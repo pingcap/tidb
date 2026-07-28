@@ -767,6 +767,183 @@ impl Session {
                         rows,
                     }))
                 }
+                // Go `fetchShowCharset`: one row per charset in the parser's
+                // registry, captured from mock TiDB (`Charset | Description |
+                // Default collation | Maxlen`).
+                //
+                // DEFERRED (documented, and refused rather than ignored):
+                // `WHERE`, because honoring it needs the same virtual-row
+                // selection machinery `SHOW STATUS` uses and this table is
+                // static rather than session state.
+                tidb_ast::AdminStmt::ShowCharset(show) => {
+                    let pattern = match &show.filter {
+                        Some(tidb_ast::ShowCharsetFilter::Like(tidb_ast::Expr::String(text))) => {
+                            Some(text.clone())
+                        }
+                        Some(tidb_ast::ShowCharsetFilter::Like(_)) => {
+                            return Err(DriverError::Unsupported(
+                                "SHOW CHARSET LIKE takes a string pattern",
+                            ))
+                        }
+                        Some(tidb_ast::ShowCharsetFilter::Where(_)) => {
+                            return Err(DriverError::Unsupported(
+                                "SHOW CHARSET WHERE is not supported yet",
+                            ))
+                        }
+                        None => None,
+                    };
+                    let text =
+                        || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                    let number =
+                        || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+                    let mut rows = Vec::new();
+                    for &(name, description, default_collation, maxlen) in SHOW_CHARSET_ROWS {
+                        if let Some(pattern) = &pattern {
+                            if !tidb_executor::like_match_with_collation(
+                                name,
+                                pattern,
+                                None,
+                                tidb_datatype::Collation::Utf8Mb4Bin,
+                            ) {
+                                continue;
+                            }
+                        }
+                        rows.push(vec![
+                            Datum::Bytes(name.as_bytes().to_vec()),
+                            Datum::Bytes(description.as_bytes().to_vec()),
+                            Datum::Bytes(default_collation.as_bytes().to_vec()),
+                            Datum::Int(maxlen),
+                        ]);
+                    }
+                    Ok(Some(StmtOutput::Rows {
+                        columns: vec![
+                            ("Charset".to_owned(), text()),
+                            ("Description".to_owned(), text()),
+                            ("Default collation".to_owned(), text()),
+                            ("Maxlen".to_owned(), number()),
+                        ],
+                        rows,
+                    }))
+                }
+                // Go `fetchShowEngines`: this tier is the mock/embedded
+                // single-engine server, so the table is always the single
+                // `InnoDB` row Go's mock session reports.
+                //
+                // DEFERRED (documented, refused rather than ignored): `WHERE`
+                // /`LIKE`, for the same reason as `SHOW CHARSET` above --
+                // there is exactly one row and no virtual-row selection path
+                // wired up for it yet.
+                tidb_ast::AdminStmt::ShowEngines(show) => {
+                    if show.filter.is_some() {
+                        return Err(DriverError::Unsupported(
+                            "SHOW ENGINES filters are not supported yet",
+                        ));
+                    }
+                    let text =
+                        || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                    Ok(Some(StmtOutput::Rows {
+                        columns: vec![
+                            ("Engine".to_owned(), text()),
+                            ("Support".to_owned(), text()),
+                            ("Comment".to_owned(), text()),
+                            ("Transactions".to_owned(), text()),
+                            ("XA".to_owned(), text()),
+                            ("Savepoints".to_owned(), text()),
+                        ],
+                        rows: vec![vec![
+                            Datum::Bytes(b"InnoDB".to_vec()),
+                            Datum::Bytes(b"DEFAULT".to_vec()),
+                            Datum::Bytes(
+                                b"Supports transactions, row-level locking, and foreign keys"
+                                    .to_vec(),
+                            ),
+                            Datum::Bytes(b"YES".to_vec()),
+                            Datum::Bytes(b"YES".to_vec()),
+                            Datum::Bytes(b"YES".to_vec()),
+                        ]],
+                    }))
+                }
+                // Go `fetchShowCollation`: one row per collation in the
+                // parser's registry (`Collation | Charset | Id | Default |
+                // Compiled | Sortlen | Pad_attribute`).
+                //
+                // NOT MODELLED (documented): `Utf8Mb4ZhPinyinTiDbAsCs`, TiDB's
+                // reserved pinyin collation stub -- mock TiDB's own `SHOW
+                // COLLATION` capture omits it too, so this table matches the
+                // 15 collations Go actually lists rather than this crate's
+                // full 16-variant registry.
+                //
+                // DEFERRED (documented, and refused rather than ignored):
+                // `WHERE`, for the same reason as `SHOW CHARSET` above.
+                tidb_ast::AdminStmt::ShowCollation(show) => {
+                    let pattern = match &show.filter {
+                        Some(tidb_ast::ShowCollationFilter::Like(tidb_ast::Expr::String(text))) => {
+                            Some(text.clone())
+                        }
+                        Some(tidb_ast::ShowCollationFilter::Like(_)) => {
+                            return Err(DriverError::Unsupported(
+                                "SHOW COLLATION LIKE takes a string pattern",
+                            ))
+                        }
+                        Some(tidb_ast::ShowCollationFilter::Where(_)) => {
+                            return Err(DriverError::Unsupported(
+                                "SHOW COLLATION WHERE is not supported yet",
+                            ))
+                        }
+                        None => None,
+                    };
+                    let text =
+                        || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                    let number =
+                        || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+                    let mut rows = Vec::new();
+                    for &collation in SHOW_COLLATION_ROWS {
+                        let name = collation.name();
+                        if let Some(pattern) = &pattern {
+                            if !tidb_executor::like_match_with_collation(
+                                name,
+                                pattern,
+                                None,
+                                tidb_datatype::Collation::Utf8Mb4Bin,
+                            ) {
+                                continue;
+                            }
+                        }
+                        let (sortlen, pad_attribute): (i64, &str) = match collation {
+                            tidb_datatype::Collation::Utf8UnicodeCi
+                            | tidb_datatype::Collation::Utf8Mb4UnicodeCi => (8, "PAD SPACE"),
+                            tidb_datatype::Collation::Utf8Mb40900AiCi => (0, "NO PAD"),
+                            tidb_datatype::Collation::Binary
+                            | tidb_datatype::Collation::Utf8Mb40900Bin => (1, "NO PAD"),
+                            _ => (1, "PAD SPACE"),
+                        };
+                        rows.push(vec![
+                            Datum::Bytes(name.as_bytes().to_vec()),
+                            Datum::Bytes(collation.charset().name().as_bytes().to_vec()),
+                            Datum::Int(i64::from(collation.id())),
+                            Datum::Bytes(if is_default_show_collation(collation) {
+                                b"Yes".to_vec()
+                            } else {
+                                Vec::new()
+                            }),
+                            Datum::Bytes(b"Yes".to_vec()),
+                            Datum::Int(sortlen),
+                            Datum::Bytes(pad_attribute.as_bytes().to_vec()),
+                        ]);
+                    }
+                    Ok(Some(StmtOutput::Rows {
+                        columns: vec![
+                            ("Collation".to_owned(), text()),
+                            ("Charset".to_owned(), text()),
+                            ("Id".to_owned(), number()),
+                            ("Default".to_owned(), text()),
+                            ("Compiled".to_owned(), text()),
+                            ("Sortlen".to_owned(), number()),
+                            ("Pad_attribute".to_owned(), text()),
+                        ],
+                        rows,
+                    }))
+                }
                 // Go `ShowExec` with `ShowWarnings`/`ShowErrors`: the rows are
                 // the statement-context warnings, whose `Level` column is
                 // `Warning` or `Error`.
@@ -1667,6 +1844,71 @@ fn show_table_status_row(name: &str, auto_increment: Option<i64>) -> Vec<Datum> 
         text(""), // Create_options
         text(""), // Comment
     ]
+}
+
+/// `SHOW CHARSET` rows: `(Charset, Description, Default collation, Maxlen)`,
+/// captured verbatim from mock TiDB's `charset.GetSupportedCharsets`. Order
+/// matches the capture (alphabetical by charset name).
+const SHOW_CHARSET_ROWS: &[(&str, &str, &str, i64)] = &[
+    ("ascii", "US ASCII", "ascii_bin", 1),
+    ("binary", "binary", "binary", 1),
+    (
+        "gb18030",
+        "China National Standard GB18030",
+        "gb18030_chinese_ci",
+        4,
+    ),
+    (
+        "gbk",
+        "Chinese Internal Code Specification",
+        "gbk_chinese_ci",
+        2,
+    ),
+    ("latin1", "Latin1", "latin1_bin", 1),
+    ("utf8", "UTF-8 Unicode", "utf8_bin", 3),
+    ("utf8mb4", "UTF-8 Unicode", "utf8mb4_bin", 4),
+];
+
+/// The collations `SHOW COLLATION` reports, in mock TiDB's own capture order
+/// (alphabetical by collation name). `Utf8Mb4ZhPinyinTiDbAsCs` is
+/// deliberately excluded: it is a reserved stub collation, and Go's own
+/// `SHOW COLLATION` capture omits it too.
+const SHOW_COLLATION_ROWS: &[tidb_datatype::Collation] = &[
+    tidb_datatype::Collation::AsciiBin,
+    tidb_datatype::Collation::Binary,
+    tidb_datatype::Collation::Gb18030Bin,
+    tidb_datatype::Collation::Gb18030ChineseCi,
+    tidb_datatype::Collation::GbkBin,
+    tidb_datatype::Collation::GbkChineseCi,
+    tidb_datatype::Collation::Latin1Bin,
+    tidb_datatype::Collation::Utf8Bin,
+    tidb_datatype::Collation::Utf8GeneralCi,
+    tidb_datatype::Collation::Utf8UnicodeCi,
+    tidb_datatype::Collation::Utf8Mb40900AiCi,
+    tidb_datatype::Collation::Utf8Mb40900Bin,
+    tidb_datatype::Collation::Utf8Mb4Bin,
+    tidb_datatype::Collation::Utf8Mb4GeneralCi,
+    tidb_datatype::Collation::Utf8Mb4UnicodeCi,
+];
+
+/// Whether `collation` is the one `SHOW COLLATION` marks `Default`.
+///
+/// This is NOT the same as [`tidb_datatype::Charset::default_collation`]:
+/// mock TiDB's capture shows `gbk_chinese_ci`/`gb18030_chinese_ci` as the
+/// default for their charsets, not the `_bin` collations that method
+/// returns, so the SHOW COLLATION default is listed explicitly here rather
+/// than derived from it.
+fn is_default_show_collation(collation: tidb_datatype::Collation) -> bool {
+    matches!(
+        collation,
+        tidb_datatype::Collation::AsciiBin
+            | tidb_datatype::Collation::Binary
+            | tidb_datatype::Collation::Gb18030ChineseCi
+            | tidb_datatype::Collation::GbkChineseCi
+            | tidb_datatype::Collation::Latin1Bin
+            | tidb_datatype::Collation::Utf8Bin
+            | tidb_datatype::Collation::Utf8Mb4Bin
+    )
 }
 
 /// The `SHOW INDEX` header, with the columns Go reports as numbers marked.
@@ -4553,6 +4795,113 @@ mod tests {
             global_rows.iter().any(|row| row[0] == "Ssl_version"),
             "{global_rows:?}"
         );
+    }
+
+    /// `SHOW CHARSET`, `SHOW ENGINES`, and `SHOW COLLATION`, checked against
+    /// a mock-TiDB capture: 7 SHOW CHARSET rows, one InnoDB SHOW ENGINES row,
+    /// and 15 SHOW COLLATION rows (LIKE 'utf8mb4%' narrows to 5).
+    #[test]
+    fn show_charset_engines_collation() {
+        let mut session = Session::new();
+
+        assert_eq!(
+            row_text(session.run("SHOW CHARSET")),
+            [
+                ["ascii", "US ASCII", "ascii_bin", "1"],
+                ["binary", "binary", "binary", "1"],
+                [
+                    "gb18030",
+                    "China National Standard GB18030",
+                    "gb18030_chinese_ci",
+                    "4"
+                ],
+                [
+                    "gbk",
+                    "Chinese Internal Code Specification",
+                    "gbk_chinese_ci",
+                    "2"
+                ],
+                ["latin1", "Latin1", "latin1_bin", "1"],
+                ["utf8", "UTF-8 Unicode", "utf8_bin", "3"],
+                ["utf8mb4", "UTF-8 Unicode", "utf8mb4_bin", "4"],
+            ]
+        );
+
+        assert_eq!(
+            row_text(session.run("SHOW ENGINES")),
+            [[
+                "InnoDB",
+                "DEFAULT",
+                "Supports transactions, row-level locking, and foreign keys",
+                "YES",
+                "YES",
+                "YES",
+            ]]
+        );
+
+        let collation_rows = row_text(session.run("SHOW COLLATION"));
+        assert_eq!(collation_rows.len(), 15);
+        assert_eq!(
+            collation_rows[0],
+            ["ascii_bin", "ascii", "65", "Yes", "Yes", "1", "PAD SPACE"]
+        );
+        assert_eq!(
+            collation_rows[1],
+            ["binary", "binary", "63", "Yes", "Yes", "1", "NO PAD"]
+        );
+
+        assert_eq!(
+            row_text(session.run("SHOW COLLATION LIKE 'utf8mb4%'")),
+            [
+                [
+                    "utf8mb4_0900_ai_ci",
+                    "utf8mb4",
+                    "255",
+                    "",
+                    "Yes",
+                    "0",
+                    "NO PAD"
+                ],
+                [
+                    "utf8mb4_0900_bin",
+                    "utf8mb4",
+                    "309",
+                    "",
+                    "Yes",
+                    "1",
+                    "NO PAD"
+                ],
+                [
+                    "utf8mb4_bin",
+                    "utf8mb4",
+                    "46",
+                    "Yes",
+                    "Yes",
+                    "1",
+                    "PAD SPACE"
+                ],
+                [
+                    "utf8mb4_general_ci",
+                    "utf8mb4",
+                    "45",
+                    "",
+                    "Yes",
+                    "1",
+                    "PAD SPACE"
+                ],
+                [
+                    "utf8mb4_unicode_ci",
+                    "utf8mb4",
+                    "224",
+                    "",
+                    "Yes",
+                    "8",
+                    "PAD SPACE"
+                ],
+            ]
+        );
+
+        assert!(session.run("SHOW CHARSET WHERE Charset = 'utf8'").is_err());
     }
 
     /// The three conflict policies -- `REPLACE`, `INSERT IGNORE` and
