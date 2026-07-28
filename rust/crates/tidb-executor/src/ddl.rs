@@ -842,7 +842,11 @@ pub fn run_drop_table_in(
     for path in &drop.names {
         let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
         let (database, name) = (database.to_owned(), name.to_owned());
-        if !catalog.drop_table_in(&database, &name) && missing.is_none() {
+        // A view is not a table: `DROP TABLE v` reports the name as unknown
+        // rather than dropping the view (Go's own captured behaviour).
+        let dropped =
+            !catalog.is_view_in(&database, &name) && catalog.drop_table_in(&database, &name);
+        if !dropped && missing.is_none() {
             // Go reports the first missing name, after the drops it performed.
             missing = Some(format!("{database}.{name}"));
         }

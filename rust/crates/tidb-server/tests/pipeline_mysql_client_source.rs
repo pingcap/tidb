@@ -709,6 +709,44 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
             .collect::<Vec<_>>(),
         vec!["gen".to_owned(), "t".to_owned()]
     );
+
+    // A view over the wire: created, read through, and listed beside the base
+    // tables with its kind -- the whole life a client sees.
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "CREATE VIEW vwire AS SELECT a, b FROM t WHERE a >= 2"
+        ),
+        0
+    );
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT b FROM vwire ORDER BY a"),
+        vec![vec!["20".to_owned()], vec!["30".to_owned()], vec![
+            "40".to_owned()
+        ]]
+    );
+    let created_view = run_query(&mut client, &mut reader, "SHOW CREATE VIEW vwire");
+    assert_eq!(
+        created_view[0][1],
+        "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `vwire` (`a`, `b`) \
+         AS SELECT `a` AS `a`,`b` AS `b` FROM `test`.`t` WHERE `a`>=2",
+        "{created_view:?}"
+    );
+    assert!(
+        run_query(&mut client, &mut reader, "SHOW TABLES")
+            .into_iter()
+            .any(|row| row[0] == "vwire"),
+        "SHOW TABLES lists the view"
+    );
+    assert!(
+        run_query(&mut client, &mut reader, "SHOW FULL TABLES")
+            .into_iter()
+            .any(|row| row[0] == "vwire" && row[1] == "VIEW"),
+        "SHOW FULL TABLES reports the view's kind"
+    );
+    assert_eq!(run_write(&mut client, &mut reader, "DROP VIEW vwire"), 0);
+
     assert!(run_query(&mut client, &mut reader, "SHOW WARNINGS").is_empty());
     // USE answers with an OK packet, as a client expects when it switches
     // schema.

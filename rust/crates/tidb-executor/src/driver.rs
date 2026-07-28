@@ -150,6 +150,39 @@ impl Default for Catalog {
     }
 }
 
+/// A view: Go `model.TableInfo` whose `View` field is set. A view stores no
+/// rows -- its `SELECT` is re-run whenever the name is read.
+///
+/// DIVERGENCE (documented): Go resolves the view's output columns afresh on
+/// every read, so an incompatible change to a base table surfaces at read
+/// time. Here the columns are resolved once, at `CREATE VIEW`, and cached:
+/// `SHOW CREATE VIEW` and `DESCRIBE` therefore answer from the definition as
+/// it was created. A read still runs the body, so a dropped base table is
+/// still Go's `ErrViewInvalid` (1356).
+///
+/// NOT MODELLED (documented): `WITH CHECK OPTION` (this tier refuses writes
+/// through a view outright, which is where the check option would apply).
+#[derive(Clone, Debug)]
+pub struct ViewDef {
+    /// The view name as written, for `SHOW CREATE VIEW`.
+    pub name: String,
+    /// The output columns, resolved when the view was created. The names are
+    /// the explicit `CREATE VIEW v (...)` list when one was written.
+    pub columns: Vec<(String, FieldType)>,
+    /// The view's `SELECT`, canonicalized as Go stores it: every field
+    /// explicitly aliased, every table reference schema-qualified.
+    pub select_sql: String,
+    /// The definer's user name (empty when the session has no user, which is
+    /// this tier's only case).
+    pub definer_user: String,
+    /// The definer's host name.
+    pub definer_host: String,
+    /// The `ALGORITHM` as written, defaulting to `UNDEFINED`.
+    pub algorithm: String,
+    /// The `SQL SECURITY` mode as written, defaulting to `DEFINER`.
+    pub security: String,
+}
+
 /// A catalog table's backing store.
 #[derive(Clone, Debug)]
 pub enum TableEntry {
@@ -157,6 +190,8 @@ pub enum TableEntry {
     Mem(MemTable),
     /// Rows stored as real TiKV-format bytes (see [`crate::kv_table`]).
     Kv(KvTable),
+    /// A view: a stored `SELECT` rather than stored rows.
+    View(ViewDef),
 }
 
 impl TableEntry {
@@ -169,7 +204,15 @@ impl TableEntry {
                 .iter()
                 .map(|c| (c.name.clone(), c.field_type.clone()))
                 .collect(),
+            TableEntry::View(view) => view.columns.clone(),
         }
+    }
+
+    /// Whether this entry is a view, which decides which of MySQL's two
+    /// object kinds a statement is allowed to name.
+    #[must_use]
+    pub fn is_view(&self) -> bool {
+        matches!(self, TableEntry::View(_))
     }
 }
 
@@ -361,6 +404,18 @@ impl Catalog {
     /// Registers a TiKV-format-byte-backed table in `database`.
     pub fn register_kv_in(&mut self, database: &str, name: &str, table: KvTable) {
         self.register_in(database, name, TableEntry::Kv(table));
+    }
+
+    /// Registers a view in `database`, replacing whatever the name held --
+    /// which is what `CREATE OR REPLACE VIEW` means.
+    pub fn register_view_in(&mut self, database: &str, name: &str, view: ViewDef) {
+        self.register_in(database, name, TableEntry::View(view));
+    }
+
+    /// Whether `name` in `database` is a view.
+    #[must_use]
+    pub fn is_view_in(&self, database: &str, name: &str) -> bool {
+        self.get_in(database, name).is_some_and(TableEntry::is_view)
     }
 
     /// Whether a table with `name` exists in the default database.
@@ -559,6 +614,17 @@ pub enum DriverError {
     /// argument is not one of the `GROUP BY` expressions. The number Go prints
     /// is the argument's 0-based position.
     FieldInGroupingNotGroupBy(usize),
+    /// Go's plain `INSERT into view` refusal, which carries no error class:
+    /// `insert into view %s is not supported now`.
+    InsertIntoViewUnsupported(String),
+    /// Go's plain `DELETE` refusal: `delete view %s is not supported now`.
+    DeleteViewUnsupported(String),
+    /// Go `plannererrors.ErrNonUpdatableTable` (1288), which is what an
+    /// `UPDATE` through a view reports.
+    TableNotUpdatable(String),
+    /// Go `ErrViewWrongList` (1353): the `CREATE VIEW v (...)` column list
+    /// and the body's select list have different widths.
+    ViewWrongList,
 }
 
 /// Why a schema statement failed.
@@ -578,6 +644,15 @@ pub enum SchemaErrorKind {
     DatabaseExists(String),
     /// Go `plannererrors.ErrNoDB` (1046).
     NoDatabaseSelected,
+    /// Go `ErrWrongObject` (1347): the name exists but is the other object
+    /// kind -- `DROP VIEW t` / `SHOW CREATE VIEW t` on a base table. The
+    /// string is the qualified name; the expected kind is always `VIEW`,
+    /// since the reverse direction (a table statement naming a view) reports
+    /// the name as simply unknown, as Go does.
+    NotView(String),
+    /// Go `plannererrors.ErrViewInvalid` (1356): the view's own query no
+    /// longer runs, typically because a base table was dropped.
+    ViewInvalid(String),
 }
 
 /// Why a session-variable statement failed.
@@ -1188,6 +1263,7 @@ fn run_select_stmt(
             }
             applied.tables.push(FromTable {
                 name: String::new(),
+                database: None,
                 columns: vec![(format!("__apply_{appended}"), value_type)],
                 offset: appended,
             });
@@ -1328,6 +1404,7 @@ fn run_select_stmt(
             let inner_scope = current_scope.clone();
             current_scope.tables.push(FromTable {
                 name: String::new(),
+                database: None,
                 columns: vec![(format!("__apply_{appended}"), value_type)],
                 offset: appended,
             });
@@ -1615,6 +1692,10 @@ pub fn run_insert_reporting(
     let table = catalog
         .get_mut_in(&database, &table_name)
         .ok_or(DriverError::Unsupported("table not found in catalog"))?;
+    // Go refuses a write through a view before planning anything.
+    if table.is_view() {
+        return Err(DriverError::InsertIntoViewUnsupported(table_name.clone()));
+    }
     let column_list = table.column_list();
 
     // Map an explicit column list to table offsets; without one, values map to
@@ -1676,11 +1757,13 @@ pub fn run_insert_reporting(
             .iter()
             .map(|(name, _)| (None, false, name.clone()))
             .collect(),
+        TableEntry::View(_) => unreachable!("INSERT through a view is refused above"),
     };
 
     let auto_increment_offset = match table {
         TableEntry::Kv(kv) => kv.auto_increment_offset(),
         TableEntry::Mem(_) => None,
+        TableEntry::View(_) => unreachable!("INSERT through a view is refused above"),
     };
     let mut auto_rows: Vec<usize> = Vec::new();
     let mut first_allocated: Option<i64> = None;
@@ -1771,6 +1854,7 @@ pub fn run_insert_reporting(
         inserted += 1;
     }
     match table {
+        TableEntry::View(_) => unreachable!("INSERT through a view is refused above"),
         TableEntry::Mem(mem) => mem.rows.extend(new_rows),
         TableEntry::Kv(kv) => {
             // The allocator lives on the table, so the ids are handed out here
@@ -3843,7 +3927,8 @@ pub(crate) fn single_kv_table(
     let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
     match catalog.get_in(database, name)? {
         TableEntry::Kv(kv) => Some(kv.clone()),
-        TableEntry::Mem(_) => None,
+        // A view stores no rows, so there is no point get to try.
+        TableEntry::Mem(_) | TableEntry::View(_) => None,
     }
 }
 
@@ -4081,6 +4166,10 @@ pub(crate) fn try_point_get(
 #[derive(Clone, Debug)]
 pub(crate) struct FromTable {
     pub(crate) name: String,
+    /// The schema the table lives in, when a `db.t.column` reference may name
+    /// it. `None` for a source that cannot be schema-qualified: an aliased
+    /// table (MySQL's alias replaces the whole path) or a synthetic scope.
+    pub(crate) database: Option<String>,
     pub(crate) columns: Vec<(String, FieldType)>,
     pub(crate) offset: usize,
 }
@@ -4123,10 +4212,11 @@ pub(crate) fn scope_resolver(scope: &FromScope) -> impl ColumnResolver + '_ {
 
 impl ColumnResolver for ScopeResolver<'_> {
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
-        let (qualifier, name) = match path {
-            [name] => (None, name),
-            [table, name] => (Some(table), name),
-            // db.t.a qualification waits on a multi-schema catalog.
+        let (schema, qualifier, name) = match path {
+            [name] => (None, None, name),
+            [table, name] => (None, Some(table), name),
+            // `db.t.a` is how a view's stored definition names its columns.
+            [schema, table, name] => (Some(schema), Some(table), name),
             _ => return None,
         };
         let mut found: Option<(usize, FieldType)> = None;
@@ -4134,6 +4224,14 @@ impl ColumnResolver for ScopeResolver<'_> {
             if let Some(q) = qualifier {
                 if !q.eq_ignore_ascii_case(&table.name) {
                     continue;
+                }
+            }
+            if let Some(schema) = schema {
+                // An aliased or synthetic source carries no schema, so a
+                // schema-qualified reference cannot name it.
+                match &table.database {
+                    Some(db) if db.eq_ignore_ascii_case(schema) => {}
+                    _ => continue,
                 }
             }
             for (i, (candidate, ft)) in table.columns.iter().enumerate() {
@@ -4175,9 +4273,20 @@ fn build_from(
             let entry = catalog
                 .get_in(database, name)
                 .ok_or(DriverError::Unsupported("table not found in catalog"))?;
-            let columns = entry.column_list();
             // A table alias replaces the name for qualification, as in Go.
             let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
+            if let TableEntry::View(view) = entry {
+                return build_view_source(
+                    view,
+                    database,
+                    name,
+                    visible,
+                    table_ref.alias.is_none(),
+                    catalog,
+                    ctx,
+                );
+            }
+            let columns = entry.column_list();
             let schema_columns: Vec<Column> = columns
                 .iter()
                 .enumerate()
@@ -4197,10 +4306,15 @@ fn build_from(
                     ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
                     kv.clone(),
                 )),
+                // Handled above, before the columns were taken.
+                TableEntry::View(_) => unreachable!("views take the branch above"),
             };
             let scope = FromScope {
                 tables: vec![FromTable {
                     name: visible,
+                    // An alias replaces the whole path, so `db.t.col` no
+                    // longer names the table once it is aliased.
+                    database: table_ref.alias.is_none().then(|| database.to_owned()),
                     columns,
                     offset: 0,
                 }],
@@ -4212,6 +4326,105 @@ fn build_from(
             "derived tables are not supported yet",
         )),
     }
+}
+
+/// How deep a view may nest before the reference is called invalid. A view
+/// whose body reads itself (which `CREATE OR REPLACE` can build) would
+/// otherwise recurse forever.
+///
+/// DIVERGENCE (documented): MySQL caps nesting at 61 and reports
+/// `ER_VIEW_RECURSIVE` (1462); this reports `ErrViewInvalid` (1356), the same
+/// error the other broken-view cases report.
+const MAX_VIEW_DEPTH: usize = 32;
+
+thread_local! {
+    /// How many view bodies the current statement is inside.
+    static VIEW_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Decrements the view-nesting depth however the body's evaluation ends.
+struct ViewDepthGuard;
+
+impl ViewDepthGuard {
+    /// Enters one view body, refusing to go past [`MAX_VIEW_DEPTH`].
+    fn enter(qualified: &str) -> Result<ViewDepthGuard, DriverError> {
+        VIEW_DEPTH.with(|depth| {
+            if depth.get() >= MAX_VIEW_DEPTH {
+                return Err(DriverError::Schema(SchemaErrorKind::ViewInvalid(
+                    qualified.to_owned(),
+                )));
+            }
+            depth.set(depth.get() + 1);
+            Ok(ViewDepthGuard)
+        })
+    }
+}
+
+impl Drop for ViewDepthGuard {
+    fn drop(&mut self) {
+        VIEW_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
+/// Runs a view's stored `SELECT` and presents its rows as a `FROM` source.
+///
+/// Go rewrites the reference into a derived table over the view's plan; the
+/// rows here are materialized instead, which is the same result for a reader
+/// (the outer `WHERE`, joins and `ORDER BY` all apply to the view's output
+/// either way) and differs only in that nothing is pushed into the view.
+///
+/// The body's own failure is Go's `ErrViewInvalid`: the definition ran once
+/// already, when the view was created, so anything that stops it running now
+/// is a schema change underneath it.
+fn build_view_source(
+    view: &ViewDef,
+    database: &str,
+    name: &str,
+    visible: String,
+    alias_free: bool,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
+    let qualified = format!("{database}.{name}");
+    let _guard = ViewDepthGuard::enter(&qualified)?;
+    let invalid = || DriverError::Schema(SchemaErrorKind::ViewInvalid(qualified.clone()));
+    // The definition is stored schema-qualified, so it resolves in the view's
+    // own schema rather than the reader's.
+    let (body_columns, rows) =
+        run_select_meta_in(&view.select_sql, catalog, database, ctx).map_err(|_| invalid())?;
+    if body_columns.len() != view.columns.len() {
+        return Err(invalid());
+    }
+    // The view's own column names win over the body's, which is what a
+    // `CREATE VIEW v (a2) AS SELECT a ...` column list means.
+    let columns: Vec<(String, FieldType)> = view
+        .columns
+        .iter()
+        .zip(&body_columns)
+        .map(|((name, _), (_, ft))| (name.clone(), ft.clone()))
+        .collect();
+    let schema_columns: Vec<Column> = columns
+        .iter()
+        .enumerate()
+        .map(|(i, (_, ft))| {
+            let mut col = Column::new((i + 1) as i64, ft.clone());
+            col.index = i as i64;
+            col
+        })
+        .collect();
+    let exec: Box<dyn Executor> = Box::new(MemTableSourceExec::new(
+        ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
+        rows,
+    ));
+    let scope = FromScope {
+        tables: vec![FromTable {
+            name: visible,
+            database: alias_free.then(|| database.to_owned()),
+            columns,
+            offset: 0,
+        }],
+    };
+    Ok((exec, scope))
 }
 
 /// Builds one join node (or passes through the single-table wrapper).
@@ -4239,6 +4452,7 @@ fn build_join(
     for table in right_scope.tables {
         scope.tables.push(FromTable {
             name: table.name,
+            database: table.database,
             columns: table.columns,
             offset: table.offset + left_width,
         });
@@ -4419,6 +4633,8 @@ pub fn run_update_in(
 
     let mut changed = 0u64;
     match entry {
+        // Go's planner rejects an UPDATE whose target is a view.
+        TableEntry::View(_) => return Err(DriverError::TableNotUpdatable(name.clone())),
         TableEntry::Mem(mem) => {
             let mut updates = Vec::new();
             for (index, row) in mem.rows.iter().enumerate() {
@@ -4576,6 +4792,7 @@ pub fn run_delete_in(
 
     let mut deleted = 0u64;
     match entry {
+        TableEntry::View(_) => return Err(DriverError::DeleteViewUnsupported(name.clone())),
         TableEntry::Mem(mem) => {
             let mut kept = Vec::with_capacity(mem.rows.len());
             for row in std::mem::take(&mut mem.rows) {
@@ -5146,6 +5363,7 @@ fn run_aggregate_select(
         let outer_scope = FromScope {
             tables: vec![FromTable {
                 name: String::new(),
+                database: None,
                 columns: names.iter().cloned().zip(types.iter().cloned()).collect(),
                 offset: 0,
             }],
@@ -8576,6 +8794,46 @@ impl DriverError {
         DriverError::Schema(crate::SchemaErrorKind::UnknownTable(name)) => {
             MysqlError::new(1146, *b"42S02", format!("Table '{name}' doesn't exist"))
         }
+        // Go: "'%-.192s.%-.192s' is not %s".
+        DriverError::Schema(crate::SchemaErrorKind::NotView(name)) => {
+            MysqlError::new(1347, *b"HY000", format!("'{name}' is not VIEW"))
+        }
+        // Go: "View '%-.192s.%-.192s' references invalid table(s) ...".
+        DriverError::Schema(crate::SchemaErrorKind::ViewInvalid(name)) => MysqlError::new(
+            1356,
+            *b"HY000",
+            format!(
+                "View '{name}' references invalid table(s) or column(s) or function(s) or \
+                 definer/invoker of view lack rights to use them"
+            ),
+        ),
+        // Go raises this one as a plain error, so it carries 1105.
+        DriverError::InsertIntoViewUnsupported(name) => MysqlError::new(
+            1105,
+            *b"HY000",
+            format!("insert into view {name} is not supported now"),
+        ),
+        DriverError::DeleteViewUnsupported(name) => MysqlError::new(
+            1105,
+            *b"HY000",
+            format!("delete view {name} is not supported now"),
+        ),
+        // Go: "In definition of view, derived table or common table
+        // expression, SELECT list and column names list have different column
+        // counts".
+        DriverError::ViewWrongList => MysqlError::new(
+            1353,
+            *b"HY000",
+            "In definition of view, derived table or common table expression, SELECT list and \
+             column names list have different column counts"
+                .to_owned(),
+        ),
+        // Go: "The target table %-.100s of the %s is not updatable".
+        DriverError::TableNotUpdatable(name) => MysqlError::new(
+            1288,
+            *b"HY000",
+            format!("The target table {name} of the UPDATE is not updatable"),
+        ),
         // Go: "Unknown database '%-.192s'".
         DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(
             name,

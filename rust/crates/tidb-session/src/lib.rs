@@ -212,6 +212,44 @@ fn escape_name(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
 }
 
+/// Go's `TABLE_TYPE` / `Table_type` value for an object.
+fn table_type_of(is_view: bool) -> &'static str {
+    if is_view {
+        "VIEW"
+    } else {
+        "BASE TABLE"
+    }
+}
+
+/// Go `ConstructResultOfShowCreateView`.
+///
+/// Go always prints the full preamble, including the defaults the statement
+/// never wrote, and always prints an explicit column list even when the
+/// `CREATE VIEW` had none -- the names come from the stored definition.
+///
+/// DIVERGENCE (documented): the definer is whatever the statement recorded,
+/// which in this tier is the empty identity, printed as ``@``. A TiDB with
+/// authentication prints the connected user there.
+fn show_create_view_text(view: &tidb_executor::ViewDef) -> String {
+    let mut out = format!(
+        "CREATE ALGORITHM={} DEFINER={}@{} SQL SECURITY {} VIEW {} (",
+        view.algorithm,
+        escape_name(&view.definer_user),
+        escape_name(&view.definer_host),
+        view.security,
+        escape_name(&view.name),
+    );
+    for (index, (name, _)) in view.columns.iter().enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&escape_name(name));
+    }
+    out.push_str(") AS ");
+    out.push_str(&view.select_sql);
+    out
+}
+
 /// Go `constructResultOfShowCreateTable`, over the metadata this seed keeps.
 ///
 /// The shape is Go's line for line: the header, two-space-indented column
@@ -404,6 +442,51 @@ fn column_description(
         Datum::Bytes(extra.as_bytes().to_vec()),
         Datum::Bytes(FULL_COL_DESC_PRIVILEGES.as_bytes().to_vec()),
         Datum::Bytes(Vec::new()), // Comment: no per-column comments modelled.
+    ]
+}
+
+/// A view column's `SHOW COLUMNS` row.
+///
+/// A view carries no storage metadata, so Go reports no key, no default and
+/// no extra for every one of its columns; only the name, the type the body
+/// produced, and nullability come from the definition. The body's columns are
+/// nullable here because nothing propagates a base column's NOT NULL through
+/// the view's stored types, which is what Go reports for these views too.
+fn view_column_description(
+    name: &str,
+    field_type: &tidb_datatype::FieldType,
+    full: bool,
+) -> Vec<Datum> {
+    let null_flag = if field_type.flags() & NOT_NULL_FLAG != 0 {
+        "NO"
+    } else {
+        "YES"
+    };
+    if !full {
+        return vec![
+            Datum::Bytes(name.as_bytes().to_vec()),
+            Datum::Bytes(field_type.compact_str(false).into_bytes()),
+            Datum::Bytes(null_flag.as_bytes().to_vec()),
+            Datum::Bytes(Vec::new()),
+            Datum::Null,
+            Datum::Bytes(Vec::new()),
+        ];
+    }
+    let collation = if field_type.is_string() {
+        Datum::Bytes(tidb_datatype::Collation::DEFAULT.name().as_bytes().to_vec())
+    } else {
+        Datum::Null
+    };
+    vec![
+        Datum::Bytes(name.as_bytes().to_vec()),
+        Datum::Bytes(field_type.compact_str(false).into_bytes()),
+        collation,
+        Datum::Bytes(null_flag.as_bytes().to_vec()),
+        Datum::Bytes(Vec::new()),
+        Datum::Null,
+        Datum::Bytes(Vec::new()),
+        Datum::Bytes(FULL_COL_DESC_PRIVILEGES.as_bytes().to_vec()),
+        Datum::Bytes(Vec::new()),
     ]
 }
 
@@ -1141,33 +1224,63 @@ impl Session {
                 }
                 // Go `fetchShowCreateTable`.
                 tidb_ast::AdminStmt::ShowCreate { kind, name, .. } => {
-                    if *kind != tidb_ast::ShowCreateKind::Table {
-                        return Ok(None);
-                    }
+                    let want_view = match kind {
+                        tidb_ast::ShowCreateKind::Table => false,
+                        tidb_ast::ShowCreateKind::View => true,
+                        _ => return Ok(None),
+                    };
                     let current = self.require_current_database()?.to_owned();
                     let (database, table_name) = match name.as_slice() {
                         [table] => (current, table.clone()),
                         [database, table] => (database.clone(), table.clone()),
                         _ => return Err(DriverError::Unsupported("empty table name")),
                     };
-                    let (text, reported) = self.with_catalog_mut(|catalog| {
+                    // A view answers either spelling with the same row, which
+                    // is Go's own behaviour; only `SHOW CREATE VIEW` on a base
+                    // table is refused.
+                    let (text, reported, is_view) = self.with_catalog_mut(|catalog| {
                         let Some(entry) = catalog.table_in(&database, &table_name) else {
                             return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(
                                 format!("{database}.{table_name}"),
                             )));
                         };
-                        let tidb_executor::TableEntry::Kv(table) = entry else {
-                            return Err(DriverError::Unsupported(
+                        match entry {
+                            tidb_executor::TableEntry::View(view) => {
+                                Ok((show_create_view_text(view), table_name.clone(), true))
+                            }
+                            _ if want_view => Err(DriverError::Schema(SchemaErrorKind::NotView(
+                                format!("{database}.{table_name}"),
+                            ))),
+                            tidb_executor::TableEntry::Kv(table) => Ok((
+                                show_create_table_text(&table_name, table),
+                                table_name.clone(),
+                                false,
+                            )),
+                            tidb_executor::TableEntry::Mem(_) => Err(DriverError::Unsupported(
                                 "SHOW CREATE TABLE needs a storage-backed table",
-                            ));
-                        };
-                        Ok((
-                            show_create_table_text(&table_name, table),
-                            table_name.clone(),
-                        ))
+                            )),
+                        }
                     })?;
                     let field_type =
                         tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                    // Go's view form carries its own header and the session's
+                    // character set and collation.
+                    if is_view {
+                        return Ok(Some(StmtOutput::Rows {
+                            columns: vec![
+                                ("View".to_owned(), field_type.clone()),
+                                ("Create View".to_owned(), field_type.clone()),
+                                ("character_set_client".to_owned(), field_type.clone()),
+                                ("collation_connection".to_owned(), field_type),
+                            ],
+                            rows: vec![vec![
+                                Datum::Bytes(reported.into_bytes()),
+                                Datum::Bytes(text.into_bytes()),
+                                Datum::Bytes(b"utf8mb4".to_vec()),
+                                Datum::Bytes(b"utf8mb4_bin".to_vec()),
+                            ]],
+                        }));
+                    }
                     Ok(Some(StmtOutput::Rows {
                         columns: vec![
                             ("Table".to_owned(), field_type.clone()),
@@ -1208,25 +1321,56 @@ impl Session {
                     .map(Some)
                 }
                 tidb_ast::AdminStmt::ShowTables(show) => {
-                    if show.filter.is_some() || show.full {
+                    if show.filter.is_some() {
                         return Err(DriverError::Unsupported(
-                            "SHOW FULL TABLES and SHOW TABLES filters are not supported yet",
+                            "SHOW TABLES filters are not supported yet",
                         ));
                     }
                     let database = match &show.database {
                         Some(name) => name.clone(),
                         None => self.require_current_database()?.to_owned(),
                     };
-                    let names =
-                        self.with_catalog_mut(|catalog| Ok(catalog.table_names(&database)))?;
-                    let names = names.ok_or_else(|| {
+                    let full = show.full;
+                    let listed = self.with_catalog_mut(|catalog| {
+                        Ok(catalog.table_names(&database).map(|names| {
+                            names
+                                .into_iter()
+                                .map(|name| {
+                                    let is_view = catalog.is_view_in(&database, &name);
+                                    (name, is_view)
+                                })
+                                .collect::<Vec<_>>()
+                        }))
+                    })?;
+                    let listed = listed.ok_or_else(|| {
                         DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
                     })?;
                     // Go names the column after the schema being listed.
-                    Ok(Some(string_column_output(
-                        &format!("Tables_in_{database}"),
-                        names,
-                    )))
+                    let name_column = format!("Tables_in_{database}");
+                    if !full {
+                        return Ok(Some(string_column_output(
+                            &name_column,
+                            listed.into_iter().map(|(name, _)| name).collect(),
+                        )));
+                    }
+                    // Go's `SHOW FULL TABLES` adds the object kind.
+                    let field_type =
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                    Ok(Some(StmtOutput::Rows {
+                        columns: vec![
+                            (name_column, field_type.clone()),
+                            ("Table_type".to_owned(), field_type),
+                        ],
+                        rows: listed
+                            .into_iter()
+                            .map(|(name, is_view)| {
+                                vec![
+                                    Datum::Bytes(name.into_bytes()),
+                                    Datum::Bytes(table_type_of(is_view).as_bytes().to_vec()),
+                                ]
+                            })
+                            .collect(),
+                    }))
                 }
                 _ => Ok(None),
             },
@@ -1322,6 +1466,16 @@ impl Session {
                     "{database}.{table_name}"
                 ))));
             };
+            if let tidb_executor::TableEntry::View(view) = entry {
+                return Ok(view
+                    .columns
+                    .iter()
+                    .filter(|(candidate, _)| {
+                        column.is_none_or(|name| candidate.eq_ignore_ascii_case(name))
+                    })
+                    .map(|(name, field_type)| view_column_description(name, field_type, full))
+                    .collect::<Vec<_>>());
+            }
             let tidb_executor::TableEntry::Kv(table) = entry else {
                 return Err(DriverError::Unsupported(
                     "SHOW COLUMNS needs a storage-backed table",
@@ -2029,6 +2183,23 @@ impl Session {
                             catalog,
                             &current_db,
                         )?))
+                    })
+                }
+                DdlStmt::CreateView(create) => {
+                    let current_db = self.current_db.clone();
+                    let ctx = self.statement_context(false);
+                    let create = create.clone();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_create_view_in(&create, catalog, &current_db, &ctx)?;
+                        Ok(StmtOutput::Affected(0))
+                    })
+                }
+                DdlStmt::DropView { if_exists, names } => {
+                    let current_db = self.current_db.clone();
+                    let (if_exists, names) = (*if_exists, names.clone());
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_drop_view_in(if_exists, &names, catalog, &current_db)?;
+                        Ok(StmtOutput::Affected(0))
                     })
                 }
                 _ => Err(DriverError::Unsupported(
@@ -4155,9 +4326,10 @@ mod tests {
         );
 
         // An unimplemented information_schema table is an error, not empty
-        // output that would look like a table with no rows.
+        // output that would look like a table with no rows. (`views` is
+        // implemented -- see `views_appear_in_the_metadata_statements`.)
         assert!(session
-            .run("SELECT * FROM information_schema.views")
+            .run("SELECT * FROM information_schema.engines")
             .is_err());
     }
 
@@ -7991,6 +8163,55 @@ mod tests {
         session
     }
 
+    /// A result's column names and rows as text, matching how the captured
+    /// Go output above prints them.
+    fn query_text(session: &mut Session, sql: &str) -> (Vec<String>, Vec<Vec<String>>) {
+        match session.run_with_columns(sql).unwrap() {
+            StmtOutput::Rows { columns, rows } => (
+                columns
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>(),
+                rows.into_iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|value| match value {
+                                Datum::Null => "<nil>".to_owned(),
+                                Datum::Int(v) => v.to_string(),
+                                other => datum_text(other).unwrap_or_default(),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            other => panic!("expected rows, got {other:?}"),
+        }
+    }
+
+    /// A session with `t`, `s` and the views the captures were taken over.
+    fn view_session() -> Session {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
+        session
+            .run("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)")
+            .unwrap();
+        session
+            .run("CREATE TABLE s (a BIGINT, c VARCHAR(20))")
+            .unwrap();
+        session
+            .run("INSERT INTO s VALUES (1, 'x'), (2, 'y')")
+            .unwrap();
+        session.run("CREATE VIEW v AS SELECT a, b FROM t").unwrap();
+        session
+            .run("CREATE VIEW v2(a2) AS SELECT a FROM t")
+            .unwrap();
+        session
+            .run("CREATE VIEW v3 AS SELECT * FROM v WHERE b > 10")
+            .unwrap();
+        session
+    }
+
+<<<<<<< HEAD
     /// `ROW_NUMBER`/`RANK`/`DENSE_RANK` over ties, checked against captured
     /// TiDB output.
     ///
@@ -8429,6 +8650,343 @@ mod tests {
                  FROM t ORDER BY rn DESC, g LIMIT 3"
             )),
             [["1", "40", "5"], ["1", "30", "4"], ["1", "20", "3"]]
+        );
+    }
+
+    /// Reading through a view: the plain form, a pushed-down predicate, an
+    /// explicit column list, a view of a view, and a view joined to a table.
+    /// Every result captured from upstream Go on a mock store.
+    #[test]
+    fn views_are_read_as_their_query() {
+        let mut session = view_session();
+
+        // Captured: header [a b], rows 1/10, 2/20, 3/30.
+        let (names, rows) = query_text(&mut session, "SELECT * FROM v");
+        assert_eq!(names, ["a", "b"]);
+        assert_eq!(rows, [["1", "10"], ["2", "20"], ["3", "30"]]);
+
+        // The outer WHERE filters the view's rows.
+        let (_, rows) = query_text(&mut session, "SELECT * FROM v WHERE a > 1");
+        assert_eq!(rows, [["2", "20"], ["3", "30"]]);
+        let (_, rows) = query_text(&mut session, "SELECT a FROM v ORDER BY a DESC");
+        assert_eq!(rows, [["3"], ["2"], ["1"]]);
+
+        // The column list renames the body's output, so `a2` is the only name
+        // that resolves.
+        let (names, rows) = query_text(&mut session, "SELECT * FROM v2");
+        assert_eq!(names, ["a2"]);
+        assert_eq!(rows, [["1"], ["2"], ["3"]]);
+        let (_, rows) = query_text(&mut session, "SELECT a2 FROM v2 WHERE a2 = 2");
+        assert_eq!(rows, [["2"]]);
+
+        // A view over a view.
+        let (names, rows) = query_text(&mut session, "SELECT * FROM v3");
+        assert_eq!(names, ["a", "b"]);
+        assert_eq!(rows, [["2", "20"], ["3", "30"]]);
+
+        // A view joined to a base table.
+        let (names, rows) = query_text(&mut session, "SELECT v.a, s.c FROM v JOIN s ON v.a = s.a");
+        assert_eq!(names, ["a", "c"]);
+        assert_eq!(rows, [["1", "x"], ["2", "y"]]);
+    }
+
+    /// `SHOW CREATE VIEW` and `SHOW CREATE TABLE` over a view, asserted
+    /// against the exact captured text.
+    #[test]
+    fn show_create_view_prints_the_stored_definition() {
+        let mut session = view_session();
+
+        let (names, rows) = query_text(&mut session, "SHOW CREATE VIEW v");
+        assert_eq!(
+            names,
+            [
+                "View",
+                "Create View",
+                "character_set_client",
+                "collation_connection"
+            ]
+        );
+        assert_eq!(
+            rows,
+            [[
+                "v",
+                "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v` \
+                 (`a`, `b`) AS SELECT `a` AS `a`,`b` AS `b` FROM `test`.`t`",
+                "utf8mb4",
+                "utf8mb4_bin",
+            ]]
+        );
+
+        // The explicit column list is what the header prints; the body keeps
+        // the names it was written with.
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW v2");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v2` (`a2`) \
+             AS SELECT `a` AS `a` FROM `test`.`t`"
+        );
+
+        // A view of a view stores its body's columns fully qualified.
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW v3");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v3` \
+             (`a`, `b`) AS SELECT `test`.`v`.`a` AS `a`,`test`.`v`.`b` AS `b` \
+             FROM `test`.`v` WHERE `b`>10"
+        );
+
+        // SHOW CREATE TABLE over a view prints the view form, header and all.
+        let (table_names, table_rows) = query_text(&mut session, "SHOW CREATE TABLE v");
+        let (view_names, view_rows) = query_text(&mut session, "SHOW CREATE VIEW v");
+        assert_eq!(table_names, view_names);
+        assert_eq!(table_rows, view_rows);
+
+        // Captured: [executor:1347]'test.t' is not VIEW.
+        assert!(matches!(
+            session.run("SHOW CREATE VIEW t"),
+            Err(DriverError::Schema(SchemaErrorKind::NotView(ref name))) if name == "test.t"
+        ));
+
+        // An aliased body keeps the alias, both in the FROM and in the
+        // column references. Captured from Go.
+        session
+            .run("CREATE VIEW valias AS SELECT x.a FROM t AS x")
+            .unwrap();
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW valias");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `valias` (`a`) \
+             AS SELECT `x`.`a` AS `a` FROM `test`.`t` AS `x`"
+        );
+
+        // A FROM-less body, whose single column is named after its text.
+        session.run("CREATE VIEW vlit AS SELECT 1").unwrap();
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vlit");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `vlit` (`1`) \
+             AS SELECT 1 AS `1`"
+        );
+        let (names, rows) = query_text(&mut session, "SELECT * FROM vlit");
+        assert_eq!(names, ["1"]);
+        assert_eq!(rows, [["1"]]);
+    }
+
+    /// Which statements may name a view, and which report the other kind.
+    #[test]
+    fn view_and_table_statements_do_not_cross() {
+        let mut session = view_session();
+
+        // Captured: [ddl:1347]'test.t' is not VIEW.
+        assert!(matches!(
+            session.run("DROP VIEW t"),
+            Err(DriverError::Schema(SchemaErrorKind::NotView(ref name))) if name == "test.t"
+        ));
+        // The refusal really did not drop the table.
+        assert_eq!(
+            row_text(session.run("SELECT COUNT(*) FROM t")),
+            vec![vec!["3".to_owned()]]
+        );
+
+        // Captured: [schema:1051]Unknown table 'test.v' -- DROP TABLE does not
+        // see a view at all.
+        assert!(matches!(
+            session.run("DROP TABLE v"),
+            Err(DriverError::Schema(SchemaErrorKind::BadTable(ref name))) if name == "test.v"
+        ));
+        assert_eq!(row_text(session.run("SELECT COUNT(*) FROM v")).len(), 1);
+
+        // Captured: [schema:1050]Table 'test.v' already exists.
+        assert!(matches!(
+            session.run("CREATE VIEW v AS SELECT 1"),
+            Err(DriverError::Schema(SchemaErrorKind::TableExists(ref name))) if name == "test.v"
+        ));
+        // OR REPLACE overwrites it instead.
+        session
+            .run("CREATE OR REPLACE VIEW v AS SELECT a AS a, b AS b FROM t")
+            .unwrap();
+        let (_, rows) = query_text(&mut session, "SELECT * FROM v");
+        assert_eq!(rows, [["1", "10"], ["2", "20"], ["3", "30"]]);
+
+        // Captured: [schema:1051]Unknown table 'test.nosuch', suppressed by
+        // IF EXISTS.
+        session.run("DROP VIEW IF EXISTS nosuch").unwrap();
+        assert!(matches!(
+            session.run("DROP VIEW nosuch"),
+            Err(DriverError::Schema(SchemaErrorKind::BadTable(ref name))) if name == "test.nosuch"
+        ));
+
+        // Captured: [ddl:1353], the column list and the select list disagree.
+        assert!(matches!(
+            session.run("CREATE VIEW vbad(x, y) AS SELECT a FROM t"),
+            Err(DriverError::ViewWrongList)
+        ));
+
+        // Captured: a view is hidden from its own replacement's body, so
+        // `SELECT ... FROM v` inside `CREATE OR REPLACE VIEW v` is
+        // [planner:1146]Table 'test.v' doesn't exist -- which is also why no
+        // directly recursive view can be built.
+        assert!(matches!(
+            session.run("CREATE OR REPLACE VIEW v AS SELECT * FROM v"),
+            Err(DriverError::Schema(SchemaErrorKind::UnknownTable(ref name))) if name == "test.v"
+        ));
+
+        // A comma-separated DROP VIEW drops them all.
+        session.run("DROP VIEW v, v2, v3").unwrap();
+        let (_, rows) = query_text(&mut session, "SHOW TABLES");
+        assert_eq!(rows, [["s"], ["t"]]);
+    }
+
+    /// Writes through a view, which this tier refuses with Go's own messages.
+    #[test]
+    fn writes_through_a_view_are_refused() {
+        let mut session = view_session();
+
+        // Captured: "insert into view v is not supported now" -- a plain Go
+        // error, so it carries no error class.
+        assert!(matches!(
+            session.run("INSERT INTO v VALUES (1, 2)"),
+            Err(DriverError::InsertIntoViewUnsupported(ref name)) if name == "v"
+        ));
+        // Captured: [planner:1288]The target table v of the UPDATE is not
+        // updatable.
+        assert!(matches!(
+            session.run("UPDATE v SET a = 1"),
+            Err(DriverError::TableNotUpdatable(ref name)) if name == "v"
+        ));
+        // Captured: "delete view v is not supported now".
+        assert!(matches!(
+            session.run("DELETE FROM v"),
+            Err(DriverError::DeleteViewUnsupported(ref name)) if name == "v"
+        ));
+        // None of the refusals touched the base table.
+        assert_eq!(
+            row_text(session.run("SELECT COUNT(*) FROM t")),
+            vec![vec!["3".to_owned()]]
+        );
+    }
+
+    /// A view whose base table is dropped: the definition survives, reading
+    /// it does not.
+    #[test]
+    fn a_view_over_a_dropped_table_is_invalid() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE base (x BIGINT)").unwrap();
+        session.run("CREATE VIEW vb AS SELECT x FROM base").unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT * FROM vb")),
+            Vec::<Vec<String>>::new()
+        );
+
+        session.run("DROP TABLE base").unwrap();
+        // Captured: [planner:1356]View 'test.vb' references invalid table(s)
+        // or column(s) or function(s) or definer/invoker of view lack rights
+        // to use them.
+        assert!(matches!(
+            session.run("SELECT * FROM vb"),
+            Err(DriverError::Schema(SchemaErrorKind::ViewInvalid(ref name))) if name == "test.vb"
+        ));
+        // SHOW CREATE VIEW still answers from the stored definition.
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vb");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `vb` (`x`) \
+             AS SELECT `x` AS `x` FROM `test`.`base`"
+        );
+    }
+
+    /// Where a view shows up in the metadata statements.
+    #[test]
+    fn views_appear_in_the_metadata_statements() {
+        let mut session = view_session();
+
+        // SHOW TABLES lists views beside tables, in one sorted list.
+        let (names, rows) = query_text(&mut session, "SHOW TABLES");
+        assert_eq!(names, ["Tables_in_test"]);
+        assert_eq!(rows, [["s"], ["t"], ["v"], ["v2"], ["v3"]]);
+
+        // SHOW FULL TABLES adds the kind.
+        let (names, rows) = query_text(&mut session, "SHOW FULL TABLES");
+        assert_eq!(names, ["Tables_in_test", "Table_type"]);
+        assert_eq!(
+            rows,
+            [
+                ["s", "BASE TABLE"],
+                ["t", "BASE TABLE"],
+                ["v", "VIEW"],
+                ["v2", "VIEW"],
+                ["v3", "VIEW"],
+            ]
+        );
+
+        // information_schema.tables reports the same kinds.
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT table_name, table_type FROM information_schema.tables \
+             WHERE table_schema = 'test' ORDER BY table_name",
+        );
+        assert_eq!(
+            rows,
+            [
+                ["s", "BASE TABLE"],
+                ["t", "BASE TABLE"],
+                ["v", "VIEW"],
+                ["v2", "VIEW"],
+                ["v3", "VIEW"],
+            ]
+        );
+
+        // information_schema.views: the captured header, and the stored
+        // definition as VIEW_DEFINITION.
+        let (names, rows) = query_text(
+            &mut session,
+            "SELECT * FROM information_schema.views WHERE table_schema = 'test'",
+        );
+        assert_eq!(
+            names,
+            [
+                "TABLE_CATALOG",
+                "TABLE_SCHEMA",
+                "TABLE_NAME",
+                "VIEW_DEFINITION",
+                "CHECK_OPTION",
+                "IS_UPDATABLE",
+                "DEFINER",
+                "SECURITY_TYPE",
+                "CHARACTER_SET_CLIENT",
+                "COLLATION_CONNECTION",
+            ]
+        );
+        assert_eq!(
+            rows[0],
+            [
+                "def",
+                "test",
+                "v",
+                "SELECT `a` AS `a`,`b` AS `b` FROM `test`.`t`",
+                "CASCADED",
+                "NO",
+                "@",
+                "DEFINER",
+                "utf8mb4",
+                "utf8mb4_bin",
+            ]
+        );
+        assert_eq!(
+            rows[2][3],
+            "SELECT `test`.`v`.`a` AS `a`,`test`.`v`.`b` AS `b` FROM `test`.`v` WHERE `b`>10"
+        );
+
+        // DESCRIBE reports the view's own columns, with no key, default or
+        // extra -- captured from Go, where a view's columns carry none.
+        let (names, rows) = query_text(&mut session, "DESCRIBE v");
+        assert_eq!(names, ["Field", "Type", "Null", "Key", "Default", "Extra"]);
+        assert_eq!(
+            rows,
+            [
+                ["a", "bigint(20)", "YES", "", "<nil>", ""],
+                ["b", "bigint(20)", "YES", "", "<nil>", ""],
+            ]
         );
     }
 }

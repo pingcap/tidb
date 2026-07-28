@@ -45,6 +45,7 @@ pub mod selection;
 pub mod sort;
 mod stmt_context;
 pub mod table_dual;
+pub mod view;
 mod window;
 
 pub use apply::ApplyExec;
@@ -56,7 +57,7 @@ pub use driver::{
     bind_parameters, parameter_count, run_delete_in, run_delete_on, run_insert_in, run_insert_on,
     run_insert_reporting, run_select, run_select_meta_in, run_select_meta_on, run_select_meta_stmt,
     run_select_on, run_set_opr_stmt, run_update_in, run_update_on, Catalog, DriverError, MemTable,
-    MysqlError, SchemaErrorKind, SelectMeta, TableEntry, TxnErrorKind, VarErrorKind,
+    MysqlError, SchemaErrorKind, SelectMeta, TableEntry, TxnErrorKind, VarErrorKind, ViewDef,
     DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
@@ -77,3 +78,4 @@ pub use table_dual::TableDualExec;
 pub use tidb_expr::{
     eval_in, like_match_with_collation, truthy_of, Columns, EvalError, MysqlRng, SessionTimeZone,
 };
+pub use view::{run_create_view_in, run_drop_view_in};

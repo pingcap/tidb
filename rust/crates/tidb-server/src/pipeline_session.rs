@@ -552,7 +552,7 @@ mod tests {
 
         // A statement kind that is unsupported regardless of catalog state,
         // so this assertion does not quietly become an unknown-table one.
-        let Err(unsupported) = session.execute("CREATE VIEW v AS SELECT 1") else {
+        let Err(unsupported) = session.execute("CREATE SEQUENCE seq") else {
             panic!("an unsupported statement must not produce a result");
         };
         assert_eq!(unsupported.code, 1105);

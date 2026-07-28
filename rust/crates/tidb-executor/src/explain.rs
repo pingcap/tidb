@@ -802,6 +802,7 @@ fn scope_of_join(
     for table in right.tables {
         scope.tables.push(FromTable {
             name: table.name,
+            database: table.database,
             columns: table.columns,
             offset: table.offset + left_width,
         });
@@ -824,6 +825,7 @@ fn scope_of_node(
             Ok(FromScope {
                 tables: vec![FromTable {
                     name: visible,
+                    database: table_ref.alias.is_none().then(|| database.to_owned()),
                     columns: entry.column_list(),
                     offset: 0,
                 }],

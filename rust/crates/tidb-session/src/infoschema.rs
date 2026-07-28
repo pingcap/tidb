@@ -82,6 +82,20 @@ const TABLES_COLUMNS: &[(&str, bool)] = &[
     ("TIDB_STORAGE_CLASS", false),
 ];
 
+/// Go `infoschema.tableViewsCols`.
+const VIEWS_COLUMNS: &[(&str, bool)] = &[
+    ("TABLE_CATALOG", false),
+    ("TABLE_SCHEMA", false),
+    ("TABLE_NAME", false),
+    ("VIEW_DEFINITION", false),
+    ("CHECK_OPTION", false),
+    ("IS_UPDATABLE", false),
+    ("DEFINER", false),
+    ("SECURITY_TYPE", false),
+    ("CHARACTER_SET_CLIENT", false),
+    ("COLLATION_CONNECTION", false),
+];
+
 /// Go `infoschema.tableColumnsCols`.
 const COLUMNS_COLUMNS: &[(&str, bool)] = &[
     ("TABLE_CATALOG", false),
@@ -203,6 +217,8 @@ pub fn table_columns(name: &str) -> Option<&'static [(&'static str, bool)]> {
         Some(SCHEMATA_COLUMNS)
     } else if name.eq_ignore_ascii_case("TABLES") {
         Some(TABLES_COLUMNS)
+    } else if name.eq_ignore_ascii_case("VIEWS") {
+        Some(VIEWS_COLUMNS)
     } else if name.eq_ignore_ascii_case("COLUMNS") {
         Some(COLUMNS_COLUMNS)
     } else if name.eq_ignore_ascii_case("KEY_COLUMN_USAGE") {
@@ -231,6 +247,9 @@ pub fn table_rows(name: &str, catalog: &Catalog) -> Option<Vec<Vec<Datum>>> {
     }
     if name.eq_ignore_ascii_case("TABLES") {
         return Some(tables_rows(catalog));
+    }
+    if name.eq_ignore_ascii_case("VIEWS") {
+        return Some(views_rows(catalog));
     }
     if name.eq_ignore_ascii_case("COLUMNS") {
         return Some(columns_rows(catalog));
@@ -495,8 +514,15 @@ fn tables_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
             continue;
         };
         for table_name in tables {
-            let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
-                continue;
+            let table = match catalog.table_in(&schema, &table_name) {
+                Some(TableEntry::Kv(table)) => table,
+                // A view has no storage, so every storage column is NULL and
+                // the comment states the kind -- Go's own captured row.
+                Some(TableEntry::View(_)) => {
+                    rows.push(view_tables_row(&schema, &table_name));
+                    continue;
+                }
+                _ => continue,
             };
             rows.push(vec![
                 text(CATALOG),
@@ -529,6 +555,61 @@ fn tables_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
                 text("Normal"),
                 Datum::Null,
                 text(""),
+            ]);
+        }
+    }
+    rows
+}
+
+/// The `information_schema.tables` row of a view: everything a base table
+/// reports about its storage is NULL, `TABLE_TYPE` and `TABLE_COMMENT` both
+/// say `VIEW`, and `TIDB_PK_TYPE` still reports `NONCLUSTERED`.
+///
+/// DIVERGENCE (documented): `TIDB_TABLE_ID` is NULL here because this tier
+/// allocates no id for a view; Go reports the view's own table id.
+/// `CREATE_TIME` is NULL for the same reason it is NULL for a base table --
+/// nothing records one.
+fn view_tables_row(schema: &str, table_name: &str) -> Vec<Datum> {
+    let mut row = vec![text(CATALOG), text(schema), text(table_name), text("VIEW")];
+    // ENGINE through CREATE_OPTIONS: sixteen columns a view has no value for.
+    row.extend(std::iter::repeat_n(Datum::Null, 16));
+    // TABLE_COMMENT, TIDB_TABLE_ID, TIDB_ROW_ID_SHARDING_INFO, TIDB_PK_TYPE.
+    row.push(text("VIEW"));
+    row.push(Datum::Null);
+    row.push(Datum::Null);
+    row.push(text("NONCLUSTERED"));
+    // The four trailing TiDB placement/mode columns.
+    row.extend(std::iter::repeat_n(Datum::Null, 4));
+    row
+}
+
+/// One row per view, in schema then view order.
+///
+/// DIVERGENCE (documented): `CHECK_OPTION` is always `CASCADED` and
+/// `IS_UPDATABLE` always `NO`, which is what Go reports for every view this
+/// tier can create -- no view here is updatable, and `WITH CHECK OPTION` is
+/// not modelled.
+fn views_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::new();
+    for schema in catalog.database_names() {
+        let Some(tables) = catalog.table_names(&schema) else {
+            continue;
+        };
+        for table_name in tables {
+            let Some(TableEntry::View(view)) = catalog.table_in(&schema, &table_name) else {
+                continue;
+            };
+            rows.push(vec![
+                text(CATALOG),
+                text(&schema),
+                text(&table_name),
+                text(&view.select_sql),
+                text("CASCADED"),
+                text("NO"),
+                text(&format!("{}@{}", view.definer_user, view.definer_host)),
+                text(&view.security),
+                text(CHARSET),
+                text(COLLATION),
             ]);
         }
     }
