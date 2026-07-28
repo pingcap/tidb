@@ -34,15 +34,12 @@
 use std::fmt;
 use std::time::Duration;
 
-use tidb_codec::{
-    decode_configured_row_bytes, decode_configured_row_int, encode_configured_mixed_row,
-    table_key::{
-        encode_non_unique_index_key, encode_row_key_with_handle, non_unique_index_value,
-        RecordHandle,
-    },
-    ConfiguredRowReadError, ConfiguredRowWriteError, ConfiguredValue,
+use tidb_codec::table_key::{
+    encode_non_unique_index_key, encode_row_key_with_handle, non_unique_index_value, RecordHandle,
 };
-use tidb_datatype::{produce_char_value, Datum};
+use tidb_datatype::{
+    parse_duration, parse_time, produce_char_value, Datum, Decimal, MySqlDuration, TimeType,
+};
 use tidb_planner::{
     prepared_dml::{
         lower_prepared_write, lower_text_write, ConfiguredAssignment, ConfiguredInsertRow,
@@ -54,6 +51,7 @@ use tidb_planner::{
         ConfiguredIndex, ConfiguredScalarType, ConfiguredTable,
     },
 };
+use tidb_tablecodec::{decode_table_row_to_map, encode_table_row, TableRowError};
 use tidb_txnkv::{
     lock::{LockRecoveryClient, TimestampSource},
     region::RegionRecoveryLoader,
@@ -68,10 +66,13 @@ use tidb_txnkv::{
 /// Why a bound configured write cannot produce mutations.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfiguredWriteError {
-    /// The row could not be encoded.
-    RowWrite(ConfiguredRowWriteError),
-    /// The stored value read at `start_ts` could not be decoded.
-    RowRead(ConfiguredRowReadError),
+    /// The row could not be encoded. Carries the `tidb_tablecodec::TableRowError`
+    /// display message (that type has no `Eq`/`Clone`, so it is rendered here
+    /// rather than wrapped).
+    RowWrite(String),
+    /// The stored value read at `start_ts` could not be decoded, or the row
+    /// carries no entry for a requested column.
+    RowRead(String),
     /// Signed `BIGINT` addition left the domain, exactly as Go's
     /// `types.ErrOverflow` "BIGINT value is out of range" case.
     Overflow {
@@ -134,19 +135,33 @@ pub enum ConfiguredWriteError {
         /// The value's actual character length.
         char_length: usize,
     },
-    /// A configured column's scalar type has no write-path encode/decode yet.
-    ///
-    /// `ConfiguredScalarType::UnsignedBigInt` and `ConfiguredScalarType::Double`
-    /// widen only the read path (real-TiKV chunk decode); this executable does
-    /// not admit either kind through `--read-table` yet, so production
-    /// configuration can never reach this arm. It exists so the write path's
-    /// column-type matches stay exhaustive without guessing an encoding for a
-    /// type this boundary does not own.
-    UnsupportedScalarType {
-        /// Configured column whose type the write path cannot handle.
+    /// A bound value is outside `BIGINT UNSIGNED`'s domain (negative, or
+    /// larger than `u64::MAX`), matching Go `types.ErrOverflow` /
+    /// `[types:1264]Out of range value for column`.
+    UnsignedOutOfRange {
+        /// Configured column that rejected the value.
         column: String,
-        /// The unsupported scalar type.
-        scalar_type: ConfiguredScalarType,
+    },
+    /// A bound decimal string does not fit `DECIMAL(precision, scale)` after
+    /// rounding to `scale`, matching Go `types.ErrOverflow` /
+    /// `[types:1264]Out of range value for column`.
+    DecimalOutOfRange {
+        /// Configured column that rejected the value.
+        column: String,
+    },
+    /// A bound temporal string is not a valid literal for its column's type,
+    /// matching Go `types.ErrWrongValue` / `[table:1292]Incorrect ... value`.
+    InvalidTemporal {
+        /// Configured column that rejected the value.
+        column: String,
+        /// The underlying parse failure.
+        message: String,
+    },
+    /// `NULL` was bound to a `NOT NULL` configured column, matching Go
+    /// `[table:1048]Column '<name>' cannot be null`.
+    NullNotAllowed {
+        /// Configured column that rejected `NULL`.
+        column: String,
     },
 }
 
@@ -234,10 +249,21 @@ impl fmt::Display for ConfiguredWriteError {
                 formatter,
                 "Data too long for column '{column}' (field len {max_length}, data len {char_length})"
             ),
-            Self::UnsupportedScalarType { column, scalar_type } => write!(
+            Self::UnsignedOutOfRange { column } => write!(
                 formatter,
-                "configured write does not support column '{column}' of type {scalar_type:?}"
+                "Out of range value for column '{column}'"
             ),
+            Self::DecimalOutOfRange { column } => write!(
+                formatter,
+                "Out of range value for column '{column}'"
+            ),
+            Self::InvalidTemporal { column, message } => write!(
+                formatter,
+                "Incorrect value: '{message}' for column '{column}'"
+            ),
+            Self::NullNotAllowed { column } => {
+                write!(formatter, "Column '{column}' cannot be null")
+            }
         }
     }
 }
@@ -245,12 +271,12 @@ impl fmt::Display for ConfiguredWriteError {
 impl std::error::Error for ConfiguredWriteError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::RowWrite(error) => Some(error),
-            Self::RowRead(error) => Some(error),
             Self::Mutations(error) => Some(error),
             Self::Transaction(error) => Some(error),
             Self::Plan(error) => Some(error),
-            Self::Overflow { .. }
+            Self::RowWrite(_)
+            | Self::RowRead(_)
+            | Self::Overflow { .. }
             | Self::ValueOutOfRange { .. }
             | Self::DuplicateHandle(_)
             | Self::Parse(_)
@@ -258,20 +284,19 @@ impl std::error::Error for ConfiguredWriteError {
             | Self::ColumnTypeMismatch { .. }
             | Self::UnsupportedIndex { .. }
             | Self::DataTooLong { .. }
-            | Self::UnsupportedScalarType { .. } => None,
+            | Self::UnsignedOutOfRange { .. }
+            | Self::DecimalOutOfRange { .. }
+            | Self::InvalidTemporal { .. }
+            | Self::NullNotAllowed { .. } => None,
         }
     }
 }
 
-impl From<ConfiguredRowWriteError> for ConfiguredWriteError {
-    fn from(error: ConfiguredRowWriteError) -> Self {
-        Self::RowWrite(error)
-    }
-}
-
-impl From<ConfiguredRowReadError> for ConfiguredWriteError {
-    fn from(error: ConfiguredRowReadError) -> Self {
-        Self::RowRead(error)
+impl From<TableRowError> for ConfiguredWriteError {
+    fn from(error: TableRowError) -> Self {
+        // `TableRowError` carries no `Display` impl of its own beyond `Debug`
+        // (it is a leaf codec error), so its debug rendering is the message.
+        Self::RowWrite(format!("{error:?}"))
     }
 }
 
@@ -333,7 +358,8 @@ pub fn plan_insert(
             return Err(ConfiguredWriteError::DuplicateHandle(handle));
         }
         handles.push(handle);
-        let (key, value) = encode_configured_mixed_row(table.table_id(), handle, &columns)?;
+        let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
+        let value = encode_row_value(&columns)?;
         mutations.push(OptimisticMutation::insert(key, value)?);
         // Every configured index gains one entry for the new row, committed in
         // the same 2PC as the record so the index can never lag the row.
@@ -374,9 +400,15 @@ pub fn plan_update(
         });
     };
     let assigned = &table.columns()[column_index];
-    // The assigned column's stored value at its own type, for the unchanged-row
-    // check and any index entry the update moves.
-    let stored_value = decode_stored_column_value(assigned, stored)?;
+    // Decode the whole stored row once: the unchanged-row check, the moved
+    // index entry, and every carried-forward column all read from it.
+    let stored_row = decode_stored_row(table, stored)?;
+    let stored_value = stored_row.get(&assigned.id()).cloned().ok_or_else(|| {
+        ConfiguredWriteError::RowRead(format!(
+            "configured row is missing column ID {}",
+            assigned.id()
+        ))
+    })?;
 
     // Resolve the assigned column's new value by assignment kind. An integer
     // assignment applies the column's range (the i64 arithmetic runs first, then
@@ -386,10 +418,15 @@ pub fn plan_update(
     let new_value = match assignment {
         ConfiguredAssignment::Set(value) => {
             check_column_value(assigned, value)?;
-            ConfiguredValue::Int(value)
+            Datum::Int(value)
         }
         ConfiguredAssignment::Add(addend) => {
-            let current = decode_configured_row_int(stored, assigned.id())?;
+            let current = stored_value.as_int().ok_or_else(|| {
+                ConfiguredWriteError::RowRead(format!(
+                    "configured column ID {} is not a signed integer",
+                    assigned.id()
+                ))
+            })?;
             let replacement =
                 current
                     .checked_add(addend)
@@ -399,7 +436,7 @@ pub fn plan_update(
                         addend,
                     })?;
             check_column_value(assigned, replacement)?;
-            ConfiguredValue::Int(replacement)
+            Datum::Int(replacement)
         }
         ConfiguredAssignment::SetBytes(bytes) => {
             // A bytes assignment targets a CHAR column (the lowering resolves the
@@ -411,7 +448,10 @@ pub fn plan_update(
                     value_is_bytes: true,
                 });
             };
-            ConfiguredValue::Bytes(admit_char_value(assigned, bytes, max_length)?)
+            Datum::new_collation_string(
+                admit_char_value(assigned, bytes, max_length)?,
+                tidb_datatype::Collation::Utf8Mb4Bin,
+            )
         }
     };
     // An UPDATE whose value does not change writes nothing (Go `AddTouchedRows`
@@ -427,7 +467,7 @@ pub fn plan_update(
     // type so a CHAR column survives the rewrite as its raw bytes rather than
     // being misread as an integer. Columns are ordered by id before encoding,
     // exactly as the INSERT path emits them.
-    let mut columns: Vec<(i64, ConfiguredValue)> = Vec::new();
+    let mut columns: Vec<(i64, Datum)> = Vec::new();
     for column in table.columns() {
         if column.kind() == ConfiguredColumnKind::ClusteredPrimaryKey {
             continue;
@@ -435,17 +475,23 @@ pub fn plan_update(
         let value = if column.id() == assigned.id() {
             new_value.clone()
         } else {
-            decode_stored_column_value(column, stored)?
+            stored_row.get(&column.id()).cloned().ok_or_else(|| {
+                ConfiguredWriteError::RowRead(format!(
+                    "configured row is missing column ID {}",
+                    column.id()
+                ))
+            })?
         };
         columns.push((column.id(), value));
     }
     columns.sort_by_key(|(id, _)| *id);
-    let (key, value) = encode_configured_mixed_row(table.table_id(), handle, &columns)?;
+    let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
+    let value = encode_row_value(&columns)?;
     let mut mutations = vec![OptimisticMutation::put_existing(key, value)?];
     // A single-column update moves only the entry of an index on that column;
     // any other index is untouched because its column value did not change. The
     // index path maintains integer columns only, so a moved entry over a CHAR
-    // column fails closed rather than writing a malformed key.
+    // column, or a NULL value, fails closed rather than writing a malformed key.
     for index in table.indexes() {
         if index.is_unique() {
             return Err(ConfiguredWriteError::UnsupportedIndex {
@@ -454,7 +500,7 @@ pub fn plan_update(
         }
         if index.column_id() == assigned.id() {
             match (&stored_value, &new_value) {
-                (ConfiguredValue::Int(old), ConfiguredValue::Int(new)) => {
+                (Datum::Int(old), Datum::Int(new)) => {
                     mutations.push(index_delete_mutation(
                         table.table_id(),
                         index,
@@ -462,6 +508,11 @@ pub fn plan_update(
                         handle,
                     )?);
                     mutations.push(index_put_mutation(table.table_id(), index, *new, handle)?);
+                }
+                (Datum::Null, _) | (_, Datum::Null) => {
+                    return Err(ConfiguredWriteError::UnsupportedIndex {
+                        reason: "index over a nullable column",
+                    })
                 }
                 _ => {
                     return Err(ConfiguredWriteError::UnsupportedIndex {
@@ -495,14 +546,17 @@ pub fn plan_delete(
     let mut mutations = vec![OptimisticMutation::delete(key)?];
     // The removed row's index entries go with it, keyed by the values it stored
     // at `start_ts`.
-    for index in table.indexes() {
-        let indexed = indexed_stored_value(index, stored)?;
-        mutations.push(index_delete_mutation(
-            table.table_id(),
-            index,
-            indexed,
-            handle,
-        )?);
+    if !table.indexes().is_empty() {
+        let stored_row = decode_stored_row(table, stored)?;
+        for index in table.indexes() {
+            let indexed = indexed_stored_value(index, &stored_row)?;
+            mutations.push(index_delete_mutation(
+                table.table_id(),
+                index,
+                indexed,
+                handle,
+            )?);
+        }
     }
     Ok(ConfiguredWritePlan::Write {
         mutations,
@@ -533,49 +587,172 @@ fn admit_char_value(
     })
 }
 
-/// Decodes one stored column from a persisted row at its own type.
+/// Admits a bound string into a `VARCHAR(max_length)` column.
 ///
-/// A row rewrite (a point UPDATE) must carry every unchanged column forward
-/// intact. Decoding by the column's scalar type keeps a `CHAR` column's raw
-/// bytes as bytes rather than misreading them as an integer, so the re-encoded
-/// row is byte-identical to the original in every column the statement did not
-/// touch.
-fn decode_stored_column_value(
+/// A `binary`-collation column (`VARCHAR ... CHARACTER SET binary`/
+/// `VARBINARY`) counts length in bytes with no character-boundary or
+/// whitespace-trim exception, matching Go's byte-length check for a binary
+/// string. A `utf8mb4` column shares the exact same length/truncation rule a
+/// `CHAR` column uses (`admit_char_value`); MySQL/TiDB's over-length
+/// whitespace exception applies identically to both.
+fn admit_varchar_value(
     column: &ConfiguredColumn,
-    stored: &[u8],
-) -> Result<ConfiguredValue, ConfiguredWriteError> {
-    match column.scalar_type() {
-        ConfiguredScalarType::BigInt | ConfiguredScalarType::Int => Ok(ConfiguredValue::Int(
-            decode_configured_row_int(stored, column.id())?,
-        )),
-        ConfiguredScalarType::Char { .. } => Ok(ConfiguredValue::Bytes(
-            decode_configured_row_bytes(stored, column.id())?,
-        )),
-        // Read-path-only scalar types (see `ConfiguredWriteError::UnsupportedScalarType`).
-        scalar_type @ (ConfiguredScalarType::UnsignedBigInt
-        | ConfiguredScalarType::Double
-        | ConfiguredScalarType::Varchar { .. }
-        | ConfiguredScalarType::Decimal { .. }
-        | ConfiguredScalarType::Date
-        | ConfiguredScalarType::Datetime { .. }
-        | ConfiguredScalarType::Timestamp { .. }
-        | ConfiguredScalarType::Duration { .. }) => {
-            Err(ConfiguredWriteError::UnsupportedScalarType {
+    value: Vec<u8>,
+    max_length: u32,
+    binary: bool,
+) -> Result<Vec<u8>, ConfiguredWriteError> {
+    if binary {
+        if value.len() > max_length as usize {
+            return Err(ConfiguredWriteError::DataTooLong {
                 column: column.name().to_owned(),
-                scalar_type,
-            })
+                max_length: max_length as usize,
+                char_length: value.len(),
+            });
+        }
+        return Ok(value);
+    }
+    admit_char_value(column, value, max_length)
+}
+
+/// Admits a bound decimal-text literal into a `DECIMAL(precision, scale)`
+/// column: parses it (Go `types.ParseDecimal`), then rounds to `scale` and
+/// checks the rounded value's integer digits fit `precision - scale`
+/// (`Decimal::fit_precision_scale`, already the exact call
+/// `pkg/types/convert.go`'s `ProduceDecWithSpecifiedTp` performs). An integer
+/// part that only fits after rounding is accepted — MySQL/TiDB round before
+/// checking overflow, matching `fit_precision_scale`'s own contract.
+fn admit_decimal_value(
+    column: &ConfiguredColumn,
+    bytes: &[u8],
+    precision: u32,
+    scale: u32,
+) -> Result<Decimal, ConfiguredWriteError> {
+    let (parsed, _warning) = Decimal::parse_mysql(&String::from_utf8_lossy(bytes));
+    parsed.fit_precision_scale(precision, scale).ok_or_else(|| {
+        ConfiguredWriteError::DecimalOutOfRange {
+            column: column.name().to_owned(),
+        }
+    })
+}
+
+/// Admits a bound literal into a `DATE`/`DATETIME`/`TIMESTAMP`/`TIME` column,
+/// rounding to the column's own declared fractional-seconds precision
+/// (`fsp`) exactly as `parse_time`/`parse_duration` already do for the read
+/// path's literal folding.
+///
+/// `TIMESTAMP` is parsed and stored as the literal wall-clock value with no
+/// session-timezone-to-UTC conversion: this bounded write boundary has no
+/// session timezone threaded to it yet (see `ConfiguredScalarType::Timestamp`'s
+/// own doc, which notes the conversion happens server-side on read). This is a
+/// known, narrower behavior than Go's `TIMESTAMP`, tracked as a follow-up
+/// rather than silently guessed.
+fn admit_temporal_value(
+    column: &ConfiguredColumn,
+    bytes: &[u8],
+    scalar_type: ConfiguredScalarType,
+) -> Result<Datum, ConfiguredWriteError> {
+    let invalid = |message: String| ConfiguredWriteError::InvalidTemporal {
+        column: column.name().to_owned(),
+        message,
+    };
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| invalid(String::from_utf8_lossy(bytes).into_owned()))?;
+    match scalar_type {
+        ConfiguredScalarType::Date => {
+            let parsed = parse_time(text, TimeType::Date, 0, false, false, false, &chrono::Utc)
+                .map_err(|error| invalid(format!("{text}: {error}")))?;
+            Ok(Datum::Time(parsed.time))
+        }
+        ConfiguredScalarType::Datetime { fsp } => {
+            let parsed = parse_time(
+                text,
+                TimeType::DateTime,
+                i64::from(fsp),
+                false,
+                false,
+                false,
+                &chrono::Utc,
+            )
+            .map_err(|error| invalid(format!("{text}: {error}")))?;
+            Ok(Datum::Time(parsed.time))
+        }
+        ConfiguredScalarType::Timestamp { fsp } => {
+            let parsed = parse_time(
+                text,
+                TimeType::Timestamp,
+                i64::from(fsp),
+                false,
+                false,
+                false,
+                &chrono::Utc,
+            )
+            .map_err(|error| invalid(format!("{text}: {error}")))?;
+            Ok(Datum::Time(parsed.time))
+        }
+        ConfiguredScalarType::Duration { fsp } => {
+            let parsed = parse_duration(bytes, i64::from(fsp))
+                .map_err(|error| invalid(format!("{text}: {error:?}")))?;
+            let duration = MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp())
+                .map_err(|error| invalid(format!("{text}: {error:?}")))?;
+            Ok(Datum::Duration(duration))
+        }
+        ConfiguredScalarType::BigInt
+        | ConfiguredScalarType::UnsignedBigInt
+        | ConfiguredScalarType::Int
+        | ConfiguredScalarType::Double
+        | ConfiguredScalarType::Char { .. }
+        | ConfiguredScalarType::Varchar { .. }
+        | ConfiguredScalarType::Decimal { .. } => {
+            unreachable!("configured_stored_value only calls this for temporal scalar types")
         }
     }
 }
 
+/// Encodes the new-format row value for a complete set of stored columns,
+/// through the same `Datum`-based codec (`tidb_tablecodec::encode_table_row`)
+/// the in-process `KvTable` store and the real-TiKV read path both already
+/// use. Routing through one shared codec (rather than growing a bespoke
+/// integer/bytes-only encoder) is what makes every `Datum` variant — `UInt`,
+/// `Real`, `Decimal`, `Time`, `Duration`, `Null` — writable with no per-type
+/// encoding logic of this crate's own.
+fn encode_row_value(columns: &[(i64, Datum)]) -> Result<Vec<u8>, ConfiguredWriteError> {
+    let ids: Vec<i64> = columns.iter().map(|(id, _)| *id).collect();
+    let values: Vec<Datum> = columns.iter().map(|(_, value)| value.clone()).collect();
+    Ok(encode_table_row(None, &values, &ids, true, None)?)
+}
+
+/// Decodes every stored column of a persisted row in one pass, keyed by
+/// column ID.
+///
+/// A row rewrite (a point UPDATE) or a point DELETE's index pre-image must
+/// read every stored column at its own configured type — decoding once into a
+/// map (rather than once per column) is both simpler and cheaper than the
+/// prior per-column re-parse. An explicit SQL `NULL` decodes to [`Datum::Null`]
+/// (`tidb_tablecodec::decode_table_row_to_map` already distinguishes a
+/// present-but-NULL column from an absent one), so a nullable column's value
+/// carries forward exactly, with no special case here.
+fn decode_stored_row(
+    table: &ConfiguredTable,
+    stored: &[u8],
+) -> Result<std::collections::BTreeMap<i64, Datum>, ConfiguredWriteError> {
+    let field_types: std::collections::BTreeMap<i64, tidb_datatype::FieldType> = table
+        .columns()
+        .iter()
+        .filter(|column| column.kind() == ConfiguredColumnKind::Stored)
+        .map(|column| (column.id(), column.scalar_type().chunk_field_type()))
+        .collect();
+    decode_table_row_to_map(stored, &field_types, None)
+        .map_err(|error| ConfiguredWriteError::RowRead(error.to_string()))
+}
+
 /// Resolves a non-unique integer index's column value for a newly inserted row.
 ///
-/// Fails closed on the index shapes this path does not maintain: a unique index,
-/// an index over a non-integer column, or an index whose column is not a stored
-/// column of the row.
+/// Fails closed on the index shapes this path does not maintain: a unique
+/// index, an index over a non-integer or nullable column, or an index whose
+/// column is not a stored column of the row.
 fn indexed_insert_value(
     index: &ConfiguredIndex,
-    columns: &[(i64, ConfiguredValue)],
+    columns: &[(i64, Datum)],
 ) -> Result<i64, ConfiguredWriteError> {
     if index.is_unique() {
         return Err(ConfiguredWriteError::UnsupportedIndex {
@@ -583,8 +760,11 @@ fn indexed_insert_value(
         });
     }
     match columns.iter().find(|(id, _)| *id == index.column_id()) {
-        Some((_, ConfiguredValue::Int(value))) => Ok(*value),
-        Some((_, ConfiguredValue::Bytes(_))) => Err(ConfiguredWriteError::UnsupportedIndex {
+        Some((_, Datum::Int(value))) => Ok(*value),
+        Some((_, Datum::Null)) => Err(ConfiguredWriteError::UnsupportedIndex {
+            reason: "index over a nullable column",
+        }),
+        Some(_) => Err(ConfiguredWriteError::UnsupportedIndex {
             reason: "index over a non-integer column",
         }),
         None => Err(ConfiguredWriteError::UnsupportedIndex {
@@ -593,18 +773,29 @@ fn indexed_insert_value(
     }
 }
 
-/// Resolves a non-unique integer index's column value from a stored row (the
-/// pre-image for a delete or an update).
+/// Resolves a non-unique integer index's column value from a decoded stored
+/// row (the pre-image for a delete or an update).
 fn indexed_stored_value(
     index: &ConfiguredIndex,
-    stored: &[u8],
+    stored_row: &std::collections::BTreeMap<i64, Datum>,
 ) -> Result<i64, ConfiguredWriteError> {
     if index.is_unique() {
         return Err(ConfiguredWriteError::UnsupportedIndex {
             reason: "unique index",
         });
     }
-    Ok(decode_configured_row_int(stored, index.column_id())?)
+    match stored_row.get(&index.column_id()) {
+        Some(Datum::Int(value)) => Ok(*value),
+        Some(Datum::Null) => Err(ConfiguredWriteError::UnsupportedIndex {
+            reason: "index over a nullable column",
+        }),
+        Some(_) => Err(ConfiguredWriteError::UnsupportedIndex {
+            reason: "index over a non-integer column",
+        }),
+        None => Err(ConfiguredWriteError::UnsupportedIndex {
+            reason: "indexed column is not a stored column",
+        }),
+    }
 }
 
 /// Builds the PUT mutation adding a non-unique index entry for `(value, handle)`.
@@ -647,7 +838,7 @@ fn index_delete_mutation(
 fn split_row(
     table: &ConfiguredTable,
     row: &ConfiguredInsertRow,
-) -> Result<(i64, Vec<(i64, ConfiguredValue)>), ConfiguredWriteError> {
+) -> Result<(i64, Vec<(i64, Datum)>), ConfiguredWriteError> {
     let mut handle = 0;
     let mut columns = Vec::with_capacity(row.values().len());
     for (column_index, value) in row.values() {
@@ -679,6 +870,13 @@ fn expect_integer_column_value(
             check_column_value(column, *value)?;
             Ok(*value)
         }
+        PreparedBindValue::UInt(_) | PreparedBindValue::Float(_) | PreparedBindValue::Null => {
+            Err(ConfiguredWriteError::ColumnTypeMismatch {
+                column: column.name().to_owned(),
+                scalar_type: column.scalar_type(),
+                value_is_bytes: false,
+            })
+        }
         PreparedBindValue::Bytes(_) => Err(ConfiguredWriteError::ColumnTypeMismatch {
             column: column.name().to_owned(),
             scalar_type: column.scalar_type(),
@@ -687,38 +885,117 @@ fn expect_integer_column_value(
     }
 }
 
-/// Maps a bound value to a stored column's codec value, requiring the parameter
-/// kind (integer vs string) to match the column's type.
+/// Builds the "wrong kind of value for this column" error `configured_stored_value`
+/// reports for every scalar type it refuses at a given position.
+fn type_mismatch(column: &ConfiguredColumn, value_is_bytes: bool) -> ConfiguredWriteError {
+    ConfiguredWriteError::ColumnTypeMismatch {
+        column: column.name().to_owned(),
+        scalar_type: column.scalar_type(),
+        value_is_bytes,
+    }
+}
+
+/// Maps a bound value to a stored column's codec value (a [`Datum`] the shared
+/// row codec can encode), requiring the parameter kind to match the column's
+/// type and admitting `NULL` only into a nullable column.
+///
+/// `VARCHAR`, `DECIMAL`, and every temporal type bind as raw string bytes (the
+/// same wire shape a `CHAR` column already used): the target column's own type
+/// picks how those bytes are parsed, exactly as Go's parameter binding
+/// converts a string parameter through `types.Datum.ConvertTo` the target
+/// column's type describes.
 fn configured_stored_value(
     column: &ConfiguredColumn,
     value: &PreparedBindValue,
-) -> Result<ConfiguredValue, ConfiguredWriteError> {
-    let is_integer_column = column.scalar_type().integer_range().is_some();
-    match value {
-        PreparedBindValue::Int(value) => {
-            if !is_integer_column {
-                return Err(ConfiguredWriteError::ColumnTypeMismatch {
-                    column: column.name().to_owned(),
-                    scalar_type: column.scalar_type(),
-                    value_is_bytes: false,
-                });
-            }
-            check_column_value(column, *value)?;
-            Ok(ConfiguredValue::Int(*value))
-        }
-        PreparedBindValue::Bytes(bytes) => {
-            let ConfiguredScalarType::Char { max_length } = column.scalar_type() else {
-                return Err(ConfiguredWriteError::ColumnTypeMismatch {
-                    column: column.name().to_owned(),
-                    scalar_type: column.scalar_type(),
-                    value_is_bytes: true,
-                });
+) -> Result<Datum, ConfiguredWriteError> {
+    if matches!(value, PreparedBindValue::Null) {
+        return if column.is_nullable() {
+            Ok(Datum::Null)
+        } else {
+            Err(ConfiguredWriteError::NullNotAllowed {
+                column: column.name().to_owned(),
+            })
+        };
+    }
+    match column.scalar_type() {
+        ConfiguredScalarType::BigInt | ConfiguredScalarType::Int => {
+            let PreparedBindValue::Int(signed) = value else {
+                return Err(type_mismatch(
+                    column,
+                    !matches!(
+                        value,
+                        PreparedBindValue::UInt(_) | PreparedBindValue::Float(_)
+                    ),
+                ));
             };
-            Ok(ConfiguredValue::Bytes(admit_char_value(
+            check_column_value(column, *signed)?;
+            Ok(Datum::Int(*signed))
+        }
+        ConfiguredScalarType::UnsignedBigInt => match value {
+            PreparedBindValue::Int(signed) if *signed >= 0 => Ok(Datum::UInt(*signed as u64)),
+            PreparedBindValue::Int(_) => Err(ConfiguredWriteError::UnsignedOutOfRange {
+                column: column.name().to_owned(),
+            }),
+            PreparedBindValue::UInt(unsigned) => Ok(Datum::UInt(*unsigned)),
+            PreparedBindValue::Float(_) | PreparedBindValue::Bytes(_) => Err(type_mismatch(
                 column,
-                bytes.clone(),
-                max_length,
+                matches!(value, PreparedBindValue::Bytes(_)),
+            )),
+            PreparedBindValue::Null => unreachable!("NULL is admitted above"),
+        },
+        ConfiguredScalarType::Double => match value {
+            PreparedBindValue::Float(real) => Ok(Datum::Real(*real)),
+            // An integer literal (`INSERT ... VALUES (3)`) is a valid DOUBLE
+            // value, exactly as Go's implicit numeric-to-numeric conversion.
+            PreparedBindValue::Int(signed) => Ok(Datum::Real(*signed as f64)),
+            PreparedBindValue::UInt(unsigned) => Ok(Datum::Real(*unsigned as f64)),
+            PreparedBindValue::Bytes(_) => Err(type_mismatch(column, true)),
+            PreparedBindValue::Null => unreachable!("NULL is admitted above"),
+        },
+        ConfiguredScalarType::Char { max_length } => {
+            let PreparedBindValue::Bytes(bytes) = value else {
+                return Err(type_mismatch(column, false));
+            };
+            // A collation-tagged `Datum::String`, not a bare `Datum::Bytes`:
+            // this must be the exact `Datum` shape
+            // `tidb_tablecodec::decode_table_row_to_map` reconstructs for this
+            // column (`unflatten_datum`'s `String`/`Varchar`/... arm), so the
+            // point UPDATE unchanged-value comparison compares like with like.
+            Ok(Datum::new_collation_string(
+                admit_char_value(column, bytes.clone(), max_length)?,
+                tidb_datatype::Collation::Utf8Mb4Bin,
+            ))
+        }
+        ConfiguredScalarType::Varchar { max_length, binary } => {
+            let PreparedBindValue::Bytes(bytes) = value else {
+                return Err(type_mismatch(column, false));
+            };
+            let collation = if binary {
+                tidb_datatype::Collation::Binary
+            } else {
+                tidb_datatype::Collation::Utf8Mb4Bin
+            };
+            Ok(Datum::new_collation_string(
+                admit_varchar_value(column, bytes.clone(), max_length, binary)?,
+                collation,
+            ))
+        }
+        ConfiguredScalarType::Decimal { precision, scale } => {
+            let PreparedBindValue::Bytes(bytes) = value else {
+                return Err(type_mismatch(column, false));
+            };
+            Ok(Datum::Decimal(admit_decimal_value(
+                column, bytes, precision, scale,
             )?))
+        }
+        scalar_type @ (ConfiguredScalarType::Date
+        | ConfiguredScalarType::Datetime { .. }
+        | ConfiguredScalarType::Timestamp { .. }
+        | ConfiguredScalarType::Duration { .. }) => {
+            let PreparedBindValue::Bytes(bytes) = value else {
+                return Err(type_mismatch(column, false));
+            };
+            admit_temporal_value(column, bytes, scalar_type)
         }
     }
 }

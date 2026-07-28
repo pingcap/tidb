@@ -32,8 +32,8 @@
 use std::{error::Error, fmt};
 
 use tidb_ast::{
-    BinaryOp, DeleteKind, DeleteStmt, DmlStmt, Expr, InsertStmt, Stmt, TableRef, UpdateKind,
-    UpdateStmt,
+    BinaryOp, DeleteKind, DeleteStmt, DmlStmt, Expr, InsertStmt, Stmt, TableRef, UnaryOp,
+    UpdateKind, UpdateStmt,
 };
 
 use crate::{
@@ -61,14 +61,6 @@ pub enum PreparedWritePlanError {
     Unsupported(UnsupportedPreparedWrite),
     /// The statement names a column outside the configured table.
     UnknownColumn(String),
-    /// The write target has a nullable column, which the read path decodes but
-    /// the write path cannot encode yet.
-    NullableColumn {
-        /// Resolved `schema.table` of the write target.
-        table: String,
-        /// The first nullable column, in configured source order.
-        column: String,
-    },
     /// An INSERT column list must name every configured column exactly once.
     InsertColumnCoverage {
         /// Number of configured columns on the resolved table.
@@ -130,11 +122,6 @@ impl fmt::Display for PreparedWritePlanError {
                 write!(formatter, "unsupported write feature: {feature:?}")
             }
             Self::UnknownColumn(column) => write!(formatter, "unknown column: {column}"),
-            Self::NullableColumn { table, column } => write!(
-                formatter,
-                "table {table} cannot be written by this node: column `{column}` is nullable, \
-                 and the write path encodes only NOT NULL columns"
-            ),
             Self::InsertColumnCoverage { configured, named } => write!(
                 formatter,
                 "INSERT must name all {configured} configured columns, found {named}"
@@ -245,12 +232,22 @@ pub enum UnsupportedPreparedWrite {
 /// or raw string bytes and lets `tidb-exec` map each to its target column's
 /// codec value. This mirrors Go binding `param.BinaryParam` values into an
 /// execution plan without the planning layer knowing the row encoding.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PreparedBindValue {
     /// A signed integer parameter, already sign-extended to 64 bits.
     Int(i64),
-    /// Raw string/bytes parameter content (a `CHAR`/`VARCHAR` value).
+    /// An integer literal too large for `i64` (only reachable for a positive
+    /// digit literal beyond `i64::MAX`, e.g. a `BIGINT UNSIGNED` value in the
+    /// top half of its domain).
+    UInt(u64),
+    /// A floating-point parameter (a `DOUBLE` value).
+    Float(f64),
+    /// Raw string/bytes parameter content — a `CHAR`/`VARCHAR` value, or a
+    /// `DECIMAL`/temporal literal's text, parsed against its target column's
+    /// declared type.
     Bytes(Vec<u8>),
+    /// SQL `NULL`, admitted only into a nullable column.
+    Null,
 }
 
 /// Why bound execute values cannot produce a typed write command.
@@ -298,7 +295,7 @@ impl fmt::Display for PreparedWriteBindError {
 impl Error for PreparedWriteBindError {}
 
 /// One admitted prepared write template.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ConfiguredPreparedWriteTemplate {
     /// `INSERT INTO t (<all configured columns>) VALUES (?, ...)[, (?, ...)]`.
     Insert(ConfiguredPreparedInsertTemplate),
@@ -352,9 +349,10 @@ fn expect_integer(
 ) -> Result<i64, PreparedWriteBindError> {
     match value {
         PreparedBindValue::Int(value) => Ok(*value),
-        PreparedBindValue::Bytes(_) => {
-            Err(PreparedWriteBindError::NonIntegerParameter { position })
-        }
+        PreparedBindValue::UInt(_)
+        | PreparedBindValue::Float(_)
+        | PreparedBindValue::Bytes(_)
+        | PreparedBindValue::Null => Err(PreparedWriteBindError::NonIntegerParameter { position }),
     }
 }
 
@@ -365,7 +363,10 @@ fn expect_bytes(
 ) -> Result<Vec<u8>, PreparedWriteBindError> {
     match value {
         PreparedBindValue::Bytes(bytes) => Ok(bytes.clone()),
-        PreparedBindValue::Int(_) => Err(PreparedWriteBindError::NonStringParameter { position }),
+        PreparedBindValue::Int(_)
+        | PreparedBindValue::UInt(_)
+        | PreparedBindValue::Float(_)
+        | PreparedBindValue::Null => Err(PreparedWriteBindError::NonStringParameter { position }),
     }
 }
 
@@ -383,7 +384,7 @@ enum ValueMode {
 }
 
 /// One admitted value position of a write template.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum TemplateValue {
     /// Filled by the execute packet, in marker order.
     Marker,
@@ -454,18 +455,38 @@ fn admit_value(
 /// literal carries its decoded bytes for a `CHAR` column.
 fn literal_bind_value(expr: &Expr) -> Option<PreparedBindValue> {
     match expr {
+        Expr::Null => Some(PreparedBindValue::Null),
+        Expr::Float(value) => Some(PreparedBindValue::Float(*value)),
+        // `DECIMAL` and temporal literals share `CHAR`/`VARCHAR`'s bytes shape:
+        // the target column's type picks how the text is parsed, in
+        // `tidb-exec`'s `configured_stored_value`.
+        Expr::Decimal(text) => Some(PreparedBindValue::Bytes(text.clone().into_bytes())),
         Expr::String(value) | Expr::RawString(value) => {
             Some(PreparedBindValue::Bytes(value.clone().into_bytes()))
         }
-        literal if is_integer_literal_shape(literal) => {
-            parse_signed_integer(literal).map(PreparedBindValue::Int)
-        }
+        literal if is_integer_literal_shape(literal) => match parse_signed_integer(literal) {
+            Some(value) => Some(PreparedBindValue::Int(value)),
+            // A positive digit literal too large for `i64` (e.g. the top half
+            // of `BIGINT UNSIGNED`'s domain) still binds, as `UInt`; a
+            // negative literal in that range has no unsigned reading, so it
+            // stays refused here exactly as a plain `i64` overflow would.
+            None => parse_unsigned_integer(literal).map(PreparedBindValue::UInt),
+        },
+        _ => None,
+    }
+}
+
+/// Parses a non-negative integer literal too large for [`parse_signed_integer`].
+fn parse_unsigned_integer(expr: &Expr) -> Option<u64> {
+    match expr {
+        Expr::Int(value) => value.parse::<u64>().ok(),
+        Expr::Paren(inner) | Expr::Unary(UnaryOp::Plus, inner) => parse_unsigned_integer(inner),
         _ => None,
     }
 }
 
 /// A validated multi-row INSERT template over the configured columns.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ConfiguredPreparedInsertTemplate {
     table: ConfiguredTable,
     /// Configured column index for each named INSERT column, in source order.
@@ -518,7 +539,7 @@ impl ConfiguredPreparedInsertTemplate {
 }
 
 /// A validated point UPDATE template against the clustered handle.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ConfiguredPreparedUpdateTemplate {
     table: ConfiguredTable,
     column_index: usize,
@@ -579,7 +600,7 @@ impl ConfiguredPreparedUpdateTemplate {
 }
 
 /// A validated point DELETE template against the clustered handle.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ConfiguredPreparedDeleteTemplate {
     table: ConfiguredTable,
     /// The clustered handle's slot.
@@ -612,7 +633,7 @@ impl ConfiguredPreparedDeleteTemplate {
 }
 
 /// One fully bound INSERT row.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ConfiguredInsertRow {
     values: Vec<(usize, PreparedBindValue)>,
 }
@@ -641,7 +662,7 @@ pub enum ConfiguredAssignment {
 }
 
 /// A storage-neutral bound write command.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ConfiguredPreparedWrite {
     /// Insert one or more complete configured rows.
     InsertRows {
@@ -985,23 +1006,13 @@ fn resolve_write_table<'a>(
             return Err(PreparedWritePlanError::MalformedTableName(name.join(".")));
         }
     };
-    let resolved = catalog
+    // A nullable column is admitted here: `tidb-exec::real_tikv_dml` encodes
+    // and decodes `NULL` for a nullable column through the shared `Datum`-based
+    // row codec, exactly like every other stored value, so lowering no longer
+    // needs to refuse the table up front.
+    catalog
         .resolve_table(schema, table)
-        .map_err(PreparedWritePlanError::Catalog)?;
-    // Every write shape resolves its target here, so refusing a nullable table
-    // once keeps INSERT, UPDATE, and DELETE from ever reaching the row encoder
-    // or the stored-row decoder with a column that has no encodable value.
-    if let Some(column) = resolved
-        .columns()
-        .iter()
-        .find(|column| column.is_nullable())
-    {
-        return Err(PreparedWritePlanError::NullableColumn {
-            table: format!("{}.{}", resolved.schema(), resolved.table()),
-            column: column.name().to_owned(),
-        });
-    }
-    Ok(resolved)
+        .map_err(PreparedWritePlanError::Catalog)
 }
 
 fn validate_write_table_ref(table_ref: &TableRef) -> Result<(), PreparedWritePlanError> {

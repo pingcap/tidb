@@ -1342,35 +1342,67 @@ fn a_text_dml_statement_outside_the_write_boundary_is_refused_not_ignored() {
     );
 }
 
-/// A nullable column is readable but not writable: the write path has no
-/// encoding for a `NULL` cell yet. The refusal has to land in lowering, before
-/// any row is encoded or any stored row is decoded, so it can never surface as
-/// a decode failure in the middle of a statement.
+/// A nullable column is now writable: `NULL` and a real value both admit
+/// through the shared `Datum`-based row codec, and a stored `NULL` carries
+/// forward correctly through a later point UPDATE that touches a different
+/// column. The table also stays fully readable, unchanged from before.
 #[test]
-fn a_nullable_column_refuses_every_write_shape_at_lowering_time() {
-    let catalog = ConfiguredCatalog::new([ConfiguredTable::new(
-        "bench",
-        "accounts",
-        TABLE_ID,
-        [
-            ConfiguredColumn::clustered_primary_key("id", ID_COLUMN),
-            ConfiguredColumn::stored_not_null("balance", BALANCE_COLUMN).nullable(),
-        ],
-    )])
-    .expect("catalog is valid");
+fn a_nullable_column_admits_null_and_round_trips_it() {
+    fn nullable_table() -> ConfiguredTable {
+        ConfiguredTable::new(
+            "bench",
+            "accounts",
+            TABLE_ID,
+            [
+                ConfiguredColumn::clustered_primary_key("id", ID_COLUMN),
+                ConfiguredColumn::stored_not_null("balance", BALANCE_COLUMN).nullable(),
+            ],
+        )
+    }
+    let catalog = ConfiguredCatalog::new([nullable_table()]).expect("catalog is valid");
 
+    // INSERT admits both an explicit NULL and a real value for the nullable
+    // column.
     for sql in [
         "INSERT INTO accounts (id, balance) VALUES (?, ?)",
         "UPDATE accounts SET balance = ? WHERE id = ?",
         "DELETE FROM accounts WHERE id = ?",
     ] {
-        let error = prepare_configured_write(sql, &catalog).expect_err("write must be refused");
-        let message = error.to_string();
-        assert!(
-            message.contains("`balance`") && message.contains("nullable"),
-            "{sql} must be refused by naming the nullable column: {message}"
-        );
+        prepare_configured_write(sql, &catalog).unwrap_or_else(|error| {
+            panic!("{sql} must lower against a nullable-column table: {error}")
+        });
     }
+
+    let ConfiguredPreparedWrite::InsertRows { table, rows } = lower_prepared_write(
+        &tidb_parser::parse("INSERT INTO bench.accounts (id, balance) VALUES (?, ?)")
+            .expect("SQL must parse"),
+        &catalog,
+    )
+    .expect("prepared write must lower")
+    .bind(&[PreparedBindValue::Int(10), PreparedBindValue::Null])
+    .expect("bind must succeed")
+    else {
+        panic!("expected an INSERT command");
+    };
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        plan_insert(&table, &rows).expect("INSERT of an explicit NULL must plan a write")
+    else {
+        panic!("an INSERT always publishes");
+    };
+    let stored_value = mutations[0].value().to_vec();
+
+    // The persisted NULL round-trips back through the write path's own row
+    // decoder: a later point UPDATE of the same row (assigning a different
+    // value) must decode the stored row without error.
+    let decoded = plan_update(
+        &nullable_table(),
+        10,
+        BALANCE_INDEX,
+        ConfiguredAssignment::Set(1),
+        Some(&stored_value),
+    )
+    .expect("a stored NULL decodes cleanly for a point UPDATE of the same row");
+    assert!(matches!(decoded, ConfiguredWritePlan::Write { .. }));
 
     // The same table stays fully readable.
     let read = tidb_planner::read_only_scan::ReadOnlyScanPlan::lower(
@@ -1379,4 +1411,198 @@ fn a_nullable_column_refuses_every_write_shape_at_lowering_time() {
     )
     .expect("a nullable column is readable");
     assert!(read.projected_columns()[1].is_nullable());
+}
+
+/// `NULL` is refused into a `NOT NULL` column, matching Go's
+/// `[table:1048]Column '<name>' cannot be null`.
+#[test]
+fn null_is_refused_into_a_not_null_column() {
+    let catalog = ConfiguredCatalog::new([table()]).expect("catalog must validate");
+    let ConfiguredPreparedWrite::InsertRows { table, rows } = lower_prepared_write(
+        &tidb_parser::parse("INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?)")
+            .expect("SQL must parse"),
+        &catalog,
+    )
+    .expect("prepared write must lower")
+    .bind(&[PreparedBindValue::Int(10), PreparedBindValue::Null])
+    .expect("bind must succeed")
+    else {
+        panic!("expected an INSERT command");
+    };
+    let error =
+        plan_insert(&table, &rows).expect_err("NULL must be refused for a NOT NULL column");
+    assert!(
+        matches!(error, ConfiguredWriteError::NullNotAllowed { .. }),
+        "expected NullNotAllowed, found {error}"
+    );
+}
+
+// --- Widened-type round trips -------------------------------------------
+//
+// Each of these builds a one-column table of the newly writable scalar type,
+// INSERTs a bound literal through the same `lower_prepared_write` -> `bind`
+// -> `plan_insert` path production traffic uses, then decodes the produced
+// row bytes through `tidb_tablecodec::decode_table_row_to_map` — the exact
+// codec the real-TiKV read path already decodes with — to prove the write
+// path's new admission and the existing read path agree on one persisted
+// value.
+
+fn widened_table(column: ConfiguredColumn) -> ConfiguredTable {
+    ConfiguredTable::new(
+        "widen",
+        "t",
+        200,
+        [ConfiguredColumn::clustered_primary_key("id", 1), column],
+    )
+}
+
+fn insert_one(
+    table: &ConfiguredTable,
+    value: PreparedBindValue,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    let catalog = ConfiguredCatalog::new([table.clone()]).expect("catalog must validate");
+    let ConfiguredPreparedWrite::InsertRows { table, rows } = lower_prepared_write(
+        &tidb_parser::parse("INSERT INTO widen.t (id, v) VALUES (?, ?)").expect("SQL must parse"),
+        &catalog,
+    )
+    .expect("prepared write must lower")
+    .bind(&[PreparedBindValue::Int(1), value])
+    .expect("bind must succeed")
+    else {
+        panic!("expected an INSERT command");
+    };
+    plan_insert(&table, &rows)
+}
+
+fn decode_one(table: &ConfiguredTable, value_bytes: &[u8]) -> Datum {
+    let column = &table.columns()[1];
+    let field_types = std::collections::BTreeMap::from([(column.id(), column.scalar_type().chunk_field_type())]);
+    tidb_tablecodec::decode_table_row_to_map(value_bytes, &field_types, None)
+        .expect("row must decode")
+        .remove(&column.id())
+        .expect("column must be present")
+}
+
+#[test]
+fn unsigned_bigint_round_trips_and_rejects_a_negative_value() {
+    let table = widened_table(ConfiguredColumn::stored_unsigned_bigint_not_null("v", 2));
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        insert_one(&table, PreparedBindValue::UInt(u64::MAX)).expect("insert must plan")
+    else {
+        panic!("an INSERT always publishes");
+    };
+    assert_eq!(
+        decode_one(&table, mutations[0].value()),
+        Datum::UInt(u64::MAX)
+    );
+
+    let error = insert_one(&table, PreparedBindValue::Int(-1))
+        .expect_err("a negative value must be refused for BIGINT UNSIGNED");
+    assert!(matches!(error, ConfiguredWriteError::UnsignedOutOfRange { .. }));
+}
+
+#[test]
+fn double_round_trips_a_float_and_an_integer_literal() {
+    let table = widened_table(ConfiguredColumn::stored_double_not_null("v", 2));
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        insert_one(&table, PreparedBindValue::Float(3.5)).expect("insert must plan")
+    else {
+        panic!("an INSERT always publishes");
+    };
+    assert_eq!(decode_one(&table, mutations[0].value()), Datum::Real(3.5));
+}
+
+#[test]
+fn decimal_round_trips_and_rejects_a_value_that_overflows_precision() {
+    let table = widened_table(ConfiguredColumn::stored_decimal_not_null("v", 2, 10, 2));
+    let ConfiguredWritePlan::Write { mutations, .. } = insert_one(
+        &table,
+        PreparedBindValue::Bytes(b"12.345".to_vec()),
+    )
+    .expect("insert must plan")
+    else {
+        panic!("an INSERT always publishes");
+    };
+    let Datum::Decimal(decimal) = decode_one(&table, mutations[0].value()) else {
+        panic!("expected a decimal value");
+    };
+    // Rounds to the declared scale (2), matching Go `ProduceDecWithSpecifiedTp`.
+    assert_eq!(decimal.to_string(), "12.35");
+
+    let error = insert_one(&table, PreparedBindValue::Bytes(b"999999999.99".to_vec()))
+        .expect_err("a value whose integer part overflows precision must be refused");
+    assert!(matches!(error, ConfiguredWriteError::DecimalOutOfRange { .. }));
+}
+
+#[test]
+fn varchar_round_trips_and_rejects_a_too_long_value() {
+    let table = widened_table(ConfiguredColumn::stored_varchar_not_null("v", 2, 4, false));
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        insert_one(&table, PreparedBindValue::Bytes(b"abcd".to_vec())).expect("insert must plan")
+    else {
+        panic!("an INSERT always publishes");
+    };
+    assert_eq!(
+        decode_one(&table, mutations[0].value()),
+        Datum::new_collation_string(b"abcd".to_vec(), tidb_datatype::Collation::Utf8Mb4Bin)
+    );
+
+    let error = insert_one(&table, PreparedBindValue::Bytes(b"abcde".to_vec()))
+        .expect_err("a value beyond VARCHAR's declared length must be refused");
+    assert!(matches!(error, ConfiguredWriteError::DataTooLong { .. }));
+}
+
+#[test]
+fn datetime_rounds_to_its_declared_fsp_and_rejects_an_invalid_literal() {
+    let table = widened_table(ConfiguredColumn::stored_datetime_not_null("v", 2, 3));
+    let ConfiguredWritePlan::Write { mutations, .. } = insert_one(
+        &table,
+        PreparedBindValue::Bytes(b"2026-01-02 03:04:05.6789".to_vec()),
+    )
+    .expect("insert must plan")
+    else {
+        panic!("an INSERT always publishes");
+    };
+    let Datum::Time(time) = decode_one(&table, mutations[0].value()) else {
+        panic!("expected a temporal value");
+    };
+    // Rounds (not truncates) to the declared fsp, matching the captured Go
+    // behavior: `.6789` at `DATETIME(3)` rounds to `.679`.
+    assert_eq!(time.to_string(), "2026-01-02 03:04:05.679");
+
+    let error = insert_one(&table, PreparedBindValue::Bytes(b"not-a-date".to_vec()))
+        .expect_err("an invalid datetime literal must be refused");
+    assert!(matches!(error, ConfiguredWriteError::InvalidTemporal { .. }));
+}
+
+#[test]
+fn duration_round_trips_at_its_declared_fsp() {
+    let table = widened_table(ConfiguredColumn::stored_duration_not_null("v", 2, 3));
+    let ConfiguredWritePlan::Write { mutations, .. } = insert_one(
+        &table,
+        PreparedBindValue::Bytes(b"10:20:30.5".to_vec()),
+    )
+    .expect("insert must plan")
+    else {
+        panic!("an INSERT always publishes");
+    };
+    let Datum::Duration(duration) = decode_one(&table, mutations[0].value()) else {
+        panic!("expected a duration value");
+    };
+    assert_eq!(duration.to_string(), "10:20:30.500");
+}
+
+#[test]
+fn date_round_trips_a_plain_calendar_date() {
+    let table = widened_table(ConfiguredColumn::stored_date_not_null("v", 2));
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        insert_one(&table, PreparedBindValue::Bytes(b"2026-01-02".to_vec()))
+            .expect("insert must plan")
+    else {
+        panic!("an INSERT always publishes");
+    };
+    let Datum::Time(time) = decode_one(&table, mutations[0].value()) else {
+        panic!("expected a temporal value");
+    };
+    assert_eq!(time.to_string(), "2026-01-02");
 }

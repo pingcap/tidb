@@ -454,11 +454,22 @@ impl ConfiguredScalarType {
             // it needs no flen/decimal to do so.
             Self::Decimal { .. } => FieldType::new(FieldTypeCode::NewDecimal),
             // `Date`/`Datetime`/`Timestamp` decode from the packed Go
-            // `types.Time` 8-byte representation, which is self-describing
-            // (it embeds its own fsp); the decoder needs no `decimal` hint.
+            // `types.Time` 8-byte representation, which packs year/month/day/
+            // hour/minute/second/microsecond but NOT `fsp`
+            // (`tidb_datatype::PackedTimeParts` carries no fsp field) — the
+            // coprocessor chunk decoder happens not to need `fsp` to read the
+            // value (it always keeps full microsecond precision internally),
+            // but `tidb_tablecodec::table_row::unflatten_datum`'s row-value
+            // decode reads `field_type.decimal()` to round the restored `Time`
+            // to its declared display precision, so it must be set here too.
+            // `DATE` has no fractional-seconds component at all.
             Self::Date => FieldType::new(FieldTypeCode::Date),
-            Self::Datetime { .. } => FieldType::new(FieldTypeCode::Datetime),
-            Self::Timestamp { .. } => FieldType::new(FieldTypeCode::Timestamp),
+            Self::Datetime { fsp } => {
+                FieldType::new(FieldTypeCode::Datetime).with_decimal(i64::from(fsp))
+            }
+            Self::Timestamp { fsp } => {
+                FieldType::new(FieldTypeCode::Timestamp).with_decimal(i64::from(fsp))
+            }
             // `Duration` decodes from a raw `int64` nanosecond count that does
             // NOT self-describe its fsp, so the decoder
             // (`tidb_codec::column::decode_column_datums`'s `Duration` arm)

@@ -48,15 +48,14 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use tidb_codec::table_key::{decode_record_key, encode_row_key_with_handle, RecordHandle};
-use tidb_codec::{decode_configured_row_bytes, decode_configured_row_int};
 use tidb_datatype::Datum;
 use tidb_planner::prepared_dml::ConfiguredPreparedWrite;
 use tidb_planner::read_only_scan::{
-    ConfiguredColumnKind, ConfiguredScalarType, ConfiguredTable, ReadLockWait,
-    ResolvedProjectionColumn,
+    ConfiguredColumnKind, ConfiguredTable, ReadLockWait, ResolvedProjectionColumn,
 };
 use tidb_planner::signed_bigint_ranger::SignedBigIntRange;
 use tidb_planner::txn_mode::SessionTxnMode;
+use tidb_tablecodec::decode_table_row_to_map;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     LockKeepAlive, LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError,
@@ -566,41 +565,43 @@ impl WritePlanningSnapshot for MultiStatementTransaction {
 /// Decodes one staged row into exactly the columns a read projects.
 ///
 /// The clustered primary key is not stored in the row value — it *is* the record
-/// key's handle — so it is filled from the handle, while every other projected
-/// column is decoded from the row bytes at its own configured type.
+/// key's handle — so it is filled from the handle. Every other projected column
+/// decodes through the same `Datum`-based row codec
+/// (`tidb_tablecodec::decode_table_row_to_map`) the real-TiKV read path and the
+/// write path's own row rewrite both use, so a staged row (one this
+/// transaction itself just wrote) admits every type the write path can now
+/// produce — including an explicit SQL `NULL` in a nullable column, which
+/// decodes to [`Datum::Null`] rather than a decode failure.
 fn decode_staged_projection(
     projection: &[ResolvedProjectionColumn],
     handle: i64,
     row: &[u8],
 ) -> Result<Vec<Datum>, ConfiguredWriteError> {
+    let field_types: std::collections::BTreeMap<i64, tidb_datatype::FieldType> = projection
+        .iter()
+        .filter(|column| column.kind() != ConfiguredColumnKind::ClusteredPrimaryKey)
+        .map(|column| {
+            (
+                column.scan_column().column_id,
+                column.scalar_type().chunk_field_type(),
+            )
+        })
+        .collect();
+    let decoded = decode_table_row_to_map(row, &field_types, None)
+        .map_err(|error| ConfiguredWriteError::RowRead(error.to_string()))?;
     projection
         .iter()
-        .map(|column| match (column.kind(), column.scalar_type()) {
-            (ConfiguredColumnKind::ClusteredPrimaryKey, _) => Ok(Datum::new_int(handle)),
-            (_, ConfiguredScalarType::BigInt | ConfiguredScalarType::Int) => Ok(Datum::new_int(
-                decode_configured_row_int(row, column.scan_column().column_id)?,
-            )),
-            (_, ConfiguredScalarType::Char { .. }) => Ok(Datum::new_string(
-                decode_configured_row_bytes(row, column.scan_column().column_id)?,
-            )),
-            // The write path cannot produce a row with either type (see
-            // `ConfiguredWriteError::UnsupportedScalarType`), so a staged row
-            // never carries one; refusing keeps that fact checked rather than
-            // assumed.
-            (
-                _,
-                scalar_type @ (ConfiguredScalarType::UnsignedBigInt
-                | ConfiguredScalarType::Double
-                | ConfiguredScalarType::Varchar { .. }
-                | ConfiguredScalarType::Decimal { .. }
-                | ConfiguredScalarType::Date
-                | ConfiguredScalarType::Datetime { .. }
-                | ConfiguredScalarType::Timestamp { .. }
-                | ConfiguredScalarType::Duration { .. }),
-            ) => Err(ConfiguredWriteError::UnsupportedScalarType {
-                column: column.source_name().to_owned(),
-                scalar_type,
-            }),
+        .map(|column| match column.kind() {
+            ConfiguredColumnKind::ClusteredPrimaryKey => Ok(Datum::new_int(handle)),
+            _ => decoded
+                .get(&column.scan_column().column_id)
+                .cloned()
+                .ok_or_else(|| {
+                    ConfiguredWriteError::RowRead(format!(
+                        "configured row is missing column ID {}",
+                        column.scan_column().column_id
+                    ))
+                }),
         })
         .collect()
 }
