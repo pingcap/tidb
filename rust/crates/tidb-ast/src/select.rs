@@ -2082,11 +2082,9 @@ pub enum JoinNode {
         /// tables preceding it in the same `FROM` clause (confirmed via
         /// `godump restore`: `pkg/parser/join_parser.go`'s
         /// `parseLateralTableSource`). Real TiDB's own execution treats
-        /// this as a correlated, per-outer-row re-evaluation; this crate's
-        /// execution engine is unconditionally `Unsupported` for it (see
-        /// `tidb_exec`'s own `build_node`), the SAME "real semantic effect,
-        /// no cheap representation" scope cut already applied to
-        /// `TABLESAMPLE`/`AS OF TIMESTAMP`.
+        /// this as a correlated, per-outer-row re-evaluation -- Go's
+        /// `buildLateralJoin` builds a `LogicalApply` with `InnerJoin` --
+        /// which `tidb_executor`'s own `build_lateral_join` now reproduces.
         lateral: bool,
         /// An optional `(col1, col2, ...)` alias list renaming the
         /// subquery's own output columns positionally — grammatically

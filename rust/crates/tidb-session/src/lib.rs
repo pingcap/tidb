@@ -9573,6 +9573,276 @@ mod tests {
         );
     }
 
+    /// Every `ALGORITHM` a `CREATE VIEW` may write round-trips through
+    /// `SHOW CREATE VIEW`, and NONE of them changes what the view returns.
+    ///
+    /// Captured from Go's mock store: `MERGE` and `TEMPTABLE` print back
+    /// exactly as written, an omitted clause prints `UNDEFINED`, and all
+    /// three read the same rows -- on this tier the algorithm is recorded
+    /// text, because the merge-vs-materialize choice it names is a plan
+    /// shape, not a result.
+    #[test]
+    fn view_algorithm_round_trips_through_show_create_view() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
+        session
+            .run("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)")
+            .unwrap();
+
+        for (written, printed) in [
+            ("", "UNDEFINED"),
+            ("ALGORITHM=UNDEFINED ", "UNDEFINED"),
+            ("ALGORITHM=MERGE ", "MERGE"),
+            ("ALGORITHM=TEMPTABLE ", "TEMPTABLE"),
+        ] {
+            session.run("DROP VIEW IF EXISTS vv").unwrap();
+            session
+                .run(&format!("CREATE {written}VIEW vv AS SELECT a, b FROM t"))
+                .unwrap();
+            let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vv");
+            assert_eq!(
+                rows[0][1],
+                format!(
+                    "CREATE ALGORITHM={printed} DEFINER=``@`` SQL SECURITY DEFINER VIEW `vv` \
+                     (`a`, `b`) AS SELECT `a` AS `a`,`b` AS `b` FROM `test`.`t`"
+                )
+            );
+            let (_, rows) = query_text(&mut session, "SELECT * FROM vv");
+            assert_eq!(rows, [["1", "10"], ["2", "20"], ["3", "30"]]);
+        }
+
+        // `CREATE OR REPLACE` rewrites the recorded algorithm along with the
+        // body, so the replacement's own clause is what prints afterwards.
+        session.run("DROP VIEW IF EXISTS vv").unwrap();
+        session
+            .run("CREATE ALGORITHM=MERGE VIEW vv AS SELECT a FROM t")
+            .unwrap();
+        session
+            .run("CREATE OR REPLACE ALGORITHM=TEMPTABLE VIEW vv AS SELECT b FROM t")
+            .unwrap();
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vv");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=TEMPTABLE DEFINER=``@`` SQL SECURITY DEFINER VIEW `vv` (`b`) \
+             AS SELECT `b` AS `b` FROM `test`.`t`"
+        );
+
+        // The algorithm and an explicit column list are recorded together.
+        session
+            .run("CREATE ALGORITHM=MERGE VIEW vw2 (p, q) AS SELECT a, b FROM t")
+            .unwrap();
+        let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vw2");
+        assert_eq!(
+            rows[0][1],
+            "CREATE ALGORITHM=MERGE DEFINER=``@`` SQL SECURITY DEFINER VIEW `vw2` (`p`, `q`) \
+             AS SELECT `a` AS `a`,`b` AS `b` FROM `test`.`t`"
+        );
+    }
+
+    /// The fixture the captured `LATERAL` cases run against: `s` has a
+    /// different number of rows per key (2, 1, 3), so a per-outer-row
+    /// re-evaluation is visibly different from any single inner run.
+    fn lateral_session() -> Session {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,10),(2,20),(3,30)")
+            .unwrap();
+        session.run("CREATE TABLE s (k BIGINT, v BIGINT)").unwrap();
+        session
+            .run("INSERT INTO s VALUES (1,100),(1,101),(2,200),(3,300),(3,301),(3,302)")
+            .unwrap();
+        session.run("CREATE TABLE u (a BIGINT, z BIGINT)").unwrap();
+        session.run("INSERT INTO u VALUES (1,7),(2,8)").unwrap();
+        session
+    }
+
+    /// A `LATERAL` derived table really is re-evaluated per outer row: the
+    /// captured counts differ per group, which no uncorrelated single run
+    /// could produce.
+    #[test]
+    fn lateral_derived_table_varies_per_outer_row() {
+        let mut session = lateral_session();
+
+        let (names, rows) = query_text(
+            &mut session,
+            "SELECT t.a, x.cnt FROM t, LATERAL (SELECT COUNT(*) AS cnt FROM s WHERE s.k = t.a) x",
+        );
+        assert_eq!(names, ["a", "cnt"]);
+        assert_eq!(rows, [["1", "2"], ["2", "1"], ["3", "3"]]);
+
+        // The inner relation may be several rows tall: each one is
+        // concatenated onto its own outer row.
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT t.a, x.v FROM t, LATERAL (SELECT v FROM s WHERE s.k = t.a) x",
+        );
+        assert_eq!(
+            rows,
+            [
+                ["1", "100"],
+                ["1", "101"],
+                ["2", "200"],
+                ["3", "300"],
+                ["3", "301"],
+                ["3", "302"],
+            ]
+        );
+
+        // A `LIMIT` inside the subquery applies per outer row, not once.
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT t.a, x.v FROM t, LATERAL (SELECT v FROM s WHERE s.k = t.a \
+             ORDER BY v DESC LIMIT 2) x",
+        );
+        assert_eq!(
+            rows,
+            [
+                ["1", "101"],
+                ["1", "100"],
+                ["2", "200"],
+                ["3", "302"],
+                ["3", "301"],
+            ]
+        );
+
+        // The join is INNER (Go's `buildLateralJoin` always builds
+        // `InnerJoin`), so an outer row whose inner relation is empty is
+        // dropped -- captured: `a = 9` matches no `s` row and disappears.
+        session.run("INSERT INTO t VALUES (9, 90)").unwrap();
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT t.a FROM t, LATERAL (SELECT v FROM s WHERE s.k = t.a) x",
+        );
+        assert_eq!(rows.len(), 6);
+        assert!(!rows.iter().any(|row| row[0] == "9"));
+        // An inner relation that always has a row keeps every outer row.
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT t.a FROM t, LATERAL (SELECT 1) x WHERE t.a = 9",
+        );
+        assert_eq!(rows, [["9"]]);
+    }
+
+    /// The join shapes `buildLateralJoin` accepts and refuses.
+    #[test]
+    fn lateral_derived_table_join_shapes() {
+        let mut session = lateral_session();
+
+        // A `LATERAL` may correlate with SEVERAL preceding tables at once.
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT t.a, u.z, x.n FROM t, u, LATERAL (SELECT t.a + u.z AS n) x ORDER BY t.a, u.z",
+        );
+        assert_eq!(
+            rows,
+            [
+                ["1", "7", "8"],
+                ["1", "8", "9"],
+                ["2", "7", "9"],
+                ["2", "8", "10"],
+                ["3", "7", "10"],
+                ["3", "8", "11"],
+            ]
+        );
+
+        // One `LATERAL` may correlate with a preceding `LATERAL`.
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT * FROM t, LATERAL (SELECT t.a) x, LATERAL (SELECT x.a + 1 AS y) z",
+        );
+        assert_eq!(
+            rows,
+            [
+                ["1", "10", "1", "2"],
+                ["2", "20", "2", "3"],
+                ["3", "30", "3", "4"],
+            ]
+        );
+
+        // CROSS/INNER JOIN read the same as the comma syntax, and an `ON`
+        // condition filters the Apply's rows.
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT t.a, x.v FROM t CROSS JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x",
+        );
+        assert_eq!(rows.len(), 6);
+        let (_, rows) = query_text(
+            &mut session,
+            "SELECT t.a, x.v FROM t JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x \
+             ON x.v > 200 ORDER BY x.v",
+        );
+        assert_eq!(rows, [["3", "300"], ["3", "301"], ["3", "302"]]);
+
+        // Captured: [planner:3809]. Go rejects outer joins with LATERAL.
+        assert!(matches!(
+            session.run(
+                "SELECT t.a FROM t LEFT JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x ON TRUE"
+            ),
+            Err(DriverError::InvalidLateralJoin(
+                "LEFT JOIN is not supported with LATERAL"
+            ))
+        ));
+        assert!(matches!(
+            session.run(
+                "SELECT t.a FROM t RIGHT JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x ON TRUE"
+            ),
+            Err(DriverError::InvalidLateralJoin(
+                "RIGHT JOIN is not supported with LATERAL"
+            ))
+        ));
+
+        // A leftmost `LATERAL` has nothing to correlate with and reads as an
+        // ordinary derived table (captured: it runs).
+        let (_, rows) = query_text(&mut session, "SELECT * FROM LATERAL (SELECT 1) x");
+        assert_eq!(rows, [["1"]]);
+    }
+
+    /// The alias column list, which the grammar allows ONLY on a `LATERAL`
+    /// derived table -- a plain `(SELECT ...) x(c1)` is a parse error, so the
+    /// parser is the whole story there and only the lateral form reaches
+    /// execution.
+    #[test]
+    fn lateral_alias_column_list_renames_positionally() {
+        let mut session = lateral_session();
+
+        let (names, rows) = query_text(
+            &mut session,
+            "SELECT x.c FROM t, LATERAL (SELECT COUNT(*) FROM s WHERE s.k = t.a) x(c)",
+        );
+        assert_eq!(names, ["c"]);
+        assert_eq!(rows, [["2"], ["1"], ["3"]]);
+
+        // Captured: a width disagreement is [ddl:1353], the same error a
+        // `CREATE VIEW` column list mismatch reports.
+        assert!(matches!(
+            session.run("SELECT * FROM t, LATERAL (SELECT 1, 2) x(c)"),
+            Err(DriverError::ViewWrongList)
+        ));
+        assert!(matches!(
+            session.run("SELECT * FROM t, LATERAL (SELECT 1) x(c1, c2)"),
+            Err(DriverError::ViewWrongList)
+        ));
+
+        // A plain derived table's alias column list never parses.
+        assert!(session
+            .run("SELECT * FROM (SELECT a, b FROM t) x(c1, c2)")
+            .is_err());
+    }
+
+    /// Without `LATERAL`, a derived table cannot see a sibling `FROM` entry:
+    /// captured as [planner:1054], reported against the clause the reference
+    /// sits in.
+    #[test]
+    fn non_lateral_derived_table_cannot_see_a_sibling() {
+        let mut session = lateral_session();
+
+        assert!(session
+            .run("SELECT t.a FROM t, (SELECT COUNT(*) AS cnt FROM s WHERE s.k = t.a) x")
+            .is_err());
+        assert!(session.run("SELECT * FROM t, (SELECT t.a AS q) x").is_err());
+    }
+
     /// The two tables the captured semi-join cases run against.
     fn semi_join_session() -> Session {
         let mut session = Session::new();

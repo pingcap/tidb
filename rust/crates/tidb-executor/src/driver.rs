@@ -667,8 +667,14 @@ pub enum DriverError {
     /// `UPDATE` through a view reports.
     TableNotUpdatable(String),
     /// Go `ErrViewWrongList` (1353): the `CREATE VIEW v (...)` column list
-    /// and the body's select list have different widths.
+    /// and the body's select list have different widths. A derived table's
+    /// own `(c1, c2)` alias column list reports the SAME error when it does
+    /// not match the subquery's width (captured).
     ViewWrongList,
+    /// Go `plannererrors.ErrInvalidLateralJoin` (3809): a `LATERAL` derived
+    /// table in a join shape `buildLateralJoin` refuses. The payload is Go's
+    /// own reason text, which the message interpolates.
+    InvalidLateralJoin(&'static str),
     /// Go `plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or
     /// CONNECTION_ADMIN")` (1227): `KILL` of a connection logged in as a
     /// DIFFERENT user than the caller, without SUPER (or the dynamic
@@ -4620,8 +4626,11 @@ impl ColumnResolver for ScopeResolver<'_> {
 /// `(a JOIN b) JOIN c` and the row layout is `a`'s columns, then `b`'s, then
 /// `c`'s.
 ///
-/// DEFERRED (documented): derived tables, `USING`, `NATURAL`, and
-/// `STRAIGHT_JOIN`'s ordering guarantee.
+/// A `LATERAL` derived table on the right of a join is not a join at all but
+/// an Apply, so it leaves this path early -- see `build_lateral_join`.
+///
+/// DEFERRED (documented): `USING`, `NATURAL`, and `STRAIGHT_JOIN`'s ordering
+/// guarantee.
 fn build_from(
     node: &JoinNode,
     catalog: &Catalog,
@@ -4691,12 +4700,16 @@ fn build_from(
             lateral,
             column_names,
         } => {
-            if *lateral || !column_names.is_empty() {
-                return Err(DriverError::Unsupported(
-                    "a LATERAL derived table is not supported yet",
-                ));
-            }
-            build_derived_source(subquery, alias.as_deref(), catalog, current_db, ctx)
+            // A `LATERAL` in the LEFTMOST position has no preceding table to
+            // correlate with, so it is an ordinary derived table -- the same
+            // reading Go's `buildLateralJoin` reaches with an empty outer
+            // schema (captured: `SELECT * FROM LATERAL (SELECT 1) x` runs).
+            // Its alias column list still renames positionally.
+            let _ = lateral;
+            let (exec, mut scope) =
+                build_derived_source(subquery, alias.as_deref(), catalog, current_db, ctx)?;
+            rename_derived_columns(&mut scope.tables[0].columns, column_names)?;
+            Ok((exec, scope))
         }
     }
 }
@@ -4759,6 +4772,261 @@ fn build_derived_source(
             offset: 0,
         }],
     };
+    Ok((exec, scope))
+}
+
+/// Applies a derived table's `(c1, c2, ...)` alias column list.
+///
+/// The list renames the subquery's own output columns positionally, and a
+/// length disagreement is Go's `ErrViewWrongList` (1353) -- captured, the same
+/// error a `CREATE VIEW v (a, b) AS SELECT 1` mismatch reports.
+fn rename_derived_columns(
+    columns: &mut [(String, FieldType)],
+    names: &[String],
+) -> Result<(), DriverError> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    if names.len() != columns.len() {
+        return Err(DriverError::ViewWrongList);
+    }
+    for (column, name) in columns.iter_mut().zip(names) {
+        column.0 = name.clone();
+    }
+    Ok(())
+}
+
+/// The names a `SELECT`'s fields give the relation they produce, when they can
+/// be read off the statement alone.
+///
+/// The lateral path needs the names BEFORE it can run anything, and the run it
+/// uses to settle the column TYPES has the correlated columns replaced by
+/// literals -- which would rename `SELECT t.a` to the literal's own text. This
+/// applies the same naming rule the plain select path uses (an alias, else a
+/// column reference's bare name, else the restored expression), and gives up
+/// (`None`) on a `*` field, whose width is not known from the statement.
+fn derived_field_names(select: &tidb_ast::SelectStmt) -> Option<Vec<String>> {
+    select
+        .fields
+        .fields()
+        .iter()
+        .map(|field| match field {
+            SelectField::Expr { expr, alias } => Some(match (alias, expr) {
+                (Some(alias), _) => alias.clone(),
+                (None, tidb_ast::Expr::Column(path)) => {
+                    path.last().cloned().unwrap_or_else(|| expr.restore())
+                }
+                (None, _) => expr.restore(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A type-carrying stand-in value for a column of type `ft`.
+///
+/// Type inference over the probe run needs a datum of the right KIND, and
+/// nothing more -- so this is the neutral value of that kind, never a bound
+/// that arithmetic in the subquery could overflow. Types with no obvious
+/// neutral value fall back to NULL, which is what the probe used before types
+/// were carried at all.
+fn probe_datum(ft: &FieldType) -> Datum {
+    match tidb_datatype::get_min_value(ft) {
+        Datum::Int(_) => Datum::Int(0),
+        Datum::UInt(_) => Datum::UInt(0),
+        Datum::Real(_) => Datum::Real(0.0),
+        Datum::Float32(_) => Datum::Float32(0.0),
+        Datum::Decimal(_) => Datum::new_decimal(tidb_datatype::Decimal::from_signed_literal("0")),
+        other => other,
+    }
+}
+
+/// Builds a `LATERAL` derived table as an Apply over the tables preceding it.
+///
+/// Go's `buildLateralJoin` makes this a `LogicalApply` with `InnerJoin`: the
+/// left side's columns are the outer schema the subquery's correlated columns
+/// bind against, and the subquery is re-run per outer row. That is exactly
+/// this crate's correlated-subquery machinery, with the one difference that a
+/// derived table yields a RELATION rather than a scalar, so
+/// [`crate::apply::LateralApplyExec`] concatenates every inner row onto the
+/// outer row instead of appending one value.
+///
+/// DEFERRED (documented): a `LATERAL` over a set operation (`UNION`), which
+/// this crate's correlated-column collector does not walk.
+#[allow(clippy::too_many_arguments)]
+fn build_lateral_join(
+    join: &tidb_ast::Join,
+    left_exec: Box<dyn Executor>,
+    left_scope: FromScope,
+    subquery: &QueryStmt,
+    alias: Option<&str>,
+    column_names: &[String],
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
+    // Go's own rejections, in `buildLateralJoin`'s order.
+    if join.natural {
+        return Err(DriverError::InvalidLateralJoin(
+            "NATURAL JOIN is not supported with LATERAL",
+        ));
+    }
+    if !join.using.is_empty() {
+        return Err(DriverError::InvalidLateralJoin(
+            "USING clause is not supported with LATERAL",
+        ));
+    }
+    match join.tp {
+        tidb_ast::JoinType::Left => {
+            return Err(DriverError::InvalidLateralJoin(
+                "LEFT JOIN is not supported with LATERAL",
+            ))
+        }
+        tidb_ast::JoinType::Right => {
+            return Err(DriverError::InvalidLateralJoin(
+                "RIGHT JOIN is not supported with LATERAL",
+            ))
+        }
+        // Comma syntax (which the parser spells `CrossJoin`) and an explicit
+        // INNER JOIN are the shapes Go plans.
+        tidb_ast::JoinType::Cross => {}
+    }
+    let alias = alias.filter(|alias| !alias.is_empty());
+    let Some(alias) = alias else {
+        return Err(DriverError::DerivedMustHaveAlias);
+    };
+    let QueryStmt::Select(select) = subquery else {
+        return Err(DriverError::Unsupported(
+            "a LATERAL derived table over a set operation is not supported yet",
+        ));
+    };
+
+    // The columns the subquery's correlated references name in the left scope.
+    let mut correlated = Vec::new();
+    collect_correlated_columns(
+        select,
+        &left_scope,
+        catalog,
+        current_db,
+        &mut correlated,
+        ctx,
+    );
+
+    // The inner relation's shape must be fixed before the first outer row, so
+    // it is settled by one probe run with every correlated column bound to a
+    // stand-in value -- the same trick `subquery_result_type` uses for a
+    // scalar Apply, except the stand-in must carry the outer column's OWN
+    // type: a bare NULL would make `SELECT t.a + u.z` infer the type of
+    // `NULL + NULL` rather than of two BIGINTs. The probe's VALUES are
+    // discarded; only the field types (and, when the statement does not state
+    // them, the names) survive.
+    let probe_resolver = ScopeResolver { scope: &left_scope };
+    let probes: Vec<(Vec<String>, Datum)> = correlated
+        .iter()
+        .map(|path| {
+            let datum = probe_resolver
+                .resolve(path)
+                .map_or(Datum::Null, |(_, ft, _)| probe_datum(&ft));
+            (path.clone(), datum)
+        })
+        .collect();
+    let typed = bind_subquery_columns(select, &probes)?;
+    let (probe_columns, _) = run_select_stmt(&typed, catalog, current_db, ctx)?;
+    let mut columns: Vec<(String, FieldType)> = match derived_field_names(select) {
+        Some(names) if names.len() == probe_columns.len() => names
+            .into_iter()
+            .zip(&probe_columns)
+            .map(|(name, (_, ft))| (name, ft.clone()))
+            .collect(),
+        _ => probe_columns,
+    };
+    // A derived table is a named relation, so duplicate column names are Go's
+    // ErrDupFieldName -- the same check `build_derived_source` makes.
+    for (index, (name, _)) in columns.iter().enumerate() {
+        if columns[..index]
+            .iter()
+            .any(|(earlier, _)| earlier.eq_ignore_ascii_case(name))
+        {
+            return Err(DriverError::DuplicateColumnName(name.clone()));
+        }
+    }
+    rename_derived_columns(&mut columns, column_names)?;
+
+    let left_width = left_scope.width();
+    let mut scope = left_scope.clone();
+    scope.tables.push(FromTable {
+        name: alias.to_owned(),
+        // An alias is the only qualifier a derived table answers to.
+        database: None,
+        columns: columns.clone(),
+        offset: left_width,
+    });
+
+    let inner_width = columns.len();
+    let select = select.as_ref().clone();
+    let correlated_paths = correlated;
+    let outer_scope = left_scope;
+    // The callback outlives this borrow of the catalog, so it owns a snapshot
+    // (see ApplyExec::new).
+    let inner_catalog = catalog.clone();
+    let inner_db = current_db.to_owned();
+    let inner_ctx = ctx.clone();
+    let runner: crate::apply::LateralRunner = Box::new(move |values: &[Datum]| {
+        let mut bindings = Vec::with_capacity(correlated_paths.len());
+        let resolver = ScopeResolver {
+            scope: &outer_scope,
+        };
+        for path in &correlated_paths {
+            let (index, _, _) = resolver
+                .resolve(path)
+                .ok_or(ExecError::Unsupported("unresolved correlated column"))?;
+            let value = values
+                .get(index)
+                .cloned()
+                .ok_or(ExecError::Unsupported("correlated column out of range"))?;
+            bindings.push((path.clone(), value));
+        }
+        let bound = bind_subquery_columns(&select, &bindings)
+            .map_err(|e| ExecError::Unsupported(driver_error_text(&e)))?;
+        let (_, rows) = run_select_stmt(&bound, &inner_catalog, &inner_db, &inner_ctx).map_err(
+            |e| match e {
+                DriverError::Exec(exec) => exec,
+                other => ExecError::Unsupported(driver_error_text(&other)),
+            },
+        )?;
+        Ok(rows)
+    });
+
+    let schema_columns: Vec<Column> = scope
+        .column_list()
+        .iter()
+        .enumerate()
+        .map(|(i, (_, ft))| {
+            let mut col = Column::new((i + 1) as i64, ft.clone());
+            col.index = i as i64;
+            col
+        })
+        .collect();
+    debug_assert_eq!(schema_columns.len(), left_width + inner_width);
+    let schema = Schema::new(schema_columns);
+    let mut exec: Box<dyn Executor> = Box::new(crate::apply::LateralApplyExec::new(
+        ExecutorMeta::new(schema.clone(), 6, INIT_CAP, MAX_CHUNK_SIZE),
+        left_exec,
+        runner,
+    ));
+    // `JOIN LATERAL (...) x ON <cond>`: the inner join is already produced by
+    // the Apply, so the ON condition is simply a filter over its rows.
+    if let Some(on) = &join.on {
+        let resolver = ScopeResolver { scope: &scope };
+        let predicate = rewrite_expr_resolved(on, &resolver)
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        exec = Box::new(SelectionExec::new(
+            ExecutorMeta::new(schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
+            vec![predicate],
+            exec,
+            ctx.clone(),
+        ));
+    }
     Ok((exec, scope))
 }
 
@@ -4873,6 +5141,25 @@ fn build_join(
         // The single-table wrapper the parser always produces.
         return Ok((left_exec, left_scope));
     };
+    if let JoinNode::Derived {
+        subquery,
+        alias,
+        lateral: true,
+        column_names,
+    } = right_node
+    {
+        return build_lateral_join(
+            join,
+            left_exec,
+            left_scope,
+            subquery,
+            alias.as_deref(),
+            column_names,
+            catalog,
+            current_db,
+            ctx,
+        );
+    }
     if join.natural || !join.using.is_empty() {
         return Err(DriverError::Unsupported(
             "NATURAL and USING joins are not supported yet",
@@ -9885,6 +10172,12 @@ impl DriverError {
             "In definition of view, derived table or common table expression, SELECT list and \
              column names list have different column counts"
                 .to_owned(),
+        ),
+        // Go `ErrInvalidLateralJoin`: "Invalid use of LATERAL: %s".
+        DriverError::InvalidLateralJoin(reason) => MysqlError::new(
+            3809,
+            *b"HY000",
+            format!("Invalid use of LATERAL: {reason}"),
         ),
         // Go: "Every derived table must have its own alias".
         DriverError::DerivedMustHaveAlias => MysqlError::new(

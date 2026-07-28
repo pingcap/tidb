@@ -42,6 +42,109 @@ use tidb_expr::schema::Schema;
 /// binds the correlated columns from them and runs the inner query.
 pub type InnerRunner = Box<dyn FnMut(&[Datum]) -> Result<Datum, ExecError>>;
 
+/// Produces one outer row's whole inner relation, row by row.
+///
+/// This is the multi-row, multi-column counterpart of [`InnerRunner`]: a
+/// `LATERAL` derived table is a relation per outer row, not a value per outer
+/// row. Each returned row must have the inner relation's fixed width.
+pub type LateralRunner = Box<dyn FnMut(&[Datum]) -> Result<Vec<Vec<Datum>>, ExecError>>;
+
+/// Go `LogicalApply` with `InnerJoin` -- what `buildLateralJoin`
+/// (`pkg/planner/core/logical_plan_builder.go`) builds for a `LATERAL`
+/// derived table.
+///
+/// The inner query runs once per outer row with that row's columns bound, and
+/// every inner row it yields is concatenated onto the outer row. An outer row
+/// whose inner relation is EMPTY produces nothing, because the join type is
+/// inner: Go rejects `LEFT`/`RIGHT JOIN LATERAL` outright (`ErrInvalidLateralJoin`,
+/// 3809), so inner is the only shape that reaches execution.
+pub struct LateralApplyExec {
+    meta: ExecutorMeta,
+    outer: Box<dyn Executor>,
+    run_inner: LateralRunner,
+    emitted: bool,
+}
+
+impl LateralApplyExec {
+    /// Builds a lateral apply over `outer`, whose schema must be the outer
+    /// columns followed by the inner relation's columns.
+    #[must_use]
+    pub fn new(meta: ExecutorMeta, outer: Box<dyn Executor>, run_inner: LateralRunner) -> Self {
+        LateralApplyExec {
+            meta,
+            outer,
+            run_inner,
+            emitted: false,
+        }
+    }
+}
+
+impl Executor for LateralApplyExec {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.outer.open()?;
+        self.emitted = false;
+        Ok(())
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        if self.emitted {
+            return Ok(());
+        }
+        let outer_types: Vec<FieldType> = self.outer.ret_field_types().to_vec();
+        let mut outer_chunk = self.outer.new_chunk();
+        loop {
+            self.outer.next(&mut outer_chunk)?;
+            let rows = outer_chunk.num_rows();
+            if rows == 0 {
+                break;
+            }
+            for r in 0..rows {
+                let row = outer_chunk.get_row(r);
+                let values: Vec<Datum> = outer_types
+                    .iter()
+                    .enumerate()
+                    .map(|(c, ft)| row.get_datum(c, ft))
+                    .collect();
+                for inner in (self.run_inner)(&values)? {
+                    for (c, value) in values.iter().enumerate() {
+                        req.append_datum(c, value);
+                    }
+                    for (c, value) in inner.iter().enumerate() {
+                        req.append_datum(values.len() + c, value);
+                    }
+                }
+            }
+        }
+        self.emitted = true;
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        self.outer.close()
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
+
 /// Go `NestedLoopApplyExec`, restricted to the one-appended-column shape a
 /// scalar or `EXISTS` correlated subquery needs.
 pub struct ApplyExec {
