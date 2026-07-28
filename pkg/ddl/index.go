@@ -4149,12 +4149,16 @@ func checkIndexCondition(tblInfo *model.TableInfo, indexCondition ast.ExprNode) 
 			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
 				fmt.Sprintf("generated column %s cannot be used in partial index condition", columnName.Name.Name.L))
 		}
-
 		// The another side must be a literal value, and it must have the same type as the column.
 		constantExpr, ok := anotherSide.(ast.ValueExpr)
 		if !ok {
 			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
 				"partial index condition must include a literal value on the other side of the binary operation")
+		}
+		if columnInfo.GetType() == mysql.TypeTimestamp {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+				fmt.Sprintf("TIMESTAMP column `%s` does not support comparison operators in partial index condition",
+					columnName.Name.Name.L))
 		}
 		// Reference `types.DefaultTypeForValue`, they are all possible types for literal values.
 		// However, this switch-case still includes more types than the ones we have in that function

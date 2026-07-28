@@ -45,7 +45,7 @@
 - `pkg/ddl/index_cop_test.go` - ddl: Tests add index fetch rows from coprocessor.
 - `pkg/ddl/index_modify_test.go` - ddl: Tests add primary key1.
 - `pkg/ddl/index_nokit_test.go` - ddl: Tests modify task param loop.
-- `pkg/ddl/integration_test.go` - ddl: Tests DDL statements back fill.
+- `pkg/ddl/integration_test.go` - ddl: Tests DDL backfill and partial-index condition validation.
 - `pkg/ddl/job_scheduler_test.go` - ddl: Tests must reload schemas.
 - `pkg/ddl/job_scheduler_testkit_test.go` - ddl: Tests DDL scheduling.
 - `pkg/ddl/job_submitter_test.go` - ddl: Tests gen ID and insert jobs with retry.
