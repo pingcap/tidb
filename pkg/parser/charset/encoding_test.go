@@ -232,3 +232,28 @@ func TestEncodingGB18030(t *testing.T) {
 		require.Equal(t, tc.result, string(result), cmt)
 	}
 }
+
+var benchmarkEncoding charset.Encoding
+
+func BenchmarkFindEncoding(b *testing.B) {
+	charsets := []string{
+		charset.CharsetUTF8MB4,
+		charset.CharsetUTF8,
+		charset.CharsetGBK,
+		charset.CharsetLatin1,
+		charset.CharsetBin,
+		charset.CharsetASCII,
+		charset.CharsetGB18030,
+		"unknown",
+	}
+	for _, chs := range charsets {
+		b.Run(chs, func(b *testing.B) {
+			b.ReportAllocs()
+			var enc charset.Encoding
+			for range b.N {
+				enc = charset.FindEncoding(chs)
+			}
+			benchmarkEncoding = enc
+		})
+	}
+}
