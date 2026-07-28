@@ -1150,15 +1150,22 @@ impl Session {
 
     /// Classifies a statement by parsing alone (no execution), so a caller can
     /// choose the protocol answer shape before running it.
+    ///
+    /// This decides the SHAPE of the answer, not whether the statement is
+    /// supported: a `SHOW` this tier cannot answer still classifies as a
+    /// query and reports its own error when it runs. Classifying it as
+    /// unsupported here is what made every `SHOW` fail over the wire while
+    /// `run` answered it in process -- the two callers of one session have to
+    /// agree.
     pub fn statement_kind(&self, sql: &str) -> Result<StmtKind, DriverError> {
         let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
-        match &stmt {
-            Stmt::Query(_) => Ok(StmtKind::Query),
-            Stmt::Dml(_) | Stmt::Ddl(_) => Ok(StmtKind::Write),
-            _ => Err(DriverError::Unsupported(
-                "this statement kind is not supported yet",
-            )),
-        }
+        Ok(match &stmt {
+            // `SHOW`/`DESCRIBE`/`EXPLAIN` all answer with a result set.
+            Stmt::Query(_) | Stmt::Admin(_) => StmtKind::Query,
+            // `USE`, `SET` and the transaction controls answer with an OK
+            // packet, the same shape a write uses.
+            Stmt::Dml(_) | Stmt::Ddl(_) | Stmt::Session(_) => StmtKind::Write,
+        })
     }
 
     /// Runs one SQL statement (Go `session.ExecuteStmt`): parses, dispatches by

@@ -104,10 +104,31 @@ fn authenticate(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>) {
     assert_eq!(reader.read_packet().unwrap()[0], 0, "auth OK");
 }
 
+/// Reads a protocol length-encoded string, including the multi-byte length
+/// prefixes a value longer than 250 bytes uses -- `SHOW CREATE TABLE` and
+/// `sql_mode` both produce those.
 fn read_length_encoded_string(packet: &mut &[u8]) -> Vec<u8> {
-    let length = usize::from(packet[0]);
-    assert!(length < 0xfb, "test values use one-byte lengths");
-    *packet = &packet[1..];
+    let first = packet[0];
+    let (length, header) = match first {
+        0xfb => (0, 1), // NULL, which reads as an empty value here.
+        0xfc => (
+            usize::from(u16::from_le_bytes([packet[1], packet[2]])),
+            3,
+        ),
+        0xfd => (
+            u32::from_le_bytes([packet[1], packet[2], packet[3], 0]) as usize,
+            4,
+        ),
+        0xfe => (
+            usize::try_from(u64::from_le_bytes(
+                packet[1..9].try_into().expect("eight length bytes"),
+            ))
+            .expect("a length that fits this platform"),
+            9,
+        ),
+        other => (usize::from(other), 1),
+    };
+    *packet = &packet[header..];
     let (value, remaining) = packet.split_at(length);
     *packet = remaining;
     value.to_vec()
@@ -331,6 +352,32 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         run_query(&mut client, &mut reader, "SELECT a FROM t WHERE a = 5"),
         Vec::<Vec<String>>::new()
     );
+
+    // The metadata statements a client and its tooling send: each answers
+    // with a real result set over the wire, the same way `Session::run`
+    // answers it in process. These went through a separate classification
+    // on this path, which used to reject them.
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SHOW VARIABLES LIKE 'autocommit'").len(),
+        1
+    );
+    let created = run_query(&mut client, &mut reader, "SHOW CREATE TABLE t");
+    assert!(created[0][1].starts_with("CREATE TABLE `t`"), "{created:?}");
+    let columns = run_query(&mut client, &mut reader, "SHOW COLUMNS FROM t");
+    assert_eq!(columns.len(), 2, "{columns:?}");
+    let index = run_query(&mut client, &mut reader, "SHOW INDEX FROM gen");
+    assert_eq!(index[0][2], "PRIMARY", "{index:?}");
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SHOW TABLES")
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect::<Vec<_>>(),
+        vec!["gen".to_owned(), "t".to_owned()]
+    );
+    assert!(run_query(&mut client, &mut reader, "SHOW WARNINGS").is_empty());
+    // USE answers with an OK packet, as a client expects when it switches
+    // schema.
+    assert_eq!(run_write(&mut client, &mut reader, "USE test"), 0);
 
     // COM_QUIT ends the connection cleanly.
     write_packet(&mut client, 0, &[0x01]);
