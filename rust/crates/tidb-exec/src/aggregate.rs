@@ -320,6 +320,10 @@ impl Database {
                     l,
                     r,
                     u32::from(self.div_precision_increment.value()),
+                    // The grouped path has no resolver of its own, so a
+                    // division-by-zero warning goes to the outer statement's
+                    // context when there is one.
+                    outer.unwrap_or(&tidb_expr::NoColumns),
                 )?)
             }
             // `CASE WHEN COUNT(*) > 5 THEN dept.name ELSE 'other' END`:

@@ -359,7 +359,7 @@ pub use field_name::{find_field_name, find_field_name_index_by_column, NonUnique
 
 pub use build::{BuildContext, BuiltStringLength, StringLengthFunction, StringLengthSignature};
 pub use coerce::truthy_of;
-pub use context::{Columns, EvalError, NoColumns, SessionTimeZone};
+pub use context::{Columns, ErrorLevel, EvalError, NoColumns, SessionTimeZone};
 pub use grouping::{GroupingFunction, GroupingMetadata, GroupingMetadataError, GroupingMode};
 pub use like::{ilike_match, like_match_with_collation};
 pub use rng::MysqlRng;
@@ -407,8 +407,9 @@ pub fn apply_binary_with_div_precision(
     l: Datum,
     r: Datum,
     div_precision_increment: u32,
+    ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, EvalError> {
-    eval_binary_with_div_precision(op, l, r, div_precision_increment)
+    eval_binary_with_div_precision(op, l, r, div_precision_increment, ctx)
 }
 
 /// Applies a unary operator to an already-evaluated operand.
@@ -571,6 +572,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             eval_in(l, cols)?,
             eval_in(r, cols)?,
             cols.div_precision_increment(),
+            cols,
         ),
         // A constant `RAND(N)` has state per function occurrence for the
         // whole statement. The function node's address is stable while this

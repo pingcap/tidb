@@ -230,7 +230,16 @@ impl ScalarFunction {
             if self.args.len() == 2 {
                 let lhs = self.args[0].eval(ctx, row)?;
                 let rhs = self.args[1].eval(ctx, row)?;
-                return crate::apply_binary(op, lhs, rhs);
+                // The statement context travels with the operands, so a
+                // zero divisor reaches the same warning/error policy the AST
+                // evaluator applies.
+                return crate::apply_binary_with_div_precision(
+                    op,
+                    lhs,
+                    rhs,
+                    ctx.div_precision_increment(),
+                    ctx,
+                );
             }
         }
         if let Some(op) = unary_op_for_name(name) {

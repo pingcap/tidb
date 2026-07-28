@@ -33,6 +33,22 @@ pub enum EvalError {
     DecimalOverflow,
     /// A sequence operation failed at runtime.
     Sequence(&'static str),
+    /// Go `ErrDivisionByZero` (1365) raised at error level.
+    DivisionByZero,
+}
+
+/// Go `errctx.Level`: what a statement does with an error group it can also
+/// tolerate. The default is Go's own zero value for a fresh statement
+/// context, which warns.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ErrorLevel {
+    /// The condition is neither reported nor recorded.
+    Ignore,
+    /// The condition becomes a warning and evaluation continues.
+    #[default]
+    Warn,
+    /// The condition fails the statement.
+    Error,
 }
 
 /// The session `time_zone` surfaced through [`Columns::time_zone`]: a fixed
@@ -64,6 +80,35 @@ pub trait Columns {
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         let _ = (scope, name);
         None
+    }
+
+    /// Go `errctx.ErrGroupDividedByZero`'s level for the running statement.
+    ///
+    /// Go sets `LevelWarn` for a query, and for `INSERT`/`UPDATE`/`DELETE`
+    /// resolves it from the SQL mode: no `ERROR_FOR_DIVISION_BY_ZERO` ignores
+    /// it entirely, a non-strict mode (or `IGNORE`) warns, and the default
+    /// strict mode fails the statement.
+    fn division_by_zero_level(&self) -> ErrorLevel {
+        ErrorLevel::Warn
+    }
+
+    /// Records a statement warning, which Go appends to `StmtCtx.warnings`.
+    fn append_warning(&self, code: u16, message: &str) {
+        let _ = (code, message);
+    }
+
+    /// Go `handleDivisionByZeroError`: applies this statement's level to a
+    /// zero divisor. The value the caller returns is `NULL` either way; only
+    /// whether the statement survives differs.
+    fn handle_division_by_zero(&self) -> Result<(), EvalError> {
+        match self.division_by_zero_level() {
+            ErrorLevel::Ignore => Ok(()),
+            ErrorLevel::Warn => {
+                self.append_warning(1365, "Division by 0");
+                Ok(())
+            }
+            ErrorLevel::Error => Err(EvalError::DivisionByZero),
+        }
     }
 
     /// Reads a case-insensitive user variable.
@@ -143,6 +188,9 @@ pub trait Columns {
 }
 
 /// A resolver with no columns or session state.
+///
+/// Its warning sink discards, which is what an evaluation outside a statement
+/// -- a test, a DEFAULT expression folded at DDL time -- wants.
 pub struct NoColumns;
 
 impl Columns for NoColumns {

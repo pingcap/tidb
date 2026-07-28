@@ -46,7 +46,6 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver, NoResolver};
 use tidb_expr::schema::Schema;
-use tidb_expr::NoColumns;
 
 /// An in-memory table: named, typed columns plus row values.
 #[derive(Clone, Debug, Default)]
@@ -550,13 +549,17 @@ const MAX_CHUNK_SIZE: usize = 1024;
 
 /// Parses and runs a `FROM`-less `SELECT`, returning its rows as `Datum`s.
 pub fn run_select(sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
-    run_select_on(sql, &Catalog::default())
+    run_select_on(sql, &Catalog::default(), &crate::StmtContext::for_query())
 }
 
 /// Parses and runs a single-table (or `FROM`-less) `SELECT` against `catalog`,
 /// returning its rows as `Datum`s.
-pub fn run_select_on(sql: &str, catalog: &Catalog) -> Result<Vec<Vec<Datum>>, DriverError> {
-    run_select_meta_on(sql, catalog).map(|(_, rows)| rows)
+pub fn run_select_on(
+    sql: &str,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<Vec<Datum>>, DriverError> {
+    run_select_meta_on(sql, catalog, ctx).map(|(_, rows)| rows)
 }
 
 /// A `SELECT` result with metadata: the output columns as `(name, type)`, then
@@ -570,8 +573,12 @@ pub type SelectMeta = (Vec<(String, FieldType)>, Vec<Vec<Datum>>);
 /// seed driver: an `AS` alias wins; a plain column reference uses the column's
 /// own name; any other expression uses its restored text (Go's
 /// `RestoreString`); `*` expands to the table's column names.
-pub fn run_select_meta_on(sql: &str, catalog: &Catalog) -> Result<SelectMeta, DriverError> {
-    run_select_meta_in(sql, catalog, DEFAULT_DATABASE)
+pub fn run_select_meta_on(
+    sql: &str,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<SelectMeta, DriverError> {
+    run_select_meta_in(sql, catalog, DEFAULT_DATABASE, ctx)
 }
 
 /// [`run_select_meta_on`] resolving unqualified names in `current_db`.
@@ -579,17 +586,20 @@ pub fn run_select_meta_in(
     sql: &str,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
 
     let select = match &stmt {
         Stmt::Query(query) => match &**query {
             QueryStmt::Select(select) => select,
-            QueryStmt::SetOpr(set_opr) => return run_set_opr_stmt(set_opr, catalog, current_db),
+            QueryStmt::SetOpr(set_opr) => {
+                return run_set_opr_stmt(set_opr, catalog, current_db, ctx)
+            }
         },
         _ => return Err(DriverError::Unsupported("only SELECT is supported")),
     };
-    run_select_stmt(select, catalog, current_db)
+    run_select_stmt(select, catalog, current_db, ctx)
 }
 
 /// Runs a set-operation statement: `UNION`, `EXCEPT` or `INTERSECT`.
@@ -611,13 +621,14 @@ pub fn run_set_opr_stmt(
     stmt: &tidb_ast::SetOprStmt,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
     // A CTE prefix belongs to the whole statement, so it is materialized once
     // and every term sees it.
     let with_catalog;
     let catalog = match &stmt.with {
         Some(with) => {
-            with_catalog = materialize_ctes(with, catalog, current_db)?;
+            with_catalog = materialize_ctes(with, catalog, current_db, ctx)?;
             &with_catalog
         }
         None => catalog,
@@ -626,7 +637,7 @@ pub fn run_set_opr_stmt(
     let mut columns: Option<Vec<(String, FieldType)>> = None;
     let mut accumulated: Vec<Vec<Datum>> = Vec::new();
     for (index, term) in stmt.terms.iter().enumerate() {
-        let (term_columns, term_rows) = run_set_opr_term(term, catalog, current_db)?;
+        let (term_columns, term_rows) = run_set_opr_term(term, catalog, current_db, ctx)?;
         match &mut columns {
             None => {
                 columns = Some(term_columns);
@@ -670,10 +681,15 @@ fn run_set_opr_term(
     term: &tidb_ast::SetOprTerm,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
     match &term.body {
-        tidb_ast::SetOprTermBody::Select(select) => run_select_stmt(select, catalog, current_db),
-        tidb_ast::SetOprTermBody::Nested(nested) => run_set_opr_stmt(nested, catalog, current_db),
+        tidb_ast::SetOprTermBody::Select(select) => {
+            run_select_stmt(select, catalog, current_db, ctx)
+        }
+        tidb_ast::SetOprTermBody::Nested(nested) => {
+            run_set_opr_stmt(nested, catalog, current_db, ctx)
+        }
     }
 }
 
@@ -847,6 +863,7 @@ fn materialize_ctes(
     with: &tidb_ast::WithClause,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<Catalog, DriverError> {
     if with.recursive {
         return Err(DriverError::Unsupported(
@@ -864,7 +881,7 @@ fn materialize_ctes(
         };
         // Each CTE sees the ones already materialized, which is what lets a
         // later one reference an earlier one.
-        let (mut columns, rows) = run_select_stmt(select, &scratch, current_db)?;
+        let (mut columns, rows) = run_select_stmt(select, &scratch, current_db, ctx)?;
         if !cte.columns.is_empty() {
             if cte.columns.len() != columns.len() {
                 return Err(DriverError::Unsupported(
@@ -887,8 +904,9 @@ pub fn run_select_meta_stmt(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
-    run_select_stmt(select, catalog, current_db)
+    run_select_stmt(select, catalog, current_db, ctx)
 }
 
 /// Runs one parsed `SELECT` against the catalog.
@@ -896,13 +914,14 @@ fn run_select_stmt(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
     // A WITH clause's CTEs are materialized first, then the query runs against
     // a catalog that contains them.
     let with_catalog;
     let catalog = match &select.with {
         Some(with) => {
-            with_catalog = materialize_ctes(with, catalog, current_db)?;
+            with_catalog = materialize_ctes(with, catalog, current_db, ctx)?;
             &with_catalog
         }
         None => catalog,
@@ -911,8 +930,8 @@ fn run_select_stmt(
     // everything below plans against ordinary expressions (Go's
     // handleScalarSubquery for the non-Apply case).
     let folded;
-    let select = if select_has_uncorrelated_subquery(select, catalog, current_db) {
-        folded = fold_select_subqueries(select, catalog, current_db)?;
+    let select = if select_has_uncorrelated_subquery(select, catalog, current_db, ctx) {
+        folded = fold_select_subqueries(select, catalog, current_db, ctx)?;
         &folded
     } else {
         select
@@ -922,7 +941,7 @@ fn run_select_stmt(
     let (mut from_source, scope): (Option<Box<dyn Executor>>, FromScope) = match &select.from {
         None => (None, FromScope::default()),
         Some(join) => {
-            let (exec, scope) = build_join(join, catalog, current_db)?;
+            let (exec, scope) = build_join(join, catalog, current_db, ctx)?;
             (Some(exec), scope)
         }
     };
@@ -1036,7 +1055,7 @@ fn run_select_stmt(
             )
         });
     if is_aggregate {
-        return run_aggregate_select(select, from_source, &resolver, catalog);
+        return run_aggregate_select(select, from_source, &resolver, catalog, ctx);
     }
 
     // Rewrite each projected field into an evaluable expression; `*` expands to
@@ -1144,6 +1163,7 @@ fn run_select_stmt(
             current_db,
             appended,
             &mut correlated,
+            ctx,
         )?;
         let (predicate_resolver, predicate_scope);
         let mut source_schema = source_schema;
@@ -1152,7 +1172,7 @@ fn run_select_stmt(
             let mut applied = scope.clone();
             let mut value_type = FieldType::new(FieldTypeCode::LongLong);
             if correlated.exists.is_none() {
-                value_type = subquery_result_type(&correlated.select, catalog, current_db)
+                value_type = subquery_result_type(&correlated.select, catalog, current_db, ctx)
                     .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
             }
             applied.tables.push(FromTable {
@@ -1176,6 +1196,9 @@ fn run_select_stmt(
             // owns a snapshot (see ApplyExec::new).
             let inner_catalog = catalog.clone();
             let inner_db = current_db.to_owned();
+            // The statement context is a handle, so the callback shares the
+            // one warning buffer the statement reports.
+            let inner_ctx = ctx.clone();
             let runner: crate::apply::InnerRunner = Box::new(move |values: &[Datum]| {
                 run_correlated_subquery(
                     &correlated,
@@ -1183,6 +1206,7 @@ fn run_select_stmt(
                     &inner_scope,
                     &inner_catalog,
                     &inner_db,
+                    &inner_ctx,
                 )
                 .map_err(|e| match e {
                     DriverError::Exec(exec) => exec,
@@ -1208,7 +1232,7 @@ fn run_select_stmt(
             ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
             vec![pred],
             source,
-            NoColumns,
+            ctx.clone(),
         ));
     }
 
@@ -1232,7 +1256,7 @@ fn run_select_stmt(
             ExecutorMeta::new(sort_schema, 3, INIT_CAP, MAX_CHUNK_SIZE),
             by_items,
             source,
-            NoColumns,
+            ctx.clone(),
         ));
     }
 
@@ -1241,14 +1265,14 @@ fn run_select_stmt(
         ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
         exprs,
         source,
-        NoColumns,
+        ctx.clone(),
     ));
 
     // SELECT DISTINCT: Go `buildDistinct` builds an aggregation grouping by
     // every projected column, with a FIRST_ROW aggregate per column, which is
     // exactly a deduplication. It sits above the projection and below LIMIT.
     if select.distinct {
-        root = Box::new(distinct_over(root, &out_schema));
+        root = Box::new(distinct_over(root, &out_schema, ctx));
     }
 
     // LIMIT [offset,] count: both bounds must be non-negative integer literals
@@ -1301,8 +1325,12 @@ fn run_select_stmt(
 /// `SET` syntax, `INSERT ... SELECT`, partitions, and `RETURNING`. Columns not
 /// listed in an explicit column list are filled with NULL (column defaults
 /// wait on ColumnInfo default-value wiring).
-pub fn run_insert_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverError> {
-    run_insert_in(sql, catalog, DEFAULT_DATABASE)
+pub fn run_insert_on(
+    sql: &str,
+    catalog: &mut Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<u64, DriverError> {
+    run_insert_in(sql, catalog, DEFAULT_DATABASE, ctx)
 }
 
 /// [`run_insert_on`] resolving unqualified names in `current_db`.
@@ -1310,8 +1338,9 @@ pub fn run_insert_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
-    run_insert_reporting(sql, catalog, current_db).map(|outcome| outcome.0)
+    run_insert_reporting(sql, catalog, current_db, ctx).map(|outcome| outcome.0)
 }
 
 /// [`run_insert_in`], also reporting the first auto-increment id the statement
@@ -1324,6 +1353,7 @@ pub fn run_insert_reporting(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<(u64, Option<i64>), DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
 
@@ -1421,7 +1451,7 @@ pub fn run_insert_reporting(
             let rewritten = rewrite_expr_resolved(expr, &NoResolver)
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
             let value = rewritten
-                .eval(&NoColumns, eval_chunk.get_row(0))
+                .eval(ctx, eval_chunk.get_row(0))
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
             row[offset] = value;
             assigned[offset] = true;
@@ -1707,8 +1737,9 @@ fn subquery_result_type(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Option<FieldType> {
-    run_select_stmt(select, catalog, current_db)
+    run_select_stmt(select, catalog, current_db, ctx)
         .ok()
         .and_then(|(columns, _)| columns.first().map(|(_, ft)| ft.clone()))
 }
@@ -1743,10 +1774,11 @@ fn collect_correlated_columns(
     catalog: &Catalog,
     current_db: &str,
     found: &mut Vec<Vec<String>>,
+    ctx: &crate::StmtContext,
 ) {
     let inner = match &select.from {
         None => FromScope::default(),
-        Some(join) => match build_join(join, catalog, current_db) {
+        Some(join) => match build_join(join, catalog, current_db, ctx) {
             Ok((_, scope)) => scope,
             // An unresolvable inner FROM is reported by the inner run itself.
             Err(_) => FromScope::default(),
@@ -1893,6 +1925,7 @@ fn run_correlated_subquery(
     outer_scope: &FromScope,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<Datum, DriverError> {
     let mut bindings = Vec::with_capacity(correlated.columns.len());
     for path in &correlated.columns {
@@ -1926,7 +1959,7 @@ fn run_correlated_subquery(
         item.expr = bind_correlated_columns(&item.expr, &bindings)?;
     }
 
-    let (_, rows) = run_select_stmt(&bound, catalog, current_db)?;
+    let (_, rows) = run_select_stmt(&bound, catalog, current_db, ctx)?;
     match correlated.exists {
         // EXISTS folds to 1/0 per outer row.
         Some(not) => Ok(Datum::Int(i64::from(!rows.is_empty() != not))),
@@ -1957,6 +1990,7 @@ fn extract_correlated_subquery(
     current_db: &str,
     index: usize,
     found: &mut Option<CorrelatedSubquery>,
+    ctx: &crate::StmtContext,
 ) -> Result<tidb_ast::Expr, DriverError> {
     use tidb_ast::Expr;
     // The synthetic name the appended column answers to.
@@ -1972,7 +2006,7 @@ fn extract_correlated_subquery(
                 ));
             };
             let mut columns = Vec::new();
-            collect_correlated_columns(select, outer, catalog, current_db, &mut columns);
+            collect_correlated_columns(select, outer, catalog, current_db, &mut columns, ctx);
             if columns.is_empty() {
                 // Uncorrelated: the folding pass handles it.
                 return Ok(expr.clone());
@@ -1999,17 +2033,17 @@ fn extract_correlated_subquery(
             expr.clone()
         }
         Expr::Paren(inner) => Expr::Paren(Box::new(extract_correlated_subquery(
-            inner, outer, catalog, current_db, index, found,
+            inner, outer, catalog, current_db, index, found, ctx,
         )?)),
         Expr::Unary(op, inner) => Expr::Unary(
             *op,
             Box::new(extract_correlated_subquery(
-                inner, outer, catalog, current_db, index, found,
+                inner, outer, catalog, current_db, index, found, ctx,
             )?),
         ),
         Expr::Is { expr, target, not } => Expr::Is {
             expr: Box::new(extract_correlated_subquery(
-                expr, outer, catalog, current_db, index, found,
+                expr, outer, catalog, current_db, index, found, ctx,
             )?),
             target: *target,
             not: *not,
@@ -2017,10 +2051,10 @@ fn extract_correlated_subquery(
         Expr::Binary(op, lhs, rhs) => Expr::Binary(
             *op,
             Box::new(extract_correlated_subquery(
-                lhs, outer, catalog, current_db, index, found,
+                lhs, outer, catalog, current_db, index, found, ctx,
             )?),
             Box::new(extract_correlated_subquery(
-                rhs, outer, catalog, current_db, index, found,
+                rhs, outer, catalog, current_db, index, found, ctx,
             )?),
         ),
         other => other.clone(),
@@ -2033,20 +2067,29 @@ fn select_has_uncorrelated_subquery(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> bool {
     if let Some(where_clause) = &select.where_clause {
         if expr_has_subquery(where_clause) {
             let outer = match &select.from {
                 None => FromScope::default(),
-                Some(join) => match build_join(join, catalog, current_db) {
+                Some(join) => match build_join(join, catalog, current_db, ctx) {
                     Ok((_, scope)) => scope,
                     Err(_) => FromScope::default(),
                 },
             };
             let mut found = None;
             // A correlated WHERE subquery is the Apply path's job.
-            if extract_correlated_subquery(where_clause, &outer, catalog, current_db, 0, &mut found)
-                .is_ok()
+            if extract_correlated_subquery(
+                where_clause,
+                &outer,
+                catalog,
+                current_db,
+                0,
+                &mut found,
+                ctx,
+            )
+            .is_ok()
                 && found.is_some()
             {
                 return false;
@@ -2100,24 +2143,25 @@ fn fold_select_subqueries(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<tidb_ast::SelectStmt, DriverError> {
     let mut folded = select.clone();
     for field in folded.fields.fields_mut() {
         if let SelectField::Expr { expr, .. } = field {
-            *expr = fold_subqueries(expr, catalog, current_db)?;
+            *expr = fold_subqueries(expr, catalog, current_db, ctx)?;
         }
     }
     if let Some(where_clause) = &folded.where_clause {
-        folded.where_clause = Some(fold_subqueries(where_clause, catalog, current_db)?);
+        folded.where_clause = Some(fold_subqueries(where_clause, catalog, current_db, ctx)?);
     }
     if let Some(having) = &folded.having {
-        folded.having = Some(fold_subqueries(having, catalog, current_db)?);
+        folded.having = Some(fold_subqueries(having, catalog, current_db, ctx)?);
     }
     for item in &mut folded.order_by {
-        item.expr = fold_subqueries(&item.expr, catalog, current_db)?;
+        item.expr = fold_subqueries(&item.expr, catalog, current_db, ctx)?;
     }
     for item in &mut folded.group_by {
-        item.expr = fold_subqueries(&item.expr, catalog, current_db)?;
+        item.expr = fold_subqueries(&item.expr, catalog, current_db, ctx)?;
     }
     Ok(folded)
 }
@@ -2143,11 +2187,12 @@ fn fold_subqueries(
     expr: &tidb_ast::Expr,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<tidb_ast::Expr, DriverError> {
     use tidb_ast::Expr;
     Ok(match expr {
         Expr::Subquery(query) => {
-            let rows = run_subquery(query, catalog, current_db)?;
+            let rows = run_subquery(query, catalog, current_db, ctx)?;
             match rows.len() {
                 // Go: a scalar subquery with no rows is NULL.
                 0 => Expr::Null,
@@ -2165,7 +2210,7 @@ fn fold_subqueries(
             }
         }
         Expr::Exists { subquery, not } => {
-            let rows = run_subquery(subquery, catalog, current_db)?;
+            let rows = run_subquery(subquery, catalog, current_db, ctx)?;
             let exists = !rows.is_empty();
             Expr::Int(i64::from(exists != *not).to_string())
         }
@@ -2174,7 +2219,7 @@ fn fold_subqueries(
             subquery,
             not,
         } => {
-            let rows = run_subquery(subquery, catalog, current_db)?;
+            let rows = run_subquery(subquery, catalog, current_db, ctx)?;
             let mut list = Vec::with_capacity(rows.len());
             for row in &rows {
                 let [value] = row.as_slice() else {
@@ -2191,7 +2236,7 @@ fn fold_subqueries(
                 return Ok(Expr::Int(i64::from(*not).to_string()));
             }
             Expr::In {
-                expr: Box::new(fold_subqueries(expr, catalog, current_db)?),
+                expr: Box::new(fold_subqueries(expr, catalog, current_db, ctx)?),
                 list,
                 not: *not,
             }
@@ -2203,25 +2248,28 @@ fn fold_subqueries(
         }
         // Walk the forms the expression rewriter itself supports; anything
         // else is returned unchanged and fails to rewrite as it already does.
-        Expr::Paren(inner) => Expr::Paren(Box::new(fold_subqueries(inner, catalog, current_db)?)),
-        Expr::Unary(op, inner) => {
-            Expr::Unary(*op, Box::new(fold_subqueries(inner, catalog, current_db)?))
+        Expr::Paren(inner) => {
+            Expr::Paren(Box::new(fold_subqueries(inner, catalog, current_db, ctx)?))
         }
+        Expr::Unary(op, inner) => Expr::Unary(
+            *op,
+            Box::new(fold_subqueries(inner, catalog, current_db, ctx)?),
+        ),
         Expr::Binary(op, lhs, rhs) => Expr::Binary(
             *op,
-            Box::new(fold_subqueries(lhs, catalog, current_db)?),
-            Box::new(fold_subqueries(rhs, catalog, current_db)?),
+            Box::new(fold_subqueries(lhs, catalog, current_db, ctx)?),
+            Box::new(fold_subqueries(rhs, catalog, current_db, ctx)?),
         ),
         Expr::Is { expr, target, not } => Expr::Is {
-            expr: Box::new(fold_subqueries(expr, catalog, current_db)?),
+            expr: Box::new(fold_subqueries(expr, catalog, current_db, ctx)?),
             target: *target,
             not: *not,
         },
         Expr::In { expr, list, not } => Expr::In {
-            expr: Box::new(fold_subqueries(expr, catalog, current_db)?),
+            expr: Box::new(fold_subqueries(expr, catalog, current_db, ctx)?),
             list: list
                 .iter()
-                .map(|item| fold_subqueries(item, catalog, current_db))
+                .map(|item| fold_subqueries(item, catalog, current_db, ctx))
                 .collect::<Result<_, _>>()?,
             not: *not,
         },
@@ -2238,6 +2286,7 @@ fn run_subquery(
     query: &tidb_ast::QueryStmt,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     let tidb_ast::QueryStmt::Select(_) = query else {
         return Err(DriverError::Unsupported(
@@ -2247,7 +2296,7 @@ fn run_subquery(
     let tidb_ast::QueryStmt::Select(select) = query else {
         unreachable!("the set-operation case is rejected above")
     };
-    run_select_stmt(select, catalog, current_db).map(|(_, rows)| rows)
+    run_select_stmt(select, catalog, current_db, ctx).map(|(_, rows)| rows)
 }
 
 /// Go turns a subquery's result `Datum` into an `expression.Constant`; the
@@ -2807,6 +2856,7 @@ fn build_from(
     node: &JoinNode,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
     match node {
         JoinNode::Table(table_ref) => {
@@ -2848,7 +2898,7 @@ fn build_from(
             };
             Ok((exec, scope))
         }
-        JoinNode::Join(join) => build_join(join, catalog, current_db),
+        JoinNode::Join(join) => build_join(join, catalog, current_db, ctx),
         JoinNode::Derived { .. } => Err(DriverError::Unsupported(
             "derived tables are not supported yet",
         )),
@@ -2860,8 +2910,9 @@ fn build_join(
     join: &tidb_ast::Join,
     catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
-    let (left_exec, left_scope) = build_from(&join.left, catalog, current_db)?;
+    let (left_exec, left_scope) = build_from(&join.left, catalog, current_db, ctx)?;
     let Some(right_node) = &join.right else {
         // The single-table wrapper the parser always produces.
         return Ok((left_exec, left_scope));
@@ -2871,7 +2922,7 @@ fn build_join(
             "NATURAL and USING joins are not supported yet",
         ));
     }
-    let (right_exec, right_scope) = build_from(right_node, catalog, current_db)?;
+    let (right_exec, right_scope) = build_from(right_node, catalog, current_db, ctx)?;
 
     // The joined scope: the right tables' columns follow the left's.
     let left_width = left_scope.width();
@@ -2910,7 +2961,12 @@ fn build_join(
         tidb_ast::JoinType::Right => JoinKind::Right,
     };
     let exec: Box<dyn Executor> = Box::new(JoinExec::new(
-        meta, kind, conditions, left_exec, right_exec, NoColumns,
+        meta,
+        kind,
+        conditions,
+        left_exec,
+        right_exec,
+        ctx.clone(),
     ));
     Ok((exec, scope))
 }
@@ -2967,8 +3023,12 @@ fn column_is_not_null(meta: &[(Option<Datum>, bool, String)], offset: usize) -> 
 /// `IGNORE`, `RETURNING`, generated and `ON UPDATE CURRENT_TIMESTAMP` columns,
 /// and the handle-changed path (a row whose primary-key handle column is
 /// assigned is deleted and re-inserted in Go; this seed rejects it).
-pub fn run_update_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverError> {
-    run_update_in(sql, catalog, DEFAULT_DATABASE)
+pub fn run_update_on(
+    sql: &str,
+    catalog: &mut Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<u64, DriverError> {
+    run_update_in(sql, catalog, DEFAULT_DATABASE, ctx)
 }
 
 /// [`run_update_on`] resolving unqualified names in `current_db`.
@@ -2976,6 +3036,7 @@ pub fn run_update_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let update = match &stmt {
@@ -3053,7 +3114,7 @@ pub fn run_update_in(
             let mut updates = Vec::new();
             for (index, row) in mem.rows.iter().enumerate() {
                 if let Some(new_row) =
-                    compute_updated_row(row, &field_types, &predicate, &set_exprs)?
+                    compute_updated_row(row, &field_types, &predicate, &set_exprs, ctx)?
                 {
                     updates.push((index, new_row));
                 }
@@ -3069,7 +3130,7 @@ pub fn run_update_in(
                 .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
             for (handle, row) in rows {
                 if let Some(new_row) =
-                    compute_updated_row(&row, &field_types, &predicate, &set_exprs)?
+                    compute_updated_row(&row, &field_types, &predicate, &set_exprs, ctx)?
                 {
                     kv.update_row(&handle, &new_row).map_err(|e| match e {
                         crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
@@ -3092,11 +3153,12 @@ fn compute_updated_row(
     field_types: &[FieldType],
     predicate: &Option<Expression>,
     set_exprs: &[(usize, Expression)],
+    ctx: &crate::StmtContext,
 ) -> Result<Option<Vec<Datum>>, DriverError> {
     let chunk = row_chunk(row, field_types)?;
     if let Some(predicate) = predicate {
         let selected = predicate
-            .eval(&NoColumns, chunk.get_row(0))
+            .eval(ctx, chunk.get_row(0))
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
         if !datum_is_true(&selected) {
             return Ok(None);
@@ -3108,7 +3170,7 @@ fn compute_updated_row(
         // assignments left it, so `SET a = 1, b = a` sees the new `a`.
         let source = row_chunk(&new_row, field_types)?;
         let value = expr
-            .eval(&NoColumns, source.get_row(0))
+            .eval(ctx, source.get_row(0))
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
         new_row[*offset] = value;
     }
@@ -3126,8 +3188,12 @@ fn compute_updated_row(
 ///
 /// DEFERRED (documented): multi-table DELETE, `ORDER BY`/`LIMIT` tails,
 /// `IGNORE`, and `RETURNING`.
-pub fn run_delete_on(sql: &str, catalog: &mut Catalog) -> Result<u64, DriverError> {
-    run_delete_in(sql, catalog, DEFAULT_DATABASE)
+pub fn run_delete_on(
+    sql: &str,
+    catalog: &mut Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<u64, DriverError> {
+    run_delete_in(sql, catalog, DEFAULT_DATABASE, ctx)
 }
 
 /// [`run_delete_on`] resolving unqualified names in `current_db`.
@@ -3135,6 +3201,7 @@ pub fn run_delete_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let delete = match &stmt {
@@ -3188,7 +3255,7 @@ pub fn run_delete_in(
         TableEntry::Mem(mem) => {
             let mut kept = Vec::with_capacity(mem.rows.len());
             for row in std::mem::take(&mut mem.rows) {
-                if row_is_selected(&row, &field_types, &predicate)? {
+                if row_is_selected(&row, &field_types, &predicate, ctx)? {
                     deleted += 1;
                 } else {
                     kept.push(row);
@@ -3201,7 +3268,7 @@ pub fn run_delete_in(
                 .scan_rows_with_handles()
                 .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
             for (handle, row) in rows {
-                if row_is_selected(&row, &field_types, &predicate)? {
+                if row_is_selected(&row, &field_types, &predicate, ctx)? {
                     kv.delete_row(&handle)
                         .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
                     deleted += 1;
@@ -3217,13 +3284,14 @@ fn row_is_selected(
     row: &[Datum],
     field_types: &[FieldType],
     predicate: &Option<Expression>,
+    ctx: &crate::StmtContext,
 ) -> Result<bool, DriverError> {
     let Some(predicate) = predicate else {
         return Ok(true);
     };
     let chunk = row_chunk(row, field_types)?;
     let selected = predicate
-        .eval(&NoColumns, chunk.get_row(0))
+        .eval(ctx, chunk.get_row(0))
         .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
     Ok(datum_is_true(&selected))
 }
@@ -3267,6 +3335,7 @@ fn run_aggregate_select(
     from_source: Option<Box<dyn Executor>>,
     resolver: &ScopeResolver<'_>,
     _catalog: &Catalog,
+    ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
     if select.rollup {
         return Err(DriverError::Unsupported("WITH ROLLUP is not supported yet"));
@@ -3401,7 +3470,7 @@ fn run_aggregate_select(
             ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
             vec![pred],
             source,
-            NoColumns,
+            ctx.clone(),
         ));
     }
 
@@ -3422,7 +3491,7 @@ fn run_aggregate_select(
         group_by,
         agg_funcs,
         source,
-        NoColumns,
+        ctx.clone(),
     ));
 
     // HAVING filters the aggregation's output rows (Go's Selection above the
@@ -3438,7 +3507,7 @@ fn run_aggregate_select(
             ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
             vec![predicate],
             root,
-            NoColumns,
+            ctx.clone(),
         ));
     }
     if !order_by_exprs.is_empty() {
@@ -3454,7 +3523,7 @@ fn run_aggregate_select(
             ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
             by_items,
             root,
-            NoColumns,
+            ctx.clone(),
         ));
     }
     if let Some(limit) = &select.limit {
@@ -3499,7 +3568,7 @@ fn run_aggregate_select(
             ),
             visible,
             root,
-            NoColumns,
+            ctx.clone(),
         ));
         names.truncate(visible_columns);
         types.truncate(visible_columns);
@@ -3519,7 +3588,7 @@ fn run_aggregate_select(
             })
             .collect();
         let schema = Schema::new(columns);
-        root = Box::new(distinct_over(root, &schema));
+        root = Box::new(distinct_over(root, &schema, ctx));
     }
 
     root.open()?;
@@ -3551,7 +3620,11 @@ fn run_aggregate_select(
 /// The hash aggregation emits groups in first-seen order, so a sort below it
 /// still orders the deduplicated rows -- the first row of each group is the
 /// one the sort put first.
-fn distinct_over(child: Box<dyn Executor>, schema: &Schema) -> HashAggExec<NoColumns> {
+fn distinct_over(
+    child: Box<dyn Executor>,
+    schema: &Schema,
+    ctx: &crate::StmtContext,
+) -> HashAggExec<crate::StmtContext> {
     let group_by: Vec<Expression> = schema
         .columns
         .iter()
@@ -3566,7 +3639,7 @@ fn distinct_over(child: Box<dyn Executor>, schema: &Schema) -> HashAggExec<NoCol
         group_by,
         agg_funcs,
         child,
-        NoColumns,
+        ctx.clone(),
     )
 }
 
@@ -3671,7 +3744,12 @@ mod tests {
         let catalog = test_catalog();
         // Column projection.
         assert_eq!(
-            run_select_on("SELECT a FROM t", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a FROM t",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![
                 vec![Datum::Int(1)],
                 vec![Datum::Int(2)],
@@ -3680,14 +3758,24 @@ mod tests {
         );
         // Wildcard, qualified column, and an expression over columns.
         assert_eq!(
-            run_select_on("SELECT * FROM t WHERE t.a > 1", &catalog).unwrap(),
+            run_select_on(
+                "SELECT * FROM t WHERE t.a > 1",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![
                 vec![Datum::Int(2), Datum::Int(20)],
                 vec![Datum::Int(3), Datum::Int(10)],
             ]
         );
         assert_eq!(
-            run_select_on("SELECT a + b FROM t WHERE a = 2", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a + b FROM t WHERE a = 2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(22)]]
         );
     }
@@ -3697,16 +3785,31 @@ mod tests {
         let mut catalog = test_catalog();
         // Full-row insert.
         assert_eq!(
-            run_insert_on("INSERT INTO t VALUES (4, 40), (5, 50)", &mut catalog).unwrap(),
+            run_insert_on(
+                "INSERT INTO t VALUES (4, 40), (5, 50)",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             2
         );
         // Column-list insert: unspecified column fills with NULL.
         assert_eq!(
-            run_insert_on("INSERT INTO t (a) VALUES (6)", &mut catalog).unwrap(),
+            run_insert_on(
+                "INSERT INTO t (a) VALUES (6)",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             1
         );
         assert_eq!(
-            run_select_on("SELECT a, b FROM t WHERE a > 3 ORDER BY a", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a, b FROM t WHERE a > 3 ORDER BY a",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![
                 vec![Datum::Int(4), Datum::Int(40)],
                 vec![Datum::Int(5), Datum::Int(50)],
@@ -3714,8 +3817,18 @@ mod tests {
             ]
         );
         // Arity mismatch and unknown table are rejected.
-        assert!(run_insert_on("INSERT INTO t (a) VALUES (1, 2)", &mut catalog).is_err());
-        assert!(run_insert_on("INSERT INTO missing VALUES (1)", &mut catalog).is_err());
+        assert!(run_insert_on(
+            "INSERT INTO t (a) VALUES (1, 2)",
+            &mut catalog,
+            &crate::StmtContext::for_query()
+        )
+        .is_err());
+        assert!(run_insert_on(
+            "INSERT INTO missing VALUES (1)",
+            &mut catalog,
+            &crate::StmtContext::for_query()
+        )
+        .is_err());
     }
 
     /// The deployment-ladder proof: INSERT and SELECT round-trip through a
@@ -3754,20 +3867,31 @@ mod tests {
         assert_eq!(
             run_insert_on(
                 "INSERT INTO kt VALUES (1, 10), (2, 20), (3, 30)",
-                &mut catalog
+                &mut catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             3
         );
         assert_eq!(
-            run_select_on("SELECT a, b FROM kt WHERE a > 1 ORDER BY b DESC", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a, b FROM kt WHERE a > 1 ORDER BY b DESC",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![
                 vec![Datum::Int(3), Datum::Int(30)],
                 vec![Datum::Int(2), Datum::Int(20)],
             ]
         );
         assert_eq!(
-            run_select_on("SELECT a + b FROM kt WHERE a = 1", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a + b FROM kt WHERE a = 1",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(11)]]
         );
     }
@@ -3777,14 +3901,20 @@ mod tests {
         let catalog = test_catalog();
         // Global aggregates: rows (1,30),(2,20),(3,10).
         assert_eq!(
-            run_select_on("SELECT COUNT(*), SUM(a) FROM t", &catalog).unwrap(),
+            run_select_on(
+                "SELECT COUNT(*), SUM(a) FROM t",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(3), Datum::Int(6)]]
         );
         // GROUP BY with a carried key column, WHERE below the agg.
         assert_eq!(
             run_select_on(
                 "SELECT a, COUNT(*) FROM t WHERE b >= 20 GROUP BY a",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![
@@ -3794,25 +3924,41 @@ mod tests {
         );
         // Empty-input rules through SQL: global agg over no rows -> one row.
         assert_eq!(
-            run_select_on("SELECT COUNT(a) FROM t WHERE a > 100", &catalog).unwrap(),
+            run_select_on(
+                "SELECT COUNT(a) FROM t WHERE a > 100",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(0)]]
         );
         assert_eq!(
             run_select_on(
                 "SELECT a, COUNT(*) FROM t WHERE a > 100 GROUP BY a",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             Vec::<Vec<Datum>>::new()
         );
         // MIN/MAX over the shared datum ordering.
         assert_eq!(
-            run_select_on("SELECT MIN(a), MAX(b) FROM t", &catalog).unwrap(),
+            run_select_on(
+                "SELECT MIN(a), MAX(b) FROM t",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(1), Datum::Int(30)]]
         );
         // AVG over integers is DECIMAL, scaled by div_precision_increment.
         assert_eq!(
-            run_select_on("SELECT AVG(a) FROM t", &catalog).unwrap(),
+            run_select_on(
+                "SELECT AVG(a) FROM t",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_literal(
                 "2.0000"
             ))]]
@@ -3822,7 +3968,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT COUNT(DISTINCT a), COUNT(DISTINCT 1) FROM t",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(3), Datum::Int(1)]]
@@ -3831,7 +3978,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT MIN(a), MAX(a), AVG(a) FROM t WHERE a > 100",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Null, Datum::Null, Datum::Null]]
@@ -3849,6 +3997,7 @@ mod tests {
         run_insert_on(
             "INSERT INTO g VALUES (1, 10), (1, 20), (2, 5), (3, 7), (3, 8)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
 
@@ -3856,7 +4005,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT a, COUNT(*) FROM g GROUP BY a HAVING COUNT(*) > 1",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![
@@ -3866,12 +4016,22 @@ mod tests {
         );
         // HAVING over an aggregate that is NOT selected: one output column.
         assert_eq!(
-            run_select_on("SELECT a FROM g GROUP BY a HAVING SUM(b) > 15", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a FROM g GROUP BY a HAVING SUM(b) > 15",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(1)]]
         );
         // ORDER BY an aggregate that is not selected, descending.
         assert_eq!(
-            run_select_on("SELECT a FROM g GROUP BY a ORDER BY SUM(b) DESC", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a FROM g GROUP BY a ORDER BY SUM(b) DESC",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![
                 vec![Datum::Int(1)],
                 vec![Datum::Int(3)],
@@ -3882,7 +4042,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT a, SUM(b) FROM g GROUP BY a HAVING COUNT(*) > 1 ORDER BY SUM(b) LIMIT 1",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(3), Datum::Int(15)]]
@@ -3891,7 +4052,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT a, SUM(b) AS total FROM g GROUP BY a ORDER BY total",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![
@@ -3903,12 +4065,22 @@ mod tests {
         // A grouped column that is not selected is still visible to HAVING
         // and ORDER BY (Go carries it as a hidden FIRST_ROW column).
         assert_eq!(
-            run_select_on("SELECT COUNT(*) FROM g GROUP BY a HAVING a > 1", &catalog).unwrap(),
+            run_select_on(
+                "SELECT COUNT(*) FROM g GROUP BY a HAVING a > 1",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
         );
         // A global aggregate's HAVING filters the single group.
         assert_eq!(
-            run_select_on("SELECT COUNT(*) FROM g HAVING COUNT(*) > 100", &catalog).unwrap(),
+            run_select_on(
+                "SELECT COUNT(*) FROM g HAVING COUNT(*) > 100",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             Vec::<Vec<Datum>>::new()
         );
     }
@@ -3938,17 +4110,28 @@ mod tests {
             run_insert_on(
                 "INSERT INTO w VALUES (1, 10), (2, 20), (3, 30)",
                 &mut catalog,
+                &crate::StmtContext::for_query(),
             )
             .unwrap();
 
             // WHERE-selected update, counting only changed rows.
             assert_eq!(
-                run_update_on("UPDATE w SET b = b + 1 WHERE a >= 2", &mut catalog).unwrap(),
+                run_update_on(
+                    "UPDATE w SET b = b + 1 WHERE a >= 2",
+                    &mut catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 2,
                 "kv={kv}"
             );
             assert_eq!(
-                run_select_on("SELECT a, b FROM w", &catalog).unwrap(),
+                run_select_on(
+                    "SELECT a, b FROM w",
+                    &catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 vec![
                     vec![Datum::Int(1), Datum::Int(10)],
                     vec![Datum::Int(2), Datum::Int(21)],
@@ -3959,38 +4142,68 @@ mod tests {
 
             // A no-op update matches rows but changes none: MySQL reports 0.
             assert_eq!(
-                run_update_on("UPDATE w SET b = b WHERE a = 1", &mut catalog).unwrap(),
+                run_update_on(
+                    "UPDATE w SET b = b WHERE a = 1",
+                    &mut catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 0,
                 "kv={kv}"
             );
 
             // Later assignments see earlier ones, as in Go's composeNewRow.
             assert_eq!(
-                run_update_on("UPDATE w SET a = 7, b = a WHERE a = 1", &mut catalog).unwrap(),
+                run_update_on(
+                    "UPDATE w SET a = 7, b = a WHERE a = 1",
+                    &mut catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 1,
                 "kv={kv}"
             );
             assert_eq!(
-                run_select_on("SELECT a, b FROM w WHERE a = 7", &catalog).unwrap(),
+                run_select_on(
+                    "SELECT a, b FROM w WHERE a = 7",
+                    &catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 vec![vec![Datum::Int(7), Datum::Int(7)]],
                 "kv={kv}"
             );
 
             // A WHERE-less UPDATE touches every row.
             assert_eq!(
-                run_update_on("UPDATE w SET b = 0", &mut catalog).unwrap(),
+                run_update_on(
+                    "UPDATE w SET b = 0",
+                    &mut catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 3,
                 "kv={kv}"
             );
 
             // DELETE removes the selected rows and reports their count.
             assert_eq!(
-                run_delete_on("DELETE FROM w WHERE a >= 3", &mut catalog).unwrap(),
+                run_delete_on(
+                    "DELETE FROM w WHERE a >= 3",
+                    &mut catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 2,
                 "kv={kv}"
             );
             assert_eq!(
-                run_select_on("SELECT a FROM w", &catalog).unwrap(),
+                run_select_on(
+                    "SELECT a FROM w",
+                    &catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 vec![vec![Datum::Int(2)]],
                 "kv={kv}"
             );
@@ -3998,26 +4211,61 @@ mod tests {
             // A WHERE-less DELETE empties the table, and re-inserting works
             // after it (the store is genuinely empty, not just filtered).
             assert_eq!(
-                run_delete_on("DELETE FROM w", &mut catalog).unwrap(),
+                run_delete_on(
+                    "DELETE FROM w",
+                    &mut catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 1,
                 "kv={kv}"
             );
             assert_eq!(
-                run_select_on("SELECT a FROM w", &catalog).unwrap(),
+                run_select_on(
+                    "SELECT a FROM w",
+                    &catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 Vec::<Vec<Datum>>::new(),
                 "kv={kv}"
             );
-            run_insert_on("INSERT INTO w VALUES (9, 9)", &mut catalog).unwrap();
+            run_insert_on(
+                "INSERT INTO w VALUES (9, 9)",
+                &mut catalog,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
             assert_eq!(
-                run_select_on("SELECT a FROM w", &catalog).unwrap(),
+                run_select_on(
+                    "SELECT a FROM w",
+                    &catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 vec![vec![Datum::Int(9)]],
                 "kv={kv}"
             );
 
             // Unsupported shapes fail closed.
-            assert!(run_update_on("UPDATE w SET a = 1 LIMIT 1", &mut catalog).is_err());
-            assert!(run_delete_on("DELETE FROM w ORDER BY a LIMIT 1", &mut catalog).is_err());
-            assert!(run_update_on("UPDATE w SET zzz = 1", &mut catalog).is_err());
+            assert!(run_update_on(
+                "UPDATE w SET a = 1 LIMIT 1",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            )
+            .is_err());
+            assert!(run_delete_on(
+                "DELETE FROM w ORDER BY a LIMIT 1",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            )
+            .is_err());
+            assert!(run_update_on(
+                "UPDATE w SET zzz = 1",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            )
+            .is_err());
         }
     }
 
@@ -4032,11 +4280,13 @@ mod tests {
         run_insert_on(
             "INSERT INTO l VALUES (1, 10), (2, 20), (3, 30)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
         run_insert_on(
             "INSERT INTO r VALUES (1, 100), (3, 300), (3, 301)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
 
@@ -4044,7 +4294,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT l.id, l.v, r.w FROM l JOIN r ON l.id = r.id",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![
@@ -4058,7 +4309,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT l.id, r.w FROM l LEFT JOIN r ON l.id = r.id",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![
@@ -4073,7 +4325,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT l.id FROM l LEFT JOIN r ON l.id = r.id WHERE r.id IS NULL",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(2)]]
@@ -4082,7 +4335,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT l.id, r.w FROM l LEFT JOIN r ON l.id = r.id AND r.w > 200",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![
@@ -4097,7 +4351,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT l.v, r.id FROM l RIGHT JOIN r ON l.id = r.id AND l.v > 100",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![
@@ -4109,37 +4364,58 @@ mod tests {
 
         // A comma join with no ON is a Cartesian product.
         assert_eq!(
-            run_select_on("SELECT l.id FROM l, r", &catalog)
-                .unwrap()
-                .len(),
+            run_select_on(
+                "SELECT l.id FROM l, r",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .len(),
             9
         );
 
         // `*` expands across both tables in FROM order; `t.*` over one.
         assert_eq!(
-            run_select_on("SELECT * FROM l JOIN r ON l.id = r.id", &catalog)
-                .unwrap()
-                .first()
-                .unwrap()
-                .len(),
+            run_select_on(
+                "SELECT * FROM l JOIN r ON l.id = r.id",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .first()
+            .unwrap()
+            .len(),
             4
         );
         assert_eq!(
-            run_select_on("SELECT r.* FROM l JOIN r ON l.id = r.id", &catalog)
-                .unwrap()
-                .first()
-                .unwrap()
-                .len(),
+            run_select_on(
+                "SELECT r.* FROM l JOIN r ON l.id = r.id",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .first()
+            .unwrap()
+            .len(),
             2
         );
 
         // An unqualified column present in both tables is ambiguous, as in
         // MySQL; one present in only one table resolves.
-        assert!(run_select_on("SELECT id FROM l JOIN r ON l.id = r.id", &catalog).is_err());
+        assert!(run_select_on(
+            "SELECT id FROM l JOIN r ON l.id = r.id",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .is_err());
         assert_eq!(
-            run_select_on("SELECT v, w FROM l JOIN r ON l.id = r.id", &catalog)
-                .unwrap()
-                .len(),
+            run_select_on(
+                "SELECT v, w FROM l JOIN r ON l.id = r.id",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .len(),
             3
         );
 
@@ -4147,7 +4423,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT a.id FROM l AS a JOIN r AS b ON a.id = b.id",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap()
             .len(),
@@ -4156,19 +4433,35 @@ mod tests {
 
         // A three-table left-deep chain, and an aggregate over a join.
         crate::run_create_table_on("CREATE TABLE m (id BIGINT)", &mut catalog).unwrap();
-        run_insert_on("INSERT INTO m VALUES (3)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO m VALUES (3)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(
             run_select_on(
                 "SELECT COUNT(*) FROM l JOIN r ON l.id = r.id JOIN m ON m.id = r.id",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(2)]]
         );
 
         // Unsupported join shapes fail closed.
-        assert!(run_select_on("SELECT * FROM l NATURAL JOIN r", &catalog).is_err());
-        assert!(run_select_on("SELECT * FROM l JOIN r USING (id)", &catalog).is_err());
+        assert!(run_select_on(
+            "SELECT * FROM l NATURAL JOIN r",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .is_err());
+        assert!(run_select_on(
+            "SELECT * FROM l JOIN r USING (id)",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .is_err());
     }
 
     /// Uncorrelated subqueries are evaluated and folded into literals, the way
@@ -4181,45 +4474,81 @@ mod tests {
         run_insert_on(
             "INSERT INTO s VALUES (1, 10), (2, 20), (3, 30)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
-        run_insert_on("INSERT INTO u VALUES (2), (3)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO u VALUES (2), (3)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
 
         // A scalar subquery in the select list and in a predicate.
         assert_eq!(
-            run_select_on("SELECT (SELECT MAX(b) FROM s)", &catalog).unwrap(),
+            run_select_on(
+                "SELECT (SELECT MAX(b) FROM s)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(30)]]
         );
         assert_eq!(
-            run_select_on("SELECT a FROM s WHERE b = (SELECT MAX(b) FROM s)", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a FROM s WHERE b = (SELECT MAX(b) FROM s)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(3)]]
         );
 
         // No rows is NULL, as Go's buildMaxOneRow leaves it.
         assert_eq!(
-            run_select_on("SELECT (SELECT a FROM s WHERE a > 100)", &catalog).unwrap(),
+            run_select_on(
+                "SELECT (SELECT a FROM s WHERE a > 100)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Null]]
         );
         // More than one row is Go's ER_SUBQUERY_NO_1_ROW.
         assert!(matches!(
-            run_select_on("SELECT (SELECT a FROM s)", &catalog),
+            run_select_on(
+                "SELECT (SELECT a FROM s)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            ),
             Err(DriverError::SubqueryReturnsMoreThanOneRow)
         ));
 
         // IN / NOT IN over a subquery.
         assert_eq!(
-            run_select_on("SELECT a FROM s WHERE a IN (SELECT a FROM u)", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a FROM s WHERE a IN (SELECT a FROM u)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(2)], vec![Datum::Int(3)]]
         );
         assert_eq!(
-            run_select_on("SELECT a FROM s WHERE a NOT IN (SELECT a FROM u)", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a FROM s WHERE a NOT IN (SELECT a FROM u)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(1)]]
         );
         // An empty IN subquery matches nothing, and NOT IN over it matches all.
         assert_eq!(
             run_select_on(
                 "SELECT a FROM s WHERE a IN (SELECT a FROM u WHERE a > 100)",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             Vec::<Vec<Datum>>::new()
@@ -4227,7 +4556,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT a FROM s WHERE a NOT IN (SELECT a FROM u WHERE a > 100)",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap()
             .len(),
@@ -4236,15 +4566,20 @@ mod tests {
 
         // EXISTS / NOT EXISTS fold to 1 / 0.
         assert_eq!(
-            run_select_on("SELECT a FROM s WHERE EXISTS (SELECT 1 FROM u)", &catalog)
-                .unwrap()
-                .len(),
+            run_select_on(
+                "SELECT a FROM s WHERE EXISTS (SELECT 1 FROM u)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .len(),
             3
         );
         assert_eq!(
             run_select_on(
                 "SELECT a FROM s WHERE NOT EXISTS (SELECT 1 FROM u)",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             Vec::<Vec<Datum>>::new()
@@ -4254,7 +4589,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT a FROM s GROUP BY a HAVING SUM(b) > (SELECT MIN(b) FROM s)",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(2)], vec![Datum::Int(3)]]
@@ -4262,9 +4598,12 @@ mod tests {
 
         // A CORRELATED subquery runs through Apply (see the apply tests).
         // ANY/ALL comparison subqueries are not supported yet.
-        assert!(
-            run_select_on("SELECT a FROM s WHERE a > ANY (SELECT a FROM u)", &catalog).is_err()
-        );
+        assert!(run_select_on(
+            "SELECT a FROM s WHERE a > ANY (SELECT a FROM u)",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .is_err());
     }
 
     /// A correlated subquery becomes an Apply: the inner query re-runs once
@@ -4278,11 +4617,13 @@ mod tests {
         run_insert_on(
             "INSERT INTO o VALUES (1, 10), (2, 20), (3, 30)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
         run_insert_on(
             "INSERT INTO i VALUES (1, 10), (2, 5), (2, 25), (4, 40)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
 
@@ -4290,7 +4631,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT id FROM o WHERE v = (SELECT MAX(w) FROM i WHERE i.id = o.id)",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(1)]]
@@ -4300,7 +4642,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT id FROM o WHERE v < (SELECT MAX(w) FROM i WHERE i.id = o.id)",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(2)]]
@@ -4311,7 +4654,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT id FROM o WHERE (SELECT MAX(w) FROM i WHERE i.id = o.id) IS NULL",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(3)]]
@@ -4321,7 +4665,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT id FROM o WHERE EXISTS (SELECT 1 FROM i WHERE i.id = o.id)",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
@@ -4329,7 +4674,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT id FROM o WHERE NOT EXISTS (SELECT 1 FROM i WHERE i.id = o.id)",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(3)]]
@@ -4339,7 +4685,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "SELECT id FROM o WHERE EXISTS (SELECT 1 FROM i WHERE i.w = v)",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(1)]]
@@ -4349,7 +4696,8 @@ mod tests {
         assert!(matches!(
             run_select_on(
                 "SELECT id FROM o WHERE v = (SELECT w FROM i WHERE i.id = o.id)",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             ),
             Err(DriverError::Exec(ExecError::Unsupported(_)))
         ));
@@ -4357,7 +4705,8 @@ mod tests {
         // Correlated IN and ANY/ALL are still the deferred semi-join shapes.
         assert!(run_select_on(
             "SELECT id FROM o WHERE v IN (SELECT w FROM i WHERE i.id = o.id)",
-            &catalog
+            &catalog,
+            &crate::StmtContext::for_query()
         )
         .is_err());
     }
@@ -4374,13 +4723,28 @@ mod tests {
         ] {
             let mut catalog = Catalog::default();
             crate::run_create_table_on(ddl, &mut catalog).unwrap();
-            run_insert_on("INSERT INTO p VALUES (10, 100), (20, 200)", &mut catalog).unwrap();
+            run_insert_on(
+                "INSERT INTO p VALUES (10, 100), (20, 200)",
+                &mut catalog,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
 
             // The rows come back in handle order, which is the key's order --
             // not insertion order, because the handle IS the primary key.
-            run_insert_on("INSERT INTO p VALUES (5, 50)", &mut catalog).unwrap();
+            run_insert_on(
+                "INSERT INTO p VALUES (5, 50)",
+                &mut catalog,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
             assert_eq!(
-                run_select_on("SELECT id FROM p", &catalog).unwrap(),
+                run_select_on(
+                    "SELECT id FROM p",
+                    &catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 vec![
                     vec![Datum::Int(5)],
                     vec![Datum::Int(10)],
@@ -4392,21 +4756,41 @@ mod tests {
             // A repeated key is Go's ErrDupEntry.
             assert!(
                 matches!(
-                    run_insert_on("INSERT INTO p VALUES (10, 999)", &mut catalog),
+                    run_insert_on(
+                        "INSERT INTO p VALUES (10, 999)",
+                        &mut catalog,
+                        &crate::StmtContext::for_query()
+                    ),
                     Err(DriverError::DuplicateEntry { .. })
                 ),
                 "{ddl}"
             );
             // The failed insert left the original row untouched.
             assert_eq!(
-                run_select_on("SELECT v FROM p WHERE id = 10", &catalog).unwrap(),
+                run_select_on(
+                    "SELECT v FROM p WHERE id = 10",
+                    &catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap(),
                 vec![vec![Datum::Int(100)]],
                 "{ddl}"
             );
             // A negative key works too: the key codec sign-flips handles.
-            run_insert_on("INSERT INTO p VALUES (-1, 1)", &mut catalog).unwrap();
+            run_insert_on(
+                "INSERT INTO p VALUES (-1, 1)",
+                &mut catalog,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
             assert_eq!(
-                run_select_on("SELECT id FROM p", &catalog).unwrap().len(),
+                run_select_on(
+                    "SELECT id FROM p",
+                    &catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap()
+                .len(),
                 4,
                 "{ddl}"
             );
@@ -4419,8 +4803,22 @@ mod tests {
     fn without_a_primary_key_rows_repeat_freely() {
         let mut catalog = Catalog::default();
         crate::run_create_table_on("CREATE TABLE h (a BIGINT)", &mut catalog).unwrap();
-        run_insert_on("INSERT INTO h VALUES (1), (1), (1)", &mut catalog).unwrap();
-        assert_eq!(run_select_on("SELECT a FROM h", &catalog).unwrap().len(), 3);
+        run_insert_on(
+            "INSERT INTO h VALUES (1), (1), (1)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        assert_eq!(
+            run_select_on(
+                "SELECT a FROM h",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .len(),
+            3
+        );
     }
 
     /// Constraint shapes that need tiers this seed lacks are rejected rather
@@ -4449,11 +4847,29 @@ mod tests {
         let mut catalog = Catalog::default();
         crate::run_create_table_on("CREATE TABLE s (k VARCHAR(10) PRIMARY KEY)", &mut catalog)
             .unwrap();
-        run_insert_on("INSERT INTO s VALUES ('a'), ('b')", &mut catalog).unwrap();
-        assert_eq!(run_select_on("SELECT k FROM s", &catalog).unwrap().len(), 2);
+        run_insert_on(
+            "INSERT INTO s VALUES ('a'), ('b')",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        assert_eq!(
+            run_select_on(
+                "SELECT k FROM s",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .len(),
+            2
+        );
         // The duplicate is now caught by the index, as in real TiDB.
         assert!(matches!(
-            run_insert_on("INSERT INTO s VALUES ('a')", &mut catalog),
+            run_insert_on(
+                "INSERT INTO s VALUES ('a')",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            ),
             Err(DriverError::DuplicateEntry { .. })
         ));
     }
@@ -4482,11 +4898,16 @@ mod tests {
         run_insert_on(
             "INSERT INTO u VALUES (1, 'a@x', 10), (2, 'b@x', 20)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
 
         // A repeated unique value is rejected, naming the index.
-        match run_insert_on("INSERT INTO u VALUES (3, 'a@x', 30)", &mut catalog) {
+        match run_insert_on(
+            "INSERT INTO u VALUES (3, 'a@x', 30)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        ) {
             Err(DriverError::DuplicateEntry { value, key }) => {
                 assert_eq!(value, "a@x");
                 // Captured from TiDB: the key is qualified table.index, as in
@@ -4497,34 +4918,85 @@ mod tests {
         }
         // The rejected insert wrote nothing.
         assert_eq!(
-            run_select_on("SELECT id FROM u", &catalog).unwrap().len(),
+            run_select_on(
+                "SELECT id FROM u",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .len(),
             2
         );
 
         // UPDATE is checked too, and a rejected update leaves the row alone.
         assert!(matches!(
-            run_update_on("UPDATE u SET email = 'a@x' WHERE id = 2", &mut catalog),
+            run_update_on(
+                "UPDATE u SET email = 'a@x' WHERE id = 2",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            ),
             Err(DriverError::DuplicateEntry { .. })
         ));
         assert_eq!(
             datum_text_for_test(
-                &run_select_on("SELECT email FROM u WHERE id = 2", &catalog).unwrap()[0][0]
+                &run_select_on(
+                    "SELECT email FROM u WHERE id = 2",
+                    &catalog,
+                    &crate::StmtContext::for_query()
+                )
+                .unwrap()[0][0]
             ),
             "b@x"
         );
         // An update that frees a value lets another row take it.
-        run_update_on("UPDATE u SET email = 'c@x' WHERE id = 1", &mut catalog).unwrap();
-        run_insert_on("INSERT INTO u VALUES (4, 'a@x', 40)", &mut catalog).unwrap();
+        run_update_on(
+            "UPDATE u SET email = 'c@x' WHERE id = 1",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO u VALUES (4, 'a@x', 40)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
 
         // DELETE frees the value as well.
-        run_delete_on("DELETE FROM u WHERE id = 4", &mut catalog).unwrap();
-        run_insert_on("INSERT INTO u VALUES (5, 'a@x', 50)", &mut catalog).unwrap();
+        run_delete_on(
+            "DELETE FROM u WHERE id = 4",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO u VALUES (5, 'a@x', 50)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
 
         // MySQL permits many NULLs in a unique index.
-        run_insert_on("INSERT INTO u VALUES (6, NULL, 60)", &mut catalog).unwrap();
-        run_insert_on("INSERT INTO u VALUES (7, NULL, 70)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO u VALUES (6, NULL, 60)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO u VALUES (7, NULL, 70)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(
-            run_select_on("SELECT id FROM u", &catalog).unwrap().len(),
+            run_select_on(
+                "SELECT id FROM u",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .len(),
             5
         );
     }
@@ -4542,10 +5014,17 @@ mod tests {
         run_insert_on(
             "INSERT INTO n VALUES (1, 'x'), (2, 'x'), (3, 'y')",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
         assert_eq!(
-            run_select_on("SELECT id FROM n", &catalog).unwrap().len(),
+            run_select_on(
+                "SELECT id FROM n",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .len(),
             3
         );
     }
@@ -4560,7 +5039,12 @@ mod tests {
             &mut catalog,
         )
         .unwrap();
-        run_insert_on("INSERT INTO k VALUES (7, 'abc'), (8, 'def')", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO k VALUES (7, 'abc'), (8, 'def')",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
 
         let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("k") else {
             panic!("expected a kv table");
@@ -4602,26 +5086,47 @@ mod tests {
         run_insert_on(
             "INSERT INTO g VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
 
         // Handle point get.
         assert_eq!(
-            run_select_on("SELECT v FROM g WHERE id = 2", &catalog).unwrap(),
+            run_select_on(
+                "SELECT v FROM g WHERE id = 2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(20)]]
         );
         // A handle that does not exist reads nothing.
         assert_eq!(
-            run_select_on("SELECT v FROM g WHERE id = 99", &catalog).unwrap(),
+            run_select_on(
+                "SELECT v FROM g WHERE id = 99",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             Vec::<Vec<Datum>>::new()
         );
         // Unique-index point get, through the entry's stored handle.
         assert_eq!(
-            run_select_on("SELECT id FROM g WHERE code = 'c'", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id FROM g WHERE code = 'c'",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(3)]]
         );
         assert_eq!(
-            run_select_on("SELECT id FROM g WHERE code = 'zz'", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id FROM g WHERE code = 'zz'",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             Vec::<Vec<Datum>>::new()
         );
 
@@ -4629,61 +5134,126 @@ mod tests {
         // filters: the point get narrows the source, it does not replace the
         // filter.
         assert_eq!(
-            run_select_on("SELECT id FROM g WHERE id = 2 AND v = 20", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id FROM g WHERE id = 2 AND v = 20",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(2)]]
         );
         assert_eq!(
-            run_select_on("SELECT id FROM g WHERE id = 2 AND v = 999", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id FROM g WHERE id = 2 AND v = 999",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             Vec::<Vec<Datum>>::new()
         );
 
         // Shapes that do not qualify fall back to the scan and stay correct.
         assert_eq!(
-            run_select_on("SELECT id FROM g WHERE v = 30", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id FROM g WHERE v = 30",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(3)]],
             "a non-key column is not a point get"
         );
         assert_eq!(
-            run_select_on("SELECT id FROM g WHERE id > 1 ORDER BY id", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id FROM g WHERE id > 1 ORDER BY id",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(2)], vec![Datum::Int(3)]],
             "a range is not a point get"
         );
         assert_eq!(
-            run_select_on("SELECT id FROM g WHERE id = 1 OR id = 3", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id FROM g WHERE id = 1 OR id = 3",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(1)], vec![Datum::Int(3)]],
             "Go recurses only through AND, so OR is not a point get"
         );
         // Go rejects the fast plan when ORDER BY or HAVING is present, or when
         // LIMIT could remove the row; the answers stay right either way.
         assert_eq!(
-            run_select_on("SELECT id FROM g WHERE id = 2 LIMIT 1 OFFSET 1", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id FROM g WHERE id = 2 LIMIT 1 OFFSET 1",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             Vec::<Vec<Datum>>::new()
         );
         assert_eq!(
-            run_select_on("SELECT id FROM g WHERE id = 2 ORDER BY id", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id FROM g WHERE id = 2 ORDER BY id",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(2)]]
         );
 
         // A non-integer constant cannot name an integer handle: no row, not a
         // wrong row.
         assert_eq!(
-            run_select_on("SELECT id FROM g WHERE id = 'x'", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id FROM g WHERE id = 'x'",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             Vec::<Vec<Datum>>::new()
         );
 
         // A point get sees writes, including the row a DELETE removed.
-        run_update_on("UPDATE g SET v = 99 WHERE id = 2", &mut catalog).unwrap();
+        run_update_on(
+            "UPDATE g SET v = 99 WHERE id = 2",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(
-            run_select_on("SELECT v FROM g WHERE id = 2", &catalog).unwrap(),
+            run_select_on(
+                "SELECT v FROM g WHERE id = 2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(99)]]
         );
-        run_delete_on("DELETE FROM g WHERE id = 2", &mut catalog).unwrap();
+        run_delete_on(
+            "DELETE FROM g WHERE id = 2",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(
-            run_select_on("SELECT v FROM g WHERE id = 2", &catalog).unwrap(),
+            run_select_on(
+                "SELECT v FROM g WHERE id = 2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             Vec::<Vec<Datum>>::new()
         );
         assert_eq!(
-            run_select_on("SELECT id FROM g WHERE code = 'b'", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id FROM g WHERE code = 'b'",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             Vec::<Vec<Datum>>::new(),
             "the deleted row's index entry is gone too"
         );
@@ -4700,7 +5270,12 @@ mod tests {
             &mut catalog,
         )
         .unwrap();
-        run_insert_on("INSERT INTO d VALUES (1, 'a', 10)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO d VALUES (1, 'a', 10)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("d") else {
             panic!("expected a kv table");
         };
@@ -4777,11 +5352,12 @@ mod tests {
         run_insert_on(
             "INSERT INTO r VALUES (1, 10), (2, 20), (3, 30), (4, 20), (5, NULL)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
 
         let ids = |sql: &str, catalog: &Catalog| {
-            let mut got: Vec<i64> = run_select_on(sql, catalog)
+            let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query())
                 .unwrap()
                 .into_iter()
                 .map(|row| match row[0] {
@@ -4849,9 +5425,19 @@ mod tests {
 
         // Writes are visible to a later range scan, including through the
         // index entries a DELETE removed.
-        run_update_on("UPDATE r SET score = 99 WHERE id = 1", &mut catalog).unwrap();
+        run_update_on(
+            "UPDATE r SET score = 99 WHERE id = 1",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(ids("SELECT id FROM r WHERE score > 50", &catalog), vec![1]);
-        run_delete_on("DELETE FROM r WHERE id = 1", &mut catalog).unwrap();
+        run_delete_on(
+            "DELETE FROM r WHERE id = 1",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(
             ids("SELECT id FROM r WHERE score > 50", &catalog),
             Vec::<i64>::new()
@@ -4872,13 +5458,18 @@ mod tests {
         run_insert_on(
             "INSERT INTO u2 VALUES (1, 100), (2, 200), (3, 300), (4, NULL)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
-        let mut ids: Vec<Datum> = run_select_on("SELECT id FROM u2 WHERE code >= 200", &catalog)
-            .unwrap()
-            .into_iter()
-            .map(|row| row[0].clone())
-            .collect();
+        let mut ids: Vec<Datum> = run_select_on(
+            "SELECT id FROM u2 WHERE code >= 200",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap()
+        .into_iter()
+        .map(|row| row[0].clone())
+        .collect();
         ids.sort_by_key(|value| match value {
             Datum::Int(v) => *v,
             other => panic!("expected an int, got {other:?}"),
@@ -4886,7 +5477,12 @@ mod tests {
         assert_eq!(ids, vec![Datum::Int(2), Datum::Int(3)]);
         // The NULL row is reachable, just never through a comparison.
         assert_eq!(
-            run_select_on("SELECT id FROM u2 WHERE code IS NULL", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id FROM u2 WHERE code IS NULL",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(4)]]
         );
     }
@@ -4989,33 +5585,54 @@ mod tests {
 
         // Omitted columns take their defaults; a nullable one with no DEFAULT
         // is NULL.
-        run_insert_on("INSERT INTO d (id, n) VALUES (1, 5)", &mut catalog).unwrap();
-        let row = &run_select_on("SELECT w, s, plain FROM d WHERE id = 1", &catalog).unwrap()[0];
+        run_insert_on(
+            "INSERT INTO d (id, n) VALUES (1, 5)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        let row = &run_select_on(
+            "SELECT w, s, plain FROM d WHERE id = 1",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap()[0];
         assert_eq!(row[0], Datum::Int(7));
         assert_eq!(datum_text_for_test(&row[1]), "zz");
         assert_eq!(row[2], Datum::Null);
 
         // An explicit value overrides the default.
-        run_insert_on("INSERT INTO d (id, n, w) VALUES (2, 5, 100)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO d (id, n, w) VALUES (2, 5, 100)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(
-            run_select_on("SELECT w FROM d WHERE id = 2", &catalog).unwrap(),
+            run_select_on(
+                "SELECT w FROM d WHERE id = 2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(100)]]
         );
 
         // An omitted NOT NULL column with no default is 1364.
         assert!(matches!(
-            run_insert_on("INSERT INTO d (id) VALUES (3)", &mut catalog),
+            run_insert_on("INSERT INTO d (id) VALUES (3)", &mut catalog, &crate::StmtContext::for_query()),
             Err(DriverError::NoDefaultForField(name)) if name == "n"
         ));
         // An explicit NULL into that column is the other error, 1048.
         assert!(matches!(
-            run_insert_on("INSERT INTO d (id, n) VALUES (3, NULL)", &mut catalog),
+            run_insert_on("INSERT INTO d (id, n) VALUES (3, NULL)", &mut catalog, &crate::StmtContext::for_query()),
             Err(DriverError::ColumnCannotBeNull(name)) if name == "n"
         ));
         // A NULL into a nullable column is fine.
         run_insert_on(
             "INSERT INTO d (id, n, plain) VALUES (3, 5, NULL)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
 
@@ -5026,15 +5643,29 @@ mod tests {
             &mut catalog,
         )
         .unwrap();
-        run_insert_on("INSERT INTO e (id) VALUES (1)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO e (id) VALUES (1)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(
-            run_select_on("SELECT v FROM e", &catalog).unwrap(),
+            run_select_on(
+                "SELECT v FROM e",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Null]]
         );
 
         // A primary key is NOT NULL, so omitting it is 1364 as well.
         assert!(matches!(
-            run_insert_on("INSERT INTO e (v) VALUES (1)", &mut catalog),
+            run_insert_on(
+                "INSERT INTO e (v) VALUES (1)",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            ),
             Err(DriverError::NoDefaultForField(_))
         ));
 
@@ -5042,11 +5673,26 @@ mod tests {
         // never the missing-default case (see the auto_increment test).
         crate::run_create_table_on("CREATE TABLE f (a BIGINT AUTO_INCREMENT)", &mut catalog)
             .unwrap();
-        run_insert_on("INSERT INTO f () VALUES ()", &mut catalog)
-            .or_else(|_| run_insert_on("INSERT INTO f VALUES (NULL)", &mut catalog))
-            .unwrap();
+        run_insert_on(
+            "INSERT INTO f () VALUES ()",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .or_else(|_| {
+            run_insert_on(
+                "INSERT INTO f VALUES (NULL)",
+                &mut catalog,
+                &crate::StmtContext::for_query(),
+            )
+        })
+        .unwrap();
         assert_eq!(
-            run_select_on("SELECT a FROM f", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a FROM f",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(1)]]
         );
         // A generated column is still rejected rather than ignored.
@@ -5072,39 +5718,82 @@ mod tests {
         run_insert_on(
             "INSERT INTO c VALUES ('b', 2), ('a', 1), ('c', 3)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
 
         // Key order, not insertion order -- the key IS the primary key.
         assert_eq!(
-            run_select_on("SELECT k, v FROM c", &catalog)
-                .unwrap()
-                .into_iter()
-                .map(|row| datum_text_for_test(&row[0]))
-                .collect::<Vec<_>>(),
+            run_select_on(
+                "SELECT k, v FROM c",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .into_iter()
+            .map(|row| datum_text_for_test(&row[0]))
+            .collect::<Vec<_>>(),
             vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]
         );
         // The key column round-trips even though the value omits it.
         assert_eq!(
-            run_select_on("SELECT v FROM c WHERE k = 'b'", &catalog).unwrap(),
+            run_select_on(
+                "SELECT v FROM c WHERE k = 'b'",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(2)]]
         );
         // A repeated key is a duplicate.
         assert!(matches!(
-            run_insert_on("INSERT INTO c VALUES ('a', 9)", &mut catalog),
+            run_insert_on(
+                "INSERT INTO c VALUES ('a', 9)",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            ),
             Err(DriverError::DuplicateEntry { .. })
         ));
 
         // Writes address the row through its clustered key.
-        run_update_on("UPDATE c SET v = 20 WHERE k = 'b'", &mut catalog).unwrap();
+        run_update_on(
+            "UPDATE c SET v = 20 WHERE k = 'b'",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(
-            run_select_on("SELECT v FROM c WHERE k = 'b'", &catalog).unwrap(),
+            run_select_on(
+                "SELECT v FROM c WHERE k = 'b'",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(20)]]
         );
-        run_delete_on("DELETE FROM c WHERE k = 'a'", &mut catalog).unwrap();
-        assert_eq!(run_select_on("SELECT k FROM c", &catalog).unwrap().len(), 2);
+        run_delete_on(
+            "DELETE FROM c WHERE k = 'a'",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        assert_eq!(
+            run_select_on(
+                "SELECT k FROM c",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .len(),
+            2
+        );
         // The freed key can be inserted again.
-        run_insert_on("INSERT INTO c VALUES ('a', 1)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO c VALUES ('a', 1)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
 
         // A multi-column primary key is a clustered common handle too.
         crate::run_create_table_on(
@@ -5115,14 +5804,19 @@ mod tests {
         run_insert_on(
             "INSERT INTO m VALUES (1, 'y', 10), (1, 'x', 20), (2, 'a', 30)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
         assert_eq!(
-            run_select_on("SELECT a, b FROM m", &catalog)
-                .unwrap()
-                .into_iter()
-                .map(|row| format!("{:?}/{}", row[0], datum_text_for_test(&row[1])))
-                .collect::<Vec<_>>(),
+            run_select_on(
+                "SELECT a, b FROM m",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .into_iter()
+            .map(|row| format!("{:?}/{}", row[0], datum_text_for_test(&row[1])))
+            .collect::<Vec<_>>(),
             vec![
                 "Int(1)/x".to_owned(),
                 "Int(1)/y".to_owned(),
@@ -5131,10 +5825,19 @@ mod tests {
         );
         // Only the whole key must be unique; a repeated leading column is fine.
         assert!(matches!(
-            run_insert_on("INSERT INTO m VALUES (1, 'x', 99)", &mut catalog),
+            run_insert_on(
+                "INSERT INTO m VALUES (1, 'x', 99)",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            ),
             Err(DriverError::DuplicateEntry { .. })
         ));
-        run_insert_on("INSERT INTO m VALUES (1, 'z', 40)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO m VALUES (1, 'z', 40)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
 
         // A secondary index over a clustered table stores the common handle
         // and still resolves to its row.
@@ -5143,13 +5846,22 @@ mod tests {
             &mut catalog,
         )
         .unwrap();
-        run_insert_on("INSERT INTO s VALUES ('p', 1), ('q', 2)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO s VALUES ('p', 1), ('q', 2)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(
-            run_select_on("SELECT k FROM s WHERE tag >= 2", &catalog)
-                .unwrap()
-                .into_iter()
-                .map(|row| datum_text_for_test(&row[0]))
-                .collect::<Vec<_>>(),
+            run_select_on(
+                "SELECT k FROM s WHERE tag >= 2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .into_iter()
+            .map(|row| datum_text_for_test(&row[0]))
+            .collect::<Vec<_>>(),
             vec!["q".to_owned()]
         );
     }
@@ -5165,14 +5877,39 @@ mod tests {
             &mut catalog,
         )
         .unwrap();
-        run_insert_on("INSERT INTO a1 (v) VALUES (10), (20)", &mut catalog).unwrap();
-        run_insert_on("INSERT INTO a1 VALUES (100, 30)", &mut catalog).unwrap();
-        run_insert_on("INSERT INTO a1 (v) VALUES (40)", &mut catalog).unwrap();
-        run_insert_on("INSERT INTO a1 VALUES (NULL, 50), (0, 60)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO a1 (v) VALUES (10), (20)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO a1 VALUES (100, 30)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO a1 (v) VALUES (40)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO a1 VALUES (NULL, 50), (0, 60)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
 
         // Captured from TiDB: [[1 10] [2 20] [100 30] [101 40] [102 50] [103 60]]
         assert_eq!(
-            run_select_on("SELECT id, v FROM a1", &catalog).unwrap(),
+            run_select_on(
+                "SELECT id, v FROM a1",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![
                 vec![Datum::Int(1), Datum::Int(10)],
                 vec![Datum::Int(2), Datum::Int(20)],
@@ -5190,9 +5927,19 @@ mod tests {
             &mut catalog,
         )
         .unwrap();
-        run_insert_on("INSERT INTO bad (b) VALUES (1), (2)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO bad (b) VALUES (1), (2)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(
-            run_select_on("SELECT a FROM bad", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a FROM bad",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
         );
 
@@ -5228,11 +5975,12 @@ mod tests {
         run_insert_on(
             "INSERT INTO b VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
 
         let ids = |sql: &str, catalog: &Catalog| {
-            let mut got: Vec<i64> = run_select_on(sql, catalog)
+            let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query())
                 .unwrap()
                 .into_iter()
                 .map(|row| match row[0] {
@@ -5283,9 +6031,13 @@ mod tests {
             vec![1, 3]
         );
         assert_eq!(
-            run_select_on("SELECT id FROM b WHERE id IN (1, 2, 3) LIMIT 2", &catalog)
-                .unwrap()
-                .len(),
+            run_select_on(
+                "SELECT id FROM b WHERE id IN (1, 2, 3) LIMIT 2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .len(),
             2
         );
     }
@@ -5300,7 +6052,12 @@ mod tests {
             &mut catalog,
         )
         .unwrap();
-        run_insert_on("INSERT INTO bd VALUES (1, 'a', 10)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO bd VALUES (1, 'a', 10)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("bd") else {
             panic!("expected a kv table");
         };
@@ -5350,17 +6107,28 @@ mod tests {
         run_insert_on(
             "INSERT INTO d2 VALUES (1, 1), (1, 2), (1, 1), (2, 2)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
 
         assert_eq!(
-            run_select_on("SELECT DISTINCT a FROM d2", &catalog).unwrap(),
+            run_select_on(
+                "SELECT DISTINCT a FROM d2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
         );
         // Every projected column takes part, so (1,1) collapses but (1,2)
         // stays.
         assert_eq!(
-            run_select_on("SELECT DISTINCT a, b FROM d2", &catalog).unwrap(),
+            run_select_on(
+                "SELECT DISTINCT a, b FROM d2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![
                 vec![Datum::Int(1), Datum::Int(1)],
                 vec![Datum::Int(1), Datum::Int(2)],
@@ -5369,13 +6137,24 @@ mod tests {
         );
         // Without DISTINCT every row survives.
         assert_eq!(
-            run_select_on("SELECT a FROM d2", &catalog).unwrap().len(),
+            run_select_on(
+                "SELECT a FROM d2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .len(),
             4
         );
 
         // DISTINCT applies to the projected expression, not the source rows.
         assert_eq!(
-            run_select_on("SELECT DISTINCT a + b FROM d2", &catalog).unwrap(),
+            run_select_on(
+                "SELECT DISTINCT a + b FROM d2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![
                 vec![Datum::Int(2)],
                 vec![Datum::Int(3)],
@@ -5386,25 +6165,50 @@ mod tests {
         // The dedup emits groups in first-seen order, so a sort below it still
         // orders the surviving rows.
         assert_eq!(
-            run_select_on("SELECT DISTINCT a FROM d2 ORDER BY a DESC", &catalog).unwrap(),
+            run_select_on(
+                "SELECT DISTINCT a FROM d2 ORDER BY a DESC",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(2)], vec![Datum::Int(1)]]
         );
         // LIMIT applies after the dedup.
         assert_eq!(
-            run_select_on("SELECT DISTINCT a FROM d2 LIMIT 1", &catalog).unwrap(),
+            run_select_on(
+                "SELECT DISTINCT a FROM d2 LIMIT 1",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(1)]]
         );
         // A WHERE below it still filters.
         assert_eq!(
-            run_select_on("SELECT DISTINCT a FROM d2 WHERE b = 2", &catalog).unwrap(),
+            run_select_on(
+                "SELECT DISTINCT a FROM d2 WHERE b = 2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
         );
 
         // Over an aggregate result, DISTINCT deduplicates the output rows.
         crate::run_create_table_on("CREATE TABLE g3 (k BIGINT, v BIGINT)", &mut catalog).unwrap();
-        run_insert_on("INSERT INTO g3 VALUES (1, 5), (2, 5), (3, 9)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO g3 VALUES (1, 5), (2, 5), (3, 9)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(
-            run_select_on("SELECT DISTINCT SUM(v) FROM g3 GROUP BY k", &catalog).unwrap(),
+            run_select_on(
+                "SELECT DISTINCT SUM(v) FROM g3 GROUP BY k",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(5)], vec![Datum::Int(9)]]
         );
     }
@@ -5419,13 +6223,15 @@ mod tests {
         run_insert_on(
             "INSERT INTO c1 VALUES (1, 10), (2, 20), (3, 30)",
             &mut catalog,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
 
         assert_eq!(
             run_select_on(
                 "WITH c AS (SELECT a FROM c1 WHERE a > 1) SELECT a FROM c",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(2)], vec![Datum::Int(3)]]
@@ -5434,7 +6240,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "WITH c AS (SELECT a, b FROM c1) SELECT SUM(b) FROM c WHERE a >= 2",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(50)]]
@@ -5443,7 +6250,8 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "WITH c (x) AS (SELECT a FROM c1 WHERE a = 3) SELECT x FROM c",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(3)]]
@@ -5454,7 +6262,8 @@ mod tests {
             run_select_on(
                 "WITH c AS (SELECT a FROM c1 WHERE a > 1), d AS (SELECT a FROM c WHERE a > 2) \
                  SELECT a FROM d",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(3)]]
@@ -5463,14 +6272,20 @@ mod tests {
         assert_eq!(
             run_select_on(
                 "WITH c AS (SELECT a FROM c1 WHERE a = 2) SELECT c1.b FROM c JOIN c1 ON c.a = c1.a",
-                &catalog
+                &catalog,
+                &crate::StmtContext::for_query()
             )
             .unwrap(),
             vec![vec![Datum::Int(20)]]
         );
         // A CTE shadows a real table of the same name, as in SQL.
         assert_eq!(
-            run_select_on("WITH c1 AS (SELECT 9 AS a) SELECT a FROM c1", &catalog).unwrap(),
+            run_select_on(
+                "WITH c1 AS (SELECT 9 AS a) SELECT a FROM c1",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(9)]]
         );
 
@@ -5479,13 +6294,15 @@ mod tests {
         assert!(run_select_on(
             "WITH RECURSIVE c (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 3) \
              SELECT n FROM c",
-            &catalog
+            &catalog,
+            &crate::StmtContext::for_query()
         )
         .is_err());
         // A mismatched column list is an error, not a silent rename of some.
         assert!(run_select_on(
             "WITH c (x, y) AS (SELECT a FROM c1) SELECT x FROM c",
-            &catalog
+            &catalog,
+            &crate::StmtContext::for_query()
         )
         .is_err());
     }
@@ -5497,11 +6314,21 @@ mod tests {
         let mut catalog = Catalog::default();
         crate::run_create_table_on("CREATE TABLE u1 (a BIGINT)", &mut catalog).unwrap();
         crate::run_create_table_on("CREATE TABLE u2 (a BIGINT)", &mut catalog).unwrap();
-        run_insert_on("INSERT INTO u1 VALUES (1), (2), (2), (3)", &mut catalog).unwrap();
-        run_insert_on("INSERT INTO u2 VALUES (2), (3), (4)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO u1 VALUES (1), (2), (2), (3)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO u2 VALUES (2), (3), (4)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
 
         let sorted = |sql: &str, catalog: &Catalog| {
-            let mut got: Vec<i64> = run_select_on(sql, catalog)
+            let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query())
                 .unwrap()
                 .into_iter()
                 .map(|row| match row[0] {
@@ -5513,7 +6340,7 @@ mod tests {
             got
         };
         let listed = |sql: &str, catalog: &Catalog| {
-            run_select_on(sql, catalog)
+            run_select_on(sql, catalog, &crate::StmtContext::for_query())
                 .unwrap()
                 .into_iter()
                 .map(|row| match row[0] {
@@ -5591,7 +6418,11 @@ mod tests {
 
         // Captured: a term of a different width is 1222.
         assert!(matches!(
-            run_select_on("SELECT a FROM u1 UNION SELECT a, a FROM u2", &catalog),
+            run_select_on(
+                "SELECT a FROM u1 UNION SELECT a, a FROM u2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            ),
             Err(DriverError::WrongNumberOfColumnsInSelect)
         ));
     }
@@ -5601,7 +6432,12 @@ mod tests {
         let catalog = test_catalog();
         // ORDER BY a column that is not projected (sort runs below projection).
         assert_eq!(
-            run_select_on("SELECT a FROM t ORDER BY b", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a FROM t ORDER BY b",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![
                 vec![Datum::Int(3)],
                 vec![Datum::Int(2)],
@@ -5609,7 +6445,12 @@ mod tests {
             ]
         );
         assert_eq!(
-            run_select_on("SELECT a FROM t ORDER BY b DESC LIMIT 2", &catalog).unwrap(),
+            run_select_on(
+                "SELECT a FROM t ORDER BY b DESC LIMIT 2",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
         );
     }

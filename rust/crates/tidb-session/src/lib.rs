@@ -628,8 +628,14 @@ impl Session {
             &table_name,
             tidb_executor::MemTable { columns, rows },
         );
-        let (columns, rows) =
-            tidb_executor::run_select_meta_stmt(select, &scratch, infoschema::INFORMATION_SCHEMA)?;
+        let ctx = self.statement_context(false);
+        let (columns, rows) = tidb_executor::run_select_meta_stmt(
+            select,
+            &scratch,
+            infoschema::INFORMATION_SCHEMA,
+            &ctx,
+        )?;
+        self.drain_eval_warnings(&ctx);
         Ok(Some(StmtOutput::Rows { columns, rows }))
     }
 
@@ -826,7 +832,9 @@ impl Session {
             }
         }
         let sql = format!("SELECT {}", expr.restore());
-        let rows = self.with_catalog_mut(|catalog| tidb_executor::run_select_on(&sql, catalog))?;
+        let ctx = self.statement_context(false);
+        let rows =
+            self.with_catalog_mut(|catalog| tidb_executor::run_select_on(&sql, catalog, &ctx))?;
         let value = rows
             .first()
             .and_then(|row| row.first())
@@ -1114,9 +1122,11 @@ impl Session {
                         unreachable!("a query is a SELECT or a set operation")
                     };
                     let current_db = self.current_db.clone();
+                    let ctx = self.statement_context(false);
                     let (columns, rows) = self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_set_opr_stmt(set_opr, catalog, &current_db)
+                        tidb_executor::run_set_opr_stmt(set_opr, catalog, &current_db, &ctx)
                     })?;
+                    self.drain_eval_warnings(&ctx);
                     return Ok(StmtOutput::Rows { columns, rows });
                 };
                 // An information_schema table is virtual: its rows are
@@ -1125,17 +1135,21 @@ impl Session {
                     return Ok(output);
                 }
                 let current_db = self.current_db.clone();
+                let ctx = self.statement_context(false);
                 let (columns, rows) = self.with_catalog_mut(|catalog| {
-                    tidb_executor::run_select_meta_stmt(select, catalog, &current_db)
+                    tidb_executor::run_select_meta_stmt(select, catalog, &current_db, &ctx)
                 })?;
+                self.drain_eval_warnings(&ctx);
                 Ok(StmtOutput::Rows { columns, rows })
             }
             Stmt::Dml(dml) => match &**dml {
                 DmlStmt::Insert(_) => {
                     let current_db = self.current_db.clone();
+                    let ctx = self.statement_context(true);
                     let (affected, allocated) = self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_insert_reporting(sql, catalog, &current_db)
+                        tidb_executor::run_insert_reporting(sql, catalog, &current_db, &ctx)
                     })?;
+                    self.drain_eval_warnings(&ctx);
                     self.statement_insert_id = allocated.unwrap_or(0).max(0) as u64;
                     if let Some(allocated) = allocated {
                         self.last_insert_id = allocated.max(0) as u64;
@@ -1144,23 +1158,31 @@ impl Session {
                 }
                 DmlStmt::Update(_) => {
                     let current_db = self.current_db.clone();
-                    self.with_catalog_mut(|catalog| {
+                    let ctx = self.statement_context(true);
+                    let output = self.with_catalog_mut(|catalog| {
                         Ok(StmtOutput::Affected(tidb_executor::run_update_in(
                             sql,
                             catalog,
                             &current_db,
+                            &ctx,
                         )?))
-                    })
+                    });
+                    self.drain_eval_warnings(&ctx);
+                    output
                 }
                 DmlStmt::Delete(_) => {
                     let current_db = self.current_db.clone();
-                    self.with_catalog_mut(|catalog| {
+                    let ctx = self.statement_context(true);
+                    let output = self.with_catalog_mut(|catalog| {
                         Ok(StmtOutput::Affected(tidb_executor::run_delete_in(
                             sql,
                             catalog,
                             &current_db,
+                            &ctx,
                         )?))
-                    })
+                    });
+                    self.drain_eval_warnings(&ctx);
+                    output
                 }
                 _ => Err(DriverError::Unsupported(
                     "this DML statement kind is not supported yet",
@@ -1323,6 +1345,40 @@ impl Session {
                 ("Message".to_owned(), text()),
             ],
             rows,
+        }
+    }
+
+    /// The evaluation context for one statement, which is Go's
+    /// `StatementContext`.
+    ///
+    /// The division-by-zero level is the only group modelled so far: Go warns
+    /// for a query, and for a DML statement resolves it from `sql_mode` --
+    /// without `ERROR_FOR_DIVISION_BY_ZERO` the condition is ignored, a
+    /// non-strict mode warns, and the default strict mode fails the statement.
+    fn statement_context(&self, is_dml: bool) -> tidb_executor::StmtContext {
+        if !is_dml {
+            return tidb_executor::StmtContext::for_query();
+        }
+        let mode = self
+            .vars
+            .get_system("sql_mode")
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        let has = |flag: &str| mode.split(',').any(|part| part.trim() == flag);
+        tidb_executor::StmtContext::for_dml(
+            has("ERROR_FOR_DIVISION_BY_ZERO"),
+            has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
+        )
+    }
+
+    /// Moves what evaluation recorded into the statement's warning buffer.
+    fn drain_eval_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
+        for (code, message) in ctx.take_warnings() {
+            self.warnings.push(SqlWarning {
+                level: WarningLevel::Warning,
+                code,
+                message,
+            });
         }
     }
 
@@ -2719,6 +2775,109 @@ mod tests {
                 .collect(),
             other => panic!("expected rows, got {other:?}"),
         }
+    }
+
+    /// Division by zero, checked against captured TiDB output.
+    ///
+    /// The value is `NULL` in every case; what the SQL mode decides is whether
+    /// the statement also warns, fails, or stays silent.
+    ///
+    /// NOT PORTED from Go's own suites: the coprocessor's own warning
+    /// merging. TiDB pushes a `WHERE a/0 IS NULL` filter down and reports ONE
+    /// warning for all the rows a region produced, while three zero divisors
+    /// in a projection give three warnings; this tier has no coprocessor
+    /// boundary, so it reports one warning per evaluation everywhere.
+    #[test]
+    fn division_by_zero() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
+
+        // Captured: a query returns NULL and warns 1365.
+        assert_eq!(
+            session.run("SELECT 1 / 0").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Null]])
+        );
+        assert_eq!(session.warnings().len(), 1);
+        assert_eq!(session.warnings()[0].code, 1365);
+        assert_eq!(session.warnings()[0].message, "Division by 0");
+        assert_eq!(
+            row_text(session.run("SHOW WARNINGS")),
+            [[
+                "Warning".to_owned(),
+                "1365".to_owned(),
+                "Division by 0".to_owned()
+            ]]
+        );
+
+        // Captured: every zero divisor raises its own warning.
+        assert_eq!(
+            session.run("SELECT 1 / 0, 2 / 0").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Null, Datum::Null]])
+        );
+        assert_eq!(session.warnings().len(), 2);
+        // DEFERRED (pre-existing rewriter gaps, not this channel's): `DIV`,
+        // `MOD` and a decimal literal operand reach the same zero-divisor
+        // check in `ops.rs`, but the rewriter does not build those expression
+        // forms yet, so they cannot be asserted through the session here.
+
+        // Captured: a zero dividend is ordinary arithmetic, not this case.
+        session.run("SELECT 0 / 1").unwrap();
+        assert!(session.warnings().is_empty());
+
+        // Captured: under the default SQL mode an INSERT fails with 1365 and
+        // writes nothing.
+        assert!(matches!(
+            session.run("INSERT INTO t VALUES (1 / 0, 1)"),
+            Err(DriverError::Exec(tidb_executor::ExecError::Eval(
+                tidb_executor::EvalError::DivisionByZero
+            )))
+        ));
+        assert_eq!(
+            session.run("SELECT a FROM t").unwrap(),
+            StmtResult::Rows(vec![])
+        );
+
+        // The same holds for UPDATE and DELETE, which Go gives the same level.
+        session.run("INSERT INTO t VALUES (1, 1)").unwrap();
+        assert!(session.run("UPDATE t SET a = a / 0").is_err());
+        assert_eq!(
+            session.run("SELECT a FROM t").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        assert!(session.run("DELETE FROM t WHERE a = 1 / 0").is_err());
+        assert_eq!(
+            session.run("SELECT a FROM t").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+
+        // Captured: without ERROR_FOR_DIVISION_BY_ZERO the condition is
+        // ignored entirely -- NULL is written, with no warning at all.
+        session.apply_set("SET sql_mode = ''").unwrap();
+        session.run("INSERT INTO t VALUES (1 / 0, 2)").unwrap();
+        assert!(session.warnings().is_empty());
+        assert_eq!(
+            session.run("SELECT a FROM t").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)], vec![Datum::Null]])
+        );
+        // Captured: a strict mode without that flag ignores it too.
+        session
+            .apply_set("SET sql_mode = 'STRICT_TRANS_TABLES'")
+            .unwrap();
+        session.run("INSERT INTO t VALUES (1 / 0, 3)").unwrap();
+        assert!(session.warnings().is_empty());
+
+        // Non-strict with the flag warns instead of failing.
+        session
+            .apply_set("SET sql_mode = 'ERROR_FOR_DIVISION_BY_ZERO'")
+            .unwrap();
+        session.run("INSERT INTO t VALUES (1 / 0, 4)").unwrap();
+        assert_eq!(session.warnings().len(), 1);
+        assert_eq!(session.warnings()[0].code, 1365);
+
+        // A query keeps warning whatever the SQL mode says.
+        session.apply_set("SET sql_mode = ''").unwrap();
+        session.run("SELECT 1 / 0").unwrap();
+        assert_eq!(session.warnings().len(), 1);
     }
 
     /// SHOW WARNINGS / SHOW ERRORS, checked against captured TiDB output.

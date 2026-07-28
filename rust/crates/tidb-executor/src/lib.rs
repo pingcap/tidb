@@ -42,6 +42,7 @@ pub mod mem_table;
 pub mod projection;
 pub mod selection;
 pub mod sort;
+mod stmt_context;
 pub mod table_dual;
 
 pub use apply::ApplyExec;
@@ -64,4 +65,6 @@ pub use mem_table::MemTableSourceExec;
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
+pub use stmt_context::StmtContext;
 pub use table_dual::TableDualExec;
+pub use tidb_expr::EvalError;

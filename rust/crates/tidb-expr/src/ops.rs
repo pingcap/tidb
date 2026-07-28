@@ -129,6 +129,7 @@ pub(crate) fn eval_binary_with_div_precision(
     l: Datum,
     r: Datum,
     div_precision_increment: u32,
+    ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, EvalError> {
     use BinaryOp::*;
     if l.is_range_sentinel() || r.is_range_sentinel() {
@@ -187,7 +188,7 @@ pub(crate) fn eval_binary_with_div_precision(
     // not to `Decimal` (confirmed via goeval: `1.5e2 + 3.14` is
     // `FLOAT:153.14`, not a `Decimal`).
     if matches!(l, Datum::Real(_)) || matches!(r, Datum::Real(_)) {
-        return float_binary(op, l, r);
+        return float_binary(op, l, r, ctx);
     }
     // `/` always promotes both operands to Decimal and produces a Decimal
     // result — even for two Int operands, MySQL's `/` never yields an Int
@@ -200,6 +201,10 @@ pub(crate) fn eval_binary_with_div_precision(
         }
         let a = to_decimal(l);
         let b = to_decimal(r);
+        if b.is_zero() {
+            ctx.handle_division_by_zero()?;
+            return Ok(Datum::Null);
+        }
         let target_scale = a.scale() + effective_div_precision_increment(div_precision_increment);
         return Ok(match a.true_div(&b, target_scale) {
             Some(q) => Datum::Decimal(q),
@@ -209,7 +214,7 @@ pub(crate) fn eval_binary_with_div_precision(
     // A Decimal operand (an Int operand promotes to a scale-0 decimal, MySQL's
     // implicit rule) arithmetics/compares exactly; handles its own NullEq.
     if matches!(l, Datum::Decimal(_)) || matches!(r, Datum::Decimal(_)) {
-        return decimal_binary(op, l, r);
+        return decimal_binary(op, l, r, ctx);
     }
     if op == NullEq {
         return Ok(null_safe_eq(l, r));
@@ -227,10 +232,15 @@ pub(crate) fn eval_binary_with_div_precision(
         (Some(a), Some(b)) => (a, b),
         _ => unreachable!("eval_binary's own upstream guards exclude this: {l:?} {r:?}"),
     };
-    integer_binary(op, a, b)
+    integer_binary(op, a, b, ctx)
 }
 
-fn integer_binary(op: BinaryOp, a: Integer, b: Integer) -> Result<Datum, EvalError> {
+fn integer_binary(
+    op: BinaryOp,
+    a: Integer,
+    b: Integer,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
     use BinaryOp::*;
     let lhs_unsigned = matches!(a, Integer::Unsigned(_));
     let rhs_unsigned = matches!(b, Integer::Unsigned(_));
@@ -272,6 +282,7 @@ fn integer_binary(op: BinaryOp, a: Integer, b: Integer) -> Result<Datum, EvalErr
         // `DIV`/`MOD` by zero yield NULL in MySQL. `DIV` truncates toward zero.
         IntDiv => {
             if bits_b == 0 {
+                ctx.handle_division_by_zero()?;
                 Datum::Null
             } else {
                 // Go selects a different checked helper for every signedness
@@ -297,6 +308,7 @@ fn integer_binary(op: BinaryOp, a: Integer, b: Integer) -> Result<Datum, EvalErr
         }
         Mod => {
             if bits_b == 0 {
+                ctx.handle_division_by_zero()?;
                 Datum::Null
             } else {
                 // MOD's result flag follows the left operand only.  Go's
@@ -420,7 +432,7 @@ fn minus_overflows(lhs_unsigned: bool, rhs_unsigned: bool, a: i64, b: i64) -> bo
 /// Evaluates a context-free binary operation with TiDB's default
 /// `div_precision_increment` of 4.
 pub(crate) fn eval_binary(op: BinaryOp, l: Datum, r: Datum) -> Result<Datum, EvalError> {
-    eval_binary_with_div_precision(op, l, r, 4)
+    eval_binary_with_div_precision(op, l, r, 4, &crate::context::NoColumns)
 }
 
 /// TiDB preserves a declared decimal division result scale when the session
@@ -444,7 +456,12 @@ pub(crate) const fn effective_div_precision_increment(raw: u32) -> u32 {
 /// `MOD` by zero, matching the `Int` case. `/` itself never reaches this
 /// function — `eval_binary` intercepts it earlier, since it must promote
 /// even a pure `Int`/`Int` pair to `Decimal`.
-fn decimal_binary(op: BinaryOp, l: Datum, r: Datum) -> Result<Datum, EvalError> {
+fn decimal_binary(
+    op: BinaryOp,
+    l: Datum,
+    r: Datum,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
     use BinaryOp::*;
     if op == NullEq {
         return Ok(match (&l, &r) {
@@ -489,11 +506,17 @@ fn decimal_binary(op: BinaryOp, l: Datum, r: Datum) -> Result<Datum, EvalError> 
         Div => unreachable!("handled above"),
         IntDiv => match a.div_rem(&b) {
             Some((q, _)) => Datum::Int(q),
-            None => Datum::Null,
+            None => {
+                ctx.handle_division_by_zero()?;
+                Datum::Null
+            }
         },
         Mod => match a.rem_mysql(&b) {
             Some(r) => Datum::Decimal(r),
-            None => Datum::Null,
+            None => {
+                ctx.handle_division_by_zero()?;
+                Datum::Null
+            }
         },
         // Bitwise/shift operators work on integers in MySQL, so a decimal
         // operand rounds to the nearest `i64` first (ties away from zero),
@@ -560,7 +583,12 @@ pub(crate) fn to_decimal(v: Datum) -> Decimal {
 /// bitwise/shift operators round to the nearest `i64` first, but TIES TO
 /// EVEN — the OPPOSITE tie-breaking rule from `Decimal`'s own bitwise
 /// conversion (ties away from zero), confirmed via `goeval`, not assumed.
-fn float_binary(op: BinaryOp, l: Datum, r: Datum) -> Result<Datum, EvalError> {
+fn float_binary(
+    op: BinaryOp,
+    l: Datum,
+    r: Datum,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
     use BinaryOp::*;
     if op == NullEq {
         return Ok(match (&l, &r) {
@@ -580,6 +608,7 @@ fn float_binary(op: BinaryOp, l: Datum, r: Datum) -> Result<Datum, EvalError> {
         Mul => finite_float(a * b)?,
         Div => {
             if b == 0.0 {
+                ctx.handle_division_by_zero()?;
                 Datum::Null
             } else {
                 finite_float(a / b)?
@@ -587,6 +616,7 @@ fn float_binary(op: BinaryOp, l: Datum, r: Datum) -> Result<Datum, EvalError> {
         }
         IntDiv => {
             if b == 0.0 {
+                ctx.handle_division_by_zero()?;
                 Datum::Null
             } else {
                 Datum::Int(f64_to_i64((a / b).trunc()).ok_or(EvalError::IntOverflow)?)
@@ -594,6 +624,7 @@ fn float_binary(op: BinaryOp, l: Datum, r: Datum) -> Result<Datum, EvalError> {
         }
         Mod => {
             if b == 0.0 {
+                ctx.handle_division_by_zero()?;
                 Datum::Null
             } else {
                 finite_float(a % b)?

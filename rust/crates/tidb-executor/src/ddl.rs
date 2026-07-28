@@ -1254,10 +1254,20 @@ mod tests {
         .unwrap());
 
         assert_eq!(
-            run_insert_on("INSERT INTO t (a, s) VALUES (7, 'x')", &mut catalog).unwrap(),
+            run_insert_on(
+                "INSERT INTO t (a, s) VALUES (7, 'x')",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
             1
         );
-        let rows = run_select_on("SELECT a, s FROM t", &catalog).unwrap();
+        let rows = run_select_on(
+            "SELECT a, s FROM t",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0], Datum::Int(7));
         match &rows[0][1] {
