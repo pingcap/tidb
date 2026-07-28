@@ -788,6 +788,27 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         "EXPLAIN INSERT must not insert"
     );
 
+    // JSON evaluated as values over the wire: extraction operators, TiDB's
+    // plain-byte key ordering, and the real JSON error code for a bad path.
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            r#"SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('b', 1, 'aa', 2), '$.aa')), JSON_TYPE('1.0')"#
+        ),
+        vec![vec!["2".to_owned(), "DOUBLE".to_owned()]]
+    );
+
+    // The privilege registry answers over the wire.
+    // The handshake-matched identity is seeded into the privilege registry
+    // on login, so a fresh account reports USAGE, as Go's mysql.user does.
+    let grants = run_query(&mut client, &mut reader, "SHOW GRANTS");
+    assert_eq!(
+        grants[0][0],
+        "GRANT USAGE ON *.* TO 'alice'@'%'",
+        "{grants:?}"
+    );
+
     // The processlist virtual table sees this very connection.
     let processes = run_query(
         &mut client,

@@ -144,6 +144,13 @@ impl QuerySessionFactory for PipelineSessionFactory {
             ))),
         );
         session.session.attach_process(context.connection_id, guard);
+        // An identity the handshake matched exists in Go's mysql.user by
+        // construction, so SHOW GRANTS always finds at least USAGE for it.
+        // The configured user store and the privilege registry are separate
+        // structures here -- seed the account on first login so the same
+        // holds (create_user is a no-op when it already exists).
+        self.privileges
+            .create_user(identity.username(), identity.host());
         session.session.attach_privileges(self.privileges.clone());
         Ok(session)
     }
