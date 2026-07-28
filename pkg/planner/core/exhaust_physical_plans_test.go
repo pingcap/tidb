@@ -226,6 +226,18 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 }
 
 func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
+	t.Run("probe_cardinality_respects_table_row_count", func(t *testing.T) {
+		ctx := coretestsdk.MockContext()
+		defer domain.GetDomain(ctx).StatsHandle().Close()
+		ds := logicalop.DataSource{}.Init(ctx.GetPlanCtx(), 0)
+		ds.TableStats = &property.StatsInfo{RowCount: 10}
+
+		probeCardinality := estimateIndexJoinProbeCardinality(ds, 5, true, nil, nil, 20)
+		require.Equal(t, 10.0, probeCardinality.countAfterAccess)
+		require.Equal(t, 10.0, probeCardinality.countAfterIndex)
+		require.Equal(t, 10.0, probeCardinality.countAfterFilter)
+	})
+
 	indexJoinCtx := prepareForAnalyzeLookUpFilters()
 	dsSchema := indexJoinCtx.dataSourceNode.Schema()
 	tests := []indexJoinTestCase{

@@ -846,6 +846,11 @@ type indexJoinProbeCardinality struct {
 	// Rows after all residual DataSource filters, but before join conditions
 	// that are not used by the access path.
 	countAfterFilter float64
+
+	// Minimum rows after residual DataSource filters. It comes from AvgInnerRowCnt,
+	// which is estimated after the inner DataSource filters and all equality join
+	// conditions, but before non-equality join conditions.
+	countAfterFilterLowerBound float64
 }
 
 func estimateIndexJoinProbeCardinality(
@@ -856,6 +861,9 @@ func estimateIndexJoinProbeCardinality(
 	tableConds []expression.Expression,
 	fallbackCountAfterFilter float64,
 ) indexJoinProbeCardinality {
+	probeCardinality := indexJoinProbeCardinality{
+		countAfterFilterLowerBound: fallbackCountAfterFilter,
+	}
 	// Estimate the index and table filter stages separately. This keeps the scan and
 	// lookup costs explicit instead of deriving both by dividing a final row count.
 	indexSelectivity := estimateIndexJoinFilterSelectivity(ds, indexConds)
@@ -865,27 +873,58 @@ func estimateIndexJoinProbeCardinality(
 			fallbackCountAfterFilter = 1
 		}
 		countAfterIndex := fallbackCountAfterFilter / tableSelectivity
-		return indexJoinProbeCardinality{
-			countAfterAccess: countAfterIndex / indexSelectivity,
-			countAfterIndex:  countAfterIndex,
-			countAfterFilter: fallbackCountAfterFilter,
+		probeCardinality.countAfterAccess = countAfterIndex / indexSelectivity
+		probeCardinality.countAfterIndex = countAfterIndex
+		probeCardinality.countAfterFilter = fallbackCountAfterFilter
+	} else {
+		probeCardinality.countAfterAccess = countAfterAccess
+		probeCardinality.countAfterIndex = countAfterAccess * indexSelectivity
+		probeCardinality.countAfterFilter = probeCardinality.countAfterIndex * tableSelectivity
+		// AvgInnerRowCnt is estimated after all equality join conditions. Conditions that this path
+		// cannot use can only reduce the probe rows further, so it is a lower bound here.
+		if probeCardinality.countAfterFilter < fallbackCountAfterFilter {
+			ratio := fallbackCountAfterFilter / probeCardinality.countAfterFilter
+			probeCardinality.countAfterAccess *= ratio
+			probeCardinality.countAfterIndex *= ratio
+			probeCardinality.countAfterFilter = fallbackCountAfterFilter
 		}
 	}
-
-	probeCardinality := indexJoinProbeCardinality{
-		countAfterAccess: countAfterAccess,
-		countAfterIndex:  countAfterAccess * indexSelectivity,
-	}
-	probeCardinality.countAfterFilter = probeCardinality.countAfterIndex * tableSelectivity
-	// AvgInnerRowCnt is estimated after all equality join conditions. Conditions that this path
-	// cannot use can only reduce the probe rows further, so it is a lower bound here.
-	if probeCardinality.countAfterFilter < fallbackCountAfterFilter {
-		ratio := fallbackCountAfterFilter / probeCardinality.countAfterFilter
-		probeCardinality.countAfterAccess *= ratio
-		probeCardinality.countAfterIndex *= ratio
-		probeCardinality.countAfterFilter = fallbackCountAfterFilter
+	probeCardinality.enforceCountAfterFilterLowerBound()
+	if ds.TableStats != nil && ds.TableStats.RowCount > 0 {
+		probeCardinality.enforceCountAfterAccessUpperBound(ds.TableStats.RowCount)
 	}
 	return probeCardinality
+}
+
+func (c *indexJoinProbeCardinality) enforceCountAfterFilterLowerBound() {
+	// NOTE:
+	// An implied predicate can remain in both the runtime ranges and the index or
+	// table filters. Applying its standalone selectivity again can severely
+	// underestimate the probe rows. AvgInnerRowCnt is derived from the equality
+	// join output whose inner child statistics already include all DataSource
+	// filters, so use it as an estimate-based lower bound here.
+
+	// Hard access bounds, such as a unique lookup, take precedence over an
+	// estimate-based lower bound. If the two bounds conflict, discard the
+	// estimate-based lower bound instead of assuming that every lookup matches.
+	if c.countAfterFilterLowerBound > c.countAfterAccess {
+		return
+	}
+	c.countAfterFilter = math.Max(c.countAfterFilter, c.countAfterFilterLowerBound)
+	// Keep the cardinalities monotonic across the access, index filter, and
+	// table filter stages.
+	c.countAfterIndex = math.Max(c.countAfterIndex, c.countAfterFilter)
+}
+
+func (c *indexJoinProbeCardinality) enforceCountAfterAccessUpperBound(upperBound float64) {
+	if c.countAfterAccess <= upperBound {
+		return
+	}
+	ratio := upperBound / c.countAfterAccess
+	c.countAfterAccess = upperBound
+	c.countAfterIndex *= ratio
+	c.countAfterFilter *= ratio
+	c.enforceCountAfterFilterLowerBound()
 }
 
 func estimateIndexJoinFilterSelectivity(ds *logicalop.DataSource, filters []expression.Expression) float64 {
@@ -938,14 +977,7 @@ func constructDS2TableScanTask(
 	// For CommonHandle, this requires matching ALL primary key columns with equality conditions.
 	// For prefix scans (e.g., only matching first column of a composite PK), we trust the statistical estimation.
 	if maxOneRow && probeCardinality.countAfterAccess > 1 {
-		// Scale all stages together so the unique lookup is capped at one row while
-		// preserving the selectivity of residual index/table filters. The final
-		// filtered cardinality may still be below one because those filters can
-		// reject the row returned by the unique lookup.
-		ratio := 1 / probeCardinality.countAfterAccess
-		probeCardinality.countAfterAccess = 1
-		probeCardinality.countAfterIndex *= ratio
-		probeCardinality.countAfterFilter *= ratio
+		probeCardinality.enforceCountAfterAccessUpperBound(1)
 	}
 	ts.SetStats(&property.StatsInfo{
 		RowCount:     probeCardinality.countAfterAccess,
@@ -1220,12 +1252,7 @@ func constructDS2IndexScanTask(
 	if maxOneRow && probeCardinality.countAfterAccess > 1 {
 		// Theoretically, the join row-count estimate should not exceed 1.0. It can be larger
 		// with pseudo statistics, which do not reflect the unique constraint in their NDV.
-		// Scale all stages together to enforce the unique lookup bound without discarding
-		// the selectivity of residual index/table filters; countAfterFilter can be below one.
-		ratio := 1 / probeCardinality.countAfterAccess
-		probeCardinality.countAfterAccess = 1
-		probeCardinality.countAfterIndex *= ratio
-		probeCardinality.countAfterFilter *= ratio
+		probeCardinality.enforceCountAfterAccessUpperBound(1)
 	}
 	tmpPath := &util.AccessPath{
 		IndexFilters:        pushDownIndexConds,

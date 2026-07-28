@@ -84,7 +84,7 @@
 - `pkg/planner/core/cbo_test.go` - planner/core: Benchmarks optimizer plan selection.
 - `pkg/planner/core/common_plans_test.go` - planner/core: Tests LOAD DATA line/field defaults.
 - `pkg/planner/core/enforce_mpp_test.go` - planner/core: Tests row-size impact on TiFlash MPP cost.
-- `pkg/planner/core/exhaust_physical_plans_test.go` - planner/core: Tests index join lookup filter analysis and range building.
+- `pkg/planner/core/exhaust_physical_plans_test.go` - planner/core: Tests index join lookup filter analysis, range building, and probe cardinality bounds.
 - `pkg/planner/core/expression_test.go` - planner/core: Tests AST expression eval (between/case/cast).
 - `pkg/planner/core/find_best_task_test.go` - planner/core: Tests FindBestTask overflow, property, and hint cases.
 - `pkg/planner/core/hint_test.go` - planner/core: Tests set_var and write_slow_log hints with bindings/EXPLAIN and partial ordered index.
