@@ -186,6 +186,8 @@ func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *StmtD
 
 // ToEvictedCountDatum converts history evicted record to `evicted count` record's datum
 func (ssbde *stmtSummaryByDigestEvicted) ToEvictedCountDatum() [][]types.Datum {
+	ssbde.Lock()
+	defer ssbde.Unlock()
 	records := make([][]types.Datum, 0, ssbde.history.Len())
 	for e := ssbde.history.Back(); e != nil; e = e.Prev() {
 		if record := e.Value.(*stmtSummaryByDigestEvictedElement).toEvictedCountDatum(); record != nil {
