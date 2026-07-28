@@ -548,39 +548,93 @@ impl Session {
                     if explain.analyze {
                         // ANALYZE reports per-operator runtime counters this
                         // tier does not collect; inventing them would be
-                        // worse than refusing.
+                        // worse than refusing. (Go itself EXECUTES the
+                        // wrapped statement to gather those counters --
+                        // confirmed by capture -- so refusing rather than
+                        // silently planning-only also avoids answering with
+                        // a plan that looks like ANALYZE's richer output but
+                        // isn't.)
                         return Err(DriverError::Unsupported(
                             "EXPLAIN ANALYZE is not supported yet",
                         ));
                     }
-                    if !explain.format.eq_ignore_ascii_case("row") {
-                        return Err(DriverError::Unsupported(
-                            "only the default EXPLAIN row format is supported yet",
-                        ));
-                    }
+                    // Go's preprocessor rejects an unrecognized format name
+                    // with this exact message before the statement is even
+                    // planned (captured: `explain format = 'bogus' ...` ->
+                    // `Unknown EXPLAIN format name: 'bogus'`).
+                    let Some(format) = tidb_executor::ExplainFormat::parse(&explain.format) else {
+                        return Err(DriverError::Unsupported("unknown EXPLAIN format name"));
+                    };
                     let Some(target) = explain.statement() else {
                         return Err(DriverError::Unsupported(
                             "EXPLAIN of a plan digest is not supported yet",
                         ));
                     };
-                    let Stmt::Query(query) = target else {
-                        // A write's plan would have to be built by the write
-                        // path, which in this tier only exists as "execute
-                        // it". Refusing is the only answer that keeps
-                        // EXPLAIN side-effect free.
-                        return Err(DriverError::Unsupported(
-                            "only EXPLAIN of a SELECT is supported yet",
-                        ));
-                    };
-                    let tidb_ast::QueryStmt::Select(select) = &**query else {
-                        return Err(DriverError::Unsupported(
-                            "EXPLAIN of a set operation is not supported yet",
-                        ));
-                    };
                     let current_db = self.current_db.clone();
-                    let (columns, rows) = self.with_catalog_mut(|catalog| {
-                        tidb_executor::explain_select_stmt(select, catalog, &current_db)
-                    })?;
+                    let (columns, rows) = match target {
+                        Stmt::Query(query) => {
+                            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                                return Err(DriverError::Unsupported(
+                                    "EXPLAIN of a set operation is not supported yet",
+                                ));
+                            };
+                            self.with_catalog_mut(|catalog| {
+                                tidb_executor::explain_select_stmt(
+                                    select,
+                                    catalog,
+                                    &current_db,
+                                    format,
+                                )
+                            })?
+                        }
+                        // A write's plan is the same plan recorder run over
+                        // the read path the driver's write executes; nothing
+                        // is executed -- no row is read or written -- which
+                        // is also what Go does (`EXPLAIN INSERT` inserts no
+                        // row, captured).
+                        Stmt::Dml(dml) => match &**dml {
+                            tidb_ast::DmlStmt::Insert(insert) => {
+                                self.with_catalog_mut(|catalog| {
+                                    tidb_executor::explain_insert_stmt(
+                                        insert,
+                                        catalog,
+                                        &current_db,
+                                        format,
+                                    )
+                                })?
+                            }
+                            tidb_ast::DmlStmt::Update(update) => {
+                                self.with_catalog_mut(|catalog| {
+                                    tidb_executor::explain_update_stmt(
+                                        update,
+                                        catalog,
+                                        &current_db,
+                                        format,
+                                    )
+                                })?
+                            }
+                            tidb_ast::DmlStmt::Delete(delete) => {
+                                self.with_catalog_mut(|catalog| {
+                                    tidb_executor::explain_delete_stmt(
+                                        delete,
+                                        catalog,
+                                        &current_db,
+                                        format,
+                                    )
+                                })?
+                            }
+                            _ => {
+                                return Err(DriverError::Unsupported(
+                                    "only EXPLAIN of INSERT, UPDATE, or DELETE is supported yet",
+                                ));
+                            }
+                        },
+                        _ => {
+                            return Err(DriverError::Unsupported(
+                                "only EXPLAIN of a SELECT, INSERT, UPDATE, or DELETE is supported yet",
+                            ));
+                        }
+                    };
                     Ok(Some(StmtOutput::Rows { columns, rows }))
                 }
                 tidb_ast::AdminStmt::ShowDatabases(show) => {
@@ -2954,29 +3008,168 @@ mod tests {
         );
     }
 
-    /// EXPLAIN plans; it must never run the statement, and it refuses the
-    /// forms this tier cannot plan honestly.
+    /// `EXPLAIN` of a write: it must never run the statement. Captured
+    /// against real TiDB: `EXPLAIN INSERT INTO t VALUES (1)` answers
+    /// `Insert_1 | N/A | root | | N/A` and inserts nothing.
+    #[test]
+    fn explain_insert_plans_without_writing() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
+            .unwrap();
+
+        assert_eq!(
+            row_text(session.run("EXPLAIN INSERT INTO t VALUES (1)")),
+            vec![vec![
+                "Insert_1".to_owned(),
+                "N/A".to_owned(),
+                "root".to_owned(),
+                String::new(),
+                "N/A".to_owned(),
+            ]]
+        );
+        // The plan really did not write the row.
+        assert_eq!(
+            row_text(session.run("SELECT COUNT(*) FROM t")),
+            vec![vec!["0".to_owned()]]
+        );
+    }
+
+    /// `EXPLAIN UPDATE`/`EXPLAIN DELETE`: the write's plan is `Update_N`/
+    /// `Delete_N` over the same read the write drivers actually build to
+    /// find the target rows. Divergence 8 (`explain` module doc): those
+    /// drivers always scan the whole table and filter row-by-row, with no
+    /// point-get/index fast path, so the recorder always shows
+    /// `TableFullScan` + `Selection` -- even for a primary-key equality,
+    /// where Go's own planner would print `Point_Get`.
+    #[test]
+    fn explain_update_and_delete_plan_without_writing() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b BIGINT)")
+            .unwrap();
+        session.run("INSERT INTO t VALUES (1, 1)").unwrap();
+
+        assert_eq!(
+            row_text(session.run("EXPLAIN UPDATE t SET b = 100 WHERE a = 1")),
+            vec![
+                vec![
+                    "Update_3".to_owned(),
+                    "N/A".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "N/A".to_owned(),
+                ],
+                vec![
+                    "└─Selection_2".to_owned(),
+                    "10.00".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "eq(test.t.a, 1)".to_owned(),
+                ],
+                vec![
+                    "  └─TableFullScan_1".to_owned(),
+                    "10000.00".to_owned(),
+                    "root".to_owned(),
+                    "table:t".to_owned(),
+                    "keep order:false, stats:pseudo".to_owned(),
+                ],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run("EXPLAIN DELETE FROM t WHERE a = 1")),
+            vec![
+                vec![
+                    "Delete_3".to_owned(),
+                    "N/A".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "N/A".to_owned(),
+                ],
+                vec![
+                    "└─Selection_2".to_owned(),
+                    "10.00".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "eq(test.t.a, 1)".to_owned(),
+                ],
+                vec![
+                    "  └─TableFullScan_1".to_owned(),
+                    "10000.00".to_owned(),
+                    "root".to_owned(),
+                    "table:t".to_owned(),
+                    "keep order:false, stats:pseudo".to_owned(),
+                ],
+            ]
+        );
+        // Neither plan wrote or removed the row.
+        assert_eq!(
+            row_text(session.run("SELECT * FROM t")),
+            vec![vec!["1".to_owned(), "1".to_owned()]]
+        );
+    }
+
+    /// `EXPLAIN FORMAT = 'brief'` prints the identical tree with every
+    /// operator's `_N` build-order suffix stripped (captured: `explain
+    /// format = 'brief' select * from t` strips the `Point_Get_1`/
+    /// `Selection_2`/`Projection_3` ids down to `Point_Get`/`Selection`/
+    /// `Projection`; `'row'`, the default, keeps them).
+    #[test]
+    fn explain_brief_format_strips_operator_ids() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
+            .unwrap();
+        session.run("INSERT INTO t VALUES (1)").unwrap();
+
+        assert_eq!(
+            row_text(session.run("EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 1")),
+            vec![
+                vec![
+                    "Projection".to_owned(),
+                    "1.00".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "*".to_owned(),
+                ],
+                vec![
+                    "└─Selection".to_owned(),
+                    "1.00".to_owned(),
+                    "root".to_owned(),
+                    String::new(),
+                    "eq(test.t.a, 1)".to_owned(),
+                ],
+                vec![
+                    "  └─Point_Get".to_owned(),
+                    "1.00".to_owned(),
+                    "root".to_owned(),
+                    "table:t".to_owned(),
+                    "handle:1".to_owned(),
+                ],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run("EXPLAIN FORMAT = 'row' SELECT * FROM t WHERE a = 1"))[2],
+            vec![
+                "  └─Point_Get_1".to_owned(),
+                "1.00".to_owned(),
+                "root".to_owned(),
+                "table:t".to_owned(),
+                "handle:1".to_owned(),
+            ]
+        );
+    }
+
+    /// EXPLAIN still refuses the forms this tier cannot plan honestly:
+    /// ANALYZE (Go executes the statement to gather runtime counters this
+    /// tier does not collect, captured) and any format name Go itself does
+    /// not recognize.
     #[test]
     fn explain_refuses_what_it_cannot_plan() {
         let mut session = Session::new();
         session
             .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
             .unwrap();
-
-        // TiDB answers `EXPLAIN INSERT` with `Insert_1 | N/A | root | | N/A`
-        // and inserts nothing. This tier has no plan object for the write
-        // path, so it refuses rather than risk executing the insert.
-        assert!(matches!(
-            session.run("EXPLAIN INSERT INTO t VALUES (1)"),
-            Err(DriverError::Unsupported(
-                "only EXPLAIN of a SELECT is supported yet"
-            ))
-        ));
-        // The refusal really did not write the row.
-        assert_eq!(
-            row_text(session.run("SELECT COUNT(*) FROM t")),
-            vec![vec!["0".to_owned()]]
-        );
 
         assert!(matches!(
             session.run("EXPLAIN ANALYZE SELECT * FROM t"),
@@ -2985,10 +3178,8 @@ mod tests {
             ))
         ));
         assert!(matches!(
-            session.run("EXPLAIN FORMAT = 'brief' SELECT * FROM t"),
-            Err(DriverError::Unsupported(
-                "only the default EXPLAIN row format is supported yet"
-            ))
+            session.run("EXPLAIN FORMAT = 'bogus' SELECT * FROM t"),
+            Err(DriverError::Unsupported("unknown EXPLAIN format name"))
         ));
     }
 

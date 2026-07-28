@@ -59,7 +59,10 @@ pub use driver::{
     DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
-pub use explain::explain_select_stmt;
+pub use explain::{
+    explain_delete_stmt, explain_insert_stmt, explain_select_stmt, explain_update_stmt,
+    ExplainFormat,
+};
 pub use hash_agg::{AggFunc, AggKind, HashAggExec};
 pub use join::{JoinExec, JoinKind};
 pub use kv_table::{IndexRange, KvColumn, KvIndex, KvTable, TableScanExec};

@@ -69,6 +69,17 @@
 //!    priced those conditions, the selection does not reduce the estimate
 //!    again -- see `plan_select`.
 //!
+//! 8. **`UPDATE`/`DELETE` always show `TableFullScan`, never `Point_Get` or
+//!    `IndexRangeScan`.** Go's planner finds the same fast access paths for
+//!    a write as for a `SELECT`. This tier's write drivers
+//!    ([`crate::driver::run_update_in`], [`crate::driver::run_delete_in`])
+//!    do not: both unconditionally `KvTable::scan_rows_with_handles` the
+//!    whole table and filter each row with the `WHERE` in a plain iterator,
+//!    with no access-path selection at all. The recorder mirrors that: a
+//!    write's read plan is always `TableFullScan` (+ `Selection` for a
+//!    `WHERE`), even for `WHERE <primary key> = <literal>`, where Go itself
+//!    prints `Point_Get` (captured).
+//!
 //! # Where the estRows numbers come from
 //!
 //! Every value printed is a stats-less default read from Go's source, not a
@@ -153,22 +164,189 @@ impl PlanNode {
 /// The header Go's row-format EXPLAIN reports, captured from TiDB.
 const EXPLAIN_COLUMNS: [&str; 5] = ["id", "estRows", "task", "access object", "operator info"];
 
+/// The `EXPLAIN FORMAT = '...'` this tier accepts. Go's `'row'` (the
+/// default, also the explicit spelling) and `'brief'` render the identical
+/// tree; `'brief'` merely drops each operator's `_N` build-order suffix
+/// (captured: `explain format = 'brief' select ...` prints `Point_Get` where
+/// the default prints `Point_Get_1`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplainFormat {
+    /// Go's default: every operator id carries its `_N` build-order suffix.
+    Row,
+    /// Same tree, ids printed without the `_N` suffix.
+    Brief,
+}
+
+impl ExplainFormat {
+    /// Parses Go's `ExplainStmt.Format` string, case-insensitively as Go's
+    /// preprocessor does. `None` for a format this tier does not recognize
+    /// -- the caller reports Go's own "Unknown EXPLAIN format name" error
+    /// (captured verbatim from `explain format = 'bogus' ...`).
+    pub fn parse(format: &str) -> Option<Self> {
+        if format.eq_ignore_ascii_case("row") {
+            Some(Self::Row)
+        } else if format.eq_ignore_ascii_case("brief") {
+            Some(Self::Brief)
+        } else {
+            None
+        }
+    }
+}
+
 /// Plans `select` and reports the plan as EXPLAIN rows, executing nothing.
 pub fn explain_select_stmt(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
+    format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
     let plan = plan_select(select, catalog, current_db)?;
-    Ok(render(plan))
+    Ok(render(plan, format))
+}
+
+/// Plans an `INSERT` and reports the plan as EXPLAIN rows, executing
+/// nothing. Go's `Insert_N` row carries none of the estimate/access/info a
+/// read operator would (captured: `[Insert_1 N/A root  N/A]`, both for a
+/// plain `VALUES` insert and for the `Insert ... SELECT` form, where the
+/// select's own plan appears as `Insert`'s one child).
+pub fn explain_insert_stmt(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    let children = match &insert.source {
+        Some(query) => {
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                return Err(DriverError::Unsupported(
+                    "EXPLAIN of a set-operation INSERT source is not supported yet",
+                ));
+            };
+            vec![plan_select(select, catalog, current_db)?]
+        }
+        None => Vec::new(),
+    };
+    let plan = PlanNode {
+        name: "Insert",
+        est_rows: None,
+        access: String::new(),
+        info: "N/A".to_owned(),
+        children,
+    };
+    Ok(render(plan, format))
+}
+
+/// Plans an `UPDATE` and reports the plan as EXPLAIN rows, executing
+/// nothing. `Update_N`'s one child is the same read the driver would run to
+/// find the rows to update: the access path `plan_source` picks, with a
+/// `Selection` above it only when the access path did not already consume
+/// the `WHERE` (captured: a `WHERE` on the primary key gives one
+/// `Point_Get` child with no `Selection`; a `WHERE` on any other column
+/// gives `Selection` over `TableFullScan`/`IndexRangeScan`).
+pub fn explain_update_stmt(
+    update: &tidb_ast::UpdateStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
+        return Err(DriverError::Unsupported(
+            "EXPLAIN of a multi-table UPDATE is not supported yet",
+        ));
+    };
+    let child = plan_dml_source(table_ref, &update.where_clause, catalog, current_db)?;
+    let plan = PlanNode {
+        name: "Update",
+        est_rows: None,
+        access: String::new(),
+        info: "N/A".to_owned(),
+        children: vec![child],
+    };
+    Ok(render(plan, format))
+}
+
+/// Plans a `DELETE` and reports the plan as EXPLAIN rows, executing nothing.
+/// See [`explain_update_stmt`]: `Delete_N`'s child is the same read-path
+/// plan.
+pub fn explain_delete_stmt(
+    delete: &tidb_ast::DeleteStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    let tidb_ast::DeleteKind::Single(table_ref) = &delete.kind else {
+        return Err(DriverError::Unsupported(
+            "EXPLAIN of a multi-table DELETE is not supported yet",
+        ));
+    };
+    let child = plan_dml_source(table_ref, &delete.where_clause, catalog, current_db)?;
+    let plan = PlanNode {
+        name: "Delete",
+        est_rows: None,
+        access: String::new(),
+        info: "N/A".to_owned(),
+        children: vec![child],
+    };
+    Ok(render(plan, format))
+}
+
+/// The read plan an `UPDATE`/`DELETE` builds to find its target rows.
+///
+/// Unlike a `SELECT`, the write drivers (`driver::run_update_in`,
+/// `driver::run_delete_in`) never call the point-get/batch-point-get/
+/// index-range fast paths at all: both unconditionally
+/// `KvTable::scan_rows_with_handles` the whole table and filter each row
+/// with the `WHERE` in a plain iterator (confirmed by reading those
+/// functions -- there is no access-path selection to mirror). So this
+/// recorder always shows `TableFullScan`, with a `Selection` above it for
+/// the `WHERE` (a full scan consumes nothing, so the selection is the one
+/// place that narrows the estimate) -- which is what a real capture
+/// confirms for anything but a bare primary-key equality (`explain update t
+/// set b = 100 where c = 1` -> `TableFullScan` + `Selection`). Go's own
+/// planner instead finds a `Point_Get` for a primary-key equality even
+/// inside `UPDATE`/`DELETE`; printing that here would describe an access
+/// path this tier's write executors do not take.
+fn plan_dml_source(
+    table_ref: &tidb_ast::TableRef,
+    where_clause: &Option<tidb_ast::Expr>,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<PlanNode, DriverError> {
+    let (database, name) = crate::driver::single_table_name(table_ref, current_db)?;
+    let entry = catalog
+        .get_in(&database, &name)
+        .ok_or(DriverError::Unsupported("table not found in catalog"))?;
+    let visible = table_ref.alias.clone().unwrap_or_else(|| name.clone());
+    let scope = FromScope {
+        tables: vec![FromTable {
+            name: visible.clone(),
+            columns: entry.column_list(),
+            offset: 0,
+        }],
+    };
+    let mut node = PlanNode::leaf(
+        "TableFullScan",
+        Some(PSEUDO_ROW_COUNT),
+        format!("table:{visible}"),
+        "keep order:false, stats:pseudo".to_owned(),
+    );
+    if let Some(predicate) = where_clause {
+        let qualify = Qualifier {
+            db: current_db,
+            scope: &scope,
+        };
+        let rows = node.est_rows.map(|r| r * selectivity(predicate));
+        node = PlanNode::unary("Selection", rows, qualify.expr(predicate), node);
+    }
+    Ok(node)
 }
 
 /// Assigns ids bottom-up and flattens the tree into the five text columns.
-fn render(plan: PlanNode) -> SelectMeta {
+fn render(plan: PlanNode, format: ExplainFormat) -> SelectMeta {
     let mut counter = 0;
     let plan = assign_ids(plan, &mut counter);
     let mut rows = Vec::new();
-    flatten(&plan, String::new(), true, true, &mut rows);
+    flatten(&plan, String::new(), true, true, format, &mut rows);
     let field_type = FieldType::new(FieldTypeCode::VarString);
     let columns = EXPLAIN_COLUMNS
         .iter()
@@ -179,7 +357,10 @@ fn render(plan: PlanNode) -> SelectMeta {
 
 /// A plan node whose id is fixed.
 struct IdNode {
-    id: String,
+    /// Go's operator name without the `_N` suffix (`TableFullScan`).
+    name: &'static str,
+    /// The build-order number `assign_ids` gave this node.
+    counter: usize,
     est_rows: Option<f64>,
     access: String,
     info: String,
@@ -196,7 +377,8 @@ fn assign_ids(node: PlanNode, counter: &mut usize) -> IdNode {
         .collect();
     *counter += 1;
     IdNode {
-        id: format!("{}_{}", node.name, counter),
+        name: node.name,
+        counter: *counter,
         est_rows: node.est_rows,
         access: node.access,
         info: node.info,
@@ -207,13 +389,26 @@ fn assign_ids(node: PlanNode, counter: &mut usize) -> IdNode {
 /// Go's tree drawing: the last child gets `└─`, an earlier sibling `├─`, and
 /// a non-last child's descendants are prefixed with `│ ` so the branch line
 /// continues past them.
-fn flatten(node: &IdNode, prefix: String, is_root: bool, is_last: bool, out: &mut Vec<Vec<Datum>>) {
+fn flatten(
+    node: &IdNode,
+    prefix: String,
+    is_root: bool,
+    is_last: bool,
+    format: ExplainFormat,
+    out: &mut Vec<Vec<Datum>>,
+) {
+    // Divergence: `'brief'` drops the `_N` suffix Go's `'row'`/default
+    // format prints (captured: `Point_Get` vs `Point_Get_1`).
+    let name = match format {
+        ExplainFormat::Row => format!("{}_{}", node.name, node.counter),
+        ExplainFormat::Brief => node.name.to_owned(),
+    };
     let id = if is_root {
-        node.id.clone()
+        name
     } else if is_last {
-        format!("{prefix}└─{}", node.id)
+        format!("{prefix}└─{name}")
     } else {
-        format!("{prefix}├─{}", node.id)
+        format!("{prefix}├─{name}")
     };
     let est = match node.est_rows {
         Some(value) => format!("{value:.2}"),
@@ -236,7 +431,7 @@ fn flatten(node: &IdNode, prefix: String, is_root: bool, is_last: bool, out: &mu
     };
     let last = node.children.len().saturating_sub(1);
     for (i, child) in node.children.iter().enumerate() {
-        flatten(child, child_prefix.clone(), false, i == last, out);
+        flatten(child, child_prefix.clone(), false, i == last, format, out);
     }
 }
 

@@ -4210,7 +4210,7 @@ fn build_join(
 }
 
 /// The table a single-table `UPDATE`/`DELETE` targets.
-fn single_table_name(
+pub(crate) fn single_table_name(
     table_ref: &tidb_ast::TableRef,
     current_db: &str,
 ) -> Result<(String, String), DriverError> {
