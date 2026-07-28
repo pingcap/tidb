@@ -136,6 +136,15 @@ pub struct NodeConfig {
     /// reloader uses, so a grant made afterwards reaches this node without a
     /// restart.
     pub load_privileges: bool,
+    /// Serve the wide-SQL session driver over the whole cluster catalog
+    /// instead of the bounded one- or two-table read surface.
+    ///
+    /// This mode names no table at all: it reads the cluster's entire stored
+    /// catalog at boot, keeps following it, and gives every connection a
+    /// session whose tables read and write through real transactions. It is
+    /// therefore incompatible with `--read-table`/`--load-table`, which
+    /// describe the bounded surface.
+    pub cluster_session: bool,
     /// Fixed connection-worker count and accepted-socket queue capacity.
     pub max_connections: usize,
     /// Handshake, idle-command, and socket-write deadline for one connection.
@@ -229,6 +238,7 @@ impl NodeConfig {
         let mut max_topn_rows = None;
         let mut schema_lease_ms = None;
         let mut load_privileges = false;
+        let mut cluster_session = false;
 
         while let Some(argument) = pending.next() {
             if argument == "--help" || argument == "-h" {
@@ -247,6 +257,13 @@ impl NodeConfig {
                     return Err(NodeConfigError::DuplicateOption(argument));
                 }
                 load_privileges = true;
+                continue;
+            }
+            if argument == "--cluster-session" {
+                if cluster_session {
+                    return Err(NodeConfigError::DuplicateOption(argument));
+                }
+                cluster_session = true;
                 continue;
             }
             if argument == "--read-table" {
@@ -305,8 +322,21 @@ impl NodeConfig {
             return Err(NodeConfigError::UnsupportedStore(store.to_owned()));
         }
         let pd_endpoints = parse_pd_endpoints(required(path, "--path")?)?;
-        validate_read_tables(&read_tables, &load_tables)?;
-        validate_load_tables(&read_tables, &load_tables)?;
+        if cluster_session {
+            // The bounded surface is described by naming tables; this one is
+            // the cluster's whole catalog. Accepting both would leave two
+            // answers to "what does this node serve".
+            if !read_tables.is_empty() || !load_tables.is_empty() {
+                return Err(invalid(
+                    "--cluster-session",
+                    "cannot be combined with --read-table or --load-table; this mode serves the \
+                     cluster's whole loaded catalog",
+                ));
+            }
+        } else {
+            validate_read_tables(&read_tables, &load_tables)?;
+            validate_load_tables(&read_tables, &load_tables)?;
+        }
         let max_allowed_packet = match max_allowed_packet {
             Some(value) => parse_positive_number("--max-allowed-packet", &value)?,
             None => DEFAULT_MAX_ALLOWED_PACKET,
@@ -363,6 +393,7 @@ impl NodeConfig {
             max_topn_rows,
             schema_lease,
             load_privileges,
+            cluster_session,
         })
     }
 
@@ -374,7 +405,7 @@ impl NodeConfig {
 <name>:<id>:<clustered-pk|stored-not-null> \
 [<name>:<id>:<clustered-pk|stored-not-null> ...]] \
 [--read-table <database> <table> <table-id> <column-count> <column> ...] \
-[--load-table <database>.<table> ...] \
+[--load-table <database>.<table> ...] [--cluster-session] \
 [--max-connections <count>] [--connection-timeout-ms <milliseconds>] \
 [--max-topn-rows <rows>] [--lease-ms <milliseconds>] \
 [--auth-file <mode-0600-tsv> | --load-privileges] \

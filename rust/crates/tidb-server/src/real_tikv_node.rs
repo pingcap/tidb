@@ -249,7 +249,7 @@ impl RealTiKvSessionFactory {
 /// A failed pass is not fatal and does not stop the thread: the previously
 /// published catalog stays in force and the next tick tries again, which is
 /// what Go's reload loop does with a failed `Reload`.
-fn spawn_catalog_reloader(
+pub(crate) fn spawn_catalog_reloader(
     startup: ClusterCatalog,
     transaction_opener: RealOptimisticTransactionOpener,
     schema_lease: Duration,

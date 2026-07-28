@@ -156,6 +156,20 @@ impl MutationBuffer {
         self.lock().clear();
     }
 
+    /// Replaces the whole buffer with `entries`, which [`Self::staged`]
+    /// produced before a statement ran.
+    ///
+    /// This is statement-level rollback: Go undoes a failed statement's writes
+    /// back to the `MemBuffer` staging handle it took at statement start, so a
+    /// failure inside an explicit transaction discards that statement's writes
+    /// and keeps every earlier one. Restoring a whole snapshot has the same
+    /// effect at this seam, which records no per-key undo log.
+    pub fn restore(&self, entries: Vec<(Key, Option<Vec<u8>>)>) {
+        let mut staged = self.lock();
+        staged.clear();
+        staged.extend(entries);
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<Key, Option<Vec<u8>>>> {
         // A poisoned buffer means another statement panicked mid-write; the
         // staged bytes are still exactly what was written before that, and the
@@ -163,6 +177,69 @@ impl MutationBuffer {
         self.staged
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
+    }
+}
+
+/// The snapshot half of a *session's* storage: one slot the session rebinds at
+/// every statement boundary.
+///
+/// A [`ClusterTableStorage`] fixes its snapshot handle at construction, and a
+/// catalog of `KvTable`s is built once per connection -- but "one statement,
+/// one `start_ts`" requires a different transaction for every statement. Both
+/// hold at once when the handle every table shares is this slot: the session
+/// binds a fresh snapshot before a statement and takes it back afterwards, and
+/// no table is rebuilt.
+///
+/// An unbound slot is not an empty table: every read reports a backend error
+/// naming the missing snapshot, so a statement that somehow escapes the
+/// session's bind/unbind pairing fails loudly instead of reading nothing.
+#[derive(Debug, Default)]
+pub struct SwappableSnapshot {
+    bound: Option<Box<dyn ClusterSnapshot>>,
+}
+
+impl SwappableSnapshot {
+    /// An unbound slot, as a session opens with.
+    #[must_use]
+    pub fn new() -> Self {
+        SwappableSnapshot::default()
+    }
+
+    /// Binds this statement's snapshot, returning whatever the slot held.
+    ///
+    /// A returned `Some` means the previous statement never unbound; the
+    /// caller owns finishing it.
+    pub fn bind(&mut self, snapshot: Box<dyn ClusterSnapshot>) -> Option<Box<dyn ClusterSnapshot>> {
+        self.bound.replace(snapshot)
+    }
+
+    /// Takes the bound snapshot back, leaving the slot unbound.
+    pub fn unbind(&mut self) -> Option<Box<dyn ClusterSnapshot>> {
+        self.bound.take()
+    }
+
+    /// Whether a statement's snapshot is currently bound.
+    #[must_use]
+    pub const fn is_bound(&self) -> bool {
+        self.bound.is_some()
+    }
+
+    fn snapshot(&mut self) -> Result<&mut Box<dyn ClusterSnapshot>, StorageError> {
+        self.bound.as_mut().ok_or_else(|| {
+            StorageError::Backend(
+                "no statement snapshot is bound to this session's cluster storage".to_owned(),
+            )
+        })
+    }
+}
+
+impl ClusterSnapshot for SwappableSnapshot {
+    fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        self.snapshot()?.get(key)
+    }
+
+    fn scan(&mut self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError> {
+        self.snapshot()?.scan(start, end)
     }
 }
 
@@ -520,6 +597,60 @@ mod tests {
         assert!(matches!(
             store.iter(Some(&key(b"a")), Some(&key(b"b"))),
             Err(StorageError::Retryable(_))
+        ));
+    }
+
+    #[test]
+    fn restore_puts_the_buffer_back_where_a_statement_found_it() {
+        let buffer = MutationBuffer::new();
+        buffer.set(key(b"a"), b"1".to_vec());
+        let savepoint = buffer.staged();
+        // A statement writes, deletes, and overwrites; restoring undoes all
+        // three and leaves the earlier write exactly as it was.
+        buffer.set(key(b"b"), b"2".to_vec());
+        buffer.delete(key(b"a"));
+        buffer.restore(savepoint);
+        assert_eq!(buffer.get(&key(b"a")), Some(Some(b"1".to_vec())));
+        assert_eq!(buffer.get(&key(b"b")), None);
+        assert_eq!(buffer.len(), 1);
+    }
+
+    #[test]
+    fn a_rebound_slot_serves_the_new_statements_snapshot() {
+        let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
+        let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&slot) as _;
+        let mut store = ClusterTableStorage::new(MutationBuffer::new(), handle);
+        // An unbound slot is a loud error, never an empty table.
+        assert!(matches!(
+            store.get(&key(b"a")),
+            Err(StorageError::Backend(_))
+        ));
+
+        let first = MockSnapshot {
+            data: [(b"a".to_vec(), b"first".to_vec())].into_iter().collect(),
+            ..MockSnapshot::default()
+        };
+        assert!(slot.lock().unwrap().bind(Box::new(first)).is_none());
+        assert_eq!(store.get(&key(b"a")).unwrap(), b"first".to_vec());
+
+        // The next statement's snapshot replaces it without touching the
+        // table, which is the whole point of the slot.
+        let previous = slot
+            .lock()
+            .unwrap()
+            .bind(Box::new(MockSnapshot {
+                data: [(b"a".to_vec(), b"second".to_vec())].into_iter().collect(),
+                ..MockSnapshot::default()
+            }))
+            .expect("the first snapshot is still bound");
+        drop(previous);
+        assert_eq!(store.get(&key(b"a")).unwrap(), b"second".to_vec());
+
+        assert!(slot.lock().unwrap().unbind().is_some());
+        assert!(!slot.lock().unwrap().is_bound());
+        assert!(matches!(
+            store.get(&key(b"a")),
+            Err(StorageError::Backend(_))
         ));
     }
 

@@ -936,6 +936,43 @@ impl Session {
         })
     }
 
+    /// Whether `sql` is a statement that changes persistent schema or account
+    /// state: Go's `ast.DDLNode` (which includes `CREATE USER` and friends),
+    /// plus the privilege and role statements TiDB's parser builds as
+    /// administrative rather than DDL.
+    ///
+    /// A front end whose catalog and account table are a *read* of somebody
+    /// else's stored state needs this: running such a statement would change
+    /// only this process's in-memory copy, which is a silently wrong answer
+    /// rather than a slow one. Classifying it here keeps that decision on the
+    /// parse, next to [`Self::statement_kind`], instead of in each front end's
+    /// own matcher.
+    pub fn statement_changes_stored_schema(&self, sql: &str) -> Result<bool, DriverError> {
+        let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        Ok(match &stmt {
+            Stmt::Ddl(_) => true,
+            // The privilege/role statements: everything under `Admin` that
+            // writes `mysql.user`, `mysql.db`, or the role edges. `SHOW
+            // GRANTS` and the other inspections read and are left alone.
+            Stmt::Admin(admin) => matches!(
+                admin.as_ref(),
+                tidb_ast::AdminStmt::Grant(_)
+                    | tidb_ast::AdminStmt::GrantProxy(_)
+                    | tidb_ast::AdminStmt::GrantRole(_)
+                    | tidb_ast::AdminStmt::Revoke(_)
+                    | tidb_ast::AdminStmt::RevokeRole(_)
+            ),
+            // `SET PASSWORD` and `SET DEFAULT ROLE` write `mysql.user` and
+            // `mysql.default_roles`; every other `SET` is session- or
+            // process-local.
+            Stmt::Session(session) => matches!(
+                session.as_ref(),
+                tidb_ast::SessionStmt::SetPassword(_) | tidb_ast::SessionStmt::SetDefaultRole(_)
+            ),
+            Stmt::Query(_) | Stmt::Dml(_) => false,
+        })
+    }
+
     /// Records the authenticated identity, which the builtins report.
     ///
     /// Go sets `SessionVars.User` once the connection authenticates; a

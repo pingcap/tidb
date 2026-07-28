@@ -284,47 +284,7 @@ impl QuerySession for PipelineServerSession {
         statement: &PreparedGeneral,
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
-        let params: Vec<tidb_datatype::Datum> = values
-            .iter()
-            // Go `ExecBinaryParam` builds one datum per parameter kind: a
-            // signed width becomes an Int, an unsigned one a UInt, FLOAT and
-            // DOUBLE their own real domains, DECIMAL is parsed from its
-            // digits, and a NULL parameter is a NULL datum.
-            .map(|value| match value {
-                tidb_protocol::PreparedValue::SignedLongLong(value) => {
-                    tidb_datatype::Datum::Int(*value)
-                }
-                tidb_protocol::PreparedValue::UnsignedLongLong(value) => {
-                    tidb_datatype::Datum::UInt(*value)
-                }
-                tidb_protocol::PreparedValue::String(bytes) => {
-                    tidb_datatype::Datum::Bytes(bytes.clone())
-                }
-                tidb_protocol::PreparedValue::Float(value) => {
-                    tidb_datatype::Datum::Float32(f64::from(*value))
-                }
-                tidb_protocol::PreparedValue::Double(value) => tidb_datatype::Datum::Real(*value),
-                tidb_protocol::PreparedValue::Decimal(digits) => {
-                    match std::str::from_utf8(digits) {
-                        Ok(text) => tidb_datatype::Datum::Decimal(
-                            tidb_datatype::Decimal::from_literal(text),
-                        ),
-                        // Go's own FromString reports truncation and keeps
-                        // what it read; digits that are not even text cannot
-                        // be a number at all.
-                        Err(_) => tidb_datatype::Datum::Null,
-                    }
-                }
-                tidb_protocol::PreparedValue::Null => tidb_datatype::Datum::Null,
-                // Go parses the rendered text into a Time or Duration datum.
-                // This tier keeps temporal values as their formatted text --
-                // the same documented divergence the temporal casts and the
-                // date/time builtins carry -- so the text IS the value here.
-                tidb_protocol::PreparedValue::Temporal(text) => {
-                    tidb_datatype::Datum::Bytes(text.clone().into_bytes())
-                }
-            })
-            .collect();
+        let params = prepared_parameters(values);
         let output = self
             .session
             .run_with_params(statement.sql(), &params)
@@ -362,6 +322,54 @@ impl QuerySession for PipelineServerSession {
     }
 }
 
+/// Binds one `COM_STMT_EXECUTE` parameter list to the driver's datum domain.
+///
+/// Go `ExecBinaryParam` builds one datum per parameter kind: a signed width
+/// becomes an Int, an unsigned one a UInt, FLOAT and DOUBLE their own real
+/// domains, DECIMAL is parsed from its digits, and a NULL parameter is a NULL
+/// datum.
+pub(crate) fn prepared_parameters(
+    values: &[tidb_protocol::PreparedValue],
+) -> Vec<tidb_datatype::Datum> {
+    values
+        .iter()
+        .map(|value| match value {
+            tidb_protocol::PreparedValue::SignedLongLong(value) => {
+                tidb_datatype::Datum::Int(*value)
+            }
+            tidb_protocol::PreparedValue::UnsignedLongLong(value) => {
+                tidb_datatype::Datum::UInt(*value)
+            }
+            tidb_protocol::PreparedValue::String(bytes) => {
+                tidb_datatype::Datum::Bytes(bytes.clone())
+            }
+            tidb_protocol::PreparedValue::Float(value) => {
+                tidb_datatype::Datum::Float32(f64::from(*value))
+            }
+            tidb_protocol::PreparedValue::Double(value) => tidb_datatype::Datum::Real(*value),
+            tidb_protocol::PreparedValue::Decimal(digits) => {
+                match std::str::from_utf8(digits) {
+                    Ok(text) => {
+                        tidb_datatype::Datum::Decimal(tidb_datatype::Decimal::from_literal(text))
+                    }
+                    // Go's own FromString reports truncation and keeps
+                    // what it read; digits that are not even text cannot
+                    // be a number at all.
+                    Err(_) => tidb_datatype::Datum::Null,
+                }
+            }
+            tidb_protocol::PreparedValue::Null => tidb_datatype::Datum::Null,
+            // Go parses the rendered text into a Time or Duration datum.
+            // This tier keeps temporal values as their formatted text --
+            // the same documented divergence the temporal casts and the
+            // date/time builtins carry -- so the text IS the value here.
+            tidb_protocol::PreparedValue::Temporal(text) => {
+                tidb_datatype::Datum::Bytes(text.clone().into_bytes())
+            }
+        })
+        .collect()
+}
+
 fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
     let mapped = error.to_mysql_error();
     SqlQueryError::new(mapped.code, mapped.state, mapped.message)
@@ -374,7 +382,7 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
 /// schema/table/column names for the wire, so those identifier fields are
 /// empty and `org_name` mirrors the display name, as Go does for expression
 /// result fields.
-fn select_columns(columns: &[(String, FieldType)]) -> Vec<ColumnInfo> {
+pub(crate) fn select_columns(columns: &[(String, FieldType)]) -> Vec<ColumnInfo> {
     columns
         .iter()
         .map(|(name, field_type)| {
@@ -413,7 +421,7 @@ const fn length_to_option(length: i64) -> Option<i64> {
 
 /// The one-column `affected_rows` result set that carries a write outcome on
 /// the text path (see the module documentation for why not an OK packet).
-fn affected_rows_source(count: u64) -> MaterializedResultSetSource {
+pub(crate) fn affected_rows_source(count: u64) -> MaterializedResultSetSource {
     let field_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
     MaterializedResultSetSource::new(
         select_columns(&[("affected_rows".to_owned(), field_type)]),

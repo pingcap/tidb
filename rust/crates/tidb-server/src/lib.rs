@@ -33,6 +33,7 @@ mod auth_token;
 mod bootstrap;
 mod cluster_privileges;
 pub mod cluster_session;
+pub mod cluster_session_node;
 mod compressed_command_io;
 mod configured_user_store;
 pub mod connection_resultset;
@@ -93,6 +94,9 @@ pub use bootstrap::{
     BootstrapPhase, BOOTSTRAP_PHASE_ORDER, NOT_BOOTSTRAPPED,
 };
 pub use cluster_privileges::{registry_from_cluster, LoadedRegistry, SkippedGrant};
+pub use cluster_session_node::{
+    run_cluster_session_node, ClusterServerSession, ClusterSessionFactory,
+};
 pub use compressed_command_io::{
     CommandIoError, CommandIoOutcome, CompressedCommandIo, NegotiatedCompression, CLIENT_COMPRESS,
 };
@@ -158,7 +162,14 @@ pub use sql_node::{
 /// routed until its schema is read from the cluster's own catalog, so it
 /// connects once and then serves whichever of the single-reader or
 /// connected-join surfaces its servable table count reaches.
+///
+/// `--cluster-session` leaves that family entirely: it names no table and
+/// serves the cluster's whole loaded catalog through the wide-SQL session
+/// driver ([`cluster_session_node`]), so it is routed first.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
+    if config.cluster_session {
+        return run_cluster_session_node(config);
+    }
     if !config.load_tables.is_empty() {
         return match connect_loaded_catalog_authority(&config)
             .map_err(RunConfiguredNodeError::Engine)?

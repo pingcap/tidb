@@ -595,6 +595,39 @@ fn load_table_requires_a_qualified_name() {
     );
 }
 
+/// `--cluster-session` is the one mode that names no table: it serves the
+/// cluster's whole loaded catalog through the wide-SQL session driver.
+#[test]
+fn cluster_session_needs_no_table_and_rejects_a_bounded_one() {
+    let config = NodeConfig::parse(vec![
+        "tidb-server",
+        "--path",
+        "127.0.0.1:2379",
+        "--cluster-session",
+        "--load-privileges",
+    ])
+    .unwrap();
+    assert!(config.cluster_session);
+    assert!(config.read_tables.is_empty());
+    assert!(config.load_tables.is_empty());
+    assert!(config.load_privileges);
+
+    let error = NodeConfig::parse(vec![
+        "tidb-server",
+        "--path",
+        "127.0.0.1:2379",
+        "--cluster-session",
+        "--load-table",
+        "campaign.rows",
+        "--load-privileges",
+    ])
+    .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("--cluster-session"),
+        "unexpected error: {error:?}"
+    );
+}
+
 #[test]
 fn a_table_cannot_be_both_described_and_loaded() {
     let mut arguments = required();
