@@ -552,7 +552,10 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
     let startup = loaded.expect("the catalog closure ran exactly once");
     let schema_version = startup.schema_version;
 
-    let users = node_accounts(&config, &authority)?;
+    // `node_accounts` also hands back the privilege reloader (landed in
+    // parallel); it must stay alive for the node's run and drop before the
+    // authority's shutdown drain, like the catalog reloader below.
+    let (users, privilege_reloader) = node_accounts(&config, &authority)?;
     let (catalog, reloader) =
         spawn_catalog_reloader(startup, authority.transaction_opener(), config.schema_lease)
             .map_err(|error| {
@@ -569,9 +572,9 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
     let skipped = render_skipped(factory.boot_skipped_tables());
 
     run_with_process_shutdown(
-        (factory, reloader),
+        (factory, reloader, privilege_reloader),
         authority,
-        move |(factory, reloader)| {
+        move |(factory, reloader, privilege_reloader)| {
             let node =
                 ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                     crate::real_tikv_node::emit_connections_startup_failure(&error);
@@ -592,9 +595,11 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             users.len(),
         );
             let outcome = node.run().map_err(RunConfiguredNodeError::Node);
-            // The reload thread holds its own transaction opener; joining it here
-            // releases those PD handles before the authority's shutdown drain.
+            // The reload threads hold their own transaction openers; joining
+            // them here releases those PD handles before the authority's
+            // shutdown drain.
             drop(reloader);
+            drop(privilege_reloader);
             outcome
         },
     )
