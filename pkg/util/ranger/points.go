@@ -195,10 +195,10 @@ func pointConvertToSortKey(
  * So for keep this behaver, getFullRange function is introduced.
  */
 func getFullRange() []*point {
-	return []*point{
-		{start: true},
-		{value: types.MaxValueDatum()},
-	}
+	return newPointPair(
+		point{start: true},
+		point{value: types.MaxValueDatum()},
+	)
 }
 
 func getNotNullFullRange() []*point {
