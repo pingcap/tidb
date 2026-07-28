@@ -2080,16 +2080,11 @@ impl Session {
         Ok(StmtOutput::Affected(0))
     }
 
-    /// `GRANT <static privs> ON *.* TO <user>...` -- the GLOBAL-scope slice
-    /// of Go's `grant.go`. Roles, dynamic privileges, `WITH GRANT OPTION`,
-    /// column lists, and any level but `*.*` are refused rather than
+    /// `GRANT <static privs> ON <level> TO <user>...` -- Go's `grant.go`
+    /// GLOBAL/DATABASE/TABLE scopes. Roles, dynamic privileges,
+    /// `WITH GRANT OPTION`, and column lists are refused rather than
     /// silently accepted or dropped.
     fn grant_stmt(&mut self, grant: &tidb_ast::GrantStmt) -> Result<StmtOutput, DriverError> {
-        if !matches!(grant.level, tidb_ast::GrantLevel::Global) {
-            return Err(DriverError::Unsupported(
-                "GRANT at database or table scope is not supported yet",
-            ));
-        }
         if grant.object_type.is_some() {
             return Err(DriverError::Unsupported(
                 "GRANT ... ON FUNCTION/PROCEDURE is not supported yet",
@@ -2105,58 +2100,208 @@ impl Session {
                 "GRANT ... REQUIRE is not supported yet",
             ));
         }
-        let mask = self.resolve_global_priv_mask(&grant.privileges)?;
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::Unsupported(
                 "GRANT requires a server front end with a privilege registry",
             ));
         };
-        for spec in &grant.users {
-            let user = spec.user.user.as_str();
-            let host = spec.user.host.as_str();
-            // Go's default sql_mode forbids GRANT from implicitly creating
-            // the target account (captured: `ErrCantCreateUserWithGrant`,
-            // 1410).
-            if !registry.user_exists(user, host) {
-                return Err(DriverError::GrantToUnknownUser);
+        match &grant.level {
+            tidb_ast::GrantLevel::Global => {
+                let mask = self.resolve_global_priv_mask(&grant.privileges)?;
+                for spec in &grant.users {
+                    let user = spec.user.user.as_str();
+                    let host = spec.user.host.as_str();
+                    // Go's default sql_mode forbids GRANT from implicitly
+                    // creating the target account (captured:
+                    // `ErrCantCreateUserWithGrant`, 1410).
+                    if !registry.user_exists(user, host) {
+                        return Err(DriverError::GrantToUnknownUser);
+                    }
+                    registry.grant(user, host, mask);
+                }
             }
-            registry.grant(user, host, mask);
+            tidb_ast::GrantLevel::Database(database) => {
+                let database = self.resolve_grant_database(database.as_deref())?;
+                let privs = self.resolve_scoped_privs(&grant.privileges, ScopeKind::Database)?;
+                let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
+                for spec in &grant.users {
+                    let user = spec.user.user.as_str();
+                    let host = spec.user.host.as_str();
+                    if !registry.user_exists(user, host) {
+                        return Err(DriverError::GrantToUnknownUser);
+                    }
+                    registry.grant_db(user, host, &database, mask);
+                }
+            }
+            tidb_ast::GrantLevel::Table { database, table } => {
+                let database = self.resolve_grant_database(database.as_deref())?;
+                let privs = self.resolve_scoped_privs(&grant.privileges, ScopeKind::Table)?;
+                let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
+                // Go allows granting on a table that does not exist only
+                // when the privilege list includes `CREATE` (captured:
+                // issues #28533/#29268); otherwise it reports
+                // `ErrTableNotExists` (1146).
+                let table_exists = self.lock_catalog()?.table_in(&database, table).is_some();
+                if !table_exists && !privs.contains(&privilege::GlobalPriv::Create) {
+                    return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                        "{database}.{table}"
+                    ))));
+                }
+                for spec in &grant.users {
+                    let user = spec.user.user.as_str();
+                    let host = spec.user.host.as_str();
+                    if !registry.user_exists(user, host) {
+                        return Err(DriverError::GrantToUnknownUser);
+                    }
+                    registry.grant_table(user, host, &database, table, mask);
+                }
+            }
         }
         Ok(StmtOutput::Affected(0))
     }
 
-    /// `REVOKE <static privs> ON *.* FROM <user>...`. Go's `revoke.go`
+    /// `REVOKE <static privs> ON <level> FROM <user>...`. Go's `revoke.go`
     /// requires every named account to already exist (`errors.Errorf("Unknown
     /// user: %s", ...)`, captured); this tier does too.
     fn revoke_stmt(&mut self, revoke: &tidb_ast::RevokeStmt) -> Result<StmtOutput, DriverError> {
-        if !matches!(revoke.level, tidb_ast::GrantLevel::Global) {
-            return Err(DriverError::Unsupported(
-                "REVOKE at database or table scope is not supported yet",
-            ));
-        }
         if revoke.object_type.is_some() {
             return Err(DriverError::Unsupported(
                 "REVOKE ... ON FUNCTION/PROCEDURE is not supported yet",
             ));
         }
-        let mask = self.resolve_global_priv_mask(&revoke.privileges)?;
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::Unsupported(
                 "REVOKE requires a server front end with a privilege registry",
             ));
         };
-        for spec in &revoke.users {
-            let user = spec.user.user.as_str();
-            let host = spec.user.host.as_str();
-            if !registry.user_exists(user, host) {
-                return Err(DriverError::RevokeUnknownUser {
-                    user: user.to_owned(),
-                    host: host.to_owned(),
-                });
+        match &revoke.level {
+            tidb_ast::GrantLevel::Global => {
+                let mask = self.resolve_global_priv_mask(&revoke.privileges)?;
+                for spec in &revoke.users {
+                    let user = spec.user.user.as_str();
+                    let host = spec.user.host.as_str();
+                    if !registry.user_exists(user, host) {
+                        return Err(DriverError::RevokeUnknownUser {
+                            user: user.to_owned(),
+                            host: host.to_owned(),
+                        });
+                    }
+                    registry.revoke(user, host, mask);
+                }
             }
-            registry.revoke(user, host, mask);
+            tidb_ast::GrantLevel::Database(database) => {
+                let database = self.resolve_grant_database(database.as_deref())?;
+                let privs = self.resolve_scoped_privs(&revoke.privileges, ScopeKind::Database)?;
+                let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
+                for spec in &revoke.users {
+                    let user = spec.user.user.as_str();
+                    let host = spec.user.host.as_str();
+                    if !registry.user_exists(user, host) {
+                        return Err(DriverError::RevokeUnknownUser {
+                            user: user.to_owned(),
+                            host: host.to_owned(),
+                        });
+                    }
+                    if !registry.db_grant_row_exists(user, host, &database) {
+                        return Err(DriverError::RevokeNoDbGrant {
+                            user: user.to_owned(),
+                            host: host.to_owned(),
+                            database: database.clone(),
+                        });
+                    }
+                    registry.revoke_db(user, host, &database, mask);
+                }
+            }
+            tidb_ast::GrantLevel::Table { database, table } => {
+                let database = self.resolve_grant_database(database.as_deref())?;
+                let privs = self.resolve_scoped_privs(&revoke.privileges, ScopeKind::Table)?;
+                let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
+                for spec in &revoke.users {
+                    let user = spec.user.user.as_str();
+                    let host = spec.user.host.as_str();
+                    if !registry.user_exists(user, host) {
+                        return Err(DriverError::RevokeUnknownUser {
+                            user: user.to_owned(),
+                            host: host.to_owned(),
+                        });
+                    }
+                    if !registry.table_grant_row_exists(user, host, &database, table) {
+                        return Err(DriverError::RevokeNoTableGrant {
+                            user: user.to_owned(),
+                            host: host.to_owned(),
+                            database: database.clone(),
+                            table: table.clone(),
+                        });
+                    }
+                    registry.revoke_table(user, host, &database, table, mask);
+                }
+            }
         }
         Ok(StmtOutput::Affected(0))
+    }
+
+    /// Resolves a DB/TABLE-scope `GRANT`/`REVOKE`'s database qualifier: the
+    /// written name, or (Go's `getTargetSchemaName`) the session's current
+    /// database when the statement wrote a bare `*`/table name.
+    fn resolve_grant_database(&self, database: Option<&str>) -> Result<String, DriverError> {
+        match database {
+            Some(database) => Ok(database.to_owned()),
+            None if !self.current_db.is_empty() => Ok(self.current_db.clone()),
+            None => Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected)),
+        }
+    }
+
+    /// Resolves a `GRANT`/`REVOKE` privilege list at DB or TABLE scope,
+    /// validating that every privilege is one Go's `mysql.AllDBPrivs`/
+    /// `mysql.AllTablePrivs` allows there. `ALL [PRIVILEGES]` expands to
+    /// every privilege valid at that scope. A global-only privilege at DB
+    /// scope is refused with the captured `ErrWrongUsage`/1221; any
+    /// privilege outside the TABLE-scope set is refused with the captured
+    /// `ErrIllegalGrantForTable`/1144 (Go checks the TABLE-scope validity
+    /// before the table-existence check, so this runs first here too).
+    fn resolve_scoped_privs(
+        &self,
+        privileges: &[tidb_ast::GrantPrivilege],
+        scope: ScopeKind,
+    ) -> Result<Vec<privilege::GlobalPriv>, DriverError> {
+        let all_scoped: &[privilege::GlobalPriv] = match scope {
+            ScopeKind::Database => privilege::ALL_DB_PRIVS,
+            ScopeKind::Table => privilege::ALL_TABLE_PRIVS,
+        };
+        let mut result = Vec::new();
+        for privilege in privileges {
+            if privilege.name == "ALL" {
+                result.extend_from_slice(all_scoped);
+                continue;
+            }
+            if !privilege.columns.is_empty() {
+                return Err(DriverError::Unsupported(
+                    "GRANT/REVOKE with a column list is not supported yet",
+                ));
+            }
+            let Some(priv_) = privilege::GlobalPriv::from_grant_name(&privilege.name) else {
+                return Err(DriverError::DynamicPrivilegeNotRegistered(
+                    privilege.name.clone(),
+                ));
+            };
+            if privilege.dynamic {
+                return Err(DriverError::DynamicPrivilegeNotRegistered(
+                    privilege.name.clone(),
+                ));
+            }
+            let valid = match scope {
+                ScopeKind::Database => priv_.is_valid_at_db_scope(),
+                ScopeKind::Table => priv_.is_valid_at_table_scope(),
+            };
+            if !valid {
+                return Err(match scope {
+                    ScopeKind::Database => DriverError::DbGrantGlobalOnlyPriv,
+                    ScopeKind::Table => DriverError::IllegalGrantForTable,
+                });
+            }
+            result.push(priv_);
+        }
+        Ok(result)
     }
 
     /// Resolves a `GRANT`/`REVOKE` privilege list to the bitmask this tier's
@@ -2230,14 +2375,15 @@ impl Session {
                 "SHOW GRANTS requires a server front end with a privilege registry",
             ));
         };
-        let Some(line) = registry.show_grants(&user, &host) else {
+        let Some(lines) = registry.show_grants(&user, &host) else {
             return Err(DriverError::NonexistingGrant { user, host });
         };
         // Go: `fmt.Sprintf("Grants for %s", s.User)` -- `s.User.String()` is
-        // unquoted `user@host`.
+        // unquoted `user@host`. One row per GLOBAL/DB/TABLE-scope line, in
+        // that order (`registry.show_grants`'s captured ordering).
         Ok(string_column_output(
             &format!("Grants for {user}@{host}"),
-            vec![line],
+            lines.split('\n').map(str::to_owned).collect(),
         ))
     }
 
@@ -2826,6 +2972,17 @@ impl WarningLevel {
             WarningLevel::Error => "Error",
         }
     }
+}
+
+/// Which non-global `GRANT`/`REVOKE` scope a privilege list is being
+/// validated against -- selects between Go's `mysql.AllDBPrivs` and
+/// `mysql.AllTablePrivs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScopeKind {
+    /// `ON db.*`.
+    Database,
+    /// `ON db.t`.
+    Table,
 }
 
 /// Go `variable.NoopFuncsMode`: how a clause TiDB only implements as a
@@ -10256,16 +10413,13 @@ mod tests {
         );
     }
 
-    /// OUT OF SCOPE, refused rather than faked: database/table-level grants,
-    /// `WITH GRANT OPTION`, and roles.
+    /// OUT OF SCOPE, refused rather than faked: `WITH GRANT OPTION`, column
+    /// lists, and roles. (Database/table-level grants themselves are now
+    /// modeled -- see the `db_scope_*`/`table_scope_*` tests below.)
     #[test]
     fn out_of_scope_grant_forms_are_refused() {
         let mut session = session_with_privileges();
         session.run("CREATE USER 'dup1'@'%'").unwrap();
-        assert!(matches!(
-            session.run("GRANT SELECT ON test.* TO 'dup1'@'%'"),
-            Err(DriverError::Unsupported(_))
-        ));
         assert!(matches!(
             session.run("GRANT SELECT ON *.* TO 'dup1'@'%' WITH GRANT OPTION"),
             Err(DriverError::Unsupported(_))
@@ -10274,6 +10428,167 @@ mod tests {
             session.run("DROP ROLE 'r1'"),
             Err(DriverError::Unsupported(_))
         ));
+    }
+
+    /// CAPTURED end to end (`pkg/executor/grant.go`/`revoke.go`,
+    /// `pkg/privilege/privileges/cache.go`'s `showGrants`): DB-scope
+    /// `GRANT`/`REVOKE`/`SHOW GRANTS`, including the `ALL PRIVILEGES`
+    /// literal and the lexical (not insertion, not plain-name) sort order
+    /// across multiple databases.
+    #[test]
+    fn db_scope_grant_revoke_and_show_grants_round_trip() {
+        let mut session = session_with_privileges();
+        session.run("CREATE USER 'u1'@'%'").unwrap();
+        session.run("CREATE DATABASE db1").unwrap();
+        session.run("CREATE DATABASE aaadb").unwrap();
+
+        session.run("GRANT SELECT ON db1.* TO 'u1'@'%'").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+            [
+                vec!["GRANT USAGE ON *.* TO 'u1'@'%'".to_owned()],
+                vec!["GRANT SELECT ON `db1`.* TO 'u1'@'%'".to_owned()],
+            ]
+        );
+
+        // A second DB, granted later, still sorts before `db1` (captured:
+        // Go sorts DB-scope lines lexically by their formatted text).
+        session.run("GRANT SELECT ON aaadb.* TO 'u1'@'%'").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+            [
+                vec!["GRANT USAGE ON *.* TO 'u1'@'%'".to_owned()],
+                vec!["GRANT SELECT ON `aaadb`.* TO 'u1'@'%'".to_owned()],
+                vec!["GRANT SELECT ON `db1`.* TO 'u1'@'%'".to_owned()],
+            ]
+        );
+
+        // Once `db1`'s line becomes `GRANT ALL PRIVILEGES ...`, it sorts
+        // *before* `aaadb`'s `GRANT SELECT ...` line: the sort key is the
+        // whole formatted string, which starts with the privilege text, not
+        // the database name ('A' < 'S').
+        session.run("GRANT ALL ON db1.* TO 'u1'@'%'").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u1'@'%'"))[1],
+            vec!["GRANT ALL PRIVILEGES ON `db1`.* TO 'u1'@'%'".to_owned()]
+        );
+
+        session.run("REVOKE ALL ON db1.* FROM 'u1'@'%'").unwrap();
+        session.run("REVOKE SELECT ON db1.* FROM 'u1'@'%'").unwrap();
+        // Back to `GRANT USAGE ...`, which sorts after `aaadb`'s `SELECT`
+        // line again ('U' > 'S').
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u1'@'%'"))[2],
+            vec!["GRANT USAGE ON `db1`.* TO 'u1'@'%'".to_owned()]
+        );
+    }
+
+    /// CAPTURED: `GRANT PROCESS ON db.*` (a global-only privilege) is Go's
+    /// `ErrWrongUsage`/1221, "Incorrect usage of DB GRANT and GLOBAL
+    /// PRIVILEGES".
+    #[test]
+    fn db_scope_grant_rejects_global_only_privilege() {
+        let mut session = session_with_privileges();
+        session.run("CREATE USER 'u1'@'%'").unwrap();
+        session.run("CREATE DATABASE db1").unwrap();
+        assert!(matches!(
+            session.run("GRANT PROCESS ON db1.* TO 'u1'@'%'"),
+            Err(DriverError::DbGrantGlobalOnlyPriv)
+        ));
+    }
+
+    /// CAPTURED: `REVOKE ... ON db.*` for an account with no `mysql.DB` row
+    /// for that database at all is Go's plain "There is no such grant
+    /// defined for user '%s' on host '%s' on database %s".
+    #[test]
+    fn db_scope_revoke_without_any_grant_row_is_refused() {
+        let mut session = session_with_privileges();
+        session.run("CREATE USER 'u1'@'%'").unwrap();
+        session.run("CREATE DATABASE emptydb").unwrap();
+        match session.run("REVOKE SELECT ON emptydb.* FROM 'u1'@'%'") {
+            Err(DriverError::RevokeNoDbGrant {
+                user,
+                host,
+                database,
+            }) => {
+                assert_eq!(user, "u1");
+                assert_eq!(host, "%");
+                assert_eq!(database, "emptydb");
+            }
+            other => panic!("expected RevokeNoDbGrant, got {other:?}"),
+        }
+    }
+
+    /// CAPTURED end to end: TABLE-scope `GRANT`/`REVOKE`/`SHOW GRANTS`,
+    /// including the `ALL PRIVILEGES` literal, backtick-quoted
+    /// `` `db`.`table` `` (both segments escaped, same as Go's
+    /// `stringutil.Escape`), and the invalid-scope-privilege / missing-table
+    /// error split (Go checks privilege validity before table existence).
+    #[test]
+    fn table_scope_grant_revoke_and_show_grants_round_trip() {
+        let mut session = session_with_privileges();
+        session.run("CREATE USER 'u1'@'%'").unwrap();
+        session.run("CREATE DATABASE db1").unwrap();
+        session.run("CREATE TABLE db1.t1 (a INT)").unwrap();
+
+        session
+            .run("GRANT SELECT, INSERT ON db1.t1 TO 'u1'@'%'")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
+            [
+                vec!["GRANT USAGE ON *.* TO 'u1'@'%'".to_owned()],
+                vec!["GRANT SELECT,INSERT ON `db1`.`t1` TO 'u1'@'%'".to_owned()],
+            ]
+        );
+
+        session.run("GRANT ALL ON db1.t1 TO 'u1'@'%'").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u1'@'%'"))[1],
+            vec!["GRANT ALL PRIVILEGES ON `db1`.`t1` TO 'u1'@'%'".to_owned()]
+        );
+
+        session.run("REVOKE ALL ON db1.t1 FROM 'u1'@'%'").unwrap();
+        assert_eq!(
+            row_text(session.run("SHOW GRANTS FOR 'u1'@'%'"))[1],
+            vec!["GRANT USAGE ON `db1`.`t1` TO 'u1'@'%'".to_owned()]
+        );
+
+        // Invalid-scope privilege: refused before the table-existence
+        // check runs (captured `ErrIllegalGrantForTable`/1144).
+        assert!(matches!(
+            session.run("GRANT PROCESS ON db1.t1 TO 'u1'@'%'"),
+            Err(DriverError::IllegalGrantForTable)
+        ));
+
+        // A valid privilege on a table that does not exist: refused with
+        // `ErrTableNotExists`/1146 (captured), unless `CREATE` is among the
+        // granted privileges (Go's issue #28533/#29268 exception).
+        assert!(matches!(
+            session.run("GRANT SELECT ON db1.nosuchtable TO 'u1'@'%'"),
+            Err(DriverError::Schema(SchemaErrorKind::UnknownTable(ref name)))
+                if name == "db1.nosuchtable"
+        ));
+        session
+            .run("GRANT CREATE ON db1.nosuchtable TO 'u1'@'%'")
+            .unwrap();
+
+        // REVOKE for an account with no `mysql.Tables_priv` row at all.
+        session.run("CREATE TABLE db1.t2 (a INT)").unwrap();
+        match session.run("REVOKE SELECT ON db1.t2 FROM 'u1'@'%'") {
+            Err(DriverError::RevokeNoTableGrant {
+                user,
+                host,
+                database,
+                table,
+            }) => {
+                assert_eq!(user, "u1");
+                assert_eq!(host, "%");
+                assert_eq!(database, "db1");
+                assert_eq!(table, "t2");
+            }
+            other => panic!("expected RevokeNoTableGrant, got {other:?}"),
+        }
     }
 
     /// `PROCESS` granted through `GRANT` (not the test-only

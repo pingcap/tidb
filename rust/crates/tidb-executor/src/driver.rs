@@ -673,6 +673,37 @@ pub enum DriverError {
         /// The account host.
         host: String,
     },
+    /// Go `ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")`
+    /// (1221): a DB-scope `GRANT`/`REVOKE` named a global-only privilege
+    /// (`PROCESS`, `SUPER`, ...).
+    DbGrantGlobalOnlyPriv,
+    /// Go `ErrIllegalGrantForTable` (1144): a TABLE-scope `GRANT`/`REVOKE`
+    /// named a privilege outside `mysql.AllTablePrivs`.
+    IllegalGrantForTable,
+    /// Go's plain `errors.Errorf("There is no such grant defined for user
+    /// '%s' on host '%s' on database %s", ...)`: `REVOKE ... ON db.*` for an
+    /// account with no `mysql.DB` row for that database at all.
+    RevokeNoDbGrant {
+        /// The account username.
+        user: String,
+        /// The account host.
+        host: String,
+        /// The database named in the `REVOKE`, as written.
+        database: String,
+    },
+    /// Go's plain `errors.Errorf("There is no such grant defined for user
+    /// '%s' on host '%s' on table %s.%s", ...)`: `REVOKE ... ON db.t` for an
+    /// account with no `mysql.Tables_priv` row for that table at all.
+    RevokeNoTableGrant {
+        /// The account username.
+        user: String,
+        /// The account host.
+        host: String,
+        /// The database named in the `REVOKE`, as written.
+        database: String,
+        /// The table named in the `REVOKE`, as written.
+        table: String,
+    },
 }
 
 /// Why a schema statement failed.
@@ -8957,6 +8988,41 @@ impl DriverError {
             *b"42000",
             format!("There is no such grant defined for user '{user}' on host '{host}'"),
         ),
+        // Go `ErrWrongUsage` (1221), `grantDBLevel`'s global-only-privilege
+        // check.
+        DriverError::DbGrantGlobalOnlyPriv => MysqlError::new(
+            1221,
+            *b"HY000",
+            "Incorrect usage of DB GRANT and GLOBAL PRIVILEGES".to_owned(),
+        ),
+        // Go `ErrIllegalGrantForTable` (1144).
+        DriverError::IllegalGrantForTable => MysqlError::new(
+            1144,
+            *b"42000",
+            "Illegal GRANT/REVOKE command; please consult the manual to see which privileges \
+             can be used"
+                .to_owned(),
+        ),
+        // Go: `errors.Errorf("There is no such grant defined for user '%s' \
+        // on host '%s' on database %s", ...)` in `RevokeExec.revokeOneUser`.
+        DriverError::RevokeNoDbGrant {
+            user,
+            host,
+            database,
+        } => MysqlError::unknown(format!(
+            "There is no such grant defined for user '{user}' on host '{host}' on database \
+             {database}"
+        )),
+        // Go: the TABLE-scope analogue of `RevokeNoDbGrant`.
+        DriverError::RevokeNoTableGrant {
+            user,
+            host,
+            database,
+            table,
+        } => MysqlError::unknown(format!(
+            "There is no such grant defined for user '{user}' on host '{host}' on table \
+             {database}.{table}"
+        )),
         // Go: "Unknown database '%-.192s'".
         DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(
             name,
