@@ -458,3 +458,96 @@ func readAllRows(t *testing.T, reader *HistoryReader) [][]types.Datum {
 	}
 	return results
 }
+
+// TestStmtFilesClosesExcludedFDs closes V2-17 of the statement-summary audit:
+// the directory walk opened every candidate file to read its begin/end metadata
+// and, when a file was excluded by the requested time range, returned without
+// closing the OS FD. Over a long-running TiDB process with on-disk history
+// pruning this leaks one FD per excluded file until the process runs out of
+// file descriptors.
+//
+// The test axiomatically observes file lifetimes by wrapping openStmtFileFn:
+// every opened *os.File is recorded. After newStmtFiles returns, the test
+// double-closes each recorded FD. On a *os.File, calling Close a second time
+// returns os.ErrClosed iff the first Close already ran. Therefore:
+//   - excluded file FDs MUST report os.ErrClosed (closed by the fix);
+//   - kept file FDs MUST NOT report os.ErrClosed (still owned by the reader,
+//     closed later via stmtFiles.close()).
+//
+// On the buggy code the excluded FDs were never closed, so the rechsurClose
+// attempt returns nil and the test fails.
+func TestStmtFilesClosesExcludedFDs(t *testing.T) {
+	t1 := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
+	rotated := "tidb-statements-2022-12-27T16-21-20.245.log"
+	active := "tidb-statements.log"
+
+	require.NoError(t, writeStmtFile(rotated, t1.Unix()-10, t1.Unix()))
+	t.Cleanup(func() { _ = os.Remove(rotated) })
+	require.NoError(t, writeStmtFile(active, t1.Unix()+100, t1.Unix()+110))
+	t.Cleanup(func() { _ = os.Remove(active) })
+
+	var opened []*os.File
+	orig := openStmtFileFn
+	openStmtFileFn = func(path string) (*stmtFile, error) {
+		f, err := orig(path)
+		if f != nil {
+			opened = append(opened, f.file)
+		}
+		return f, err
+	}
+	t.Cleanup(func() { openStmtFileFn = orig })
+
+	// Time range excludes BOTH files: any FD opened during enumeration must be
+	// released before newStmtFiles returns.
+	files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
+		{Begin: 0, End: 1},
+	})
+	require.NoError(t, err)
+	defer files.close()
+	require.Empty(t, files.files)
+
+	require.NotEmpty(t, opened, "test setup: openStmtFile was not invoked")
+	for _, f := range opened {
+		// Second close on an already-closed *os.File returns os.ErrClosed.
+		// Every FD we observed must already be closed, proving walkFn did not
+		// leak a descriptor for an excluded file.
+		err := f.Close()
+		require.ErrorIs(t, err, os.ErrClosed, "excluded statement file FD was not closed (V2-17 FD leak)")
+	}
+}
+
+// TestStmtFilesKeepsOpenFDsForSelectedFiles guards the inverse of V2-17: when a
+// file IS selected by the time range, its FD MUST remain open so the reader
+// can stream rows from it. A regression that over-eagerly closes selected FDs
+// along with excluded ones would surface here as a Stat failure.
+func TestStmtFilesKeepsOpenFDsForSelectedFiles(t *testing.T) {
+	t1 := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
+	rotated := "tidb-statements-2022-12-27T16-21-20.245.log"
+
+	require.NoError(t, writeStmtFile(rotated, t1.Unix()-10, t1.Unix()))
+	t.Cleanup(func() { _ = os.Remove(rotated) })
+
+	files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
+		{Begin: t1.Unix() - 10, End: t1.Unix()},
+	})
+	require.NoError(t, err)
+	defer files.close()
+	require.Len(t, files.files, 1)
+
+	// The retained FD must still be usable: Stat on an already-closed *os.File
+	// returns os.ErrClosed, so a passing Stat proves it is open.
+	_, err = files.files[0].file.Stat()
+	require.NoError(t, err, "selected statement file FD must remain open for the reader")
+}
+
+func writeStmtFile(name string, begin, end int64) error {
+	f, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := fmt.Fprintf(f, "{\"begin\":%d,\"end\":%d}\n", begin, end); err != nil {
+		return err
+	}
+	return nil
+}

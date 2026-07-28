@@ -459,6 +459,11 @@ type stmtFile struct {
 	end   int64
 }
 
+// openStmtFileFn is the openable of statement files. It is a package-level
+// variable so that tests can observe file lifetimes (e.g., verify that files
+// excluded by time range are closed rather than leaked in V2-17).
+var openStmtFileFn = openStmtFile
+
 func openStmtFile(path string) (*stmtFile, error) {
 	file, err := os.OpenFile(path, os.O_RDONLY, os.ModePerm)
 	if err != nil {
@@ -561,11 +566,18 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 		if isCtxDone(ctx) {
 			return ctx.Err()
 		}
-		file, err := openStmtFile(path)
+		file, err := openStmtFileFn(path)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", path))
 			return nil
 		}
+		// Closing the file is the caller's responsibility in every non-keep
+		// branch below. Historically files that fell out of the time range (or
+		// were dropped on context cancellation) were opened and then silently
+		// forgotten, leaking OS FDs for the lifetime of the reader (V2-17). The
+		// outer err-handler on `dir` enumeration only knows about files already
+		// appended to `files`, so any FD opened here but not stored must be
+		// released by this closure before returning.
 		if len(timeRanges) == 0 {
 			files = append(files, file)
 			return nil
@@ -576,6 +588,9 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 				return nil
 			}
 		}
+		// Time range excluded this file: it was opened just to read its begin/end
+		// metadata, close it now so we do not hold an FD until process exit.
+		_ = file.close()
 		return nil
 	}
 
