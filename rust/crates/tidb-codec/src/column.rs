@@ -24,7 +24,10 @@
 
 use std::fmt;
 
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{
+    BinaryJSON, Datum, Decimal, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, MysqlEnum,
+    MysqlSet, Time,
+};
 
 const HEADER_BYTES: usize = 8;
 const OFFSET_BYTES: usize = 8;
@@ -239,6 +242,18 @@ pub enum TypedColumnError {
     },
     /// This type requires a codec owner that has not crossed this boundary.
     UnsupportedFieldType(FieldTypeCode),
+    /// The fixed or variable payload's bytes do not form a valid value of the
+    /// requested type (for example: an invalid packed `types.Time`, an
+    /// out-of-range `Duration` fsp, a malformed `MyDecimal`, or truncated
+    /// `BinaryJSON`/enum/set framing).
+    InvalidTypedPayload {
+        /// MySQL type code requested by the caller.
+        field_type: FieldTypeCode,
+        /// Row whose payload failed to convert.
+        row: usize,
+        /// Source error message describing the failure.
+        message: String,
+    },
     /// Raw column framing failed before typed interpretation.
     Column(ColumnCodecError),
 }
@@ -265,6 +280,14 @@ impl fmt::Display for TypedColumnError {
             Self::UnsupportedFieldType(field_type) => {
                 write!(formatter, "typed chunk column {field_type:?} is not implemented")
             }
+            Self::InvalidTypedPayload {
+                field_type,
+                row,
+                message,
+            } => write!(
+                formatter,
+                "typed chunk column {field_type:?} row {row} has an invalid payload: {message}"
+            ),
             Self::Column(error) => write!(formatter, "raw chunk column error: {error}"),
         }
     }
@@ -384,6 +407,173 @@ pub fn decode_column_datums(
                         Datum::new_bytes(bytes.to_vec())
                     } else {
                         Datum::new_collation_string(bytes.to_vec(), field_type.collation())
+                    })
+                })
+                .collect()
+        }
+        FieldTypeCode::NewDecimal => {
+            let width = layout.fixed_width().expect("decimal chunk type is fixed");
+            validate_fixed_layout(column, code, width)?;
+            (0..column.length)
+                .map(|row| {
+                    if column.is_null(row)? {
+                        return Ok(Datum::Null);
+                    }
+                    let bytes = column.fixed_value(row, width)?;
+                    let raw: [u8; MY_DECIMAL_BYTES] =
+                        bytes
+                            .try_into()
+                            .map_err(|_| TypedColumnError::InvalidFixedDataLength {
+                                field_type: code,
+                                expected: width,
+                                actual: bytes.len(),
+                            })?;
+                    let my_decimal = MyDecimal::from_raw_bytes(raw).map_err(|message| {
+                        TypedColumnError::InvalidTypedPayload {
+                            field_type: code,
+                            row,
+                            message: message.to_string(),
+                        }
+                    })?;
+                    let text =
+                        String::from_utf8(my_decimal.to_string_bytes()).map_err(|error| {
+                            TypedColumnError::InvalidTypedPayload {
+                                field_type: code,
+                                row,
+                                message: error.to_string(),
+                            }
+                        })?;
+                    let (decimal, parse_error) = Decimal::parse_mysql(&text);
+                    if let Some(parse_error) = parse_error {
+                        return Err(TypedColumnError::InvalidTypedPayload {
+                            field_type: code,
+                            row,
+                            message: format!("{parse_error:?}"),
+                        });
+                    }
+                    Ok(Datum::new_decimal(decimal))
+                })
+                .collect()
+        }
+        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
+            let width = layout.fixed_width().expect("temporal chunk type is fixed");
+            validate_fixed_layout(column, code, width)?;
+            (0..column.length)
+                .map(|row| {
+                    if column.is_null(row)? {
+                        return Ok(Datum::Null);
+                    }
+                    let bytes = column.fixed_value(row, width)?;
+                    let value =
+                        bytes
+                            .try_into()
+                            .map_err(|_| TypedColumnError::InvalidFixedDataLength {
+                                field_type: code,
+                                expected: width,
+                                actual: bytes.len(),
+                            })?;
+                    let time = Time::from_go_raw(u64::from_ne_bytes(value)).map_err(|error| {
+                        TypedColumnError::InvalidTypedPayload {
+                            field_type: code,
+                            row,
+                            message: error.to_string(),
+                        }
+                    })?;
+                    Ok(Datum::new_time(time))
+                })
+                .collect()
+        }
+        FieldTypeCode::Duration => {
+            let width = layout.fixed_width().expect("duration chunk type is fixed");
+            validate_fixed_layout(column, code, width)?;
+            (0..column.length)
+                .map(|row| {
+                    if column.is_null(row)? {
+                        return Ok(Datum::Null);
+                    }
+                    let bytes = column.fixed_value(row, width)?;
+                    let value =
+                        bytes
+                            .try_into()
+                            .map_err(|_| TypedColumnError::InvalidFixedDataLength {
+                                field_type: code,
+                                expected: width,
+                                actual: bytes.len(),
+                            })?;
+                    let nanoseconds = i64::from_ne_bytes(value);
+                    let duration =
+                        MySqlDuration::from_nanoseconds(nanoseconds, field_type.decimal())
+                            .map_err(|error| TypedColumnError::InvalidTypedPayload {
+                                field_type: code,
+                                row,
+                                message: format!("{error:?}"),
+                            })?;
+                    Ok(Datum::new_duration(duration))
+                })
+                .collect()
+        }
+        FieldTypeCode::Json => {
+            validate_variable_layout(column, code)?;
+            (0..column.length)
+                .map(|row| {
+                    if column.is_null(row)? {
+                        return Ok(Datum::Null);
+                    }
+                    let bytes = column.value(row)?;
+                    let (&type_code, value) = bytes.split_first().ok_or_else(|| {
+                        TypedColumnError::InvalidTypedPayload {
+                            field_type: code,
+                            row,
+                            message: "empty JSON cell".to_string(),
+                        }
+                    })?;
+                    let json =
+                        BinaryJSON::from_raw(type_code, value.to_vec()).map_err(|error| {
+                            TypedColumnError::InvalidTypedPayload {
+                                field_type: code,
+                                row,
+                                message: format!("{error:?}"),
+                            }
+                        })?;
+                    Ok(Datum::new_json(json))
+                })
+                .collect()
+        }
+        FieldTypeCode::Enum | FieldTypeCode::Set => {
+            validate_variable_layout(column, code)?;
+            (0..column.length)
+                .map(|row| {
+                    if column.is_null(row)? {
+                        return Ok(Datum::Null);
+                    }
+                    let bytes = column.value(row)?;
+                    let (name, value) = if bytes.is_empty() {
+                        (String::new(), 0_u64)
+                    } else {
+                        let (value_bytes, name_bytes) = bytes.split_at_checked(EIGHT_BYTES).ok_or(
+                            TypedColumnError::InvalidTypedPayload {
+                                field_type: code,
+                                row,
+                                message: format!(
+                                    "{code:?} cell of {len} bytes is shorter than the 8-byte value prefix",
+                                    len = bytes.len()
+                                ),
+                            },
+                        )?;
+                        let value = u64::from_ne_bytes(value_bytes.try_into().unwrap());
+                        let name = String::from_utf8(name_bytes.to_vec()).map_err(|error| {
+                            TypedColumnError::InvalidTypedPayload {
+                                field_type: code,
+                                row,
+                                message: error.to_string(),
+                            }
+                        })?;
+                        (name, value)
+                    };
+                    Ok(if code == FieldTypeCode::Enum {
+                        Datum::new_enum(MysqlEnum::new(name, value), field_type.collation())
+                    } else {
+                        Datum::new_set(MysqlSet::new(name, value), field_type.collation())
                     })
                 })
                 .collect()
@@ -662,4 +852,150 @@ fn take<'a>(
                 available: input.len(),
             })?;
     Ok((taken, remainder))
+}
+
+#[cfg(test)]
+mod tests {
+    use tidb_datatype::{Collation, Decimal, MySqlDuration, MysqlEnum, MysqlSet};
+
+    use super::*;
+
+    /// Go `codec.Encode` output for one 2-row chunk of
+    /// (`NewDecimal`, `Date`, `Datetime`, `Duration`, `JSON`, `Enum`, `Set`)
+    /// columns, row 0 holding a value and row 1 `NULL` in every column.
+    ///
+    /// Generated by a throwaway `TestZZDumpChunkVec` in
+    /// `pkg/util/chunk/zz_dump_chunkvec_test.go` (deleted after this vector
+    /// was captured): decimal `123.456`, date `2024-05-06`, datetime
+    /// `2024-05-06 07:08:09.5`, duration `12:34:56.789`, JSON `-123`, enum
+    /// `bb` (of `a,bb,ccc`), set `x,zzz` (of `x,yy,zzz`).
+    #[rustfmt::skip]
+    const BYTES: &[u8] = &[
+        0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x03, 0x03, 0x03, 0x00, 0x7b, 0x00, 0x00,
+        0x00, 0x00, 0x02, 0x2e, 0x1b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x03, 0x03, 0x03, 0x00, 0x7b, 0x00, 0x00, 0x00, 0x00, 0x02, 0x2e, 0x1b, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+        0x00, 0x01, 0x0e, 0x00, 0x00, 0x00, 0x00, 0x4c, 0xa1, 0x1f, 0x0e, 0x00, 0x00, 0x00, 0x00, 0x4c,
+        0xa1, 0x1f, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x02, 0x12, 0x7a, 0x09, 0x72,
+        0x4c, 0xa1, 0x1f, 0x02, 0x12, 0x7a, 0x09, 0x72, 0x4c, 0xa1, 0x1f, 0x02, 0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x01, 0x40, 0x8f, 0x04, 0x7b, 0x32, 0x29, 0x00, 0x00, 0x40, 0x8f, 0x04, 0x7b,
+        0x32, 0x29, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x85, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02, 0x00,
+        0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x62, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x78, 0x2c, 0x7a, 0x7a, 0x7a,
+    ];
+
+    fn decoded_columns() -> Vec<RawColumn<'static>> {
+        let codes = [
+            FieldTypeCode::NewDecimal,
+            FieldTypeCode::Date,
+            FieldTypeCode::Datetime,
+            FieldTypeCode::Duration,
+            FieldTypeCode::Json,
+            FieldTypeCode::Enum,
+            FieldTypeCode::Set,
+        ];
+        let layouts: Vec<ColumnLayout> = codes
+            .iter()
+            .map(|code| ColumnLayout::for_field_type_code(*code))
+            .collect();
+        let (remainder, columns) = decode_columns(BYTES, &layouts).expect("valid fixture bytes");
+        assert!(remainder.is_empty(), "fixture bytes fully consumed");
+        columns
+    }
+
+    #[test]
+    fn decodes_decimal_column() {
+        let columns = decoded_columns();
+        let field_type = FieldType::new(FieldTypeCode::NewDecimal);
+        let datums = decode_column_datums(&columns[0], field_type).expect("decimal decode");
+        let (expected, error) = Decimal::parse_mysql("123.456");
+        assert!(error.is_none());
+        assert_eq!(datums, vec![Datum::new_decimal(expected), Datum::Null]);
+    }
+
+    #[test]
+    fn decodes_date_column() {
+        let columns = decoded_columns();
+        let field_type = FieldType::new(FieldTypeCode::Date);
+        let datums = decode_column_datums(&columns[1], field_type).expect("date decode");
+        match &datums[..] {
+            [Datum::Time(time), Datum::Null] => {
+                assert_eq!(time.to_string(), "2024-05-06");
+            }
+            other => panic!("unexpected date datums: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decodes_datetime_column() {
+        let columns = decoded_columns();
+        let field_type = FieldType::new(FieldTypeCode::Datetime);
+        let datums = decode_column_datums(&columns[2], field_type).expect("datetime decode");
+        match &datums[..] {
+            [Datum::Time(time), Datum::Null] => {
+                assert_eq!(time.to_string(), "2024-05-06 07:08:09.5");
+            }
+            other => panic!("unexpected datetime datums: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decodes_duration_column() {
+        let columns = decoded_columns();
+        let mut field_type = FieldType::new(FieldTypeCode::Duration);
+        field_type.set_decimal(3);
+        let datums = decode_column_datums(&columns[3], field_type).expect("duration decode");
+        let nanoseconds = ((12 * 3_600 + 34 * 60 + 56) * 1_000_000_000) + 789 * 1_000_000;
+        let expected = MySqlDuration::from_nanoseconds(nanoseconds, 3).expect("valid duration");
+        assert_eq!(datums, vec![Datum::new_duration(expected), Datum::Null]);
+    }
+
+    #[test]
+    fn decodes_json_column() {
+        let columns = decoded_columns();
+        let field_type = FieldType::new(FieldTypeCode::Json);
+        let datums = decode_column_datums(&columns[4], field_type).expect("json decode");
+        match &datums[..] {
+            [Datum::Json(json), Datum::Null] => {
+                assert_eq!(json.as_i64().expect("int64 json"), -123);
+            }
+            other => panic!("unexpected json datums: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decodes_enum_column() {
+        let columns = decoded_columns();
+        let field_type = FieldType::new(FieldTypeCode::Enum);
+        let datums = decode_column_datums(&columns[5], field_type).expect("enum decode");
+        assert_eq!(
+            datums,
+            vec![
+                Datum::new_enum(MysqlEnum::new("bb", 2), Collation::Binary),
+                Datum::Null,
+            ]
+        );
+    }
+
+    #[test]
+    fn decodes_set_column() {
+        let columns = decoded_columns();
+        let field_type = FieldType::new(FieldTypeCode::Set);
+        let datums = decode_column_datums(&columns[6], field_type).expect("set decode");
+        assert_eq!(
+            datums,
+            vec![
+                Datum::new_set(MysqlSet::new("x,zzz", 5), Collation::Binary),
+                Datum::Null,
+            ]
+        );
+    }
 }
