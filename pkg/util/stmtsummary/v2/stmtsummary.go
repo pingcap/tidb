@@ -100,6 +100,11 @@ type StmtSummary struct {
 	optPersistEvicted      *atomic2.Bool
 	optGroupByUser         *atomic2.Bool
 
+	// Locking invariant:
+	//   - windowLock protects the current window and its LRU membership and order.
+	//   - lockedStmtRecord.Mutex protects the mutable fields of that record.
+	//   - When both are needed, acquire windowLock before the record mutex. Code
+	//     holding only a record mutex must never try to acquire windowLock.
 	window     *stmtWindow
 	windowLock sync.Mutex
 	storage    stmtStorage
@@ -377,10 +382,17 @@ func (s *StmtSummary) ClearInternal() {
 	s.windowLock.Lock()
 	defer s.windowLock.Unlock()
 	for _, k := range s.window.lru.Keys() {
-		v, _ := s.window.lru.Get(k)
-		if v.(*lockedStmtRecord).IsInternal {
+		v, ok := s.window.lru.Peek(k)
+		if !ok {
+			continue
+		}
+		record := v.(*lockedStmtRecord)
+		// Protect the record's mutable fields from concurrent Add calls.
+		record.Lock()
+		if record.IsInternal {
 			s.window.lru.Delete(k)
 		}
+		record.Unlock()
 	}
 }
 
@@ -683,6 +695,9 @@ func newEvictedAggregateRecord() *StmtRecord {
 	}
 }
 
+// lockedStmtRecord protects the mutable fields of StmtRecord. Never acquire a
+// StmtSummary windowLock while holding this mutex; see StmtSummary's locking
+// invariant for the global lock order.
 type lockedStmtRecord struct {
 	sync.Mutex
 	*StmtRecord
