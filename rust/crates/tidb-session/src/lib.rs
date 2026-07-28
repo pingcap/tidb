@@ -5928,6 +5928,50 @@ mod tests {
         assert!(session.run("SELECT COUNT(b, a) FROM t").is_err());
     }
 
+    /// `[NOT] REGEXP` through the chunk (table-scan `WHERE`) path, checked
+    /// against captured TiDB output. Before this test, the chunk rewriter had
+    /// no `Expr::Regexp` arm, so `SELECT ... WHERE b REGEXP '...'` failed
+    /// even though the same expression worked as a bare `SELECT`.
+    #[test]
+    fn regexp_through_the_chunk_path() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(20))")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,'abc'),(2,'xyz'),(3,NULL)")
+            .unwrap();
+
+        // Captured: `abc` matches `^a`, `xyz` and the NULL row do not.
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t WHERE b REGEXP '^a'")),
+            [["1"]]
+        );
+        // Captured: NOT REGEXP is the complement, still excluding the NULL
+        // row -- a NULL operand is never TRUE for either polarity.
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t WHERE b NOT REGEXP '^a'")),
+            [["2"]]
+        );
+        // Captured: a bare SELECT REGEXP still works (the row path this
+        // reused already handled it), so both paths agree.
+        assert_eq!(row_text(session.run("SELECT 'abc' REGEXP '^a'")), [["1"]]);
+        assert_eq!(
+            row_text(session.run("SELECT 'abc' NOT REGEXP '^a'")),
+            [["0"]]
+        );
+        // Captured: NULL propagates from either operand.
+        assert_eq!(row_text(session.run("SELECT NULL REGEXP '^a'")), [["NULL"]]);
+        assert_eq!(
+            row_text(session.run("SELECT 'abc' REGEXP NULL")),
+            [["NULL"]]
+        );
+        // Captured: an invalid pattern is a query error, not a NULL/false
+        // result -- `[expression:1139]Got error 'error parsing regexp:
+        // missing closing ): `(`' from regexp`.
+        assert!(session.run("SELECT 'abc' REGEXP '('").is_err());
+    }
+
     /// Go `getDefaultValue` + `checkDefaultValue`: a written DEFAULT is
     /// normalized and checked against the column's own type at DDL time,
     /// checked against captured TiDB output.

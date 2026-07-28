@@ -173,8 +173,9 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // String in, number out.
         "length" | "octet_length" | "char_length" | "character_length" | "bit_length" | "ascii"
         | "instr" | "locate" | "position" | "find_in_set" | "strcmp" | "field" => int(),
-        // Go `likeFunctionClass`: a one-digit boolean.
-        "like" | "ilike" => {
+        // Go `likeFunctionClass`/`regexpLikeFunctionClass`: a one-digit
+        // boolean.
+        "like" | "ilike" | "regexp" => {
             let mut ft = int();
             ft.set_flen(1);
             ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
@@ -589,6 +590,29 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 builtin_return_type(name, &args).expect("the like builtin has a fixed result type");
             let call = Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(name),
+                ret_type.clone(),
+                args,
+            ));
+            if *not {
+                return Ok(Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(unary_op_name(UnaryOp::Not)),
+                    ret_type,
+                    vec![call],
+                )));
+            }
+            Ok(call)
+        }
+        // Go builds `regexp(expr, pattern)`; `NOT REGEXP`/`NOT RLIKE` wraps
+        // it in a unary NOT, the same shape `Expr::Like` above builds.
+        Expr::Regexp { expr, pattern, not } => {
+            let args = vec![
+                rewrite_expr_resolved(expr, resolver)?,
+                rewrite_expr_resolved(pattern, resolver)?,
+            ];
+            let ret_type = builtin_return_type("regexp", &args)
+                .expect("the regexp builtin has a fixed result type");
+            let call = Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("regexp"),
                 ret_type.clone(),
                 args,
             ));

@@ -330,6 +330,24 @@ impl ScalarFunction {
             };
             return Ok(Datum::Int(i64::from(matched)));
         }
+        // Go `builtinRegexpLikeSig`: both operands are stringified, NULL in
+        // either propagates, and `NOT REGEXP` is a separate unary NOT wrapped
+        // around this call by the rewriter -- see `Expr::Regexp`'s own doc.
+        if name == "regexp" && self.args.len() == 2 {
+            let value = self.args[0].eval(ctx, row)?;
+            let pattern = self.args[1].eval(ctx, row)?;
+            if value.is_null() || pattern.is_null() {
+                return Ok(Datum::Null);
+            }
+            let text = value
+                .sql_string()
+                .map_err(|_| EvalError::Unsupported("invalid UTF-8 REGEXP operand"))?;
+            let pattern = pattern
+                .sql_string()
+                .map_err(|_| EvalError::Unsupported("invalid UTF-8 REGEXP pattern"))?;
+            let matched = crate::regexp_match(&text, &pattern)?;
+            return Ok(Datum::Int(i64::from(matched)));
+        }
         // Go picks one cast signature per target type; the rewriter records
         // that choice in the name, and the width/scale arguments the CHAR,
         // BINARY and DECIMAL casts need come from the result type.
