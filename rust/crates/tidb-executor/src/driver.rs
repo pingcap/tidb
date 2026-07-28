@@ -2751,6 +2751,14 @@ fn substitute_aggregates(
         // ONLY_FULL_GROUP_BY reports in Go.
         Expr::Column(path) => {
             let name = path.last().cloned().unwrap_or_default();
+            // `__apply_N` is not a real column: it is the placeholder a
+            // correlated subquery's extraction left behind, standing in for
+            // the column an Apply appends above the aggregation once the
+            // subquery is bound and run. It carries no ONLY_FULL_GROUP_BY
+            // obligation of its own, so it passes through untouched.
+            if name.starts_with("__apply_") {
+                return Ok(expr.clone());
+            }
             if names
                 .iter()
                 .any(|candidate| candidate.eq_ignore_ascii_case(&name))
@@ -2915,6 +2923,18 @@ fn build_agg_func(
     if !rest.is_empty() && name != "COUNT" {
         return Err(DriverError::Unsupported(
             "multi-argument aggregates are deferred",
+        ));
+    }
+    // A subquery inside an aggregate's own argument (`SUM((SELECT ...))`,
+    // `SUM(CASE WHEN EXISTS(...) THEN v END)`) would need to run once per
+    // SOURCE row, before the aggregate accumulates it -- an Apply BELOW the
+    // aggregation, rather than the Apply above it this driver builds for a
+    // select-field/HAVING/ORDER BY subquery (which reads the already-grouped
+    // value). That per-row Apply is not built here; refuse precisely rather
+    // than let the per-row rewriter reject it with its generic message.
+    if expr_has_subquery(first) || rest.iter().any(expr_has_subquery) {
+        return Err(DriverError::Unsupported(
+            "a subquery inside an aggregate function's argument is not supported yet",
         ));
     }
     let arg = rewrite_expr_resolved(first, resolver)
@@ -3200,8 +3220,18 @@ fn run_correlated_subquery(
     let mut bindings = Vec::with_capacity(correlated.columns.len());
     for path in &correlated.columns {
         let resolver = ScopeResolver { scope: outer_scope };
+        // The aggregation's output row has no table qualifiers of its own
+        // (Go's post-aggregation schema is one flat row), so a qualified
+        // correlated reference (`t.g`) falls back to a bare-name lookup
+        // (`g`) when the qualified one does not resolve. The plain WHERE/
+        // SELECT Apply paths bind against the real `FromScope`, where the
+        // qualified lookup already succeeds and this fallback never fires.
         let (index, _, _) = resolver
             .resolve(path)
+            .or_else(|| {
+                let name = path.last()?;
+                resolver.resolve(std::slice::from_ref(name))
+            })
             .ok_or(DriverError::Unsupported("unresolved correlated column"))?;
         let value = outer_values
             .get(index)
@@ -5110,42 +5140,74 @@ fn add_grouping_column(
 enum OutputSlot {
     /// An aggregation output column, by index.
     Agg(usize),
-    /// The column the n-th Apply appends above the aggregation.
-    Apply(usize),
+    /// An expression over the aggregation's (+ Apply's) output columns, by
+    /// index into `post_agg_exprs` -- a select field that CONTAINS a
+    /// correlated subquery alongside aggregates/columns, e.g.
+    /// `SUM(v) + (SELECT ...)`.
+    Expr(usize),
 }
 
-/// The correlated subquery an aggregate select field IS, if any.
-///
-/// Only a bare subquery field is supported: Go evaluates a larger expression
-/// over the projection above the Apply, which this seed does not build, so
-/// `(SELECT ...) + 1` in a grouped select list is rejected rather than
-/// silently mis-evaluated. `EXISTS`, `IN` and `ANY`/`ALL` ride the same slot,
+/// Extracts the one correlated subquery in a post-aggregation expression (a
+/// select field, `HAVING`, or an `ORDER BY` item), hoists any aggregate calls
+/// left in the remainder into `agg_funcs`/`names`/`types`, and returns the
+/// resulting expression: aggregates and grouped columns become output column
+/// references (Go's `havingWindowAndOrderbyExprResolver`), and the subquery
+/// becomes a `__apply_N` placeholder column reference that the caller's
+/// Apply (built once every correlated subquery in the statement is known)
+/// makes real. `EXISTS`, `IN` and `ANY`/`ALL` ride the same placeholder,
 /// because the Apply appends whatever [`run_correlated_subquery`] folds.
-fn aggregate_field_subquery(
+///
+/// Returns `(expr, true)` when a correlated subquery was found and hoisted,
+/// `(expr, false)` otherwise (uncorrelated, or no subquery at all).
+#[allow(clippy::too_many_arguments)]
+fn extract_and_hoist_subquery(
     expr: &tidb_ast::Expr,
     outer: &FromScope,
     catalog: &Catalog,
     current_db: &str,
+    applies: &mut Vec<(CorrelatedSubquery, String, FieldType)>,
+    agg_funcs: &mut Vec<AggFunc>,
+    names: &mut Vec<String>,
+    types: &mut Vec<FieldType>,
+    grouping_specs: &mut Vec<GroupingSpec>,
+    group_by_names: &[String],
+    resolver: &ScopeResolver<'_>,
     ctx: &crate::StmtContext,
-) -> Result<Option<CorrelatedSubquery>, DriverError> {
-    let mut expr = expr;
-    while let tidb_ast::Expr::Paren(inner) = expr {
-        expr = inner;
-    }
+) -> Result<(tidb_ast::Expr, bool), DriverError> {
+    // No subquery anywhere in the expression, so there is nothing to hoist
+    // out of the way of a per-group Apply: the caller decides how (or
+    // whether) to run the aggregate hoist itself, exactly as it did before
+    // this function existed.
     if !expr_has_subquery(expr) {
-        return Ok(None);
+        return Ok((expr.clone(), false));
     }
+    let index = applies.len();
     let mut found = None;
     let rewritten =
-        extract_correlated_subquery(expr, outer, catalog, current_db, 0, &mut found, ctx)?;
-    if found.is_some()
-        && !matches!(&rewritten, tidb_ast::Expr::Column(path) if path == &["__apply_0".to_owned()])
-    {
-        return Err(DriverError::Unsupported(
-            "a correlated subquery nested inside a larger aggregate select field is not supported yet",
-        ));
-    }
-    Ok(found)
+        extract_correlated_subquery(expr, outer, catalog, current_db, index, &mut found, ctx)?;
+    let Some(correlated) = found else {
+        // Uncorrelated, or no subquery reachable through this expression
+        // shape: left for the caller / the fold pass / the rewriter's own
+        // error.
+        return Ok((rewritten, false));
+    };
+    let value_type = if matches!(correlated.kind, SubqueryKind::Scalar) {
+        subquery_result_type(&correlated, catalog, current_db, ctx)
+            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
+    } else {
+        FieldType::new(FieldTypeCode::LongLong)
+    };
+    let hoisted = substitute_aggregates(
+        &rewritten,
+        agg_funcs,
+        names,
+        types,
+        grouping_specs,
+        group_by_names,
+        resolver,
+    )?;
+    applies.push((correlated, format!("__apply_{index}"), value_type));
+    Ok((hoisted, true))
 }
 
 /// Runs an aggregate `SELECT` (`GROUP BY` and/or aggregate select fields)
@@ -5192,6 +5254,9 @@ fn run_aggregate_select(
     // aggregation for a correlated subquery.
     let mut slots: Vec<OutputSlot> = Vec::new();
     let mut applies: Vec<(CorrelatedSubquery, String, FieldType)> = Vec::new();
+    // The hoisted expression for every select field a correlated subquery
+    // reaches into (see `OutputSlot::Expr`), in the order they were found.
+    let mut post_agg_exprs: Vec<tidb_ast::Expr> = Vec::new();
     for field in select.fields.fields() {
         let SelectField::Expr { expr, alias } = field else {
             return Err(DriverError::Unsupported(
@@ -5201,20 +5266,26 @@ fn run_aggregate_select(
         let display = alias.clone().unwrap_or_else(|| expr.restore());
         // A correlated subquery in an aggregate select list reads the GROUPED
         // value, so it runs once per OUTPUT row rather than per source row --
-        // Go's Apply sits above the aggregation for the same reason. The
-        // subquery must be the whole field: this seed has no projection over
-        // the aggregation's output to compute a larger expression in.
-        if let Some(correlated) =
-            aggregate_field_subquery(expr, resolver.scope, catalog, current_db, ctx)?
-        {
-            let value_type = if matches!(correlated.kind, SubqueryKind::Scalar) {
-                subquery_result_type(&correlated, catalog, current_db, ctx)
-                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
-            } else {
-                FieldType::new(FieldTypeCode::LongLong)
-            };
-            slots.push(OutputSlot::Apply(applies.len()));
-            applies.push((correlated, display, value_type));
+        // Go's Apply sits above the aggregation for the same reason. It may
+        // sit inside a larger expression (`SUM(v) + (SELECT ...)`); the
+        // aggregates around it are hoisted the same way HAVING's are.
+        let (hoisted, found) = extract_and_hoist_subquery(
+            expr,
+            resolver.scope,
+            catalog,
+            current_db,
+            &mut applies,
+            &mut agg_funcs,
+            &mut names,
+            &mut types,
+            &mut grouping_specs,
+            &group_by_names,
+            resolver,
+            ctx,
+        )?;
+        if found {
+            slots.push(OutputSlot::Expr(post_agg_exprs.len()));
+            post_agg_exprs.push(hoisted);
             continue;
         }
         slots.push(OutputSlot::Agg(names.len()));
@@ -5276,10 +5347,84 @@ fn run_aggregate_select(
         }
     }
 
+    // HAVING / ORDER BY: a correlated subquery is hoisted the same way a
+    // select field's is (Apply placeholder + aggregate hoisting); whatever
+    // aggregates remain become aggregation output columns.
+    let having_expr = match &select.having {
+        Some(having) => {
+            let (expr, found) = extract_and_hoist_subquery(
+                having,
+                resolver.scope,
+                catalog,
+                current_db,
+                &mut applies,
+                &mut agg_funcs,
+                &mut names,
+                &mut types,
+                &mut grouping_specs,
+                &group_by_names,
+                resolver,
+                ctx,
+            )?;
+            // A found subquery's remainder is already hoisted; otherwise
+            // (no subquery at all, or an uncorrelated one left for the fold
+            // pass) HAVING's aggregates still need hoisting, exactly as
+            // before a subquery could appear here at all.
+            let expr = if found {
+                expr
+            } else {
+                substitute_aggregates(
+                    &expr,
+                    &mut agg_funcs,
+                    &mut names,
+                    &mut types,
+                    &mut grouping_specs,
+                    &group_by_names,
+                    resolver,
+                )?
+            };
+            Some(expr)
+        }
+        None => None,
+    };
+    let mut order_by_exprs = Vec::with_capacity(select.order_by.len());
+    for item in &select.order_by {
+        let (expr, found) = extract_and_hoist_subquery(
+            &item.expr,
+            resolver.scope,
+            catalog,
+            current_db,
+            &mut applies,
+            &mut agg_funcs,
+            &mut names,
+            &mut types,
+            &mut grouping_specs,
+            &group_by_names,
+            resolver,
+            ctx,
+        )?;
+        let expr = if found {
+            expr
+        } else {
+            substitute_aggregates(
+                &expr,
+                &mut agg_funcs,
+                &mut names,
+                &mut types,
+                &mut grouping_specs,
+                &group_by_names,
+                resolver,
+            )?
+        };
+        order_by_exprs.push((expr, item.desc));
+    }
+
     // An Apply binds its correlated columns from the AGGREGATION's output row,
     // so every column such a subquery reads must be carried out of the
     // aggregation. A grouped column the select list does not project rides the
-    // same hidden FIRST_ROW carrier HAVING's aggregates use.
+    // same hidden FIRST_ROW carrier HAVING's aggregates use. This runs after
+    // every clause has been walked, so it covers select-field, HAVING and
+    // ORDER BY subqueries in one pass.
     for (correlated, _, _) in &applies {
         for path in &correlated.columns {
             let Some(name) = path.last() else { continue };
@@ -5302,35 +5447,6 @@ fn run_aggregate_select(
             names.push(name.clone());
             types.push(ftype);
         }
-    }
-
-    // HAVING / ORDER BY aggregates -> aggregation output columns.
-    let having_expr = match &select.having {
-        Some(having) => Some(substitute_aggregates(
-            having,
-            &mut agg_funcs,
-            &mut names,
-            &mut types,
-            &mut grouping_specs,
-            &group_by_names,
-            resolver,
-        )?),
-        None => None,
-    };
-    let mut order_by_exprs = Vec::with_capacity(select.order_by.len());
-    for item in &select.order_by {
-        order_by_exprs.push((
-            substitute_aggregates(
-                &item.expr,
-                &mut agg_funcs,
-                &mut names,
-                &mut types,
-                &mut grouping_specs,
-                &group_by_names,
-                resolver,
-            )?,
-            item.desc,
-        ));
     }
 
     // GROUP BY expressions (legacy ASC/DESC direction ignored, as in MySQL 8).
@@ -5399,58 +5515,12 @@ fn run_aggregate_select(
         ))
     };
 
-    // HAVING filters the aggregation's output rows (Go's Selection above the
-    // Aggregation), and ORDER BY sorts them.
-    let agg_resolver = AggOutputResolver {
-        names: names.clone(),
-        types: types.clone(),
-    };
-    if let Some(having) = &having_expr {
-        let predicate = rewrite_expr_resolved(having, &agg_resolver)
-            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-        root = Box::new(SelectionExec::new(
-            ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
-            vec![predicate],
-            root,
-            ctx.clone(),
-        ));
-    }
-    if !order_by_exprs.is_empty() {
-        let mut by_items = Vec::with_capacity(order_by_exprs.len());
-        for (expr, desc) in &order_by_exprs {
-            by_items.push(SortByItem {
-                expr: rewrite_expr_resolved(expr, &agg_resolver)
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
-                desc: *desc,
-            });
-        }
-        root = Box::new(SortExec::new(
-            ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
-            by_items,
-            root,
-            ctx.clone(),
-        ));
-    }
-    if let Some(limit) = &select.limit {
-        let count = eval_limit_bound(&limit.count)?;
-        let offset = match &limit.offset {
-            Some(expr) => eval_limit_bound(expr)?,
-            None => 0,
-        };
-        let limit_schema = root.schema().clone();
-        root = Box::new(LimitExec::new(
-            ExecutorMeta::new(limit_schema, 4, INIT_CAP, MAX_CHUNK_SIZE),
-            offset,
-            count,
-            root,
-        ));
-    }
-
-    // A correlated subquery field becomes an Apply over the aggregation's
-    // output rows: the outer row is the GROUP row, so the subquery sees the
-    // grouped value, and it runs once per group rather than once per source
-    // row. The columns it binds are the aggregation's own output columns.
-    let agg_width = names.len();
+    // Every correlated subquery found above (select fields, HAVING, ORDER BY)
+    // becomes an Apply over the aggregation's output rows here, BEFORE HAVING
+    // filters and ORDER BY sorts: the outer row is the GROUP row, so each
+    // subquery sees the grouped value and runs once per group rather than
+    // once per source row, and HAVING/ORDER BY can then read the appended
+    // column like any other aggregation output.
     for (correlated, display, value_type) in applies {
         let outer_scope = FromScope {
             tables: vec![FromTable {
@@ -5500,33 +5570,109 @@ fn run_aggregate_select(
         ));
     }
 
+    // HAVING filters the aggregation's (+ Applies') output rows (Go's
+    // Selection above the Aggregation), and ORDER BY sorts them. Built after
+    // the Applies above, so both clauses can read a `__apply_N` column by
+    // name exactly like an aggregate output.
+    let agg_resolver = AggOutputResolver {
+        names: names.clone(),
+        types: types.clone(),
+    };
+    let out_schema = root.schema().clone();
+    if let Some(having) = &having_expr {
+        let predicate = rewrite_expr_resolved(having, &agg_resolver)
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        root = Box::new(SelectionExec::new(
+            ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
+            vec![predicate],
+            root,
+            ctx.clone(),
+        ));
+    }
+    if !order_by_exprs.is_empty() {
+        let mut by_items = Vec::with_capacity(order_by_exprs.len());
+        for (expr, desc) in &order_by_exprs {
+            by_items.push(SortByItem {
+                expr: rewrite_expr_resolved(expr, &agg_resolver)
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+                desc: *desc,
+            });
+        }
+        root = Box::new(SortExec::new(
+            ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
+            by_items,
+            root,
+            ctx.clone(),
+        ));
+    }
+    if let Some(limit) = &select.limit {
+        let count = eval_limit_bound(&limit.count)?;
+        let offset = match &limit.offset {
+            Some(expr) => eval_limit_bound(expr)?,
+            None => 0,
+        };
+        let limit_schema = root.schema().clone();
+        root = Box::new(LimitExec::new(
+            ExecutorMeta::new(limit_schema, 4, INIT_CAP, MAX_CHUNK_SIZE),
+            offset,
+            count,
+            root,
+        ));
+    }
+
     // The select list's own columns, in field order: the aggregates and
     // carriers HAVING/ORDER BY needed but nothing selected are trimmed here,
-    // and an Apply's appended column is read from where it landed (Go's final
-    // projection over the aggregation's schema).
-    let sources: Vec<usize> = slots
-        .iter()
-        .map(|slot| match slot {
-            OutputSlot::Agg(index) => *index,
-            OutputSlot::Apply(k) => agg_width + k,
-        })
-        .collect();
-    if !sources.iter().copied().eq(0..types.len()) {
-        let visible: Vec<Expression> = sources
+    // and a select field that hoisted a correlated subquery is evaluated as
+    // the full expression (Go's final projection over the aggregation's
+    // schema, generalized from a plain column read to `rewrite_expr_resolved`
+    // so `SUM(v) + (SELECT ...)`-shaped fields can be more than one column).
+    let has_expr_slot = slots.iter().any(|slot| matches!(slot, OutputSlot::Expr(_)));
+    if has_expr_slot {
+        let visible: Vec<Expression> = slots
             .iter()
-            .map(|&i| {
-                let mut col = Column::new((i + 1) as i64, types[i].clone());
-                col.index = i as i64;
-                Expression::Column(col)
+            .map(|slot| match slot {
+                OutputSlot::Agg(index) => {
+                    let mut col = Column::new((*index + 1) as i64, types[*index].clone());
+                    col.index = *index as i64;
+                    Ok(Expression::Column(col))
+                }
+                OutputSlot::Expr(index) => {
+                    rewrite_expr_resolved(&post_agg_exprs[*index], &agg_resolver)
+                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))
+                }
             })
-            .collect();
-        let visible_schema: Vec<Column> = sources
+            .collect::<Result<_, DriverError>>()?;
+        let visible_schema: Vec<Column> = visible
             .iter()
             .enumerate()
-            .map(|(out, &i)| {
-                let mut col = Column::new((out + 1) as i64, types[i].clone());
+            .map(|(out, expr)| {
+                let mut col = Column::new(
+                    (out + 1) as i64,
+                    expr.static_type()
+                        .cloned()
+                        .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong)),
+                );
                 col.index = out as i64;
                 col
+            })
+            .collect();
+        let field_names: Vec<String> = select
+            .fields
+            .fields()
+            .iter()
+            .map(|field| match field {
+                SelectField::Expr { expr, alias } => {
+                    alias.clone().unwrap_or_else(|| expr.restore())
+                }
+                _ => String::new(),
+            })
+            .collect();
+        let field_types: Vec<FieldType> = visible_schema
+            .iter()
+            .map(|c| {
+                c.ret_type
+                    .clone()
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
             })
             .collect();
         root = Box::new(ProjectionExec::new(
@@ -5535,8 +5681,43 @@ fn run_aggregate_select(
             root,
             ctx.clone(),
         ));
-        names = sources.iter().map(|&i| names[i].clone()).collect();
-        types = sources.iter().map(|&i| types[i].clone()).collect();
+        names = field_names;
+        types = field_types;
+    } else {
+        let sources: Vec<usize> = slots
+            .iter()
+            .map(|slot| match slot {
+                OutputSlot::Agg(index) => *index,
+                OutputSlot::Expr(_) => unreachable!("no Expr slot when !has_expr_slot"),
+            })
+            .collect();
+        if !sources.iter().copied().eq(0..types.len()) {
+            let visible: Vec<Expression> = sources
+                .iter()
+                .map(|&i| {
+                    let mut col = Column::new((i + 1) as i64, types[i].clone());
+                    col.index = i as i64;
+                    Expression::Column(col)
+                })
+                .collect();
+            let visible_schema: Vec<Column> = sources
+                .iter()
+                .enumerate()
+                .map(|(out, &i)| {
+                    let mut col = Column::new((out + 1) as i64, types[i].clone());
+                    col.index = out as i64;
+                    col
+                })
+                .collect();
+            root = Box::new(ProjectionExec::new(
+                ExecutorMeta::new(Schema::new(visible_schema), 5, INIT_CAP, MAX_CHUNK_SIZE),
+                visible,
+                root,
+                ctx.clone(),
+            ));
+            names = sources.iter().map(|&i| names[i].clone()).collect();
+            types = sources.iter().map(|&i| types[i].clone()).collect();
+        }
     }
     let ret_types: Vec<FieldType> = types.clone();
 
@@ -6874,6 +7055,173 @@ mod tests {
             .unwrap(),
             vec![vec![Datum::Int(3)]]
         );
+    }
+
+    /// A correlated subquery nested inside a larger aggregate-path
+    /// expression: arithmetic over an aggregate in the select list, and a
+    /// comparison against an aggregate in `HAVING`. The Apply sits above the
+    /// aggregation (Go's plan shape), so the subquery sees the GROUPED value
+    /// and runs once per group.
+    ///
+    /// Every result here was cross-checked against a
+    /// `testkit.CreateMockStore` capture of real TiDB on the same schema.
+    #[test]
+    fn grouped_correlated_subqueries() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE t (g BIGINT, v BIGINT)", &mut catalog).unwrap();
+        crate::run_create_table_on("CREATE TABLE s (k BIGINT, x BIGINT)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO t VALUES (1, 10), (1, 20), (2, 5), (3, 100), (NULL, 7)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO s VALUES (1, 1), (1, 2), (2, 3)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+
+        // A correlated scalar subquery combined with an aggregate by
+        // arithmetic in the select list: SUM(v) is the group's own total,
+        // (SELECT COUNT...) reads how many `s` rows share the group's key.
+        assert_eq!(
+            run_select_on(
+                "SELECT g, SUM(v) + (SELECT COUNT(*) FROM s WHERE s.k = t.g) \
+                 FROM t GROUP BY g ORDER BY g",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![
+                vec![
+                    Datum::Null,
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(7))
+                ],
+                vec![
+                    Datum::Int(1),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(32))
+                ],
+                vec![
+                    Datum::Int(2),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(6))
+                ],
+                vec![
+                    Datum::Int(3),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(100))
+                ],
+            ]
+        );
+
+        // A correlated scalar subquery compared against an aggregate in
+        // HAVING: only groups whose SUM(v) beats the correlated average
+        // survive.
+        assert_eq!(
+            run_select_on(
+                "SELECT g FROM t GROUP BY g \
+                 HAVING SUM(v) > (SELECT AVG(x) FROM s WHERE s.k = t.g) \
+                 ORDER BY g",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
+        );
+
+        // The same HAVING subquery, ANDed with a plain grouped-column
+        // predicate -- both conjuncts must be readable off the same
+        // post-Apply row.
+        assert_eq!(
+            run_select_on(
+                "SELECT g, SUM(v) FROM t GROUP BY g \
+                 HAVING SUM(v) > (SELECT COUNT(*) FROM s WHERE s.k = t.g) AND g IS NOT NULL \
+                 ORDER BY g",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![
+                vec![
+                    Datum::Int(1),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(30))
+                ],
+                vec![
+                    Datum::Int(2),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(5))
+                ],
+                vec![
+                    Datum::Int(3),
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(100))
+                ],
+            ]
+        );
+
+        // HAVING a correlated subquery against a bare (unaggregated) GROUP
+        // BY column, with a NULL group in the mix.
+        assert_eq!(
+            run_select_on(
+                "SELECT g, COUNT(*) FROM t GROUP BY g \
+                 HAVING (SELECT COUNT(*) FROM s WHERE s.k = g) >= 0 \
+                 ORDER BY g",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Null, Datum::Int(1)],
+                vec![Datum::Int(1), Datum::Int(2)],
+                vec![Datum::Int(2), Datum::Int(1)],
+                vec![Datum::Int(3), Datum::Int(1)],
+            ]
+        );
+
+        // DEFERRED (documented, not silently wrong): a correlated subquery
+        // inside an AGGREGATE'S OWN ARGUMENT needs a per-SOURCE-ROW Apply
+        // below the aggregation, not the per-GROUP Apply above it this
+        // driver builds -- refused precisely rather than mis-evaluated.
+        assert!(matches!(
+            run_select_on(
+                "SELECT g, SUM((SELECT COUNT(*) FROM s WHERE s.k = g)) FROM t GROUP BY g",
+                &catalog,
+                &crate::StmtContext::for_query()
+            ),
+            Err(DriverError::Unsupported(_))
+        ));
+        assert!(matches!(
+            run_select_on(
+                "SELECT g, SUM(CASE WHEN EXISTS(SELECT 1 FROM s WHERE s.k = t.g) THEN v ELSE 0 END) \
+                 FROM t GROUP BY g",
+                &catalog,
+                &crate::StmtContext::for_query()
+            ),
+            Err(DriverError::Exec(_))
+        ));
+
+        // DEFERRED: a HAVING clause referencing a non-grouped, non-aggregated
+        // column stays ONLY_FULL_GROUP_BY-refused even with a correlated
+        // subquery alongside it -- the subquery does not launder the column
+        // reference.
+        assert!(matches!(
+            run_select_on(
+                "SELECT g, SUM(v) FROM t GROUP BY g \
+                 HAVING v > (SELECT AVG(x) FROM s WHERE s.k = t.g)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            ),
+            Err(DriverError::Unsupported(_))
+        ));
+
+        // DEFERRED: two-level nesting (a correlated subquery whose own body
+        // contains a subquery correlated to ITS outer scope) is refused
+        // rather than mis-evaluated.
+        assert!(run_select_on(
+            "SELECT g, (SELECT COUNT(*) FROM s WHERE s.k = t.g \
+             AND s.x > (SELECT AVG(x) FROM s s2 WHERE s2.k = s.k)) FROM t GROUP BY g",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .is_err());
     }
 
     /// A single-column integer PRIMARY KEY becomes the row handle (Go's
