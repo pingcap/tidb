@@ -73,6 +73,17 @@ impl Charset {
         }
     }
 
+    /// Returns the charset's maximum bytes per character, which is what turns
+    /// a column's character length into its `CHARACTER_OCTET_LENGTH`.
+    pub const fn maxlen(self) -> i64 {
+        match self {
+            Self::Binary | Self::Ascii | Self::Latin1 => 1,
+            Self::Gbk => 2,
+            Self::Utf8 => 3,
+            Self::Utf8Mb4 | Self::Gb18030 => 4,
+        }
+    }
+
     /// Returns the parser package's default collation.
     pub const fn default_collation(self) -> Collation {
         match self {

@@ -231,11 +231,6 @@ fn var_error(error: VarError) -> DriverError {
     })
 }
 
-/// Go `mysql.DefaultCharset` and the collation `getDefaultCollate` returns for
-/// it, which is what a table with no explicit charset reports.
-const TABLE_CHARSET: &str = "utf8mb4";
-const TABLE_COLLATE: &str = "utf8mb4_bin";
-
 /// The text form a system variable stores for a datum (Go keeps every system
 /// variable as a string).
 fn datum_text(value: &Datum) -> Option<String> {

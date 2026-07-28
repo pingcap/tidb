@@ -80,18 +80,23 @@ fn show_create_view_text(view: &tidb_executor::ViewDef) -> String {
 /// carry it): generated columns, AUTO_INCREMENT, AUTO_RANDOM, ON UPDATE
 /// CURRENT_TIMESTAMP, column and index comments, foreign keys, check
 /// constraints, partitioning, temporary tables, views and sequences.
-/// Per-column CHARACTER SET / COLLATE clauses are omitted because this seed
-/// stores no per-column charset, so every column takes the table's.
+/// A column prints its own charset/collation only where it differs from the
+/// table's, which is Go's rule and what the capture shows: a column whose
+/// charset differs prints `CHARACTER SET <cs> COLLATE <coll>`, one that only
+/// differs in collation prints `COLLATE <coll>`, and a binary-charset column
+/// (`varbinary`, `blob`) prints neither because its type name already says so.
 fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String {
     let mut out = format!("CREATE TABLE {} (\n", escape_name(name));
     let mut clauses: Vec<String> = Vec::with_capacity(table.columns.len() + 1);
 
+    let table_charset = table.charset();
     for (offset, column) in table.columns.iter().enumerate() {
         let mut clause = format!(
             "  {} {}",
             escape_name(&column.name),
             column.field_type.compact_str(false)
         );
+        clause.push_str(&column_charset_clause(&column.field_type, table_charset));
         let not_null = column.field_type.flags() & NOT_NULL_FLAG != 0;
         if table.auto_increment_offset() == Some(offset) {
             // Go writes the pair together for an auto column and prints no
@@ -161,9 +166,43 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
 
     out.push_str(&clauses.join(",\n"));
     out.push_str(&format!(
-        "\n) ENGINE=InnoDB DEFAULT CHARSET={TABLE_CHARSET} COLLATE={TABLE_COLLATE}"
+        "\n) ENGINE=InnoDB DEFAULT CHARSET={} COLLATE={}",
+        table_charset.charset.name(),
+        table_charset.collation.name()
     ));
     out
+}
+
+/// The ` CHARACTER SET x COLLATE y` tail a column clause carries when its own
+/// charset/collation differs from the table's default.
+fn column_charset_clause(
+    field_type: &tidb_datatype::FieldType,
+    table: tidb_executor::TableCharset,
+) -> String {
+    if !field_type.has_charset() {
+        return String::new();
+    }
+    let charset = field_type.charset_name();
+    let collation = field_type.collation_name();
+    if charset != table.charset.name() {
+        format!(" CHARACTER SET {charset} COLLATE {collation}")
+    } else if collation != table.collation.name() {
+        format!(" COLLATE {collation}")
+    } else {
+        String::new()
+    }
+}
+
+/// Go `NewColDesc`'s `Collation` cell: the column's own collation name, and
+/// NULL for anything with no character set -- a numeric or temporal column,
+/// and a binary-charset string column alike (captured: `varbinary`, `binary`,
+/// `blob` and `longblob` all report NULL).
+fn column_collation_cell(field_type: &tidb_datatype::FieldType) -> Datum {
+    if field_type.has_charset() {
+        Datum::Bytes(field_type.collation_name().as_bytes().to_vec())
+    } else {
+        Datum::Null
+    }
 }
 
 /// Go `table.ColDescFieldNames(false)`: the columns `SHOW COLUMNS` and
@@ -240,18 +279,7 @@ fn column_description(
             Datum::Bytes(extra.as_bytes().to_vec()),
         ];
     }
-    // Go `NewColDesc`: `Collation` is NULL for a non-string type (numerics,
-    // temporals, ...), and the column's own collation name otherwise.
-    //
-    // NOT MODELLED (documented): a per-column charset/collation override.
-    // This tier's DDL does not track one, so every string column reports the
-    // schema default (`utf8mb4_bin`), which is what a plain `VARCHAR` column
-    // with no explicit `CHARACTER SET`/`COLLATE` actually gets in Go too.
-    let collation = if column.field_type.is_string() {
-        Datum::Bytes(tidb_datatype::Collation::DEFAULT.name().as_bytes().to_vec())
-    } else {
-        Datum::Null
-    };
+    let collation = column_collation_cell(&column.field_type);
     vec![
         Datum::Bytes(column.name.clone().into_bytes()),
         Datum::Bytes(column.field_type.compact_str(false).into_bytes()),
@@ -292,11 +320,7 @@ fn view_column_description(
             Datum::Bytes(Vec::new()),
         ];
     }
-    let collation = if field_type.is_string() {
-        Datum::Bytes(tidb_datatype::Collation::DEFAULT.name().as_bytes().to_vec())
-    } else {
-        Datum::Null
-    };
+    let collation = column_collation_cell(field_type);
     vec![
         Datum::Bytes(name.as_bytes().to_vec()),
         Datum::Bytes(field_type.compact_str(false).into_bytes()),
@@ -378,7 +402,11 @@ const SHOW_TABLE_STATUS_COLUMNS: &[(&str, bool)] = &[
     ("Comment", false),
 ];
 
-fn show_table_status_row(name: &str, auto_increment: Option<i64>) -> Vec<Datum> {
+fn show_table_status_row(
+    name: &str,
+    auto_increment: Option<i64>,
+    charset: tidb_executor::TableCharset,
+) -> Vec<Datum> {
     let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
     vec![
         text(name),
@@ -398,7 +426,7 @@ fn show_table_status_row(name: &str, auto_increment: Option<i64>) -> Vec<Datum> 
         Datum::Null, // Create_time: no per-table creation timestamp here.
         Datum::Null, // Update_time
         Datum::Null, // Check_time
-        text(TABLE_COLLATE),
+        text(charset.collation.name()),
         text(""), // Checksum
         text(""), // Create_options
         text(""), // Comment
@@ -778,16 +806,16 @@ impl Session {
                             }
                         }
                         let entry = catalog.table_in(&database, &name);
-                        let auto_increment = match entry {
+                        let (auto_increment, table_charset) = match entry {
                             Some(tidb_executor::TableEntry::Kv(table)) => {
-                                table.next_auto_increment()
+                                (table.next_auto_increment(), table.charset())
                             }
-                            _ => None,
+                            _ => (None, tidb_executor::TableCharset::default()),
                         };
                         let row = if entry.is_some_and(tidb_executor::TableEntry::is_view) {
                             show_table_status_view_row(&name)
                         } else {
-                            show_table_status_row(&name, auto_increment)
+                            show_table_status_row(&name, auto_increment, table_charset)
                         };
                         if let Some(predicate) = &where_clause {
                             if !show_row_matches(

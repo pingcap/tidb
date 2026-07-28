@@ -1417,7 +1417,15 @@ pub fn type_to_str(code: FieldTypeCode, charset: &str) -> &'static str {
                 "tinytext"
             }
         }
-        FieldTypeCode::Varchar => "varchar",
+        // Go replaces `char` with `binary` for every `IsTypeChar` code, which
+        // turns `varchar` into `varbinary` -- `VarString` is not one of them.
+        FieldTypeCode::Varchar => {
+            if binary {
+                "varbinary"
+            } else {
+                "varchar"
+            }
+        }
         FieldTypeCode::VarString => "var_string",
         FieldTypeCode::Year => "year",
         FieldTypeCode::NewDate => "",

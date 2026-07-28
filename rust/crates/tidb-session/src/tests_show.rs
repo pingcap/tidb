@@ -1099,3 +1099,214 @@ fn show_warnings() {
         Err(DriverError::Unsupported(_)) | Err(DriverError::Parse(_))
     ));
 }
+
+/// Captured from TiDB (`pkg/executor` mock store): `SHOW FULL COLUMNS`,
+/// `SHOW CREATE TABLE` and `information_schema.columns` over one table
+/// carrying every string form, so a `VARBINARY` is distinguishable from a
+/// `VARCHAR` at every metadata surface.
+#[test]
+fn charset_and_collation_metadata_surfaces() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t1 (\
+                 c_varchar VARCHAR(10), c_char CHAR(10), \
+                 c_varbinary VARBINARY(10), c_binary BINARY(3), \
+                 c_blob BLOB, c_text TEXT, c_tinytext TINYTEXT, c_longblob LONGBLOB, \
+                 c_vc_cs VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, \
+                 c_vc_bin VARCHAR(10) BINARY, \
+                 c_enum ENUM('a','B'), c_set SET('a','B'), c_int INT)",
+        )
+        .unwrap();
+
+    // SHOW FULL COLUMNS: the type text and the Collation cell, which is NULL
+    // for every binary-charset column and for the integer one.
+    let (_, rows) = query_text(&mut session, "SHOW FULL COLUMNS FROM t1");
+    let types_and_collations: Vec<(String, String)> = rows
+        .iter()
+        .map(|row| (row[1].clone(), row[2].clone()))
+        .collect();
+    assert_eq!(
+        types_and_collations,
+        vec![
+            ("varchar(10)".to_owned(), "utf8mb4_bin".to_owned()),
+            ("char(10)".to_owned(), "utf8mb4_bin".to_owned()),
+            ("varbinary(10)".to_owned(), "<nil>".to_owned()),
+            ("binary(3)".to_owned(), "<nil>".to_owned()),
+            ("blob".to_owned(), "<nil>".to_owned()),
+            ("text".to_owned(), "utf8mb4_bin".to_owned()),
+            ("tinytext".to_owned(), "utf8mb4_bin".to_owned()),
+            ("longblob".to_owned(), "<nil>".to_owned()),
+            ("varchar(10)".to_owned(), "utf8mb4_general_ci".to_owned()),
+            ("varchar(10)".to_owned(), "utf8mb4_bin".to_owned()),
+            ("enum('a','B')".to_owned(), "utf8mb4_bin".to_owned()),
+            ("set('a','B')".to_owned(), "utf8mb4_bin".to_owned()),
+            ("int(11)".to_owned(), "<nil>".to_owned()),
+        ]
+    );
+
+    // SHOW CREATE TABLE: only the column whose collation differs from the
+    // table's prints a COLLATE clause.
+    let create = show_create(&mut session, "t1");
+    assert!(
+        create.contains("`c_varbinary` varbinary(10) DEFAULT NULL"),
+        "{create}"
+    );
+    assert!(
+        create.contains("`c_binary` binary(3) DEFAULT NULL"),
+        "{create}"
+    );
+    assert!(create.contains("`c_blob` blob DEFAULT NULL"), "{create}");
+    assert!(create.contains("`c_text` text DEFAULT NULL"), "{create}");
+    assert!(
+        create.contains("`c_vc_cs` varchar(10) COLLATE utf8mb4_general_ci DEFAULT NULL"),
+        "{create}"
+    );
+    assert!(
+        create.contains("`c_vc_bin` varchar(10) DEFAULT NULL"),
+        "{create}"
+    );
+    assert!(
+        create.ends_with(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"),
+        "{create}"
+    );
+
+    // information_schema.columns: the character length, the octet length
+    // (which scales by the charset's bytes per character), and the
+    // charset/collation names -- NULL for a binary-charset column.
+    let (_, rows) = query_text(
+        &mut session,
+        "SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH, \
+             CHARACTER_SET_NAME, COLLATION_NAME FROM information_schema.columns \
+             WHERE table_name = 't1'",
+    );
+    assert_eq!(
+        rows,
+        vec![
+            vec!["c_varchar", "varchar", "10", "40", "utf8mb4", "utf8mb4_bin"],
+            vec!["c_char", "char", "10", "40", "utf8mb4", "utf8mb4_bin"],
+            vec!["c_varbinary", "varbinary", "10", "10", "<nil>", "<nil>"],
+            vec!["c_binary", "binary", "3", "3", "<nil>", "<nil>"],
+            vec!["c_blob", "blob", "65535", "65535", "<nil>", "<nil>"],
+            vec![
+                "c_text",
+                "text",
+                "65535",
+                "262140",
+                "utf8mb4",
+                "utf8mb4_bin"
+            ],
+            vec![
+                "c_tinytext",
+                "tinytext",
+                "255",
+                "1020",
+                "utf8mb4",
+                "utf8mb4_bin"
+            ],
+            vec![
+                "c_longblob",
+                "longblob",
+                "4294967295",
+                "4294967295",
+                "<nil>",
+                "<nil>"
+            ],
+            vec![
+                "c_vc_cs",
+                "varchar",
+                "10",
+                "40",
+                "utf8mb4",
+                "utf8mb4_general_ci"
+            ],
+            vec!["c_vc_bin", "varchar", "10", "40", "utf8mb4", "utf8mb4_bin"],
+            vec!["c_enum", "enum", "1", "4", "utf8mb4", "utf8mb4_bin"],
+            vec!["c_set", "set", "3", "12", "utf8mb4", "utf8mb4_bin"],
+            vec!["c_int", "int", "<nil>", "<nil>", "<nil>", "<nil>"],
+        ]
+    );
+}
+
+/// Captured from TiDB over `... DEFAULT CHARSET=latin1`: the table tail
+/// reports latin1/latin1_bin, a column whose charset differs prints the full
+/// `CHARACTER SET ... COLLATE ...` pair, and `CHARACTER SET binary` on a
+/// VARCHAR reports a `varbinary`. The octet length follows the charset:
+/// latin1 is 1 byte per character, utf8mb4 is 4.
+#[test]
+fn table_default_charset_flows_into_every_surface() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t2 (a VARCHAR(10), b VARCHAR(10) CHARACTER SET utf8mb4, \
+                 c VARCHAR(10) CHARACTER SET latin1, d VARCHAR(10) CHARACTER SET binary) \
+                 DEFAULT CHARSET=latin1",
+        )
+        .unwrap();
+
+    let (_, rows) = query_text(&mut session, "SHOW FULL COLUMNS FROM t2");
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row[1].clone(), row[2].clone()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("varchar(10)".to_owned(), "latin1_bin".to_owned()),
+            ("varchar(10)".to_owned(), "utf8mb4_bin".to_owned()),
+            ("varchar(10)".to_owned(), "latin1_bin".to_owned()),
+            ("varbinary(10)".to_owned(), "<nil>".to_owned()),
+        ]
+    );
+
+    assert_eq!(
+        show_create(&mut session, "t2"),
+        "CREATE TABLE `t2` (\n  \
+             `a` varchar(10) DEFAULT NULL,\n  \
+             `b` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,\n  \
+             `c` varchar(10) DEFAULT NULL,\n  \
+             `d` varbinary(10) DEFAULT NULL\n\
+             ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
+    );
+
+    let (_, rows) = query_text(
+        &mut session,
+        "SELECT COLUMN_NAME, CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH, \
+             CHARACTER_SET_NAME, COLLATION_NAME FROM information_schema.columns \
+             WHERE table_name = 't2'",
+    );
+    assert_eq!(
+        rows,
+        vec![
+            vec!["a", "10", "10", "latin1", "latin1_bin"],
+            vec!["b", "10", "40", "utf8mb4", "utf8mb4_bin"],
+            vec!["c", "10", "10", "latin1", "latin1_bin"],
+            vec!["d", "10", "10", "<nil>", "<nil>"],
+        ]
+    );
+
+    // SHOW TABLE STATUS reports the table's own collation.
+    let (_, rows) = query_text(&mut session, "SHOW TABLE STATUS LIKE 't2'");
+    assert_eq!(rows[0][14], "latin1_bin");
+}
+
+/// A non-UTF-8 byte string is rejected by a utf8mb4 column and accepted by a
+/// binary one -- the write-path consequence of the column carrying a real
+/// charset. Captured: TiDB answers 1366 "Incorrect string value '\xFF' for
+/// column 'b'" for the utf8mb4 column and stores `0xFFFE7A` in the binary one.
+#[test]
+fn a_utf8mb4_column_validates_its_bytes_and_a_binary_column_does_not() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (b VARCHAR(20), vb VARBINARY(20))")
+        .unwrap();
+    assert!(matches!(
+        session.run("INSERT INTO t (b) VALUES (x'FFFE7A')"),
+        Err(DriverError::IncorrectValue { .. })
+    ));
+    session
+        .run("INSERT INTO t (vb) VALUES (x'FFFE7A')")
+        .unwrap();
+    assert_eq!(
+        query_text(&mut session, "SELECT HEX(vb) FROM t").1,
+        vec![vec!["FFFE7A".to_owned()]]
+    );
+}

@@ -854,19 +854,34 @@ struct TypeCells {
 /// reports precision and scale. Captured from TiDB: varchar(8) gives 8 and
 /// 32, bigint gives 19 and 0.
 fn type_cells(field_type: &FieldType) -> TypeCells {
-    let is_string = matches!(
-        field_type.code(),
-        FieldTypeCode::VarString | FieldTypeCode::String | FieldTypeCode::Varchar
-    );
-    if is_string {
+    // Every type with a character length: the string types, plus ENUM/SET,
+    // which Go's `IsString` excludes but which do report one.
+    if field_type.code().is_string() || field_type.has_charset() {
+        // One rule for every string type, character or binary: the character
+        // length is the field length and the octet length scales it by the
+        // charset's bytes-per-character. Captured: `varchar(10)` utf8mb4 gives
+        // 10/40, the same column in latin1 gives 10/10, `varbinary(10)` gives
+        // 10/10, `text` gives 65535/262140, `enum('a','B')` gives 1/4.
+        //
+        // A binary-charset column reports no charset and no collation at all,
+        // which is exactly `HasCharset` being false for it.
         let flen = field_type.flen();
+        let charset = field_type.charset();
+        let (charset_name, collation_name) = if field_type.has_charset() {
+            (
+                text(field_type.charset_name()),
+                text(field_type.collation_name()),
+            )
+        } else {
+            (Datum::Null, Datum::Null)
+        };
         TypeCells {
             char_max: Datum::Int(flen),
-            char_octet: Datum::Int(flen * 4),
+            char_octet: Datum::Int(flen.saturating_mul(charset.maxlen())),
             numeric_precision: Datum::Null,
             numeric_scale: Datum::Null,
-            charset_name: text(CHARSET),
-            collation_name: text(COLLATION),
+            charset_name,
+            collation_name,
         }
     } else {
         TypeCells {

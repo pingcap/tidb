@@ -41,7 +41,7 @@ use tidb_codec::table_key::{
     encode_index_seek_key, encode_row_key_with_handle, get_table_handle_key_range, RecordHandle,
     RECORD_ROW_KEY_LEN,
 };
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Charset, Collation, Datum, FieldType};
 use tidb_expr::schema::Schema;
 use tidb_tablecodec::{
     cut_index_key, decode_handle_in_index_value, decode_table_row_to_map,
@@ -137,6 +137,33 @@ pub struct KvColumn {
     pub origin_default: Option<Datum>,
 }
 
+/// A table's effective character set and collation: what an unqualified
+/// string column inherits, and what `SHOW CREATE TABLE` prints in its tail.
+///
+/// Go keeps this on `TableInfo.Charset`/`Collate`, resolved by
+/// `ResolveCharsetCollation` from the table options, the schema's default and
+/// finally the server default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TableCharset {
+    /// The table's default character set.
+    pub charset: Charset,
+    /// The table's default collation.
+    pub collation: Collation,
+}
+
+impl Default for TableCharset {
+    /// The server default this tier runs with: `utf8mb4` / `utf8mb4_bin`.
+    ///
+    /// Captured: `@@character_set_server` is `utf8mb4` and `@@collation_server`
+    /// is `utf8mb4_bin` -- TiDB does NOT use MySQL 8's `utf8mb4_0900_ai_ci`.
+    fn default() -> Self {
+        Self {
+            charset: Charset::Utf8Mb4,
+            collation: Collation::DEFAULT,
+        }
+    }
+}
+
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
 #[derive(Clone, Debug)]
 pub struct KvTable {
@@ -165,6 +192,9 @@ pub struct KvTable {
     /// offsets, whose encoding IS the row handle. Empty when the table has no
     /// clustered common handle.
     common_handle_offsets: Vec<usize>,
+    /// Go `TableInfo.Charset`/`Collate`: the table's default character set and
+    /// collation, which its unqualified string columns inherit.
+    charset: TableCharset,
 }
 
 /// A failure while encoding or decoding table bytes.
@@ -249,7 +279,19 @@ impl KvTable {
             common_handle_offsets: Vec::new(),
             auto_increment_offset: None,
             next_auto_id: 1,
+            charset: TableCharset::default(),
         }
+    }
+
+    /// Sets the table's default character set and collation.
+    pub fn set_charset(&mut self, charset: TableCharset) {
+        self.charset = charset;
+    }
+
+    /// The table's default character set and collation.
+    #[must_use]
+    pub const fn charset(&self) -> TableCharset {
+        self.charset
     }
 
     /// Marks the AUTO_INCREMENT column.

@@ -1078,20 +1078,34 @@ fn prepared_statement_parameters() {
         other => panic!("expected rows, got {other:?}"),
     }
 
-    // A value that is not UTF-8 survives the round trip as a hex literal
-    // rather than being mangled by a lossy conversion.
-    session
-        .run_with_params(
+    // A value that is not UTF-8 does NOT fit a utf8mb4 column: captured, TiDB
+    // answers 1366 "Incorrect string value '\xFF' for column 'b'" rather than
+    // storing mangled bytes.
+    assert!(matches!(
+        session.run_with_params(
             "INSERT INTO t (a,b,c) VALUES (?,?,?)",
             &[
                 Datum::Int(3),
                 Datum::Bytes(vec![0xff, 0xfe, b'z']),
                 Datum::Int(30),
             ],
+        ),
+        Err(DriverError::IncorrectValue { .. })
+    ));
+
+    // The same bytes DO survive the round trip through a binary column, which
+    // has no character set to validate them against (captured).
+    session
+        .run("CREATE TABLE tv (a BIGINT PRIMARY KEY, b VARBINARY(20))")
+        .unwrap();
+    session
+        .run_with_params(
+            "INSERT INTO tv (a,b) VALUES (?,?)",
+            &[Datum::Int(3), Datum::Bytes(vec![0xff, 0xfe, b'z'])],
         )
         .unwrap();
     match session
-        .run_with_params("SELECT b FROM t WHERE a = ?", &[Datum::Int(3)])
+        .run_with_params("SELECT b FROM tv WHERE a = ?", &[Datum::Int(3)])
         .unwrap()
     {
         StmtOutput::Rows { rows, .. } => {

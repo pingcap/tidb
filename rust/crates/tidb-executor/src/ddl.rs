@@ -19,19 +19,58 @@
 //! This is the metadata slice of Go's `pkg/ddl` `buildTableInfo` /
 //! `buildColumnAndConstraint`: column types map through `str_to_type` (Go
 //! `types.StrToType`) with flen/decimal from the type arguments and the
-//! unsigned flag. DEFERRED (documented): constraints/indexes (PK, UNIQUE,
+//! unsigned flag, and charset/collation through [`field_type_of`]'s
+//! transcreation of Go `ResolveCharsetCollation` (see its doc for the exact
+//! precedence). DEFERRED (documented): constraints/indexes (PK, UNIQUE,
 //! FOREIGN KEY), column options (DEFAULT, NOT NULL, AUTO_INCREMENT, comments),
-//! charset/collation resolution beyond the type's own defaults, TEMPORARY,
-//! `CREATE TABLE ... LIKE`, partitioning, and the schema-version/DDL-job
-//! machinery (the driver applies metadata directly; the DDL job queue is a
-//! separate tier).
+//! TEMPORARY, `CREATE TABLE ... LIKE`, partitioning, and the
+//! schema-version/DDL-job machinery (the driver applies metadata directly; the
+//! DDL job queue is a separate tier).
+//!
+//! # Where a resolved collation is, and is NOT, consulted
+//!
+//! DDL-time resolution is complete: every string column carries its real
+//! charset and collation, and every metadata surface (`SHOW FULL COLUMNS`,
+//! `SHOW CREATE TABLE`, `SHOW TABLE STATUS`, `information_schema.columns`)
+//! reports them, so a `VARBINARY` is distinguishable from a `VARCHAR`. The
+//! write path validates a column's bytes against its charset, so a non-UTF-8
+//! string is rejected by a `utf8mb4` column and accepted by a binary one.
+//!
+//! DIVERGENCE (documented, captured, and NOT yet fixed): the expression
+//! evaluator still compares string VALUES byte-wise under one hard-coded
+//! `utf8mb4_bin` PAD SPACE rule (`tidb_expr::ops::string_compare`), because
+//! `Datum` carries no expression-level coercibility -- Go's
+//! `CheckAndDeriveCollationFromExprs` is a separate unit. What that costs,
+//! against the TiDB capture:
+//!
+//! * `=`, `<>`, `<`, `<=`, `>`, `>=`, `IN`, `BETWEEN` over a
+//!   case-insensitive collation (`utf8mb4_general_ci`, `utf8mb4_unicode_ci`,
+//!   `gbk_chinese_ci`, `gb18030_chinese_ci`) compare case-SENSITIVELY:
+//!   `WHERE ci_col = 'A'` returns only the row holding `'A'`, where TiDB
+//!   returns both `'a'` and `'A'`.
+//! * `LIKE` over a case-insensitive collation likewise misses the
+//!   case-folded rows: `ci_col LIKE 'a'` does not match `'A'`.
+//! * `ORDER BY` and `GROUP BY` over a case-insensitive collation use byte
+//!   order and byte identity: TiDB orders `a, A, b, B` and produces 2 groups
+//!   where this tier orders `A, B, a, b` and produces 4.
+//! * A BINARY-collation comparison is PAD SPACE here but NO PAD in TiDB:
+//!   `_binary'a' = _binary'a  '` (and the same over a `VARBINARY` column) is
+//!   TRUE here and FALSE in TiDB.
+//! * `INSTR`, `LOCATE`, `STRCMP` and the other string builtins ignore the
+//!   collation entirely.
+//!
+//! Everything under `utf8mb4_bin` / `latin1_bin` -- the default, and what an
+//! unqualified column gets -- already matches the capture exactly, including
+//! its PAD SPACE rule (`'a' = 'a  '` is TRUE), and `COUNT(DISTINCT ci_col)`
+//! matches too.
 
 use crate::driver::{Catalog, DriverError};
-use crate::kv_table::{KvColumn, KvIndex, KvTable};
+use crate::kv_table::{KvColumn, KvIndex, KvTable, TableCharset};
 use tidb_ast::CiString;
 use tidb_ast::{ColumnDef, ColumnTypeArg, DdlStmt, Stmt};
 use tidb_datatype::{
-    str_to_type, Datum, FieldType, FieldTypeBuilder, FieldTypeCode, FieldTypeFlags,
+    str_to_type, Charset, Collation, Datum, FieldType, FieldTypeBuilder, FieldTypeCode,
+    FieldTypeFlags,
 };
 use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
@@ -497,6 +536,15 @@ fn normalize_column_default(
 /// "this column has primary key flag"), a BLOB/TEXT column that an index
 /// covers (Go 1170), generated columns, and the column options beyond
 /// NULL/NOT NULL/DEFAULT that CREATE TABLE also rejects here.
+/// The existing table's default charset/collation, which a column added or
+/// modified by ALTER TABLE inherits just as a CREATE TABLE column does.
+fn existing_table_charset(catalog: &Catalog, database: &str, table_name: &str) -> TableCharset {
+    match catalog.table_in(database, table_name) {
+        Some(crate::TableEntry::Kv(table)) => table.charset(),
+        _ => TableCharset::default(),
+    }
+}
+
 fn modify_column_action(
     catalog: &mut Catalog,
     database: &str,
@@ -506,7 +554,7 @@ fn modify_column_action(
     position: &tidb_ast::ColumnPosition,
     if_exists: bool,
 ) -> Result<(), DriverError> {
-    let field_type = field_type_of(def)?;
+    let field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
     let mut default_value = None;
     for option in &def.options {
         match option {
@@ -663,7 +711,7 @@ fn add_column_action(
     def: &ColumnDef,
     position: &tidb_ast::ColumnPosition,
 ) -> Result<(), DriverError> {
-    let field_type = field_type_of(def)?;
+    let field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
     let mut default_value = None;
     for option in &def.options {
         match option {
@@ -1070,33 +1118,183 @@ fn primary_key_column(
     Ok(found)
 }
 
-/// `str_to_type`, flen/decimal from numeric type arguments, unsigned flag.
-fn field_type_of(def: &ColumnDef) -> Result<FieldType, DriverError> {
+/// Go `ResolveCharsetCollation` over one `charset`/`collate` pair: either side
+/// alone determines the other, and both together must agree.
+fn resolve_pair(
+    charset: Option<Charset>,
+    collation: Option<Collation>,
+    fallback: TableCharset,
+) -> Result<TableCharset, DriverError> {
+    match (charset, collation) {
+        (Some(charset), Some(collation)) => {
+            if collation.charset() != charset {
+                return Err(DriverError::Unsupported(
+                    "COLLATE is not valid for the declared CHARACTER SET",
+                ));
+            }
+            Ok(TableCharset { charset, collation })
+        }
+        (Some(charset), None) => Ok(TableCharset {
+            charset,
+            collation: charset.default_collation(),
+        }),
+        (None, Some(collation)) => Ok(TableCharset {
+            charset: collation.charset(),
+            collation,
+        }),
+        (None, None) => Ok(fallback),
+    }
+}
+
+/// Parses a charset name, rejecting one this tier does not carry.
+fn charset_named(name: &str) -> Result<Charset, DriverError> {
+    Charset::from_name(name).ok_or(DriverError::Unsupported("unknown character set"))
+}
+
+/// Parses a collation name, rejecting one this tier does not carry.
+fn collation_named(name: &str) -> Result<Collation, DriverError> {
+    Collation::from_name(name).ok_or(DriverError::Unsupported("unknown collation"))
+}
+
+/// The table's own `DEFAULT CHARSET=` / `DEFAULT COLLATE=` options, falling
+/// back to the server default when neither is written.
+fn table_charset_of(options: &[tidb_ast::TableOption]) -> Result<TableCharset, DriverError> {
+    let mut charset = None;
+    let mut collation = None;
+    for option in options {
+        match option {
+            tidb_ast::TableOption::CharacterSet(name) => charset = Some(charset_named(name)?),
+            tidb_ast::TableOption::Collate(name) => collation = Some(collation_named(name)?),
+            _ => {}
+        }
+    }
+    resolve_pair(charset, collation, TableCharset::default())
+}
+
+/// Whether the declared type name is one whose representation IS binary --
+/// Go's `BINARY`/`VARBINARY` and the BLOB family, which carry charset
+/// `binary` no matter what the table's default is.
+fn is_intrinsically_binary(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "BINARY" | "VARBINARY" | "TINYBLOB" | "BLOB" | "MEDIUMBLOB" | "LONGBLOB"
+    )
+}
+
+/// Go's default `flen` for a BLOB/TEXT-family column, which has no written
+/// length. Captured from `information_schema.columns`: `blob` reports 65535,
+/// `tinytext` 255 and `longblob` 4294967295.
+const fn blob_family_flen(code: FieldTypeCode) -> Option<i64> {
+    match code {
+        FieldTypeCode::TinyBlob => Some(255),
+        FieldTypeCode::Blob => Some(65535),
+        FieldTypeCode::MediumBlob => Some(16_777_215),
+        FieldTypeCode::LongBlob => Some(4_294_967_295),
+        _ => None,
+    }
+}
+
+/// `str_to_type`, flen/decimal from numeric type arguments, unsigned flag, and
+/// Go `ResolveCharsetCollation`'s charset/collation precedence.
+///
+/// Precedence, highest first (Go `pkg/ddl/ddl_api.go`):
+/// 1. `BINARY`/`VARBINARY`/BLOB and an explicit `CHARACTER SET binary` are
+///    binary-charset columns carrying `BinaryFlag`; a `VARCHAR CHARACTER SET
+///    binary` becomes `varbinary` exactly because of this (captured).
+/// 2. the column's own `CHARACTER SET` and/or `COLLATE`,
+/// 3. the column's `BINARY` attribute, which picks the charset's `_bin`
+///    collation (captured: `VARCHAR(10) BINARY` reports `utf8mb4_bin`),
+/// 4. the table's `DEFAULT CHARSET=`/`COLLATE=`,
+/// 5. the server default (`utf8mb4` / `utf8mb4_bin`).
+fn field_type_of(def: &ColumnDef, table: TableCharset) -> Result<FieldType, DriverError> {
     let code = str_to_type(&def.ty.name.to_lowercase());
     if code == FieldTypeCode::Unspecified {
         return Err(DriverError::Unsupported("unsupported column type"));
     }
     let mut builder = FieldTypeBuilder::new().with_code(code);
-    // Go `setCharsetCollationFlenDecimal`'s `TypeJSON` arm: a JSON column is
-    // a BINARY-charset column carrying `BinaryFlag`, which is what makes the
-    // wire report `charset=binary, flag=128` for it rather than the table's
-    // utf8mb4 default. The document's own text is still UTF-8.
-    if code == FieldTypeCode::Json {
-        builder = builder
-            .charset_set("binary")
-            .collation_set("binary")
-            .add_flags(FieldTypeFlags::BINARY);
+
+    let written_charset = def.ty.charset.as_deref().map(charset_named).transpose()?;
+    let written_collation = def
+        .options
+        .iter()
+        .filter_map(|option| match option {
+            tidb_ast::ColumnOption::Collate(name) => Some(name.as_str()),
+            _ => None,
+        })
+        .next_back()
+        .map(collation_named)
+        .transpose()?;
+
+    // A JSON column is a BINARY-charset column too (Go
+    // `setCharsetCollationFlenDecimal`'s `TypeJSON` arm), which is what makes
+    // the wire report `charset=binary, flag=128` for it. The document's own
+    // text is still UTF-8.
+    let binary = code == FieldTypeCode::Json
+        || is_intrinsically_binary(&def.ty.name)
+        || written_charset == Some(Charset::Binary);
+    let resolved = if binary {
+        TableCharset {
+            charset: Charset::Binary,
+            collation: Collation::Binary,
+        }
+    } else if written_collation.is_none() && def.ty.binary {
+        // The `BINARY` column attribute keeps the inherited charset and picks
+        // that charset's `_bin` collation.
+        let charset = written_charset.unwrap_or(table.charset);
+        TableCharset {
+            charset,
+            collation: charset.default_collation(),
+        }
+    } else {
+        resolve_pair(written_charset, written_collation, table)?
+    };
+    builder = builder
+        .charset_set(resolved.charset.name())
+        .collation_set(resolved.collation.name());
+    if binary && code.is_string() {
+        // `HasCharset` is false exactly for a string type carrying
+        // `BinaryFlag`, which is what makes SHOW/information_schema report a
+        // NULL charset and collation for it (captured).
+        builder = builder.add_flags(FieldTypeFlags::BINARY);
     }
-    let mut numeric_args = def.ty.args.iter().filter_map(|arg| match arg {
-        ColumnTypeArg::Text(text) => text.parse::<i64>().ok(),
-        ColumnTypeArg::Bytes(_) => None,
-    });
-    if let Some(flen) = numeric_args.next() {
-        builder = builder.flen_set(flen);
+
+    if matches!(code, FieldTypeCode::Enum | FieldTypeCode::Set) {
+        // Go stores the members on the field type and derives the display
+        // length from them: captured, `enum('a','B')` reports
+        // CHARACTER_MAXIMUM_LENGTH 1 and `set('a','B')` reports 3.
+        let elems: Vec<String> = def
+            .ty
+            .args
+            .iter()
+            .map(ColumnTypeArg::as_text_lossy)
+            .collect();
+        if elems.is_empty() {
+            return Err(DriverError::Unsupported("ENUM/SET needs members"));
+        }
+        if let Some(flen) = def.ty.enum_set_display_length() {
+            builder = builder.flen_set(flen);
+        }
+        builder = builder.elems(elems);
+    } else {
+        let mut numeric_args = def.ty.args.iter().filter_map(|arg| match arg {
+            ColumnTypeArg::Text(text) => text.parse::<i64>().ok(),
+            ColumnTypeArg::Bytes(_) => None,
+        });
+        match numeric_args.next() {
+            Some(flen) => builder = builder.flen_set(flen),
+            // A BLOB/TEXT-family column carries no written length, so it takes
+            // its type's fixed capacity.
+            None => {
+                if let Some(flen) = blob_family_flen(code) {
+                    builder = builder.flen_set(flen);
+                }
+            }
+        }
+        if let Some(decimal) = numeric_args.next() {
+            builder = builder.decimal_set(decimal);
+        }
     }
-    if let Some(decimal) = numeric_args.next() {
-        builder = builder.decimal_set(decimal);
-    }
+
     if def.ty.unsigned {
         builder = builder.add_flags(FieldTypeFlags::UNSIGNED);
     }
@@ -1156,9 +1354,10 @@ pub fn run_create_table_in(
     }
 
     // Build the ColumnInfos (ids 1..n, offsets in definition order).
+    let table_charset = table_charset_of(&create.table_options)?;
     let mut columns = Vec::with_capacity(create.columns.len());
     for (i, def) in create.columns.iter().enumerate() {
-        let field_type = field_type_of(def)?;
+        let field_type = field_type_of(def, table_charset)?;
         let mut col = ColumnInfo::new((i + 1) as i64, &def.name, field_type);
         col.offset = i as i32;
         columns.push(col);
@@ -1316,6 +1515,7 @@ pub fn run_create_table_in(
     let table = KvTable::new(info.id, kv_columns);
     let mut table = table;
     table.set_name(name);
+    table.set_charset(table_charset);
     if pk_is_handle {
         if let Some(offset) = pk_offset {
             table.set_pk_handle_offset(offset);
@@ -1401,5 +1601,185 @@ mod tests {
         assert_eq!(handle_offset("t"), Some(0));
         assert_eq!(handle_offset("s"), None, "a string PK is not a handle");
         assert_eq!(handle_offset("h"), None, "no PK, no handle column");
+    }
+
+    /// The `(charset, collation, flen)` a column resolves to, for the
+    /// charset/collation captures below.
+    fn resolved(catalog: &Catalog, table: &str, column: &str) -> (String, String, i64) {
+        let Some(crate::TableEntry::Kv(kv)) = catalog.get_table_for_test(table) else {
+            panic!("expected a kv table");
+        };
+        let column = kv
+            .columns
+            .iter()
+            .find(|c| c.name == column)
+            .expect("column exists");
+        (
+            column.field_type.charset_name().to_owned(),
+            column.field_type.collation_name().to_owned(),
+            column.field_type.flen(),
+        )
+    }
+
+    /// Captured from TiDB (`SHOW FULL COLUMNS` + `information_schema.columns`
+    /// over one table carrying every string form): the BINARY/VARBINARY/BLOB
+    /// family is charset `binary`, the CHAR/VARCHAR/TEXT family takes the
+    /// table's default (`utf8mb4`/`utf8mb4_bin` -- NOT `utf8mb4_0900_ai_ci`),
+    /// an explicit COLLATE wins, and the `BINARY` column attribute picks the
+    /// charset's `_bin` collation.
+    #[test]
+    fn ddl_resolves_charset_and_collation_per_column() {
+        let mut catalog = Catalog::default();
+        run_create_table_on(
+            "CREATE TABLE t1 (\
+                 c_varchar VARCHAR(10), c_char CHAR(10), \
+                 c_varbinary VARBINARY(10), c_binary BINARY(3), \
+                 c_blob BLOB, c_text TEXT, c_tinytext TINYTEXT, c_longblob LONGBLOB, \
+                 c_vc_cs VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, \
+                 c_vc_bin VARCHAR(10) BINARY, \
+                 c_enum ENUM('a','B'), c_set SET('a','B'), c_int INT)",
+            &mut catalog,
+        )
+        .unwrap();
+
+        let case = |column: &str| resolved(&catalog, "t1", column);
+        assert_eq!(
+            case("c_varchar"),
+            ("utf8mb4".into(), "utf8mb4_bin".into(), 10)
+        );
+        assert_eq!(case("c_char"), ("utf8mb4".into(), "utf8mb4_bin".into(), 10));
+        assert_eq!(case("c_varbinary"), ("binary".into(), "binary".into(), 10));
+        assert_eq!(case("c_binary"), ("binary".into(), "binary".into(), 3));
+        // The BLOB/TEXT family carries its type's fixed capacity as flen.
+        assert_eq!(case("c_blob"), ("binary".into(), "binary".into(), 65535));
+        assert_eq!(
+            case("c_text"),
+            ("utf8mb4".into(), "utf8mb4_bin".into(), 65535)
+        );
+        assert_eq!(
+            case("c_tinytext"),
+            ("utf8mb4".into(), "utf8mb4_bin".into(), 255)
+        );
+        assert_eq!(
+            case("c_longblob"),
+            ("binary".into(), "binary".into(), 4_294_967_295)
+        );
+        assert_eq!(
+            case("c_vc_cs"),
+            ("utf8mb4".into(), "utf8mb4_general_ci".into(), 10)
+        );
+        // `VARCHAR(10) BINARY` is the charset's `_bin` collation, NOT charset
+        // `binary`: it still reports utf8mb4 (captured).
+        assert_eq!(
+            case("c_vc_bin"),
+            ("utf8mb4".into(), "utf8mb4_bin".into(), 10)
+        );
+        // ENUM/SET take the table charset, and their flen is the display
+        // length Go derives from the members.
+        assert_eq!(case("c_enum"), ("utf8mb4".into(), "utf8mb4_bin".into(), 1));
+        assert_eq!(case("c_set"), ("utf8mb4".into(), "utf8mb4_bin".into(), 3));
+
+        // A binary-charset string column has no charset for `HasCharset`,
+        // which is what makes SHOW/information_schema report NULL for it.
+        let Some(crate::TableEntry::Kv(kv)) = catalog.get_table_for_test("t1") else {
+            panic!("expected a kv table");
+        };
+        let has_charset = |column: &str| {
+            kv.columns
+                .iter()
+                .find(|c| c.name == column)
+                .unwrap()
+                .field_type
+                .has_charset()
+        };
+        assert!(has_charset("c_varchar") && has_charset("c_enum"));
+        assert!(!has_charset("c_varbinary") && !has_charset("c_blob"));
+        assert!(!has_charset("c_int"));
+    }
+
+    /// Captured from TiDB over `... DEFAULT CHARSET=latin1`: a column with no
+    /// clause takes the table's charset AND collation, an explicit
+    /// `CHARACTER SET utf8mb4` takes that charset's default collation, and
+    /// `CHARACTER SET binary` turns a VARCHAR into a `varbinary`.
+    #[test]
+    fn ddl_column_charset_falls_back_to_the_table_default() {
+        let mut catalog = Catalog::default();
+        run_create_table_on(
+            "CREATE TABLE t2 (a VARCHAR(10), b VARCHAR(10) CHARACTER SET utf8mb4, \
+                 c VARCHAR(10) CHARACTER SET latin1, d VARCHAR(10) CHARACTER SET binary) \
+                 DEFAULT CHARSET=latin1",
+            &mut catalog,
+        )
+        .unwrap();
+        let case = |column: &str| resolved(&catalog, "t2", column);
+        assert_eq!(case("a"), ("latin1".into(), "latin1_bin".into(), 10));
+        assert_eq!(case("b"), ("utf8mb4".into(), "utf8mb4_bin".into(), 10));
+        assert_eq!(case("c"), ("latin1".into(), "latin1_bin".into(), 10));
+        assert_eq!(case("d"), ("binary".into(), "binary".into(), 10));
+
+        let Some(crate::TableEntry::Kv(kv)) = catalog.get_table_for_test("t2") else {
+            panic!("expected a kv table");
+        };
+        assert_eq!(
+            kv.charset(),
+            TableCharset {
+                charset: Charset::Latin1,
+                collation: Collation::Latin1Bin,
+            }
+        );
+    }
+
+    /// A `COLLATE` alone determines the charset, and a `COLLATE` that does not
+    /// belong to the written `CHARACTER SET` is rejected rather than silently
+    /// producing a contradictory field type.
+    #[test]
+    fn ddl_collate_alone_picks_the_charset_and_a_mismatched_pair_is_rejected() {
+        let mut catalog = Catalog::default();
+        run_create_table_on(
+            "CREATE TABLE t (a VARCHAR(10) COLLATE latin1_bin)",
+            &mut catalog,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved(&catalog, "t", "a"),
+            ("latin1".into(), "latin1_bin".into(), 10)
+        );
+        assert!(run_create_table_on(
+            "CREATE TABLE bad (a VARCHAR(10) CHARACTER SET latin1 COLLATE utf8mb4_bin)",
+            &mut catalog,
+        )
+        .is_err());
+    }
+
+    /// Captured from TiDB: `INSERT INTO tb(b BINARY(3)) VALUES ('ab')` reads
+    /// back as `0x616200` with `LENGTH` 3 -- a fixed-width binary column is
+    /// zero-padded to its flen -- while `VARBINARY(3)` keeps the two bytes.
+    #[test]
+    fn binary_column_zero_pads_to_its_length() {
+        let mut catalog = Catalog::default();
+        run_create_table_on(
+            "CREATE TABLE tb (b BINARY(3), vb VARBINARY(3))",
+            &mut catalog,
+        )
+        .unwrap();
+        run_insert_on(
+            "INSERT INTO tb VALUES ('ab','ab')",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        let rows = run_select_on(
+            "SELECT b, vb FROM tb",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        let bytes = |value: &Datum| match value {
+            Datum::Bytes(b) => b.clone(),
+            Datum::String(s) => s.bytes().to_vec(),
+            other => panic!("unexpected string datum {other:?}"),
+        };
+        assert_eq!(bytes(&rows[0][0]), vec![b'a', b'b', 0]);
+        assert_eq!(bytes(&rows[0][1]), vec![b'a', b'b']);
     }
 }

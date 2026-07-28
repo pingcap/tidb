@@ -71,7 +71,7 @@ pub use explain::{
 };
 pub use hash_agg::{AggFunc, AggKind, HashAggExec};
 pub use join::{JoinExec, JoinKind};
-pub use kv_table::{IndexRange, KvColumn, KvIndex, KvTable, TableScanExec};
+pub use kv_table::{IndexRange, KvColumn, KvIndex, KvTable, TableCharset, TableScanExec};
 pub use limit::LimitExec;
 pub use mem_table::MemTableSourceExec;
 pub use projection::ProjectionExec;
