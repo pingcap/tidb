@@ -25,6 +25,7 @@ import (
 
 var benchmarkColumnInfoDumpSink []byte
 var benchmarkResultEncoderSink *ResultEncoder
+var benchmarkEncodedLengthSink int
 
 func BenchmarkNewResultEncoder(b *testing.B) {
 	for _, testCase := range []struct {
@@ -55,6 +56,21 @@ func BenchmarkUpdateDataEncodingWideRows(b *testing.B) {
 		}
 	}
 	benchmarkResultEncoderSink = encoder
+}
+
+func BenchmarkEncodeWithWideRows(b *testing.B) {
+	encoder := NewResultEncoder(charset.CharsetUTF8MB4)
+	c := make([]byte, 119)
+	pad := make([]byte, 59)
+	total := 0
+	b.ReportAllocs()
+	for range b.N {
+		for range 510 {
+			total += len(encoder.EncodeWith(c, charset.EncodingBinImpl))
+			total += len(encoder.EncodeWith(pad, charset.EncodingBinImpl))
+		}
+	}
+	benchmarkEncodedLengthSink = total
 }
 
 func BenchmarkColumnInfoDump(b *testing.B) {
