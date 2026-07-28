@@ -15,6 +15,7 @@ package ast_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -673,4 +674,37 @@ func TestImportIntoFromSelectInvalidStmt(t *testing.T) {
 	require.ErrorContains(t, err, "Cannot use user variable(b) in IMPORT INTO FROM SELECT statement")
 	_, err = p.ParseOneStmt("IMPORT INTO t1(a) set a=1 FROM select a from t2;", "", "")
 	require.ErrorContains(t, err, "Cannot use SET clause in IMPORT INTO FROM SELECT statement.")
+}
+
+func TestJSONTableRestore(t *testing.T) {
+	p := parser.New()
+	tests := []struct {
+		input  string
+		expect string
+	}{
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id FOR ORDINALITY)) jt`,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` FOR ORDINALITY)) AS `jt`"},
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a')) jt`,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a')) AS `jt`"},
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT EXISTS PATH '$.a')) jt`,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT EXISTS PATH '$.a')) AS `jt`"},
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (NESTED PATH '$.b' COLUMNS (c INT PATH '$.c'))) jt`,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (NESTED PATH '$.b' COLUMNS (`c` INT PATH '$.c'))) AS `jt`"},
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' NULL ON EMPTY)) jt`,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a' NULL ON EMPTY)) AS `jt`"},
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' ERROR ON ERROR)) jt`,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a' ERROR ON ERROR)) AS `jt`"},
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' NULL ON EMPTY ERROR ON ERROR)) jt`,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a' NULL ON EMPTY ERROR ON ERROR)) AS `jt`"},
+	}
+	for _, tt := range tests {
+		stmts, _, err := p.Parse(tt.input, "", "")
+		require.NoError(t, err)
+		stmt := stmts[0]
+		var sb strings.Builder
+		ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err = stmt.Restore(ctx)
+		require.NoError(t, err)
+		require.Equal(t, tt.expect, sb.String())
+	}
 }

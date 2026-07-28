@@ -7231,6 +7231,26 @@ func TestStartTransaction(t *testing.T) {
 	RunTest(t, cases, false, false)
 }
 
+func TestJSONTable(t *testing.T) {
+	cases := []testCase{
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id FOR ORDINALITY)) jt`, true,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` FOR ORDINALITY)) AS `jt`"},
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a')) jt`, true,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a')) AS `jt`"},
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT EXISTS PATH '$.a')) jt`, true,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT EXISTS PATH '$.a')) AS `jt`"},
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (NESTED PATH '$.b' COLUMNS (c INT PATH '$.c'))) jt`, true,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (NESTED PATH '$.b' COLUMNS (`c` INT PATH '$.c'))) AS `jt`"},
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' NULL ON EMPTY)) jt`, true,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a' NULL ON EMPTY)) AS `jt`"},
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' ERROR ON ERROR)) jt`, true,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a' ERROR ON ERROR)) AS `jt`"},
+		{`SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' NULL ON EMPTY ERROR ON ERROR)) jt`, true,
+			"SELECT * FROM JSON_TABLE(_UTF8MB4'{\"a\":1}', '$' COLUMNS (`id` INT PATH '$.a' NULL ON EMPTY ERROR ON ERROR)) AS `jt`"},
+	}
+	RunTest(t, cases, false, false)
+}
+
 func TestSignedInt64OutOfRange(t *testing.T) {
 	p := parser.New()
 	cases := []string{

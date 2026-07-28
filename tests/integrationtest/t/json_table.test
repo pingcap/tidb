@@ -1,0 +1,24 @@
+# Test JSON_TABLE syntax acceptance
+
+# FOR ORDINALITY
+--error 1235
+SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id FOR ORDINALITY)) jt;
+
+# # PATH column 
+--error 1235
+SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a')) jt;
+
+# EXISTS PATH 
+--error 1235
+SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT EXISTS PATH '$.a')) jt;
+
+# NESTED PATH
+--error 1235
+SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (NESTED PATH '$.b' COLUMNS (c INT PATH '$.c'))) jt;
+
+# ON EMPTY / ON ERROR handlers 
+--error 1235
+SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' NULL ON EMPTY)) jt;
+
+--error 1235
+SELECT * FROM JSON_TABLE('{"a":1}', '$' COLUMNS (id INT PATH '$.a' NULL ON EMPTY ERROR ON ERROR)) jt;
