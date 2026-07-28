@@ -5042,6 +5042,129 @@ mod tests {
         assert_eq!(session.warnings().len(), 1);
     }
 
+    /// `GROUP BY ... WITH ROLLUP`, checked against captured TiDB output.
+    ///
+    /// Go's hash aggregation over Expand emits rollup rows in a
+    /// NONDETERMINISTIC order (verified: the captured order changed across
+    /// runs of the same query), so without `ORDER BY` only the row MULTISET
+    /// is contractual. This tier's deterministic order is: full groups in
+    /// first-seen order, then each shorter prefix's subtotals, then the
+    /// grand total. The `ORDER BY` cases below match captured TiDB output
+    /// row for row.
+    #[test]
+    fn with_rollup() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT, b BIGINT, c BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,1,10),(1,2,20),(2,1,30),(2,2,40),(1,1,5)")
+            .unwrap();
+
+        // Two-column rollup: every prefix (a,b), (a), () gets aggregate rows,
+        // with the rolled-up columns NULL. Multiset captured from TiDB.
+        assert_eq!(
+            row_text(session.run("SELECT a, b, SUM(c) FROM t GROUP BY a, b WITH ROLLUP")),
+            [
+                ["1", "1", "15"],
+                ["1", "2", "20"],
+                ["2", "1", "30"],
+                ["2", "2", "40"],
+                ["1", "NULL", "35"],
+                ["2", "NULL", "70"],
+                ["NULL", "NULL", "105"],
+            ]
+        );
+        // Single-column rollup.
+        assert_eq!(
+            row_text(session.run("SELECT a, SUM(c) FROM t GROUP BY a WITH ROLLUP")),
+            [["1", "35"], ["2", "70"], ["NULL", "105"]]
+        );
+        // COUNT(*) counts the replicated rows per grouping set.
+        assert_eq!(
+            row_text(session.run("SELECT a, b, COUNT(*) FROM t GROUP BY a, b WITH ROLLUP")),
+            [
+                ["1", "1", "2"],
+                ["1", "2", "1"],
+                ["2", "1", "1"],
+                ["2", "2", "1"],
+                ["1", "NULL", "3"],
+                ["2", "NULL", "2"],
+                ["NULL", "NULL", "5"],
+            ]
+        );
+        // AVG: captured scale is 4 (decimal AVG over BIGINT).
+        assert_eq!(
+            row_text(session.run("SELECT a, b, AVG(c) FROM t GROUP BY a, b WITH ROLLUP")),
+            [
+                ["1", "1", "7.5000"],
+                ["1", "2", "20.0000"],
+                ["2", "1", "30.0000"],
+                ["2", "2", "40.0000"],
+                ["1", "NULL", "11.6667"],
+                ["2", "NULL", "35.0000"],
+                ["NULL", "NULL", "21.0000"],
+            ]
+        );
+        // Captured row for row: ORDER BY sorts NULL first, so the grand
+        // total leads and each subtotal precedes its group's rows.
+        assert_eq!(
+            row_text(
+                session.run("SELECT a, b, SUM(c) FROM t GROUP BY a, b WITH ROLLUP ORDER BY a, b")
+            ),
+            [
+                ["NULL", "NULL", "105"],
+                ["1", "NULL", "35"],
+                ["1", "1", "15"],
+                ["1", "2", "20"],
+                ["2", "NULL", "70"],
+                ["2", "1", "30"],
+                ["2", "2", "40"],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a, SUM(c) FROM t GROUP BY a WITH ROLLUP ORDER BY a")),
+            [["NULL", "105"], ["1", "35"], ["2", "70"]]
+        );
+
+        // A genuinely-NULL data value is indistinguishable from a rollup
+        // NULL in the output, exactly as in TiDB: a=1 has rows (b=1,c=10)
+        // and (b=NULL,c=20), so both the data group [1 NULL 20] and the
+        // subtotal [1 NULL 30] appear (captured). Only GROUPING(), which
+        // this tier does not support, can tell them apart.
+        session
+            .run("CREATE TABLE tn (a BIGINT, b BIGINT, c BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO tn VALUES (1,1,10),(1,NULL,20),(NULL,1,30),(2,2,40)")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT a, b, SUM(c) FROM tn GROUP BY a, b WITH ROLLUP")),
+            [
+                ["1", "1", "10"],
+                ["1", "NULL", "20"],
+                ["NULL", "1", "30"],
+                ["2", "2", "40"],
+                ["1", "NULL", "30"],
+                ["NULL", "NULL", "30"],
+                ["2", "NULL", "40"],
+                ["NULL", "NULL", "100"],
+            ]
+        );
+
+        // Deferred: a non-column grouping expression cannot be NULLed at the
+        // source, so it is refused rather than answered wrongly.
+        assert!(matches!(
+            session.run("SELECT a+1, SUM(c) FROM t GROUP BY a+1 WITH ROLLUP"),
+            Err(DriverError::Unsupported(_))
+        ));
+
+        // An empty source yields no rows at all -- not even the grand total
+        // -- because Expand replicates zero rows (unlike a scalar aggregate).
+        session.run("DELETE FROM t").unwrap();
+        assert!(row_text(session.run("SELECT a, SUM(c) FROM t GROUP BY a WITH ROLLUP")).is_empty());
+    }
+
     /// SHOW WARNINGS / SHOW ERRORS, checked against captured TiDB output.
     ///
     /// NOT PORTED from Go's own suites: the warnings raised by evaluation

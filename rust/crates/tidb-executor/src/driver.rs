@@ -4178,7 +4178,8 @@ fn datum_is_true(value: &Datum) -> bool {
 /// `COUNT(*)` as the literal-`1` argument, which counts every row identically);
 /// any non-aggregate select field becomes a `FIRST_ROW` carrier (Go's planner
 /// does the same; `ONLY_FULL_GROUP_BY` validation is deferred); `DISTINCT`
-/// other aggregate functions and `WITH ROLLUP` are rejected as unsupported.
+/// and other aggregate functions are rejected as unsupported. `WITH ROLLUP`
+/// runs through [`run_rollup_aggregate`] (plain-column grouping only).
 /// `HAVING` and `ORDER BY` run over the aggregation's output, as in Go: an
 /// aggregate appearing only in those clauses is appended as a hidden output
 /// column and trimmed by a final projection.
@@ -4189,10 +4190,6 @@ fn run_aggregate_select(
     _catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
-    if select.rollup {
-        return Err(DriverError::Unsupported("WITH ROLLUP is not supported yet"));
-    }
-
     // Fields -> aggregate functions (+ output names/types).
     let mut agg_funcs: Vec<AggFunc> = Vec::new();
     let mut names: Vec<String> = Vec::new();
@@ -4327,13 +4324,17 @@ fn run_aggregate_select(
         .collect();
     let out_schema = Schema::new(out_columns);
 
-    let mut root: Box<dyn Executor> = Box::new(HashAggExec::new(
-        ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
-        group_by,
-        agg_funcs,
-        source,
-        ctx.clone(),
-    ));
+    let mut root: Box<dyn Executor> = if select.rollup {
+        run_rollup_aggregate(source, &group_by, &agg_funcs, &out_schema, &types, ctx)?
+    } else {
+        Box::new(HashAggExec::new(
+            ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
+            group_by,
+            agg_funcs,
+            source,
+            ctx.clone(),
+        ))
+    };
 
     // HAVING filters the aggregation's output rows (Go's Selection above the
     // Aggregation), and ORDER BY sorts them.
@@ -4453,6 +4454,113 @@ fn run_aggregate_select(
     }
     root.close()?;
     Ok((names.into_iter().zip(ret_types).collect(), rows))
+}
+
+/// Runs `GROUP BY g1..gn WITH ROLLUP` by materializing the source rows once
+/// and aggregating every grouping-set prefix `(g1..gk)`, `k = n..0`, over
+/// them -- logically what Go's Expand operator does by replicating each input
+/// row once per grouping set. The rolled-up columns are NULLed in the
+/// materialized SOURCE rows, so every expression over them (the `FIRST_ROW`
+/// carriers, `a+1`, a `HAVING` reference) evaluates against NULL exactly as
+/// it does over Expand's replicated rows; a genuinely-NULL data value and a
+/// rollup NULL are indistinguishable in the output, as in TiDB (only
+/// `GROUPING()`, unsupported here, can tell them apart -- captured from real
+/// TiDB: `a=1` rows `(b=1,c=10)`/`(b=NULL,c=20)` yield both `[1 NULL 20]` and
+/// the subtotal `[1 NULL 30]`).
+///
+/// Row order: Go's hash aggregation over Expand output emits rollup rows in a
+/// NONDETERMINISTIC order (verified against real TiDB -- the order changes
+/// across runs), so only the row multiset is contractual and `ORDER BY` is the
+/// only ordering guarantee. This tier emits full groups first (first-seen
+/// order), then each shorter prefix's subtotals, then the grand total. An
+/// empty source yields no rows at all -- not even the grand total -- because
+/// Expand replicates zero rows (unlike a scalar aggregate).
+fn run_rollup_aggregate(
+    source: Box<dyn Executor>,
+    group_by: &[Expression],
+    agg_funcs: &[AggFunc],
+    out_schema: &Schema,
+    out_types: &[FieldType],
+    ctx: &crate::StmtContext,
+) -> Result<Box<dyn Executor>, DriverError> {
+    // Each rolled-up position must be a plain column so it can be NULLed in
+    // the materialized source rows (Go's Expand projects grouping expressions
+    // into dedicated columns; that generality is deferred).
+    let mut group_cols = Vec::with_capacity(group_by.len());
+    for expr in group_by {
+        let Expression::Column(col) = expr else {
+            return Err(DriverError::Unsupported(
+                "WITH ROLLUP over a non-column GROUP BY expression is not supported yet",
+            ));
+        };
+        group_cols.push(
+            usize::try_from(col.index).map_err(|_| {
+                DriverError::Parse("GROUP BY column has no source index".to_string())
+            })?,
+        );
+    }
+
+    // Materialize the source once; every prefix pass replays these rows.
+    let source_schema = source.schema().clone();
+    let source_types = source.ret_field_types().to_vec();
+    let rows = drain_executor_rows(source, &source_types)?;
+
+    let mut out_rows: Vec<Vec<Datum>> = Vec::new();
+    if !rows.is_empty() {
+        for k in (0..=group_cols.len()).rev() {
+            let mut pass_rows = rows.clone();
+            for row in &mut pass_rows {
+                for &idx in &group_cols[k..] {
+                    row[idx] = Datum::Null;
+                }
+            }
+            let pass_source = Box::new(MemTableSourceExec::new(
+                ExecutorMeta::new(source_schema.clone(), 1, INIT_CAP, MAX_CHUNK_SIZE),
+                pass_rows,
+            ));
+            let agg = HashAggExec::new(
+                ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
+                group_by[..k].to_vec(),
+                agg_funcs.to_vec(),
+                pass_source,
+                ctx.clone(),
+            );
+            out_rows.extend(drain_executor_rows(Box::new(agg), out_types)?);
+        }
+    }
+    Ok(Box::new(MemTableSourceExec::new(
+        ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
+        out_rows,
+    )))
+}
+
+/// Opens `exec`, drains every row as datums of `types`, and closes it.
+fn drain_executor_rows(
+    mut exec: Box<dyn Executor>,
+    types: &[FieldType],
+) -> Result<Vec<Vec<Datum>>, DriverError> {
+    exec.open()?;
+    let mut rows = Vec::new();
+    let mut req = exec.new_chunk();
+    loop {
+        exec.next(&mut req)?;
+        let n = req.num_rows();
+        if n == 0 {
+            break;
+        }
+        for r in 0..n {
+            let row = req.get_row(r);
+            rows.push(
+                types
+                    .iter()
+                    .enumerate()
+                    .map(|(c, ft)| row.get_datum(c, ft))
+                    .collect(),
+            );
+        }
+    }
+    exec.close()?;
+    Ok(rows)
 }
 
 /// Go `buildDistinct`: an aggregation grouping by every column of `schema`,
