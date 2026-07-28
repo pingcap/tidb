@@ -2226,6 +2226,7 @@ fn order_rows_for_dml<H>(
     order_by: &[tidb_ast::OrderItem],
     field_types: &[FieldType],
     resolver: &impl tidb_expr::rewriter::ColumnResolver,
+    column_names: &[String],
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     if order_by.is_empty() {
@@ -2233,7 +2234,25 @@ fn order_rows_for_dml<H>(
     }
     let mut items = Vec::with_capacity(order_by.len());
     for item in order_by {
-        let expr = rewrite_expr_resolved(&item.expr, resolver)
+        // A bare positive integer literal is a positional reference to the
+        // table's own column at that 1-based position, NOT a constant —
+        // confirmed via `zz_dump_parity_test.go`
+        // (`TestZZDumpParityDMLPositionalOrderBy`): `UPDATE t SET a = a +
+        // 100 ORDER BY 2 LIMIT 1` on `t(a, b)` picked the row with the
+        // smallest `b`, i.e. `2` resolved to column `b`, exactly like
+        // `SELECT`'s positional `ORDER BY`/`GROUP BY` (see
+        // `tidb_exec::order::positional`). There is no select list here, so
+        // the position indexes the table's declared columns instead.
+        let resolved_expr = match dml_order_by_position(&item.expr)? {
+            Some(pos) => {
+                let name = column_names
+                    .get(pos)
+                    .ok_or(DriverError::Unsupported("ORDER BY position out of range"))?;
+                tidb_ast::Expr::Column(vec![name.clone()])
+            }
+            None => item.expr.clone(),
+        };
+        let expr = rewrite_expr_resolved(&resolved_expr, resolver)
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
         items.push((expr, item.desc));
     }
@@ -2273,6 +2292,25 @@ fn order_rows_for_dml<H>(
     let order: Vec<usize> = keyed.into_iter().map(|(index, _)| index).collect();
     apply_permutation(rows, &order);
     Ok(())
+}
+
+/// If `expr` is a positive integer literal `N` (or the boolean literals
+/// `TRUE`/`FALSE`, treated as `1`/`0`), returns its 0-based column index
+/// (`N-1`); any other expression returns `None`; position `0` is an error.
+/// Mirrors `tidb_exec::order::positional`'s SELECT-list version, but for
+/// `UPDATE`/`DELETE ... ORDER BY`, which has no select list to index — see
+/// `order_rows_for_dml`.
+fn dml_order_by_position(expr: &tidb_ast::Expr) -> Result<Option<usize>, DriverError> {
+    let n: usize = match expr {
+        tidb_ast::Expr::Int(digits) => digits
+            .parse()
+            .map_err(|_| DriverError::Unsupported("ORDER BY position"))?,
+        tidb_ast::Expr::Bool(b) => usize::from(*b),
+        _ => return Ok(None),
+    };
+    n.checked_sub(1)
+        .ok_or(DriverError::Unsupported("ORDER BY position 0"))
+        .map(Some)
 }
 
 /// Reorders `rows` so that position `i` holds what was at `order[i]`.
@@ -5263,10 +5301,11 @@ fn column_is_not_null(meta: &[(Option<Datum>, bool, String)], offset: usize) -> 
 /// with each assignment seeing the effects of the previous ones -- Go's
 /// `composeNewRow` order.
 ///
-/// DEFERRED (documented): multi-table UPDATE, `ORDER BY`/`LIMIT` tails,
-/// `IGNORE`, generated and `ON UPDATE CURRENT_TIMESTAMP` columns,
-/// and the handle-changed path (a row whose primary-key handle column is
-/// assigned is deleted and re-inserted in Go; this seed rejects it).
+/// DEFERRED (documented): multi-table UPDATE, `IGNORE`, generated and
+/// `ON UPDATE CURRENT_TIMESTAMP` columns, and the handle-changed path (a row
+/// whose primary-key handle column is assigned is deleted and re-inserted in
+/// Go; this seed rejects it). Single-table `ORDER BY`/`LIMIT` IS supported
+/// (see `order_rows_for_dml`, `dml_row_limit`).
 pub fn run_update_on(
     sql: &str,
     catalog: &mut Catalog,
@@ -5394,7 +5433,14 @@ pub(crate) fn run_update_stmt(
             let mut rows = kv
                 .scan_rows_with_handles()
                 .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
-            order_rows_for_dml(&mut rows, &update.order_by, &field_types, &resolver, ctx)?;
+            order_rows_for_dml(
+                &mut rows,
+                &update.order_by,
+                &field_types,
+                &resolver,
+                &column_names,
+                ctx,
+            )?;
             for (handle, row) in rows {
                 if row_limit.is_some_and(|cap| changed >= cap) {
                     break;
@@ -5465,9 +5511,11 @@ fn compute_updated_row(
 /// Go `executor.DeleteExec`: every row the `WHERE` selects is removed, and the
 /// affected-row count is simply that count.
 ///
-/// DEFERRED (documented): multi-table DELETE, `ORDER BY`/`LIMIT` tails,
-/// `IGNORE`. A `RETURNING` clause is parsed and silently ignored, matching
-/// Go, where the planner and executor never read `DeleteStmt.Returning`.
+/// DEFERRED (documented): multi-table DELETE, `IGNORE`. Single-table
+/// `ORDER BY`/`LIMIT` IS supported (see `order_rows_for_dml`,
+/// `dml_row_limit`). A `RETURNING` clause is parsed and silently ignored,
+/// matching Go, where the planner and executor never read
+/// `DeleteStmt.Returning`.
 pub fn run_delete_on(
     sql: &str,
     catalog: &mut Catalog,
@@ -5533,6 +5581,7 @@ pub(crate) fn run_delete_stmt(
         None => None,
     };
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
+    let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
     let row_limit = dml_row_limit(&delete.limit)?;
     let entry = catalog
         .get_mut_in(&database, &name)
@@ -5556,7 +5605,14 @@ pub(crate) fn run_delete_stmt(
             let mut rows = kv
                 .scan_rows_with_handles()
                 .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
-            order_rows_for_dml(&mut rows, &delete.order_by, &field_types, &resolver, ctx)?;
+            order_rows_for_dml(
+                &mut rows,
+                &delete.order_by,
+                &field_types,
+                &resolver,
+                &column_names,
+                ctx,
+            )?;
             for (handle, row) in rows {
                 // Go's LIMIT caps the rows DELETED, not the rows examined.
                 if row_limit.is_some_and(|cap| deleted >= cap) {
@@ -7197,6 +7253,83 @@ mod tests {
             )
             .unwrap(),
             Vec::<Vec<Datum>>::new()
+        );
+    }
+
+    /// A bare integer in `UPDATE`/`DELETE ... ORDER BY` is a POSITIONAL
+    /// reference to the table's own column at that 1-based position, not a
+    /// constant. Captured via `zz_dump_parity_test.go`
+    /// (`TestZZDumpParityDMLPositionalOrderBy`, run with
+    /// `go test -tags=intest -run TestZZDumpParityDMLPositionalOrderBy
+    /// ./pkg/executor/ -v`): on `t(a, b)` seeded with
+    /// `(1,30),(2,20),(3,10)`, `UPDATE t SET a = a + 100 ORDER BY 2 LIMIT 1`
+    /// updated the row with the SMALLEST `b` (`(3,10)` -> `(103,10)`), and
+    /// `DELETE FROM t ORDER BY 2 LIMIT 1` removed that same smallest-`b`
+    /// row. `2` resolves to column `b`, exactly like `SELECT`'s positional
+    /// `ORDER BY`/`GROUP BY` against the select list -- there is no select
+    /// list in a single-table `UPDATE`/`DELETE`, so it indexes the table's
+    /// declared columns instead. Do not "fix" this back to a constant.
+    #[test]
+    fn dml_positional_order_by_resolves_to_column() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO t VALUES (1, 30), (2, 20), (3, 10)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            run_update_on(
+                "UPDATE t SET a = a + 100 ORDER BY 2 LIMIT 1",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT a, b FROM t ORDER BY b",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Int(103), Datum::Int(10)],
+                vec![Datum::Int(2), Datum::Int(20)],
+                vec![Datum::Int(1), Datum::Int(30)],
+            ]
+        );
+
+        crate::run_create_table_on("CREATE TABLE t2 (a BIGINT, b BIGINT)", &mut catalog).unwrap();
+        run_insert_on(
+            "INSERT INTO t2 VALUES (1, 30), (2, 20), (3, 10)",
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        assert_eq!(
+            run_delete_on(
+                "DELETE FROM t2 ORDER BY 2 LIMIT 1",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT a, b FROM t2 ORDER BY b",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Int(2), Datum::Int(20)],
+                vec![Datum::Int(1), Datum::Int(30)],
+            ]
         );
     }
 
