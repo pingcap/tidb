@@ -71,5 +71,5 @@ pub use sort::{SortByItem, SortExec};
 pub use stmt_context::StmtContext;
 pub use table_dual::TableDualExec;
 pub use tidb_expr::{
-    eval_in, like_match_with_collation, truthy_of, Columns, EvalError, SessionTimeZone,
+    eval_in, like_match_with_collation, truthy_of, Columns, EvalError, MysqlRng, SessionTimeZone,
 };

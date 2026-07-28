@@ -15,10 +15,11 @@
 //! The per-statement evaluation context, which is Go's `StatementContext`.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use tidb_datatype::Datum;
-use tidb_expr::{Columns, ErrorLevel};
+use tidb_expr::{Columns, ErrorLevel, MysqlRng};
 
 /// Go `stmtctx.StatementContext`, in the part evaluation actually reads: the
 /// warning buffer and the error levels that decide whether a tolerable
@@ -47,6 +48,16 @@ pub struct StmtContext {
     /// statement reads the same instant.
     now: Option<(i64, u32, i32)>,
     time_zone: Option<tidb_expr::SessionTimeZone>,
+    /// Go `SessionVars.Rng`: the SESSION-scoped generator unseeded `RAND()`
+    /// advances, shared across every statement of one session. `None` is a
+    /// context with no session behind it (a test, a DEFAULT expression
+    /// folded at DDL time), where `RAND()` is unsupported rather than wrong.
+    rand_session: Option<Rc<RefCell<MysqlRng>>>,
+    /// Go `builtinRandSig`'s per-call `*mathutil.MysqlRng`: one generator per
+    /// constant `RAND(N)` occurrence, created fresh for each STATEMENT (Go
+    /// builds a new `builtinFunc` per plan) and advanced once per row by the
+    /// evaluator, keyed by the call site's stable identity.
+    rand_seeded: Rc<RefCell<HashMap<usize, MysqlRng>>>,
 }
 
 impl StmtContext {
@@ -64,6 +75,8 @@ impl StmtContext {
             connection_id: None,
             now: None,
             time_zone: None,
+            rand_session: None,
+            rand_seeded: Rc::default(),
         }
     }
 
@@ -96,6 +109,16 @@ impl StmtContext {
     #[must_use]
     pub fn with_connection_id(mut self, connection_id: Option<u64>) -> Self {
         self.connection_id = connection_id;
+        self
+    }
+
+    /// Attaches the session-scoped generator unseeded `RAND()` reads and
+    /// advances, which Go keeps on `SessionVars.Rng` for the session's whole
+    /// lifetime (shared across statements, unlike constant `RAND(N)`'s
+    /// per-statement generators).
+    #[must_use]
+    pub fn with_rand_session(mut self, rand_session: Rc<RefCell<MysqlRng>>) -> Self {
+        self.rand_session = Some(rand_session);
         self
     }
 
@@ -136,6 +159,8 @@ impl StmtContext {
             connection_id: None,
             now: None,
             time_zone: None,
+            rand_session: None,
+            rand_seeded: Rc::default(),
         }
     }
 
@@ -199,6 +224,20 @@ impl Columns for StmtContext {
         self.connection_id
     }
 
+    fn rand_next(&self) -> Option<f64> {
+        self.rand_session.as_ref().map(|rng| rng.borrow_mut().gen())
+    }
+
+    fn rand_seeded_next(&self, key: usize, seed: i64) -> Option<f64> {
+        Some(
+            self.rand_seeded
+                .borrow_mut()
+                .entry(key)
+                .or_insert_with(|| MysqlRng::new_with_seed(seed))
+                .gen(),
+        )
+    }
+
     fn current_database(&self) -> Option<String> {
         self.current_db.clone()
     }
@@ -237,5 +276,30 @@ mod tests {
     fn connection_id_reports_the_attached_value() {
         let ctx = StmtContext::for_query().with_connection_id(Some(7));
         assert_eq!(ctx.connection_id(), Some(7));
+    }
+
+    #[test]
+    fn rand_next_is_unsupported_without_a_session_generator() {
+        assert_eq!(StmtContext::for_query().rand_next(), None);
+    }
+
+    #[test]
+    fn rand_next_advances_the_attached_session_generator() {
+        let rng = Rc::new(RefCell::new(MysqlRng::new_with_seed(1)));
+        let ctx = StmtContext::for_query().with_rand_session(Rc::clone(&rng));
+        // Matches `MysqlRng::new_with_seed(1)`'s own pinned sequence
+        // (`rng.rs`'s `source_seed_vectors_match`), read through the
+        // `Columns` seam instead of the generator directly.
+        assert_eq!(ctx.rand_next(), Some(0.40540353712197724));
+        assert_eq!(ctx.rand_next(), Some(0.8716141803857071));
+    }
+
+    #[test]
+    fn rand_seeded_next_is_one_generator_per_key_advancing_across_calls() {
+        let ctx = StmtContext::for_query();
+        assert_eq!(ctx.rand_seeded_next(1, 1), Some(0.40540353712197724));
+        assert_eq!(ctx.rand_seeded_next(1, 1), Some(0.8716141803857071));
+        // A different key is seeded independently, even with the same seed.
+        assert_eq!(ctx.rand_seeded_next(2, 1), Some(0.40540353712197724));
     }
 }

@@ -27,11 +27,13 @@
 //! here for dispatch, once in the driver's runner) -- a wiring simplification
 //! to remove when the driver's runners take parsed statements.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_datatype::{Datum, FieldType};
-use tidb_executor::{Catalog, DriverError};
+use tidb_executor::{Catalog, DriverError, MysqlRng};
 use tidb_executor::{SchemaErrorKind, DEFAULT_DATABASE};
 
 /// The result of running one statement.
@@ -117,13 +119,15 @@ pub struct Session {
     /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
     /// Empty means no database is selected, which is Go's `ErrNoDB` case.
     current_db: String,
-    /// Go `SessionVars.ConnectionID`. 0 for a session with no server front,
-    /// which is also what Go leaves it at for an internal session.
     /// This connection's registration in the server's process list, which the
     /// front end installs. `None` for a session with no server front; such a
     /// session still answers `SHOW PROCESSLIST` -- with the single row it can
     /// honestly report, itself.
     process: Option<process::ProcessGuard>,
+    /// Go `SessionVars.Rng`: the generator unseeded `RAND()` advances, shared
+    /// across every statement of this session (unlike constant `RAND(N)`,
+    /// which owns a fresh per-statement generator -- see `StmtContext`).
+    rand: Rc<RefCell<MysqlRng>>,
 }
 
 impl Default for Session {
@@ -142,8 +146,20 @@ impl Default for Session {
             statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
+            rand: new_time_seeded_rand(),
         }
     }
+}
+
+/// Go `mathutil.NewWithTime()`: seeds a session's unseeded-`RAND()` generator
+/// from the wall clock, which is what makes two sessions' `RAND()` sequences
+/// differ without either being told to.
+fn new_time_seeded_rand() -> Rc<RefCell<MysqlRng>> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0);
+    Rc::new(RefCell::new(MysqlRng::new_with_seed(nanos)))
 }
 
 /// An open transaction's state.
@@ -1608,6 +1624,7 @@ impl Session {
             statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
+            rand: new_time_seeded_rand(),
         }
     }
 
@@ -2505,6 +2522,7 @@ impl Session {
                 .with_session_state(current_db, version)
                 .with_user(self.current_user.clone(), self.login_user.clone())
                 .with_connection_id(self.connection_id)
+                .with_rand_session(Rc::clone(&self.rand))
                 .with_clock(clock, zone);
         }
         let mode = self
@@ -2520,6 +2538,7 @@ impl Session {
         .with_session_state(current_db, version)
         .with_user(self.current_user.clone(), self.login_user.clone())
         .with_connection_id(self.connection_id)
+        .with_rand_session(Rc::clone(&self.rand))
         .with_clock(clock, zone)
     }
 
@@ -5677,6 +5696,64 @@ mod tests {
         // zero there would otherwise warn.
         session.run("SELECT IF(1, 1, 1/0)").unwrap();
         assert!(session.warnings().is_empty());
+    }
+
+    /// `RAND(N)`/`RAND()` through the chunk executor and `ORDER BY RAND()`.
+    ///
+    /// Captured from Go (`pkg/executor`, a fresh mock session, table `t(a)`
+    /// holding `(1),(2),(3),(4),(5)`): a constant `RAND(5)` evaluated once
+    /// per row of a 5-row scan produces the EXACT sequence asserted below --
+    /// one generator per AST occurrence, seeded once and advanced per row,
+    /// not reseeded. `ORDER BY RAND()` only needs to permute the rows: Go's
+    /// own captured order (`[4] [2] [5] [1] [3]`) is one specific shuffle
+    /// among the seed's many possible ones, so only the SET is checked here,
+    /// not the exact order.
+    #[test]
+    fn rand_constant_sequence_and_order_by_rand() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1),(2),(3),(4),(5)")
+            .unwrap();
+
+        // A constant RAND(5) evaluated on the SAME row three times in one
+        // statement returns the SAME value: MySQL's docs describe RAND(N)
+        // as "producing a repeatable sequence", but a single implicit row
+        // draws only the sequence's first value from each of these three
+        // INDEPENDENT call sites -- they agree because they share both seed
+        // and position, not because they are the same generator.
+        assert_eq!(
+            row_text(session.run("SELECT RAND(5), RAND(5), RAND(5)")),
+            [[
+                "0.40613597483014313",
+                "0.40613597483014313",
+                "0.40613597483014313"
+            ]]
+        );
+
+        // The SAME call site advances across rows, producing Go's exact
+        // captured sequence.
+        assert_eq!(
+            row_text(session.run("SELECT RAND(5) FROM t")),
+            [
+                ["0.40613597483014313"],
+                ["0.8745439358749836"],
+                ["0.15431178561813363"],
+                ["0.1479271511993624"],
+                ["0.276700429876056"],
+            ]
+        );
+
+        // ORDER BY RAND() must not error and must produce a permutation of
+        // every row -- the unseeded sequence itself is not pinned.
+        let mut rows: Vec<String> = row_text(session.run("SELECT a FROM t ORDER BY RAND()"))
+            .into_iter()
+            .flatten()
+            .collect();
+        rows.sort();
+        assert_eq!(rows, ["1", "2", "3", "4", "5"]);
     }
 
     /// The date/time family through the chunk executor, checked against

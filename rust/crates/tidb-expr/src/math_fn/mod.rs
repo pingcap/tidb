@@ -463,13 +463,34 @@ fn eval_rand(
     function_key: Option<usize>,
 ) -> Result<Datum, EvalError> {
     match (args, vals) {
-        ([], []) => cols
+        ([], []) => eval_rand_values(&[], cols, function_key, false),
+        ([arg], [value]) => eval_rand_values(
+            std::slice::from_ref(value),
+            cols,
+            function_key,
+            is_constant_expr(arg),
+        ),
+        _ => Err(EvalError::Unsupported("bad function arity")),
+    }
+}
+
+/// The value-level half of [`eval_rand`], shared with the chunk-row bridge
+/// (`ScalarFunction::eval`), which has no `tidb_ast::Expr` to classify --
+/// its caller passes the constant-vs-row identity it already knows instead.
+pub(crate) fn eval_rand_values(
+    vals: &[Datum],
+    cols: &dyn Columns,
+    function_key: Option<usize>,
+    arg_is_constant: bool,
+) -> Result<Datum, EvalError> {
+    match vals {
+        [] => cols
             .rand_next()
             .map(Datum::Real)
             .ok_or(EvalError::Unsupported("RAND requires a session")),
-        ([arg], [value]) => {
+        [value] => {
             let seed = rand_seed(value)?;
-            if is_constant_expr(arg) {
+            if arg_is_constant {
                 let key = function_key.ok_or(EvalError::Unsupported(
                     "RAND requires a stable function identity",
                 ))?;
@@ -875,6 +896,40 @@ mod tests {
             Some(Ok(Datum::Real(0.25)))
         );
         assert_eq!(columns.seeded.get(), Some((41, 7)));
+    }
+
+    #[test]
+    fn rand_values_shares_the_ast_paths_identity_semantics() {
+        use super::eval_rand_values;
+
+        // The chunk bridge has no `Expr` to classify, so its caller passes
+        // constant-vs-row as a plain bool; a constant argument still needs
+        // the stable identity to reach the seeded generator.
+        let columns = RandColumns {
+            seeded: Cell::new(None),
+        };
+        assert_eq!(
+            eval_rand_values(&[Datum::Int(7)], &columns, Some(41), true),
+            Ok(Datum::Real(0.25))
+        );
+        assert_eq!(columns.seeded.get(), Some((41, 7)));
+
+        // A nonconstant argument (or a missing identity) never touches the
+        // seeded generator -- it always starts a fresh one.
+        let columns = RandColumns {
+            seeded: Cell::new(None),
+        };
+        assert!(matches!(
+            eval_rand_values(&[Datum::Int(7)], &columns, None, false),
+            Ok(Datum::Real(_))
+        ));
+        assert_eq!(columns.seeded.get(), None);
+
+        // The zero-argument form reads the session's running generator.
+        assert_eq!(
+            eval_rand_values(&[], &columns, None, false),
+            Err(EvalError::Unsupported("RAND requires a session"))
+        );
     }
 
     #[test]

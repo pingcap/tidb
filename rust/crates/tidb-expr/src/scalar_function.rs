@@ -455,6 +455,30 @@ impl ScalarFunction {
                 return built.eval(&self.args[0].eval(ctx, row)?);
             }
         }
+        // Go `randFunctionClass`: a constant `RAND(N)` owns one
+        // statement-scoped generator per AST occurrence, a nonconstant
+        // argument starts a fresh generator every row. The AST evaluator
+        // (`crate::func::eval_func`) gets that per-call identity from the
+        // `Expr` node's own address (`expr as *const Expr as usize`, stable
+        // for the query's lifetime because the tree is evaluated by
+        // reference, never rebuilt per row); this node is evaluated the same
+        // way, so its own address serves identically. A literal argument is
+        // classified by matching `Expression::Constant` directly -- unlike
+        // the AST classifier this does not recurse through a folded
+        // arithmetic tree of literals (e.g. `RAND(1+2)`), because constant
+        // folding is not yet wired for scalar functions here (`const_level`
+        // above is conservatively `ConstNone`); every case this port targets
+        // passes RAND a bare literal.
+        if name == "rand" {
+            let vals: Vec<Datum> = self
+                .args
+                .iter()
+                .map(|a| a.eval(ctx, row))
+                .collect::<Result<_, _>>()?;
+            let arg_is_constant = matches!(self.args.first(), Some(Expression::Constant(_)));
+            let function_key = Some(std::ptr::from_ref(self) as usize);
+            return crate::math_fn::eval_rand_values(&vals, ctx, function_key, arg_is_constant);
+        }
         // Values-only builtins (ABS/CONCAT/COALESCE/...): evaluate every
         // argument, then reuse the single Datum-level implementation shared
         // with the AST evaluator (`crate::func::eval_func_values`). Lazy
@@ -648,6 +672,83 @@ mod tests {
             unknown.eval(&NoColumns, row),
             Err(EvalError::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn rand_reuses_one_generator_per_node_for_a_constant_seed() {
+        use std::cell::Cell;
+        use tidb_chunk::chunk::Chunk;
+
+        // A minimal session whose `rand_seeded_next` records the key it was
+        // called with and returns a fixed value, so this asserts the SAME
+        // key reaches it across repeated evaluations of one `ScalarFunction`
+        // node -- exactly the identity the AST evaluator gets from the
+        // `Expr` node's own address.
+        struct RandColumns {
+            keys: Cell<Vec<usize>>,
+        }
+        impl Columns for RandColumns {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn rand_seeded_next(&self, key: usize, _seed: i64) -> Option<f64> {
+                let mut keys = self.keys.take();
+                keys.push(key);
+                self.keys.set(keys);
+                Some(0.5)
+            }
+        }
+
+        let chk = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
+        let row = chk.get_row(0);
+        let konst = |d: Datum| Expression::Constant(Constant::new(d, ft()));
+        let rand_five =
+            ScalarFunction::new(CiString::new("rand"), ft(), vec![konst(Datum::Int(5))]);
+        let columns = RandColumns {
+            keys: Cell::new(Vec::new()),
+        };
+
+        assert_eq!(rand_five.eval(&columns, row).unwrap(), Datum::Real(0.5));
+        assert_eq!(rand_five.eval(&columns, row).unwrap(), Datum::Real(0.5));
+        let keys = columns.keys.into_inner();
+        assert_eq!(keys.len(), 2);
+        // The SAME node produced the same key both times.
+        assert_eq!(keys[0], keys[1]);
+
+        // A DIFFERENT node (a different RAND(5) call site) gets a different
+        // key, because each owns its own generator.
+        let rand_five_again =
+            ScalarFunction::new(CiString::new("rand"), ft(), vec![konst(Datum::Int(5))]);
+        let columns2 = RandColumns {
+            keys: Cell::new(Vec::new()),
+        };
+        rand_five_again.eval(&columns2, row).unwrap();
+        assert_ne!(columns2.keys.into_inner()[0], keys[0]);
+    }
+
+    #[test]
+    fn rand_with_no_args_reads_the_running_generator() {
+        use tidb_chunk::chunk::Chunk;
+
+        struct SeqColumns {
+            next: std::cell::Cell<f64>,
+        }
+        impl Columns for SeqColumns {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn rand_next(&self) -> Option<f64> {
+                Some(self.next.get())
+            }
+        }
+
+        let chk = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
+        let row = chk.get_row(0);
+        let rand = ScalarFunction::new(CiString::new("rand"), ft(), vec![]);
+        let columns = SeqColumns {
+            next: std::cell::Cell::new(0.75),
+        };
+        assert_eq!(rand.eval(&columns, row).unwrap(), Datum::Real(0.75));
     }
 
     #[test]
