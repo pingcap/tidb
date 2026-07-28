@@ -469,7 +469,7 @@ fn hoist_having_and_order_by(
         // aggregate path too (the plain path resolves it in
         // `substitute_output_aliases`; without this the position fell through
         // as a CONSTANT and the sort was silently dropped).
-        let item_expr = if matches!(item.expr, tidb_ast::Expr::Int(_)) {
+        let item_expr = if is_positional_field(&item.expr) {
             substitute_output_aliases(&item.expr, select.fields.fields(), true)?
         } else {
             item.expr.clone()

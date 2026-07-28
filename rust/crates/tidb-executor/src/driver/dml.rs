@@ -551,16 +551,21 @@ pub(crate) fn order_rows_for_dml<H>(
 /// `UPDATE`/`DELETE ... ORDER BY`, which has no select list to index — see
 /// `order_rows_for_dml`.
 pub(crate) fn dml_order_by_position(expr: &tidb_ast::Expr) -> Result<Option<usize>, DriverError> {
-    let n: usize = match expr {
-        tidb_ast::Expr::Int(digits) => digits
-            .parse()
-            .map_err(|_| DriverError::Unsupported("ORDER BY position"))?,
-        tidb_ast::Expr::Bool(b) => usize::from(*b),
-        _ => return Ok(None),
-    };
-    n.checked_sub(1)
-        .ok_or(DriverError::Unsupported("ORDER BY position 0"))
-        .map(Some)
+    if let Some((_, index)) = positional_field_index(expr) {
+        return index.map(Some).map_err(|why| match why {
+            PositionalError::Malformed => DriverError::Unsupported("ORDER BY position"),
+            PositionalError::Zero => DriverError::Unsupported("ORDER BY position 0"),
+        });
+    }
+    // `ORDER BY TRUE` reaches the DML tier as a boolean literal rather than
+    // digits, and MySQL still reads it as position 1.
+    match expr {
+        tidb_ast::Expr::Bool(b) => usize::from(*b)
+            .checked_sub(1)
+            .ok_or(DriverError::Unsupported("ORDER BY position 0"))
+            .map(Some),
+        _ => Ok(None),
+    }
 }
 
 /// Reorders `rows` so that position `i` holds what was at `order[i]`.

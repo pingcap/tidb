@@ -1635,19 +1635,16 @@ fn substitute_output_aliases(
     use tidb_ast::Expr;
     // A bare integer at the top of an ORDER BY item is an output position.
     if top_level {
-        if let Expr::Int(text) = expr {
-            let position: usize = text.parse().map_err(|_| unknown_order_column(text))?;
+        if let Some((text, index)) = positional_field_index(expr) {
+            let index = index.map_err(|_| unknown_order_column(text))?;
             let projected = fields
                 .iter()
                 .filter_map(|field| match field {
                     SelectField::Expr { expr, .. } => Some(expr),
                     SelectField::Wildcard(_) => None,
                 })
-                .nth(position.wrapping_sub(1))
+                .nth(index)
                 .ok_or_else(|| unknown_order_column(text))?;
-            if position == 0 {
-                return Err(unknown_order_column(text));
-            }
             return Ok(projected.clone());
         }
     }
@@ -1710,20 +1707,17 @@ fn resolve_group_by_position<'a>(
     expr: &'a tidb_ast::Expr,
     fields: &'a [SelectField],
 ) -> Result<std::borrow::Cow<'a, tidb_ast::Expr>, DriverError> {
-    let tidb_ast::Expr::Int(text) = expr else {
+    let Some((text, index)) = positional_field_index(expr) else {
         return Ok(std::borrow::Cow::Borrowed(expr));
     };
-    let position: usize = text.parse().map_err(|_| unknown_group_position(text))?;
-    if position == 0 {
-        return Err(unknown_group_position(text));
-    }
+    let index = index.map_err(|_| unknown_group_position(text))?;
     let (target, alias) = fields
         .iter()
         .filter_map(|field| match field {
             SelectField::Expr { expr, alias } => Some((expr, alias)),
             SelectField::Wildcard(_) => None,
         })
-        .nth(position - 1)
+        .nth(index)
         .ok_or_else(|| unknown_group_position(text))?;
     if matches!(
         target,
@@ -1734,6 +1728,46 @@ fn resolve_group_by_position<'a>(
         return Err(DriverError::WrongGroupField(name));
     }
     Ok(std::borrow::Cow::Borrowed(target))
+}
+
+/// Why a bare-integer clause item is not a usable output position.
+///
+/// The clause decides what this REPORTS: `ORDER BY` and `GROUP BY` raise
+/// `ErrUnknownColumn` naming their own clause, and the DML tier refuses the
+/// statement outright. The rule itself -- which integers are positions and
+/// which index they name -- is the same everywhere, so it lives once in
+/// [`positional_field_index`].
+pub(crate) enum PositionalError {
+    /// The digits do not fit a `usize` (Go's `strconv.ParseUint` failure).
+    Malformed,
+    /// Position `0`, which MySQL numbers from 1 and so never names a field.
+    Zero,
+}
+
+/// Go's shared "bare integer is a 1-based output position" rule, as it applies
+/// in `ORDER BY`, `GROUP BY` and the DML tier's own `ORDER BY`.
+///
+/// Returns `None` when `expr` is not a bare integer at all -- the item is then
+/// an ordinary expression and every caller falls through to its usual
+/// resolution. Otherwise it yields the integer AS WRITTEN (which the callers'
+/// errors quote verbatim, as MySQL does) together with the ZERO-based field
+/// index it names, or why it names none.
+fn positional_field_index(expr: &tidb_ast::Expr) -> Option<(&str, Result<usize, PositionalError>)> {
+    let tidb_ast::Expr::Int(text) = expr else {
+        return None;
+    };
+    let index = match text.parse::<usize>() {
+        Err(_) => Err(PositionalError::Malformed),
+        Ok(0) => Err(PositionalError::Zero),
+        Ok(position) => Ok(position - 1),
+    };
+    Some((text.as_str(), index))
+}
+
+/// Whether a clause item is the bare-integer output position form, without
+/// resolving it -- see [`positional_field_index`].
+pub(crate) fn is_positional_field(expr: &tidb_ast::Expr) -> bool {
+    positional_field_index(expr).is_some()
 }
 
 /// Go `ErrUnknownColumn` naming the `group statement`, for a `GROUP BY`
