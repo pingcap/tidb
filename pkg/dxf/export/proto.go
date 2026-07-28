@@ -59,10 +59,13 @@ type Chunk struct {
 	// [Start, End) is the record-key range this chunk exports.
 	Start []byte `json:"start"`
 	End   []byte `json:"end"`
+	// Size is the estimated byte size of the chunk's range, used at split time to
+	// balance chunks across subtasks.
+	Size int64 `json:"size"`
 	// Ordinal is the table-local chunk index that fixes the name prefix of the
-	// chunk's output files (see the file-name scheme). It is stamped at split
-	// time, not derived from the worker or subtask, so the names are a pure
-	// function of the chunk.
+	// chunk's output files (see the file-name scheme) — the "how to name this
+	// range" write meta. It is stamped at split time, not derived from the worker
+	// or subtask, so the names are a pure function of the chunk.
 	Ordinal int `json:"ordinal"`
 }
 
