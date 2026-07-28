@@ -27,7 +27,10 @@
 use prost::Message;
 use tidb_proto::{
     KvrpcBatchRollbackRequest, KvrpcBatchRollbackResponse, KvrpcCommitRequest, KvrpcCommitResponse,
-    KvrpcContext, KvrpcGetRequest, KvrpcGetResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
+    KvrpcContext, KvrpcGetRequest, KvrpcGetResponse, KvrpcPessimisticLockRequest,
+    KvrpcPessimisticLockResponse, KvrpcPessimisticRollbackRequest,
+    KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
+    KvrpcTxnHeartBeatRequest, KvrpcTxnHeartBeatResponse,
 };
 
 use crate::rpc::{
@@ -100,6 +103,36 @@ pub trait TransactionCommandClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcBatchRollbackResponse>;
+
+    /// Publishes one PessimisticLock acquiring locks at a statement's
+    /// `for_update_ts`. TiKV may hold the request for its `wait_timeout`
+    /// before answering, so this is the one command whose server-side latency
+    /// is a protocol feature rather than a symptom.
+    fn publish_pessimistic_lock(
+        &mut self,
+        address: &str,
+        request: &KvrpcPessimisticLockRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<KvrpcPessimisticLockResponse>;
+
+    /// Publishes one PessimisticRollback releasing acquired pessimistic locks.
+    fn publish_pessimistic_rollback(
+        &mut self,
+        address: &str,
+        request: &KvrpcPessimisticRollbackRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<KvrpcPessimisticRollbackResponse>;
+
+    /// Publishes one TxnHeartBeat extending the primary lock's TTL.
+    fn publish_txn_heart_beat(
+        &mut self,
+        address: &str,
+        request: &KvrpcTxnHeartBeatRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<KvrpcTxnHeartBeatResponse>;
 }
 
 impl TransactionCommandClient for TonicCoprocessorClient {
@@ -154,6 +187,48 @@ impl TransactionCommandClient for TonicCoprocessorClient {
     ) -> PublishedCommand<KvrpcBatchRollbackResponse> {
         complete_published(
             self.begin_transaction_batch_rollback(address, None, request, context, call)
+                .map_err(|error| error.to_string()),
+            call,
+        )
+    }
+
+    fn publish_pessimistic_lock(
+        &mut self,
+        address: &str,
+        request: &KvrpcPessimisticLockRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<KvrpcPessimisticLockResponse> {
+        complete_published(
+            self.begin_transaction_pessimistic_lock(address, None, request, context, call)
+                .map_err(|error| error.to_string()),
+            call,
+        )
+    }
+
+    fn publish_pessimistic_rollback(
+        &mut self,
+        address: &str,
+        request: &KvrpcPessimisticRollbackRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<KvrpcPessimisticRollbackResponse> {
+        complete_published(
+            self.begin_transaction_pessimistic_rollback(address, None, request, context, call)
+                .map_err(|error| error.to_string()),
+            call,
+        )
+    }
+
+    fn publish_txn_heart_beat(
+        &mut self,
+        address: &str,
+        request: &KvrpcTxnHeartBeatRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<KvrpcTxnHeartBeatResponse> {
+        complete_published(
+            self.begin_transaction_heart_beat(address, None, request, context, call)
                 .map_err(|error| error.to_string()),
             call,
         )

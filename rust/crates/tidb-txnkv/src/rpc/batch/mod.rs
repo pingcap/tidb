@@ -24,10 +24,13 @@ mod coprocessor;
 mod get;
 mod inflight;
 mod observability;
+mod pessimistic_lock;
+mod pessimistic_rollback;
 mod prewrite;
 mod priority_queue;
 mod scheduler;
 mod transport;
+mod txn_heart_beat;
 mod wire;
 
 pub(in crate::rpc) use transport::{BatchStreamEvent, BatchTransportState};
@@ -37,7 +40,10 @@ pub use coprocessor::BatchCoprocessorPending;
 pub(in crate::rpc) use batch_rollback::entry as batch_rollback_entry;
 pub(in crate::rpc) use commit::entry as commit_entry;
 pub(in crate::rpc) use get::entry as get_entry;
+pub(in crate::rpc) use pessimistic_lock::entry as pessimistic_lock_entry;
+pub(in crate::rpc) use pessimistic_rollback::entry as pessimistic_rollback_entry;
 pub(in crate::rpc) use prewrite::entry as prewrite_entry;
+pub(in crate::rpc) use txn_heart_beat::entry as txn_heart_beat_entry;
 
 pub use inflight::{
     BatchInflightError, BatchInflightTable, BatchPublishError, BatchRetirementReport, BatchRoute,

@@ -22,11 +22,15 @@ use std::marker::PhantomData;
 use prost::Message;
 use tidb_proto::{
     KvrpcBatchRollbackRequest, KvrpcBatchRollbackResponse, KvrpcCommitRequest, KvrpcCommitResponse,
-    KvrpcContext, KvrpcGetRequest, KvrpcGetResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
+    KvrpcContext, KvrpcGetRequest, KvrpcGetResponse, KvrpcPessimisticLockRequest,
+    KvrpcPessimisticLockResponse, KvrpcPessimisticRollbackRequest,
+    KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
+    KvrpcTxnHeartBeatRequest, KvrpcTxnHeartBeatResponse,
 };
 
 use super::batch::{
-    batch_rollback_entry, commit_entry, get_entry, prewrite_entry, BatchCommandEntry,
+    batch_rollback_entry, commit_entry, get_entry, pessimistic_lock_entry,
+    pessimistic_rollback_entry, prewrite_entry, txn_heart_beat_entry, BatchCommandEntry,
     BatchCommandTag, BatchInflightError, BatchPublicationReceipt, BatchRoute, OpaqueBatchCommand,
 };
 use super::TonicCoprocessorClient;
@@ -322,6 +326,46 @@ impl TonicCoprocessorClient {
         call: &UnaryCallContext,
     ) -> Result<TransactionBatchPending<KvrpcBatchRollbackResponse>, DirectUnaryClientError> {
         let (entry, pending) = batch_rollback_entry(request, context, forwarded_host);
+        self.publish_transaction_command(physical_address, entry, pending, call)
+    }
+
+    /// Begins one PessimisticLock on an already selected TiKV route.
+    pub fn begin_transaction_pessimistic_lock(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &KvrpcPessimisticLockRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<TransactionBatchPending<KvrpcPessimisticLockResponse>, DirectUnaryClientError> {
+        let (entry, pending) = pessimistic_lock_entry(request, context, forwarded_host);
+        self.publish_transaction_command(physical_address, entry, pending, call)
+    }
+
+    /// Begins one PessimisticRollback on an already selected TiKV route.
+    pub fn begin_transaction_pessimistic_rollback(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &KvrpcPessimisticRollbackRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<TransactionBatchPending<KvrpcPessimisticRollbackResponse>, DirectUnaryClientError>
+    {
+        let (entry, pending) = pessimistic_rollback_entry(request, context, forwarded_host);
+        self.publish_transaction_command(physical_address, entry, pending, call)
+    }
+
+    /// Begins one TxnHeartBeat on an already selected TiKV route.
+    pub fn begin_transaction_heart_beat(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &KvrpcTxnHeartBeatRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<TransactionBatchPending<KvrpcTxnHeartBeatResponse>, DirectUnaryClientError> {
+        let (entry, pending) = txn_heart_beat_entry(request, context, forwarded_host);
         self.publish_transaction_command(physical_address, entry, pending, call)
     }
 }

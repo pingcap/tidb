@@ -65,6 +65,8 @@ pub use mpp::{
     ReportTaskStatusResponse as MppReportTaskStatusResponse, TaskMeta as MppTaskMeta,
 };
 
+pub use kvrpcpb::prewrite_request::PessimisticAction as KvrpcPessimisticAction;
+
 pub use kvrpcpb::{
     Action as KvrpcTxnAction, AlreadyExist as KvrpcAlreadyExist, Assertion as KvrpcAssertion,
     AssertionFailed as KvrpcAssertionFailed, AssertionLevel as KvrpcAssertionLevel,
@@ -74,15 +76,24 @@ pub use kvrpcpb::{
     CheckTxnStatusResponse as KvrpcCheckTxnStatusResponse, CommandPri as KvrpcCommandPriority,
     CommitRequest as KvrpcCommitRequest, CommitResponse as KvrpcCommitResponse,
     CommitRole as KvrpcCommitRole, CommitTsExpired as KvrpcCommitTsExpired,
-    CommitTsTooLarge as KvrpcCommitTsTooLarge, Context as KvrpcContext,
+    CommitTsTooLarge as KvrpcCommitTsTooLarge, Context as KvrpcContext, Deadlock as KvrpcDeadlock,
     GetRequest as KvrpcGetRequest, GetResponse as KvrpcGetResponse,
     IsolationLevel as KvrpcIsolationLevel, KeyError as KvrpcKeyError, LockInfo as KvrpcLockInfo,
     Mutation as KvrpcMutation, Op as KvrpcOp, Peer as KvrpcPeer,
+    PessimisticLockKeyResult as KvrpcPessimisticLockKeyResult,
+    PessimisticLockKeyResultType as KvrpcPessimisticLockKeyResultType,
+    PessimisticLockRequest as KvrpcPessimisticLockRequest,
+    PessimisticLockResponse as KvrpcPessimisticLockResponse,
+    PessimisticLockWakeUpMode as KvrpcPessimisticLockWakeUpMode,
+    PessimisticRollbackRequest as KvrpcPessimisticRollbackRequest,
+    PessimisticRollbackResponse as KvrpcPessimisticRollbackResponse,
     PrewriteRequest as KvrpcPrewriteRequest, PrewriteResponse as KvrpcPrewriteResponse,
     RegionEpoch as KvrpcRegionEpoch, RequestOrigin as KvrpcRequestOrigin,
     ResolveLockRequest as KvrpcResolveLockRequest, ResolveLockResponse as KvrpcResolveLockResponse,
     ResourceControlContext as KvrpcResourceControlContext, SourceStmt as KvrpcSourceStmt,
-    TxnInfo as KvrpcTxnInfo, WriteConflict as KvrpcWriteConflict,
+    TxnHeartBeatRequest as KvrpcTxnHeartBeatRequest,
+    TxnHeartBeatResponse as KvrpcTxnHeartBeatResponse, TxnInfo as KvrpcTxnInfo,
+    WaitForEntry as KvrpcWaitForEntry, WriteConflict as KvrpcWriteConflict,
 };
 
 pub use tipb::{

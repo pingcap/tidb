@@ -145,8 +145,7 @@ message KeyError {
   string abort = 3;
   WriteConflict conflict = 4;
   AlreadyExist already_exist = 5;
-  // Upstream field 6 is pessimistic deadlock metadata and remains outside
-  // this normal optimistic transaction owner.
+  Deadlock deadlock = 6;
   CommitTsExpired commit_ts_expired = 7;
   TxnNotFound txn_not_found = 8;
   CommitTsTooLarge commit_ts_too_large = 9;
@@ -176,6 +175,27 @@ message WriteConflict {
 }
 
 message AlreadyExist { bytes key = 1; }
+
+// Upstream `Deadlock.wait_chain` is `deadlock.WaitForEntry`. Only the message
+// name differs; the wire encoding of an embedded message is independent of its
+// declaring package, so this bounded owner keeps the entry local instead of
+// importing the whole deadlock-detector service protocol.
+message WaitForEntry {
+  uint64 txn = 1;
+  uint64 wait_for_txn = 2;
+  uint64 key_hash = 3;
+  bytes key = 4;
+  bytes resource_group_tag = 5;
+  uint64 wait_time = 6;
+}
+
+message Deadlock {
+  uint64 lock_ts = 1;
+  bytes lock_key = 2;
+  uint64 deadlock_key_hash = 3;
+  repeated WaitForEntry wait_chain = 4;
+  bytes deadlock_key = 5;
+}
 
 message CommitTsExpired {
   uint64 start_ts = 1;
@@ -357,4 +377,95 @@ message ResolveLockResponse {
   errorpb.Error region_error = 1;
   KeyError error = 2;
   // Upstream field 3 is ExecDetailsV2 and is outside this bounded owner.
+}
+
+// Exact pinned kvproto shape for pessimistic lock acquisition.
+//
+// Only `WakeUpModeNormal` is exercised by this owner: on a wake-up TiKV
+// returns the blocking KeyError and the client retries, so every result stays
+// in `errors`/`values`/`not_founds`. `WakeUpModeForceLock` and its `results`
+// field belong to fair (aggressive) locking, which is outside this boundary.
+enum PessimisticLockWakeUpMode {
+  WakeUpModeNormal = 0;
+  WakeUpModeForceLock = 1;
+}
+
+enum PessimisticLockKeyResultType {
+  LockResultNormal = 0;
+  LockResultLockedWithConflict = 1;
+  LockResultFailed = 2;
+}
+
+message PessimisticLockKeyResult {
+  PessimisticLockKeyResultType type = 1;
+  bytes value = 2;
+  bool existence = 3;
+  uint64 locked_with_conflict_ts = 4;
+  bool skip_resolving_lock = 11;
+}
+
+message PessimisticLockRequest {
+  Context context = 1;
+  // Every `Op` must be `PessimisticLock` or `SharedPessimisticLock`.
+  repeated Mutation mutations = 2;
+  bytes primary_lock = 3;
+  uint64 start_version = 4;
+  uint64 lock_ttl = 5;
+  // Statement-level timestamp. A locking statement that hits a write conflict
+  // retries under a newer `for_update_ts` without restarting the transaction.
+  uint64 for_update_ts = 6;
+  bool is_first_lock = 7;
+  // Milliseconds to wait for a conflicting lock. Zero means TiKV's default and
+  // a negative value means do not wait.
+  int64 wait_timeout = 8;
+  bool force = 9 [deprecated = true];
+  bool return_values = 10;
+  uint64 min_commit_ts = 11;
+  bool check_existence = 12;
+  bool lock_only_if_exists = 13;
+  PessimisticLockWakeUpMode wake_up_mode = 14;
+}
+
+message PessimisticLockResponse {
+  errorpb.Error region_error = 1;
+  repeated KeyError errors = 2;
+  uint64 commit_ts = 3 [deprecated = true];
+  bytes value = 4 [deprecated = true];
+  repeated bytes values = 5;
+  repeated bool not_founds = 6;
+  // Upstream field 7 is ExecDetailsV2 and is outside this bounded owner.
+  repeated PessimisticLockKeyResult results = 8;
+}
+
+// Exact pinned kvproto shape for releasing pessimistic locks. An empty `keys`
+// list releases every lock the transaction holds in the addressed region,
+// which is how lock recovery cleans a whole region in one command.
+message PessimisticRollbackRequest {
+  Context context = 1;
+  uint64 start_version = 2;
+  uint64 for_update_ts = 3;
+  repeated bytes keys = 4;
+}
+
+message PessimisticRollbackResponse {
+  errorpb.Error region_error = 1;
+  repeated KeyError errors = 2;
+  // Upstream field 3 is ExecDetailsV2 and is outside this bounded owner.
+}
+
+// Exact pinned kvproto shape used to keep a primary lock alive.
+message TxnHeartBeatRequest {
+  Context context = 1;
+  bytes primary_lock = 2;
+  uint64 start_version = 3;
+  uint64 advise_lock_ttl = 4;
+  uint64 min_commit_ts = 5;
+  bool is_txn_file = 100;
+}
+
+message TxnHeartBeatResponse {
+  errorpb.Error region_error = 1;
+  KeyError error = 2;
+  uint64 lock_ttl = 3;
+  // Upstream field 4 is ExecDetailsV2 and is outside this bounded owner.
 }
