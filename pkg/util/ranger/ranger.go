@@ -65,6 +65,27 @@ func validInterval(ec errctx.Context, loc *time.Location, low, high *point) (boo
 func convertPoints(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *types.FieldType, skipNull bool, tableRange bool) ([]*point, error) {
 	i := 0
 	numPoints := len(rangePoints)
+	numConvertedPoints := 0
+	for _, point := range rangePoints {
+		switch point.value.Kind() {
+		case types.KindMaxValue, types.KindMinNotNull:
+		default:
+			numConvertedPoints++
+		}
+	}
+	convertedPointStorage := make([]point, numConvertedPoints)
+	nextConvertedPoint := 0
+	convert := func(input *point) (*point, error) {
+		var dst *point
+		if nextConvertedPoint < len(convertedPointStorage) {
+			dst = &convertedPointStorage[nextConvertedPoint]
+		}
+		converted, err := convertPointTo(sctx, input, newTp, dst)
+		if dst != nil && converted == dst {
+			nextConvertedPoint++
+		}
+		return converted, err
+	}
 	var minValueDatum, maxValueDatum types.Datum
 	if tableRange {
 		// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
@@ -78,7 +99,7 @@ func convertPoints(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *t
 		}
 	}
 	for j := 0; j < numPoints; j += 2 {
-		startPoint, err := convertPoint(sctx, rangePoints[j], newTp)
+		startPoint, err := convert(rangePoints[j])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -90,7 +111,7 @@ func convertPoints(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *t
 				startPoint.value = minValueDatum
 			}
 		}
-		endPoint, err := convertPoint(sctx, rangePoints[j+1], newTp)
+		endPoint, err := convert(rangePoints[j+1])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -186,15 +207,19 @@ func points2Ranges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *t
 }
 
 func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.FieldType) (*point, error) {
-	switch point.value.Kind() {
+	return convertPointTo(sctx, point, newTp, nil)
+}
+
+func convertPointTo(sctx *rangerctx.RangerContext, input *point, newTp *types.FieldType, dst *point) (*point, error) {
+	switch input.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
-		return point, nil
+		return input, nil
 	}
-	casted, err := point.value.ConvertTo(sctx.TypeCtx, newTp)
+	casted, err := input.value.ConvertTo(sctx.TypeCtx, newTp)
 	if err != nil {
 		if sctx.InPreparedPlanBuilding {
 			// skip plan cache in this case for safety.
-			sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), point.value))
+			sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), input.value))
 		}
 		//revive:disable:empty-block
 		if newTp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
@@ -206,13 +231,13 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
 			// tests in TestIndexRange/TestIndexRangeForDecimal
-		} else if point.value.Kind() == types.KindMysqlTime && newTp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
+		} else if input.value.Kind() == types.KindMysqlTime && newTp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
 			// See issue #28424: query failed after add index
 			// Ignore conversion from Date[Time] to Timestamp since it must be either out of range or impossible date, which will not match a point select
 		} else if newTp.GetType() == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
 			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
 			// We should cover Enum upper overflow, and convert to the biggest value.
-			if point.value.GetInt64() > 0 {
+			if input.value.GetInt64() > 0 {
 				upperEnum, err := types.ParseEnumValue(newTp.GetElems(), uint64(len(newTp.GetElems())))
 				if err != nil {
 					return nil, err
@@ -223,17 +248,24 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 			// The invalid string can be produced by changing datum's underlying bytes directly.
 			// For example, newBuildFromPatternLike calculates the end point by adding 1 to bytes.
 			// We need to skip these invalid strings.
-			return point, nil
+			return input, nil
 		} else {
-			return point, errors.Trace(err)
+			return input, errors.Trace(err)
 		}
 		//revive:enable:empty-block
 	}
-	valCmpCasted, err := point.value.Compare(sctx.TypeCtx, &casted, collate.GetCollator(newTp.GetCollate()))
+	valCmpCasted, err := input.value.Compare(sctx.TypeCtx, &casted, collate.GetCollator(newTp.GetCollate()))
 	if err != nil {
-		return point, errors.Trace(err)
+		return input, errors.Trace(err)
 	}
-	npoint := point.Clone(casted)
+	var npoint *point
+	if dst == nil {
+		npoint = input.Clone(casted)
+	} else {
+		*dst = *input
+		dst.value = casted
+		npoint = dst
+	}
 	if valCmpCasted == 0 {
 		return npoint, nil
 	}

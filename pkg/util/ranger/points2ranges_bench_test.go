@@ -106,3 +106,49 @@ func TestSingleColumnRangeStorageIndependence(t *testing.T) {
 		t.Fatal("sibling range collators alias")
 	}
 }
+
+func TestConvertPointsBatchStorageIndependence(t *testing.T) {
+	sctx := &rangerctx.RangerContext{
+		TypeCtx: types.DefaultStmtNoWarningContext,
+		ErrCtx:  errctx.StrictNoWarningContext,
+	}
+	intType := types.NewFieldType(mysql.TypeLong)
+	intType.AddFlag(mysql.NotNullFlag)
+
+	input := makeIntegerRangePoints(2)
+	originalPointers := append([]*point(nil), input...)
+	converted, err := convertPoints(sctx, input, intType, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(converted) != 4 {
+		t.Fatalf("unexpected converted length: %d", len(converted))
+	}
+	for i := range converted {
+		if converted[i] == originalPointers[i] {
+			t.Fatalf("point %d was not independently converted", i)
+		}
+		for j := i + 1; j < len(converted); j++ {
+			if converted[i] == converted[j] {
+				t.Fatalf("converted points %d and %d alias", i, j)
+			}
+		}
+	}
+	converted[0].value.SetInt64(999)
+	if converted[1].value.GetInt64() == 999 ||
+		originalPointers[0].value.GetInt64() == 999 {
+		t.Fatal("converted point mutation changed another point")
+	}
+
+	sentinels := []*point{
+		{value: types.MinNotNullDatum(), start: true},
+		{value: types.MaxValueDatum()},
+	}
+	convertedSentinels, err := convertPoints(sctx, sentinels, intType, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if convertedSentinels[0] != sentinels[0] || convertedSentinels[1] != sentinels[1] {
+		t.Fatal("sentinel pointer identity changed")
+	}
+}
