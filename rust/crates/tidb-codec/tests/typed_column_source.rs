@@ -106,10 +106,12 @@ fn typed_chunk_scalar_variable_values_keep_collation_or_binary_bytes() {
 fn typed_chunk_rejects_opaque_types_and_wrong_physical_layout() {
     let encoded = fixed_column(&[1], None);
     let (_, columns) = decode_columns(&encoded, &[ColumnLayout::fixed(8)]).unwrap();
+    // DATETIME graduated to a real decode; GEOMETRY remains genuinely
+    // unsupported, so the refusal assertion re-points there (never deleted).
     assert_eq!(
-        decode_column_datums(&columns[0], FieldType::new(FieldTypeCode::Datetime)),
+        decode_column_datums(&columns[0], FieldType::new(FieldTypeCode::Geometry)),
         Err(TypedColumnError::UnsupportedFieldType(
-            FieldTypeCode::Datetime
+            FieldTypeCode::Geometry
         ))
     );
 
