@@ -1028,6 +1028,31 @@ func TestColumnValueFactoryDoubleUintMetrics(t *testing.T) {
 	}
 }
 
+func TestExecutionAverageColumnsUseExecCount(t *testing.T) {
+	stats := &stmtSummaryStats{
+		execCount:            2,
+		commitCount:          0,
+		sumKVTotal:           10,
+		sumPDTotal:           20,
+		sumBackoffTotal:      30,
+		sumWriteSQLRespTotal: 40,
+	}
+	cases := []struct {
+		name     string
+		expected int64
+	}{
+		{name: AvgKvTimeStr, expected: 5},
+		{name: AvgPdTimeStr, expected: 10},
+		{name: AvgBackoffTotalTimeStr, expected: 15},
+		{name: AvgWriteSQLRespTimeStr, expected: 20},
+	}
+	for _, tc := range cases {
+		factory, ok := columnValueFactoryMap[tc.name]
+		require.Truef(t, ok, "missing column value factory: %s", tc.name)
+		require.Equal(t, tc.expected, factory(nil, nil, nil, stats), tc.name)
+	}
+}
+
 // Test stmtSummaryByDigest.ToDatum.
 func TestToDatum(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()

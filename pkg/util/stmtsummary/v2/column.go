@@ -437,16 +437,16 @@ var columnFactoryMap = map[string]columnFactory{
 		return record.MaxDisk
 	},
 	AvgKvTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumKVTotal), record.CommitCount)
+		return avgInt(int64(record.SumKVTotal), record.ExecCount)
 	},
 	AvgPdTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumPDTotal), record.CommitCount)
+		return avgInt(int64(record.SumPDTotal), record.ExecCount)
 	},
 	AvgBackoffTotalTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumBackoffTotal), record.CommitCount)
+		return avgInt(int64(record.SumBackoffTotal), record.ExecCount)
 	},
 	AvgWriteSQLRespTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumWriteSQLRespTotal), record.CommitCount)
+		return avgInt(int64(record.SumWriteSQLRespTotal), record.ExecCount)
 	},
 	AvgTidbCPUTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumTidbCPU), record.ExecCount)
