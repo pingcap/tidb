@@ -4487,12 +4487,16 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return importinto.NewImportExecutor(ctx, task, param)
 		},
 	)
-	// The Export task executor is registered by a later milestone; until then no
-	// Export task is submitted, so the scheduler alone is inert.
 	scheduler.RegisterSchedulerFactory(
 		proto.Export,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			return export.NewExportScheduler(ctx, task, param)
+		},
+	)
+	taskexecutor.RegisterTaskType(
+		proto.Export,
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return export.NewExportTaskExecutor(ctx, task, param)
 		},
 	)
 
