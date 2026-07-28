@@ -437,7 +437,11 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 			}
 			return nil
 		}
-		r.selectResp = new(tipb.SelectResponse)
+		if r.selectResp == nil {
+			r.selectResp = new(tipb.SelectResponse)
+		} else {
+			r.selectResp.Reset()
+		}
 		err = r.selectResp.Unmarshal(resultSubset.GetData())
 		if err != nil {
 			return errors.Trace(err)
