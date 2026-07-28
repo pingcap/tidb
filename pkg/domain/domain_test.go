@@ -52,6 +52,29 @@ import (
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
+func TestEmbeddingRuntimeConcurrentLifecycle(t *testing.T) {
+	do := &Domain{}
+	for range 32 {
+		do.initInferenceProviders()
+		start := make(chan struct{})
+		readDone := make(chan struct{})
+		closeDone := make(chan struct{})
+		go func() {
+			<-start
+			_ = do.GetEmbedFn()
+			close(readDone)
+		}()
+		go func() {
+			<-start
+			do.closeInferenceProviders()
+			close(closeDone)
+		}()
+		close(start)
+		<-readDone
+		<-closeDone
+	}
+}
+
 func TestInfo(t *testing.T) {
 	t.Skip("TestInfo will hang currently, it should be fixed later")
 

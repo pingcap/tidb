@@ -4530,7 +4530,7 @@ func TestEmbedTextFunction(t *testing.T) {
 	err := tk.QueryToErr(`select embed_text('mock/json', '[1, 3, 4]')`)
 	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
 	if !enableStarterDeployModeForEmbeddingTest(t) {
-		return
+		t.Skip("EMBED_TEXT functional tests require nextgen kernel in starter deployment mode")
 	}
 
 	err = tk.QueryToErr("select embed_text('text-embedding-3', 'hello world')")

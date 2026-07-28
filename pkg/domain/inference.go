@@ -17,16 +17,17 @@ package domain
 import "github.com/pingcap/tidb/pkg/inference"
 
 func (do *Domain) initInferenceProviders() {
-	do.closeInferenceProviders()
-	do.embedFn = inference.NewEmbedFn()
+	oldEmbedFn := do.embedFn.Swap(inference.NewEmbedFn())
+	if oldEmbedFn != nil {
+		oldEmbedFn.Close()
+	}
 }
 
 func (do *Domain) closeInferenceProviders() {
-	if do.embedFn == nil {
-		return
+	embedFn := do.embedFn.Swap(nil)
+	if embedFn != nil {
+		embedFn.Close()
 	}
-	do.embedFn.Close()
-	do.embedFn = nil
 }
 
 // GetEmbedFn returns the embedding function managed by this Domain.
@@ -34,5 +35,5 @@ func (do *Domain) GetEmbedFn() *inference.EmbedFn {
 	if do == nil {
 		return nil
 	}
-	return do.embedFn
+	return do.embedFn.Load()
 }

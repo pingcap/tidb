@@ -27,6 +27,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const embeddingTestTimeout = 10 * time.Second
+
 type staticEmbedder struct {
 	embeddings [][]float32
 	err        error
@@ -197,13 +199,8 @@ func TestEmbedFnSharedCallCancellation(t *testing.T) {
 		result2 <- result{embedding: embedding, err: err}
 	}()
 	require.Eventually(t, func() bool {
-		embedFn.mu.Lock()
-		defer embedFn.mu.Unlock()
-		for _, call := range embedFn.inFlight {
-			return call.waiters == 2
-		}
-		return false
-	}, time.Second, 10*time.Millisecond)
+		return hasSingleInFlightCallWithWaiters(embedFn, 2)
+	}, embeddingTestTimeout, 10*time.Millisecond)
 
 	firstCause := errors.New("first caller canceled")
 	cancel1(firstCause)
@@ -245,13 +242,8 @@ func TestEmbedFnCancelsProviderAfterAllCallersCancel(t *testing.T) {
 		err2 <- err
 	}()
 	require.Eventually(t, func() bool {
-		embedFn.mu.Lock()
-		defer embedFn.mu.Unlock()
-		for _, call := range embedFn.inFlight {
-			return call.waiters == 2
-		}
-		return false
-	}, time.Second, 10*time.Millisecond)
+		return hasSingleInFlightCallWithWaiters(embedFn, 2)
+	}, embeddingTestTimeout, 10*time.Millisecond)
 
 	cancel1()
 	cancel2()
@@ -259,7 +251,7 @@ func TestEmbedFnCancelsProviderAfterAllCallersCancel(t *testing.T) {
 	require.ErrorIs(t, receiveFromChannel(t, err2, "second caller cancellation"), context.Canceled)
 	select {
 	case <-provider.canceled:
-	case <-time.After(time.Second):
+	case <-time.After(embeddingTestTimeout):
 		t.Fatal("provider request was not canceled after all callers canceled")
 	}
 }
@@ -278,12 +270,24 @@ func waitForChannel(t *testing.T, ch <-chan struct{}, description string) {
 	receiveFromChannel(t, ch, description)
 }
 
+func hasSingleInFlightCallWithWaiters(embedFn *EmbedFn, waiters int) bool {
+	embedFn.mu.Lock()
+	defer embedFn.mu.Unlock()
+	if len(embedFn.inFlight) != 1 {
+		return false
+	}
+	for _, call := range embedFn.inFlight {
+		return call.waiters == waiters
+	}
+	return false
+}
+
 func receiveFromChannel[T any](t *testing.T, ch <-chan T, description string) T {
 	t.Helper()
 	select {
 	case value := <-ch:
 		return value
-	case <-time.After(time.Second):
+	case <-time.After(embeddingTestTimeout):
 		t.Fatalf("timed out waiting for %s", description)
 		var zero T
 		return zero

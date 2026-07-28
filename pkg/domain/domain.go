@@ -229,7 +229,7 @@ type Domain struct {
 	minJobIDRefresher *systable.MinJobIDRefresher
 
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
-	embedFn           *inference.EmbedFn
+	embedFn           atomic.Pointer[inference.EmbedFn]
 
 	statsOwner owner.Manager
 
