@@ -809,6 +809,46 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         "{grants:?}"
     );
 
+    // A JSON column round-trips through the real cell (type 245) with the
+    // canonical key order, and a mutation function edits it in SQL.
+    assert_eq!(
+        run_write(&mut client, &mut reader, "CREATE TABLE jt (j JSON)"),
+        0
+    );
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            r#"INSERT INTO jt VALUES ('{"b":2,"a":1}')"#
+        ),
+        1
+    );
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            r#"SELECT JSON_SET(j, '$.c', 3) FROM jt"#
+        ),
+        vec![vec![r#"{"a": 1, "b": 2, "c": 3}"#.to_owned()]]
+    );
+
+    // A window aggregate with a RANGE value bound and a correlated HAVING
+    // comparison, both computed over the grouped rows.
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT a, SUM(b) OVER (ORDER BY a RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) \
+             FROM t ORDER BY a"
+        ),
+        vec![
+            vec!["1".to_owned(), "10".to_owned()],
+            vec!["2".to_owned(), "30".to_owned()],
+            vec!["3".to_owned(), "50".to_owned()],
+            vec!["4".to_owned(), "70".to_owned()],
+        ]
+    );
+
     // The processlist virtual table sees this very connection.
     let processes = run_query(
         &mut client,
