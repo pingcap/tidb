@@ -5831,8 +5831,17 @@ fn run_aggregate_select(
     };
     let mut order_by_exprs = Vec::with_capacity(select.order_by.len());
     for item in &select.order_by {
+        // A bare integer ORDER BY item is a 1-based output position on the
+        // aggregate path too (the plain path resolves it in
+        // `substitute_output_aliases`; without this the position fell through
+        // as a CONSTANT and the sort was silently dropped).
+        let item_expr = if matches!(item.expr, tidb_ast::Expr::Int(_)) {
+            substitute_output_aliases(&item.expr, select.fields.fields(), true)?
+        } else {
+            item.expr.clone()
+        };
         let (expr, found) = extract_and_hoist_subquery(
-            &item.expr,
+            &item_expr,
             resolver.scope,
             catalog,
             current_db,

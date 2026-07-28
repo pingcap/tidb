@@ -7052,6 +7052,18 @@ mod tests {
             }
         }
 
+        // A positional ORDER BY on the AGGREGATE path was the same silent
+        // drop: the bare integer fell through as a constant and the sort
+        // never happened. `ORDER BY 2 DESC` sorts by the count.
+        assert_eq!(
+            row_text(session.run("SELECT a, COUNT(*) FROM t GROUP BY a ORDER BY 2 DESC, a")),
+            [["1", "2"], ["2", "1"], ["3", "1"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a, COUNT(*) FROM t GROUP BY a ORDER BY 1 DESC")),
+            [["3", "1"], ["2", "1"], ["1", "2"]]
+        );
+
         // Captured: an out-of-range position (including zero) is 1054 naming
         // the group statement.
         for sql in [
