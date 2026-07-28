@@ -209,6 +209,35 @@ const REFERENTIAL_CONSTRAINTS_COLUMNS: &[(&str, bool)] = &[
     ("REFERENCED_TABLE_NAME", false),
 ];
 
+/// Go `infoschema.tableProcesslistCols`, CAPTURED from `pkg/infoschema/tables.go`
+/// (`ID, USER, HOST, DB, COMMAND, TIME, STATE, INFO` are the `SHOW
+/// PROCESSLIST` columns; the rest are this table's own extras). Rows come
+/// from session/registry state, not the catalog -- see
+/// `Session::process_list_table_rows`, which is why this table has no
+/// `*_rows` function alongside it in this module.
+const PROCESSLIST_COLUMNS: &[(&str, bool)] = &[
+    ("ID", true),
+    ("USER", false),
+    ("HOST", false),
+    ("DB", false),
+    ("COMMAND", false),
+    ("TIME", true),
+    ("STATE", false),
+    ("INFO", false),
+    ("DIGEST", false),
+    ("MEM", true),
+    ("MEM_ARBITRATION", true),
+    ("MEM_WAIT_ARBITRATE_START", false),
+    ("MEM_WAIT_ARBITRATE_BYTES", true),
+    ("DISK", true),
+    ("TxnStart", false),
+    ("RESOURCE_GROUP", false),
+    ("SESSION_ALIAS", false),
+    ("ROWS_AFFECTED", true),
+    ("TIDB_CPU", true),
+    ("TIKV_CPU", true),
+];
+
 /// The column names of one `information_schema` table, or `None` when the
 /// table is not one this tier implements.
 #[must_use]
@@ -229,6 +258,8 @@ pub fn table_columns(name: &str) -> Option<&'static [(&'static str, bool)]> {
         Some(TABLE_CONSTRAINTS_COLUMNS)
     } else if name.eq_ignore_ascii_case("REFERENTIAL_CONSTRAINTS") {
         Some(REFERENTIAL_CONSTRAINTS_COLUMNS)
+    } else if name.eq_ignore_ascii_case("PROCESSLIST") {
+        Some(PROCESSLIST_COLUMNS)
     } else {
         None
     }

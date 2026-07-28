@@ -124,6 +124,17 @@ pub struct Session {
     /// session still answers `SHOW PROCESSLIST` -- with the single row it can
     /// honestly report, itself.
     process: Option<process::ProcessGuard>,
+    /// Whether this session holds the `PROCESS` privilege, which decides
+    /// what `SHOW PROCESSLIST` and `information_schema.PROCESSLIST` let it
+    /// see (Go `hasPriv(ctx, mysql.ProcessPriv)`).
+    ///
+    /// STUBBED: `GRANT`/`REVOKE` are not implemented yet (see
+    /// `tidb_exec::admin_runtime::AdminStmt::Grant`), so there is no SQL path
+    /// that sets this bit -- only [`Session::set_process_privilege`] does,
+    /// which a front end or test calls directly. This is the minimal
+    /// per-session privilege state needed to make the visibility rule
+    /// testable ahead of a real grant table.
+    has_process_priv: bool,
     /// Go `SessionVars.Rng`: the generator unseeded `RAND()` advances, shared
     /// across every statement of this session (unlike constant `RAND(N)`,
     /// which owns a fresh per-statement generator -- see `StmtContext`).
@@ -146,6 +157,7 @@ impl Default for Session {
             statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
+            has_process_priv: false,
             rand: new_time_seeded_rand(),
         }
     }
@@ -1422,9 +1434,16 @@ impl Session {
                 "{schema}.{table_name}"
             ))));
         };
-        let rows = self.with_catalog_mut(|catalog| {
-            Ok(infoschema::table_rows(&table_name, catalog).unwrap_or_default())
-        })?;
+        // `PROCESSLIST` is session/registry state, not catalog state, so it
+        // is built directly rather than through `infoschema::table_rows`,
+        // which only ever sees the catalog.
+        let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
+            self.process_list_table_rows()
+        } else {
+            self.with_catalog_mut(|catalog| {
+                Ok(infoschema::table_rows(&table_name, catalog).unwrap_or_default())
+            })?
+        };
 
         // A scratch catalog holding just this table, so the ordinary plan runs
         // over it.
@@ -1832,6 +1851,7 @@ impl Session {
             statement_insert_id: 0,
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
+            has_process_priv: false,
             rand: new_time_seeded_rand(),
         }
     }
@@ -1904,6 +1924,15 @@ impl Session {
     pub fn set_user(&mut self, current_user: String, login_user: String) {
         self.current_user = Some(current_user);
         self.login_user = Some(login_user);
+    }
+
+    /// Grants or revokes this session's `PROCESS` privilege.
+    ///
+    /// See the [`Session::has_process_priv`] field doc for why this exists
+    /// as a direct setter rather than a `GRANT PROCESS ON *.* TO ...`
+    /// statement: `GRANT` is not implemented in this tier yet.
+    pub fn set_process_privilege(&mut self, granted: bool) {
+        self.has_process_priv = granted;
     }
 
     /// Joins this session to the server's process list under `connection_id`.
@@ -2531,27 +2560,11 @@ impl Session {
     /// end never assigned one), no client host, its current schema, and the
     /// statement it is running, which is this SHOW.
     ///
-    /// NOT MODELLED (Go filters the list by the `PROCESS` privilege, showing
-    /// a user without it only their own connections): this tier has no
-    /// privilege manager, so every row is visible.
+    /// Filtered by the `PROCESS` privilege the same way Go's
+    /// `setDataForProcessList` / `fetchShowProcessList` both filter: a
+    /// session without it sees only its own connections.
     fn process_list_output(&self, full: bool) -> StmtOutput {
-        let rows: Vec<process::ProcessRow> = match &self.process {
-            Some(guard) => guard.registry().snapshot(),
-            None => vec![process::ProcessRow {
-                id: self.connection_id.unwrap_or(0),
-                user: self.process_list_user(),
-                host: String::new(),
-                db: self.current_db.clone(),
-                command: "Query".to_owned(),
-                time: 0,
-                state: self.status_text(),
-                info: Some(if full {
-                    "show full processlist".to_owned()
-                } else {
-                    "show processlist".to_owned()
-                }),
-            }],
-        };
+        let rows = self.visible_process_rows(full);
         let text = || FieldType::new(tidb_datatype::FieldTypeCode::Varchar);
         let nullable_text = |value: String| {
             if value.is_empty() {
@@ -2614,6 +2627,108 @@ impl Session {
             Some(user) => user.split('@').next().unwrap_or_default().to_owned(),
             None => String::new(),
         }
+    }
+
+    /// Every connection this session is allowed to see for `SHOW
+    /// PROCESSLIST` / `information_schema.PROCESSLIST`.
+    ///
+    /// Go (`setDataForProcessList`, `fetchShowProcessList`): "If you have the
+    /// PROCESS privilege, you can see all threads. Otherwise, you can see
+    /// only your own threads" -- and an internal session with no login user
+    /// is not filtered at all, since there is nothing to compare against.
+    fn visible_process_rows(&self, full: bool) -> Vec<process::ProcessRow> {
+        let rows: Vec<process::ProcessRow> = match &self.process {
+            Some(guard) => guard.registry().snapshot(),
+            None => vec![process::ProcessRow {
+                id: self.connection_id.unwrap_or(0),
+                user: self.process_list_user(),
+                host: String::new(),
+                db: self.current_db.clone(),
+                command: "Query".to_owned(),
+                time: 0,
+                state: self.status_text(),
+                info: Some(if full {
+                    "show full processlist".to_owned()
+                } else {
+                    "show processlist".to_owned()
+                }),
+            }],
+        };
+        if self.has_process_priv || self.login_user.is_none() {
+            return rows;
+        }
+        let me = self.process_list_user();
+        rows.into_iter().filter(|row| row.user == me).collect()
+    }
+
+    /// `SELECT * FROM information_schema.PROCESSLIST` rows, in the exact
+    /// column order Go's `tableProcesslistCols` / `ProcessInfo.ToRow` build
+    /// (CAPTURED: `ID, USER, HOST, DB, COMMAND, TIME, STATE, INFO, DIGEST,
+    /// MEM, MEM_ARBITRATION, MEM_WAIT_ARBITRATE_START,
+    /// MEM_WAIT_ARBITRATE_BYTES, DISK, TxnStart, RESOURCE_GROUP,
+    /// SESSION_ALIAS, ROWS_AFFECTED, TIDB_CPU, TIKV_CPU`).
+    ///
+    /// `ToRow` builds on `ToRowForShow(true)`, i.e. `INFO` is never truncated
+    /// here (unlike `SHOW PROCESSLIST` without `FULL`).
+    ///
+    /// NOT MODELLED (this tier tracks none of these per connection, so each
+    /// is Go's own value for a connection with no live statement context --
+    /// `RefCountOfStmtCtx` fails to increase -- rather than an invented one):
+    /// `DIGEST` is `""`, `MEM`/`DISK`/`TIDB_CPU`/`TIKV_CPU` are `0`,
+    /// `MEM_ARBITRATION`/`MEM_WAIT_ARBITRATE_START`/
+    /// `MEM_WAIT_ARBITRATE_BYTES`/`ROWS_AFFECTED` are `NULL`, and
+    /// `TxnStart`/`RESOURCE_GROUP`/`SESSION_ALIAS` are `""`.
+    fn process_list_table_rows(&self) -> Vec<Vec<Datum>> {
+        self.visible_process_rows(true)
+            .into_iter()
+            .map(|row| {
+                vec![
+                    Datum::UInt(row.id),
+                    Datum::Bytes(row.user.into_bytes()),
+                    Datum::Bytes(row.host.into_bytes()),
+                    if row.db.is_empty() {
+                        Datum::Null
+                    } else {
+                        Datum::Bytes(row.db.into_bytes())
+                    },
+                    Datum::Bytes(row.command.into_bytes()),
+                    Datum::Int(i64::try_from(row.time).unwrap_or(i64::MAX)),
+                    if row.state.is_empty() {
+                        Datum::Null
+                    } else {
+                        Datum::Bytes(row.state.into_bytes())
+                    },
+                    match row.info {
+                        Some(info) => Datum::Bytes(info.into_bytes()),
+                        None => Datum::Null,
+                    },
+                    // DIGEST
+                    Datum::Bytes(Vec::new()),
+                    // MEM
+                    Datum::UInt(0),
+                    // MEM_ARBITRATION
+                    Datum::Null,
+                    // MEM_WAIT_ARBITRATE_START
+                    Datum::Null,
+                    // MEM_WAIT_ARBITRATE_BYTES
+                    Datum::Null,
+                    // DISK
+                    Datum::UInt(0),
+                    // TxnStart
+                    Datum::Bytes(Vec::new()),
+                    // RESOURCE_GROUP
+                    Datum::Bytes(Vec::new()),
+                    // SESSION_ALIAS
+                    Datum::Bytes(Vec::new()),
+                    // ROWS_AFFECTED
+                    Datum::Null,
+                    // TIDB_CPU
+                    Datum::Int(0),
+                    // TIKV_CPU
+                    Datum::Int(0),
+                ]
+            })
+            .collect()
     }
 
     fn warning_output(&self, count_only: bool, errors_only: bool) -> StmtOutput {
@@ -7395,6 +7510,119 @@ mod tests {
         let full = row_text(session.run("show full processlist"));
         assert_eq!(full[1][7], long);
         assert_eq!(full[0][7], "show full processlist");
+    }
+
+    /// Go `setDataForProcessList` / `fetchShowProcessList`: without the
+    /// `PROCESS` privilege a session sees only its own connections, on both
+    /// `SHOW PROCESSLIST` and `information_schema.PROCESSLIST`; with it, all
+    /// of them.
+    #[test]
+    fn process_privilege_gates_visibility_on_both_surfaces() {
+        let registry = process::ProcessRegistry::default();
+        let mut session = Session::new();
+        session.set_user("bob@%".to_owned(), "bob@10.0.0.1".to_owned());
+        let guard = registry.register(
+            1,
+            "bob".to_owned(),
+            "10.0.0.1:1".to_owned(),
+            "test".to_owned(),
+            None,
+        );
+        session.attach_process(1, guard);
+        let _alice = registry.register(
+            2,
+            "alice".to_owned(),
+            "10.0.0.2:2".to_owned(),
+            "test".to_owned(),
+            None,
+        );
+
+        // No PROCESS privilege: only bob's own row.
+        let show = row_text(session.run("show processlist"));
+        assert_eq!(show.len(), 1);
+        assert_eq!(show[0][1], "bob");
+        let table = row_text(session.run("select * from information_schema.processlist"));
+        assert_eq!(table.len(), 1);
+        assert_eq!(table[0][1], "bob");
+
+        // With PROCESS: every connection, on both surfaces.
+        session.set_process_privilege(true);
+        let show = row_text(session.run("show processlist"));
+        assert_eq!(show.len(), 2);
+        let table = row_text(session.run("select * from information_schema.processlist"));
+        assert_eq!(table.len(), 2);
+    }
+
+    /// CAPTURED (`pkg/infoschema/tables.go` `tableProcesslistCols`): the
+    /// exact column list and order of `information_schema.PROCESSLIST`,
+    /// which is 12 columns wider than `SHOW PROCESSLIST`'s 8.
+    #[test]
+    fn information_schema_processlist_has_the_captured_column_list() {
+        let mut session = Session::new();
+        let StmtOutput::Rows { columns, rows } = session
+            .run_with_columns("select * from information_schema.processlist")
+            .unwrap()
+        else {
+            panic!("PROCESSLIST answers with rows");
+        };
+        assert_eq!(
+            columns
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "ID",
+                "USER",
+                "HOST",
+                "DB",
+                "COMMAND",
+                "TIME",
+                "STATE",
+                "INFO",
+                "DIGEST",
+                "MEM",
+                "MEM_ARBITRATION",
+                "MEM_WAIT_ARBITRATE_START",
+                "MEM_WAIT_ARBITRATE_BYTES",
+                "DISK",
+                "TxnStart",
+                "RESOURCE_GROUP",
+                "SESSION_ALIAS",
+                "ROWS_AFFECTED",
+                "TIDB_CPU",
+                "TIKV_CPU",
+            ]
+        );
+        assert_eq!(rows.len(), 1);
+    }
+
+    /// `WHERE` over the virtual table runs through the ordinary plan, exactly
+    /// as it does for the other `information_schema` tables.
+    #[test]
+    fn information_schema_processlist_where_filters_by_user() {
+        let registry = process::ProcessRegistry::default();
+        let mut session = Session::new();
+        session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
+        session.set_process_privilege(true);
+        let guard = registry.register(
+            1,
+            "root".to_owned(),
+            "127.0.0.1:1".to_owned(),
+            "test".to_owned(),
+            None,
+        );
+        session.attach_process(1, guard);
+        let _alice = registry.register(
+            2,
+            "alice".to_owned(),
+            "10.0.0.2:2".to_owned(),
+            "test".to_owned(),
+            None,
+        );
+        let rows = row_text(
+            session.run("select id, user from information_schema.processlist where user = 'alice'"),
+        );
+        assert_eq!(rows, vec![vec!["2".to_owned(), "alice".to_owned()]]);
     }
 
     /// Captured from TiDB: `KILL <unknown id>` is NOT an error -- it answers
