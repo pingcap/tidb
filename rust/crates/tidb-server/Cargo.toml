@@ -25,13 +25,13 @@ tidb-executor = { path = "../tidb-executor" }
 tidb-model = { path = "../tidb-model" }
 tidb-protocol = { path = "../tidb-protocol" }
 tidb-session = { path = "../tidb-session" }
+tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]
 prost.workspace = true
 tidb-ast = { path = "../tidb-ast" }
 tidb-proto = { path = "../tidb-proto" }
-tidb-txnkv = { path = "../tidb-txnkv" }
 
 [[test]]
 name = "all"

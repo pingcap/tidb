@@ -164,12 +164,12 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
             .map_err(RunConfiguredNodeError::Engine)?
         {
             LoadedCatalogAuthority::Single(factory, authority) => {
-                let users = node_accounts(&config, &authority)?;
-                run_bound_node(config, *factory, authority, users)
+                let (users, privilege_reloader) = node_accounts(&config, &authority)?;
+                run_bound_node(config, *factory, authority, users, privilege_reloader)
             }
             LoadedCatalogAuthority::Multi(factory, authority) => {
-                let users = node_accounts(&config, &authority)?;
-                run_bound_multi_node(config, *factory, authority, users)
+                let (users, privilege_reloader) = node_accounts(&config, &authority)?;
+                run_bound_multi_node(config, *factory, authority, users, privilege_reloader)
             }
         };
     }

@@ -229,6 +229,11 @@ impl ConfiguredUserStore {
 
     /// The live account table, to be shared with the session factory so that
     /// `CREATE USER`/`DROP USER` and the login path see one set of rows.
+    ///
+    /// Also the handle a [`crate::cluster_privileges::PrivilegeReloader`]
+    /// publishes into: because every clone shares the same underlying
+    /// `Mutex`es, a reload thread given this clone keeps this store (and
+    /// every other clone) current without either side holding the other.
     #[must_use]
     pub fn accounts(&self) -> PrivilegeRegistry {
         self.accounts.clone()

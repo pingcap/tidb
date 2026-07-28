@@ -50,6 +50,7 @@ use tidb_planner::transaction_control::{classify_transaction_control, Transactio
 use tidb_protocol::ColumnInfo;
 
 use crate::aggregate_result_set::AggregateResultSetSource;
+use crate::cluster_privileges::PrivilegeReloader;
 use crate::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError};
 use crate::distinct_result_set::DistinctResultSetSource;
 use crate::node_config::{ConfiguredReadColumnKind, ConfiguredReadTable, NodeConfig};
@@ -1186,7 +1187,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     );
     let (factory, authority) =
         RealTiKvSessionFactory::connect(&config).map_err(RunConfiguredNodeError::Engine)?;
-    run_bound_node(config, factory, authority, users)
+    run_bound_node(config, factory, authority, users, None)
 }
 
 /// Starts the same listener/lifecycle over an already-connected factory and
@@ -1201,6 +1202,7 @@ pub(crate) fn run_bound_node(
     factory: RealTiKvSessionFactory,
     authority: ProductionReadProcessAuthority,
     users: Arc<ConfiguredUserStore>,
+    privilege_reloader: Option<PrivilegeReloader>,
 ) -> Result<(), RunConfiguredNodeError> {
     let factory = Arc::new(factory);
     let cluster_id = factory.cluster_id();
@@ -1219,6 +1221,10 @@ pub(crate) fn run_bound_node(
         .collect::<Vec<_>>()
         .join(",");
     run_with_process_shutdown(factory, authority, move |factory| {
+        // Held for exactly the node's run: the reload thread it owns is
+        // stopped by `Drop` when this closure returns, whether the node
+        // exited normally or by error.
+        let privilege_reloader = privilege_reloader;
         let node =
             ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                 emit_connections_startup_failure(&error);
@@ -1241,25 +1247,49 @@ pub(crate) fn run_bound_node(
             config.max_connections,
             users.len(),
         );
-        node.run().map_err(RunConfiguredNodeError::Node)
+        let result = node.run().map_err(RunConfiguredNodeError::Node);
+        emit_privilege_reload_stats(privilege_reloader.as_ref());
+        result
     })
 }
 
+/// Logs what the privilege reload thread did over the node's whole run,
+/// right before it is dropped (and stopped) along with the node.
+pub(crate) fn emit_privilege_reload_stats(reloader: Option<&PrivilegeReloader>) {
+    if let Some(reloader) = reloader {
+        let stats = reloader.stats();
+        eprintln!(
+            "{{\"event\":\"privilege_reload_stats\",\"passes\":{},\"reloads\":{},\"failures\":{}}}",
+            stats.passes, stats.reloads, stats.failures
+        );
+    }
+}
+
 /// Builds this node's live account table from whichever source the
-/// command line named.
+/// command line named, plus the live-refresh reload thread when
+/// `--load-privileges` is set.
 ///
 /// `--load-privileges` reads the cluster's own `mysql.*` through the
 /// already-connected authority, so the accounts this node admits are exactly
 /// the ones a Go TiDB wrote there. It is refused against a keyspace no TiDB
 /// ever bootstrapped: an empty account table would accept nobody, and
 /// reporting that as a successful load would hide the real cause.
+///
+/// The returned [`PrivilegeReloader`], when present, must be kept alive for
+/// the node's whole run: dropping it stops the reload thread, so a caller
+/// that let it go out of scope early would silently fall back to the
+/// one-shot startup snapshot.
 pub(crate) fn node_accounts(
     config: &NodeConfig,
     authority: &ProductionReadProcessAuthority,
-) -> Result<Arc<ConfiguredUserStore>, RunConfiguredNodeError> {
+) -> Result<(Arc<ConfiguredUserStore>, Option<PrivilegeReloader>), RunConfiguredNodeError> {
     if !config.load_privileges {
-        return Ok(Arc::new(
-            ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?,
+        return Ok((
+            Arc::new(
+                ConfiguredUserStore::load(&config.auth_file)
+                    .map_err(RunConfiguredNodeError::Auth)?,
+            ),
+            None,
         ));
     }
     let accounts = tidb_exec::real_tikv_privileges::load_accounts_from_cluster(
@@ -1297,9 +1327,20 @@ pub(crate) fn node_accounts(
         accounts.privileges.dynamic_grants.len(),
         accounts.privileges.role_edges.len(),
     );
-    Ok(Arc::new(ConfiguredUserStore::from_accounts(
-        loaded.registry,
-    )))
+    let users = Arc::new(ConfiguredUserStore::from_accounts(loaded.registry));
+    // Ticks at the same `schema_lease / 2` cadence as the catalog reloader,
+    // so a node is never more than one lease behind the cluster's accounts
+    // either. A failed spawn (only a zero lease can cause it, and the parser
+    // already rejects that) is reported rather than silently leaving the
+    // node on its startup snapshot forever.
+    let reloader = PrivilegeReloader::spawn(
+        users.accounts(),
+        authority.transaction_opener(),
+        config.schema_lease / 2,
+        PRODUCTION_CONTROL_PLANE_TIMEOUT,
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    Ok((users, Some(reloader)))
 }
 
 /// Every servable-table outcome a `--load-table` node can settle on, once its

@@ -43,6 +43,7 @@ use tidb_planner::{
     prepared_dml::PreparedBindValue,
 };
 
+use crate::cluster_privileges::PrivilegeReloader;
 use crate::configured_user_store::ConfiguredUserStore;
 use crate::node_config::NodeConfig;
 use crate::real_tikv_node::{
@@ -934,7 +935,7 @@ pub fn run_configured_multi_node(config: NodeConfig) -> Result<(), RunConfigured
     );
     let (factory, authority) =
         RealTiKvMultiSessionFactory::connect(&config).map_err(RunConfiguredNodeError::Engine)?;
-    run_bound_multi_node(config, factory, authority, users)
+    run_bound_multi_node(config, factory, authority, users, None)
 }
 
 /// Starts the same listener/lifecycle over an already-connected two-table
@@ -949,6 +950,7 @@ pub(crate) fn run_bound_multi_node(
     factory: RealTiKvMultiSessionFactory,
     authority: ProductionReadProcessAuthority,
     users: Arc<ConfiguredUserStore>,
+    privilege_reloader: Option<PrivilegeReloader>,
 ) -> Result<(), RunConfiguredNodeError> {
     let factory = Arc::new(factory);
     let cluster_id = factory.cluster_id();
@@ -967,6 +969,10 @@ pub(crate) fn run_bound_multi_node(
         .collect::<Vec<_>>()
         .join(",");
     run_with_process_shutdown(factory, authority, move |factory| {
+        // Held for exactly the node's run: the reload thread it owns is
+        // stopped by `Drop` when this closure returns, whether the node
+        // exited normally or by error.
+        let privilege_reloader = privilege_reloader;
         let node =
             ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                 emit_connections_startup_failure(&error);
@@ -993,7 +999,9 @@ pub(crate) fn run_bound_multi_node(
             config.max_connections,
             users.len(),
         );
-        node.run().map_err(RunConfiguredNodeError::Node)
+        let result = node.run().map_err(RunConfiguredNodeError::Node);
+        crate::real_tikv_node::emit_privilege_reload_stats(privilege_reloader.as_ref());
+        result
     })
 }
 

@@ -130,8 +130,11 @@ pub struct NodeConfig {
     /// startup instead of from `--auth-file`.
     ///
     /// This is the bridge to a keyspace a Go TiDB bootstrapped: whatever
-    /// `CREATE USER`/`GRANT` wrote there is what this node admits. The load is
-    /// one-shot at startup, so a grant made afterwards needs a restart.
+    /// `CREATE USER`/`GRANT` wrote there is what this node admits. Startup
+    /// reads one snapshot; a [`crate::cluster_privileges::PrivilegeReloader`]
+    /// then re-reads on the same `schema_lease / 2` cadence the catalog
+    /// reloader uses, so a grant made afterwards reaches this node without a
+    /// restart.
     pub load_privileges: bool,
     /// Fixed connection-worker count and accepted-socket queue capacity.
     pub max_connections: usize,

@@ -27,7 +27,16 @@
 //! a node that refuses to start because a Go TiDB granted `RESTRICTED_TABLES_ADMIN`
 //! is useless, and one that silently swallows it is dishonest.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::{Condvar, Mutex};
+use std::thread::JoinHandle;
+use std::time::Duration;
+
 use tidb_exec::cluster_privilege_load::{ClusterPrivileges, LoadedUser};
+use tidb_exec::real_tikv_privileges::{load_accounts_from_cluster, ClusterAccounts};
+use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+
 use tidb_session::privilege::{is_dynamic_privilege, Account, GlobalPriv, PrivilegeRegistry};
 
 use crate::auth_identity::DEFAULT_AUTH_PLUGIN;
@@ -258,6 +267,234 @@ fn account(user: &str, host: &str) -> Account {
     (user.to_owned(), host.to_owned())
 }
 
+/// Keeps a node's live [`PrivilegeRegistry`] following the cluster's own
+/// `mysql.*` on a cadence, so a `GRANT`/`CREATE USER`/`DROP USER` a Go node
+/// commits reaches this node without a restart.
+///
+/// Go source of truth: `pkg/domain/domain.go`'s privilege-reload goroutine,
+/// which re-reads `mysql.*` on a `notifyupdateprivilege` etcd event and on its
+/// own interval. This tier has no etcd notification wired up (the same
+/// documented gap [`tidb_exec::catalog_watch`] states for the schema
+/// catalog), so this is the lease-cadence backstop alone: a re-scan every
+/// `interval`, diffed against nothing and simply applied whole via
+/// [`PrivilegeRegistry::replace_from`].
+///
+/// One-shot loading (`--load-privileges`'s startup read,
+/// [`crate::real_tikv_node::node_accounts`]) already reuses
+/// [`load_accounts_from_cluster`] and [`registry_from_cluster`]; this
+/// reloader is the same two calls run again on a timer against the SAME live
+/// registry, rather than a new one the caller has to go re-wire in.
+pub struct PrivilegeReloader {
+    signal: Arc<(Mutex<PrivilegeReloadSignal>, Condvar)>,
+    stats: Arc<PrivilegeReloadCounters>,
+    worker: Option<JoinHandle<()>>,
+}
+
+#[derive(Debug, Default)]
+struct PrivilegeReloadSignal {
+    shutdown: bool,
+}
+
+#[derive(Debug, Default)]
+struct PrivilegeReloadCounters {
+    passes: AtomicU64,
+    reloads: AtomicU64,
+    failures: AtomicU64,
+}
+
+/// What the reload thread has done so far, for tests and for operators.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PrivilegeReloadStats {
+    /// Passes that ran to a decision, successful or not.
+    pub passes: u64,
+    /// Passes that read a bootstrapped cluster and published its accounts.
+    pub reloads: u64,
+    /// Passes whose read failed, or found an unbootstrapped cluster; the
+    /// previously published table stays in force.
+    pub failures: u64,
+}
+
+/// Why a privilege reload thread could not be started or stopped.
+#[derive(Debug)]
+pub enum PrivilegeReloadError {
+    /// A zero tick would spin the reload thread against PD without pause.
+    ZeroInterval,
+    /// The reload thread could not be created.
+    Spawn(std::io::Error),
+    /// The reload thread panicked.
+    WorkerPanicked,
+}
+
+impl std::fmt::Display for PrivilegeReloadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ZeroInterval => formatter.write_str("privilege reload interval must be nonzero"),
+            Self::Spawn(error) => {
+                write!(formatter, "failed to spawn privilege reloader: {error}")
+            }
+            Self::WorkerPanicked => formatter.write_str("privilege reloader panicked"),
+        }
+    }
+}
+
+impl std::error::Error for PrivilegeReloadError {}
+
+/// One reload pass's read step, answering one cluster snapshot or a reason it
+/// could not be read.
+///
+/// Kept as an injectable closure -- Go's own reload loop separates "read one
+/// snapshot" from "publish it" the same way -- so the thread's condvar/
+/// shutdown machinery can run against a fake snapshot provider in tests,
+/// without a real PD/TiKV connection.
+pub type PrivilegeReloadRead = Box<dyn FnMut() -> Result<ClusterAccounts, String> + Send + 'static>;
+
+impl PrivilegeReloader {
+    /// Starts the reload thread ticking every `interval` against `registry`,
+    /// reading through `opener`.
+    ///
+    /// `registry` is the node's LIVE table -- the same one every session, the
+    /// login path, and `SHOW GRANTS` already hold a clone of. Every tick
+    /// builds a throwaway registry from one fresh cluster snapshot and
+    /// publishes it into `registry` with
+    /// [`PrivilegeRegistry::replace_from`], which every existing clone
+    /// observes immediately.
+    pub fn spawn(
+        registry: PrivilegeRegistry,
+        opener: RealOptimisticTransactionOpener,
+        interval: Duration,
+        timeout: Duration,
+    ) -> Result<Self, PrivilegeReloadError> {
+        Self::spawn_with_read(
+            registry,
+            interval,
+            Box::new(move || {
+                load_accounts_from_cluster(&opener, timeout).map_err(|error| error.to_string())
+            }),
+        )
+    }
+
+    /// Starts the reload thread with an injectable read step; production
+    /// code should use [`Self::spawn`], which supplies the real cluster read.
+    pub fn spawn_with_read(
+        registry: PrivilegeRegistry,
+        interval: Duration,
+        mut read: PrivilegeReloadRead,
+    ) -> Result<Self, PrivilegeReloadError> {
+        if interval.is_zero() {
+            return Err(PrivilegeReloadError::ZeroInterval);
+        }
+        let signal = Arc::new((Mutex::new(PrivilegeReloadSignal::default()), Condvar::new()));
+        let stats = Arc::new(PrivilegeReloadCounters::default());
+        let worker_signal = Arc::clone(&signal);
+        let worker_stats = Arc::clone(&stats);
+        let worker = std::thread::Builder::new()
+            .name("privilege-reloader".to_owned())
+            .spawn(move || {
+                let (lock, condvar) = &*worker_signal;
+                loop {
+                    // Waiting on the condvar rather than sleeping is what
+                    // makes shutdown prompt: a stop does not wait out the
+                    // interval.
+                    let mut state = match lock.lock() {
+                        Ok(state) => state,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    if !state.shutdown {
+                        state = match condvar.wait_timeout(state, interval) {
+                            Ok((state, _)) => state,
+                            Err(poisoned) => poisoned.into_inner().0,
+                        };
+                    }
+                    let stopping = state.shutdown;
+                    drop(state);
+                    if stopping {
+                        return;
+                    }
+                    run_one_privilege_reload_pass(&registry, read.as_mut(), &worker_stats);
+                }
+            })
+            .map_err(PrivilegeReloadError::Spawn)?;
+        Ok(Self {
+            signal,
+            stats,
+            worker: Some(worker),
+        })
+    }
+
+    /// What the thread has done so far.
+    #[must_use]
+    pub fn stats(&self) -> PrivilegeReloadStats {
+        PrivilegeReloadStats {
+            passes: self.stats.passes.load(Ordering::Acquire),
+            reloads: self.stats.reloads.load(Ordering::Acquire),
+            failures: self.stats.failures.load(Ordering::Acquire),
+        }
+    }
+
+    /// Stops the thread and waits for it, reporting a panicking worker.
+    ///
+    /// Idempotent: [`Drop`] calls it, so an explicit call is only needed when
+    /// the caller wants to observe the failure.
+    pub fn shutdown(&mut self) -> Result<(), PrivilegeReloadError> {
+        let (lock, condvar) = &*self.signal;
+        {
+            let mut state = match lock.lock() {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state.shutdown = true;
+        }
+        condvar.notify_all();
+        match self.worker.take() {
+            Some(worker) => worker
+                .join()
+                .map_err(|_| PrivilegeReloadError::WorkerPanicked),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for PrivilegeReloader {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
+}
+
+/// Runs one pass: read one fresh cluster snapshot, build its registry, and
+/// publish it -- or leave the currently published table alone on any
+/// failure, exactly as Go's reload loop logs and retries.
+///
+/// An unbootstrapped cluster is treated the same as a read failure rather
+/// than as "zero accounts": a cluster that was bootstrapped when this node
+/// started and then somehow reports unbootstrapped is a read anomaly, not a
+/// real account wipe, and publishing an empty table would lock out every
+/// account this node currently admits.
+fn run_one_privilege_reload_pass(
+    registry: &PrivilegeRegistry,
+    read: &mut dyn FnMut() -> Result<ClusterAccounts, String>,
+    stats: &PrivilegeReloadCounters,
+) {
+    stats.passes.fetch_add(1, Ordering::AcqRel);
+    match read() {
+        Ok(accounts) if accounts.bootstrap.already_bootstrapped() => {
+            let built = registry_from_cluster(&accounts.privileges);
+            registry.replace_from(&built.registry);
+            stats.reloads.fetch_add(1, Ordering::AcqRel);
+        }
+        Ok(accounts) => {
+            stats.failures.fetch_add(1, Ordering::AcqRel);
+            eprintln!(
+                "{{\"event\":\"privilege_reload_failed\",\"error\":{:?}}}",
+                format!("cluster reports {}", accounts.bootstrap)
+            );
+        }
+        Err(error) => {
+            stats.failures.fetch_add(1, Ordering::AcqRel);
+            eprintln!("{{\"event\":\"privilege_reload_failed\",\"error\":{error:?}}}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use tidb_exec::cluster_privilege_load::{
@@ -474,5 +711,182 @@ mod tests {
         let account = ("bridge".to_owned(), "%".to_owned());
         assert_eq!(built.registry.default_roles(&account).len(), 2);
         assert_eq!(built.registry.granted_roles(&account).len(), 2);
+    }
+
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    use tidb_exec::cluster_privilege_load::ClusterBootstrapState;
+    use tidb_exec::real_tikv_privileges::ClusterAccounts;
+
+    fn bootstrapped(privileges: ClusterPrivileges) -> ClusterAccounts {
+        ClusterAccounts {
+            bootstrap: ClusterBootstrapState::Bootstrapped { version: Some(1) },
+            privileges,
+        }
+    }
+
+    fn snapshot_with_users(users: Vec<LoadedUser>) -> ClusterAccounts {
+        bootstrapped(ClusterPrivileges {
+            users,
+            ..ClusterPrivileges::default()
+        })
+    }
+
+    #[test]
+    fn a_zero_interval_is_refused_rather_than_spinning() {
+        let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        let result = PrivilegeReloader::spawn_with_read(
+            registry,
+            Duration::ZERO,
+            Box::new(|| Ok(snapshot_with_users(Vec::new()))),
+        );
+        assert!(matches!(result, Err(PrivilegeReloadError::ZeroInterval)));
+    }
+
+    #[test]
+    fn a_reload_picks_up_a_new_user_a_new_grant_a_revoke_and_a_drop() {
+        let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        registry.create_user("stale", "%", "");
+        registry.grant("stale", "%", GlobalPriv::Select.mask());
+
+        let (sender, receiver) = mpsc::channel();
+        let mut tick = 0u32;
+        let mut reloader = PrivilegeReloader::spawn_with_read(
+            registry.clone(),
+            Duration::from_millis(5),
+            Box::new(move || {
+                tick += 1;
+                let snapshot = match tick {
+                    // Pass 1: `new_user` arrives with SELECT, `stale` is
+                    // dropped entirely -- this is what a cluster-side
+                    // `CREATE USER new_user` + `GRANT SELECT` + `DROP USER
+                    // stale` produces by the next tick.
+                    1 => {
+                        snapshot_with_users(vec![user("new_user", "%", "", false, vec!["SELECT"])])
+                    }
+                    // Pass 2: a `REVOKE SELECT` on `new_user` leaves it with
+                    // no privileges.
+                    _ => snapshot_with_users(vec![user("new_user", "%", "", false, Vec::new())]),
+                };
+                sender.send(tick).unwrap();
+                Ok(snapshot)
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(receiver.recv().unwrap(), 1);
+        assert_eq!(receiver.recv().unwrap(), 2);
+        reloader.shutdown().unwrap();
+
+        assert!(registry.user_exists("new_user", "%"));
+        assert!(!registry.has_global_priv("new_user", "%", GlobalPriv::Select));
+        assert!(!registry.user_exists("stale", "%"));
+        let stats = reloader.stats();
+        assert_eq!(stats.reloads, 2);
+        assert_eq!(stats.failures, 0);
+    }
+
+    #[test]
+    fn an_unbootstrapped_read_is_counted_as_a_failure_and_keeps_the_previous_table() {
+        let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        registry.create_user("kept", "%", "");
+
+        let mut reloader = PrivilegeReloader::spawn_with_read(
+            registry.clone(),
+            Duration::from_millis(5),
+            Box::new(|| {
+                Ok(ClusterAccounts {
+                    bootstrap: ClusterBootstrapState::Unflagged,
+                    privileges: ClusterPrivileges::default(),
+                })
+            }),
+        )
+        .unwrap();
+
+        // Give the thread a few ticks to run, then confirm it never
+        // published the unbootstrapped snapshot's empty table.
+        std::thread::sleep(Duration::from_millis(60));
+        reloader.shutdown().unwrap();
+
+        assert!(registry.user_exists("kept", "%"));
+        let stats = reloader.stats();
+        assert!(stats.passes > 0);
+        assert_eq!(stats.reloads, 0);
+        assert_eq!(stats.failures, stats.passes);
+    }
+
+    #[test]
+    fn dropping_the_reloader_stops_its_thread_promptly() {
+        let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        let (sender, receiver) = mpsc::channel();
+        let reloader = PrivilegeReloader::spawn_with_read(
+            registry,
+            Duration::from_millis(5),
+            Box::new(move || {
+                let _ = sender.send(());
+                Ok(snapshot_with_users(Vec::new()))
+            }),
+        )
+        .unwrap();
+        receiver.recv().unwrap();
+
+        let stopping = Instant::now();
+        drop(reloader);
+        assert!(stopping.elapsed() < Duration::from_secs(5));
+
+        while receiver.recv_timeout(Duration::from_millis(200)).is_ok() {}
+        assert!(receiver.recv_timeout(Duration::from_millis(200)).is_err());
+    }
+
+    #[test]
+    fn a_role_dropped_by_a_reload_stops_granting_though_a_session_still_names_it_active() {
+        // Same rule `PrivilegeRegistry::replace_from` documents, exercised
+        // through the reload thread rather than a direct call: Go's
+        // `FindAllUserEffectiveRoles` never reaches into a live session to
+        // deactivate a dropped role, it just stops finding it in the
+        // reloaded role graph on the next check.
+        let registry = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        registry.create_user("bridge", "%", "");
+        registry.create_role("r1", "%");
+        let bridge: Account = ("bridge".to_owned(), "%".to_owned());
+        let role: Account = ("r1".to_owned(), "%".to_owned());
+        registry.grant_role(&role, &bridge);
+        registry.grant("r1", "%", GlobalPriv::Select.mask());
+        let active_roles = vec![role];
+        assert!(registry.has_global_priv_with_roles(
+            "bridge",
+            "%",
+            &active_roles,
+            GlobalPriv::Select
+        ));
+
+        let (sender, receiver) = mpsc::channel();
+        let mut reloader = PrivilegeReloader::spawn_with_read(
+            registry.clone(),
+            Duration::from_millis(5),
+            Box::new(move || {
+                let _ = sender.send(());
+                // `r1` is gone: no row, no edge -- a cluster-wide `DROP ROLE
+                // r1`.
+                Ok(snapshot_with_users(vec![user(
+                    "bridge",
+                    "%",
+                    "",
+                    false,
+                    Vec::new(),
+                )]))
+            }),
+        )
+        .unwrap();
+        receiver.recv().unwrap();
+        reloader.shutdown().unwrap();
+
+        assert!(!registry.has_global_priv_with_roles(
+            "bridge",
+            "%",
+            &active_roles,
+            GlobalPriv::Select
+        ));
     }
 }

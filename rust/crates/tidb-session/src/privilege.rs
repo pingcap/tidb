@@ -1001,6 +1001,45 @@ impl PrivilegeRegistry {
         self.lock().keys().cloned().collect()
     }
 
+    /// Publishes `fresh`'s account and grant tables into `self`, in place.
+    ///
+    /// This is the live-refresh publish step: every clone of `self` shares
+    /// these same `Mutex`es (every session, the login path, `SHOW GRANTS`),
+    /// so replacing each table's contents under its own lock is visible to
+    /// all of them immediately, with no second registry to swap in from
+    /// outside. `fresh` is normally a throwaway registry built fresh by
+    /// [`crate::privilege`]'s caller
+    /// (`tidb_server::cluster_privileges::registry_from_cluster`) from one
+    /// cluster snapshot, so each table is replaced whole rather than
+    /// reconciled row by row -- the same "publish whole" philosophy
+    /// [`crate::catalog_watch::CatalogReloader`] uses for the schema
+    /// catalog, applied per table because this registry has no single outer
+    /// handle to swap.
+    ///
+    /// `clock` and `sandbox_mode_enabled` are left alone: they are this
+    /// server's own runtime settings, not `mysql.*` state a cluster snapshot
+    /// carries.
+    ///
+    /// A session's own `active_roles` list is untouched by this call and may
+    /// still name a role this replaces away. That is intentional and matches
+    /// Go: `MySQLPrivilege.FindAllUserEffectiveRoles` filters the session's
+    /// `activeRoles` down to whichever are still found in the reloaded role
+    /// graph on every check, silently dropping the rest, rather than the
+    /// reload reaching into live sessions to deactivate them. Because this
+    /// registry's own [`Self::effective_roles`] performs exactly that same
+    /// filter against `role_edges`, a role dropped elsewhere stops granting
+    /// anything the moment this call removes its edges -- the active-role
+    /// list is no longer changed, but it stops mattering.
+    pub fn replace_from(&self, fresh: &Self) {
+        *self.lock() = std::mem::take(&mut *fresh.lock());
+        *self.lock_db() = std::mem::take(&mut *fresh.lock_db());
+        *self.lock_table() = std::mem::take(&mut *fresh.lock_table());
+        *self.lock_column() = std::mem::take(&mut *fresh.lock_column());
+        *self.lock_dynamic() = std::mem::take(&mut *fresh.lock_dynamic());
+        *self.lock_role_edges() = std::mem::take(&mut *fresh.lock_role_edges());
+        *self.lock_default_roles() = std::mem::take(&mut *fresh.lock_default_roles());
+    }
+
     /// Go `RENAME USER`: moves the account row and every DB/TABLE grant row
     /// keyed by it to a new identity, keeping the `authentication_string`
     /// (captured). Returns `false` without changing anything when the old
@@ -2817,5 +2856,81 @@ mod tests {
             Sha256Hash::digest(input).into()
         });
         assert_eq!(rederived, hash);
+    }
+
+    #[test]
+    fn replace_from_publishes_a_new_user_to_every_existing_clone() {
+        // The live registry a session factory and the login path already
+        // hold is `live`; `fresh` stands in for one reload pass's throwaway
+        // build. `cloned` is what a session opened before the reload holds --
+        // it must see the new account too, because it shares the same
+        // Mutexes rather than a snapshot.
+        let live = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        let cloned = live.clone();
+        assert!(!live.user_exists("u1", "%"));
+
+        let fresh = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        fresh.create_user("u1", "%", "");
+        fresh.grant("u1", "%", GlobalPriv::Select.bit());
+
+        live.replace_from(&fresh);
+
+        assert!(live.user_exists("u1", "%"));
+        assert!(cloned.user_exists("u1", "%"));
+        assert!(cloned.has_global_priv("u1", "%", GlobalPriv::Select));
+    }
+
+    #[test]
+    fn replace_from_revokes_and_drops_accounts_the_fresh_snapshot_no_longer_has() {
+        let live = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        live.create_user("stale", "%", "");
+        live.grant("stale", "%", GlobalPriv::Select.bit());
+        live.create_user("kept", "%", "");
+        live.grant("kept", "%", all_privs_mask());
+
+        // The fresh snapshot dropped `stale` entirely and revoked one
+        // privilege from `kept` -- exactly what a `DROP USER stale` and a
+        // `REVOKE ... FROM kept` on the Go side would produce next tick.
+        let fresh = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        fresh.create_user("kept", "%", "");
+        fresh.grant("kept", "%", GlobalPriv::Select.bit());
+
+        live.replace_from(&fresh);
+
+        assert!(!live.user_exists("stale", "%"));
+        assert!(live.user_exists("kept", "%"));
+        assert!(live.has_global_priv("kept", "%", GlobalPriv::Select));
+        assert!(!live.has_global_priv("kept", "%", GlobalPriv::Super));
+    }
+
+    #[test]
+    fn a_role_dropped_by_replace_from_stops_granting_though_it_stays_named_active() {
+        // Go's own behavior (`FindAllUserEffectiveRoles`): a session's active
+        // role list is never edited by a reload. It just stops being backed
+        // by a role_edges entry, so every later privilege check silently
+        // filters it out.
+        let live = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        live.create_user("bridge", "%", "");
+        live.create_role("r1", "%");
+        let bridge: Account = ("bridge".to_owned(), "%".to_owned());
+        let role: Account = ("r1".to_owned(), "%".to_owned());
+        live.grant_role(&role, &bridge);
+        live.grant("r1", "%", GlobalPriv::Select.bit());
+
+        let active_roles = vec![role.clone()];
+        assert!(live.has_global_priv_with_roles("bridge", "%", &active_roles, GlobalPriv::Select));
+
+        // The fresh snapshot is what a cluster-wide `DROP ROLE r1` produces:
+        // no `r1` row, no edge granting it to `bridge`.
+        let fresh = PrivilegeRegistry::bootstrapped_from(Vec::new());
+        fresh.create_user("bridge", "%", "");
+        live.replace_from(&fresh);
+
+        // The session's own active-role list still names `r1` -- nothing in
+        // `replace_from` reached into it -- but the role no longer grants
+        // anything, because `effective_roles` filters `active_roles` against
+        // the (now empty) role_edges on every check.
+        assert!(!live.has_global_priv_with_roles("bridge", "%", &active_roles, GlobalPriv::Select));
+        assert!(live.effective_roles(&bridge, &active_roles).is_empty());
     }
 }
