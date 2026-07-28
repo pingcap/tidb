@@ -1404,14 +1404,31 @@ pub fn run_insert_reporting(
         || insert.ignore
         || !insert.on_duplicate.is_empty()
         || insert.set_syntax
-        || insert.source.is_some()
         || !insert.partitions.is_empty()
         || !insert.returning.fields().is_empty()
     {
         return Err(DriverError::Unsupported(
-            "only plain INSERT INTO t [(cols)] VALUES is supported",
+            "REPLACE, INSERT IGNORE, ON DUPLICATE KEY UPDATE, SET syntax, \
+             partitions and RETURNING are not supported yet",
         ));
     }
+
+    // `INSERT ... SELECT` runs its source query first, over the catalog as it
+    // stands: Go materializes the SelectExec's rows and feeds them to the
+    // insert, so a source that reads the target table sees the pre-insert
+    // rows. The query runs before the table is borrowed mutably, which is the
+    // same ordering.
+    let source_rows: Option<Vec<Vec<Datum>>> = match &insert.source {
+        Some(query) => Some(match &**query {
+            tidb_ast::QueryStmt::Select(select) => {
+                run_select_stmt(select, catalog, current_db, ctx)?.1
+            }
+            tidb_ast::QueryStmt::SetOpr(set_opr) => {
+                run_set_opr_stmt(set_opr, catalog, current_db, ctx)?.1
+            }
+        }),
+        None => None,
+    };
 
     let (database, table_name) = split_table_path(&insert.table, current_db)?;
     let (database, table_name) = (database.to_owned(), table_name.to_owned());
@@ -1473,21 +1490,38 @@ pub fn run_insert_reporting(
     let mut first_allocated: Option<i64> = None;
 
     let mut inserted = 0u64;
-    let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(insert.rows.len());
-    for value_row in &insert.rows {
-        if value_row.len() != target_offsets.len() {
+    // A source query supplies already-evaluated values; a VALUES list
+    // supplies expressions. Both fill the same target offsets.
+    let value_rows: Vec<Vec<Datum>> = match &source_rows {
+        Some(rows) => rows.clone(),
+        None => Vec::new(),
+    };
+    let row_count = source_rows.as_ref().map_or(insert.rows.len(), Vec::len);
+    let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
+    for index in 0..row_count {
+        let width = match source_rows.as_ref() {
+            Some(_) => value_rows.get(index).map_or(0, Vec::len),
+            None => insert.rows[index].len(),
+        };
+        if width != target_offsets.len() {
             return Err(DriverError::Unsupported(
                 "VALUES arity does not match the column list",
             ));
         }
         let mut row = vec![Datum::Null; column_list.len()];
         let mut assigned = vec![false; column_list.len()];
-        for (expr, &offset) in value_row.iter().zip(&target_offsets) {
-            let rewritten = rewrite_expr_resolved(expr, &NoResolver)
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-            let value = rewritten
-                .eval(ctx, eval_chunk.get_row(0))
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        for (position, &offset) in target_offsets.iter().enumerate() {
+            let value = match source_rows.as_ref() {
+                Some(_) => value_rows[index][position].clone(),
+                None => {
+                    let rewritten =
+                        rewrite_expr_resolved(&insert.rows[index][position], &NoResolver)
+                            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                    rewritten
+                        .eval(ctx, eval_chunk.get_row(0))
+                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?
+                }
+            };
             row[offset] = value;
             assigned[offset] = true;
         }
@@ -1662,6 +1696,101 @@ fn datum_error_text(value: &Datum) -> String {
         Datum::String(s) => String::from_utf8_lossy(s.bytes()).into_owned(),
         other => format!("{other:?}"),
     }
+}
+
+/// Orders candidate rows the way a DML statement's own `ORDER BY` does, and
+/// reports the row cap its `LIMIT` sets.
+///
+/// Go plans `UPDATE`/`DELETE ... ORDER BY ... LIMIT n` as a sort and a limit
+/// over the rows to modify, so the cap counts rows actually MODIFIED, not
+/// rows examined -- which is why the limit is applied by the caller as it
+/// modifies rather than by truncating this list.
+fn order_rows_for_dml<H>(
+    rows: &mut [(H, Vec<Datum>)],
+    order_by: &[tidb_ast::OrderItem],
+    field_types: &[FieldType],
+    resolver: &impl tidb_expr::rewriter::ColumnResolver,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    if order_by.is_empty() {
+        return Ok(());
+    }
+    let mut items = Vec::with_capacity(order_by.len());
+    for item in order_by {
+        let expr = rewrite_expr_resolved(&item.expr, resolver)
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        items.push((expr, item.desc));
+    }
+    // Each row's sort key is computed once, so the comparison itself cannot
+    // fail partway through and leave a partial order.
+    let mut keyed = Vec::with_capacity(rows.len());
+    for (index, (_, row)) in rows.iter().enumerate() {
+        let chunk = row_chunk(row, field_types)?;
+        let mut key = Vec::with_capacity(items.len());
+        for (expr, _) in &items {
+            key.push(
+                expr.eval(ctx, chunk.get_row(0))
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+            );
+        }
+        keyed.push((index, key));
+    }
+    let mut failure = None;
+    keyed.sort_by(|left, right| {
+        for (position, (_, desc)) in items.iter().enumerate() {
+            let ordering = match tidb_expr::compare_datums(&left.1[position], &right.1[position]) {
+                Ok(ordering) => ordering,
+                Err(error) => {
+                    failure = Some(error);
+                    std::cmp::Ordering::Equal
+                }
+            };
+            if ordering != std::cmp::Ordering::Equal {
+                return if *desc { ordering.reverse() } else { ordering };
+            }
+        }
+        std::cmp::Ordering::Equal
+    });
+    if let Some(error) = failure {
+        return Err(DriverError::Exec(ExecError::Eval(error)));
+    }
+    let order: Vec<usize> = keyed.into_iter().map(|(index, _)| index).collect();
+    apply_permutation(rows, &order);
+    Ok(())
+}
+
+/// Reorders `rows` so that position `i` holds what was at `order[i]`.
+fn apply_permutation<T>(rows: &mut [T], order: &[usize]) {
+    let mut done = vec![false; rows.len()];
+    for start in 0..rows.len() {
+        if done[start] || order[start] == start {
+            done[start] = true;
+            continue;
+        }
+        let mut current = start;
+        loop {
+            let next = order[current];
+            done[current] = true;
+            if next == start {
+                break;
+            }
+            rows.swap(current, next);
+            current = next;
+        }
+    }
+}
+
+/// The row cap a DML `LIMIT` sets, which Go requires to be a constant.
+fn dml_row_limit(limit: &Option<tidb_ast::Limit>) -> Result<Option<u64>, DriverError> {
+    let Some(limit) = limit else {
+        return Ok(None);
+    };
+    if limit.offset.is_some() {
+        return Err(DriverError::Unsupported(
+            "an UPDATE/DELETE LIMIT takes no offset",
+        ));
+    }
+    Ok(Some(eval_limit_bound(&limit.count)?))
 }
 
 /// Go `havingWindowAndOrderbyExprResolver`: an `ORDER BY` item is resolved
@@ -3300,13 +3429,9 @@ pub fn run_update_in(
         },
         _ => return Err(DriverError::Unsupported("only UPDATE is supported here")),
     };
-    if update.ignore
-        || !update.order_by.is_empty()
-        || update.limit.is_some()
-        || !update.returning.fields().is_empty()
-    {
+    if update.ignore || !update.returning.fields().is_empty() {
         return Err(DriverError::Unsupported(
-            "only plain UPDATE t SET ... [WHERE ...] is supported",
+            "UPDATE IGNORE and RETURNING are not supported yet",
         ));
     }
     let table_ref = match &update.kind {
@@ -3359,6 +3484,7 @@ pub fn run_update_in(
 
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
+    let row_limit = dml_row_limit(&update.limit)?;
     let entry = catalog
         .get_mut_in(&database, &name)
         .ok_or(DriverError::Unsupported("unknown table"))?;
@@ -3385,10 +3511,14 @@ pub fn run_update_in(
             }
         }
         TableEntry::Kv(kv) => {
-            let rows = kv
+            let mut rows = kv
                 .scan_rows_with_handles()
                 .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
+            order_rows_for_dml(&mut rows, &update.order_by, &field_types, &resolver, ctx)?;
             for (handle, row) in rows {
+                if row_limit.is_some_and(|cap| changed >= cap) {
+                    break;
+                }
                 if let Some(new_row) = compute_updated_row(
                     &row,
                     &field_types,
@@ -3480,12 +3610,7 @@ pub fn run_delete_in(
         },
         _ => return Err(DriverError::Unsupported("only DELETE is supported here")),
     };
-    if delete.ignore
-        || delete.quick
-        || !delete.order_by.is_empty()
-        || delete.limit.is_some()
-        || !delete.returning.fields().is_empty()
-    {
+    if delete.ignore || delete.quick || !delete.returning.fields().is_empty() {
         return Err(DriverError::Unsupported(
             "only plain DELETE FROM t [WHERE ...] is supported",
         ));
@@ -3515,6 +3640,7 @@ pub fn run_delete_in(
         None => None,
     };
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
+    let row_limit = dml_row_limit(&delete.limit)?;
     let entry = catalog
         .get_mut_in(&database, &name)
         .ok_or(DriverError::Unsupported("unknown table"))?;
@@ -3533,10 +3659,15 @@ pub fn run_delete_in(
             mem.rows = kept;
         }
         TableEntry::Kv(kv) => {
-            let rows = kv
+            let mut rows = kv
                 .scan_rows_with_handles()
                 .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
+            order_rows_for_dml(&mut rows, &delete.order_by, &field_types, &resolver, ctx)?;
             for (handle, row) in rows {
+                // Go's LIMIT caps the rows DELETED, not the rows examined.
+                if row_limit.is_some_and(|cap| deleted >= cap) {
+                    break;
+                }
                 if row_is_selected(&row, &field_types, &predicate, ctx)? {
                     kv.delete_row(&handle)
                         .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
@@ -4532,21 +4663,17 @@ mod tests {
                 "kv={kv}"
             );
 
-            // Unsupported shapes fail closed.
-            assert!(run_update_on(
-                "UPDATE w SET a = 1 LIMIT 1",
-                &mut catalog,
-                &crate::StmtContext::for_query()
-            )
-            .is_err());
-            assert!(run_delete_on(
-                "DELETE FROM w ORDER BY a LIMIT 1",
-                &mut catalog,
-                &crate::StmtContext::for_query()
-            )
-            .is_err());
+            // ORDER BY and LIMIT are supported now (see the session's
+            // `insert_select_and_ordered_dml`); an unknown SET column and
+            // the IGNORE form still fail closed.
             assert!(run_update_on(
                 "UPDATE w SET zzz = 1",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            )
+            .is_err());
+            assert!(run_update_on(
+                "UPDATE IGNORE w SET a = 1",
                 &mut catalog,
                 &crate::StmtContext::for_query()
             )

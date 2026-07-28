@@ -2860,6 +2860,97 @@ mod tests {
         }
     }
 
+    /// `INSERT ... SELECT` and the `ORDER BY`/`LIMIT` forms of UPDATE and
+    /// DELETE, checked against captured TiDB output.
+    ///
+    /// STILL REFUSED, each recorded at its gate: `REPLACE INTO`,
+    /// `INSERT IGNORE`, `ON DUPLICATE KEY UPDATE` (all three need
+    /// conflict-time row replacement), the `SET` insert syntax, partitions
+    /// and `RETURNING`.
+    #[test]
+    fn insert_select_and_ordered_dml() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(10), c BIGINT)")
+            .unwrap();
+        session
+            .run("CREATE TABLE u (x BIGINT, y VARCHAR(10))")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1,'p',10),(2,'q',20),(3,'r',30)")
+            .unwrap();
+        session
+            .run("INSERT INTO u VALUES (7,'seven'),(8,'eight')")
+            .unwrap();
+
+        // Captured: INSERT ... SELECT inserts the query's rows, and the
+        // columns it does not name stay NULL.
+        assert_eq!(
+            session
+                .run("INSERT INTO t (a,b) SELECT x, y FROM u")
+                .unwrap(),
+            StmtResult::Affected(2)
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a, b, c FROM t ORDER BY a")),
+            [
+                ["1", "p", "10"],
+                ["2", "q", "20"],
+                ["3", "r", "30"],
+                ["7", "seven", "NULL"],
+                ["8", "eight", "NULL"],
+            ]
+        );
+
+        // Captured: UPDATE ... ORDER BY ... LIMIT updates that many rows, in
+        // that order -- here the largest `a`.
+        assert_eq!(
+            session
+                .run("UPDATE t SET c = 99 ORDER BY a DESC LIMIT 1")
+                .unwrap(),
+            StmtResult::Affected(1)
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a, c FROM t ORDER BY a")),
+            [
+                ["1", "10"],
+                ["2", "20"],
+                ["3", "30"],
+                ["7", "NULL"],
+                ["8", "99"],
+            ]
+        );
+
+        // Captured: DELETE ... ORDER BY ... LIMIT, and the WHERE + LIMIT form
+        // whose cap counts rows DELETED rather than rows examined.
+        assert_eq!(
+            session
+                .run("DELETE FROM t ORDER BY a DESC LIMIT 1")
+                .unwrap(),
+            StmtResult::Affected(1)
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t ORDER BY a")),
+            [["1"], ["2"], ["3"], ["7"]]
+        );
+        assert_eq!(
+            session.run("DELETE FROM t WHERE c > 0 LIMIT 2").unwrap(),
+            StmtResult::Affected(2)
+        );
+        assert_eq!(
+            row_text(session.run("SELECT a FROM t ORDER BY a")),
+            [["3"], ["7"]]
+        );
+
+        // The refusals are refusals, not wrong answers.
+        for sql in [
+            "REPLACE INTO t (a,b) VALUES (3,'z')",
+            "INSERT INTO t (a,b) VALUES (3,'z') ON DUPLICATE KEY UPDATE b='z'",
+        ] {
+            assert!(session.run(sql).is_err(), "{sql} should still be refused");
+        }
+    }
+
     /// `ORDER BY` resolved against the SELECT list, checked against captured
     /// TiDB output.
     ///
@@ -4086,8 +4177,13 @@ mod tests {
     fn unsupported_kinds_error() {
         let mut session = Session::new();
         session.run("CREATE TABLE t (a INT)").unwrap();
-        // Shapes the write paths do not model yet.
-        assert!(session.run("DELETE FROM t ORDER BY a LIMIT 1").is_err());
-        assert!(session.run("UPDATE t SET a = 1 LIMIT 1").is_err());
+        // Shapes the write paths do not model yet. (ORDER BY and LIMIT used
+        // to be the examples here; both work now -- see
+        // `insert_select_and_ordered_dml`.)
+        assert!(session.run("REPLACE INTO t (a) VALUES (1)").is_err());
+        assert!(session.run("DELETE QUICK FROM t").is_err());
+        assert!(session
+            .run("INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE a = 2")
+            .is_err());
     }
 }
