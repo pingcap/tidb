@@ -56,6 +56,22 @@ pub enum PreparedParameterType {
     /// length-encoded string (`ExecBinaryParam`'s string arm; utf8 for this
     /// node).
     String,
+    /// The unsigned counterpart of each fixed-width integer, which Go reads
+    /// into a `uint64` datum rather than sign-extending.
+    UnsignedTiny,
+    /// An unsigned `MYSQL_TYPE_SHORT`/`YEAR` parameter.
+    UnsignedShort,
+    /// An unsigned `MYSQL_TYPE_INT24`/`LONG` parameter.
+    UnsignedLong,
+    /// An unsigned `MYSQL_TYPE_LONGLONG` parameter.
+    UnsignedLongLong,
+    /// A `MYSQL_TYPE_FLOAT` parameter (four little-endian bytes).
+    Float,
+    /// A `MYSQL_TYPE_DOUBLE` parameter (eight little-endian bytes).
+    Double,
+    /// A `MYSQL_TYPE_NEWDECIMAL`/`DECIMAL` parameter, which the protocol
+    /// carries as a length-encoded string of digits.
+    Decimal,
 }
 
 /// A decoded prepared-statement value admitted by this protocol leaf.
@@ -63,12 +79,23 @@ pub enum PreparedParameterType {
 /// A signed integer width interprets to one `i64` (Go `ExecBinaryParam`
 /// sign-extends `int8`/`int16`/`int32`/`int64`); a string parameter carries its
 /// raw length-encoded bytes.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PreparedValue {
     /// A signed integer parameter, sign-extended to 64 bits from its wire width.
     SignedLongLong(i64),
     /// A string parameter's raw bytes (utf8 for the configured node).
     String(Vec<u8>),
+    /// An unsigned integer parameter, widened to 64 bits.
+    UnsignedLongLong(u64),
+    /// A `FLOAT` parameter, widened to `f64` the way Go widens `float32`.
+    Float(f32),
+    /// A `DOUBLE` parameter.
+    Double(f64),
+    /// A `DECIMAL` parameter's digits, which Go parses with
+    /// `MyDecimal.FromString`.
+    Decimal(Vec<u8>),
+    /// A parameter the execute packet marked NULL in its bitmap.
+    Null,
 }
 
 /// Whether an execute packet supplied a new parameter type vector.
@@ -82,7 +109,7 @@ pub enum PreparedParameterTypes {
 }
 
 /// A decoded bounded `COM_STMT_EXECUTE` payload.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PreparedStatementExecute {
     /// The per-connection statement handle selected by the client.
     pub statement_id: u32,
@@ -308,12 +335,12 @@ pub fn decode_prepared_statement_execute(
     }
 
     let null_bitmap_len = parameter_count.div_ceil(8);
-    let null_bitmap = cursor.read_exact(null_bitmap_len, "null bitmap")?;
-    for parameter in 0..parameter_count {
-        if null_bitmap[parameter / 8] & (1 << (parameter % 8)) != 0 {
-            return Err(PreparedStatementError::NullParameter { parameter });
-        }
-    }
+    let null_bitmap = cursor.read_exact(null_bitmap_len, "null bitmap")?.to_vec();
+    // A bit set in the bitmap is Go's `mysql.TypeNull` arm: the value is NULL
+    // and carries no bytes in the value section at all.
+    let is_null: Vec<bool> = (0..parameter_count)
+        .map(|parameter| null_bitmap[parameter / 8] & (1 << (parameter % 8)) != 0)
+        .collect();
     if !parameter_count.is_multiple_of(8)
         && null_bitmap
             .last()
@@ -355,7 +382,12 @@ pub fn decode_prepared_statement_execute(
         };
 
     let mut values = Vec::with_capacity(types.len());
-    for parameter_type in &types {
+    for (parameter, parameter_type) in types.iter().enumerate() {
+        // A NULL parameter occupies no bytes in the value section.
+        if is_null.get(parameter).copied().unwrap_or(false) {
+            values.push(PreparedValue::Null);
+            continue;
+        }
         // Each integer width sign-extends to one i64, exactly as Go
         // `ExecBinaryParam` widens int8/int16/int32/int64 with `int64(intN(...))`;
         // a string carries its length-encoded bytes.
@@ -374,6 +406,27 @@ pub fn decode_prepared_statement_execute(
             }
             PreparedParameterType::String => {
                 PreparedValue::String(cursor.read_length_encoded_string("string value")?)
+            }
+            PreparedParameterType::UnsignedTiny => PreparedValue::UnsignedLongLong(u64::from(
+                cursor.read_u8("unsigned TINYINT value")?,
+            )),
+            PreparedParameterType::UnsignedShort => PreparedValue::UnsignedLongLong(u64::from(
+                cursor.read_u16("unsigned SMALLINT value")?,
+            )),
+            PreparedParameterType::UnsignedLong => {
+                PreparedValue::UnsignedLongLong(u64::from(cursor.read_u32("unsigned INT value")?))
+            }
+            PreparedParameterType::UnsignedLongLong => {
+                PreparedValue::UnsignedLongLong(cursor.read_u64("unsigned BIGINT value")?)
+            }
+            PreparedParameterType::Float => {
+                PreparedValue::Float(f32::from_bits(cursor.read_u32("FLOAT value")?))
+            }
+            PreparedParameterType::Double => {
+                PreparedValue::Double(f64::from_bits(cursor.read_u64("DOUBLE value")?))
+            }
+            PreparedParameterType::Decimal => {
+                PreparedValue::Decimal(cursor.read_length_encoded_string("DECIMAL value")?)
             }
         };
         values.push(value);
@@ -868,20 +921,27 @@ fn decode_parameter_type(
 ) -> Result<PreparedParameterType, PreparedStatementError> {
     // The unsigned bit is rejected first (Go reads only this flag bit); any
     // other nonzero flag byte is an unmodelled encoding for this bounded path.
-    if type_flags & MYSQL_UNSIGNED_FLAG != 0 {
-        return Err(PreparedStatementError::UnsignedParameter { parameter });
-    }
-    if type_flags != 0 {
+    let unsigned = type_flags & MYSQL_UNSIGNED_FLAG != 0;
+    if type_flags & !MYSQL_UNSIGNED_FLAG != 0 {
         return Err(PreparedStatementError::InvalidField {
             field: "parameter type flags",
             value: type_flags,
         });
     }
+    // Go `ExecBinaryParam` reads the unsigned flag per integer width and
+    // produces a uint64 datum; every other family ignores it.
     match type_code {
+        TYPE_TINY if unsigned => Ok(PreparedParameterType::UnsignedTiny),
         TYPE_TINY => Ok(PreparedParameterType::SignedTiny),
+        TYPE_SHORT | TYPE_YEAR if unsigned => Ok(PreparedParameterType::UnsignedShort),
         TYPE_SHORT | TYPE_YEAR => Ok(PreparedParameterType::SignedShort),
+        TYPE_INT24 | TYPE_LONG if unsigned => Ok(PreparedParameterType::UnsignedLong),
         TYPE_INT24 | TYPE_LONG => Ok(PreparedParameterType::SignedLong),
+        TYPE_LONGLONG if unsigned => Ok(PreparedParameterType::UnsignedLongLong),
         TYPE_LONGLONG => Ok(PreparedParameterType::SignedLongLong),
+        TYPE_FLOAT => Ok(PreparedParameterType::Float),
+        TYPE_DOUBLE => Ok(PreparedParameterType::Double),
+        TYPE_NEW_DECIMAL => Ok(PreparedParameterType::Decimal),
         TYPE_VARCHAR | TYPE_VAR_STRING | TYPE_STRING => Ok(PreparedParameterType::String),
         _ => Err(PreparedStatementError::UnsupportedParameterType {
             parameter,
@@ -947,6 +1007,22 @@ impl<'a> PacketCursor<'a> {
 
     fn read_i8(&mut self, field: &'static str) -> Result<i8, PreparedStatementError> {
         Ok(self.read_exact(1, field)?[0] as i8)
+    }
+
+    fn read_u16(&mut self, field: &'static str) -> Result<u16, PreparedStatementError> {
+        Ok(u16::from_le_bytes(
+            self.read_exact(2, field)?
+                .try_into()
+                .expect("two bytes were read"),
+        ))
+    }
+
+    fn read_u64(&mut self, field: &'static str) -> Result<u64, PreparedStatementError> {
+        Ok(u64::from_le_bytes(
+            self.read_exact(8, field)?
+                .try_into()
+                .expect("eight bytes were read"),
+        ))
     }
 
     fn read_i16(&mut self, field: &'static str) -> Result<i16, PreparedStatementError> {

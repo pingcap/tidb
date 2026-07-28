@@ -195,14 +195,18 @@ fn execute_rejects_every_unowned_packet_variant_without_fallback() {
             PreparedStatementError::UnsupportedIterationCount(2),
         ),
         (
-            "null",
+            // A NULL parameter carries NO bytes in the value section, so a
+            // packet that both marks it NULL and sends eight value bytes is
+            // malformed. (The NULL parameter itself is now a value -- see
+            // `execute_decodes_every_parameter_family`.)
+            "null bit with value bytes",
             {
                 let mut packet = execute_payload(1, true, 1);
                 packet[9] = 1;
                 packet
             },
             None,
-            PreparedStatementError::NullParameter { parameter: 0 },
+            PreparedStatementError::TrailingBytes { bytes: 8 },
         ),
         (
             "missing type reuse",
@@ -211,29 +215,35 @@ fn execute_rejects_every_unowned_packet_variant_without_fallback() {
             PreparedStatementError::MissingPreviousTypeVector,
         ),
         (
-            "unsigned",
+            // Only the unsigned bit is a real flag; any other bit is an
+            // encoding this leaf does not model. (The unsigned bit itself is
+            // now admitted -- see `execute_decodes_every_parameter_family`.)
+            "unmodelled type flag",
             {
                 let mut packet = execute_payload(1, true, 1);
-                packet[12] = 0x80;
+                packet[12] = 0x40;
                 packet
             },
             None,
-            PreparedStatementError::UnsignedParameter { parameter: 0 },
+            PreparedStatementError::InvalidField {
+                field: "parameter type flags",
+                value: 0x40,
+            },
         ),
         (
-            // TYPE_DOUBLE (0x05): a fixed-width type outside the admitted signed
-            // integer + string families, so still fail closed. (0x0f is now a
-            // supported VARCHAR string parameter.)
+            // TYPE_GEOMETRY (0xff): outside every family Go's ExecBinaryParam
+            // builds a datum for, so it still fails closed. (TYPE_DOUBLE used
+            // to be this example and is admitted now.)
             "unsupported type",
             {
                 let mut packet = execute_payload(1, true, 1);
-                packet[11] = 0x05;
+                packet[11] = 0xff;
                 packet
             },
             None,
             PreparedStatementError::UnsupportedParameterType {
                 parameter: 0,
-                type_code: 0x05,
+                type_code: 0xff,
             },
         ),
         (
@@ -697,4 +707,85 @@ fn binary_datetime_matches_go_dump_binary_datetime_vectors() {
         encode_binary_datetime(PackedTime::ZERO, BinaryDateTimeType::Date),
         vec![0]
     );
+}
+
+/// Go `ExecBinaryParam` builds one datum per parameter family. Each family
+/// this leaf decodes is driven here from a real execute packet.
+#[test]
+fn execute_decodes_every_parameter_family() {
+    // A NULL parameter is a bitmap bit and no value bytes at all.
+    let mut null_packet = Vec::new();
+    null_packet.extend_from_slice(&1_u32.to_le_bytes());
+    null_packet.push(0);
+    null_packet.extend_from_slice(&1_u32.to_le_bytes());
+    null_packet.push(1); // the one parameter is NULL
+    null_packet.push(1); // new types follow
+    null_packet.extend_from_slice(&[0x08, 0]);
+    assert_eq!(
+        decode_prepared_statement_execute(&null_packet, 1, None)
+            .expect("a NULL parameter decodes")
+            .values,
+        vec![PreparedValue::Null]
+    );
+
+    // Every other family carries its own value bytes.
+    let cases: Vec<(&str, u8, u8, Vec<u8>, PreparedValue)> = vec![
+        (
+            "unsigned tiny",
+            0x01,
+            0x80,
+            vec![0xff],
+            PreparedValue::UnsignedLongLong(255),
+        ),
+        (
+            "signed tiny",
+            0x01,
+            0,
+            vec![0xff],
+            PreparedValue::SignedLongLong(-1),
+        ),
+        (
+            "unsigned bigint",
+            0x08,
+            0x80,
+            u64::MAX.to_le_bytes().to_vec(),
+            PreparedValue::UnsignedLongLong(u64::MAX),
+        ),
+        (
+            "float",
+            0x04,
+            0,
+            1.5_f32.to_bits().to_le_bytes().to_vec(),
+            PreparedValue::Float(1.5),
+        ),
+        (
+            "double",
+            0x05,
+            0,
+            2.5_f64.to_bits().to_le_bytes().to_vec(),
+            PreparedValue::Double(2.5),
+        ),
+        (
+            "decimal",
+            0xf6,
+            0,
+            {
+                let digits = b"12.345";
+                let mut encoded = vec![digits.len() as u8];
+                encoded.extend_from_slice(digits);
+                encoded
+            },
+            PreparedValue::Decimal(b"12.345".to_vec()),
+        ),
+    ];
+    for (name, type_code, flag, value_bytes, expected) in cases {
+        let packet = execute_payload_typed(1, type_code, flag, &value_bytes);
+        assert_eq!(
+            decode_prepared_statement_execute(&packet, 1, None)
+                .unwrap_or_else(|error| panic!("{name} should decode: {error:?}"))
+                .values,
+            vec![expected],
+            "{name}"
+        );
+    }
 }

@@ -53,9 +53,9 @@ fn point_read_integer_parameters(values: Vec<PreparedValue>) -> Result<Vec<i64>,
         .into_iter()
         .map(|value| match value {
             PreparedValue::SignedLongLong(value) => Ok(value),
-            PreparedValue::String(_) => {
-                Err("prepared point read parameter must be an integer".to_owned())
-            }
+            // A point read binds a clustered signed handle; every other
+            // parameter shape belongs to the general path.
+            _ => Err("prepared point read parameter must be an integer".to_owned()),
         })
         .collect()
 }
@@ -67,7 +67,17 @@ fn write_bind_parameters(values: Vec<PreparedValue>) -> Vec<PreparedBindValue> {
         .into_iter()
         .map(|value| match value {
             PreparedValue::SignedLongLong(value) => PreparedBindValue::Int(value),
-            PreparedValue::String(bytes) => PreparedBindValue::Bytes(bytes),
+            PreparedValue::String(bytes) | PreparedValue::Decimal(bytes) => {
+                PreparedBindValue::Bytes(bytes)
+            }
+            // The configured write path binds only the two shapes its
+            // template models; the general path carries the rest.
+            PreparedValue::UnsignedLongLong(value) => PreparedBindValue::Int(value as i64),
+            PreparedValue::Float(value) => PreparedBindValue::Bytes(value.to_string().into_bytes()),
+            PreparedValue::Double(value) => {
+                PreparedBindValue::Bytes(value.to_string().into_bytes())
+            }
+            PreparedValue::Null => PreparedBindValue::Bytes(Vec::new()),
         })
         .collect()
 }

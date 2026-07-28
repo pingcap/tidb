@@ -113,7 +113,9 @@ fn authenticate(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>) {
 fn read_length_encoded_string(packet: &mut &[u8]) -> Vec<u8> {
     let first = packet[0];
     let (length, header) = match first {
-        0xfb => (0, 1), // NULL, which reads as an empty value here.
+        // 0xfb is the protocol's NULL marker. `read_text_value` distinguishes
+        // it; a caller that reaches here for a NULL reads an empty value.
+        0xfb => (0, 1),
         0xfc => (
             usize::from(u16::from_le_bytes([packet[1], packet[2]])),
             3,
@@ -135,6 +137,16 @@ fn read_length_encoded_string(packet: &mut &[u8]) -> Vec<u8> {
     let (value, remaining) = packet.split_at(length);
     *packet = remaining;
     value.to_vec()
+}
+
+/// Reads one value of a TEXT result-set row, where NULL is its own 0xfb
+/// marker rather than a zero-length string.
+fn read_text_value(packet: &mut &[u8]) -> String {
+    if packet[0] == 0xfb {
+        *packet = &packet[1..];
+        return "NULL".to_owned();
+    }
+    String::from_utf8_lossy(&read_length_encoded_string(packet)).into_owned()
 }
 
 /// Sends one COM_QUERY expected to answer with an OK packet (a write or DDL)
@@ -222,7 +234,7 @@ fn run_query(
         let mut remaining = packet.as_slice();
         let mut row = Vec::new();
         for _ in 0..column_count {
-            row.push(String::from_utf8(read_length_encoded_string(&mut remaining)).unwrap());
+            row.push(read_text_value(&mut remaining));
         }
         rows.push(row);
     }
@@ -352,6 +364,77 @@ fn execute_statement(
         }
         // A binary row is: 0x00 header, a NULL bitmap offset by two bits,
         // then each value packed by its own column type.
+        let null_bitmap_len = (column_count + 7 + 2) / 8;
+        let null_bitmap = &packet[1..1 + null_bitmap_len];
+        let mut remaining = &packet[1 + null_bitmap_len..];
+        let mut row = Vec::new();
+        for (index, column_type) in column_types.iter().enumerate() {
+            let bit = index + 2;
+            if null_bitmap[bit / 8] & (1 << (bit % 8)) != 0 {
+                row.push("NULL".to_owned());
+                continue;
+            }
+            row.push(read_binary_value(&mut remaining, *column_type));
+        }
+        rows.push(row);
+    }
+    rows
+}
+
+/// Sends COM_STMT_EXECUTE with explicitly typed parameters -- the shapes a
+/// real driver binds -- and reads the binary result set back.
+fn execute_statement_typed(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    statement_id: u32,
+    parameters: &[(u8, u8, Vec<u8>)],
+    null_flags: &[bool],
+) -> Vec<Vec<String>> {
+    let mut command = vec![COM_STMT_EXECUTE];
+    command.extend_from_slice(&statement_id.to_le_bytes());
+    command.push(0);
+    command.extend_from_slice(&1u32.to_le_bytes());
+    let null_bitmap_len = parameters.len().div_ceil(8);
+    let mut bitmap = vec![0u8; null_bitmap_len];
+    for (index, is_null) in null_flags.iter().enumerate() {
+        if *is_null {
+            bitmap[index / 8] |= 1 << (index % 8);
+        }
+    }
+    command.extend_from_slice(&bitmap);
+    command.push(1);
+    for (type_code, flag, _) in parameters {
+        command.push(*type_code);
+        command.push(*flag);
+    }
+    for (index, (_, _, value_bytes)) in parameters.iter().enumerate() {
+        // A NULL parameter carries no bytes at all.
+        if !null_flags[index] {
+            command.extend_from_slice(value_bytes);
+        }
+    }
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+
+    let first = reader.read_packet().unwrap();
+    assert_ne!(first[0], 0xff, "execute errored: {first:?}");
+    // A write answers with one OK packet and no result set at all, which is
+    // what an INSERT prepared this way returns.
+    if first[0] == 0x00 {
+        return Vec::new();
+    }
+    let column_count = usize::from(first[0]);
+    let mut column_types = Vec::with_capacity(column_count);
+    for _ in 0..column_count {
+        let definition = reader.read_packet().unwrap();
+        column_types.push(column_definition_type(&definition));
+    }
+    let mut rows = Vec::new();
+    loop {
+        let packet = reader.read_packet().unwrap();
+        if packet[0] == 0xfe && packet.len() < 9 + 4 {
+            break;
+        }
         let null_bitmap_len = (column_count + 7 + 2) / 8;
         let null_bitmap = &packet[1..1 + null_bitmap_len];
         let mut remaining = &packet[1 + null_bitmap_len..];
@@ -538,6 +621,51 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         execute_statement(&mut client, &mut reader, statement_id, &[3]),
         vec![vec!["3".to_owned(), "30".to_owned()]]
     );
+    // The parameter families a real driver binds: a NULL, an unsigned value,
+    // a DOUBLE and a DECIMAL each reach the engine as their own datum.
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "CREATE TABLE p (id BIGINT, note VARCHAR(20), amount DECIMAL(10,2), ratio DOUBLE)"
+        ),
+        0
+    );
+    let (insert_id, insert_params, _) = prepare_statement(
+        &mut client,
+        &mut reader,
+        "INSERT INTO p (id, note, amount, ratio) VALUES (?, ?, ?, ?)",
+    );
+    assert_eq!(insert_params, 4);
+    let decimal_digits = b"12.34";
+    let mut decimal_bytes = vec![decimal_digits.len() as u8];
+    decimal_bytes.extend_from_slice(decimal_digits);
+    execute_statement_typed(
+        &mut client,
+        &mut reader,
+        insert_id,
+        &[
+            (0x08, 0x80, u64::from(7u32).to_le_bytes().to_vec()), // unsigned BIGINT
+            (0x0f, 0, vec![0]),                                   // NULL VARCHAR
+            (0xf6, 0, decimal_bytes),                             // DECIMAL digits
+            (0x05, 0, 1.5_f64.to_bits().to_le_bytes().to_vec()),  // DOUBLE
+        ],
+        &[false, true, false, false],
+    );
+    assert_eq!(
+        run_query(
+            &mut client,
+            &mut reader,
+            "SELECT id, note, amount, ratio FROM p"
+        ),
+        vec![vec![
+            "7".to_owned(),
+            "NULL".to_owned(),
+            "12.34".to_owned(),
+            "1.5".to_owned()
+        ]]
+    );
+
     let mut close = vec![COM_STMT_CLOSE];
     close.extend_from_slice(&statement_id.to_le_bytes());
     write_packet(&mut client, 0, &close);

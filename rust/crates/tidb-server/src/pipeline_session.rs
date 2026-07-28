@@ -169,13 +169,36 @@ impl QuerySession for PipelineServerSession {
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
         let params: Vec<tidb_datatype::Datum> = values
             .iter()
+            // Go `ExecBinaryParam` builds one datum per parameter kind: a
+            // signed width becomes an Int, an unsigned one a UInt, FLOAT and
+            // DOUBLE their own real domains, DECIMAL is parsed from its
+            // digits, and a NULL parameter is a NULL datum.
             .map(|value| match value {
                 tidb_protocol::PreparedValue::SignedLongLong(value) => {
                     tidb_datatype::Datum::Int(*value)
                 }
+                tidb_protocol::PreparedValue::UnsignedLongLong(value) => {
+                    tidb_datatype::Datum::UInt(*value)
+                }
                 tidb_protocol::PreparedValue::String(bytes) => {
                     tidb_datatype::Datum::Bytes(bytes.clone())
                 }
+                tidb_protocol::PreparedValue::Float(value) => {
+                    tidb_datatype::Datum::Float32(f64::from(*value))
+                }
+                tidb_protocol::PreparedValue::Double(value) => tidb_datatype::Datum::Real(*value),
+                tidb_protocol::PreparedValue::Decimal(digits) => {
+                    match std::str::from_utf8(digits) {
+                        Ok(text) => tidb_datatype::Datum::Decimal(
+                            tidb_datatype::Decimal::from_literal(text),
+                        ),
+                        // Go's own FromString reports truncation and keeps
+                        // what it read; digits that are not even text cannot
+                        // be a number at all.
+                        Err(_) => tidb_datatype::Datum::Null,
+                    }
+                }
+                tidb_protocol::PreparedValue::Null => tidb_datatype::Datum::Null,
             })
             .collect();
         let output = self
