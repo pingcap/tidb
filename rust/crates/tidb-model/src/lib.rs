@@ -36,6 +36,7 @@ pub mod placement;
 pub mod reorg;
 pub mod resource_group;
 pub mod schema_state;
+pub mod serde_helpers;
 mod setting_builder;
 pub mod table;
 pub mod table_info;

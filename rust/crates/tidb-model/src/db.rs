@@ -17,6 +17,8 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 use tidb_ast::CiString;
 
 use crate::placement::PolicyRefInfo;
@@ -28,24 +30,66 @@ use crate::table_info::TableInfo;
 /// Go's `Clone` deep-copies `Deprecated.Tables` while `Copy` shares the
 /// `*TableInfo` pointers; with Rust's owned `Vec<TableInfo>` there is no
 /// pointer sharing, so both converge on the derived deep `Clone`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct DBInfo {
     /// The database ID.
+    #[serde(rename = "id", default)]
     pub id: i64,
     /// The database name.
+    #[serde(rename = "db_name", default)]
     pub name: CiString,
     /// The database charset.
+    #[serde(
+        rename = "charset",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub charset: String,
     /// The database collation.
+    #[serde(
+        rename = "collate",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub collate: String,
-    /// Go's `Deprecated.Tables` (not set in infoschema v2).
+    /// Go's `Deprecated.Tables` (not set in infoschema v2). Go tags the inner
+    /// field `json:"-"`, so only the empty wrapper object is ever stored.
+    #[serde(skip)]
     pub deprecated_tables: Vec<TableInfo>,
     /// The online-DDL state.
+    #[serde(rename = "state", default)]
     pub state: SchemaState,
     /// The placement-policy reference.
+    #[serde(rename = "policy_ref_info", default)]
     pub placement_policy_ref: Option<PolicyRefInfo>,
-    /// A table-name -> table-ID index (not serialized).
+    /// A table-name -> table-ID index (Go `json:"-"`).
+    #[serde(skip)]
     pub table_name2id: BTreeMap<String, i64>,
+}
+
+/// Go's anonymous `Deprecated struct { Tables []*TableInfo \`json:"-"\` }`
+/// marshals as a constant empty object, which every stored `DBInfo` carries.
+struct DeprecatedTables;
+
+impl Serialize for DeprecatedTables {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_struct("Deprecated", 0)?.end()
+    }
+}
+
+impl Serialize for DBInfo {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // Field order is Go's declaration order, which `encoding/json` preserves.
+        let mut value = serializer.serialize_struct("DBInfo", 7)?;
+        value.serialize_field("id", &self.id)?;
+        value.serialize_field("db_name", &self.name)?;
+        value.serialize_field("charset", &self.charset)?;
+        value.serialize_field("collate", &self.collate)?;
+        value.serialize_field("Deprecated", &DeprecatedTables)?;
+        value.serialize_field("state", &self.state)?;
+        value.serialize_field("policy_ref_info", &self.placement_policy_ref)?;
+        value.end()
+    }
 }
 
 /// Go `LessDBInfo`: orders two `DBInfo`s by their lower-cased name.

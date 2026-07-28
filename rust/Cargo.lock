@@ -1398,6 +1398,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-meta"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tidb-codec",
+ "tidb-model",
+]
+
+[[package]]
 name = "tidb-metadef"
 version = "0.0.0"
 dependencies = [

@@ -46,6 +46,22 @@ impl SchemaState {
     pub const GLOBAL_TXN_ONLY: SchemaState = SchemaState(7);
 }
 
+// Go's `SchemaState` is a `byte` with no `MarshalJSON`, so `encoding/json`
+// emits it as a bare JSON number; these impls do the same.
+impl serde::Serialize for SchemaState {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SchemaState {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(SchemaState(<u8 as serde::Deserialize>::deserialize(
+            deserializer,
+        )?))
+    }
+}
+
 impl std::fmt::Display for SchemaState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match *self {
@@ -100,5 +116,23 @@ mod tests {
         assert_eq!(SchemaState::GLOBAL_TXN_ONLY.to_string(), "global txn only");
         assert_eq!(SchemaState(200).to_string(), "none");
         assert_eq!(SchemaState::default(), SchemaState::NONE);
+    }
+
+    // Go marshals a `byte`-typed named state as a bare JSON number.
+    #[test]
+    fn json_is_a_number() {
+        assert_eq!(
+            serde_json::to_string(&SchemaState::PUBLIC).unwrap(),
+            "5",
+            "SchemaState must marshal as a number, like Go"
+        );
+        assert_eq!(
+            serde_json::from_str::<SchemaState>("3").unwrap(),
+            SchemaState::WRITE_REORGANIZATION
+        );
+        assert_eq!(
+            serde_json::from_str::<SchemaState>("0").unwrap(),
+            SchemaState::NONE
+        );
     }
 }

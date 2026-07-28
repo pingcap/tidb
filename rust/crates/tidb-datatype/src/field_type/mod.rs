@@ -1288,18 +1288,52 @@ impl FieldType {
     }
 }
 
+/// Deserializes a JSON `null` (and, with `#[serde(default)]`, a missing field)
+/// into `T::default()`, matching how Go leaves a field at its zero value.
+fn null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 #[derive(Serialize, Deserialize)]
 #[allow(non_snake_case)]
 struct JsonFieldType {
+    #[serde(default)]
     Tp: u8,
+    #[serde(default)]
     Flag: u32,
+    #[serde(default)]
     Flen: i64,
+    #[serde(default)]
     Decimal: i64,
+    #[serde(default, deserialize_with = "null_default")]
     Charset: String,
+    #[serde(default, deserialize_with = "null_default")]
     Collate: String,
+    #[serde(default)]
     Elems: Option<Vec<String>>,
+    #[serde(default)]
     ElemsIsBinaryLit: Option<Vec<bool>>,
+    #[serde(default)]
     Array: bool,
+}
+
+// Go marshals `types.FieldType` through its own MarshalJSON/UnmarshalJSON,
+// which use the `jsonFieldType` shape; serde does the same so a FieldType
+// nested in any meta-model struct round-trips byte-identically.
+impl Serialize for FieldType {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        JsonFieldType::from(self).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for FieldType {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        JsonFieldType::deserialize(deserializer).map(Into::into)
+    }
 }
 
 impl From<&FieldType> for JsonFieldType {

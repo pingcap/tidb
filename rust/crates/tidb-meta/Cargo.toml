@@ -1,0 +1,17 @@
+[package]
+name = "tidb-meta"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB meta: the KV key/value codec for the catalog stored under the `m` namespace."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tidb-codec = { path = "../tidb-codec" }
+tidb-model = { path = "../tidb-model" }

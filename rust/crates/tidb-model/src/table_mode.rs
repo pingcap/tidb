@@ -49,6 +49,22 @@ impl TableMode {
     }
 }
 
+// Go's `TableMode` is a `byte` with no `MarshalJSON`: `encoding/json` emits a
+// bare number.
+impl serde::Serialize for TableMode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TableMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(TableMode(<u8 as serde::Deserialize>::deserialize(
+            deserializer,
+        )?))
+    }
+}
+
 impl std::fmt::Display for TableMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match *self {
@@ -62,21 +78,29 @@ impl std::fmt::Display for TableMode {
 
 /// Go `AlterTableModeTarget`: a table-mode change request and, once resolved,
 /// the metadata needed to build an `AlterTableMode` DDL job.
-#[derive(Clone, Debug, Default)]
+/// No field carries a `json` tag in Go, so `encoding/json` uses the Go field
+/// names verbatim.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct AlterTableModeTarget {
     /// The schema containing the target table (required input).
+    #[serde(rename = "SchemaID", default)]
     pub schema_id: i64,
     /// The schema name; required for cross-keyspace requests and
     /// runtime-populated for local ones, validated against metadata.
+    #[serde(rename = "SchemaName", default)]
     pub schema_name: CiString,
     /// The target table's ID (required input).
+    #[serde(rename = "TableID", default)]
     pub table_id: i64,
     /// The table name; required for cross-keyspace requests and
     /// runtime-populated for local ones, validated against metadata.
+    #[serde(rename = "TableName", default)]
     pub table_name: CiString,
     /// Runtime-populated from table metadata during resolution.
+    #[serde(rename = "CurrentMode", default)]
     pub current_mode: TableMode,
     /// The mode requested by the caller (required input).
+    #[serde(rename = "TargetMode", default)]
     pub target_mode: TableMode,
 }
 
@@ -111,5 +135,26 @@ mod tests {
         assert_eq!(TableMode(99).to_string(), "");
         // The zero value is Normal, like Go's byte zero value.
         assert_eq!(TableMode::default(), TableMode::NORMAL);
+    }
+
+    // Go field names verbatim (no json tags) and a numeric TableMode.
+    #[test]
+    fn alter_table_mode_target_json() {
+        let target = AlterTableModeTarget {
+            schema_id: 1,
+            schema_name: CiString::new("Db"),
+            table_id: 2,
+            table_name: CiString::new("T"),
+            current_mode: TableMode::NORMAL,
+            target_mode: TableMode::IMPORT,
+        };
+        let encoded = serde_json::to_string(&target).unwrap();
+        assert_eq!(
+            encoded,
+            r#"{"SchemaID":1,"SchemaName":{"O":"Db","L":"db"},"TableID":2,"TableName":{"O":"T","L":"t"},"CurrentMode":0,"TargetMode":1}"#
+        );
+        let back: AlterTableModeTarget = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(back.target_mode, TableMode::IMPORT);
+        assert_eq!(back.schema_name.lowercase(), "db");
     }
 }

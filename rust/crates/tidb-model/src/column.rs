@@ -32,6 +32,7 @@
 
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 
@@ -53,11 +54,115 @@ pub const CHANGING_COLUMN_PREFIX: &str = "_Col$_";
 /// being removed during a modify-column.
 pub const REMOVING_OBJ_PREFIX: &str = "_Tombstone$_";
 
+/// Go `[]byte` JSON encoding: `encoding/json` writes a byte slice as a padded
+/// standard-alphabet base64 string, and a nil slice as `null`. serde would
+/// otherwise write a `Vec<u8>` as an array of numbers.
+mod go_bytes {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    fn encode(bytes: &[u8]) -> String {
+        let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let b = [
+                chunk[0],
+                *chunk.get(1).unwrap_or(&0),
+                *chunk.get(2).unwrap_or(&0),
+            ];
+            let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+            for i in 0..4 {
+                if i <= chunk.len() {
+                    out.push(ALPHABET[((n >> (18 - 6 * i)) & 0x3f) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
+    }
+
+    fn decode<E: serde::de::Error>(text: &str) -> Result<Vec<u8>, E> {
+        let mut out = Vec::with_capacity(text.len() / 4 * 3);
+        let mut acc: u32 = 0;
+        let mut bits = 0u32;
+        for byte in text.bytes().take_while(|b| *b != b'=') {
+            let Some(index) = ALPHABET.iter().position(|c| *c == byte) else {
+                return Err(E::custom("illegal base64 data"));
+            };
+            acc = (acc << 6) | index as u32;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push(((acc >> bits) & 0xff) as u8);
+            }
+        }
+        Ok(out)
+    }
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &Option<Vec<u8>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match value {
+            None => serializer.serialize_none(),
+            Some(bytes) => serializer.serialize_str(&encode(bytes)),
+        }
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Vec<u8>>, D::Error> {
+        match Option::<String>::deserialize(deserializer)? {
+            None => Ok(None),
+            Some(text) => decode(&text).map(Some),
+        }
+    }
+}
+
+/// Go `map[string]struct{}` JSON encoding: an object whose values are the
+/// empty object, with keys sorted by `encoding/json`; a nil map is `null`.
+/// The Rust side models the set as a `BTreeSet`, which serde would otherwise
+/// write as an array.
+///
+/// DIVERGENCE: a `BTreeSet` cannot distinguish Go's nil map from an allocated
+/// empty one, so an empty set is written as `null` — the nil case, which is
+/// what every non-generated column carries. A column whose `Dependences` Go
+/// allocated but left empty (`pkg/ddl/create_table.go` builds one for hidden
+/// expression-index columns) therefore re-marshals as `null` rather than `{}`.
+mod go_string_set {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use serde::de::IgnoredAny;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize)]
+    struct Empty {}
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &BTreeSet<String>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        if value.is_empty() {
+            return serializer.serialize_none();
+        }
+        serializer.collect_map(value.iter().map(|key| (key, Empty {})))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BTreeSet<String>, D::Error> {
+        let map = Option::<BTreeMap<String, IgnoredAny>>::deserialize(deserializer)?;
+        Ok(map.unwrap_or_default().into_keys().collect())
+    }
+}
+
 /// Go `ChangeStateInfo`: records schema-change information for a column.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangeStateInfo {
     /// The offset of the changing column this column depends on during a
     /// modify/change column.
+    #[serde(rename = "relative_col_offset", default)]
     pub dependency_column_offset: i32,
 }
 
@@ -129,6 +234,56 @@ impl ColumnDefaultValue {
     }
 }
 
+// Go's `any` marshals as the bare JSON value, so this enum is written
+// untagged. A Go string that is not valid UTF-8 is emitted by `encoding/json`
+// with each invalid byte replaced by U+FFFD, which is exactly what the lossy
+// conversion does here.
+impl Serialize for ColumnDefaultValue {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            ColumnDefaultValue::Int(v) => serializer.serialize_i64(*v),
+            ColumnDefaultValue::Uint(v) => serializer.serialize_u64(*v),
+            ColumnDefaultValue::Float(v) => serializer.serialize_f64(*v),
+            ColumnDefaultValue::Bool(v) => serializer.serialize_bool(*v),
+            ColumnDefaultValue::Str(bytes) => {
+                serializer.serialize_str(&String::from_utf8_lossy(bytes))
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ColumnDefaultValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct AnyVisitor;
+
+        impl serde::de::Visitor<'_> for AnyVisitor {
+            type Value = ColumnDefaultValue;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a JSON scalar (Go any)")
+            }
+
+            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
+                Ok(ColumnDefaultValue::Bool(v))
+            }
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
+                Ok(ColumnDefaultValue::Int(v))
+            }
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
+                Ok(ColumnDefaultValue::Uint(v))
+            }
+            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
+                Ok(ColumnDefaultValue::Float(v))
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(ColumnDefaultValue::str(v))
+            }
+        }
+
+        deserializer.deserialize_any(AnyVisitor)
+    }
+}
+
 /// The error Go raises as `types.ErrInvalidDefault` from a BIT column's
 /// default-value setter.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,49 +297,88 @@ impl std::fmt::Display for InvalidDefaultError {
 
 impl std::error::Error for InvalidDefaultError {}
 
+/// Go's zero-value `types.FieldType`, i.e. what Go produces for a missing
+/// `"type"` key. Spelled as the empty JSON object so it stays defined by the
+/// same decode path as any other field type.
+fn zero_field_type() -> FieldType {
+    FieldType::from_json(b"{}").expect("the empty object decodes to the zero field type")
+}
+
 /// Go `ColumnInfo`: metadata describing a table column.
 ///
 /// The `any`-typed `OriginDefaultValue`/`DefaultValue` are modelled as
 /// `Option<ColumnDefaultValue>` (`None` = Go `nil`); the accompanying `*_bit`
 /// byte fields (`Option<Vec<u8>>`, `None` = Go `nil` slice) hold the BIT-type
 /// default.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ColumnInfo {
     /// The column ID.
+    #[serde(rename = "id", default)]
     pub id: i64,
     /// The column name.
+    #[serde(rename = "name", default)]
     pub name: CiString,
     /// The column's position in the table.
+    #[serde(rename = "offset", default)]
     pub offset: i32,
     /// The original default value (`any`); `None` = Go `nil`.
+    #[serde(rename = "origin_default", default)]
     pub origin_default_value: Option<ColumnDefaultValue>,
     /// The BIT-type original default value bytes; `None` = Go `nil` slice.
+    #[serde(rename = "origin_default_bit", default, with = "go_bytes")]
     pub origin_default_value_bit: Option<Vec<u8>>,
     /// The default value (`any`); `None` = Go `nil`.
+    #[serde(rename = "default", default)]
     pub default_value: Option<ColumnDefaultValue>,
     /// The BIT-type default value bytes; `None` = Go `nil` slice.
+    #[serde(rename = "default_bit", default, with = "go_bytes")]
     pub default_value_bit: Option<Vec<u8>>,
     /// Whether the default value string is an expression.
+    #[serde(rename = "default_is_expr", default)]
     pub default_is_expr: bool,
     /// The generated-column expression, if any.
+    #[serde(
+        rename = "generated_expr_string",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub generated_expr_string: String,
     /// Whether a generated column is stored.
+    #[serde(rename = "generated_stored", default)]
     pub generated_stored: bool,
     /// The columns a generated column depends on.
+    #[serde(rename = "dependences", default, with = "go_string_set")]
     pub dependences: BTreeSet<String>,
     /// The column type.
+    #[serde(rename = "type", default = "zero_field_type")]
     pub field_type: FieldType,
     /// The new type when modifying the column.
+    #[serde(
+        rename = "changing_type",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub changing_field_type: Option<Box<FieldType>>,
     /// The online-DDL state of the column.
+    #[serde(rename = "state", default)]
     pub state: SchemaState,
     /// The column comment.
+    #[serde(
+        rename = "comment",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub comment: String,
     /// Whether the column is hidden (internal, e.g. expression indexes).
+    #[serde(rename = "hidden", default)]
     pub hidden: bool,
-    /// Schema-change info (Go's embedded `*ChangeStateInfo`).
+    /// Schema-change info (Go's embedded `*ChangeStateInfo`). Go tags the
+    /// anonymous field, which makes it a plain named field rather than an
+    /// inlined one, so it serializes as `"change_state_info": {...}` / `null`.
+    #[serde(rename = "change_state_info", default)]
     pub change_state_info: Option<ChangeStateInfo>,
     /// The column-info version (see the `COLUMN_INFO_VERSION*` constants).
+    #[serde(rename = "version", default)]
     pub version: u64,
 }
 
@@ -707,6 +901,40 @@ mod tests {
         let c = col("_Tombstone$_orig", FieldTypeCode::Long);
         assert!(c.is_removing());
         assert_eq!(c.get_removing_origin_name(), "orig");
+    }
+
+    // Byte-for-byte fixtures captured from Go `json.Marshal(*model.ColumnInfo)`
+    // (pkg/meta/model/column.go) so the Rust encoding stays pinned to
+    // encoding/json's field order, base64 []byte form, and nil-as-null.
+    const GO_POPULATED: &str = r#"{"id":3,"name":{"O":"Col1","L":"col1"},"offset":2,"origin_default":"abc","origin_default_bit":"GbkA","default":7,"default_bit":null,"default_is_expr":true,"generated_expr_string":"a+1","generated_stored":false,"dependences":{"a":{},"b":{}},"type":{"Tp":15,"Flag":0,"Flen":20,"Decimal":0,"Charset":"utf8mb4","Collate":"utf8mb4_bin","Elems":null,"ElemsIsBinaryLit":null,"Array":false},"changing_type":{"Tp":3,"Flag":0,"Flen":-1,"Decimal":-1,"Charset":"","Collate":"","Elems":null,"ElemsIsBinaryLit":null,"Array":false},"state":2,"comment":"hi","hidden":true,"change_state_info":{"relative_col_offset":4},"version":2}"#;
+
+    // Go's zero-value ColumnInfo. `changing_type` is omitempty, so it is
+    // absent; every other nil field is an explicit null.
+    const GO_ZERO: &str = r#"{"id":0,"name":{"O":"","L":""},"offset":0,"origin_default":null,"origin_default_bit":null,"default":null,"default_bit":null,"default_is_expr":false,"generated_expr_string":"","generated_stored":false,"dependences":null,"type":{"Tp":0,"Flag":0,"Flen":0,"Decimal":0,"Charset":"","Collate":"","Elems":null,"ElemsIsBinaryLit":null,"Array":false},"state":0,"comment":"","hidden":false,"change_state_info":null,"version":0}"#;
+
+    #[test]
+    fn json_round_trips_byte_identically_with_go() {
+        for fixture in [GO_POPULATED, GO_ZERO] {
+            let col: ColumnInfo = serde_json::from_str(fixture).unwrap();
+            assert_eq!(serde_json::to_string(&col).unwrap(), fixture);
+        }
+
+        // Spot-check the decoded values, so a symmetric encode/decode bug
+        // cannot hide behind the round trip.
+        let col: ColumnInfo = serde_json::from_str(GO_POPULATED).unwrap();
+        assert_eq!(col.id, 3);
+        assert_eq!(col.name.lowercase(), "col1");
+        assert_eq!(
+            col.origin_default_value,
+            Some(ColumnDefaultValue::str("abc"))
+        );
+        assert_eq!(col.origin_default_value_bit, Some(vec![25, 185, 0]));
+        assert_eq!(col.default_value, Some(ColumnDefaultValue::Uint(7)));
+        assert_eq!(col.dependences.iter().collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(col.get_type(), FieldTypeCode::Varchar);
+        assert_eq!(col.get_flen(), 20);
+        assert_eq!(col.state, SchemaState::WRITE_ONLY);
+        assert_eq!(col.change_state_info.unwrap().dependency_column_offset, 4);
     }
 
     #[test]

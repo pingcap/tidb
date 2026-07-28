@@ -17,46 +17,101 @@
 //! The `writeSetting*ToBuilder` helpers live in [`crate::setting_builder`],
 //! shared with the resource-group renderer.
 
+use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
 
 use crate::schema_state::SchemaState;
 use crate::setting_builder::{write_setting_integer, write_setting_string};
 
 /// Go `PolicyRefInfo`: a reference to a placement policy by ID and name.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyRefInfo {
     /// The policy ID.
+    #[serde(rename = "id", default)]
     pub id: i64,
     /// The policy name.
+    #[serde(rename = "name", default)]
     pub name: CiString,
 }
 
 /// Go `PlacementSettings`: the placement configuration of a schema object.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+///
+/// No field carries `omitempty`, so every one is always written; the string
+/// settings are plain JSON strings, not the `SHOW`-style rendering produced by
+/// [`Display`](std::fmt::Display).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlacementSettings {
     /// The primary region.
+    #[serde(
+        rename = "primary_region",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub primary_region: String,
     /// The regions.
+    #[serde(
+        rename = "regions",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub regions: String,
     /// The number of learner replicas.
+    #[serde(rename = "learners", default)]
     pub learners: u64,
     /// The number of follower replicas.
+    #[serde(rename = "followers", default)]
     pub followers: u64,
     /// The number of voter replicas.
+    #[serde(rename = "voters", default)]
     pub voters: u64,
     /// The schedule policy.
+    #[serde(
+        rename = "schedule",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub schedule: String,
     /// The replica constraints.
+    #[serde(
+        rename = "constraints",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub constraints: String,
     /// The leader constraints.
+    #[serde(
+        rename = "leader_constraints",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub leader_constraints: String,
     /// The learner constraints.
+    #[serde(
+        rename = "learner_constraints",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub learner_constraints: String,
     /// The follower constraints.
+    #[serde(
+        rename = "follower_constraints",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub follower_constraints: String,
     /// The voter constraints.
+    #[serde(
+        rename = "voter_constraints",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub voter_constraints: String,
     /// The survival preferences.
+    #[serde(
+        rename = "survival_preferences",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub survival_preferences: String,
 }
 
@@ -128,15 +183,25 @@ impl std::fmt::Display for PlacementSettings {
 ///
 /// Go embeds `*PlacementSettings`; here it is a named `Option<Box<..>>`
 /// field to keep the nil-able pointer, deep-cloned by the derived `Clone`.
-#[derive(Clone, Debug, Default)]
+///
+/// The embedded field has no JSON tag, so Go promotes the settings into this
+/// object; `flatten` reproduces that. One divergence: Go decodes an object with
+/// no settings keys into a nil pointer, while a flattened `Option` yields
+/// `Some(PlacementSettings::default())`, which then re-serializes the twelve
+/// zero-valued settings. Policies stored by TiDB always carry settings.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PolicyInfo {
     /// The placement settings (Go's embedded `*PlacementSettings`).
+    #[serde(flatten)]
     pub placement_settings: Option<Box<PlacementSettings>>,
     /// The policy ID.
+    #[serde(rename = "id", default)]
     pub id: i64,
     /// The policy name.
+    #[serde(rename = "name", default)]
     pub name: CiString,
     /// The online-DDL state of the policy object.
+    #[serde(rename = "state", default)]
     pub state: SchemaState,
 }
 
@@ -202,6 +267,25 @@ mod tests {
         cloned.followers = 3;
         cloned.constraints = "[+zone=z1]".into();
         assert_eq!(settings, PlacementSettings::default());
+    }
+
+    // Byte-compared against Go's json.Marshal of the same PolicyInfo.
+    #[test]
+    fn policy_info_json_matches_go() {
+        let p = PolicyInfo {
+            placement_settings: Some(Box::new(PlacementSettings {
+                primary_region: "r".into(),
+                followers: 2,
+                ..Default::default()
+            })),
+            id: 7,
+            name: CiString::new("pp"),
+            state: SchemaState::PUBLIC,
+        };
+        let want = r#"{"primary_region":"r","regions":"","learners":0,"followers":2,"voters":0,"schedule":"","constraints":"","leader_constraints":"","learner_constraints":"","follower_constraints":"","voter_constraints":"","survival_preferences":"","id":7,"name":{"O":"pp","L":"pp"},"state":5}"#;
+        assert_eq!(serde_json::to_string(&p).unwrap(), want);
+        let back: PolicyInfo = serde_json::from_str(want).unwrap();
+        assert_eq!(serde_json::to_string(&back).unwrap(), want);
     }
 
     // Go TestPlacementPolicyClone: the clone deep-copies the settings box.

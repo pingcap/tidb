@@ -42,6 +42,11 @@ use crate::table::{
 };
 use crate::table_mode::TableMode;
 
+/// Go's `omitempty` check for `Mode TableMode`: the zero mode is omitted.
+fn is_default_table_mode(mode: &TableMode) -> bool {
+    *mode == TableMode::default()
+}
+
 /// Go `TableInfoVersion0`.
 pub const TABLE_INFO_VERSION0: u16 = 0;
 /// Go `TableInfoVersion1`.
@@ -60,111 +65,238 @@ pub const TABLE_INFO_VERSION5: u16 = 5;
 /// Go's pointer sub-structs (`*PartitionInfo`, `*ViewInfo`, ...) become
 /// `Option<Box<..>>`; its two embedded fields (`TempTableType`,
 /// `TableCacheStatusType`) become named fields.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct TableInfo {
     /// The table ID.
+    #[serde(rename = "id", default)]
     pub id: i64,
     /// The table name.
+    #[serde(rename = "name", default)]
     pub name: CiString,
     /// The table charset.
+    #[serde(
+        rename = "charset",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub charset: String,
     /// The table collation.
+    #[serde(
+        rename = "collate",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub collate: String,
     /// The columns.
+    #[serde(
+        rename = "cols",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default",
+        serialize_with = "crate::serde_helpers::null_if_empty"
+    )]
     pub columns: Vec<ColumnInfo>,
     /// The indexes.
+    #[serde(
+        rename = "index_info",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default",
+        serialize_with = "crate::serde_helpers::null_if_empty"
+    )]
     pub indices: Vec<IndexInfo>,
     /// The CHECK constraints.
+    #[serde(
+        rename = "constraint_info",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default",
+        serialize_with = "crate::serde_helpers::null_if_empty"
+    )]
     pub constraints: Vec<ConstraintInfo>,
     /// The foreign keys.
+    #[serde(
+        rename = "fk_info",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default",
+        serialize_with = "crate::serde_helpers::null_if_empty"
+    )]
     pub foreign_keys: Vec<FKInfo>,
     /// The online-DDL state.
+    #[serde(rename = "state", default)]
     pub state: SchemaState,
     /// Whether the primary key is the handle.
+    #[serde(rename = "pk_is_handle", default)]
     pub pk_is_handle: bool,
     /// Whether the table uses a clustered common handle.
+    #[serde(rename = "is_common_handle", default)]
     pub is_common_handle: bool,
     /// The common-handle version.
+    #[serde(rename = "common_handle_version", default)]
     pub common_handle_version: u16,
     /// The table comment.
+    #[serde(
+        rename = "comment",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub comment: String,
     /// The next auto-increment ID.
+    #[serde(rename = "auto_inc_id", default)]
     pub auto_inc_id: i64,
     /// An extra auto-increment ID reservation.
+    #[serde(
+        rename = "auto_inc_id_extra",
+        default,
+        skip_serializing_if = "crate::serde_helpers::is_zero_i64"
+    )]
     pub auto_inc_id_extra: i64,
     /// The auto-ID cache size.
+    #[serde(rename = "auto_id_cache", default)]
     pub auto_id_cache: i64,
     /// The next auto-random ID.
+    #[serde(rename = "auto_rand_id", default)]
     pub auto_rand_id: i64,
     /// The maximum column ID.
+    #[serde(rename = "max_col_id", default)]
     pub max_column_id: i64,
     /// The maximum index ID.
+    #[serde(rename = "max_idx_id", default)]
     pub max_index_id: i64,
     /// The maximum foreign-key ID.
+    #[serde(rename = "max_fk_id", default)]
     pub max_foreign_key_id: i64,
     /// The maximum constraint ID.
+    #[serde(rename = "max_cst_id", default)]
     pub max_constraint_id: i64,
     /// The last-update timestamp (a TSO).
+    #[serde(rename = "update_timestamp", default)]
     pub update_ts: u64,
     /// The schema ID that owns the auto-ID (for `RENAME`).
+    #[serde(
+        rename = "old_schema_id",
+        default,
+        skip_serializing_if = "crate::serde_helpers::is_zero_i64"
+    )]
     pub auto_id_schema_id: i64,
     /// The `SHARD_ROW_ID_BITS` setting.
+    #[serde(rename = "ShardRowIDBits", default)]
     pub shard_row_id_bits: u64,
     /// The maximum `SHARD_ROW_ID_BITS`.
+    #[serde(rename = "max_shard_row_id_bits", default)]
     pub max_shard_row_id_bits: u64,
     /// The `AUTO_RANDOM` bit count.
+    #[serde(rename = "auto_random_bits", default)]
     pub auto_random_bits: u64,
     /// The `AUTO_RANDOM` range-bit count.
+    #[serde(rename = "auto_random_range_bits", default)]
     pub auto_random_range_bits: u64,
     /// The pre-split region count.
+    #[serde(rename = "pre_split_regions", default)]
     pub pre_split_regions: u64,
     /// The partitioning metadata.
+    #[serde(rename = "partition", default)]
     pub partition: Option<Box<PartitionInfo>>,
     /// The compression setting.
+    #[serde(
+        rename = "compression",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub compression: String,
     /// The view metadata, if this is a view.
+    #[serde(rename = "view", default)]
     pub view: Option<Box<ViewInfo>>,
     /// The sequence metadata, if this is a sequence.
+    #[serde(rename = "sequence", default)]
     pub sequence: Option<Box<SequenceInfo>>,
     /// The table lock, if held.
+    #[serde(rename = "Lock", default)]
     pub lock: Option<Box<TableLockInfo>>,
     /// The table-info version.
+    #[serde(rename = "version", default)]
     pub version: u16,
     /// The TiFlash replica configuration.
+    #[serde(rename = "tiflash_replica", default)]
     pub tiflash_replica: Option<Box<TiFlashReplicaInfo>>,
     /// Whether the table is columnar.
+    #[serde(rename = "is_columnar", default)]
     pub is_columnar: bool,
     /// The temporary-table kind (Go's embedded `TempTableType`).
+    #[serde(rename = "temp_table_type", default)]
     pub temp_table_type: TempTableType,
     /// The cache status (Go's embedded `TableCacheStatusType`).
+    #[serde(rename = "cache_table_status", default)]
     pub table_cache_status_type: TableCacheStatusType,
     /// The placement-policy reference.
+    #[serde(rename = "policy_ref_info", default)]
     pub placement_policy_ref: Option<PolicyRefInfo>,
     /// The persisted ANALYZE options.
+    #[serde(rename = "stats_options", default)]
     pub stats_options: Option<Box<StatsOptions>>,
     /// In-progress partition-exchange metadata.
+    #[serde(rename = "exchange_partition_info", default)]
     pub exchange_partition_info: Option<Box<ExchangePartitionInfo>>,
     /// The TTL configuration.
+    #[serde(rename = "ttl_info", default)]
     pub ttl_info: Option<Box<TTLInfo>>,
     /// Whether the table is active-active.
+    #[serde(
+        rename = "is_active_active",
+        default,
+        skip_serializing_if = "crate::serde_helpers::is_false"
+    )]
     pub is_active_active: bool,
     /// The soft-delete configuration.
+    #[serde(
+        rename = "softdelete_info",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub softdelete_info: Option<Box<SoftdeleteInfo>>,
     /// The affinity configuration.
+    #[serde(rename = "affinity", default, skip_serializing_if = "Option::is_none")]
     pub affinity: Option<Box<TableAffinityInfo>>,
     /// The persistent region-split policy.
+    #[serde(
+        rename = "table_split_policy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub table_split_policy: Option<Box<RegionSplitPolicy>>,
     /// The schema revision.
+    #[serde(rename = "revision", default)]
     pub revision: u64,
     /// The owning database ID (not serialized).
+    #[serde(skip)]
     pub db_id: i64,
     /// The `ENGINE_ATTRIBUTE` value.
+    #[serde(
+        rename = "engine_attribute",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default",
+        skip_serializing_if = "crate::serde_helpers::is_empty_str"
+    )]
     pub engine_attribute: String,
     /// The storage-class tier.
+    #[serde(
+        rename = "storage_class_tier",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default",
+        skip_serializing_if = "crate::serde_helpers::is_empty_str"
+    )]
     pub storage_class_tier: String,
     /// The storage-class transitions.
+    #[serde(
+        rename = "storage_class_transitions",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default",
+        skip_serializing_if = "crate::serde_helpers::is_empty_vec"
+    )]
     pub storage_class_transitions: Vec<StorageClassTransitRule>,
     /// The table mode (normal/import/restore).
+    #[serde(
+        rename = "mode",
+        default,
+        skip_serializing_if = "is_default_table_mode"
+    )]
     pub mode: TableMode,
 }
 

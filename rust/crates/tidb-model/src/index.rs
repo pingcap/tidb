@@ -23,6 +23,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tidb_ast::{CiString, IndexType};
 
 use crate::column::{removing_origin_name, REMOVING_OBJ_PREFIX};
@@ -94,8 +95,76 @@ pub fn get_full_text_parser_type_by_sql_name(name: &str) -> &'static str {
     }
 }
 
+/// Go `n == 0` for the `omitempty` check on a `uint8` field.
+fn is_zero_u8(value: &u8) -> bool {
+    *value == 0
+}
+
+/// Go `ast.IndexType` is an `int`, so `encoding/json` writes it as a number.
+/// `IndexType` lives in `tidb-ast` without serde impls, so the numeric mapping
+/// is applied per field. The discriminants must match the Go `iota` order in
+/// `pkg/parser/ast/model.go` because they are persisted in `TableInfo`.
+fn index_type_to_i64(tp: IndexType) -> i64 {
+    match tp {
+        IndexType::Invalid => 0,
+        IndexType::Btree => 1,
+        IndexType::Hash => 2,
+        IndexType::Rtree => 3,
+        IndexType::Hypo => 4,
+        IndexType::Vector => 5,
+        IndexType::Inverted => 6,
+        IndexType::Hnsw => 7,
+        IndexType::Fulltext => 8,
+    }
+}
+
+/// Inverse of [`index_type_to_i64`]; an unknown number decodes as `Invalid`,
+/// matching Go's unnamed `IndexType` values falling through `String()`.
+fn index_type_from_i64(value: i64) -> IndexType {
+    match value {
+        1 => IndexType::Btree,
+        2 => IndexType::Hash,
+        3 => IndexType::Rtree,
+        4 => IndexType::Hypo,
+        5 => IndexType::Vector,
+        6 => IndexType::Inverted,
+        7 => IndexType::Hnsw,
+        8 => IndexType::Fulltext,
+        _ => IndexType::Invalid,
+    }
+}
+
+fn serialize_index_type<S: Serializer>(tp: &IndexType, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_i64(index_type_to_i64(*tp))
+}
+
+fn deserialize_index_type<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<IndexType, D::Error> {
+    Ok(index_type_from_i64(
+        Option::<i64>::deserialize(deserializer)?.unwrap_or_default(),
+    ))
+}
+
+/// Go `BackfillState` is a `byte`, so `encoding/json` writes it as a number.
+fn serialize_backfill_state<S: Serializer>(
+    state: &BackfillState,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_u8(state.0)
+}
+
+fn deserialize_backfill_state<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BackfillState, D::Error> {
+    Ok(BackfillState(
+        Option::<u8>::deserialize(deserializer)?.unwrap_or_default(),
+    ))
+}
+
 /// Go `ColumnarIndexType` (a `uint8`): the kind of columnar index.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct ColumnarIndexType(pub u8);
 
 impl ColumnarIndexType {
@@ -122,98 +191,189 @@ impl ColumnarIndexType {
 
 /// Go `RegionSplitPolicy`: a table's region-split policy (defined in
 /// `index.go`, referenced by `TableInfo.TableSplitPolicy`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegionSplitPolicy {
     /// The lower-bound split points.
+    #[serde(
+        rename = "lower",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default",
+        serialize_with = "crate::serde_helpers::null_if_empty"
+    )]
     pub lower: Vec<String>,
     /// The upper-bound split points.
+    #[serde(
+        rename = "upper",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default",
+        serialize_with = "crate::serde_helpers::null_if_empty"
+    )]
     pub upper: Vec<String>,
     /// The number of regions.
+    #[serde(rename = "regions", default)]
     pub regions: i64,
 }
 
 /// Go `IndexColumn`: one column referenced by an index.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexColumn {
     /// The index column name.
+    #[serde(rename = "name", default)]
     pub name: CiString,
     /// The column's offset in `TableInfo.Columns`.
+    #[serde(rename = "offset", default)]
     pub offset: i32,
     /// The prefix length (`UnspecifiedLength` when not a prefix index).
+    #[serde(rename = "length", default)]
     pub length: i32,
     /// Whether the column uses the changing type.
+    #[serde(
+        rename = "using_changing_type",
+        default,
+        skip_serializing_if = "crate::serde_helpers::is_false"
+    )]
     pub use_changing_type: bool,
 }
 
 /// Go `VectorIndexInfo`: a vector index's parameters.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VectorIndexInfo {
     /// The vector dimension.
+    #[serde(rename = "dimension", default)]
     pub dimension: u64,
     /// The distance metric (see [`distance_metric`]).
+    #[serde(
+        rename = "distance_metric",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub distance_metric: String,
 }
 
 /// Go `InvertedIndexInfo`: an inverted index's parameters.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvertedIndexInfo {
     /// The indexed column ID.
+    #[serde(rename = "column_id", default)]
     pub column_id: i64,
     /// Whether the column is signed.
+    #[serde(rename = "is_signed", default)]
     pub is_signed: bool,
     /// The column's byte size.
+    #[serde(rename = "type_size", default)]
     pub type_size: u8,
 }
 
 /// Go `FullTextIndexInfo`: a full-text index's parameters.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FullTextIndexInfo {
     /// The parser type (see [`full_text_parser_type`]).
+    #[serde(
+        rename = "parser_type",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub parser_type: String,
 }
 
 /// Go `IndexInfo`: metadata describing a table index.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct IndexInfo {
     /// The index ID.
+    #[serde(rename = "id", default)]
     pub id: i64,
     /// The index name.
+    #[serde(rename = "idx_name", default)]
     pub name: CiString,
     /// The table name.
+    #[serde(rename = "tbl_name", default)]
     pub table: CiString,
     /// The index columns.
+    #[serde(
+        rename = "idx_cols",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default",
+        serialize_with = "crate::serde_helpers::null_if_empty"
+    )]
     pub columns: Vec<IndexColumn>,
     /// The online-DDL state.
+    #[serde(rename = "state", default)]
     pub state: SchemaState,
     /// The backfill-merge state.
+    #[serde(
+        rename = "backfill_state",
+        default,
+        serialize_with = "serialize_backfill_state",
+        deserialize_with = "deserialize_backfill_state"
+    )]
     pub backfill_state: BackfillState,
     /// The index comment.
+    #[serde(
+        rename = "comment",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub comment: String,
     /// The index type (Btree/Hash/...).
+    #[serde(
+        rename = "index_type",
+        default,
+        serialize_with = "serialize_index_type",
+        deserialize_with = "deserialize_index_type"
+    )]
     pub tp: IndexType,
     /// Whether the index is unique.
+    #[serde(rename = "is_unique", default)]
     pub unique: bool,
     /// Whether the index is the primary key.
+    #[serde(rename = "is_primary", default)]
     pub primary: bool,
     /// Whether the index is invisible.
+    #[serde(rename = "is_invisible", default)]
     pub invisible: bool,
     /// Whether the index is global.
+    #[serde(rename = "is_global", default)]
     pub global: bool,
     /// Whether the index is multi-valued.
+    #[serde(rename = "mv_index", default)]
     pub mv_index: bool,
     /// Vector-index parameters, if any.
+    #[serde(rename = "vector_index", default)]
     pub vector_info: Option<VectorIndexInfo>,
     /// Inverted-index parameters, if any.
+    #[serde(rename = "inverted_index", default)]
     pub inverted_info: Option<InvertedIndexInfo>,
     /// Full-text-index parameters, if any.
+    #[serde(rename = "full_text_index", default)]
     pub full_text_info: Option<FullTextIndexInfo>,
     /// The partial-index condition expression string.
+    #[serde(
+        rename = "condition_expr_string",
+        default,
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub condition_expr_string: String,
     /// The columns the index affects.
+    #[serde(
+        rename = "affect_column",
+        default,
+        skip_serializing_if = "crate::serde_helpers::is_empty_vec",
+        deserialize_with = "crate::serde_helpers::null_default"
+    )]
     pub affect_column: Vec<IndexColumn>,
     /// The global-index version.
+    #[serde(
+        rename = "global_index_version",
+        default,
+        skip_serializing_if = "is_zero_u8"
+    )]
     pub global_index_version: u8,
     /// The persistent region-split policy.
+    #[serde(
+        rename = "region_split_policy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub region_split_policy: Option<RegionSplitPolicy>,
 }
 
