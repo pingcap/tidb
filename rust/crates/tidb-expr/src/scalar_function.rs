@@ -368,6 +368,17 @@ impl ScalarFunction {
                 if value.is_null() {
                     return Ok(Datum::Null);
                 }
+                // `CAST(expr AS JSON)` reads the SOURCE argument's static
+                // FieldType first: a genuine BINARY-charset argument renders
+                // as a JSON `Opaque` value (Go's `getRealJSONValue` rule),
+                // which `crate::cast::eval_cast`'s untyped `CastType::Json`
+                // arm cannot see.
+                if target == "json" {
+                    return crate::builtin_ext::cast_as_json_typed(
+                        &value,
+                        self.args[0].static_type(),
+                    );
+                }
                 let ret_type = self
                     .get_static_type()
                     .ok_or(EvalError::Unsupported("a cast with no result type"))?;
@@ -569,6 +580,20 @@ impl ScalarFunction {
             .map(|a| a.eval(ctx, row))
             .collect::<Result<_, _>>()?;
         let upper = name.to_ascii_uppercase();
+        // `JSON_ARRAY`/`JSON_OBJECT`/`JSON_{SET,INSERT,REPLACE}`/
+        // `JSON_ARRAY_{APPEND,INSERT}`: Go builds each value argument through
+        // an implicit `CAST(... AS JSON)`, so a genuine BINARY-charset
+        // argument must render as a JSON `Opaque` value rather than an
+        // ordinary JSON string -- see `builtin_ext::json::dispatch_typed`.
+        // Only this chunk path has each argument's static `FieldType`
+        // (`Expression::static_type`); the row/AST evaluator
+        // (`crate::func::eval_func`) still falls through to the untyped
+        // `dispatch` below and stays the documented partial boundary.
+        let arg_types: Vec<Option<FieldType>> =
+            self.args.iter().map(|a| a.static_type().cloned()).collect();
+        if let Some(result) = crate::builtin_ext::json_dispatch_typed(&upper, &vals, &arg_types) {
+            return result;
+        }
         if let Some(result) = crate::func::eval_func_values_in(&upper, &vals, ctx) {
             return result;
         }
@@ -751,6 +776,50 @@ mod tests {
             unknown.eval(&NoColumns, row),
             Err(EvalError::Unsupported(_))
         ));
+    }
+
+    /// `JSON_ARRAY`/`CAST(... AS JSON)` over a column whose static `FieldType`
+    /// is BINARY-charset render the JSON `Opaque` value real TiDB produces,
+    /// not a plain JSON string -- the chunk path threads
+    /// `Expression::static_type()` into `builtin_ext::json::dispatch_typed`/
+    /// `cast_as_json_typed`. Captured: `SELECT JSON_ARRAY(vb), CAST(vb AS
+    /// JSON) FROM t` where `vb varbinary(8)` holds `'ab'`
+    /// (`zz_dump_frozjson_test.go`, `TestZZDumpFrozJSONBinaryOpaque`).
+    #[test]
+    fn eval_renders_binary_charset_column_as_json_opaque() {
+        use crate::context::NoColumns;
+        use tidb_chunk::chunk::Chunk;
+        use tidb_datatype::{Collation, FieldTypeCode};
+
+        let varbinary_type =
+            FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
+        let json_type = ft();
+        let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&varbinary_type), 1);
+        chk.append_bytes(0, b"ab");
+        let row = chk.get_row(0);
+
+        let mut col = Column::new(1, varbinary_type);
+        col.index = 0;
+
+        let json_array = ScalarFunction::new(
+            CiString::new("json_array"),
+            json_type.clone(),
+            vec![Expression::Column(col.clone())],
+        );
+        assert_eq!(
+            json_array.eval(&NoColumns, row).unwrap(),
+            Datum::new_string(r#"["base64:type15:YWI="]"#.to_string())
+        );
+
+        let cast_json = ScalarFunction::new(
+            CiString::new("cast_json"),
+            json_type,
+            vec![Expression::Column(col)],
+        );
+        assert_eq!(
+            cast_json.eval(&NoColumns, row).unwrap(),
+            Datum::new_string(r#""base64:type15:YWI=""#.to_string())
+        );
     }
 
     #[test]

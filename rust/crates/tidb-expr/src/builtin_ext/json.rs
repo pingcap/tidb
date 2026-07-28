@@ -31,6 +31,7 @@ use serde_json::{Number, Value as Json};
 
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
+use tidb_datatype::FieldType;
 
 /// Dispatches the JSON family.  The match and arities are ports of the
 /// function classes in `pkg/expression/builtin_json.go`:
@@ -42,8 +43,8 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("JSON_TYPE", 1) => Some(json_type(&vals[0])),
         ("JSON_QUOTE", 1) => Some(json_quote(&vals[0])),
         ("JSON_UNQUOTE", 1) => Some(json_unquote(&vals[0])),
-        ("JSON_ARRAY", 0..) => Some(json_array(vals)),
-        ("JSON_OBJECT", 0..) => Some(json_object(vals)),
+        ("JSON_ARRAY", 0..) => Some(json_array(vals, &no_arg_types(vals.len()))),
+        ("JSON_OBJECT", 0..) => Some(json_object(vals, &no_arg_types(vals.len()))),
         ("JSON_LENGTH", 1 | 2) => Some(json_length(vals)),
         ("JSON_EXTRACT", 2..) => Some(json_extract(vals)),
         ("JSON_MEMBER_OF", 2) => Some(json_member_of(vals)),
@@ -51,11 +52,23 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("JSON_CONTAINS_PATH", 3..) => Some(json_contains_path(vals)),
         ("JSON_KEYS", 1 | 2) => Some(json_keys(vals)),
         ("JSON_REMOVE", 2..) => Some(json_remove(vals)),
-        ("JSON_ARRAY_APPEND", 3..) => Some(json_array_append(vals)),
-        ("JSON_ARRAY_INSERT", 3..) => Some(json_array_insert(vals)),
-        ("JSON_SET", 3..) => Some(json_modify(vals, JsonModifyMode::Set)),
-        ("JSON_INSERT", 3..) => Some(json_modify(vals, JsonModifyMode::Insert)),
-        ("JSON_REPLACE", 3..) => Some(json_modify(vals, JsonModifyMode::Replace)),
+        ("JSON_ARRAY_APPEND", 3..) => Some(json_array_append(vals, &no_arg_types(vals.len()))),
+        ("JSON_ARRAY_INSERT", 3..) => Some(json_array_insert(vals, &no_arg_types(vals.len()))),
+        ("JSON_SET", 3..) => Some(json_modify(
+            vals,
+            &no_arg_types(vals.len()),
+            JsonModifyMode::Set,
+        )),
+        ("JSON_INSERT", 3..) => Some(json_modify(
+            vals,
+            &no_arg_types(vals.len()),
+            JsonModifyMode::Insert,
+        )),
+        ("JSON_REPLACE", 3..) => Some(json_modify(
+            vals,
+            &no_arg_types(vals.len()),
+            JsonModifyMode::Replace,
+        )),
         ("JSON_MERGE", 2..) => Some(json_merge(vals, "json_merge")),
         ("JSON_MERGE_PRESERVE", 2..) => Some(json_merge(vals, "json_merge_preserve")),
         ("JSON_MERGE_PATCH", 2..) => Some(json_merge_patch(vals)),
@@ -67,6 +80,88 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
     }
 }
 
+/// The typed sibling of [`dispatch`] for the function class whose value
+/// arguments Go builds through an implicit `CAST(... AS JSON)` with
+/// `ParseToJSONFlag` disabled (`newBaseBuiltinFuncWithTp(ctx, ..., ETJson,
+/// ...)` followed by `DisableParseJSONFlag4Expr`): `JSON_ARRAY`,
+/// `JSON_OBJECT`, `JSON_SET`/`JSON_INSERT`/`JSON_REPLACE`,
+/// `JSON_ARRAY_APPEND`, `JSON_ARRAY_INSERT`. `arg_types[i]` is argument `i`'s
+/// static `FieldType` when the caller has one (the chunk rewriter's
+/// `ScalarFunction::args[i].static_type()`); `None` falls back to
+/// [`json_sql_string`]'s plain-text rendering, same as the untyped
+/// [`dispatch`].
+///
+/// Every other JSON function either takes no value-domain argument that can
+/// carry a column's charset (`JSON_TYPE`, `JSON_LENGTH`, ...) or has its
+/// binary-charset arguments rejected at Go's build time by
+/// `verifyJSONArgsType` before evaluation ever sees them (`JSON_CONTAINS`,
+/// `JSON_EXTRACT`, `JSON_MEMBER_OF`, ...) -- a plan-build-time check this
+/// evaluator does not perform, and out of scope here since it never reaches
+/// this Datum-only dispatch either way.
+pub(crate) fn dispatch_typed(
+    name: &str,
+    vals: &[Datum],
+    arg_types: &[Option<FieldType>],
+) -> Option<Result<Datum, EvalError>> {
+    debug_assert_eq!(vals.len(), arg_types.len());
+    match (name, vals.len()) {
+        ("JSON_ARRAY", 0..) => Some(json_array(vals, arg_types)),
+        ("JSON_OBJECT", 0..) => Some(json_object(vals, arg_types)),
+        ("JSON_SET", 3..) => Some(json_modify(vals, arg_types, JsonModifyMode::Set)),
+        ("JSON_INSERT", 3..) => Some(json_modify(vals, arg_types, JsonModifyMode::Insert)),
+        ("JSON_REPLACE", 3..) => Some(json_modify(vals, arg_types, JsonModifyMode::Replace)),
+        ("JSON_ARRAY_APPEND", 3..) => Some(json_array_append(vals, arg_types)),
+        ("JSON_ARRAY_INSERT", 3..) => Some(json_array_insert(vals, arg_types)),
+        _ => None,
+    }
+}
+
+/// An all-`None` `arg_types` slice for [`dispatch`]'s untyped callers, so
+/// [`json_array`]/[`json_object`]/[`json_modify`]/[`json_array_append`]/
+/// [`json_array_insert`] share one implementation with [`dispatch_typed`]
+/// instead of duplicating the plain-text path.
+fn no_arg_types(len: usize) -> Vec<Option<FieldType>> {
+    vec![None; len]
+}
+
+/// Whether `value` is a genuine BINARY-charset payload given its source
+/// `field_type`.
+///
+/// NAMED BOUNDARY: unlike the JSON aggregates' `json_value`
+/// (`tidb-executor`), this does NOT treat every `Datum::Bytes` as
+/// unconditionally binary. In Go, a `KindBytes` datum only ever comes from a
+/// genuinely BINARY-charset source, so `getRealJSONValue` can trust the datum
+/// kind alone. This crate's chunk rewriter is looser: `Expr::String` literals
+/// are built as `Datum::Bytes` regardless of their own (possibly non-binary)
+/// static type (see `json_sql_string`'s doc), so a scalar-function value
+/// argument's `Bytes`-vs-`String` shape carries no charset signal here --
+/// `field_type.is_binary_string()` is the only trustworthy source, exactly as
+/// Go's own `KindString` arm of `getRealJSONValue` checks
+/// `ft.GetCharset() == charset.CharsetBin`. (Chunk-COLUMN reads never
+/// actually produce `Bytes`: `tidb_chunk::row::Row::get_datum` always builds
+/// `Datum::String` with the column's own collation, so a real BINARY column
+/// reaches here as `String` with a binary collation either way.)
+fn is_binary_datum(value: &Datum, field_type: Option<&FieldType>) -> bool {
+    matches!(value, Datum::Bytes(_) | Datum::String(_))
+        && field_type.is_some_and(FieldType::is_binary_string)
+}
+
+/// Renders `value` as the JSON `Opaque` value Go's `getRealJSONValue`
+/// produces for a BINARY-charset argument, in THIS module's text-domain
+/// [`Json`] model: [`Datum::to_mysql_json_with_source_type`] builds the typed
+/// `BinaryJSON::Opaque`, whose `Display` is already the exact
+/// `"base64:type<N>:<...>"` quoted string real TiDB prints (captured:
+/// `VARBINARY`/`BLOB` render `type15`/`type252`, fixed `BINARY(n)` renders
+/// `type254` padded to `n` bytes) -- reparsing that text through
+/// [`parse_json`] yields the matching [`Json::String`] with no new formatting
+/// logic in this crate.
+fn binary_opaque_json(value: &Datum, field_type: &FieldType) -> Result<Json, EvalError> {
+    let binary = value
+        .to_mysql_json_with_source_type(field_type)
+        .map_err(|_| EvalError::Unsupported("datum JSON conversion"))?;
+    parse_json(&binary.to_string())
+}
+
 /// The SQL string an argument carries, or `None` when it is not a SQL string.
 ///
 /// `Datum::String` and `Datum::Bytes` are the SAME SQL string value here: the
@@ -76,11 +171,18 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
 /// argument's EvalType -- `ETString` for both -- so splitting them would make
 /// `JSON_TYPE('{}')` succeed or raise 3146 depending on which evaluator ran.
 ///
-/// NAMED BOUNDARY: this collapses `CAST(x AS BINARY)` onto the same arm. Go
-/// stores a binary-charset string as an OPAQUE JSON value
-/// (`"base64:type254:..."`), which needs a charset this datum domain does not
-/// carry. A binary literal is still `Datum::BinaryLiteral` and keeps its own
-/// arm; only an explicit binary CAST lands here and reads as ordinary text.
+/// NAMED BOUNDARY (GRADUATED for the typed call sites): this collapses
+/// `CAST(x AS BINARY)` onto the same arm, and by itself carries no charset --
+/// a binary literal is still `Datum::BinaryLiteral` and keeps its own arm;
+/// only an explicit binary CAST lands here and reads as ordinary text.
+///
+/// The typed entry points ([`cast_as_json_typed`],
+/// [`dispatch_typed`]) consult the argument's static [`FieldType`] BEFORE
+/// falling into this function, so a genuine BINARY-charset column now renders
+/// as a JSON `Opaque` value (`"base64:type254:..."`) via
+/// [`binary_opaque_json`] instead of reaching here. This function remains the
+/// plain-text fallback for callers with no `FieldType` (the row/AST evaluator
+/// path in `crate::func`, which does not yet thread argument types).
 fn json_sql_string(value: &Datum) -> Result<Option<&str>, EvalError> {
     let bytes = match value {
         Datum::String(text) => text.bytes(),
@@ -223,15 +325,39 @@ pub(crate) fn cast_as_json(value: &Datum) -> Result<Datum, EvalError> {
     Ok(Datum::new_string(format_json(&json)))
 }
 
+/// [`cast_as_json`] with the source argument's static `FieldType`, when the
+/// caller has one, consulted first: a genuine BINARY-charset argument
+/// (`CAST(varbinary_col AS JSON)`) renders as the JSON `Opaque` value real
+/// TiDB produces (captured: `base64:type15:...`) instead of being parsed as
+/// JSON text or read as an ordinary string. `field_type: None` is exactly
+/// [`cast_as_json`].
+pub(crate) fn cast_as_json_typed(
+    value: &Datum,
+    field_type: Option<&FieldType>,
+) -> Result<Datum, EvalError> {
+    if value.is_null() {
+        return Ok(Datum::Null);
+    }
+    if let Some(field_type) = field_type {
+        if is_binary_datum(value, Some(field_type)) {
+            return Ok(Datum::new_string(format_json(&binary_opaque_json(
+                value, field_type,
+            )?)));
+        }
+    }
+    cast_as_json(value)
+}
+
 /// `JSON_ARRAY(value [, value] ...)`, port of `jsonArrayFunctionClass` and
 /// `builtinJSONArraySig` in `pkg/expression/builtin_json.go`.  SQL strings
 /// remain JSON strings, while numeric and NULL datums become their matching
 /// JSON scalar values.  Typed boolean/BinaryJSON arguments are outside this
 /// evaluator's value domain and are not inferred from an integer or string.
-fn json_array(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn json_array(vals: &[Datum], arg_types: &[Option<FieldType>]) -> Result<Datum, EvalError> {
     let values = vals
         .iter()
-        .map(json_mutation_value_argument)
+        .zip(arg_types.iter())
+        .map(|(v, ft)| json_mutation_value_argument(v, ft.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Datum::new_string(format_json(&Json::Array(values))))
 }
@@ -241,18 +367,18 @@ fn json_array(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `pkg/expression/builtin_json.go`.  Keys are SQL-string-coerced, NULL keys
 /// are rejected, and values follow the scalar JSON value boundary used by
 /// `JSON_ARRAY`.
-fn json_object(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn json_object(vals: &[Datum], arg_types: &[Option<FieldType>]) -> Result<Datum, EvalError> {
     if !vals.len().is_multiple_of(2) {
         return Err(EvalError::Unsupported(
             "JSON_OBJECT requires key/value pairs",
         ));
     }
     let mut object = serde_json::Map::new();
-    for pair in vals.chunks_exact(2) {
+    for (pair, types) in vals.chunks_exact(2).zip(arg_types.chunks_exact(2)) {
         let Some(key) = coerce_str(&pair[0])? else {
             return Err(EvalError::Json(JsonError::NullMemberName));
         };
-        let value = json_mutation_value_argument(&pair[1])?;
+        let value = json_mutation_value_argument(&pair[1], types[1].as_ref())?;
         object.insert(key, value);
     }
     Ok(Datum::new_string(format_json(&Json::Object(object))))
@@ -498,14 +624,17 @@ fn json_remove(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// parsed as an object.  The frozen Rust datum domain has no typed BinaryJSON
 /// variant, so rows whose value is an already-typed JSON object/array remain
 /// an explicit boundary; every scalar value-domain row is executable here.
-fn json_array_append(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn json_array_append(vals: &[Datum], arg_types: &[Option<FieldType>]) -> Result<Datum, EvalError> {
     if vals.len() < 3 || vals.len().is_multiple_of(2) {
         return Err(EvalError::Unsupported("JSON_ARRAY_APPEND arity"));
     }
     let Some(mut document) = parse_json_document_argument(&vals[0])? else {
         return Ok(Datum::Null);
     };
-    for pair in vals[1..].chunks_exact(2) {
+    for (pair, types) in vals[1..]
+        .chunks_exact(2)
+        .zip(arg_types[1..].chunks_exact(2))
+    {
         let Some(path) = coerce_str(&pair[0])? else {
             return Ok(Datum::Null);
         };
@@ -513,7 +642,7 @@ fn json_array_append(vals: &[Datum]) -> Result<Datum, EvalError> {
         if path.could_match_multiple {
             return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
         }
-        let value = json_mutation_value_argument(&pair[1])?;
+        let value = json_mutation_value_argument(&pair[1], types[1].as_ref())?;
         append_at_path(&mut document, &path.legs, &value);
     }
     Ok(Datum::new_string(format_json(&document)))
@@ -526,14 +655,17 @@ fn json_array_append(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// parent or a parent that is not an array is a no-op, while an index beyond
 /// the end appends.  Typed BinaryJSON value arguments are outside this
 /// evaluator's public datum domain; scalar values and SQL NULL are preserved.
-fn json_array_insert(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn json_array_insert(vals: &[Datum], arg_types: &[Option<FieldType>]) -> Result<Datum, EvalError> {
     if vals.len() < 3 || vals.len().is_multiple_of(2) {
         return Err(EvalError::Unsupported("JSON_ARRAY_INSERT arity"));
     }
     let Some(mut document) = parse_json_document_argument(&vals[0])? else {
         return Ok(Datum::Null);
     };
-    for pair in vals[1..].chunks_exact(2) {
+    for (pair, types) in vals[1..]
+        .chunks_exact(2)
+        .zip(arg_types[1..].chunks_exact(2))
+    {
         let Some(path) = coerce_str(&pair[0])? else {
             return Ok(Datum::Null);
         };
@@ -554,7 +686,7 @@ fn json_array_insert(vals: &[Datum]) -> Result<Datum, EvalError> {
         }) {
             return Err(EvalError::Json(JsonError::InvalidPathArrayCell));
         }
-        let value = json_mutation_value_argument(&pair[1])?;
+        let value = json_mutation_value_argument(&pair[1], types[1].as_ref())?;
         insert_at_path(&mut document, &path.legs, *index, &value);
     }
     Ok(Datum::new_string(format_json(&document)))
@@ -575,14 +707,21 @@ enum JsonModifyMode {
 /// `pkg/expression/builtin_json.go` / `pkg/types/json_binary_functions.go`.
 /// Value strings remain JSON strings because the source disables
 /// `ParseToJSONFlag4Expr` for every value argument.
-fn json_modify(vals: &[Datum], mode: JsonModifyMode) -> Result<Datum, EvalError> {
+fn json_modify(
+    vals: &[Datum],
+    arg_types: &[Option<FieldType>],
+    mode: JsonModifyMode,
+) -> Result<Datum, EvalError> {
     if vals.len() < 3 || vals.len().is_multiple_of(2) {
         return Err(EvalError::Unsupported("JSON modification arity"));
     }
     let Some(mut document) = parse_json_document_argument(&vals[0])? else {
         return Ok(Datum::Null);
     };
-    for pair in vals[1..].chunks_exact(2) {
+    for (pair, types) in vals[1..]
+        .chunks_exact(2)
+        .zip(arg_types[1..].chunks_exact(2))
+    {
         let Some(path) = coerce_str(&pair[0])? else {
             return Ok(Datum::Null);
         };
@@ -597,7 +736,7 @@ fn json_modify(vals: &[Datum], mode: JsonModifyMode) -> Result<Datum, EvalError>
         {
             return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
         }
-        let value = json_mutation_value_argument(&pair[1])?;
+        let value = json_mutation_value_argument(&pair[1], types[1].as_ref())?;
         let exists = descend_exact_mut(&mut document, &path.legs).is_some();
         match mode {
             JsonModifyMode::Set => {
@@ -1302,7 +1441,20 @@ fn crc32_ieee(bytes: &[u8]) -> u32 {
 /// The value-side coercion used by both array mutation signatures.  This is
 /// deliberately distinct from `parse_json_value_argument`: Go disables
 /// `ParseToJSONFlag` for these arguments, so strings remain JSON strings.
-fn json_mutation_value_argument(value: &Datum) -> Result<Json, EvalError> {
+///
+/// `field_type` is the argument's static type when the caller has one (see
+/// [`dispatch_typed`]); a BINARY-charset payload then renders as the JSON
+/// `Opaque` value Go's implicit `CAST(... AS JSON)` produces instead of an
+/// ordinary JSON string.
+fn json_mutation_value_argument(
+    value: &Datum,
+    field_type: Option<&FieldType>,
+) -> Result<Json, EvalError> {
+    if let Some(field_type) = field_type {
+        if is_binary_datum(value, Some(field_type)) {
+            return binary_opaque_json(value, field_type);
+        }
+    }
     if let Some(text) = json_sql_string(value)? {
         return Ok(Json::String(text.to_owned()));
     }
@@ -3562,5 +3714,97 @@ mod tests {
                 "{name} disagreed between its string and bytes spellings"
             );
         }
+    }
+
+    /// `dispatch_typed`'s BINARY-charset value rendering. Every expected
+    /// string is captured verbatim from a real TiDB server
+    /// (`zz_dump_frozjson_test.go`, `TestZZDumpFrozJSONBinaryOpaque`) over a
+    /// one-row table with `vb varbinary(8)`, `b binary(3)`, `bl blob`, `vc
+    /// varchar(8)`, each holding `'ab'`.
+    #[test]
+    fn dispatch_typed_renders_binary_charset_arguments_as_opaque() {
+        use super::dispatch_typed;
+        use tidb_datatype::{Collation, FieldType, FieldTypeCode};
+
+        let varbinary = FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
+        let mut binary = FieldType::new(FieldTypeCode::String).with_collation(Collation::Binary);
+        binary.set_flen(3);
+        let blob = FieldType::new(FieldTypeCode::Blob);
+        let varchar = FieldType::new(FieldTypeCode::Varchar);
+
+        // `JSON_ARRAY(vb)`, `JSON_ARRAY(b)`, `JSON_ARRAY(bl)`, `JSON_ARRAY(vc)`.
+        for (field_type, bytes, expected) in [
+            (
+                varbinary.clone(),
+                b"ab".as_slice(),
+                r#"["base64:type15:YWI="]"#,
+            ),
+            (
+                binary.clone(),
+                b"ab".as_slice(),
+                r#"["base64:type254:YWIA"]"#,
+            ),
+            (blob.clone(), b"ab".as_slice(), r#"["base64:type252:YWI="]"#),
+        ] {
+            let got = dispatch_typed(
+                "JSON_ARRAY",
+                &[Datum::Bytes(bytes.to_vec())],
+                &[Some(field_type)],
+            )
+            .expect("JSON_ARRAY is owned")
+            .expect("valid vector");
+            assert_eq!(got, s(expected));
+        }
+        // An ordinary (non-binary-charset) STRING datum is unaffected.
+        let plain = dispatch_typed(
+            "JSON_ARRAY",
+            &[Datum::new_string("ab".to_string())],
+            &[Some(varchar)],
+        )
+        .expect("JSON_ARRAY is owned")
+        .expect("valid vector");
+        assert_eq!(plain, s(r#"["ab"]"#));
+
+        // `JSON_OBJECT('k', vb)`.
+        let object = dispatch_typed(
+            "JSON_OBJECT",
+            &[s("k"), Datum::Bytes(b"ab".to_vec())],
+            &[None, Some(varbinary.clone())],
+        )
+        .expect("JSON_OBJECT is owned")
+        .expect("valid vector");
+        assert_eq!(object, s(r#"{"k": "base64:type15:YWI="}"#));
+
+        // `JSON_INSERT('{}', '$.a', vb)`.
+        let inserted = dispatch_typed(
+            "JSON_INSERT",
+            &[s("{}"), s("$.a"), Datum::Bytes(b"ab".to_vec())],
+            &[None, None, Some(varbinary)],
+        )
+        .expect("JSON_INSERT is owned")
+        .expect("valid vector");
+        assert_eq!(inserted, s(r#"{"a": "base64:type15:YWI="}"#));
+    }
+
+    /// [`cast_as_json_typed`]'s BINARY-charset rendering, the same capture as
+    /// `dispatch_typed_renders_binary_charset_arguments_as_opaque`:
+    /// `SELECT CAST(vb AS JSON) FROM t`.
+    #[test]
+    fn cast_as_json_typed_renders_binary_charset_argument_as_opaque() {
+        use super::cast_as_json_typed;
+        use tidb_datatype::{Collation, FieldType, FieldTypeCode};
+
+        let varbinary = FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
+        let got = cast_as_json_typed(&Datum::Bytes(b"ab".to_vec()), Some(&varbinary))
+            .expect("valid vector");
+        // `CAST(... AS JSON)`'s result is the document TEXT: a scalar JSON
+        // string is quoted, matching `SELECT CAST(vb AS JSON) FROM t` =>
+        // `"base64:type15:YWI="` (captured, quotes included).
+        assert_eq!(got, s(r#""base64:type15:YWI=""#));
+
+        // `field_type: None` is exactly the untyped `cast_as_json`: a bare
+        // (non-JSON) string is PARSED as a JSON document and `ab` is not
+        // valid JSON text, so this errors instead of guessing Opaque.
+        assert!(cast_as_json_typed(&Datum::Bytes(b"ab".to_vec()), None).is_err());
     }
 }
