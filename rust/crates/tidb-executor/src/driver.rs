@@ -552,6 +552,12 @@ pub enum DriverError {
     /// with an `N PRECEDING`/`N FOLLOWING` bound needs exactly one `ORDER BY`
     /// expression of numeric or temporal type.
     WindowRangeFrameOrderType,
+    /// Go `plannererrors.ErrWindowRangeFrameTemporalType` (3588): a temporal
+    /// `ORDER BY` key accepts only an `INTERVAL` bound value.
+    WindowRangeFrameTemporalType,
+    /// Go `plannererrors.ErrWindowRangeFrameNumericType` (3589): a numeric
+    /// `ORDER BY` key rejects an `INTERVAL` bound value.
+    WindowRangeFrameNumericType,
     /// Go `ErrUnknownColumn` (1054) naming the clause it was written in.
     UnknownColumnInClause {
         /// The name as written.
@@ -1289,10 +1295,6 @@ fn run_select_stmt(
             )
         });
     if is_aggregate {
-        if crate::window::select_has_window(select) {
-            // A window over post-aggregation rows is outside this slice.
-            return Err(DriverError::Unsupported(crate::window::SLICE_MESSAGE));
-        }
         return run_aggregate_select(select, from_source, &resolver, catalog, current_db, ctx);
     }
 
@@ -2749,6 +2751,16 @@ fn substitute_aggregates(
         // FIRST_ROW column, exactly as it does for a selected group column.
         // A column that is not grouped is rejected, which is what
         // ONLY_FULL_GROUP_BY reports in Go.
+        // A hoisted window column is computed ABOVE the aggregation, so it is
+        // neither grouped nor aggregated and must be left alone here; it
+        // resolves once the window stage has appended it.
+        Expr::Column(path)
+            if path
+                .last()
+                .is_some_and(|name| crate::window::is_window_column(name)) =>
+        {
+            expr.clone()
+        }
         Expr::Column(path) => {
             let name = path.last().cloned().unwrap_or_default();
             // `__apply_N` is not a real column: it is the placeholder a
@@ -2846,6 +2858,48 @@ fn substitute_aggregates(
         ),
         other => other.clone(),
     })
+}
+
+/// The window-call index a select field IS, once
+/// [`crate::window::hoist_windows`] has replaced the call with its computed
+/// column.
+fn hoisted_window_index(expr: &tidb_ast::Expr) -> Option<usize> {
+    let tidb_ast::Expr::Column(path) = expr else {
+        return None;
+    };
+    let name = path.last()?;
+    crate::window::is_window_column(name)
+        .then(|| crate::window::window_column_index(name))
+        .flatten()
+}
+
+/// Whether `expr` reads a hoisted window column anywhere inside a larger
+/// expression.
+fn expr_has_hoisted_window(expr: &tidb_ast::Expr) -> bool {
+    struct Finder {
+        found: bool,
+    }
+    impl tidb_ast::Visitor for Finder {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(tidb_ast::Expr::Column(path)) = node.downcast_ref::<tidb_ast::Expr>() {
+                if path
+                    .last()
+                    .is_some_and(|name| crate::window::is_window_column(name))
+                {
+                    self.found = true;
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    let mut finder = Finder { found: false };
+    let mut owned = expr.clone();
+    tidb_ast::Visitable::accept(&mut owned, &mut finder);
+    finder.found
 }
 
 /// Builds one aggregate function (and its Go-inferred result type) from an
@@ -5145,6 +5199,8 @@ enum OutputSlot {
     /// correlated subquery alongside aggregates/columns, e.g.
     /// `SUM(v) + (SELECT ...)`.
     Expr(usize),
+    /// The column the n-th window call appends above the aggregation.
+    Window(usize),
 }
 
 /// Extracts the one correlated subquery in a post-aggregation expression (a
@@ -5249,6 +5305,72 @@ fn run_aggregate_select(
     let mut names: Vec<String> = Vec::new();
     let mut types: Vec<FieldType> = Vec::new();
     let mut grouping_specs: Vec<GroupingSpec> = Vec::new();
+
+    // Window functions over a grouped query compute over the aggregation's
+    // OUTPUT rows (Go plans Aggregation -> Selection(HAVING) -> Window ->
+    // Sort), so every expression inside a window call -- `RANK() OVER (ORDER
+    // BY SUM(v))` -- is hoisted into the aggregation first and the call is
+    // left reading that output column. The display names below still come
+    // from the ORIGINAL field text, so the column is named as written.
+    let hoisted;
+    let mut window_calls = Vec::new();
+    let select = if crate::window::select_has_window(select) {
+        if select.rollup {
+            return Err(DriverError::Unsupported(
+                "a window function combined with GROUP BY ... WITH ROLLUP is not supported yet",
+            ));
+        }
+        // `ORDER BY <window alias>` names a value the window stage computes,
+        // not an aggregation output column, so the alias is resolved to its
+        // window expression BEFORE hoisting -- the hoist then leaves the same
+        // computed column behind in both places.
+        let mut aliased = select.clone();
+        for item in &mut aliased.order_by {
+            let tidb_ast::Expr::Column(path) = &item.expr else {
+                continue;
+            };
+            let [name] = path.as_slice() else { continue };
+            let projected = select.fields.fields().iter().find_map(|field| match field {
+                SelectField::Expr {
+                    expr,
+                    alias: Some(alias),
+                } if alias.eq_ignore_ascii_case(name)
+                    && !crate::window::windows_in(expr).is_empty() =>
+                {
+                    Some(expr.clone())
+                }
+                _ => None,
+            });
+            if let Some(expr) = projected {
+                item.expr = expr;
+            }
+        }
+        let select = &aliased;
+        let mut hoist_funcs = Vec::new();
+        let mut hoist_names = Vec::new();
+        let mut hoist_types = Vec::new();
+        let mut hoist_specs = Vec::new();
+        let (calls, rewritten) = crate::window::hoist_windows(select, |expr| {
+            substitute_aggregates(
+                expr,
+                &mut hoist_funcs,
+                &mut hoist_names,
+                &mut hoist_types,
+                &mut hoist_specs,
+                &group_by_names,
+                resolver,
+            )
+        })?;
+        agg_funcs = hoist_funcs;
+        names = hoist_names;
+        types = hoist_types;
+        grouping_specs = hoist_specs;
+        window_calls = calls;
+        hoisted = rewritten;
+        &hoisted
+    } else {
+        select
+    };
     // Where each select field's value comes from, in field order: an
     // aggregation output column, or the column an Apply appends above the
     // aggregation for a correlated subquery.
@@ -5257,6 +5379,10 @@ fn run_aggregate_select(
     // The hoisted expression for every select field a correlated subquery
     // reaches into (see `OutputSlot::Expr`), in the order they were found.
     let mut post_agg_exprs: Vec<tidb_ast::Expr> = Vec::new();
+    // The name a select field forces onto its output column when the column
+    // it reads is SHARED with another field (a hoisted window value, or a
+    // grouped column the window stage already carried out).
+    let mut slot_names: Vec<Option<String>> = Vec::new();
     for field in select.fields.fields() {
         let SelectField::Expr { expr, alias } = field else {
             return Err(DriverError::Unsupported(
@@ -5264,6 +5390,38 @@ fn run_aggregate_select(
             ));
         };
         let display = alias.clone().unwrap_or_else(|| expr.restore());
+        // A hoisted window call: its value is appended above the aggregation,
+        // so the field reads that column rather than any aggregate.
+        if let Some(index) = hoisted_window_index(expr) {
+            slots.push(OutputSlot::Window(index));
+            slot_names.push(Some(display));
+            continue;
+        }
+        // A grouped column the hoisting already carried out of the
+        // aggregation is REUSED rather than carried twice: two columns of the
+        // same name in the window stage's scope would be ambiguous there.
+        if !window_calls.is_empty() {
+            if let tidb_ast::Expr::Column(path) = expr {
+                let name = path.last().cloned().unwrap_or_default();
+                if let Some(index) = names
+                    .iter()
+                    .position(|have| have.eq_ignore_ascii_case(&name))
+                {
+                    slots.push(OutputSlot::Agg(index));
+                    slot_names.push(Some(alias.clone().unwrap_or(name)));
+                    continue;
+                }
+            }
+        }
+        if expr_has_hoisted_window(expr) {
+            // Go computes a larger expression over the projection ABOVE the
+            // window operator; this path has no such projection, so only a
+            // bare window field is supported over a grouped query.
+            return Err(DriverError::Unsupported(
+                "a window function nested inside a larger select expression is not \
+                 supported over a grouped query",
+            ));
+        }
         // A correlated subquery in an aggregate select list reads the GROUPED
         // value, so it runs once per OUTPUT row rather than per source row --
         // Go's Apply sits above the aggregation for the same reason. It may
@@ -5285,10 +5443,12 @@ fn run_aggregate_select(
         )?;
         if found {
             slots.push(OutputSlot::Expr(post_agg_exprs.len()));
+            slot_names.push(None);
             post_agg_exprs.push(hoisted);
             continue;
         }
         slots.push(OutputSlot::Agg(names.len()));
+        slot_names.push(None);
         match expr {
             // Both aggregate shapes lower through the same builder, which
             // knows GROUP_CONCAT's separator and DISTINCT.
@@ -5574,11 +5734,11 @@ fn run_aggregate_select(
     // Selection above the Aggregation), and ORDER BY sorts them. Built after
     // the Applies above, so both clauses can read a `__apply_N` column by
     // name exactly like an aggregate output.
-    let agg_resolver = AggOutputResolver {
+    let mut agg_resolver = AggOutputResolver {
         names: names.clone(),
         types: types.clone(),
     };
-    let out_schema = root.schema().clone();
+    let mut out_schema = root.schema().clone();
     if let Some(having) = &having_expr {
         let predicate = rewrite_expr_resolved(having, &agg_resolver)
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
@@ -5588,6 +5748,55 @@ fn run_aggregate_select(
             root,
             ctx.clone(),
         ));
+    }
+    // The window stage sits between HAVING and ORDER BY, exactly where Go
+    // plans it: the rows it sees are the surviving GROUP rows (with any
+    // Apply-appended subquery columns), and the sort below then orders the
+    // already-computed window values.
+    let window_base = names.len();
+    if !window_calls.is_empty() {
+        let scope = FromScope {
+            tables: vec![FromTable {
+                name: String::new(),
+                database: None,
+                columns: names.iter().cloned().zip(types.iter().cloned()).collect(),
+                offset: 0,
+            }],
+        };
+        let rows = drain_executor_rows(root, &types)?;
+        let (rows, scope_with_windows) =
+            crate::window::compute_windows(&window_calls, rows, &scope, ctx)?;
+        // The synthetic `__window_<i>` names are kept here so the ORDER BY /
+        // HAVING rewriting resolves them; the final projection puts the
+        // field's own written text back on the visible column.
+        for (name, field_type) in scope_with_windows
+            .column_list()
+            .into_iter()
+            .skip(window_base)
+        {
+            names.push(name);
+            types.push(field_type);
+        }
+        let columns: Vec<Column> = types
+            .iter()
+            .enumerate()
+            .map(|(i, ft)| {
+                let mut col = Column::new((i + 1) as i64, ft.clone());
+                col.index = i as i64;
+                col
+            })
+            .collect();
+        out_schema = Schema::new(columns);
+        root = Box::new(MemTableSourceExec::new(
+            ExecutorMeta::new(out_schema.clone(), 0, INIT_CAP, MAX_CHUNK_SIZE),
+            rows,
+        ));
+        // ORDER BY resolves against the WIDENED output, so an `ORDER BY` over
+        // a window value reads the computed column.
+        agg_resolver = AggOutputResolver {
+            names: names.clone(),
+            types: types.clone(),
+        };
     }
     if !order_by_exprs.is_empty() {
         let mut by_items = Vec::with_capacity(order_by_exprs.len());
@@ -5626,14 +5835,22 @@ fn run_aggregate_select(
     // the full expression (Go's final projection over the aggregation's
     // schema, generalized from a plain column read to `rewrite_expr_resolved`
     // so `SUM(v) + (SELECT ...)`-shaped fields can be more than one column).
+    // A window column always needs the projection, if only to put the
+    // field's written text back on it in place of the synthetic name.
     let has_expr_slot = slots.iter().any(|slot| matches!(slot, OutputSlot::Expr(_)));
-    if has_expr_slot {
+    if has_expr_slot || !window_calls.is_empty() {
         let visible: Vec<Expression> = slots
             .iter()
             .map(|slot| match slot {
                 OutputSlot::Agg(index) => {
                     let mut col = Column::new((*index + 1) as i64, types[*index].clone());
                     col.index = *index as i64;
+                    Ok(Expression::Column(col))
+                }
+                OutputSlot::Window(k) => {
+                    let index = window_base + k;
+                    let mut col = Column::new((index + 1) as i64, types[index].clone());
+                    col.index = index as i64;
                     Ok(Expression::Column(col))
                 }
                 OutputSlot::Expr(index) => {
@@ -5688,6 +5905,7 @@ fn run_aggregate_select(
             .iter()
             .map(|slot| match slot {
                 OutputSlot::Agg(index) => *index,
+                OutputSlot::Window(k) => window_base + k,
                 OutputSlot::Expr(_) => unreachable!("no Expr slot when !has_expr_slot"),
             })
             .collect();
@@ -5715,7 +5933,11 @@ fn run_aggregate_select(
                 root,
                 ctx.clone(),
             ));
-            names = sources.iter().map(|&i| names[i].clone()).collect();
+            names = slot_names
+                .iter()
+                .zip(&sources)
+                .map(|(forced, &i)| forced.clone().unwrap_or_else(|| names[i].clone()))
+                .collect();
             types = sources.iter().map(|&i| types[i].clone()).collect();
         }
     }
@@ -9195,6 +9417,24 @@ impl DriverError {
             *b"HY000",
             "Window '<unnamed window>' with RANGE N PRECEDING/FOLLOWING frame requires \
              exactly one ORDER BY expression, of numeric or temporal type"
+                .to_owned(),
+        ),
+        // Go: "Window '%s' with RANGE frame has ORDER BY expression of
+        // datetime type. Only INTERVAL bound value allowed."
+        DriverError::WindowRangeFrameTemporalType => MysqlError::new(
+            3588,
+            *b"HY000",
+            "Window '<unnamed window>' with RANGE frame has ORDER BY expression of \
+             datetime type. Only INTERVAL bound value allowed."
+                .to_owned(),
+        ),
+        // Go: "Window '%s' with RANGE frame has ORDER BY expression of
+        // numeric type, INTERVAL bound value not allowed."
+        DriverError::WindowRangeFrameNumericType => MysqlError::new(
+            3589,
+            *b"HY000",
+            "Window '<unnamed window>' with RANGE frame has ORDER BY expression of \
+             numeric type, INTERVAL bound value not allowed."
                 .to_owned(),
         ),
         // Go: "Invalid use of group function".

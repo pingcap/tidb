@@ -9336,37 +9336,16 @@ mod tests {
             Err(DriverError::WindowNoRedefineOrderBy(ref base)) if base == "w"
         ));
 
-        // Outside this slice: the distribution functions, every other
-        // aggregate, and a window combined with GROUP BY.
-        for sql in [
-            "SELECT g, PERCENT_RANK() OVER (ORDER BY v) FROM t",
-            "SELECT g, CUME_DIST() OVER (ORDER BY v) FROM t",
-            "SELECT g, ROW_NUMBER() OVER (ORDER BY v) FROM t GROUP BY g",
-        ] {
-            match session.run(sql) {
-                Err(DriverError::Unsupported(message)) => {
-                    assert!(
-                        message.contains("ROW_NUMBER"),
-                        "refusal for {sql} should name this slice, got {message}"
-                    );
-                }
-                other => panic!("expected a slice refusal for {sql}, got {other:?}"),
-            }
-        }
-
-        // A RANGE frame with a VALUE offset bound is the one frame shape this
-        // slice defers, and it says so precisely rather than naming the whole
-        // slice. Captured TiDB DOES answer it (`RANGE BETWEEN 5 PRECEDING AND
-        // CURRENT ROW` over `10,20,20,30,40` is `10,40,40,30,40`), so this is
-        // a deferral, not a divergence.
-        match session.run("SELECT SUM(v) OVER (PARTITION BY g ORDER BY v RANGE BETWEEN 5 PRECEDING AND CURRENT ROW) FROM t") {
+        // Outside this slice: every aggregate the framed family does not
+        // cover.
+        match session.run("SELECT g, BIT_OR(v) OVER (ORDER BY v) FROM t") {
             Err(DriverError::Unsupported(message)) => {
                 assert!(
-                    message.contains("RANGE frame"),
-                    "expected the RANGE-offset refusal, got {message}"
+                    message.contains("ROW_NUMBER"),
+                    "refusal should name this slice, got {message}"
                 );
             }
-            other => panic!("expected the RANGE-offset refusal, got {other:?}"),
+            other => panic!("expected a slice refusal, got {other:?}"),
         }
 
         // Frame validation is the PLANNER's, so it fires for every function
@@ -9393,19 +9372,58 @@ mod tests {
             Err(DriverError::WindowRangeFrameOrderType)
         ));
 
-        // A LAG/LEAD default that WIDENS the result type is deferred: Go
-        // merges the two into a VARCHAR here and casts BOTH the argument and
-        // the default into it (captured: `LAG(v, 1, 'zz')` over a BIGINT
-        // column returns the strings `zz`, `10`, ...), and that cast is a
-        // separate unit. A same-type default (`LAG(v, 1, -1)`) is fine.
-        match session.run("SELECT LAG(v, 1, 'zz') OVER (ORDER BY v) FROM t") {
+        // Captured: "[planner:3588]Window '<unnamed window>' with RANGE frame
+        // has ORDER BY expression of datetime type. Only INTERVAL bound value
+        // allowed." -- a numeric bound over a temporal key.
+        session
+            .run("CREATE TABLE rt (d DATE, v BIGINT)")
+            .expect("create rt");
+        session
+            .run("INSERT INTO rt VALUES ('2020-01-01',1),('2020-01-02',2)")
+            .expect("insert rt");
+        assert!(matches!(
+            session.run(
+                "SELECT SUM(v) OVER (ORDER BY d RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM rt"
+            ),
+            Err(DriverError::WindowRangeFrameTemporalType)
+        ));
+
+        // Captured: "[planner:3589]... of numeric type, INTERVAL bound value
+        // not allowed." -- and, over a STRING key, 3587 wins over BOTH the
+        // interval check and the interval refusal below.
+        assert!(matches!(
+            session.run(
+                "SELECT SUM(v) OVER (ORDER BY v RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM t"
+            ),
+            Err(DriverError::WindowRangeFrameNumericType)
+        ));
+        session
+            .run("CREATE TABLE rs (k VARCHAR(10), v BIGINT)")
+            .expect("create rs");
+        for sql in [
+            "SELECT SUM(v) OVER (ORDER BY k RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM rs",
+            "SELECT SUM(v) OVER (ORDER BY k RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM rs",
+        ] {
+            assert!(
+                matches!(session.run(sql), Err(DriverError::WindowRangeFrameOrderType)),
+                "expected 3587 for {sql}"
+            );
+        }
+
+        // The one RANGE shape still deferred: an INTERVAL bound over a
+        // temporal key, which captured TiDB DOES answer
+        // (`2020-01-01,2020-01-02,2020-01-05` with values `1,2,3` under
+        // `RANGE INTERVAL 1 DAY PRECEDING` is `1,3,3`).
+        match session.run(
+            "SELECT SUM(v) OVER (ORDER BY d RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM rt",
+        ) {
             Err(DriverError::Unsupported(message)) => {
                 assert!(
-                    message.contains("LAG/LEAD"),
-                    "expected the LAG/LEAD cast refusal, got {message}"
+                    message.contains("INTERVAL"),
+                    "expected the INTERVAL-bound refusal, got {message}"
                 );
             }
-            other => panic!("expected the LAG/LEAD cast refusal, got {other:?}"),
+            other => panic!("expected the INTERVAL-bound refusal, got {other:?}"),
         }
 
         // Captured: "[planner:1210]Incorrect arguments to nth_value" -- the
@@ -9413,6 +9431,502 @@ mod tests {
         assert!(matches!(
             session.run("SELECT NTH_VALUE(v, 0) OVER (PARTITION BY g ORDER BY v) FROM t"),
             Err(DriverError::WrongArguments("nth_value"))
+        ));
+    }
+
+    /// The fixture the value-measured `RANGE` frame captures ran over: keys
+    /// with a TIE (`3,3`) and a GAP (`3 -> 7`), which is what separates a
+    /// value frame from a positional one.
+    fn range_session() -> Session {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE ri (g BIGINT, k BIGINT, v BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO ri VALUES (1,1,10),(1,3,20),(1,3,30),(1,7,40),(1,8,50)")
+            .unwrap();
+        session
+    }
+
+    /// `RANGE BETWEEN N PRECEDING/FOLLOWING`: the boundary is a VALUE of the
+    /// single `ORDER BY` key, so ties share a frame and a gap in the key
+    /// SHRINKS the frame rather than shifting it.
+    ///
+    /// Every expectation is captured TiDB output over `k = 1,3,3,7,8`.
+    #[test]
+    fn window_range_value_bounds() {
+        let mut session = range_session();
+
+        for (frame, expected) in [
+            (
+                "RANGE BETWEEN 2 PRECEDING AND CURRENT ROW",
+                [
+                    ["10", "1"],
+                    ["60", "3"],
+                    ["60", "3"],
+                    ["40", "1"],
+                    ["90", "2"],
+                ],
+            ),
+            (
+                "RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING",
+                [
+                    ["10", "1"],
+                    ["50", "2"],
+                    ["50", "2"],
+                    ["90", "2"],
+                    ["90", "2"],
+                ],
+            ),
+            (
+                "RANGE BETWEEN CURRENT ROW AND 2 FOLLOWING",
+                [
+                    ["60", "3"],
+                    ["50", "2"],
+                    ["50", "2"],
+                    ["90", "2"],
+                    ["50", "1"],
+                ],
+            ),
+            // An empty frame: SUM is NULL but COUNT is 0, as under ROWS.
+            (
+                "RANGE BETWEEN 1 FOLLOWING AND 2 FOLLOWING",
+                [
+                    ["50", "2"],
+                    ["NULL", "0"],
+                    ["NULL", "0"],
+                    ["50", "1"],
+                    ["NULL", "0"],
+                ],
+            ),
+            (
+                "RANGE BETWEEN 2 PRECEDING AND 1 PRECEDING",
+                [
+                    ["NULL", "0"],
+                    ["10", "1"],
+                    ["10", "1"],
+                    ["NULL", "0"],
+                    ["40", "1"],
+                ],
+            ),
+            (
+                "RANGE BETWEEN UNBOUNDED PRECEDING AND 1 FOLLOWING",
+                [
+                    ["10", "1"],
+                    ["60", "3"],
+                    ["60", "3"],
+                    ["150", "5"],
+                    ["150", "5"],
+                ],
+            ),
+            (
+                "RANGE BETWEEN 1 PRECEDING AND UNBOUNDED FOLLOWING",
+                [
+                    ["150", "5"],
+                    ["140", "4"],
+                    ["140", "4"],
+                    ["90", "2"],
+                    ["90", "2"],
+                ],
+            ),
+            // A zero-width value frame is still the whole PEER group.
+            (
+                "RANGE BETWEEN 0 PRECEDING AND 0 FOLLOWING",
+                [
+                    ["10", "1"],
+                    ["50", "2"],
+                    ["50", "2"],
+                    ["40", "1"],
+                    ["50", "1"],
+                ],
+            ),
+        ] {
+            assert_eq!(
+                row_text(session.run(&format!(
+                    "SELECT SUM(v) OVER (ORDER BY k {frame}) s, \
+                     COUNT(*) OVER (ORDER BY k {frame}) c FROM ri"
+                ))),
+                expected,
+                "frame {frame}"
+            );
+        }
+
+        // A fractional offset is legal under RANGE (only ROWS demands an
+        // integer): `1.5 PRECEDING` over `1,3,3,7,8` is `10,50,50,40,90`.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k RANGE BETWEEN 1.5 PRECEDING AND CURRENT ROW) \
+                 FROM ri"
+            )),
+            [["10"], ["50"], ["50"], ["40"], ["90"]]
+        );
+
+        // The frame is per PARTITION, as everywhere else.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (PARTITION BY g ORDER BY k \
+                 RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM ri"
+            )),
+            [["10"], ["50"], ["50"], ["90"], ["90"]]
+        );
+
+        // A DECIMAL key uses decimal arithmetic for the boundary value.
+        session
+            .run("CREATE TABLE rd (k DECIMAL(10,2), v BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO rd VALUES (1.00,1),(1.50,2),(2.25,3),(5.00,4)")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM rd"
+            )),
+            [["1"], ["3"], ["5"], ["4"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k RANGE BETWEEN 0.5 PRECEDING AND 0.5 FOLLOWING) \
+                 FROM rd"
+            )),
+            [["3"], ["3"], ["3"], ["4"]]
+        );
+    }
+
+    /// `RANGE` under `DESC`, and `RANGE` over NULL keys -- the two rules a
+    /// positional reading of the frame gets wrong.
+    #[test]
+    fn window_range_desc_direction_and_nulls() {
+        let mut session = range_session();
+
+        // Under DESC, `N PRECEDING` reaches the LARGER keys (the ones that
+        // sort EARLIER), so at `k = 7` the frame is `{8, 7}` and not `{7, 3}`.
+        // Rows come out in source order `1,3,3,7,8`.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k DESC RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) s, \
+                 COUNT(*) OVER (ORDER BY k DESC RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) c FROM ri"
+            )),
+            [["60", "3"], ["50", "2"], ["50", "2"], ["90", "2"], ["50", "1"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k DESC RANGE BETWEEN CURRENT ROW AND 2 FOLLOWING) \
+                 FROM ri"
+            )),
+            [["10"], ["60"], ["60"], ["40"], ["90"]]
+        );
+
+        // NULL keys form a frame of their OWN: they peer with each other and
+        // with nothing else, so the two NULL rows see only each other (sum 3,
+        // count 2) and no non-NULL row ever includes them.
+        session.run("CREATE TABLE rn (k BIGINT, v BIGINT)").unwrap();
+        session
+            .run("INSERT INTO rn VALUES (NULL,1),(NULL,2),(1,10),(2,20),(5,50)")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) s, \
+                 COUNT(*) OVER (ORDER BY k RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) c FROM rn"
+            )),
+            [
+                ["3", "2"],
+                ["3", "2"],
+                ["30", "2"],
+                ["30", "2"],
+                ["50", "1"]
+            ]
+        );
+        // Under DESC the NULLs sort LAST, and still frame only each other.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT SUM(v) OVER (ORDER BY k DESC RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) \
+                 FROM rn"
+            )),
+            [["3"], ["3"], ["30"], ["30"], ["50"]]
+        );
+    }
+
+    /// A `LAG`/`LEAD` default that WIDENS the result type: Go merges the two
+    /// argument types and reads BOTH operands through the merged one, so the
+    /// VALUE argument changes domain too.
+    #[test]
+    fn window_lag_lead_widening_default() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE ll (id BIGINT, v BIGINT, d DECIMAL(10,2), s VARCHAR(10))")
+            .unwrap();
+        session
+            .run("INSERT INTO ll VALUES (1,10,1.50,'a'),(2,20,2.50,'b'),(3,30,3.50,'c')")
+            .unwrap();
+
+        // Captured: the integers come back as STRINGS, not just the default.
+        assert_eq!(
+            row_text(session.run("SELECT LAG(v,1,'zz') OVER (ORDER BY id) FROM ll")),
+            [["zz"], ["10"], ["20"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT LEAD(v,1,'zz') OVER (ORDER BY id) FROM ll")),
+            [["20"], ["30"], ["zz"]]
+        );
+        // A DECIMAL default widens an integer argument to DECIMAL, and the
+        // argument keeps its own scale (`10`, not the scale-padded `10.0`):
+        // Go reads it through the merged type's EVAL kind, not through a
+        // width-and-scale-applying conversion.
+        assert_eq!(
+            row_text(session.run("SELECT LAG(v,1,1.5) OVER (ORDER BY id) FROM ll")),
+            [["1.5"], ["10"], ["20"]]
+        );
+        // The widening runs the other way too: an integer default over a
+        // string argument merges to VARCHAR.
+        assert_eq!(
+            row_text(session.run("SELECT LAG(s,1,0) OVER (ORDER BY id) FROM ll")),
+            [["0"], ["a"], ["b"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT LAG(d,1,'zz') OVER (ORDER BY id) FROM ll")),
+            [["zz"], ["1.50"], ["2.50"]]
+        );
+        // Every position out of range takes the default.
+        assert_eq!(
+            row_text(session.run("SELECT LAG(v,5,'zz') OVER (ORDER BY id) FROM ll")),
+            [["zz"], ["zz"], ["zz"]]
+        );
+        // A NULL default does NOT widen: Go's `InferType4ControlFuncs` drops
+        // NULL-typed operands, so the result stays the argument's own type.
+        assert_eq!(
+            row_text(session.run("SELECT LAG(v,1,NULL) OVER (ORDER BY id) FROM ll")),
+            [["NULL"], ["10"], ["20"]]
+        );
+
+        // The merged result TYPE, captured: VARCHAR for a string default,
+        // DECIMAL for a decimal one, and the argument's own BIGINT when the
+        // default is NULL or already an integer.
+        use tidb_datatype::FieldTypeCode;
+        for (sql, code) in [
+            (
+                "SELECT LAG(v,1,'zz') OVER (ORDER BY id) FROM ll",
+                FieldTypeCode::Varchar,
+            ),
+            (
+                "SELECT LAG(v,1,1.5) OVER (ORDER BY id) FROM ll",
+                FieldTypeCode::NewDecimal,
+            ),
+            (
+                "SELECT LAG(s,1,0) OVER (ORDER BY id) FROM ll",
+                FieldTypeCode::Varchar,
+            ),
+            (
+                "SELECT LAG(v,1,NULL) OVER (ORDER BY id) FROM ll",
+                FieldTypeCode::LongLong,
+            ),
+            (
+                "SELECT LAG(v,1,-1) OVER (ORDER BY id) FROM ll",
+                FieldTypeCode::LongLong,
+            ),
+        ] {
+            match session.run_with_columns(sql).unwrap() {
+                StmtOutput::Rows { columns, .. } => {
+                    assert_eq!(columns[0].1.code(), code, "result type for {sql}");
+                }
+                other => panic!("expected rows, got {other:?}"),
+            }
+        }
+    }
+
+    /// `PERCENT_RANK()` and `CUME_DIST()`: both are PEER-based, both ignore
+    /// the frame, and `PERCENT_RANK` answers `0` rather than NaN when the
+    /// partition holds a single row.
+    #[test]
+    fn window_percent_rank_and_cume_dist() {
+        let mut session = Session::new();
+        session.run("CREATE TABLE pr (g BIGINT, v BIGINT)").unwrap();
+        session
+            .run("INSERT INTO pr VALUES (1,10),(1,20),(1,20),(1,30),(2,5)")
+            .unwrap();
+
+        // Captured: the tied 20s SHARE both values, and the one-row partition
+        // `g = 2` is PERCENT_RANK 0 / CUME_DIST 1.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, v, PERCENT_RANK() OVER (PARTITION BY g ORDER BY v) p, \
+                 CUME_DIST() OVER (PARTITION BY g ORDER BY v) c FROM pr ORDER BY g, v"
+            )),
+            [
+                ["1", "10", "0", "0.25"],
+                ["1", "20", "0.3333333333333333", "0.75"],
+                ["1", "20", "0.3333333333333333", "0.75"],
+                ["1", "30", "1", "1"],
+                ["2", "5", "0", "1"],
+            ]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT PERCENT_RANK() OVER (ORDER BY v) p, CUME_DIST() OVER (ORDER BY v) c \
+                 FROM pr ORDER BY v"
+            )),
+            [
+                ["0", "0.2"],
+                ["0.25", "0.4"],
+                ["0.5", "0.8"],
+                ["0.5", "0.8"],
+                ["1", "1"],
+            ]
+        );
+        // With NO ORDER BY every row is a peer: rank 1 everywhere, so
+        // PERCENT_RANK is 0 and CUME_DIST is 1.
+        assert_eq!(
+            row_text(session.run("SELECT PERCENT_RANK() OVER () p, CUME_DIST() OVER () c FROM pr")),
+            [["0", "1"], ["0", "1"], ["0", "1"], ["0", "1"], ["0", "1"],]
+        );
+        // DESC reverses which peer group is first.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT PERCENT_RANK() OVER (ORDER BY v DESC) p, \
+                 CUME_DIST() OVER (ORDER BY v DESC) c FROM pr ORDER BY v DESC"
+            )),
+            [
+                ["0", "0.2"],
+                ["0.25", "0.6"],
+                ["0.25", "0.6"],
+                ["0.75", "0.8"],
+                ["1", "1"],
+            ]
+        );
+        // A written frame is IGNORED by both (the values match the frameless
+        // form above), though it is still VALIDATED.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT PERCENT_RANK() OVER (ORDER BY v ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) \
+                 FROM pr ORDER BY v"
+            )),
+            [["0"], ["0.25"], ["0.5"], ["0.5"], ["1"]]
+        );
+        assert!(matches!(
+            session.run(
+                "SELECT PERCENT_RANK() OVER (ORDER BY v ROWS BETWEEN CURRENT ROW AND 1 PRECEDING) \
+                 FROM pr"
+            ),
+            Err(DriverError::WindowFrameIllegal)
+        ));
+
+        // Both are a NOT NULL DOUBLE (Go's `typeInfer4PercentRank` /
+        // `typeInfer4CumeDist`).
+        for sql in [
+            "SELECT PERCENT_RANK() OVER (ORDER BY v) FROM pr",
+            "SELECT CUME_DIST() OVER (ORDER BY v) FROM pr",
+        ] {
+            match session.run_with_columns(sql).unwrap() {
+                StmtOutput::Rows { columns, .. } => {
+                    let (_, ftype) = &columns[0];
+                    assert_eq!(ftype.code(), tidb_datatype::FieldTypeCode::Double, "{sql}");
+                    assert_ne!(ftype.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL, 0);
+                }
+                other => panic!("expected rows, got {other:?}"),
+            }
+        }
+    }
+
+    /// A window function combined with `GROUP BY`: the window computes over
+    /// the POST-aggregation rows, so its `ORDER BY` may name an aggregate and
+    /// `HAVING` has already removed the groups it never sees.
+    #[test]
+    fn window_over_group_by() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE gw (g BIGINT, h BIGINT, v BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO gw VALUES (1,1,10),(1,2,20),(2,1,30),(2,2,5),(3,1,15)")
+            .unwrap();
+
+        // Captured: the ranks follow the GROUP sums (15, 30, 35), not any
+        // source row.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, SUM(v) s, RANK() OVER (ORDER BY SUM(v)) r FROM gw GROUP BY g \
+                 ORDER BY g"
+            )),
+            [["1", "30", "2"], ["2", "35", "3"], ["3", "15", "1"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, ROW_NUMBER() OVER (ORDER BY SUM(v) DESC) r FROM gw GROUP BY g \
+                 ORDER BY g"
+            )),
+            [["1", "2"], ["2", "1"], ["3", "3"]]
+        );
+        // An aggregate INSIDE a window aggregate: the running total of the
+        // group sums.
+        assert_eq!(
+            row_text(
+                session
+                    .run("SELECT g, SUM(SUM(v)) OVER (ORDER BY g) t FROM gw GROUP BY g ORDER BY g")
+            ),
+            [["1", "30"], ["2", "65"], ["3", "80"]]
+        );
+        // HAVING runs BELOW the window, so the removed group never counts:
+        // ranks are 1 and 2 over the two surviving groups.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, SUM(v) s, RANK() OVER (ORDER BY SUM(v)) r FROM gw GROUP BY g \
+                 HAVING SUM(v) > 15 ORDER BY g"
+            )),
+            [["1", "30", "1"], ["2", "35", "2"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, SUM(v) s, RANK() OVER (ORDER BY g) r FROM gw GROUP BY g \
+                 HAVING SUM(v) > 15 ORDER BY g"
+            )),
+            [["1", "30", "1"], ["2", "35", "2"]]
+        );
+        // A window PARTITION BY over an aggregate.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, COUNT(*) c, RANK() OVER (PARTITION BY COUNT(*) ORDER BY g) r \
+                 FROM gw GROUP BY g ORDER BY g"
+            )),
+            [["1", "2", "1"], ["2", "2", "2"], ["3", "1", "1"]]
+        );
+        // LAG and PERCENT_RANK over the grouped rows.
+        assert_eq!(
+            row_text(
+                session
+                    .run("SELECT g, LAG(SUM(v)) OVER (ORDER BY g) l FROM gw GROUP BY g ORDER BY g")
+            ),
+            [["1", "NULL"], ["2", "30"], ["3", "35"]]
+        );
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, PERCENT_RANK() OVER (ORDER BY SUM(v)) p FROM gw GROUP BY g ORDER BY g"
+            )),
+            [["1", "0.5"], ["2", "1"], ["3", "0"]]
+        );
+        // A window over an implicit single-group aggregation (no GROUP BY).
+        assert_eq!(
+            row_text(session.run("SELECT MAX(v) m, RANK() OVER (ORDER BY MAX(v)) r FROM gw")),
+            [["30", "1"]]
+        );
+        // The outer ORDER BY sorts the already-computed window value, through
+        // its select alias.
+        assert_eq!(
+            row_text(session.run(
+                "SELECT g, SUM(v) s, RANK() OVER (ORDER BY SUM(v)) r FROM gw GROUP BY g \
+                 ORDER BY r DESC"
+            )),
+            [["2", "35", "3"], ["1", "30", "2"], ["3", "15", "1"]]
+        );
+        // A window over a GROUPED column needs no aggregate at all.
+        assert_eq!(
+            row_text(
+                session.run("SELECT g, RANK() OVER (ORDER BY g) r FROM gw GROUP BY g ORDER BY g")
+            ),
+            [["1", "1"], ["2", "2"], ["3", "3"]]
+        );
+        // A window in HAVING is still Go's 3593, wherever the query groups.
+        assert!(matches!(
+            session.run("SELECT g FROM gw GROUP BY g HAVING RANK() OVER (ORDER BY g) = 1"),
+            Err(DriverError::WindowInvalidWindowFuncUse(ref name)) if name == "rank"
         ));
     }
 

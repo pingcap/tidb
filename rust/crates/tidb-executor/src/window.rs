@@ -82,17 +82,60 @@
 //! 1 PRECEDING)` is 3586, `RANK() OVER (PARTITION BY g RANGE BETWEEN 1
 //! PRECEDING AND CURRENT ROW)` is 3587).
 //!
-//! SLICE SCOPE: the four ranking functions (frame-less, as above), the value
-//! family `LAG`/`LEAD`/`FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE`, and the
-//! aggregates `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` as window functions, over the
-//! default frame or an explicit `ROWS BETWEEN`. Still refused: the
-//! distribution functions (`PERCENT_RANK`/`CUME_DIST`), every other
-//! aggregate as a window function, a window function combined with `GROUP
-//! BY`/aggregation, and an explicit `RANGE` frame carrying an `N
-//! PRECEDING`/`N FOLLOWING` VALUE bound ([`RANGE_OFFSET_MESSAGE`]) -- a
-//! `RANGE` frame built only from `UNBOUNDED PRECEDING`/`CURRENT ROW`/
-//! `UNBOUNDED FOLLOWING` needs no value arithmetic and IS implemented, since
-//! it is exactly the peer-based default frame written out.
+//! Semantics confirmed against Go (`TestZZDumpWindow3` capture, since
+//! removed) for the value-measured `RANGE` frame, the DISTRIBUTION functions
+//! and the GROUPED shape:
+//!
+//! * `RANGE BETWEEN N PRECEDING AND N FOLLOWING` measures the boundary as a
+//!   VALUE of the single `ORDER BY` key, so a TIE shares one frame and a GAP
+//!   shrinks it: over `k = 1,3,3,7,8` with `v = 10..50`, `2 PRECEDING AND
+//!   CURRENT ROW` is `10,60,60,40,90` -- the `k = 7` row sees only itself
+//!   because nothing lies in `[5,7]`. `0 PRECEDING AND 0 FOLLOWING` is still
+//!   the whole peer group, and a FRACTIONAL offset is legal (only `ROWS`
+//!   demands an integer).
+//! * Under `ORDER BY ... DESC` the sign FLIPS: `N PRECEDING` reaches the
+//!   LARGER keys, which are the ones that sort earlier. Same fixture,
+//!   `ORDER BY k DESC RANGE BETWEEN 2 PRECEDING AND CURRENT ROW`, the `k = 7`
+//!   row sums `{8,7}` = `90`.
+//! * NULL keys form a frame of their OWN: they peer with each other and with
+//!   nothing else, so over `NULL,NULL,1,2,5` the two NULL rows see only each
+//!   other and no real key ever includes them -- which falls out of NULL
+//!   comparing below every value in both the boundary arithmetic (`NULL - 1`
+//!   is `NULL`) and the boundary search.
+//! * Go validates the `ORDER BY` shape in the planner and its errors OUTRANK
+//!   everything else about the bound: not exactly one key, or a key that is
+//!   neither numeric nor temporal, is 3587 -- even for an `INTERVAL` bound;
+//!   a numeric bound over a temporal key is 3588; an `INTERVAL` bound over a
+//!   numeric key is 3589.
+//! * `PERCENT_RANK` is `(RANK() - 1) / (rows - 1)` and `CUME_DIST` is the
+//!   fraction of the partition at or before the current PEER GROUP, so over
+//!   `10,20,20,30` they are `0, 1/3, 1/3, 1` and `.25, .75, .75, 1`. A
+//!   single-row partition is `PERCENT_RANK` 0 (not NaN) and `CUME_DIST` 1,
+//!   and with NO `ORDER BY` every row is a peer, so every row is `0` / `1`.
+//!   Both IGNORE the frame but still VALIDATE it.
+//! * A window function combined with `GROUP BY` computes over the
+//!   POST-aggregation rows, so its own `ORDER BY`/`PARTITION BY`/argument may
+//!   name an aggregate (`RANK() OVER (ORDER BY SUM(v))`) and a `HAVING` that
+//!   removed a group means the window never counts it.
+//! * `LAG`/`LEAD` with a WIDENING default reads BOTH operands through the
+//!   merged type, so `LAG(int_col, 1, 'zz')` returns the STRINGS `'zz'`,
+//!   `'10'`, ... The value argument goes through the merged type's DOMAIN
+//!   only ([`coerce_to_domain`]) while the default constant goes through the
+//!   full type, which is why `LAG(int_col, 1, 1.5)` prints `1.5` and `10`
+//!   rather than the scale-padded `10.0`. A NULL default does not widen at
+//!   all (Go's `InferType4ControlFuncs` drops NULL-typed operands).
+//!
+//! SLICE SCOPE: the ranking functions (frame-less, as above), the
+//! distribution functions `PERCENT_RANK`/`CUME_DIST`, the value family
+//! `LAG`/`LEAD`/`FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE`, and the aggregates
+//! `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` as window functions, over the default
+//! frame, an explicit `ROWS BETWEEN`, or a `RANGE BETWEEN` with peer or
+//! numeric VALUE bounds -- alone or over a `GROUP BY`. Still refused: every
+//! other aggregate as a window function ([`SLICE_MESSAGE`]); a `RANGE` bound
+//! written as `INTERVAL n unit` over a temporal key
+//! ([`RANGE_INTERVAL_MESSAGE`]); a window function nested inside a LARGER
+//! select expression over a grouped query, and `GROUP BY ... WITH ROLLUP`
+//! combined with a window (both refused in `crate::driver`).
 //!
 //! Result TYPES follow Go's `baseFuncDesc.TypeInfer`: `COUNT` is a NOT NULL
 //! `BIGINT(21)`, `SUM` a `DECIMAL` (`DOUBLE` for a real argument), `AVG` a
@@ -120,19 +163,13 @@ pub(crate) const SLICE_MESSAGE: &str =
      FIRST_VALUE, LAST_VALUE, NTH_VALUE) and aggregate (SUM, COUNT, AVG, MIN, MAX) \
      window functions are supported";
 
-/// What a `LAG`/`LEAD` whose default WIDENS the result type is refused with:
-/// Go casts both the argument and the default to the merged type, and that
-/// cast is a separate unit.
-pub(crate) const LAG_LEAD_CAST_MESSAGE: &str =
-    "LAG/LEAD with a default whose type does not match the argument's is not \
-     yet supported, because the result would need a cast";
-
-/// What a `RANGE` frame with a VALUE offset bound is refused with: those need
-/// Go's per-type range arithmetic over the single `ORDER BY` key, which this
-/// slice does not implement.
-pub(crate) const RANGE_OFFSET_MESSAGE: &str =
-    "a RANGE frame with an N PRECEDING/N FOLLOWING value bound is not yet \
-     supported; use a ROWS frame or the default frame";
+/// What a `RANGE` frame with an `INTERVAL` offset bound is refused with: the
+/// numeric value bounds ARE implemented (see [`Frame::Range`]), but an
+/// `INTERVAL` bound measures the frame in calendar units over a temporal
+/// `ORDER BY` key, which is a separate unit.
+pub(crate) const RANGE_INTERVAL_MESSAGE: &str =
+    "a RANGE frame with an INTERVAL bound value is not yet supported; a \
+     numeric N PRECEDING/N FOLLOWING bound over a numeric ORDER BY key is";
 
 /// The prefix of the synthetic column each computed window call is read from.
 const WINDOW_COLUMN_PREFIX: &str = "__window_";
@@ -159,6 +196,12 @@ enum WindowKind {
     Rank,
     /// `DENSE_RANK()`.
     DenseRank,
+    /// `PERCENT_RANK()`: `(RANK() - 1) / (rows - 1)`, and `0` for a
+    /// single-row partition (Go's `func_percent_rank.go`).
+    PercentRank,
+    /// `CUME_DIST()`: the fraction of the partition at or before the current
+    /// row's PEER GROUP (Go's `func_cume_dist.go`).
+    CumeDist,
     /// `NTILE(n)`; `None` is `NTILE(NULL)`, whose result is `NULL` everywhere.
     Ntile(Option<u64>),
     /// `SUM`/`COUNT`/`AVG`/`MIN`/`MAX` over the frame. `arg` is the argument
@@ -229,12 +272,6 @@ impl Bound {
             Bound::UnboundedFollowing => 4,
         }
     }
-
-    /// Whether this bound carries a VALUE offset, which is what makes a
-    /// `RANGE` frame need the sort key's own arithmetic.
-    fn has_offset(self) -> bool {
-        matches!(self, Bound::Preceding(_) | Bound::Following(_))
-    }
 }
 
 /// The resolved frame a non-ranking window function evaluates over.
@@ -259,6 +296,66 @@ enum Frame {
         /// The ending boundary.
         end: Bound,
     },
+    /// `RANGE BETWEEN start AND end` where at least one bound carries a VALUE
+    /// offset, so the boundary is a VALUE of the single `ORDER BY` key rather
+    /// than a position: the frame holds every row whose key lies within the
+    /// offset of the current row's key.
+    Range {
+        /// The starting boundary.
+        start: RangeBound,
+        /// The ending boundary.
+        end: RangeBound,
+    },
+}
+
+/// One boundary of a value-measured `RANGE` frame.
+#[derive(Clone)]
+enum RangeBound {
+    /// The partition's first row.
+    UnboundedPreceding,
+    /// The current row's whole PEER GROUP (its first row as a start bound,
+    /// one past its last as an end bound).
+    CurrentRow,
+    /// A key value `offset` BEFORE the current row's, in the window's own
+    /// direction -- under `ORDER BY ... DESC` "before" means a LARGER key.
+    Preceding(Offset),
+    /// A key value `offset` AFTER the current row's, in the same sense.
+    Following(Offset),
+    /// The partition's last row.
+    UnboundedFollowing,
+}
+
+/// A `RANGE` bound's offset as written.
+#[derive(Clone)]
+enum Offset {
+    /// A plain numeric constant, which only a numeric `ORDER BY` key accepts.
+    Value(Datum),
+    /// `INTERVAL n unit`, which only a temporal `ORDER BY` key accepts.
+    Interval,
+}
+
+impl RangeBound {
+    /// Whether this bound is written as `INTERVAL n unit`, which is what
+    /// decides between Go's 3588 and 3589 against the key's own type.
+    fn is_interval(&self) -> bool {
+        matches!(
+            self,
+            RangeBound::Preceding(Offset::Interval) | RangeBound::Following(Offset::Interval)
+        )
+    }
+
+    /// The bound's place in the same `UNBOUNDED PRECEDING < N PRECEDING <
+    /// CURRENT ROW < N FOLLOWING < UNBOUNDED FOLLOWING` order [`Bound::rank`]
+    /// uses.
+    fn rank(&self) -> u8 {
+        match self {
+            RangeBound::UnboundedPreceding => 0,
+            RangeBound::Preceding(_) => 1,
+            RangeBound::CurrentRow => 2,
+            RangeBound::Following(_) => 3,
+            RangeBound::UnboundedFollowing => 4,
+        }
+    }
 }
 
 impl Frame {
@@ -269,7 +366,17 @@ impl Frame {
     /// An empty frame comes back as an empty range; every out-of-partition
     /// offset is clamped, so `ROWS BETWEEN 1 PRECEDING AND CURRENT ROW` at the
     /// partition's first row is `[0, 1)` rather than an error.
-    fn range(&self, position: usize, total: usize, peers: (usize, usize)) -> (usize, usize) {
+    fn range(
+        &self,
+        position: usize,
+        total: usize,
+        peers: (usize, usize),
+        keys: Option<&RangeKeys<'_>>,
+    ) -> Result<(usize, usize), DriverError> {
+        if let Frame::Range { start, end } = self {
+            let keys = keys.expect("a value-measured RANGE frame carries its sorted key column");
+            return keys.bounds(start, end, position, total, peers);
+        }
         let total_i = total as i128;
         let (low, high) = match self {
             Frame::Rows { start, end } => {
@@ -297,10 +404,121 @@ impl Frame {
                 };
                 (at(start, peers.0) as i128, at(end, peers.1) as i128)
             }
+            Frame::Range { .. } => unreachable!("handled above"),
         };
         let low = low.clamp(0, total_i) as usize;
         let high = high.clamp(0, total_i) as usize;
-        (low, high.max(low))
+        Ok((low, high.max(low)))
+    }
+}
+
+/// The single `ORDER BY` key a value-measured `RANGE` frame is computed
+/// against, in the partition's sorted order, plus that order's direction.
+struct RangeKeys<'a> {
+    /// The key value at each sorted partition position.
+    keys: &'a [Datum],
+    /// Whether the window's own `ORDER BY` is descending, which flips what
+    /// `PRECEDING` means: under `DESC` the preceding rows hold LARGER keys.
+    desc: bool,
+}
+
+impl RangeKeys<'_> {
+    /// The frame's half-open `[start, end)` position range, following Go's
+    /// `rangeFrameWindowProcessor`: a boundary is the first sorted position
+    /// whose key has passed the boundary VALUE (the current row's key moved
+    /// by the offset), so ties on the key are naturally peer-inclusive and a
+    /// gap in the key values simply yields a shorter frame.
+    fn bounds(
+        &self,
+        start: &RangeBound,
+        end: &RangeBound,
+        position: usize,
+        total: usize,
+        peers: (usize, usize),
+    ) -> Result<(usize, usize), DriverError> {
+        let low = match start {
+            RangeBound::UnboundedPreceding => 0,
+            RangeBound::CurrentRow => peers.0,
+            RangeBound::UnboundedFollowing => total,
+            RangeBound::Preceding(offset) | RangeBound::Following(offset) => {
+                let bound = self.boundary_value(
+                    position,
+                    offset,
+                    matches!(start, RangeBound::Preceding(_)),
+                )?;
+                // Go's `getStartOffset`: skip while the key still lies BEFORE
+                // the boundary in the window's direction; the first key that
+                // has reached it starts the frame.
+                self.seek(total, |key| self.before(key, &bound))?
+            }
+        };
+        let high = match end {
+            RangeBound::UnboundedPreceding => 0,
+            RangeBound::CurrentRow => peers.1,
+            RangeBound::UnboundedFollowing => total,
+            RangeBound::Preceding(offset) | RangeBound::Following(offset) => {
+                let bound =
+                    self.boundary_value(position, offset, matches!(end, RangeBound::Preceding(_)))?;
+                // Go's `getEndOffset`: the frame ends at the first key that
+                // lies strictly PAST the boundary.
+                self.seek(total, |key| Ok(!self.before(&bound, key)?))?
+            }
+        };
+        Ok((low, high.max(low)))
+    }
+
+    /// The boundary VALUE for the row at `position`: its own key moved by
+    /// `offset`, in the direction `preceding` names. Under `DESC` the sign
+    /// flips, which is exactly what makes `2 PRECEDING` reach the LARGER keys
+    /// that sort earlier.
+    fn boundary_value(
+        &self,
+        position: usize,
+        offset: &Offset,
+        preceding: bool,
+    ) -> Result<Datum, DriverError> {
+        let Offset::Value(offset) = offset else {
+            unreachable!("an INTERVAL bound is refused before the frame is evaluated");
+        };
+        let key = &self.keys[position];
+        if key.is_null() {
+            // Go's calc function propagates NULL, and a NULL boundary
+            // compares below every real key -- which is why the NULL rows
+            // form a frame of their own.
+            return Ok(Datum::Null);
+        }
+        let op = if preceding != self.desc {
+            tidb_ast::BinaryOp::Minus
+        } else {
+            tidb_ast::BinaryOp::Plus
+        };
+        tidb_expr::apply_binary(op, key.clone(), offset.clone())
+            .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))
+    }
+
+    /// Whether `left` lies before `right` in the window's own direction.
+    fn before(&self, left: &Datum, right: &Datum) -> Result<bool, DriverError> {
+        let ordering = tidb_expr::compare_datums(left, right)
+            .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
+        Ok(if self.desc {
+            ordering.is_gt()
+        } else {
+            ordering.is_lt()
+        })
+    }
+
+    /// The first position whose key stops satisfying `skip`, or `total`.
+    fn seek(
+        &self,
+        total: usize,
+        skip: impl Fn(&Datum) -> Result<bool, DriverError>,
+    ) -> Result<usize, DriverError> {
+        for position in 0..total {
+            if !skip(&self.keys[position])? {
+                return Ok(position);
+            }
+        }
+        Ok(total)
     }
 }
 
@@ -338,6 +556,23 @@ fn build_frame(spec: &WindowSpec) -> Result<Frame, DriverError> {
             end: Bound::CurrentRow,
         });
     };
+    if matches!(kind, FrameKind::Range) && (has_offset(start) || has_offset(end)) {
+        // A value-measured RANGE frame: its offsets are key VALUES, so they
+        // are neither counted nor required to be integers, and Go validates
+        // the ORDER BY shape before anything else about them.
+        let range_start = build_range_bound(start)?;
+        let range_end = build_range_bound(end)?;
+        if range_start.rank() > range_end.rank() {
+            return Err(DriverError::WindowFrameIllegal);
+        }
+        if spec.order_by.len() != 1 {
+            return Err(DriverError::WindowRangeFrameOrderType);
+        }
+        return Ok(Frame::Range {
+            start: range_start,
+            end: range_end,
+        });
+    }
     let start = build_bound(start)?;
     let end = build_bound(end)?;
     if start.rank() > end.rank() {
@@ -345,23 +580,81 @@ fn build_frame(spec: &WindowSpec) -> Result<Frame, DriverError> {
     }
     match kind {
         FrameKind::Rows => Ok(Frame::Rows { start, end }),
-        FrameKind::Range if !start.has_offset() && !end.has_offset() => {
-            // Only peer-based bounds: the default frame, written out.
-            Ok(Frame::Peers { start, end })
-        }
-        FrameKind::Range => {
-            // Go checks the ORDER BY shape before anything else about a value
-            // bound, so this error wins over the refusal below.
-            if spec.order_by.len() != 1 {
-                return Err(DriverError::WindowRangeFrameOrderType);
-            }
-            Err(DriverError::Unsupported(RANGE_OFFSET_MESSAGE))
-        }
+        // Only peer-based bounds: the default frame, written out.
+        FrameKind::Range => Ok(Frame::Peers { start, end }),
     }
 }
 
+/// Whether a frame bound carries any offset expression at all, which is what
+/// separates a value-measured `RANGE` frame from the peer-based one.
+fn has_offset(bound: &FrameBound) -> bool {
+    matches!(bound, FrameBound::Preceding(_) | FrameBound::Following(_))
+}
+
+/// Folds one value-measured `RANGE` bound's offset.
+///
+/// Go requires a constant here and the parser has already rejected a column
+/// reference, so the only shapes left are numeric literals and `INTERVAL n
+/// unit` -- the latter carried as [`Offset::Interval`] rather than refused
+/// outright, because the `ORDER BY` key's own type decides which of Go's
+/// errors (3587/3588/3589) wins over the refusal.
+fn build_range_bound(bound: &FrameBound) -> Result<RangeBound, DriverError> {
+    let offset = |expr: &Expr| -> Result<Offset, DriverError> {
+        Ok(match expr {
+            Expr::Interval { .. } => Offset::Interval,
+            Expr::Int(text) => Offset::Value(Datum::Int(
+                text.parse::<i64>()
+                    .map_err(|_| DriverError::WindowFrameIllegal)?,
+            )),
+            Expr::Decimal(text) => {
+                Offset::Value(Datum::Decimal(tidb_datatype::Decimal::from_literal(text)))
+            }
+            Expr::Float(value) => Offset::Value(Datum::Real(*value)),
+            _ => return Err(DriverError::WindowFrameIllegal),
+        })
+    };
+    Ok(match bound {
+        FrameBound::UnboundedPreceding => RangeBound::UnboundedPreceding,
+        FrameBound::CurrentRow => RangeBound::CurrentRow,
+        FrameBound::UnboundedFollowing => RangeBound::UnboundedFollowing,
+        FrameBound::Preceding(expr) => RangeBound::Preceding(offset(expr)?),
+        FrameBound::Following(expr) => RangeBound::Following(offset(expr)?),
+    })
+}
+
+/// Go's `checkOriginWindowFrameBound` tail for a value-measured `RANGE`
+/// frame, which needs the `ORDER BY` key's own type and therefore runs once
+/// the source scope is known rather than at build time.
+///
+/// The refusal of an `INTERVAL` bound comes LAST, so Go's own errors win: a
+/// string key with an `INTERVAL` bound is 3587, not the refusal.
+fn check_range_key(frame: &Frame, key_type: Option<&FieldType>) -> Result<(), DriverError> {
+    let Frame::Range { start, end } = frame else {
+        return Ok(());
+    };
+    let code = key_type
+        .map(FieldType::code)
+        .ok_or(DriverError::WindowRangeFrameOrderType)?;
+    let (numeric, temporal) = (code.is_type_numeric(), code.is_type_temporal());
+    if !numeric && !temporal {
+        return Err(DriverError::WindowRangeFrameOrderType);
+    }
+    for bound in [start, end] {
+        if bound.is_interval() && !temporal {
+            return Err(DriverError::WindowRangeFrameNumericType);
+        }
+        if !bound.is_interval() && matches!(bound.rank(), 1 | 3) && !numeric {
+            return Err(DriverError::WindowRangeFrameTemporalType);
+        }
+    }
+    if start.is_interval() || end.is_interval() {
+        return Err(DriverError::Unsupported(RANGE_INTERVAL_MESSAGE));
+    }
+    Ok(())
+}
+
 /// Collects every `Expr::Window` node inside `expr`, in written order.
-fn windows_in(expr: &Expr) -> Vec<Expr> {
+pub(crate) fn windows_in(expr: &Expr) -> Vec<Expr> {
     struct Collector {
         found: Vec<Expr>,
     }
@@ -514,6 +807,114 @@ pub(crate) fn collect_window_calls(select: &SelectStmt) -> Result<Vec<WindowCall
     Ok(calls)
 }
 
+/// Whether `name` is one of the synthetic columns a computed window call
+/// lands in, which the aggregate path's own clause rewriting must leave
+/// alone.
+pub(crate) fn is_window_column(name: &str) -> bool {
+    name.starts_with(WINDOW_COLUMN_PREFIX)
+}
+
+/// The call index one synthetic window column names.
+pub(crate) fn window_column_index(name: &str) -> Option<usize> {
+    name.strip_prefix(WINDOW_COLUMN_PREFIX)?.parse().ok()
+}
+
+/// Hoists every window call out of `select`'s select list and `ORDER BY`,
+/// leaving a reference to its computed column behind.
+///
+/// This is the aggregate path's entry: the window stage there runs over the
+/// aggregation's OUTPUT rows, so every expression INSIDE a window call
+/// (`RANK() OVER (ORDER BY SUM(v))`) must first be rewritten to read that
+/// aggregation's own output columns -- which is what `substitute` does.
+///
+/// The returned statement's window nodes are replaced by
+/// `__window_<i>` column references, so the caller's ordinary
+/// aggregate-output machinery handles them like any other column.
+pub(crate) fn hoist_windows(
+    select: &SelectStmt,
+    mut substitute: impl FnMut(&Expr) -> Result<Expr, DriverError>,
+) -> Result<(Vec<WindowCall>, SelectStmt), DriverError> {
+    let mut originals: Vec<Expr> = Vec::new();
+    for expr in window_bearing_exprs(select) {
+        for node in windows_in(expr) {
+            if !originals.contains(&node) {
+                originals.push(node);
+            }
+        }
+    }
+    // A named window's own specification names the same aggregation output
+    // columns, so it is substituted once here rather than per reference.
+    let mut resolved_select = select.clone();
+    for (_, def) in &mut resolved_select.windows {
+        substitute_spec(&mut def.spec, &mut substitute)?;
+    }
+    let mut calls = Vec::with_capacity(originals.len());
+    for node in &originals {
+        let mut substituted = node.clone();
+        let Expr::Window { args, over, .. } = &mut substituted else {
+            unreachable!("windows_in only yields Expr::Window");
+        };
+        for arg in args.iter_mut() {
+            *arg = substitute(arg)?;
+        }
+        if let WindowOver::Def(def) = over {
+            substitute_spec(&mut def.spec, &mut substitute)?;
+        }
+        calls.push(build_call(substituted, &resolved_select)?);
+    }
+    let mut rewritten = select.clone();
+    let mut replacer = NodeReplacer {
+        originals: &originals,
+    };
+    for field in rewritten.fields.fields_mut() {
+        if let SelectField::Expr { expr, .. } = field {
+            tidb_ast::Visitable::accept(expr, &mut replacer);
+        }
+    }
+    for item in &mut rewritten.order_by {
+        tidb_ast::Visitable::accept(&mut item.expr, &mut replacer);
+    }
+    Ok((calls, rewritten))
+}
+
+/// Runs `substitute` over every expression of one window specification.
+fn substitute_spec(
+    spec: &mut WindowSpec,
+    substitute: &mut impl FnMut(&Expr) -> Result<Expr, DriverError>,
+) -> Result<(), DriverError> {
+    for expr in &mut spec.partition_by {
+        *expr = substitute(expr)?;
+    }
+    for item in &mut spec.order_by {
+        item.expr = substitute(&item.expr)?;
+    }
+    Ok(())
+}
+
+/// Replaces each window node of `originals` with its computed column.
+struct NodeReplacer<'a> {
+    originals: &'a [Expr],
+}
+
+impl tidb_ast::Visitor for NodeReplacer<'_> {
+    fn enter(&mut self, node: &mut dyn Any) -> bool {
+        let Some(expr) = node.downcast_mut::<Expr>() else {
+            return false;
+        };
+        if !matches!(expr, Expr::Window { .. }) {
+            return false;
+        }
+        if let Some(index) = self.originals.iter().position(|node| node == expr) {
+            *expr = Expr::Column(vec![window_column_name(index)]);
+        }
+        true
+    }
+
+    fn leave(&mut self, _node: &mut dyn Any) -> bool {
+        true
+    }
+}
+
 /// Validates one window call and resolves its specification.
 fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError> {
     let Expr::Window {
@@ -544,6 +945,8 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
         "ROW_NUMBER" => no_args(WindowKind::RowNumber)?,
         "RANK" => no_args(WindowKind::Rank)?,
         "DENSE_RANK" => no_args(WindowKind::DenseRank)?,
+        "PERCENT_RANK" => no_args(WindowKind::PercentRank)?,
+        "CUME_DIST" => no_args(WindowKind::CumeDist)?,
         // Go's `NewWindowFuncDesc` validates NTILE's bucket count in the
         // planner: it must be a constant, NULL or a positive integer --
         // anything else (`0`, a negative, a column) is `ErrWrongArguments`.
@@ -709,6 +1112,20 @@ fn compute_one(
         .collect();
     let order_keys = eval_keys(&order_exprs, rows, field_types, resolver, ctx)?;
 
+    // A value-measured RANGE frame needs the single ORDER BY key's own type,
+    // which is only known here -- Go checks it in the planner, so it fires
+    // before any row is produced either way.
+    if matches!(call.frame, Frame::Range { .. }) {
+        let key_type = match order_exprs.first() {
+            Some(expr) => rewrite_expr_resolved(expr, resolver)
+                .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?
+                .static_type()
+                .cloned(),
+            None => None,
+        };
+        check_range_key(&call.frame, key_type.as_ref())?;
+    }
+
     // Partition on the hash encoding of the key datums, exactly as the hash
     // aggregation groups rows, keeping each partition's rows in source order.
     let mut partitions: std::collections::HashMap<Vec<u8>, Vec<usize>> =
@@ -729,8 +1146,17 @@ fn compute_one(
             WindowKind::RowNumber
             | WindowKind::Rank
             | WindowKind::DenseRank
+            | WindowKind::PercentRank
+            | WindowKind::CumeDist
             | WindowKind::Ntile(_) => rank_partition(&call.kind, indices, &order_keys, &mut values),
-            _ => evaluate_partition(call, indices, &order_keys, &arg_values, &mut values)?,
+            _ => evaluate_partition(
+                call,
+                indices,
+                &order_keys,
+                &arg_values,
+                &result_type,
+                &mut values,
+            )?,
         }
     }
     Ok((values, result_type))
@@ -746,6 +1172,8 @@ impl WindowKind {
             WindowKind::RowNumber
             | WindowKind::Rank
             | WindowKind::DenseRank
+            | WindowKind::PercentRank
+            | WindowKind::CumeDist
             | WindowKind::Ntile(_) => Vec::new(),
             WindowKind::Agg { arg, .. } | WindowKind::Value { arg, .. } => vec![arg],
             WindowKind::LagLead { arg, default, .. } => match default {
@@ -778,6 +1206,21 @@ impl WindowKind {
                 field_type.add_flags(FieldTypeFlags::NOT_NULL);
                 field_type
             }
+            // Go's `typeInfer4PercentRank` / `typeInfer4CumeDist`: a NOT NULL
+            // `DOUBLE` with no fixed scale. The two differ only in `flen`,
+            // because Go's percent-rank inference writes the real width into
+            // the FLAG field rather than the length -- captured as written.
+            WindowKind::PercentRank | WindowKind::CumeDist => {
+                let mut field_type = FieldType::new(FieldTypeCode::Double);
+                field_type.set_flen(if matches!(self, WindowKind::CumeDist) {
+                    23
+                } else {
+                    tidb_datatype::UNSPECIFIED_LENGTH
+                });
+                field_type.set_decimal(tidb_datatype::UNSPECIFIED_FSP);
+                field_type.add_flags(FieldTypeFlags::NOT_NULL);
+                field_type
+            }
             WindowKind::Ntile(_) => {
                 // Go's `typeInfer4Ntile`: binary charset plus UNSIGNED, and
                 // deliberately no NOT NULL (`NTILE(NULL)` is all NULLs).
@@ -804,16 +1247,15 @@ impl WindowKind {
                 default: Some(_), ..
             } => {
                 let argument = carried(0);
-                let merged = agg_field_type(&[argument.clone(), carried(1)]);
-                // When the merge WIDENS past the argument's own type Go casts
-                // both the argument and the default to it (`LAG(int_col, 1,
-                // 'zz')` returns strings, not integers). That cast is a
-                // separate unit, so the widening case is refused rather than
-                // silently answered in the argument's own domain.
-                if merged.code() != argument.code() {
-                    return Err(DriverError::Unsupported(LAG_LEAD_CAST_MESSAGE));
+                let default = carried(1);
+                // Go's `InferType4ControlFuncs` ignores a NULL-typed operand
+                // entirely: with only one non-NULL type left the result is
+                // that type, so `LAG(int_col, 1, NULL)` stays `BIGINT`.
+                match arg_types.get(1).cloned().flatten() {
+                    None => argument,
+                    Some(written) if matches!(written.code(), FieldTypeCode::Null) => argument,
+                    Some(_) => agg_field_type(&[argument, default]),
                 }
-                merged
             }
         })
     }
@@ -829,6 +1271,7 @@ fn evaluate_partition(
     indices: &[usize],
     order_keys: &[Vec<Datum>],
     arg_values: &[Vec<Datum>],
+    result_type: &FieldType,
     values: &mut [Datum],
 ) -> Result<(), DriverError> {
     let total = indices.len();
@@ -848,6 +1291,19 @@ fn evaluate_partition(
         }
     }
 
+    // The sorted single ORDER BY key a value-measured RANGE frame is
+    // computed against; the other frame kinds never look at it.
+    let range_keys = matches!(call.frame, Frame::Range { .. }).then(|| {
+        indices
+            .iter()
+            .map(|index| order_keys[*index][0].clone())
+            .collect::<Vec<Datum>>()
+    });
+    let range_keys = range_keys.as_ref().map(|keys| RangeKeys {
+        keys,
+        desc: call.spec.order_by[0].desc,
+    });
+
     let arg_at = |slot: usize, position: usize| arg_values[slot][indices[position]].clone();
     for position in 0..total {
         let target = indices[position];
@@ -863,20 +1319,30 @@ fn evaluate_partition(
                 let offset = i128::from(*offset);
                 let signed = position as i128 + if *is_lag { -offset } else { offset };
                 match usize::try_from(signed).ok().filter(|at| *at < total) {
-                    Some(at) => arg_at(0, at),
-                    // The default is a constant, so any row carries its value.
-                    None if default.is_some() => arg_at(1, position),
+                    // Go reads the value argument AS the merged result type
+                    // (`buildValueEvaluator(RetTp)`), so a widening default
+                    // pulls the argument into the wider domain too:
+                    // `LAG(int_col, 1, 'zz')` yields the STRING `'10'`.
+                    Some(at) => coerce_to_domain(arg_at(0, at), result_type),
+                    // Go converts the default CONSTANT to the full merged
+                    // type (`Value.ConvertTo(RetTp)` in `buildLeadLag`), so
+                    // its own display metadata applies to it.
+                    None if default.is_some() => coerce_to_type(arg_at(1, position), result_type),
                     None => Datum::Null,
                 }
             }
             WindowKind::Agg { name, arg: _ } => {
-                let (low, high) = call.frame.range(position, total, peers[position]);
+                let (low, high) =
+                    call.frame
+                        .range(position, total, peers[position], range_keys.as_ref())?;
                 let kind = agg_kind(name);
                 aggregate_values(&kind, (low..high).map(|at| Some(arg_at(0, at))))
                     .map_err(DriverError::Exec)?
             }
             WindowKind::Value { pick, .. } => {
-                let (low, high) = call.frame.range(position, total, peers[position]);
+                let (low, high) =
+                    call.frame
+                        .range(position, total, peers[position], range_keys.as_ref())?;
                 let at = match pick {
                     Pick::Last => high.checked_sub(1).filter(|at| *at >= low),
                     Pick::Nth(n) => usize::try_from(low as u128 + u128::from(*n) - 1)
@@ -890,10 +1356,41 @@ fn evaluate_partition(
             WindowKind::RowNumber
             | WindowKind::Rank
             | WindowKind::DenseRank
+            | WindowKind::PercentRank
+            | WindowKind::CumeDist
             | WindowKind::Ntile(_) => unreachable!("the ranking functions take `rank_partition`"),
         };
     }
     Ok(())
+}
+
+/// Converts a value into `target`'s DOMAIN, ignoring its display metadata --
+/// Go's `buildValueEvaluator(RetTp)`, which reads an argument through the
+/// merged type's eval kind (`EvalString`, `EvalDecimal`, ...) rather than
+/// through a width-and-scale-applying conversion. That distinction is
+/// visible: `LAG(int_col, 1, 1.5)` returns `10`, not the scale-padded
+/// `10.0` the full `DECIMAL(12,1)` would produce.
+fn coerce_to_domain(value: Datum, target: &FieldType) -> Datum {
+    let mut domain = FieldType::new(target.code());
+    domain.set_flen(tidb_datatype::UNSPECIFIED_LENGTH);
+    domain.set_decimal(tidb_datatype::UNSPECIFIED_FSP);
+    if target.is_unsigned() {
+        domain.add_flags(FieldTypeFlags::UNSIGNED);
+    }
+    coerce_to_type(value, &domain)
+}
+
+/// Converts a value into `target` exactly, leaving it untouched when the
+/// conversion fails (Go's `buildLeadLag` keeps the original constant when
+/// `ConvertTo` errors).
+fn coerce_to_type(value: Datum, target: &FieldType) -> Datum {
+    if value.is_null() {
+        return value;
+    }
+    match value.convert_to(target, tidb_datatype::DEFAULT_STATEMENT_FLAGS) {
+        Ok(converted) => converted.value,
+        Err(_) => value,
+    }
 }
 
 /// The [`AggKind`] one aggregate name folds its frame with. `build_call` has
@@ -1048,6 +1545,31 @@ fn rank_partition(
                     rank += 1;
                 }
                 values[*index] = Datum::Int(rank);
+            }
+        }
+        // Both distribution functions are PEER-based: every row of a peer
+        // group shares one value, computed from where the group starts
+        // (`PERCENT_RANK`) or ends (`CUME_DIST`).
+        WindowKind::PercentRank | WindowKind::CumeDist => {
+            let total = indices.len();
+            let mut group_start = 0;
+            for position in 1..=total {
+                if position < total && peers(indices[position - 1], indices[position]) {
+                    continue;
+                }
+                let value = if matches!(kind, WindowKind::CumeDist) {
+                    position as f64 / total as f64
+                } else if total <= 1 {
+                    // Go's `percentRank`: a single-row partition divides by
+                    // zero rows, and the answer is 0 rather than NaN.
+                    0.0
+                } else {
+                    group_start as f64 / (total - 1) as f64
+                };
+                for index in &indices[group_start..position] {
+                    values[*index] = Datum::Real(value);
+                }
+                group_start = position;
             }
         }
         WindowKind::Ntile(buckets) => {
