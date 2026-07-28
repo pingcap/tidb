@@ -215,8 +215,27 @@ expect "same connection uses the table it created" $'1\t11;2\t22;' "${SAME_CONN}
 
 # The GO TiDB sees the Rust-created table AND writes it -- which it can only do
 # if the stored TableInfo is one a real TiDB accepts.
-GO_SEES=$(go_sql -N -B -e "SHOW TABLES IN conv LIKE 'rust_made';" | tr '\n' ';')
-expect "Go TiDB sees the Rust-created table" "rust_made;" "${GO_SEES}"
+#
+# It does not see it instantly. Go's own DDL owner PUTs the new schema version
+# to etcd so every peer's watch fires; this node commits the catalog change
+# through TiKV alone (see `catalog_watch`'s module doc for why that etcd leg is
+# deferred rather than guessed at), so the Go TiDB notices only on its next
+# schema-lease reload. Waiting for that tick is the honest assertion.
+wait_for_go_table() {
+  local table=$1 want=$2 deadline=$((SECONDS + 180)) seen
+  while ((SECONDS < deadline)); do
+    seen=$(go_sql -N -B -e "SHOW TABLES IN conv LIKE '${table}';" 2>/dev/null | tr -d '\n')
+    if [[ "${seen}" == "${want}" ]]; then
+      return 0
+    fi
+    sleep 3
+  done
+  echo "the Go TiDB never reloaded to [${want}] for ${table}; last saw [${seen}]" >&2
+  return 1
+}
+
+wait_for_go_table rust_made rust_made
+echo "  ok  Go TiDB sees the Rust-created table after its schema-lease reload"
 go_sql -e "INSERT INTO conv.rust_made VALUES (1, 'written by go');"
 
 # And the Rust node reads back the row the Go TiDB wrote into that table.
@@ -225,8 +244,8 @@ expect "Rust node reads the Go-written row" $'1\twritten by go;' "${RUST_READS}"
 
 # DROP through the Rust node, and the Go TiDB stops seeing the table.
 rust_sql -e "DROP TABLE conv.rust_made_two;"
-DROPPED=$(go_sql -N -B -e "SHOW TABLES IN conv LIKE 'rust_made_two';" | tr '\n' ';')
-expect "Go TiDB no longer sees the dropped table" "" "${DROPPED}"
+wait_for_go_table rust_made_two ""
+echo "  ok  Go TiDB no longer sees the table the Rust node dropped"
 
 # What this mode still refuses, on purpose: a stored-schema change the cluster
 # DDL path cannot express, and every account change.
