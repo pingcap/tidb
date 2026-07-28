@@ -136,7 +136,14 @@ impl<C: Columns> SortExec<C> {
         let mut indices: Vec<usize> = (0..self.order.len()).collect();
         indices.sort_by(|&a, &b| {
             for (i, item) in by_items.iter().enumerate() {
-                let mut cmp = match tidb_expr::compare_datums(&keys[a][i], &keys[b][i]) {
+                // Each key compares under ITS OWN derived collation (Go builds
+                // `keyCmpFuncs` from the by-item's `RetType`): `ORDER BY
+                // ci_col` orders `a, A, b, B`, not the byte order `A, B, a, b`.
+                let mut cmp = match tidb_expr::compare_datums_with_collation(
+                    &keys[a][i],
+                    &keys[b][i],
+                    tidb_expr::collation_derive::collation_of_node(&item.expr),
+                ) {
                     Ok(cmp) => cmp,
                     Err(err) => {
                         if sort_err.is_none() {

@@ -1728,6 +1728,8 @@ fn collect_noop_in_expr(expr: &tidb_ast::Expr, out: &mut Vec<&'static str>) {
 }
 
 #[cfg(test)]
+mod tests_collation;
+#[cfg(test)]
 mod tests_core;
 #[cfg(test)]
 mod tests_explain;

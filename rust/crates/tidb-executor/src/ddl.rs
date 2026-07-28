@@ -36,33 +36,35 @@
 //! write path validates a column's bytes against its charset, so a non-UTF-8
 //! string is rejected by a `utf8mb4` column and accepted by a binary one.
 //!
-//! DIVERGENCE (documented, captured, and NOT yet fixed): the expression
-//! evaluator still compares string VALUES byte-wise under one hard-coded
-//! `utf8mb4_bin` PAD SPACE rule (`tidb_expr::ops::string_compare`), because
-//! `Datum` carries no expression-level coercibility -- Go's
-//! `CheckAndDeriveCollationFromExprs` is a separate unit. What that costs,
-//! against the TiDB capture:
+//! Expression-level derivation is complete too: `tidb_expr::collation_derive`
+//! transcreates Go's `CheckAndDeriveCollationFromExprs`/`deriveCollation`, so a
+//! comparison's collation is aggregated from its operands by coercibility
+//! (EXPLICIT `COLLATE` > IMPLICIT column > SYSCONST > COERCIBLE literal >
+//! NUMERIC > IGNORABLE `NULL`) and stamped on the function's result type, which
+//! is where the comparer, `LIKE`, `IN`, `INSTR`/`LOCATE`/`STRCMP`, and the
+//! sort/group key comparers all read it from. The previously documented
+//! byte-wise divergences are GRADUATED and covered by
+//! `tidb-session`'s `tests_collation`: `_ci` `=`/`<>`/`<`/`IN`/`BETWEEN`/
+//! `LIKE`/`ORDER BY`/`GROUP BY`, `binary`'s NO PAD against `utf8mb4_bin`'s PAD
+//! SPACE, the collation-aware string builtins, and the exact 1267/1271
+//! "Illegal mix of collations" and 1253 charset-mismatch texts.
 //!
-//! * `=`, `<>`, `<`, `<=`, `>`, `>=`, `IN`, `BETWEEN` over a
-//!   case-insensitive collation (`utf8mb4_general_ci`, `utf8mb4_unicode_ci`,
-//!   `gbk_chinese_ci`, `gb18030_chinese_ci`) compare case-SENSITIVELY:
-//!   `WHERE ci_col = 'A'` returns only the row holding `'A'`, where TiDB
-//!   returns both `'a'` and `'A'`.
-//! * `LIKE` over a case-insensitive collation likewise misses the
-//!   case-folded rows: `ci_col LIKE 'a'` does not match `'A'`.
-//! * `ORDER BY` and `GROUP BY` over a case-insensitive collation use byte
-//!   order and byte identity: TiDB orders `a, A, b, B` and produces 2 groups
-//!   where this tier orders `A, B, a, b` and produces 4.
-//! * A BINARY-collation comparison is PAD SPACE here but NO PAD in TiDB:
-//!   `_binary'a' = _binary'a  '` (and the same over a `VARBINARY` column) is
-//!   TRUE here and FALSE in TiDB.
-//! * `INSTR`, `LOCATE`, `STRCMP` and the other string builtins ignore the
-//!   collation entirely.
+//! DIVERGENCE (documented, captured, and NOT yet fixed) in what remains:
 //!
-//! Everything under `utf8mb4_bin` / `latin1_bin` -- the default, and what an
-//! unqualified column gets -- already matches the capture exactly, including
-//! its PAD SPACE rule (`'a' = 'a  '` is TRUE), and `COUNT(DISTINCT ci_col)`
-//! matches too.
+//! * A non-Unicode charset (`latin1`, `gbk`, `gb18030`, `ascii`) is accepted at
+//!   DDL time and reported by every metadata surface, but its VALUES are still
+//!   stored and compared as the bytes the client sent, with no transcoding --
+//!   so `Go safeConvert`'s encoding-validity half of
+//!   `CheckAndDeriveCollationFromExprs` is deferred with it (see that
+//!   function's own doc). Every collation with a real comparer wired here is
+//!   `utf8mb4`- or `binary`-based.
+//! * `deriveCollation`'s `DATE_FORMAT`/`TIME_FORMAT`, `CASE` (Go's own comment
+//!   marks its aggregation incorrect), `FIELD`, and `CAST`-to-string arms fall
+//!   into the default arm here, which gives them the connection collation
+//!   rather than an aggregated one.
+//! * A comparison between a string and a NUMBER promotes to REAL and consults
+//!   no collation (matching Go), so no collation-mismatch error can arise
+//!   there even when TiDB's own planner would have rewritten the expression.
 
 use crate::driver::{Catalog, DriverError};
 use crate::kv_table::{KvColumn, KvIndex, KvTable, TableCharset};

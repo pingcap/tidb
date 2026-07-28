@@ -50,11 +50,29 @@ use crate::{Datum, EvalError};
 /// Real via `f64`); string-vs-numeric compares as MySQL real coercion.
 /// Errors surface for operand kinds the evaluator does not order.
 pub fn compare_datums(l: &Datum, r: &Datum) -> Result<Ordering, EvalError> {
+    compare_datums_with_collation(l, r, crate::ops::DERIVATION_FREE_COLLATION)
+}
+
+/// [`compare_datums`] under an explicitly derived collation.
+///
+/// A sort or grouping key that is a string compares -- and, for grouping,
+/// is IDENTIFIED -- under the collation its own expression carries, which is
+/// what makes `ORDER BY ci_col` produce `a, A, b, B` and `GROUP BY ci_col`
+/// produce two groups instead of four (Go builds `keyCmpFuncs` from the
+/// by-item's `RetType`, whose collation the derivation set).
+pub fn compare_datums_with_collation(
+    l: &Datum,
+    r: &Datum,
+    collation: tidb_datatype::Collation,
+) -> Result<Ordering, EvalError> {
     match (l, r) {
         (Datum::Null, Datum::Null) => return Ok(Ordering::Equal),
         (Datum::Null, _) => return Ok(Ordering::Less),
         (_, Datum::Null) => return Ok(Ordering::Greater),
         _ => {}
+    }
+    if let (Some(a), Some(b)) = (l.as_raw_bytes(), r.as_raw_bytes()) {
+        return Ok(collation.compare(a, b));
     }
     match eval_binary(BinaryOp::Eq, l.clone(), r.clone())? {
         Datum::Int(1) => return Ok(Ordering::Equal),

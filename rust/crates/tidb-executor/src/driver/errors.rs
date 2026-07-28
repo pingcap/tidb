@@ -552,8 +552,21 @@ impl DriverError {
         // document, 3143 malformed path, ...), which applications branch on.
         // Every other eval error is still a porting boundary, not SQL-visible
         // behavior, so it stays the generic unknown-error code.
-        DriverError::Exec(ExecError::Eval(crate::EvalError::Json(error))) => {
-            MysqlError::new(error.code(), *b"HY000", error.message())
+        // Every eval error that carries a MySQL code of its own reports it:
+        // the `json` class (3140 malformed document, 3143 malformed path, ...),
+        // which applications branch on, and the collation class (1267/1271
+        // illegal mix, 1253 collation/charset mismatch, 1273 unknown
+        // collation), which is how a user learns a query needs an explicit
+        // `COLLATE`. Every other eval error is still a porting boundary, not
+        // SQL-visible behavior, so it stays the generic unknown-error code.
+        DriverError::Exec(ExecError::Eval(ref error))
+            if error.mysql_code().is_some() =>
+        {
+            MysqlError::new(
+                error.mysql_code().unwrap_or_default(),
+                *b"HY000",
+                error.mysql_message().unwrap_or_default(),
+            )
         }
         DriverError::Exec(error) => MysqlError::unknown(format!("{error:?}")),
         DriverError::Txn(crate::TxnErrorKind::WriteConflict) => {

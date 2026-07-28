@@ -131,6 +131,41 @@ pub(crate) fn eval_binary_with_div_precision(
     div_precision_increment: u32,
     ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, EvalError> {
+    eval_binary_full(
+        op,
+        l,
+        r,
+        div_precision_increment,
+        DERIVATION_FREE_COLLATION,
+        ctx,
+    )
+}
+
+/// The collation an evaluation with no expression-level derivation behind it
+/// runs under: `utf8mb4_bin`, this tier's connection collation.
+///
+/// This is the AST evaluator's answer (`tidb_expr::eval_in` walks a parsed
+/// `Expr` with no built expression tree, so it has no derived collation to
+/// consult) and the answer for a hand-assembled function node. Every path that
+/// goes through the rewriter -- which is every table-backed query -- carries a
+/// real derived collation instead; see [`crate::collation_derive`].
+pub(crate) const DERIVATION_FREE_COLLATION: tidb_datatype::Collation =
+    tidb_datatype::Collation::Utf8Mb4Bin;
+
+/// [`eval_binary_with_div_precision`] under an explicitly derived collation.
+///
+/// A string-vs-string comparison consults `collation`, which the expression
+/// rewriter aggregated from the operands (Go: the comparison's own result type
+/// carries the collation `builtinCompareStringSig` compares under). Every other
+/// operand pairing ignores it, exactly as in Go.
+pub(crate) fn eval_binary_full(
+    op: BinaryOp,
+    l: Datum,
+    r: Datum,
+    div_precision_increment: u32,
+    collation: tidb_datatype::Collation,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
     use BinaryOp::*;
     if l.is_range_sentinel() || r.is_range_sentinel() {
         return Err(EvalError::Unsupported("range sentinel expression operand"));
@@ -156,10 +191,11 @@ pub(crate) fn eval_binary_with_div_precision(
         LogicXor => return logic_xor(l, r),
         _ => {}
     }
-    // Two strings compare under the session's utf8mb4_bin collation (byte order,
-    // PAD SPACE).
+    // Two strings compare under the collation the expression derivation
+    // aggregated for THIS comparison (byte order and PAD SPACE for
+    // `utf8mb4_bin`, case folding for a `_ci` collation, NO PAD for `binary`).
     if let (Some(a), Some(b)) = (l.as_raw_bytes(), r.as_raw_bytes()) {
-        return string_compare(op, a, b);
+        return string_compare(op, a, b, collation);
     }
     // A datetime/date value compares in the TIME domain: Go's
     // `GetCmpFunction` picks the datetime comparer when either side is a
@@ -888,12 +924,20 @@ fn f64_to_i64(f: f64) -> Option<i64> {
     }
 }
 
-/// Compares two strings under the `utf8mb4_bin` PAD SPACE collation (the
-/// session default): case-sensitive byte order, trailing spaces ignored. Only
-/// comparison operators are defined on strings here.
-fn string_compare(op: BinaryOp, a: &[u8], b: &[u8]) -> Result<Datum, EvalError> {
+/// Compares two strings under `collation`.
+///
+/// The PAD SPACE vs NO PAD rule is the collation's own (`Collation::compare`
+/// transcreates each collator's `Compare`, including `utf8mb4_bin`'s trailing-
+/// space trim and `binary`'s lack of one), so this function no longer decides
+/// it. Only comparison operators are defined on strings here.
+fn string_compare(
+    op: BinaryOp,
+    a: &[u8],
+    b: &[u8],
+    collation: tidb_datatype::Collation,
+) -> Result<Datum, EvalError> {
     use BinaryOp::*;
-    let ord = cmp_pad_space(a, b);
+    let ord = collation.compare(a, b);
     Ok(match op {
         Eq | NullEq => bool_int(ord == std::cmp::Ordering::Equal),
         Ne => bool_int(ord != std::cmp::Ordering::Equal),
@@ -903,21 +947,6 @@ fn string_compare(op: BinaryOp, a: &[u8], b: &[u8]) -> Result<Datum, EvalError> 
         Ge => bool_int(ord != std::cmp::Ordering::Less),
         _ => return Err(EvalError::Unsupported("string arithmetic")),
     })
-}
-
-/// Byte comparison with the shorter operand padded by spaces (PAD SPACE), so
-/// trailing spaces do not affect ordering.
-fn cmp_pad_space(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
-    let n = a.len().max(b.len());
-    for i in 0..n {
-        let ca = a.get(i).copied().unwrap_or(b' ');
-        let cb = b.get(i).copied().unwrap_or(b' ');
-        match ca.cmp(&cb) {
-            std::cmp::Ordering::Equal => continue,
-            other => return other,
-        }
-    }
-    std::cmp::Ordering::Equal
 }
 
 /// MySQL shifts operate on 64-bit unsigned values; a shift amount `>= 64`

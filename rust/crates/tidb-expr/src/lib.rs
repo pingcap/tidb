@@ -341,6 +341,7 @@ mod builtin_ext;
 pub mod builtin_op;
 mod cast;
 mod coerce;
+pub mod collation_derive;
 pub mod column;
 pub mod constant;
 mod context;
@@ -370,7 +371,7 @@ pub use context::{Columns, ErrorLevel, EvalError, JsonError, NoColumns, SessionT
 pub use grouping::{GroupingFunction, GroupingMetadata, GroupingMetadataError, GroupingMode};
 pub use like::{ilike_match, like_match_with_collation};
 pub use rng::MysqlRng;
-pub use row::compare_datums;
+pub use row::{compare_datums, compare_datums_with_collation};
 pub(crate) use tidb_datatype::{Datum, Decimal};
 
 use tidb_ast::{CastStyle, Expr, GetFormatSelector, IsTarget};

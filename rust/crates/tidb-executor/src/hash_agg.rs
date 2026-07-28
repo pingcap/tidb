@@ -328,6 +328,30 @@ impl AggState {
 
 /// The bytes one `GROUP_CONCAT` input contributes, which Go produces by
 /// casting the argument to a string.
+/// The derived collation of a group-by expression.
+fn expr_collation(expr: &Expression) -> tidb_datatype::Collation {
+    tidb_expr::collation_derive::collation_of_node(expr)
+}
+
+/// One group-key part: a STRING key is the collation's SORT KEY, so two values
+/// that the collation calls equal land in the same group.
+///
+/// Go's `HashGroupKey` calls `codec.HashChunkSelected` with the column's own
+/// collator, which encodes `collator.Key(value)` rather than the raw bytes --
+/// that is what makes `GROUP BY ci_col` over `a, A, b, B` produce two groups
+/// (and `utf8mb4_bin`'s PAD SPACE key group `'a'` with `'a  '`). Every
+/// non-string datum keeps its ordinary hash code.
+fn group_key_part(collation: &tidb_datatype::Collation, datum: &Datum) -> Vec<u8> {
+    match datum.as_raw_bytes() {
+        Some(bytes) => {
+            let mut encoded = Vec::new();
+            encode_compact_bytes(&mut encoded, &collation.key(bytes));
+            encoded
+        }
+        None => tidb_codec::hash_code(datum),
+    }
+}
+
 fn group_concat_bytes(value: &Datum) -> Result<Vec<u8>, ExecError> {
     Ok(match value {
         Datum::Bytes(bytes) => bytes.clone(),
@@ -956,7 +980,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
                 let mut key = Vec::new();
                 for expr in &self.group_by {
                     let datum = expr.eval(&self.ctx, row)?;
-                    key.extend_from_slice(&tidb_codec::hash_code(&datum));
+                    key.extend_from_slice(&group_key_part(&expr_collation(expr), &datum));
                     key.push(0xff); // separator, as key parts are length-coded
                 }
                 let idx = match groups.get(&key) {

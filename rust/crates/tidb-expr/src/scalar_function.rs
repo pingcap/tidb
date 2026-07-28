@@ -241,12 +241,27 @@ impl ScalarFunction {
         }
     }
 
+    /// The collation this function's own evaluation runs under: the one the
+    /// expression rewriter's derivation stamped on its result type (Go's
+    /// `baseBuiltinFunc.collator`, set from `ExprCollation.Collation`).
+    ///
+    /// A node built outside the rewriter carries no derived collation, and
+    /// falls back to the connection collation the rest of the tier uses.
+    #[must_use]
+    pub fn derived_collation(&self) -> tidb_datatype::Collation {
+        self.ret_type
+            .as_ref()
+            .and_then(|ft| tidb_datatype::Collation::from_name(ft.collation_name()))
+            .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION)
+    }
+
     /// Go `ScalarFunction.Eval`: evaluate the function against one row.
     ///
     /// The binary operators, the lazy control forms (`CASE`/`IF`), `LIKE`,
-    /// the casts, the session-state functions and the date/time family are
-    /// each handled by name below; everything else evaluates its arguments
-    /// eagerly and reuses the shared Datum-level implementations.
+    /// the collation-aware string builtins, the casts, the session-state
+    /// functions and the date/time family are each handled by name below;
+    /// everything else evaluates its arguments eagerly and reuses the shared
+    /// Datum-level implementations.
     pub fn eval(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
         let name = self.func_name.lowercase();
         if let Some(op) = binary_op_for_name(name) {
@@ -256,11 +271,12 @@ impl ScalarFunction {
                 // The statement context travels with the operands, so a
                 // zero divisor reaches the same warning/error policy the AST
                 // evaluator applies.
-                return crate::apply_binary_with_div_precision(
+                return crate::ops::eval_binary_full(
                     op,
                     lhs,
                     rhs,
                     ctx.div_precision_increment(),
+                    self.derived_collation(),
                     ctx,
                 );
             }
@@ -321,12 +337,7 @@ impl ScalarFunction {
             let matched = if name == "ilike" {
                 crate::ilike_match(&text, &pattern, escape.unwrap_or(b'\\'))
             } else {
-                crate::like_match_with_collation(
-                    &text,
-                    &pattern,
-                    escape,
-                    tidb_datatype::Collation::Utf8Mb4Bin,
-                )
+                crate::like_match_with_collation(&text, &pattern, escape, self.derived_collation())
             };
             return Ok(Datum::Int(i64::from(matched)));
         }
@@ -487,6 +498,64 @@ impl ScalarFunction {
             let arg_is_constant = matches!(self.args.first(), Some(Expression::Constant(_)));
             let function_key = Some(std::ptr::from_ref(self) as usize);
             return crate::math_fn::eval_rand_values(&vals, ctx, function_key, arg_is_constant);
+        }
+        // Go `builtinInStringSig` compares the tested value with each list
+        // item through the function's own collator, which the derivation
+        // aggregated over ALL of them -- so `ci_col IN ('A')` folds case just
+        // like `ci_col = 'A'`. Three-valued: a match is 1, no match with a
+        // NULL anywhere is NULL, otherwise 0.
+        if name == "in" && self.args.len() >= 2 {
+            let collation = self.derived_collation();
+            let value = self.args[0].eval(ctx, row)?;
+            let mut found_null = value.is_null();
+            for item in &self.args[1..] {
+                let item = item.eval(ctx, row)?;
+                match crate::ops::eval_binary_full(
+                    tidb_ast::BinaryOp::Eq,
+                    value.clone(),
+                    item,
+                    ctx.div_precision_increment(),
+                    collation,
+                    ctx,
+                )? {
+                    Datum::Int(0) => {}
+                    Datum::Null => found_null = true,
+                    _ => return Ok(Datum::Int(1)),
+                }
+            }
+            return Ok(if found_null {
+                Datum::Null
+            } else {
+                Datum::Int(0)
+            });
+        }
+        // The collation-aware string builtins. Go gives each of these a
+        // `baseBuiltinFunc.collator` taken from the derived result collation
+        // (`builtinLocate2ArgsUTF8Sig`, `builtinInstrUTF8Sig`,
+        // `builtinStrcmpSig`), so `INSTR('ABC' COLLATE utf8mb4_general_ci, 'b')`
+        // is 2 while the `utf8mb4_bin` form is 0. They are intercepted here,
+        // ahead of the values-only dispatch, because that dispatch sees values
+        // alone and cannot know which collation was derived.
+        if self.args.len() == 2 {
+            let collation = self.derived_collation();
+            match name {
+                // `LOCATE(substr, str)` / `INSTR(str, substr)`: the same
+                // 1-indexed character position with the arguments swapped.
+                "locate" | "instr" => {
+                    let (a, b) = (self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?);
+                    let (haystack, needle) = if name == "locate" { (&b, &a) } else { (&a, &b) };
+                    return Ok(crate::string_fn::position_with_collation(
+                        crate::coerce::coerce_str(needle)?,
+                        crate::coerce::coerce_str(haystack)?,
+                        collation,
+                    ));
+                }
+                "strcmp" => {
+                    let vals = [self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?];
+                    return crate::string_fn::strcmp_with_collation(&vals, collation);
+                }
+                _ => {}
+            }
         }
         // Values-only builtins (ABS/CONCAT/COALESCE/...): evaluate every
         // argument, then reuse the single Datum-level implementation shared

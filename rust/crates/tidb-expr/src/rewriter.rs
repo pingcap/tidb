@@ -420,7 +420,40 @@ pub fn rewrite_expr_resolved(
         col.index = index as i64;
         return Ok(Expression::Column(col));
     }
-    rewrite_leaf(expr, resolver)
+    let mut built = rewrite_leaf(expr, resolver)?;
+    derive_tree_collation(&mut built)?;
+    Ok(built)
+}
+
+/// Runs Go's collation derivation over a freshly built expression tree,
+/// bottom up (`pkg/expression/collation.go` `deriveCollation`, applied by
+/// `newBaseBuiltinFuncWithTp` as each function is constructed).
+///
+/// Go derives while BUILDING, which is naturally bottom-up; this rewriter
+/// builds several nested functions inside a single arm (`NOT IN` is a `not`
+/// over an `in`, `NOT LIKE` a `not` over a `like`), so the derivation is a
+/// walk instead of a per-construction-site call. A node that already carries a
+/// derived coercibility is left alone, which makes the walk idempotent -- the
+/// recursion in [`rewrite_expr_resolved`] runs it once per level, and only the
+/// first visit does work.
+pub fn derive_tree_collation(expr: &mut Expression) -> Result<(), EvalError> {
+    let Expression::ScalarFunction(func) = expr else {
+        return Ok(());
+    };
+    for arg in &mut func.args {
+        derive_tree_collation(arg)?;
+    }
+    if func.collation.has_coercibility() {
+        return Ok(());
+    }
+    let ret_type = func
+        .ret_type
+        .as_ref()
+        .map_or(tidb_datatype::EvalType::Int, FieldType::eval_type);
+    let name = func.func_name.lowercase().to_owned();
+    let ec = crate::collation_derive::derive_collation(&name, &func.args, ret_type)?;
+    crate::collation_derive::apply_derived_collation(expr, &ec);
+    Ok(())
 }
 
 fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
@@ -477,6 +510,44 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             )))
         }
         Expr::Paren(inner) => rewrite_expr_resolved(inner, resolver),
+        // Go `expression_rewriter`'s `case *ast.SetCollationExpr`: the
+        // collation is written onto the argument's own result type and its
+        // coercibility is raised to EXPLICIT, so it outranks every column and
+        // literal in the enclosing aggregation. A collation that does not
+        // belong to the value's charset is error 1253, which is what makes
+        // `SELECT 'a' COLLATE latin1_bin` fail (a bare literal is utf8mb4).
+        Expr::Collate { expr, collation } => {
+            let mut arg = rewrite_expr_resolved(expr, resolver)?;
+            let name = collation.to_ascii_lowercase();
+            let Some(collation) = tidb_datatype::Collation::from_name(&name) else {
+                return Err(EvalError::UnknownCollation(name));
+            };
+            let arg_charset = arg
+                .static_type()
+                .map_or(String::new(), |ft| ft.charset_name().to_owned());
+            if !crate::collation_derive::collation_matches_charset(collation, &arg_charset) {
+                return Err(EvalError::CollationCharsetMismatch {
+                    collation: name,
+                    charset: arg_charset,
+                });
+            }
+            crate::collation_derive::set_explicit_collation(&mut arg, collation);
+            Ok(arg)
+        }
+        // A charset introducer (`_binary'a'`, `_latin1'x'`): Go's parser gives
+        // the literal that charset and its default collation. `_binary` is the
+        // one this tier's value domain can represent exactly -- a byte string,
+        // NO PAD -- and it is also the only introducer with SQL-visible
+        // comparison semantics of its own here.
+        Expr::CharsetString { charset, value } if charset.eq_ignore_ascii_case("binary") => {
+            let mut datum = Datum::Null;
+            datum.set_bytes(value.clone().into_bytes());
+            let mut ft = FieldType::new(FieldTypeCode::VarString);
+            ft.set_charset_name("binary");
+            ft.set_collation_name("binary");
+            ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+            Ok(Expression::Constant(Constant::new(datum, ft)))
+        }
         // Go's `in` builtin takes the tested value as args[0] and the list as
         // the remaining arguments; `NOT IN` wraps it in a unary NOT, which
         // keeps NULL as NULL exactly as MySQL requires.

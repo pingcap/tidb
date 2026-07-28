@@ -211,19 +211,41 @@ pub(crate) fn substring(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `substr` always matches at position `1` (confirmed via `gorun`).
 /// `NULL` if either operand is `NULL`.
 pub(crate) fn position(substr: Option<String>, str: Option<String>) -> Datum {
+    position_with_collation(substr, str, tidb_datatype::Collation::Utf8Mb4Bin)
+}
+
+/// `LOCATE`/`INSTR`/`POSITION` under an explicit collation.
+///
+/// Go's `builtinLocate2ArgsUTF8Sig`/`builtinInstrUTF8Sig` search with the
+/// function's own collator, so a case-insensitive collation finds a
+/// case-folded occurrence: captured from TiDB,
+/// `INSTR('ABC' COLLATE utf8mb4_general_ci, 'b')` is 2 where the
+/// `utf8mb4_bin` form is 0. The position reported is a 1-based CHARACTER
+/// index into the haystack either way.
+///
+/// The window is compared by the collation rather than by bytes, which is
+/// what makes a folding collation match; a collation whose folding changes
+/// character COUNT (none this tier registers) would need a different scan.
+pub(crate) fn position_with_collation(
+    substr: Option<String>,
+    str: Option<String>,
+    collation: tidb_datatype::Collation,
+) -> Datum {
     let (Some(substr), Some(str)) = (substr, str) else {
         return Datum::Null;
     };
-    let substr: Vec<char> = substr.chars().collect();
-    let str: Vec<char> = str.chars().collect();
-    if substr.is_empty() {
+    let needle: Vec<char> = substr.chars().collect();
+    let haystack: Vec<char> = str.chars().collect();
+    if needle.is_empty() {
         return Datum::Int(1);
     }
-    if substr.len() > str.len() {
+    if needle.len() > haystack.len() {
         return Datum::Int(0);
     }
-    for start in 0..=(str.len() - substr.len()) {
-        if str[start..start + substr.len()] == substr[..] {
+    let needle_bytes = substr.as_bytes();
+    for start in 0..=(haystack.len() - needle.len()) {
+        let window: String = haystack[start..start + needle.len()].iter().collect();
+        if collation.compare(window.as_bytes(), needle_bytes) == std::cmp::Ordering::Equal {
             return Datum::Int(start as i64 + 1);
         }
     }
@@ -384,7 +406,32 @@ pub(crate) fn strcmp(vals: &[Datum]) -> Result<Datum, EvalError> {
             .or_else(|| right.collation())
             .unwrap_or(tidb_datatype::Collation::DEFAULT)
     };
-    Ok(Datum::Int(match collation.compare(&a, &b) {
+    strcmp_under(&a, &b, collation)
+}
+
+/// `STRCMP` under the collation the expression derivation aggregated
+/// (Go `builtinStrcmpSig`, which compares with `b.collator`). Captured from
+/// TiDB: `STRCMP('a' COLLATE utf8mb4_general_ci, 'A' COLLATE
+/// utf8mb4_general_ci)` is 0 where the `utf8mb4_bin` form is 1.
+pub(crate) fn strcmp_with_collation(
+    vals: &[Datum],
+    collation: tidb_datatype::Collation,
+) -> Result<Datum, EvalError> {
+    let [left, right] = vals else {
+        return Err(EvalError::Unsupported("bad STRCMP arity"));
+    };
+    let (Some(a), Some(b)) = (coerce_str_bytes(left)?, coerce_str_bytes(right)?) else {
+        return Ok(Datum::Null);
+    };
+    strcmp_under(&a, &b, collation)
+}
+
+fn strcmp_under(
+    a: &[u8],
+    b: &[u8],
+    collation: tidb_datatype::Collation,
+) -> Result<Datum, EvalError> {
+    Ok(Datum::Int(match collation.compare(a, b) {
         std::cmp::Ordering::Less => -1,
         std::cmp::Ordering::Equal => 0,
         std::cmp::Ordering::Greater => 1,
