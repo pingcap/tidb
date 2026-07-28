@@ -1266,6 +1266,36 @@ impl Session {
                     // front holds no connection at all, which is Go's
                     // `sm == nil` early return: also a silent no-op.
                     if let Some(guard) = &self.process {
+                        // Go `planbuilder.go`'s `*ast.KillStmt` case: everyone
+                        // may KILL their own connection regardless of
+                        // privilege; killing anyone else's requires SUPER (or
+                        // the dynamic CONNECTION_ADMIN, not modelled in this
+                        // tier), reported as `ErrSpecificAccessDenied` (1227)
+                        // -- NOT the unused 1095 `ErrKillDenied` errno entry,
+                        // which no code path in current Go ever raises.
+                        let is_self = self.connection_id == Some(target);
+                        if !is_self {
+                            let owner = guard
+                                .registry()
+                                .snapshot()
+                                .into_iter()
+                                .find(|row| row.id == target)
+                                .map(|row| row.user);
+                            let same_user =
+                                owner.as_deref() == Some(self.process_list_user().as_str());
+                            let has_super = self.privileges.as_ref().is_some_and(|registry| {
+                                self.current_identity().is_some_and(|(user, host)| {
+                                    registry.has_global_priv(
+                                        user,
+                                        host,
+                                        privilege::GlobalPriv::Super,
+                                    )
+                                })
+                            });
+                            if owner.is_some() && !same_user && !has_super {
+                                return Err(DriverError::KillAccessDenied);
+                            }
+                        }
                         guard.registry().kill(target, kill.query);
                     }
                     Ok(Some(StmtOutput::Affected(0)))
@@ -11260,6 +11290,54 @@ mod tests {
             }
             other => panic!("expected RevokeNoTableGrant, got {other:?}"),
         }
+    }
+
+    /// Go `planbuilder.go`'s `*ast.KillStmt` case: a session may always KILL
+    /// its OWN connection, but killing a peer logged in as a DIFFERENT user
+    /// is refused with `ErrSpecificAccessDenied` (1227) unless the caller
+    /// holds SUPER. Granting SUPER then lets the same KILL through.
+    #[test]
+    fn kill_of_another_users_connection_requires_super() {
+        let registry = process::ProcessRegistry::default();
+        let mut victim = session_with_privileges();
+        victim.set_user("root@%".to_owned(), "root@10.0.0.1".to_owned());
+        let victim_guard = registry.register(
+            1,
+            "root".to_owned(),
+            "10.0.0.1:1".to_owned(),
+            "test".to_owned(),
+            None,
+        );
+        victim.attach_process(1, victim_guard);
+
+        let mut bob = session_with_privileges();
+        bob.set_user("bob@%".to_owned(), "bob@10.0.0.2".to_owned());
+        let bob_guard = registry.register(
+            2,
+            "bob".to_owned(),
+            "10.0.0.2:2".to_owned(),
+            "test".to_owned(),
+            None,
+        );
+        bob.attach_process(2, bob_guard);
+        bob.run("CREATE USER 'bob'@'%'").unwrap();
+
+        // Killing one's own connection never needs a privilege.
+        assert_eq!(
+            bob.run("kill 2").unwrap(),
+            StmtResult::Affected(0),
+            "KILL of one's own connection is always allowed"
+        );
+
+        // Killing root's connection without SUPER is refused.
+        match bob.run("kill 1") {
+            Err(DriverError::KillAccessDenied) => {}
+            other => panic!("expected KillAccessDenied, got {other:?}"),
+        }
+
+        // Granting SUPER lets the same KILL through.
+        bob.run("GRANT SUPER ON *.* TO 'bob'@'%'").unwrap();
+        assert_eq!(bob.run("kill 1").unwrap(), StmtResult::Affected(0));
     }
 
     /// `PROCESS` granted through `GRANT` (not the test-only

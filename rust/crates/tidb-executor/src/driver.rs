@@ -643,6 +643,12 @@ pub enum DriverError {
     /// Go `ErrViewWrongList` (1353): the `CREATE VIEW v (...)` column list
     /// and the body's select list have different widths.
     ViewWrongList,
+    /// Go `plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or
+    /// CONNECTION_ADMIN")` (1227): `KILL` of a connection logged in as a
+    /// DIFFERENT user than the caller, without SUPER (or the dynamic
+    /// CONNECTION_ADMIN privilege, not modelled in this tier). Killing one's
+    /// own connection is always allowed regardless of privilege.
+    KillAccessDenied,
     /// Go `ErrCannotUser` (1396): `CREATE USER` named an account that
     /// already exists. Go quotes the account as `'user'@'host'`.
     CreateUserAlreadyExists {
@@ -9577,6 +9583,15 @@ impl DriverError {
             1288,
             *b"HY000",
             format!("The target table {name} of the UPDATE is not updatable"),
+        ),
+        // Go `ErrSpecificAccessDenied` (1227), `planbuilder.go`'s
+        // `*ast.KillStmt` case.
+        DriverError::KillAccessDenied => MysqlError::new(
+            1227,
+            *b"42000",
+            "Access denied; you need (at least one of) the SUPER or CONNECTION_ADMIN \
+             privilege(s) for this operation"
+                .to_owned(),
         ),
         // Go `ErrCannotUser` (1396): "Operation %s failed for %.256s", quoted
         // `'user'@'host'` for CREATE USER.
