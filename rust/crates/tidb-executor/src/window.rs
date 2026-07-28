@@ -361,6 +361,7 @@ pub(crate) fn compute_windows(
     let offset = scope.width();
     out_scope.tables.push(FromTable {
         name: String::new(),
+        database: None,
         columns: calls
             .iter()
             .enumerate()

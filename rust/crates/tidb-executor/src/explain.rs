@@ -320,6 +320,7 @@ fn plan_dml_source(
     let scope = FromScope {
         tables: vec![FromTable {
             name: visible.clone(),
+            database: table_ref.alias.is_none().then(|| database.clone()),
             columns: entry.column_list(),
             offset: 0,
         }],

@@ -8211,7 +8211,6 @@ mod tests {
         session
     }
 
-<<<<<<< HEAD
     /// `ROW_NUMBER`/`RANK`/`DENSE_RANK` over ties, checked against captured
     /// TiDB output.
     ///
