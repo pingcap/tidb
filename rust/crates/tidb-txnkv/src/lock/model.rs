@@ -42,6 +42,17 @@ pub struct OptimisticLock {
     pub lock_type: i32,
     /// Minimum commit timestamp retained for diagnostics.
     pub min_commit_ts: u64,
+    /// Whether the owning transaction prewrote with the async-commit protocol.
+    ///
+    /// Such a transaction has no single commit record to query: its commit
+    /// point is the completed prewrite, so its fate is derived from the
+    /// secondary locks named below rather than from the primary alone.
+    pub use_async_commit: bool,
+    /// Every non-primary key the owning async-commit transaction wrote.
+    ///
+    /// Only the primary lock carries this list, and only for an async-commit
+    /// transaction; it is empty otherwise.
+    pub secondaries: Vec<Vec<u8>>,
 }
 
 /// One source-shaped pessimistic lock observed by a blocked locking statement.
@@ -119,8 +130,6 @@ impl BlockingLock {
 pub enum LockAdmissionError {
     /// A pessimistic lock requires a different protocol.
     Pessimistic(i32),
-    /// An async-commit lock requires secondary-status recovery.
-    AsyncCommit,
     /// A transaction-file lock requires file-aware cleanup.
     TransactionFile,
     /// The lock mutation is not an admitted optimistic prewrite operation.
@@ -137,9 +146,6 @@ impl fmt::Display for LockAdmissionError {
                     formatter,
                     "pessimistic lock type {lock_type} is outside bounded recovery"
                 )
-            }
-            Self::AsyncCommit => {
-                formatter.write_str("async-commit lock is outside bounded recovery")
             }
             Self::TransactionFile => {
                 formatter.write_str("transaction-file lock is outside bounded recovery")
@@ -213,9 +219,6 @@ fn admit_blocking_lock(lock: &KvrpcLockInfo) -> Result<BlockingLock, LockAdmissi
 }
 
 fn admit_lock(lock: &KvrpcLockInfo) -> Result<OptimisticLock, LockAdmissionError> {
-    if lock.use_async_commit {
-        return Err(LockAdmissionError::AsyncCommit);
-    }
     if lock.is_txn_file {
         return Err(LockAdmissionError::TransactionFile);
     }
@@ -240,5 +243,7 @@ fn admit_lock(lock: &KvrpcLockInfo) -> Result<OptimisticLock, LockAdmissionError
         txn_size: lock.txn_size,
         lock_type: lock.lock_type,
         min_commit_ts: lock.min_commit_ts,
+        use_async_commit: lock.use_async_commit,
+        secondaries: lock.secondaries.clone(),
     })
 }

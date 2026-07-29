@@ -68,13 +68,6 @@ fn fails_closed_for_every_protocol_outside_the_bounded_path() {
     );
 
     lock = optimistic(b"s", b"p", 11);
-    lock.use_async_commit = true;
-    assert_eq!(
-        decode_lock_observation(&lock),
-        Err(LockAdmissionError::AsyncCommit)
-    );
-
-    lock = optimistic(b"s", b"p", 11);
     lock.is_txn_file = true;
     assert_eq!(
         decode_lock_observation(&lock),

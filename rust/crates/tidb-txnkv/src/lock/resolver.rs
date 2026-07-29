@@ -17,9 +17,10 @@ use std::fmt;
 use std::time::Duration;
 
 use tidb_proto::{
-    KvrpcCheckTxnStatusRequest, KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcPeer,
-    KvrpcPessimisticRollbackRequest, KvrpcPessimisticRollbackResponse, KvrpcRegionEpoch,
-    KvrpcResolveLockRequest, KvrpcResolveLockResponse, KvrpcTxnAction,
+    KvrpcCheckSecondaryLocksRequest, KvrpcCheckSecondaryLocksResponse, KvrpcCheckTxnStatusRequest,
+    KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcPeer, KvrpcPessimisticRollbackRequest,
+    KvrpcPessimisticRollbackResponse, KvrpcRegionEpoch, KvrpcResolveLockRequest,
+    KvrpcResolveLockResponse, KvrpcTxnAction,
 };
 
 use crate::region::{ReadPolicy, RegionLoader, RequestSelection};
@@ -77,6 +78,15 @@ pub trait LockRecoveryClient {
         call: &UnaryCallContext,
     ) -> Result<KvrpcCheckTxnStatusResponse, DirectUnaryClientError>;
 
+    /// Sends CheckSecondaryLocks through the client's existing unary core.
+    fn check_secondary_locks_for_lock(
+        &mut self,
+        address: &str,
+        request: &KvrpcCheckSecondaryLocksRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError>;
+
     /// Sends keyed ResolveLock through the client's existing unary core.
     fn resolve_lock_for_read(
         &mut self,
@@ -109,6 +119,16 @@ impl LockRecoveryClient for TonicCoprocessorClient {
         call: &UnaryCallContext,
     ) -> Result<KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
         self.check_txn_status(address, request, context, call)
+    }
+
+    fn check_secondary_locks_for_lock(
+        &mut self,
+        address: &str,
+        request: &KvrpcCheckSecondaryLocksRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
+        self.check_secondary_locks(address, request, context, call)
     }
 
     fn resolve_lock_for_read(
@@ -182,6 +202,13 @@ pub enum LockRecoveryError {
     CallerCancelled,
     /// MinCommitTSPushed requires resolved-lock propagation outside this slice.
     MinCommitTsPushed,
+    /// CheckSecondaryLocks answered with a lock that is not async-commit.
+    ///
+    /// Go `nonAsyncCommitLock`: the primary said async commit and a secondary
+    /// disagrees, so the two views of the same transaction cannot both be true.
+    NonAsyncCommitLock,
+    /// An async-commit recovery observed a self-contradictory commit timestamp.
+    AsyncCommitConflict(String),
 }
 
 impl fmt::Display for LockRecoveryError {
@@ -208,6 +235,12 @@ impl fmt::Display for LockRecoveryError {
             Self::CallerCancelled => formatter.write_str("lock recovery cancelled by caller"),
             Self::MinCommitTsPushed => formatter
                 .write_str("MinCommitTSPushed lock requires deferred resolved-lock propagation"),
+            Self::NonAsyncCommitLock => {
+                formatter.write_str("CheckSecondaryLocks returned a non-async-commit lock")
+            }
+            Self::AsyncCommitConflict(error) => {
+                write!(formatter, "async commit recovery is inconsistent: {error}")
+            }
         }
     }
 }
@@ -266,12 +299,20 @@ where
         // acting on a simultaneous CheckTxnStatus result.
         check_cancelled(call)?;
         reject_check_error(&check_response)?;
-        if let Some(primary_lock) = check_response.lock_info.as_ref() {
+        let primary_lock = match check_response.lock_info.as_ref() {
             // The returned primary lock uses the same strict protocol gate.
-            super::decode_lock_observation(primary_lock)?;
-        }
+            Some(primary_lock) => super::decode_lock_observation(primary_lock)?
+                .into_iter()
+                .next(),
+            None => None,
+        };
         if check_response.lock_ttl > 0 {
-            if check_response.action == KvrpcTxnAction::MinCommitTsPushed as i32 {
+            let async_commit_primary = primary_lock
+                .as_ref()
+                .is_some_and(|primary_lock| primary_lock.use_async_commit);
+            if !async_commit_primary
+                && check_response.action == KvrpcTxnAction::MinCommitTsPushed as i32
+            {
                 return Err(LockRecoveryError::MinCommitTsPushed);
             }
             // client-go sends the pre-RPC TSO in CheckTxnStatus, then asks the
@@ -283,6 +324,24 @@ where
                 .map_err(LockRecoveryError::Timestamp)?;
             check_cancelled(call)?;
             let ttl = remaining_lock_ttl(lock.txn_id, check_response.lock_ttl, post_check_ts);
+            // Go `expiredAsyncCommitLocks`: an async-commit primary that is
+            // still present but expired is not "alive". Its commit point is the
+            // completed prewrite, so waiting for a TTL nobody will refresh only
+            // stalls the reader; the fate must come from the secondaries.
+            if async_commit_primary && ttl.is_zero() {
+                let primary_lock = primary_lock.expect("an async-commit primary was observed");
+                statuses.push(resolve_async_commit_lock(
+                    runtime,
+                    lock,
+                    &primary_lock,
+                    base_context,
+                    call,
+                )?);
+                continue;
+            }
+            if check_response.action == KvrpcTxnAction::MinCommitTsPushed as i32 {
+                return Err(LockRecoveryError::MinCommitTsPushed);
+            }
             minimum_wait = Some(minimum_wait.map_or(ttl, |wait| wait.min(ttl)));
             continue;
         }
@@ -341,6 +400,168 @@ pub(super) fn classify_determined_status(
     })
 }
 
+/// Commit-timestamp evidence assembled from an async-commit transaction's
+/// secondary locks.
+///
+/// Go `asyncResolveData`. The invariant it enforces is that a transaction has
+/// exactly one fate: either every lock is still present, in which case the
+/// commit timestamp is `max(min_commit_ts)` over all of them, or at least one
+/// lock is already gone, in which case TiKV's own commit timestamp for that key
+/// is the only admissible answer and every other observation must agree with it.
+struct AsyncResolveData {
+    commit_ts: u64,
+    keys: Vec<Vec<u8>>,
+    missing_lock: bool,
+}
+
+impl AsyncResolveData {
+    fn add_keys(
+        &mut self,
+        locks: &[tidb_proto::KvrpcLockInfo],
+        expected: usize,
+        start_ts: u64,
+        commit_ts: u64,
+    ) -> Result<(), LockRecoveryError> {
+        if locks.len() < expected {
+            // A lock is missing, so the transaction was already committed or
+            // rolled back and TiKV has resolved the remaining keys itself.
+            if !self.missing_lock {
+                if commit_ts != 0 && commit_ts < self.commit_ts {
+                    return Err(LockRecoveryError::AsyncCommitConflict(format!(
+                        "commit ts {commit_ts} precedes min commit ts {}",
+                        self.commit_ts
+                    )));
+                }
+                self.commit_ts = commit_ts;
+            }
+            self.missing_lock = true;
+            if self.commit_ts != commit_ts {
+                return Err(LockRecoveryError::AsyncCommitConflict(format!(
+                    "commit ts mismatch: {} and {commit_ts}",
+                    self.commit_ts
+                )));
+            }
+            return Ok(());
+        }
+        for lock in locks {
+            if lock.lock_version != start_ts {
+                return Err(LockRecoveryError::AsyncCommitConflict(format!(
+                    "unexpected lock timestamp, expected {start_ts}, found {}",
+                    lock.lock_version
+                )));
+            }
+            if !lock.use_async_commit {
+                return Err(LockRecoveryError::NonAsyncCommitLock);
+            }
+            if !self.missing_lock && lock.min_commit_ts > self.commit_ts {
+                self.commit_ts = lock.min_commit_ts;
+            }
+            self.keys.push(lock.key.clone());
+        }
+        Ok(())
+    }
+}
+
+/// Determines and then applies an expired async-commit transaction's fate.
+///
+/// Go `LockResolver.resolveAsyncCommitLock` for the undetermined case: the
+/// primary lock names every secondary, CheckSecondaryLocks reports which of
+/// them still hold a lock, and the transaction counts as committed exactly when
+/// the assembled commit timestamp is nonzero. Only then is ResolveLock sent, so
+/// a partially-prewritten async-commit transaction is never half committed.
+fn resolve_async_commit_lock<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    lock: &OptimisticLock,
+    primary_lock: &OptimisticLock,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+) -> Result<ResolvedTxnStatus, LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionLoader,
+{
+    let mut data = AsyncResolveData {
+        commit_ts: primary_lock.min_commit_ts,
+        keys: Vec::new(),
+        missing_lock: false,
+    };
+    for group in group_keys_by_region(runtime, &primary_lock.secondaries, base_context)? {
+        check_cancelled(call)?;
+        let request = KvrpcCheckSecondaryLocksRequest {
+            keys: group.keys.clone(),
+            start_version: lock.txn_id,
+            ..KvrpcCheckSecondaryLocksRequest::default()
+        };
+        let response = runtime
+            .client()
+            .try_borrow_mut()
+            .map_err(|_| LockRecoveryError::ClientLifecycle)?
+            .check_secondary_locks_for_lock(&group.address, &request, &group.context, call)
+            .map_err(map_rpc_error)?;
+        check_cancelled(call)?;
+        if let Some(error) = response.region_error.as_ref() {
+            return Err(LockRecoveryError::RegionError(format!("{error:?}")));
+        }
+        if let Some(error) = response.error.as_ref() {
+            return Err(LockRecoveryError::KeyError(format!("{error:?}")));
+        }
+        data.add_keys(
+            &response.locks,
+            group.keys.len(),
+            lock.txn_id,
+            response.commit_ts,
+        )?;
+    }
+    // The primary is resolved with the same fate as every secondary; it is
+    // deliberately last, so a failure cannot leave secondaries resolved against
+    // a primary that still claims a different outcome.
+    data.keys.push(lock.primary.clone());
+    let status = if data.commit_ts == 0 {
+        ResolvedTxnStatus::RolledBack
+    } else {
+        ResolvedTxnStatus::Committed(data.commit_ts)
+    };
+    for key in &data.keys {
+        resolve_key(runtime, lock.txn_id, key, status, base_context, call)?;
+    }
+    Ok(status)
+}
+
+/// One region's share of a keyed recovery command.
+struct RegionKeyGroup {
+    address: String,
+    context: KvrpcContext,
+    keys: Vec<Vec<u8>>,
+}
+
+/// Routes `keys` and groups them by the region that serves each, preserving the
+/// caller's key order inside every group.
+fn group_keys_by_region<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    keys: &[Vec<u8>],
+    base_context: &KvrpcContext,
+) -> Result<Vec<RegionKeyGroup>, LockRecoveryError>
+where
+    L: RegionLoader,
+{
+    let mut groups: Vec<RegionKeyGroup> = Vec::new();
+    for key in keys {
+        let (address, context) = route_key(runtime, key, base_context)?;
+        match groups
+            .iter_mut()
+            .find(|group| group.address == address && group.context.region_id == context.region_id)
+        {
+            Some(group) => group.keys.push(key.clone()),
+            None => groups.push(RegionKeyGroup {
+                address,
+                context,
+                keys: vec![key.clone()],
+            }),
+        }
+    }
+    Ok(groups)
+}
+
 fn resolve_secondary<C, L>(
     runtime: &SharedReadRuntime<C, L>,
     lock: &OptimisticLock,
@@ -352,16 +573,31 @@ where
     C: LockRecoveryClient,
     L: RegionLoader,
 {
+    resolve_key(runtime, lock.txn_id, &lock.key, status, base_context, call)
+}
+
+fn resolve_key<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    txn_id: u64,
+    key: &[u8],
+    status: ResolvedTxnStatus,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+) -> Result<(), LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionLoader,
+{
     check_cancelled(call)?;
-    let (address, context) = route_key(runtime, &lock.key, base_context)?;
+    let (address, context) = route_key(runtime, key, base_context)?;
     check_cancelled(call)?;
     let request = KvrpcResolveLockRequest {
-        start_version: lock.txn_id,
+        start_version: txn_id,
         commit_version: match status {
             ResolvedTxnStatus::Committed(commit_ts) => commit_ts,
             ResolvedTxnStatus::RolledBack => 0,
         },
-        keys: vec![lock.key.clone()],
+        keys: vec![key.to_vec()],
         is_async: false,
         is_txn_file: false,
         ..KvrpcResolveLockRequest::default()

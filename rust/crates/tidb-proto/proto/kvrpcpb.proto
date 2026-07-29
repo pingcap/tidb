@@ -389,6 +389,28 @@ message CheckTxnStatusResponse {
   // Upstream field 7 is ExecDetailsV2 and is outside this bounded owner.
 }
 
+// Exact pinned kvproto command used to determine an async-commit transaction's
+// fate from its secondary locks when its primary lock is still present.
+message CheckSecondaryLocksRequest {
+  Context context = 1;
+  repeated bytes keys = 2;
+  // Identifies the transaction we are investigating.
+  uint64 start_version = 3;
+}
+
+message CheckSecondaryLocksResponse {
+  errorpb.Error region_error = 1;
+  KeyError error = 2;
+  // For each key in `keys`, there is a lock here when one is present and
+  // belongs to `start_version`. A shorter list therefore means at least one key
+  // was already committed or rolled back.
+  repeated LockInfo locks = 3;
+  // The commit timestamp used when any of the locks was already committed, zero
+  // otherwise.
+  uint64 commit_ts = 4;
+  // Upstream field 5 is ExecDetailsV2 and is outside this bounded owner.
+}
+
 message TxnInfo {
   uint64 txn = 1;
   uint64 status = 2;

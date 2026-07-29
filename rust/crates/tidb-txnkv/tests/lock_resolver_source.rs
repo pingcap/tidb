@@ -42,7 +42,8 @@ use region::{
     RegionVerId, Store,
 };
 use tidb_proto::{
-    kvrpcpb, KvrpcCheckTxnStatusRequest, KvrpcCheckTxnStatusResponse, KvrpcContext,
+    kvrpcpb, KvrpcCheckSecondaryLocksRequest, KvrpcCheckSecondaryLocksResponse,
+    KvrpcCheckTxnStatusRequest, KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcLockInfo,
     KvrpcResolveLockRequest, KvrpcResolveLockResponse, KvrpcTxnAction,
 };
 
@@ -70,10 +71,12 @@ struct Recorded {
     checks: Vec<(String, KvrpcCheckTxnStatusRequest, KvrpcContext)>,
     resolves: Vec<(String, KvrpcResolveLockRequest, KvrpcContext)>,
     pessimistic_rollbacks: Vec<(String, tidb_proto::KvrpcPessimisticRollbackRequest)>,
+    secondary_checks: Vec<(String, KvrpcCheckSecondaryLocksRequest)>,
 }
 
 struct MockClient {
     checks: VecDeque<KvrpcCheckTxnStatusResponse>,
+    secondary_checks: VecDeque<KvrpcCheckSecondaryLocksResponse>,
     recorded: Rc<RefCell<Recorded>>,
     cancel_after_check: bool,
     cancel_after_resolve: bool,
@@ -102,6 +105,23 @@ impl LockRecoveryClient for MockClient {
             call.cancellation().cancel();
         }
         Ok(response)
+    }
+
+    fn check_secondary_locks_for_lock(
+        &mut self,
+        address: &str,
+        request: &KvrpcCheckSecondaryLocksRequest,
+        _context: &KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
+        self.recorded
+            .borrow_mut()
+            .secondary_checks
+            .push((address.to_owned(), request.clone()));
+        Ok(self
+            .secondary_checks
+            .pop_front()
+            .expect("one queued secondary-lock answer"))
     }
 
     fn resolve_lock_for_read(
@@ -174,9 +194,20 @@ fn runtime(
     SharedReadRuntime<MockClient, StaticLoader>,
     Rc<RefCell<Recorded>>,
 ) {
+    runtime_with_secondary_checks(statuses, Vec::new())
+}
+
+fn runtime_with_secondary_checks(
+    statuses: Vec<KvrpcCheckTxnStatusResponse>,
+    secondary_checks: Vec<KvrpcCheckSecondaryLocksResponse>,
+) -> (
+    SharedReadRuntime<MockClient, StaticLoader>,
+    Rc<RefCell<Recorded>>,
+) {
     let recorded = Rc::new(RefCell::new(Recorded::default()));
     let client = MockClient {
         checks: statuses.into(),
+        secondary_checks: secondary_checks.into(),
         recorded: Rc::clone(&recorded),
         cancel_after_check: false,
         cancel_after_resolve: false,
@@ -201,6 +232,8 @@ fn secondary() -> OptimisticLock {
         txn_size: 2,
         lock_type: 0,
         min_commit_ts: 0,
+        use_async_commit: false,
+        secondaries: Vec::new(),
     }
 }
 
@@ -767,4 +800,272 @@ fn a_primary_pessimistic_blocker_is_cleaned_by_the_status_query_alone() {
     .unwrap();
 
     assert!(recorded.borrow().pessimistic_rollbacks.is_empty());
+}
+
+// -----------------------------------------------------------------------------
+// Async-commit recovery
+// -----------------------------------------------------------------------------
+
+const ASYNC_TXN_ID: u64 = 1_000 << 18;
+/// Two secondaries the static topology splits across both regions, so recovery
+/// has to group them and reconcile two independent answers.
+const ASYNC_SECONDARIES: [&[u8]; 2] = [b"alpha", b"secondary"];
+
+fn async_primary_lock(min_commit_ts: u64) -> KvrpcLockInfo {
+    KvrpcLockInfo {
+        primary_lock: b"primary".to_vec(),
+        key: b"primary".to_vec(),
+        lock_version: ASYNC_TXN_ID,
+        lock_ttl: 500,
+        use_async_commit: true,
+        min_commit_ts,
+        secondaries: ASYNC_SECONDARIES.iter().map(|key| key.to_vec()).collect(),
+        ..KvrpcLockInfo::default()
+    }
+}
+
+/// The CheckTxnStatus answer for a still-present async-commit primary.
+fn async_primary_status(min_commit_ts: u64) -> KvrpcCheckTxnStatusResponse {
+    KvrpcCheckTxnStatusResponse {
+        lock_ttl: 500,
+        lock_info: Some(async_primary_lock(min_commit_ts)),
+        ..KvrpcCheckTxnStatusResponse::default()
+    }
+}
+
+fn present_secondary_lock(key: &[u8], min_commit_ts: u64) -> KvrpcLockInfo {
+    KvrpcLockInfo {
+        primary_lock: b"primary".to_vec(),
+        key: key.to_vec(),
+        lock_version: ASYNC_TXN_ID,
+        lock_ttl: 500,
+        use_async_commit: true,
+        min_commit_ts,
+        ..KvrpcLockInfo::default()
+    }
+}
+
+fn async_blocker() -> OptimisticLock {
+    OptimisticLock {
+        key: b"secondary".to_vec(),
+        primary: b"primary".to_vec(),
+        txn_id: ASYNC_TXN_ID,
+        ttl_ms: 500,
+        txn_size: 3,
+        lock_type: 0,
+        min_commit_ts: 0,
+        use_async_commit: true,
+        secondaries: Vec::new(),
+    }
+}
+
+/// The pre-RPC timestamp, then a post-RPC one past the lock's 500ms TTL, so the
+/// primary counts as expired rather than alive.
+fn expired_timestamps() -> AdvancingTimestampSource {
+    AdvancingTimestampSource::new([1_100 << 18, 2_000 << 18])
+}
+
+/// An expired async-commit transaction whose locks are all still present
+/// commits at the largest `min_commit_ts` any of them reports.
+///
+/// Source contract (`asyncResolveData.addKeys`): with no lock missing, no key
+/// has been committed yet, so the commit point is `max(min_commit_ts)` over the
+/// primary and every secondary — and every key is then resolved at that one
+/// timestamp.
+#[test]
+fn an_expired_async_commit_txn_commits_at_the_largest_min_commit_ts() {
+    let (runtime, recorded) = runtime_with_secondary_checks(
+        vec![async_primary_status(1_400 << 18)],
+        vec![
+            KvrpcCheckSecondaryLocksResponse {
+                locks: vec![present_secondary_lock(b"alpha", 1_500 << 18)],
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            },
+            KvrpcCheckSecondaryLocksResponse {
+                locks: vec![present_secondary_lock(b"secondary", 1_450 << 18)],
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            },
+        ],
+    );
+
+    let result = resolve_optimistic_locks(
+        &runtime,
+        &[async_blocker()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &expired_timestamps(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        result,
+        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::Committed(1_500 << 18)]),
+        "the commit timestamp is the maximum min_commit_ts, not the primary's"
+    );
+
+    let recorded = recorded.borrow();
+    // One CheckSecondaryLocks per region, each carrying only its own keys.
+    assert_eq!(recorded.secondary_checks.len(), 2);
+    assert_eq!(recorded.secondary_checks[0].0, "primary:20160");
+    assert_eq!(recorded.secondary_checks[0].1.keys, vec![b"alpha".to_vec()]);
+    assert_eq!(recorded.secondary_checks[1].0, "secondary:20160");
+    assert_eq!(
+        recorded.secondary_checks[1].1.keys,
+        vec![b"secondary".to_vec()]
+    );
+    assert!(recorded
+        .secondary_checks
+        .iter()
+        .all(|(_, request)| request.start_version == ASYNC_TXN_ID));
+
+    // Every secondary plus the primary is resolved, and the primary is last so
+    // it can never contradict an already-resolved secondary.
+    let resolved_keys = recorded
+        .resolves
+        .iter()
+        .map(|(_, request, _)| request.keys.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        resolved_keys,
+        vec![
+            vec![b"alpha".to_vec()],
+            vec![b"secondary".to_vec()],
+            vec![b"primary".to_vec()],
+        ]
+    );
+    assert!(recorded.resolves.iter().all(|(_, request, _)| {
+        request.commit_version == 1_500 << 18 && request.start_version == ASYNC_TXN_ID
+    }));
+}
+
+/// A key whose lock is already gone fixes the commit timestamp for every other
+/// key, overriding the locks that are still present.
+///
+/// Source contract: TiKV reports the timestamp it actually committed that key
+/// at, and a transaction has exactly one commit timestamp, so
+/// `max(min_commit_ts)` stops being admissible once a real one exists.
+#[test]
+fn a_missing_lock_fixes_the_commit_timestamp_for_the_whole_transaction() {
+    let (runtime, _recorded) = runtime_with_secondary_checks(
+        vec![async_primary_status(1_400 << 18)],
+        vec![
+            // `alpha` was already committed, so TiKV reports no lock for it.
+            KvrpcCheckSecondaryLocksResponse {
+                locks: Vec::new(),
+                commit_ts: 1_600 << 18,
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            },
+            KvrpcCheckSecondaryLocksResponse {
+                locks: vec![present_secondary_lock(b"secondary", 1_450 << 18)],
+                ..KvrpcCheckSecondaryLocksResponse::default()
+            },
+        ],
+    );
+
+    let result = resolve_optimistic_locks(
+        &runtime,
+        &[async_blocker()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &expired_timestamps(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        result,
+        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::Committed(1_600 << 18)])
+    );
+}
+
+/// An expired async-commit transaction with a missing lock and no commit
+/// timestamp is rolled back.
+#[test]
+fn an_async_commit_txn_with_a_rolled_back_key_resolves_as_rolled_back() {
+    let (runtime, recorded) = runtime_with_secondary_checks(
+        vec![async_primary_status(0)],
+        vec![
+            KvrpcCheckSecondaryLocksResponse::default(),
+            KvrpcCheckSecondaryLocksResponse::default(),
+        ],
+    );
+
+    let result = resolve_optimistic_locks(
+        &runtime,
+        &[async_blocker()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &expired_timestamps(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        result,
+        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::RolledBack])
+    );
+    assert!(recorded
+        .borrow()
+        .resolves
+        .iter()
+        .all(|(_, request, _)| request.commit_version == 0));
+}
+
+/// A secondary that denies the async-commit protocol its primary claims fails
+/// closed rather than picking one of the two contradictory views.
+#[test]
+fn a_non_async_commit_secondary_fails_the_recovery_closed() {
+    let (runtime, recorded) = runtime_with_secondary_checks(
+        vec![async_primary_status(1_400 << 18)],
+        vec![KvrpcCheckSecondaryLocksResponse {
+            locks: vec![KvrpcLockInfo {
+                use_async_commit: false,
+                ..present_secondary_lock(b"alpha", 1_450 << 18)
+            }],
+            ..KvrpcCheckSecondaryLocksResponse::default()
+        }],
+    );
+
+    let error = resolve_optimistic_locks(
+        &runtime,
+        &[async_blocker()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &expired_timestamps(),
+    )
+    .expect_err("two contradictory views of one transaction cannot both be applied");
+
+    assert_eq!(error, LockRecoveryError::NonAsyncCommitLock);
+    assert!(
+        recorded.borrow().resolves.is_empty(),
+        "no key may be resolved before the fate is determined"
+    );
+}
+
+/// An async-commit primary whose TTL has *not* run out is still alive, so the
+/// reader waits instead of forcing a recovery.
+#[test]
+fn a_live_async_commit_primary_is_waited_for_rather_than_recovered() {
+    let (runtime, recorded) =
+        runtime_with_secondary_checks(vec![async_primary_status(1_400 << 18)], Vec::new());
+
+    let result = resolve_optimistic_locks(
+        &runtime,
+        &[async_blocker()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        // The post-check timestamp is still inside the 500ms TTL.
+        &AdvancingTimestampSource::new([1_100 << 18, 1_200 << 18]),
+    )
+    .unwrap();
+
+    assert_eq!(
+        result,
+        LockRecoveryResult::Alive(Duration::from_millis(300))
+    );
+    assert!(recorded.borrow().secondary_checks.is_empty());
+    assert!(recorded.borrow().resolves.is_empty());
 }

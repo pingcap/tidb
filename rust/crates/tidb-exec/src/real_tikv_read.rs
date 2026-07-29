@@ -680,7 +680,10 @@ impl ProductionReadProcessAuthority {
             pd.clone(),
             timeout,
         )
-        .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
+        .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?
+        // `@@tidb_enable_async_commit` / `@@tidb_enable_1pc`, resolved once for
+        // the node exactly as `@@tidb_pessimistic_txn_fair_locking` is.
+        .with_commit_protocol(crate::session_commit_protocol::session_commit_protocol());
         let table = choose_table(&transaction_opener).map_err(RealTiKvReadError::Catalog)?;
         let (opener, admission) = RealTiKvReadSessionOpener::new_with_admission_owner(
             table,

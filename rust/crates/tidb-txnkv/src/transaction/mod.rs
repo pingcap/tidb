@@ -27,8 +27,7 @@ pub use command_client::{PublishedCommand, TransactionCommandClient};
 pub use coordinator::{
     CommitProtocol, OptimisticCoordinatorError, PdLockTimestampSource,
     ProductionOptimisticTransaction, ProductionPessimisticTransaction, RealOptimisticTransaction,
-    RealOptimisticTransactionOpener, SnapshotGetResult, ASYNC_COMMIT_KEYS_LIMIT,
-    ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT,
+    RealOptimisticTransactionOpener, SnapshotGetResult,
 };
 pub use mutation::{
     MutationSetError, OptimisticMutation, OptimisticMutationKind, MAX_OPTIMISTIC_KEY_BYTES,
@@ -40,10 +39,11 @@ pub use pessimistic::{
 };
 pub use region_batches::RegionMutationBatch;
 pub use state::{
-    CleanupBatchFailure, CleanupFailedTransaction, CommittedTransaction, OptimisticCommitOutcome,
-    OptimisticTransactionReceipt, OptimisticTransactionState, ReadOnlyTransaction,
-    RolledBackTransaction, SecondaryCommitFailure, SnapshotReadReceipt, TransactionAttemptPhase,
-    TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause, UndeterminedTransaction,
+    CleanupBatchFailure, CleanupFailedTransaction, CommittedProtocol, CommittedTransaction,
+    OptimisticCommitOutcome, OptimisticTransactionReceipt, OptimisticTransactionState,
+    ReadOnlyTransaction, RolledBackTransaction, SecondaryCommitFailure, SnapshotReadReceipt,
+    TransactionAttemptPhase, TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause,
+    UndeterminedTransaction,
 };
 pub use ttl::{
     HeartBeatFailure, KeepAliveReport, KeepAliveStop, LockKeepAlive, TxnHeartBeatSender,

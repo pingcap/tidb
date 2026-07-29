@@ -662,6 +662,7 @@ mod select;
 mod sequence;
 pub mod sequence_state;
 mod session;
+pub mod session_commit_protocol;
 pub mod session_context_key;
 pub mod session_metrics;
 pub mod session_pool_capacity;

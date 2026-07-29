@@ -42,74 +42,22 @@ use super::region_batches::{
     group_keys, group_mutations, point_route, RegionKeyBatch, RegionMutationBatch,
 };
 use super::state::{
-    CleanupBatchFailure, CleanupFailedTransaction, CommittedTransaction, CoordinatorState,
-    OptimisticCommitOutcome, OptimisticTransactionReceipt, OptimisticTransactionState,
-    ReadOnlyTransaction, RolledBackTransaction, SecondaryCommitFailure, SnapshotReadReceipt,
-    TransactionAttemptPhase, TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause,
-    UndeterminedTransaction,
+    CleanupBatchFailure, CleanupFailedTransaction, CommittedProtocol, CommittedTransaction,
+    CoordinatorState, OptimisticCommitOutcome, OptimisticTransactionReceipt,
+    OptimisticTransactionState, ReadOnlyTransaction, RolledBackTransaction, SecondaryCommitFailure,
+    SnapshotReadReceipt, TransactionAttemptPhase, TransactionAttemptReceipt,
+    TransactionAttemptResult, TransactionCause, UndeterminedTransaction,
 };
 use super::ttl::{HeartBeatFailure, LockKeepAlive, TxnHeartBeatSender, MANAGED_LOCK_TTL_MS};
 
 const DEFAULT_LOCK_TTL_MS: u64 = 3_000;
+/// Go `config.DefaultConfig().TiKVClient.AsyncCommit.KeysLimit`.
+const ASYNC_COMMIT_KEYS_LIMIT: usize = 256;
+/// Go `config.DefaultConfig().TiKVClient.AsyncCommit.TotalKeySizeLimit` (4 KiB).
+const ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT: u64 = 4 * 1024;
+/// Go `config.DefaultConfig().TiKVClient.AsyncCommit.SafeWindow` (2s).
+const ASYNC_COMMIT_SAFE_WINDOW_MS: u64 = 2_000;
 pub(super) const MAX_LOCK_ATTEMPTS: usize = 4;
-
-/// client-go `config.DefaultConfig().TiKVClient.AsyncCommit.KeysLimit`: async
-/// commit is only eligible while the mutation count stays at or below this.
-pub const ASYNC_COMMIT_KEYS_LIMIT: usize = 256;
-/// client-go `AsyncCommit.TotalKeySizeLimit` (4 KiB): async commit is only
-/// eligible while the summed key bytes stay at or below this.
-pub const ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT: u64 = 4 * 1024;
-
-/// Fast-commit protocol selection a session threads into a write transaction.
-///
-/// It is the Rust image of the two client-go `KVTxn` flags `enableAsyncCommit`
-/// / `enable1PC` (set from `@@tidb_enable_async_commit` / `@@tidb_enable_1pc`)
-/// plus the two `config.AsyncCommit` size limits that gate async-commit
-/// eligibility. The default is neither protocol enabled, which is exactly the
-/// registry default of both system variables and keeps a transaction on the
-/// normal synchronous two-phase commit; a real-TiKV session flips both on,
-/// matching Go `GlobalSystemVariableInitialValue`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CommitProtocol {
-    /// `@@tidb_enable_async_commit`: allow the async-commit protocol.
-    pub enable_async_commit: bool,
-    /// `@@tidb_enable_1pc`: allow the one-phase-commit protocol.
-    pub enable_1pc: bool,
-    /// Async-commit mutation-count ceiling.
-    pub async_keys_limit: usize,
-    /// Async-commit summed-key-bytes ceiling.
-    pub async_total_key_size_limit: u64,
-    /// External commit-ts cap (`max_commit_ts`). Zero means no cap, which is the
-    /// only value this client produces: the stale-read/cached-table sources that
-    /// set a nonzero cap in client-go are outside this boundary.
-    pub max_commit_ts: u64,
-}
-
-impl Default for CommitProtocol {
-    fn default() -> Self {
-        Self {
-            enable_async_commit: false,
-            enable_1pc: false,
-            async_keys_limit: ASYNC_COMMIT_KEYS_LIMIT,
-            async_total_key_size_limit: ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT,
-            max_commit_ts: 0,
-        }
-    }
-}
-
-/// The Prewrite-request protocol fields decided for one batch.
-#[derive(Clone, Copy)]
-struct PrewriteProtocol<'a> {
-    use_async_commit: bool,
-    try_one_pc: bool,
-    /// `min_commit_ts` floor carried on the request: the greatest value TiKV has
-    /// returned so far, never below `start_ts + 1` (or `for_update_ts + 1`).
-    min_commit_ts: u64,
-    max_commit_ts: u64,
-    /// The secondary key list, present only on the primary batch of an
-    /// async-commit transaction.
-    secondaries: Option<&'a [Vec<u8>]>,
-}
 /// Key/value pairs one snapshot scan returned, in key order.
 pub type SnapshotScanPairs = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -168,6 +116,33 @@ impl fmt::Display for OptimisticCoordinatorError {
 
 impl std::error::Error for OptimisticCoordinatorError {}
 
+/// Which faster-than-2PC commit protocols a transaction may attempt.
+///
+/// These are permissions, not decisions: TiKV can refuse either protocol on any
+/// prewrite response, and the coordinator then finishes the transaction as a
+/// normal two-phase commit. Both flags come from the session
+/// (`@@tidb_enable_async_commit`, `@@tidb_enable_1pc`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CommitProtocol {
+    /// `@@tidb_enable_async_commit`: commit at the completed prewrite, using
+    /// `max(min_commit_ts)` instead of a second PD round trip.
+    pub async_commit: bool,
+    /// `@@tidb_enable_1pc`: let TiKV commit a single-region transaction inside
+    /// the prewrite itself, so no Commit command is ever published.
+    pub one_pc: bool,
+}
+
+impl CommitProtocol {
+    /// The protocol set of a transaction that must use normal two-phase commit.
+    #[must_use]
+    pub const fn two_phase_only() -> Self {
+        Self {
+            async_commit: false,
+            one_pc: false,
+        }
+    }
+}
+
 /// Result of one real transactional point Get at the transaction start timestamp.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SnapshotGetResult {
@@ -193,6 +168,7 @@ pub struct RealOptimisticTransactionOpener {
     /// Keeps the shared txn safe point current for as long as any clone of this
     /// opener — and therefore any transaction it opened — can still read.
     gc_state: Arc<TxnSafePointRefresher>,
+    protocol: CommitProtocol,
 }
 
 impl Clone for RealOptimisticTransactionOpener {
@@ -202,6 +178,7 @@ impl Clone for RealOptimisticTransactionOpener {
             pd: self.pd.clone(),
             timeout: self.timeout,
             gc_state: Arc::clone(&self.gc_state),
+            protocol: self.protocol,
         }
     }
 }
@@ -233,7 +210,20 @@ impl RealOptimisticTransactionOpener {
             pd,
             timeout,
             gc_state: Arc::new(gc_state),
+            protocol: CommitProtocol::two_phase_only(),
         })
+    }
+
+    /// Lets every transaction opened from here attempt `protocol`.
+    ///
+    /// The node resolves `@@tidb_enable_async_commit` / `@@tidb_enable_1pc`
+    /// once, exactly as it resolves `@@tidb_pessimistic_txn_fair_locking`, so
+    /// this is a property of the opener rather than an argument threaded
+    /// through every call site that begins a transaction.
+    #[must_use]
+    pub const fn with_commit_protocol(mut self, protocol: CommitProtocol) -> Self {
+        self.protocol = protocol;
+        self
     }
 
     /// The shared txn safe point every transaction from this opener reads
@@ -307,7 +297,7 @@ impl RealOptimisticTransactionOpener {
                 "PD returned zero start timestamp".to_owned(),
             ));
         }
-        RealOptimisticTransaction::new_opened(
+        let mut transaction = RealOptimisticTransaction::new_opened(
             runtime,
             PdLockTimestampSource(self.pd.clone()),
             self.timeout,
@@ -316,7 +306,9 @@ impl RealOptimisticTransactionOpener {
             planned_mutation_count,
             planned_aggregate_bytes,
             self.gc_state.cache(),
-        )
+        )?;
+        transaction.set_commit_protocol(self.protocol);
+        Ok(transaction)
     }
 
     /// Opens a pessimistic transaction over the same process authorities.
@@ -470,12 +462,10 @@ pub struct RealOptimisticTransaction<C, L, T> {
     secondary_backoff: RegionBackoffBudget,
     cleanup_backoff: RegionBackoffBudget,
     pessimistic: Option<PessimisticPrewritePlan>,
-    /// Fast-commit protocol the session enabled for this transaction. Default is
-    /// neither protocol, i.e. the normal synchronous two-phase commit.
-    commit_protocol: CommitProtocol,
     /// The store-wide txn safe point every read from this transaction is
     /// validated against once TiKV has answered.
     gc_state: Arc<GcStateCache>,
+    protocol: CommitProtocol,
 }
 
 /// What a pessimistic transaction already proved before it reached Prewrite.
@@ -581,20 +571,14 @@ where
             secondary_backoff: RegionBackoffBudget::campaign_default(),
             cleanup_backoff: RegionBackoffBudget::campaign_default(),
             pessimistic: None,
-            commit_protocol: CommitProtocol::default(),
             gc_state,
+            protocol: CommitProtocol::two_phase_only(),
         })
     }
 
-    /// Selects the fast-commit protocol this transaction may use at commit.
-    ///
-    /// A session sets this once from `@@tidb_enable_async_commit` /
-    /// `@@tidb_enable_1pc` before the write phase; leaving it unset keeps the
-    /// normal synchronous two-phase commit. The final eligibility check still
-    /// runs at commit time against the concrete mutation set, so enabling a
-    /// protocol here never forces its use.
+    /// Permits this transaction to attempt async commit and/or 1PC.
     pub fn set_commit_protocol(&mut self, protocol: CommitProtocol) {
-        self.commit_protocol = protocol;
+        self.protocol = protocol;
     }
 
     /// Rejects a completed read whose `start_ts` GC has already passed.
@@ -951,17 +935,18 @@ where
         let lock_ttl_ms = transaction_lock_ttl_ms(self.opened_at, actual_bytes);
         receipt.lock_ttl_ms = lock_ttl_ms;
         let mut possibly_prewrite_keys = Vec::<Vec<u8>>::new();
-        // The `min_commit_ts` floor grows as TiKV returns higher values on each
-        // Prewrite batch. Its base is `start_ts + 1`, or `for_update_ts + 1` for
-        // a pessimistic transaction whose statements advanced past `start_ts`
-        // (client-go `prewrite.go`: `minCommitTS` derivation).
-        let mut min_commit_ts = self
-            .pessimistic
-            .as_ref()
-            .map_or(self.start_ts, |plan| plan.for_update_ts.max(self.start_ts))
-            .saturating_add(1);
-        let batches = match group_mutations(&self.runtime, &mutations) {
-            Ok(batches) => batches,
+        let mut min_commit_ts = self.start_ts.saturating_add(1);
+        let mut protocol = self.attempted_protocol(&mutations, &primary_key);
+        let mut queue = match group_mutations(&self.runtime, &mutations) {
+            Ok(batches) => {
+                protocol.observe_batch_count(batches.len());
+                VecDeque::from(
+                    batches
+                        .into_iter()
+                        .map(|batch| (batch, false))
+                        .collect::<Vec<_>>(),
+                )
+            }
             Err(error) => {
                 return Ok(self.rollback_after_failure(
                     receipt,
@@ -972,61 +957,18 @@ where
                 ));
             }
         };
-        // Fast-commit eligibility (client-go `checkAsyncCommit` / `checkOnePC`):
-        // async commit requires the mutation count and summed key bytes to stay
-        // within the configured limits; 1PC additionally requires the whole
-        // transaction to prewrite as a single region batch
-        // (`checkOnePCFallBack`), since TiKV commits it atomically in one RPC.
-        let total_key_size: u64 = mutations
-            .iter()
-            .map(|mutation| mutation.key().len() as u64)
-            .sum();
-        let mut use_async_commit = self.commit_protocol.enable_async_commit
-            && mutations.len() <= self.commit_protocol.async_keys_limit
-            && total_key_size <= self.commit_protocol.async_total_key_size_limit;
-        let mut use_one_pc = self.commit_protocol.enable_1pc && batches.len() <= 1;
-        let mut one_pc_commit_ts = 0u64;
-        // All keys but the primary, published on the primary batch of an
-        // async-commit transaction so TiKV can resolve them lazily.
-        let secondary_keys_for_async: Vec<Vec<u8>> = if use_async_commit {
-            mutations
-                .iter()
-                .map(|mutation| mutation.key().to_vec())
-                .filter(|key| key.as_slice() != primary_key.as_slice())
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let mut queue = VecDeque::from(
-            batches
-                .into_iter()
-                .map(|batch| (batch, false))
-                .collect::<Vec<_>>(),
-        );
         let mut lock_attempts = 0usize;
 
         while let Some((batch, is_retry)) = queue.pop_front() {
             receipt.region_attempts.push(batch.region());
             let published_keys = batch.keys();
-            let is_primary_batch = batch
-                .keys()
-                .iter()
-                .any(|key| key.as_slice() == primary_key.as_slice());
-            let protocol = PrewriteProtocol {
-                use_async_commit,
-                try_one_pc: use_one_pc,
-                min_commit_ts,
-                max_commit_ts: self.commit_protocol.max_commit_ts,
-                secondaries: (use_async_commit && is_primary_batch)
-                    .then_some(secondary_keys_for_async.as_slice()),
-            };
             match self.prewrite_batch(
                 &batch,
                 &primary_key,
                 mutations.len(),
                 lock_ttl_ms,
                 is_retry,
-                protocol,
+                &protocol,
                 call,
             ) {
                 PublishedCommand::Response(response) => {
@@ -1068,6 +1010,7 @@ where
                         );
                         match group_mutations(&self.runtime, batch.mutations()) {
                             Ok(regrouped) => {
+                                protocol.observe_batch_count(regrouped.len());
                                 for regrouped_batch in regrouped.into_iter().rev() {
                                     queue.push_front((regrouped_batch, true));
                                 }
@@ -1142,47 +1085,7 @@ where
                             }
                         }
                     }
-                    // Async-commit / 1PC protocol response handling and the two
-                    // fallbacks to normal 2PC (client-go `prewrite.go`
-                    // `handleSingleBatchSucceed`).
-                    if use_one_pc {
-                        if response.response.one_pc_commit_ts == 0 {
-                            // TiKV rejected 1PC. It must not also return a
-                            // min_commit_ts: that would be a contradictory
-                            // response, not a clean fallback.
-                            if response.response.min_commit_ts != 0 {
-                                let cause = TransactionCause::InvalidResponse {
-                                    detail: "min_commit_ts must be 0 when 1PC falls back to 2PC"
-                                        .to_owned(),
-                                };
-                                record_attempt(
-                                    &mut receipt,
-                                    TransactionAttemptPhase::Prewrite,
-                                    &published_keys,
-                                    &batch,
-                                    Some(response.publication.clone()),
-                                    TransactionAttemptResult::DefinitiveFailure(cause.clone()),
-                                );
-                                return Ok(self.rollback_after_failure(
-                                    receipt,
-                                    &possibly_prewrite_keys,
-                                    cause,
-                                ));
-                            }
-                            // Fall back to the normal synchronous 2PC path.
-                            use_one_pc = false;
-                            use_async_commit = false;
-                        } else {
-                            one_pc_commit_ts =
-                                one_pc_commit_ts.max(response.response.one_pc_commit_ts);
-                        }
-                    } else if response.response.one_pc_commit_ts != 0 {
-                        // TiKV committed with 1PC a transaction that never asked
-                        // for it: the response cannot be trusted.
-                        let cause = TransactionCause::InvalidResponse {
-                            detail: "TiKV committed a non-1PC transaction with the 1PC protocol"
-                                .to_owned(),
-                        };
+                    if let Err(cause) = protocol.observe_prewrite_response(&response.response) {
                         record_attempt(
                             &mut receipt,
                             TransactionAttemptPhase::Prewrite,
@@ -1197,16 +1100,7 @@ where
                             cause,
                         ));
                     }
-                    if !use_one_pc {
-                        if use_async_commit && response.response.min_commit_ts == 0 {
-                            // TiKV cannot proceed with async commit (for example
-                            // a min_commit_ts that would exceed max_commit_ts):
-                            // fall back to the normal 2PC path.
-                            use_async_commit = false;
-                        } else {
-                            min_commit_ts = min_commit_ts.max(response.response.min_commit_ts);
-                        }
-                    }
+                    min_commit_ts = min_commit_ts.max(response.response.min_commit_ts);
                     record_attempt(
                         &mut receipt,
                         TransactionAttemptPhase::Prewrite,
@@ -1264,25 +1158,29 @@ where
             .transition(CoordinatorState::Prewritten)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
 
-        // 1PC: TiKV already committed the transaction atomically during
-        // Prewrite and returned its commit timestamp, so there is no Commit RPC
-        // and no PD TSO round-trip (client-go `2pc.go`: the `isOnePC()` branch
-        // returns before `commitTxn`).
-        if use_one_pc {
-            if one_pc_commit_ts <= self.start_ts {
+        let all_mutation_keys = mutations
+            .iter()
+            .map(|mutation| mutation.key().to_vec())
+            .collect::<Vec<_>>();
+
+        // 1PC: TiKV already committed every key while answering the prewrite,
+        // so publishing a Commit would be a second, contradictory decision.
+        if protocol.use_one_pc {
+            if protocol.one_pc_commit_ts == 0 {
                 return Ok(self.rollback_after_failure(
                     receipt,
                     &possibly_prewrite_keys,
                     TransactionCause::InvalidResponse {
-                        detail: format!(
-                            "1PC one_pc_commit_ts {one_pc_commit_ts} not advanced past start_ts {}",
-                            self.start_ts
-                        ),
+                        detail: "1PC prewrite reported success without a commit timestamp"
+                            .to_owned(),
                     },
                 ));
             }
-            receipt.commit_ts = one_pc_commit_ts;
-            receipt.one_pc = true;
+            receipt.commit_ts = protocol.one_pc_commit_ts;
+            receipt.commit_protocol = CommittedProtocol::OnePc;
+            self.state
+                .transition(CoordinatorState::OnePcCommitted)
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
             self.state
                 .transition(CoordinatorState::Committed)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -1292,40 +1190,40 @@ where
             }));
         }
 
-        // Async commit takes its commit timestamp from the greatest
-        // `min_commit_ts` TiKV returned during Prewrite instead of allocating a
-        // fresh PD timestamp; normal 2PC asks PD for one no lower than the
-        // accumulated floor.
-        let commit_ts = if use_async_commit {
-            if min_commit_ts <= self.start_ts {
-                return Ok(self.rollback_after_failure(
-                    receipt,
-                    &possibly_prewrite_keys,
-                    TransactionCause::InvalidResponse {
-                        detail: "async commit min_commit_ts not advanced past start_ts".to_owned(),
-                    },
-                ));
-            }
-            receipt.async_commit = true;
-            min_commit_ts
-        } else {
-            match self.commit_timestamp(min_commit_ts, call) {
-                Ok(timestamp) => timestamp,
-                Err(error) => {
-                    return Ok(self.rollback_after_failure(
-                        receipt,
-                        &possibly_prewrite_keys,
-                        error,
-                    ));
-                }
+        // Async commit: the completed prewrite is the commit point and
+        // `max(min_commit_ts)` is the commit timestamp, so no second PD round
+        // trip happens. The Commit commands below only make the decision
+        // visible without a lock resolution; failing them cannot un-commit the
+        // transaction, which is why they are reported as secondary failures.
+        if protocol.use_async_commit {
+            receipt.commit_ts = min_commit_ts;
+            receipt.commit_protocol = CommittedProtocol::AsyncCommit;
+            self.state
+                .transition(CoordinatorState::AsyncCommitted)
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            let failures = self.commit_secondaries(
+                &all_mutation_keys,
+                &primary_key,
+                min_commit_ts,
+                true,
+                &mut receipt,
+            );
+            self.state
+                .transition(CoordinatorState::Committed)
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            return Ok(OptimisticCommitOutcome::Committed(CommittedTransaction {
+                receipt,
+                secondary_failures: failures,
+            }));
+        }
+
+        let commit_ts = match self.commit_timestamp(min_commit_ts, call) {
+            Ok(timestamp) => timestamp,
+            Err(error) => {
+                return Ok(self.rollback_after_failure(receipt, &possibly_prewrite_keys, error));
             }
         };
         receipt.commit_ts = commit_ts;
-
-        let all_mutation_keys = mutations
-            .iter()
-            .map(|mutation| mutation.key().to_vec())
-            .collect::<Vec<_>>();
 
         self.state
             .transition(CoordinatorState::PrimaryCommitting)
@@ -1335,7 +1233,6 @@ where
             &all_mutation_keys,
             &primary_key,
             commit_ts,
-            use_async_commit,
             call,
             &mut receipt,
         ) {
@@ -1377,7 +1274,7 @@ where
             &secondary_keys,
             &primary_key,
             receipt.commit_ts,
-            use_async_commit,
+            false,
             &mut receipt,
         );
         self.state
@@ -1414,6 +1311,58 @@ where
         }
     }
 
+    /// Decides which faster-than-2PC protocols this exact mutation set may
+    /// still attempt.
+    ///
+    /// Go `twoPhaseCommitter.checkAsyncCommit`/`checkOnePC`: the session
+    /// permission is necessary but not sufficient, because an async-commit
+    /// primary lock has to carry every secondary key and a lock that large
+    /// would cost more to write and to recover than the saved round trip.
+    fn attempted_protocol(
+        &self,
+        mutations: &[OptimisticMutation],
+        primary_key: &[u8],
+    ) -> AttemptedProtocol {
+        let total_key_bytes = mutations
+            .iter()
+            .map(|mutation| mutation.key().len() as u64)
+            .sum::<u64>();
+        let use_async_commit = self.protocol.async_commit
+            && mutations.len() <= ASYNC_COMMIT_KEYS_LIMIT
+            && total_key_bytes <= ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT;
+        AttemptedProtocol {
+            use_async_commit,
+            use_one_pc: self.protocol.one_pc,
+            max_commit_ts: if use_async_commit {
+                self.max_commit_ts()
+            } else {
+                0
+            },
+            one_pc_commit_ts: 0,
+            secondaries: if use_async_commit {
+                mutations
+                    .iter()
+                    .filter(|mutation| mutation.key() != primary_key)
+                    .map(|mutation| mutation.key().to_vec())
+                    .collect()
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    /// The latest commit timestamp an async-commit prewrite may be granted.
+    ///
+    /// Go `calculateMaxCommitTS`: a synthetic "now" is derived from the elapsed
+    /// wall time since the transaction opened, and the safe window is added on
+    /// top. Bounding the commit timestamp is what keeps a schema version valid
+    /// for the whole life of the commit even though no PD timestamp is taken.
+    fn max_commit_ts(&self) -> u64 {
+        let elapsed_ms = u64::try_from(self.opened_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let current_ts = (elapsed_ms << TSO_LOGICAL_BITS).saturating_add(self.start_ts);
+        (ASYNC_COMMIT_SAFE_WINDOW_MS << TSO_LOGICAL_BITS).saturating_add(current_ts)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn prewrite_batch(
         &self,
@@ -1422,7 +1371,7 @@ where
         transaction_size: usize,
         lock_ttl_ms: u64,
         is_retry: bool,
-        protocol: PrewriteProtocol<'_>,
+        protocol: &AttemptedProtocol,
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcPrewriteResponse> {
         let mut request = KvrpcPrewriteRequest {
@@ -1435,11 +1384,23 @@ where
             start_version: self.start_ts,
             lock_ttl: lock_ttl_ms,
             txn_size: u64::try_from(transaction_size).unwrap_or(u64::MAX),
-            use_async_commit: false,
-            try_one_pc: false,
+            min_commit_ts: self.start_ts.saturating_add(1),
+            max_commit_ts: protocol.max_commit_ts,
+            use_async_commit: protocol.use_async_commit,
+            try_one_pc: protocol.use_one_pc,
             assertion_level: KvrpcAssertionLevel::Strict as i32,
             ..KvrpcPrewriteRequest::default()
         };
+        // Only the primary lock names the secondaries; that is what makes the
+        // primary the single entry point for recovering the transaction.
+        if protocol.use_async_commit
+            && batch
+                .mutations()
+                .iter()
+                .any(|mutation| mutation.key() == primary_key)
+        {
+            request.secondaries = protocol.secondaries.clone();
+        }
         if let Some(plan) = self.pessimistic.as_ref() {
             request.for_update_ts = plan.for_update_ts;
             request.min_commit_ts = plan.for_update_ts.saturating_add(1);
@@ -1466,19 +1427,6 @@ where
                     })
                 })
                 .collect();
-        }
-        // Fast-commit protocol fields. `min_commit_ts` / `max_commit_ts` are the
-        // floor and cap TiKV uses to compute this lock's commit timestamp; the
-        // secondary list rides only on the primary batch of an async commit so
-        // the primary lock records the whole key set for lazy resolution.
-        if protocol.use_async_commit || protocol.try_one_pc {
-            request.min_commit_ts = protocol.min_commit_ts;
-            request.max_commit_ts = protocol.max_commit_ts;
-            request.use_async_commit = protocol.use_async_commit;
-            request.try_one_pc = protocol.try_one_pc;
-            if let Some(secondaries) = protocol.secondaries {
-                request.secondaries = secondaries.to_vec();
-            }
         }
         request.context = None;
         let mut context = batch.context().clone();
@@ -1629,7 +1577,6 @@ where
         primary_batch_keys: &[Vec<u8>],
         primary_key: &[u8],
         mut commit_ts: u64,
-        use_async_commit: bool,
         call: &UnaryCallContext,
         receipt: &mut OptimisticTransactionReceipt,
     ) -> PrimaryResult {
@@ -1658,7 +1605,7 @@ where
                 commit_version: commit_ts,
                 commit_role: KvrpcCommitRole::Primary as i32,
                 primary_key: primary_key.to_vec(),
-                use_async_commit,
+                use_async_commit: false,
                 ..KvrpcCommitRequest::default()
             };
             let mut context = route.context().clone();
@@ -1820,6 +1767,11 @@ where
         }
     }
 
+    /// Commits keys whose outcome is already decided.
+    ///
+    /// The batch that happens to hold the primary key commits in the primary
+    /// role — which only occurs on the async-commit path, where every key is
+    /// passed in at once because the decision was already made at prewrite.
     fn commit_secondaries(
         &mut self,
         secondary_keys: &[Vec<u8>],
@@ -1849,11 +1801,16 @@ where
         let mut failures = Vec::new();
         while let Some(batch) = queue.pop_front() {
             receipt.region_attempts.push(batch.region());
+            let holds_primary = batch.keys().iter().any(|key| key.as_slice() == primary_key);
             let request = KvrpcCommitRequest {
                 start_version: self.start_ts,
                 keys: batch.keys().to_vec(),
                 commit_version: commit_ts,
-                commit_role: KvrpcCommitRole::Secondary as i32,
+                commit_role: if holds_primary {
+                    KvrpcCommitRole::Primary as i32
+                } else {
+                    KvrpcCommitRole::Secondary as i32
+                },
                 primary_key: primary_key.to_vec(),
                 use_async_commit,
                 ..KvrpcCommitRequest::default()
@@ -2266,6 +2223,77 @@ impl fmt::Debug for PdLockTimestampSource {
 impl TimestampSource for PdLockTimestampSource {
     fn current_ts(&self) -> Result<u64, String> {
         self.0.get_timestamp().map_err(|error| error.to_string())
+    }
+}
+
+/// One commit's live protocol decision, narrowed as TiKV answers.
+///
+/// It only ever narrows: every observation can turn a protocol off, none can
+/// turn one back on. That is what makes the fallback to normal two-phase commit
+/// safe to take at any point during prewrite.
+struct AttemptedProtocol {
+    use_async_commit: bool,
+    use_one_pc: bool,
+    max_commit_ts: u64,
+    one_pc_commit_ts: u64,
+    secondaries: Vec<Vec<u8>>,
+}
+
+impl AttemptedProtocol {
+    /// Go `checkOnePCFallBack`: 1PC is a single-region protocol, so the moment
+    /// the mutations need more than one region it is off — including when a
+    /// region split discovers this mid-prewrite.
+    fn observe_batch_count(&mut self, batches: usize) {
+        if batches > 1 {
+            self.use_one_pc = false;
+        }
+    }
+
+    /// Applies one successful prewrite response to the protocol decision.
+    ///
+    /// Go `prewrite1BatchReqHandler.handleSingleBatchSucceed`. TiKV signals
+    /// refusal by omission: a zeroed `one_pc_commit_ts` under `try_one_pc`, or
+    /// a zeroed `min_commit_ts` under `use_async_commit`, each means "finish
+    /// this the normal way".
+    fn observe_prewrite_response(
+        &mut self,
+        response: &KvrpcPrewriteResponse,
+    ) -> Result<(), TransactionCause> {
+        if self.use_one_pc {
+            if response.one_pc_commit_ts == 0 {
+                if response.min_commit_ts != 0 {
+                    return Err(TransactionCause::InvalidResponse {
+                        detail: format!(
+                            "1PC fallback must zero min_commit_ts, got {}",
+                            response.min_commit_ts
+                        ),
+                    });
+                }
+                self.use_one_pc = false;
+                // A 1PC fallback is TiKV declining to commit in the prewrite at
+                // all, so async commit cannot rescue this transaction either.
+                self.use_async_commit = false;
+            } else if self.one_pc_commit_ts != 0 {
+                return Err(TransactionCause::InvalidResponse {
+                    detail: "1PC committed more than one prewrite batch".to_owned(),
+                });
+            } else {
+                self.one_pc_commit_ts = response.one_pc_commit_ts;
+            }
+            return Ok(());
+        }
+        if response.one_pc_commit_ts != 0 {
+            return Err(TransactionCause::InvalidResponse {
+                detail: format!(
+                    "TiKV committed a non-1PC transaction with 1PC at {}",
+                    response.one_pc_commit_ts
+                ),
+            });
+        }
+        if self.use_async_commit && response.min_commit_ts == 0 {
+            self.use_async_commit = false;
+        }
+        Ok(())
     }
 }
 

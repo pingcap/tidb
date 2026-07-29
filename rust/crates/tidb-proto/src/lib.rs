@@ -86,6 +86,8 @@ pub use kvrpcpb::{
     AssertionFailed as KvrpcAssertionFailed, AssertionLevel as KvrpcAssertionLevel,
     BatchRollbackRequest as KvrpcBatchRollbackRequest,
     BatchRollbackResponse as KvrpcBatchRollbackResponse,
+    CheckSecondaryLocksRequest as KvrpcCheckSecondaryLocksRequest,
+    CheckSecondaryLocksResponse as KvrpcCheckSecondaryLocksResponse,
     CheckTxnStatusRequest as KvrpcCheckTxnStatusRequest,
     CheckTxnStatusResponse as KvrpcCheckTxnStatusResponse, CommandPri as KvrpcCommandPriority,
     CommitRequest as KvrpcCommitRequest, CommitResponse as KvrpcCommitResponse,

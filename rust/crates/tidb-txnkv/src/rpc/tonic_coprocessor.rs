@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use prost::Message;
 use tidb_proto::{
-    KvrpcCheckTxnStatusRequest, KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcResolveLockRequest,
-    KvrpcResolveLockResponse,
+    KvrpcCheckSecondaryLocksRequest, KvrpcCheckSecondaryLocksResponse, KvrpcCheckTxnStatusRequest,
+    KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcResolveLockRequest, KvrpcResolveLockResponse,
 };
 
 use crate::region::StoreLiveness;
@@ -36,6 +36,7 @@ const MAX_PROTOBUF_FIELD_NUMBER: u64 = (1 << 29) - 1;
 const COPROCESSOR_PATH: &str = "/tikvpb.Tikv/Coprocessor";
 const CHECK_TXN_STATUS_PATH: &str = "/tikvpb.Tikv/KvCheckTxnStatus";
 const RESOLVE_LOCK_PATH: &str = "/tikvpb.Tikv/KvResolveLock";
+const CHECK_SECONDARY_LOCKS_PATH: &str = "/tikvpb.Tikv/KvCheckSecondaryLocks";
 
 /// Synchronous client-go-shaped TiKV transport capability backed by tonic.
 ///
@@ -188,6 +189,39 @@ impl TonicCoprocessorClient {
                 "invalid CheckTxnStatus response: {error}"
             ))
         })
+    }
+
+    /// Sends the exact pinned CheckSecondaryLocks command through the shared core.
+    ///
+    /// This is the only way to learn an async-commit transaction's fate while
+    /// its primary lock is still present: the commit point is spread across
+    /// every lock the transaction wrote, so the answer is assembled from the
+    /// secondaries rather than read off the primary.
+    pub fn check_secondary_locks(
+        &mut self,
+        address: &str,
+        request: &KvrpcCheckSecondaryLocksRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
+        let mut request = request.clone();
+        request.context = Some(context.clone());
+        let response = self.transport.send(
+            address,
+            RawUnaryRequest {
+                path: CHECK_SECONDARY_LOCKS_PATH,
+                encoded_request: request.encode_to_vec(),
+                forwarded_host: None,
+            },
+            call,
+        )?;
+        KvrpcCheckSecondaryLocksResponse::decode(response.encoded_response.as_slice()).map_err(
+            |error| {
+                DirectUnaryClientError::InvalidRequest(format!(
+                    "invalid CheckSecondaryLocks response: {error}"
+                ))
+            },
+        )
     }
 
     /// Sends the exact pinned keyed ResolveLock command through the shared core.

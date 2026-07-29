@@ -151,6 +151,16 @@ impl tidb_distsql::LockRecoveryClient for ReaderUnaryClient {
         panic!("reader test does not return locks")
     }
 
+    fn check_secondary_locks_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcCheckSecondaryLocksRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &tidb_distsql::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
+        panic!("reader test does not return locks")
+    }
+
     fn resolve_lock_for_read(
         &mut self,
         _address: &str,
