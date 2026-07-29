@@ -156,7 +156,7 @@ go_test(
     ],
     embed = [":domain"],
     flaky = True,
-    shard_count = 32,
+    shard_count = 31,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
