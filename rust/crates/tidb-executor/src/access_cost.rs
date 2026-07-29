@@ -131,33 +131,60 @@ const DIST_SQL_SCAN_CONCURRENCY: f64 = 15.0;
 /// Go `SessionVars.IndexLookupConcurrency()`, which falls back to
 /// `DefExecutorConcurrency` because `DefIndexLookupConcurrency` is unset.
 const INDEX_LOOKUP_CONCURRENCY: f64 = 5.0;
-/// The table-side requests one double read issues PER INDEX ROW.
+/// The table-side requests one double read issues PER INDEX ROW, as Go's
+/// cost model counts them.
 ///
 /// Go writes this in `getPlanCostVer24PhysicalIndexLookUpReader` as
 /// `doubleReadTasks = doubleReadRows / batchSize * taskPerBatch`, with
 /// `batchSize = SessionVars.IndexLookupSize` (`vardef.DefIndexLookupSize`,
-/// 20000) and `taskPerBatch = 32`: `32/20000 = 0.0016` requests per row.
+/// 20000) and `taskPerBatch = 32`: `32/20000` requests per row.
 ///
-/// That is not a free constant -- it is a claim about Go's reader, and Go's
-/// reader honours it. `pkg/executor/distsql.go`'s `IndexLookUpExecutor`
-/// gathers handles in `fetchHandles` until it has `IndexLookupSize` of them,
-/// hands the whole batch to `buildTableReader`, and issues cop tasks for the
-/// batch. Per row, the request count is the batching factor's reciprocal.
+/// It is not a free constant -- it is a claim about Go's reader, and Go's
+/// reader honours it. `IndexLookUpExecutor.fetchHandles` gathers handles
+/// until it has `IndexLookupSize` of them, `buildTableReader` hands the whole
+/// batch to `buildTableReaderFromHandles`, and that turns the batch into ONE
+/// distsql request (`RequestBuilder.SetTableHandles`, `pkg/executor/
+/// builder.go`). Per row, the request count is the batching factor's
+/// reciprocal.
 ///
-/// OUR reader does not batch. `IndexRangeSourceExec` in
-/// [`crate::access_path`] calls `KvTable::get_row_by_handle` once per index
-/// entry, and that is one `TableStorage::get` -- against
-/// `ClusterTableStorage`, one snapshot round trip to TiKV, per row. So the
-/// honest count here is `1.0`. Pricing our reader at Go's constants
-/// under-costs every non-covering index path by 625x, and the cost-based
-/// chooser then picks index plans that cannot be executed at anything near
-/// the cost it claimed.
+/// # THE READER THIS PRICES IS NOT THE READER WE RUN
 ///
-/// This constant is a property of THIS tier's executor, not of Go's cost
-/// model. Making the reader batch (collect handles, one batched read per
-/// batch, as Go does) is the real fix; when it lands, this becomes
-/// `32.0 / 20000.0` and nothing else in this function changes.
-const DOUBLE_READ_REQUESTS_PER_ROW: f64 = 1.0;
+/// `IndexRangeSourceExec` in [`crate::access_path`] calls
+/// `KvTable::get_row_by_handle` once per index entry -- one
+/// `TableStorage::get`, and against `ClusterTableStorage` one snapshot round
+/// trip to TiKV, PER ROW. `access_path::tests::
+/// the_double_read_issues_one_point_get_per_index_row` pins that: N index
+/// rows, N point gets, where Go issues one request for the batch.
+///
+/// The obvious repricing -- charge `1.0` request per row, since that is what
+/// we issue -- was tried against a live v8.5.6 playground and is WRONG. It
+/// makes a one-row lookup cost more than a full scan of 2000 rows, and
+/// `scripts/run-realtikv-access-path.sh` reported five cases where Go reads
+/// through an index and this node would then have chosen a full scan
+/// (`SELECT * FROM t WHERE rare = 7` among them). One round trip cannot cost
+/// more than reading two thousand rows, and a model that says so is a
+/// different lie, not a repair.
+///
+/// The reason it breaks there and only there is the term's two regimes, both
+/// pinned by `tests::the_table_side_not_the_request_term_is_what_costs_a_
+/// double_read`. On a SELECTIVE path the request term is nearly the entire
+/// price of the lookup, so multiplying it by the batching factor moves that
+/// path by the same factor. At the CROSSOVER it is the minority: the table
+/// side's per-row scan and net costs dominate, and those are ported at full
+/// rate with no batching discount of any kind. So the crossover is Go's
+/// wherever the constant sits, and inflating the constant cannot improve it
+/// -- it can only push selective paths, the ones Go and this node already
+/// agree on, over to the scan.
+///
+/// The same differential confirms it from the other end: across a 50000-row
+/// table at one row, 1/50th and a quarter, both planners choose the SAME path
+/// at every point. The under-counted term costs LATENCY on plans that are
+/// correctly chosen, not wrong plans.
+///
+/// That makes the fix an executor change, not a cost change: batch the
+/// handles and issue one read per batch, as Go does. When that lands this
+/// constant already describes the reader, and nothing here has to move.
+const DOUBLE_READ_REQUESTS_PER_ROW: f64 = 32.0 / 20000.0;
 /// Go `plan_cost_ver2.go`'s `MinNumRows`.
 const MIN_NUM_ROWS: f64 = 1.0;
 /// Go `plan_cost_ver2.go`'s `MinRowSize`.
@@ -905,24 +932,25 @@ mod tests {
         }
     }
 
-    /// The per-row round trip our double read really issues has to cost more
-    /// than reading the rows it skips, or the chooser prefers a plan the
-    /// reader cannot execute at the price it was sold at.
+    /// What actually decides a double read is the TABLE SIDE, not the request
+    /// term -- which is why [`DOUBLE_READ_REQUESTS_PER_ROW`] can stay at Go's
+    /// batched value while our reader issues one round trip per row.
     ///
-    /// The number that decides it is [`DOUBLE_READ_REQUESTS_PER_ROW`]. Go's
-    /// batched reader amortizes a table-side request over `IndexLookupSize`
-    /// rows (`32/20000` requests per row); ours issues one
-    /// `TableStorage::get` per index entry. At Go's constant this index path
-    /// came out CHEAPER than the full scan of the same table -- 625x too
-    /// cheap -- and won the plan.
+    /// The table side is charged per looked-up row at full rate, with no
+    /// batching discount of any kind, so it grows with the rows the index
+    /// returns while a full scan's cost is fixed by the table. That is the
+    /// crossover, and it is Go's. The request term at Go's constant is a
+    /// rounding error beside it: this test measures both, so a future change
+    /// to either one has to say which of the two it is moving.
     #[test]
-    fn an_unbatched_double_read_costs_more_than_the_scan_it_replaces() {
+    fn the_table_side_not_the_request_term_is_what_costs_a_double_read() {
         let table = table_with_index();
         let index = table.plan_indexes().next().unwrap().clone();
         let realtime = crate::plan_trace::PSEUDO_ROW_COUNT;
 
         // `a` is not stored in the index on `b`, so this path pays a double
-        // read: one `get_row_by_handle` per index entry.
+        // read; `b` is, so this one does not. The gap between them is the
+        // whole price of the lookup.
         let non_covering = index_path(
             &table,
             &index,
@@ -932,18 +960,6 @@ mod tests {
             None,
             realtime,
         );
-        let scan = table_scan_path(&table, None, &NoResolver, None, realtime);
-        assert!(
-            non_covering.cost > scan.cost,
-            "a double read of {} rows must not undercut a {realtime}-row scan: \
-             index {} vs scan {}",
-            non_covering.estimate.rows,
-            non_covering.cost,
-            scan.cost
-        );
-
-        // The control: a covering path performs no lookup, so the request
-        // price does not reach it and it still wins comfortably.
         let covering = index_path(
             &table,
             &index,
@@ -953,12 +969,66 @@ mod tests {
             None,
             realtime,
         );
+        let request_term = |rows: f64| {
+            rows * DOUBLE_READ_REQUESTS_PER_ROW * TIDB_REQUEST_FACTOR / INDEX_LOOKUP_CONCURRENCY
+        };
+        // SELECTIVE END: the request term is nearly the whole price of the
+        // lookup. Scaling it by the batching factor therefore lands squarely
+        // here -- which is exactly where the live differential saw a one-row
+        // lookup lose to a 2000-row scan.
+        let few_rows = non_covering.estimate.rows;
+        let selective_price = non_covering.cost - covering.cost;
         assert!(
-            covering.cost < scan.cost,
-            "a covering index path issues no round trip and must stay cheap: \
-             index {} vs scan {}",
-            covering.cost,
+            request_term(few_rows) > selective_price / 2.0,
+            "at {few_rows} rows the request term ({}) is most of the lookup's \
+             price ({selective_price})",
+            request_term(few_rows)
+        );
+
+        // The crossover itself: a point range keeps the index, a range
+        // covering the whole table does not.
+        let scan = table_scan_path(&table, None, &NoResolver, None, realtime);
+        assert!(
+            non_covering.cost < scan.cost,
+            "a one-row lookup must beat a {realtime}-row scan: index {} vs \
+             scan {}",
+            non_covering.cost,
             scan.cost
+        );
+        let whole_table = index_path(
+            &table,
+            &index,
+            vec![IndexRange {
+                low: vec![Datum::MinNotNull],
+                high: vec![Datum::MaxValue],
+                low_exclusive: false,
+                high_exclusive: false,
+            }],
+            &[0],
+            None,
+            None,
+            realtime,
+        );
+        assert!(
+            whole_table.cost > scan.cost,
+            "and a double read of the whole table must lose to scanning it: \
+             index {} vs scan {}",
+            whole_table.cost,
+            scan.cost
+        );
+
+        // BROAD END, where the crossover actually lives: the table side
+        // dominates and the request term is the minority, so the constant
+        // does NOT set the crossover -- Go's per-row table scan and net costs
+        // do, and those are ported at full rate. This is why the live
+        // differential agrees with Go on every broad case.
+        let many_rows = whole_table.estimate.rows;
+        let broad_price = whole_table.cost - scan.cost;
+        assert!(
+            request_term(many_rows) < broad_price,
+            "at {many_rows} rows the table side, not the request term ({}), \
+             is what puts the double read over the scan (by {broad_price})",
+            request_term(many_rows)
         );
     }
 }

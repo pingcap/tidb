@@ -530,26 +530,35 @@ tikv_msg_count() {
 # Runs `query` on one node and reports how many kvrpc Gets and coprocessor
 # requests TiKV served while it ran. Idle traffic (heartbeats, stats) does not
 # touch these two counters, so the delta is the statement's own.
+# `kv_scan` is counted beside them because THIS node's table scan is a paged
+# `snapshot_scan`, not a coprocessor request -- leaving it out would show a
+# 50000-row scan as costing zero requests.
 measure_requests() {
   local node=$1 query=$2
-  local before_get before_cop after_get after_cop
+  local before_get before_cop before_scan after_get after_cop after_scan
   before_get=$(tikv_msg_count kv_get)
   before_cop=$(tikv_msg_count coprocessor)
+  before_scan=$(tikv_msg_count kv_scan)
   if [[ "${node}" == "go" ]]; then
     go_sql -Nse "USE pathdiff; ${query}" >/dev/null
   else
     rust_sql -Nse "USE pathdiff; ${query}" >/dev/null
   fi
+  # TiKV publishes these counters asynchronously, so a fast statement's
+  # requests can land after an immediate scrape. Without this settle the Go
+  # node -- which answers in milliseconds -- reports zeros it did not earn.
+  sleep "${ACCESS_PATH_METRIC_SETTLE:-3}"
   after_get=$(tikv_msg_count kv_get)
   after_cop=$(tikv_msg_count coprocessor)
-  echo "$((after_get - before_get)) $((after_cop - before_cop))"
+  after_scan=$(tikv_msg_count kv_scan)
+  echo "$((after_get - before_get)) $((after_cop - before_cop)) $((after_scan - before_scan))"
 }
 
 # `compare_double_read <label> <expected rows> <query>`: the plan each node
 # chose, and the requests each one really issued to get there.
 compare_double_read() {
   local label=$1 expected=$2 query=$3
-  local gp rp gm rm gg gc rg rc grows rrows
+  local gp rp gm rm gg gc gs rg rc rs grows rrows
   gp=$(go_path "${query}")
   rp=$(rust_path "${query}")
   # SELECT COUNT(*) would let the planner cover the query with the index and
@@ -559,17 +568,17 @@ compare_double_read() {
   rrows=$(rust_sql -Nse "USE pathdiff; SELECT COUNT(*) FROM (${query}) AS c")
   gm=$(measure_requests go "${query}")
   rm=$(measure_requests rust "${query}")
-  read -r gg gc <<<"${gm}"
-  read -r rg rc <<<"${rm}"
+  read -r gg gc gs <<<"${gm}"
+  read -r rg rc rs <<<"${rm}"
   echo
   echo "--- ${label}"
   echo "    ${query}"
-  printf '      %-6s %-16s %-10s %-12s %-12s %s\n' \
-    "" "path" "rows" "kv_get" "coprocessor" "rows read"
-  printf '      %-6s %-16s %-10s %-12s %-12s %s\n' \
-    "GO" "${gp:-<none>}" "${expected}" "${gg}" "${gc}" "${grows}"
-  printf '      %-6s %-16s %-10s %-12s %-12s %s\n' \
-    "RUST" "${rp:-<none>}" "${expected}" "${rg}" "${rc}" "${rrows}"
+  printf '      %-6s %-16s %-8s %-9s %-13s %-9s %s\n' \
+    "" "path" "rows" "kv_get" "coprocessor" "kv_scan" "rows read"
+  printf '      %-6s %-16s %-8s %-9s %-13s %-9s %s\n' \
+    "GO" "${gp:-<none>}" "${expected}" "${gg}" "${gc}" "${gs}" "${grows}"
+  printf '      %-6s %-16s %-8s %-9s %-13s %-9s %s\n' \
+    "RUST" "${rp:-<none>}" "${expected}" "${rg}" "${rc}" "${rs}" "${rrows}"
   check "${label}: both nodes returned the same rows" test "${grows}" = "${rrows}"
   if [[ "${gp}" != "${rp}" ]]; then
     echo "      FINDING: the two planners chose DIFFERENT paths (${gp} vs ${rp})" >&2

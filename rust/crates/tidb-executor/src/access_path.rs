@@ -620,6 +620,41 @@ mod tests {
         );
     }
 
+    /// THE DOUBLE READ IS UNBATCHED: N index rows produce N point gets.
+    ///
+    /// This is the executor half of the model/executor seam, pinned so it
+    /// cannot drift silently. Go's `IndexLookUpExecutor` gathers handles into
+    /// batches of `IndexLookupSize` in `fetchHandles` and hands each whole
+    /// batch to `buildTableReader`, which turns it into ONE distsql request
+    /// (`buildTableReaderFromHandles` -> `RequestBuilder.SetTableHandles`,
+    /// `pkg/executor/builder.go`). That is what earns Go's cost model its
+    /// `doubleReadTasks = rows/IndexLookupSize*32` term in
+    /// `getPlanCostVer24PhysicalIndexLookUpReader`.
+    ///
+    /// `IndexRangeSourceExec` calls `KvTable::get_row_by_handle` per index
+    /// entry instead, so against a cluster it issues one snapshot round trip
+    /// per row. The assertion below is `n`, and a batched reader would make it
+    /// `ceil(n / batch)` -- so landing the batched double read is exactly the
+    /// change that flips this number, and this test is what makes that
+    /// visible rather than silent.
+    #[test]
+    fn the_double_read_issues_one_point_get_per_index_row() {
+        let ctx = crate::StmtContext::for_query();
+        let (catalog, _, gets) = table_of(ROWS, true);
+        // An `IN` list keeps `eq_or_in_count` non-zero, which is what makes
+        // Go's `prefer_range` rule hold the index path under pseudo
+        // statistics -- so this measures the READER, not the chooser.
+        let list: Vec<String> = (1..=50).map(|value| value.to_string()).collect();
+        let query = format!("SELECT a FROM t WHERE b IN ({})", list.join(", "));
+        let rows = run_select_on(&query, &catalog, &ctx).unwrap();
+        assert_eq!(rows.len(), 50);
+        assert_eq!(
+            gets.load(Ordering::Relaxed),
+            50,
+            "one point get per index row -- a batched reader would issue 1"
+        );
+    }
+
     /// An `ORDER BY` on a column no index orders must NOT push: a sort has to
     /// see every row before it can name the first one. Go turns this case
     /// into a `TopN` over a scan that still reports all the rows (captured:
