@@ -1673,6 +1673,7 @@ func (local *Backend) doImport(
 	workGroup.Go(func() error {
 		pool.Start(wctx)
 		<-wctx.Done()
+		failpoint.InjectCall("beforeReleaseRegionJobWorkerPool")
 		pool.Release()
 		return wctx.OperatorErr()
 	})
