@@ -147,10 +147,12 @@ func TestCreateSessionWithDomainOptionsAttachesExternalWorkloadManager(t *testin
 	domap.Delete(store)
 
 	mgr := &bootstrapExternalWorkloadManager{role: config.RoleMaster}
-	newDom, err := domap.getWithEtcdClient(store, nil, nil, domainCreateOptions{extWorkloadMgr: mgr})
+	se, err := createSessionWithDomainOptions(store, domainCreateOptions{extWorkloadMgr: mgr})
 	require.NoError(t, err)
+	newDom := domain.GetDomain(se)
 	require.Same(t, mgr, newDom.ExternalWorkloadManager())
 
+	se.Close()
 	newDom.Close()
 }
 
