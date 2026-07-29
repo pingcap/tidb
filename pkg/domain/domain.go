@@ -235,7 +235,10 @@ type Domain struct {
 	// only used for nextgen
 	crossKSSessMgr           *crossks.Manager
 	crossKSSessFactoryGetter func(string, validatorapi.Validator) pools.Factory
-	extWorkloadMgr           extworkload.Manager
+
+	// extWorkloadMgr coordinates background workloads such as TTL with the
+	// external workload controller in Starter deployments.
+	extWorkloadMgr extworkload.Manager
 }
 
 var _ sqlsvrapi.Server = (*Domain)(nil)
