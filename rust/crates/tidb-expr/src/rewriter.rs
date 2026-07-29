@@ -91,6 +91,24 @@ fn decimal_literal_type(value: &tidb_datatype::Decimal) -> FieldType {
     ft
 }
 
+/// Go `types.DefaultTypeForValue` for an `int64`/`uint64`: a `BIGINT` as wide
+/// as the value's printed digits, with `UnsignedFlag` set exactly when the
+/// literal did not fit the signed domain.
+///
+/// The flen counts the digits of the VALUE, not of the source text, because
+/// Go measures `StrLenOfInt64Fast(x)` after the parse -- so `007` is flen 1.
+fn int_literal_type(printed_len: usize, unsigned: bool) -> FieldType {
+    let mut ft = FieldType::new(FieldTypeCode::LongLong);
+    ft.set_flen(printed_len as i64);
+    ft.set_decimal(0);
+    set_binary_charset(&mut ft);
+    ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    if unsigned {
+        ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+    }
+    ft
+}
+
 /// Go `types.DefaultTypeForValue` for a `BitLiteral`/`HexLiteral`: a binary
 /// `VarString` three bytes wide per literal byte. Only the hex form is
 /// unsigned, which is what makes `0x41 + 0` read the bytes as a number.
@@ -705,11 +723,27 @@ pub fn derive_tree_collation(expr: &mut Expression) -> Result<(), EvalError> {
 
 fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
     match expr {
+        // Go's `ast.NewValueExpr` hands the scanned literal to
+        // `types.NewDatum`, whose int64/uint64 split puts a literal above
+        // `math.MaxInt64` in `KindUint64` -- the signedness lives in the datum
+        // kind, so every consumer reads it from the one value rather than from
+        // a parallel flag. `Datum::UInt` is that kind here. A literal wider
+        // than u64 never reaches this arm: the lexer already turns it into a
+        // `DecLit` (`toInt` -> `toDecimal` on `strconv.ErrRange`).
         Expr::Int(text) => {
-            let value: i64 = text
-                .parse()
-                .map_err(|_| EvalError::Unsupported("integer literal outside the i64 domain"))?;
-            Ok(constant(Datum::Int(value), FieldTypeCode::LongLong))
+            let (datum, unsigned, printed_len) = match text.parse::<i64>() {
+                Ok(value) => (Datum::Int(value), false, value.to_string().len()),
+                Err(_) => {
+                    let value: u64 = text.parse().map_err(|_| {
+                        EvalError::Unsupported("integer literal outside the u64 domain")
+                    })?;
+                    (Datum::UInt(value), true, value.to_string().len())
+                }
+            };
+            Ok(Expression::Constant(Constant::new(
+                datum,
+                int_literal_type(printed_len, unsigned),
+            )))
         }
         Expr::Float(value) => Ok(constant(Datum::Real(*value), FieldTypeCode::Double)),
         Expr::Bool(value) => Ok(constant(
@@ -1475,6 +1509,59 @@ mod literal_tests {
             &constant.value,
             constant.ret_type.as_ref().expect("a literal has a type"),
         )
+    }
+
+    /// Captured from TiDB (`SELECT <literal>`, reading the result field's own
+    /// type/flen/flag): a literal above `math.MaxInt64` is `KindUint64` with
+    /// `UnsignedFlag` set and a flen of its printed digits, and one wider
+    /// than `math.MaxUint64` never reaches this arm at all -- the lexer has
+    /// already made it a decimal literal, which is why `SELECT
+    /// 18446744073709551616` reports `tp=decimal`.
+    #[test]
+    fn integer_literal_signedness_matches_tidb() {
+        for (text, datum, flen, unsigned) in [
+            ("0", Datum::Int(0), 1, false),
+            ("007", Datum::Int(7), 1, false),
+            ("9223372036854775807", Datum::Int(i64::MAX), 19, false),
+            (
+                "9223372036854775808",
+                Datum::UInt(9_223_372_036_854_775_808),
+                19,
+                true,
+            ),
+            ("18446744073709551615", Datum::UInt(u64::MAX), 20, true),
+        ] {
+            let expr = rewrite(text);
+            let (value, ft) = constant_of(&expr);
+            assert_eq!(*value, datum, "{text} value");
+            assert_eq!(ft.code(), FieldTypeCode::LongLong, "{text} type");
+            assert_eq!(ft.flen(), flen, "{text} flen");
+            assert_eq!(ft.decimal(), 0, "{text} decimal");
+            assert_eq!(ft.charset_name(), "binary", "{text} charset");
+            assert!(ft.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL != 0);
+            assert_eq!(
+                ft.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED != 0,
+                unsigned,
+                "{text} unsigned"
+            );
+        }
+        // The mixed-sign comparison rules Go applies to the pair, captured
+        // whole: `18446744073709551615 = -1` is FALSE (not the two-complement
+        // bit identity), and `-1 < 18446744073709551615` is TRUE.
+        for (text, want) in [
+            ("18446744073709551615 = -1", Datum::Int(0)),
+            ("-1 < 18446744073709551615", Datum::Int(1)),
+            ("9223372036854775808 > 9223372036854775807", Datum::Int(1)),
+            ("18446744073709551615 - 1", Datum::UInt(u64::MAX - 1)),
+            ("9223372036854775808 + 1", Datum::UInt(1 << 63 | 1)),
+        ] {
+            let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+            chunk.set_num_virtual_rows(1);
+            let got = rewrite(text)
+                .eval(&crate::context::NoColumns, chunk.get_row(0))
+                .expect(text);
+            assert_eq!(got, want, "{text}");
+        }
     }
 
     /// Captured from TiDB (`SELECT 1.5` etc., reading the result field's own
