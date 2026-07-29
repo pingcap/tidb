@@ -348,17 +348,24 @@ pub(crate) fn run_select_traced(
     // ErrWindowInvalidWindowFuncUse (3593), whichever path runs below.
     crate::window::reject_windows_outside_select_list(select)?;
 
-    // Aggregate path: GROUP BY, or any select field that is an aggregate call.
+    // Aggregate path, Go `PlanBuilder.detectSelectAgg`: GROUP BY, or any
+    // select field, HAVING or ORDER BY expression CONTAINING an aggregate
+    // call -- not merely one that IS an aggregate call. `IF(1=1, COUNT(*), 0)`
+    // is an aggregate query, and answering it on the non-aggregate path leaves
+    // the aggregate node for the expression rewriter to refuse.
     let is_aggregate = !select.group_by.is_empty()
-        || select.fields.fields().iter().any(|f| {
-            matches!(
-                f,
-                SelectField::Expr {
-                    expr: tidb_ast::Expr::Aggregate { .. } | tidb_ast::Expr::GroupConcat { .. },
-                    ..
-                }
-            )
-        });
+        || select.fields.fields().iter().any(|f| match f {
+            SelectField::Expr { expr, .. } => expr.has_aggregate_flag(),
+            SelectField::Wildcard { .. } => false,
+        })
+        || select
+            .having
+            .as_ref()
+            .is_some_and(tidb_ast::Expr::has_aggregate_flag)
+        || select
+            .order_by
+            .iter()
+            .any(|item| item.expr.has_aggregate_flag());
     if is_aggregate {
         return run_aggregate_select(
             select,

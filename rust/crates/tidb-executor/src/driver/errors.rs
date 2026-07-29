@@ -200,6 +200,15 @@ pub enum DriverError {
         /// The column, qualified as Go qualifies it.
         column: String,
     },
+    /// Go `plannererrors.ErrAggregateOrderNonAggQuery` (3029): an `ORDER BY`
+    /// aggregate over a query whose select list reads a bare column, so the
+    /// aggregate would apply to a result that was never aggregated. Go reports
+    /// it BEFORE 8123 and regardless of whether the select list aggregates at
+    /// all.
+    AggregateOrderNonAggQuery {
+        /// The offending `ORDER BY` item's 1-based position.
+        position: usize,
+    },
     /// Go `types.ErrInvalidDefault` (1067).
     InvalidDefault(String),
     /// Go `ErrDataTooLong` (1406).
@@ -1418,6 +1427,14 @@ impl DriverError {
                 "Expression #{position} of {clause} is not in GROUP BY clause and contains \
                  nonaggregated column '{column}' which is not functionally dependent on columns \
                  in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by"
+            ),
+        ),
+        DriverError::AggregateOrderNonAggQuery { position } => MysqlError::new(
+            3029,
+            *b"HY000",
+            format!(
+                "Expression #{position} of ORDER BY contains aggregate function and applies to \
+                 the result of a non-aggregated query"
             ),
         ),
         DriverError::FieldNotInAggregatedQuery { position, column } => MysqlError::new(

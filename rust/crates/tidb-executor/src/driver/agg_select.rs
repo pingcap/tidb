@@ -421,6 +421,31 @@ fn lower_select_fields(
                     "GROUPING() nested inside a larger select expression is not supported yet",
                 ));
             }
+            // An aggregate inside a LARGER expression (`IF(1=1, COUNT(*), 0)`,
+            // `AVG(a) / 2`, `CASE WHEN COUNT(*) > 2 ...`): Go's
+            // `buildProjection` evaluates it ABOVE the aggregation, over the
+            // aggregate results. Hoisting the aggregates and leaving the rest
+            // as a post-aggregation expression is that projection -- the same
+            // path a hoisted window value and a correlated subquery already
+            // take, so this is not a new stage.
+            other if other.has_aggregate_flag() => {
+                let hoisted = substitute_aggregates(
+                    other,
+                    &mut state.agg_funcs,
+                    &mut state.names,
+                    &mut state.types,
+                    &mut state.grouping_specs,
+                    &state.group_by_names,
+                    resolver,
+                )?;
+                if let Some(slot) = state.slots.last_mut() {
+                    *slot = OutputSlot::Expr(state.post_agg_exprs.len());
+                }
+                if let Some(name) = state.slot_names.last_mut() {
+                    *name = Some(display);
+                }
+                state.post_agg_exprs.push(hoisted);
+            }
             other => {
                 // A plain field in an aggregate query rides FIRST_ROW.
                 let rewritten = rewrite_expr_resolved(other, resolver)

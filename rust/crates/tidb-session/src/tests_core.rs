@@ -3507,6 +3507,135 @@ fn having_hoists_an_aggregate_out_of_any_enclosing_form() {
     }
 }
 
+/// Go `PlanBuilder.detectSelectAgg` + `buildProjection`: a query is an
+/// aggregate query when any select field, `HAVING` or `ORDER BY` expression
+/// CONTAINS an aggregate, and an aggregate inside a larger expression is
+/// evaluated by a projection ABOVE the aggregation.
+///
+/// `checkOnlyFullGroupByWithOutGroupClause` guards the other side of that
+/// widening: an `ORDER BY` aggregate over a select list that reads a bare
+/// column is 3029, so the widening does not turn an error into a wrong answer.
+///
+/// Captured from TiDB (`testkit`, `pkg/executor`) over
+/// `ha (id, v) = (1,10),(1,20),(2,30),(2,40),(3,50)`:
+///
+/// ```text
+/// select if(1=1, count(*), 0) from ha                 [[5]]
+/// select case when count(*) > 2 then 'many' else 'few' end from ha  [[many]]
+/// select avg(v) / 2, avg(v/id) from ha    [[15.00000000 16.33333333]]
+/// select count(*) + 1 from ha                         [[6]]
+/// select id, count(*) * 2 from ha group by id         [[1 4] [2 4] [3 2]]
+/// select id, if(count(*) = 2, 'pair', 'other') from ha group by id
+///                                          [[1 pair] [2 pair] [3 other]]
+/// select concat(count(*), '-', sum(v)) from ha        [[5-150]]
+/// select -count(*) from ha                            [[-5]]
+/// select sum(v) + count(*) from ha                    [[155]]
+/// select coalesce(max(v), 0) from ha where id = 99    [[0]]
+/// select 1 from ha having count(*) > 1                [[1]]
+/// select count(*) from ha order by count(*)           [[5]]
+/// select id from ha group by id order by count(*)     [[3] [2] [1]]
+///     -- not asserted: ids 1 and 2 tie on count 2, so their order is
+///     -- unspecified; the ordered form is asserted in the HAVING test
+///
+/// select id from ha order by count(*) desc
+///     ERR errno=3029 "[planner:3029]Expression #1 of ORDER BY contains
+///         aggregate function and applies to the result of a non-aggregated
+///         query"
+/// select id, count(*) from ha order by count(*)   ERR errno=3029, #1
+/// select id from ha order by id, count(*)         ERR errno=3029, #2
+/// select id from ha where id = 1 order by count(v)  ERR errno=3029, #1
+/// set sql_mode = ''
+/// select id from ha order by count(*) desc        [[1]]
+/// select id, count(*) from ha order by count(*)   [[1 5]]
+/// ```
+#[test]
+fn a_select_field_containing_an_aggregate_is_an_aggregate_query() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE ha (id INT, v INT)").unwrap();
+    session
+        .run("INSERT INTO ha VALUES (1,10),(1,20),(2,30),(2,40),(3,50)")
+        .unwrap();
+    let cases: &[(&str, &[&[&str]])] = &[
+        ("SELECT IF(1=1, COUNT(*), 0) FROM ha", &[&["5"]]),
+        (
+            "SELECT CASE WHEN COUNT(*) > 2 THEN 'many' ELSE 'few' END FROM ha",
+            &[&["many"]],
+        ),
+        (
+            "SELECT AVG(v) / 2, AVG(v/id) FROM ha",
+            &[&["15.00000000", "16.33333333"]],
+        ),
+        ("SELECT COUNT(*) + 1 FROM ha", &[&["6"]]),
+        (
+            "SELECT id, COUNT(*) * 2 FROM ha GROUP BY id ORDER BY id",
+            &[&["1", "4"], &["2", "4"], &["3", "2"]],
+        ),
+        (
+            "SELECT id, IF(COUNT(*) = 2, 'pair', 'other') FROM ha GROUP BY id ORDER BY id",
+            &[&["1", "pair"], &["2", "pair"], &["3", "other"]],
+        ),
+        (
+            "SELECT CONCAT(COUNT(*), '-', SUM(v)) FROM ha",
+            &[&["5-150"]],
+        ),
+        ("SELECT -COUNT(*) FROM ha", &[&["-5"]]),
+        ("SELECT SUM(v) + COUNT(*) FROM ha", &[&["155"]]),
+        (
+            "SELECT COALESCE(MAX(v), 0) FROM ha WHERE id = 99",
+            &[&["0"]],
+        ),
+        ("SELECT 1 FROM ha HAVING COUNT(*) > 1", &[&["1"]]),
+        ("SELECT COUNT(*) FROM ha ORDER BY COUNT(*)", &[&["5"]]),
+    ];
+    for (sql, want) in cases {
+        let got = row_text(session.run(sql));
+        let want: Vec<Vec<String>> = want
+            .iter()
+            .map(|row| row.iter().map(|v| (*v).to_owned()).collect())
+            .collect();
+        assert_eq!(got, want, "{sql}");
+    }
+
+    // The widening does not turn Go's 3029 into a wrong answer: an ORDER BY
+    // aggregate over a select list that reads a bare column is illegal, and
+    // the WHERE-clause pinning that exempts a column from 8123 does NOT exempt
+    // it here.
+    for (sql, position) in [
+        ("SELECT id FROM ha ORDER BY COUNT(*) DESC", 1),
+        ("SELECT id, COUNT(*) FROM ha ORDER BY COUNT(*)", 1),
+        ("SELECT id FROM ha ORDER BY id, COUNT(*)", 2),
+        ("SELECT id FROM ha WHERE id = 1 ORDER BY COUNT(v)", 1),
+    ] {
+        let error = session.run(sql).unwrap_err();
+        assert!(
+            matches!(&error, DriverError::AggregateOrderNonAggQuery { position: got }
+                if *got == position),
+            "expected 3029 #{position} from {sql}, got {error:?}"
+        );
+        let rendered = error.to_mysql_error();
+        assert_eq!(rendered.code, 3029);
+        assert_eq!(
+            rendered.message,
+            format!(
+                "Expression #{position} of ORDER BY contains aggregate function and applies to \
+                 the result of a non-aggregated query"
+            )
+        );
+    }
+
+    // Off ONLY_FULL_GROUP_BY the same statements answer rows, which is what
+    // the widened aggregate path computes.
+    session.apply_set("SET sql_mode = ''").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id FROM ha ORDER BY COUNT(*) DESC")),
+        [["1"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT id, COUNT(*) FROM ha ORDER BY COUNT(*)")),
+        [["1", "5"]]
+    );
+}
+
 /// ALTER TABLE MODIFY / CHANGE COLUMN, checked against captured TiDB
 /// output (`alter table t modify column ...` on a mock store).
 ///

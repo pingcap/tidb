@@ -157,6 +157,41 @@ pub(crate) fn check_only_full_group_by(
         }
     }
 
+    // Go `checkOnlyFullGroupByWithOutGroupClause`: an `ORDER BY` aggregate over
+    // a query whose select list reads a bare column is 3029, reported BEFORE
+    // 8123 and regardless of whether the select list aggregates at all
+    // (`SELECT id FROM t ORDER BY COUNT(*)` is illegal). Go's `nonAggCols`
+    // knows nothing of the WHERE-clause pinning applied above -- captured:
+    // `SELECT id FROM ha WHERE id = 1 ORDER BY COUNT(v)` is 3029 too -- so the
+    // test is over the select list with nothing pinned.
+    if select.group_by.is_empty() {
+        let mut bare_columns: Vec<Offender> = Vec::new();
+        for (index, field) in select.fields.fields().iter().enumerate() {
+            if let tidb_ast::SelectField::Expr { expr, .. } = field {
+                collect_offenders(
+                    expr,
+                    index + 1,
+                    Clause::Select,
+                    &[],
+                    &HashSet::new(),
+                    &resolver,
+                    &mut bare_columns,
+                );
+            }
+        }
+        if !bare_columns.is_empty() {
+            if let Some(index) = select
+                .order_by
+                .iter()
+                .position(|item| aggregates_anywhere(&item.expr))
+            {
+                return Err(DriverError::AggregateOrderNonAggQuery {
+                    position: index + 1,
+                });
+            }
+        }
+    }
+
     // A query with no aggregate and no `GROUP BY` is not a grouped query at
     // all, so nothing needs justifying.
     if select.group_by.is_empty() && !has_aggregate {
