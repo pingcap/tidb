@@ -1148,7 +1148,7 @@ impl Session {
                 Ok(Some(false))
             }
             SessionStmt::Savepoint(name) => {
-                self.set_savepoint(name);
+                self.set_savepoint(name)?;
                 Ok(Some(self.txn.is_some()))
             }
             SessionStmt::ReleaseSavepoint(name) => {
@@ -1161,24 +1161,31 @@ impl Session {
 
     /// `SAVEPOINT name` -- Go `SimpleExec.executeSavepoint`.
     ///
-    /// Outside an explicit transaction Go returns `nil` without recording
-    /// anything (`!sessVars.InTxn() && sessVars.IsAutocommit()`), so the
-    /// statement succeeds and a later `ROLLBACK TO` that name still reports
-    /// 1305. That no-op is reproduced here.
+    /// The no-op arm is narrower than "no transaction open": Go returns `nil`
+    /// only when `!sessVars.InTxn() && sessVars.IsAutocommit()`. With
+    /// autocommit OFF and no transaction yet, `e.Ctx().Txn(true)` ACTIVATES
+    /// the pending transaction, so `SAVEPOINT` is what opens it and a later
+    /// `ROLLBACK TO` that name finds it. Only in autocommit does the
+    /// statement succeed while recording nothing, leaving `ROLLBACK TO` to
+    /// report 1305.
     ///
     /// Redefining an existing name is `AddSavepoint`: DELETE the old entry,
     /// then APPEND the new one. The distinction matters -- the redefinition
     /// moves the name to the END of the stack, so savepoints that were taken
     /// after the original are no longer "after" it, and a later `ROLLBACK TO`
     /// the redefined name no longer drops them.
-    fn set_savepoint(&mut self, name: &str) {
+    fn set_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
+        // Go's `Txn(true)`: with autocommit OFF this is the statement that
+        // opens the pending transaction.
+        self.begin_implicit_transaction()?;
         let Some(txn) = &mut self.txn else {
-            return;
+            return Ok(());
         };
         let name = name.to_lowercase();
         let image = txn.working.clone();
         txn.savepoints.retain(|savepoint| savepoint.name != name);
         txn.savepoints.push(Savepoint { name, image });
+        Ok(())
     }
 
     /// `ROLLBACK TO [SAVEPOINT] name` -- Go's `executeRollback` savepoint arm

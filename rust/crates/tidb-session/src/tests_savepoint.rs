@@ -187,9 +187,11 @@ fn redefining_a_savepoint_moves_it_to_the_end_of_the_stack() {
     assert_eq!(ids(&mut session), ["1"]);
 }
 
-/// `SAVEPOINT` outside an explicit transaction is a harmless no-op that
-/// records nothing: Go returns `nil` before touching `TxnCtx`, so the
-/// statement succeeds and the name is still unknown afterwards.
+/// `SAVEPOINT` in AUTOCOMMIT with no explicit transaction is a harmless
+/// no-op that records nothing: Go returns `nil` before touching `TxnCtx`, so
+/// the statement succeeds and the name is still unknown afterwards. The
+/// autocommit half of the condition matters -- see
+/// [`a_savepoint_with_autocommit_off_opens_the_transaction`].
 #[test]
 fn a_savepoint_outside_a_transaction_records_nothing() {
     let mut session = session_with_table();
@@ -298,4 +300,56 @@ fn ending_the_transaction_clears_the_savepoint_stack() {
             "{ending} left a savepoint behind"
         );
     }
+}
+
+/// With autocommit OFF and no explicit `BEGIN`, `SAVEPOINT` is the statement
+/// that OPENS the transaction: Go's no-op arm needs BOTH `!InTxn()` and
+/// `IsAutocommit()`, and with autocommit off it falls through to
+/// `e.Ctx().Txn(true)`, which activates the pending transaction before
+/// `AddSavepoint`. Captured from Go (`rust/difftests/gorun`):
+///
+/// ```text
+/// set autocommit = 0            OK
+/// savepoint before_write        OK
+/// insert into spac values (1)   OK
+/// rollback to before_write      OK      <- the savepoint EXISTS
+/// select id from spac           RS:     <- the row is gone
+/// insert into spac values (2)   OK
+/// commit                        OK
+/// select id from spac           RS:2
+/// set autocommit = 1
+/// savepoint no_txn              OK      <- records nothing
+/// rollback to no_txn            ERR     <- 1305
+/// ```
+#[test]
+fn a_savepoint_with_autocommit_off_opens_the_transaction() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE spac (id INT)").unwrap();
+    session.run("SET autocommit = 0").unwrap();
+    session.run("SAVEPOINT before_write").unwrap();
+    session.run("INSERT INTO spac VALUES (1)").unwrap();
+    session.run("ROLLBACK TO before_write").unwrap();
+    assert!(rows(&mut session, "SELECT id FROM spac ORDER BY id").is_empty());
+    session.run("INSERT INTO spac VALUES (2)").unwrap();
+    session.run("COMMIT").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id FROM spac ORDER BY id")),
+        [vec!["2".to_owned()]]
+    );
+
+    // Back in autocommit the no-op arm applies again, and `ROLLBACK TO` is
+    // Go's 1305.
+    session.run("SET autocommit = 1").unwrap();
+    session.run("SAVEPOINT no_txn").unwrap();
+    let reported = session
+        .run("ROLLBACK TO no_txn")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(reported.code, 1305);
+    assert_eq!(&reported.state, b"42000");
+    assert_eq!(reported.message, "SAVEPOINT no_txn does not exist");
+    assert_eq!(
+        row_text(session.run("SELECT id FROM spac ORDER BY id")),
+        [vec!["2".to_owned()]]
+    );
 }
