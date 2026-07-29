@@ -3418,3 +3418,197 @@ fn sql_mode_is_normalized_when_it_is_set() {
         StmtResult::Rows(vec![vec![Datum::new_string("ANSI_QUOTES")]])
     );
 }
+
+/// Reads one scalar as text through the ordinary statement path.
+fn session_scalar(session: &mut Session, sql: &str) -> String {
+    match session.run(sql).unwrap() {
+        StmtResult::Rows(rows) => datum_text(&rows[0][0]).unwrap(),
+        other => panic!("expected rows, got {other:?}"),
+    }
+}
+
+/// `ROW_COUNT()`'s captured rule table (real TiDB, `corpus/table/row_count`):
+/// it reports what the PRECEDING statement did -- `-1` after any SELECT,
+/// including the `SELECT ROW_COUNT()` before it; the affected-row count after
+/// a DML statement (0 when it matched but changed nothing); and 0 after DDL,
+/// SET, or transaction control.
+#[test]
+fn row_count_reports_the_previous_statements_class() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE rc (id INT PRIMARY KEY, u INT UNIQUE, v INT)")
+        .unwrap();
+    assert_eq!(
+        session_scalar(&mut session, "SELECT ROW_COUNT()"),
+        "0",
+        "captured: after DDL"
+    );
+    assert_eq!(
+        session_scalar(&mut session, "SELECT ROW_COUNT()"),
+        "-1",
+        "captured: after the SELECT above"
+    );
+
+    session
+        .run("INSERT INTO rc VALUES (1, 10, 1), (2, 20, 2)")
+        .unwrap();
+    assert_eq!(
+        session_scalar(&mut session, "SELECT ROW_COUNT()"),
+        "2",
+        "captured: a two-row insert"
+    );
+
+    session.run("UPDATE rc SET v = 1 WHERE id = 1").unwrap();
+    assert_eq!(
+        session_scalar(&mut session, "SELECT ROW_COUNT()"),
+        "0",
+        "captured: an update that matched but changed nothing"
+    );
+    session.run("UPDATE rc SET v = 3 WHERE id = 1").unwrap();
+    assert_eq!(session_scalar(&mut session, "SELECT ROW_COUNT()"), "1");
+
+    session.run("DELETE FROM rc WHERE id = 99").unwrap();
+    assert_eq!(
+        session_scalar(&mut session, "SELECT ROW_COUNT()"),
+        "0",
+        "captured: a delete that matched nothing"
+    );
+    session.run("DELETE FROM rc WHERE id = 2").unwrap();
+    assert_eq!(session_scalar(&mut session, "SELECT ROW_COUNT()"), "1");
+
+    // A FAILED statement still classifies itself, because Go sets the
+    // `In*Stmt` bits before execution: a failed SELECT leaves -1, a failed
+    // INSERT leaves 0.
+    assert!(session
+        .run("SELECT * FROM no_such_row_count_table")
+        .is_err());
+    assert_eq!(
+        session_scalar(&mut session, "SELECT ROW_COUNT()"),
+        "-1",
+        "captured: after a failed SELECT"
+    );
+    assert!(session
+        .run("INSERT INTO no_such_row_count_table VALUES (1)")
+        .is_err());
+    assert_eq!(
+        session_scalar(&mut session, "SELECT ROW_COUNT()"),
+        "0",
+        "captured: after a failed INSERT"
+    );
+
+    session.run("SET @@sql_safe_updates = 0").unwrap();
+    assert_eq!(
+        session_scalar(&mut session, "SELECT ROW_COUNT()"),
+        "0",
+        "captured: after SET"
+    );
+}
+
+/// `LAST_INSERT_ID(expr)`'s captured rules
+/// (`corpus/table/last_insert_id_uint`): the one-argument form returns its
+/// coerced UNSIGNED value immediately and publishes it for the NEXT statement
+/// only, `NULL` publishes nothing, and a `ROLLBACK` does not undo it.
+/// `@@last_insert_id` and `@@identity` report the same 64-bit pattern.
+#[test]
+fn last_insert_id_argument_form_publishes_for_the_next_statement() {
+    let mut session = Session::new();
+    assert_eq!(
+        session
+            .run("SELECT LAST_INSERT_ID(5), LAST_INSERT_ID()")
+            .unwrap(),
+        StmtResult::Rows(vec![vec![Datum::UInt(5), Datum::UInt(0)]]),
+        "captured: the no-argument read is the PREVIOUS statement's value"
+    );
+    assert_eq!(session_scalar(&mut session, "SELECT LAST_INSERT_ID()"), "5");
+
+    // Negative and out-of-`i64` arguments are the same two's-complement bits.
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID(-1)"),
+        "18446744073709551615"
+    );
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID(18446744073709551615)"),
+        "18446744073709551615",
+        "captured: a literal above the i64 domain is UNSIGNED, not an error"
+    );
+
+    // `EvalInt` coercion: rounding, and a string's leading integer run.
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID(1.5)"),
+        "2"
+    );
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID('1e2tail')"),
+        "1"
+    );
+    // NULL returns NULL and publishes nothing, so the previous value stands.
+    assert_eq!(
+        session.run("SELECT LAST_INSERT_ID(NULL)").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Null]])
+    );
+    assert_eq!(session_scalar(&mut session, "SELECT LAST_INSERT_ID()"), "1");
+
+    // A ROLLBACK does not undo the publication.
+    session.run("BEGIN").unwrap();
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID(9)"),
+        "9"
+    );
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(session_scalar(&mut session, "SELECT LAST_INSERT_ID()"), "9");
+    assert_eq!(session_scalar(&mut session, "SELECT @@last_insert_id"), "9");
+    assert_eq!(session_scalar(&mut session, "SELECT @@identity"), "9");
+}
+
+/// The FUNCTION and the WIRE value read ONE publication, so they can differ
+/// only where Go itself makes them differ.
+///
+/// Go keeps two readers of `StmtCtx`: the OK packet answers
+/// `LastInsertID`-or-`InsertID` (`session.LastInsertID()`), while
+/// `LAST_INSERT_ID()` answers `PrevLastInsertID`. The shapes below are
+/// exactly where that shows -- an allocating insert agrees on both, an
+/// EXPLICIT id moves the wire only, and a non-allocating statement resets the
+/// wire to 0 while the function stays put -- and the last block proves the
+/// function form writes the insert path's channel rather than a second copy.
+#[test]
+fn last_insert_id_function_and_wire_value_are_one_publication() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE w (id BIGINT AUTO_INCREMENT PRIMARY KEY, v BIGINT)")
+        .unwrap();
+
+    session.run("INSERT INTO w (v) VALUES (1)").unwrap();
+    assert_eq!(session.statement_insert_id(), 1, "wire: allocated");
+    assert_eq!(session_scalar(&mut session, "SELECT LAST_INSERT_ID()"), "1");
+
+    session.run("INSERT INTO w VALUES (50, 2)").unwrap();
+    assert_eq!(
+        session.statement_insert_id(),
+        50,
+        "captured: the wire reports an EXPLICIT id"
+    );
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID()"),
+        "1",
+        "captured: the function never follows an explicit value"
+    );
+
+    session.run("SELECT 1").unwrap();
+    assert_eq!(
+        session.statement_insert_id(),
+        0,
+        "the wire field is per statement"
+    );
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID()"),
+        "1",
+        "the function is sticky"
+    );
+
+    session.run("SELECT LAST_INSERT_ID(77)").unwrap();
+    assert_eq!(session.last_insert_id(), 77);
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID()"),
+        "77"
+    );
+}

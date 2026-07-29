@@ -70,6 +70,16 @@ pub struct StmtContext {
     /// make the failing case unreachable and force a second, error-shaped
     /// channel for exactly that case.
     last_insert_id: Rc<Cell<Option<u64>>>,
+    /// Go `StmtCtx.PrevLastInsertID`: what the PRECEDING statement published,
+    /// which is the value `LAST_INSERT_ID()` and `@@last_insert_id` report.
+    /// It is a plain copy rather than a handle because a statement cannot
+    /// change its own predecessor's publication.
+    prev_last_insert_id: u64,
+    /// Go `StmtCtx.PrevAffectedRows`: what `ROW_COUNT()` reports -- the
+    /// preceding statement's affected rows, `-1` after a SELECT, `0`
+    /// otherwise. The session derives it from that statement's class exactly
+    /// as `ResetContextOfStmt` does.
+    prev_row_count: i64,
     /// Go `StmtCtx.InsertID`: the explicit value a row gave the
     /// `AUTO_INCREMENT` column, which the OK packet falls back to.
     given_insert_id: Rc<Cell<u64>>,
@@ -115,6 +125,8 @@ impl StmtContext {
             rand_session: None,
             rand_seeded: Rc::default(),
             last_insert_id: Rc::default(),
+            prev_last_insert_id: 0,
+            prev_row_count: 0,
             given_insert_id: Rc::default(),
             auto_increment_step_is_default: true,
             auto_increment_zero_is_explicit: false,
@@ -241,6 +253,8 @@ impl StmtContext {
             rand_session: None,
             rand_seeded: Rc::default(),
             last_insert_id: Rc::default(),
+            prev_last_insert_id: 0,
+            prev_row_count: 0,
             given_insert_id: Rc::default(),
             auto_increment_step_is_default: true,
             auto_increment_zero_is_explicit: false,
@@ -286,6 +300,30 @@ impl StmtContext {
     #[must_use]
     pub fn published_last_insert_id(&self) -> Option<u64> {
         self.last_insert_id.get()
+    }
+
+    /// Attaches the session's own publication cell so `LAST_INSERT_ID(expr)`
+    /// and an allocating INSERT write the SAME storage the session reads
+    /// after the statement. Without it each context would own a private cell
+    /// and only the branches that bother to read theirs back would publish.
+    #[must_use]
+    pub fn with_last_insert_id_channel(mut self, channel: Rc<Cell<Option<u64>>>) -> Self {
+        self.last_insert_id = channel;
+        self
+    }
+
+    /// Attaches what the PRECEDING statement published: Go's
+    /// `StmtCtx.PrevLastInsertID` and `StmtCtx.PrevAffectedRows`, which are
+    /// exactly what `LAST_INSERT_ID()` and `ROW_COUNT()` read.
+    #[must_use]
+    pub fn with_previous_statement(
+        mut self,
+        prev_last_insert_id: u64,
+        prev_row_count: i64,
+    ) -> Self {
+        self.prev_last_insert_id = prev_last_insert_id;
+        self.prev_row_count = prev_row_count;
+        self
     }
 
     /// Go `StmtCtx.InsertID`: the explicit non-zero value a row GAVE the
@@ -429,6 +467,22 @@ impl Columns for StmtContext {
 
     fn append_warning(&self, code: u16, message: &str) {
         self.warnings.borrow_mut().push((code, message.to_owned()));
+    }
+
+    fn row_count(&self) -> Option<i64> {
+        Some(self.prev_row_count)
+    }
+
+    fn last_insert_id(&self) -> Option<u64> {
+        Some(self.prev_last_insert_id)
+    }
+
+    /// Go `SessionVars.SetLastInsertID`, which `LAST_INSERT_ID(expr)` calls:
+    /// it writes the same `StmtCtx.LastInsertID` an allocating INSERT writes,
+    /// unconditionally -- the last such call of a statement wins, unlike the
+    /// insert path's single first-row publication.
+    fn set_last_insert_id(&self, value: u64) {
+        self.last_insert_id.set(Some(value));
     }
 }
 

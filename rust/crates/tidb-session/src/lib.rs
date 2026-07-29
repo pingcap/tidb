@@ -27,7 +27,7 @@
 //! here for dispatch, once in the driver's runner) -- a wiring simplification
 //! to remove when the driver's runners take parsed statements.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -165,6 +165,23 @@ pub struct Session {
     /// The id the last statement allocated, which the OK packet carries and
     /// which is 0 for a statement that allocated nothing.
     statement_insert_id: u64,
+    /// Go `StmtCtx.PrevAffectedRows`, which is all `ROW_COUNT()` reports: the
+    /// preceding statement's affected rows, `-1` after a SELECT, `0`
+    /// otherwise. Derived once at the statement boundary from
+    /// [`Session::statement_kind`], so the function and the OK packet cannot
+    /// disagree about what the statement did.
+    prev_row_count: i64,
+    /// The class of the statement currently running, which decides what
+    /// `ROW_COUNT()` reports next (Go's `StmtCtx.InSelectStmt` /
+    /// `InInsertStmt` / `InUpdateStmt` / `InDeleteStmt` bits, read by
+    /// `ResetContextOfStmt`). It is recorded even for a statement that ends
+    /// in an error, because Go's bits survive the failure too.
+    statement_kind: StatementKind,
+    /// Go `StmtCtx.LastInsertID`/`LastInsertIDSet`: the id the RUNNING
+    /// statement publishes. The session owns the cell and lends it to every
+    /// [`tidb_executor::StmtContext`] the statement builds, so an allocating
+    /// INSERT and `LAST_INSERT_ID(expr)` write one place, not two.
+    published_last_insert_id: Rc<Cell<Option<u64>>>,
     /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
     /// Empty means no database is selected, which is Go's `ErrNoDB` case.
     current_db: String,
@@ -202,6 +219,42 @@ pub struct Session {
     rand: Rc<RefCell<MysqlRng>>,
 }
 
+/// The statement classes `ROW_COUNT()` distinguishes.
+///
+/// Go spells this as four independent `StmtCtx` bits (`InSelectStmt`,
+/// `InInsertStmt`, `InUpdateStmt`, `InDeleteStmt`) and reads them in one
+/// if/else chain in `ResetContextOfStmt` (`pkg/executor/select.go:1229-1237`);
+/// one enum says the same thing without letting two of them be true at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatementKind {
+    /// A SELECT or set operation, after which `ROW_COUNT()` is `-1`.
+    Select,
+    /// INSERT/REPLACE/UPDATE/DELETE, after which `ROW_COUNT()` is the
+    /// affected-row count.
+    Dml,
+    /// Everything else -- DDL, SHOW, SET, transaction control -- after which
+    /// `ROW_COUNT()` is `0`.
+    Other,
+}
+
+/// Classifies a parsed statement for `ROW_COUNT()`, unwrapping a `WITH`
+/// prefix the way Go does -- the CTE belongs to the mutation, so
+/// `WITH x AS (...) DELETE ...` still sets `InDeleteStmt`.
+fn statement_kind_of(stmt: &Stmt) -> StatementKind {
+    fn dml_kind(dml: &DmlStmt) -> StatementKind {
+        match dml {
+            DmlStmt::With { statement, .. } => dml_kind(statement),
+            DmlStmt::Insert(_) | DmlStmt::Update(_) | DmlStmt::Delete(_) => StatementKind::Dml,
+            _ => StatementKind::Other,
+        }
+    }
+    match stmt {
+        Stmt::Query(_) => StatementKind::Select,
+        Stmt::Dml(dml) => dml_kind(dml),
+        _ => StatementKind::Other,
+    }
+}
+
 impl Default for Session {
     /// A session on its own empty catalog, with `test` selected as a fresh
     /// TiDB connection has.
@@ -217,6 +270,9 @@ impl Default for Session {
             connection_id: None,
             last_insert_id: 0,
             statement_insert_id: 0,
+            prev_row_count: 0,
+            statement_kind: StatementKind::Other,
+            published_last_insert_id: Rc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
             has_process_priv: false,
@@ -910,6 +966,18 @@ impl Session {
         use tidb_ast::Expr;
         Ok(match expr {
             Expr::SysVar { scope, name } => {
+                // `@@last_insert_id` and its `@@identity` alias are the SAME
+                // value `LAST_INSERT_ID()` reports -- Go's
+                // `StmtCtx.PrevLastInsertID` -- not an entry in the variable
+                // table, which is why they are answered from the session's
+                // publication rather than from `get_system`. `@@global.` on
+                // either is still the variable table's error (captured).
+                if *scope != Some(tidb_ast::SysVarScope::Global)
+                    && (name.eq_ignore_ascii_case("last_insert_id")
+                        || name.eq_ignore_ascii_case("identity"))
+                {
+                    return Ok(Expr::Int(self.last_insert_id.to_string()));
+                }
                 // `@@global.x` reads the shared table live; every other
                 // scope (unqualified, `@@session.x`, `@@instance.x`) reads
                 // this session's own copy.
@@ -922,13 +990,6 @@ impl Session {
                     Ok(value) => sysvar_native_expr(name, value),
                     Err(error) => return Err(var_error(error)),
                 }
-            }
-            // `LAST_INSERT_ID()` reads session state, so it binds here for
-            // the same reason `@@x` does.
-            Expr::Func { name, args, .. }
-                if name.eq_ignore_ascii_case("LAST_INSERT_ID") && args.is_empty() =>
-            {
-                Expr::Int(self.last_insert_id.to_string())
             }
             Expr::UserVar(name) => match self.vars.get_user(name) {
                 Some(value) => Expr::String(value),
@@ -1147,6 +1208,9 @@ impl Session {
             connection_id: None,
             last_insert_id: 0,
             statement_insert_id: 0,
+            prev_row_count: 0,
+            statement_kind: StatementKind::Other,
+            published_last_insert_id: Rc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
             has_process_priv: false,
@@ -1577,7 +1641,13 @@ impl Session {
                 .registry()
                 .statement_started(guard.id(), sql, &self.status_text());
         }
+        // Go's `ResetContextOfStmt` promotes the PRECEDING statement's
+        // publication into the `Prev*` fields the next statement reads, so
+        // the promotion happens at the boundary, once, for every statement.
+        self.statement_kind = StatementKind::Other;
+        self.published_last_insert_id.set(None);
         let result = self.execute_statement(sql);
+        self.publish_statement_status(&result);
         if let Some(guard) = &self.process {
             guard
                 .registry()
@@ -1657,6 +1727,11 @@ impl Session {
         self.bind_variables(&mut stmt)?;
         // Only an allocating INSERT sets it; every other statement reports 0.
         self.statement_insert_id = 0;
+        // Go sets the `InSelectStmt`/`In*Stmt` bits here, before execution,
+        // so a statement that FAILS still classifies itself for the next
+        // statement's `ROW_COUNT()` (captured: a failed SELECT leaves -1, a
+        // failed INSERT leaves 0).
+        self.statement_kind = statement_kind_of(&stmt);
         // Go's preprocessor runs before planning, so a gated clause is
         // refused before any table is touched.
         if let Stmt::Query(query) = &stmt {
@@ -1704,9 +1779,6 @@ impl Session {
                         tidb_executor::run_insert_reporting(sql, catalog, &current_db, &ctx)
                     });
                     self.drain_eval_warnings(&ctx);
-                    // The published id outlives a failing statement, exactly
-                    // as Go's `StmtCtx.LastInsertID` does, so it is read
-                    // before the error is propagated.
                     // Go `session.LastInsertID()`, the OK packet's field:
                     // `StmtCtx.LastInsertID` when the statement PUBLISHED an
                     // allocated id, `StmtCtx.InsertID` -- the last explicit
@@ -1720,9 +1792,9 @@ impl Session {
                     // on the wire while `LAST_INSERT_ID()` stays where it was;
                     // an `INSERT IGNORE` whose only row is a duplicate burns
                     // an id but reports 0 on the wire.
-                    if let Some(published) = ctx.published_last_insert_id() {
-                        self.last_insert_id = published;
-                    }
+                    // The publication itself is promoted at the statement
+                    // boundary by `publish_statement_status`, off the same
+                    // cell this reads -- one channel, two readers.
                     self.statement_insert_id = ctx
                         .published_last_insert_id()
                         .unwrap_or_else(|| ctx.given_insert_id());
@@ -2175,6 +2247,8 @@ impl Session {
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
                 .with_connection_id(self.connection_id)
                 .with_rand_session(Rc::clone(&self.rand))
+                .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
+                .with_previous_statement(self.last_insert_id, self.prev_row_count)
                 .with_week_and_division_scale(week_format, div_scale)
                 .with_clock(clock, zone);
         }
@@ -2188,6 +2262,8 @@ impl Session {
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
         .with_connection_id(self.connection_id)
         .with_rand_session(Rc::clone(&self.rand))
+        .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
+        .with_previous_statement(self.last_insert_id, self.prev_row_count)
         .with_week_and_division_scale(week_format, div_scale)
         .with_clock(clock, zone)
         .with_auto_increment_step_default(self.auto_increment_step_is_default())
@@ -2202,6 +2278,36 @@ impl Session {
         ["auto_increment_increment", "auto_increment_offset"]
             .iter()
             .all(|name| self.vars.get_system(name).as_deref() == Ok("1"))
+    }
+
+    /// Go `ResetContextOfStmt`'s `Prev*` promotion, run at the statement
+    /// boundary: what the statement just published becomes what the next one
+    /// reads.
+    ///
+    /// This is the ONE place either value moves. `LAST_INSERT_ID()`,
+    /// `@@last_insert_id`, `@@identity` and `ROW_COUNT()` all read the fields
+    /// it writes, and the OK packet reads
+    /// [`Session::statement_insert_id`]'s own fallback off the same
+    /// publication -- so the function and the wire can differ only where Go
+    /// itself makes them differ.
+    fn publish_statement_status(&mut self, result: &Result<StmtOutput, DriverError>) {
+        // The publication outlives a failing statement, exactly as Go's
+        // `StmtCtx.LastInsertID` does: `SELECT LAST_INSERT_ID(17), bad()`
+        // fails and still moves the id (captured).
+        if let Some(published) = self.published_last_insert_id.get() {
+            self.last_insert_id = published;
+        }
+        self.prev_row_count = match self.statement_kind {
+            StatementKind::Select => -1,
+            // Go reads `StmtCtx.AffectedRows()`, which a failed statement
+            // leaves at whatever it managed to apply -- 0 for a statement
+            // that never reached a row.
+            StatementKind::Dml => match result {
+                Ok(StmtOutput::Affected(rows)) => i64::try_from(*rows).unwrap_or(i64::MAX),
+                _ => 0,
+            },
+            StatementKind::Other => 0,
+        };
     }
 
     /// Moves what evaluation recorded into the statement's warning buffer.
