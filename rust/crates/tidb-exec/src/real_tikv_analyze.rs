@@ -83,6 +83,19 @@ pub struct ClusterAnalyzeReport {
     pub topn_count: usize,
 }
 
+/// `mysql.stats_meta.count` as the sample-rate rule reads it.
+///
+/// Go's `RealtimeCount` is an `int64`, so a stored count past `i64::MAX` is
+/// not a number Go can have written and not one this node can believe. It
+/// reads as *no usable count*, which `getAdjustedSampleRate` answers with
+/// `1.0` -- read every row. Saturating to `i64::MAX` instead would drive the
+/// rate to ~1e-14: zero rows kept, yet the NDVs still taken from the
+/// full-scan FM sketch, producing a table the loader accepts as non-pseudo
+/// with empty histograms.
+fn realtime_count_of(row_count: u64) -> i64 {
+    i64::try_from(row_count).unwrap_or(0)
+}
+
 /// Runs and commits one `ANALYZE TABLE`.
 pub fn commit_cluster_analyze(
     opener: &RealOptimisticTransactionOpener,
@@ -129,7 +142,7 @@ pub fn commit_cluster_analyze(
                     .ok()
                     .flatten()
             })
-            .map(|stats| i64::try_from(stats.row_count).unwrap_or(i64::MAX));
+            .map(|stats| realtime_count_of(stats.row_count));
         let report = analyze_table(
             &mut snapshot,
             &table,
@@ -169,5 +182,28 @@ pub fn commit_cluster_analyze(
             "the statistics were not committed: {:?}",
             other.state()
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::realtime_count_of;
+    use tidb_stats::row_sample_collector::adjusted_sample_rate;
+
+    #[test]
+    fn an_unbelievable_stored_row_count_reads_every_row_rather_than_none() {
+        assert_eq!(realtime_count_of(10_000), 10_000);
+        assert_eq!(realtime_count_of(u64::MAX), 0);
+        // The failure this is about: a saturating read would sample at
+        // 110000/i64::MAX and keep nothing, while the FM sketch still reported
+        // NDVs from the full scan.
+        assert!(
+            adjusted_sample_rate(Some(realtime_count_of(u64::MAX)), None)
+                > adjusted_sample_rate(Some(i64::MAX), None)
+        );
+        assert!(
+            (adjusted_sample_rate(Some(realtime_count_of(u64::MAX)), None) - 1.0).abs()
+                < f64::EPSILON
+        );
     }
 }
