@@ -1771,6 +1771,7 @@ impl Session {
         // `@@x` / `@x` read the session's own state, so they are bound before
         // the statement reaches the driver.
         self.bind_variables(&mut stmt)?;
+        self.try_add_extra_limit(&mut stmt);
         // Only an allocating INSERT sets it; every other statement reports 0.
         self.statement_insert_id = 0;
         // Go sets the `InSelectStmt`/`In*Stmt` bits here, before execution,
@@ -2435,6 +2436,45 @@ impl Session {
             ));
         }
         Ok(())
+    }
+
+    /// Go `preprocess.go:TryAddExtraLimit`: while `sql_select_limit` is not
+    /// at its `MaxUint64` default, a SELECT or set operation that writes no
+    /// LIMIT of its own is given one, so the variable caps the result the same
+    /// way an explicit `LIMIT n` would. A statement that DOES write a LIMIT is
+    /// left alone, even one asking for more rows than the cap.
+    ///
+    /// DEFERRED (documented): Go's `ShowStmt` arm, gated on `NeedLimitRSRow()`
+    /// -- the subset of SHOW forms whose rows a LIMIT may cut -- and its
+    /// `ExplainStmt` arm, which caps the wrapped statement rather than the
+    /// EXPLAIN. `SELECT ... INTO OUTFILE` is excluded exactly as Go excludes
+    /// it, even though this tier refuses that clause anyway.
+    fn try_add_extra_limit(&self, stmt: &mut Stmt) {
+        let cap = match self.vars.get_system("sql_select_limit") {
+            Ok(value) => match value.parse::<u64>() {
+                Ok(cap) if cap != u64::MAX => cap,
+                _ => return,
+            },
+            Err(_) => return,
+        };
+        let limit = tidb_ast::Limit {
+            offset: None,
+            count: tidb_ast::Expr::Int(cap.to_string()),
+        };
+        if let Stmt::Query(query) = stmt {
+            match &mut **query {
+                tidb_ast::QueryStmt::Select(select) => {
+                    if select.limit.is_none() && select.into_outfile.is_none() {
+                        select.limit = Some(limit);
+                    }
+                }
+                tidb_ast::QueryStmt::SetOpr(set_opr) => {
+                    if set_opr.limit.is_none() {
+                        set_opr.limit = Some(limit);
+                    }
+                }
+            }
+        }
     }
 
     /// Go `SessionVars.NoopFuncsMode`, read from this session's copy of

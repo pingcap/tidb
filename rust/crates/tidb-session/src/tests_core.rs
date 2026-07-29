@@ -3229,6 +3229,91 @@ fn insert_with_an_empty_values_row_takes_every_default() {
     assert_eq!(row_text(session.run("SELECT LAST_INSERT_ID()")), [["2"]]);
 }
 
+/// Go `preprocess.go:TryAddExtraLimit`: `sql_select_limit` caps a top-level
+/// SELECT or set operation that writes no LIMIT of its own, and nothing else.
+///
+/// Captured from TiDB (`testkit`, `pkg/executor`) with three rows 1,2,3 in
+/// `sslt` and `set @@sql_select_limit = 2`:
+///
+/// ```text
+/// select a from sslt order by a                    [[1] [2]]
+/// select a from sslt order by a limit 3            [[1] [2] [3]]
+/// select a from sslt order by a limit 1            [[1]]
+/// select a from sslt order by a limit 1, 5         [[2] [3]]
+/// select 1 union all select 2 union all select 3   two rows
+/// select (select count(*) from sslt)               [[3]]
+/// select a from (select a from sslt order by a) d order by a   [[1] [2]]
+/// select count(*) from sslt                        [[3]]
+/// select * from sslt where a in (select a from sslt)           [[1] [2]]
+/// set @@sql_select_limit = 0   -> select a from sslt order by a  []
+/// set @@sql_select_limit = default -> [[1] [2] [3]]
+/// ```
+#[test]
+fn sql_select_limit_caps_a_statement_that_wrote_no_limit() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE sslt (a INT)").unwrap();
+    session
+        .run("INSERT INTO sslt VALUES (1), (2), (3)")
+        .unwrap();
+    // The default is MaxUint64, which caps nothing.
+    assert_eq!(
+        row_text(session.run("SELECT a FROM sslt ORDER BY a")),
+        [["1"], ["2"], ["3"]]
+    );
+
+    session.apply_set("SET @@sql_select_limit = 2").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a FROM sslt ORDER BY a")),
+        [["1"], ["2"]]
+    );
+    // A statement that writes its OWN limit is left alone, even one asking
+    // for more rows than the cap.
+    assert_eq!(
+        row_text(session.run("SELECT a FROM sslt ORDER BY a LIMIT 3")),
+        [["1"], ["2"], ["3"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a FROM sslt ORDER BY a LIMIT 1")),
+        [["1"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a FROM sslt ORDER BY a LIMIT 1, 5")),
+        [["2"], ["3"]]
+    );
+    // A set operation is capped at the statement level.
+    assert_eq!(
+        row_text(session.run("SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3")).len(),
+        2
+    );
+
+    // Only the TOP-LEVEL statement is capped: a scalar subquery, a derived
+    // table and an IN subquery all still see every row.
+    assert_eq!(
+        row_text(session.run("SELECT (SELECT COUNT(*) FROM sslt)")),
+        [["3"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a FROM (SELECT a FROM sslt ORDER BY a) d ORDER BY a")),
+        [["1"], ["2"]]
+    );
+    assert_eq!(row_text(session.run("SELECT COUNT(*) FROM sslt")), [["3"]]);
+    assert_eq!(
+        row_text(session.run("SELECT a FROM sslt WHERE a IN (SELECT a FROM sslt) ORDER BY a")),
+        [["1"], ["2"]]
+    );
+
+    // Zero is a cap like any other, and DEFAULT lifts it.
+    session.apply_set("SET @@sql_select_limit = 0").unwrap();
+    assert!(row_text(session.run("SELECT a FROM sslt ORDER BY a")).is_empty());
+    session
+        .apply_set("SET @@sql_select_limit = DEFAULT")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a FROM sslt ORDER BY a")),
+        [["1"], ["2"], ["3"]]
+    );
+}
+
 /// ALTER TABLE MODIFY / CHANGE COLUMN, checked against captured TiDB
 /// output (`alter table t modify column ...` on a mock store).
 ///
