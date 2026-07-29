@@ -131,7 +131,7 @@ use tidb_executor::cluster_storage::{
 use tidb_executor::pushdown_scan::PushdownScanner;
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
-use tidb_session::privilege::PrivilegeRegistry;
+use tidb_session::privilege::{GlobalPriv, PrivilegeRegistry};
 use tidb_session::process::ProcessRegistry;
 use tidb_session::{GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange};
 
@@ -153,6 +153,9 @@ use crate::sql_node::{
 /// The PD/TiKV control-plane deadline this node's boot and statements use, the
 /// same one the bounded node applies.
 const CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Go `errno.ErrTableaccessDenied`.
+const ER_TABLEACCESS_DENIED_ERROR: u16 = 1142;
 
 mod ddl;
 mod transactions;
@@ -663,6 +666,19 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
+        // Go checks the privileges of EVERY named table before running any
+        // of them: `buildAnalyze` appends the visitInfo for each and
+        // `CheckPrivilege` runs over the whole plan, so `ANALYZE TABLE ok, no`
+        // stores nothing at all.
+        for statement in tables {
+            self.require_analyze_privileges(statement)?;
+        }
+        // Go's analyze memory quota is process-wide and read at execution:
+        // `variable.SetMemQuotaAnalyze` drives one `GlobalAnalyzeMemoryTracker`
+        // (`pkg/executor/select.go:141`), so the value in force is whatever
+        // `SET GLOBAL tidb_mem_quota_analyze` last stored. Its default, `-1`,
+        // is no bound.
+        let memory_quota = self.analyze_memory_quota();
         for statement in tables {
             let report = self
                 .analyze
@@ -689,6 +705,66 @@ impl ClusterServerSession {
             affected_rows: 0,
             last_insert_id: 0,
         })
+    }
+
+    /// Go's privilege gate on `ANALYZE TABLE`: INSERT *and* SELECT on the
+    /// table.
+    ///
+    /// `pkg/planner/core/planbuilder.go:3205` calls
+    /// `requireInsertAndSelectPriv(as.TableNames)`, which appends
+    /// `mysql.InsertPriv` and then `mysql.SelectPriv` for each table, each
+    /// carrying its own `ErrTableaccessDenied`. INSERT is appended first, so
+    /// an account holding neither is told about INSERT -- captured from a
+    /// real TiDB, for a user with no privileges and for a SELECT-only user
+    /// alike:
+    ///
+    /// ```text
+    /// ERROR 1142 (42000): INSERT command denied to user 'zzlow'@'%' for table 'zzt'
+    /// ```
+    ///
+    /// This is not a formality on a read: the TopN entries an `ANALYZE`
+    /// writes into `mysql.stats_top_n` are ACTUAL COLUMN VALUES, readable by
+    /// anyone who can read the statistics.
+    fn require_analyze_privileges(
+        &self,
+        statement: &AnalyzeStatement,
+    ) -> Result<(), SqlQueryError> {
+        for required in [GlobalPriv::Insert, GlobalPriv::Select] {
+            if self
+                .session
+                .has_table_privilege(&statement.schema, &statement.table, required)
+            {
+                continue;
+            }
+            let (user, host) = self.session.authenticated_identity().unwrap_or(("", ""));
+            return Err(SqlQueryError::new(
+                ER_TABLEACCESS_DENIED_ERROR,
+                *b"42000",
+                format!(
+                    "{} command denied to user '{user}'@'{host}' for table '{}'",
+                    required.print_name(),
+                    statement.table
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// `tidb_mem_quota_analyze` as this node currently holds it.
+    ///
+    /// A variable that is missing or unreadable is Go's default: no bound. It
+    /// is not a reason to refuse an `ANALYZE`, since Go runs every one of them
+    /// unbounded by default anyway.
+    fn analyze_memory_quota(&self) -> SampleMemoryQuota {
+        self.session
+            .vars()
+            .get_global(MEM_QUOTA_ANALYZE_VARIABLE)
+            .ok()
+            .and_then(|value| value.trim().parse::<i64>().ok())
+            .map_or_else(
+                SampleMemoryQuota::unlimited,
+                SampleMemoryQuota::from_setting,
+            )
     }
 
     /// Performs one `SET GLOBAL` change.
@@ -2510,6 +2586,117 @@ mod tests {
         assert!(
             refusal.contains("`t`"),
             "the refusal must name the table: {refusal}"
+        );
+    }
+
+    /// Opens a connection authenticated as `user`, which is how a test says
+    /// "somebody other than root".
+    fn open_session_as(node: &MockNode, user: &str) -> ClusterServerSession {
+        let cluster = Arc::clone(&node.cluster);
+        let factory = ClusterSessionFactory::new(
+            Arc::new(MockTransactions(cluster)),
+            Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
+            Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
+            Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+            Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+            Arc::clone(&node.catalog),
+            node.accounts.live.clone(),
+            node.sysvars.live.clone(),
+            Arc::new(SharedStats::new(
+                tidb_exec::stats_watch::StatsSnapshot::new(),
+            )),
+        );
+        let users =
+            ConfiguredUserStore::parse(&format!("{user}\t%\tmysql_native_password\t{ABC_HASH}\n"))
+                .expect("configured user store");
+        let identity = users
+            .authenticate_native(user, "127.0.0.1", &SALT, &scramble(b"abc", &SALT))
+            .expect("authenticated identity");
+        let peer_addr: SocketAddr = "127.0.0.1:4001".parse().expect("peer address");
+        let mut session = factory
+            .open_session(SessionContext {
+                connection_id: 2,
+                peer_addr,
+                identity,
+                cancellation: ConnectionCancellation::default(),
+                close: ConnectionClose::default(),
+            })
+            .expect("the cluster session opens");
+        session.execute_write("USE app").expect("USE app");
+        session
+    }
+
+    /// An account with no privilege on the table cannot `ANALYZE` it.
+    ///
+    /// The statistics an `ANALYZE` writes are not metadata: a TopN entry in
+    /// `mysql.stats_top_n` is an ACTUAL COLUMN VALUE. Letting any
+    /// authenticated connection analyze any table therefore hands out the
+    /// table's contents, which is why Go requires INSERT and SELECT on it
+    /// (`planbuilder.go:3205` `requireInsertAndSelectPriv`).
+    ///
+    /// The assertion is on the seam as much as on the error: the mock
+    /// analyzer refuses every table by name, so reaching it at all would show
+    /// up here as ITS message rather than the access-denied one.
+    #[test]
+    fn analyze_without_privileges_on_the_table_is_refused_before_the_seam() {
+        let node = MockNode::start();
+        node.accounts.live.create_user("low", "%", "");
+        let mut session = open_session_as(&node, "low");
+        let refusal = session
+            .execute_write("ANALYZE TABLE t")
+            .expect_err("an account with no privilege on `t` may not analyze it");
+        // Captured from a real TiDB, for a user with no privileges at all and
+        // for a SELECT-only user alike -- INSERT is the visitInfo Go appends
+        // first.
+        assert_eq!(refusal.code, 1142);
+        assert_eq!(refusal.state, *b"42000");
+        assert_eq!(
+            refusal.message,
+            "INSERT command denied to user 'low'@'%' for table 't'"
+        );
+    }
+
+    /// SELECT alone is not enough, which is Go's answer too: the INSERT the
+    /// statement needs is the one that writes `mysql.stats_*`.
+    #[test]
+    fn analyze_with_only_select_on_the_table_is_still_refused() {
+        let node = MockNode::start();
+        node.accounts.live.create_user("ro", "%", "");
+        node.accounts
+            .live
+            .grant_table("ro", "%", "app", "t", GlobalPriv::Select.mask());
+        let mut session = open_session_as(&node, "ro");
+        let refusal = session
+            .execute_write("ANALYZE TABLE t")
+            .expect_err("SELECT alone does not carry an ANALYZE");
+        assert_eq!(refusal.code, 1142);
+        assert_eq!(
+            refusal.message,
+            "INSERT command denied to user 'ro'@'%' for table 't'"
+        );
+    }
+
+    /// INSERT and SELECT on the table carry it, and the statement then
+    /// reaches the statistics seam -- the grant does not have to be global.
+    #[test]
+    fn analyze_with_insert_and_select_on_the_table_reaches_the_seam() {
+        let node = MockNode::start();
+        node.accounts.live.create_user("rw", "%", "");
+        node.accounts.live.grant_table(
+            "rw",
+            "%",
+            "app",
+            "t",
+            GlobalPriv::Select.mask() | GlobalPriv::Insert.mask(),
+        );
+        let mut session = open_session_as(&node, "rw");
+        let refusal = session
+            .execute_write("ANALYZE TABLE t")
+            .expect_err("the mock node has no statistics to store")
+            .message;
+        assert!(
+            refusal.contains("the mock node stores no statistics for"),
+            "a privileged account must reach the statistics seam: {refusal}"
         );
     }
 

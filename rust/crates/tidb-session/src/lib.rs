@@ -744,6 +744,49 @@ impl Session {
         }
     }
 
+    /// Go `RequestVerification` at table scope: whether this session holds
+    /// `global_priv` on `database`.`table`, through its own grants or a role.
+    ///
+    /// A session with no attached registry, or none with a front end, is
+    /// unrestricted -- the same rule
+    /// [`Self::require_set_global_privilege`] applies, and the same reason:
+    /// an in-process session has no identity to check.
+    ///
+    /// The *error* a denied caller reports is the caller's, not this
+    /// method's: Go words it per statement (`ANALYZE` reports
+    /// `ErrTableaccessDenied` naming INSERT or SELECT), and only the caller
+    /// knows which privilege it was asking about.
+    #[must_use]
+    pub fn has_table_privilege(
+        &self,
+        database: &str,
+        table: &str,
+        global_priv: privilege::GlobalPriv,
+    ) -> bool {
+        let Some(registry) = &self.privileges else {
+            return true;
+        };
+        let Some((user, host)) = self.current_identity() else {
+            return true;
+        };
+        registry.has_table_priv_with_roles(
+            user,
+            host,
+            self.active_roles(),
+            database,
+            table,
+            global_priv,
+        )
+    }
+
+    /// The `user@host` this session authenticated as, as Go's
+    /// `AuthUsername`/`AuthHostname` pair. `None` for a session with no front
+    /// end.
+    #[must_use]
+    pub fn authenticated_identity(&self) -> Option<(&str, &str)> {
+        self.current_identity()
+    }
+
     /// `SET NAMES` / `SET CHARACTER SET`.
     fn apply_charset(
         &mut self,

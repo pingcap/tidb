@@ -185,8 +185,9 @@ impl GlobalPriv {
     }
 
     /// Go `mysql.Priv2Str`, uppercased -- the exact text `SHOW GRANTS` prints
-    /// for this privilege.
-    pub(crate) fn print_name(self) -> &'static str {
+    /// for this privilege, and the verb an access-denied error names.
+    #[must_use]
+    pub fn print_name(self) -> &'static str {
         match self {
             Self::Select => "SELECT",
             Self::Insert => "INSERT",
@@ -1806,6 +1807,76 @@ impl PrivilegeRegistry {
             database.to_owned(),
             table.to_owned(),
         ))
+    }
+
+    /// Go `MySQLPrivilege.RequestVerification` for a statement that names one
+    /// table: the privilege is held when the account's *global*, *database*
+    /// or *table* scope carries it.
+    ///
+    /// Go walks the same three scopes in that order and returns on the first
+    /// that grants the privilege, so ORing the masks is the same answer. A
+    /// wider scope subsuming a narrower one is the whole point: `GRANT SELECT
+    /// ON *.*` satisfies a check on `db.t` without any `mysql.tables_priv`
+    /// row.
+    ///
+    /// Column scope is deliberately not consulted: Go passes an empty column
+    /// for a whole-table request, and a column-scope grant never satisfies
+    /// one.
+    #[must_use]
+    pub fn has_table_priv(
+        &self,
+        user: &str,
+        host: &str,
+        database: &str,
+        table: &str,
+        global_priv: GlobalPriv,
+    ) -> bool {
+        if self.has_global_priv(user, host, global_priv) {
+            return true;
+        }
+        let bit = global_priv.bit();
+        // Schema and table names are stored as the `GRANT` (or the
+        // `mysql.db` row) spelled them, while the statement spells them its
+        // own way, so the scopes are matched case-insensitively rather than
+        // by key -- which is how Go compares them too.
+        let scoped = |row_user: &str, row_host: &str, row_database: &str| {
+            row_user == user && row_host == host && row_database.eq_ignore_ascii_case(database)
+        };
+        if self
+            .lock_db()
+            .iter()
+            .any(|((row_user, row_host, row_database), privs)| {
+                scoped(row_user, row_host, row_database) && privs & bit != 0
+            })
+        {
+            return true;
+        }
+        self.lock_table()
+            .iter()
+            .any(|((row_user, row_host, row_database, row_table), privs)| {
+                scoped(row_user, row_host, row_database)
+                    && row_table.eq_ignore_ascii_case(table)
+                    && privs & bit != 0
+            })
+    }
+
+    /// [`Self::has_table_priv`] over the account and every role it reaches,
+    /// which is the identity list Go's `RequestVerification` walks.
+    #[must_use]
+    pub fn has_table_priv_with_roles(
+        &self,
+        user: &str,
+        host: &str,
+        active_roles: &[Account],
+        database: &str,
+        table: &str,
+        global_priv: GlobalPriv,
+    ) -> bool {
+        self.identities_for_check(user, host, active_roles)
+            .into_iter()
+            .any(|(role_user, role_host)| {
+                self.has_table_priv(&role_user, &role_host, database, table, global_priv)
+            })
     }
 
     /// Clears every bit in `mask` on the account's `(database, table)` row.
