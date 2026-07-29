@@ -49,8 +49,6 @@ func (e *dumpStepExecutor) exportChunk(ctx context.Context, ce *chunkExporter, c
 	tblInfo := tbl.TableInfo
 	colInfos, fieldTps := exportColumns(tblInfo)
 
-	// concurrency 1 with keep-order (as in add-index) keeps rows in handle order;
-	// read parallelism comes from the worker pool, not from within one chunk.
 	rs, err := buildScan(ctx, ce.exprCtx, ce.distCtx, tblInfo, c.PhysicalID, colInfos, fieldTps,
 		e.taskMeta.SnapshotTS, 1, c.Start, c.End)
 	if err != nil {
