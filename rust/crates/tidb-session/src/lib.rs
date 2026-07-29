@@ -2602,6 +2602,8 @@ mod tests_harvested_relation_engine;
 #[cfg(test)]
 mod tests_json;
 #[cfg(test)]
+mod tests_multi_table_dml;
+#[cfg(test)]
 mod tests_savepoint;
 #[cfg(test)]
 mod tests_show;

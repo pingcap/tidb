@@ -181,7 +181,16 @@ fn table_execution_matches_go_engine() {
     // DOWN. A permanently red suite would destroy the signal every other gate
     // depends on, and deleting the cases would destroy the evidence -- so the
     // debt is carried as a number that fails the moment it grows.
-    const KNOWN_DIVERGENCES: usize = 79;
+    //
+    // Multi-table UPDATE/DELETE and `DELETE IGNORE` took this from 79 to 76:
+    // five `row_count` statements now match, and TWO of that topic's
+    // `ROW_COUNT()` reads newly diverge because `DELETE IGNORE FROM fp`
+    // finally RUNS. Go skips its row -- a child row in `fc` references it --
+    // and reports 0; with no foreign keys modelled here the row really is
+    // deletable, so the count is 1, and the later `foreign_key_checks = 0`
+    // delete then finds nothing left. Both belong to FOREIGN KEY support,
+    // not to multi-table DML.
+    const KNOWN_DIVERGENCES: usize = 76;
 
     assert!(
         failures.len() <= KNOWN_DIVERGENCES,

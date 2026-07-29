@@ -811,7 +811,10 @@ pub(crate) fn column_is_not_null(meta: &[(Option<Datum>, bool, String)], offset:
 /// with each assignment seeing the effects of the previous ones -- Go's
 /// `composeNewRow` order.
 ///
-/// DEFERRED (documented): multi-table UPDATE, `IGNORE`, generated and
+/// Multi-table `UPDATE` lives in `multi_dml`, which reads a joined row
+/// source carrying each target's row identity.
+///
+/// DEFERRED (documented): `IGNORE`, generated and
 /// `ON UPDATE CURRENT_TIMESTAMP` columns, and the handle-changed path (a row
 /// whose primary-key handle column is assigned is deleted and re-inserted in
 /// Go; this seed rejects it). Single-table `ORDER BY`/`LIMIT` IS supported
@@ -879,10 +882,17 @@ pub(crate) fn run_update_traced(
     }
     let table_ref = match &update.kind {
         tidb_ast::UpdateKind::Single(table_ref) => table_ref,
-        tidb_ast::UpdateKind::Multi { .. } => {
-            return Err(DriverError::Unsupported(
-                "multi-table UPDATE is not supported yet",
-            ))
+        // A multi-table write reads a joined row source that carries every
+        // target's row identity, which is a different read path -- see
+        // `multi_dml`'s module doc. `EXPLAIN` has never described it.
+        tidb_ast::UpdateKind::Multi { from, .. } => {
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.refuse("multi-table UPDATE plans are not supported yet");
+                if trace.is_plan_only() {
+                    return Ok(0);
+                }
+            }
+            return super::multi_dml::run_multi_update(update, from, catalog, current_db, ctx);
         }
     };
     let (database, name) = single_table_name(table_ref, current_db)?;
@@ -1081,7 +1091,15 @@ pub(crate) fn compute_updated_row(
 /// Go `executor.DeleteExec`: every row the `WHERE` selects is removed, and the
 /// affected-row count is simply that count.
 ///
-/// DEFERRED (documented): multi-table DELETE, `IGNORE`. Single-table
+/// `DELETE IGNORE` runs as a plain `DELETE`: Go's `IGNORE` downgrades a
+/// per-row failure to a skipped row plus a warning, and the only per-row
+/// failure a `DELETE` can raise is a foreign-key restriction, which this
+/// engine does not model at all -- so with nothing to downgrade the two
+/// spellings really are one statement here. Captured from Go: without a
+/// referencing child row, `DELETE IGNORE` and `DELETE` remove the same rows
+/// and report the same count. Multi-table `DELETE` lives in `multi_dml`.
+///
+/// DEFERRED (documented): `QUICK`. Single-table
 /// `ORDER BY`/`LIMIT` IS supported (see `order_rows_for_dml`,
 /// `dml_row_limit`). A `RETURNING` clause is parsed and silently ignored,
 /// matching Go, where the planner and executor never read
@@ -1134,17 +1152,24 @@ pub(crate) fn run_delete_traced(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
 ) -> Result<u64, DriverError> {
-    if delete.ignore || delete.quick {
+    if delete.quick {
         return Err(DriverError::Unsupported(
-            "only plain DELETE FROM t [WHERE ...] is supported",
+            "DELETE QUICK is not supported yet",
         ));
     }
     let table_ref = match &delete.kind {
         tidb_ast::DeleteKind::Single(table_ref) => table_ref,
-        tidb_ast::DeleteKind::Multi { .. } => {
-            return Err(DriverError::Unsupported(
-                "multi-table DELETE is not supported yet",
-            ))
+        // See `multi_dml`'s module doc; `EXPLAIN` has never described this.
+        tidb_ast::DeleteKind::Multi { targets, from, .. } => {
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.refuse("multi-table DELETE plans are not supported yet");
+                if trace.is_plan_only() {
+                    return Ok(0);
+                }
+            }
+            return super::multi_dml::run_multi_delete(
+                delete, targets, from, catalog, current_db, ctx,
+            );
         }
     };
     let (database, name) = single_table_name(table_ref, current_db)?;

@@ -545,6 +545,7 @@ mod agg_select;
 mod dml;
 mod errors;
 mod from;
+mod multi_dml;
 mod only_full_group_by;
 
 // Re-exported flat, so every caller inside and outside this module keeps

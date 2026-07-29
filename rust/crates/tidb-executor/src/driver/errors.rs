@@ -152,6 +152,10 @@ pub enum DriverError {
         /// The clause Go names, for example `order clause`.
         clause: String,
     },
+    /// Go `plannererrors.ErrUnknownTable` (1109): a multi-table `DELETE`
+    /// names a target the `FROM`/`USING` clause does not provide -- which
+    /// includes naming an aliased source by its stored table name.
+    UnknownTableInMultiDelete(String),
     /// Go `plannererrors.ErrWrongGroupField` (1056): a `GROUP BY` position
     /// resolves to an aggregate or window-function select field, which
     /// cannot itself be grouped on.
@@ -1246,6 +1250,12 @@ impl DriverError {
             1054,
             *b"42S22",
             format!("Unknown column '{column}' in '{clause}'"),
+        ),
+        // Go: "Unknown table '%-.192s' in %-.32s".
+        DriverError::UnknownTableInMultiDelete(table) => MysqlError::new(
+            1109,
+            *b"42S02",
+            format!("Unknown table '{table}' in MULTI DELETE"),
         ),
         // Go: "Can't group on '%-.192s'".
         DriverError::WrongGroupField(field) => MysqlError::new(
