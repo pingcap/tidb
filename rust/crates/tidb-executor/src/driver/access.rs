@@ -380,9 +380,12 @@ pub(crate) fn full_scan_estimate(
         TableEntry::Mem(_) | TableEntry::View(_) => None,
     };
     match stats {
+        // The row count is real whenever a `mysql.stats_meta` row exists,
+        // even when no histogram was ever analyzed -- and in that state Go
+        // prints the real count AND `stats:pseudo`.
         Some(stats) => crate::access_cost::ScanEstimate {
             rows: stats.row_count.max(0) as f64,
-            pseudo: false,
+            pseudo: stats.pseudo,
         },
         None => crate::access_cost::ScanEstimate::pseudo(crate::plan_trace::PSEUDO_ROW_COUNT),
     }
@@ -401,6 +404,12 @@ pub(crate) fn stats_selectivity(
 ) -> Option<f64> {
     let predicate = where_clause?;
     let stats = catalog.table_statistics(table.table_id)?;
+    if stats.pseudo {
+        // A table with a row count but no histograms falls back to the same
+        // pseudo rates an unanalyzed one uses; saying so with `None` keeps
+        // that in one place.
+        return None;
+    }
     Some(crate::access_cost::selectivity(
         predicate,
         table,

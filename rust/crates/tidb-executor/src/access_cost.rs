@@ -65,10 +65,42 @@
 //! * **Point get / batch point get**: Go decides these in `TryFastPlan`,
 //!   BEFORE cost-based selection, and so does [`crate::driver::access`].
 //!   They are not costed here for the same reason Go does not cost them.
+//!
+//! # Skyline pruning is NOT ported, and one case shows it
+//!
+//! Go does not cost every path it enumerates: `skylinePruning` /
+//! `compareCandidates` (`find_best_task.go`) first drops any path another one
+//! DOMINATES on four metrics at once -- access-condition coverage
+//! (`util.CompareCol2Len` over `accessCondsColMap`), index-back scan
+//! (`compareIndexBack`), the required physical property, and global-index
+//! preference -- with further risk-ratio and pseudo-statistics heuristics on
+//! top. Only the survivors reach the cost formula.
+//!
+//! Costing every candidate instead is not equivalent, and a live differential
+//! against a v8.5.6 playground shows exactly where. On
+//! `t(id PK, bucket, rare, payload, KEY idx_bucket(bucket), KEY idx_rare(rare),
+//! KEY idx_cover(bucket, rare))` with 2000 analyzed rows:
+//!
+//! ```text
+//! SELECT * FROM t WHERE bucket = 1 AND rare = 7
+//!   GO    IndexRangeScan  1.00  index:idx_cover(bucket, rare)  range:[1 7,1 7]
+//!   OURS  IndexRangeScan  1.00  index:idx_rare(rare)           range:[7,7]
+//! ```
+//!
+//! Both estimate one row, so the cost formula cannot separate them and the
+//! narrower single-column index wins on its smaller index row size. Go never
+//! costs `idx_rare` at all: `idx_cover`'s access conditions are a strict
+//! superset of it, so `idx_rare` is pruned. Porting that is its own unit --
+//! the four metrics need the physical property and the risk ratio this tier
+//! does not carry -- so it is named here rather than approximated by a
+//! tie-break rule that would happen to fix this one query.
 
 use std::collections::BTreeMap;
 
 use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+use tidb_planner::cardinality::pseudo::{
+    pseudo_row_count_by_index_ranges, IndexRange as PseudoIndexRange, PseudoBoundKind, ScalarRange,
+};
 use tidb_planner::cardinality::row_count_estimator::{
     get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, ColumnStats,
     EstimatorOptions, IndexRangeDatums, IndexStats,
@@ -79,7 +111,7 @@ use tidb_planner::cardinality::row_size::{
 };
 
 use crate::kv_table::{IndexRange, KvColumn, KvIndex, KvTable};
-use crate::plan_trace::{PSEUDO_EQUAL_RATE, PSEUDO_LESS_RATE, PSEUDO_ROW_COUNT};
+use crate::plan_trace::PSEUDO_ROW_COUNT;
 
 /// Go `defaultVer2Factors.TiKVScan`.
 const TIKV_SCAN_FACTOR: f64 = 40.70;
@@ -111,6 +143,17 @@ const MIN_ROW_SIZE: f64 = 2.0;
 /// know how `mysql.stats_*` is stored.
 #[derive(Clone, Debug, Default)]
 pub struct TableStatistics {
+    /// Go `HistColl.Pseudo`: the table has a `mysql.stats_meta` row -- so its
+    /// ROW COUNT is real -- but not one analyzed column or index histogram,
+    /// so its DISTRIBUTION is not.
+    ///
+    /// The two halves move independently and Go prints them independently: a
+    /// table in this state shows a real `estRows` on its `TableFullScan` and
+    /// still says `stats:pseudo`, because the scan's row count came from
+    /// `stats_meta` while every selectivity below it came from the pseudo
+    /// rates. Collapsing the two would either invent a distribution or throw
+    /// away a row count the cluster really knows.
+    pub pseudo: bool,
     /// Go `HistColl.RealtimeCount`, from `mysql.stats_meta.count`.
     pub row_count: i64,
     /// Go `HistColl.ModifyCount`, from `mysql.stats_meta.modify_count`.
@@ -220,6 +263,10 @@ fn row_size_type(field_type: &FieldType) -> RowSizeType {
 
 /// The table's realtime row count: `stats_meta.count` when analyzed, Go's
 /// `statistics.PseudoRowCount` when not.
+fn is_pseudo(stats: Option<&TableStatistics>) -> bool {
+    stats.is_none_or(|stats| stats.pseudo)
+}
+
 fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
     match stats {
         Some(stats) if stats.row_count > 0 => stats.row_count as f64,
@@ -315,7 +362,7 @@ fn table_scan_path(
         .collect();
     let row_size = get_table_avg_row_size(
         &row_columns,
-        stats.is_none(),
+        is_pseudo(stats),
         realtime as i64,
         RowSizeStore::TiKv,
         table.pk_handle_offset().is_some(),
@@ -334,7 +381,7 @@ fn table_scan_path(
         index: None,
         estimate: ScanEstimate {
             rows: realtime,
-            pseudo: stats.is_none(),
+            pseudo: is_pseudo(stats),
         },
         cost: (scanned + transferred) / DIST_SQL_SCAN_CONCURRENCY,
     }
@@ -350,7 +397,7 @@ fn index_path(
     stats: Option<&TableStatistics>,
     realtime: f64,
 ) -> AccessPath {
-    let estimated = index_row_count(index, &ranges, stats, realtime);
+    let estimated = index_row_count(index, table, &ranges, stats, realtime);
     // Go costs the index side at `min(rows, PushedLimit.Count)` when the
     // reader stops at the cap; `estimated` is still what EXPLAIN prints for
     // the scan, because the cop-side `Limit` is its own operator there.
@@ -368,7 +415,7 @@ fn index_path(
         .collect();
     let index_row_size = get_index_avg_row_size(
         &index_row_columns,
-        stats.is_none(),
+        is_pseudo(stats),
         realtime as i64,
         index.unique,
         false,
@@ -391,7 +438,7 @@ fn index_path(
             .collect();
         let table_row_size = get_table_avg_row_size(
             &table_row_columns,
-            stats.is_none(),
+            is_pseudo(stats),
             realtime as i64,
             RowSizeStore::TiKv,
             table.pk_handle_offset().is_some(),
@@ -411,7 +458,7 @@ fn index_path(
         index: Some((index.id, ranges)),
         estimate: ScanEstimate {
             rows: estimated,
-            pseudo: stats.is_none(),
+            pseudo: is_pseudo(stats),
         },
         cost,
     }
@@ -429,20 +476,22 @@ fn is_covering(index: &KvIndex, table: &KvTable, needed_columns: &[usize]) -> bo
 }
 
 /// Go `getIndexRowCountForStatsV2` over the index's ranges, falling back to
-/// the pseudo rate when the index has no loaded histogram.
+/// the pseudo formula when the table -- or just this index -- has no
+/// analyzed histogram.
 fn index_row_count(
     index: &KvIndex,
+    table: &KvTable,
     ranges: &[IndexRange],
     stats: Option<&TableStatistics>,
     realtime: f64,
 ) -> f64 {
-    let Some(stats) = stats else {
-        return pseudo_index_row_count(ranges, realtime);
+    let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
+        return pseudo_index_row_count(index, ranges, realtime);
     };
     let Some(index_stats) = stats.indexes.get(&index.id) else {
         // A table WITH statistics whose index was never analyzed: Go falls
         // back to the pseudo rate for that path only, not for the table.
-        return pseudo_index_row_count(ranges, realtime);
+        return pseudo_index_row_count(index, ranges, realtime);
     };
     let datum_ranges: Vec<IndexRangeDatums> = ranges
         .iter()
@@ -454,9 +503,21 @@ fn index_row_count(
         })
         .collect();
     // The per-column histograms `expBackoffEstimation` consults, positionally
-    // by index column. A column with no histogram is `None`, which the
-    // estimator skips exactly as the source does.
-    let column_stats: Vec<Option<&ColumnStats>> = Vec::new();
+    // by index column -- Go's `HistColl.ColUniqueID2IdxIDs` walk. Without
+    // them a range that pins a PREFIX of a composite index has only the index
+    // histogram to go on and misses the leading column's TopN, which is an
+    // exact count where it hits. A column with no histogram is `None`, which
+    // the estimator skips exactly as the source does.
+    let column_stats: Vec<Option<&ColumnStats>> = index
+        .column_offsets
+        .iter()
+        .map(|offset| {
+            table
+                .columns
+                .get(*offset)
+                .and_then(|column| stats.columns.get(&column.id))
+        })
+        .collect();
     let estimate = get_index_row_count_for_stats_v2(
         index_stats,
         &column_stats,
@@ -468,19 +529,93 @@ fn index_row_count(
     estimate.est.clamp(0.0, realtime.max(0.0))
 }
 
-/// The stats-less index estimate, which is the same pseudo rate
-/// [`crate::plan_trace`] prints for an unanalyzed table: one point range is an
-/// equality, anything else is a range.
-fn pseudo_index_row_count(ranges: &[IndexRange], realtime: f64) -> f64 {
-    let rate = if ranges
+/// The stats-less index estimate: Go `getPseudoRowCountByIndexRanges`
+/// (`pkg/planner/cardinality/pseudo.go`), through its port.
+///
+/// `colsLen` there is the index's column count for a UNIQUE index and `-1`
+/// otherwise, which is what decides whether a full-length point range is
+/// worth exactly one row; that is the `unique_columns` argument.
+fn pseudo_index_row_count(index: &KvIndex, ranges: &[IndexRange], realtime: f64) -> f64 {
+    let pseudo_ranges: Vec<PseudoIndexRange> = ranges
         .iter()
-        .all(|range| range.low == range.high && !range.low_exclusive && !range.high_exclusive)
-    {
-        PSEUDO_EQUAL_RATE
-    } else {
-        PSEUDO_LESS_RATE
-    };
-    realtime / rate * ranges.len().max(1) as f64
+        .map(|range| {
+            let width = range.low.len().max(range.high.len());
+            let columns: Vec<ScalarRange> = (0..width)
+                .map(|position| scalar_range(range.low.get(position), range.high.get(position)))
+                .collect();
+            PseudoIndexRange::new(
+                columns,
+                equal_prefix_len(range),
+                range.low_exclusive,
+                range.high_exclusive,
+            )
+        })
+        .collect();
+    pseudo_row_count_by_index_ranges(
+        &pseudo_ranges,
+        realtime,
+        index.unique.then_some(index.column_offsets.len()),
+    )
+}
+
+/// Go `ranger.Range.PrefixEqualLen`: how many leading columns the range pins
+/// to one concrete, non-NULL value.
+fn equal_prefix_len(range: &IndexRange) -> usize {
+    range
+        .low
+        .iter()
+        .zip(&range.high)
+        .take_while(|(low, high)| low == high && **low != Datum::Null)
+        .count()
+}
+
+/// One index column's bounds as the pseudo formula reads them.
+///
+/// The formula only ever compares the two bounds for equality and classifies
+/// the infinities, so the numeric values exist solely to answer
+/// "low == high"; a missing bound is the corresponding infinity, which is how
+/// a range that pins a PREFIX of the index is spelled.
+fn scalar_range(low: Option<&Datum>, high: Option<&Datum>) -> ScalarRange {
+    let (low_value, low_kind) = pseudo_bound(low, PseudoBoundKind::MinNotNull);
+    let (high_value, high_kind) = pseudo_bound(high, PseudoBoundKind::MaxValue);
+    ScalarRange::new(low_value, high_value, low_kind, high_kind)
+}
+
+/// A bound as a `(numeric, kind)` pair; `absent` is the infinity that side
+/// takes when the range does not reach this column.
+fn pseudo_bound(bound: Option<&Datum>, absent: PseudoBoundKind) -> (f64, PseudoBoundKind) {
+    match bound {
+        None => (
+            if absent == PseudoBoundKind::MaxValue {
+                f64::INFINITY
+            } else {
+                f64::NEG_INFINITY
+            },
+            absent,
+        ),
+        Some(Datum::MinNotNull) => (f64::NEG_INFINITY, PseudoBoundKind::MinNotNull),
+        Some(Datum::MaxValue) => (f64::INFINITY, PseudoBoundKind::MaxValue),
+        Some(Datum::Null) => (0.0, PseudoBoundKind::Null),
+        // The value itself is only ever tested for equality against the other
+        // bound, and two bounds are equal exactly when their datums are, so a
+        // stable per-datum number is all the formula needs.
+        Some(value) => (datum_ordinal(value), PseudoBoundKind::Value),
+    }
+}
+
+/// A stable number for one datum, for the equality test above only.
+fn datum_ordinal(value: &Datum) -> f64 {
+    use std::hash::{Hash, Hasher};
+    match value {
+        Datum::Int(v) => *v as f64,
+        Datum::UInt(v) => *v as f64,
+        Datum::Real(v) => *v,
+        other => {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            format!("{other:?}").hash(&mut hasher);
+            hasher.finish() as f64
+        }
+    }
 }
 
 /// Go `cardinality.Selectivity` for the conjuncts of a single-table `WHERE`,
@@ -502,7 +637,7 @@ pub(crate) fn selectivity(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
 ) -> f64 {
-    let Some(stats) = stats else {
+    let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
         return crate::plan_trace::pseudo_selectivity(predicate);
     };
     let realtime = realtime_row_count(Some(stats));

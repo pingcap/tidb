@@ -227,7 +227,7 @@ const UNSIGNED_FLAG: u32 = 1 << 5;
 fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStatistics {
     let mut columns = std::collections::BTreeMap::new();
     for column in table.cols() {
-        let Some(item) = stats.column(column.id) else {
+        let Some(item) = stats.column(column.id).filter(stats_available) else {
             continue;
         };
         columns.insert(
@@ -243,7 +243,7 @@ fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStat
     }
     let mut indexes = std::collections::BTreeMap::new();
     for index in &table.indices {
-        let Some(item) = stats.index(index.id) else {
+        let Some(item) = stats.index(index.id).filter(stats_available) else {
             continue;
         };
         indexes.insert(
@@ -252,11 +252,26 @@ fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStat
         );
     }
     TableStatistics {
+        // Go `Table.IsInitialized()`: a table whose every histogram is
+        // uninitialized is `HistColl.Pseudo`, even though the `stats_meta`
+        // row that made this function run gives it a real row count.
+        pseudo: columns.is_empty() && indexes.is_empty(),
         row_count: i64::try_from(stats.row_count).unwrap_or(i64::MAX),
         modify_count: stats.modify_count,
         columns,
         indexes,
     }
+}
+
+/// Go `Column.StatsAvailable()` / `IsColumnAnalyzedOrSynthesized`: whether
+/// this histogram was actually collected.
+///
+/// A `stats_histograms` row can exist with `stats_ver = 0` -- an ADD COLUMN
+/// synthesizes one from the default value -- so the version alone is not the
+/// test; Go also accepts a non-zero NDV or null count, which is that
+/// synthesized case.
+fn stats_available(item: &&ClusterStatsItem) -> bool {
+    item.stats_ver > 0 || item.histogram.ndv > 0 || item.histogram.null_count > 0
 }
 
 /// One index histogram, with the two schema facts the estimator needs that
