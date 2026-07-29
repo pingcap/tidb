@@ -66,7 +66,7 @@ use tidb_txnkv::transaction::{
 
 use crate::pessimistic_lock_error::{
     commit_outcome_to_sql_error, is_retryable_statement_failure, lock_failure_to_sql_error,
-    locked_with_conflict_error, transaction_cause_to_sql_error, LockSqlError, ERR_WRITE_CONFLICT,
+    locked_with_conflict_error, transaction_cause_to_sql_error, LockSqlError,
 };
 use crate::real_tikv_dml::{
     plan_configured_write, ConfiguredWriteError, ConfiguredWritePlan, ConfiguredWriteReport,
