@@ -162,7 +162,7 @@ fn table_execution_matches_go_engine() {
     // deletable, so the count is 1, and the later `foreign_key_checks = 0`
     // delete then finds nothing left. Both belong to FOREIGN KEY support,
     // not to multi-table DML.
-    const KNOWN_DIVERGENCES: usize = 60;
+    const KNOWN_DIVERGENCES: usize = 59;
 
     assert!(
         failures.len() <= KNOWN_DIVERGENCES,

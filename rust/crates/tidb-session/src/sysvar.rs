@@ -11565,6 +11565,38 @@ const ALIASES: &[(&str, &str)] = &[
     ("tx_read_only", "transaction_read_only"),
 ];
 
+/// Go `noop.go`: the five registrations whose `Validation` is
+/// `checkReadOnly`. Enabling any of them needs `tidb_enable_noop_functions`,
+/// because the server does not actually make anything read-only; the flag
+/// selects which clause name the 1235 diagnostic uses.
+///
+/// HAND-MAINTAINED for the same reason as the tables above: the registry the
+/// generator reads does not expose `Validation`.
+const READ_ONLY_NOOP_VARS: &[(&str, bool)] = &[
+    ("tx_read_only", false),
+    ("transaction_read_only", false),
+    ("offline_mode", true),
+    ("super_read_only", false),
+    ("read_only", false),
+];
+
+/// The clause name `checkReadOnly` would put in its 1235 diagnostic for
+/// `name`, or `None` when `name` is not one of the read-only no-op
+/// variables.
+#[must_use]
+pub fn read_only_noop_clause(name: &str) -> Option<&'static str> {
+    READ_ONLY_NOOP_VARS
+        .iter()
+        .find(|(candidate, _)| name.eq_ignore_ascii_case(candidate))
+        .map(|&(_, offline_mode)| {
+            if offline_mode {
+                "OFFLINE MODE"
+            } else {
+                "READ ONLY"
+            }
+        })
+}
+
 /// The other spelling of `name`, if it has one.
 #[must_use]
 pub fn alias_of(name: &str) -> Option<&'static str> {

@@ -810,6 +810,7 @@ impl Session {
         };
         // Go stores every system variable as a string.
         let value = value.unwrap_or_default();
+        self.check_read_only_noop(&assignment.name, &value, is_global)?;
         if is_global {
             return self
                 .vars
@@ -2436,6 +2437,66 @@ impl Session {
         Ok(())
     }
 
+    /// Go `SessionVars.NoopFuncsMode`, read from this session's copy of
+    /// `tidb_enable_noop_functions` or -- for a `SET GLOBAL` being validated
+    /// -- from the shared table, which is the scope Go's `checkReadOnly`
+    /// consults through `GlobalVarsAccessor`.
+    fn noop_funcs_mode(&self, global: bool) -> NoopFuncsMode {
+        let value = if global {
+            self.vars.get_global("tidb_enable_noop_functions")
+        } else {
+            self.vars.get_system("tidb_enable_noop_functions")
+        };
+        match value
+            .unwrap_or_else(|_| "OFF".to_owned())
+            .to_ascii_uppercase()
+            .as_str()
+        {
+            "ON" | "1" => NoopFuncsMode::On,
+            "WARN" => NoopFuncsMode::Warn,
+            _ => NoopFuncsMode::Off,
+        }
+    }
+
+    /// Go `varsutil.go:checkReadOnly`, the `Validation` hook on the five
+    /// `noop.go` read-only variables: turning one ON is refused with 1235
+    /// unless `tidb_enable_noop_functions` allows it, because the server does
+    /// not actually stop writes. Turning one OFF is always accepted, and so
+    /// is a value the registry would reject -- that is
+    /// [`vars::SessionSysvars::set_system`]'s job, and Go likewise validates
+    /// the type before it runs this hook.
+    fn check_read_only_noop(
+        &mut self,
+        name: &str,
+        value: &str,
+        is_global: bool,
+    ) -> Result<(), DriverError> {
+        let Some(clause) = sysvar::read_only_noop_clause(name) else {
+            return Ok(());
+        };
+        let normalized = sysvar::get_sys_var(name)
+            .and_then(|def| def.validate(value).ok())
+            .map(|validated| validated.value);
+        if normalized.as_deref() != Some("ON") {
+            return Ok(());
+        }
+        match self.noop_funcs_mode(is_global) {
+            NoopFuncsMode::On => Ok(()),
+            NoopFuncsMode::Off => Err(DriverError::FunctionsNoopImpl(clause)),
+            NoopFuncsMode::Warn => {
+                self.warnings.push(SqlWarning {
+                    level: WarningLevel::Warning,
+                    code: 1235,
+                    message: format!(
+                        "function {clause} has only noop implementation in tidb now, use \
+                         tidb_enable_noop_functions to enable these functions"
+                    ),
+                });
+                Ok(())
+            }
+        }
+    }
+
     /// Go `preprocessor.checkNoopFuncs` + `checkGroupBy`: refuses the clauses
     /// TiDB parses but only implements as no-ops, unless
     /// `tidb_enable_noop_functions` says otherwise.
@@ -2449,17 +2510,7 @@ impl Session {
     /// `ForShareLockEnabledByNoop` statement flag that only a real locking
     /// layer would read.
     fn check_noop_functions(&mut self, query: &tidb_ast::QueryStmt) -> Result<(), DriverError> {
-        let mode = match self
-            .vars
-            .get_system("tidb_enable_noop_functions")
-            .unwrap_or_else(|_| "OFF".to_owned())
-            .to_ascii_uppercase()
-            .as_str()
-        {
-            "ON" | "1" => NoopFuncsMode::On,
-            "WARN" => NoopFuncsMode::Warn,
-            _ => NoopFuncsMode::Off,
-        };
+        let mode = self.noop_funcs_mode(false);
         let mut gated: Vec<&'static str> = Vec::new();
         collect_noop_clauses(query, &mut gated);
         if gated.is_empty() || mode == NoopFuncsMode::On {

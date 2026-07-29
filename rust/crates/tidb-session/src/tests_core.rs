@@ -3055,6 +3055,100 @@ fn noop_function_gate() {
     ));
 }
 
+/// Go `varsutil.go:checkReadOnly`: turning one of `noop.go`'s read-only
+/// variables ON needs `tidb_enable_noop_functions`, because the server does
+/// not actually stop writes.
+///
+/// Captured from TiDB (`testkit`, `pkg/executor`) at the `OFF` default:
+///
+/// ```text
+/// set transaction_read_only = 1  ERR errno=1235 "[variable:1235]function READ ONLY has only
+///                                noop implementation in tidb now, use
+///                                tidb_enable_noop_functions to enable these functions"
+/// set tx_read_only = 1           ERR errno=1235 (same message)
+/// set tidb_enable_noop_functions = warn   OK
+/// set tx_read_only = 1                    OK
+/// select @@tx_read_only, @@transaction_read_only   [[1 1]]
+/// ```
+#[test]
+fn read_only_noop_variables_need_the_noop_gate() {
+    let mut session = Session::new();
+    /// The one row a `SELECT @@...` returns, as text.
+    fn read(session: &mut Session, sql: &str) -> Vec<String> {
+        match session.run(sql).unwrap() {
+            StmtResult::Rows(rows) => rows[0].iter().map(|d| format!("{d:?}")).collect(),
+            other => panic!("expected rows from {sql}, got {other:?}"),
+        }
+    }
+
+    // The default is OFF for both spellings, and neither can be turned ON.
+    assert_eq!(
+        read(
+            &mut session,
+            "SELECT @@tx_read_only, @@transaction_read_only"
+        ),
+        ["Int(0)", "Int(0)"]
+    );
+    for sql in ["SET tx_read_only = 1", "SET transaction_read_only = 1"] {
+        assert!(
+            matches!(
+                session.run(sql),
+                Err(DriverError::FunctionsNoopImpl("READ ONLY"))
+            ),
+            "expected 1235 from {sql}"
+        );
+    }
+    // The refusal leaves the value alone -- including the alias's copy.
+    assert_eq!(
+        read(
+            &mut session,
+            "SELECT @@tx_read_only, @@transaction_read_only"
+        ),
+        ["Int(0)", "Int(0)"]
+    );
+
+    // Turning one OFF is never gated.
+    session.run("SET tx_read_only = 0").unwrap();
+
+    // WARN accepts the value and reports the same message as a warning.
+    session
+        .apply_set("SET tidb_enable_noop_functions = 'WARN'")
+        .unwrap();
+    session.run("SET tx_read_only = 1").unwrap();
+    assert_eq!(session.warnings().len(), 1);
+    assert_eq!(session.warnings()[0].code, 1235);
+    assert!(session.warnings()[0].message.contains("READ ONLY"));
+    assert_eq!(
+        read(
+            &mut session,
+            "SELECT @@tx_read_only, @@transaction_read_only"
+        ),
+        ["Int(1)", "Int(1)"]
+    );
+
+    // ON accepts it silently, and `SET TRANSACTION READ ONLY` -- the same
+    // assignment under another spelling -- goes through the same gate.
+    session
+        .apply_set("SET tidb_enable_noop_functions = 'ON'")
+        .unwrap();
+    session.run("SET TRANSACTION READ WRITE").unwrap();
+    assert_eq!(read(&mut session, "SELECT @@tx_read_only"), ["Int(0)"]);
+    session.run("SET TRANSACTION READ ONLY").unwrap();
+    assert!(session.warnings().is_empty());
+    assert_eq!(read(&mut session, "SELECT @@tx_read_only"), ["Int(1)"]);
+
+    // Back at OFF, `SET TRANSACTION READ ONLY` is refused too: it is one and
+    // the same `tx_read_only = 1`.
+    session.run("SET TRANSACTION READ WRITE").unwrap();
+    session
+        .apply_set("SET tidb_enable_noop_functions = 'OFF'")
+        .unwrap();
+    assert!(matches!(
+        session.run("SET TRANSACTION READ ONLY"),
+        Err(DriverError::FunctionsNoopImpl("READ ONLY"))
+    ));
+}
+
 /// ALTER TABLE MODIFY / CHANGE COLUMN, checked against captured TiDB
 /// output (`alter table t modify column ...` on a mock store).
 ///
