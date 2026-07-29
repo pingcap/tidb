@@ -706,55 +706,44 @@ func (n *JSONTableExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*JSONTableExpr)
-
 	node, ok := n.Expr.Accept(v)
 	if !ok {
 		return n, false
 	}
 	n.Expr = node.(ExprNode)
-
-	acceptHandler := func(h *JSONTableHandler) bool {
-		if h == nil || h.Kind != JSONTableHandlerDefault || h.Default == nil {
-			return true
-		}
-		n, ok := h.Default.Accept(v)
-		if !ok {
-			return false
-		}
-		h.Default = n.(ExprNode)
-		return true
-	}
-	var acceptCols func(cols []*JSONTableColumn) bool
-	acceptCols = func(cols []*JSONTableColumn) bool {
-		for _, col := range cols {
-			if col == nil {
-				continue
-			}
-			if !acceptHandler(col.OnEmpty) || !acceptHandler(col.OnError) {
-				return false
-			}
-			if col.Kind == JSONTableColumnNested {
-				if !acceptCols(col.NestedCols) {
-					return false
-				}
-			}
-		}
-		return true
-	}
-	if !acceptCols(n.Columns) {
-		return n, false
-	}
+		 acceptHandler := func(h *JSONTableHandler) bool {
+                if h == nil || h.Kind != JSONTableHandlerDefault || h.Default == nil {
+                        return true
+                }
+                n, ok := h.Default.Accept(v)
+                if !ok {
+                        return false
+                }
+                h.Default = n.(ExprNode)
+                return true
+        }
+        var acceptCols func(cols []*JSONTableColumn) bool
+        acceptCols = func(cols []*JSONTableColumn) bool {
+                for _, col := range cols {
+                        if col == nil {
+                                continue
+                        }
+                        if !acceptHandler(col.OnEmpty) || !acceptHandler(col.OnError) {
+                                return false
+                        }
+                        if col.Kind == JSONTableColumnNested {
+                                if !acceptCols(col.NestedCols) {
+                                        return false
+                                }
+                        }
+                }
+                return true
+        }
+        if !acceptCols(n.Columns) {
+                return n, false
+        }
 	return v.Leave(n)
 }
-	n = newNode.(*JSONTableExpr)
-	node, ok := n.Expr.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Expr = node.(ExprNode)
-	return v.Leave(n)
-}
-
 // Restore implements Node interface.
 func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 	// Validate AST invariants before emitting any SQL.
@@ -840,7 +829,7 @@ func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 					}
 					ctx.WriteName(col.String())
 				}
-				ctx.WritePlain(")")
+			ctx.WritePlain(")")
 			}
 		}
 	}
