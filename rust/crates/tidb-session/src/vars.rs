@@ -45,6 +45,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use tidb_datatype::Datum;
+
 use crate::sysvar::{alias_of, get_sys_var, ValidationError, SCOPE_GLOBAL, SCOPE_SESSION};
 
 /// The shared GLOBAL-scope value table every session of one
@@ -206,7 +208,11 @@ pub enum VarError {
 #[derive(Clone, Debug, Default)]
 pub struct SessionVars {
     systems: HashMap<String, String>,
-    users: HashMap<String, Option<String>>,
+    /// User variables keep a TYPED value, not text: Go's
+    /// `SessionVars.SetUserVarVal` stores a `types.Datum`, so `SET @i = 5`
+    /// and `SET @s = '5'` are different values afterwards and `@i + 1`
+    /// evaluates as integer arithmetic.
+    users: HashMap<String, Option<Datum>>,
     /// The shared GLOBAL-scope table this session's factory holds. Cloning a
     /// [`GlobalSysvars`] is cheap (one `Arc` bump), so every session shares
     /// the same underlying map.
@@ -377,7 +383,7 @@ impl SessionVars {
     /// Reads a user variable. An unset one is NULL, as in MySQL -- never an
     /// error, unlike a system variable.
     #[must_use]
-    pub fn get_user(&self, name: &str) -> Option<String> {
+    pub fn get_user(&self, name: &str) -> Option<Datum> {
         self.users
             .get(&name.to_ascii_lowercase())
             .cloned()
@@ -385,7 +391,7 @@ impl SessionVars {
     }
 
     /// Sets a user variable; `None` is Go's `UnsetUserVar` for a NULL value.
-    pub fn set_user(&mut self, name: &str, value: Option<String>) {
+    pub fn set_user(&mut self, name: &str, value: Option<Datum>) {
         self.users.insert(name.to_ascii_lowercase(), value);
     }
 
@@ -574,8 +580,8 @@ mod tests {
     fn an_unset_user_variable_is_null_rather_than_an_error() {
         let mut vars = SessionVars::new();
         assert_eq!(vars.get_user("@x"), None);
-        vars.set_user("@x", Some("1".to_owned()));
-        assert_eq!(vars.get_user("@X"), Some("1".to_owned()));
+        vars.set_user("@x", Some(Datum::Int(1)));
+        assert_eq!(vars.get_user("@X"), Some(Datum::Int(1)));
         vars.set_user("@x", None);
         assert_eq!(vars.get_user("@x"), None);
     }

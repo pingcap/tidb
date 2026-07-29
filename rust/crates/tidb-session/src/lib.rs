@@ -386,6 +386,31 @@ fn sysvar_native_expr(name: &str, value: String) -> tidb_ast::Expr {
     }
 }
 
+/// The literal expression a typed value substitutes as, so a user variable
+/// reaching the rewriter keeps the TYPE it was stored with instead of
+/// collapsing to text.
+///
+/// Every arm restores to SQL the rewriter reads back as the same value:
+/// `Datum::Real` goes through `Expr::Float`, whose restore is a float literal,
+/// and a decimal stays a decimal rather than becoming a float. Anything with
+/// no literal form (a temporal, a JSON document, a duration) falls back to its
+/// text, which is what a string-typed operand of that value would have been
+/// anyway.
+fn datum_literal_expr(value: &Datum) -> tidb_ast::Expr {
+    use tidb_ast::Expr;
+    match value {
+        Datum::Null => Expr::Null,
+        Datum::Int(v) => Expr::Int(v.to_string()),
+        Datum::UInt(v) => Expr::Int(v.to_string()),
+        Datum::Real(v) => Expr::Float(*v),
+        Datum::Decimal(d) => Expr::Decimal(d.to_string()),
+        other => match datum_text(other) {
+            Some(text) => Expr::String(text),
+            None => Expr::Null,
+        },
+    }
+}
+
 /// Maps a variable error onto the driver error the wire layer renders.
 fn var_error(error: VarError) -> DriverError {
     DriverError::Var(match error {
@@ -771,7 +796,8 @@ impl Session {
             }
             SessionStmt::SetUserVar(set) => {
                 for assignment in &set.assignments {
-                    let value = self.eval_literal(&assignment.value)?;
+                    let value = self.eval_value(&assignment.value)?;
+                    let value = (!matches!(value, Datum::Null)).then_some(value);
                     self.vars.set_user(&assignment.name, value);
                 }
                 Ok(Some(()))
@@ -959,23 +985,38 @@ impl Session {
     /// evaluator; this evaluates it as a constant expression, which covers the
     /// literals and simple arithmetic a `SET` carries.
     fn eval_literal(&mut self, expr: &tidb_ast::Expr) -> Result<Option<String>, DriverError> {
+        Ok(datum_text(&self.eval_value(expr)?))
+    }
+
+    /// Evaluates a `SET` right-hand side to its TYPED value, which is what a
+    /// user variable stores (Go's `SetUserVarVal` takes a `types.Datum`). A
+    /// system variable keeps only the text, so [`Self::eval_literal`] is this
+    /// plus `datum_text`.
+    ///
+    /// The expression may itself reference variables (`SET @z = @x + 1`), so
+    /// they are bound to their values first -- the same substitution a
+    /// user-facing query gets, for the same reason: the rewriter behind
+    /// `run_select_on` knows literals and columns, not session state.
+    fn eval_value(&mut self, expr: &tidb_ast::Expr) -> Result<Datum, DriverError> {
         // An unquoted identifier is a bare word value such as `SET sql_mode =
-        // ANSI_QUOTES` or `SET autocommit = ON`, which MySQL takes literally.
+        // ANSI_QUOTES` or `SET autocommit = ON`, which MySQL takes literally
+        // (`SET @x = ANSI_QUOTES` stores the string too, confirmed via
+        // `gorun`).
         if let tidb_ast::Expr::Column(path) = expr {
             if let [word] = path.as_slice() {
-                return Ok(Some(word.clone()));
+                return Ok(Datum::new_string(word.clone()));
             }
         }
-        let sql = format!("SELECT {}", expr.restore());
+        let bound = self.bind_variables_in(expr)?;
+        let sql = format!("SELECT {}", bound.restore());
         let ctx = self.statement_context(false);
         let rows =
             self.with_catalog_mut(|catalog| tidb_executor::run_select_on(&sql, catalog, &ctx))?;
-        let value = rows
+        Ok(rows
             .first()
             .and_then(|row| row.first())
             .cloned()
-            .unwrap_or(Datum::Null);
-        Ok(datum_text(&value))
+            .unwrap_or(Datum::Null))
     }
 
     /// Replaces every variable reference in `sql` with the session's value,
@@ -1042,8 +1083,11 @@ impl Session {
                     Err(error) => return Err(var_error(error)),
                 }
             }
+            // A user variable substitutes as a TYPED literal, so `SET @i = 5`
+            // followed by `@i + 1` is integer arithmetic as in Go, not the
+            // string `'5'`. An unset (or NULL-valued) variable is `NULL`.
             Expr::UserVar(name) => match self.vars.get_user(name) {
-                Some(value) => Expr::String(value),
+                Some(value) => datum_literal_expr(&value),
                 None => Expr::Null,
             },
             Expr::Paren(inner) => Expr::Paren(Box::new(self.bind_variables_in(inner)?)),
@@ -2816,6 +2860,8 @@ mod tests_statement_rollback;
 mod tests_subquery;
 #[cfg(test)]
 mod tests_support;
+#[cfg(test)]
+mod tests_user_vars;
 #[cfg(test)]
 mod tests_views;
 #[cfg(test)]

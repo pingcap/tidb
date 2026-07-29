@@ -167,7 +167,12 @@ fn table_execution_matches_go_engine() {
     // transaction (Go's `Txn(true)` in `executeSavepoint`) instead of being a
     // no-op, which was the whole `savepoint_autocommit` topic -- a seam
     // between two landed features, not missing work.
-    const KNOWN_DIVERGENCES: usize = 31;
+    //
+    // 31 -> 28: user variables now store a TYPED value (Go's
+    // `SetUserVarVal` keeps a `types.Datum`) and a `SET` right-hand side has
+    // its own variable references bound before evaluation, so `@x + 1` is
+    // integer arithmetic and `SET @z = @x + 1` runs at all.
+    const KNOWN_DIVERGENCES: usize = 28;
 
     assert!(
         failures.len() <= KNOWN_DIVERGENCES,
