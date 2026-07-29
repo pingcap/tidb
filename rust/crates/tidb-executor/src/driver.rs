@@ -933,7 +933,7 @@ pub(crate) fn run_select_traced(
     };
 
     // Resolve FROM: none -> table-dual; otherwise the (possibly joined) tables.
-    let (mut from_source, scope): (Option<Box<dyn Executor>>, FromScope) = match &select.from {
+    let (mut from_source, mut scope): (Option<Box<dyn Executor>>, FromScope) = match &select.from {
         None => {
             if let Some(trace) = trace.as_deref_mut() {
                 trace.table_dual();
@@ -1073,6 +1073,26 @@ pub(crate) fn run_select_traced(
                 ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
                 rows,
             )));
+        }
+    }
+
+    // Column pruning: over a single base-table scan the fast paths left
+    // alone, narrow the scan -- and with it the scope -- to the columns the
+    // statement actually reads (Go's `rule_column_pruning.go`).
+    //
+    // This runs BEFORE any expression is built, which is the whole point:
+    // every offset below is resolved against the narrowed scope from the
+    // start, so no already-built index has to be renumbered. It also runs
+    // before the predicate push-down further down, so a pushed conjunct's
+    // `column_offset` is already in narrow space -- and the kept set contains
+    // the `WHERE`'s columns because the gate collected them.
+    if !source_replaced {
+        if let Some(source) = from_source.as_mut() {
+            if let Some(keep) = crate::column_prune::prunable_columns(select, &scope) {
+                if keep.len() < scope.width() && source.accept_column_prune(&keep) {
+                    scope = crate::column_prune::pruned_scope(&scope, &keep);
+                }
+            }
         }
     }
 

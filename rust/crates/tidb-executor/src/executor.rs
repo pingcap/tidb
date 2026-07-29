@@ -114,6 +114,23 @@ pub trait Executor {
     fn scanned_rows_counter(&self) -> Option<std::rc::Rc<std::cell::Cell<u64>>> {
         None
     }
+
+    /// Offers this source the chance to emit only the columns at `keep`
+    /// (offsets into its current output row, ascending and unique), as Go's
+    /// column pruning narrows a `DataSource`'s schema.
+    ///
+    /// Returning `true` is a promise the driver relies on to renumber the
+    /// `FROM` scope: from the next `open` on, every row this source emits
+    /// must be exactly `keep.len()` wide and hold `keep`'s columns in
+    /// `keep`'s order, and [`Executor::schema`] must already describe that
+    /// narrow row. A source that cannot promise it leaves the default
+    /// `false` and the driver keeps the full-width scope unchanged.
+    ///
+    /// See [`crate::column_prune`] for the eligibility gate and the reasoning.
+    fn accept_column_prune(&mut self, keep: &[usize]) -> bool {
+        let _ = keep;
+        false
+    }
 }
 
 /// Go `exec.executorMeta`: the schema/id/children/result-type base state shared

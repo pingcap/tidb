@@ -33,6 +33,7 @@
 pub mod apply;
 mod approx_count_distinct;
 pub mod cluster_storage;
+pub(crate) mod column_prune;
 pub mod ddl;
 pub mod driver;
 pub mod executor;

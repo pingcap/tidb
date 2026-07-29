@@ -52,6 +52,46 @@ use tidb_tablecodec::{
 };
 use tidb_txnkv::Key;
 
+thread_local! {
+    /// The column ids the row codec has been asked for while a
+    /// [`capture_decoded_column_ids`] call is on this thread's stack.
+    static DECODE_PROBE: std::cell::RefCell<Option<std::collections::BTreeSet<i64>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` while recording every column id a table scan asks the row codec
+/// to decode, and returns that set alongside `f`'s value.
+///
+/// This is the instrument that makes column pruning *checkable* rather than
+/// merely plausible: the set is the exact `columns` map handed to
+/// `tidb_tablecodec::decode_table_row_to_map`, which decodes an id if and
+/// only if the map holds it. A column absent from the set was never read out
+/// of the stored row bytes.
+///
+/// Capture is per-thread and does not nest: an inner call takes the recorded
+/// set with it and leaves the outer one empty.
+pub fn capture_decoded_column_ids<R>(
+    f: impl FnOnce() -> R,
+) -> (R, std::collections::BTreeSet<i64>) {
+    DECODE_PROBE.with(|probe| {
+        *probe.borrow_mut() = Some(std::collections::BTreeSet::new());
+    });
+    let value = f();
+    let ids = DECODE_PROBE
+        .with(|probe| probe.borrow_mut().take())
+        .unwrap_or_default();
+    (value, ids)
+}
+
+/// Records the ids one decode round asked for, when a capture is active.
+fn note_decoded_column_ids(ids: impl Iterator<Item = i64>) {
+    DECODE_PROBE.with(|probe| {
+        if let Some(recorded) = probe.borrow_mut().as_mut() {
+            recorded.extend(ids);
+        }
+    });
+}
+
 /// Go `kv.Handle`: the row identifier a record key encodes.
 ///
 /// An integer handle comes from a single-column integer primary key (or the
@@ -881,12 +921,34 @@ impl KvTable {
     pub fn scan_rows_with_handles(
         &mut self,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
+        let all: Vec<usize> = (0..self.columns.len()).collect();
+        self.scan_rows_with_handles_projected(&all)
+    }
+
+    /// [`KvTable::scan_rows_with_handles`] narrowed to the columns at `keep`
+    /// (offsets into [`KvTable::columns`], ascending and unique): the row
+    /// codec is asked for **only** those columns' ids, and each returned row
+    /// holds exactly them, in `keep`'s order.
+    ///
+    /// The handle columns are still filled from the record key before the
+    /// projection, so a kept handle column reads its real value and a dropped
+    /// one is discarded rather than left holding a substitute. That is the
+    /// point of projecting last: a column that is not kept never survives
+    /// long enough to be mistaken for a decoded value.
+    pub fn scan_rows_with_handles_projected(
+        &mut self,
+        keep: &[usize],
+    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
         let (low, high) = get_table_handle_key_range(self.table_id);
+        let kept: std::collections::BTreeSet<usize> = keep.iter().copied().collect();
         let column_types: BTreeMap<i64, FieldType> = self
             .columns
             .iter()
-            .map(|c| (c.id, c.field_type.clone()))
+            .enumerate()
+            .filter(|(offset, _)| kept.contains(offset))
+            .map(|(_, c)| (c.id, c.field_type.clone()))
             .collect();
+        note_decoded_column_ids(column_types.keys().copied());
         // `get_table_handle_key_range` returns an inclusive upper bound, while
         // the iterator's is exclusive, so the scan runs to the key just past it.
         let mut upper = high;
@@ -913,7 +975,11 @@ impl KvTable {
                 })
                 .collect();
             self.fill_handle_columns(&mut row, &handle)?;
-            rows.push((handle, row));
+            let projected: Vec<Datum> = keep
+                .iter()
+                .map(|offset| std::mem::replace(&mut row[*offset], Datum::Null))
+                .collect();
+            rows.push((handle, projected));
             iterator
                 .next()
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -1367,6 +1433,9 @@ pub struct TableScanExec {
     emitted: bool,
     /// Conjuncts this scan took over from the `Selection` above it.
     filter: Option<crate::scan_pushdown::ScanFilterProbe>,
+    /// The table-column offsets this scan emits, in output order. Every
+    /// column of the table until the driver prunes it.
+    keep: Vec<usize>,
     /// Rows this scan read before filtering -- what Go's `TableFullScan`
     /// reports as `actRows`, which a filter above it must not change.
     scanned: std::rc::Rc<std::cell::Cell<u64>>,
@@ -1376,11 +1445,13 @@ impl TableScanExec {
     /// Builds a scan over `table`.
     #[must_use]
     pub fn new(meta: ExecutorMeta, table: KvTable) -> Self {
+        let keep = (0..table.columns.len()).collect();
         TableScanExec {
             meta,
             table,
             emitted: false,
             filter: None,
+            keep,
             scanned: std::rc::Rc::new(std::cell::Cell::new(0)),
         }
     }
@@ -1405,7 +1476,8 @@ impl Executor for TableScanExec {
         }
         let rows = self
             .table
-            .scan_rows()
+            .scan_rows_with_handles_projected(&self.keep)
+            .map(|rows| rows.into_iter().map(|(_, row)| row).collect::<Vec<_>>())
             .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
         self.scanned.set(rows.len() as u64);
         for row in &rows {
@@ -1461,6 +1533,49 @@ impl Executor for TableScanExec {
 
     fn scanned_rows_counter(&self) -> Option<std::rc::Rc<std::cell::Cell<u64>>> {
         Some(self.scanned_rows())
+    }
+
+    /// The scan narrows both what it decodes and what it emits, so the
+    /// promise `accept_column_prune` makes holds for every row.
+    ///
+    /// Refused once a filter has been accepted: the filter's offsets were
+    /// computed against the width the scan had when it took them, and
+    /// renumbering underneath it would silently retarget the comparison. The
+    /// driver only ever prunes first, so this guard never fires in practice.
+    fn accept_column_prune(&mut self, keep: &[usize]) -> bool {
+        if self.filter.is_some() || keep.is_empty() {
+            return false;
+        }
+        if !keep.windows(2).all(|pair| pair[0] < pair[1]) {
+            return false;
+        }
+        if keep.last().is_some_and(|last| *last >= self.keep.len()) {
+            return false;
+        }
+        let columns: Vec<tidb_expr::column::Column> = keep
+            .iter()
+            .enumerate()
+            .map(|(index, offset)| {
+                let mut column = self.meta.schema().columns[*offset].clone();
+                column.index = index as i64;
+                // The driver's scope resolver hands expressions the unique id
+                // `index + 1`, so the schema must renumber with it or the two
+                // would disagree about which column is which.
+                column.id = index as i64 + 1;
+                column
+            })
+            .collect();
+        self.meta = ExecutorMeta::new(
+            Schema::new(columns),
+            self.meta.id(),
+            self.meta.init_cap(),
+            self.meta.max_chunk_size(),
+        );
+        // `keep` indexes the CURRENT output, which a previous prune may
+        // already have narrowed, so the table offsets compose rather than
+        // replace.
+        self.keep = keep.iter().map(|offset| self.keep[*offset]).collect();
+        true
     }
 
     fn max_chunk_size(&self) -> usize {

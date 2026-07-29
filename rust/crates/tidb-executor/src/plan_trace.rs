@@ -672,6 +672,10 @@ impl Executor for CountExec {
     fn scanned_rows_counter(&self) -> Option<Rc<Cell<u64>>> {
         self.child.scanned_rows_counter()
     }
+
+    fn accept_column_prune(&mut self, keep: &[usize]) -> bool {
+        self.child.accept_column_prune(keep)
+    }
 }
 
 fn handle_text(handle: &TableHandle) -> String {

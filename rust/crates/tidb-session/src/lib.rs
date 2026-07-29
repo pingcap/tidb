@@ -2034,6 +2034,8 @@ mod tests_charset;
 #[cfg(test)]
 mod tests_collation;
 #[cfg(test)]
+mod tests_column_prune;
+#[cfg(test)]
 mod tests_core;
 #[cfg(test)]
 mod tests_explain;
