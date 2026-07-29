@@ -888,24 +888,6 @@ func isFullIndexMatch(candidate *candidatePath) bool {
 	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
-// hasV0NewCollationStringHandle reports whether ds has CommonHandleVersion == 0
-// with new collation enabled and at least one non-binary string column in the
-// handle. In this combination the handle bytes stored in the index are collation
-// sortKey weights, not original values, so collation-aware comparison on those
-// bytes during merge-sort would be incorrect.
-func hasV0NewCollationStringHandle(ds *logicalop.DataSource) bool {
-	if ds.TableInfo.CommonHandleVersion != 0 || !collate.NewCollationEnabled() {
-		return false
-	}
-	for _, col := range ds.CommonHandleCols {
-		if col != nil && col.RetType.EvalType() == types.ETString &&
-			!mysql.HasBinaryFlag(col.RetType.GetFlag()) {
-			return true
-		}
-	}
-	return false
-}
-
 func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
 	// This function may set the two fields below for the PropMatchedNeedMergeSort case, so we reset them here to
 	// avoid leaving the AccessPath with an inconsistent state when there are multiple calls to matchProperty with
@@ -963,8 +945,9 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	idxColLens := path.IdxColLens
 	if path.Index != nil && !path.Index.Unique && !path.Index.Primary &&
 		ds.TableInfo.IsCommonHandle && len(ds.CommonHandleCols) > 0 &&
+		len(ds.CommonHandleLens) == len(ds.CommonHandleCols) &&
 		len(path.Index.Columns) == len(path.IdxCols) &&
-		!hasV0NewCollationStringHandle(ds) {
+		!ds.HasV0NewCollationStringHandle() {
 		extended := false
 		for i, handleCol := range ds.CommonHandleCols {
 			if handleCol == nil {
@@ -2767,7 +2750,7 @@ func (is *PhysicalIndexScan) getScanRowSize() float64 {
 //	PhysicalIndexScan.IdxCols       []*expression.Column
 //	PhysicalIndexScan.Columns       []*model.ColumnInfo
 func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
-	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.Index.Columns)+1)
+	indexCols := make([]*expression.Column, len(is.IdxCols), max(len(is.IdxCols), len(is.Index.Columns))+1)
 	copy(indexCols, is.IdxCols)
 
 	for i := len(is.IdxCols); i < len(is.Index.Columns); i++ {
@@ -2784,7 +2767,8 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 	}
 	is.NeedCommonHandle = is.Table.IsCommonHandle
 
-	if is.NeedCommonHandle {
+	// The common-handle suffix may already be present in IdxCols.
+	if is.NeedCommonHandle && len(is.IdxCols) <= len(is.Index.Columns) {
 		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
 			indexCols = append(indexCols, idxExprCols[i])
 		}

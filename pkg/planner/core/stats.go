@@ -180,25 +180,19 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
 		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
-		handleCol := ds.GetPKIsHandleCol()
-		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
-			alreadyHandle := false
-			for _, col := range path.IdxCols {
-				if col.ID == model.ExtraHandleID || col.EqualColumn(handleCol) {
-					alreadyHandle = true
-				}
-			}
-			// Don't add one column twice to the index. May cause unexpected errors.
-			if !alreadyHandle {
-				path.FullIdxCols = append(path.FullIdxCols, handleCol)
-				path.FullIdxColLens = append(path.FullIdxColLens, types.UnspecifiedLength)
-				path.IdxCols = append(path.IdxCols, handleCol)
-				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
-				// Also updates the map that maps the index id to its prefix column ids.
-				if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
-					ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] = append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], handleCol.UniqueID)
-				}
+	// Append the clustered-handle columns TiKV stores in a non-unique secondary index's
+	// key so ranger can turn predicates on them into scan ranges. The same layout is used
+	// by index pruning via ds.HandleColsToAppend (see rule_prune_indexes.go).
+	if appendCols, appendLens := ds.HandleColsToAppend(path, path.IdxCols); len(appendCols) > 0 {
+		path.FullIdxCols = append(path.FullIdxCols, appendCols...)
+		path.FullIdxColLens = append(path.FullIdxColLens, appendLens...)
+		path.IdxCols = append(path.IdxCols, appendCols...)
+		path.IdxColLens = append(path.IdxColLens, appendLens...)
+		// Also updates the map that maps the index id to its prefix column ids.
+		if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
+			for _, col := range appendCols {
+				ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] =
+					append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], col.UniqueID)
 			}
 		}
 	}
@@ -449,7 +443,7 @@ func getGroupNDVs(ds *logicalop.DataSource, colGroups [][]*expression.Column) []
 		if colsLen < len(idx.Info.Columns) {
 			return false
 		} else if colsLen > len(idx.Info.Columns) {
-			colsLen--
+			colsLen = len(idx.Info.Columns)
 		}
 		idxCols := make([]int64, colsLen)
 		copy(idxCols, tbl.Idx2ColUniqueIDs[idxID])
