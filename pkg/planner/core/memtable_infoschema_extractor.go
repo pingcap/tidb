@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
@@ -762,7 +761,6 @@ func findSchemasForTables(
 	schemaSlice := make([]ast.CIStr, 0, len(tableSlice))
 	for i, tbl := range tableSlice {
 		dbInfo, ok := is.SchemaByID(tbl.DBID)
-		intest.Assert(ok)
 		if !ok {
 			logutil.BgLogger().Warn("schema not found for table info",
 				zap.Int64("tableID", tbl.ID), zap.Int64("dbID", tbl.DBID))
