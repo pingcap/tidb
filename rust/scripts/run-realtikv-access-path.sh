@@ -8,16 +8,40 @@
 # nodes read the same cluster, so the tables, the rows and the statistics are
 # literally the same bytes; the only variable is the planner.
 #
-# Six cases, each chosen because it can distinguish two planners:
+# The cases, each chosen because it can distinguish two planners. The first
+# five are about COSTING; the four after them are about PRUNING -- Go's
+# `skylinePruning` drops a candidate before the cost formula sees it, and a
+# planner that only costs cannot reproduce that.
 #
 #   1. a filter on a LEADING index column                     -- the easy case;
 #   2. a filter where the SECOND-declared index is far more selective than the
-#      first -- the case a "first index that fits" rule gets wrong, and the
-#      headline receipt for this unit;
+#      first -- the case a "first index that fits" rule gets wrong;
 #   3. a filter selective enough to prefer an index over a full scan;
 #   4. a filter broad enough to prefer the full scan;
 #   5. a COVERING index, where there is no double read to pay for;
-#   6. every one of the above BEFORE and AFTER `ANALYZE TABLE`, so the
+#
+#   6. STRICT SUPERSET of access columns: `bucket = 1 AND rare = 7` ranges
+#      idx_bucket(bucket), idx_rare(rare) AND idx_cover(bucket, rare). Every
+#      one of them estimates the same handful of rows, so COST CANNOT SEPARATE
+#      THEM -- and cost alone in fact picks idx_rare, whose smaller index row
+#      makes it the cheapest. Go picks idx_cover because its access conditions
+#      strictly contain the others'. This is simultaneously the "one path's
+#      access columns strictly contain another's" case and the "the pruned
+#      candidate would have won on cost" case, which is why it is the headline
+#      receipt for this unit.
+#   7. COVERING vs NON-COVERING with IDENTICAL access conditions:
+#      `SELECT bucket, rare FROM t WHERE bucket = 1` ranges idx_bucket and
+#      idx_cover on the same single column, so `accessResult` is 0 and only
+#      `compareIndexBack` can separate them -- idx_cover needs no row lookup.
+#   8. NO candidate dominates: `SELECT * FROM u WHERE a = 1 AND b = 2` over
+#      idx_a(a) and idx_b(b). The access-column sets are the SAME SIZE and
+#      DIFFERENT, which is exactly Go's "not comparable", so both survive
+#      pruning and the cost formula makes the call.
+#   9. an EMPTY range: `bucket = 1 AND bucket = 2` is contradictory, and Go
+#      returns that one candidate alone rather than letting a full scan
+#      survive beside it.
+#
+#  10. every one of the above BEFORE and AFTER `ANALYZE TABLE`, so the
 #      pseudo -> real transition is visible on both nodes at once.
 #
 # estRows is compared with a tolerance, and every case where the two nodes
@@ -157,9 +181,22 @@ CREATE TABLE t (
   KEY idx_rare (rare),
   KEY idx_cover (bucket, rare)
 );
+-- The second table exists for ONE pruning case: two single-column indexes on
+-- DIFFERENT columns. Their access-column sets are the same size and neither
+-- contains the other, which is exactly the "not comparable" answer from
+-- `util.CompareCol2Len` -- so nothing is pruned and cost decides. `t` cannot
+-- express that, because idx_cover contains every other index's columns.
+CREATE TABLE u (
+  id BIGINT PRIMARY KEY,
+  a BIGINT NOT NULL,
+  b BIGINT NOT NULL,
+  payload VARCHAR(64) NOT NULL,
+  KEY idx_a (a),
+  KEY idx_b (b)
+);
 SQL
 
-echo "seeding 2000 rows"
+echo "seeding 2000 rows into each table"
 {
   echo "USE pathdiff;"
   echo "INSERT INTO t VALUES"
@@ -170,11 +207,24 @@ echo "seeding 2000 rows"
     [[ "${i}" -eq 2000 ]] && sep=";"
     echo "(${i}, ${bucket}, ${rare}, 'p${i}')${sep}"
   done
+  # `a` takes 8 values and `b` takes 500, so once the histograms exist the two
+  # incomparable candidates are far apart on cost and the case is decisive
+  # rather than a tie-break.
+  echo "INSERT INTO u VALUES"
+  for i in $(seq 1 2000); do
+    a=$((i % 8))
+    b=$((i % 500))
+    sep=","
+    [[ "${i}" -eq 2000 ]] && sep=";"
+    echo "(${i}, ${a}, ${b}, 'q${i}')${sep}"
+  done
 } >"${WORK_DIR}/seed.sql"
 go_sql <"${WORK_DIR}/seed.sql"
 
-seeded=$(go_sql -Nse "SELECT COUNT(*) FROM pathdiff.t")
-[[ "${seeded}" == 2000 ]] || { echo "the fixture did not seed 2000 rows, got ${seeded}" >&2; exit 1; }
+for fixture in t u; do
+  seeded=$(go_sql -Nse "SELECT COUNT(*) FROM pathdiff.${fixture}")
+  [[ "${seeded}" == 2000 ]] || { echo "pathdiff.${fixture} did not seed 2000 rows, got ${seeded}" >&2; exit 1; }
+done
 
 echo "building the Rust node"
 cargo build --manifest-path "${RUST_ROOT}/Cargo.toml" -p tidb-server --bin tidb-server
@@ -197,11 +247,11 @@ grep -F '"event":"cluster_session_node_ready"' "${RUST_LOG_FILE}" >/dev/null \
 # SCAN row -- the operator that names the path -- which both do print.
 go_path() {
   go_sql -Nse "USE pathdiff; EXPLAIN $1" \
-    | awk -F '\t' 'match($1, /Batch_Point_Get|Point_Get|TableFullScan|IndexRangeScan|IndexFullScan|TableRangeScan/) { print substr($1, RSTART, RLENGTH); exit }'
+    | awk -F '\t' 'match($1, /TableDual|Batch_Point_Get|Point_Get|TableFullScan|IndexRangeScan|IndexFullScan|TableRangeScan/) { print substr($1, RSTART, RLENGTH); exit }'
 }
 go_est() {
   go_sql -Nse "USE pathdiff; EXPLAIN $1" \
-    | awk -F '\t' '$1 ~ /(TableFullScan|IndexRangeScan|IndexFullScan|TableRangeScan|Point_Get|Batch_Point_Get)/ { print $2; exit }'
+    | awk -F '\t' '$1 ~ /(TableDual|TableFullScan|IndexRangeScan|IndexFullScan|TableRangeScan|Point_Get|Batch_Point_Get)/ { print $2; exit }'
 }
 go_index() {
   go_sql -Nse "USE pathdiff; EXPLAIN $1" \
@@ -209,11 +259,11 @@ go_index() {
 }
 rust_path() {
   rust_sql -Nse "USE pathdiff; EXPLAIN $1" \
-    | awk -F '\t' 'match($1, /Batch_Point_Get|Point_Get|TableFullScan|IndexRangeScan|IndexFullScan|TableRangeScan/) { print substr($1, RSTART, RLENGTH); exit }'
+    | awk -F '\t' 'match($1, /TableDual|Batch_Point_Get|Point_Get|TableFullScan|IndexRangeScan|IndexFullScan|TableRangeScan/) { print substr($1, RSTART, RLENGTH); exit }'
 }
 rust_est() {
   rust_sql -Nse "USE pathdiff; EXPLAIN $1" \
-    | awk -F '\t' '$1 ~ /(TableFullScan|IndexRangeScan|IndexFullScan|TableRangeScan|Point_Get|Batch_Point_Get)/ { print $2; exit }'
+    | awk -F '\t' '$1 ~ /(TableDual|TableFullScan|IndexRangeScan|IndexFullScan|TableRangeScan|Point_Get|Batch_Point_Get)/ { print $2; exit }'
 }
 rust_index() {
   rust_sql -Nse "USE pathdiff; EXPLAIN $1" \
@@ -228,17 +278,10 @@ rust_index() {
 # because two different paths legitimately estimate different row counts.
 EST_TOLERANCE=${ACCESS_PATH_EST_TOLERANCE:-0.05}
 
-# The ONE divergence this unit ships with, named so that a NEW one cannot hide
-# behind it. Go prunes `idx_rare` before costing anything, because
-# `idx_cover`'s access conditions are a strict superset of it
-# (`skylinePruning` / `compareCandidates`, `find_best_task.go`); costing every
-# candidate cannot reproduce that, and both paths estimate the same one row,
-# so the cost formula has nothing to separate them by. See
-# `tidb_executor::access_cost`'s module doc. It appears only with real
-# statistics -- under pseudo statistics the two paths estimate differently and
-# the cost model picks Go's.
-KNOWN_FINDING="second index far more selective than the first"
-KNOWN_FINDINGS_SEEN=0
+# There is no known-divergence escape hatch here any more. The one this
+# differential used to carry -- Go picking idx_cover where costing alone picked
+# idx_rare -- is what `tidb_executor::skyline` now reproduces, so every case
+# below must MATCH, and a divergence is a failure.
 
 compare() {
   local label=$1 query=$2
@@ -261,13 +304,8 @@ compare() {
     divergence="same operator, DIFFERENT index (${gi} vs ${ri})"
   fi
   if [[ -n "${divergence}" ]]; then
-    if [[ "${label}" == "${KNOWN_FINDING}" ]]; then
-      echo "      KNOWN FINDING (skyline pruning, documented): ${divergence}"
-      KNOWN_FINDINGS_SEEN=$((KNOWN_FINDINGS_SEEN + 1))
-    else
-      echo "      FINDING: ${divergence}" >&2
-      DIFFERENT_PATHS=$((DIFFERENT_PATHS + 1))
-    fi
+    echo "      FINDING: ${divergence}" >&2
+    DIFFERENT_PATHS=$((DIFFERENT_PATHS + 1))
     return
   fi
   check "${label}: same path, and estRows within ${EST_TOLERANCE}" \
@@ -280,15 +318,28 @@ Q_SECOND="SELECT * FROM t WHERE bucket = 1 AND rare = 7"
 Q_SELECTIVE="SELECT * FROM t WHERE rare = 7"
 Q_BROAD="SELECT * FROM t WHERE rare > 0"
 Q_COVERING="SELECT bucket, rare FROM t WHERE bucket = 1"
+# The pruning cases. Q_SECOND above is one of them too -- it is both the
+# strict-superset case and the "the pruned candidate would have won on cost"
+# case -- so it is not repeated here.
+Q_SUPERSET_RANGE="SELECT * FROM t WHERE bucket = 1 AND rare > 1990"
+Q_INCOMPARABLE="SELECT * FROM u WHERE a = 1 AND b = 2"
+Q_EMPTY_RANGE="SELECT * FROM t WHERE bucket = 1 AND bucket = 2"
+
+# Every case, in one list, so the two phases below cannot drift apart.
+CASES=(
+  "leading index column|${Q_LEADING}"
+  "strict superset of access columns, and cost alone would pick the other|${Q_SECOND}"
+  "selective enough for an index|${Q_SELECTIVE}"
+  "broad enough for the full scan|${Q_BROAD}"
+  "covering beats non-covering on identical access conditions|${Q_COVERING}"
+  "strict superset where the extra column is a RANGE, not an equality|${Q_SUPERSET_RANGE}"
+  "no candidate dominates, so cost decides|${Q_INCOMPARABLE}"
+  "a contradictory filter leaves one candidate|${Q_EMPTY_RANGE}"
+)
 
 echo
 echo "==================== BEFORE ANALYZE (pseudo statistics) ===================="
-for pair in \
-  "leading index column|${Q_LEADING}" \
-  "second index far more selective than the first|${Q_SECOND}" \
-  "selective enough for an index|${Q_SELECTIVE}" \
-  "broad enough for the full scan|${Q_BROAD}" \
-  "covering index|${Q_COVERING}"; do
+for pair in "${CASES[@]}"; do
   compare "${pair%%|*}" "${pair#*|}"
 done
 
@@ -303,39 +354,38 @@ check "before ANALYZE both nodes print stats:pseudo (go=${go_pseudo} rust=${rust
 echo
 echo "==================== ANALYZE, on the GO node ===================="
 go_sql -e "ANALYZE TABLE pathdiff.t"
+go_sql -e "ANALYZE TABLE pathdiff.u"
 # The Go server loads a histogram lazily; a synchronous-load query on each
 # compared column is what makes its own EXPLAIN read the statistics rather
 # than the absence of them.
 for _ in $(seq 1 30); do
   go_sql -Nse "SET SESSION tidb_stats_load_sync_wait = 10000;
                USE pathdiff;
-               SELECT COUNT(*) FROM t WHERE bucket = 1 OR rare = 7" >/dev/null 2>&1 || true
-  loaded=$(go_sql -Nse "SHOW STATS_BUCKETS WHERE db_name='pathdiff' AND table_name='t' AND column_name='rare' AND is_index=0" | wc -l | tr -d ' ')
-  [[ "${loaded}" -gt 0 ]] && break
+               SELECT COUNT(*) FROM t WHERE bucket = 1 OR rare = 7;
+               SELECT COUNT(*) FROM u WHERE a = 1 OR b = 2" >/dev/null 2>&1 || true
+  loaded=$(go_sql -Nse "SHOW STATS_BUCKETS WHERE db_name='pathdiff' AND table_name IN ('t','u') AND column_name IN ('rare','b') AND is_index=0" | wc -l | tr -d ' ')
+  [[ "${loaded}" -ge 2 ]] && break
   sleep 1
 done
 
 # The Rust node re-reads mysql.stats_* on its own ticker (there is no etcd
 # notification for a stats change; see `tidb_exec::stats_watch`), so it has to
-# be given a tick or two before its planner can see the ANALYZE.
+# be given a tick or two before its planner can see the ANALYZE. Both tables
+# are waited on: pruning compares candidates within ONE table, but a case that
+# read `u` under pseudo statistics while `t` was analyzed would be measuring
+# the reload race instead of the planner.
 echo "waiting for the Rust node's stats reload to pick the ANALYZE up"
 for _ in $(seq 1 60); do
-  if rust_sql -Nse "USE pathdiff; EXPLAIN ${Q_BROAD}" | grep -qv "stats:pseudo"; then
-    if ! rust_sql -Nse "USE pathdiff; EXPLAIN ${Q_BROAD}" | grep -q "stats:pseudo"; then
-      break
-    fi
+  if ! rust_sql -Nse "USE pathdiff; EXPLAIN ${Q_BROAD}" | grep -q "stats:pseudo" \
+    && ! rust_sql -Nse "USE pathdiff; EXPLAIN ${Q_INCOMPARABLE}" | grep -q "stats:pseudo"; then
+    break
   fi
   sleep 2
 done
 
 echo
 echo "==================== AFTER ANALYZE (real statistics) ===================="
-for pair in \
-  "leading index column|${Q_LEADING}" \
-  "second index far more selective than the first|${Q_SECOND}" \
-  "selective enough for an index|${Q_SELECTIVE}" \
-  "broad enough for the full scan|${Q_BROAD}" \
-  "covering index|${Q_COVERING}"; do
+for pair in "${CASES[@]}"; do
   compare "${pair%%|*}" "${pair#*|}"
 done
 
@@ -347,7 +397,7 @@ check "after ANALYZE neither node prints stats:pseudo (go=${go_pseudo} rust=${ru
 
 echo
 echo "=== the two planners' full plans, side by side, after ANALYZE ==="
-for query in "${Q_SECOND}" "${Q_BROAD}"; do
+for query in "${Q_SECOND}" "${Q_BROAD}" "${Q_INCOMPARABLE}"; do
   echo
   echo "  ${query}"
   echo "  --- GO"
@@ -372,12 +422,21 @@ cat <<'NOTE'
   * The exact cost numbers. Go does not print them without
     `EXPLAIN FORMAT='verbose'`/`true_card_cost`, and a cost is only ever a
     means to a choice -- the choice and the estRows are what is compared.
+  * The pruning dimensions this tier holds at zero: the required physical
+    property (`matchProperty`), global-index preference, and the RISK RATIO
+    (`compareRiskRatio` over `MaxCountAfterAccess`). The first two are exact
+    for the call this tier makes; the risk ratio is a real exclusion that can
+    prune a candidate Go keeps, and `tidb_executor::skyline`'s module doc
+    states its direction. No case below can catch it, because this rewrite
+    does not compute the risk estimate that would make it fire.
+  * A covering index with NO access conditions. Go keeps it
+    (`keepIndex := ... || path.IsSingleScan`) and it then prunes the table
+    path, so `SELECT bucket FROM t` is an `IndexFullScan` there and a
+    `TableFullScan` here. That is an ENUMERATION gap, named in
+    `tidb_executor::access_cost`, not a pruning one.
 NOTE
 
 echo
-if [[ "${KNOWN_FINDINGS_SEEN}" -gt 0 ]]; then
-  echo "${KNOWN_FINDINGS_SEEN} KNOWN divergence(s), the documented skyline-pruning gap"
-fi
 if [[ "${DIFFERENT_PATHS}" -gt 0 ]]; then
   echo "${DIFFERENT_PATHS} NEW case(s) where the two planners chose differently -- see the FINDING lines above" >&2
 fi
