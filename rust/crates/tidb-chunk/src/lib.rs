@@ -19,8 +19,8 @@
 //! storage (fixed-length int/real + variable-length string/bytes + the
 //! `getFixedLen`/`NewColumn` type dispatch); [`chunk`] the `Chunk` batch; and
 //! [`row`] the `Row` cursor that expression evaluation reads. DEFERRED
-//! (documented per module): the typed appends/getters for Time/Duration/Decimal/
-//! JSON/Enum/Set/VectorFloat32, `Reset(EvalType)`, the growth/pool/disk paths,
+//! (documented per module): the typed appends/getters for
+//! `VectorFloat32`, `Reset(EvalType)`, the growth/pool/disk paths,
 //! and a `str`-typed `GetString`.
 
 pub mod chunk;

@@ -26,7 +26,7 @@
 //! DEFERRED (documented): the `requiredRows`/`IsFull` growth policy,
 //! `GrowAndReset`, `CopyConstructSel` and other selection transforms, the chunk
 //! pool/allocator, disk spilling (`chunk_in_disk`), and the exotic-typed append
-//! helpers that depend on Decimal/JSON/Enum/Set column support (Time and
+//! helpers that depend on `VectorFloat32` column support (Time and
 //! Duration are ported; see `column.rs` for the `MyDecimal` layout deferral).
 
 use crate::column::Column;
@@ -221,6 +221,18 @@ impl Chunk {
         self.append_bytes(col_idx, &value.encoded());
     }
 
+    /// Go `AppendEnum`.
+    pub fn append_enum(&mut self, col_idx: usize, value: &tidb_datatype::MysqlEnum) {
+        self.append_sel(col_idx);
+        self.columns[col_idx].append_enum(value);
+    }
+
+    /// Go `AppendSet`.
+    pub fn append_set(&mut self, col_idx: usize, value: &tidb_datatype::MysqlSet) {
+        self.append_sel(col_idx);
+        self.columns[col_idx].append_set(value);
+    }
+
     /// Go `AppendDatum`: append a [`Datum`] value into column `col_idx`,
     /// dispatching on its kind (the inverse of [`Row::get_datum`]).
     ///
@@ -232,9 +244,8 @@ impl Chunk {
     /// already should use the exact [`Chunk::append_my_decimal`].
     ///
     /// Supports the kinds whose column storage exists (NULL, int/uint, real/
-    /// float32, string/bytes, binary literal, time, duration, decimal). Other
-    /// kinds panic,
-    /// pending their column support.
+    /// float32, string/bytes, binary literal, time, duration, decimal, JSON,
+    /// enum, set). Other kinds panic, pending their column support.
     pub fn append_datum(&mut self, col_idx: usize, datum: &Datum) {
         match datum {
             Datum::Null => self.append_null(col_idx),
@@ -254,6 +265,8 @@ impl Chunk {
                 self.append_bytes(col_idx, literal.as_bytes());
             }
             Datum::Json(value) => self.append_json(col_idx, value),
+            Datum::Enum(value, _) => self.append_enum(col_idx, value),
+            Datum::Set(value, _) => self.append_set(col_idx, value),
             Datum::Time(t) => self.append_time(col_idx, *t),
             Datum::Duration(d) => self.append_duration(col_idx, *d),
             Datum::Decimal(dec) => {

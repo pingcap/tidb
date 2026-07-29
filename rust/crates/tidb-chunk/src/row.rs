@@ -21,7 +21,7 @@
 //! Ported: the accessors a simple query needs -- `chunk`, `idx`, `len`,
 //! `get_int64`/`get_uint64`/`get_float32`/`get_float64`, `get_bytes`/`get_raw`,
 //! `get_time`/`get_duration`, and `is_null`. DEFERRED (documented): the typed
-//! getters that need `MyDecimal`/JSON/Enum/Set column support (see
+//! getters that need `MyDecimal`/JSON column support (see
 //! `column.rs` for the `MyDecimal` layout deferral), `GetDatumRow`, `CopyConstruct`, and
 //! a `str`-typed `GetString` (pending the crate-wide bytes-vs-str policy).
 
@@ -111,6 +111,18 @@ impl<'a> Row<'a> {
         self.chunk.columns()[col_idx].get_my_decimal(self.idx)
     }
 
+    /// Go `GetEnum`.
+    #[must_use]
+    pub fn get_enum(&self, col_idx: usize) -> tidb_datatype::MysqlEnum {
+        self.chunk.columns()[col_idx].get_enum(self.idx)
+    }
+
+    /// Go `GetSet`.
+    #[must_use]
+    pub fn get_set(&self, col_idx: usize) -> tidb_datatype::MysqlSet {
+        self.chunk.columns()[col_idx].get_set(self.idx)
+    }
+
     /// Go `GetBytes`: the raw bytes of a variable-length column's cell.
     #[must_use]
     pub fn get_bytes(&self, col_idx: usize) -> &'a [u8] {
@@ -137,7 +149,7 @@ impl<'a> Row<'a> {
     /// family (as a collation-tagged string), `Date`/`Datetime`/`Timestamp`
     /// (as a Time datum), and `Duration` (fsp filled from the field type's
     /// decimal, matching Go). The remaining types
-    /// (Decimal/Enum/Set/Bit/JSON/VectorFloat32) land with their
+    /// (Decimal/Bit/VectorFloat32) land with their
     /// column getters; reaching one here panics rather than returning a wrong or
     /// silently-null datum.
     #[must_use]
@@ -186,6 +198,17 @@ impl<'a> Row<'a> {
                     *type_code, value,
                 ))
             }
+            // Go `GetEnum`/`GetSet`: the cell is the 8-byte native value
+            // followed by the element name, and the datum carries the column's
+            // collation so name comparison stays collation-aware.
+            FieldTypeCode::Enum => Datum::new_enum(
+                self.get_enum(col_idx),
+                Collation::from_name(field_type.collation_name()).unwrap_or(Collation::Binary),
+            ),
+            FieldTypeCode::Set => Datum::new_set(
+                self.get_set(col_idx),
+                Collation::from_name(field_type.collation_name()).unwrap_or(Collation::Binary),
+            ),
             FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
                 Datum::Time(self.get_time(col_idx))
             }

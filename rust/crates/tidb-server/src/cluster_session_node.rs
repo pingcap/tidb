@@ -1442,10 +1442,46 @@ mod tests {
         column
     }
 
+    /// One column shaped the way `mysql.user`/`mysql.tables_priv` shape theirs:
+    /// an `ENUM`/`SET` with its declared element list.
+    fn named_value_column(
+        id: i64,
+        offset: i32,
+        name: &str,
+        code: FieldTypeCode,
+        elems: &[&str],
+    ) -> ModelColumnInfo {
+        let mut field_type = FieldType::new(code);
+        field_type.set_elems(elems.iter().map(|elem| (*elem).to_owned()).collect());
+        let mut column = ModelColumnInfo::new(id, name, field_type);
+        column.offset = offset;
+        column
+    }
+
     /// `app.t(id BIGINT PRIMARY KEY, v BIGINT)` and
     /// `app.g(id BIGINT PRIMARY KEY, grp BIGINT)`, plus one table mid-DDL the
-    /// session must refuse by name.
+    /// session must refuse by name, plus `app.acct` -- `mysql.user`'s own
+    /// shape, an `ENUM('N','Y')` privilege column beside a `SET` one, which is
+    /// what a `SELECT ... FROM mysql.user` has to serve.
     fn loaded_catalog() -> ClusterCatalog {
+        let acct = TableInfo {
+            id: 104,
+            name: CiString::new("acct"),
+            columns: vec![
+                column(1, 0, "id", true),
+                named_value_column(2, 1, "select_priv", FieldTypeCode::Enum, &["N", "Y"]),
+                named_value_column(
+                    3,
+                    2,
+                    "table_priv",
+                    FieldTypeCode::Set,
+                    &["Select", "Insert", "Update", "Grant"],
+                ),
+            ],
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
         let t = TableInfo {
             id: 101,
             name: CiString::new("t"),
@@ -1477,7 +1513,7 @@ mod tests {
                     name: CiString::new("app"),
                     ..DBInfo::default()
                 },
-                tables: vec![t, g, pending],
+                tables: vec![t, g, pending, acct],
             }],
         }
     }
@@ -1681,6 +1717,55 @@ mod tests {
         source.finish().expect("finish");
         source.close().expect("close");
         rows
+    }
+
+    /// A `SELECT` over a stored `ENUM`/`SET` column answers with the element
+    /// NAME, the way MySQL prints it.
+    ///
+    /// This is the shape that used to abort the SQL worker: the scan decoded
+    /// the row into an `Enum` datum and then panicked appending it to the
+    /// output chunk, so `SELECT ... FROM mysql.user` crashed the node rather
+    /// than answering. The row here is seeded the way a Go bootstrap seeds
+    /// `mysql.user`'s -- written into the committed store, never through this
+    /// node's own INSERT -- because that is the case that crashed.
+    #[test]
+    fn a_select_over_stored_enum_and_set_columns_answers_with_their_names() {
+        let (mut session, cluster) = open_session();
+        let row = tidb_tablecodec::encode_table_row(
+            None,
+            &[
+                Datum::new_enum(
+                    tidb_datatype::MysqlEnum::new("Y", 2),
+                    tidb_datatype::Collation::Binary,
+                ),
+                Datum::new_set(
+                    tidb_datatype::MysqlSet::new("Select,Grant", 1 | 8),
+                    tidb_datatype::Collation::Binary,
+                ),
+            ],
+            &[2, 3],
+            true,
+            None,
+        )
+        .expect("the seeded account row encodes");
+        cluster.committed.lock().expect("committed").insert(
+            tidb_tablecodec::table_key::encode_row_key_with_handle(
+                104,
+                &tidb_tablecodec::table_key::RecordHandle::Int(1),
+            ),
+            row,
+        );
+
+        let selected = rows(&mut session, "SELECT id, select_priv, table_priv FROM acct");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0][0], Datum::Int(1));
+        match (&selected[0][1], &selected[0][2]) {
+            (Datum::Enum(member, _), Datum::Set(members, _)) => {
+                assert_eq!((member.name(), member.value()), ("Y", 2));
+                assert_eq!((members.name(), members.value()), ("Select,Grant", 9));
+            }
+            other => panic!("the ENUM/SET columns came back as {other:?}"),
+        }
     }
 
     /// The catalog a session gets is the cluster's, minus exactly the tables
