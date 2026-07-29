@@ -1309,6 +1309,17 @@ impl QuerySession for RealTiKvServerSession {
                     .map_err(|error| self.transaction_error(&error))?;
                 Ok(Some(false))
             }
+            // This node reads; it stages no writes, so a savepoint would have
+            // nothing to mark and nothing to take back. Refusing is the honest
+            // answer -- accepting it would let a client believe a rollback
+            // point exists.
+            Some(
+                TransactionControl::Savepoint(_)
+                | TransactionControl::RollbackToSavepoint(_)
+                | TransactionControl::ReleaseSavepoint(_),
+            ) => Err(SqlQueryError::unknown(
+                "SAVEPOINT is not supported by the read-only Rust SQL node",
+            )),
             Some(TransactionControl::Unsupported(feature)) => Err(SqlQueryError::unknown(format!(
                 "{feature} is not supported by the read-only Rust SQL node"
             ))),

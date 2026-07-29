@@ -114,6 +114,13 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
     }
 }
 
+/// A whole [`MutationBuffer`] as of one moment, in key order: what
+/// [`MutationBuffer::staged`] produces and [`MutationBuffer::restore`] puts
+/// back. Go's counterpart is a `tikv.MemDBCheckpoint` -- a position in the
+/// membuffer rather than a copy of it -- which a statement rollback or a
+/// savepoint returns to.
+pub type BufferImage = Vec<(Key, Option<Vec<u8>>)>;
+
 /// The session's staged writes: Go's `kv.MemBuffer`.
 ///
 /// `None` is a tombstone -- a staged delete of a key the snapshot may still
@@ -160,7 +167,7 @@ impl MutationBuffer {
 
     /// Every staged entry, in key order: the COMMIT mutation set.
     #[must_use]
-    pub fn staged(&self) -> Vec<(Key, Option<Vec<u8>>)> {
+    pub fn staged(&self) -> BufferImage {
         self.lock()
             .iter()
             .map(|(key, value)| (key.clone(), value.clone()))
@@ -193,7 +200,7 @@ impl MutationBuffer {
     /// failure inside an explicit transaction discards that statement's writes
     /// and keeps every earlier one. Restoring a whole snapshot has the same
     /// effect at this seam, which records no per-key undo log.
-    pub fn restore(&self, entries: Vec<(Key, Option<Vec<u8>>)>) {
+    pub fn restore(&self, entries: BufferImage) {
         let mut staged = self.lock();
         staged.clear();
         staged.extend(entries);

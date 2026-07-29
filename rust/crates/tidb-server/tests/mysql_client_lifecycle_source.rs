@@ -828,6 +828,14 @@ impl QuerySession for TransactionSession {
                     .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                 Ok(Some(false))
             }
+            // This test session drives only BEGIN/COMMIT/ROLLBACK.
+            Some(
+                TransactionControl::Savepoint(_)
+                | TransactionControl::RollbackToSavepoint(_)
+                | TransactionControl::ReleaseSavepoint(_),
+            ) => Err(SqlQueryError::unknown(
+                "savepoints are not part of this test",
+            )),
             Some(TransactionControl::Unsupported(feature)) => Err(SqlQueryError::unknown(format!(
                 "{feature} is not supported by the read-only Rust SQL node"
             ))),

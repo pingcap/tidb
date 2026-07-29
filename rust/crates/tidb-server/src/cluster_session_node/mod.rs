@@ -126,7 +126,7 @@ use tidb_exec::real_tikv_ddl::prepare_cluster_ddl;
 use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::cluster_storage::{
-    ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
+    BufferImage, ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
 use tidb_executor::pushdown_scan::PushdownScanner;
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
@@ -355,6 +355,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             stats: Arc::clone(&self.stats),
             statistics,
             explicit: None,
+            savepoints: Vec::new(),
             skipped: built.skipped,
         })
     }
@@ -400,6 +401,22 @@ pub struct ClusterServerSession {
     /// The transaction an explicit `BEGIN` holds open. `None` is autocommit,
     /// where each statement gets its own timestamp.
     explicit: Option<Box<dyn OpenClusterTransaction>>,
+    /// The transaction's savepoints, oldest first: for each, the name
+    /// lowercased and the buffer image taken when it was declared.
+    ///
+    /// The driver session owns the savepoint RULES -- which names exist, which
+    /// ones a `ROLLBACK TO` or `RELEASE` drops, and the 1305 an unknown name
+    /// reports -- exactly as it owns `in_transaction`. This owns what those
+    /// rules mean for cluster storage, where the session's catalog image
+    /// restores nothing (every table shares one `Arc` buffer). It is the same
+    /// `MutationBuffer::staged()`/`restore()` pair
+    /// [`ClusterServerSession::with_statement`] already uses for
+    /// statement-level rollback, held under a name.
+    ///
+    /// The two stacks stay in step because both apply the same rules to the
+    /// same statement sequence, and the session's error arm runs FIRST -- a
+    /// name this stack could not find is one the session already refused.
+    savepoints: Vec<(String, BufferImage)>,
     /// Tables of the cluster this connection's catalog could not include,
     /// answered by name when a statement names one. Rebuilt with the catalog.
     skipped: Vec<SkippedTable>,
@@ -512,6 +529,7 @@ impl ClusterServerSession {
     /// find writes the previous statement already published, so the buffer is
     /// empty and nothing is spent.
     fn commit_explicit(&mut self) -> Result<(), SqlQueryError> {
+        self.savepoints.clear();
         let Some(transaction) = self.explicit.take() else {
             return self.commit_autocommit_buffer();
         };
@@ -524,10 +542,49 @@ impl ClusterServerSession {
         }
     }
 
+    /// Applies one savepoint statement to the connection's buffer, after the
+    /// driver session has accepted it.
+    ///
+    /// Each arm is the byte half of the rule the session just applied:
+    /// declaring a name replaces any earlier entry and pushes the image on
+    /// top; `ROLLBACK TO` puts the named image back and drops the savepoints
+    /// above it, keeping the named one so it can be rolled back to again;
+    /// `RELEASE` drops the named one and those above it, touching no bytes.
+    fn apply_savepoint(&mut self, control: &TransactionControl) {
+        match control {
+            TransactionControl::Savepoint(name) => {
+                // Outside an explicit transaction the session recorded
+                // nothing, so neither does this.
+                if self.explicit.is_none() {
+                    return;
+                }
+                let name = name.to_lowercase();
+                let image = self.buffer.staged();
+                self.savepoints.retain(|(existing, _)| *existing != name);
+                self.savepoints.push((name, image));
+            }
+            TransactionControl::RollbackToSavepoint(name) => {
+                let name = name.to_lowercase();
+                if let Some(index) = self.savepoints.iter().position(|(sp, _)| *sp == name) {
+                    self.buffer.restore(self.savepoints[index].1.clone());
+                    self.savepoints.truncate(index + 1);
+                }
+            }
+            TransactionControl::ReleaseSavepoint(name) => {
+                let name = name.to_lowercase();
+                if let Some(index) = self.savepoints.iter().position(|(sp, _)| *sp == name) {
+                    self.savepoints.truncate(index);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Drops the explicit transaction without publishing anything, along with
     /// every write it staged.
     fn discard_explicit(&mut self) -> Result<(), SqlQueryError> {
         self.buffer.reset();
+        self.savepoints.clear();
         match self.explicit.take() {
             Some(transaction) => transaction.rollback().map_err(SqlQueryError::unknown),
             None => Ok(()),
@@ -860,6 +917,11 @@ impl QuerySession for ClusterServerSession {
                 self.discard_explicit()?;
                 self.explicit = Some(self.transactions.begin().map_err(SqlQueryError::unknown)?);
             }
+            Some(
+                control @ (TransactionControl::Savepoint(_)
+                | TransactionControl::RollbackToSavepoint(_)
+                | TransactionControl::ReleaseSavepoint(_)),
+            ) => self.apply_savepoint(&control),
             Some(TransactionControl::Unsupported(_)) | None => {}
         }
         Ok(Some(in_transaction))
@@ -2493,6 +2555,116 @@ mod tests {
             vec![vec![Datum::Int(10)], vec![Datum::Int(30)]]
         );
         assert!(cluster.rows() > 0);
+    }
+
+    /// `ROLLBACK TO` takes the mutation buffer back to the savepoint's own
+    /// bytes, leaves the transaction OPEN, and lets `COMMIT` publish exactly
+    /// the writes that survived.
+    ///
+    /// This is the cluster-path counterpart of `tidb_session`'s savepoint
+    /// tests, and it is a separate test for the same reason the statement
+    /// savepoint above is: the session's catalog image cannot roll a cluster
+    /// write back, so only a buffer image proves anything here.
+    #[test]
+    fn rollback_to_a_savepoint_restores_the_buffer_and_keeps_the_transaction_open() {
+        let (mut session, cluster) = open_session();
+        session.control_transaction("BEGIN").expect("begin");
+        session
+            .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+            .expect("first insert");
+        assert_eq!(
+            session.control_transaction("SAVEPOINT s1").unwrap(),
+            Some(true)
+        );
+        let staged_at_savepoint = session.buffer.staged();
+        session
+            .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
+            .expect("second insert");
+
+        // ROLLBACK TO reports the transaction still open, and the buffer holds
+        // the savepoint's bytes -- not merely "row 2 is invisible".
+        assert_eq!(
+            session.control_transaction("ROLLBACK TO s1").unwrap(),
+            Some(true)
+        );
+        assert_eq!(session.buffer.staged(), staged_at_savepoint);
+        assert_eq!(staged_handles(&session, 101), vec![1]);
+        assert_eq!(cluster.publications.load(Ordering::Acquire), 0);
+
+        // The transaction is still running, so this statement joins it.
+        session
+            .execute_write("INSERT INTO t (id, v) VALUES (3, 30)")
+            .expect("third insert");
+        session.control_transaction("COMMIT").expect("commit");
+        assert_eq!(
+            rows(&mut session, "SELECT id FROM t ORDER BY id"),
+            vec![vec![Datum::Int(1)], vec![Datum::Int(3)]]
+        );
+        assert_eq!(cluster.rows(), 2);
+    }
+
+    /// The stack rules on the cluster path: a savepoint survives its own
+    /// rollback, `RELEASE` drops the named one and those above it without
+    /// touching bytes, and an unknown name is Go's 1305.
+    #[test]
+    fn the_savepoint_stack_follows_the_same_rules_on_the_cluster_path() {
+        let (mut session, _cluster) = open_session();
+        session.control_transaction("BEGIN").expect("begin");
+        session.control_transaction("SAVEPOINT s1").expect("s1");
+        session
+            .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+            .expect("insert");
+        session.control_transaction("SAVEPOINT s2").expect("s2");
+
+        // Releasing s1 drops s2 with it and keeps row 1 staged.
+        session
+            .control_transaction("RELEASE SAVEPOINT s1")
+            .expect("release");
+        assert_eq!(staged_handles(&session, 101), vec![1]);
+        for sql in ["ROLLBACK TO s1", "ROLLBACK TO s2"] {
+            let reported = session.control_transaction(sql).unwrap_err();
+            assert!(
+                format!("{reported:?}").contains("1305"),
+                "{sql} did not report 1305: {reported:?}"
+            );
+        }
+
+        // A fresh savepoint, rolled back to twice: it survives its own
+        // rollback, matched case-insensitively.
+        session.control_transaction("SAVEPOINT S3").expect("s3");
+        session
+            .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
+            .expect("insert");
+        session
+            .control_transaction("ROLLBACK TO s3")
+            .expect("first");
+        assert_eq!(staged_handles(&session, 101), vec![1]);
+        session
+            .execute_write("INSERT INTO t (id, v) VALUES (3, 30)")
+            .expect("insert");
+        session
+            .control_transaction("ROLLBACK TO s3")
+            .expect("second");
+        assert_eq!(staged_handles(&session, 101), vec![1]);
+    }
+
+    /// Ending the transaction takes the savepoint stack with it, so a name
+    /// cannot outlive the transaction that declared it and reach into the
+    /// next one's buffer.
+    #[test]
+    fn ending_the_transaction_clears_the_cluster_savepoint_stack() {
+        for ending in ["ROLLBACK", "COMMIT"] {
+            let (mut session, _cluster) = open_session();
+            session.control_transaction("BEGIN").expect("begin");
+            session.control_transaction("SAVEPOINT s1").expect("s1");
+            session.control_transaction(ending).expect("ending");
+            assert!(session.savepoints.is_empty(), "{ending} kept a savepoint");
+            session.control_transaction("BEGIN").expect("begin");
+            assert!(
+                session.control_transaction("ROLLBACK TO s1").is_err(),
+                "{ending} left a savepoint reachable"
+            );
+        }
     }
 
     /// A refused publication does not leave the writes staged for the next

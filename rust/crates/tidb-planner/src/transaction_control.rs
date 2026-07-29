@@ -17,7 +17,7 @@
 use tidb_ast::{SessionStmt, Stmt, TransactionMode};
 
 /// One recognized transaction-control statement.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TransactionControl {
     /// `BEGIN` / `START TRANSACTION` opening a transaction.
     ///
@@ -37,6 +37,15 @@ pub enum TransactionControl {
     /// writes does opposite things for the two, and a read-only transaction
     /// only *looks* like it does the same thing for both.
     Rollback,
+    /// `SAVEPOINT name`: mark a point inside the open transaction to come back
+    /// to. Carries the name as written; savepoint names match
+    /// case-insensitively.
+    Savepoint(String),
+    /// `ROLLBACK TO [SAVEPOINT] name`: undo back to a mark WITHOUT ending the
+    /// transaction, which is what keeps it apart from [`Self::Rollback`].
+    RollbackToSavepoint(String),
+    /// `RELEASE SAVEPOINT name`: forget a mark, keeping its writes.
+    ReleaseSavepoint(String),
     /// A transaction-control statement the bounded node cannot honor yet (named
     /// for its diagnostic), e.g. `START TRANSACTION ... AS OF TIMESTAMP`.
     Unsupported(&'static str),
@@ -85,8 +94,14 @@ pub fn classify_transaction_control(sql: &str) -> Option<TransactionControl> {
                 "transaction completion mode",
             ))
         }
-        // Savepoints and every other session statement are not this node's
-        // transaction control; the query path admits or rejects them.
+        SessionStmt::Rollback {
+            savepoint: Some(name),
+            ..
+        } => Some(TransactionControl::RollbackToSavepoint(name)),
+        SessionStmt::Savepoint(name) => Some(TransactionControl::Savepoint(*name)),
+        SessionStmt::ReleaseSavepoint(name) => Some(TransactionControl::ReleaseSavepoint(*name)),
+        // Every other session statement is not this node's transaction
+        // control; the query path admits or rejects them.
         _ => None,
     }
 }
@@ -148,8 +163,34 @@ mod tests {
         assert_eq!(classify_transaction_control("SELECT 1"), None);
         assert_eq!(classify_transaction_control("SET autocommit = 1"), None);
         assert_eq!(classify_transaction_control("USE test"), None);
-        // A savepoint is transaction-related but not BEGIN/COMMIT/ROLLBACK.
-        assert_eq!(classify_transaction_control("SAVEPOINT s1"), None);
+    }
+
+    /// The savepoint statements are transaction control: they act on the
+    /// transaction's staged writes, not on any table.
+    #[test]
+    fn the_savepoint_statements_are_transaction_control() {
+        assert_eq!(
+            classify_transaction_control("SAVEPOINT s1"),
+            Some(TransactionControl::Savepoint("s1".to_owned()))
+        );
+        assert_eq!(
+            classify_transaction_control("ROLLBACK TO s1"),
+            Some(TransactionControl::RollbackToSavepoint("s1".to_owned()))
+        );
+        // The optional SAVEPOINT keyword spells the same statement.
+        assert_eq!(
+            classify_transaction_control("ROLLBACK TO SAVEPOINT s1"),
+            Some(TransactionControl::RollbackToSavepoint("s1".to_owned()))
+        );
+        assert_eq!(
+            classify_transaction_control("RELEASE SAVEPOINT s1"),
+            Some(TransactionControl::ReleaseSavepoint("s1".to_owned()))
+        );
+        // A plain ROLLBACK stays the transaction-ending one.
+        assert_eq!(
+            classify_transaction_control("ROLLBACK"),
+            Some(TransactionControl::Rollback)
+        );
     }
 
     #[test]
