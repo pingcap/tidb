@@ -188,7 +188,18 @@ pub struct OptimisticTransactionReceipt {
     /// Real PD start timestamp used by reads and prewrites.
     pub start_ts: u64,
     /// Real PD commit timestamp, zero until the commit phase begins.
+    ///
+    /// For an async-commit transaction this is the greatest `min_commit_ts`
+    /// TiKV returned across the Prewrite batches; for a 1PC transaction it is
+    /// the `one_pc_commit_ts` TiKV assigned when it committed during Prewrite.
     pub commit_ts: u64,
+    /// True when this transaction committed via the async-commit protocol: no
+    /// PD commit timestamp was allocated and the Commit RPCs carried
+    /// `use_async_commit`.
+    pub async_commit: bool,
+    /// True when this transaction committed via 1PC: TiKV committed atomically
+    /// during Prewrite and no Commit RPC was published at all.
+    pub one_pc: bool,
     /// Lexicographically smallest encoded mutation key.
     pub primary_key: Vec<u8>,
     /// Number of immutable mutations admitted by the transaction.
@@ -232,6 +243,8 @@ impl OptimisticTransactionReceipt {
             authority_id,
             start_ts,
             commit_ts: 0,
+            async_commit: false,
+            one_pc: false,
             primary_key,
             mutation_count,
             lock_ttl_ms: 0,
@@ -362,6 +375,9 @@ impl CoordinatorState {
                 | (Self::New | Self::Reading, Self::Prewriting)
                 | (Self::Prewriting, Self::Prewritten)
                 | (Self::Prewritten, Self::PrimaryCommitting)
+                // 1PC: TiKV commits atomically during Prewrite, so there is no
+                // Commit RPC and the transaction reaches Committed directly.
+                | (Self::Prewritten, Self::Committed)
                 | (
                     Self::PrimaryCommitting,
                     Self::PrimaryCommitted | Self::RollingBack | Self::Undetermined

@@ -290,6 +290,14 @@ where
         self.fair_locking
     }
 
+    /// Selects the fast-commit protocol the final 2PC of this pessimistic
+    /// transaction may use, from `@@tidb_enable_async_commit` /
+    /// `@@tidb_enable_1pc`. The choice is applied by the shared optimistic
+    /// coordinator at commit time.
+    pub fn set_commit_protocol(&mut self, protocol: super::CommitProtocol) {
+        self.two_pc.set_commit_protocol(protocol);
+    }
+
     /// Highest timestamp at which fair locking granted a lock despite conflict.
     #[must_use]
     pub const fn max_locked_with_conflict_ts(&self) -> u64 {

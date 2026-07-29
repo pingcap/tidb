@@ -28,13 +28,14 @@
 //! `start_ts` the first of them took.
 
 use tidb_exec::global_sysvar_initial::{
-    global_system_variable_initial_value, GlobalSysvarEnvironment, ON,
-    PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
+    global_system_variable_initial_value, GlobalSysvarEnvironment, ENABLE_1PC, ENABLE_ASYNC_COMMIT,
+    ON, PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
 };
 use tidb_exec::multi_statement_transaction::{
     MultiStatementTransaction, TransactionEnd, TransactionStatementError,
 };
 use tidb_planner::txn_mode::{txn_mode_for_begin, SessionTxnMode, TransactionMode};
+use tidb_txnkv::transaction::CommitProtocol;
 
 /// Whether `@@tidb_pessimistic_txn_fair_locking` is on for this node.
 ///
@@ -57,6 +58,34 @@ pub fn session_fair_locking() -> bool {
             next_gen: false,
         },
     ) == ON
+}
+
+/// The fast-commit protocol this node's transactions may use, from
+/// `@@tidb_enable_async_commit` / `@@tidb_enable_1pc`.
+///
+/// Like fair locking, both variables carry the registry default `OFF`, but Go
+/// `GlobalSystemVariableInitialValue` overrides them to `ON` on a real-TiKV
+/// cluster (`config.Store == StoreTypeTiKV`), and that is the value
+/// `mysql.global_variables` then holds. This node has no `SET`-able session
+/// store, so it takes that bootstrap value directly. The commit-time
+/// eligibility check still decides whether any given transaction actually uses
+/// a fast-commit path.
+#[must_use]
+pub fn session_commit_protocol() -> CommitProtocol {
+    let environment = GlobalSysvarEnvironment {
+        store_is_tikv: true,
+        in_test: false,
+        next_gen: false,
+    };
+    CommitProtocol {
+        enable_async_commit: global_system_variable_initial_value(
+            ENABLE_ASYNC_COMMIT,
+            "OFF",
+            environment,
+        ) == ON,
+        enable_1pc: global_system_variable_initial_value(ENABLE_1PC, "OFF", environment) == ON,
+        ..CommitProtocol::default()
+    }
 }
 
 /// The explicit-transaction state of one session.

@@ -25,9 +25,10 @@ mod ttl;
 
 pub use command_client::{PublishedCommand, TransactionCommandClient};
 pub use coordinator::{
-    OptimisticCoordinatorError, PdLockTimestampSource, ProductionOptimisticTransaction,
-    ProductionPessimisticTransaction, RealOptimisticTransaction, RealOptimisticTransactionOpener,
-    SnapshotGetResult,
+    CommitProtocol, OptimisticCoordinatorError, PdLockTimestampSource,
+    ProductionOptimisticTransaction, ProductionPessimisticTransaction, RealOptimisticTransaction,
+    RealOptimisticTransactionOpener, SnapshotGetResult, ASYNC_COMMIT_KEYS_LIMIT,
+    ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT,
 };
 pub use mutation::{
     MutationSetError, OptimisticMutation, OptimisticMutationKind, MAX_OPTIMISTIC_KEY_BYTES,

@@ -58,10 +58,11 @@ use tidb_planner::txn_mode::SessionTxnMode;
 use tidb_tablecodec::decode_table_row_to_map;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    LockKeepAlive, LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError,
-    OptimisticMutationKind, PessimisticLockFailure, ProductionOptimisticTransaction,
-    ProductionPessimisticTransaction, RealOptimisticTransactionOpener, TransactionMutationBuffer,
-    MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    CommitProtocol, LockKeepAlive, LockWaitTime, OptimisticCommitOutcome,
+    OptimisticCoordinatorError, OptimisticMutationKind, PessimisticLockFailure,
+    ProductionOptimisticTransaction, ProductionPessimisticTransaction,
+    RealOptimisticTransactionOpener, TransactionMutationBuffer, MAX_OPTIMISTIC_MUTATIONS,
+    MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 
 use crate::pessimistic_lock_error::{
@@ -217,13 +218,19 @@ impl MultiStatementTransaction {
         opener: &RealOptimisticTransactionOpener,
         mode: SessionTxnMode,
         fair_locking: bool,
+        commit_protocol: CommitProtocol,
         table: ConfiguredTable,
         timeout: Duration,
     ) -> Result<Self, OptimisticCoordinatorError> {
         let open = match mode {
-            SessionTxnMode::Optimistic => OpenTransaction::Optimistic(Box::new(
-                opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)?,
-            )),
+            SessionTxnMode::Optimistic => {
+                let mut transaction =
+                    opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)?;
+                // `@@tidb_enable_async_commit` / `@@tidb_enable_1pc` reaching the
+                // transaction; the commit-time eligibility check still decides.
+                transaction.set_commit_protocol(commit_protocol);
+                OpenTransaction::Optimistic(Box::new(transaction))
+            }
             SessionTxnMode::Pessimistic => {
                 let mut transaction = opener.begin_pessimistic(
                     MAX_OPTIMISTIC_MUTATIONS,
@@ -232,6 +239,7 @@ impl MultiStatementTransaction {
                 // `@@tidb_pessimistic_txn_fair_locking`. Only a pessimistic
                 // transaction locks, so only it can lock fairly.
                 transaction.set_fair_locking(fair_locking);
+                transaction.set_commit_protocol(commit_protocol);
                 OpenTransaction::Pessimistic(Box::new(transaction))
             }
         };
