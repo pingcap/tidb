@@ -169,7 +169,15 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.attachTopProfilingInfo(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		executor, err := newReadIndexExecutor(
+			store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		if err != nil {
+			return nil, err
+		}
+		if len(cloudStorageURI) == 0 {
+			executor.localDiskPrecheck = s.checkLocalSortFreeDisk
+		}
+		return executor, nil
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(&s.task.TaskBase, store, jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
@@ -219,30 +227,32 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	}
 
 	s.taskMeta = bgm
+	return nil
+}
+
+func (s *backfillDistExecutor) checkLocalSortFreeDisk(ctx context.Context) error {
 	// TODO: Recheck local disk when users increase concurrency with ADMIN ALTER DDL JOB.
-	if len(s.taskMeta.CloudStorageURI) == 0 && s.task.Step == proto.BackfillStepReadIndex {
-		// This precheck reserves future growth only for local-sort DXF backfills. Local-sort
-		// IMPORT INTO FROM FILE is excluded because its quota-based import/reset mechanism
-		// manages temporary-disk growth. IMPORT INTO FROM SELECT is excluded because its final
-		// size cannot be reliably estimated. Their current disk usage is reflected in the
-		// filesystem's available space.
-		runningJobCount, runningJobRuntimeSlots, runningJobUsedBytes, err :=
-			s.getRunningLocalSortJobDiskUsage(ctx)
-		if err != nil {
-			return err
-		}
-		if err := ingest.CheckLocalSortFreeDisk(
-			s.GetExecutorID(),
-			runningJobCount,
-			runningJobRuntimeSlots,
-			runningJobUsedBytes,
-			s.task.GetRuntimeSlots(),
-		); err != nil {
-			// Running add-index disk usage is subtracted from the remaining growth budget, so admission failures
-			// indicate persistent non-DDL disk pressure and must remain fatal; operators
-			// must remove logs or other files to resolve it.
-			return err
-		}
+	// This precheck reserves future growth only for local-sort DXF backfills. Local-sort
+	// IMPORT INTO FROM FILE is excluded because its quota-based import/reset mechanism
+	// manages temporary-disk growth. IMPORT INTO FROM SELECT is excluded because its final
+	// size cannot be reliably estimated. Their current disk usage is reflected in the
+	// filesystem's available space.
+	runningJobCount, runningJobRuntimeSlots, runningJobUsedBytes, err :=
+		s.getRunningLocalSortJobDiskUsage(ctx)
+	if err != nil {
+		return err
+	}
+	if err := ingest.CheckLocalSortFreeDisk(
+		s.GetExecutorID(),
+		runningJobCount,
+		runningJobRuntimeSlots,
+		runningJobUsedBytes,
+		s.task.GetRuntimeSlots(),
+	); err != nil {
+		// Running add-index disk usage is subtracted from the remaining growth budget, so admission failures
+		// indicate persistent non-DDL disk pressure and must remain fatal; operators
+		// must remove logs or other files to resolve it.
+		return err
 	}
 	return nil
 }
