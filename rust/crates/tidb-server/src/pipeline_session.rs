@@ -213,6 +213,12 @@ impl QuerySessionFactory for PipelineSessionFactory {
 }
 
 impl QuerySession for PipelineServerSession {
+    /// The handshake's initial database and `COM_INIT_DB`, which Go serves
+    /// with one `useDB` each.
+    fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
+        self.session.select_database(name).map_err(map_error)
+    }
+
     /// BEGIN/COMMIT/ROLLBACK drive the session's transaction, and the caller
     /// answers with an OK packet whose status carries the returned flag.
     fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
