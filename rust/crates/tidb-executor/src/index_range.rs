@@ -662,7 +662,7 @@ fn points_on_column(condition: &Expr, column: &str) -> Option<ColumnPoints> {
 /// The access ranges of one CNF conjunct list over one index, with the
 /// conjunct indices that were consumed as access conditions.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct IndexRanges {
+pub(crate) struct IndexRanges<'a> {
     /// The derived ranges. Empty means no row qualifies.
     pub ranges: Vec<IndexRange>,
     /// How many conjuncts became access conditions (Go's `len(AccessConds)`).
@@ -670,13 +670,33 @@ pub(crate) struct IndexRanges {
     /// How many index columns the ranges span, Go's `EqOrInCount` plus the
     /// spanning column. Used to prefer the index that reaches deepest.
     pub column_count: usize,
+    /// The index POSITIONS the access conditions constrain, which is what
+    /// Go's `accessCondsColMap` holds (`ExtractCol2Len(path.AccessConds,
+    /// path.IdxCols, path.IdxColLens)`); skyline pruning compares candidates
+    /// on this set. Sorted and unique.
+    ///
+    /// For a CNF walk this is the leading `column_count` positions, because
+    /// the walk consumes conditions strictly in index-column order. For a DNF
+    /// it is the UNION over branches, because Go's access condition there is
+    /// the whole disjunction and every column it names is in the map.
+    pub access_columns: Vec<usize>,
+    /// Go `AccessPath.EqOrInCondCount` as `candidatePath.equalPredicateCount`
+    /// reports it: how many leading index columns an `=`/`IN` pinned.
+    pub eq_or_in_count: usize,
+    /// The conjuncts that did NOT become access conditions, which Go splits
+    /// into `IndexFilters` and `TableFilters` (`splitIndexFilterConditions`)
+    /// once it knows which columns the index stores.
+    pub residual: Vec<&'a Expr>,
 }
 
 /// Go `detachCNFCondAndBuildRangeForIndex`, reduced to the column walk:
 /// equalities and `IN`s pin the leading index columns one at a time, then
 /// every remaining condition on the next column is intersected into one
 /// spanning interval.
-fn build_cnf_ranges(index_columns: &[(String, FieldType)], conditions: &[&Expr]) -> IndexRanges {
+fn build_cnf_ranges<'a>(
+    index_columns: &[(String, FieldType)],
+    conditions: &[&'a Expr],
+) -> IndexRanges<'a> {
     let mut consumed = vec![false; conditions.len()];
     let mut eq_in_points: Vec<Vec<Point>> = Vec::new();
     let mut access_count = 0;
@@ -752,6 +772,17 @@ fn build_cnf_ranges(index_columns: &[(String, FieldType)], conditions: &[&Expr])
         ranges,
         access_count,
         column_count,
+        // The walk consumes conditions in index-column order and stops at the
+        // first unconstrained column, so the constrained positions are always
+        // the leading `column_count` of them.
+        access_columns: (0..column_count).collect(),
+        eq_or_in_count: eq_in_count,
+        residual: conditions
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !consumed[*i])
+            .map(|(_, condition)| *condition)
+            .collect(),
     }
 }
 
@@ -793,11 +824,20 @@ fn is_or(expr: &Expr) -> bool {
 /// filter and no range can be built. The branches' ranges are then unioned,
 /// merging ranges that only touch --- which is what turns `a = 1 OR a = 2`
 /// into `[1,2]`.
-fn build_dnf_ranges(index_columns: &[(String, FieldType)], disjunct: &Expr) -> Option<IndexRanges> {
+fn build_dnf_ranges<'a>(
+    index_columns: &[(String, FieldType)],
+    disjunct: &'a Expr,
+) -> Option<IndexRanges<'a>> {
     let mut branches = Vec::new();
     collect_disjuncts(disjunct, &mut branches);
     let mut ranges = Vec::new();
     let mut column_count = usize::MAX;
+    // Go's `minAccessConds` (`detachDNFCondAndBuildRangeForIndex`), and
+    // whether every branch consists only of `=`/`IN` predicates, which is
+    // what `hasOnlyEqualPredicatesInDNF` decides for the whole disjunction.
+    let mut min_access_conds = usize::MAX;
+    let mut only_equal = true;
+    let mut access_columns: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
     for branch in branches {
         let mut conjuncts = Vec::new();
         collect_conjuncts(branch, &mut conjuncts);
@@ -807,11 +847,19 @@ fn build_dnf_ranges(index_columns: &[(String, FieldType)], disjunct: &Expr) -> O
         if built.access_count == 0 || built.access_count != conjuncts.len() {
             return None;
         }
+        min_access_conds = min_access_conds.min(built.access_count);
+        only_equal &= built.eq_or_in_count == built.access_count;
+        // Go's access condition for a DNF is the WHOLE disjunction, so every
+        // index column any branch names lands in `accessCondsColMap`.
+        access_columns.extend(built.access_columns.iter().copied());
         if built.ranges.is_empty() {
             continue;
         }
         column_count = column_count.min(built.column_count);
         ranges.extend(built.ranges);
+    }
+    if min_access_conds == usize::MAX {
+        min_access_conds = 0;
     }
     Some(IndexRanges {
         ranges: union_ranges(ranges, true),
@@ -821,6 +869,16 @@ fn build_dnf_ranges(index_columns: &[(String, FieldType)], disjunct: &Expr) -> O
         } else {
             column_count
         },
+        access_columns: access_columns.into_iter().collect(),
+        // Go `candidatePath.equalPredicateCount` for a DNF access condition.
+        eq_or_in_count: if only_equal {
+            min_access_conds
+        } else {
+            min_access_conds.saturating_sub(1)
+        },
+        // The DNF branch is only taken when the WHOLE `WHERE` is one `OR`, so
+        // there is no conjunct left over beside it.
+        residual: Vec::new(),
     })
 }
 
@@ -830,10 +888,10 @@ fn build_dnf_ranges(index_columns: &[(String, FieldType)], disjunct: &Expr) -> O
 /// `None` means the `WHERE` constrains none of the index's columns, so a
 /// range scan is no better than a full scan. `Some` with an empty range list
 /// means the conditions are contradictory and no row qualifies.
-pub(crate) fn detach_cond_and_build_range_for_index(
+pub(crate) fn detach_cond_and_build_range_for_index<'a>(
     index_columns: &[(String, FieldType)],
-    where_clause: &Expr,
-) -> Option<IndexRanges> {
+    where_clause: &'a Expr,
+) -> Option<IndexRanges<'a>> {
     let mut conjuncts = Vec::new();
     collect_conjuncts(where_clause, &mut conjuncts);
 
