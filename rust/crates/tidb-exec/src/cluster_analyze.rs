@@ -385,9 +385,19 @@ pub fn analyze_table<S: MetaSnapshot>(
         table_id: table.id,
         version,
         // Go's `SaveAnalyzeResultToStorage` stores
-        // `max(curModifyCnt - results.BaseModifyCnt, 0)`, which for a
-        // non-incremental `ANALYZE` of the whole table is zero: every
-        // modification the previous count described has now been measured.
+        // `max(curModifyCnt - results.BaseModifyCnt, 0)`: the modifications
+        // that arrived *while the analyze ran*, which its sample therefore
+        // does not describe. Go has such a window because it reads the rows
+        // at one timestamp and saves at a later one, so a `dumpStatsDelta`
+        // from another node can land in between and must be preserved.
+        //
+        // This path has no such window. It reads the rows, reads the previous
+        // `stats_meta` and writes the new one all at the single `start_ts` of
+        // one transaction, so `curModifyCnt` IS `BaseModifyCnt` and the
+        // difference is zero -- not a discarded count. A Go node's delta flush
+        // that commits after that `start_ts` writes the same `stats_meta` row
+        // and is a plain write conflict at prewrite, so exactly one of the two
+        // survives rather than one silently erasing the other.
         modify_count: 0,
         row_count: u64::try_from(scanned_rows).unwrap_or_default(),
         columns: Vec::new(),
