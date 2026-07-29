@@ -11633,7 +11633,7 @@ impl SysVarDef {
                 truncated: false,
             }),
         }?;
-        self.run_validation(validated)
+        self.run_validation(validated, value)
     }
 
     /// Go's per-variable `SysVar.Validation` closure, which runs after
@@ -11643,7 +11643,27 @@ impl SysVarDef {
     /// are here; everything else takes the type-validated value unchanged.
     /// The point of doing it at SET time is that every reader afterwards sees
     /// one canonical form, so no read site has to re-expand anything.
-    fn run_validation(&self, validated: Validated) -> Result<Validated, ValidationError> {
+    ///
+    /// `original` is the value as TYPED. Go hands the closure both the
+    /// normalized and the original text, and `timestamp`'s closure reads the
+    /// original -- so a value the type check would silently clamp is still
+    /// rejected.
+    fn run_validation(
+        &self,
+        validated: Validated,
+        original: &str,
+    ) -> Result<Validated, ValidationError> {
+        // Go's `timestamp` validation (`sysvar.go`, the `vardef.Timestamp`
+        // entry): `tidbOptFloat64(originalValue)` above `math.MaxInt32` is
+        // `ErrWrongValueForVar`. The type check alone would have clamped it to
+        // the bound and accepted it, which is the opposite outcome.
+        if self.name == "timestamp"
+            && original
+                .parse::<f64>()
+                .is_ok_and(|value| value > f64::from(i32::MAX))
+        {
+            return Err(ValidationError::WrongValue);
+        }
         // Go's `time_zone` validation (`sysvar.go`, the `vardef.TimeZone`
         // entry): `SYSTEM` in any spelling canonicalizes to upper case, and
         // every other name is stored exactly as typed -- `SET time_zone='utc'`
