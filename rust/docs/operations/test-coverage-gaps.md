@@ -50,6 +50,14 @@ bucket: no Rust test carries its name, its words, or a citation of it.
 | 19 | `pkg/statistics/histogram_test.go:79` `TestMergePartitionLevelHist`, `:493` `TestMergeBucketNDV` | Histogram merging. Wrong estimates pick wrong plans -- slow, not incorrect, but invisible until production. |
 | 20 | `pkg/types/vector_test.go:24` `TestVectorEndianess`, `:149` `TestVectorSerialize` | Vector column wire bytes. A byte-order mistake is a cross-language corruption that only a differential test catches. |
 
+### Closed by porting
+
+| # | Ported to | What the port found |
+| --- | --- | --- |
+| 10 | `tidb-executor/src/scan_pushdown.rs` `tests_push_down_verdict` | Nothing wrong: all 9 expressions Go refuses are refused here too. All 55 Go pushes are refused (this engine lowers only a column-vs-constant comparison), which is a performance gap, tracked in an `#[ignore]`d test carrying Go's verdict. `TestExprPushDownToFlash` (`:668`) is still open. |
+| 11 | `tidb-session/src/tests_eval_bool.rs` | FOUR live bugs, one root cause (four divergent truth tests, none of them `Datum.ToBool`): `WHERE varchar_col` and `WHERE json_col` returned NO ROWS where TiDB returns rows (silent row loss), `IF(varchar_col,…)` always took the false branch, and `varchar_col IS TRUE` was true for every non-NULL row. |
+| 14 | `tidb-protocol/tests/binary_params_source.rs` | `parse_binary_params`'s charset decode was an identity stub, so a gbk client's parameter was stored as if its bytes were UTF-8. Fixed. The *live* `COM_STMT_EXECUTE` decoder still has no charset seam -- `#[ignore]`d test with TiDB's answer. |
+
 Runners-up worth naming: `pkg/meta/model/job_args_test.go` (40 uncovered DDL
 argument round-trips -- every one is a job that would deserialize wrong), and
 `pkg/session/bootstrap_test.go` (37 uncovered upgrade-path tests; each pins one
