@@ -72,7 +72,7 @@ pub const DEFAULT_DATABASE: &str = "test";
 /// policy and state, which live on Go's `DBInfo` and matter to DDL rather
 /// than to resolving a name.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Database {
+struct Database {
     /// The name as written, for `SHOW DATABASES` output.
     name: String,
     tables: HashMap<String, TableEntry>,
