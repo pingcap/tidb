@@ -61,6 +61,14 @@ impl ColumnResolver for NoResolver {
 fn set_binary_charset(ft: &mut FieldType) {
     ft.set_charset_name("binary");
     ft.set_collation_name("binary");
+    // `set_collation_name` only mirrors Go's `FieldType.SetCollate` (a plain
+    // string field in Go). This port additionally caches the collation as
+    // `Collation` enum (`FieldType.collation`), which `is_binary_string`
+    // reads -- so the enum must be kept in sync here too, or a value this
+    // function marks binary (hex/bit literals, `UNHEX`, `CAST AS BINARY`,
+    // ...) still reads as a character string to anything that checks the
+    // enum instead of the name strings.
+    ft.set_collation(tidb_datatype::Collation::Binary);
     ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
 }
 
@@ -123,8 +131,18 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // String in, string out.
         "concat" | "concat_ws" | "upper" | "ucase" | "lower" | "lcase" | "trim" | "ltrim"
         | "rtrim" | "reverse" | "left" | "right" | "substring" | "substr" | "mid" | "replace"
-        | "repeat" | "lpad" | "rpad" | "space" | "hex" | "unhex" | "md5" | "elt" | "make_set"
+        | "repeat" | "lpad" | "rpad" | "space" | "hex" | "md5" | "elt" | "make_set"
         | "substring_index" | "insert_func" | "char_func" | "export_set" | "quote" => text(),
+        // Go `unhexFunctionClass`/`base64FunctionClass.fromBase64` (see
+        // `types.SetBinChsClnFlag` in `pkg/expression/builtin_string.go`):
+        // unlike the plain string-in-string-out family above, these two
+        // return a BINARY-collated `VarString`, which is what makes
+        // `CHAR_LENGTH(UNHEX(...))` count bytes rather than characters.
+        "unhex" | "from_base64" => {
+            let mut ft = text();
+            set_binary_charset(&mut ft);
+            ft
+        }
         // The date/time family. Every value this crate produces for them is
         // a formatted string or an integer -- see `time_fn`'s own doc for
         // why there is no `Time` value domain here -- so the result types
@@ -310,9 +328,7 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
         }
         CastType::Binary { len } => {
             let mut ft = FieldType::new(FieldTypeCode::VarString);
-            ft.set_charset_name("binary");
-            ft.set_collation_name("binary");
-            ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+            set_binary_charset(&mut ft);
             if let Some(len) = len {
                 ft.set_flen(i64::from(*len));
             }
@@ -582,9 +598,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             let mut datum = Datum::Null;
             datum.set_bytes(value.clone().into_bytes());
             let mut ft = FieldType::new(FieldTypeCode::VarString);
-            ft.set_charset_name("binary");
-            ft.set_collation_name("binary");
-            ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+            set_binary_charset(&mut ft);
             Ok(Expression::Constant(Constant::new(datum, ft)))
         }
         // Go's `in` builtin takes the tested value as args[0] and the list as

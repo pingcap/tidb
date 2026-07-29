@@ -979,6 +979,17 @@ impl FieldType {
         self.collation_name = collation.into();
     }
 
+    /// Sets the cached [`Collation`] enum directly, without touching the
+    /// parser-owned name strings. Go's own `FieldType` has no equivalent --
+    /// it stores only the collation name and re-resolves it on demand -- but
+    /// this port additionally caches the resolved `Collation` (read by
+    /// [`is_binary_string`](Self::is_binary_string) and friends), so any
+    /// caller that changes a type's collation via the name-only setters must
+    /// call this too or the two representations fall out of sync.
+    pub fn set_collation(&mut self, collation: Collation) {
+        self.collation = collation;
+    }
+
     /// Mirrors Go `FieldType.SetElems`: replaces the ENUM/SET elements.
     pub fn set_elems(&mut self, elems: Vec<String>) {
         self.elems = elems;

@@ -623,18 +623,24 @@ fn a_bare_ungrouped_column_is_rejected() {
         .is_err());
 }
 
-/// BUG: `CHAR_LENGTH` is not source-typed, so a binary-valued argument is
-/// counted in characters instead of bytes.
+/// `CHAR_LENGTH` picks its byte-counting or character-counting signature
+/// from the argument's static `FieldType` (`is_binary_string`), which needs
+/// a hex/bit literal or `UNHEX()`/`CAST(x AS BINARY)` result to actually
+/// carry `Collation::Binary`.
 ///
 /// TiDB picks `CHAR_LENGTH`'s signature from the argument's TYPE before
 /// evaluating it: a hex literal and `UNHEX()` are binary, so their length is a
 /// byte count. `gorun` answers 3 for both `char_length(0xE4BDA0)` and
 /// `char_length(unhex('E4BDA0'))`, against 1 for the ordinary string literal
-/// `'你'`. The live engine answers 1 for all three, decoding the bytes as UTF-8
-/// it was never told to decode. Note `LENGTH(0xE4BDA0)` is already correct at
-/// 3, so only the character-semantics signature choice is wrong.
+/// `'你'`. Root cause: `rewriter::set_binary_charset` set the `charset_name`/
+/// `collation_name` STRING fields to `"binary"` but never updated the
+/// separately cached `Collation` ENUM field that `FieldType::is_binary_string`
+/// actually reads, so every value this helper marks binary (hex/bit literals,
+/// `UNHEX`, `FROM_BASE64`, `CAST AS BINARY`, ...) still read as a character
+/// string. Fixed by `FieldType::set_collation` and updating the helper to
+/// call it. Note `LENGTH(0xE4BDA0)` was already correct at 3, because
+/// `LENGTH` always counts encoded bytes regardless of this signature choice.
 #[test]
-#[ignore = "live-engine bug: CHAR_LENGTH ignores the argument's binary type"]
 fn char_length_counts_bytes_for_a_binary_argument() {
     let mut session = Session::new();
     assert_eq!(
@@ -644,4 +650,48 @@ fn char_length_counts_bytes_for_a_binary_argument() {
         ),
         [["3", "3", "1"]]
     );
+}
+
+/// Companion capture (`gorun`, `TestZZDumpCharLength`) for
+/// [`char_length_counts_bytes_for_a_binary_argument`]: every case from that
+/// live capture, `CHAR_LENGTH` and `LENGTH` side by side so the byte-vs-
+/// character divergence is visible, plus `CAST(... AS BINARY)`, a `VARCHAR`
+/// vs `VARBINARY`/`BINARY` column, `NULL`, the empty string, and
+/// `CHARACTER_LENGTH` (the documented synonym, confirmed to resolve
+/// identically to `CHAR_LENGTH`).
+#[test]
+fn char_length_matches_go_across_binary_and_character_forms() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE zz_cl (v VARCHAR(20), b VARBINARY(20), c BINARY(20))")
+        .unwrap();
+    session
+        .run("INSERT INTO zz_cl VALUES ('你好', 0xE4BDA0, 0xE4BDA0)")
+        .unwrap();
+
+    let cases: &[(&str, [&str; 3])] = &[
+        ("0xE4BDA0", ["3", "3", "3"]),
+        ("unhex('E4BDA0')", ["3", "3", "3"]),
+        ("cast('你' as binary)", ["3", "3", "3"]),
+        ("'你'", ["1", "1", "3"]),
+        ("'hello'", ["5", "5", "5"]),
+        ("v", ["2", "2", "6"]),
+        ("b", ["3", "3", "3"]),
+        // A fixed-width BINARY column is zero-padded to its declared width,
+        // and the padding counts for both signatures alike.
+        ("c", ["20", "20", "20"]),
+        ("NULL", ["NULL", "NULL", "NULL"]),
+        ("''", ["0", "0", "0"]),
+    ];
+
+    for (expr, [char_length, character_length, length]) in cases {
+        let query = format!(
+            "SELECT char_length({expr}), character_length({expr}), length({expr}) FROM zz_cl LIMIT 1"
+        );
+        assert_eq!(
+            rows(&mut session, &query),
+            [[*char_length, *character_length, *length]],
+            "case {expr}"
+        );
+    }
 }
