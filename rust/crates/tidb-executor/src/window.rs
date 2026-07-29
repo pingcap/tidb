@@ -1120,13 +1120,14 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
                 .split_first()
                 .ok_or(DriverError::Unsupported(SLICE_MESSAGE))?;
             // Go's `NewWindowFuncDesc` requires a non-negative integer
-            // constant offset; the parser has already rejected a negative one.
+            // constant offset (`0` allowed, unlike NTILE/NTH_VALUE, but
+            // `NULL` is not); the parser has already rejected a negative one.
             let offset = match rest.first() {
                 None => 1,
-                Some(Expr::Int(text)) => text
-                    .parse::<u64>()
-                    .map_err(|_| DriverError::WrongArguments("lag/lead"))?,
-                Some(_) => return Err(DriverError::WrongArguments("lag/lead")),
+                Some(expr) => match constant_uint(expr) {
+                    Some(Some(count)) => count,
+                    _ => return Err(DriverError::WrongArguments("lag/lead")),
+                },
             };
             WindowKind::LagLead {
                 arg: arg.clone(),
@@ -1155,17 +1156,31 @@ enum BucketCount {
     Positive(u64),
 }
 
-/// Reads `NTILE`'s bucket count from a constant argument, or `None` when the
-/// argument is not a constant Go would accept.
-fn constant_bucket_count(arg: &Expr) -> Option<BucketCount> {
+/// Reads a constant the way Go's `expression.GetUint64FromConstant` does:
+/// `NULL`, a non-negative integer literal, or a boolean literal. Go's parser
+/// lowers `TRUE`/`FALSE` to `Int64` constants `1`/`0` (the same shape as
+/// `GROUP BY TRUE`), so every site that reads a constant integer window
+/// argument must accept a boolean literal exactly like an integer one.
+///
+/// Returns `None` when `arg` is not a constant Go would accept here at all;
+/// `Some(None)` for `NULL`; `Some(Some(n))` for a resolved value.
+fn constant_uint(arg: &Expr) -> Option<Option<u64>> {
     match arg {
-        Expr::Null => Some(BucketCount::Null),
-        Expr::Int(text) => text
-            .parse::<u64>()
-            .ok()
-            .filter(|count| *count > 0)
-            .map(BucketCount::Positive),
+        Expr::Null => Some(None),
+        Expr::Bool(value) => Some(Some(u64::from(*value))),
+        Expr::Int(text) => text.parse::<u64>().ok().map(Some),
         _ => None,
+    }
+}
+
+/// Reads `NTILE`'s (and `NTH_VALUE`'s position) bucket count from a constant
+/// argument, or `None` when the argument is not a constant Go would accept,
+/// or resolves to `0` (Go rejects `0` but allows `NULL`).
+fn constant_bucket_count(arg: &Expr) -> Option<BucketCount> {
+    match constant_uint(arg)? {
+        None => Some(BucketCount::Null),
+        Some(0) => None,
+        Some(count) => Some(BucketCount::Positive(count)),
     }
 }
 
@@ -1824,4 +1839,45 @@ pub(crate) fn rewrite_windows(select: &SelectStmt, calls: &[WindowCall]) -> Sele
         tidb_ast::Visitable::accept(&mut item.expr, &mut replacer);
     }
     rewritten
+}
+
+#[cfg(test)]
+mod constant_uint_tests {
+    use super::*;
+
+    /// `constant_uint` must resolve `TRUE`/`FALSE` to `1`/`0` exactly like
+    /// Go's `GetUint64FromConstant` resolves an `Int64` constant -- proving
+    /// `FALSE` is rejected downstream because it resolves to the disallowed
+    /// value `0` (the same ground as `NTILE(0)`), not because it fails to
+    /// parse as a constant at all (that "wrong reason" is what a bare
+    /// `Err(DriverError::WrongArguments(_))` match cannot distinguish, since
+    /// both paths produce the same error variant).
+    #[test]
+    fn bool_literals_resolve_like_go_int64_constants() {
+        assert_eq!(constant_uint(&Expr::Bool(true)), Some(Some(1)));
+        assert_eq!(constant_uint(&Expr::Bool(false)), Some(Some(0)));
+        assert_eq!(constant_uint(&Expr::Null), Some(None));
+        assert_eq!(constant_uint(&Expr::Int("5".to_string())), Some(Some(5)));
+        // A column reference is not a constant at all -- genuinely `None`,
+        // the OTHER ground `NTILE(k)` is rejected on.
+        assert_eq!(constant_uint(&Expr::Column(vec!["k".to_string()])), None);
+    }
+
+    #[test]
+    fn ntile_bucket_count_accepts_true_rejects_false_on_the_zero_ground() {
+        assert!(matches!(
+            constant_bucket_count(&Expr::Bool(true)),
+            Some(BucketCount::Positive(1))
+        ));
+        assert!(matches!(
+            constant_bucket_count(&Expr::Null),
+            Some(BucketCount::Null)
+        ));
+        // `FALSE` reaches `constant_uint` fine (it IS a constant, resolving
+        // to `0`), and is rejected by the zero check inside
+        // `constant_bucket_count` -- the same branch that rejects
+        // `NTILE(0)` -- not by `constant_uint` returning `None`.
+        assert_eq!(constant_uint(&Expr::Bool(false)), Some(Some(0)));
+        assert!(constant_bucket_count(&Expr::Bool(false)).is_none());
+    }
 }

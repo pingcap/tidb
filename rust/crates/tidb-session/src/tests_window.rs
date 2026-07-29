@@ -2367,7 +2367,6 @@ fn window_ntile_argument_domain() {
     for sql in [
         "SELECT NTILE(0) OVER (ORDER BY id) FROM ranking_live",
         "SELECT NTILE(-1) OVER (ORDER BY id) FROM ranking_live",
-        "SELECT NTILE(FALSE) OVER (ORDER BY id) FROM ranking_live",
         "SELECT NTILE(k) OVER (ORDER BY id) FROM ranking_live",
     ] {
         assert!(
@@ -2375,23 +2374,37 @@ fn window_ntile_argument_domain() {
             "expected ErrWrongArguments for {sql}"
         );
     }
+
+    // `NTILE(FALSE)` must be rejected on the SAME ground as `NTILE(0)`:
+    // `FALSE` lowers to the integer constant `0`, which fails the
+    // positivity check, not the "not a constant at all" check a plain
+    // column reference like `NTILE(k)` fails. Both grounds produce the
+    // identical `DriverError::WrongArguments("ntile")` / errno 1210 /
+    // "Incorrect arguments to ntile", so asserting only the error variant
+    // cannot distinguish them -- `constant_uint`'s unit tests in
+    // `tidb-executor/src/window.rs` (`constant_uint_tests`) pin the actual
+    // ground: `FALSE` resolves to `Some(Some(0))`, exactly like `NTILE(0)`,
+    // rather than `None`, like the non-constant `NTILE(k)`.
+    let false_error = session
+        .run("SELECT NTILE(FALSE) OVER (ORDER BY id) FROM ranking_live")
+        .unwrap_err()
+        .to_mysql_error();
+    let zero_error = session
+        .run("SELECT NTILE(0) OVER (ORDER BY id) FROM ranking_live")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(false_error, zero_error);
+    assert_eq!(false_error.code, 1210);
+    assert_eq!(false_error.message, "Incorrect arguments to ntile");
 }
 
-/// KNOWN DIVERGENCE. `TRUE` is an `Int64`-valued `Constant` in Go's
-/// expression layer, so `NewWindowFuncDesc`'s `GetUint64FromConstant`
-/// reads it as ONE bucket; captured from real TiDB, which returns
-/// bucket 1 for every row.
-///
-/// This build's `constant_bucket_count`
-/// (`tidb-executor/src/window.rs`) only accepts `Expr::Null` and
-/// `Expr::Int`, so `Expr::Bool(true)` falls through to
-/// `ErrWrongArguments`. The fix is to fold boolean literals into the
-/// same unsigned constant read (`TRUE` -> 1, `FALSE` -> 0, which then
-/// fails the positivity check exactly as `NTILE(0)` does -- and the
-/// `NTILE(FALSE)` refusal above already passes for the wrong reason).
-/// Ignored until that lands; the assertion below is the GO answer.
+/// `TRUE` is an `Int64`-valued `Constant` in Go's expression layer, so
+/// `NewWindowFuncDesc`'s `GetUint64FromConstant` reads it as ONE bucket;
+/// captured from real TiDB, which returns bucket 1 for every row.
+/// `constant_uint` (`tidb-executor/src/window.rs`) now folds boolean
+/// literals into the same unsigned constant read Go uses (`TRUE` -> 1,
+/// `FALSE` -> 0).
 #[test]
-#[ignore = "live engine rejects NTILE(TRUE); Go resolves it to one bucket"]
 fn window_ntile_accepts_boolean_constant() {
     let mut session = ranking_live_session();
     assert_eq!(
