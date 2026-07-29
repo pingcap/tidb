@@ -62,6 +62,7 @@ type UpdateExec struct {
 	tblColPosInfos            physicalop.TblColPosInfoSlice
 	assignFlag                []int
 	evalBuffer                chunk.MutRow
+	datumRow                  []types.Datum
 	newRowData                []types.Datum
 	allAssignmentsAreConstant bool
 	virtualAssignmentsOffset  int
@@ -454,7 +455,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 		}
 		for rowIdx := range chk.NumRows() {
 			chunkRow := chk.GetRow(rowIdx)
-			datumRow := chunkRow.GetDatumRow(fields)
+			datumRow := e.getDatumRow(chunkRow, fields)
 			// precomputes handles
 			if err := e.prepare(datumRow); err != nil {
 				return 0, 0, err
@@ -572,6 +573,16 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 	return newRowData, nil
 }
 
+func (e *UpdateExec) getDatumRow(row chunk.Row, fields []*types.FieldType) []types.Datum {
+	rowLen := row.Len()
+	if e.datumRow == nil || len(e.datumRow) != rowLen {
+		e.datumRow = row.GetDatumRow(fields)
+		return e.datumRow
+	}
+	clear(e.datumRow)
+	return row.GetDatumRowWithBuffer(fields, e.datumRow)
+}
+
 func (e *UpdateExec) cloneRow(row []types.Datum) []types.Datum {
 	if cap(e.newRowData) < len(row) {
 		e.newRowData = make([]types.Datum, len(row))
@@ -590,6 +601,7 @@ func (e *UpdateExec) cloneRow(row []types.Datum) []types.Datum {
 // Close implements the Executor Close interface.
 func (e *UpdateExec) Close() error {
 	defer e.memTracker.ReplaceBytesUsed(0)
+	e.datumRow = nil
 	e.newRowData = nil
 	e.setMessage()
 	if e.RuntimeStats() != nil && e.stats != nil {
