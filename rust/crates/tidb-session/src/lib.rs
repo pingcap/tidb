@@ -2049,6 +2049,20 @@ impl Session {
             .unwrap_or_default()
             .to_ascii_uppercase();
         let has = |flag: &str| mode.split(',').any(|part| part.trim() == flag);
+        // Go `GetDefaultWeekFormatMode` treats an unset or empty value as
+        // "0"; `GetDivPrecisionIncrement` falls back to the default of 4.
+        let week_format = self
+            .vars
+            .get_system("default_week_format")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(0);
+        let div_scale = self
+            .vars
+            .get_system("div_precision_increment")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(4);
         if !is_dml {
             return tidb_executor::StmtContext::for_query()
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
@@ -2057,6 +2071,7 @@ impl Session {
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
                 .with_connection_id(self.connection_id)
                 .with_rand_session(Rc::clone(&self.rand))
+                .with_week_and_division_scale(week_format, div_scale)
                 .with_clock(clock, zone);
         }
         tidb_executor::StmtContext::for_dml(
@@ -2069,6 +2084,7 @@ impl Session {
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
         .with_connection_id(self.connection_id)
         .with_rand_session(Rc::clone(&self.rand))
+        .with_week_and_division_scale(week_format, div_scale)
         .with_clock(clock, zone)
         .with_auto_increment_step_default(self.auto_increment_step_is_default())
         .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))

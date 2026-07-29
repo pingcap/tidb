@@ -87,6 +87,13 @@ pub struct StmtContext {
     /// is in TiDB's DEFAULT `sql_mode`, so a session leaves this on; a context
     /// with no session behind it (a test, a DDL-time fold) is permissive.
     only_full_group_by: bool,
+    /// Go `SessionVars`'s `default_week_format` and `div_precision_increment`,
+    /// which `EvalContext::GetDefaultWeekFormatMode` and
+    /// `GetDivPrecisionIncrement` hand to `WEEK()` and to the `/` operator's
+    /// result scale. The defaults here are the registry's own (`0` and `4`),
+    /// so a context with no session behind it behaves like a stock one.
+    default_week_format: i64,
+    div_precision_increment: u32,
 }
 
 impl StmtContext {
@@ -112,7 +119,21 @@ impl StmtContext {
             auto_increment_step_is_default: true,
             auto_increment_zero_is_explicit: false,
             only_full_group_by: false,
+            default_week_format: 0,
+            div_precision_increment: 4,
         }
+    }
+
+    /// Sets the session's `default_week_format` and `div_precision_increment`.
+    #[must_use]
+    pub fn with_week_and_division_scale(
+        mut self,
+        default_week_format: i64,
+        div_precision_increment: u32,
+    ) -> Self {
+        self.default_week_format = default_week_format;
+        self.div_precision_increment = div_precision_increment;
+        self
     }
 
     /// Sets whether `ONLY_FULL_GROUP_BY` is in effect, which a session reads
@@ -224,6 +245,8 @@ impl StmtContext {
             auto_increment_step_is_default: true,
             auto_increment_zero_is_explicit: false,
             only_full_group_by: false,
+            default_week_format: 0,
+            div_precision_increment: 4,
         }
     }
 
@@ -390,6 +413,14 @@ impl Columns for StmtContext {
                 .map(|value| Datum::Bytes(value.clone().into_bytes()));
         }
         None
+    }
+
+    fn default_week_format(&self) -> i64 {
+        self.default_week_format
+    }
+
+    fn div_precision_increment(&self) -> u32 {
+        self.div_precision_increment
     }
 
     fn division_by_zero_level(&self) -> ErrorLevel {
