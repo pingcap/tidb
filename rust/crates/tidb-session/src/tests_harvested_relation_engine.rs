@@ -758,7 +758,8 @@ fn a_bare_ungrouped_column_is_rejected() {
 /// is exempt, which the check below implements — but this engine's expression
 /// rewriter cannot yet build that select field at all, so the query fails on
 /// its own unrelated boundary. The exemption itself is covered by the
-/// `any_value(v)` row.
+/// `any_value(v)` row, which now asserts the ANSWER (`10;2` / `30;1`,
+/// captured from `gorun`) rather than merely "not rejected by this rule".
 #[test]
 fn only_full_group_by_pins_by_name_by_where_equality_and_by_candidate_key() {
     let mut session = Session::new();
@@ -824,13 +825,20 @@ fn only_full_group_by_pins_by_name_by_where_equality_and_by_candidate_key() {
     for sql in permitted {
         session.run(sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
     }
-    // `ANY_VALUE()` is exempt, so the check lets this through -- the query
-    // then fails on a SEPARATE gap (the builtin has no chunk evaluator yet),
-    // which is exactly what "not rejected by this rule" has to mean until
-    // that builtin lands.
-    let sql = "SELECT any_value(v), count(*) FROM gg GROUP BY k";
-    let code = session.run(sql).expect_err(sql).to_mysql_error().code;
-    assert!(code != 1055 && code != 8123, "{sql}: {code}");
+    // `ANY_VALUE()` is exempt, so the check lets this through -- and now that
+    // the builtin is typed for chunk evaluation the query ANSWERS, which is a
+    // strictly stronger assertion than the "failed, but not with 1055/8123"
+    // this row could make while the evaluator refused it. `ANY_VALUE` takes
+    // the group's FIRST row (`builtinIntAnyValueSig` is the identity on the
+    // value the aggregation already holds), so `k=1` reports the `v` of
+    // `(1,10)`.
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT any_value(v), count(*) FROM gg GROUP BY k"
+        ),
+        [["10", "2"], ["30", "1"]]
+    );
 
     // Clearing the mode restores the permissive answers, values included.
     session.run("SET sql_mode = 'STRICT_TRANS_TABLES'").unwrap();
