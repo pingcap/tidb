@@ -65,6 +65,7 @@ pub mod projection;
 pub mod pushdown_scan;
 pub mod scan_pushdown;
 pub mod selection;
+pub mod sequence;
 mod skyline;
 pub mod sort;
 mod stmt_context;
