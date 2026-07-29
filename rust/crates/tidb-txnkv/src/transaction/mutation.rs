@@ -264,7 +264,16 @@ fn checked_aggregate_sizes(sizes: impl IntoIterator<Item = (usize, usize)>) -> u
         .unwrap_or(usize::MAX)
 }
 
-/// Maximum mutations admitted by the first bounded normal-2PC path.
+/// The mutation-count budget the ordinary bounded normal-2PC callers declare.
+///
+/// This is a *caller's declared plan*, enforced per transaction by
+/// [`crate::transaction::ProductionOptimisticTransaction::commit`] against the
+/// budget that transaction was opened with -- not a global ceiling. A path
+/// whose legitimate plan is larger declares its own; see
+/// `tidb_exec::real_tikv_analyze::ANALYZE_MAX_MUTATIONS`, which is what one
+/// `ANALYZE TABLE` of a real table needs and what Go's own analyze save
+/// (`pkg/statistics/handle/storage/save.go`, one transaction per table)
+/// places no count limit on at all.
 ///
 /// Go and client-go enforce no such per-transaction mutation *count*: the real
 /// limits are byte-based (`txn-entry-size-limit`, default 6MiB per entry;
@@ -292,12 +301,13 @@ pub(super) fn validate_plan(count: usize, aggregate_bytes: usize) -> Result<(), 
     if count == 0 {
         return Err(MutationSetError::Empty);
     }
-    if count > MAX_OPTIMISTIC_MUTATIONS {
-        return Err(MutationSetError::TooManyMutations {
-            count,
-            limit: MAX_OPTIMISTIC_MUTATIONS,
-        });
-    }
+    // No count ceiling here on purpose. Go and client-go enforce none either
+    // (`txn-entry-size-limit` / `txn-total-size-limit` are byte-based), and a
+    // ceiling applied to *every* mutation set would override the budget a
+    // caller declared for its own transaction -- which is what made a
+    // real-sized `ANALYZE TABLE` uncommittable while a toy one worked. The
+    // bound each transaction is actually held to is the plan it was opened
+    // with, checked in `commit`.
     if aggregate_bytes > MAX_OPTIMISTIC_TRANSACTION_BYTES {
         return Err(MutationSetError::TransactionTooLarge {
             size: aggregate_bytes,
@@ -380,10 +390,10 @@ mod tests {
             Err(MutationSetError::ValueTooLarge { .. })
         ));
         assert!(validate_plan(MAX_OPTIMISTIC_MUTATIONS, 1).is_ok());
-        assert!(matches!(
-            validate_plan(MAX_OPTIMISTIC_MUTATIONS + 1, 1),
-            Err(MutationSetError::TooManyMutations { .. })
-        ));
+        // A count past the ordinary callers' budget is not rejected here: the
+        // budget belongs to the transaction that declared it, and `commit`
+        // holds the mutation set to that one.
+        assert!(validate_plan(MAX_OPTIMISTIC_MUTATIONS + 1, 1).is_ok());
         assert!(validate_plan(1, MAX_OPTIMISTIC_TRANSACTION_BYTES).is_ok());
         assert!(matches!(
             validate_plan(1, MAX_OPTIMISTIC_TRANSACTION_BYTES + 1),

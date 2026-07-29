@@ -31,8 +31,7 @@ use std::time::Duration;
 
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_MUTATIONS,
-    MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    OptimisticCommitOutcome, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 
 use crate::cluster_analyze::{analyze_table, lower_analyze, AnalyzeError, AnalyzeStatement};
@@ -42,6 +41,30 @@ use crate::cluster_stats_write::plan_stats_write;
 use crate::mysql_bootstrap::utc_now_timestamp;
 use crate::mysql_system_tables::SystemTableError;
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
+
+/// The mutation-count budget one `ANALYZE TABLE` declares.
+///
+/// Go saves one table's whole analyze result in ONE transaction --
+/// `pkg/statistics/handle/storage/stats_read_writer.go:141` wraps
+/// `SaveAnalyzeResultToStorage` in `util.FlagWrapTxn`, which is a single
+/// `BEGIN PESSIMISTIC` ... `COMMIT` around every `stats_meta`,
+/// `stats_histograms`, `stats_buckets` and `stats_top_n` write for the table
+/// -- and places no bound on how many rows that is. Its batching
+/// (`save.go:42`'s `batchInsertSize = 10`) groups rows into *statements*
+/// inside that one transaction, not into separate transactions.
+///
+/// So this path keeps its single transaction, and states the count budget
+/// Go's has: none. The bound that remains is the byte one
+/// ([`MAX_OPTIMISTIC_TRANSACTION_BYTES`], this path's stand-in for Go's
+/// `txn-total-size-limit`), which is the bound Go is actually held to.
+///
+/// The generic [`tidb_txnkv::transaction::MAX_OPTIMISTIC_MUTATIONS`] is the
+/// wrong budget here and was
+/// the defect: the default `ANALYZE` builds 256 buckets and 100 TopN entries
+/// per histogram, so a table with four columns and two indexes plans ~4300
+/// mutations -- over that budget. It worked on toy tables and hard-failed on
+/// real ones.
+pub const ANALYZE_MAX_MUTATIONS: usize = usize::MAX;
 
 /// Parses and admits one text-protocol statement as an `ANALYZE TABLE`.
 ///
@@ -104,7 +127,7 @@ pub fn commit_cluster_analyze(
 ) -> Result<ClusterAnalyzeReport, String> {
     let call = UnaryCallContext::with_timeout(timeout);
     let mut transaction = opener
-        .begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
         .map_err(|error| error.to_string())?;
     let start_ts = transaction.start_ts();
     let planned = {
