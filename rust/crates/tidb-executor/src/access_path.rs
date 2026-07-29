@@ -583,12 +583,19 @@ mod tests {
     /// An `ORDER BY` the index range already produces lets the cap through:
     /// the scan stops at `count` rows instead of reading the range and
     /// sorting it.
+    ///
+    /// The projection is covering on purpose. A non-covering one adds a
+    /// double read, and this tier's double read issues one round trip per
+    /// row, which [`crate::access_cost`] now prices honestly -- on a table
+    /// this small the chooser then prefers the scan, and the cap would be
+    /// tested through the wrong path. See
+    /// `a_double_read_costs_more_than_the_scan_it_replaces` below.
     #[test]
     fn an_order_by_the_index_satisfies_pushes_the_limit() {
         let ctx = crate::StmtContext::for_query();
         let (catalog, entries, gets) = table_of(ROWS, true);
         let rows = run_select_on(
-            "SELECT a FROM t WHERE b > 0 ORDER BY b LIMIT 5",
+            "SELECT b FROM t WHERE b > 0 ORDER BY b LIMIT 5",
             &catalog,
             &ctx,
         )
@@ -599,10 +606,17 @@ mod tests {
             5,
             "only five index entries were walked"
         );
+        // KNOWN GAP, asserted rather than hidden: the source looks the row up
+        // even though every column this statement reads is IN the index. Go's
+        // covering path lowers to a `PhysicalIndexReader` that never touches
+        // the table, and [`crate::access_cost`] costs it that way -- but
+        // `IndexRangeSourceExec` always calls `get_row_by_handle`. So a
+        // covering path costs zero round trips in the model and five here.
+        // Closing it is the same work as batching the double read.
         assert_eq!(
             gets.load(Ordering::Relaxed),
             5,
-            "and only five rows were looked up"
+            "five rows were still looked up, though the index covers them"
         );
     }
 

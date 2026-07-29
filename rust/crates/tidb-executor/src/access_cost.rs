@@ -131,10 +131,33 @@ const DIST_SQL_SCAN_CONCURRENCY: f64 = 15.0;
 /// Go `SessionVars.IndexLookupConcurrency()`, which falls back to
 /// `DefExecutorConcurrency` because `DefIndexLookupConcurrency` is unset.
 const INDEX_LOOKUP_CONCURRENCY: f64 = 5.0;
-/// Go `vardef.DefIndexLookupSize`.
-const INDEX_LOOKUP_SIZE: f64 = 20000.0;
-/// Go's `taskPerBatch` magic number in `getPlanCostVer24PhysicalIndexLookUpReader`.
-const TASK_PER_BATCH: f64 = 32.0;
+/// The table-side requests one double read issues PER INDEX ROW.
+///
+/// Go writes this in `getPlanCostVer24PhysicalIndexLookUpReader` as
+/// `doubleReadTasks = doubleReadRows / batchSize * taskPerBatch`, with
+/// `batchSize = SessionVars.IndexLookupSize` (`vardef.DefIndexLookupSize`,
+/// 20000) and `taskPerBatch = 32`: `32/20000 = 0.0016` requests per row.
+///
+/// That is not a free constant -- it is a claim about Go's reader, and Go's
+/// reader honours it. `pkg/executor/distsql.go`'s `IndexLookUpExecutor`
+/// gathers handles in `fetchHandles` until it has `IndexLookupSize` of them,
+/// hands the whole batch to `buildTableReader`, and issues cop tasks for the
+/// batch. Per row, the request count is the batching factor's reciprocal.
+///
+/// OUR reader does not batch. `IndexRangeSourceExec` in
+/// [`crate::access_path`] calls `KvTable::get_row_by_handle` once per index
+/// entry, and that is one `TableStorage::get` -- against
+/// `ClusterTableStorage`, one snapshot round trip to TiKV, per row. So the
+/// honest count here is `1.0`. Pricing our reader at Go's constants
+/// under-costs every non-covering index path by 625x, and the cost-based
+/// chooser then picks index plans that cannot be executed at anything near
+/// the cost it claimed.
+///
+/// This constant is a property of THIS tier's executor, not of Go's cost
+/// model. Making the reader batch (collect handles, one batched read per
+/// batch, as Go does) is the real fix; when it lands, this becomes
+/// `32.0 / 20000.0` and nothing else in this function changes.
+const DOUBLE_READ_REQUESTS_PER_ROW: f64 = 1.0;
 /// Go `plan_cost_ver2.go`'s `MinNumRows`.
 const MIN_NUM_ROWS: f64 = 1.0;
 /// Go `plan_cost_ver2.go`'s `MinRowSize`.
@@ -553,7 +576,7 @@ fn index_path(
         let table_net = net_cost(rows, table_row_size);
         let table_side = (table_scan + table_net) / DIST_SQL_SCAN_CONCURRENCY;
         let double_read_cpu = rows * TIKV_CPU_FACTOR;
-        let double_read_tasks = rows / INDEX_LOOKUP_SIZE * TASK_PER_BATCH;
+        let double_read_tasks = rows * DOUBLE_READ_REQUESTS_PER_ROW;
         let double_read_request = double_read_tasks * TIDB_REQUEST_FACTOR;
         index_side + (table_side + double_read_cpu + double_read_request) / INDEX_LOOKUP_CONCURRENCY
     };
@@ -829,4 +852,113 @@ pub(crate) fn choose_access_path(
         }
     }
     best
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kv_table::KvColumn;
+    use crate::storage::MemTableStorage;
+    use tidb_expr::rewriter::NoResolver;
+
+    fn long_column(name: &str, id: i64) -> KvColumn {
+        KvColumn {
+            name: name.to_owned(),
+            id,
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            default_value: None,
+            origin_default: None,
+        }
+    }
+
+    /// `t(a, b, c)` with a non-unique index on `b`, the shape
+    /// [`crate::access_path`]'s tests use.
+    fn table_with_index() -> KvTable {
+        let mut table = KvTable::with_storage(
+            77,
+            vec![
+                long_column("a", 1),
+                long_column("b", 2),
+                long_column("c", 3),
+            ],
+            Box::new(MemTableStorage::new()),
+        );
+        table
+            .create_index(KvIndex {
+                id: 1,
+                name: "ib".to_owned(),
+                unique: false,
+                column_offsets: vec![1],
+                visible: true,
+            })
+            .unwrap();
+        table
+    }
+
+    /// The single point range `b = 42`.
+    fn point_range() -> IndexRange {
+        IndexRange {
+            low: vec![Datum::Int(42)],
+            high: vec![Datum::Int(42)],
+            low_exclusive: false,
+            high_exclusive: false,
+        }
+    }
+
+    /// The per-row round trip our double read really issues has to cost more
+    /// than reading the rows it skips, or the chooser prefers a plan the
+    /// reader cannot execute at the price it was sold at.
+    ///
+    /// The number that decides it is [`DOUBLE_READ_REQUESTS_PER_ROW`]. Go's
+    /// batched reader amortizes a table-side request over `IndexLookupSize`
+    /// rows (`32/20000` requests per row); ours issues one
+    /// `TableStorage::get` per index entry. At Go's constant this index path
+    /// came out CHEAPER than the full scan of the same table -- 625x too
+    /// cheap -- and won the plan.
+    #[test]
+    fn an_unbatched_double_read_costs_more_than_the_scan_it_replaces() {
+        let table = table_with_index();
+        let index = table.plan_indexes().next().unwrap().clone();
+        let realtime = crate::plan_trace::PSEUDO_ROW_COUNT;
+
+        // `a` is not stored in the index on `b`, so this path pays a double
+        // read: one `get_row_by_handle` per index entry.
+        let non_covering = index_path(
+            &table,
+            &index,
+            vec![point_range()],
+            &[0],
+            None,
+            None,
+            realtime,
+        );
+        let scan = table_scan_path(&table, None, &NoResolver, None, realtime);
+        assert!(
+            non_covering.cost > scan.cost,
+            "a double read of {} rows must not undercut a {realtime}-row scan: \
+             index {} vs scan {}",
+            non_covering.estimate.rows,
+            non_covering.cost,
+            scan.cost
+        );
+
+        // The control: a covering path performs no lookup, so the request
+        // price does not reach it and it still wins comfortably.
+        let covering = index_path(
+            &table,
+            &index,
+            vec![point_range()],
+            &[1],
+            None,
+            None,
+            realtime,
+        );
+        assert!(
+            covering.cost < scan.cost,
+            "a covering index path issues no round trip and must stay cheap: \
+             index {} vs scan {}",
+            covering.cost,
+            scan.cost
+        );
+    }
 }
