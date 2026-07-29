@@ -404,3 +404,217 @@ mod tests {
         assert_eq!(ScanComparisonOp::from_ast(tidb_ast::BinaryOp::NullEq), None);
     }
 }
+
+/// The port of Go `TestExprPushDownToTiKV`
+/// (`pkg/expression/expr_to_pb_test.go:1547`): which expressions may be
+/// evaluated by the coprocessor.
+///
+/// # What the port can and cannot assert
+///
+/// Go's table is a list of scalar functions built over typed columns, each
+/// checked with `PushDownExprs(..., kv.TiKV)`. This engine has no
+/// expression-level push-down catalog at all: `split_scan_predicates` pushes
+/// exactly one shape -- a column compared with a constant -- so **every** row
+/// of Go's table is refused here, whichever way Go answers. The two directions
+/// of that disagreement are not equally serious, so they are separate tests:
+///
+/// * **Correctness.** For the rows Go *refuses*, a push here would be a bug:
+///   the coprocessor would evaluate an expression TiDB deliberately keeps in
+///   the TiDB layer (`INET_ATON` and friends; `CONV` over a BIT column, Go
+///   issue 51877), and rows would silently differ. Those rows are asserted
+///   unconditionally and are live coverage for any future widening.
+/// * **Performance.** For the rows Go *pushes*, refusing them costs network
+///   and CPU but cannot change an answer. Those rows carry Go's verdict in an
+///   `#[ignore]`d test so the gap is tracked rather than forgotten.
+#[cfg(test)]
+mod tests_push_down_verdict {
+    use tidb_datatype::{FieldType, FieldTypeCode};
+
+    use crate::driver::{split_scan_predicates, FromScope, FromTable, ScopeResolver};
+
+    /// Go's `genColumn` set from the test, one column per type it builds an
+    /// expression over.
+    fn scope() -> FromScope {
+        let column = |name: &str, code: FieldTypeCode| (name.to_owned(), FieldType::new(code));
+        FromScope {
+            tables: vec![FromTable {
+                name: "t".to_owned(),
+                database: None,
+                columns: vec![
+                    column("j", FieldTypeCode::Json),
+                    column("i", FieldTypeCode::LongLong),
+                    column("r", FieldTypeCode::Double),
+                    column("dec", FieldTypeCode::NewDecimal),
+                    column("s", FieldTypeCode::String),
+                    column("dt", FieldTypeCode::Datetime),
+                    column("bs", FieldTypeCode::String),
+                    column("d", FieldTypeCode::Date),
+                    column("bt", FieldTypeCode::Bit),
+                    column("tm", FieldTypeCode::Duration),
+                ],
+                offset: 0,
+                determinants: Vec::new(),
+            }],
+            ..FromScope::default()
+        }
+    }
+
+    /// Whether this engine pushes the single conjunct of `where_expr` into the
+    /// scan. `None` means the expression does not parse here at all, which is
+    /// a different (and larger) gap than a refused push.
+    fn pushes(where_expr: &str) -> Option<bool> {
+        let sql = format!("SELECT 1 FROM t WHERE {where_expr}");
+        let stmt = tidb_parser::parse(&sql).ok()?;
+        let tidb_ast::Stmt::Query(query) = &stmt else {
+            return None;
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            return None;
+        };
+        let where_clause = select.where_clause.clone()?;
+        let scope = scope();
+        let (pushed, _) = split_scan_predicates(&where_clause, &ScopeResolver { scope: &scope });
+        Some(!pushed.is_empty())
+    }
+
+    /// Every expression Go REFUSES to push to TiKV, in Go's order.
+    ///
+    /// The IP family is TiDB-only; `CONV` over a BIT column is refused
+    /// because the BIT-to-binary-string cast TiDB inserts is only handled in
+    /// TiDB (Go issue 51877) -- note that `CONV` over a plain string column
+    /// *is* pushed, and is in the pushed table below.
+    const GO_REFUSES: &[&str] = &[
+        "inet_aton(s)",
+        "inet_ntoa(s)",
+        "inet6_aton(s)",
+        "inet6_ntoa(s)",
+        "is_ipv4(s)",
+        "is_ipv6(s)",
+        "is_ipv4_compat(s)",
+        "is_ipv4_mapped(s)",
+        "conv(cast(bt as binary), i, i)",
+    ];
+
+    /// Every expression Go PUSHES to TiKV, in Go's order.
+    ///
+    /// Go's table has five further rows commented out in the source
+    /// (`TRUNCATE`, and four `STR_TO_DATE` spellings), so they pin no verdict
+    /// and are deliberately absent here too.
+    const GO_PUSHES: &[&str] = &[
+        // `CONV` over a string column, and the substring family.
+        "conv(s, i, i)",
+        "substr(s, i, i)",
+        "substring(s, i, i)",
+        "mid(s, i, i)",
+        // The `testcases` table, row for row.
+        "char_length(s)",
+        "sin(i)",
+        "asin(i)",
+        "cos(i)",
+        "acos(i)",
+        "atan(i)",
+        "cot(i)",
+        "atan2(i, i)",
+        "date_format(d, s)",
+        "hour(d)",
+        "minute(d)",
+        "second(d)",
+        "month(d)",
+        "microsecond(d)",
+        "pi()",
+        "round(i)",
+        "date(d)",
+        "week(d)",
+        "datediff(d, d)",
+        "mod(i, i)",
+        "upper(s)",
+        "lower(s)",
+        "pow(r, r)",
+        "power(r, r)",
+        "json_replace(j, s, j, s, j)",
+        "json_array_append(j, s, j, s, j)",
+        "json_merge_patch(j, j, j)",
+        "date_add(s, interval s second)",
+        "date_add(dec, interval r day)",
+        "date_add(dt, interval i year)",
+        "date_add(tm, interval s minute)",
+        "date_add(tm, interval s year_month)",
+        "date_sub(s, interval i microsecond)",
+        "date_sub(i, interval r day)",
+        "date_sub(dt, interval i quarter)",
+        "date_sub(tm, interval s hour)",
+        "date_sub(tm, interval s year_month)",
+        "adddate(tm, interval s week)",
+        "subdate(s, interval i hour)",
+        "from_unixtime(dec)",
+        "from_unixtime(dec, s)",
+        "timestampdiff(second, dt, dt)",
+        "timestampdiff(day, dt, dt)",
+        "timestampdiff(year, dt, dt)",
+        "unix_timestamp(dt)",
+        "unix_timestamp(s)",
+    ];
+
+    /// CORRECTNESS: nothing Go keeps in TiDB may be handed to the store.
+    #[test]
+    fn tikv_refuses_what_go_refuses() {
+        for expr in GO_REFUSES {
+            // `None` (unparsable here) is also a refusal to push, which is the
+            // safe direction; the missing builtin is a separate gap.
+            if let Some(pushed) = pushes(expr) {
+                assert!(
+                    !pushed,
+                    "{expr}: TiDB refuses to push this to TiKV, so pushing it here \
+                     would let the store evaluate what only TiDB evaluates correctly"
+                );
+            }
+        }
+    }
+
+    /// PERFORMANCE: this engine pushes none of what Go pushes, because its
+    /// accepted shape is a column-versus-constant comparison and nothing else.
+    /// The assertion is written the way it must eventually read (Go's verdict),
+    /// so widening the lowering turns this test green rather than leaving the
+    /// gap invisible.
+    #[test]
+    #[ignore = "no expression-level push-down catalog yet: only column-vs-constant comparisons are lowered"]
+    fn tikv_pushes_what_go_pushes() {
+        for expr in GO_PUSHES {
+            assert_eq!(pushes(expr), Some(true), "{expr}: TiDB pushes this to TiKV");
+        }
+    }
+
+    /// The gap the `#[ignore]`d test above would otherwise hide: TODAY every
+    /// pushable row is refused. Pinning that keeps the count honest -- if a
+    /// widening starts pushing some of them, this test fails and the ignored
+    /// one must be re-checked.
+    #[test]
+    fn every_go_pushable_expression_is_still_refused_here() {
+        let pushed_here: Vec<&&str> = GO_PUSHES
+            .iter()
+            .filter(|expr| pushes(expr) == Some(true))
+            .collect();
+        assert!(
+            pushed_here.is_empty(),
+            "these now push -- re-check them against Go's verdict: {pushed_here:?}"
+        );
+    }
+
+    /// Every expression in Go's table parses here, in both halves. This is the
+    /// part of the Go table that *is* fully covered today: the shapes exist as
+    /// expressions even though none of them lowers into the scan, so a
+    /// regression that lost one of these spellings from the grammar would fail
+    /// here rather than silently shrinking the table above.
+    #[test]
+    fn every_expression_in_gos_table_parses() {
+        let unparsable: Vec<&&str> = GO_REFUSES
+            .iter()
+            .chain(GO_PUSHES)
+            .filter(|expr| pushes(expr).is_none())
+            .collect();
+        assert!(
+            unparsable.is_empty(),
+            "these rows of Go's push-down table do not parse here: {unparsable:?}"
+        );
+    }
+}
