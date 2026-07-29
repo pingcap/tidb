@@ -637,6 +637,7 @@ impl RealTiKvServerSession {
                 MultiStatementTransaction::begin(
                     &opener,
                     mode,
+                    crate::session_transaction::session_fair_locking(),
                     table,
                     PRODUCTION_CONTROL_PLANE_TIMEOUT,
                 )

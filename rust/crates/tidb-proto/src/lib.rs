@@ -78,6 +78,7 @@ pub use mpp::{
     ReportTaskStatusResponse as MppReportTaskStatusResponse, TaskMeta as MppTaskMeta,
 };
 
+pub use kvrpcpb::prewrite_request::ForUpdateTsConstraint as KvrpcForUpdateTsConstraint;
 pub use kvrpcpb::prewrite_request::PessimisticAction as KvrpcPessimisticAction;
 
 pub use kvrpcpb::{

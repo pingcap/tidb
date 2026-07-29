@@ -23,18 +23,29 @@
 //! commit is literally the optimistic one — [`RealOptimisticTransaction`] —
 //! with Prewrite told to verify the locks instead of re-checking for conflicts.
 //!
-//! Out of scope here, and deliberately so: fair (aggressive) locking's
-//! `WakeUpModeForceLock`, `return_values`/`check_existence` value caching,
-//! async commit, and 1PC.
+//! Fair (aggressive) locking is the second way a conflict can be settled. With
+//! `@@tidb_pessimistic_txn_fair_locking` on, a single-key locking statement is
+//! sent in `WakeUpModeForceLock`, and TiKV may grant the lock *despite* a
+//! newer committed version, reporting `LockResultLockedWithConflict` with that
+//! version's commit timestamp. The lock then really exists at that timestamp,
+//! not at the requested `for_update_ts` — so this owner records it per key and
+//! declares it to Prewrite as a `for_update_ts` constraint, and releases such a
+//! lock at the higher timestamp. The statement still has to be retried, because
+//! its result was computed from a snapshot the lock has now overtaken; what
+//! fair locking buys is that the lock survives the retry, so the retry needs no
+//! second PessimisticLock round trip for that key.
+//!
+//! Out of scope here, and deliberately so: `return_values`/`check_existence`
+//! value caching, async commit, and 1PC.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::time::{Duration, Instant};
 
 use tidb_proto::{
     KvrpcAssertion, KvrpcDeadlock, KvrpcKeyError, KvrpcMutation, KvrpcOp,
-    KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse, KvrpcPessimisticLockWakeUpMode,
-    KvrpcPessimisticRollbackRequest,
+    KvrpcPessimisticLockKeyResultType, KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse,
+    KvrpcPessimisticLockWakeUpMode, KvrpcPessimisticRollbackRequest,
 };
 
 use crate::lock::{
@@ -202,6 +213,16 @@ pub struct AcquiredLocks {
     pub keys: Vec<Vec<u8>>,
     /// Primary key of the transaction, chosen by the first successful lock.
     pub primary_key: Vec<u8>,
+    /// Keys fair locking locked *despite* a conflict, with the commit
+    /// timestamp of the version that beat this statement.
+    ///
+    /// Non-empty only under [`RealPessimisticTransaction::set_fair_locking`].
+    /// Each entry says "the lock exists, but at this higher timestamp": the
+    /// statement's own result is stale and must be recomputed, while the lock
+    /// itself carries over to the retry. Go turns the same fact into
+    /// `ErrWriteConflict{reason: "LockedWithConflict"}` in
+    /// `pkg/store/driver/txn.generateWriteConflictForLockedWithConflict`.
+    pub locked_with_conflict: Vec<(Vec<u8>, u64)>,
 }
 
 /// One concrete pessimistic transaction over the shared process authorities.
@@ -215,6 +236,14 @@ pub struct RealPessimisticTransaction<C, L, T> {
     opened_at: Instant,
     primary_key: Option<Vec<u8>>,
     locked_keys: BTreeSet<Vec<u8>>,
+    fair_locking: bool,
+    /// Actual `for_update_ts` of every lock TiKV granted with a conflict, which
+    /// is higher than the `for_update_ts` that asked for it.
+    locked_with_conflict: BTreeMap<Vec<u8>, u64>,
+    /// Highest such timestamp ever seen, kept even after the key is released.
+    /// Go's `twoPhaseCommitter.maxLockedWithConflictTS`: PessimisticRollback
+    /// must address a lock at the timestamp it really carries.
+    max_locked_with_conflict_ts: u64,
 }
 
 impl<C, L, T> RealPessimisticTransaction<C, L, T>
@@ -238,7 +267,46 @@ where
             opened_at,
             primary_key: None,
             locked_keys: BTreeSet::new(),
+            fair_locking: false,
+            locked_with_conflict: BTreeMap::new(),
+            max_locked_with_conflict_ts: 0,
         })
+    }
+
+    /// Turns fair (aggressive) locking on or off for the statements that follow.
+    ///
+    /// This is `@@tidb_pessimistic_txn_fair_locking` reaching the transaction.
+    /// Go arms it per statement through `StartFairLocking` /
+    /// `DoneFairLocking`; here it is a mode the transaction stays in, because
+    /// the only state Go's per-statement scope protects — the derived-lock
+    /// buffer — is held by the SQL tier that retries the statement.
+    pub const fn set_fair_locking(&mut self, enabled: bool) {
+        self.fair_locking = enabled;
+    }
+
+    /// Whether the next locking statement may use `WakeUpModeForceLock`.
+    #[must_use]
+    pub const fn is_in_fair_locking_mode(&self) -> bool {
+        self.fair_locking
+    }
+
+    /// Highest timestamp at which fair locking granted a lock despite conflict.
+    #[must_use]
+    pub const fn max_locked_with_conflict_ts(&self) -> u64 {
+        self.max_locked_with_conflict_ts
+    }
+
+    /// Timestamp a PessimisticRollback of this transaction's locks must carry.
+    ///
+    /// Go `actionPessimisticRollback.handleSingleBatch`: a lock granted with
+    /// conflict exists at the conflicting commit timestamp, so releasing it at
+    /// the requested `for_update_ts` would leave it behind.
+    const fn rollback_for_update_ts(&self) -> u64 {
+        if self.max_locked_with_conflict_ts > self.for_update_ts {
+            self.max_locked_with_conflict_ts
+        } else {
+            self.for_update_ts
+        }
     }
 
     /// Snapshot timestamp shared by reads, locks, and the final commit.
@@ -327,9 +395,19 @@ where
             Some(primary) => primary,
             None => sorted[0].clone(),
         };
+        // Go `KVTxn.LockKeys`: ForceLock is requested only while fair locking
+        // is armed *and* the statement locks exactly one key. TiKV's ForceLock
+        // path answers about a single key, so a multi-key statement stays in
+        // Normal mode even under fair locking.
+        let wake_up_mode = if self.fair_locking && sorted.len() == 1 {
+            KvrpcPessimisticLockWakeUpMode::WakeUpModeForceLock
+        } else {
+            KvrpcPessimisticLockWakeUpMode::WakeUpModeNormal
+        };
         let wait_started_at = Instant::now();
         let mut queue = VecDeque::from(self.group(&sorted)?);
         let mut newly_locked = Vec::new();
+        let mut locked_with_conflict: Vec<(Vec<u8>, u64)> = Vec::new();
         while let Some(batch) = queue.pop_front() {
             match self.lock_batch(
                 &batch,
@@ -338,9 +416,13 @@ where
                 presume_not_exists,
                 wait,
                 wait_started_at,
+                wake_up_mode,
                 call,
             )? {
-                BatchOutcome::Locked => newly_locked.extend(batch.keys().iter().cloned()),
+                BatchOutcome::Locked { conflicts } => {
+                    newly_locked.extend(batch.keys().iter().cloned());
+                    locked_with_conflict.extend(conflicts);
+                }
                 BatchOutcome::Regroup => {
                     for regrouped in self.group(batch.keys())?.into_iter().rev() {
                         queue.push_front(regrouped);
@@ -350,10 +432,15 @@ where
         }
         self.primary_key = Some(primary_key.clone());
         self.locked_keys.extend(newly_locked.iter().cloned());
+        for (key, conflict_ts) in &locked_with_conflict {
+            self.locked_with_conflict.insert(key.clone(), *conflict_ts);
+            self.max_locked_with_conflict_ts = self.max_locked_with_conflict_ts.max(*conflict_ts);
+        }
         Ok(AcquiredLocks {
             for_update_ts: self.for_update_ts,
             keys: newly_locked,
             primary_key,
+            locked_with_conflict,
         })
     }
 
@@ -375,7 +462,7 @@ where
         while let Some(batch) = queue.pop_front() {
             let request = KvrpcPessimisticRollbackRequest {
                 start_version: self.start_ts(),
-                for_update_ts: self.for_update_ts,
+                for_update_ts: self.rollback_for_update_ts(),
                 keys: batch.keys().to_vec(),
                 ..KvrpcPessimisticRollbackRequest::default()
             };
@@ -421,6 +508,7 @@ where
                     }
                     for key in batch.keys() {
                         self.locked_keys.remove(key);
+                        self.locked_with_conflict.remove(key);
                     }
                 }
             }
@@ -442,6 +530,7 @@ where
             .set_pessimistic_prewrite(PessimisticPrewritePlan {
                 for_update_ts: self.for_update_ts,
                 locked_keys: self.locked_keys.clone(),
+                for_update_ts_constraints: self.locked_with_conflict.clone(),
             });
         self.two_pc.commit(mutations, call)
     }
@@ -480,6 +569,7 @@ where
         presume_not_exists: &BTreeSet<Vec<u8>>,
         wait: LockWaitTime,
         wait_started_at: Instant,
+        wake_up_mode: KvrpcPessimisticLockWakeUpMode,
         call: &UnaryCallContext,
     ) -> Result<BatchOutcome, PessimisticLockFailure> {
         let mutations = batch
@@ -510,7 +600,7 @@ where
                 is_first_lock,
                 wait_timeout: wait.wait_timeout_ms(waited),
                 min_commit_ts: self.for_update_ts.saturating_add(1),
-                wake_up_mode: KvrpcPessimisticLockWakeUpMode::WakeUpModeNormal as i32,
+                wake_up_mode: wake_up_mode as i32,
                 ..KvrpcPessimisticLockRequest::default()
             };
             let response = self.publish_lock(batch, &request, call)?;
@@ -525,10 +615,33 @@ where
                     .map_err(PessimisticLockFailure::Transaction)?;
                 return Ok(BatchOutcome::Regroup);
             }
+            if matches!(
+                wake_up_mode,
+                KvrpcPessimisticLockWakeUpMode::WakeUpModeForceLock
+            ) {
+                match self.read_force_lock_result(batch, &response)? {
+                    ForceLockOutcome::Locked { conflicts } => {
+                        return Ok(BatchOutcome::Locked { conflicts })
+                    }
+                    // TiKV refused this key. It reports why in `errors`, and
+                    // the same blocker handling as Normal mode decides whether
+                    // the statement may try again.
+                    ForceLockOutcome::Failed => {
+                        self.wait_out_blockers(
+                            &response.errors,
+                            batch,
+                            wait,
+                            wait_started_at,
+                            call,
+                        )?;
+                        continue;
+                    }
+                }
+            }
             if !response.results.is_empty() {
-                // `results` belongs to `WakeUpModeForceLock`, which this owner
-                // never requests. A server that fills it is answering a
-                // protocol this client did not speak.
+                // `results` belongs to `WakeUpModeForceLock`, which this
+                // request did not ask for. A server that fills it is answering
+                // a protocol this client did not speak.
                 return Err(PessimisticLockFailure::Transaction(
                     TransactionCause::InvalidResponse {
                         detail: "PessimisticLock returned ForceLock results for a Normal wake-up"
@@ -537,9 +650,73 @@ where
                 ));
             }
             if response.errors.is_empty() {
-                return Ok(BatchOutcome::Locked);
+                return Ok(BatchOutcome::Locked {
+                    conflicts: Vec::new(),
+                });
             }
             self.wait_out_blockers(&response.errors, batch, wait, wait_started_at, call)?;
+        }
+    }
+
+    /// Reads the per-key `results` a `WakeUpModeForceLock` answer carries.
+    ///
+    /// Go `actionPessimisticLock.handlePessimisticLockResponseForceLockMode`.
+    /// The shape is exact: at most one mutation and one result, because TiKV's
+    /// ForceLock path answers about a single key. Everything Go reaches by
+    /// `panic("unreachable")` or `errors.New("Pessimistic lock response
+    /// corrupted")` is a response this client did not ask for, so it ends the
+    /// transaction rather than the statement.
+    fn read_force_lock_result(
+        &self,
+        batch: &RegionKeyBatch,
+        response: &KvrpcPessimisticLockResponse,
+    ) -> Result<ForceLockOutcome, PessimisticLockFailure> {
+        let corrupted = |detail: &str| {
+            PessimisticLockFailure::Transaction(TransactionCause::InvalidResponse {
+                detail: detail.to_owned(),
+            })
+        };
+        if batch.keys().len() > 1 || response.results.len() > 1 {
+            return Err(corrupted(
+                "ForceLock addresses exactly one key, and TiKV answered about more",
+            ));
+        }
+        let Some(result) = response.results.first() else {
+            // No result at all: TiKV must have reported a region error (already
+            // handled) or a terminal key error, so let the key errors speak.
+            if response.errors.is_empty() {
+                return Err(corrupted(
+                    "ForceLock PessimisticLock answered with neither a result nor an error",
+                ));
+            }
+            return Ok(ForceLockOutcome::Failed);
+        };
+        let key = batch.keys()[0].clone();
+        match KvrpcPessimisticLockKeyResultType::try_from(result.r#type) {
+            Ok(KvrpcPessimisticLockKeyResultType::LockResultNormal) => {
+                Ok(ForceLockOutcome::Locked {
+                    conflicts: Vec::new(),
+                })
+            }
+            Ok(KvrpcPessimisticLockKeyResultType::LockResultLockedWithConflict) => {
+                // TiKV grants the lock at the conflicting version's commit
+                // timestamp, which is by construction newer than the one asked
+                // for. Anything else would leave the lock unaddressable.
+                if result.locked_with_conflict_ts <= self.for_update_ts {
+                    return Err(corrupted(&format!(
+                        "LockedWithConflict timestamp {} does not exceed the requested for_update_ts {}",
+                        result.locked_with_conflict_ts, self.for_update_ts
+                    )));
+                }
+                Ok(ForceLockOutcome::Locked {
+                    conflicts: vec![(key, result.locked_with_conflict_ts)],
+                })
+            }
+            Ok(KvrpcPessimisticLockKeyResultType::LockResultFailed) => Ok(ForceLockOutcome::Failed),
+            Err(_) => Err(corrupted(&format!(
+                "unknown PessimisticLockKeyResultType {}",
+                result.r#type
+            ))),
         }
     }
 
@@ -644,8 +821,20 @@ where
 }
 
 enum BatchOutcome {
-    Locked,
+    Locked {
+        /// Keys fair locking granted at a higher timestamp than requested.
+        conflicts: Vec<(Vec<u8>, u64)>,
+    },
     Regroup,
+}
+
+/// What one `WakeUpModeForceLock` answer said about its single key.
+enum ForceLockOutcome {
+    /// The lock exists — at the requested `for_update_ts` when `conflicts` is
+    /// empty, otherwise at the conflicting version's commit timestamp.
+    Locked { conflicts: Vec<(Vec<u8>, u64)> },
+    /// TiKV did not grant the lock; `errors` says why.
+    Failed,
 }
 
 /// Extracts the locks worth resolving, failing on anything terminal.

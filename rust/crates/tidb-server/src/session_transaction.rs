@@ -27,10 +27,37 @@
 //! timestamp at all, and every statement in a real transaction shares the one
 //! `start_ts` the first of them took.
 
+use tidb_exec::global_sysvar_initial::{
+    global_system_variable_initial_value, GlobalSysvarEnvironment, ON,
+    PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
+};
 use tidb_exec::multi_statement_transaction::{
     MultiStatementTransaction, TransactionEnd, TransactionStatementError,
 };
 use tidb_planner::txn_mode::{txn_mode_for_begin, SessionTxnMode, TransactionMode};
+
+/// Whether `@@tidb_pessimistic_txn_fair_locking` is on for this node.
+///
+/// The variable's registry value is `OFF`, but that is not what a cluster runs
+/// with: Go `GlobalSystemVariableInitialValue` overrides it to `ON` when a
+/// classic-kernel cluster is bootstrapped, and that is what
+/// `mysql.global_variables` then holds. Captured from TiDB's mock store:
+/// `SELECT @@tidb_pessimistic_txn_fair_locking, @@global....` reads `1 1`, and
+/// `mysql.global_variables` holds `ON`. This node has no `SET`-able session
+/// variable store, so it takes that bootstrap value directly.
+#[must_use]
+pub fn session_fair_locking() -> bool {
+    global_system_variable_initial_value(
+        PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
+        // The registry default this node would otherwise carry.
+        "OFF",
+        GlobalSysvarEnvironment {
+            store_is_tikv: true,
+            in_test: false,
+            next_gen: false,
+        },
+    ) == ON
+}
 
 /// The explicit-transaction state of one session.
 #[derive(Default)]

@@ -35,6 +35,8 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(20);
 /// Distinct per-run prefix so a reused cluster cannot leak state between runs.
 const CONTENDED_KEY: &[u8] = b"pessimistic-lock-proof-contended";
 const UNCONTENDED_KEY: &[u8] = b"pessimistic-lock-proof-uncontended";
+/// Key the fair-locking proof contends on, distinct from every other one here.
+const FAIR_LOCK_KEY: &[u8] = b"pessimistic-lock-proof-fair-locking";
 
 fn call() -> UnaryCallContext {
     UnaryCallContext::with_timeout(RPC_TIMEOUT)
@@ -217,5 +219,118 @@ fn two_transactions_serialize_on_one_real_pessimistic_lock() {
          holder_commit_ts={commit_ts} waiter_for_update_ts={statement_ts} \
          contended_key={} ",
         String::from_utf8_lossy(CONTENDED_KEY)
+    );
+}
+
+/// Real-TiKV proof that fair locking grants a lock despite a newer commit.
+///
+/// The scripted suite proves the client reads `LockResultLockedWithConflict`
+/// correctly. Only a real cluster proves TiKV produces it: that a
+/// `WakeUpModeForceLock` request whose `for_update_ts` predates a committed
+/// version comes back with the lock *taken*, at that version's commit
+/// timestamp, instead of the write conflict Normal mode would report.
+#[test]
+#[ignore = "requires run-realtikv-pessimistic-lock.sh"]
+fn fair_locking_takes_the_lock_despite_a_newer_committed_version() {
+    let pd_address = std::env::var("PESSIMISTIC_LOCK_PD_ADDR")
+        .expect("runner must provide PESSIMISTIC_LOCK_PD_ADDR");
+    let pd_owner = PdClient::connect_seeds([pd_address], Duration::from_secs(10))
+        .expect("start sole real PD authority");
+    let cluster_id = pd_owner.cluster_id();
+    let loader = PdRegionLoader::from_client(pd_owner.clone());
+    let transport_owner =
+        TonicCoprocessorClient::new().expect("start sole real BatchCommands authority");
+    let shared = SharedReadAuthority::start_with_store_liveness(
+        transport_owner.clone(),
+        RegionCache::new(loader),
+    )
+    .expect("start sole real RegionCache authority");
+    let opener = RealOptimisticTransactionOpener::from_process_capabilities(
+        shared.opener(),
+        pd_owner.clone(),
+        RPC_TIMEOUT,
+    )
+    .expect("derive transaction opener without starting another authority");
+
+    // The fair-locking reader opens first, so its `for_update_ts` is older than
+    // the commit that is about to land. That ordering is what makes TiKV take
+    // the ForceLock branch at all.
+    let mut reader = opener
+        .begin_pessimistic(4, 4 * 1024)
+        .expect("open the fair-locking pessimistic transaction");
+    reader.set_fair_locking(true);
+    let reader_for_update_ts = reader.for_update_ts();
+
+    // A second transaction commits a new version of the very key the reader is
+    // about to lock.
+    let writer = opener
+        .begin(4, 4 * 1024)
+        .expect("open the writing optimistic transaction");
+    let outcome = writer
+        .commit(
+            vec![OptimisticMutation::insert(FAIR_LOCK_KEY.to_vec(), b"newer".to_vec()).unwrap()],
+            &call(),
+        )
+        .expect("the writer reaches a terminal outcome");
+    assert_eq!(outcome.state(), OptimisticTransactionState::Committed);
+    let commit_ts = outcome.receipt().commit_ts;
+    assert!(commit_ts > reader_for_update_ts);
+    println!(
+        "fair_locking_realtikv phase=newer_version_committed commit_ts={commit_ts} \
+         reader_for_update_ts={reader_for_update_ts}"
+    );
+
+    // One key, fair locking armed: this is exactly the shape that goes out in
+    // WakeUpModeForceLock.
+    let acquired = reader
+        .acquire_locks(
+            &[FAIR_LOCK_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::NoWait,
+            &call(),
+        )
+        .expect("fair locking takes the lock instead of reporting a write conflict");
+    assert_eq!(acquired.keys, vec![FAIR_LOCK_KEY.to_vec()]);
+    assert_eq!(
+        acquired.locked_with_conflict,
+        vec![(FAIR_LOCK_KEY.to_vec(), commit_ts)],
+        "TiKV must report the conflicting version's commit timestamp as the lock's own"
+    );
+    assert_eq!(
+        reader.for_update_ts(),
+        reader_for_update_ts,
+        "the lock does not move the statement's timestamp; the retry allocates its own"
+    );
+    assert_eq!(reader.max_locked_with_conflict_ts(), commit_ts);
+    println!(
+        "fair_locking_realtikv phase=locked_with_conflict locked_ts={commit_ts} \
+         requested_for_update_ts={reader_for_update_ts}"
+    );
+
+    // The lock really exists at the higher timestamp: releasing it at the
+    // requested `for_update_ts` would silently leave it behind, so a NOWAIT
+    // attempt by a third transaction after the rollback is the proof it went.
+    reader
+        .pessimistic_rollback(&[FAIR_LOCK_KEY.to_vec()], &call())
+        .expect("the fair lock is released at the timestamp it really carries");
+    let mut prober = opener
+        .begin_pessimistic(4, 4 * 1024)
+        .expect("open the probing pessimistic transaction");
+    prober
+        .acquire_locks(
+            &[FAIR_LOCK_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::NoWait,
+            &call(),
+        )
+        .expect("a released fair lock leaves the key immediately lockable");
+    prober
+        .pessimistic_rollback(&prober.locked_keys(), &call())
+        .expect("the prober releases what it took");
+    println!("fair_locking_realtikv phase=released_at_conflict_ts");
+
+    println!(
+        "fair_locking_realtikv status=passed cluster_id={cluster_id} \
+         locked_with_conflict_ts={commit_ts} requested_for_update_ts={reader_for_update_ts}"
     );
 }

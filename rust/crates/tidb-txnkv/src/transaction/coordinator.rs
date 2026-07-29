@@ -20,8 +20,9 @@ use std::time::{Duration, Instant};
 use tidb_pd_client::PdClient;
 use tidb_proto::{
     KvrpcAssertionLevel, KvrpcBatchRollbackRequest, KvrpcCommitRequest, KvrpcCommitRole,
-    KvrpcCommitTsExpired, KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcPessimisticAction,
-    KvrpcPrewriteRequest, KvrpcPrewriteResponse, KvrpcScanRequest, KvrpcScanResponse,
+    KvrpcCommitTsExpired, KvrpcForUpdateTsConstraint, KvrpcGetRequest, KvrpcGetResponse,
+    KvrpcKeyError, KvrpcPessimisticAction, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
+    KvrpcScanRequest, KvrpcScanResponse,
 };
 
 use crate::gc_state::{GcStateCache, TxnSafePointLoader, TxnSafePointRefresher, VisibilityError};
@@ -430,6 +431,13 @@ pub(super) struct PessimisticPrewritePlan {
     pub(super) for_update_ts: u64,
     /// Exact encoded keys this transaction holds a pessimistic lock on.
     pub(super) locked_keys: std::collections::BTreeSet<Vec<u8>>,
+    /// Keys whose lock fair locking granted at a timestamp higher than the
+    /// transaction's `for_update_ts`, and that exact timestamp.
+    ///
+    /// Go `twoPhaseCommitter.forUpdateTSConstraints`: Prewrite carries one
+    /// `for_update_ts` for the whole request, so a lock taken with conflict
+    /// must name its own, or TiKV would verify a lock that is not there.
+    pub(super) for_update_ts_constraints: std::collections::BTreeMap<Vec<u8>, u64>,
 }
 
 impl<C, L, T> RealOptimisticTransaction<C, L, T>
@@ -1206,6 +1214,18 @@ where
                     } else {
                         KvrpcPessimisticAction::SkipPessimisticCheck as i32
                     }
+                })
+                .collect();
+            request.for_update_ts_constraints = batch
+                .mutations()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, mutation)| {
+                    let expected = *plan.for_update_ts_constraints.get(mutation.key())?;
+                    Some(KvrpcForUpdateTsConstraint {
+                        index: u32::try_from(index).unwrap_or(u32::MAX),
+                        expected_for_update_ts: expected,
+                    })
                 })
                 .collect();
         }

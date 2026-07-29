@@ -150,6 +150,35 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
     }
 }
 
+/// The write conflict a fair-locking `LockedWithConflict` result reports.
+///
+/// Go `pkg/store/driver/txn.generateWriteConflictForLockedWithConflict`: the
+/// lock exists, but at a timestamp newer than the statement's, so the
+/// statement's result was computed from a snapshot that has been overtaken.
+/// Reporting it as `ErrWriteConflict` is what puts the statement on the same
+/// retry path a plain conflict takes — the difference is that the lock is kept.
+///
+/// `conflict_key` is the key whose lock carries `conflict_commit_ts`; Go
+/// renders it through `prettyWriteKey`, which decodes the table and index it
+/// belongs to. This bounded owner has no such decoder here and prints the
+/// encoded key instead, which names the same row.
+#[must_use]
+pub fn locked_with_conflict_error(
+    start_ts: u64,
+    conflict_commit_ts: u64,
+    conflict_key: &[u8],
+) -> LockSqlError {
+    LockSqlError {
+        code: ERR_WRITE_CONFLICT,
+        state: DEFAULT_SQL_STATE,
+        message: format!(
+            "[kv:9007]Write conflict, txnStartTS={start_ts}, conflictStartTS=0, \
+             conflictCommitTS={conflict_commit_ts}, key={conflict_key:?} primary=<unknown>, \
+             reason=LockedWithConflict [try again later]"
+        ),
+    }
+}
+
 /// Whether the SQL layer may retry only the statement, under a newer
 /// `for_update_ts`, instead of ending the transaction.
 ///

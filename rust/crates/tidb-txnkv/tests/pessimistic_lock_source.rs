@@ -37,7 +37,8 @@ use tidb_proto::tikvpb::{batch_commands_response, BatchCommandsRequest, BatchCom
 use tidb_proto::{
     CoprocessorRequest, CoprocessorResponse, KvrpcCommitRequest, KvrpcCommitResponse, KvrpcDeadlock,
     KvrpcKeyError, KvrpcLockInfo, KvrpcOp, KvrpcPessimisticAction, KvrpcPessimisticLockKeyResult,
-    KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse, KvrpcPessimisticLockWakeUpMode,
+    KvrpcPessimisticLockKeyResultType, KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse,
+    KvrpcPessimisticLockWakeUpMode,
     KvrpcPessimisticRollbackRequest, KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest,
     KvrpcPrewriteResponse, KvrpcWaitForEntry, KvrpcWriteConflict,
 };
@@ -173,6 +174,13 @@ enum LockOutcome {
     BlockedByLiveLock { refreshed_ms: u64 },
     /// A Normal wake-up answered with the ForceLock-only `results` field.
     ForceLockResults,
+    /// A ForceLock wake-up granted without conflict.
+    ForceLockGranted,
+    /// A ForceLock wake-up granted *despite* a version committed at
+    /// `conflict_commit_ts`, which is the lock's real `for_update_ts`.
+    ForceLockedWithConflict { conflict_commit_ts: u64 },
+    /// A ForceLock wake-up TiKV refused, blocked by a live owner.
+    ForceLockFailed { refreshed_ms: u64 },
 }
 
 #[derive(Debug, Default)]
@@ -280,8 +288,32 @@ fn lock_response(outcome: &LockOutcome, request: &KvrpcPessimisticLockRequest) -
             errors: vec![live_pessimistic_lock(&blocked_key, *refreshed_ms)],
             ..KvrpcPessimisticLockResponse::default()
         },
-        LockOutcome::ForceLockResults => KvrpcPessimisticLockResponse {
-            results: vec![KvrpcPessimisticLockKeyResult::default()],
+        LockOutcome::ForceLockResults | LockOutcome::ForceLockGranted => {
+            KvrpcPessimisticLockResponse {
+                results: vec![KvrpcPessimisticLockKeyResult {
+                    r#type: KvrpcPessimisticLockKeyResultType::LockResultNormal as i32,
+                    ..KvrpcPessimisticLockKeyResult::default()
+                }],
+                ..KvrpcPessimisticLockResponse::default()
+            }
+        }
+        LockOutcome::ForceLockedWithConflict { conflict_commit_ts } => {
+            KvrpcPessimisticLockResponse {
+                results: vec![KvrpcPessimisticLockKeyResult {
+                    r#type: KvrpcPessimisticLockKeyResultType::LockResultLockedWithConflict as i32,
+                    existence: true,
+                    locked_with_conflict_ts: *conflict_commit_ts,
+                    ..KvrpcPessimisticLockKeyResult::default()
+                }],
+                ..KvrpcPessimisticLockResponse::default()
+            }
+        }
+        LockOutcome::ForceLockFailed { refreshed_ms } => KvrpcPessimisticLockResponse {
+            results: vec![KvrpcPessimisticLockKeyResult {
+                r#type: KvrpcPessimisticLockKeyResultType::LockResultFailed as i32,
+                ..KvrpcPessimisticLockKeyResult::default()
+            }],
+            errors: vec![live_pessimistic_lock(&blocked_key, *refreshed_ms)],
             ..KvrpcPessimisticLockResponse::default()
         },
     };
@@ -791,6 +823,249 @@ fn force_lock_results_in_a_normal_wake_up_are_refused() {
             PessimisticLockFailure::Transaction(TransactionCause::InvalidResponse { .. })
         ),
         "got {failure:?}"
+    );
+}
+
+// -----------------------------------------------------------------------------
+// Fair (aggressive) locking
+// -----------------------------------------------------------------------------
+
+/// ForceLock is asked for only when fair locking is on *and* one key is locked.
+///
+/// Source contract (`KVTxn.LockKeys`): `IsInAggressiveLockingMode() &&
+/// len(keys) == 1` is the exact condition; TiKV's ForceLock path answers about
+/// a single key, so a multi-key statement stays in Normal mode.
+#[test]
+fn force_lock_is_requested_only_for_a_single_key_statement_under_fair_locking() {
+    let (_server, recorded, mut transaction) =
+        fixture(vec![LockOutcome::Granted, LockOutcome::ForceLockGranted]);
+    assert!(!transaction.is_in_fair_locking_mode());
+    transaction.set_fair_locking(true);
+    assert!(transaction.is_in_fair_locking_mode());
+
+    transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec(), SECOND_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect("a two-key statement is granted in Normal mode");
+    transaction.advance_for_update_ts().expect("a newer TSO");
+    transaction
+        .acquire_locks(
+            &[b"c".to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect("a one-key statement is granted in ForceLock mode");
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(
+        recorded.locks[0].wake_up_mode,
+        KvrpcPessimisticLockWakeUpMode::WakeUpModeNormal as i32
+    );
+    assert_eq!(
+        recorded.locks[1].wake_up_mode,
+        KvrpcPessimisticLockWakeUpMode::WakeUpModeForceLock as i32
+    );
+}
+
+/// A ForceLock grant without conflict is an ordinary lock.
+#[test]
+fn a_force_lock_grant_without_conflict_reports_no_conflict() {
+    let (_server, _recorded, mut transaction) = fixture(vec![LockOutcome::ForceLockGranted]);
+    transaction.set_fair_locking(true);
+
+    let acquired = transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect("the lock is granted");
+
+    assert_eq!(acquired.keys, vec![PRIMARY_KEY.to_vec()]);
+    assert!(acquired.locked_with_conflict.is_empty());
+    assert_eq!(transaction.max_locked_with_conflict_ts(), 0);
+}
+
+/// `LockedWithConflict` keeps the lock and reports the timestamp it really has.
+///
+/// Source contract (`handlePessimisticLockResponseForceLockMode`): the lock
+/// exists at `locked_with_conflict_ts`, not at the requested `for_update_ts`,
+/// and the client records it rather than re-acquiring. The statement's own
+/// `for_update_ts` is left alone — Go allocates the retry's timestamp from PD
+/// (`repeatableReadTxnContextProvider.OnStmtErrorForNextAction`), never from
+/// the conflicting commit.
+#[test]
+fn a_lock_granted_with_conflict_is_kept_and_reports_the_conflicting_timestamp() {
+    let conflict_commit_ts = START_TS + 17;
+    let (_server, recorded, mut transaction) =
+        fixture(vec![LockOutcome::ForceLockedWithConflict {
+            conflict_commit_ts,
+        }]);
+    transaction.set_fair_locking(true);
+
+    let acquired = transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect("fair locking grants the lock despite the conflict");
+
+    assert_eq!(
+        acquired.locked_with_conflict,
+        vec![(PRIMARY_KEY.to_vec(), conflict_commit_ts)]
+    );
+    assert_eq!(acquired.for_update_ts, START_TS);
+    assert_eq!(transaction.for_update_ts(), START_TS);
+    assert_eq!(transaction.max_locked_with_conflict_ts(), conflict_commit_ts);
+    assert_eq!(transaction.locked_keys(), vec![PRIMARY_KEY.to_vec()]);
+    assert_eq!(
+        recorded.lock().unwrap().locks.len(),
+        1,
+        "the whole point is that no second PessimisticLock is needed"
+    );
+}
+
+/// A `LockedWithConflict` timestamp that does not advance is not interpretable.
+#[test]
+fn a_locked_with_conflict_timestamp_that_does_not_advance_is_refused() {
+    let (_server, _recorded, mut transaction) =
+        fixture(vec![LockOutcome::ForceLockedWithConflict {
+            // Not newer than the requested `for_update_ts`: TiKV cannot have
+            // granted the lock at a timestamp the request already covered.
+            conflict_commit_ts: START_TS,
+        }]);
+    transaction.set_fair_locking(true);
+
+    let failure = transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect_err("an unaddressable lock cannot be recorded");
+
+    assert!(
+        matches!(
+            failure,
+            PessimisticLockFailure::Transaction(TransactionCause::InvalidResponse { .. })
+        ),
+        "got {failure:?}"
+    );
+}
+
+/// A refused ForceLock attempt takes the same blocker path as Normal mode.
+#[test]
+fn a_refused_force_lock_is_handled_like_any_other_blocked_lock() {
+    let (_server, recorded, mut transaction) = fixture(vec![LockOutcome::ForceLockFailed {
+        // Inside the skip-resolve threshold: the owner is demonstrably alive.
+        refreshed_ms: 10,
+    }]);
+    transaction.set_fair_locking(true);
+
+    let failure = transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::NoWait,
+            &call(),
+        )
+        .expect_err("NOWAIT cannot wait, in either wake-up mode");
+
+    let PessimisticLockFailure::LockAcquireFailAndNoWaitSet { key } = failure else {
+        panic!("a refused ForceLock is still a lock failure, got {failure:?}");
+    };
+    assert_eq!(key, PRIMARY_KEY.to_vec());
+    assert_eq!(recorded.lock().unwrap().locks.len(), 1);
+}
+
+/// A lock granted with conflict is released at the timestamp it really carries.
+///
+/// Source contract (`actionPessimisticRollback.handleSingleBatch`): the rollback
+/// uses `max(forUpdateTS, maxLockedWithConflictTS)`, or the lock survives the
+/// release and blocks every later writer.
+#[test]
+fn releasing_a_lock_granted_with_conflict_addresses_the_conflicting_timestamp() {
+    let conflict_commit_ts = START_TS + 23;
+    let (_server, recorded, mut transaction) =
+        fixture(vec![LockOutcome::ForceLockedWithConflict {
+            conflict_commit_ts,
+        }]);
+    transaction.set_fair_locking(true);
+    transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect("the lock is granted with conflict");
+
+    transaction
+        .pessimistic_rollback(&[PRIMARY_KEY.to_vec()], &call())
+        .expect("releasing an own lock succeeds");
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.pessimistic_rollbacks.len(), 1);
+    assert_eq!(
+        recorded.pessimistic_rollbacks[0].for_update_ts, conflict_commit_ts,
+        "a rollback at the requested for_update_ts would miss the lock"
+    );
+}
+
+/// Prewrite names the real `for_update_ts` of every lock taken with conflict.
+///
+/// Source contract (`buildPrewriteRequest` / `forUpdateTSConstraints`): one
+/// Prewrite carries a single `for_update_ts`, so a lock that exists at a higher
+/// one must be declared per key, by mutation index.
+#[test]
+fn commit_declares_a_for_update_ts_constraint_for_a_lock_taken_with_conflict() {
+    let conflict_commit_ts = START_TS + 31;
+    let (_server, recorded, mut transaction) =
+        fixture(vec![LockOutcome::ForceLockedWithConflict {
+            conflict_commit_ts,
+        }]);
+    transaction.set_fair_locking(true);
+    transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect("the lock is granted with conflict");
+
+    transaction
+        .commit(
+            vec![
+                OptimisticMutation::put_existing(PRIMARY_KEY.to_vec(), b"locked".to_vec()).unwrap(),
+                OptimisticMutation::index_put(SECOND_KEY.to_vec(), b"index".to_vec()).unwrap(),
+            ],
+            &call(),
+        )
+        .expect("the two-phase commit runs to a terminal outcome");
+
+    let recorded = recorded.lock().unwrap();
+    let prewrite = &recorded.prewrites[0];
+    let constraints = &prewrite.for_update_ts_constraints;
+    assert_eq!(
+        constraints.len(),
+        1,
+        "only the key locked with conflict needs one"
+    );
+    assert_eq!(constraints[0].expected_for_update_ts, conflict_commit_ts);
+    assert_eq!(
+        prewrite.mutations[constraints[0].index as usize].key,
+        PRIMARY_KEY.to_vec(),
+        "TiKV matches a constraint to its mutation by index"
     );
 }
 

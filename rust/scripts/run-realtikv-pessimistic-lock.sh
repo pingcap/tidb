@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 
-# Real-TiKV proof that two transactions serialize on one pessimistic lock.
+# Real-TiKV proofs of pessimistic locking under contention:
+#   * two transactions serialize on one pessimistic lock, and
+#   * fair locking's WakeUpModeForceLock takes the lock despite a newer commit,
+#     reporting LockResultLockedWithConflict.
 #
 # Starts an owned TiUP playground (PD + 3 TiKV, no TiDB), runs the ignored
-# Rust proof against it, then unconditionally tears the playground down and
+# Rust proofs against it, then unconditionally tears the playground down and
 # verifies nothing it owned survived.
 
 set -euo pipefail
@@ -156,8 +159,8 @@ cd "${RUST_ROOT}"
 PESSIMISTIC_LOCK_PD_ADDR="${PD_ADDR}" \
   CARGO_BUILD_JOBS=12 cargo test --offline --locked -j12 -p tidb-txnkv \
     --test all \
-    pessimistic_lock_realtikv_source::two_transactions_serialize_on_one_real_pessimistic_lock \
-    -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 &
+    pessimistic_lock_realtikv_source:: \
+    -- --ignored --nocapture --test-threads 1 >"${RUST_LOG}" 2>&1 &
 RUST_PID=$!
 
 wait "${RUST_PID}" || {
@@ -168,8 +171,8 @@ wait "${RUST_PID}" || {
 }
 RUST_PID=
 
-MARKER=$(grep '^pessimistic_lock_realtikv status=passed ' "${RUST_LOG}" | tail -1 || true)
-PHASES=$(grep '^pessimistic_lock_realtikv phase=' "${RUST_LOG}" || true)
+MARKER=$(grep 'pessimistic_lock_realtikv status=passed ' "${RUST_LOG}" | tail -1 || true)
+PHASES=$(grep 'pessimistic_lock_realtikv phase=' "${RUST_LOG}" || true)
 if [[ "${MARKER}" != *"cluster_id="* ]] \
   || [[ "${MARKER}" != *"holder_commit_ts="* ]] \
   || [[ "${MARKER}" != *"waiter_for_update_ts="* ]] \
@@ -182,4 +185,17 @@ if [[ "${MARKER}" != *"cluster_id="* ]] \
   exit 1
 fi
 
+FAIR_MARKER=$(grep 'fair_locking_realtikv status=passed ' "${RUST_LOG}" | tail -1 || true)
+FAIR_PHASES=$(grep 'fair_locking_realtikv phase=' "${RUST_LOG}" || true)
+if [[ "${FAIR_MARKER}" != *"locked_with_conflict_ts="* ]] \
+  || [[ "${FAIR_MARKER}" != *"requested_for_update_ts="* ]] \
+  || [[ "${FAIR_PHASES}" != *"phase=newer_version_committed"* ]] \
+  || [[ "${FAIR_PHASES}" != *"phase=locked_with_conflict"* ]] \
+  || [[ "${FAIR_PHASES}" != *"phase=released_at_conflict_ts"* ]]; then
+  echo "receipt omitted the fair-locking LockedWithConflict evidence" >&2
+  tail -220 "${RUST_LOG}" >&2
+  exit 1
+fi
+
 echo "pessimistic lock serialization passed: ${MARKER}"
+echo "fair locking LockedWithConflict passed: ${FAIR_MARKER}"

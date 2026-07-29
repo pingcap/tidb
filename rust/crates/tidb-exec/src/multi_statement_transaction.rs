@@ -66,7 +66,7 @@ use tidb_txnkv::transaction::{
 
 use crate::pessimistic_lock_error::{
     commit_outcome_to_sql_error, is_retryable_statement_failure, lock_failure_to_sql_error,
-    transaction_cause_to_sql_error, LockSqlError,
+    locked_with_conflict_error, transaction_cause_to_sql_error, LockSqlError, ERR_WRITE_CONFLICT,
 };
 use crate::real_tikv_dml::{
     plan_configured_write, ConfiguredWriteError, ConfiguredWritePlan, ConfiguredWriteReport,
@@ -216,6 +216,7 @@ impl MultiStatementTransaction {
     pub fn begin(
         opener: &RealOptimisticTransactionOpener,
         mode: SessionTxnMode,
+        fair_locking: bool,
         table: ConfiguredTable,
         timeout: Duration,
     ) -> Result<Self, OptimisticCoordinatorError> {
@@ -224,10 +225,14 @@ impl MultiStatementTransaction {
                 opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)?,
             )),
             SessionTxnMode::Pessimistic => {
-                OpenTransaction::Pessimistic(Box::new(opener.begin_pessimistic(
+                let mut transaction = opener.begin_pessimistic(
                     MAX_OPTIMISTIC_MUTATIONS,
                     MAX_OPTIMISTIC_TRANSACTION_BYTES,
-                )?))
+                )?;
+                // `@@tidb_pessimistic_txn_fair_locking`. Only a pessimistic
+                // transaction locks, so only it can lock fairly.
+                transaction.set_fair_locking(fair_locking);
+                OpenTransaction::Pessimistic(Box::new(transaction))
             }
         };
         Ok(Self {
@@ -419,8 +424,21 @@ impl MultiStatementTransaction {
         let acquired = loop {
             // No key of a locking read is presumed absent: the rows already
             // exist, which is why the statement is locking them.
-            match transaction.acquire_locks(&keys, &BTreeSet::new(), wait, &call) {
-                Ok(acquired) => break acquired,
+            let retry_reason = match transaction.acquire_locks(&keys, &BTreeSet::new(), wait, &call)
+            {
+                Ok(acquired) if acquired.locked_with_conflict.is_empty() => break acquired,
+                // Fair locking: TiKV granted the locks despite a newer
+                // committed version. The locks stay — that is the whole point,
+                // the retry needs no second PessimisticLock — but the statement
+                // must be recomputed at a timestamp that can see that version.
+                Ok(acquired) => {
+                    let (key, conflict_commit_ts) = acquired
+                        .locked_with_conflict
+                        .iter()
+                        .max_by_key(|(_, conflict_ts)| *conflict_ts)
+                        .expect("the non-empty branch above admits at least one conflict");
+                    locked_with_conflict_error(transaction.start_ts(), *conflict_commit_ts, key)
+                }
                 Err(failure) => {
                     // Release only what this statement added; the transaction's
                     // earlier locks must survive its own failed statement.
@@ -434,17 +452,23 @@ impl MultiStatementTransaction {
                             transaction_cause_to_sql_error(&cause),
                         ));
                     }
-                    if !is_retryable_statement_failure(&failure) || attempt >= MAX_LOCK_RETRIES {
+                    if !is_retryable_statement_failure(&failure) {
                         return Err(TransactionStatementError::from_lock_failure(&failure));
                     }
-                    // A newer statement timestamp is what makes the retry see
-                    // the committed version that beat this one.
-                    transaction
-                        .advance_for_update_ts()
-                        .map_err(|error| TransactionStatementError::from_lock_failure(&error))?;
-                    attempt += 1;
+                    lock_failure_to_sql_error(&failure)
                 }
+            };
+            if attempt >= MAX_LOCK_RETRIES {
+                return Err(TransactionStatementError::Statement(retry_reason));
             }
+            // A newer statement timestamp is what makes the retry see the
+            // committed version that beat this one. Go takes it from PD rather
+            // than adopting the conflicting commit timestamp, which would let a
+            // later commit exceed PD's maximum allocated timestamp.
+            transaction
+                .advance_for_update_ts()
+                .map_err(|error| TransactionStatementError::from_lock_failure(&error))?;
+            attempt += 1;
         };
         // The primary lock now has to survive every later statement, so its TTL
         // is refreshed from the moment it exists.
