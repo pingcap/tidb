@@ -568,17 +568,15 @@ fn update_set_assignments_rotate_values_without_a_temporary() {
     );
 }
 
-/// BUG: `GROUP BY TRUE` is treated as a constant (one group) instead of as the
-/// positional reference it is.
+/// `GROUP BY TRUE` is the positional reference `GROUP BY 1`, not a constant.
 ///
 /// TiDB lowers `TRUE` to the integer 1 before resolving `GROUP BY`, so
 /// `GROUP BY TRUE` is exactly `GROUP BY 1`. `gorun` over `(1,10),(1,20),(2,30)`
 /// answers `1|2;2|1` for `SELECT k, count(*) ... GROUP BY TRUE`, and errors on
 /// `SELECT count(*) ... GROUP BY TRUE` because position 1 is an aggregate.
-/// `GROUP BY FALSE` is position 0 and is likewise an error. The live engine
-/// collapses all three into a single constant group.
+/// `GROUP BY FALSE` is position 0 and is likewise an error. The engine used to
+/// collapse all three into a single constant group.
 #[test]
-#[ignore = "live-engine bug: GROUP BY TRUE/FALSE is treated as a constant, not a position"]
 fn group_by_true_is_the_position_one_reference() {
     let mut session = Session::new();
     session.run("CREATE TABLE gg (k INT, v INT)").unwrap();
@@ -598,6 +596,72 @@ fn group_by_true_is_the_position_one_reference() {
     assert!(session
         .run("SELECT k, count(*) FROM gg GROUP BY FALSE")
         .is_err());
+}
+
+/// The whole positional `GROUP BY` surface, captured from TiDB in one pass so
+/// the boolean spellings above are pinned against the integers they lower to.
+///
+/// `gorun` over `gg(k,v) = (1,10),(1,20),(2,30)`:
+/// `GROUP BY 1` answers `1|2;2|1` (same as `GROUP BY TRUE`); `GROUP BY 0` and
+/// `GROUP BY 3` both report `Unknown column '<n>' in 'group statement'`, which
+/// `GROUP BY FALSE` reports as position `0`; `GROUP BY 2` lands on `count(*)`
+/// and reports `[planner:1056]Can't group on 'count(*)'`, exactly as
+/// `SELECT count(*) ... GROUP BY TRUE` does; and `GROUP BY 1, 2` groups by both
+/// selected columns, answering one row per distinct `(k, v)` pair.
+///
+/// KNOWN DIVERGENCE (separate from the position rule, deliberately not fixed
+/// here): Go quotes the offending field by the text it was WRITTEN as, so its
+/// message reads `Can't group on 'count(*)'`, while this engine quotes the
+/// RESTORED form, `COUNT(1)`. That is the AST's missing original-text
+/// tracking, not the positional resolution these cases exist to pin, so the
+/// assertions below check the code and the message up to the quoted name.
+#[test]
+fn a_group_by_position_names_a_select_field_or_reports_which_one_it_cannot() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE gg (k INT, v INT)").unwrap();
+    session
+        .run("INSERT INTO gg VALUES (1,10),(1,20),(2,30)")
+        .unwrap();
+
+    assert_eq!(
+        rows(&mut session, "SELECT k, count(*) FROM gg GROUP BY 1"),
+        [["1", "2"], ["2", "1"]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT k, v, count(*) FROM gg GROUP BY 1, 2"),
+        [["1", "10", "1"], ["1", "20", "1"], ["2", "30", "1"]]
+    );
+    for (sql, code, message) in [
+        (
+            "SELECT k, count(*) FROM gg GROUP BY 0",
+            1054,
+            "Unknown column '0' in 'group statement'",
+        ),
+        (
+            "SELECT k, count(*) FROM gg GROUP BY FALSE",
+            1054,
+            "Unknown column '0' in 'group statement'",
+        ),
+        (
+            "SELECT k, count(*) FROM gg GROUP BY 3",
+            1054,
+            "Unknown column '3' in 'group statement'",
+        ),
+        (
+            "SELECT k, count(*) FROM gg GROUP BY 2",
+            1056,
+            "Can't group on",
+        ),
+        (
+            "SELECT count(*) FROM gg GROUP BY TRUE",
+            1056,
+            "Can't group on",
+        ),
+    ] {
+        let err = session.run(sql).expect_err(sql).to_mysql_error();
+        assert_eq!(err.code, code, "{sql}: {err:?}");
+        assert!(err.message.contains(message), "{sql}: {}", err.message);
+    }
 }
 
 /// BUG: `ONLY_FULL_GROUP_BY` is not enforced — a bare ungrouped column is

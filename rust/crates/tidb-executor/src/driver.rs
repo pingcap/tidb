@@ -1827,16 +1827,26 @@ pub(crate) enum PositionalError {
 /// resolution. Otherwise it yields the integer AS WRITTEN (which the callers'
 /// errors quote verbatim, as MySQL does) together with the ZERO-based field
 /// index it names, or why it names none.
+///
+/// `TRUE`/`FALSE` are positions too: Go's parser builds them with
+/// `ast.NewValueExpr(bool)`, and `types.Datum` has no boolean kind, so they
+/// reach the clause as the plain integers `1`/`0` and the position rule sees
+/// nothing else. Captured from TiDB: `GROUP BY TRUE` groups by the first
+/// select field exactly like `GROUP BY 1`, and `GROUP BY FALSE` reports the
+/// same "Unknown column '0' in 'group statement'" `GROUP BY 0` does.
 fn positional_field_index(expr: &tidb_ast::Expr) -> Option<(&str, Result<usize, PositionalError>)> {
-    let tidb_ast::Expr::Int(text) = expr else {
-        return None;
+    let text = match expr {
+        tidb_ast::Expr::Int(text) => text.as_str(),
+        tidb_ast::Expr::Bool(true) => "1",
+        tidb_ast::Expr::Bool(false) => "0",
+        _ => return None,
     };
     let index = match text.parse::<usize>() {
         Err(_) => Err(PositionalError::Malformed),
         Ok(0) => Err(PositionalError::Zero),
         Ok(position) => Ok(position - 1),
     };
-    Some((text.as_str(), index))
+    Some((text, index))
 }
 
 /// Whether a clause item is the bare-integer output position form, without
