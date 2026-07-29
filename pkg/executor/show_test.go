@@ -15,9 +15,11 @@
 package executor_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -139,6 +141,118 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	jobInfo.SourceFileSize = 3
 	executor.FillOneImportJobInfo(c, jobInfo, nil)
 	require.Equal(t, "3B", c.GetRow(10).GetString(sourceFileSizeIdx))
+
+	testBuildRawImportJobStats(t)
+}
+
+func testBuildRawImportJobStats(t *testing.T) {
+	loc := time.UTC
+	t2024 := types.NewTime(types.FromGoTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)), mysql.TypeTimestamp, 0)
+	t2025 := types.NewTime(types.FromGoTime(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)), mysql.TypeTimestamp, 0)
+
+	info := &importer.JobInfo{
+		ID:          1,
+		GroupKey:    "g1",
+		TableSchema: "test",
+		TableName:   "t",
+		TableID:     42,
+		CreatedBy:   "u@h",
+		Parameters: importer.ImportParameters{
+			FileLocation: "s3://bucket/prefix",
+		},
+		SourceFileSize: 123,
+		Step:           "importing",
+		Status:         importer.JobStatusRunning,
+		CreateTime:     t2024,
+		UpdateTime:     t2024,
+	}
+	runInfo := &importinto.RuntimeInfo{
+		ImportRows: 10,
+		Step:       proto.ImportStepImport,
+		Processed:  50,
+		Total:      100,
+		Speed:      10,
+		UpdateTime: t2025,
+		ErrorMsg:   "should-not-be-used",
+		Status:     proto.TaskStateRunning,
+	}
+
+	stats, err := executor.BuildRawImportJobStats(loc, info, runInfo)
+	require.NoError(t, err)
+	require.Equal(t, importer.RawImportJobStatsContractVersion, stats.Version)
+	require.Equal(t, int64(1), stats.JobID)
+	require.Equal(t, "g1", stats.GroupKey)
+	require.Equal(t, "s3://bucket/prefix", stats.DataSource)
+	require.Equal(t, utils.EncloseDBAndTable("test", "t"), stats.TargetTable)
+	require.Equal(t, int64(42), stats.TableID)
+	require.Equal(t, "importing", stats.Phase)
+	require.Equal(t, importer.JobStatusRunning, stats.Status)
+	require.Equal(t, importer.RawImportJobStatusCategoryRunning, stats.StatusCategory)
+	require.False(t, stats.Terminal)
+	require.Equal(t, int64(123), stats.SourceFileSizeBytes)
+	require.Equal(t, "u@h", stats.CreatedBy)
+	rawJSON, err := json.Marshal(stats)
+	require.NoError(t, err)
+	require.NotContains(t, string(rawJSON), "job_id")
+	require.NotContains(t, string(rawJSON), "group_key")
+	require.Contains(t, string(rawJSON), "job_phase")
+
+	require.NotNil(t, stats.ImportedRows)
+	require.Equal(t, int64(10), *stats.ImportedRows)
+	require.NotNil(t, stats.CurrentStep)
+	require.Equal(t, "import", stats.CurrentStep.Name)
+	require.Equal(t, int64(50), stats.CurrentStep.ProcessedBytes)
+	require.Equal(t, int64(100), stats.CurrentStep.TotalBytes)
+	require.Equal(t, int64(10), stats.CurrentStep.SpeedBytesPerSec)
+	require.Zero(t, stats.CurrentStep.ProcessedConflicts)
+	require.NotNil(t, stats.CurrentStep.RemainingSeconds)
+	require.Equal(t, int64(5), *stats.CurrentStep.RemainingSeconds)
+
+	require.Equal(t, int64(1704067200), stats.CreateTimeUnix) // 2024-01-01 00:00:00 UTC
+	require.Equal(t, int64(1735689600), stats.UpdateTimeUnix) // use runtime update time
+
+	// Conflict steps expose conflict counters instead of overloading byte fields.
+	runInfo.Step = proto.ImportStepConflictResolution
+	runInfo.Processed = 3
+	runInfo.Total = 5
+	runInfo.Speed = 2
+	stats, err = executor.BuildRawImportJobStats(loc, info, runInfo)
+	require.NoError(t, err)
+	require.NotNil(t, stats.CurrentStep)
+	require.Equal(t, "conflict-resolution", stats.CurrentStep.Name)
+	require.Zero(t, stats.CurrentStep.ProcessedBytes)
+	require.Equal(t, int64(3), stats.CurrentStep.ProcessedConflicts)
+	require.Equal(t, int64(5), stats.CurrentStep.TotalConflicts)
+	require.Equal(t, int64(2), stats.CurrentStep.SpeedConflictsPerSec)
+
+	// Finished job: ImportedRows comes from summary, CurrentStep omitted, update time follows EndTime.
+	info.Status = importer.JobStatusFinished
+	info.Summary = &importer.Summary{
+		EncodeSummary: importer.StepSummary{Bytes: 10, RowCnt: 2},
+		ImportedRows:  99,
+	}
+	info.EndTime = t2025
+	stats, err = executor.BuildRawImportJobStats(loc, info, nil)
+	require.NoError(t, err)
+	require.NotNil(t, stats.ImportedRows)
+	require.Equal(t, int64(99), *stats.ImportedRows)
+	require.Equal(t, importer.RawImportJobStatusCategoryTerminal, stats.StatusCategory)
+	require.True(t, stats.Terminal)
+	require.NotNil(t, stats.Summary)
+	require.Equal(t, int64(99), stats.Summary.ImportedRows)
+	require.Len(t, stats.Summary.Steps, 1)
+	require.Equal(t, "encode", stats.Summary.Steps[0].Name)
+	require.Equal(t, int64(10), stats.Summary.Steps[0].InputBytes)
+	require.Nil(t, stats.CurrentStep)
+	require.Equal(t, int64(1735689600), stats.UpdateTimeUnix)
+
+	info.Status = "failed"
+	info.ErrorMessage = "load failed"
+	stats, err = executor.BuildRawImportJobStats(loc, info, nil)
+	require.NoError(t, err)
+	require.NotNil(t, stats.Error)
+	require.Equal(t, importer.RawImportJobErrorCategoryFailed, stats.Error.Category)
+	require.True(t, stats.Error.Terminal)
 }
 
 func TestShow(t *testing.T) {

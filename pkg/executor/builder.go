@@ -932,8 +932,11 @@ func (b *executorBuilder) buildShow(v *physicalop.PhysicalShow) exec.Executor {
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
+		ImportJobIDFilter:     v.ImportJobIDFilter,
+		ImportJobRaw:          v.ImportJobRaw,
 		DistributionJobID:     v.DistributionJobID,
 		ImportGroupKey:        v.ImportGroupKey,
+		ImportGroupKeySet:     v.ImportGroupKeySet,
 	}
 	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.
