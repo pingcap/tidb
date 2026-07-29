@@ -349,12 +349,18 @@ func (c *Constant) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) 
 	if !lazy {
 		dt = c.Value
 	}
-	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+	tp := c.RetType
+	var paramType types.FieldType
+	if c.ParamMarker != nil {
+		types.InferParamTypeFromDatum(&dt, &paramType)
+		tp = &paramType
+	}
+	if tp.GetType() == mysql.TypeNull || dt.IsNull() {
 		return 0, true, nil
 	} else if dt.Kind() == types.KindBinaryLiteral {
 		val, err := dt.GetBinaryLiteral().ToInt(typeCtx(ctx))
 		return int64(val), err != nil, err
-	} else if c.GetType(ctx).Hybrid() || dt.Kind() == types.KindString {
+	} else if tp.Hybrid() || dt.Kind() == types.KindString {
 		res, err := dt.ToInt64(typeCtx(ctx))
 		return res, false, err
 	} else if dt.Kind() == types.KindMysqlBit {
