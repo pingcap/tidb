@@ -60,6 +60,7 @@ pub mod global_stats_layout;
 pub mod global_stats_sql_index;
 pub mod global_topn;
 pub mod healthy_metrics;
+pub mod histogram;
 pub mod historical_stats;
 pub mod index_query;
 pub mod index_usage;
