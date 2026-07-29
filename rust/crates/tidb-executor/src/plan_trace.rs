@@ -76,8 +76,18 @@ pub(crate) struct PlanNode {
     pub(crate) est_rows: Option<f64>,
     /// The `access object` cell.
     pub(crate) access: String,
-    /// The `operator info` cell.
+    /// The `operator info` cell, up to the point a join splices its
+    /// `, left side:<child>` in.
     pub(crate) info: String,
+    /// A join's `, left side:` insertion point: the index in `children` of
+    /// the operator that is this join's LEFT input. `None` for every node
+    /// that does not print one (Go omits it for an inner join).
+    pub(crate) left_side_child: Option<usize>,
+    /// The rest of the `operator info` cell, after the `left side:` clause.
+    pub(crate) info_tail: String,
+    /// The suffix Go appends to this operator's NAME to mark its role in the
+    /// parent join (`(Build)` / `(Probe)`); empty for every other node.
+    pub(crate) label: &'static str,
     /// Children, in the order Go prints them (build side first for a join).
     pub(crate) children: Vec<PlanNode>,
     /// The real row count this operator produced, live while the pipeline
@@ -93,6 +103,9 @@ impl PlanNode {
             est_rows,
             access,
             info,
+            left_side_child: None,
+            info_tail: String::new(),
+            label: "",
             children: Vec::new(),
             act_rows: None,
         }
@@ -469,6 +482,8 @@ impl PlanTrace {
         join: &tidb_ast::Join,
         scope: &FromScope,
         current_db: &str,
+        equal_mask: &[bool],
+        build_is_left: bool,
     ) -> Result<(), ()> {
         let qualify = Qualifier {
             db: current_db,
@@ -479,22 +494,73 @@ impl PlanTrace {
             tidb_ast::JoinType::Left => "left outer join",
             tidb_ast::JoinType::Right => "right outer join",
         };
-        let info = match &join.on {
-            Some(expr) => format!("{kind}, conditions:{}", qualify.expr(expr)),
-            None => kind.to_owned(),
-        };
-        let (Some(right), Some(left)) = (self.stack.pop(), self.stack.pop()) else {
+        // `equal_mask` comes from the executor's own condition split, so the
+        // conjuncts printed under `equal:[...]` are exactly the ones the hash
+        // table indexes and `other cond:` is exactly the residue it still
+        // evaluates per candidate pair.
+        let mut conjuncts = Vec::new();
+        if let Some(expr) = &join.on {
+            collect_and(expr, &mut conjuncts);
+        }
+        if conjuncts.len() != equal_mask.len() {
+            return Err(());
+        }
+        let mut equal = Vec::new();
+        let mut other = Vec::new();
+        for (conjunct, is_equal) in conjuncts.iter().zip(equal_mask) {
+            let rendered = qualify.expr(conjunct);
+            if *is_equal {
+                equal.push(rendered);
+            } else {
+                other.push(rendered);
+            }
+        }
+        // Go `PhysicalHashJoin.explainInfo`: the `CARTESIAN` prefix marks a
+        // join with NO equal condition -- the shape that has to compare
+        // every pair -- and `other cond:` is a SORTED list
+        // (`SortedExplainExpressionList`), while `equal:` keeps `ON` order.
+        other.sort();
+        let mut info = String::new();
+        if equal.is_empty() {
+            info.push_str("CARTESIAN ");
+        }
+        info.push_str(kind);
+        let mut tail = String::new();
+        if !equal.is_empty() {
+            tail.push_str(", equal:[");
+            tail.push_str(&equal.join(" "));
+            tail.push(']');
+        }
+        if !other.is_empty() {
+            tail.push_str(", other cond:");
+            tail.push_str(&other.join(", "));
+        }
+        let (Some(mut right), Some(mut left)) = (self.stack.pop(), self.stack.pop()) else {
             return Err(());
         };
+        // Go prints the BUILD child first and labels both sides
+        // (`flat_plan.go`'s `BuildSide`/`ProbeSide`).
+        left.label = if build_is_left { "(Build)" } else { "(Probe)" };
+        right.label = if build_is_left { "(Probe)" } else { "(Build)" };
+        let children = if build_is_left {
+            vec![left, right]
+        } else {
+            vec![right, left]
+        };
         self.stack.push(PlanNode {
-            // The driver builds a nested-loop JoinExec; Go's own name for
-            // the shape with no hash or merge structure.
             name: "HashJoin",
             // Divergence 6: an equi-join's cardinality needs statistics.
             est_rows: None,
             access: String::new(),
             info,
-            children: vec![left, right],
+            // `explainJoinLeftSide` names the LEFT child's operator, and only
+            // for an OUTER join. The name carries its own id in `format='row'`,
+            // which is not assigned yet, so the renderer splices it in.
+            left_side_child: (join.tp != tidb_ast::JoinType::Cross)
+                .then_some(usize::from(!build_is_left)),
+            info_tail: tail,
+            label: "",
+            children,
             act_rows: None,
         });
         Ok(())

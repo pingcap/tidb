@@ -39,6 +39,7 @@ pub mod executor;
 pub mod explain;
 mod farmhash;
 pub mod hash_agg;
+mod hash_join;
 pub mod join;
 pub mod kv_table;
 pub mod limit;

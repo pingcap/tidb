@@ -660,3 +660,140 @@ fn a_filtering_scan_still_reports_the_rows_it_read() {
     assert_eq!(rows[2][0], "  \u{2514}\u{2500}TableFullScan_1");
     assert_eq!(rows[2][2], "4", "rows the scan read, before filtering");
 }
+
+/// `EXPLAIN` of a hash join, against a `pkg/executor` mock-store capture on
+/// the same statistics-free schema (`TestZZDumpHashJoin`).
+///
+/// Every assertion below is the join row's own `operator info` cell plus the
+/// `(Build)`/`(Probe)` labels, which are byte-identical to that capture. The
+/// rows AROUND the join still diverge in the ways `tidb_executor::explain`'s
+/// module doc already names -- this tier reads a table directly instead of
+/// through a `TableReader`/`Selection` pair, does not push the implicit
+/// `not(isnull(key))` down, prints `N/A` where an equi-join's cardinality
+/// would need statistics, and always builds a `Projection`. What this test
+/// pins is the join operator itself.
+#[test]
+fn explain_hash_join_operator_info_matches_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE hj1 (a INT, b INT, s VARCHAR(20))")
+        .unwrap();
+    session
+        .run("CREATE TABLE hj2 (a INT, b INT, s VARCHAR(20))")
+        .unwrap();
+
+    // The join row, and which child carries which label.
+    let join_shape = |session: &mut Session, sql: &str| -> Vec<String> {
+        let rows = row_text(session.run(sql));
+        let join = rows
+            .iter()
+            .find(|row| row[0].ends_with("HashJoin"))
+            .expect("the plan has a HashJoin row");
+        let mut out = vec![join[4].clone()];
+        out.extend(
+            rows.iter()
+                .filter(|row| row[0].contains("(Build)") || row[0].contains("(Probe)"))
+                .map(|row| format!("{} {}", label_of(&row[0]), row[3])),
+        );
+        out
+    };
+
+    // Captured: `inner join, equal:[eq(test.hj1.a, test.hj2.a)]`, with hj2
+    // as `(Build)`. Go's stats-less enumeration reaches the RIGHT child as
+    // the build side first for an inner join, and this tier has no
+    // statistics to re-pick with.
+    assert_eq!(
+        join_shape(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM hj1 JOIN hj2 ON hj1.a = hj2.a"
+        ),
+        vec![
+            "inner join, equal:[eq(test.hj1.a, test.hj2.a)]",
+            "(Build) table:hj2",
+            "(Probe) table:hj1",
+        ]
+    );
+
+    // An outer join names its LEFT child (`explainJoinLeftSide`, omitted for
+    // an inner join) and builds on the NON-preserved side, so the preserved
+    // side is the one being streamed.
+    assert_eq!(
+        join_shape(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM hj1 LEFT JOIN hj2 ON hj1.a = hj2.a"
+        ),
+        vec![
+            "left outer join, left side:TableFullScan, equal:[eq(test.hj1.a, test.hj2.a)]",
+            "(Build) table:hj2",
+            "(Probe) table:hj1",
+        ]
+    );
+    assert_eq!(
+        join_shape(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM hj1 RIGHT JOIN hj2 ON hj1.a = hj2.a"
+        ),
+        vec![
+            "right outer join, left side:TableFullScan, equal:[eq(test.hj1.a, test.hj2.a)]",
+            "(Build) table:hj1",
+            "(Probe) table:hj2",
+        ]
+    );
+
+    // Multiple keys stay in `ON` order and are SPACE separated inside
+    // `equal:[...]` -- Go writes no comma between them.
+    assert_eq!(
+        join_shape(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM hj1 JOIN hj2 \
+             ON hj1.a = hj2.a AND hj1.b = hj2.b"
+        )[0],
+        "inner join, equal:[eq(test.hj1.a, test.hj2.a) eq(test.hj1.b, test.hj2.b)]"
+    );
+
+    // A non-equi conjunct alongside an equal one is the residue the hash
+    // table cannot index; it prints as `other cond:` and is still evaluated
+    // per candidate pair.
+    assert_eq!(
+        join_shape(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM hj1 JOIN hj2 \
+             ON hj1.a = hj2.a AND hj1.b > hj2.b"
+        )[0],
+        "inner join, equal:[eq(test.hj1.a, test.hj2.a)], other cond:gt(test.hj1.b, test.hj2.b)"
+    );
+
+    // No equal condition at all: `CARTESIAN`, and the executor falls back to
+    // the nested loop.
+    assert_eq!(
+        join_shape(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM hj1 JOIN hj2 ON hj1.a > hj2.a"
+        )[0],
+        "CARTESIAN inner join, other cond:gt(test.hj1.a, test.hj2.a)"
+    );
+    assert_eq!(
+        join_shape(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM hj1 JOIN hj2"
+        )[0],
+        "CARTESIAN inner join"
+    );
+
+    // A string key hashes too (under the comparison collation's sort key).
+    assert_eq!(
+        join_shape(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT * FROM hj1 LEFT JOIN hj2 ON hj1.s = hj2.s"
+        )[0],
+        "left outer join, left side:TableFullScan, equal:[eq(test.hj1.s, test.hj2.s)]"
+    );
+}
+
+fn label_of(drawn_name: &str) -> &'static str {
+    if drawn_name.contains("(Build)") {
+        "(Build)"
+    } else {
+        "(Probe)"
+    }
+}

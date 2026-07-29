@@ -727,6 +727,13 @@ pub(crate) fn build_join(
         tidb_ast::JoinType::Left => JoinKind::Left,
         tidb_ast::JoinType::Right => JoinKind::Right,
     };
+    // The condition split the executor will run on, so EXPLAIN's
+    // `equal:[...]`/`other cond:` and the hash table's own keys are one
+    // decision rather than two that can drift.
+    let split = crate::hash_join::split_equi(&conditions, left_width);
+    // Go's stats-less build side: the inner (non-preserved) child, which is
+    // the left one only for a RIGHT join. See `join.rs`'s module doc.
+    let build_is_left = kind == JoinKind::Right;
     let exec: Box<dyn Executor> = Box::new(JoinExec::new(
         meta,
         kind,
@@ -736,7 +743,10 @@ pub(crate) fn build_join(
         ctx.clone(),
     ));
     if let Some(trace) = trace.as_deref_mut() {
-        if trace.join(join, &scope, current_db).is_err() {
+        if trace
+            .join(join, &scope, current_db, &split.equal_mask, build_is_left)
+            .is_err()
+        {
             trace.refuse("this join's plan is not supported yet");
         }
     }

@@ -393,6 +393,9 @@ struct IdNode {
     est_rows: Option<f64>,
     access: String,
     info: String,
+    left_side_child: Option<usize>,
+    info_tail: String,
+    label: &'static str,
     children: Vec<IdNode>,
     /// The counter the trace metered this operator with, if it metered it.
     act_rows: Option<Rc<Cell<u64>>>,
@@ -413,6 +416,9 @@ fn assign_ids(node: PlanNode, counter: &mut usize) -> IdNode {
         est_rows: node.est_rows,
         access: node.access,
         info: node.info,
+        left_side_child: node.left_side_child,
+        info_tail: node.info_tail,
+        label: node.label,
         children,
         act_rows: node.act_rows,
     }
@@ -429,10 +435,7 @@ fn draw_id(
     is_last: bool,
     format: ExplainFormat,
 ) -> String {
-    let name = match format {
-        ExplainFormat::Row => format!("{}_{}", node.name, node.counter),
-        ExplainFormat::Brief => node.name.to_owned(),
-    };
+    let name = format!("{}{}", explain_id(node, format), node.label);
     if is_root {
         name
     } else if is_last {
@@ -452,6 +455,33 @@ fn child_prefix(prefix: &str, is_root: bool, is_last: bool) -> String {
     } else {
         format!("{prefix}│ ")
     }
+}
+
+/// Go `Plan.ExplainID().String()`: the operator name, carrying its `_N`
+/// suffix outside `format='brief'`.
+fn explain_id(node: &IdNode, format: ExplainFormat) -> String {
+    match format {
+        ExplainFormat::Row => format!("{}_{}", node.name, node.counter),
+        ExplainFormat::Brief => node.name.to_owned(),
+    }
+}
+
+/// The `operator info` cell. A join splices Go's `, left side:<operator>`
+/// clause into the middle of its own info here rather than at record time,
+/// because the operator that clause NAMES only has its id once the whole
+/// tree is numbered.
+fn info_text(node: &IdNode, format: ExplainFormat) -> String {
+    let left_side = match node.left_side_child {
+        Some(index) => {
+            let name = node
+                .children
+                .get(index)
+                .map_or_else(String::new, |child| explain_id(child, format));
+            format!(", left side:{name}")
+        }
+        None => String::new(),
+    };
+    format!("{}{left_side}{}", node.info, node.info_tail)
 }
 
 fn est_text(est_rows: Option<f64>) -> String {
@@ -475,7 +505,7 @@ fn flatten(
         // Divergence 1: every operator here runs in the TiDB process.
         text("root"),
         text(&node.access),
-        text(&node.info),
+        text(&info_text(node, format)),
     ]);
     let child_prefix = child_prefix(&prefix, is_root, is_last);
     let last = node.children.len().saturating_sub(1);
@@ -505,7 +535,7 @@ fn flatten_analyze(
         text("root"),
         text(&node.access),
         text("N/A"),
-        text(&node.info),
+        text(&info_text(node, format)),
         text("N/A"),
         text("N/A"),
     ]);
