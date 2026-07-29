@@ -1122,11 +1122,13 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
 	historySize := 24
-	for i := int64(0); i < 100; i++ {
-		enableMockTime(beginTimeForCurInterval + interval*i)
-		tk.MustExec(fmt.Sprintf("create table if not exists th%v (p bigint key, q int);", i))
-	}
-	disableMockTime()
+	func() {
+		defer disableMockTime()
+		for i := int64(0); i < 100; i++ {
+			enableMockTime(beginTimeForCurInterval + interval*i)
+			tk.MustExec(fmt.Sprintf("create table if not exists th%v (p bigint key, q int);", i))
+		}
+	}()
 	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").
 		Check(testkit.Rows(fmt.Sprintf("%v", historySize)))
 
@@ -1134,20 +1136,22 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
 	tk.MustExec("set @@global.tidb_stmt_summary_max_stmt_count=1;")
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
-	enableMockTime(beginTimeForCurInterval)
-	for i := int64(0); i < 3; i++ {
-		tk.MustExec(fmt.Sprintf("select count(*) from th%v", i))
-	}
-	enableMockTime(beginTimeForCurInterval + 2*interval)
-	for i := int64(0); i < 3; i++ {
-		tk.MustExec(fmt.Sprintf("select count(*) from th%v", i))
-	}
-	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").Check(testkit.Rows("2"))
-	tk.MustQuery("select BEGIN_TIME from information_schema.statements_summary_evicted;").
-		Check(testkit.
-			Rows(time.Unix(beginTimeForCurInterval+2*interval, 0).Format(time.DateTime),
-				time.Unix(beginTimeForCurInterval, 0).Format(time.DateTime)))
-	disableMockTime()
+	func() {
+		defer disableMockTime()
+		enableMockTime(beginTimeForCurInterval)
+		for i := int64(0); i < 3; i++ {
+			tk.MustExec(fmt.Sprintf("select count(*) from th%v", i))
+		}
+		enableMockTime(beginTimeForCurInterval + 2*interval)
+		for i := int64(0); i < 3; i++ {
+			tk.MustExec(fmt.Sprintf("select count(*) from th%v", i))
+		}
+		tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").Check(testkit.Rows("2"))
+		tk.MustQuery("select BEGIN_TIME from information_schema.statements_summary_evicted;").
+			Check(testkit.
+				Rows(time.Unix(beginTimeForCurInterval+2*interval, 0).Format(time.DateTime),
+					time.Unix(beginTimeForCurInterval, 0).Format(time.DateTime)))
+	}()
 	// TODO: Add more tests.
 }
 
