@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -53,8 +54,8 @@ func (*exportTaskExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 // IsRetryableError implements taskexecutor.Extension.
-func (*exportTaskExecutor) IsRetryableError(error) bool {
-	return false
+func (*exportTaskExecutor) IsRetryableError(err error) bool {
+	return common.IsRetryableError(err)
 }
 
 // GetStepExecutor implements taskexecutor.Extension.
@@ -117,8 +118,9 @@ func (e *dumpStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtas
 	eg, egCtx := errgroup.WithContext(ctx)
 	for range concurrency {
 		eg.Go(func() error {
+			ce := e.newChunkExporter()
 			for c := range chunkCh {
-				if err := e.exportChunk(egCtx, c); err != nil {
+				if err := e.exportChunk(egCtx, ce, c); err != nil {
 					return err
 				}
 			}
