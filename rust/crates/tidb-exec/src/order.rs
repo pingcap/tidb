@@ -682,6 +682,13 @@ pub fn validate_prepared_order_rows(
 /// before all non-`NULL` values ascending — defers to [`sort_value_cmp`], the
 /// same total order the in-process sort executor applies, so the two sorts
 /// cannot disagree. Callers must first run [`validate_prepared_order_rows`].
+///
+/// `utf8mb4_bin` is hardcoded here rather than carried per key because
+/// `ConfiguredScalarType` can name no other string collation, and the catalog
+/// loader (`configured_string_is_binary`) refuses at load any stored column
+/// whose collation differs. Widening that gate without first giving this
+/// comparator the column's real collation would silently order a
+/// `utf8mb4_general_ci` column by raw bytes.
 fn compare_prepared_rows(left: &Row, right: &Row, keys: &[PreparedOrderColumn]) -> Ordering {
     for key in keys {
         let offset = key.output_offset();

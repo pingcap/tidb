@@ -29,6 +29,12 @@
 //! order-independent and stays correct whether or not an `ORDER BY` sorted the
 //! stream first — and it is composed OUTSIDE any [`SortingResultSetSource`] so
 //! `DISTINCT ... ORDER BY` returns the distinct rows already in sorted order.
+//!
+//! That "only string collation" is an enforced invariant, not an assumption:
+//! `tidb_exec::cluster_catalog`'s loader refuses any stored string column whose
+//! collation is neither `utf8mb4_bin` nor `binary`. It has to — a
+//! `utf8mb4_general_ci` column groups `'B'` and `'b'` into ONE group in Go, and
+//! the `utf8mb4_bin` key here would emit two.
 
 use tidb_datatype::{Collation, Datum};
 use tidb_exec::aggregate::aggregate_distinct::DistinctChecker;

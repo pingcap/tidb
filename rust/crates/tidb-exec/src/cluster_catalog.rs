@@ -262,6 +262,35 @@ fn configured_fsp(name: &str, sql_type: &str, decimal: i64) -> Result<u8, String
         })
 }
 
+/// Decides whether one stored string column is the `binary` variant, refusing
+/// every charset/collation pairing the node's configured types cannot express.
+///
+/// `ConfiguredScalarType`'s string vocabulary is exactly two collations:
+/// `utf8mb4_bin` and `binary`. Both the bounded node's `ORDER BY`
+/// (`compare_prepared_rows`) and its `SELECT DISTINCT` grouping normalize
+/// `Datum::Bytes` under a hardcoded `Collation::Utf8Mb4Bin`, because that is
+/// the only string collation the configured surface can name. Admitting a
+/// column stored at any other collation — `utf8mb4_general_ci`, say — would
+/// therefore sort and group it by raw bytes, silently returning `'B' < 'a'`
+/// where Go's collation-aware `SortExec` returns `'a' < 'B'`. Checking the
+/// charset alone is not enough: `utf8mb4_general_ci` is a `utf8mb4` charset.
+/// So the collation itself is the gate, and an unrepresentable one refuses the
+/// whole table at load rather than answering it wrongly at query time.
+fn configured_string_is_binary(
+    name: &str,
+    sql_type: &str,
+    column: &ColumnInfo,
+) -> Result<bool, String> {
+    match (column.get_charset(), column.get_collate()) {
+        ("utf8mb4", "utf8mb4_bin") => Ok(false),
+        ("binary", "binary") => Ok(true),
+        (charset, collate) => Err(format!(
+            "column `{name}` is {sql_type} with charset `{charset}` collation `{collate}`, \
+             and this node only reads `utf8mb4_bin` or `binary` strings"
+        )),
+    }
+}
+
 fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, String> {
     let name = column.name.original();
     let flags = column.get_flag();
@@ -304,6 +333,14 @@ fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, Stri
             let max_length = u32::try_from(flen).map_err(|_| {
                 format!("column `{name}` is CHAR with an unusable declared length {flen}")
             })?;
+            if configured_string_is_binary(name, "CHAR", column)? {
+                // `ConfiguredScalarType::Char` has no `binary` variant, so a
+                // stored `BINARY(n)` (a `String` column at charset `binary`)
+                // has no faithful configured type at all.
+                return Err(format!(
+                    "column `{name}` is BINARY, which this node cannot decode yet"
+                ));
+            }
             Ok(ConfiguredColumn::stored_char_not_null(
                 name, column.id, max_length,
             ))
@@ -313,18 +350,7 @@ fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, Stri
             let max_length = u32::try_from(flen).map_err(|_| {
                 format!("column `{name}` is VARCHAR with an unusable declared length {flen}")
             })?;
-            // `binary`/`VARBINARY` is the only non-`utf8mb4` charset this node
-            // recognizes for a `VARCHAR`-family column; any other charset
-            // stays refused rather than guessing a collation.
-            let binary = match column.get_charset() {
-                "utf8mb4" => false,
-                "binary" => true,
-                other => {
-                    return Err(format!(
-                        "column `{name}` is VARCHAR with charset `{other}`, which this node cannot decode yet"
-                    ))
-                }
-            };
+            let binary = configured_string_is_binary(name, "VARCHAR", column)?;
             Ok(ConfiguredColumn::stored_varchar_not_null(
                 name, column.id, max_length, binary,
             ))

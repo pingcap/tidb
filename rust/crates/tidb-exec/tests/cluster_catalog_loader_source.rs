@@ -96,6 +96,23 @@ const GO_VARCHAR_TABLE: &str = r#"{"id":81,"name":{"O":"Tags2","L":"tags2"},"cha
 {"id":3,"name":{"O":"raw","L":"raw"},"offset":2,"type":{"Tp":15,"Flag":1,"Flen":32,"Decimal":-1,"Charset":"binary","Collate":"binary","Elems":null,"Array":false},"state":5,"version":2}
 ],"index_info":null,"state":5,"pk_is_handle":true,"is_common_handle":false,"max_col_id":3,"version":5}"#;
 
+/// A base table with a `VARCHAR(64) NOT NULL COLLATE utf8mb4_general_ci`
+/// column. Its charset is `utf8mb4`, so a charset-only check admits it, but
+/// the node's string comparators are hardcoded to `utf8mb4_bin`: admitting it
+/// would order and group `'B'` before `'a'` where Go orders `'a'` before
+/// `'B'`.
+const GO_CI_COLLATION_TABLE: &str = r#"{"id":82,"name":{"O":"Labels","L":"labels"},"charset":"utf8mb4","collate":"utf8mb4_bin","cols":[
+{"id":1,"name":{"O":"id","L":"id"},"offset":0,"type":{"Tp":8,"Flag":3,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false},"state":5,"version":2},
+{"id":2,"name":{"O":"name","L":"name"},"offset":1,"type":{"Tp":15,"Flag":1,"Flen":64,"Decimal":-1,"Charset":"utf8mb4","Collate":"utf8mb4_general_ci","Elems":null,"Array":false},"state":5,"version":2}
+],"index_info":null,"state":5,"pk_is_handle":true,"is_common_handle":false,"max_col_id":2,"version":5}"#;
+
+/// A base table with a `BINARY(16) NOT NULL` column: the `String` type code at
+/// the `binary` charset, which `ConfiguredScalarType::Char` cannot express.
+const GO_BINARY_CHAR_TABLE: &str = r#"{"id":83,"name":{"O":"Blobs","L":"blobs"},"charset":"utf8mb4","collate":"utf8mb4_bin","cols":[
+{"id":1,"name":{"O":"id","L":"id"},"offset":0,"type":{"Tp":8,"Flag":3,"Flen":20,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false},"state":5,"version":2},
+{"id":2,"name":{"O":"digest","L":"digest"},"offset":1,"type":{"Tp":254,"Flag":1,"Flen":16,"Decimal":0,"Charset":"binary","Collate":"binary","Elems":null,"Array":false},"state":5,"version":2}
+],"index_info":null,"state":5,"pk_is_handle":true,"is_common_handle":false,"max_col_id":2,"version":5}"#;
+
 fn recorded_cluster() -> RecordedSnapshot {
     let mut snapshot = RecordedSnapshot::default();
     snapshot.put(key::schema_version_kv_key(), value::encode_int_value(412));
@@ -105,6 +122,8 @@ fn recorded_cluster() -> RecordedSnapshot {
     snapshot.put(key::table_kv_key(3, 79), GO_UNSUPPORTED_TYPE_TABLE);
     snapshot.put(key::table_kv_key(3, 80), GO_DECIMAL_TABLE);
     snapshot.put(key::table_kv_key(3, 81), GO_VARCHAR_TABLE);
+    snapshot.put(key::table_kv_key(3, 82), GO_CI_COLLATION_TABLE);
+    snapshot.put(key::table_kv_key(3, 83), GO_BINARY_CHAR_TABLE);
     // The same database hash also holds allocator fields, which are not tables.
     snapshot.put(
         key::auto_table_id_kv_key(3, 77),
@@ -128,7 +147,7 @@ fn loads_databases_tables_and_schema_version_from_stored_bytes() {
     assert_eq!(database.info.id, 3);
     assert_eq!(database.info.name.original(), "Campaign");
     // Allocator fields in the same hash must not be mistaken for tables.
-    assert_eq!(database.tables.len(), 5);
+    assert_eq!(database.tables.len(), 7);
     assert_eq!(database.tables[0].id, 77);
     assert_eq!(database.tables[0].db_id, 3);
     assert_eq!(database.tables[1].id, 78);
@@ -232,6 +251,38 @@ fn varchar_columns_are_admitted_at_their_declared_charset() {
             max_length: 32,
             binary: true,
         }
+    );
+}
+
+#[test]
+fn string_column_at_an_unrepresentable_collation_is_refused() {
+    let mut snapshot = recorded_cluster();
+    let catalog = load_cluster_catalog(&mut snapshot).expect("catalog loads");
+
+    // Go, on the same table shape, orders `utf8mb4_general_ci` case-folded and
+    // groups `'B'`/`'b'` together:
+    //   ORDER BY name -> [a B b C]   (utf8mb4_bin -> [B C a b])
+    //   SELECT DISTINCT name -> [B C a]  (three groups, not four)
+    // Both the bounded node's sort (`compare_prepared_rows`) and its DISTINCT
+    // normalization are hardcoded to `utf8mb4_bin`, so this column must never
+    // be admitted rather than silently answered by byte order.
+    let (database, table) = catalog.find_table("campaign", "labels").expect("table found");
+    let refusal =
+        configure_loaded_table(database.name.original(), table).expect_err("table must be refused");
+    assert_eq!(
+        refusal.reason,
+        "column `name` is VARCHAR with charset `utf8mb4` collation `utf8mb4_general_ci`, \
+         and this node only reads `utf8mb4_bin` or `binary` strings"
+    );
+
+    // `ConfiguredScalarType::Char` has no `binary` variant, so `BINARY(n)` is
+    // refused too instead of being read as a `utf8mb4_bin` `CHAR`.
+    let (database, table) = catalog.find_table("campaign", "blobs").expect("table found");
+    let refusal =
+        configure_loaded_table(database.name.original(), table).expect_err("table must be refused");
+    assert_eq!(
+        refusal.reason,
+        "column `digest` is BINARY, which this node cannot decode yet"
     );
 }
 
