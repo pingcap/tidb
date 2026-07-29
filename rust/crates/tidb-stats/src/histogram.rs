@@ -441,16 +441,21 @@ impl Histogram {
         gt_count.max(0.0)
     }
 
-    /// Estimates the row count in `[a, b)`, Go `BetweenRowCount` restricted
-    /// to the stats-version-1 path (no `RiskRangeSkewRatio` session
-    /// adjustment, since that requires a live `PlanContext`; callers needing
-    /// the skew-adjusted version-2 estimate should apply
-    /// `CalculateSkewRatioCounts`-equivalent logic themselves on top of this
-    /// result using their own session skew ratio).
+    /// Estimates the row count in `[a, b)`, Go `BetweenRowCount`.
+    ///
+    /// `skew` carries the session's `RiskRangeSkewRatio`; `None` stands for
+    /// Go's nil `sctx` (stats version 1 callers), which skips the whole
+    /// same-bucket skew branch including its `MaxEst` widening.
     #[must_use]
-    pub fn between_row_count(&self, a: &Datum, b: &Datum, collation: Collation) -> RowEstimate {
-        let (less_count_a, _bkt_index_a) = self.less_row_count_with_bkt_idx(a, collation);
-        let (less_count_b, _bkt_index_b) = self.less_row_count_with_bkt_idx(b, collation);
+    pub fn between_row_count(
+        &self,
+        a: &Datum,
+        b: &Datum,
+        collation: Collation,
+        skew: Option<f64>,
+    ) -> RowEstimate {
+        let (less_count_a, bkt_index_a) = self.less_row_count_with_bkt_idx(a, collation);
+        let (less_count_b, bkt_index_b) = self.less_row_count_with_bkt_idx(b, collation);
         let mut range_est = default_row_est(less_count_b - less_count_a);
         let (low_equal, _) = self.equal_row_count(a, false, collation);
         let ndv_avg = self.not_null_count() / self.ndv as f64;
@@ -458,8 +463,214 @@ impl Histogram {
             let result = less_count_b.min(self.not_null_count() - less_count_a);
             range_est = default_row_est(result.min(low_equal + ndv_avg));
         }
+        // Equal less-counts mean no valid bucket was crossed (or both bounds
+        // are out of range), so there is no in-bucket skew to account for.
+        let in_valid_bucket = less_count_a != less_count_b;
+        if let Some(skew_ratio) = skew {
+            if in_valid_bucket && bkt_index_a == bkt_index_b {
+                let bucket = &self.buckets[bkt_index_a];
+                let mut skew_estimate = self.bucket_count(bkt_index_a);
+                if less_count_b <= (bucket.count - bucket.repeat) as f64 {
+                    skew_estimate -= bucket.repeat;
+                }
+                let skew_estimate = skew_estimate as f64;
+                if skew_ratio > 0.0 {
+                    range_est = crate::row_estimate::calculate_skew_ratio_counts(
+                        range_est.est,
+                        (range_est.est * 2.0).min(skew_estimate),
+                        skew_ratio,
+                    );
+                }
+                range_est.max_est = range_est.max_est.max(skew_estimate);
+            }
+        }
         range_est
     }
+
+    /// Go `Histogram.OutOfRange`: whether `value` falls outside every bucket.
+    #[must_use]
+    pub fn out_of_range(&self, value: &Datum, collation: Collation) -> bool {
+        let (Some(first), Some(last)) = (self.buckets.first(), self.buckets.last()) else {
+            return false;
+        };
+        let greater = first
+            .lower_bound
+            .compare(value, collation)
+            .is_ok_and(|ordering| ordering == std::cmp::Ordering::Greater);
+        let less = last
+            .upper_bound
+            .compare(value, collation)
+            .is_ok_and(|ordering| ordering == std::cmp::Ordering::Less);
+        greater || less
+    }
+
+    /// Go `Histogram.AbsRowCountDifference`.
+    #[must_use]
+    pub fn abs_row_count_difference(&self, realtime_row_count: i64) -> f64 {
+        (realtime_row_count as f64 - self.total_row_count()).abs()
+    }
+
+    /// Go `Histogram.GetIncreaseFactor`.
+    #[must_use]
+    pub fn get_increase_factor(&self, total_count: i64) -> f64 {
+        let column_count = self.total_row_count();
+        if column_count == 0.0 {
+            return 1.0;
+        }
+        total_count as f64 / column_count
+    }
+
+    /// Estimates rows for the part of `[l, r]` that lies outside the analyzed
+    /// histogram, Go `Histogram.OutOfRangeRowCount`.
+    ///
+    /// The table and session inputs come from [`OutOfRangeContext`].
+    #[must_use]
+    pub fn out_of_range_row_count(
+        &self,
+        l_datum: &Datum,
+        r_datum: &Datum,
+        context: OutOfRangeContext,
+    ) -> RowEstimate {
+        let OutOfRangeContext {
+            realtime_row_count,
+            modify_count,
+            hist_ndv,
+            unsigned,
+            allow_use_modify_count,
+            skew_ratio,
+        } = context;
+        if self.is_empty() {
+            return default_row_est(0.0);
+        }
+        let mut realtime_row_count = realtime_row_count;
+        let hist_ndv = hist_ndv.max(1);
+        let mut one_value = self.not_null_count() / hist_ndv as f64;
+        if !allow_use_modify_count {
+            return default_row_est(one_value);
+        }
+        if (hist_ndv as f64) < OUT_OF_RANGE_BETWEEN_RATE {
+            one_value = one_value
+                .min(realtime_row_count as f64 / OUT_OF_RANGE_BETWEEN_RATE)
+                .max(1.0);
+        }
+
+        let first_lower = &self.buckets[0].lower_bound;
+        let last_upper = &self.buckets[self.len() - 1].upper_bound;
+        let common_prefix = if matches!(first_lower, Datum::Bytes(_) | Datum::String(_)) {
+            crate::scalar_geometry::common_prefix_length(&[
+                datum_bytes(first_lower),
+                datum_bytes(last_upper),
+                datum_bytes(l_datum),
+                datum_bytes(r_datum),
+            ])
+        } else {
+            0
+        };
+
+        let mut l = convert_datum_to_scalar(l_datum, common_prefix);
+        let mut r = convert_datum_to_scalar(r_datum, common_prefix);
+        if unsigned {
+            let mut left_clamped = false;
+            let mut right_clamped = false;
+            if l < 0.0 {
+                l = 0.0;
+                left_clamped = true;
+            }
+            if r < 0.0 {
+                r = 0.0;
+                right_clamped = true;
+            }
+            if l == 0.0 && r == 0.0 && (left_clamped || right_clamped) {
+                return default_row_est(0.0);
+            }
+        }
+
+        let hist_l = convert_datum_to_scalar(first_lower, common_prefix);
+        let hist_r = convert_datum_to_scalar(last_upper, common_prefix);
+        let mut hist_width = hist_r - hist_l;
+        if hist_width < 0.0 || hist_width.is_infinite() {
+            hist_width = 0.0;
+        }
+        let bound_l = hist_l - hist_width;
+        let bound_r = hist_r + hist_width;
+
+        let pred_width = r - l;
+        if pred_width < 0.0 {
+            return default_row_est(0.0);
+        }
+        if pred_width == 0.0 {
+            hist_width = 0.0;
+        }
+
+        let left_percent =
+            crate::overlap_geometry::left_overlap_percent(l, r, bound_l, hist_l, hist_width);
+        let right_percent =
+            crate::overlap_geometry::right_overlap_percent(l, r, hist_r, bound_r, hist_width);
+        let total_percent = (left_percent * 0.5 + right_percent * 0.5).min(1.0);
+        let max_total_percent = (left_percent + right_percent).min(1.0);
+
+        let added_rows = self.abs_row_count_difference(realtime_row_count);
+        let mut max_added_rows = added_rows;
+
+        let mut est_rows = one_value;
+        if total_percent > 0.0 {
+            // 50% of the changed rows are assumed to land outside the analyzed
+            // range unless the session overrides that share.
+            let added_row_multiplier = if skew_ratio > 0.0 { skew_ratio } else { 0.5 };
+            est_rows = (added_rows * added_row_multiplier) * total_percent;
+        }
+
+        if modify_count == 0 || added_rows == 0.0 {
+            if realtime_row_count <= 0 {
+                realtime_row_count = self.total_row_count() as i64;
+            }
+            max_added_rows =
+                max_added_rows.max(realtime_row_count as f64 / OUT_OF_RANGE_BETWEEN_RATE);
+        }
+        if max_total_percent > 0.0 {
+            max_added_rows *= max_total_percent;
+        }
+
+        // The source assigns MinEst first and lets the skew branch overwrite
+        // the whole estimate, so a positive skew ratio drops that assignment.
+        let mut result = RowEstimate {
+            est: 0.0,
+            min_est: est_rows.min(one_value),
+            max_est: 0.0,
+        };
+        if skew_ratio > 0.0 {
+            result = crate::row_estimate::calculate_skew_ratio_counts(
+                est_rows,
+                max_added_rows,
+                skew_ratio,
+            );
+        } else {
+            result.est = est_rows;
+        }
+        result.est = result.est.max(one_value);
+        result.max_est = result.est.max(max_added_rows);
+        result
+    }
+}
+
+/// Go `outOfRangeBetweenRate`, the smoothing divisor for out-of-range work.
+pub const OUT_OF_RANGE_BETWEEN_RATE: f64 = 100.0;
+
+/// The table and session inputs of [`Histogram::out_of_range_row_count`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OutOfRangeContext {
+    /// The table's current row count.
+    pub realtime_row_count: i64,
+    /// Rows changed since the histogram was analyzed.
+    pub modify_count: i64,
+    /// Histogram NDV with any TopN entries already removed.
+    pub hist_ndv: i64,
+    /// The source's `mysql.HasUnsignedFlag(hg.Tp.GetFlag())`.
+    pub unsigned: bool,
+    /// False only under `OptObjectiveDeterminate`, which bans modify counts.
+    pub allow_use_modify_count: bool,
+    /// The session's `RiskRangeSkewRatio`.
+    pub skew_ratio: f64,
 }
 
 #[cfg(test)]

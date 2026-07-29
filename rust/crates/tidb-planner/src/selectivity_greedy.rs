@@ -189,3 +189,119 @@ fn is_better_choice(
     // Go's `<` comparison in the source implementation.
     candidate.selectivity < current.selectivity
 }
+
+/// What kind of predicate one condition is, for the leftover-condition tail of
+/// Go's `Selectivity`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConditionKind {
+    /// A constant that evaluates to NULL or false: it zeroes the result.
+    ConstantFalse,
+    /// A constant that evaluates to true: it covers itself and changes nothing.
+    ConstantTrue,
+    /// A disjunction. The source estimates it recursively; this port leaves it
+    /// to the default factor and says so at [`combine_selectivity`].
+    Disjunction,
+    /// `LIKE`/`ILIKE`/`REGEXP`, which carry their own default selectivity.
+    StringMatch,
+    /// A negated string match, with its own default selectivity again.
+    NegatedStringMatch,
+    /// Anything else, which falls back to the general selectivity factor.
+    Other,
+}
+
+/// The session defaults the leftover-condition tail multiplies by.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SelectivityDefaults {
+    /// `SelectivityFactor`, Go's 0.8.
+    pub selectivity_factor: f64,
+    /// `GetStrMatchDefaultSelectivity`.
+    pub str_match_default: f64,
+    /// `GetNegateStrMatchDefaultSelectivity`.
+    pub negate_str_match_default: f64,
+}
+
+impl Default for SelectivityDefaults {
+    fn default() -> Self {
+        Self {
+            selectivity_factor: 0.8,
+            str_match_default: 0.8,
+            negate_str_match_default: 0.8,
+        }
+    }
+}
+
+/// Combines statistics nodes into one selectivity, Go `Selectivity`'s body
+/// after the nodes are built.
+///
+/// `initial` carries the correlated-column product the source accumulates
+/// before node selection. `conditions` describes each CNF item in the same
+/// order the node masks index. Two source behaviors are *not* reproduced
+/// here, because both need an expression evaluator this crate does not have:
+/// a [`ConditionKind::Disjunction`] is never estimated recursively, and no
+/// TopN-assisted string-match estimation is attempted -- both simply fall
+/// through to their default selectivity, which is what the source itself does
+/// when those attempts decline.
+#[must_use]
+pub fn combine_selectivity(
+    nodes: &mut [StatsNode],
+    conditions: &[ConditionKind],
+    initial: f64,
+    realtime_row_count: i64,
+    defaults: SelectivityDefaults,
+) -> f64 {
+    if realtime_row_count == 0 || conditions.is_empty() {
+        return 1.0;
+    }
+    let mut ret = initial;
+    let mut mask: i64 = if conditions.len() >= 63 {
+        i64::MAX
+    } else {
+        (1_i64 << conditions.len()) - 1
+    };
+
+    for set in get_usable_sets_by_greedy(nodes) {
+        mask &= !set.mask;
+        ret *= set.selectivity;
+        // A partial DNF cover leaves residual conditions behind, so the
+        // source charges the default factor for them on top.
+        if set.partial_cover {
+            ret *= defaults.selectivity_factor;
+        }
+    }
+
+    let (mut has_default, mut has_str_match, mut has_negate_str_match) = (false, false, false);
+    for (index, kind) in conditions.iter().enumerate() {
+        if mask & (1_i64 << index) == 0 {
+            continue;
+        }
+        match kind {
+            ConditionKind::ConstantFalse => {
+                ret *= 0.0;
+                mask &= !(1_i64 << index);
+            }
+            ConditionKind::ConstantTrue => {
+                mask &= !(1_i64 << index);
+            }
+            ConditionKind::StringMatch => has_str_match = true,
+            ConditionKind::NegatedStringMatch => has_negate_str_match = true,
+            ConditionKind::Disjunction | ConditionKind::Other => has_default = true,
+        }
+    }
+
+    if mask > 0 {
+        let mut min_selectivity = 1.0_f64;
+        if has_default {
+            min_selectivity = min_selectivity.min(defaults.selectivity_factor);
+        }
+        if has_str_match {
+            min_selectivity = min_selectivity.min(defaults.str_match_default);
+        }
+        if has_negate_str_match {
+            min_selectivity = min_selectivity.min(defaults.negate_str_match_default);
+        }
+        ret *= min_selectivity;
+    }
+
+    // The source never lets a selectivity fall below one row.
+    ret.max(1.0 / realtime_row_count as f64)
+}

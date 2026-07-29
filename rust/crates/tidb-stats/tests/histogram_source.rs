@@ -125,7 +125,7 @@ fn source_int_histogram_between_row_count_probes() {
     ];
     for &(a, b, est) in cases {
         let result =
-            hist.between_row_count(&Datum::new_int(a), &Datum::new_int(b), Collation::Binary);
+            hist.between_row_count(&Datum::new_int(a), &Datum::new_int(b), Collation::Binary, None);
         assert_close(result.est, est, &format!("between[{a},{b})"));
         assert_close(result.min_est, est, &format!("between[{a},{b}).min"));
         assert_close(result.max_est, est, &format!("between[{a},{b}).max"));

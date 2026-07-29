@@ -1530,6 +1530,7 @@ name = "tidb-planner"
 version = "0.0.0"
 dependencies = [
  "tidb-ast",
+ "tidb-codec",
  "tidb-datatype",
  "tidb-hash",
  "tidb-parser",

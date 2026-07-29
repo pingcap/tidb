@@ -22,6 +22,7 @@ pub mod ndv;
 pub mod out_of_range;
 pub mod pseudo;
 pub mod row_count_column;
+pub mod row_count_estimator;
 pub mod row_size;
 pub mod uniform;
 
