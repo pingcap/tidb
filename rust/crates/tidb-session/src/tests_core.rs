@@ -3612,3 +3612,70 @@ fn last_insert_id_function_and_wire_value_are_one_publication() {
         "77"
     );
 }
+
+/// `autocommit = 0`'s captured rules (`corpus/table/transactions` and
+/// `corpus/table/autocommit_source`): a statement then runs inside a
+/// transaction the session opens for it, so `ROLLBACK` discards it; and only
+/// the OFF -> ON TRANSITION of `SET autocommit` commits what is open -- `SET
+/// autocommit = 1` while it is already on leaves an explicit `BEGIN`
+/// running.
+#[test]
+fn autocommit_off_puts_a_statement_in_a_transaction() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE ac (id INT)").unwrap();
+
+    session.run("SET autocommit = 0").unwrap();
+    session.run("INSERT INTO ac VALUES (1)").unwrap();
+    session.run("INSERT INTO ac VALUES (2)").unwrap();
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(
+        session.run("SELECT id FROM ac ORDER BY id").unwrap(),
+        StmtResult::Rows(vec![]),
+        "captured: both writes were inside the implicit transaction"
+    );
+
+    session.run("INSERT INTO ac VALUES (1)").unwrap();
+    session.run("COMMIT").unwrap();
+    session.run("INSERT INTO ac VALUES (2)").unwrap();
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(
+        session.run("SELECT id FROM ac ORDER BY id").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(1)]])
+    );
+
+    // OFF -> ON commits what is open.
+    session.run("INSERT INTO ac VALUES (2)").unwrap();
+    session.run("SET autocommit = 1").unwrap();
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(
+        session.run("SELECT id FROM ac ORDER BY id").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(1)], vec![Datum::Int(2)]])
+    );
+
+    // ON -> ON is not a transition, so the explicit transaction survives the
+    // SET and the ROLLBACK still discards.
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO ac VALUES (3)").unwrap();
+    session.run("SET autocommit = 1").unwrap();
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(
+        session.run("SELECT id FROM ac ORDER BY id").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]),
+        "captured: a redundant SET does not end the transaction"
+    );
+
+    // ... but ON -> OFF -> ON inside the same explicit transaction does.
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO ac VALUES (3)").unwrap();
+    session.run("SET autocommit = 0").unwrap();
+    session.run("SET autocommit = 1").unwrap();
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(
+        session.run("SELECT id FROM ac ORDER BY id").unwrap(),
+        StmtResult::Rows(vec![
+            vec![Datum::Int(1)],
+            vec![Datum::Int(2)],
+            vec![Datum::Int(3)],
+        ])
+    );
+}

@@ -811,14 +811,55 @@ impl Session {
         // Go stores every system variable as a string.
         let value = value.unwrap_or_default();
         if is_global {
-            self.vars
+            return self
+                .vars
                 .set_global(&assignment.name, value)
-                .map_err(var_error)
-        } else {
-            self.vars
-                .set_system(&assignment.name, value)
-                .map_err(var_error)
+                .map_err(var_error);
         }
+        let was_autocommit = self.is_autocommit();
+        self.vars
+            .set_system(&assignment.name, value)
+            .map_err(var_error)?;
+        // Go `sysvar.go`'s `AutoCommit.SetSession`: turning autocommit back
+        // ON ends the ongoing transaction ("Implicitly commit the possible
+        // ongoing transaction if mode is changed from off to on"). Only the
+        // TRANSITION does it -- `SET autocommit = 1` while it is already on
+        // leaves an explicit `BEGIN` running, which is why
+        // `BEGIN; INSERT; SET autocommit = 1; ROLLBACK` still rolls back
+        // (captured).
+        if assignment.name.eq_ignore_ascii_case("autocommit")
+            && !was_autocommit
+            && self.is_autocommit()
+        {
+            self.commit()?;
+        }
+        Ok(())
+    }
+
+    /// Go `SessionVars.IsAutocommit()`: whether each statement stands on its
+    /// own, or joins a transaction the session keeps open for it.
+    fn is_autocommit(&self) -> bool {
+        self.vars.get_system("autocommit").as_deref() != Ok("OFF")
+    }
+
+    /// Go's lazy transaction start: with autocommit OFF, a statement that
+    /// touches data runs INSIDE a transaction the session opens for it, so a
+    /// later `ROLLBACK` can discard it. `BEGIN` still opens one explicitly;
+    /// this only covers the statements that would otherwise have none.
+    fn begin_implicit_transaction(&mut self) -> Result<(), DriverError> {
+        if self.txn.is_some() || self.is_autocommit() {
+            return Ok(());
+        }
+        let (working, base_version) = {
+            let catalog = self.lock_catalog()?;
+            (catalog.clone(), catalog.version())
+        };
+        self.txn = Some(Transaction {
+            working,
+            base_version,
+            mode: self.resolve_begin_txn_mode(tidb_ast::TransactionMode::Default),
+        });
+        Ok(())
     }
 
     /// Go's privilege gate on `SET GLOBAL`: SUPER, or the dynamic
@@ -1732,6 +1773,12 @@ impl Session {
         // statement's `ROW_COUNT()` (captured: a failed SELECT leaves -1, a
         // failed INSERT leaves 0).
         self.statement_kind = statement_kind_of(&stmt);
+        // With autocommit OFF a read or a write joins a transaction rather
+        // than standing alone; DDL is left out because it commits the open
+        // transaction instead of joining it.
+        if self.statement_kind != StatementKind::Other {
+            self.begin_implicit_transaction()?;
+        }
         // Go's preprocessor runs before planning, so a gated clause is
         // refused before any table is touched.
         if let Stmt::Query(query) = &stmt {
