@@ -98,6 +98,9 @@ impl GlobalSysvars {
                     ValidationError::WrongValue => {
                         VarError::WrongValueForVar(name.to_ascii_lowercase(), value.clone())
                     }
+                    ValidationError::WrongValueOf(part) => {
+                        VarError::WrongValueForVar(name.to_ascii_lowercase(), part)
+                    }
                 })?;
         self.values
             .lock()
@@ -283,6 +286,9 @@ impl SessionVars {
                     }
                     ValidationError::WrongValue => {
                         VarError::WrongValueForVar(name.to_ascii_lowercase(), value.clone())
+                    }
+                    ValidationError::WrongValueOf(part) => {
+                        VarError::WrongValueForVar(name.to_ascii_lowercase(), part)
                     }
                 })?;
         self.systems

@@ -3340,3 +3340,80 @@ fn a_begin_resolves_its_transaction_mode_from_the_keyword_then_the_variable() {
         ))
     ));
 }
+
+/// `sql_mode` is normalized at SET time, so every reader afterwards sees the
+/// expanded, canonical set rather than the shorthand the user typed.
+///
+/// Captured from TiDB (`SET sql_mode='TRADITIONAL'; SELECT @@sql_mode`): the
+/// combination expands to its member modes AND keeps its own name at the end.
+/// Without this normalization `SET sql_mode='TRADITIONAL'` left the literal
+/// string `TRADITIONAL` stored, and every reader looking for
+/// `STRICT_TRANS_TABLES` silently found a NON-strict session -- an over-long
+/// INSERT then truncated and stored a wrong value instead of failing.
+#[test]
+fn sql_mode_is_normalized_when_it_is_set() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (c VARCHAR(3))").unwrap();
+
+    session.apply_set("SET sql_mode = 'TRADITIONAL'").unwrap();
+    assert_eq!(
+        session.run("SELECT @@sql_mode").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::new_string(
+            "STRICT_TRANS_TABLES,STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
+             ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,TRADITIONAL"
+        )]])
+    );
+    // Captured: `[types:1406]Data too long for column 'c' at row 1`, and the
+    // row is NOT stored.
+    assert!(session.run("INSERT INTO t VALUES ('abcdef')").is_err());
+    assert_eq!(
+        session.run("SELECT c FROM t").unwrap(),
+        StmtResult::Rows(vec![])
+    );
+
+    // Captured: ANSI expands to its five member modes plus its own name, which
+    // is how ONLY_FULL_GROUP_BY comes along with it.
+    session.apply_set("SET sql_mode = 'ansi'").unwrap();
+    assert_eq!(
+        session.run("SELECT @@sql_mode").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::new_string(
+            "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"
+        )]])
+    );
+
+    // A non-combination mode is only uppercased, and duplicates collapse.
+    session
+        .apply_set("SET sql_mode = 'ansi_quotes,ANSI_QUOTES'")
+        .unwrap();
+    assert_eq!(
+        session.run("SELECT @@sql_mode").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::new_string("ANSI_QUOTES")]])
+    );
+
+    // Captured: an unknown mode and a numeric bitmask are both 1231, and the
+    // message names the offending TOKEN rather than the whole assignment.
+    for (value, token) in [
+        ("NO_SUCH_MODE", "NO_SUCH_MODE"),
+        ("2097152", "2097152"),
+        ("ANSI_QUOTES,bogus", "BOGUS"),
+        // Captured: only TRAILING spaces are trimmed, so a leading one makes
+        // the whole token invalid.
+        (" STRICT_TRANS_TABLES", " STRICT_TRANS_TABLES"),
+    ] {
+        match session.apply_set(&format!("SET sql_mode = '{value}'")) {
+            Err(DriverError::Var(tidb_executor::VarErrorKind::WrongValueForVar(
+                name,
+                reported,
+            ))) => {
+                assert_eq!(name, "sql_mode");
+                assert_eq!(reported, token, "for {value}");
+            }
+            other => panic!("{value} should be rejected, got {other:?}"),
+        }
+    }
+    // A rejected SET left the previous value in place.
+    assert_eq!(
+        session.run("SELECT @@sql_mode").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::new_string("ANSI_QUOTES")]])
+    );
+}

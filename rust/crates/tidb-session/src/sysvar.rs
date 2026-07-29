@@ -11548,6 +11548,9 @@ pub enum ValidationError {
     WrongType,
     /// Go `ErrWrongValueForVar` (1231).
     WrongValue,
+    /// Go `ErrWrongValueForVar` (1231) where the rejected text is not the
+    /// whole assigned value: `SET sql_mode = 'ANSI,BOGUS'` names `BOGUS`.
+    WrongValueOf(String),
 }
 
 /// The outcome of validating a value: Go returns the (possibly normalized)
@@ -11583,7 +11586,7 @@ impl SysVarDef {
                 truncated: false,
             });
         }
-        match self.var_type {
+        let validated = match self.var_type {
             VarType::Unsigned => self.check_uint64(value),
             VarType::Int => self.check_int64(value),
             VarType::Bool => self.check_bool(value),
@@ -11596,6 +11599,37 @@ impl SysVarDef {
                 value: value.to_owned(),
                 truncated: false,
             }),
+        }?;
+        self.run_validation(validated)
+    }
+
+    /// Go's per-variable `SysVar.Validation` closure, which runs after
+    /// `ValidateFromType` and returns the value actually stored.
+    ///
+    /// Only the variables whose stored form differs from what the user typed
+    /// are here; everything else takes the type-validated value unchanged.
+    /// The point of doing it at SET time is that every reader afterwards sees
+    /// one canonical form, so no read site has to re-expand anything.
+    fn run_validation(&self, validated: Validated) -> Result<Validated, ValidationError> {
+        if self.name != "sql_mode" {
+            return Ok(validated);
+        }
+        // Go: `normalizedValue = mysql.FormatSQLModeStr(normalizedValue)`
+        // then `mysql.GetSQLMode(normalizedValue)`. The formatting uppercases,
+        // expands the combination modes (TRADITIONAL, ANSI, ORACLE, ...) into
+        // their member modes while KEEPING the combination name itself, and
+        // drops duplicates; parsing then rejects any token that names no mode
+        // -- which is also what refuses a numeric bitmask, since MySQL's
+        // numeric sql_mode form is not accepted here.
+        let formatted = tidb_mysql::format_sql_mode_str(&validated.value);
+        match tidb_mysql::get_sql_mode(&formatted) {
+            Ok(_) => Ok(Validated {
+                value: formatted,
+                truncated: validated.truncated,
+            }),
+            // Go's `newInvalidModeErr` names the offending *token*, not the
+            // whole assigned string.
+            Err(invalid) => Err(ValidationError::WrongValueOf(invalid.value)),
         }
     }
 
