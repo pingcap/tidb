@@ -37,6 +37,14 @@
 //! [`crate::cluster_stats_load::decode_bound`]'s inverse is what this must
 //! satisfy, and the round trip is what the module's tests assert.
 //!
+//! # Which handle shape the four tables have
+//!
+//! Not a fixed answer. `mysql.stats_meta` and its histogram tables became
+//! `CLUSTERED` only in a recent TiDB; on a v8.5 cluster they are still a
+//! `UNIQUE INDEX` over a `_tidb_rowid`, which a writer that assumed the newer
+//! shape cannot address at all. This module reads the cluster's own
+//! `TableInfo` and writes whichever shape it finds -- see [`StatsRows`].
+//!
 //! # What it does not write
 //!
 //! `mysql.stats_fm_sketch` is written only for a partitioned table's
@@ -56,10 +64,11 @@ use tidb_txnkv::transaction::OptimisticMutation;
 use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use crate::mysql_system_tables::{
-    scan_system_table, scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,
+    scan_system_table, scan_system_table_prefixed, HandleLayout, SystemRow, SystemTableError,
+    SystemTableView,
 };
 use crate::system_row_write::{
-    clustered_record_key, defaults_row, delete_clustered_row, delete_row, insert_row, row_id_of,
+    defaults_row, delete_clustered_row, delete_row, insert_row, rewrite_rowid_row, row_id_of,
     store_clustered_row, RowEncodeError, RowValues,
 };
 
@@ -159,6 +168,7 @@ fn plan_meta<S: MetaSnapshot>(
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_meta")?;
+    let mut rows = StatsRows::open(snapshot, table, &["table_id"], stats.table_id)?;
     let mut values = defaults_row(table, now)?;
     set(table, &mut values, "table_id", Datum::Int(stats.table_id));
     set(table, &mut values, "version", Datum::UInt(stats.version));
@@ -182,13 +192,11 @@ fn plan_meta<S: MetaSnapshot>(
         "last_stats_histograms_version",
         Datum::UInt(stats.version),
     );
-
-    let existing = read_rows(snapshot, table, Some(stats.table_id))?;
-    let (key, _) = clustered_record_key(table, &values)?;
-    let previous = existing.get(&key);
-    plan.mutations
-        .extend(store_clustered_row(table, previous, &values)?);
-    Ok(())
+    rows.store(snapshot, catalog, &values, plan)?;
+    // Deliberately no retraction: `mysql.stats_meta` holds one row per table
+    // and the identity IS the table, so there is never a leftover. Retracting
+    // here would only be a way to delete a row this `ANALYZE` did not write.
+    rows.publish_watermark(catalog, plan)
 }
 
 fn plan_histograms<S: MetaSnapshot>(
@@ -199,7 +207,12 @@ fn plan_histograms<S: MetaSnapshot>(
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_histograms")?;
-    let mut existing = read_rows(snapshot, table, Some(stats.table_id))?;
+    let mut rows = StatsRows::open(
+        snapshot,
+        table,
+        &["table_id", "is_index", "hist_id"],
+        stats.table_id,
+    )?;
     for item in stats.columns.iter().chain(&stats.indexes) {
         let mut values = defaults_row(table, now)?;
         set(table, &mut values, "table_id", Datum::Int(stats.table_id));
@@ -242,19 +255,14 @@ fn plan_histograms<S: MetaSnapshot>(
             "correlation",
             Datum::Real(item.histogram.correlation),
         );
-        let (key, _) = clustered_record_key(table, &values)?;
-        let previous = existing.remove(&key);
-        plan.mutations
-            .extend(store_clustered_row(table, previous.as_ref(), &values)?);
+        rows.store(snapshot, catalog, &values, plan)?;
         plan.histogram_count += 1;
     }
     // A histogram this `ANALYZE` no longer produces -- a dropped index, a
     // column that became unanalyzable -- must lose its row, or the loader
     // would keep handing the planner statistics for something that is gone.
-    for values in existing.into_values() {
-        plan.mutations.extend(delete_clustered_row(table, &values)?);
-    }
-    Ok(())
+    rows.retract_remaining(plan)?;
+    rows.publish_watermark(catalog, plan)
 }
 
 fn plan_buckets<S: MetaSnapshot>(
@@ -265,7 +273,12 @@ fn plan_buckets<S: MetaSnapshot>(
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_buckets")?;
-    let mut existing = read_rows(snapshot, table, Some(stats.table_id))?;
+    let mut rows = StatsRows::open(
+        snapshot,
+        table,
+        &["table_id", "is_index", "hist_id", "bucket_id"],
+        stats.table_id,
+    )?;
     for item in stats.columns.iter().chain(&stats.indexes) {
         let mut previous_count = 0_i64;
         for (bucket_id, bucket) in item.histogram.buckets.iter().enumerate() {
@@ -306,20 +319,15 @@ fn plan_buckets<S: MetaSnapshot>(
                 "upper_bound",
                 bound_blob(&bucket.upper_bound)?,
             );
-            let (key, _) = clustered_record_key(table, &values)?;
-            let stored = existing.remove(&key);
-            plan.mutations
-                .extend(store_clustered_row(table, stored.as_ref(), &values)?);
+            rows.store(snapshot, catalog, &values, plan)?;
             plan.bucket_count += 1;
         }
     }
     // A shorter histogram than last time leaves its tail behind, and a stale
     // bucket read back as part of this histogram would be a range the table
     // no longer has.
-    for values in existing.into_values() {
-        plan.mutations.extend(delete_clustered_row(table, &values)?);
-    }
-    Ok(())
+    rows.retract_remaining(plan)?;
+    rows.publish_watermark(catalog, plan)
 }
 
 fn plan_topn<S: MetaSnapshot>(
@@ -330,39 +338,19 @@ fn plan_topn<S: MetaSnapshot>(
     plan: &mut StatsWritePlan,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_top_n")?;
-    // `mysql.stats_top_n` is the one statistics table with no clustered
-    // handle: its rows are identified by an allocated `_tidb_rowid` and
-    // nothing else, so a row cannot be addressed by what it says. Go's writer
-    // deletes the histogram's rows and inserts the new list
-    // (`save.go:278`); this does the same, over the whole table's rows,
-    // because that is the only identity available.
-    let mut deleted_row_ids = Vec::new();
-    for (key, values) in read_rows_with_keys(snapshot, table, None)? {
-        if values
-            .get(&column_id(table, "table_id")?)
-            .and_then(|value| match value {
-                Datum::Int(value) => Some(*value),
-                _ => None,
-            })
-            != Some(stats.table_id)
-        {
-            continue;
-        }
-        deleted_row_ids.push(row_id_of(&key)?);
-        plan.mutations.extend(delete_row(table, &key, &values)?);
-    }
-
-    let mut next_row_id: Option<i64> = None;
+    // A TopN row is named by its VALUE as well as by its histogram: one
+    // histogram has many of them, and they are not numbered.
+    let mut rows = StatsRows::open(
+        snapshot,
+        table,
+        &["table_id", "is_index", "hist_id", "value"],
+        stats.table_id,
+    )?;
     for item in stats.columns.iter().chain(&stats.indexes) {
         let Some(topn) = item.topn.as_ref() else {
             continue;
         };
         for entry in topn.entries() {
-            let row_id = match next_row_id {
-                Some(next) => next,
-                None => first_free_row_id(snapshot, catalog, table, &deleted_row_ids)?,
-            };
-            next_row_id = Some(row_id + 1);
             let mut values = defaults_row(table, now)?;
             set(table, &mut values, "table_id", Datum::Int(stats.table_id));
             set(
@@ -379,20 +367,159 @@ fn plan_topn<S: MetaSnapshot>(
                 Datum::Bytes(entry.encoded.clone()),
             );
             set(table, &mut values, "count", Datum::UInt(entry.count));
-            plan.mutations.extend(insert_row(table, row_id, &values)?);
+            rows.store(snapshot, catalog, &values, plan)?;
             plan.topn_count += 1;
         }
     }
-    if let Some(next) = next_row_id {
+    rows.retract_remaining(plan)?;
+    rows.publish_watermark(catalog, plan)
+}
+
+/// One `mysql.stats_*` table's current rows for one analyzed table, addressed
+/// by the LOGICAL identity that names a row rather than by a physical handle.
+///
+/// # Why the identity, and not the key
+///
+/// The four statistics tables have changed handle shape across TiDB versions:
+/// what is `PRIMARY KEY (table_id, is_index, hist_id) CLUSTERED` on a recent
+/// server was `UNIQUE INDEX tbl(...)` over a `_tidb_rowid` on an older one,
+/// and `mysql.stats_top_n` has never had a clustered handle at all. A writer
+/// that derived a record key from a row's values would work on exactly one of
+/// those shapes and silently store unaddressable rows on the others -- so
+/// this reads what is there and matches on the columns that MEAN "this
+/// histogram's third bucket", which every version agrees on.
+///
+/// # Two replace strategies, because there are two handle shapes
+///
+/// A clustered row's key is derived from its identity, so rewriting it is a
+/// put over the same key. A `_tidb_rowid` row's handle is arbitrary, and any
+/// secondary index over a column this write moves would be left pointing at
+/// the old value -- so the old row is deleted whole and a new one inserted
+/// under a freshly allocated handle. That is deliberately more churn than an
+/// in-place update, and it is the only version-independent way to be correct.
+struct StatsRows<'table> {
+    table: &'table TableInfo,
+    identity: &'static [&'static str],
+    clustered: bool,
+    /// Identity -> (record key, stored values), drained as rows are matched.
+    existing: BTreeMap<Vec<String>, (Vec<u8>, RowValues)>,
+    /// The next `_tidb_rowid` to hand out, once one has been reserved.
+    next_row_id: Option<i64>,
+}
+
+impl<'table> StatsRows<'table> {
+    fn open<S: MetaSnapshot>(
+        snapshot: &mut S,
+        table: &'table TableInfo,
+        identity: &'static [&'static str],
+        table_id: i64,
+    ) -> Result<Self, StatsWriteError> {
+        let clustered = !matches!(HandleLayout::of(table), HandleLayout::RowId);
+        let mut existing = BTreeMap::new();
+        for (key, values) in read_rows_with_keys(snapshot, table, Some(table_id))? {
+            existing.insert(identity_of(table, identity, &values)?, (key, values));
+        }
+        Ok(Self {
+            table,
+            identity,
+            clustered,
+            existing,
+            next_row_id: None,
+        })
+    }
+
+    fn store<S: MetaSnapshot>(
+        &mut self,
+        snapshot: &mut S,
+        catalog: &ClusterCatalog,
+        values: &RowValues,
+        plan: &mut StatsWritePlan,
+    ) -> Result<(), StatsWriteError> {
+        let identity = identity_of(self.table, self.identity, values)?;
+        let previous = self.existing.remove(&identity);
+        if self.clustered {
+            plan.mutations.extend(store_clustered_row(
+                self.table,
+                previous.as_ref().map(|(_, stored)| stored),
+                values,
+            )?);
+            return Ok(());
+        }
+        // A row that is already there keeps its handle: see
+        // [`rewrite_rowid_row`] for why a delete-and-reinsert would collide
+        // with itself on any index whose columns did not move.
+        if let Some((key, stored)) = previous {
+            plan.mutations
+                .extend(rewrite_rowid_row(self.table, &key, &stored, values)?);
+            return Ok(());
+        }
+        let row_id = self.reserve_row_id(snapshot, catalog)?;
+        plan.mutations
+            .extend(insert_row(self.table, row_id, values)?);
+        Ok(())
+    }
+
+    fn retract_remaining(&mut self, plan: &mut StatsWritePlan) -> Result<(), StatsWriteError> {
+        for (key, stored) in std::mem::take(&mut self.existing).into_values() {
+            if self.clustered {
+                plan.mutations
+                    .extend(delete_clustered_row(self.table, &stored)?);
+            } else {
+                plan.mutations
+                    .extend(delete_row(self.table, &key, &stored)?);
+            }
+        }
+        Ok(())
+    }
+
+    /// Records the highest `_tidb_rowid` this plan used, so the next writer
+    /// does not hand out a handle this one already did.
+    fn publish_watermark(
+        &self,
+        catalog: &ClusterCatalog,
+        plan: &mut StatsWritePlan,
+    ) -> Result<(), StatsWriteError> {
+        let Some(next) = self.next_row_id else {
+            return Ok(());
+        };
         plan.mutations.push(
             OptimisticMutation::meta_put(
-                key::auto_table_id_kv_key(system_db_id(catalog)?, table.id),
+                key::auto_table_id_kv_key(system_db_id(catalog)?, self.table.id),
                 value::encode_int_value(next - 1),
             )
             .map_err(|error| StatsWriteError::Encode(RowEncodeError(error.to_string())))?,
         );
+        Ok(())
     }
-    Ok(())
+
+    fn reserve_row_id<S: MetaSnapshot>(
+        &mut self,
+        snapshot: &mut S,
+        catalog: &ClusterCatalog,
+    ) -> Result<i64, StatsWriteError> {
+        let row_id = match self.next_row_id {
+            Some(next) => next,
+            None => first_free_row_id(snapshot, catalog, self.table)?,
+        };
+        self.next_row_id = Some(row_id + 1);
+        Ok(row_id)
+    }
+}
+
+/// The values of the columns that name one statistics row, rendered so that
+/// two rows compare equal exactly when they mean the same thing.
+fn identity_of(
+    table: &TableInfo,
+    identity: &'static [&'static str],
+    values: &RowValues,
+) -> Result<Vec<String>, StatsWriteError> {
+    identity
+        .iter()
+        .map(|name| {
+            let id = column_id(table, name)?;
+            Ok(format!("{:?}", values.get(&id).unwrap_or(&Datum::Null)))
+        })
+        .collect()
 }
 
 /// Go `convertBoundToBlob`: `Datum.ConvertTo(TypeBlob)`.
@@ -477,17 +604,13 @@ fn full_view(table: &TableInfo) -> SystemTableView {
     )
 }
 
-/// The table's stored rows, keyed by their record key.
-fn read_rows<S: MetaSnapshot>(
-    snapshot: &mut S,
-    table: &TableInfo,
-    table_id: Option<i64>,
-) -> Result<BTreeMap<Vec<u8>, RowValues>, StatsWriteError> {
-    Ok(read_rows_with_keys(snapshot, table, table_id)?
-        .into_iter()
-        .collect())
-}
-
+/// The table's stored rows for one analyzed table, each with the record key
+/// it lives under.
+///
+/// `table_id` narrows the scan by the clustered prefix when the table has
+/// one, and filters afterwards when it does not -- which is exactly the
+/// situation `mysql.stats_top_n` is always in and the older statistics
+/// schemas are in too.
 fn read_rows_with_keys<S: MetaSnapshot>(
     snapshot: &mut S,
     table: &TableInfo,
@@ -524,14 +647,13 @@ fn read_rows_with_keys<S: MetaSnapshot>(
 /// reserving from the value this snapshot read is what makes a competing
 /// allocation a write conflict rather than a duplicate handle.
 ///
-/// `deleted_row_ids` are the handles this plan is about to free. They are
-/// deliberately *not* reused: a key deleted and reinserted in one transaction
-/// is two mutations on one key, which the mutation set rejects.
+/// Every handle currently stored is counted, including the ones this plan is
+/// about to retract: a key deleted and reinserted in one transaction is two
+/// mutations on one key, which the mutation set rejects.
 fn first_free_row_id<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     table: &TableInfo,
-    deleted_row_ids: &[i64],
 ) -> Result<i64, StatsWriteError> {
     let stored = snapshot
         .get(&key::auto_table_id_kv_key(system_db_id(catalog)?, table.id))
@@ -550,7 +672,6 @@ fn first_free_row_id<S: MetaSnapshot>(
         .map(|(key, _)| row_id_of(key))
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
-        .chain(deleted_row_ids.iter().copied())
         .max()
         .unwrap_or(0);
     Ok(current.max(highest) + 1)

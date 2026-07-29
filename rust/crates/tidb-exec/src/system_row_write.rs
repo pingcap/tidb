@@ -28,20 +28,26 @@
 //! out of the bootstrap's one-shot shape so the account path can also update
 //! and delete rows that already exist.
 //!
-//! # Two handle shapes, because `mysql.*` has two
+//! # Two handle shapes, because `mysql.*` has two — and which one is which
+//! depends on the cluster's version
 //!
-//! The account tables TiDB declares `NONCLUSTERED`, so their rows live under
-//! an allocated `_tidb_rowid` and every declared column is in the row value:
-//! [`insert_row`], [`update_row`], [`delete_row`].
+//! A table with **no clustered handle** stores its rows under an allocated
+//! `_tidb_rowid`, with every declared column in the row value:
+//! [`insert_row`], [`update_row`], [`rewrite_rowid_row`], [`delete_row`].
+//! Every account table is one of these, and so are the statistics tables on a
+//! v8.5 cluster, where `mysql.stats_histograms` is still
+//! `UNIQUE INDEX tbl(table_id, is_index, hist_id)` over a row ID.
 //!
-//! The statistics tables are `CLUSTERED` — `mysql.stats_meta` on `table_id`,
-//! `mysql.stats_histograms` and `mysql.stats_buckets` on their whole
-//! `(table_id, is_index, hist_id[, bucket_id])` tuple. Their handle columns
-//! live in the record *key* and are absent from the row value, which is the
-//! same rule the reader states in `SystemTableView::project`:
-//! [`clustered_record_key`], [`store_clustered_row`],
-//! [`delete_clustered_row`]. `mysql.stats_top_n` is the odd one out, with no
-//! clustered handle at all, and takes the first set.
+//! A **clustered** table's primary key *is* its handle, so those columns live
+//! in the record key and are absent from the row value — the same rule the
+//! reader states in `SystemTableView::project`. Recent TiDB declares
+//! `mysql.stats_meta` `PRIMARY KEY (table_id) CLUSTERED` and its histogram
+//! tables likewise: [`clustered_record_key`], [`store_clustered_row`],
+//! [`delete_clustered_row`].
+//!
+//! Which set a caller needs is therefore a question about the *cluster's*
+//! `TableInfo`, never about the table's name; [`crate::cluster_stats_write`]
+//! asks [`HandleLayout::of`] per table for exactly that reason.
 
 use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_codec::Encoder;
@@ -241,35 +247,62 @@ pub fn store_clustered_row(
     values: &RowValues,
 ) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
     let (key, handle) = clustered_record_key(table, values)?;
-    let encoded = encode_row(table, values)?;
-    let mut mutations = Vec::new();
     match existing {
-        Some(existing) => {
-            mutations.push(
-                OptimisticMutation::put_existing(key, encoded)
-                    .map_err(|error| encode_error(error.to_string()))?,
-            );
-            // Retracting first and writing second matters only when the value
-            // moved; when it did not, the two entries share a key and the
-            // retraction would delete what the write just stored, so the
-            // unchanged case skips both.
-            let stale = index_entries(table, &handle, existing, IndexOp::Delete)?;
-            let fresh = index_entries(table, &handle, values, IndexOp::Put)?;
-            for (retract, store) in stale.into_iter().zip(fresh) {
-                if retract.key() == store.key() {
-                    continue;
-                }
-                mutations.push(retract);
-                mutations.push(store);
-            }
-        }
+        Some(existing) => rewrite_row(table, &key, &handle, existing, values),
         None => {
-            mutations.push(
-                OptimisticMutation::insert(key, encoded)
-                    .map_err(|error| encode_error(error.to_string()))?,
-            );
+            let mut mutations = vec![OptimisticMutation::insert(key, encode_row(table, values)?)
+                .map_err(|error| encode_error(error.to_string()))?];
             mutations.extend(index_entries(table, &handle, values, IndexOp::Put)?);
+            Ok(mutations)
         }
+    }
+}
+
+/// The mutations that rewrite one row of a `_tidb_rowid` table in place,
+/// keeping its handle.
+///
+/// Keeping the handle is the point. Deleting the row and inserting a
+/// replacement under a fresh handle would touch every index entry twice --
+/// and for an index whose columns did not move, that is a delete and a put of
+/// the *same key* in one transaction, which the mutation set rejects. A
+/// rewrite under the same handle leaves those entries alone, exactly as Go's
+/// `UPDATE` does.
+pub fn rewrite_rowid_row(
+    table: &TableInfo,
+    key: &[u8],
+    existing: &RowValues,
+    values: &RowValues,
+) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+    let handle = Handle::Int(IntHandle::new(row_id_of(key)?));
+    rewrite_row(table, key, &handle, existing, values)
+}
+
+/// The record put and the index moves that turn `existing` into `values`
+/// under one unchanged handle.
+fn rewrite_row(
+    table: &TableInfo,
+    key: &[u8],
+    handle: &Handle,
+    existing: &RowValues,
+    values: &RowValues,
+) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+    let mut mutations =
+        vec![
+            OptimisticMutation::put_existing(key.to_vec(), encode_row(table, values)?)
+                .map_err(|error| encode_error(error.to_string()))?,
+        ];
+    // Retracting the old entry and writing the new one matters only when the
+    // indexed value moved. When it did not, both share a key -- and both a
+    // duplicate mutation on one key and a retraction of what the write just
+    // stored are wrong -- so the unchanged case emits neither.
+    let stale = index_entries(table, handle, existing, IndexOp::Delete)?;
+    let fresh = index_entries(table, handle, values, IndexOp::Put)?;
+    for (retract, store) in stale.into_iter().zip(fresh) {
+        if retract.key() == store.key() {
+            continue;
+        }
+        mutations.push(retract);
+        mutations.push(store);
     }
     Ok(mutations)
 }
