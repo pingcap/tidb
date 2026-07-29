@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -661,6 +662,30 @@ func TestUncompressRejectsInflatedDataLargerThanDeclaredLength(t *testing.T) {
 	require.True(t, out.IsNull())
 	require.Equal(t, int64(0), tracker.BytesConsumed())
 	require.LessOrEqual(t, tracker.MaxConsumed(), int64(declaredLength))
+	requireLastZlibWarning(t, ctx, errZlibZBuf)
+}
+
+func TestUncompressRejectsHandcraftedPayloadLargerThanDeclaredLength(t *testing.T) {
+	ctx := createContext(t)
+	payload := decodeHex("20000000789c73741c05a360148c540000a4780410")
+	tracker := ctx.GetSessionVars().StmtCtx.MemTracker
+
+	require.Equal(t, uint32(32), binary.LittleEndian.Uint32(payload[:4]))
+	reader, err := zlib.NewReader(bytes.NewReader(payload[4:]))
+	require.NoError(t, err)
+	raw, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.NoError(t, reader.Close())
+	require.Equal(t, bytes.Repeat([]byte("A"), 1024), raw)
+
+	fc := funcs[ast.Uncompress]
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewBytesDatum(payload)}))
+	require.NoError(t, err)
+	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, out.IsNull())
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.LessOrEqual(t, tracker.MaxConsumed(), int64(32))
 	requireLastZlibWarning(t, ctx, errZlibZBuf)
 }
 
