@@ -290,18 +290,6 @@ impl PlanTrace {
             node.act_rows = Some(scanned);
         }
     }
-
-    /// Records the top node's real row count directly, for a site that
-    /// materializes its rows rather than streaming them through an executor
-    /// (a point get's handle lookup, a write's own scan).
-    pub(crate) fn set_act_rows(&mut self, rows: u64) {
-        if !self.counting {
-            return;
-        }
-        if let Some(node) = self.stack.last_mut() {
-            node.act_rows = Some(Rc::new(Cell::new(rows)));
-        }
-    }
 }
 
 /// The node constructors: every operator's printed name, access object,
@@ -667,6 +655,13 @@ impl Executor for CountExec {
         ctx: &crate::StmtContext,
     ) -> bool {
         self.child.accept_scan_filter(filter, ctx)
+    }
+
+    /// Metering must not change what runs, so the push-down offers pass
+    /// through to the real source -- otherwise `EXPLAIN ANALYZE` would
+    /// measure a differently-planned query than the one it was asked about.
+    fn accept_scan_limit(&mut self, cap: u64) -> bool {
+        self.child.accept_scan_limit(cap)
     }
 
     fn scanned_rows_counter(&self) -> Option<Rc<Cell<u64>>> {

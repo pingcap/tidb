@@ -107,6 +107,25 @@ pub trait Executor {
         false
     }
 
+    /// Offers this source a row cap, as Go's `LIMIT` push-down puts a `Limit`
+    /// inside the cop task below the scan (captured: `Limit_12 | cop[tikv] |
+    /// offset:0, count:3` under `IndexRangeScan_11`).
+    ///
+    /// `cap` is `offset + count`, because the offset rows are consumed above
+    /// and must still be produced -- exactly what Go's cop-side `Limit`
+    /// carries (`limit 2, 3` lowers to `offset:0, count:5`).
+    ///
+    /// Returning `true` promises the source stops after `cap` rows *that it
+    /// itself emits*. The driver may therefore only offer a cap when every
+    /// filter the query applies is applied at or below this source, and when
+    /// the row order this source produces is the order the `LIMIT` selects
+    /// from. Like [`Executor::accept_scan_filter`] this is fail-closed: the
+    /// default refuses and the `LimitExec` above keeps doing all the work.
+    fn accept_scan_limit(&mut self, cap: u64) -> bool {
+        let _ = cap;
+        false
+    }
+
     /// The live count of rows this source read from storage, before any
     /// filter it accepted -- `TableFullScan`'s `actRows`, which a pushed
     /// predicate must not change. `None` for anything that is not such a

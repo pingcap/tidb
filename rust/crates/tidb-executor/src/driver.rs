@@ -29,6 +29,7 @@
 //! the rewriter does not yet handle. The real storage-backed `TableReaderExec`
 //! replaces [`MemTableSourceExec`] when storage/tablecodec integration lands.
 
+use crate::access_path::{HandleSourceExec, IndexRangeSourceExec};
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
 use crate::join::{JoinExec, JoinKind};
@@ -951,30 +952,19 @@ pub(crate) fn run_select_traced(
     // instead of scanning. The WHERE stays in the pipeline below, so an
     // unsatisfied extra condition still filters the row out -- the point get
     // narrows the source, it does not replace the filter.
-    // A fast path REPLACES the scan with rows it has already read, so the
-    // predicate push-down below (which only a scan can honour) must not fire
-    // over one.
-    let mut source_replaced = false;
+    //
+    // Each fast path installs a streaming source over the narrowed access
+    // path (see `crate::access_path`), not a `Vec` of rows it already read,
+    // so an index range over a huge table costs one chunk of memory and a
+    // pushed `LIMIT` never reads past its cap.
+    //
+    // Set when the committed source emits rows in an index's order, which is
+    // what lets a `LIMIT` under a matching `ORDER BY` stop the scan early.
+    let mut index_order: Option<IndexAccessOrder> = None;
     if let Some(table) = single_kv_table(&select.from, catalog, current_db) {
         let columns = scope.column_list();
         // Go tries the batch point get before the single one.
         if let Some(handles) = try_batch_point_get(select, &table, &columns)? {
-            let mut table = table.clone();
-            let mut rows = Vec::with_capacity(handles.len());
-            for handle in &handles {
-                if let Some(row) = table
-                    .get_row_by_handle(handle)
-                    .map_err(|e| DriverError::Parse(format!("batch point get failed: {e:?}")))?
-                {
-                    rows.push(row);
-                }
-            }
-            if let Some(trace) = trace.as_deref_mut() {
-                trace.batch_point_get(source_table_name(&scope, &table.name), &handles);
-                // The rows are already in hand: this operator produced every
-                // one of them, so its real count is known here.
-                trace.set_act_rows(rows.len() as u64);
-            }
             let schema_columns: Vec<Column> = columns
                 .iter()
                 .enumerate()
@@ -984,32 +974,49 @@ pub(crate) fn run_select_traced(
                     col
                 })
                 .collect();
-            source_replaced = true;
-            from_source = Some(Box::new(MemTableSourceExec::new(
+            let exec = HandleSourceExec::new(
                 ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
-                rows,
-            )));
+                table.clone(),
+                handles.clone(),
+            );
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.batch_point_get(source_table_name(&scope, &table.name), &handles);
+                // The rows are read lazily, so the count is the source's live
+                // one rather than a `Vec`'s length.
+                trace.set_scan_act_rows(exec.produced_rows());
+            }
+            from_source = Some(Box::new(exec));
         } else
         // An index range scan, when no point get applies: the ranges replace
         // the full scan with the rows the index covers, and the WHERE stays
         // above to apply the conditions the ranges did not consume.
         if try_point_get(select, &table, &columns)?.is_none() {
             if let Some((index_id, ranges)) = try_index_ranges(select, &table, &columns) {
-                let mut table = table.clone();
-                let mut rows = Vec::new();
-                for range in &ranges {
-                    for handle in table
-                        .scan_index_range(index_id, range)
-                        .map_err(|e| DriverError::Parse(format!("index scan failed: {e:?}")))?
-                    {
-                        if let Some(row) = table
-                            .get_row_by_handle(&handle)
-                            .map_err(|e| DriverError::Parse(format!("row read failed: {e:?}")))?
-                        {
-                            rows.push(row);
-                        }
-                    }
-                }
+                let schema_columns: Vec<Column> = columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, ft))| {
+                        let mut col = Column::new((i + 1) as i64, ft.clone());
+                        col.index = i as i64;
+                        col
+                    })
+                    .collect();
+                let exec = IndexRangeSourceExec::new(
+                    ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
+                    table.clone(),
+                    index_id,
+                    ranges.clone(),
+                );
+                index_order = Some(IndexAccessOrder {
+                    column_offsets: table
+                        .indexes()
+                        .iter()
+                        .find(|index| index.id == index_id)
+                        .expect("try_index_ranges returns an index of this table")
+                        .column_offsets
+                        .clone(),
+                    single_range: ranges.len() == 1,
+                });
                 if let Some(trace) = trace.as_deref_mut() {
                     let index = table
                         .indexes()
@@ -1027,38 +1034,12 @@ pub(crate) fn run_select_traced(
                         &index_columns,
                         &ranges,
                     );
-                    trace.set_act_rows(rows.len() as u64);
+                    trace.set_scan_act_rows(exec.produced_rows());
                 }
-                let schema_columns: Vec<Column> = columns
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (_, ft))| {
-                        let mut col = Column::new((i + 1) as i64, ft.clone());
-                        col.index = i as i64;
-                        col
-                    })
-                    .collect();
-                source_replaced = true;
-                from_source = Some(Box::new(MemTableSourceExec::new(
-                    ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
-                    rows,
-                )));
+                from_source = Some(Box::new(exec));
             }
         }
         if let Some(handle) = try_point_get(select, &table, &columns)? {
-            let mut table = table;
-            let rows = match &handle {
-                Some(handle) => table
-                    .get_row_by_handle(handle)
-                    .map_err(|e| DriverError::Parse(format!("point get failed: {e:?}")))?
-                    .map(|row| vec![row])
-                    .unwrap_or_default(),
-                None => Vec::new(),
-            };
-            if let Some(trace) = trace.as_deref_mut() {
-                trace.point_get(source_table_name(&scope, &table.name), handle.as_ref());
-                trace.set_act_rows(rows.len() as u64);
-            }
             let schema_columns: Vec<Column> = columns
                 .iter()
                 .enumerate()
@@ -1068,11 +1049,21 @@ pub(crate) fn run_select_traced(
                     col
                 })
                 .collect();
-            source_replaced = true;
-            from_source = Some(Box::new(MemTableSourceExec::new(
+            // A `None` handle is a WHERE that pins a handle no row can have:
+            // the plan is a point get over an empty handle list.
+            let exec = HandleSourceExec::new(
                 ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
-                rows,
-            )));
+                table.clone(),
+                handle.clone().into_iter().collect(),
+            );
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.point_get(source_table_name(&scope, &table.name), handle.as_ref());
+                trace.set_scan_act_rows(exec.produced_rows());
+            }
+            // The index-range path above may have already committed a source;
+            // a point get supersedes it, and so does its ordering claim.
+            index_order = None;
+            from_source = Some(Box::new(exec));
         }
     }
 
@@ -1086,12 +1077,15 @@ pub(crate) fn run_select_traced(
     // before the predicate push-down further down, so a pushed conjunct's
     // `column_offset` is already in narrow space -- and the kept set contains
     // the `WHERE`'s columns because the gate collected them.
-    if !source_replaced {
-        if let Some(source) = from_source.as_mut() {
-            if let Some(keep) = crate::column_prune::prunable_columns(select, &scope) {
-                if keep.len() < scope.width() && source.accept_column_prune(&keep) {
-                    scope = crate::column_prune::pruned_scope(&scope, &keep);
-                }
+    //
+    // No "was the source replaced?" flag is needed: `accept_column_prune`
+    // defaults to refusing, so a fast-path source that cannot project simply
+    // says no and the full-width path stands. Each source answers for itself,
+    // fail-closed -- the same rule the pushed filter and row cap follow.
+    if let Some(source) = from_source.as_mut() {
+        if let Some(keep) = crate::column_prune::prunable_columns(select, &scope) {
+            if keep.len() < scope.width() && source.accept_column_prune(&keep) {
+                scope = crate::column_prune::pruned_scope(&scope, &keep);
             }
         }
     }
@@ -1166,15 +1160,19 @@ pub(crate) fn run_select_traced(
     // The scope the rows above the WHERE have: the FROM tables, plus the
     // column a correlated WHERE subquery's Apply appends.
     let mut current_scope = scope.clone();
-    // Predicate push-down: over a single base table whose scan the fast paths
-    // left alone, offer the scan the conjuncts it can apply itself. Only the
-    // residual then needs a `Selection`; when the scan takes the whole
+    // Predicate push-down: over a single base table, offer the source the
+    // conjuncts it can apply itself. Every source below is a real streaming
+    // scan, so each answers for itself whether it can keep the promise
+    // `accept_scan_filter` describes -- an index range can (it tests every
+    // row it emits), a point get's handle source does not implement it and
+    // so refuses. Only the residual then needs a `Selection`; when the scan
+    // takes the whole
     // `WHERE` there is no `Selection` executor left, but the recorded plan is
     // unchanged either way -- Go prints one `Selection` over the scan for
     // both halves (captured, `pkg/executor/zz_dump_pushdown_test.go`), and
     // this tier prints no `TableReader`/`cop[tikv]` task to distinguish them.
-    let executed_where = match (&select.where_clause, source_replaced, scope.tables.len()) {
-        (Some(predicate), false, 1) => {
+    let executed_where = match (&select.where_clause, scope.tables.len()) {
+        (Some(predicate), 1) => {
             let (pushed, residual) =
                 split_scan_predicates(predicate, &ScopeResolver { scope: &scope });
             if !pushed.is_empty() && source.accept_scan_filter(&pushed, ctx) {
@@ -1191,8 +1189,21 @@ pub(crate) fn run_select_traced(
                 Some(predicate.clone())
             }
         }
-        (where_clause, _, _) => where_clause.clone(),
+        (where_clause, _) => where_clause.clone(),
     };
+    // LIMIT push-down: offer the source the row cap, when nothing between it
+    // and the `LimitExec` can add, drop or reorder a row. This must run
+    // before any wrapper goes over the source, because the cap is a promise
+    // only the source itself can keep.
+    if let Some(cap) = scan_limit_cap(
+        select,
+        executed_where.as_ref(),
+        index_order.as_ref(),
+        &resolver,
+    ) {
+        source.accept_scan_limit(cap);
+    }
+
     // A `WHERE` whose conjuncts all moved into the scan still records its
     // `Selection`, over the predicate as written, and meters the filtered
     // rows the scan now emits.
@@ -4373,6 +4384,117 @@ fn distinct_over(
         child,
         ctx.clone(),
     )
+}
+
+/// The row order a committed index access path produces, for the `ORDER BY`
+/// half of the `LIMIT` push-down rule.
+struct IndexAccessOrder {
+    /// The index's columns as offsets into the source row, in index order.
+    column_offsets: Vec<usize>,
+    /// Whether one range covers the access path. Several ranges are each
+    /// internally in index order but are walked one after another, and their
+    /// concatenation is not index order, so only a single range establishes
+    /// the total order an `ORDER BY` can be discharged against.
+    single_range: bool,
+}
+
+/// The row cap a `LIMIT` may push into the source, or `None` to leave all the
+/// work to the `LimitExec`.
+///
+/// Go pushes a `Limit` into the cop task below the scan, and a `TopN` when an
+/// order has to be established first. Captured from TiDB (mock store,
+/// `pkg/executor/zz_dump_limit_test.go`):
+///
+/// ```text
+/// select a, b from t where b > 4 limit 3
+///   Limit_8            root       offset:0, count:3
+///   └─IndexReader_13   root       index:Limit_12
+///     └─Limit_12       cop[tikv]  offset:0, count:3
+///       └─IndexRangeScan_11  cop[tikv]  range:(4,+inf], keep order:false
+///
+/// select a, b from t where b > 4 order by b limit 2, 3
+///   Limit_13           root       offset:2, count:3
+///     └─Limit_22       cop[tikv]  offset:0, count:5      <- cap is offset+count
+///       └─IndexRangeScan_21  cop[tikv]  range:(4,+inf], keep order:true
+///
+/// select a, b from t order by c limit 3                  <- NOT pushed
+///   TopN_8             root       test.t.c, offset:0, count:3
+///     └─TopN_17        cop[tikv]  test.t.c, offset:0, count:3
+///       └─TableFullScan_16  cop[tikv]  keep order:false  <- reads all 20 rows
+///
+/// select a, b from t where c > 4 order by b limit 3      <- NOT pushed
+///   TopN_8             root       test.t.b, offset:0, count:3
+///     └─TopN_18        cop[tikv]  test.t.b, offset:0, count:3
+///       └─Selection_17 cop[tikv]  gt(test.t.c, 4)        <- filter below the TopN
+/// ```
+///
+/// # The rule
+///
+/// The cap is `offset + count`, because the offset rows are dropped above and
+/// must still be produced -- Go's cop-side `Limit` carries exactly that
+/// (`limit 2, 3` lowers to `offset:0, count:5`).
+///
+/// A cap is only sound when every row the source emits reaches the `LIMIT`,
+/// in the order the `LIMIT` selects from. So it is refused when anything
+/// between them can drop rows (a residual `Selection`, `DISTINCT`, `HAVING`),
+/// or add them (a window function's materialize-and-append), and when the
+/// query has an `ORDER BY` the access path does not already satisfy -- a sort
+/// must see every row before it can name the first one, which is why Go turns
+/// that case into a `TopN` and leaves the scan reading everything.
+///
+/// An `ORDER BY` is satisfied when the source is a single index range and the
+/// by-items are a prefix of that index's columns, all ascending: the storage
+/// iterator walks encoded index keys in ascending order, and the codec's
+/// order is the collation order the sort would have used (NULLs lowest, as
+/// `ORDER BY ... ASC` puts them first).
+///
+/// # Divergence from Go
+///
+/// Go decides this in the planner and *prints* it (`Limit` inside `cop[tikv]`,
+/// or `keep order:true` on the scan). This tier has no cop task or
+/// `TableReader` in its plan text, so the push-down changes only what runs:
+/// the printed plan keeps the `Limit`-over-scan shape either way, and the
+/// truncation shows up in `EXPLAIN ANALYZE`'s `actRows` instead.
+fn scan_limit_cap(
+    select: &tidb_ast::SelectStmt,
+    residual_where: Option<&tidb_ast::Expr>,
+    index_order: Option<&IndexAccessOrder>,
+    resolver: &ScopeResolver<'_>,
+) -> Option<u64> {
+    let limit = select.limit.as_ref()?;
+    let count = eval_limit_bound(&limit.count).ok()?;
+    let offset = match &limit.offset {
+        Some(expr) => eval_limit_bound(expr).ok()?,
+        None => 0,
+    };
+    let cap = offset.checked_add(count)?;
+    // Anything that can drop or add a row between the source and the LIMIT.
+    if residual_where.is_some()
+        || select.distinct
+        || select.having.is_some()
+        || crate::window::select_has_window(select)
+    {
+        return None;
+    }
+    if select.order_by.is_empty() {
+        return Some(cap);
+    }
+    // An ORDER BY the access path already produces.
+    let order = index_order?;
+    if !order.single_range || select.order_by.len() > order.column_offsets.len() {
+        return None;
+    }
+    for (item, offset) in select.order_by.iter().zip(&order.column_offsets) {
+        // The cursor is forward-only, so a descending key is not this order.
+        if item.desc {
+            return None;
+        }
+        match rewrite_expr_resolved(&item.expr, resolver).ok()? {
+            Expression::Column(column) if usize::try_from(column.index).ok()? == *offset => {}
+            _ => return None,
+        }
+    }
+    Some(cap)
 }
 
 /// Evaluates a `LIMIT` bound, which must be a non-negative integer literal.

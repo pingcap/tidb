@@ -37,7 +37,7 @@
 //! backend still needs.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::storage::{MemTableStorage, StorageError, TableStorage};
+use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use std::collections::BTreeMap;
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
@@ -467,23 +467,12 @@ impl KvTable {
         row: &mut [Datum],
         handle: &TableHandle,
     ) -> Result<(), KvTableError> {
-        match handle {
-            TableHandle::Int(value) => {
-                if let Some(offset) = self.pk_handle_offset {
-                    row[offset] = Datum::Int(*value);
-                }
-            }
-            TableHandle::Common(bytes) => {
-                let mut rest: &[u8] = bytes;
-                for offset in &self.common_handle_offsets {
-                    let (remaining, value) = tidb_codec::decode_one(rest)
-                        .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-                    row[*offset] = value;
-                    rest = remaining;
-                }
-            }
-        }
-        Ok(())
+        fill_handle_columns(
+            self.pk_handle_offset,
+            &self.common_handle_offsets,
+            row,
+            handle,
+        )
     }
 
     /// Empties the table, keeping its schema and indexes.
@@ -905,6 +894,72 @@ impl KvTable {
         Ok(handle)
     }
 
+    /// The row-decoding metadata, detached from the table.
+    ///
+    /// A cursor holds the storage iterator and must decode without borrowing
+    /// the table it came from, so it carries its own copy of everything
+    /// decoding reads. The copy is a snapshot of the schema at cursor-open
+    /// time, which is the schema the statement planned against.
+    fn row_decoder(&self) -> RowDecoder {
+        self.row_decoder_projected(None)
+    }
+
+    /// [`KvTable::row_decoder`] narrowed to the columns at `keep` (offsets
+    /// into [`KvTable::columns`], ascending and unique): the row codec is
+    /// asked for only those columns' ids, so an unreferenced column is never
+    /// decoded.
+    fn row_decoder_projected(&self, keep: Option<&[usize]>) -> RowDecoder {
+        let kept: Option<std::collections::BTreeSet<usize>> =
+            keep.map(|keep| keep.iter().copied().collect());
+        let column_types: BTreeMap<i64, FieldType> = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(offset, _)| kept.as_ref().is_none_or(|kept| kept.contains(offset)))
+            .map(|(_, c)| (c.id, c.field_type.clone()))
+            .collect();
+        note_decoded_column_ids(column_types.keys().copied());
+        RowDecoder {
+            column_types,
+            columns: self.columns.clone(),
+            pk_handle_offset: self.pk_handle_offset,
+            common_handle_offsets: self.common_handle_offsets.clone(),
+            keep: keep.map(<[usize]>::to_vec),
+        }
+    }
+
+    /// A forward cursor over the table's record-key range, in key order.
+    ///
+    /// This is the streaming form of [`KvTable::scan_rows_with_handles`]: the
+    /// storage iterator stays open and one row is *decoded* per pull, so the
+    /// decoded rows alive at once are the caller's chunk rather than the whole
+    /// relation. (How far the laziness reaches below the storage seam is a
+    /// property of the backend's `iter`; see [`crate::access_path`].) The seam
+    /// returns an owned iterator, so the cursor does not borrow the table and
+    /// a caller may hold it across chunk boundaries.
+    pub fn row_cursor(&mut self) -> Result<RowCursor, KvTableError> {
+        self.row_cursor_projected(None)
+    }
+
+    /// [`KvTable::row_cursor`] narrowed to the columns at `keep`: the cursor
+    /// decodes and yields exactly those columns, in `keep`'s order.
+    pub fn row_cursor_projected(
+        &mut self,
+        keep: Option<&[usize]>,
+    ) -> Result<RowCursor, KvTableError> {
+        let decoder = self.row_decoder_projected(keep);
+        let (low, high) = get_table_handle_key_range(self.table_id);
+        // `get_table_handle_key_range` returns an inclusive upper bound, while
+        // the iterator's is exclusive, so the scan runs to the key just past it.
+        let mut upper = high;
+        upper.push(0);
+        let iterator = self
+            .store
+            .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        Ok(RowCursor { iterator, decoder })
+    }
+
     /// Scans the table's record-key range in key order, decoding each value.
     /// Returns rows as `Datum`s in schema order (a missing column decodes
     /// NULL, and the handle columns come from the key).
@@ -918,11 +973,19 @@ impl KvTable {
 
     /// Like [`KvTable::scan_rows`], but each row carries the record handle its
     /// key encodes, which `UPDATE`/`DELETE` need to address the row again.
+    ///
+    /// This drains a [`RowCursor`]; a caller that does not need the whole
+    /// relation in memory should hold the cursor instead (see
+    /// [`KvTable::row_cursor`]).
     pub fn scan_rows_with_handles(
         &mut self,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        let all: Vec<usize> = (0..self.columns.len()).collect();
-        self.scan_rows_with_handles_projected(&all)
+        let mut cursor = self.row_cursor()?;
+        let mut rows = Vec::new();
+        while let Some(entry) = cursor.next_row()? {
+            rows.push(entry);
+        }
+        Ok(rows)
     }
 
     /// [`KvTable::scan_rows_with_handles`] narrowed to the columns at `keep`
@@ -930,61 +993,17 @@ impl KvTable {
     /// codec is asked for **only** those columns' ids, and each returned row
     /// holds exactly them, in `keep`'s order.
     ///
-    /// The handle columns are still filled from the record key before the
-    /// projection, so a kept handle column reads its real value and a dropped
-    /// one is discarded rather than left holding a substitute. That is the
-    /// point of projecting last: a column that is not kept never survives
-    /// long enough to be mistaken for a decoded value.
+    /// This drains a projected [`RowCursor`]; the projection lives in the
+    /// cursor so the streaming path prunes too.
     pub fn scan_rows_with_handles_projected(
         &mut self,
         keep: &[usize],
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        let (low, high) = get_table_handle_key_range(self.table_id);
-        let kept: std::collections::BTreeSet<usize> = keep.iter().copied().collect();
-        let column_types: BTreeMap<i64, FieldType> = self
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|(offset, _)| kept.contains(offset))
-            .map(|(_, c)| (c.id, c.field_type.clone()))
-            .collect();
-        note_decoded_column_ids(column_types.keys().copied());
-        // `get_table_handle_key_range` returns an inclusive upper bound, while
-        // the iterator's is exclusive, so the scan runs to the key just past it.
-        let mut upper = high;
-        upper.push(0);
-        let mut iterator = self
-            .store
-            .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-
+        let mut cursor = self.row_cursor_projected(Some(keep))?;
         let mut rows = Vec::new();
-        while iterator.valid() {
-            let handle = self.decode_record_handle(iterator.key().as_bytes())?;
-            let mut decoded = decode_table_row_to_map(iterator.value(), &column_types, None)
-                .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-            let mut row: Vec<Datum> = self
-                .columns
-                .iter()
-                .map(|column| {
-                    decoded
-                        .remove(&column.id)
-                        // A row written before this column existed reads back
-                        // its origin default.
-                        .unwrap_or_else(|| column.origin_default_value())
-                })
-                .collect();
-            self.fill_handle_columns(&mut row, &handle)?;
-            let projected: Vec<Datum> = keep
-                .iter()
-                .map(|offset| std::mem::replace(&mut row[*offset], Datum::Null))
-                .collect();
-            rows.push((handle, projected));
-            iterator
-                .next()
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        while let Some(entry) = cursor.next_row()? {
+            rows.push(entry);
         }
-        iterator.close();
         Ok(rows)
     }
 
@@ -1174,6 +1193,21 @@ impl KvTable {
         index_id: i64,
         range: &IndexRange,
     ) -> Result<Vec<TableHandle>, KvTableError> {
+        let mut cursor = self.index_range_cursor(index_id, range)?;
+        let mut handles = Vec::new();
+        while let Some(handle) = cursor.next_handle()? {
+            handles.push(handle);
+        }
+        Ok(handles)
+    }
+
+    /// A forward cursor over one index range, in index order -- the streaming
+    /// form of [`KvTable::scan_index_range`].
+    pub fn index_range_cursor(
+        &mut self,
+        index_id: i64,
+        range: &IndexRange,
+    ) -> Result<IndexRangeCursor, KvTableError> {
         let Some(index) = self
             .indexes
             .iter()
@@ -1202,36 +1236,15 @@ impl KvTable {
             high = high.prefix_next();
         }
 
-        let mut iterator = self
+        let iterator = self
             .store
             .iter(Some(&low), Some(&high))
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        let mut handles = Vec::new();
-        while iterator.valid() {
-            handles.push(index_entry_handle(
-                &index,
-                iterator.key().as_bytes(),
-                iterator.value(),
-                !self.common_handle_offsets.is_empty(),
-            )?);
-            iterator
-                .next()
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        }
-        iterator.close();
-        Ok(handles)
-    }
-
-    /// The handle a record key encodes: the bytes after the record prefix,
-    /// read as an integer or kept whole as a common handle.
-    fn decode_record_handle(&self, key: &[u8]) -> Result<TableHandle, KvTableError> {
-        if self.common_handle_offsets.is_empty() {
-            return decode_int_handle(key).map(TableHandle::Int);
-        }
-        let bytes = key
-            .get(RECORD_ROW_KEY_LEN - 8..)
-            .ok_or_else(|| KvTableError::Decode("record key is too short".to_owned()))?;
-        Ok(TableHandle::Common(bytes.to_vec()))
+        Ok(IndexRangeCursor {
+            iterator,
+            index,
+            common_handle: !self.common_handle_offsets.is_empty(),
+        })
     }
 
     /// Whether a row is already stored under `handle`.
@@ -1425,12 +1438,172 @@ fn decode_int_handle(key: &[u8]) -> Result<i64, KvTableError> {
     Ok(i64::from_be_bytes(tail) ^ i64::MIN)
 }
 
+/// Everything decoding a record key/value pair into a row needs, owned
+/// independently of the [`KvTable`] it was taken from.
+#[derive(Clone, Debug)]
+struct RowDecoder {
+    columns: Vec<KvColumn>,
+    column_types: BTreeMap<i64, FieldType>,
+    pk_handle_offset: Option<usize>,
+    common_handle_offsets: Vec<usize>,
+    /// The column offsets this decoder keeps, ascending and unique, or `None`
+    /// for the whole schema. The projection runs AFTER the handle columns are
+    /// filled, so a kept handle column reads its real value and a dropped one
+    /// is discarded rather than left holding a substitute -- that ordering is
+    /// the point, and it is why `column_types` may ask the row codec for
+    /// fewer ids than the table has columns.
+    keep: Option<Vec<usize>>,
+}
+
+/// Restores the handle columns into a decoded row, which Go does by reading
+/// `h.IntValue()` or `h.EncodedCol(i)` rather than the value.
+fn fill_handle_columns(
+    pk_handle_offset: Option<usize>,
+    common_handle_offsets: &[usize],
+    row: &mut [Datum],
+    handle: &TableHandle,
+) -> Result<(), KvTableError> {
+    match handle {
+        TableHandle::Int(value) => {
+            if let Some(offset) = pk_handle_offset {
+                row[offset] = Datum::Int(*value);
+            }
+        }
+        TableHandle::Common(bytes) => {
+            let mut rest: &[u8] = bytes;
+            for offset in common_handle_offsets {
+                let (remaining, value) = tidb_codec::decode_one(rest)
+                    .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+                row[*offset] = value;
+                rest = remaining;
+            }
+        }
+    }
+    Ok(())
+}
+
+impl RowDecoder {
+    /// The handle a record key encodes: the bytes after the record prefix,
+    /// read as an integer or kept whole as a common handle.
+    fn record_handle(&self, key: &[u8]) -> Result<TableHandle, KvTableError> {
+        if self.common_handle_offsets.is_empty() {
+            return decode_int_handle(key).map(TableHandle::Int);
+        }
+        let bytes = key
+            .get(RECORD_ROW_KEY_LEN - 8..)
+            .ok_or_else(|| KvTableError::Decode("record key is too short".to_owned()))?;
+        Ok(TableHandle::Common(bytes.to_vec()))
+    }
+
+    /// One stored record, as a handle plus a row in schema order.
+    fn decode(&self, key: &[u8], value: &[u8]) -> Result<(TableHandle, Vec<Datum>), KvTableError> {
+        let handle = self.record_handle(key)?;
+        let mut decoded = decode_table_row_to_map(value, &self.column_types, None)
+            .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+        let mut row: Vec<Datum> = self
+            .columns
+            .iter()
+            .map(|column| {
+                decoded
+                    .remove(&column.id)
+                    // A row written before this column existed reads back its
+                    // origin default.
+                    .unwrap_or_else(|| column.origin_default_value())
+            })
+            .collect();
+        fill_handle_columns(
+            self.pk_handle_offset,
+            &self.common_handle_offsets,
+            &mut row,
+            &handle,
+        )?;
+        if let Some(keep) = &self.keep {
+            let projected: Vec<Datum> = keep
+                .iter()
+                .map(|offset| std::mem::replace(&mut row[*offset], Datum::Null))
+                .collect();
+            return Ok((handle, projected));
+        }
+        Ok((handle, row))
+    }
+}
+
+/// A forward cursor over a table's record range, decoding one row per pull.
+///
+/// See [`KvTable::row_cursor`]. Over
+/// [`ClusterTableStorage`](crate::cluster_storage::ClusterTableStorage) the
+/// iterator is the merged stream (snapshot plus the session's staged mutation
+/// buffer), so a cursor sees exactly the rows a materializing scan saw.
+pub struct RowCursor {
+    iterator: Box<dyn StorageIterator>,
+    decoder: RowDecoder,
+}
+
+impl RowCursor {
+    /// The next row in key order, or `None` at the end of the range.
+    pub fn next_row(&mut self) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
+        if !self.iterator.valid() {
+            return Ok(None);
+        }
+        let decoded = self
+            .decoder
+            .decode(self.iterator.key().as_bytes(), self.iterator.value())?;
+        self.iterator
+            .next()
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        Ok(Some(decoded))
+    }
+}
+
+impl Drop for RowCursor {
+    /// An abandoned cursor (an early-stopping `LIMIT`) must still release the
+    /// iterator, which a drained loop's explicit `close` would have done.
+    fn drop(&mut self) {
+        self.iterator.close();
+    }
+}
+
+/// A forward cursor over one index range, yielding row handles in index order.
+///
+/// See [`KvTable::index_range_cursor`].
+pub struct IndexRangeCursor {
+    iterator: Box<dyn StorageIterator>,
+    index: KvIndex,
+    common_handle: bool,
+}
+
+impl IndexRangeCursor {
+    /// The next row handle in index order, or `None` at the end of the range.
+    pub fn next_handle(&mut self) -> Result<Option<TableHandle>, KvTableError> {
+        if !self.iterator.valid() {
+            return Ok(None);
+        }
+        let handle = index_entry_handle(
+            &self.index,
+            self.iterator.key().as_bytes(),
+            self.iterator.value(),
+            self.common_handle,
+        )?;
+        self.iterator
+            .next()
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        Ok(Some(handle))
+    }
+}
+
+impl Drop for IndexRangeCursor {
+    fn drop(&mut self) {
+        self.iterator.close();
+    }
+}
+
 /// Scans a [`KvTable`]'s record range into chunks -- the storage-backed source
 /// (Go's table reader over `tablecodec`, minus distsql/coprocessor).
 pub struct TableScanExec {
     meta: ExecutorMeta,
     table: KvTable,
-    emitted: bool,
+    /// The open storage cursor; `None` before `open` and once exhausted.
+    cursor: Option<RowCursor>,
     /// Conjuncts this scan took over from the `Selection` above it.
     filter: Option<crate::scan_pushdown::ScanFilterProbe>,
     /// The table-column offsets this scan emits, in output order. Every
@@ -1439,6 +1612,12 @@ pub struct TableScanExec {
     /// Rows this scan read before filtering -- what Go's `TableFullScan`
     /// reports as `actRows`, which a filter above it must not change.
     scanned: std::rc::Rc<std::cell::Cell<u64>>,
+    /// A pushed row cap (`offset + count` of a `LIMIT`): the scan stops once
+    /// it has emitted this many qualifying rows. See
+    /// [`Executor::accept_scan_limit`].
+    limit: Option<u64>,
+    /// Qualifying rows emitted so far, against `limit`.
+    emitted: u64,
 }
 
 impl TableScanExec {
@@ -1449,10 +1628,12 @@ impl TableScanExec {
         TableScanExec {
             meta,
             table,
-            emitted: false,
+            cursor: None,
             filter: None,
             keep,
             scanned: std::rc::Rc::new(std::cell::Cell::new(0)),
+            limit: None,
+            emitted: 0,
         }
     }
 
@@ -1465,36 +1646,61 @@ impl TableScanExec {
 
 impl Executor for TableScanExec {
     fn open(&mut self) -> Result<(), ExecError> {
-        self.emitted = false;
+        // The pruned column set is the cursor's projection, so an
+        // unreferenced column is never decoded on the streaming path either.
+        let projection: Option<&[usize]> = if self.keep.len() == self.table.columns.len() {
+            None
+        } else {
+            Some(&self.keep)
+        };
+        self.cursor = Some(
+            self.table
+                .row_cursor_projected(projection)
+                .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?,
+        );
+        self.scanned.set(0);
+        self.emitted = 0;
         Ok(())
     }
 
+    /// Pulls rows from the open cursor until the chunk is full, the pushed
+    /// row cap is reached, or the range is exhausted.
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
-        if self.emitted {
-            return Ok(());
-        }
-        let rows = self
-            .table
-            .scan_rows_with_handles_projected(&self.keep)
-            .map(|rows| rows.into_iter().map(|(_, row)| row).collect::<Vec<_>>())
-            .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
-        self.scanned.set(rows.len() as u64);
-        for row in &rows {
+        let cap = self.meta.max_chunk_size();
+        while req.num_rows() < cap {
+            if self.limit.is_some_and(|limit| self.emitted >= limit) {
+                // Early stop: the cursor is dropped, so the rows past the
+                // cap are never read, let alone decoded.
+                self.cursor = None;
+                return Ok(());
+            }
+            let Some(cursor) = self.cursor.as_mut() else {
+                return Ok(());
+            };
+            let next = cursor
+                .next_row()
+                .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
+            let Some((_, row)) = next else {
+                self.cursor = None;
+                return Ok(());
+            };
+            self.scanned.set(self.scanned.get() + 1);
             if let Some(filter) = self.filter.as_mut() {
-                if !filter.admits(row)? {
+                if !filter.admits(&row)? {
                     continue;
                 }
             }
             for (c, value) in row.iter().enumerate() {
                 req.append_datum(c, value);
             }
+            self.emitted += 1;
         }
-        self.emitted = true;
         Ok(())
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
+        self.cursor = None;
         Ok(())
     }
 
@@ -1528,6 +1734,14 @@ impl Executor for TableScanExec {
             ctx.clone(),
             self.meta.new_chunk(),
         ));
+        true
+    }
+
+    /// The scan reads its range in one forward pass and emits rows in that
+    /// order, so stopping after `cap` of them yields the same prefix a
+    /// `LimitExec` above would have kept.
+    fn accept_scan_limit(&mut self, cap: u64) -> bool {
+        self.limit = Some(cap);
         true
     }
 

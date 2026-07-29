@@ -30,6 +30,7 @@
 //! `context.Context`/`sessionctx` propagation, runtime stats, the SQL killer,
 //! `Detach`, parallel projection, and the many other operators.
 
+pub mod access_path;
 pub mod apply;
 mod approx_count_distinct;
 pub mod cluster_storage;
