@@ -355,6 +355,9 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			return ver, errors.Trace(err)
 		}
 	}
+	for i := range tableInfos {
+		w.tryRegisterTTLTableToExternalWorkload(jobCtx.ctx, tableInfos[i])
+	}
 
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic

@@ -414,6 +414,31 @@ func TestBatchCreateTable(t *testing.T) {
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = d.BatchCreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.WithOnExist(ddl.OnExistError))
 	require.NoError(t, err)
+
+	t.Run("batch create ttl tables registers external workload", func(t *testing.T) {
+		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
+		tk, store := createTTLExternalWorkloadTestKit(t, mgr)
+		d := domain.GetDomain(tk.Session()).DDLExecutor()
+		infos := make([]*model.TableInfo, 0, 2)
+		for _, name := range []string{"ttl_batch_1", "ttl_batch_2"} {
+			info, err := testTableInfo(store, name, 2)
+			require.NoError(t, err)
+			info.Columns[0].FieldType = *types.NewFieldType(mysql.TypeDatetime)
+			info.TTLInfo = &model.TTLInfo{
+				ColumnName:       info.Columns[0].Name,
+				IntervalExprStr:  "1",
+				IntervalTimeUnit: int(ast.TimeUnitDay),
+				Enable:           true,
+				JobInterval:      model.DefaultTTLJobInterval,
+			}
+			infos = append(infos, info)
+		}
+
+		tk.Session().SetValue(sessionctx.QueryString, "skip")
+		err := d.BatchCreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), infos, ddl.WithOnExist(ddl.OnExistError), ddl.WithIDAllocated(true))
+		require.NoError(t, err)
+		require.Equal(t, []int64{infos[0].ID, infos[1].ID}, mgr.registeredTTLTables())
+	})
 }
 
 // port from mysql
