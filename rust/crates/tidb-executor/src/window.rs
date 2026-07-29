@@ -1317,7 +1317,9 @@ fn compute_one(
                 indices,
                 &order_keys,
                 &arg_values,
-                agg_kind.as_ref(),
+                agg_kind
+                    .as_ref()
+                    .map(|kind| (kind, tidb_expr::Columns::div_precision_increment(ctx))),
                 &result_type,
                 &mut values,
             )?,
@@ -1437,7 +1439,10 @@ fn evaluate_partition(
     indices: &[usize],
     order_keys: &[Vec<Datum>],
     arg_values: &[Vec<Datum>],
-    agg_kind: Option<&AggKind>,
+    // The aggregate fold, when this is an aggregate call, paired with the
+    // session's `div_precision_increment` -- the two things AVG's final
+    // division needs, and needed only together.
+    agg: Option<(&AggKind, u32)>,
     result_type: &FieldType,
     values: &mut [Datum],
 ) -> Result<(), DriverError> {
@@ -1502,7 +1507,8 @@ fn evaluate_partition(
                 let (low, high) =
                     call.frame
                         .range(position, total, peers[position], range_keys.as_ref())?;
-                let kind = agg_kind.expect("an aggregate window call resolves its kind");
+                let (kind, div_precision_increment) =
+                    agg.expect("an aggregate window call resolves its kind");
                 // The extra arguments a frame row contributes: only
                 // `JSON_OBJECTAGG`'s value and `APPROX_COUNT_DISTINCT`'s
                 // further tuple members reach the accumulator, since
@@ -1526,7 +1532,7 @@ fn evaluate_partition(
                     ),
                     _ => (Some(arg_at(0, at)), extras(at)),
                 });
-                aggregate_rows(kind, rows).map_err(DriverError::Exec)?
+                aggregate_rows(kind, rows, div_precision_increment).map_err(DriverError::Exec)?
             }
             WindowKind::Value { pick, .. } => {
                 let (low, high) =

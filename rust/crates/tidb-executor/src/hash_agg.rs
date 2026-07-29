@@ -737,7 +737,11 @@ impl Partial {
         Ok(())
     }
 
-    fn finish(&self, order_by: &[(Expression, bool)]) -> Result<Datum, ExecError> {
+    fn finish(
+        &self,
+        order_by: &[(Expression, bool)],
+        div_precision_increment: u32,
+    ) -> Result<Datum, ExecError> {
         Ok(match self {
             Partial::Count(n) => Datum::Int(*n),
             // An empty group is SQL NULL, not the empty document `[]`/`{}`.
@@ -814,7 +818,7 @@ impl Partial {
             Partial::AvgDecimal { count: 0, .. } | Partial::AvgReal { count: 0, .. } => Datum::Null,
             Partial::AvgDecimal { sum, count } => {
                 let divisor = Decimal::from_int(*count);
-                let target_scale = sum.scale() + DIV_PRECISION_INCREMENT;
+                let target_scale = sum.scale() + div_precision_increment;
                 match sum.true_div(&divisor, target_scale) {
                     Some(quotient) => Datum::Decimal(quotient),
                     None => Datum::Null,
@@ -905,17 +909,14 @@ fn datum_bits(value: &Datum) -> Result<u64, ExecError> {
 pub(crate) fn aggregate_rows(
     kind: &AggKind,
     rows: impl IntoIterator<Item = (Option<Datum>, Vec<Datum>)>,
+    div_precision_increment: u32,
 ) -> Result<Datum, ExecError> {
     let mut partial = Partial::new(kind);
     for (value, extra) in rows {
         partial.update(value, &extra, Vec::new())?;
     }
-    partial.finish(&[])
+    partial.finish(&[], div_precision_increment)
 }
-
-/// Go's default `div_precision_increment`, the scale AVG's division adds over
-/// its sum (`typeInfer4Avg` sets the result's decimals to it).
-const DIV_PRECISION_INCREMENT: u32 = 4;
 
 /// Go `HashAggExec` (serial): hash aggregation over the child's rows.
 pub struct HashAggExec<C: Columns> {
@@ -1105,7 +1106,12 @@ impl<C: Columns> Executor for HashAggExec<C> {
                     .agg_funcs
                     .get(c)
                     .map_or(&[][..], |func| func.order_by.as_slice());
-                req.append_datum(c, &state.partial.finish(order_by)?);
+                req.append_datum(
+                    c,
+                    &state
+                        .partial
+                        .finish(order_by, self.ctx.div_precision_increment())?,
+                );
             }
         }
         self.emitted = true;
@@ -1498,7 +1504,7 @@ mod tests {
             partial
                 .update(Some(Datum::new_bytes(*b"ab")), &[], Vec::new())
                 .unwrap();
-            let result = partial.finish(&[]).unwrap();
+            let result = partial.finish(&[], 4).unwrap();
             let Datum::Json(json) = result else {
                 panic!("expected a JSON datum, got {result:?}");
             };
@@ -1517,7 +1523,7 @@ mod tests {
                     Vec::new(),
                 )
                 .unwrap();
-            let result = partial.finish(&[]).unwrap();
+            let result = partial.finish(&[], 4).unwrap();
             let Datum::Json(json) = result else {
                 panic!("expected a JSON datum, got {result:?}");
             };
