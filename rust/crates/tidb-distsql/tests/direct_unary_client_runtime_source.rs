@@ -352,6 +352,16 @@ impl AsyncRequestDispatcher for ScriptedClient {
 }
 
 impl tidb_txnkv::lock::LockRecoveryClient for ScriptedClient {
+
+    fn check_secondary_locks_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcCheckSecondaryLocksRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
+        panic!("this test does not resolve async-commit locks")
+    }
     fn check_txn_status_for_lock(
         &mut self,
         _address: &str,
@@ -2166,6 +2176,16 @@ impl DirectUnaryClient for DelayedStoreMismatchClient {
 }
 
 impl tidb_txnkv::lock::LockRecoveryClient for DelayedStoreMismatchClient {
+
+    fn check_secondary_locks_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcCheckSecondaryLocksRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
+        panic!("this test does not resolve async-commit locks")
+    }
     fn check_txn_status_for_lock(
         &mut self,
         _address: &str,
@@ -2309,6 +2329,16 @@ impl DirectUnaryClient for ForwardedStaleMismatchClient {
 }
 
 impl tidb_txnkv::lock::LockRecoveryClient for ForwardedStaleMismatchClient {
+
+    fn check_secondary_locks_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcCheckSecondaryLocksRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
+        panic!("this test does not resolve async-commit locks")
+    }
     fn check_txn_status_for_lock(
         &mut self,
         _address: &str,

@@ -104,6 +104,16 @@ impl DirectUnaryClient for RecordingClient {
 }
 
 impl LockRecoveryClient for RecordingClient {
+
+    fn check_secondary_locks_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcCheckSecondaryLocksRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
+        panic!("this test does not resolve async-commit locks")
+    }
     fn check_txn_status_for_lock(
         &mut self,
         address: &str,
