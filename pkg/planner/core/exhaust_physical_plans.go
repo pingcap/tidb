@@ -640,6 +640,44 @@ func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinP
 	return true
 }
 
+func checkIndexJoinInnerTaskWithWindow(lw *logicalop.LogicalWindow, indexJoinProp *property.IndexJoinRuntimeProp) bool {
+	if len(lw.PartitionBy) == 0 {
+		return false
+	}
+	partitionByCols := make(map[int64]struct{}, len(lw.PartitionBy))
+	for _, item := range lw.PartitionBy {
+		partitionByCols[item.Col.UniqueID] = struct{}{}
+	}
+
+	var dataSourceSchema *expression.Schema
+	var iterChild base.LogicalPlan = lw
+	for iterChild != nil {
+		if ds, ok := iterChild.(*logicalop.DataSource); ok {
+			dataSourceSchema = ds.Schema()
+			break
+		}
+		if iterChild.Children() == nil || len(iterChild.Children()) != 1 {
+			return false
+		}
+		iterChild = iterChild.Children()[0]
+	}
+	if dataSourceSchema == nil {
+		return false
+	}
+
+	usedDataSourceKey := false
+	for _, key := range indexJoinProp.InnerJoinKeys {
+		if !expression.ExprFromSchema(key, dataSourceSchema) {
+			continue
+		}
+		usedDataSourceKey = true
+		if _, ok := partitionByCols[key.UniqueID]; !ok {
+			return false
+		}
+	}
+	return usedDataSourceKey
+}
+
 // admitIndexJoinInnerChildPattern checks whether the current logical operator can
 // appear on the inner side of an index join build.
 func admitIndexJoinInnerChildPattern(p base.LogicalPlan, indexJoinProp *property.IndexJoinRuntimeProp) bool {
@@ -665,6 +703,13 @@ func admitIndexJoinInnerChildPattern(p base.LogicalPlan, indexJoinProp *property
 			return false
 		}
 		if !checkIndexJoinInnerTaskWithAgg(x, indexJoinProp) {
+			return false
+		}
+	case *logicalop.LogicalWindow:
+		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
+			return false
+		}
+		if !checkIndexJoinInnerTaskWithWindow(x, indexJoinProp) {
 			return false
 		}
 
@@ -700,7 +745,11 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	}
 	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 	var innerTask base.Task
-	if !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
+	propMatched := !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched
+	if !prop.IsSortItemEmpty() && !propMatched && !prop.CanAddEnforcer {
+		return base.InvalidTask
+	}
+	if propMatched {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 	} else {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
@@ -750,7 +799,11 @@ func buildDataSource2TableScanByIndexJoinProp(
 		rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
-		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
+		propMatched := !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched
+		if !prop.IsSortItemEmpty() && !propMatched && !prop.CanAddEnforcer {
+			return base.InvalidTask
+		}
+		if propMatched {
 			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		} else {
 			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
@@ -771,7 +824,11 @@ func buildDataSource2TableScanByIndexJoinProp(
 		// For IntHandle (integer primary key), it's always a unique match.
 		maxOneRow := true
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
-		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
+		propMatched := !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched
+		if !prop.IsSortItemEmpty() && !propMatched && !prop.CanAddEnforcer {
+			return base.InvalidTask
+		}
+		if propMatched {
 			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		} else {
 			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)

@@ -81,7 +81,7 @@ func ExhaustPhysicalPlans4LogicalProjection(super base.LogicalPlan, prop *proper
 	}
 
 	ret := make([]base.PhysicalPlan, 0, len(newProps))
-	newProps = admitIndexJoinProps(newProps, prop)
+	newProps = admitIndexJoinProps(newProps, newProp)
 	for _, newProp := range newProps {
 		proj := PhysicalProjection{
 			Exprs:            p.Exprs,
