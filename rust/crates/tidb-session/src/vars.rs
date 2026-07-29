@@ -45,7 +45,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::sysvar::{get_sys_var, ValidationError, SCOPE_GLOBAL, SCOPE_SESSION};
+use crate::sysvar::{alias_of, get_sys_var, ValidationError, SCOPE_GLOBAL, SCOPE_SESSION};
 
 /// The shared GLOBAL-scope value table every session of one
 /// [`crate::Session`] factory holds a clone of. In-memory only: Go persists
@@ -102,10 +102,12 @@ impl GlobalSysvars {
                         VarError::WrongValueForVar(name.to_ascii_lowercase(), part)
                     }
                 })?;
-        self.values
-            .lock()
-            .expect("global sysvar lock poisoned")
-            .insert(name.to_ascii_lowercase(), validated.value);
+        let key = name.to_ascii_lowercase();
+        let mut values = self.values.lock().expect("global sysvar lock poisoned");
+        if let Some(other) = alias_of(&key) {
+            values.insert(other.to_owned(), validated.value.clone());
+        }
+        values.insert(key, validated.value);
         Ok(())
     }
 
@@ -291,8 +293,15 @@ impl SessionVars {
                         VarError::WrongValueForVar(name.to_ascii_lowercase(), part)
                     }
                 })?;
-        self.systems
-            .insert(name.to_ascii_lowercase(), validated.value);
+        let key = name.to_ascii_lowercase();
+        // Go `SetSessionFromHook`: the alias takes the SAME stored value, with
+        // its own validation skipped -- `tx_isolation` and
+        // `transaction_isolation` are one value under two spellings.
+        if let Some(other) = alias_of(&key) {
+            self.systems
+                .insert(other.to_owned(), validated.value.clone());
+        }
+        self.systems.insert(key, validated.value);
         Ok(())
     }
 
@@ -326,7 +335,11 @@ impl SessionVars {
         if def.is_read_only() {
             return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
         }
-        self.systems.remove(&name.to_ascii_lowercase());
+        let key = name.to_ascii_lowercase();
+        if let Some(other) = alias_of(&key) {
+            self.systems.remove(other);
+        }
+        self.systems.remove(&key);
         Ok(())
     }
 

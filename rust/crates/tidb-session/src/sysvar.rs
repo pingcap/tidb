@@ -11541,6 +11541,39 @@ const ALLOW_EMPTY_VARS: &[&str] = &[
 /// anything other than `pessimistic` as optimistic.
 const ALLOW_EMPTY_ALL_VARS: &[&str] = &["tidb_capture_plan_baseline", "tidb_txn_mode"];
 
+/// Go `SysVar.Aliases`: writing one of these names writes the other too, so
+/// the pair is a single value under two spellings. Go applies the alias in
+/// `SetSessionFromHook`/`SetGlobalFromHook` AFTER validation and skips the
+/// alias's own validation, which is why the stored form is simply copied.
+///
+/// HAND-MAINTAINED for the same reason as the tables above: `GetSysVars()`
+/// does not expose the field. Every reciprocal pair in the registry is here --
+/// two from `sysvar.go` (`tx_isolation`, the plan-cache size) and one from
+/// `noop.go` (`tx_read_only`) -- each listed in both directions.
+const ALIASES: &[(&str, &str)] = &[
+    (
+        "tidb_prepared_plan_cache_size",
+        "tidb_session_plan_cache_size",
+    ),
+    (
+        "tidb_session_plan_cache_size",
+        "tidb_prepared_plan_cache_size",
+    ),
+    ("transaction_isolation", "tx_isolation"),
+    ("tx_isolation", "transaction_isolation"),
+    ("transaction_read_only", "tx_read_only"),
+    ("tx_read_only", "transaction_read_only"),
+];
+
+/// The other spelling of `name`, if it has one.
+#[must_use]
+pub fn alias_of(name: &str) -> Option<&'static str> {
+    ALIASES
+        .iter()
+        .find(|(from, _)| *from == name)
+        .map(|(_, to)| *to)
+}
+
 /// Why a value was rejected.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ValidationError {
