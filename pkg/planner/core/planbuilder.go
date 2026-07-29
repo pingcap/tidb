@@ -240,6 +240,7 @@ type PlanBuilder struct {
 	// partitionRowIDWarningTables deduplicates `_tidb_rowid` warnings for partitioned
 	// tables within a single statement build.
 	partitionRowIDWarningTables set.StringSet
+	pkdbPlanBuilderState
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
 	// capFlag indicates the capability flags.

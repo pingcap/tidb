@@ -96,9 +96,11 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		}
 
 		switch f.Type.String() {
-		case "[]int", "[]byte", "[]float", "[]bool", "[]uint32", "[]string": // simple slice
+		case "[]int", "[]int64", "[]byte", "[]float", "[]bool", "[]uint32", "[]string": // simple slice
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
+		case "[]kv.KeyRange":
+			c.write("cloned.%v = cloneTiDBRowIDKeyRanges(op.%v)", f.Name, f.Name)
 		case "core.physicalSchemaProducer", "core.basePhysicalAgg", "core.basePhysicalJoin":
 			fieldName := strings.Split(f.Type.String(), ".")[1]
 			c.write(`basePlan, baseOK := op.%v.cloneForPlanCacheWithSelf(newCtx, cloned)

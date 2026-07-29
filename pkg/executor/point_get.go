@@ -422,7 +422,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	sctx := e.BaseExecutor.Ctx()
 	schema := e.Schema()
-	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
+	err = decodeRowValToChunk(sctx, schema, e.tblInfo, tblID, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
 	}
@@ -716,14 +716,29 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 // DecodeRowValToChunk decodes row value into chunk checking row format used.
 func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
 	handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
-	if rowcodec.IsNewFormat(rowVal) {
-		return rd.DecodeToChunk(rowVal, 0, handle, chk)
-	}
-	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, chk)
+	return decodeRowValToChunk(sctx, schema, tblInfo, tblInfo.ID, handle, rowVal, chk, rd)
 }
 
-func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo, handle kv.Handle,
-	rowVal []byte, chk *chunk.Chunk) error {
+func decodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
+	physicalID int64, handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
+	rowIdx := chk.NumRows()
+	if rowcodec.IsNewFormat(rowVal) {
+		if err := rd.DecodeToChunk(rowVal, 0, handle, chk); err != nil {
+			return err
+		}
+		for i, col := range schema.Columns {
+			if col.ID == model.ExtraPhysTblID {
+				chk.Column(i).Int64s()[rowIdx] = physicalID
+				chk.Column(i).SetNull(rowIdx, false)
+			}
+		}
+		return nil
+	}
+	return decodeOldRowValToChunk(sctx, schema, tblInfo, physicalID, handle, rowVal, chk)
+}
+
+func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
+	physicalID int64, handle kv.Handle, rowVal []byte, chk *chunk.Chunk) error {
 	pkCols := tables.TryGetCommonPkColumnIds(tblInfo)
 	prefixColIDs := tables.PrimaryPrefixColumnIDs(tblInfo)
 	colID2CutPos := make(map[int64]int, schema.Len())
@@ -741,6 +756,10 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	}
 	decoder := codec.NewDecoder(chk, sctx.GetSessionVars().Location())
 	for i, col := range schema.Columns {
+		if col.ID == model.ExtraPhysTblID {
+			chk.AppendInt64(i, physicalID)
+			continue
+		}
 		// fill the virtual column value after row calculation
 		if col.VirtualExpr != nil {
 			chk.AppendNull(i)

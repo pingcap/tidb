@@ -47,6 +47,10 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.filterCondition = util.CloneExpressions(op.filterCondition)
 	cloned.LateMaterializationFilterCondition = util.CloneExpressions(op.LateMaterializationFilterCondition)
 	cloned.Ranges = util.CloneRanges(op.Ranges)
+	cloned.TiDBRowIDRangeBounds = util.CloneExpressions(op.TiDBRowIDRangeBounds)
+	cloned.TiDBRowIDRangePhysicalIDs = make([]int64, len(op.TiDBRowIDRangePhysicalIDs))
+	copy(cloned.TiDBRowIDRangePhysicalIDs, op.TiDBRowIDRangePhysicalIDs)
+	cloned.TiDBRowIDKeyRanges = cloneTiDBRowIDKeyRanges(op.TiDBRowIDKeyRanges)
 	cloned.HandleIdx = make([]int, len(op.HandleIdx))
 	copy(cloned.HandleIdx, op.HandleIdx)
 	if op.HandleCols != nil {
@@ -266,6 +270,7 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	}
 	cloned.probeParents = probeParents
 	cloned.PartitionNames = util.CloneCIStrs(op.PartitionNames)
+	cloned.TiDBRowIDCandidates = util.CloneExpressions(op.TiDBRowIDCandidates)
 	cloned.schema = op.schema.Clone()
 	if op.PartitionIdx != nil {
 		cloned.PartitionIdx = new(int)
@@ -303,6 +308,7 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	}
 	cloned.probeParents = probeParents
 	cloned.PartitionNames = util.CloneCIStrs(op.PartitionNames)
+	cloned.TiDBRowIDCandidates = util.CloneExpressions(op.TiDBRowIDCandidates)
 	cloned.ctx = newCtx
 	cloned.Handles = util.CloneHandles(op.Handles)
 	cloned.HandleParams = util.CloneConstants(op.HandleParams)

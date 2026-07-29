@@ -860,6 +860,7 @@ tidb_mvcc_info
 tidb_parse_tso
 tidb_parse_tso_logical
 tidb_row_checksum
+tidb_row_id
 tidb_shard
 tidb_version
 time

@@ -986,6 +986,15 @@ type PhysicalTableScan struct {
 	DBName  pmodel.CIStr        `plan-cache-clone:"shallow"`
 	Ranges  []*ranger.Range
 
+	// TiDBRowIDRangeOps and TiDBRowIDRangeBounds are the immutable raw-key
+	// range template. Physical IDs and key ranges are resolved for the current
+	// execution and bypass typed handle-range conversion in table readers.
+	TiDBRowIDRangeOps              []expression.TiDBRowIDRangeOp `plan-cache-clone:"shallow"`
+	TiDBRowIDRangeBounds           []expression.Expression
+	TiDBRowIDAllowedPartitionNames []pmodel.CIStr `plan-cache-clone:"shallow"`
+	TiDBRowIDRangePhysicalIDs      []int64
+	TiDBRowIDKeyRanges             []kv.KeyRange
+
 	TableAsName *pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	physicalTableID int64
@@ -1075,6 +1084,7 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 	}
 	clonedScan.Columns = util.CloneColInfos(ts.Columns)
 	clonedScan.Ranges = util.CloneRanges(ts.Ranges)
+	cloneTiDBRowIDTableScanFields(clonedScan, ts)
 	clonedScan.TableAsName = ts.TableAsName
 	clonedScan.rangeInfo = ts.rangeInfo
 	if ts.runtimeFilterList != nil {
@@ -1230,6 +1240,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	for _, rang := range ts.Ranges {
 		sum += rang.MemUsage()
 	}
+	sum += tiDBRowIDTableScanMemoryUsage(ts)
 	for _, col := range ts.tblCols {
 		sum += col.MemoryUsage()
 	}

@@ -230,7 +230,13 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	start := e.index
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder)
+		physicalID := e.tblInfo.ID
+		if e.singlePartID != 0 {
+			physicalID = e.singlePartID
+		} else if len(e.planPhysIDs) > e.index {
+			physicalID = e.planPhysIDs[e.index]
+		}
+		err := decodeRowValToChunk(sctx, schema, e.tblInfo, physicalID, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
@@ -403,6 +409,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 
 	keys := make([]kv.Key, 0, len(e.handles))
 	newHandles := make([]kv.Handle, 0, len(e.handles))
+	newPhysIDs := make([]int64, 0, len(e.planPhysIDs))
 	for i, handle := range e.handles {
 		tID := e.tblInfo.ID
 		if e.singlePartID != 0 {
@@ -418,8 +425,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys = append(keys, key)
 		newHandles = append(newHandles, handle)
+		if len(e.planPhysIDs) > 0 {
+			newPhysIDs = append(newPhysIDs, tID)
+		}
 	}
 	e.handles = newHandles
+	if len(e.planPhysIDs) > 0 {
+		e.planPhysIDs = newPhysIDs
+	}
 
 	var values map[string]kv.ValueEntry
 	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.
@@ -438,6 +451,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		return err
 	}
 	handles := make([]kv.Handle, 0, len(values))
+	physicalIDs := make([]int64, 0, len(values))
 	var existKeys []kv.Key
 	if e.lock && rc {
 		existKeys = make([]kv.Key, 0, 2*len(values))
@@ -470,6 +484,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 		e.values = append(e.values, val.Value)
 		handles = append(handles, e.handles[i])
+		if len(e.planPhysIDs) > i {
+			physicalIDs = append(physicalIDs, e.planPhysIDs[i])
+		}
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
 			// when e.handles is set in builder directly, index should be primary key and the plan is CommonHandleRead
@@ -488,6 +505,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 	}
 	e.handles = handles
+	if len(e.planPhysIDs) > 0 {
+		e.planPhysIDs = physicalIDs
+	}
 	return nil
 }
 

@@ -378,6 +378,7 @@ const (
 
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
+	TiDBRowID           = "tidb_row_id"
 	TiDBMVCCInfo        = "tidb_mvcc_info"
 	TiDBEncodeRecordKey = "tidb_encode_record_key"
 	TiDBEncodeIndexKey  = "tidb_encode_index_key"

@@ -3990,6 +3990,7 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) exe
 	// Setup MPPGather.table if isSingleDataSource.
 	// Virtual Column or UnionScan need to use it.
 	ts := tableScans[0]
+	gather.emptyTiDBRowIDRange = isEmptyTiDBRowIDRangeScan(ts)
 	gather.columns = ts.Columns
 	if hasVirtualCol {
 		gather.virtualColumnIndex, gather.virtualColumnRetFieldTypes = buildVirtualColumnInfo(gather.Schema(), gather.columns)
@@ -4079,15 +4080,18 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	if !b.sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		setTiDBRowIDRangeBuilder(ret, ts, nil)
 		return ret
 	}
 	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
 	if ok, _ := ts.IsPartition(); ok {
+		setTiDBRowIDRangeBuilder(ret, ts, nil)
 		return ret
 	}
 
 	pi := ts.Table.GetPartitionInfo()
 	if pi == nil {
+		setTiDBRowIDRangeBuilder(ret, ts, nil)
 		return ret
 	}
 
@@ -4113,6 +4117,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 		partitions: partitions,
 	}
+	setTiDBRowIDRangeBuilder(ret, ts, partitions)
 
 	return ret
 }

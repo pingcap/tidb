@@ -66,7 +66,11 @@ type cteGroupInFragment struct {
 	StorageFragments []*Fragment
 }
 
-const emptyFragmentSize = int64(unsafe.Sizeof(Fragment{}))
+const (
+	emptyFragmentSize              = int64(unsafe.Sizeof(Fragment{}))
+	noMPPTasksForTableScanErrorMsg = "In mpp mode, the number of tasks for table scan should not be zero. " +
+		"Please set tidb_allow_mpp = 0, and then rerun sql."
+)
 
 // MemoryUsage return the memory usage of Fragment
 func (f *Fragment) MemoryUsage() (sum int64) {
@@ -388,9 +392,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	if f.TableScan != nil {
 		tasks, err = e.constructMPPTasksImpl(context.Background(), f.TableScan)
 		if err == nil && len(tasks) == 0 {
-			err = errors.New(
-				"In mpp mode, the number of tasks for table scan should not be zero. " +
-					"Please set tidb_allow_mpp = 0, and then rerun sql.")
+			err = errors.New(noMPPTasksForTableScanErrorMsg)
 		}
 	} else {
 		childrenTasks := make([]*kv.MPPTask, 0)
@@ -580,21 +582,36 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			req, allPartitionsIDs, err = e.constructMPPBuildTaskReqForPartitionedTable(ts, splitedRanges, partitions, start, end, hasTableSplit)
+			if len(ts.TiDBRowIDRangeOps) > 0 {
+				req, allPartitionsIDs = constructTiDBRowIDMPPBuildTaskReq(ts, partitions)
+			} else {
+				req, allPartitionsIDs, err = e.constructMPPBuildTaskReqForPartitionedTable(ts, splitedRanges, partitions, start, end, hasTableSplit)
+			}
 			for _, partitionKVRanges := range req.PartitionIDAndRanges {
 				e.KVRanges = append(e.KVRanges, partitionKVRanges.KeyRanges...)
 			}
 		} else {
 			singlePartTbl := tbl.GetPartition(ts.physicalTableID)
-			req, err = e.constructMPPBuildTaskForNonPartitionTable(singlePartTbl.GetPhysicalID(), ts.Table.IsCommonHandle, splitedRanges, start, end, hasTableSplit)
+			if len(ts.TiDBRowIDRangeOps) > 0 {
+				req = constructTiDBRowIDMPPBuildTaskForPhysicalTable(ts, singlePartTbl.GetPhysicalID())
+			} else {
+				req, err = e.constructMPPBuildTaskForNonPartitionTable(singlePartTbl.GetPhysicalID(), ts.Table.IsCommonHandle, splitedRanges, start, end, hasTableSplit)
+			}
 			e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 		}
 	} else {
-		req, err = e.constructMPPBuildTaskForNonPartitionTable(ts.Table.ID, ts.Table.IsCommonHandle, splitedRanges, start, end, hasTableSplit)
+		if len(ts.TiDBRowIDRangeOps) > 0 {
+			req = constructTiDBRowIDMPPBuildTaskForPhysicalTable(ts, ts.Table.ID)
+		} else {
+			req, err = e.constructMPPBuildTaskForNonPartitionTable(ts.Table.ID, ts.Table.IsCommonHandle, splitedRanges, start, end, hasTableSplit)
+		}
 		e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if len(ts.TiDBRowIDRangeOps) > 0 && len(req.KeyRanges) == 0 && len(req.PartitionIDAndRanges) == 0 {
+		return nil, errEmptyTiDBRowIDMPPRange
 	}
 
 	// ttl is always 0, `tidb_mpp_store_fail_ttl` variable has been deprecated

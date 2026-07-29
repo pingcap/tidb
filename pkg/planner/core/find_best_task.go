@@ -1431,6 +1431,7 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = matchProperty(ds, path, prop)
+	candidate.matchPropResult = adjustTiDBRowIDMatchProp(path, prop, candidate.matchPropResult)
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
 	candidate.eqOrInCount = candidate.equalPredicateCount()
@@ -1736,7 +1737,7 @@ func getPruningInfo(ds *logicalop.DataSource, candidates []*candidatePath, prop 
 
 func isPointGetConvertableSchema(ds *logicalop.DataSource) bool {
 	for _, col := range ds.Columns {
-		if col.Name.L == model.ExtraHandleName.L {
+		if col.Name.L == model.ExtraHandleName.L || col.ID == model.ExtraPhysTblID {
 			continue
 		}
 
@@ -1918,7 +1919,10 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			return t, cntPlan, nil
 		}
 
-		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && isPointGetConvertableSchema(ds)
+		isTiDBRowIDPointPath := len(path.TiDBRowIDCandidates) > 0
+		isTiDBRowIDRangePath := len(path.TiDBRowIDRangeOps) > 0
+		isTiDBRowIDPath := isTiDBRowIDPointPath || isTiDBRowIDRangePath
+		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && isPointGetConvertableSchema(ds) && !isTiDBRowIDRangePath
 		if fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 			canConvertPointGet = false
 		}
@@ -1927,7 +1931,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			canConvertPointGet = false // cannot use PointGet upon MVIndex
 		}
 
-		if canConvertPointGet && !path.IsIntHandlePath {
+		if canConvertPointGet && !isTiDBRowIDPath && !path.IsIntHandlePath {
 			// We simply do not build [batch] point get for prefix indexes. This can be optimized.
 			canConvertPointGet = path.Index.Unique && !path.Index.HasPrefixIndex()
 			// If any range cannot cover all columns of the index, we cannot build [batch] point get.
@@ -1939,7 +1943,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 				}
 			}
 		}
-		if canConvertPointGet && ds.Table.Meta().GetPartitionInfo() != nil {
+		if canConvertPointGet && !isTiDBRowIDPath && ds.Table.Meta().GetPartitionInfo() != nil {
 			// partition table with dynamic prune not support batchPointGet
 			// Due to sorting?
 			// Please make sure handle `where _tidb_rowid in (xx, xx)` correctly when delete this if statements.
@@ -1972,12 +1976,14 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		}
 		if canConvertPointGet {
 			allRangeIsPoint := true
-			tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
-			for _, ran := range path.Ranges {
-				if !ran.IsPointNonNullable(tc) {
-					// unique indexes can have duplicated NULL rows so we cannot use PointGet if there is NULL
-					allRangeIsPoint = false
-					break
+			if !isTiDBRowIDPath {
+				tc := ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()
+				for _, ran := range path.Ranges {
+					if !ran.IsPointNonNullable(tc) {
+						// unique indexes can have duplicated NULL rows so we cannot use PointGet if there is NULL
+						allRangeIsPoint = false
+						break
+					}
 				}
 			}
 			if allRangeIsPoint {
@@ -2025,7 +2031,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			if ds.SampleInfo != nil {
 				tblTask, err = convertToSampleTable(ds, prop, candidate, opt)
 			} else {
-				tblTask, err = convertToTableScan(ds, prop, candidate, opt)
+				tblTask, err = convertToTableScan(ds, prop, getTableScanCandidate(ds, candidate), opt)
 			}
 			if err != nil {
 				return nil, 0, err
@@ -3244,6 +3250,9 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 	pointGetPlan.PartitionNames = ds.PartitionNames
 	rTsk := &RootTask{}
 	rTsk.SetPlan(pointGetPlan)
+	if buildTiDBRowIDPointGetTask(ds, prop, candidate, pointGetPlan, rTsk) {
+		return rTsk
+	}
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.HandleCols.GetCol(0).RetType.GetFlag())
@@ -3319,6 +3328,12 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}
 	rTsk := &RootTask{}
+	if buildTiDBRowIDBatchPointGetTask(ds, prop, candidate, batchPointGetPlan, rTsk, accessCnt) {
+		if rTsk.GetPlan() == nil {
+			rTsk.SetPlan(batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset()))
+		}
+		return rTsk
+	}
 	if candidate.path.IsIntHandlePath {
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
@@ -3445,6 +3460,7 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 		filterCondition: slices.Clone(path.TableFilters),
 		TableSplit:      ds.TableSplit,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	setTiDBRowIDTableScanPath(ts, path)
 	ts.SetSchema(ds.Schema().Clone())
 	rowCount := path.CountAfterAccess
 	// Add an arbitrary tolerance factor to account for comparison with floating point

@@ -1,0 +1,130 @@
+# TIDB_ROW_ID scalar, point, range, pagination, and lifecycle coverage.
+drop table if exists locator_t, locator_other, locator_common, locator_partitioned,
+  locator_lifecycle, locator_renamed, locator_lifecycle_token;
+create table locator_t (a bigint primary key clustered, b int, index idx_b (b));
+insert into locator_t values (1, 10), (2, 20), (3, 30), (4, 40);
+
+set @r2 = (select tidb_row_id() from locator_t where a = 2);
+select a from locator_t where tidb_row_id() = @r2;
+set @r2 = (select tidb_row_id() from locator_t where a = 2);
+--replace_regex /tidb_row_id\([0-9]+,/tidb_row_id(<table_id>,/ /"[0-9a-f]+"/"<tidb_row_id>"/
+explain format = 'brief' select a from locator_t where tidb_row_id() = @r2;
+set @r1 = (select tidb_row_id() from locator_t where a = 1),
+    @r3 = (select tidb_row_id() from locator_t where a = 3);
+select a from locator_t where tidb_row_id() in (@r3, @r1) order by a;
+set @r1 = (select tidb_row_id() from locator_t where a = 1),
+    @r3 = (select tidb_row_id() from locator_t where a = 3);
+--replace_regex /tidb_row_id\([0-9]+,/tidb_row_id(<table_id>,/ /"[0-9a-f]+"/"<tidb_row_id>"/
+explain format = 'brief' select a from locator_t where tidb_row_id() in (@r3, @r1);
+
+set @r1 = (select tidb_row_id() from locator_t where a = 1);
+select a from locator_t where tidb_row_id() > @r1 order by a;
+set @r2 = (select tidb_row_id() from locator_t where a = 2);
+select a from locator_t where @r2 >= tidb_row_id() order by a;
+set @r2 = (select tidb_row_id() from locator_t where a = 2),
+    @r3 = (select tidb_row_id() from locator_t where a = 3);
+select a from locator_t where tidb_row_id() between @r2 and @r3 order by a;
+set @r2 = (select tidb_row_id() from locator_t where a = 2),
+    @r3 = (select tidb_row_id() from locator_t where a = 3);
+select a from locator_t where tidb_row_id() between @r3 and @r2;
+select a from locator_t where tidb_row_id() > null;
+set @r1 = (select tidb_row_id() from locator_t where a = 1);
+--replace_regex /tidb_row_id\([0-9]+,/tidb_row_id(<table_id>,/ /"[0-9a-f]+"/"<tidb_row_id>"/
+explain format = 'brief' select a from locator_t where tidb_row_id() > @r1;
+
+--error 8811
+select a from locator_t where tidb_row_id() > 'malformed';
+set @r1 = (select tidb_row_id() from locator_t where a = 1);
+--error 8811
+select a from locator_t where tidb_row_id() between @r1 and 'malformed';
+
+create table locator_other (a bigint primary key clustered);
+insert into locator_other values (1);
+set @foreign = (select tidb_row_id() from locator_other);
+select a from locator_t where tidb_row_id() = @foreign;
+set @foreign = (select tidb_row_id() from locator_other);
+--error 8811
+select a from locator_t where tidb_row_id() >= @foreign;
+
+prepare locator_range from 'select a from locator_t where tidb_row_id() > ? order by a';
+set @bound = (select tidb_row_id() from locator_t where a = 1);
+execute locator_range using @bound;
+set @bound = (select tidb_row_id() from locator_t where a = 3);
+execute locator_range using @bound;
+set @bound = 'malformed';
+--error 8811
+execute locator_range using @bound;
+set @bound = (select tidb_row_id() from locator_t where a = 2);
+execute locator_range using @bound;
+deallocate prepare locator_range;
+
+# A forced secondary-index path keeps correct root evaluation.
+set @r2 = (select tidb_row_id() from locator_t where a = 2);
+select a from locator_t use index (idx_b) where tidb_row_id() > concat('', @r2) order by a;
+set @r2 = (select tidb_row_id() from locator_t where a = 2);
+--replace_regex /tidb_row_id\([0-9]+,/tidb_row_id(<table_id>,/ /"[0-9a-f]+"/"<tidb_row_id>"/
+explain format = 'brief' select a from locator_t use index (idx_b) where tidb_row_id() > concat('', @r2);
+
+# Transaction-buffer and locking paths consume the same locator range.
+begin;
+insert into locator_t values (5, 50);
+set @r3 = (select tidb_row_id() from locator_t where a = 3);
+select a from locator_t where tidb_row_id() > @r3 order by a;
+rollback;
+begin pessimistic;
+set @r3 = (select tidb_row_id() from locator_t where a = 3);
+select a from locator_t where tidb_row_id() >= @r3 order by a for update;
+rollback;
+
+set @r3 = (select tidb_row_id() from locator_t where a = 3);
+update locator_t set b = b + 1 where tidb_row_id() >= @r3;
+select a, b from locator_t order by a;
+set @r3 = (select tidb_row_id() from locator_t where a = 3);
+delete from locator_t where tidb_row_id() > @r3;
+select a, b from locator_t order by a;
+
+create table locator_common (a varchar(10), b int, primary key (a, b) clustered);
+insert into locator_common values ('a', 1), ('b', 2), ('c', 3);
+set @common_bound = (select tidb_row_id() from locator_common where a = 'a');
+select a, b from locator_common where tidb_row_id() > @common_bound order by tidb_row_id();
+
+set tidb_partition_prune_mode = 'dynamic';
+create table locator_partitioned (a bigint primary key clustered)
+partition by range (a) (
+  partition p0 values less than (3),
+  partition p1 values less than (maxvalue)
+);
+insert into locator_partitioned values (1), (2), (3), (4);
+select a from locator_partitioned order by tidb_row_id() limit 2;
+set @p2 = (select tidb_row_id() from locator_partitioned where a = 2);
+select a from locator_partitioned where tidb_row_id() > @p2 order by tidb_row_id() limit 2;
+set @p3 = (select tidb_row_id() from locator_partitioned where a = 3);
+select a from locator_partitioned where tidb_row_id() < @p3 order by tidb_row_id() desc limit 2;
+set @p3 = (select tidb_row_id() from locator_partitioned where a = 3);
+select a from locator_partitioned partition (p0) where tidb_row_id() >= @p3;
+set @p2 = (select tidb_row_id() from locator_partitioned where a = 2);
+select a from locator_partitioned partition (p1) where tidb_row_id() <= @p2;
+set @p2 = (select tidb_row_id() from locator_partitioned where a = 2);
+--replace_regex /"[0-9a-f]+"/"<tidb_row_id>"/
+explain format = 'brief' select a from locator_partitioned where tidb_row_id() > @p2 order by tidb_row_id() limit 2;
+
+set tidb_partition_prune_mode = 'static';
+set @p2 = (select tidb_row_id() from locator_partitioned where a = 2),
+    @p3 = (select tidb_row_id() from locator_partitioned where a = 3);
+select a from locator_partitioned where tidb_row_id() between @p2 and @p3 order by tidb_row_id();
+set tidb_partition_prune_mode = default;
+
+# Rename preserves physical membership; truncate invalidates old range tokens.
+create table locator_lifecycle (a bigint primary key clustered);
+create table locator_lifecycle_token (token varchar(255));
+insert into locator_lifecycle values (1), (2);
+insert into locator_lifecycle_token select tidb_row_id() from locator_lifecycle where a = 1;
+rename table locator_lifecycle to locator_renamed;
+set @old_lifecycle = (select token from locator_lifecycle_token);
+select a from locator_renamed where tidb_row_id() > @old_lifecycle;
+truncate table locator_renamed;
+set @old_lifecycle = (select token from locator_lifecycle_token);
+--error 8811
+select a from locator_renamed where tidb_row_id() > @old_lifecycle;
+
+drop table if exists locator_t, locator_other, locator_common, locator_partitioned, locator_renamed, locator_lifecycle_token;

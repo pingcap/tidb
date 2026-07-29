@@ -1,0 +1,194 @@
+drop table if exists locator_t, locator_other, locator_common, locator_partitioned,
+locator_lifecycle, locator_renamed, locator_lifecycle_token;
+create table locator_t (a bigint primary key clustered, b int, index idx_b (b));
+insert into locator_t values (1, 10), (2, 20), (3, 30), (4, 40);
+set @r2 = (select tidb_row_id() from locator_t where a = 2);
+select a from locator_t where tidb_row_id() = @r2;
+a
+2
+set @r2 = (select tidb_row_id() from locator_t where a = 2);
+explain format = 'brief' select a from locator_t where tidb_row_id() = @r2;
+id	estRows	task	access object	operator info
+Selection	8000.00	root	NULL	tidb_row_id_predicate(tidb_row_id(<table_id>, executor__tidb_row_id.locator_t.a), "<tidb_row_id>")
+└─Point_Get	1.00	root	table:locator_t	handle:2
+set @r1 = (select tidb_row_id() from locator_t where a = 1),
+@r3 = (select tidb_row_id() from locator_t where a = 3);
+select a from locator_t where tidb_row_id() in (@r3, @r1) order by a;
+a
+1
+3
+set @r1 = (select tidb_row_id() from locator_t where a = 1),
+@r3 = (select tidb_row_id() from locator_t where a = 3);
+explain format = 'brief' select a from locator_t where tidb_row_id() in (@r3, @r1);
+id	estRows	task	access object	operator info
+Selection	8000.00	root	NULL	tidb_row_id_predicate(tidb_row_id(<table_id>, executor__tidb_row_id.locator_t.a), "<tidb_row_id>", "<tidb_row_id>")
+└─Batch_Point_Get	2.00	root	table:locator_t	handle:[3 1], keep order:false, desc:false
+set @r1 = (select tidb_row_id() from locator_t where a = 1);
+select a from locator_t where tidb_row_id() > @r1 order by a;
+a
+2
+3
+4
+set @r2 = (select tidb_row_id() from locator_t where a = 2);
+select a from locator_t where @r2 >= tidb_row_id() order by a;
+a
+1
+2
+set @r2 = (select tidb_row_id() from locator_t where a = 2),
+@r3 = (select tidb_row_id() from locator_t where a = 3);
+select a from locator_t where tidb_row_id() between @r2 and @r3 order by a;
+a
+2
+3
+set @r2 = (select tidb_row_id() from locator_t where a = 2),
+@r3 = (select tidb_row_id() from locator_t where a = 3);
+select a from locator_t where tidb_row_id() between @r3 and @r2;
+a
+select a from locator_t where tidb_row_id() > null;
+a
+set @r1 = (select tidb_row_id() from locator_t where a = 1);
+explain format = 'brief' select a from locator_t where tidb_row_id() > @r1;
+id	estRows	task	access object	operator info
+Selection	8000.00	root	NULL	tidb_row_id_range_predicate(tidb_row_id(<table_id>, executor__tidb_row_id.locator_t.a), "<tidb_row_id>")
+└─TableReader	8000.00	root	NULL	data:TableRangeScan
+  └─TableRangeScan	8000.00	cop[tikv]	table:locator_t	range: decided by TIDB_ROW_ID(), keep order:false, stats:pseudo
+select a from locator_t where tidb_row_id() > 'malformed';
+Error 8811 (HY000): Invalid TIDB_ROW_ID token
+set @r1 = (select tidb_row_id() from locator_t where a = 1);
+select a from locator_t where tidb_row_id() between @r1 and 'malformed';
+Error 8811 (HY000): Invalid TIDB_ROW_ID token
+create table locator_other (a bigint primary key clustered);
+insert into locator_other values (1);
+set @foreign = (select tidb_row_id() from locator_other);
+select a from locator_t where tidb_row_id() = @foreign;
+a
+set @foreign = (select tidb_row_id() from locator_other);
+select a from locator_t where tidb_row_id() >= @foreign;
+Error 8811 (HY000): Invalid TIDB_ROW_ID token
+prepare locator_range from 'select a from locator_t where tidb_row_id() > ? order by a';
+set @bound = (select tidb_row_id() from locator_t where a = 1);
+execute locator_range using @bound;
+a
+2
+3
+4
+set @bound = (select tidb_row_id() from locator_t where a = 3);
+execute locator_range using @bound;
+a
+4
+set @bound = 'malformed';
+execute locator_range using @bound;
+Error 8811 (HY000): Invalid TIDB_ROW_ID token
+set @bound = (select tidb_row_id() from locator_t where a = 2);
+execute locator_range using @bound;
+a
+3
+4
+deallocate prepare locator_range;
+set @r2 = (select tidb_row_id() from locator_t where a = 2);
+select a from locator_t use index (idx_b) where tidb_row_id() > concat('', @r2) order by a;
+a
+3
+4
+set @r2 = (select tidb_row_id() from locator_t where a = 2);
+explain format = 'brief' select a from locator_t use index (idx_b) where tidb_row_id() > concat('', @r2);
+id	estRows	task	access object	operator info
+Selection	8000.00	root	NULL	tidb_row_id_range_predicate(tidb_row_id(<table_id>, executor__tidb_row_id.locator_t.a), "<tidb_row_id>")
+└─IndexReader	10000.00	root	NULL	index:IndexFullScan
+  └─IndexFullScan	10000.00	cop[tikv]	table:locator_t, index:idx_b(b)	keep order:false, stats:pseudo
+begin;
+insert into locator_t values (5, 50);
+set @r3 = (select tidb_row_id() from locator_t where a = 3);
+select a from locator_t where tidb_row_id() > @r3 order by a;
+a
+4
+5
+rollback;
+begin pessimistic;
+set @r3 = (select tidb_row_id() from locator_t where a = 3);
+select a from locator_t where tidb_row_id() >= @r3 order by a for update;
+a
+3
+4
+rollback;
+set @r3 = (select tidb_row_id() from locator_t where a = 3);
+update locator_t set b = b + 1 where tidb_row_id() >= @r3;
+select a, b from locator_t order by a;
+a	b
+1	10
+2	20
+3	31
+4	41
+set @r3 = (select tidb_row_id() from locator_t where a = 3);
+delete from locator_t where tidb_row_id() > @r3;
+select a, b from locator_t order by a;
+a	b
+1	10
+2	20
+3	31
+create table locator_common (a varchar(10), b int, primary key (a, b) clustered);
+insert into locator_common values ('a', 1), ('b', 2), ('c', 3);
+set @common_bound = (select tidb_row_id() from locator_common where a = 'a');
+select a, b from locator_common where tidb_row_id() > @common_bound order by tidb_row_id();
+a	b
+b	2
+c	3
+set tidb_partition_prune_mode = 'dynamic';
+create table locator_partitioned (a bigint primary key clustered)
+partition by range (a) (
+partition p0 values less than (3),
+partition p1 values less than (maxvalue)
+);
+insert into locator_partitioned values (1), (2), (3), (4);
+select a from locator_partitioned order by tidb_row_id() limit 2;
+a
+1
+2
+set @p2 = (select tidb_row_id() from locator_partitioned where a = 2);
+select a from locator_partitioned where tidb_row_id() > @p2 order by tidb_row_id() limit 2;
+a
+3
+4
+set @p3 = (select tidb_row_id() from locator_partitioned where a = 3);
+select a from locator_partitioned where tidb_row_id() < @p3 order by tidb_row_id() desc limit 2;
+a
+2
+1
+set @p3 = (select tidb_row_id() from locator_partitioned where a = 3);
+select a from locator_partitioned partition (p0) where tidb_row_id() >= @p3;
+a
+set @p2 = (select tidb_row_id() from locator_partitioned where a = 2);
+select a from locator_partitioned partition (p1) where tidb_row_id() <= @p2;
+a
+set @p2 = (select tidb_row_id() from locator_partitioned where a = 2);
+explain format = 'brief' select a from locator_partitioned where tidb_row_id() > @p2 order by tidb_row_id() limit 2;
+id	estRows	task	access object	operator info
+Projection	2.00	root	NULL	executor__tidb_row_id.locator_partitioned.a
+└─Projection	2.00	root	NULL	executor__tidb_row_id.locator_partitioned.a, executor__tidb_row_id.locator_partitioned._tidb_tid
+  └─TopN	2.00	root	NULL	Column#5, offset:0, count:2
+    └─Projection	8000.00	root	NULL	executor__tidb_row_id.locator_partitioned.a, executor__tidb_row_id.locator_partitioned._tidb_tid, tidb_row_id(executor__tidb_row_id.locator_partitioned._tidb_tid, executor__tidb_row_id.locator_partitioned.a)->Column#5
+      └─Selection	8000.00	root	NULL	tidb_row_id_range_predicate(tidb_row_id(executor__tidb_row_id.locator_partitioned._tidb_tid, executor__tidb_row_id.locator_partitioned.a), "<tidb_row_id>")
+        └─TableReader	8000.00	root	partition:all	data:TableRangeScan
+          └─TableRangeScan	8000.00	cop[tikv]	table:locator_partitioned	range: decided by TIDB_ROW_ID(), keep order:false, stats:pseudo
+set tidb_partition_prune_mode = 'static';
+set @p2 = (select tidb_row_id() from locator_partitioned where a = 2),
+@p3 = (select tidb_row_id() from locator_partitioned where a = 3);
+select a from locator_partitioned where tidb_row_id() between @p2 and @p3 order by tidb_row_id();
+a
+2
+3
+set tidb_partition_prune_mode = default;
+create table locator_lifecycle (a bigint primary key clustered);
+create table locator_lifecycle_token (token varchar(255));
+insert into locator_lifecycle values (1), (2);
+insert into locator_lifecycle_token select tidb_row_id() from locator_lifecycle where a = 1;
+rename table locator_lifecycle to locator_renamed;
+set @old_lifecycle = (select token from locator_lifecycle_token);
+select a from locator_renamed where tidb_row_id() > @old_lifecycle;
+a
+2
+truncate table locator_renamed;
+set @old_lifecycle = (select token from locator_lifecycle_token);
+select a from locator_renamed where tidb_row_id() > @old_lifecycle;
+Error 8811 (HY000): Invalid TIDB_ROW_ID token
+drop table if exists locator_t, locator_other, locator_common, locator_partitioned, locator_renamed, locator_lifecycle_token;

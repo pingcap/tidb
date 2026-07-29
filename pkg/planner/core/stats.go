@@ -261,6 +261,10 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 // deriveTablePathStats will fulfill the information that the AccessPath need.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
 func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, isIm bool) error {
+	matched, err := deriveTiDBRowIDTablePathStats(ds, path, conds)
+	if err != nil || matched {
+		return err
+	}
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ds.SCtx())
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
@@ -268,7 +272,6 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	if path.IsCommonHandlePath {
 		return deriveCommonHandleTablePathStats(ds, path, conds, isIm)
 	}
-	var err error
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.TableFilters = conds
 	var pkCol *expression.Column

@@ -148,6 +148,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
 	node.Node.Accept(&v)
+	v.resolveCtx.FinishTiDBRowIDQueryBlockScan()
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
 	sctx.GetPlanCtx().SetReadonlyUserVarMap(v.varsReadonly)
@@ -423,11 +424,19 @@ type preprocessor struct {
 	*PreprocessorReturn
 	err error
 	// for udv push down
-	userDefVarsTypeGet map[string]struct{}
-	userDefVarsTypeSet map[string]struct{}
-	userDefStoredFuncs [][2]string
-	resolveCtx         *resolve.Context
-	ctasForUpdate      []createTableAsSelectForUpdateInfo
+	userDefVarsTypeGet     map[string]struct{}
+	userDefVarsTypeSet     map[string]struct{}
+	userDefStoredFuncs     [][2]string
+	resolveCtx             *resolve.Context
+	ctasForUpdate          []createTableAsSelectForUpdateInfo
+	tiDBRowIDDMLQueryBlock ast.Node
+}
+
+func (p *preprocessor) currentTiDBRowIDQueryBlock() ast.Node {
+	if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
+		return lockCtx.queryBlock
+	}
+	return p.tiDBRowIDDMLQueryBlock
 }
 
 type createTableAsSelectForUpdateInfo struct {
@@ -480,6 +489,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkAdminCheckTableGrammar(node)
 	case *ast.DeleteStmt:
 		p.stmtTp = TypeDelete
+		p.tiDBRowIDDMLQueryBlock = node
 	case *ast.SelectStmt:
 		p.stmtTp = TypeSelect
 		if node.With != nil {
@@ -496,6 +506,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.UpdateStmt:
 		p.stmtTp = TypeUpdate
+		p.tiDBRowIDDMLQueryBlock = node
 	case *ast.InsertStmt:
 		p.stmtTp = TypeInsert
 		// handle the insert table name imminently
@@ -893,6 +904,9 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.tableAliasInJoin = p.tableAliasInJoin[:len(p.tableAliasInJoin)-1]
 		}
 	case *ast.FuncCallExpr:
+		if queryBlock := p.currentTiDBRowIDQueryBlock(); x.FnName.L == ast.TiDBRowID && queryBlock != nil {
+			p.resolveCtx.MarkTiDBRowIDQueryBlock(queryBlock)
+		}
 		// The arguments for builtin NAME_CONST should be constants
 		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_name-const for details
 		if x.FnName.L == ast.NameConst {
@@ -956,6 +970,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.checkLockClauseTables(x, lockCtx)
 			p.popLockSelectCtx()
 		}
+	case *ast.UpdateStmt, *ast.DeleteStmt:
+		p.tiDBRowIDDMLQueryBlock = nil
 	case *ast.CreateProcedureInfo:
 		p.flag &= ^inCreateOrDropTable
 	case *ast.SetOprStmt:
@@ -2036,6 +2052,7 @@ type lockRef struct {
 }
 
 type lockSelectCtx struct {
+	queryBlock *ast.SelectStmt
 	// lockClauseTables are the TableName nodes that syntactically belong to this SELECT's locking
 	// clause. They skip handleTableName because they are resolved later against the FROM clause.
 	lockClauseTables map[*ast.TableName]struct{}
@@ -2090,7 +2107,9 @@ func (p *preprocessor) pushLockSelectCtx(sel *ast.SelectStmt) {
 	if sel.LockInfo != nil {
 		lockTables = sel.LockInfo.Tables
 	}
-	p.lockSelectCtxStack = append(p.lockSelectCtxStack, newLockSelectCtx(lockTables))
+	lockCtx := newLockSelectCtx(lockTables)
+	lockCtx.queryBlock = sel
+	p.lockSelectCtxStack = append(p.lockSelectCtxStack, lockCtx)
 }
 
 func (p *preprocessor) getLockSelectCtxStackTop() *lockSelectCtx {

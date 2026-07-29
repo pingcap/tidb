@@ -1184,6 +1184,10 @@ const (
 	ErrLBACAlreadyExists = 8804
 
 	ErrProcedureDisabled = 8810
+	// ErrInvalidTiDBRowID is the error code for malformed TIDB_ROW_ID tokens.
+	ErrInvalidTiDBRowID = 8811
+	// ErrTiDBRowIDTableBinding is the error code for invalid TIDB_ROW_ID table bindings.
+	ErrTiDBRowIDTableBinding = 8812
 
 	// 8802 ~ 8804 are reserved for LBAC errors.
 	// 8805 ~ 8809 are reserved for tablegroup errors.

@@ -302,7 +302,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	for i, aggFunc := range aggFuncList {
 		newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
 		for _, arg := range aggFunc.Args {
-			newArg, np, err := b.rewrite(ctx, arg, p, nil, true)
+			newArg, np, err := b.rewriteAggregateArgWithRowLocatorScope(ctx, arg, p)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -3865,7 +3865,7 @@ type ErrExprLoc struct {
 	Loc    string
 }
 
-func checkExprInGroupByOrIsSingleValue(
+func (b *PlanBuilder) checkExprInGroupByOrIsSingleValue(
 	p base.LogicalPlan,
 	expr ast.ExprNode,
 	offset int,
@@ -3900,6 +3900,9 @@ func checkExprInGroupByOrIsSingleValue(
 	}
 	colMap := make(map[*types.FieldName]struct{}, len(p.Schema().Columns))
 	allColFromExprNode(p, expr, colMap)
+	for _, dependency := range b.nonAggregateRowLocatorDependencies(p, expr) {
+		colMap[dependency] = struct{}{}
+	}
 	for col := range colMap {
 		if _, ok := gbyOrSingleValueColNames[col]; !ok {
 			notInGbyOrSingleValueColNames[col] = ErrExprLoc{Offset: offset, Loc: loc}
@@ -3986,7 +3989,7 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p base.LogicalPlan, se
 		if field.Auxiliary {
 			continue
 		}
-		checkExprInGroupByOrIsSingleValue(p, getInnerFromParenthesesAndUnaryPlus(field.Expr), offset, ErrExprInSelect, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
+		b.checkExprInGroupByOrIsSingleValue(p, getInnerFromParenthesesAndUnaryPlus(field.Expr), offset, ErrExprInSelect, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
 	}
 
 	if sel.OrderBy != nil {
@@ -4001,7 +4004,7 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p base.LogicalPlan, se
 					continue
 				}
 			}
-			checkExprInGroupByOrIsSingleValue(p, getInnerFromParenthesesAndUnaryPlus(item.Expr), offset, ErrExprInOrderBy, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
+			b.checkExprInGroupByOrIsSingleValue(p, getInnerFromParenthesesAndUnaryPlus(item.Expr), offset, ErrExprInOrderBy, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
 		}
 	}
 	if len(notInGbyOrSingleValueColNames) == 0 {
@@ -4062,6 +4065,14 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p base.LogicalPlan,
 	for idx, field := range sel.Fields.Fields {
 		resolver.exprIdx = idx
 		field.Accept(&resolver)
+		for _, dependency := range b.nonAggregateRowLocatorDependencies(p, field.Expr) {
+			resolver.nonAggCols = append(resolver.nonAggCols, &ast.ColumnName{
+				Schema: dependency.DBName,
+				Table:  dependency.TblName,
+				Name:   dependency.ColName,
+			})
+			resolver.nonAggColIdxs = append(resolver.nonAggColIdxs, idx)
+		}
 	}
 	if len(resolver.nonAggCols) > 0 {
 		if sel.Having != nil {
@@ -4145,6 +4156,9 @@ func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
 		// enable function `any_value` in aggregation even `ONLY_FULL_GROUP_BY` is set
 		if t.FnName.L == ast.AnyValue {
 			c.hasAggFuncOrAnyValue = true
+			return node, true
+		}
+		if t.FnName.L == ast.TiDBRowID {
 			return node, true
 		}
 	case *ast.ColumnNameExpr:
@@ -4459,7 +4473,13 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
+	var from ast.ResultSetNode
+	if sel.From != nil {
+		from = sel.From.TableRefs
+	}
+	b.pushRowLocatorScope(sel, from)
 	defer func() {
+		b.popRowLocatorScope()
 		b.popSelectOffset()
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
@@ -5526,6 +5546,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	b.handleHelper.pushMap(handleMap)
 	ds.SetSchema(schema)
 	ds.SetOutputNames(names)
+	b.attachRowLocatorDataSource(tn, ds)
 	// setPreferredStoreType will mark user preferred path, which should be shared by all ds alternative. Here
 	// we only mark it for the AllPossibleAccessPaths(since the element inside is shared by PossibleAccessPaths),
 	// and the following ds alternative will clone/inherit this mark from DS copying.
@@ -6387,7 +6408,9 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (base.Plan, error) {
 	b.pushSelectOffset(0)
 	b.pushTableHints(update.TableHints, 0)
+	b.pushRowLocatorScope(update, update.TableRefs.TableRefs)
 	defer func() {
+		b.popRowLocatorScope()
 		b.popSelectOffset()
 		// table hints are only visible in the current UPDATE statement.
 		b.popTableHints()
@@ -6725,6 +6748,9 @@ func isCTE(tlW *resolve.TableNameW) bool {
 
 func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p base.LogicalPlan) (newList []*expression.Assignment, po base.LogicalPlan, allAssignmentsAreConstant bool, e error) {
 	b.curClause = fieldList
+	originalUpdateAssignmentScope := b.updateAssignmentScope
+	b.updateAssignmentScope = b.currentRowLocatorScope()
+	defer func() { b.updateAssignmentScope = originalUpdateAssignmentScope }()
 	// modifyColumns indicates which columns are in set list,
 	// and if it is set to `DEFAULT`
 	modifyColumns := make(map[string]bool, p.Schema().Len())
@@ -6958,7 +6984,9 @@ func IsDefaultExprSameColumn(names types.NameSlice, node ast.ExprNode) bool {
 func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base.Plan, error) {
 	b.pushSelectOffset(0)
 	b.pushTableHints(ds.TableHints, 0)
+	b.pushRowLocatorScope(ds, ds.TableRefs.TableRefs)
 	defer func() {
+		b.popRowLocatorScope()
 		b.popSelectOffset()
 		// table hints are only visible in the current DELETE statement.
 		b.popTableHints()

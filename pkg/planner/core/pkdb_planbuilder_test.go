@@ -1,14 +1,26 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"math"
+	"runtime"
+	"strconv"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -168,6 +180,119 @@ func TestIllegalAlterLogRepl(t *testing.T) {
 			require.Nil(t, p)
 			require.ErrorContains(t, err, tc.errMsg)
 		})
+	}
+}
+
+func BenchmarkRowLocatorRangeConstruction(b *testing.B) {
+	b.Run("NoLocatorQueryBlock", func(b *testing.B) {
+		stmt, err := parser.New().ParseOneStmt("select * from t", "", "")
+		if err != nil {
+			b.Fatal(err)
+		}
+		selectStmt := stmt.(*ast.SelectStmt)
+		nodeW := resolve.NewNodeW(stmt)
+		nodeW.GetResolveContext().FinishTiDBRowIDQueryBlockScan()
+		builder := &PlanBuilder{resolveCtx: nodeW.GetResolveContext()}
+
+		b.ReportAllocs()
+		for range b.N {
+			builder.pushRowLocatorScope(selectStmt, selectStmt.From.TableRefs)
+			if builder.currentRowLocatorScope() != nil {
+				b.Fatal("query block without TIDB_ROW_ID allocated a locator scope")
+			}
+			builder.popRowLocatorScope()
+		}
+	})
+
+	ctx := mock.NewContext()
+	for _, partitionCount := range []int{1, 16, 256, 1024} {
+		b.Run(strconv.Itoa(partitionCount)+"Partitions", func(b *testing.B) {
+			definitions := make([]metamodel.PartitionDefinition, partitionCount)
+			for i := range definitions {
+				definitions[i] = metamodel.PartitionDefinition{
+					ID:   int64(1000 + i),
+					Name: model.NewCIStr("p" + strconv.Itoa(i)),
+				}
+			}
+			tableInfo := &metamodel.TableInfo{
+				ID:         999,
+				PKIsHandle: true,
+				Partition: &metamodel.PartitionInfo{
+					Enable:      true,
+					Definitions: definitions,
+				},
+			}
+			bound, err := tablecodec.EncodeTiDBRowID(definitions[partitionCount/2].ID, kv.IntHandle(0))
+			if err != nil {
+				b.Fatal(err)
+			}
+			bounds := []expression.Expression{expression.NewStrConst(bound)}
+			ops := []expression.TiDBRowIDRangeOp{expression.TiDBRowIDRangeGT}
+
+			b.ReportAllocs()
+			var physicalIDs []int64
+			var keyRanges []kv.KeyRange
+			for range b.N {
+				physicalIDs, keyRanges, err = resolveTiDBRowIDRangeBounds(
+					ctx.GetEvalCtx(), tableInfo, nil, ops, bounds,
+				)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			runtime.KeepAlive(physicalIDs)
+			runtime.KeepAlive(keyRanges)
+		})
+	}
+}
+
+func TestTiDBRowIDPhysicalTableRangeBoundaries(t *testing.T) {
+	const physicalID int64 = 2048
+	intTable := &metamodel.TableInfo{ID: physicalID, PKIsHandle: true}
+	intStart, intEnd, err := tiDBRowIDPhysicalTableRange(intTable, physicalID)
+	require.NoError(t, err)
+	require.Equal(t, tablecodec.EncodeRowKeyWithHandle(physicalID, kv.IntHandle(math.MinInt64)), intStart)
+	require.Equal(t, tablecodec.EncodeRowKeyWithHandle(physicalID, kv.IntHandle(math.MaxInt64)).Next(), intEnd)
+
+	commonTable := &metamodel.TableInfo{ID: physicalID, IsCommonHandle: true}
+	commonStart, commonEnd, err := tiDBRowIDPhysicalTableRange(commonTable, physicalID)
+	require.NoError(t, err)
+	encodedMin, err := codec.EncodeKey(time.UTC, nil, types.MinNotNullDatum())
+	require.NoError(t, err)
+	encodedMax, err := codec.EncodeKey(time.UTC, nil, types.MaxValueDatum())
+	require.NoError(t, err)
+	require.Equal(t, tablecodec.EncodeRowKey(physicalID, encodedMin), commonStart)
+	require.Equal(t, tablecodec.EncodeRowKey(physicalID, kv.Key(encodedMax).PrefixNext()), commonEnd)
+	recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
+	require.LessOrEqual(t, bytes.Compare(recordPrefix, commonStart), 0)
+	require.LessOrEqual(t, bytes.Compare(commonEnd, recordPrefix.PrefixNext()), 0)
+
+	for _, datums := range [][]types.Datum{
+		{types.NewStringDatum("")},
+		{types.NewBytesDatum([]byte{0x00, 0xff, 0x00})},
+		{types.NewBytesDatum([]byte{0xff, 0xff, 0xff, 0xff})},
+		{types.NewStringDatum("prefix"), types.NewIntDatum(-1)},
+	} {
+		encodedHandle, err := codec.EncodeKey(time.UTC, nil, datums...)
+		require.NoError(t, err)
+		handle, err := kv.NewCommonHandle(encodedHandle)
+		require.NoError(t, err)
+		rowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, handle)
+		require.LessOrEqual(t, bytes.Compare(commonStart, rowKey), 0)
+		require.Less(t, bytes.Compare(rowKey, commonEnd), 0)
+
+		token, err := tablecodec.EncodeTiDBRowID(physicalID, handle)
+		require.NoError(t, err)
+		physicalIDs, ranges, err := resolveTiDBRowIDRangeBounds(
+			mock.NewContext().GetEvalCtx(),
+			commonTable,
+			nil,
+			[]expression.TiDBRowIDRangeOp{expression.TiDBRowIDRangeLE},
+			[]expression.Expression{expression.NewStrConst(token)},
+		)
+		require.NoError(t, err)
+		require.Equal(t, []int64{physicalID}, physicalIDs)
+		require.Equal(t, []kv.KeyRange{{StartKey: commonStart, EndKey: rowKey.Next()}}, ranges)
 	}
 }
 

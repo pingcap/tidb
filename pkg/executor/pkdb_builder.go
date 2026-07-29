@@ -6,6 +6,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
+func isEmptyTiDBRowIDRangeScan(scan *plannercore.PhysicalTableScan) bool {
+	return len(scan.TiDBRowIDRangeOps) > 0 && len(scan.TiDBRowIDKeyRanges) == 0
+}
+
 func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 	switch v := p.(type) {
 	case *plannercore.ExplainForConnection:

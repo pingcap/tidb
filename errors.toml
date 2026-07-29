@@ -2241,6 +2241,11 @@ error = '''
 Invalid TABLESAMPLE: %s
 '''
 
+["expression:8811"]
+error = '''
+Invalid TIDB_ROW_ID token
+'''
+
 ["json:3069"]
 error = '''
 Invalid JSON data provided to function %s: %s
@@ -3044,6 +3049,11 @@ Delete can not find column %s for table %s
 ["planner:8242"]
 error = '''
 '%s' is unsupported on cache tables.
+'''
+
+["planner:8812"]
+error = '''
+TIDB_ROW_ID requires one eligible base table in the current query block
 '''
 
 ["privilege:1045"]

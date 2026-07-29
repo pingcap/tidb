@@ -123,6 +123,7 @@ var unsupportedNodeForCheckConstraint = map[string]struct{}{
 	ast.User:             {},
 	ast.Rand:             {},
 	ast.RowCount:         {},
+	ast.TiDBRowID:        {},
 	ast.GetLock:          {},
 	ast.IsFreeLock:       {},
 	ast.IsUsedLock:       {},

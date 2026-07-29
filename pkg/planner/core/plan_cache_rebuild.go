@@ -135,6 +135,9 @@ func rebuildRange(p base.Plan) error {
 			return err
 		}
 	case *PointGetPlan:
+		if matched, err := rebuildTiDBRowIDPointGetRange(sctx, x); matched {
+			return err
+		}
 		if x.TblInfo.GetPartitionInfo() != nil {
 			if fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix33031, false) {
 				return errors.NewNoStackError("Fix33031 fix-control set and partitioned table in cached Point Get plan")
@@ -203,6 +206,9 @@ func rebuildRange(p base.Plan) error {
 		}
 		return nil
 	case *BatchPointGetPlan:
+		if matched, err := rebuildTiDBRowIDBatchPointGetRange(sctx, x); matched {
+			return err
+		}
 		if x.TblInfo.GetPartitionInfo() != nil && fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix33031, false) {
 			return errors.NewNoStackError("Fix33031 fix-control set and partitioned table in cached Batch Point Get plan")
 		}
@@ -341,6 +347,9 @@ func convertConstant2Datum(ctx base.PlanContext, con *expression.Constant, targe
 }
 
 func buildRangeForTableScan(sctx base.PlanContext, ts *PhysicalTableScan) (err error) {
+	if matched, err := rebuildTiDBRowIDTableScanRange(sctx, ts); matched {
+		return err
+	}
 	if ts.Table.IsCommonHandle {
 		pk := tables.FindPrimaryIndex(ts.Table)
 		pkCols := make([]*expression.Column, 0, len(pk.Columns))

@@ -16,6 +16,7 @@ package utils_test
 
 import (
 	"bytes"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -382,6 +383,75 @@ func TestGetRewriteRules(t *testing.T) {
 		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(201), rewriteRules), tablecodec.GenTableRecordPrefix(200))
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(201, 1), rewriteRules), tablecodec.EncodeTableIndexPrefix(200, 1))
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(201, 2), rewriteRules), tablecodec.EncodeTableIndexPrefix(200, 2))
+	}
+}
+
+func TestTiDBRowIDChangesAcrossRestoreTableIDRewrite(t *testing.T) {
+	newTableInfo, oldTableInfo := generateRewriteTableInfos()
+	partitionRewriteRules := utils.GetRewriteRules(newTableInfo, oldTableInfo, 0, true)
+	partitionPhysicalIDs := make(map[int64]struct{}, len(newTableInfo.Partition.Definitions))
+	for _, definition := range newTableInfo.Partition.Definitions {
+		partitionPhysicalIDs[definition.ID] = struct{}{}
+	}
+
+	for _, testCase := range []struct {
+		name          string
+		oldPhysicalID int64
+		newPhysicalID int64
+		rewriteRules  *utils.RewriteRules
+		currentIDs    map[int64]struct{}
+	}{
+		{
+			name:          "Table",
+			oldPhysicalID: oldTableInfo.ID,
+			newPhysicalID: newTableInfo.ID,
+			rewriteRules:  utils.GetRewriteRuleOfTable(oldTableInfo.ID, newTableInfo.ID, nil, true),
+			currentIDs:    map[int64]struct{}{newTableInfo.ID: {}},
+		},
+		{
+			name:          "FirstPartition",
+			oldPhysicalID: 101,
+			newPhysicalID: 100,
+			rewriteRules:  partitionRewriteRules,
+			currentIDs:    partitionPhysicalIDs,
+		},
+		{
+			name:          "SecondPartition",
+			oldPhysicalID: 201,
+			newPhysicalID: 200,
+			rewriteRules:  partitionRewriteRules,
+			currentIDs:    partitionPhysicalIDs,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			handle := kv.IntHandle(42)
+			oldToken, err := tablecodec.EncodeTiDBRowID(testCase.oldPhysicalID, handle)
+			require.NoError(t, err)
+			_, oldHandle, oldKey, _, err := tablecodec.DecodeTiDBRowID(oldToken)
+			require.NoError(t, err)
+			require.True(t, handle.Equal(oldHandle))
+			_, belongsToRestoredTable := testCase.currentIDs[testCase.oldPhysicalID]
+			require.False(t, belongsToRestoredTable)
+			_, belongsToRestoredTable = testCase.currentIDs[testCase.newPhysicalID]
+			require.True(t, belongsToRestoredTable)
+
+			rule := utils.FindMatchedRewriteRule(fakeApplyFile{
+				StartKey: oldKey,
+				EndKey:   oldKey.Next(),
+			}, testCase.rewriteRules)
+			require.NotNil(t, rule)
+			rewrittenKey := rewriteKey(oldKey, rule)
+			require.Equal(t, tablecodec.EncodeRowKeyWithHandle(testCase.newPhysicalID, handle), rewrittenKey)
+
+			newToken, err := tablecodec.EncodeTiDBRowID(testCase.newPhysicalID, handle)
+			require.NoError(t, err)
+			require.Equal(t, hex.EncodeToString(rewrittenKey), newToken)
+			require.NotEqual(t, oldToken, newToken)
+			physicalID, newHandle, _, _, err := tablecodec.DecodeTiDBRowID(newToken)
+			require.NoError(t, err)
+			require.Equal(t, testCase.newPhysicalID, physicalID)
+			require.True(t, handle.Equal(newHandle))
+		})
 	}
 }
 
