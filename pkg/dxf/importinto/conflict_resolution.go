@@ -130,18 +130,32 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
+	targetIdx, err := getKVGroupIndexInfo(e.tableImporter, kvGroup)
+	if err != nil {
+		return err
+	}
 	encoders, err := createEncoders(concurrency, e.tableImporter)
 	if err != nil {
 		return err
 	}
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
+<<<<<<< HEAD
 	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+=======
+	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+	deleterChs, needDispatch := createConflictHandlerChannels(pairCh, concurrency, targetIdx)
+>>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 	for i := range concurrency {
 		encoder := encoders[i]
 		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder, e.GetMeterRecorder())
 		eg.Go(func() error {
-			return deleter.Run(egCtx, pairCh)
+			return deleter.Run(egCtx, deleterChs[i])
+		})
+	}
+	if needDispatch {
+		eg.Go(func() error {
+			return dispatchMVIndexKVPairs(egCtx, e.store, pairCh, deleterChs, targetIdx)
 		})
 	}
 
