@@ -677,6 +677,8 @@ func restoreJSONTableColumn(ctx *format.RestoreCtx, col *JSONTableColumn) error 
 			}
 		}
 		ctx.WritePlain(")")
+	default:
+		return errors.Errorf("unknown JSONTableColumnKind %v", col.Kind)
 	}
 	return nil
 }
