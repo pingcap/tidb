@@ -62,6 +62,7 @@ type UpdateExec struct {
 	tblColPosInfos            physicalop.TblColPosInfoSlice
 	assignFlag                []int
 	evalBuffer                chunk.MutRow
+	newRowData                []types.Datum
 	allAssignmentsAreConstant bool
 	virtualAssignmentsOffset  int
 	drained                   bool
@@ -512,7 +513,7 @@ func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmod
 }
 
 func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
-	newRowData := types.CloneRow(oldRow)
+	newRowData := e.cloneRow(oldRow)
 	for _, assign := range e.OrderedList {
 		var colInfo *mmodel.ColumnInfo
 		if cols[assign.Col.Index] != nil {
@@ -544,7 +545,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 }
 
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
-	newRowData := types.CloneRow(oldRow)
+	newRowData := e.cloneRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
 	for _, assign := range e.OrderedList[:e.virtualAssignmentsOffset] {
 		tblIdx := e.assignFlag[assign.Col.Index]
@@ -571,9 +572,25 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 	return newRowData, nil
 }
 
+func (e *UpdateExec) cloneRow(row []types.Datum) []types.Datum {
+	if cap(e.newRowData) < len(row) {
+		e.newRowData = make([]types.Datum, len(row))
+	} else {
+		if len(e.newRowData) > len(row) {
+			clear(e.newRowData[len(row):])
+		}
+		e.newRowData = e.newRowData[:len(row)]
+	}
+	for i := range row {
+		row[i].Copy(&e.newRowData[i])
+	}
+	return e.newRowData
+}
+
 // Close implements the Executor Close interface.
 func (e *UpdateExec) Close() error {
 	defer e.memTracker.ReplaceBytesUsed(0)
+	e.newRowData = nil
 	e.setMessage()
 	if e.RuntimeStats() != nil && e.stats != nil {
 		txn, err := e.Ctx().Txn(false)
