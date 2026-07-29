@@ -23,9 +23,23 @@ use super::*;
 
 /// The joined `FROM` scope: every table's columns concatenated left to right,
 /// which is the row layout [`JoinExec`] produces.
+///
+/// `NATURAL`/`USING` coalescing does not change that row layout at all -- it
+/// is expressed here, as the two pieces of naming a coalesced join adds on
+/// top of it (see [`coalesce_common_columns`]).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FromScope {
     pub(crate) tables: Vec<FromTable>,
+    /// The row offsets a `NATURAL`/`USING` join coalesced AWAY: the inner
+    /// side's copy of each common column, which stays reachable through its
+    /// own table's qualifier (`SELECT u2.id`) but is invisible to `*` and to
+    /// an unqualified name -- Go's `FullNames[...].Redundant`. Empty for
+    /// every other `FROM` shape, which is what makes this a no-op there.
+    pub(crate) coalesced: Vec<usize>,
+    /// The row offsets `*` expands to, in order, when that is NOT plain row
+    /// order: a coalesced join puts the common columns first and a RIGHT
+    /// join reports its two sides right-then-left. Empty means row order.
+    pub(crate) star: Vec<usize>,
 }
 
 impl FromScope {
@@ -40,6 +54,43 @@ impl FromScope {
     pub(crate) fn width(&self) -> usize {
         self.tables.iter().map(|t| t.columns.len()).sum()
     }
+
+    /// The column at a row offset, with the name it answers to.
+    pub(crate) fn column_at(&self, offset: usize) -> Option<&(String, FieldType)> {
+        self.tables
+            .iter()
+            .find(|t| (t.offset..t.offset + t.columns.len()).contains(&offset))
+            .and_then(|t| t.columns.get(offset - t.offset))
+    }
+
+    /// How a row offset is written when it must be named unambiguously:
+    /// `table.column`, the form a coalesced join's synthesized equality uses
+    /// to reach the side it means.
+    pub(crate) fn qualified_path(&self, offset: usize) -> Option<Vec<String>> {
+        let table = self
+            .tables
+            .iter()
+            .find(|t| (t.offset..t.offset + t.columns.len()).contains(&offset))?;
+        let (name, _) = table.columns.get(offset - table.offset)?;
+        Some(vec![table.name.clone(), name.clone()])
+    }
+
+    /// Every column an unqualified `*` expands to, in display order (Go's
+    /// `unfoldWildStar` over the join's own output names).
+    pub(crate) fn star_columns(&self) -> Vec<(usize, String, FieldType)> {
+        let offsets: Vec<usize> = if self.star.is_empty() {
+            (0..self.width()).collect()
+        } else {
+            self.star.clone()
+        };
+        offsets
+            .into_iter()
+            .filter_map(|offset| {
+                self.column_at(offset)
+                    .map(|(name, ft)| (offset, name.clone(), ft.clone()))
+            })
+            .collect()
+    }
 }
 
 /// Resolves a column reference against the joined `FROM` scope.
@@ -48,6 +99,12 @@ impl FromScope {
 /// the one table that has such a column, and is rejected as ambiguous when
 /// several do -- MySQL's `ERROR 1052 (23000): Column 'a' in field list is
 /// ambiguous`, which Go raises from `expression.buildColumn`.
+///
+/// A column a `NATURAL`/`USING` join coalesced away ([`FromScope::coalesced`])
+/// is skipped by the unqualified lookup and only by it: that is exactly what
+/// makes `id` unambiguous after `u1 JOIN u2 USING (id)` while `u2.id` still
+/// names the right side's own value (captured from Go, which reports the pair
+/// as two distinct columns for `SELECT u1.id, u2.id`).
 pub(crate) struct ScopeResolver<'a> {
     pub(crate) scope: &'a FromScope,
 }
@@ -83,6 +140,9 @@ impl ColumnResolver for ScopeResolver<'_> {
             }
             for (i, (candidate, ft)) in table.columns.iter().enumerate() {
                 if candidate.eq_ignore_ascii_case(name) {
+                    if qualifier.is_none() && self.scope.coalesced.contains(&(table.offset + i)) {
+                        continue;
+                    }
                     if found.is_some() {
                         // Ambiguous across tables: MySQL errors rather than
                         // picking one.
@@ -226,6 +286,7 @@ pub(crate) fn build_from(
                     columns,
                     offset: 0,
                 }],
+                ..FromScope::default()
             };
             Ok((meter(exec, trace), scope))
         }
@@ -317,6 +378,7 @@ pub(crate) fn build_derived_source(
             offset: 0,
             determinants: Vec::new(),
         }],
+        ..FromScope::default()
     };
     Ok((exec, scope))
 }
@@ -689,8 +751,131 @@ pub(crate) fn build_view_source(
             offset: 0,
             determinants: Vec::new(),
         }],
+        ..FromScope::default()
     };
     Ok((exec, scope))
+}
+
+/// One common column of a `NATURAL`/`USING` join: the row offset that stays
+/// visible under the shared name, and the one that is coalesced away.
+struct CommonColumn {
+    visible: usize,
+    redundant: usize,
+}
+
+/// Go `PlanBuilder.coalesceCommonColumns`, as the naming half of a join.
+///
+/// The whole of `NATURAL JOIN` and `JOIN ... USING` is this: an ordinary join
+/// whose `ON` is `l.c = r.c` for every common column `c`, plus a rule about
+/// which names the result answers to. Nothing about the ROW changes -- it is
+/// still the left side's columns followed by the right side's -- so this
+/// returns the common pairs and rewrites only `scope`'s [`FromScope::star`]
+/// and [`FromScope::coalesced`], and every consumer downstream (`*`, name
+/// resolution, `ONLY_FULL_GROUP_BY`, pruning) reads the scope it always did.
+///
+/// Captured from Go, and the reason the two orders below are separate:
+///
+/// * the common columns come FIRST, ordered by the LEFT side's own column
+///   order -- not by the order the `USING` list writes them (`m1 JOIN m2
+///   USING (b, a)` and `USING (a, b)` both report `a, b, ...`);
+/// * a RIGHT join reports right-then-left throughout, so its common columns
+///   take the RIGHT side's order and the surviving copy is the RIGHT side's
+///   column. That is Go's `leftPlan, rightPlan = rightPlan, leftPlan` swap,
+///   and it is what makes the survivor always the OUTER (row-preserving)
+///   side, whose value is never the NULL-padded one.
+///
+/// `using` empty means `NATURAL`: every common name participates.
+fn coalesce_common_columns(
+    scope: &mut FromScope,
+    left_visible: Vec<(usize, String, FieldType)>,
+    right_visible: Vec<(usize, String, FieldType)>,
+    join_tp: tidb_ast::JoinType,
+    using: &[String],
+) -> Result<Vec<CommonColumn>, DriverError> {
+    // The RIGHT-join mirror: from here on "left" means the outer side.
+    let (outer, inner) = match join_tp {
+        tidb_ast::JoinType::Right => (right_visible, left_visible),
+        _ => (left_visible, right_visible),
+    };
+    let lower = |name: &str| name.to_ascii_lowercase();
+    let filter: Vec<String> = using.iter().map(|name| lower(name)).collect();
+    let named = |name: &str| filter.is_empty() || filter.iter().any(|f| f == &lower(name));
+
+    // Go checks ambiguity BEFORE matching: a name that a side offers twice
+    // (which only a join can produce) has no single column to coalesce.
+    // Without a `USING` filter the check applies to the common names only,
+    // with one it applies to every name the filter mentions.
+    let ambiguous = |side: &[(usize, String, FieldType)], name: &str| {
+        side.iter()
+            .filter(|(_, candidate, _)| candidate.eq_ignore_ascii_case(name))
+            .count()
+            > 1
+    };
+    let in_both = |name: &str| {
+        outer.iter().any(|(_, n, _)| n.eq_ignore_ascii_case(name))
+            && inner.iter().any(|(_, n, _)| n.eq_ignore_ascii_case(name))
+    };
+    for (_, name, _) in outer.iter().chain(inner.iter()) {
+        // `NATURAL` has only the common names to coalesce, so only those can
+        // be ambiguous; `USING` answers for every name it lists.
+        if !named(name) || (filter.is_empty() && !in_both(name)) {
+            continue;
+        }
+        if ambiguous(&outer, name) || ambiguous(&inner, name) {
+            return Err(DriverError::AmbiguousColumnInClause {
+                column: lower(name),
+                clause: "from clause".to_owned(),
+            });
+        }
+    }
+
+    let mut common: Vec<CommonColumn> = Vec::new();
+    let mut taken: Vec<String> = Vec::new();
+    for (offset, name, _) in &outer {
+        // `USING (a, a)`: Go's filter is a set, so a name coalesces once.
+        if !named(name) || taken.contains(&lower(name)) {
+            continue;
+        }
+        let Some((inner_offset, ..)) = inner.iter().find(|(_, n, _)| n.eq_ignore_ascii_case(name))
+        else {
+            continue;
+        };
+        taken.push(lower(name));
+        common.push(CommonColumn {
+            visible: *offset,
+            redundant: *inner_offset,
+        });
+    }
+
+    // A `USING` name neither side pairs up is Go's ErrUnknownColumn against
+    // the `from clause` -- the same 1054 a missing column anywhere reports.
+    if let Some(missing) = filter.iter().find(|name| !taken.contains(name)) {
+        return Err(DriverError::UnknownColumnInClause {
+            column: missing.clone(),
+            clause: "from clause".to_owned(),
+        });
+    }
+
+    // Display order: the common columns, then the outer side's remaining
+    // columns, then the inner side's.
+    let remaining = |side: &[(usize, String, FieldType)], common: &[CommonColumn]| -> Vec<usize> {
+        side.iter()
+            .map(|(offset, ..)| *offset)
+            .filter(|offset| {
+                !common
+                    .iter()
+                    .any(|c| c.visible == *offset || c.redundant == *offset)
+            })
+            .collect()
+    };
+    scope.star = common
+        .iter()
+        .map(|c| c.visible)
+        .chain(remaining(&outer, &common))
+        .chain(remaining(&inner, &common))
+        .collect();
+    scope.coalesced.extend(common.iter().map(|c| c.redundant));
+    Ok(common)
 }
 
 /// Builds one join node (or passes through the single-table wrapper).
@@ -748,17 +933,25 @@ pub(crate) fn build_join(
             ctx,
         );
     }
-    if join.natural || !join.using.is_empty() {
-        return Err(DriverError::Unsupported(
-            "NATURAL and USING joins are not supported yet",
-        ));
-    }
+    let coalescing = join.natural || !join.using.is_empty();
     let (mut right_exec, right_scope) =
         build_from(right_node, catalog, current_db, ctx, trace.as_deref_mut())?;
 
     // The joined scope: the right tables' columns follow the left's.
     let mut left_width = left_scope.width();
+    // The two sides' DISPLAY columns, which is what a coalesced join matches
+    // on: a nested `a NATURAL JOIN b NATURAL JOIN c` sees the inner join's
+    // already-coalesced output, never its hidden duplicates.
+    let left_visible = left_scope.star_columns();
+    let right_visible: Vec<(usize, String, FieldType)> = right_scope
+        .star_columns()
+        .into_iter()
+        .map(|(offset, name, ft)| (offset + left_width, name, ft))
+        .collect();
     let mut scope = left_scope;
+    scope
+        .coalesced
+        .extend(right_scope.coalesced.iter().map(|o| o + left_width));
     for table in right_scope.tables {
         scope.tables.push(FromTable {
             name: table.name,
@@ -769,11 +962,47 @@ pub(crate) fn build_join(
         });
     }
 
+    // `NATURAL` / `USING`: the common columns' equalities become this join's
+    // conditions, and the scope records which name now reaches which column.
+    // The ROW is untouched, so everything below runs unchanged.
+    let mut coalesced_conditions = Vec::new();
+    if coalescing {
+        let common = coalesce_common_columns(
+            &mut scope,
+            left_visible,
+            right_visible,
+            join.tp,
+            &join.using,
+        )?;
+        let resolver = ScopeResolver { scope: &scope };
+        for pair in &common {
+            let (Some(visible), Some(redundant)) = (
+                scope.qualified_path(pair.visible),
+                scope.qualified_path(pair.redundant),
+            ) else {
+                return Err(DriverError::Unsupported(
+                    "a coalesced join column has no table to name it",
+                ));
+            };
+            let equality = tidb_ast::Expr::Binary(
+                tidb_ast::BinaryOp::Eq,
+                Box::new(tidb_ast::Expr::Column(visible)),
+                Box::new(tidb_ast::Expr::Column(redundant)),
+            );
+            coalesced_conditions.push(
+                rewrite_expr_resolved(&equality, &resolver)
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+            );
+        }
+    }
+
     // Column pruning across the join, BEFORE the `ON` below is rewritten:
     // each side is offered only the columns the statement (its `ON`
     // included) reads from it. The two sides answer independently, so the
     // widths below are read back off the narrowed scope rather than assumed.
-    if let Some(select) = prune {
+    // A coalesced join is exempt: its scope addresses columns by row offset
+    // in `star`/`coalesced`, which renumbering would invalidate.
+    if let Some(select) = prune.filter(|_| !coalescing) {
         if let Some((left_columns, right_columns)) = crate::column_prune::prune_join_sides(
             select,
             join,
@@ -801,7 +1030,7 @@ pub(crate) fn build_join(
         .collect();
     let meta = ExecutorMeta::new(Schema::new(schema_columns), 6, INIT_CAP, MAX_CHUNK_SIZE);
 
-    let conditions = match &join.on {
+    let mut conditions = match &join.on {
         Some(expr) => {
             let resolver = ScopeResolver { scope: &scope };
             vec![rewrite_expr_resolved(expr, &resolver)
@@ -809,6 +1038,7 @@ pub(crate) fn build_join(
         }
         None => Vec::new(),
     };
+    conditions.append(&mut coalesced_conditions);
     let kind = match join.tp {
         tidb_ast::JoinType::Cross => JoinKind::Inner,
         tidb_ast::JoinType::Left => JoinKind::Left,
@@ -830,7 +1060,11 @@ pub(crate) fn build_join(
         ctx.clone(),
     ));
     if let Some(trace) = trace.as_deref_mut() {
-        if trace
+        if coalescing {
+            // The recorder prints the `ON` as written, and a coalesced join
+            // has none -- its equalities are synthesized here.
+            trace.refuse("NATURAL and USING joins are not printed yet");
+        } else if trace
             .join(join, &scope, current_db, &split.equal_mask, build_is_left)
             .is_err()
         {

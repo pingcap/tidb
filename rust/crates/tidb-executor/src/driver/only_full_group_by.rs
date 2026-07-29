@@ -98,16 +98,19 @@ pub(crate) fn check_only_full_group_by(
     }
     // A `GROUP BY` item that is NOT a column stands on its own: an expression
     // in a checked clause is justified by being written IDENTICALLY here.
+    // A `GROUP BY` item is checked as Go RESOLVED it: a position and a
+    // select-list alias both stand for the field's expression, so `GROUP BY x`
+    // over `SELECT dept AS x` pins `dept` and the select list is justified.
+    let resolved_items: Vec<tidb_ast::Expr> = select
+        .group_by
+        .iter()
+        .map(|item| {
+            resolve_group_by_item(&item.expr, &select.fields, &resolver)
+                .map(|resolved| resolved.into_owned())
+        })
+        .collect::<Result<_, _>>()?;
     let mut group_exprs: Vec<&tidb_ast::Expr> = Vec::new();
-    for item in &select.group_by {
-        let resolved = resolve_group_by_position(&item.expr, &select.fields)?;
-        // The borrow must outlive the loop body, so a position that resolved
-        // to a select field is re-read from the field list rather than from
-        // the temporary `Cow`.
-        let resolved: &tidb_ast::Expr = match resolved {
-            std::borrow::Cow::Borrowed(expr) => expr,
-            std::borrow::Cow::Owned(_) => &item.expr,
-        };
+    for resolved in &resolved_items {
         match offset_of(resolved) {
             Some(offset) => {
                 pinned.insert(offset);

@@ -141,6 +141,7 @@ impl MultiSource {
                     determinants: Vec::new(),
                 })
                 .collect(),
+            ..FromScope::default()
         }
     }
 

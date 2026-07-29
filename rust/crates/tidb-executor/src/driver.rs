@@ -1405,9 +1405,20 @@ pub(crate) fn run_select_traced(
                     ));
                 }
                 // `*` expands to every column of every FROM table in order,
-                // `t.*` to one table's (Go's unfoldWildStar).
+                // `t.*` to one table's (Go's unfoldWildStar). A coalesced
+                // join reorders the former and hides the duplicates from it;
+                // `t.*` is untouched, so `u2.*` still reports `u2`'s own copy
+                // of a `USING` column (captured from Go).
                 let selected: Vec<&FromTable> = match qualifier.last() {
-                    None => scope.tables.iter().collect(),
+                    None => {
+                        for (index, name, ft) in scope.star_columns() {
+                            let mut col = Column::new((index + 1) as i64, ft);
+                            col.index = index as i64;
+                            exprs.push(Expression::Column(col));
+                            names.push(name);
+                        }
+                        continue;
+                    }
                     Some(q) => {
                         let matching: Vec<&FromTable> = scope
                             .tables
@@ -1790,6 +1801,23 @@ fn substitute_output_aliases(
     fields: &[SelectField],
     top_level: bool,
 ) -> Result<tidb_ast::Expr, DriverError> {
+    substitute_output_aliases_where(expr, fields, top_level, &|_| false)
+}
+
+/// [`substitute_output_aliases`], with the names that already resolve where
+/// the caller is standing held back.
+///
+/// `HAVING` needs that and `ORDER BY` does not, which IS Go's difference
+/// between the two: `havingWindowAndOrderbyExprResolver` resolves a `HAVING`
+/// name against the aggregation's own output FIRST and reaches the select
+/// list only for a name that output lacks, while an `ORDER BY` alias shadows
+/// a source column outright.
+fn substitute_output_aliases_where(
+    expr: &tidb_ast::Expr,
+    fields: &[SelectField],
+    top_level: bool,
+    resolves_already: &dyn Fn(&str) -> bool,
+) -> Result<tidb_ast::Expr, DriverError> {
     use tidb_ast::Expr;
     // A bare integer at the top of an ORDER BY item is an output position.
     if top_level {
@@ -1809,7 +1837,7 @@ fn substitute_output_aliases(
     Ok(match expr {
         // A one-segment name may be a select alias; a qualified one
         // (`t.a`) always addresses the source.
-        Expr::Column(path) if path.len() == 1 => {
+        Expr::Column(path) if path.len() == 1 && !resolves_already(&path[0]) => {
             let alias = fields.iter().find_map(|field| match field {
                 SelectField::Expr {
                     expr,
@@ -1822,17 +1850,35 @@ fn substitute_output_aliases(
                 None => expr.clone(),
             }
         }
-        Expr::Paren(inner) => {
-            Expr::Paren(Box::new(substitute_output_aliases(inner, fields, false)?))
-        }
+        Expr::Paren(inner) => Expr::Paren(Box::new(substitute_output_aliases_where(
+            inner,
+            fields,
+            false,
+            resolves_already,
+        )?)),
         Expr::Unary(op, inner) => Expr::Unary(
             *op,
-            Box::new(substitute_output_aliases(inner, fields, false)?),
+            Box::new(substitute_output_aliases_where(
+                inner,
+                fields,
+                false,
+                resolves_already,
+            )?),
         ),
         Expr::Binary(op, left, right) => Expr::Binary(
             *op,
-            Box::new(substitute_output_aliases(left, fields, false)?),
-            Box::new(substitute_output_aliases(right, fields, false)?),
+            Box::new(substitute_output_aliases_where(
+                left,
+                fields,
+                false,
+                resolves_already,
+            )?),
+            Box::new(substitute_output_aliases_where(
+                right,
+                fields,
+                false,
+                resolves_already,
+            )?),
         ),
         Expr::Func {
             name,
@@ -1842,7 +1888,7 @@ fn substitute_output_aliases(
             name: name.clone(),
             args: args
                 .iter()
-                .map(|arg| substitute_output_aliases(arg, fields, false))
+                .map(|arg| substitute_output_aliases_where(arg, fields, false, resolves_already))
                 .collect::<Result<_, _>>()?,
             origin_position: *origin_position,
         },
@@ -1850,11 +1896,116 @@ fn substitute_output_aliases(
     })
 }
 
+/// Go `gbyResolver`, whole: a `GROUP BY` item's positions AND its select-list
+/// aliases, resolved the way that resolver does.
+///
+/// The two rules are one pass because they are one clause: `GROUP BY 1` and
+/// `GROUP BY x` both end up naming a select field's expression, and every
+/// consumer below (the aggregation's keys, `ONLY_FULL_GROUP_BY`, `GROUPING`)
+/// then reads the RESOLVED item and needs no notion of either.
+///
+/// The alias rule is not `ORDER BY`'s. Captured from TiDB, and this is the
+/// difference: in `ORDER BY` an alias SHADOWS a real column of the same name,
+/// while in `GROUP BY` the REAL COLUMN WINS -- `SELECT y AS x FROM t GROUP BY
+/// x` groups by `t.x`, not by `y`, and then rejects the select list under
+/// `ONLY_FULL_GROUP_BY` because `y` is not determined by `t.x`. Go's
+/// `gbyResolver.Leave` is where that falls out: it substitutes only when
+/// `FindFieldName` found nothing.
+fn resolve_group_by_item<'a>(
+    expr: &'a tidb_ast::Expr,
+    fields: &'a SelectFieldList,
+    resolver: &ScopeResolver<'_>,
+) -> Result<std::borrow::Cow<'a, tidb_ast::Expr>, DriverError> {
+    if positional_field_index(expr).is_some() {
+        return resolve_group_by_position(expr, fields);
+    }
+    Ok(std::borrow::Cow::Owned(substitute_group_by_aliases(
+        expr, fields, resolver,
+    )?))
+}
+
+/// One node of [`resolve_group_by_item`]'s alias substitution.
+///
+/// Go carries a `gbyResolver.inExpr` flag that says whether the name sits at
+/// the TOP of the item or inside a larger expression. It changes nothing
+/// here, and deliberately has no counterpart: both of Go's branches keep a
+/// name the `FROM` scope has and substitute one it lacks, so the flag only
+/// ever selects between two paths that agree. `GROUP BY x + 0` over `SELECT
+/// dept AS x` therefore groups by `dept + 0`, which is what TiDB does.
+fn substitute_group_by_aliases(
+    expr: &tidb_ast::Expr,
+    fields: &SelectFieldList,
+    resolver: &ScopeResolver<'_>,
+) -> Result<tidb_ast::Expr, DriverError> {
+    use tidb_ast::Expr;
+    let recurse = |inner: &Expr| substitute_group_by_aliases(inner, fields, resolver);
+    Ok(match expr {
+        Expr::Column(path) if path.len() == 1 => {
+            if resolver.resolve(path).is_some() {
+                // A real column of the `FROM` scope always wins.
+                return Ok(expr.clone());
+            }
+            let alias = fields.fields().iter().find_map(|field| match field {
+                SelectField::Expr {
+                    expr,
+                    alias: Some(alias),
+                } if alias.eq_ignore_ascii_case(&path[0]) => Some(expr),
+                _ => None,
+            });
+            let Some(target) = alias else {
+                // Not a column and not an alias: the ordinary resolver
+                // reports it, with its own error.
+                return Ok(expr.clone());
+            };
+            // Grouping happens BEFORE aggregates and window functions have a
+            // value, so an alias naming one is Go's ErrIllegalReference.
+            let reason = if aggregates_in(target) {
+                Some("reference to group function")
+            } else if !crate::window::windows_in(target).is_empty() {
+                Some("reference to window function")
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                return Err(DriverError::IllegalReference {
+                    name: path[0].clone(),
+                    reason,
+                });
+            }
+            target.clone()
+        }
+        Expr::Paren(inner) => Expr::Paren(Box::new(recurse(inner)?)),
+        Expr::Unary(op, inner) => Expr::Unary(*op, Box::new(recurse(inner)?)),
+        Expr::Binary(op, left, right) => {
+            Expr::Binary(*op, Box::new(recurse(left)?), Box::new(recurse(right)?))
+        }
+        Expr::Func {
+            name,
+            args,
+            origin_position,
+        } => Expr::Func {
+            name: name.clone(),
+            args: args.iter().map(recurse).collect::<Result<_, _>>()?,
+            origin_position: *origin_position,
+        },
+        other => other.clone(),
+    })
+}
+
+/// Whether `expr` calls an aggregate anywhere, which is what makes a `GROUP
+/// BY` alias reference to it illegal.
+fn aggregates_in(expr: &tidb_ast::Expr) -> bool {
+    match expr {
+        tidb_ast::Expr::Aggregate { .. } | tidb_ast::Expr::GroupConcat { .. } => true,
+        tidb_ast::Expr::Paren(inner) | tidb_ast::Expr::Unary(_, inner) => aggregates_in(inner),
+        tidb_ast::Expr::Binary(_, left, right) => aggregates_in(left) || aggregates_in(right),
+        tidb_ast::Expr::Func { args, .. } => args.iter().any(aggregates_in),
+        _ => false,
+    }
+}
+
 /// Go `gbyResolver`: a bare integer at the top of a `GROUP BY` item is a
-/// 1-based output position resolved against the SELECT list -- the same rule
-/// `ORDER BY`'s [`substitute_output_aliases`] applies, but `GROUP BY` has no
-/// alias-substitution counterpart (a bare name is resolved by the ordinary
-/// column resolver instead), so only the position form needs handling here.
+/// 1-based output position resolved against the SELECT list.
 ///
 /// Captured from TiDB: an out-of-range position is `ErrUnknownColumn` naming
 /// the `group statement`; a position landing on an aggregate or
@@ -4047,6 +4198,7 @@ mod tests {
                 offset: 0,
                 determinants: Vec::new(),
             }],
+            ..FromScope::default()
         };
         let split = |sql: &str| {
             let stmt = tidb_parser::parse(sql).expect("a select");
@@ -4975,19 +5127,34 @@ mod tests {
             vec![vec![Datum::Int(2)]]
         );
 
-        // Unsupported join shapes fail closed.
-        assert!(run_select_on(
+        // A coalesced join reports `id` ONCE, so `*` is one column narrower
+        // than the same join written with an `ON`, and the unqualified `id`
+        // that is ambiguous above resolves here. See
+        // `tidb_session`'s `tests_coalesced_joins` for the full rule set.
+        for sql in [
             "SELECT * FROM l NATURAL JOIN r",
-            &catalog,
-            &crate::StmtContext::for_query()
-        )
-        .is_err());
-        assert!(run_select_on(
             "SELECT * FROM l JOIN r USING (id)",
-            &catalog,
-            &crate::StmtContext::for_query()
-        )
-        .is_err());
+        ] {
+            assert_eq!(
+                run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+                    .unwrap()
+                    .first()
+                    .unwrap()
+                    .len(),
+                3,
+                "{sql}"
+            );
+        }
+        assert_eq!(
+            run_select_on(
+                "SELECT id FROM l JOIN r USING (id)",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap()
+            .len(),
+            3
+        );
     }
 
     /// Uncorrelated subqueries are evaluated and folded into literals, the way

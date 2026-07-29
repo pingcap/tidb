@@ -615,6 +615,7 @@ impl PlanTrace {
                 offset: 0,
                 determinants: Vec::new(),
             }],
+            ..FromScope::default()
         }
     }
 }

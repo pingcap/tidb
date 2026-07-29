@@ -374,6 +374,7 @@ pub(crate) fn pruned_scope(scope: &FromScope, keep: &[usize]) -> FromScope {
             offset: 0,
             determinants: table.determinants.clone(),
         }],
+        ..FromScope::default()
     }
 }
 

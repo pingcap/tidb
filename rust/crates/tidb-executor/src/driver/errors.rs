@@ -145,6 +145,26 @@ pub enum DriverError {
     /// Go `plannererrors.ErrWindowRangeFrameNumericType` (3589): a numeric
     /// `ORDER BY` key rejects an `INTERVAL` bound value.
     WindowRangeFrameNumericType,
+    /// Go `plannererrors.ErrIllegalReference` (1247): a `GROUP BY` item names
+    /// a select-list alias whose expression has no value yet at grouping time
+    /// -- an aggregate or a window function.
+    IllegalReference {
+        /// The alias as written.
+        name: String,
+        /// Go's parenthesized reason, for example
+        /// `reference to group function`.
+        reason: &'static str,
+    },
+    /// Go `plannererrors.ErrAmbiguous` (1052) naming the clause it was
+    /// written in: a `NATURAL`/`USING` join raises it from
+    /// `coalesceCommonColumns` when one side offers a common name twice, so
+    /// there is no single column to coalesce.
+    AmbiguousColumnInClause {
+        /// The name as Go quotes it, which is lowercased there.
+        column: String,
+        /// The clause Go names, for example `from clause`.
+        clause: String,
+    },
     /// Go `ErrUnknownColumn` (1054) naming the clause it was written in.
     UnknownColumnInClause {
         /// The name as written.
@@ -1360,6 +1380,18 @@ impl DriverError {
             ER_SUBQUERY_NO_1_ROW,
             *b"21000",
             "Subquery returns more than 1 row".to_owned(),
+        ),
+        // Go: "Reference '%-.64s' not supported (%s)".
+        DriverError::IllegalReference { name, reason } => MysqlError::new(
+            1247,
+            *b"42S22",
+            format!("Reference '{name}' not supported ({reason})"),
+        ),
+        // Go: "Column '%-.192s' in %-.192s is ambiguous".
+        DriverError::AmbiguousColumnInClause { column, clause } => MysqlError::new(
+            1052,
+            *b"23000",
+            format!("Column '{column}' in {clause} is ambiguous"),
         ),
         // Go: "Unknown column '%-.192s' in '%-.192s'".
         DriverError::UnknownColumnInClause { column, clause } => MysqlError::new(

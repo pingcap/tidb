@@ -119,7 +119,7 @@ pub(crate) fn run_aggregate_select(
     super::only_full_group_by::check_only_full_group_by(select, resolver.scope, ctx)?;
 
     let mut state = AggPipelineState {
-        group_by_names: group_by_display_names(select),
+        group_by_names: group_by_display_names(select, resolver),
         ..AggPipelineState::default()
     };
 
@@ -188,14 +188,17 @@ pub(crate) fn run_aggregate_select(
 /// Mirrors Go's `resolveGbyExprs` / `buildAggregation` group-item naming: a
 /// positional `GROUP BY 1` names the same column a literal `GROUP BY a`
 /// would, so `GROUPING()` and `HAVING` see it the same way.
-fn group_by_display_names(select: &tidb_ast::SelectStmt) -> Vec<String> {
+fn group_by_display_names(
+    select: &tidb_ast::SelectStmt,
+    resolver: &ScopeResolver<'_>,
+) -> Vec<String> {
     select
         .group_by
         .iter()
         .filter_map(|item| {
             // A positional `GROUP BY 1` names the same column a literal
             // `GROUP BY a` would, so GROUPING() must see it the same way.
-            let resolved = resolve_group_by_position(&item.expr, &select.fields).ok()?;
+            let resolved = resolve_group_by_item(&item.expr, &select.fields, resolver).ok()?;
             match resolved.as_ref() {
                 tidb_ast::Expr::Column(path) => path.last().cloned(),
                 _ => None,
@@ -503,6 +506,19 @@ fn hoist_having_and_order_by(
     // aggregates remain become aggregation output columns.
     let having_expr = match &select.having {
         Some(having) => {
+            // A `HAVING` name the aggregation's output does not carry may be
+            // a select-list alias for one that it does (`SELECT dept AS x
+            // ... GROUP BY x HAVING x = 'a'`). Go reaches the select list
+            // only in that order, so a name the output HAS keeps its meaning.
+            let known = |name: &str| {
+                state
+                    .names
+                    .iter()
+                    .chain(state.group_by_names.iter())
+                    .any(|candidate| candidate.eq_ignore_ascii_case(name))
+            };
+            let having =
+                &substitute_output_aliases_where(having, select.fields.fields(), false, &known)?;
             check_having_names(having, state)?;
             let (expr, found) = extract_and_hoist_subquery(
                 having,
@@ -659,7 +675,7 @@ fn build_aggregation(
     // `resolve_group_by_position`.
     let mut group_by = Vec::with_capacity(select.group_by.len());
     for item in &select.group_by {
-        let resolved = resolve_group_by_position(&item.expr, &select.fields)?;
+        let resolved = resolve_group_by_item(&item.expr, &select.fields, resolver)?;
         group_by.push(
             rewrite_expr_resolved(resolved.as_ref(), resolver)
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
@@ -779,6 +795,7 @@ fn build_apply_chain(
                 offset: 0,
                 determinants: Vec::new(),
             }],
+            ..FromScope::default()
         };
         state.types.push(value_type);
         state.names.push(display);
@@ -880,6 +897,7 @@ fn build_window_stage(
                 offset: 0,
                 determinants: Vec::new(),
             }],
+            ..FromScope::default()
         };
         let rows = drain_executor_rows(root, &state.types)?;
         let (rows, scope_with_windows) =

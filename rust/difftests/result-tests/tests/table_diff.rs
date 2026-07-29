@@ -78,12 +78,6 @@ const UNSUPPORTED_TOPICS: &[(&str, &str)] = &[
         "delete_ignore_foreign_key",
         "multi-table DELETE ... USING is not modelled",
     ),
-    ("natural_join", "NATURAL JOIN is not modelled"),
-    ("using_joins", "JOIN ... USING is not modelled"),
-    (
-        "group_by_alias",
-        "GROUP BY resolving a select-list alias is not modelled",
-    ),
 ];
 
 /// Runs one statement against a live [`Session`], returning its outcome
