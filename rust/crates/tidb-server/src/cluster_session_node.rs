@@ -128,6 +128,7 @@ use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl, prepare_cluster_ddl, ClusterDdlReport, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_read::{ProductionReadProcessAuthority, RealOptimisticTransactionOpener};
+use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
@@ -391,12 +392,17 @@ pub struct ClusterSessionFactory {
     /// The tables of the boot catalog no session can include, kept so the
     /// node reports them once at startup instead of per connection.
     boot_skipped: Vec<SkippedTable>,
+    /// This node's loaded tables' `mysql.stats_*`, republished whole by the
+    /// stats reload thread [`run_cluster_session_node`] owns. Plumbing only:
+    /// the estimator that will read this is a parallel unit.
+    stats: Arc<SharedStats>,
 }
 
 impl ClusterSessionFactory {
     /// Binds the factory to an authority that has already read the cluster's
     /// catalog and accounts.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         transactions: Arc<dyn ClusterTransactions>,
         ddl: Arc<dyn ClusterDdl>,
@@ -405,6 +411,7 @@ impl ClusterSessionFactory {
         catalog: Arc<SharedClusterCatalog>,
         privileges: PrivilegeRegistry,
         global_vars: GlobalSysvars,
+        stats: Arc<SharedStats>,
     ) -> Self {
         let boot_skipped = cluster_session_catalog(&catalog.load(), &detached_storage()).skipped;
         Self {
@@ -417,7 +424,15 @@ impl ClusterSessionFactory {
             processes: ProcessRegistry::default(),
             global_vars,
             boot_skipped,
+            stats,
         }
+    }
+
+    /// This node's loaded tables' statistics. The consuming estimator is a
+    /// parallel unit; this is the supply line it will read from.
+    #[must_use]
+    pub fn stats(&self) -> &Arc<SharedStats> {
+        &self.stats
     }
 
     /// The boot catalog's tables this node cannot serve, with their reasons.
@@ -1060,6 +1075,19 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
     // parallel); it must stay alive for the node's run and drop before the
     // authority's shutdown drain, like the catalog reloader below.
     let (users, privilege_reloader) = node_accounts(&config, &authority)?;
+    // Statistics for every table this convergence node's boot catalog holds.
+    // Read before `spawn_catalog_reloader` consumes `startup`, so the boot
+    // load sees the exact table set the node is about to serve. Held in the
+    // `run_with_process_shutdown` tuple below so its reload thread stops
+    // before the authority's shutdown drain, the same discipline every other
+    // reloader here follows.
+    let (stats, stats_reloader) = crate::real_tikv_node::spawn_node_stats(
+        &startup,
+        &authority,
+        config.schema_lease,
+        CONTROL_PLANE_TIMEOUT,
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let (catalog, reloader) =
         spawn_catalog_reloader(startup, authority.transaction_opener(), config.schema_lease)
             .map_err(|error| {
@@ -1112,8 +1140,10 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
         catalog,
         users.accounts(),
         users.global_vars(),
+        Arc::clone(&stats),
     ));
     let skipped = render_skipped(factory.boot_skipped_tables());
+    let stats_receipt = stats.receipt();
 
     run_with_process_shutdown(
         (
@@ -1124,6 +1154,7 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             privilege_reloader,
             sysvar_watcher,
             sysvar_reloader,
+            stats_reloader,
         ),
         authority,
         move |(
@@ -1134,6 +1165,7 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             privilege_reloader,
             sysvar_watcher,
             sysvar_reloader,
+            stats_reloader,
         )| {
             let node =
                 ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
@@ -1150,9 +1182,11 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
                 RunConfiguredNodeError::Signal(error)
             })?;
             eprintln!(
-            "{{\"event\":\"cluster_session_node_ready\",\"address\":\"{address}\",\"schema_version\":{schema_version},\"max_connections\":{},\"account_count\":{},\"skipped_tables\":[{skipped}]}}",
+            "{{\"event\":\"cluster_session_node_ready\",\"address\":\"{address}\",\"schema_version\":{schema_version},\"max_connections\":{},\"account_count\":{},\"skipped_tables\":[{skipped}],\"stats_loaded\":{},\"stats_pseudo\":{}}}",
             config.max_connections,
             users.len(),
+            stats_receipt.loaded,
+            stats_receipt.pseudo,
         );
             let outcome = node.run().map_err(RunConfiguredNodeError::Node);
             // The reload threads hold their own transaction openers; joining
@@ -1165,6 +1199,7 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             drop(privilege_reloader);
             drop(sysvar_watcher);
             drop(sysvar_reloader);
+            drop(stats_reloader);
             outcome
         },
     )
@@ -1884,6 +1919,9 @@ mod tests {
             Arc::clone(&node.catalog),
             node.accounts.live.clone(),
             node.sysvars.live.clone(),
+            Arc::new(SharedStats::new(
+                tidb_exec::stats_watch::StatsSnapshot::new(),
+            )),
         );
         let users =
             ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))

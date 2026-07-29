@@ -32,6 +32,7 @@ use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_load::{ClusterStatsLoader, ClusterTableStats};
 use crate::mysql_system_tables::SystemTableError;
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
+use crate::stats_watch::{StatsSnapshot, TableStatsState};
 
 /// Reads one table's statistics through one fresh read-only transaction.
 ///
@@ -69,6 +70,50 @@ pub fn load_table_stats_from_cluster(
         let table_id = info.id;
         let loader = ClusterStatsLoader::locate(&catalog)?;
         loader.load_table(&mut snapshot, table_id, &column_types)
+    };
+    transaction
+        .finish_without_writes()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    loaded
+}
+
+/// Reads every one of `tables`' statistics through one fresh read-only
+/// transaction: one `start_ts` for every table's `mysql.stats_*` rows, not
+/// just one table's, which is what makes the result a single consistent
+/// [`StatsSnapshot`] a node can publish whole into
+/// [`crate::stats_watch::SharedStats`].
+///
+/// `tables` pairs each physical table ID with the column-type map its bounds
+/// decode against ([`crate::cluster_stats_load::column_types_of`]); a caller
+/// with an already-loaded [`crate::cluster_catalog::ClusterCatalog`] builds
+/// this from the `TableInfo`s it is booting the node over.
+///
+/// A table with no `mysql.stats_meta` row becomes
+/// [`TableStatsState::Pseudo`] rather than being omitted: the node must know
+/// it *asked* and the cluster said "never analyzed", which is a different
+/// fact from never having asked at all (see the [`crate::stats_watch`]
+/// module doc).
+pub fn load_stats_snapshot_from_cluster(
+    opener: &RealOptimisticTransactionOpener,
+    timeout: Duration,
+    tables: &[(i64, BTreeMap<i64, FieldType>)],
+) -> Result<StatsSnapshot, SystemTableError> {
+    let mut transaction = opener
+        .begin_read_only()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    let loaded = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        let catalog = load_cluster_catalog(&mut snapshot)?;
+        let loader = ClusterStatsLoader::locate(&catalog)?;
+        let mut result = StatsSnapshot::new();
+        for (table_id, column_types) in tables {
+            let state = match loader.load_table(&mut snapshot, *table_id, column_types)? {
+                Some(stats) => TableStatsState::Loaded(std::sync::Arc::new(stats)),
+                None => TableStatsState::Pseudo,
+            };
+            result.insert(*table_id, state);
+        }
+        Ok(result)
     };
     transaction
         .finish_without_writes()

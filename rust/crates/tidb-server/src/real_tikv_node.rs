@@ -41,6 +41,8 @@ use tidb_exec::real_tikv_read::{
     ReadProcessShutdownStage, RealOptimisticTransactionOpener, RealTiKvQuery, RealTiKvReadSession,
     RealTiKvReadSessionOpener,
 };
+use tidb_exec::real_tikv_stats::load_stats_snapshot_from_cluster;
+use tidb_exec::stats_watch::{SharedStats, StatsReloadError, StatsReloadStats, StatsReloader};
 use tidb_pd_client::{
     EtcdClient, EtcdWatchStats, EtcdWatcher, DDL_GLOBAL_SCHEMA_VERSION_KEY, PRIVILEGE_UPDATE_KEY,
     SYSVAR_UPDATE_KEY,
@@ -135,6 +137,15 @@ pub struct RealTiKvSessionFactory {
     /// `None` when etcd could not be reached at startup, which leaves peers
     /// on their own lease tick rather than failing DDL.
     schema_notifier: Option<Arc<EtcdClient>>,
+    /// This node's loaded tables' `mysql.stats_*`, republished whole by
+    /// [`Self::stats_reloader`]. `None` for a node whose table came only from
+    /// `--read-table`, which has no cluster catalog to load statistics
+    /// against either -- the same condition that leaves [`Self::catalog`]
+    /// `None`.
+    stats: Option<Arc<SharedStats>>,
+    /// The lease-cadence stats reload thread, stopped and joined when this
+    /// factory is dropped.
+    stats_reloader: Option<StatsReloader>,
 }
 
 impl RealTiKvSessionFactory {
@@ -163,8 +174,15 @@ impl RealTiKvSessionFactory {
         )
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let schema_notifier = connect_schema_notifier(config);
-        let (catalog, watcher, reloader) = match loaded {
+        let (catalog, watcher, reloader, stats, stats_reloader) = match loaded {
             Some(catalog) => {
+                let (stats, stats_reloader) = spawn_node_stats(
+                    &catalog,
+                    &authority,
+                    config.schema_lease,
+                    PRODUCTION_CONTROL_PLANE_TIMEOUT,
+                )
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                 let (catalog, reloader) = spawn_catalog_reloader(
                     catalog,
                     authority.transaction_opener(),
@@ -172,9 +190,15 @@ impl RealTiKvSessionFactory {
                 )
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                 let watcher = spawn_schema_version_watch(config, &reloader);
-                (Some(catalog), watcher, Some(reloader))
+                (
+                    Some(catalog),
+                    watcher,
+                    Some(reloader),
+                    Some(stats),
+                    Some(stats_reloader),
+                )
             }
-            None => (None, None, None),
+            None => (None, None, None, None, None),
         };
         let factory = Self::from_authority_with_catalog(
             &authority,
@@ -183,6 +207,8 @@ impl RealTiKvSessionFactory {
             watcher,
             reloader,
             schema_notifier,
+            stats,
+            stats_reloader,
         );
         Ok((factory, authority))
     }
@@ -194,6 +220,7 @@ impl RealTiKvSessionFactory {
     /// after reading the cluster's own catalog) call this with their own
     /// catalog/watcher/reloader, `None` when the served table came only from
     /// `--read-table` with no cluster catalog to follow.
+    #[allow(clippy::too_many_arguments)]
     fn from_authority_with_catalog(
         authority: &ProductionReadProcessAuthority,
         table_refusals: Vec<LoadedTableRefusal>,
@@ -201,6 +228,8 @@ impl RealTiKvSessionFactory {
         watcher: Option<EtcdWatcher>,
         reloader: Option<CatalogReloader>,
         schema_notifier: Option<Arc<EtcdClient>>,
+        stats: Option<Arc<SharedStats>>,
+        stats_reloader: Option<StatsReloader>,
     ) -> Self {
         Self {
             opener: authority.opener(),
@@ -212,6 +241,8 @@ impl RealTiKvSessionFactory {
             watcher,
             reloader,
             schema_notifier,
+            stats,
+            stats_reloader,
         }
     }
 
@@ -265,6 +296,21 @@ impl RealTiKvSessionFactory {
     #[must_use]
     pub fn schema_watch_stats(&self) -> Option<EtcdWatchStats> {
         self.watcher.as_ref().map(EtcdWatcher::stats)
+    }
+
+    /// This node's loaded tables' statistics, `None` for a node with no
+    /// cluster catalog to load them against. The consuming estimator is a
+    /// parallel unit; this is the supply line it will read from.
+    #[must_use]
+    pub fn stats(&self) -> Option<&Arc<SharedStats>> {
+        self.stats.as_ref()
+    }
+
+    /// What the stats reload thread has done so far, `None` when there is no
+    /// thread.
+    #[must_use]
+    pub fn stats_reload_stats(&self) -> Option<StatsReloadStats> {
+        self.stats_reloader.as_ref().map(StatsReloader::stats)
     }
 }
 
@@ -396,6 +442,75 @@ fn emit_warning(event: &str, detail: &str) {
 
 fn json_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"unprintable\"".to_owned())
+}
+
+/// Every table's `(table_id, column_types)` a loaded catalog holds -- exactly
+/// the argument [`load_stats_snapshot_from_cluster`] needs to boot-load
+/// statistics for every table this node serves.
+fn stats_targets(
+    catalog: &ClusterCatalog,
+) -> Vec<(
+    i64,
+    std::collections::BTreeMap<i64, tidb_datatype::FieldType>,
+)> {
+    catalog
+        .databases
+        .iter()
+        .flat_map(|database| database.tables.iter())
+        .map(|table| {
+            (
+                table.id,
+                tidb_exec::cluster_stats_load::column_types_of(table),
+            )
+        })
+        .collect()
+}
+
+/// Boot-loads every table a loaded catalog holds and starts following the
+/// cluster's `mysql.stats_*` for them.
+///
+/// This is a one-shot load over every loaded table rather than Go's lazy,
+/// per-column, async sync-load (`pkg/statistics/handle/syncload`, driven by
+/// `collect_column_stats_usage` at plan time with its own worker pool and
+/// priority channels): this node's loaded catalog is small (one process's
+/// worth of served tables, not a whole cluster's schema), so reading every
+/// table's statistics once at boot is a bounded cost, and it keeps the supply
+/// line -- plumbing only, no estimation logic -- decoupled from the planner's
+/// per-column load-on-demand path that a future estimator unit will add.
+/// Documented simplification, not a silent gap: a table analyzed for the
+/// first time after boot is picked up by [`StatsReloader`]'s tick, just not
+/// as promptly as Go's synchronous on-demand load would.
+///
+/// Ticks at the same cadence [`spawn_catalog_reloader`] uses (`schema_lease`,
+/// not halved -- see the [`tidb_exec::stats_watch`] module doc for why there
+/// is no watch to keep prompt the way the catalog's `lease/2` tick is backed
+/// by an etcd watch: Go's own stats refresh has no such key either).
+pub(crate) fn spawn_node_stats(
+    catalog: &ClusterCatalog,
+    authority: &ProductionReadProcessAuthority,
+    schema_lease: Duration,
+    timeout: Duration,
+) -> Result<(Arc<SharedStats>, StatsReloader), StatsReloadError> {
+    let targets = stats_targets(catalog);
+    let snapshot =
+        load_stats_snapshot_from_cluster(&authority.transaction_opener(), timeout, &targets)
+            .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error.to_string())))?;
+    let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
+    eprintln!(
+        "{{\"event\":\"stats_loaded\",\"loaded\":{},\"pseudo\":{}}}",
+        receipt.loaded, receipt.pseudo
+    );
+    let shared = Arc::new(SharedStats::new(snapshot));
+    let opener = authority.transaction_opener();
+    let reloader = StatsReloader::spawn(
+        Arc::clone(&shared),
+        schema_lease,
+        Box::new(move || {
+            load_stats_snapshot_from_cluster(&opener, timeout, &targets)
+                .map_err(|error| error.to_string())
+        }),
+    )?;
+    Ok((shared, reloader))
 }
 
 /// Publishes the startup catalog and starts following the cluster's schema.
@@ -1496,6 +1611,10 @@ pub(crate) fn run_bound_node(
     let authority_id = factory.authority_id();
     let read_authority_id = factory.read_authority_id();
     let served_table = factory.served_table().clone();
+    let stats_receipt = factory
+        .stats()
+        .map(|stats| stats.receipt())
+        .unwrap_or_default();
     let refused_descriptors = factory
         .table_refusals()
         .iter()
@@ -1529,10 +1648,12 @@ pub(crate) fn run_bound_node(
         })?;
         let table_descriptors = served_table_descriptor(&served_table);
         eprintln!(
-            "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"pd_endpoints\":{},\"cluster_id\":{cluster_id},\"authority_id\":{authority_id},\"read_authority_id\":{read_authority_id},\"tables\":[{table_descriptors}],\"refused_tables\":[{refused_descriptors}],\"max_connections\":{},\"account_count\":{},\"shutdown_grace_ms\":{shutdown_grace_ms}}}",
+            "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"pd_endpoints\":{},\"cluster_id\":{cluster_id},\"authority_id\":{authority_id},\"read_authority_id\":{read_authority_id},\"tables\":[{table_descriptors}],\"refused_tables\":[{refused_descriptors}],\"max_connections\":{},\"account_count\":{},\"shutdown_grace_ms\":{shutdown_grace_ms},\"stats_loaded\":{},\"stats_pseudo\":{}}}",
             config.pd_endpoints.len(),
             config.max_connections,
             users.len(),
+            stats_receipt.loaded,
+            stats_receipt.pseudo,
         );
         let result = node.run().map_err(RunConfiguredNodeError::Node);
         emit_privilege_reload_stats(privilege_reloader.as_ref());
@@ -1720,8 +1841,15 @@ pub(crate) fn connect_loaded_catalog_authority(
             // cluster's schema instead of running forever on its startup
             // read. `loaded` is `None` only when every table came from
             // `--read-table` (no `--load-table` was given at all).
-            let (catalog, watcher, reloader) = match loaded {
+            let (catalog, watcher, reloader, stats, stats_reloader) = match loaded {
                 Some(catalog) => {
+                    let (stats, stats_reloader) = spawn_node_stats(
+                        &catalog,
+                        &authority,
+                        config.schema_lease,
+                        PRODUCTION_CONTROL_PLANE_TIMEOUT,
+                    )
+                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                     let (catalog, reloader) = spawn_catalog_reloader(
                         catalog,
                         authority.transaction_opener(),
@@ -1729,9 +1857,15 @@ pub(crate) fn connect_loaded_catalog_authority(
                     )
                     .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                     let watcher = spawn_schema_version_watch(config, &reloader);
-                    (Some(catalog), watcher, Some(reloader))
+                    (
+                        Some(catalog),
+                        watcher,
+                        Some(reloader),
+                        Some(stats),
+                        Some(stats_reloader),
+                    )
                 }
-                None => (None, None, None),
+                None => (None, None, None, None, None),
             };
             Ok(LoadedCatalogAuthority::Single(
                 Box::new(RealTiKvSessionFactory::from_authority_with_catalog(
@@ -1741,6 +1875,8 @@ pub(crate) fn connect_loaded_catalog_authority(
                     watcher,
                     reloader,
                     schema_notifier,
+                    stats,
+                    stats_reloader,
                 )),
                 authority,
             ))

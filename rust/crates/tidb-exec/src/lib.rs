@@ -684,6 +684,7 @@ pub mod statement_refcount;
 pub mod statement_rows_reader;
 mod statement_status;
 pub mod stats_load_result;
+pub mod stats_watch;
 pub mod status_registry;
 mod status_result;
 pub mod stddevpop;
