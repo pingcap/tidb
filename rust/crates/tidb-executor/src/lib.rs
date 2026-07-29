@@ -49,6 +49,7 @@ pub mod limit;
 pub mod mem_table;
 mod plan_trace;
 pub mod projection;
+pub mod pushdown_scan;
 pub mod scan_pushdown;
 pub mod selection;
 pub mod sort;

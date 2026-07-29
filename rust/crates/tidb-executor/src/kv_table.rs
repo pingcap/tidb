@@ -37,6 +37,10 @@
 //! backend still needs.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::pushdown_scan::{
+    PushdownRowStream, PushdownScanColumn, PushdownScanRequest, EXTRA_HANDLE_COLUMN_ID,
+};
+use crate::scan_pushdown::ScanComparison;
 use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use std::collections::BTreeMap;
 use tidb_chunk::chunk::Chunk;
@@ -944,16 +948,114 @@ impl KvTable {
         keep: Option<&[usize]>,
     ) -> Result<RowCursor, KvTableError> {
         let decoder = self.row_decoder_projected(keep);
-        let (low, high) = get_table_handle_key_range(self.table_id);
-        // `get_table_handle_key_range` returns an inclusive upper bound, while
-        // the iterator's is exclusive, so the scan runs to the key just past it.
-        let mut upper = high;
-        upper.push(0);
+        let (low, upper) = self.record_key_range();
         let iterator = self
             .store
-            .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
+            .iter(Some(&low), Some(&upper))
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         Ok(RowCursor { iterator, decoder })
+    }
+
+    /// The record range this table's rows live in, as the storage seam's
+    /// half-open `[start, end)`.
+    fn record_key_range(&self) -> (Key, Key) {
+        let (low, high) = get_table_handle_key_range(self.table_id);
+        // `get_table_handle_key_range` returns an inclusive upper bound, while
+        // the seam's is exclusive, so the range runs to the key just past it.
+        let mut upper = high;
+        upper.push(0);
+        (Key::from_bytes(low), Key::from_bytes(upper))
+    }
+
+    /// A cursor that reads this table's rows through the backend's
+    /// coprocessor -- predicate, row cap and projection evaluated at the
+    /// region -- with the session's staged writes merged back in, or `None`
+    /// when the backend has none or this table's shape is outside it.
+    ///
+    /// `keep` is the projected column set, in output order; `comparisons`
+    /// describe the conjuncts the caller applies to every emitted row anyway,
+    /// so the remote filter is a pre-filter and cannot change the answer.
+    ///
+    /// A common-handle (clustered non-integer primary key) table is refused:
+    /// the merge below addresses rows by their integer handle, so a handle
+    /// this cursor cannot compare is a shape it must not claim to serve.
+    pub fn pushdown_row_cursor(
+        &mut self,
+        keep: &[usize],
+        comparisons: &[ScanComparison],
+        limit: Option<u64>,
+    ) -> Result<Option<RemoteRowCursor>, KvTableError> {
+        if !self.common_handle_offsets.is_empty() {
+            return Ok(None);
+        }
+        let mut columns: Vec<PushdownScanColumn> = keep
+            .iter()
+            .map(|offset| {
+                let column = &self.columns[*offset];
+                PushdownScanColumn {
+                    id: column.id,
+                    field_type: column.field_type.clone(),
+                    is_handle: self.pk_handle_offset == Some(*offset),
+                }
+            })
+            .collect();
+        // The merge needs every remote row's handle. A projected integer
+        // primary key already carries it; otherwise the row handle is no
+        // column of the table (`_tidb_rowid`), so one is appended and dropped
+        // again before the row is emitted.
+        let handle_index = match self
+            .pk_handle_offset
+            .and_then(|offset| keep.iter().position(|kept| *kept == offset))
+        {
+            Some(index) => index,
+            None => {
+                columns.push(match self.pk_handle_offset {
+                    Some(offset) => PushdownScanColumn {
+                        id: self.columns[offset].id,
+                        field_type: self.columns[offset].field_type.clone(),
+                        is_handle: true,
+                    },
+                    None => PushdownScanColumn {
+                        id: EXTRA_HANDLE_COLUMN_ID,
+                        field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        is_handle: true,
+                    },
+                });
+                columns.len() - 1
+            }
+        };
+        let (start, end) = self.record_key_range();
+        let request = PushdownScanRequest {
+            table_id: self.table_id,
+            columns,
+            handle_index,
+            comparisons: comparisons.to_vec(),
+            limit,
+            start,
+            end,
+        };
+        let Some(scan) = self.store.open_pushdown_scan(&request) else {
+            return Ok(None);
+        };
+        let scan = scan.map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        let decoder = self.row_decoder_projected(Some(keep));
+        let mut staged = Vec::with_capacity(scan.staged.len());
+        for (key, value) in scan.staged {
+            let row = match value {
+                Some(value) => Some(decoder.decode(key.as_bytes(), &value)?.1),
+                None => None,
+            };
+            staged.push((key.into_bytes(), row));
+        }
+        Ok(Some(RemoteRowCursor {
+            stream: scan.stream,
+            staged: staged.into_iter(),
+            pending_staged: None,
+            pending_remote: None,
+            width: keep.len(),
+            handle_index,
+            table_id: self.table_id,
+        }))
     }
 
     /// Scans the table's record-key range in key order, decoding each value.
@@ -1559,6 +1661,129 @@ impl Drop for RowCursor {
     }
 }
 
+/// One row of a merge side, addressed by its record key.
+type KeyedRow = (Vec<u8>, Vec<Datum>);
+
+/// One staged write of the same range: `None` is a staged delete.
+type StagedRow = (Vec<u8>, Option<Vec<Datum>>);
+
+/// A forward cursor over a table's record range served by the backend's
+/// coprocessor, with the session's staged writes merged back in.
+///
+/// # Why the merge is here and not at the backend
+///
+/// A coprocessor answers from the snapshot. Inside an explicit transaction
+/// the session's own uncommitted writes are client-side, so this cursor is
+/// Go's `UnionScan` over a distsql reader: the staged rows win over the
+/// snapshot rows they shadow, a staged delete hides the snapshot row, and the
+/// merged stream stays in record-key order -- which is the order the remote
+/// stream and the staged buffer already arrive in, so the merge is one linear
+/// pass with one row of each side alive at a time.
+///
+/// The caller applies its pushed predicate to *every* row this yields, staged
+/// or remote, so a staged row that no longer satisfies the `WHERE` is dropped
+/// by the same test the snapshot rows passed at TiKV.
+pub struct RemoteRowCursor {
+    stream: Box<dyn PushdownRowStream>,
+    staged: std::vec::IntoIter<StagedRow>,
+    pending_staged: Option<StagedRow>,
+    pending_remote: Option<KeyedRow>,
+    /// Number of projected columns, which the remote row may exceed by the
+    /// appended handle column.
+    width: usize,
+    /// Where the handle sits in a remote row.
+    handle_index: usize,
+    table_id: i64,
+}
+
+impl RemoteRowCursor {
+    /// How many rows have crossed the network so far: the wire receipt.
+    #[must_use]
+    pub fn rows_returned(&self) -> u64 {
+        self.stream.rows_returned()
+    }
+
+    /// The next remote row, as its record key and its projected columns.
+    fn next_remote(&mut self) -> Result<Option<KeyedRow>, KvTableError> {
+        if self.pending_remote.is_some() {
+            return Ok(self.pending_remote.clone());
+        }
+        let Some(mut row) = self
+            .stream
+            .next_row()
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?
+        else {
+            return Ok(None);
+        };
+        let handle = match row.get(self.handle_index) {
+            Some(Datum::Int(value)) => *value,
+            Some(Datum::UInt(value)) => *value as i64,
+            other => {
+                return Err(KvTableError::Decode(format!(
+                    "a coprocessor row carried no integer handle, got {other:?}"
+                )));
+            }
+        };
+        row.truncate(self.width);
+        let key = encode_row_key_with_handle(self.table_id, &RecordHandle::Int(handle));
+        self.pending_remote = Some((key, row));
+        Ok(self.pending_remote.clone())
+    }
+
+    fn next_staged(&mut self) -> Option<StagedRow> {
+        if self.pending_staged.is_none() {
+            self.pending_staged = self.staged.next();
+        }
+        self.pending_staged.clone()
+    }
+
+    /// The next row of the merged stream in record-key order, or `None` when
+    /// both sides are exhausted.
+    pub fn next_row(&mut self) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
+        loop {
+            let remote = self.next_remote()?;
+            let staged = self.next_staged();
+            match (remote, staged) {
+                (None, None) => return Ok(None),
+                (Some((key, row)), None) => {
+                    self.pending_remote = None;
+                    return Ok(Some((TableHandle::Int(decode_int_handle(&key)?), row)));
+                }
+                (remote, Some((staged_key, staged_row))) => {
+                    // A staged write of the same key is the transaction's own
+                    // newer version of that row, so it replaces the snapshot's
+                    // and a tombstone drops it entirely.
+                    if let Some((remote_key, _)) = &remote {
+                        match remote_key.as_slice().cmp(staged_key.as_slice()) {
+                            std::cmp::Ordering::Less => {
+                                let (key, row) = self.pending_remote.take().expect("just peeked");
+                                return Ok(Some((TableHandle::Int(decode_int_handle(&key)?), row)));
+                            }
+                            std::cmp::Ordering::Equal => self.pending_remote = None,
+                            std::cmp::Ordering::Greater => {}
+                        }
+                    }
+                    self.pending_staged = None;
+                    if let Some(row) = staged_row {
+                        return Ok(Some((
+                            TableHandle::Int(decode_int_handle(&staged_key)?),
+                            row,
+                        )));
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Drop for RemoteRowCursor {
+    /// An abandoned cursor (an early-stopping `LIMIT`) must still release the
+    /// request, which a drained stream's explicit `close` would have done.
+    fn drop(&mut self) {
+        self.stream.close();
+    }
+}
+
 /// A forward cursor over one index range, yielding row handles in index order.
 ///
 /// See [`KvTable::index_range_cursor`].
@@ -1598,10 +1823,16 @@ impl Drop for IndexRangeCursor {
 pub struct TableScanExec {
     meta: ExecutorMeta,
     table: KvTable,
-    /// The open storage cursor; `None` before `open` and once exhausted.
+    /// The open storage cursor; `None` before `open` and once exhausted, and
+    /// always `None` when the backend served the scan through `remote`.
     cursor: Option<RowCursor>,
+    /// The open coprocessor-served cursor, when the backend has one.
+    remote: Option<RemoteRowCursor>,
     /// Conjuncts this scan took over from the `Selection` above it.
     filter: Option<crate::scan_pushdown::ScanFilterProbe>,
+    /// The same conjuncts as a description, for a backend that can evaluate
+    /// them at the region. They are applied locally regardless.
+    pushed: Vec<ScanComparison>,
     /// The table-column offsets this scan emits, in output order. Every
     /// column of the table until the driver prunes it.
     keep: Vec<usize>,
@@ -1625,7 +1856,9 @@ impl TableScanExec {
             meta,
             table,
             cursor: None,
+            remote: None,
             filter: None,
+            pushed: Vec::new(),
             keep,
             scanned: std::rc::Rc::new(std::cell::Cell::new(0)),
             limit: None,
@@ -1638,10 +1871,54 @@ impl TableScanExec {
     pub fn scanned_rows(&self) -> std::rc::Rc<std::cell::Cell<u64>> {
         std::rc::Rc::clone(&self.scanned)
     }
+
+    /// How many rows the backend's coprocessor has sent across the network for
+    /// this scan, or `None` when the scan is reading raw key/value bytes.
+    ///
+    /// This is the wire receipt: against a lowered predicate it is smaller
+    /// than the table holds, which a byte-level scan can never be.
+    #[must_use]
+    pub fn rows_crossing_the_wire(&self) -> Option<u64> {
+        self.remote.as_ref().map(RemoteRowCursor::rows_returned)
+    }
+
+    /// The next row of whichever cursor is open, remote or local.
+    fn next_source_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
+        let next = match (self.remote.as_mut(), self.cursor.as_mut()) {
+            (Some(remote), _) => remote.next_row(),
+            (None, Some(cursor)) => cursor.next_row(),
+            (None, None) => return Ok(None),
+        }
+        .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
+        match next {
+            Some((_, row)) => Ok(Some(row)),
+            None => {
+                self.remote = None;
+                self.cursor = None;
+                Ok(None)
+            }
+        }
+    }
 }
 
 impl Executor for TableScanExec {
     fn open(&mut self) -> Result<(), ExecError> {
+        self.scanned.set(0);
+        self.emitted = 0;
+        self.cursor = None;
+        // A backend with a coprocessor evaluates the predicate, the cap and
+        // the projection at the region, so only the surviving rows cross the
+        // network. Nothing about the answer depends on it succeeding: the
+        // conjuncts and the cap are applied below either way, which is what
+        // makes the fall-through a performance choice rather than a semantic
+        // one.
+        self.remote = self
+            .table
+            .pushdown_row_cursor(&self.keep.clone(), &self.pushed, self.limit)
+            .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
+        if self.remote.is_some() {
+            return Ok(());
+        }
         // The pruned column set is the cursor's projection, so an
         // unreferenced column is never decoded on the streaming path either.
         let projection: Option<&[usize]> = if self.keep.len() == self.table.columns.len() {
@@ -1654,8 +1931,6 @@ impl Executor for TableScanExec {
                 .row_cursor_projected(projection)
                 .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?,
         );
-        self.scanned.set(0);
-        self.emitted = 0;
         Ok(())
     }
 
@@ -1669,16 +1944,10 @@ impl Executor for TableScanExec {
                 // Early stop: the cursor is dropped, so the rows past the
                 // cap are never read, let alone decoded.
                 self.cursor = None;
+                self.remote = None;
                 return Ok(());
             }
-            let Some(cursor) = self.cursor.as_mut() else {
-                return Ok(());
-            };
-            let next = cursor
-                .next_row()
-                .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
-            let Some((_, row)) = next else {
-                self.cursor = None;
+            let Some(row) = self.next_source_row()? else {
                 return Ok(());
             };
             self.scanned.set(self.scanned.get() + 1);
@@ -1697,6 +1966,7 @@ impl Executor for TableScanExec {
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.cursor = None;
+        self.remote = None;
         Ok(())
     }
 
@@ -1725,6 +1995,7 @@ impl Executor for TableScanExec {
         if filter.is_empty() {
             return false;
         }
+        self.pushed = filter.comparisons().to_vec();
         self.filter = Some(crate::scan_pushdown::ScanFilterProbe::new(
             filter.clone(),
             ctx.clone(),

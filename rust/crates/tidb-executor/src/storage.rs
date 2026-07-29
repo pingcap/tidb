@@ -104,6 +104,8 @@ use tidb_txnkv::{
     GetOptions, Getter, Key, KvIterator, MemStorage, MemStorageError, Mutator, Retriever,
 };
 
+use crate::pushdown_scan::{PushdownScan, PushdownScanRequest};
+
 /// A failure reported by a storage backend.
 ///
 /// The variant names match [`MemStorageError`]'s so the text a
@@ -210,6 +212,22 @@ pub trait TableStorage: fmt::Debug + Send {
         start: Option<&Key>,
         upper_bound: Option<&Key>,
     ) -> Result<Box<dyn StorageIterator>, StorageError>;
+
+    /// Optionally serves a base-table scan remotely, with the predicate, the
+    /// row cap and the column projection evaluated at the backend.
+    ///
+    /// `None` -- the default, and the in-process store's answer -- means the
+    /// backend has no coprocessor and the caller must use
+    /// [`iter`](TableStorage::iter). A returned [`PushdownScan`] carries the
+    /// session's staged writes alongside the remote rows, because a
+    /// coprocessor answers from the snapshot only; see
+    /// [`crate::pushdown_scan`].
+    fn open_pushdown_scan(
+        &mut self,
+        _request: &PushdownScanRequest,
+    ) -> Option<Result<PushdownScan, StorageError>> {
+        None
+    }
 
     /// The number of stored keys. Divergence: see the module doc.
     fn key_count(&self) -> usize;

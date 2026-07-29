@@ -63,6 +63,9 @@ use std::sync::{Arc, Mutex};
 
 use tidb_txnkv::Key;
 
+use crate::pushdown_scan::{
+    PushdownScan, PushdownScanRequest, PushdownScanner, PushdownScannerError,
+};
 use crate::storage::{StorageError, StorageIterator, TableStorage};
 
 /// Key/value pairs one snapshot scan returned, in key order. The same shape
@@ -252,6 +255,9 @@ pub struct ClusterTableStorage {
     buffer: MutationBuffer,
     snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
     truncated: Arc<Mutex<bool>>,
+    /// The coprocessor capability, when the node was given one. `None` keeps
+    /// every scan on the byte-level merge below.
+    scanner: Option<Arc<dyn PushdownScanner>>,
 }
 
 impl ClusterTableStorage {
@@ -262,7 +268,20 @@ impl ClusterTableStorage {
             buffer,
             snapshot,
             truncated: Arc::new(Mutex::new(false)),
+            scanner: None,
         }
+    }
+
+    /// Gives this session's tables a coprocessor to serve base-table scans
+    /// with, so a predicate is evaluated at the region instead of after the
+    /// range's bytes have crossed the network.
+    ///
+    /// The staged buffer is untouched by it: see
+    /// [`TableStorage::open_pushdown_scan`] below for how the two are merged.
+    #[must_use]
+    pub fn with_pushdown_scanner(mut self, scanner: Arc<dyn PushdownScanner>) -> Self {
+        self.scanner = Some(scanner);
+        self
     }
 
     /// The session buffer these tables stage into, for the COMMIT path.
@@ -339,6 +358,37 @@ impl TableStorage for ClusterTableStorage {
         let snapshot = self.snapshot_scan(start, end)?;
         let staged = self.buffer.range(start, end);
         Ok(Box::new(MergedIterator::new(merge(snapshot, staged))))
+    }
+
+    /// Serves the scan through the node's coprocessor when it has one, and
+    /// hands the session's staged writes for the same range back with it.
+    ///
+    /// The row cap is the one place the two halves interact. TiKV stops after
+    /// `limit` *snapshot* rows, which is the right prefix only when nothing is
+    /// staged in the range: a staged insert with a smaller key displaces the
+    /// last remote row, and a staged delete uncovers a row past it. So the cap
+    /// travels only when the staged range is empty, and the caller enforces it
+    /// again either way.
+    fn open_pushdown_scan(
+        &mut self,
+        request: &PushdownScanRequest,
+    ) -> Option<Result<PushdownScan, StorageError>> {
+        let scanner = self.scanner.as_ref()?;
+        if let Err(error) = self.check_usable() {
+            return Some(Err(error));
+        }
+        let staged = self.buffer.range(&request.start, &request.end);
+        let mut request = request.clone();
+        if !staged.is_empty() {
+            request.limit = None;
+        }
+        match scanner.open(&request) {
+            Ok(stream) => Some(Ok(PushdownScan { stream, staged })),
+            // A refusal is not a failure: the caller falls back to `iter`,
+            // which answers the same question from the same snapshot.
+            Err(PushdownScannerError::Unsupported(_)) => None,
+            Err(PushdownScannerError::Backend(error)) => Some(Err(error)),
+        }
     }
 
     fn key_count(&self) -> usize {
