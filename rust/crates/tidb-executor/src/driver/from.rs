@@ -356,14 +356,11 @@ pub(crate) fn derived_field_names(select: &tidb_ast::SelectStmt) -> Option<Vec<S
         .fields
         .fields()
         .iter()
-        .map(|field| match field {
-            SelectField::Expr { expr, alias } => Some(match (alias, expr) {
-                (Some(alias), _) => alias.clone(),
-                (None, tidb_ast::Expr::Column(path)) => {
-                    path.last().cloned().unwrap_or_else(|| expr.restore())
-                }
-                (None, _) => expr.restore(),
-            }),
+        .enumerate()
+        .map(|(field_index, field)| match field {
+            SelectField::Expr { expr, alias } => Some(alias.clone().unwrap_or_else(|| {
+                crate::driver::default_field_display_name(&select.fields, field_index, expr)
+            })),
             _ => None,
         })
         .collect()

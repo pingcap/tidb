@@ -100,7 +100,7 @@ pub(crate) fn check_only_full_group_by(
     // in a checked clause is justified by being written IDENTICALLY here.
     let mut group_exprs: Vec<&tidb_ast::Expr> = Vec::new();
     for item in &select.group_by {
-        let resolved = resolve_group_by_position(&item.expr, select.fields.fields())?;
+        let resolved = resolve_group_by_position(&item.expr, &select.fields)?;
         // The borrow must outlive the loop body, so a position that resolved
         // to a select field is re-read from the field list rather than from
         // the temporary `Cow`.

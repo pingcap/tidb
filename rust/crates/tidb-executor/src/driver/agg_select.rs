@@ -195,7 +195,7 @@ fn group_by_display_names(select: &tidb_ast::SelectStmt) -> Vec<String> {
         .filter_map(|item| {
             // A positional `GROUP BY 1` names the same column a literal
             // `GROUP BY a` would, so GROUPING() must see it the same way.
-            let resolved = resolve_group_by_position(&item.expr, select.fields.fields()).ok()?;
+            let resolved = resolve_group_by_position(&item.expr, &select.fields).ok()?;
             match resolved.as_ref() {
                 tidb_ast::Expr::Column(path) => path.last().cloned(),
                 _ => None,
@@ -289,13 +289,15 @@ fn lower_select_fields(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    for field in select.fields.fields() {
+    for (field_index, field) in select.fields.fields().iter().enumerate() {
         let SelectField::Expr { expr, alias } = field else {
             return Err(DriverError::Unsupported(
                 "`*` is not supported in an aggregate SELECT",
             ));
         };
-        let display = alias.clone().unwrap_or_else(|| expr.restore());
+        let display = alias.clone().unwrap_or_else(|| {
+            crate::driver::default_field_display_name(&select.fields, field_index, expr)
+        });
         // A hoisted window call: its value is appended above the aggregation,
         // so the field reads that column rather than any aggregate.
         if let Some(index) = hoisted_window_index(expr) {
@@ -657,7 +659,7 @@ fn build_aggregation(
     // `resolve_group_by_position`.
     let mut group_by = Vec::with_capacity(select.group_by.len());
     for item in &select.group_by {
-        let resolved = resolve_group_by_position(&item.expr, select.fields.fields())?;
+        let resolved = resolve_group_by_position(&item.expr, &select.fields)?;
         group_by.push(
             rewrite_expr_resolved(resolved.as_ref(), resolver)
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
@@ -1036,10 +1038,11 @@ fn build_final_projection(
             .fields
             .fields()
             .iter()
-            .map(|field| match field {
-                SelectField::Expr { expr, alias } => {
-                    alias.clone().unwrap_or_else(|| expr.restore())
-                }
+            .enumerate()
+            .map(|(field_index, field)| match field {
+                SelectField::Expr { expr, alias } => alias.clone().unwrap_or_else(|| {
+                    crate::driver::default_field_display_name(&select.fields, field_index, expr)
+                }),
                 _ => String::new(),
             })
             .collect();

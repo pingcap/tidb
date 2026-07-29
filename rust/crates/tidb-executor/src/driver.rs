@@ -44,11 +44,39 @@ use crate::sort::{SortByItem, SortExec};
 use crate::table_dual::TableDualExec;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tidb_ast::{JoinNode, QueryStmt, SelectField, Stmt};
+use tidb_ast::{JoinNode, QueryStmt, SelectField, SelectFieldList, Stmt};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver, NoResolver};
+
+/// The name an unaliased field takes: a column reference keeps its column
+/// name, anything else keeps the text it was WRITTEN with -- Go's
+/// `SelectField.Text`, backed here by the parser-recorded per-field source
+/// span (see `tidb_ast::SelectFieldList::text`). `count(*)` therefore names
+/// the column `count(*)` even though `expr` itself restores as `COUNT(1)`
+/// (the parser lowers a bare `*` argument to the AST literal `1`, matching
+/// the same lowering Go's own hand-written parser performs -- see
+/// `pkg/parser/expr_func_parser.go`'s `parseAggregateFuncCall`). A user who
+/// writes `count(1)` literally still gets `count(1)`, since both cases read
+/// the same original bytes; nothing here special-cases the star string.
+///
+/// Falls back to `expr.restore()` when the parser recorded no source text
+/// for this field (for example a field synthesized by a rewrite pass rather
+/// than parsed from source).
+pub(crate) fn default_field_display_name(
+    fields: &SelectFieldList,
+    index: usize,
+    expr: &tidb_ast::Expr,
+) -> String {
+    match expr {
+        tidb_ast::Expr::Column(path) => path.last().cloned().unwrap_or_default(),
+        other => fields
+            .text(index)
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .map_or_else(|| other.restore(), str::to_owned),
+    }
+}
 use tidb_expr::schema::Schema;
 
 /// An in-memory table: named, typed columns plus row values.
@@ -555,8 +583,10 @@ pub type SelectMeta = (Vec<(String, FieldType)>, Vec<Vec<Datum>>);
 ///
 /// Naming follows Go's result-field resolution in spirit, simplified for the
 /// seed driver: an `AS` alias wins; a plain column reference uses the column's
-/// own name; any other expression uses its restored text (Go's
-/// `RestoreString`); `*` expands to the table's column names.
+/// own name; any other expression uses the text it was WRITTEN with (Go's
+/// `SelectField.Text`, see [`default_field_display_name`]), falling back to
+/// its restored text when the parser recorded no source span for the field;
+/// `*` expands to the table's column names.
 pub fn run_select_meta_on(
     sql: &str,
     catalog: &Catalog,
@@ -1253,18 +1283,14 @@ pub(crate) fn run_select_traced(
     // ABOVE the filter, so the inner query runs only for the rows the WHERE
     // kept, as Go's plan does.
     let mut projected: Vec<(SelectField, Option<String>)> = Vec::new();
-    for field in select.fields.fields() {
+    for (field_index, field) in select.fields.fields().iter().enumerate() {
         let SelectField::Expr { expr, alias } = field else {
             projected.push((field.clone(), None));
             continue;
         };
-        let name = match (alias, expr) {
-            (Some(alias), _) => alias.clone(),
-            (None, tidb_ast::Expr::Column(path)) => {
-                path.last().cloned().unwrap_or_else(|| expr.restore())
-            }
-            (None, _) => expr.restore(),
-        };
+        let name = alias
+            .clone()
+            .unwrap_or_else(|| default_field_display_name(&select.fields, field_index, expr));
         let mut correlated = None;
         let appended = current_scope.width();
         let rewritten = extract_correlated_subquery(
@@ -1821,16 +1847,18 @@ fn substitute_output_aliases(
 /// otherwise.
 fn resolve_group_by_position<'a>(
     expr: &'a tidb_ast::Expr,
-    fields: &'a [SelectField],
+    fields: &'a SelectFieldList,
 ) -> Result<std::borrow::Cow<'a, tidb_ast::Expr>, DriverError> {
     let Some((text, index)) = positional_field_index(expr) else {
         return Ok(std::borrow::Cow::Borrowed(expr));
     };
     let index = index.map_err(|_| unknown_group_position(text))?;
-    let (target, alias) = fields
+    let (target, alias, field_index) = fields
+        .fields()
         .iter()
-        .filter_map(|field| match field {
-            SelectField::Expr { expr, alias } => Some((expr, alias)),
+        .enumerate()
+        .filter_map(|(field_index, field)| match field {
+            SelectField::Expr { expr, alias } => Some((expr, alias, field_index)),
             SelectField::Wildcard(_) => None,
         })
         .nth(index)
@@ -1840,7 +1868,9 @@ fn resolve_group_by_position<'a>(
         tidb_ast::Expr::Aggregate { .. } | tidb_ast::Expr::GroupConcat { .. }
     ) || !crate::window::windows_in(target).is_empty()
     {
-        let name = alias.clone().unwrap_or_else(|| target.restore());
+        let name = alias
+            .clone()
+            .unwrap_or_else(|| default_field_display_name(fields, field_index, target));
         return Err(DriverError::WrongGroupField(name));
     }
     Ok(std::borrow::Cow::Borrowed(target))
@@ -4114,6 +4144,59 @@ mod tests {
             )
             .unwrap(),
             vec![vec![Datum::Int(22)]]
+        );
+    }
+
+    /// Regression for the label a `COUNT` field gets when no `AS` is
+    /// written: MySQL/Go name the output column after the SQL as WRITTEN
+    /// (`SelectField.Text`), not after the AST's normal form -- `COUNT(*)`
+    /// restores as `COUNT(1)` (both here and in Go's own hand-written
+    /// parser, which lowers a bare `*` argument to the literal `1`), but the
+    /// column label must stay `count(*)`. Before the fix this asserted
+    /// `field_name(0) == "COUNT(1)"`; after, it is the written text.
+    #[test]
+    fn count_star_field_keeps_its_written_label() {
+        let catalog = test_catalog();
+        let field_name = |sql: &str| {
+            run_select_meta_on(sql, &catalog, &crate::StmtContext::for_query())
+                .unwrap()
+                .0
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(field_name("SELECT count(*) FROM t"), vec!["count(*)"]);
+        assert_eq!(field_name("SELECT count(1) FROM t"), vec!["count(1)"]);
+        assert_eq!(field_name("SELECT count(a) FROM t"), vec!["count(a)"]);
+        assert_eq!(
+            field_name("SELECT count(DISTINCT a) FROM t"),
+            vec!["count(DISTINCT a)"]
+        );
+        assert_eq!(field_name("SELECT count(*) AS n FROM t"), vec!["n"]);
+        // Same rule inside a derived table: the label becomes the derived
+        // column name.
+        assert_eq!(
+            field_name("SELECT * FROM (SELECT count(*) FROM t) d"),
+            vec!["count(*)"]
+        );
+
+        // The same root cause (the AST losing the original written text)
+        // also surfaces in `ErrWrongGroupField`'s message, which Go quotes
+        // with the field's written text too.
+        let group_by_err = |sql: &str| {
+            run_select_meta_on(sql, &catalog, &crate::StmtContext::for_query())
+                .unwrap_err()
+                .to_mysql_error()
+                .message
+        };
+        assert_eq!(
+            group_by_err("SELECT count(*) FROM t GROUP BY 1"),
+            "Can't group on 'count(*)'"
+        );
+        assert_eq!(
+            group_by_err("SELECT count(1) FROM t GROUP BY 1"),
+            "Can't group on 'count(1)'"
         );
     }
 
