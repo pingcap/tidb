@@ -1341,3 +1341,106 @@ fn a_utf8mb4_column_validates_its_bytes_and_a_binary_column_does_not() {
         vec![vec!["FFFE7A".to_owned()]]
     );
 }
+
+/// A `CHECK` constraint with `tidb_enable_check_constraint` at its OFF
+/// default. Every expectation is captured from real TiDB -- the
+/// `SHOW CREATE TABLE` text through `rust/difftests/gorun`, the warning
+/// through testkit's `SHOW WARNINGS`, the insert outcome through both:
+///
+/// ```text
+/// create table ck (a int, check (a > 0))     -- OK, Warning 1105
+/// show create table ck                       -- NO `CONSTRAINT ... CHECK` clause
+/// insert into ck values (-1)                 -- OK; the constraint is gone
+/// select constraint_name from information_schema.check_constraints  -- empty
+/// ```
+///
+/// TiDB DISCARDS the constraint rather than storing it unenforced, so
+/// discarding it here is faithful: storing it would make this very
+/// `SHOW CREATE TABLE` grow a clause TiDB does not print.
+#[test]
+fn a_check_constraint_is_accepted_discarded_and_warned_about() {
+    let mut session = Session::new();
+    let create_table_text = |session: &mut Session, name: &str| match session
+        .run_with_columns(&format!("SHOW CREATE TABLE {name}"))
+        .unwrap()
+    {
+        StmtOutput::Rows { rows, .. } => datum_text(&rows[0][1]).unwrap(),
+        other => panic!("expected rows, got {other:?}"),
+    };
+    let warnings = |session: &Session| {
+        session
+            .warnings()
+            .iter()
+            .map(|w| (w.code, w.message.clone()))
+            .collect::<Vec<_>>()
+    };
+    let is_off = || (1105u16, "tidb_enable_check_constraint is off".to_owned());
+
+    // A table-level CHECK, named and unnamed: each is accepted, warns once,
+    // and NEITHER reaches the restored DDL.
+    session
+        .run("create table ck (a int, b int, check (a > 0), constraint c2 check (b > 0))")
+        .unwrap();
+    // One warning per discarded constraint, matching Go's per-constraint
+    // `AppendWarning`.
+    assert_eq!(warnings(&session), vec![is_off(), is_off()]);
+    assert_eq!(
+        create_table_text(&mut session, "ck"),
+        "CREATE TABLE `ck` (\n  \
+             `a` int(11) DEFAULT NULL,\n  \
+             `b` int(11) DEFAULT NULL\n\
+         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+
+    // The form written inline on a column takes the same path.
+    session
+        .run("create table ck3 (a int check (a > 5), b int)")
+        .unwrap();
+    assert_eq!(warnings(&session), vec![is_off()]);
+    assert_eq!(
+        create_table_text(&mut session, "ck3"),
+        "CREATE TABLE `ck3` (\n  \
+             `a` int(11) DEFAULT NULL,\n  \
+             `b` int(11) DEFAULT NULL\n\
+         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+
+    // `[NOT] ENFORCED` changes nothing while the variable is off: TiDB
+    // discards the constraint before the keyword could matter.
+    session
+        .run("create table ck4 (a int, check (a > 0) not enforced)")
+        .unwrap();
+    session
+        .run("create table ck5 (a int, check (a > 0) enforced)")
+        .unwrap();
+    assert_eq!(warnings(&session), vec![is_off()]);
+
+    // The constraint really is gone, so a violating row inserts.
+    session.run("insert into ck values (-1, -1)").unwrap();
+    assert_eq!(
+        query_text(&mut session, "select a, b from ck").1,
+        vec![vec!["-1".to_owned(), "-1".to_owned()]]
+    );
+}
+
+/// Turning `tidb_enable_check_constraint` ON changes what a `CHECK`
+/// constraint MEANS -- TiDB then stores it (auto-named `<table>_chk_<N>`),
+/// prints it in `SHOW CREATE TABLE`, and enforces it with error 3819
+/// (captured: "Check constraint 'ck3_chk_1' is violated."). None of that is
+/// modelled, so the DDL is refused outright rather than silently discarding a
+/// constraint the session just asked to have honoured.
+#[test]
+fn a_check_constraint_is_refused_when_the_variable_is_on() {
+    let mut session = Session::new();
+    session
+        .run("set @@global.tidb_enable_check_constraint = 1")
+        .unwrap();
+    assert!(matches!(
+        session.run("create table ck (a int, check (a > 0))"),
+        Err(DriverError::Unsupported(
+            "CHECK constraints are only modelled with tidb_enable_check_constraint off"
+        ))
+    ));
+    // A table with no CHECK constraint is unaffected by the variable.
+    session.run("create table plain (a int)").unwrap();
+}

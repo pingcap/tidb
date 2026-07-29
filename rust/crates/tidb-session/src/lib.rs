@@ -2032,17 +2032,38 @@ impl Session {
                         Ok(StmtOutput::Affected(0))
                     })
                 }
-                DdlStmt::CreateTable(_) => {
+                DdlStmt::CreateTable(create) => {
                     let current_db = self.current_db.clone();
                     let foreign_key_checks = self.foreign_key_checks();
-                    self.with_catalog_mut(|catalog| {
+                    let enable_check_constraint = self.enable_check_constraint();
+                    // Go `pkg/ddl/create_table.go` and `add_column.go` warn
+                    // once per CHECK constraint they discard, before the
+                    // table is built; the constraint itself never reaches
+                    // the stored `TableInfo`.
+                    let discarded_checks = if enable_check_constraint {
+                        0
+                    } else {
+                        tidb_executor::check_constraint_count(create)
+                    };
+                    let done = self.with_catalog_mut(|catalog| {
                         Ok(StmtOutput::Done(tidb_executor::run_create_table_in(
                             sql,
                             catalog,
                             &current_db,
                             foreign_key_checks,
+                            enable_check_constraint,
                         )?))
-                    })
+                    });
+                    if done.is_ok() {
+                        for _ in 0..discarded_checks {
+                            self.warnings.push(SqlWarning {
+                                level: WarningLevel::Warning,
+                                code: CHECK_CONSTRAINT_IS_OFF_CODE,
+                                message: CHECK_CONSTRAINT_IS_OFF_MESSAGE.to_owned(),
+                            });
+                        }
+                    }
+                    done
                 }
                 DdlStmt::CreateView(create) => {
                     let current_db = self.current_db.clone();
@@ -2071,6 +2092,15 @@ impl Session {
         }
     }
 }
+
+/// Go `ddl.errCheckConstraintIsOff` is built with `errors.NewNoStackError`, so
+/// it carries no MySQL code of its own and `AppendWarning` files it under
+/// `ER_UNKNOWN_ERROR`. Captured through testkit's `SHOW WARNINGS`:
+/// `Warning | 1105 | tidb_enable_check_constraint is off`.
+const CHECK_CONSTRAINT_IS_OFF_CODE: u16 = 1105;
+/// See [`CHECK_CONSTRAINT_IS_OFF_CODE`]; the text is the variable name Go
+/// interpolates, not a sentence, so it is reproduced verbatim.
+const CHECK_CONSTRAINT_IS_OFF_MESSAGE: &str = "tidb_enable_check_constraint is off";
 
 /// A statement warning, which Go keeps in `StmtCtx` and `SHOW WARNINGS`
 /// reports as `Level | Code | Message`.
@@ -2448,6 +2478,21 @@ impl Session {
         !matches!(
             self.vars.get_system("foreign_key_checks").as_deref(),
             Ok("OFF") | Ok("off") | Ok("0")
+        )
+    }
+
+    /// Go `vardef.EnableCheckConstraint`, which is a process-wide atomic that
+    /// `SetGlobal` writes: the variable is GLOBAL-scope only, so the value a
+    /// statement sees is the global one, not a session copy. The registry
+    /// defaults it to OFF, and unlike `foreign_key_checks` the safe fallback
+    /// for an unreadable value is OFF -- that is what a stock TiDB does and
+    /// the only mode this engine models.
+    fn enable_check_constraint(&self) -> bool {
+        matches!(
+            self.vars
+                .get_global("tidb_enable_check_constraint")
+                .as_deref(),
+            Ok("ON") | Ok("on") | Ok("1")
         )
     }
 

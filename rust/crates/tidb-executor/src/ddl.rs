@@ -1357,11 +1357,11 @@ fn primary_key_column(
             // A foreign key is collected by `table_foreign_keys`, and never
             // contributes a primary key.
             tidb_ast::TableConstraint::ForeignKey(_) => continue,
-            _ => {
-                return Err(DriverError::Unsupported(
-                    "only key and foreign-key table constraints are supported yet",
-                ))
-            }
+            // A CHECK constraint is discarded -- which is what real TiDB
+            // does with `tidb_enable_check_constraint` off, the only mode
+            // `run_create_table_in` accepts one in. See its doc comment for
+            // the captured `SHOW CREATE TABLE` evidence.
+            tidb_ast::TableConstraint::Check(_) => continue,
         };
         if index.kind != tidb_ast::IndexConstraintKind::PrimaryKey {
             // Unique and secondary keys are collected by `table_indexes`.
@@ -1606,7 +1606,34 @@ fn field_type_of(def: &ColumnDef, table: TableCharset) -> Result<FieldType, Driv
 /// registering a TiKV-byte-backed table in `catalog`. Returns whether a table
 /// was created (`false` only for `IF NOT EXISTS` over an existing name).
 pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, DriverError> {
-    run_create_table_in(sql, catalog, tidb_executor_default_database(), true)
+    // A stock session has `tidb_enable_check_constraint` OFF, which is the
+    // only mode this tier models; see [`run_create_table_in`].
+    run_create_table_in(sql, catalog, tidb_executor_default_database(), true, false)
+}
+
+/// How many `CHECK` constraints a `CREATE TABLE` writes, counting both the
+/// table-level `[CONSTRAINT name] CHECK (expr)` form and the form written
+/// inline on a column.
+///
+/// Go emits ONE `tidb_enable_check_constraint is off` warning per constraint
+/// it discards (captured: a table with two of them produces two warnings), so
+/// the session needs the count, not a boolean. It lives here so "what counts
+/// as a CHECK constraint" has a single definition shared with the executor's
+/// own discard path.
+#[must_use]
+pub fn check_constraint_count(create: &tidb_ast::CreateTableStmt) -> usize {
+    let table_level = create
+        .table_constraints
+        .iter()
+        .filter(|constraint| matches!(constraint, tidb_ast::TableConstraint::Check(_)))
+        .count();
+    let column_level = create
+        .columns
+        .iter()
+        .flat_map(|column| &column.options)
+        .filter(|option| matches!(option, tidb_ast::ColumnOption::Check(_)))
+        .count();
+    table_level + column_level
 }
 
 /// The default schema an unqualified `CREATE TABLE` lands in.
@@ -1615,11 +1642,31 @@ fn tidb_executor_default_database() -> &'static str {
 }
 
 /// [`run_create_table_on`] creating the table in `current_db`.
+///
+/// `enable_check_constraint` is `@@global.tidb_enable_check_constraint`, and it
+/// decides what a `CHECK` constraint MEANS rather than merely whether it is
+/// enforced. Captured from real TiDB (`gorun`, plus `SHOW WARNINGS` through
+/// testkit) with the variable at its OFF default:
+///
+/// * `create table ck (a int, check (a > 0))` succeeds, warning 1105
+///   `tidb_enable_check_constraint is off` once per constraint;
+/// * `SHOW CREATE TABLE ck` restores `CREATE TABLE \`ck\` (\n  \`a\` int(11)
+///   DEFAULT NULL\n) ...` -- with NO `CONSTRAINT ... CHECK` clause, and
+///   `information_schema.check_constraints` is empty. The constraint is
+///   DISCARDED at DDL time, not stored-but-unenforced;
+/// * `insert into ck values (-1)` therefore succeeds.
+///
+/// So discarding is the faithful behaviour, and storing the constraint would
+/// be the divergence: `SHOW CREATE TABLE` would grow a clause TiDB does not
+/// print. With the variable ON, TiDB stores the constraint (auto-named
+/// `<table>_chk_<N>`), prints it, and enforces it with error 3819; none of
+/// that is modelled here, so this refuses rather than silently discarding.
 pub fn run_create_table_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
     foreign_key_checks: bool,
+    enable_check_constraint: bool,
 ) -> Result<bool, DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
 
@@ -1638,6 +1685,12 @@ pub fn run_create_table_in(
             ))
         }
     };
+
+    if enable_check_constraint && check_constraint_count(create) > 0 {
+        return Err(DriverError::Unsupported(
+            "CHECK constraints are only modelled with tidb_enable_check_constraint off",
+        ));
+    }
 
     if create.like_table.is_some() {
         return Err(DriverError::Unsupported("CREATE TABLE LIKE is deferred"));
