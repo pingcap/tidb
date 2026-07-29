@@ -2890,7 +2890,7 @@ func (do *Domain) serverIDKeeper() {
 // StartTTLJobManager creates and starts the ttl job manager
 func (do *Domain) StartTTLJobManager() {
 	if !do.shouldStartTTLJobManager() {
-		logutil.BgLogger().Info("skip starting ttl job manager for external workload role",
+		logutil.BgLogger().Info("don't run ttl job manager",
 			zap.String("role", string(do.extWorkloadMgr.Role())))
 		return
 	}
@@ -2900,10 +2900,13 @@ func (do *Domain) StartTTLJobManager() {
 }
 
 func (do *Domain) shouldStartTTLJobManager() bool {
-	if !extworkload.IsEnabled(do.extWorkloadMgr) {
-		return true
+	// Unit tests and non-worker deployments do not install an external workload
+	// manager, so they still start a local TTL job manager. Once external
+	// workload is enabled, only the dedicated TTL task worker should run TTL jobs.
+	if extworkload.IsEnabled(do.extWorkloadMgr) && !extworkload.IsTTLTaskWorker(do.extWorkloadMgr) {
+		return false
 	}
-	return extworkload.IsTTLTaskWorker(do.extWorkloadMgr)
+	return true
 }
 
 // TTLJobManager returns the ttl job manager on this domain
