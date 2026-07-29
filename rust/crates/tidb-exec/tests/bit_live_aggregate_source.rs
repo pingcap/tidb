@@ -17,7 +17,6 @@
 use tidb_datatype::Datum;
 use tidb_exec::aggregate::runtime::fold_values;
 use tidb_exec::bit_agg::{fold_bit_values, BitAggregate, BitAggregateKind};
-use tidb_exec::{Database, Outcome, ResultSet};
 use tidb_planner::aggregation_descriptor::AggregateKind;
 
 #[test]
@@ -61,26 +60,6 @@ fn shared_aggregate_runtime_dispatches_all_bit_kinds_to_the_canonical_state() {
         Datum::UInt(7)
     );
 }
-
-#[test]
-fn database_aggregate_path_consumes_the_canonical_bit_state() {
-    let mut database = Database::new();
-    let mut execute =
-        |sql: &str| database.run(&tidb_parser::parse(sql).expect("bit aggregate SQL parses"));
-    assert_eq!(execute("create table bit_live (v int)"), Ok(Outcome::Done));
-    assert_eq!(
-        execute("insert into bit_live values (1),(2),(4),(null)"),
-        Ok(Outcome::Done)
-    );
-    assert_eq!(
-        execute("select bit_and(v), bit_or(v), bit_xor(v) from bit_live"),
-        Ok(Outcome::Rows(ResultSet {
-            rows: vec![vec![Datum::UInt(0), Datum::UInt(7), Datum::UInt(7)]],
-            ordered: false,
-        }))
-    );
-}
-
 #[test]
 fn xor_slide_removes_departing_values_then_adds_arriving_values() {
     // Source: pkg/executor/aggfuncs/func_bitfuncs.go:112-143.

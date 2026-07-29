@@ -17,20 +17,17 @@
 //! The handshake parser remains the authority for capability intersection and
 //! the requested zstd level. This module owns the immediate post-handshake
 //! transition: choose zlib before zstd, read one sequence-zero command through
-//! the mode-aware packet reader, dispatch it through [`crate::Connection`],
+//! the mode-aware packet reader, dispatch it through the connection,
 //! then write the sequence-one response through the matching packet writer.
 //! Socket ownership, authentication, deadlines, metrics, and the server run
 //! loop remain outside this boundary.
 
-use std::io::{Cursor, Read, Write};
+use std::io::{Read, Write};
 
-use tidb_protocol::{
-    CompressionAlgorithm, PacketError, PacketIoReader, PacketIoWriter, PacketReader, PacketWriter,
-    ResultSetOptions,
-};
+use tidb_protocol::{CompressionAlgorithm, PacketError, PacketIoReader, PacketIoWriter};
 
 use crate::handshake::CLIENT_ZSTD_COMPRESSION_ALGORITHM;
-use crate::{AuthHandshakeRequest, Connection, DispatchError, FramedResponse};
+use crate::AuthHandshakeRequest;
 
 /// MySQL `CLIENT_COMPRESS`, selected ahead of zstd when both bits are set.
 pub const CLIENT_COMPRESS: u32 = 1 << 5;
@@ -91,8 +88,6 @@ pub enum CommandIoOutcome {
 pub enum CommandIoError {
     /// The negotiated packet reader rejected the request stream.
     Read(PacketError),
-    /// The existing connection dispatcher rejected or failed the command.
-    Dispatch(DispatchError),
     /// The dispatcher's uncompressed response could not be decoded.
     Response(PacketError),
     /// The negotiated packet writer could not emit or flush the response.
@@ -136,42 +131,6 @@ impl<R: Read, W: Write> CompressedCommandIo<R, W> {
         })
     }
 
-    /// Reads, dispatches, writes, and flushes exactly one MySQL command.
-    ///
-    /// Each command begins with independent inner and compressed sequences at
-    /// zero. Server responses begin at inner sequence one. Successful command
-    /// completion resets both sides for the next request, matching the Go run
-    /// loop; a quit response emits no empty compressed envelope.
-    pub fn dispatch_next(
-        &mut self,
-        connection: &mut Connection,
-        options: ResultSetOptions,
-    ) -> Result<CommandIoOutcome, CommandIoError> {
-        self.reset_request_sequences();
-        let command = self.reader.read_packet().map_err(CommandIoError::Read)?;
-        let framed = frame_command(&command).map_err(CommandIoError::Response)?;
-        let response = match connection.dispatch_framed_auto(&framed, options) {
-            Ok(response) => response,
-            Err(error) => {
-                self.reset_request_sequences();
-                return Err(CommandIoError::Dispatch(error));
-            }
-        };
-
-        let outcome = match response {
-            FramedResponse::Quit => CommandIoOutcome::Quit,
-            FramedResponse::Packets(framed_response) => {
-                self.writer.set_sequence(1);
-                self.writer.set_compressed_sequence(0);
-                self.writer.set_zstd_level(self.compression.zstd_level());
-                let packet_count = write_response_packets(&framed_response, &mut self.writer)?;
-                CommandIoOutcome::ResponseWritten(packet_count)
-            }
-        };
-        self.reset_request_sequences();
-        Ok(outcome)
-    }
-
     /// Returns the immutable negotiated compression snapshot.
     #[must_use]
     pub const fn compression(&self) -> NegotiatedCompression {
@@ -188,37 +147,4 @@ impl<R: Read, W: Write> CompressedCommandIo<R, W> {
     pub fn into_inner(self) -> (R, W) {
         (self.reader.into_inner(), self.writer.into_inner())
     }
-
-    fn reset_request_sequences(&mut self) {
-        self.reader.set_sequence(0);
-        self.reader.set_compressed_sequence(0);
-        self.writer.set_sequence(0);
-        self.writer.set_compressed_sequence(0);
-    }
-}
-
-fn frame_command(payload: &[u8]) -> Result<Vec<u8>, PacketError> {
-    let mut framed = Vec::new();
-    let mut writer = PacketWriter::new(&mut framed);
-    writer.write_packet(payload)?;
-    writer.flush()?;
-    Ok(framed)
-}
-
-fn write_response_packets<W: Write>(
-    framed: &[u8],
-    writer: &mut PacketIoWriter<W>,
-) -> Result<usize, CommandIoError> {
-    let mut reader = PacketReader::new(Cursor::new(framed));
-    reader.set_sequence(1);
-    let mut packet_count = 0;
-    while reader.get_ref().position() != reader.get_ref().get_ref().len() as u64 {
-        let payload = reader.read_packet().map_err(CommandIoError::Response)?;
-        writer
-            .write_packet(&payload)
-            .map_err(CommandIoError::Write)?;
-        packet_count += 1;
-    }
-    writer.flush().map_err(CommandIoError::Write)?;
-    Ok(packet_count)
 }

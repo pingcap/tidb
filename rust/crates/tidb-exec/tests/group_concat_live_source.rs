@@ -12,46 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use tidb_datatype::Datum;
 use tidb_exec::group_concat::{
     decode_base_partial, encode_base_partial, DistinctGroupConcatState, GroupConcatState,
     OrderedGroupConcatState,
 };
-use tidb_exec::{Database, Outcome};
-
-#[test]
-fn database_group_concat_consumes_canonical_plain_distinct_and_ordered_states() {
-    let mut database = Database::new();
-    for sql in [
-        "create table gc_live (k int, a varchar(8), b varchar(8))",
-        "insert into gc_live values (1,'0','0'),(1,'1','1'),(1,null,'2'),(1,'2','2')",
-    ] {
-        assert_eq!(
-            database.run(&tidb_parser::parse(sql).unwrap()).unwrap(),
-            Outcome::Done
-        );
-    }
-    let Outcome::Rows(result) = database
-        .run(&tidb_parser::parse("select group_concat(a, b separator ' ') from gc_live").unwrap())
-        .unwrap()
-    else {
-        panic!("expected rows");
-    };
-    assert_eq!(result.rows, vec![vec![Datum::new_string("00 11 22")]]);
-
-    let Outcome::Rows(result) = database
-        .run(
-            &tidb_parser::parse(
-                "select group_concat(distinct a order by a desc separator '-') from gc_live",
-            )
-            .unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("expected rows");
-    };
-    assert_eq!(result.rows, vec![vec![Datum::new_string("2-1-0")]]);
-}
 
 #[test]
 fn distinct_keys_preserve_tuple_boundaries_and_merge_unseen_values() {

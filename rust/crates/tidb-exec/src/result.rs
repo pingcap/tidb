@@ -39,14 +39,6 @@ pub enum Outcome {
 }
 
 impl ResultSet {
-    /// A result whose row order is not significant.
-    pub(crate) fn unordered(rows: Vec<Row>) -> Self {
-        ResultSet {
-            rows,
-            ordered: false,
-        }
-    }
-
     /// Renders the result in the `gorun` oracle's byte-safe differential
     /// format: `RS:<row>;<row>;...`, each row `c1|c2|...` of MySQL string
     /// values. Valid UTF-8 cells keep their historical bytes. Invalid UTF-8

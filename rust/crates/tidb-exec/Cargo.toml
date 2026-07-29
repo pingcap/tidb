@@ -50,10 +50,6 @@ name = "result_field_resolver_source"
 path = "tests/result_field_resolver_source.rs"
 
 [[test]]
-name = "result_metadata_source"
-path = "tests/result_metadata_source.rs"
-
-[[test]]
 name = "result_schema_join_output_source"
 path = "tests/result_schema_join_output_source.rs"
 

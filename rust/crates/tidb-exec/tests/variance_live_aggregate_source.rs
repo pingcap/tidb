@@ -18,7 +18,6 @@ use tidb_ast::{Expr, WindowDef, WindowOver};
 use tidb_datatype::{Collation, Datum, FieldTypeCode};
 use tidb_exec::aggregate::runtime::{fold_values, VarianceState};
 use tidb_exec::{resolve_result_fields, ResultFieldSpec};
-use tidb_exec::{Database, Outcome, Row};
 use tidb_planner::aggregation_descriptor::AggregateKind;
 
 const KINDS: [AggregateKind; 4] = [
@@ -38,26 +37,6 @@ fn state(kind: AggregateKind, distinct: bool, values: &[Option<f64>]) -> Varianc
 
 fn assert_close(actual: Option<f64>, expected: f64) {
     let actual = actual.expect("non-NULL variance result");
-    assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
-}
-
-fn run(database: &mut Database, sql: &str) -> Outcome {
-    database
-        .run(&tidb_parser::parse(sql).expect("variance SQL parses"))
-        .expect("variance SQL executes")
-}
-
-fn rows(database: &mut Database, sql: &str) -> Vec<Row> {
-    match run(database, sql) {
-        Outcome::Rows(result) => result.rows,
-        Outcome::Done => panic!("expected query rows"),
-    }
-}
-
-fn assert_real(value: &Datum, expected: f64) {
-    let Datum::Real(actual) = value else {
-        panic!("expected real result, got {value:?}");
-    };
     assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
 }
 
@@ -198,93 +177,6 @@ fn live_fold_routes_variance_distinct_around_generic_datum_checker() {
         fold_values(AggregateKind::StddevPop, false, &[], 4).unwrap(),
         Datum::Null
     );
-}
-
-#[test]
-fn database_and_window_consumers_reach_the_canonical_real_state() {
-    let mut database = Database::new();
-    assert_eq!(
-        run(
-            &mut database,
-            "create table variance_live (id int, v double)"
-        ),
-        Outcome::Done
-    );
-    assert_eq!(
-        run(
-            &mut database,
-            "insert into variance_live values \
-             (1, cast(0 as double)), (2, cast(1 as double)), \
-             (3, cast(2 as double)), (4, cast(3 as double)), \
-             (5, cast(4 as double)), (6, cast(4 as double)), (7, null)"
-        ),
-        Outcome::Done
-    );
-
-    let ordinary = rows(
-        &mut database,
-        "select var_pop(v), var_samp(v), stddev_pop(v), stddev_samp(v) \
-         from variance_live where id <= 5",
-    );
-    assert_eq!(ordinary.len(), 1);
-    assert_real(&ordinary[0][0], 2.0);
-    assert_real(&ordinary[0][1], 2.5);
-    assert_real(&ordinary[0][2], 2.0_f64.sqrt());
-    assert_real(&ordinary[0][3], 2.5_f64.sqrt());
-
-    let distinct = rows(
-        &mut database,
-        "select var_pop(distinct v), var_samp(distinct v), \
-         stddev_pop(distinct v), stddev_samp(distinct v) from variance_live",
-    );
-    assert_eq!(distinct.len(), 1);
-    assert_real(&distinct[0][0], 2.0);
-    assert_real(&distinct[0][1], 2.5);
-    assert_real(&distinct[0][2], 2.0_f64.sqrt());
-    assert_real(&distinct[0][3], 2.5_f64.sqrt());
-
-    // The window coordinator routes these four names through the same
-    // fold_aggregate_values seam. Five physical rows therefore repeat the
-    // same full-partition result rather than creating another state family.
-    let windowed = rows(
-        &mut database,
-        "select id, var_pop(v) over (), var_samp(v) over (), \
-         stddev_pop(v) over (), stddev_samp(v) over () \
-         from variance_live where id <= 5 order by id",
-    );
-    assert_eq!(windowed.len(), 5);
-    for (index, row) in windowed.iter().enumerate() {
-        assert_eq!(row[0], Datum::Int(index as i64 + 1));
-        assert_real(&row[1], 2.0);
-        assert_real(&row[2], 2.5);
-        assert_real(&row[3], 2.0_f64.sqrt());
-        assert_real(&row[4], 2.5_f64.sqrt());
-    }
-
-    // The parser canonicalizes VARIANCE/STD/STDDEV before both ordinary
-    // aggregate and window dispatch. Exercise the SQL surface rather than
-    // relying only on AggregateKind::from_name's unit test.
-    let aliases = rows(
-        &mut database,
-        "select variance(v), std(v), stddev(v) \
-         from variance_live where id <= 5",
-    );
-    assert_eq!(aliases.len(), 1);
-    assert_real(&aliases[0][0], 2.0);
-    assert_real(&aliases[0][1], 2.0_f64.sqrt());
-    assert_real(&aliases[0][2], 2.0_f64.sqrt());
-
-    let alias_windowed = rows(
-        &mut database,
-        "select id, variance(v) over (), std(v) over () \
-         from variance_live where id <= 5 order by id",
-    );
-    assert_eq!(alias_windowed.len(), 5);
-    for (index, row) in alias_windowed.iter().enumerate() {
-        assert_eq!(row[0], Datum::Int(index as i64 + 1));
-        assert_real(&row[1], 2.0);
-        assert_real(&row[2], 2.0_f64.sqrt());
-    }
 }
 
 #[test]

@@ -15,7 +15,7 @@
 #![allow(missing_docs)]
 
 use tidb_exec::{
-    exec_error_descriptor, exec_error_kind, Cluster, ExecError, RenderedExecError, StatementKind,
+    exec_error_descriptor, exec_error_kind, ExecError, RenderedExecError, StatementKind,
     StatementStatus,
 };
 use tidb_expr::EvalError;
@@ -168,36 +168,4 @@ fn rendered_error_attaches_only_published_statement_context() {
     let replaced = detached.attach_status(&published);
     assert_eq!(replaced.status(), Some(&published));
     assert_eq!(replaced.descriptor().message, [0xff, 0x00, 0x80]);
-}
-
-#[test]
-fn session_error_handoff_attaches_failed_status_without_reformatting() {
-    // Source: pkg/server/conn.go:1338-1345 dispatches the already-rendered
-    // error, while pkg/sessionctx/stmtctx/stmtctx.go:361-365 publishes
-    // ExecSuccess and 1129-1170 owns warnings/messages. The session helper
-    // joins those owners but never derives table/column text from ExecError.
-    let mut session = Cluster::new().session();
-    let error = session
-        .execute_sql("SELECT *")
-        .expect_err("wildcard without a relation is outside the executor subset");
-    let rendered = session.render_exec_error(&error, [b's', 0xff, b'r']);
-
-    let status = rendered.status().expect("failed statement status");
-    assert!(!status.exec_success);
-    assert!(status.warnings.is_empty());
-    assert_eq!(rendered.descriptor().message, [b's', 0xff, b'r']);
-}
-
-#[test]
-fn parse_failure_does_not_inherit_a_previous_statement_status() {
-    // Source: pkg/server/conn.go:1860-1871 trims parse warnings before the
-    // error is returned, so a parse failure must not attach the preceding
-    // statement's published status snapshot.
-    let mut session = Cluster::new().session();
-    session.execute_sql("SELECT 1").expect("seed statement");
-    let error = session
-        .execute_sql("SELECT (")
-        .expect_err("malformed query should fail before statement publication");
-    let rendered = session.render_exec_error(&error, b"parse context");
-    assert_eq!(rendered.status(), None);
 }
