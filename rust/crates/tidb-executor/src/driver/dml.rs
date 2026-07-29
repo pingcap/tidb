@@ -1008,13 +1008,18 @@ pub(crate) fn compute_updated_row(
     // counts -- not the narrower `changed` below, which Go reports as
     // `affected` rather than as rows the filter passed.
     *matched += 1;
+    // Every assignment reads the row as the statement found it, so
+    // `SET a = 100, b = a` stores the ORIGINAL `a` in `b`, and
+    // `SET c = a, a = b, b = c` rotates the three original values in one step.
+    // Go builds the whole new row from the old one before writing any of it
+    // (`executor.UpdateExec` composes `newRowData` off the fetched row), which
+    // is why an earlier assignment is invisible to a later one. Evaluating
+    // against the single unmodified `chunk` makes that the only reading there
+    // is, rather than a rule the loop has to re-establish per assignment.
     let mut new_row = row.to_vec();
     for (offset, expr) in set_exprs {
-        // Go evaluates each assignment over the row as the previous
-        // assignments left it, so `SET a = 1, b = a` sees the new `a`.
-        let source = row_chunk(&new_row, field_types)?;
         let value = expr
-            .eval(ctx, source.get_row(0))
+            .eval(ctx, chunk.get_row(0))
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
         // Go casts an assigned value to its column's type here too, which is
         // what stores `SET d = 9.87654` in a DECIMAL(10,3) column as 9.877.

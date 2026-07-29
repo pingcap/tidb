@@ -395,22 +395,36 @@ fn update_of_an_integer_primary_key_rewrites_the_row() {
     );
 }
 
-/// BUG: `UPDATE`'s `SET` assignments are evaluated sequentially, so a later
-/// assignment sees an earlier one's new value.
+/// Every `SET` assignment reads the row as it was BEFORE the statement, so
+/// assignments never chain.
 ///
-/// TiDB evaluates every assignment against the row as it was BEFORE the
-/// statement. `gorun` over `(1,10)`: `SET a = 100, b = a` answers `100|1` —
-/// `b` takes the ORIGINAL `a`. The live engine answers `100|100`, and its own
-/// comment in `driver/dml.rs`'s `compute_updated_row` states the opposite rule
-/// ("`SET a = 1, b = a` sees the new `a`"), so the rationale is wrong too.
+/// `gorun` over `(1,10)`: `SET a = 100, b = a` answers `100|1` — `b` takes the
+/// ORIGINAL `a`. The engine used to evaluate each assignment over the row the
+/// previous ones had already rewritten and answered `100|100`.
 #[test]
-#[ignore = "live-engine bug: UPDATE SET assignments chain instead of reading the original row"]
 fn update_set_assignments_all_read_the_original_row() {
     let mut session = Session::new();
     session.run("CREATE TABLE sw (a INT, b INT)").unwrap();
     session.run("INSERT INTO sw VALUES (1,10)").unwrap();
     session.run("UPDATE sw SET a = 100, b = a").unwrap();
     assert_eq!(rows(&mut session, "SELECT a,b FROM sw"), [["100", "1"]]);
+}
+
+/// The same rule over three columns: a `SET` list is a simultaneous
+/// assignment, so it can rotate values with no temporary. `gorun` over
+/// `(1,10,100)`: `SET c = a, a = b, b = c` answers `10|100|1`.
+#[test]
+fn update_set_assignments_rotate_values_without_a_temporary() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE sw2 (a INT, b INT, c INT)")
+        .unwrap();
+    session.run("INSERT INTO sw2 VALUES (1,10,100)").unwrap();
+    session.run("UPDATE sw2 SET c = a, a = b, b = c").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a,b,c FROM sw2"),
+        [["10", "100", "1"]]
+    );
 }
 
 /// BUG: `GROUP BY TRUE` is treated as a constant (one group) instead of as the

@@ -4525,7 +4525,8 @@ mod tests {
                 "kv={kv}"
             );
 
-            // Later assignments see earlier ones, as in Go's composeNewRow.
+            // Every assignment reads the row as the statement found it, so
+            // `b` takes the ORIGINAL `a` (1), not the just-assigned 7.
             assert_eq!(
                 run_update_on(
                     "UPDATE w SET a = 7, b = a WHERE a = 1",
@@ -4543,7 +4544,7 @@ mod tests {
                     &crate::StmtContext::for_query()
                 )
                 .unwrap(),
-                vec![vec![Datum::Int(7), Datum::Int(7)]],
+                vec![vec![Datum::Int(7), Datum::Int(1)]],
                 "kv={kv}"
             );
 
