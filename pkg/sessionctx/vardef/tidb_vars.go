@@ -1241,6 +1241,7 @@ const (
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
+	// The "exp" prefix in the following embedding system variables means experimental.
 	// TiDBExpEmbedJinaAIAPIKey is the API key to use when calling Jina embedding API.
 	TiDBExpEmbedJinaAIAPIKey = "tidb_exp_embed_jina_ai_api_key"
 	// TiDBExpEmbedOpenAIAPIKey is the API key to use when calling OpenAI-compatible embedding API.
