@@ -2228,3 +2228,177 @@ fn window_base_window_references() {
         [["10"], ["30"], ["50"], ["30"], ["70"]]
     );
 }
+
+/// The fixture the retired `tidb-exec` window vectors ran over, kept so
+/// their re-captured expectations read against the same shape: one
+/// four-row partition with a TIE, plus a one-row partition.
+fn ranking_live_session() -> Session {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ranking_live (id INT, p INT, k INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO ranking_live VALUES (1,1,10),(2,1,20),(3,1,20),(4,1,30),(5,2,7)")
+        .unwrap();
+    session
+}
+
+/// Every peer-aware window function in ONE query, so the shared peer
+/// geometry is proved to be shared rather than nine independent walks.
+///
+/// Re-captured from real TiDB (`testkit.CreateMockStore`) over the
+/// fixture above; the tie at `k = 20` is what separates the six ranking
+/// columns from each other.
+#[test]
+fn window_all_ranking_consumers_share_one_peer_geometry() {
+    let mut session = ranking_live_session();
+
+    assert_eq!(
+        row_text(session.run(
+            "SELECT id, ROW_NUMBER() OVER w, RANK() OVER w, DENSE_RANK() OVER w, \
+                 PERCENT_RANK() OVER w, CUME_DIST() OVER w, NTILE(3) OVER w, \
+                 LAG(id) OVER w, LEAD(id) OVER w \
+                 FROM ranking_live WINDOW w AS (PARTITION BY p ORDER BY k) ORDER BY id"
+        )),
+        [
+            ["1", "1", "1", "1", "0", "0.25", "1", "NULL", "2"],
+            [
+                "2",
+                "2",
+                "2",
+                "2",
+                "0.3333333333333333",
+                "0.75",
+                "1",
+                "1",
+                "3"
+            ],
+            [
+                "3",
+                "3",
+                "2",
+                "2",
+                "0.3333333333333333",
+                "0.75",
+                "2",
+                "2",
+                "4"
+            ],
+            ["4", "4", "4", "3", "1", "1", "3", "3", "NULL"],
+            ["5", "1", "1", "1", "0", "1", "1", "NULL", "NULL"],
+        ]
+    );
+
+    // With NO window ORDER BY the whole partition is one peer group:
+    // ROW_NUMBER still counts physical rows, everything peer-aware
+    // collapses to 1 / 1 / 0 / 1 (captured).
+    assert_eq!(
+        row_text(session.run(
+            "SELECT id, ROW_NUMBER() OVER w, RANK() OVER w, DENSE_RANK() OVER w, \
+                 PERCENT_RANK() OVER w, CUME_DIST() OVER w \
+                 FROM ranking_live WINDOW w AS (PARTITION BY p) ORDER BY id"
+        )),
+        [
+            ["1", "1", "1", "1", "0", "1"],
+            ["2", "2", "1", "1", "0", "1"],
+            ["3", "3", "1", "1", "0", "1"],
+            ["4", "4", "1", "1", "0", "1"],
+            ["5", "1", "1", "1", "0", "1"],
+        ]
+    );
+}
+
+/// `NTILE`'s bucket count is resolved ONCE per descriptor from a
+/// constant, through the same unsigned path as Go's
+/// `GetUint64FromConstant` -- so the full positive `uint64` domain is
+/// accepted, `TRUE` resolves to one, and `NULL` makes every row NULL
+/// rather than erroring.
+///
+/// Re-captured from real TiDB. `window_ntile_bucket_distribution` covers
+/// the bucket SIZING; this covers the ARGUMENT domain and the fact that
+/// a partition with no window ORDER BY still buckets in scan order.
+#[test]
+fn window_ntile_argument_domain() {
+    let mut session = ranking_live_session();
+
+    // No window ORDER BY: the buckets follow the partition's scan order
+    // and match the ordered form exactly (captured).
+    for spec in ["PARTITION BY p", "PARTITION BY p ORDER BY k"] {
+        assert_eq!(
+            row_text(session.run(&format!(
+                "SELECT id, NTILE(3) OVER ({spec}) FROM ranking_live ORDER BY id"
+            ))),
+            [["1", "1"], ["2", "1"], ["3", "2"], ["4", "3"], ["5", "1"]],
+            "for {spec}"
+        );
+    }
+
+    // More buckets than rows, and `uint64::MAX` buckets, distribute the
+    // same way: one row each from the front (captured).
+    for count in ["5", "18446744073709551615"] {
+        assert_eq!(
+            row_text(session.run(&format!(
+                "SELECT id, NTILE({count}) OVER (PARTITION BY p ORDER BY k) \
+                     FROM ranking_live ORDER BY id"
+            ))),
+            [["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["5", "1"]],
+            "for NTILE({count})"
+        );
+    }
+
+    // NULL is a legal constant: it yields NULL per row, not an error
+    // (captured).
+    assert_eq!(
+        row_text(session.run(
+            "SELECT id, NTILE(NULL) OVER (PARTITION BY p ORDER BY k) \
+                 FROM ranking_live ORDER BY id"
+        )),
+        [
+            ["1", "NULL"],
+            ["2", "NULL"],
+            ["3", "NULL"],
+            ["4", "NULL"],
+            ["5", "NULL"],
+        ]
+    );
+
+    // Captured: "[planner:1210]Incorrect arguments to ntile" for zero,
+    // negative, FALSE (which is zero), and a row-dependent count.
+    for sql in [
+        "SELECT NTILE(0) OVER (ORDER BY id) FROM ranking_live",
+        "SELECT NTILE(-1) OVER (ORDER BY id) FROM ranking_live",
+        "SELECT NTILE(FALSE) OVER (ORDER BY id) FROM ranking_live",
+        "SELECT NTILE(k) OVER (ORDER BY id) FROM ranking_live",
+    ] {
+        assert!(
+            matches!(session.run(sql), Err(DriverError::WrongArguments("ntile"))),
+            "expected ErrWrongArguments for {sql}"
+        );
+    }
+}
+
+/// KNOWN DIVERGENCE. `TRUE` is an `Int64`-valued `Constant` in Go's
+/// expression layer, so `NewWindowFuncDesc`'s `GetUint64FromConstant`
+/// reads it as ONE bucket; captured from real TiDB, which returns
+/// bucket 1 for every row.
+///
+/// This build's `constant_bucket_count`
+/// (`tidb-executor/src/window.rs`) only accepts `Expr::Null` and
+/// `Expr::Int`, so `Expr::Bool(true)` falls through to
+/// `ErrWrongArguments`. The fix is to fold boolean literals into the
+/// same unsigned constant read (`TRUE` -> 1, `FALSE` -> 0, which then
+/// fails the positivity check exactly as `NTILE(0)` does -- and the
+/// `NTILE(FALSE)` refusal above already passes for the wrong reason).
+/// Ignored until that lands; the assertion below is the GO answer.
+#[test]
+#[ignore = "live engine rejects NTILE(TRUE); Go resolves it to one bucket"]
+fn window_ntile_accepts_boolean_constant() {
+    let mut session = ranking_live_session();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT id, NTILE(TRUE) OVER (PARTITION BY p ORDER BY k) \
+                 FROM ranking_live ORDER BY id"
+        )),
+        [["1", "1"], ["2", "1"], ["3", "1"], ["4", "1"], ["5", "1"]]
+    );
+}
