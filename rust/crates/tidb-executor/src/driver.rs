@@ -7135,15 +7135,22 @@ mod tests {
             vec![vec![Datum::Int(9)]]
         );
 
-        // WITH RECURSIVE is rejected rather than run as if it were plain,
-        // which would silently return only the seed rows.
-        assert!(run_select_on(
-            "WITH RECURSIVE c (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 3) \
-             SELECT n FROM c",
-            &catalog,
-            &crate::StmtContext::for_query()
-        )
-        .is_err());
+        // WITH RECURSIVE runs the fixpoint rather than returning only the seed
+        // row; see `driver::recursive_cte`.
+        assert_eq!(
+            run_select_on(
+                "WITH RECURSIVE c (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 3) \
+                 SELECT n FROM c",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Int(1)],
+                vec![Datum::Int(2)],
+                vec![Datum::Int(3)]
+            ]
+        );
         // A mismatched column list is an error, not a silent rename of some.
         assert!(run_select_on(
             "WITH c (x, y) AS (SELECT a FROM c1) SELECT x FROM c",

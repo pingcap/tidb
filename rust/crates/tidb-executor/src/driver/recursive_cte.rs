@@ -446,11 +446,41 @@ fn expr_subquery_refs(expr: &Expr, name: &str) -> usize {
     counter.total
 }
 
-/// Whether any select field aggregates, which a recursive block may not do.
+/// Whether any select field aggregates or calls a window function, which is
+/// what Go's `ErrCTERecursiveForbidsAggregation` names.
+///
+/// The scan stops at a nested query: an aggregate inside a scalar subquery
+/// belongs to that subquery, not to this block -- and Go agrees, reporting
+/// `3577` (the reference rule) rather than `3575` for `SELECT (SELECT MAX(n)
+/// FROM t)+1 FROM t` (captured).
 fn select_aggregates(select: &SelectStmt) -> bool {
+    struct Found(bool);
+    impl tidb_ast::Visitor for Found {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if node.downcast_ref::<QueryStmt>().is_some() {
+                return true;
+            }
+            if let Some(expr) = node.downcast_ref::<Expr>() {
+                if matches!(
+                    expr,
+                    Expr::Aggregate { .. } | Expr::GroupConcat { .. } | Expr::Window { .. }
+                ) {
+                    self.0 = true;
+                    return true;
+                }
+            }
+            false
+        }
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
     select.fields.iter().any(|field| match field {
         tidb_ast::SelectField::Expr { expr, .. } => {
-            super::only_full_group_by::aggregates_anywhere(expr)
+            let mut found = Found(false);
+            let mut owned = expr.clone();
+            tidb_ast::Visitable::accept(&mut owned, &mut found);
+            found.0
         }
         tidb_ast::SelectField::Wildcard { .. } => false,
     })
