@@ -31,6 +31,8 @@ pub enum PdOperation {
     GetStore,
     /// Current timestamp allocation from the PD leader stream.
     Tso,
+    /// GC state (txn safe point) lookup.
+    GetGcState,
 }
 
 impl std::fmt::Display for PdOperation {
@@ -44,6 +46,7 @@ impl std::fmt::Display for PdOperation {
             Self::BatchScanRegions => formatter.write_str("BatchScanRegions"),
             Self::GetStore => formatter.write_str("GetStore"),
             Self::Tso => formatter.write_str("Tso"),
+            Self::GetGcState => formatter.write_str("GetGCState"),
         }
     }
 }

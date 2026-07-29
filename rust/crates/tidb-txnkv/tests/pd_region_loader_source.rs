@@ -186,6 +186,13 @@ impl Pd for MockPd {
         Ok(tonic::Response::new(state.batch_scan_regions.clone()))
     }
 
+    async fn get_gc_state(
+        &self,
+        _request: tonic::Request<pdpb::GetGcStateRequest>,
+    ) -> Result<tonic::Response<pdpb::GetGcStateResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("unused GetGCState"))
+    }
+
     async fn get_store(
         &self,
         request: tonic::Request<pdpb::GetStoreRequest>,

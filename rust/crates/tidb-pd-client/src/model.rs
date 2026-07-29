@@ -143,3 +143,20 @@ pub struct PdStore {
     /// Store labels in PD metadata order.
     pub labels: Vec<(String, String)>,
 }
+
+/// PD's current GC state for one keyspace scope.
+///
+/// Only `txn_safe_point` gates client reads: it is the timestamp below which PD
+/// has promised no transaction may still be reading, so a snapshot pinned under
+/// it may already have lost the MVCC versions it needs. `gc_safe_point` is
+/// projected for diagnostics only — advancing either point, and deleting the
+/// versions below them, belongs to the GC owner and not to a reading client.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PdGcState {
+    /// Whether GC for this scope is managed at the keyspace level.
+    pub is_keyspace_level_gc: bool,
+    /// Timestamp below which transactions are no longer safe to continue.
+    pub txn_safe_point: u64,
+    /// Timestamp below which obsolete MVCC versions may already be deleted.
+    pub gc_safe_point: u64,
+}

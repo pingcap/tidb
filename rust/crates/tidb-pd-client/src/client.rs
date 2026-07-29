@@ -28,8 +28,8 @@ use crate::tso::{
     TimestampParts, MAX_TSO_RETRIES,
 };
 use crate::{
-    PdBucketStats, PdBuckets, PdClientError, PdClientShutdownError, PdKeyRange, PdMemberSet,
-    PdNodeState, PdOperation, PdPeer, PdRegion, PdRegionEpoch, PdStore, PdStoreState,
+    PdBucketStats, PdBuckets, PdClientError, PdClientShutdownError, PdGcState, PdKeyRange,
+    PdMemberSet, PdNodeState, PdOperation, PdPeer, PdRegion, PdRegionEpoch, PdStore, PdStoreState,
 };
 
 /// Exact method paths generated from the checked source projection.
@@ -48,6 +48,8 @@ pub const BATCH_SCAN_REGIONS_PATH: &str = "/pdpb.PD/BatchScanRegions";
 pub const GET_STORE_PATH: &str = "/pdpb.PD/GetStore";
 /// Exact legacy PD timestamp-oracle stream method path.
 pub const TSO_PATH: &str = "/pdpb.PD/Tso";
+/// Exact GC-state lookup method path.
+pub const GET_GC_STATE_PATH: &str = "/pdpb.PD/GetGCState";
 
 enum WorkerCommand {
     RefreshMembers {
@@ -87,6 +89,10 @@ enum WorkerCommand {
     GetTimestamp {
         deadline: Instant,
         reply: mpsc::Sender<Result<u64, PdClientError>>,
+    },
+    GetGcState {
+        keyspace_id: Option<u32>,
+        reply: mpsc::Sender<Result<PdGcState, PdClientError>>,
     },
     Close {
         reply: mpsc::Sender<()>,
@@ -507,6 +513,22 @@ impl PdClient {
         response.recv().unwrap_or(Err(PdClientError::Closed))
     }
 
+    /// Loads PD's current GC state for one keyspace scope.
+    ///
+    /// `keyspace_id` is `None` for the null keyspace, which is the scope every
+    /// non-keyspace deployment reads under. A PD older than the GC-state API
+    /// answers `Unimplemented`; callers that must keep working against such a
+    /// cluster fall back to the deprecated etcd txn-safe-point key rather than
+    /// treating the failure as fatal.
+    pub fn get_gc_state(&self, keyspace_id: Option<u32>) -> Result<PdGcState, PdClientError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(WorkerCommand::GetGcState { keyspace_id, reply })
+            .map_err(|_| PdClientError::Closed)?;
+        response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
     fn shutdown_inner(&mut self, require_unique: bool) -> Result<(), PdClientShutdownError> {
         if !self.owns_worker {
             return Err(PdClientShutdownError::NotOwner);
@@ -593,6 +615,9 @@ fn run_worker(
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
                 WorkerCommand::GetTimestamp { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
+                WorkerCommand::GetGcState { reply, .. } => {
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
                 WorkerCommand::Close { reply } => {
@@ -800,6 +825,17 @@ fn run_worker(
                     &state,
                     &mut tso_stream,
                     &mut last_timestamp,
+                );
+                let _ = reply.send(result);
+            }
+            WorkerCommand::GetGcState { keyspace_id, reply } => {
+                let result = get_gc_state_with_failover(
+                    &runtime,
+                    &mut clients,
+                    timeout,
+                    &state,
+                    &shutdown,
+                    keyspace_id,
                 );
                 let _ = reply.send(result);
             }
@@ -1455,6 +1491,129 @@ where
         clients,
         &snapshot.members.leader_url,
         snapshot.members.cluster_id,
+    )
+}
+
+fn get_gc_state(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    endpoint: &str,
+    timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
+    cluster_id: u64,
+    keyspace_id: Option<u32>,
+) -> Result<PdGcState, PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
+    let response = block_on_rpc(
+        runtime,
+        timeout,
+        shutdown,
+        client.get_gc_state(pdpb::GetGcStateRequest {
+            header: Some(request_header(cluster_id)),
+            keyspace_scope: keyspace_id.map(|keyspace_id| pdpb::KeyspaceScope { keyspace_id }),
+            // The barriers describe which components still hold GC back. A
+            // reading client only needs the resulting txn safe point.
+            exclude_gc_barriers: true,
+        }),
+    );
+    let response =
+        map_rpc_result(response, PdOperation::GetGcState, endpoint, timeout)?.into_inner();
+    validate_response_header(
+        PdOperation::GetGcState,
+        response.header.as_ref(),
+        cluster_id,
+    )?;
+    let state = response.gc_state.ok_or_else(|| {
+        invalid_topology("missing_gc_state", "GetGCState omitted the GC state body")
+    })?;
+    Ok(PdGcState {
+        is_keyspace_level_gc: state.is_keyspace_level_gc,
+        txn_safe_point: state.txn_safe_point,
+        gc_safe_point: state.gc_safe_point,
+    })
+}
+
+fn get_gc_state_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
+    keyspace_id: Option<u32>,
+) -> Result<PdGcState, PdClientError> {
+    let snapshot = state.read().expect("PD state lock poisoned").clone();
+    let mut attempted = HashSet::new();
+    attempted.insert(snapshot.active_endpoint.clone());
+    match get_gc_state(
+        runtime,
+        clients,
+        &snapshot.active_endpoint,
+        timeout,
+        shutdown,
+        snapshot.members.cluster_id,
+        keyspace_id,
+    ) {
+        Ok(gc_state) => Ok(gc_state),
+        // An `Unimplemented` PD is uniformly old, so probing its peers would
+        // only repeat the same answer; the caller latches the fallback instead.
+        Err(error) if is_unimplemented(&error) => Err(error),
+        Err(error) if needs_failover_probe(&error) => {
+            let direct_failure = is_direct_failure(&error);
+            let mut last_error = error;
+            if let Err(error @ PdClientError::ClusterMismatch { .. }) =
+                refresh_membership(runtime, clients, timeout, state, shutdown)
+            {
+                return Err(error);
+            }
+            let current = state.read().expect("PD state lock poisoned").clone();
+            if !direct_failure && snapshot.active_endpoint == current.members.leader_url {
+                return Err(last_error);
+            }
+            for endpoint in endpoint_attempt_order(&current) {
+                if !attempted.insert(endpoint.clone()) {
+                    continue;
+                }
+                match get_gc_state(
+                    runtime,
+                    clients,
+                    &endpoint,
+                    timeout,
+                    shutdown,
+                    current.members.cluster_id,
+                    keyspace_id,
+                ) {
+                    Ok(gc_state) => {
+                        set_active_endpoint(state, endpoint);
+                        return Ok(gc_state);
+                    }
+                    Err(error) if is_unimplemented(&error) => return Err(error),
+                    Err(error)
+                        if is_retryable_endpoint_error(
+                            &error,
+                            &endpoint,
+                            &current.members.leader_url,
+                        ) =>
+                    {
+                        last_error = error;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(last_error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether PD rejected the call because it does not implement the method.
+///
+/// This is the one PD failure a caller may answer by falling back to an older
+/// mechanism rather than by retrying elsewhere.
+#[must_use]
+pub fn is_unimplemented(error: &PdClientError) -> bool {
+    matches!(
+        error,
+        PdClientError::Transport { code, .. } if code == "Unimplemented"
     )
 }
 

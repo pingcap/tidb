@@ -92,6 +92,8 @@ struct State {
     scan_region_requests: Vec<pdpb::ScanRegionsRequest>,
     batch_scan_region_requests: Vec<pdpb::BatchScanRegionsRequest>,
     store_requests: Vec<pdpb::GetStoreRequest>,
+    gc_state: Reply<pdpb::GetGcStateResponse>,
+    gc_state_requests: Vec<pdpb::GetGcStateRequest>,
 }
 
 #[derive(Clone)]
@@ -142,6 +144,18 @@ impl Pd for MockPd {
                         store: None,
                     })
                 })
+        };
+        reply.send().await
+    }
+
+    async fn get_gc_state(
+        &self,
+        request: tonic::Request<pdpb::GetGcStateRequest>,
+    ) -> Result<tonic::Response<pdpb::GetGcStateResponse>, tonic::Status> {
+        let reply = {
+            let mut state = self.state.lock().unwrap();
+            state.gc_state_requests.push(request.into_inner());
+            state.gc_state.clone()
         };
         reply.send().await
     }
@@ -454,6 +468,17 @@ fn valid_state() -> State {
         scan_region_requests: Vec::new(),
         batch_scan_region_requests: Vec::new(),
         store_requests: Vec::new(),
+        gc_state: Reply::Value(pdpb::GetGcStateResponse {
+            header: Some(header(CLUSTER_ID)),
+            gc_state: Some(pdpb::GcState {
+                keyspace_scope: None,
+                is_keyspace_level_gc: false,
+                txn_safe_point: 449_000_000_000,
+                gc_safe_point: 448_000_000_000,
+                gc_barriers: Vec::new(),
+            }),
+        }),
+        gc_state_requests: Vec::new(),
     }
 }
 
@@ -700,6 +725,47 @@ fn by_id_scan_and_batch_scan_preserve_flags_ranges_limits_and_response_order() {
     assert_exact_header(batch_without_buckets_request.header.as_ref().unwrap());
     assert!(!batch_without_buckets_request.need_buckets);
     assert_eq!(batch_without_buckets_request.ranges, batch_request.ranges);
+}
+
+#[test]
+fn gc_state_round_trips_the_txn_safe_point_and_reports_an_unimplemented_pd() {
+    // client-go tikv/kv.go:loadTxnSafePoint calls the GC states client and
+    // falls back only when PD answers Unimplemented.
+    let server = Server::start(valid_state());
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let state = client.get_gc_state(None).unwrap();
+    assert_eq!(state.txn_safe_point, 449_000_000_000);
+    assert_eq!(state.gc_safe_point, 448_000_000_000);
+    assert!(!state.is_keyspace_level_gc);
+
+    let keyspace_state = client.get_gc_state(Some(3)).unwrap();
+    assert_eq!(keyspace_state.txn_safe_point, 449_000_000_000);
+
+    {
+        let observed = server.state.lock().unwrap();
+        assert_eq!(observed.gc_state_requests.len(), 2);
+        for request in &observed.gc_state_requests {
+            assert_exact_header(request.header.as_ref().unwrap());
+            // A reader needs the resulting safe point, not the barrier list
+            // that explains which owner is holding GC back.
+            assert!(request.exclude_gc_barriers);
+        }
+        // The null keyspace must be an absent scope, not keyspace 0.
+        assert_eq!(observed.gc_state_requests[0].keyspace_scope, None);
+        assert_eq!(
+            observed.gc_state_requests[1].keyspace_scope,
+            Some(pdpb::KeyspaceScope { keyspace_id: 3 })
+        );
+    }
+
+    server.state.lock().unwrap().gc_state =
+        Reply::Status(tonic::Code::Unimplemented, "unknown method GetGCState");
+    let error = client.get_gc_state(None).unwrap_err();
+    assert!(
+        tidb_pd_client::is_unimplemented(&error),
+        "a pre-9.0 PD must be distinguishable so the caller can fall back: {error}"
+    );
 }
 
 #[test]

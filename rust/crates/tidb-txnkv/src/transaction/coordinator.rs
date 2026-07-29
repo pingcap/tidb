@@ -14,6 +14,7 @@
 
 use std::collections::VecDeque;
 use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tidb_pd_client::PdClient;
@@ -23,6 +24,7 @@ use tidb_proto::{
     KvrpcPrewriteRequest, KvrpcPrewriteResponse, KvrpcScanRequest, KvrpcScanResponse,
 };
 
+use crate::gc_state::{GcStateCache, TxnSafePointLoader, TxnSafePointRefresher, VisibilityError};
 use crate::lock::{
     decode_lock_observation, resolve_optimistic_locks, LockRecoveryClient, LockRecoveryResult,
     TimestampSource,
@@ -75,6 +77,15 @@ pub enum OptimisticCoordinatorError {
     Mutations(MutationSetError),
     /// A real snapshot Get could not produce a determinate result.
     SnapshotGet(String),
+    /// The data this transaction read may already have been garbage-collected.
+    ///
+    /// This is deliberately its own variant rather than a `SnapshotGet` string:
+    /// it is terminal, never retryable at the same `start_ts`, and it maps to
+    /// its own SQL error tier. Folding it into the generic bucket is what makes
+    /// a GC-overtaken read look like a transport hiccup worth retrying.
+    Visibility(VisibilityError),
+    /// The txn safe point could not be loaded when the authority was built.
+    GcState(String),
 }
 
 impl fmt::Display for OptimisticCoordinatorError {
@@ -90,6 +101,8 @@ impl fmt::Display for OptimisticCoordinatorError {
             Self::Timestamp(error) => write!(formatter, "PD timestamp allocation failed: {error}"),
             Self::Mutations(error) => error.fmt(formatter),
             Self::SnapshotGet(error) => write!(formatter, "snapshot Get failed: {error}"),
+            Self::Visibility(error) => error.fmt(formatter),
+            Self::GcState(error) => write!(formatter, "txn safe point unavailable: {error}"),
         }
     }
 }
@@ -118,6 +131,9 @@ pub struct RealOptimisticTransactionOpener {
     opener: crate::SharedReadOpener<TonicCoprocessorClient, PdRegionLoader>,
     pd: PdClient,
     timeout: Duration,
+    /// Keeps the shared txn safe point current for as long as any clone of this
+    /// opener — and therefore any transaction it opened — can still read.
+    gc_state: Arc<TxnSafePointRefresher>,
 }
 
 impl Clone for RealOptimisticTransactionOpener {
@@ -126,6 +142,7 @@ impl Clone for RealOptimisticTransactionOpener {
             opener: self.opener.clone(),
             pd: self.pd.clone(),
             timeout: self.timeout,
+            gc_state: Arc::clone(&self.gc_state),
         }
     }
 }
@@ -141,11 +158,30 @@ impl RealOptimisticTransactionOpener {
         if pd.cluster_id() == 0 {
             return Err(OptimisticCoordinatorError::ZeroClusterId);
         }
+        // client-go loads the txn safe point inside `NewKVStore` and fails
+        // store construction if it cannot: a reader that does not know the
+        // safe point cannot tell a valid snapshot from a collected one.
+        let gc_state = TxnSafePointRefresher::start(TxnSafePointLoader::new(
+            pd.clone(),
+            // The null keyspace: keyspace-level GC is not a scope this client
+            // reads under.
+            None,
+            timeout,
+        ))
+        .map_err(|error| OptimisticCoordinatorError::GcState(error.to_string()))?;
         Ok(Self {
             opener,
             pd,
             timeout,
+            gc_state: Arc::new(gc_state),
         })
+    }
+
+    /// The shared txn safe point every transaction from this opener reads
+    /// against.
+    #[must_use]
+    pub fn gc_state_cache(&self) -> Arc<GcStateCache> {
+        self.gc_state.cache()
     }
 
     /// Stable shared process authority identity.
@@ -220,6 +256,7 @@ impl RealOptimisticTransactionOpener {
             opened_at,
             planned_mutation_count,
             planned_aggregate_bytes,
+            self.gc_state.cache(),
         )
     }
 
@@ -374,6 +411,9 @@ pub struct RealOptimisticTransaction<C, L, T> {
     secondary_backoff: RegionBackoffBudget,
     cleanup_backoff: RegionBackoffBudget,
     pessimistic: Option<PessimisticPrewritePlan>,
+    /// The store-wide txn safe point every read from this transaction is
+    /// validated against once TiKV has answered.
+    gc_state: Arc<GcStateCache>,
 }
 
 /// What a pessimistic transaction already proved before it reached Prewrite.
@@ -427,6 +467,11 @@ where
             opened_at,
             planned_mutation_count,
             planned_aggregate_bytes,
+            // A transaction built without a store has no GC authority to share.
+            // A zero txn safe point is not a bypass — it is what PD reports on
+            // a cluster where GC has never advanced, so the same comparison
+            // runs and simply admits every timestamp.
+            Arc::new(GcStateCache::seeded(0, Instant::now())),
         )
     }
 
@@ -435,6 +480,7 @@ where
     /// A read-only transaction legitimately has a zero mutation plan, which
     /// [`validate_plan`] rejects, so the plan check stays with the callers that
     /// intend to write.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new_opened(
         runtime: SharedReadRuntime<C, L>,
         timestamps: T,
@@ -443,6 +489,7 @@ where
         opened_at: Instant,
         planned_mutation_count: usize,
         planned_aggregate_bytes: usize,
+        gc_state: Arc<GcStateCache>,
     ) -> Result<Self, OptimisticCoordinatorError> {
         if start_ts == 0 {
             return Err(OptimisticCoordinatorError::Timestamp(
@@ -465,7 +512,20 @@ where
             secondary_backoff: RegionBackoffBudget::campaign_default(),
             cleanup_backoff: RegionBackoffBudget::campaign_default(),
             pessimistic: None,
+            gc_state,
         })
+    }
+
+    /// Rejects a completed read whose `start_ts` GC has already passed.
+    ///
+    /// Called only after TiKV has answered, mirroring client-go's placement of
+    /// `CheckVisibility` at the end of `snapshot.get` and `snapshot.scan`. A
+    /// pre-read check would be worthless: GC can advance while the RPC is in
+    /// flight, so only a post-read check covers the data actually returned.
+    fn check_visibility(&self) -> Result<(), OptimisticCoordinatorError> {
+        self.gc_state
+            .check_visibility(self.start_ts)
+            .map_err(OptimisticCoordinatorError::Visibility)
     }
 
     /// Binds the pessimistic locks a caller already acquired at `start_ts`.
@@ -574,6 +634,7 @@ where
                     "TiKV key error: {key_error:?}"
                 )));
             }
+            self.check_visibility()?;
             let value = if response.response.not_found {
                 None
             } else {
@@ -690,6 +751,10 @@ where
                 // Redo this page: a locked scan returns no trustworthy pairs.
                 continue;
             }
+            // Per page, as client-go checks per `scan.Next` batch: a long scan
+            // must not spend its whole range on the strength of one check made
+            // before the first page.
+            self.check_visibility()?;
             let page_len = response.response.pairs.len();
             let last_key = response
                 .response

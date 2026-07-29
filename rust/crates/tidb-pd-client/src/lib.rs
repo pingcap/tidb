@@ -13,8 +13,9 @@ mod model;
 mod tso;
 
 pub use client::{
-    PdClient, BATCH_SCAN_REGIONS_PATH, GET_MEMBERS_PATH, GET_PREV_REGION_PATH,
-    GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH, SCAN_REGIONS_PATH, TSO_PATH,
+    is_unimplemented, PdClient, BATCH_SCAN_REGIONS_PATH, GET_GC_STATE_PATH, GET_MEMBERS_PATH,
+    GET_PREV_REGION_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH,
+    SCAN_REGIONS_PATH, TSO_PATH,
 };
 pub use error::{PdClientError, PdClientShutdownError, PdOperation};
 pub use etcd::{
@@ -23,6 +24,6 @@ pub use etcd::{
     PRIVILEGE_UPDATE_KEY,
 };
 pub use model::{
-    PdBucketStats, PdBuckets, PdKeyRange, PdMemberSet, PdNodeState, PdPeer, PdRegion,
+    PdBucketStats, PdBuckets, PdGcState, PdKeyRange, PdMemberSet, PdNodeState, PdPeer, PdRegion,
     PdRegionEpoch, PdStore, PdStoreState,
 };

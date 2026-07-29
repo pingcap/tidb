@@ -145,6 +145,13 @@ impl Pd for MockPd {
         }))
     }
 
+    async fn get_gc_state(
+        &self,
+        _request: tonic::Request<pdpb::GetGcStateRequest>,
+    ) -> Result<tonic::Response<pdpb::GetGcStateResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("unused GetGCState"))
+    }
+
     async fn get_store(
         &self,
         _request: tonic::Request<pdpb::GetStoreRequest>,

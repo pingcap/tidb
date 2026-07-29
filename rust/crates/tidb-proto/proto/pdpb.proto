@@ -12,6 +12,41 @@ service PD {
   rpc GetRegionByID(GetRegionByIDRequest) returns (GetRegionResponse) {}
   rpc ScanRegions(ScanRegionsRequest) returns (ScanRegionsResponse) {}
   rpc BatchScanRegions(BatchScanRegionsRequest) returns (BatchScanRegionsResponse) {}
+  rpc GetGCState(GetGCStateRequest) returns (GetGCStateResponse) {}
+}
+
+// A wrapper over keyspace_id, so that an unset keyspace scope (the null
+// keyspace) is distinguishable from keyspace 0 ("DEFAULT").
+message KeyspaceScope {
+  uint32 keyspace_id = 1;
+}
+
+message GCBarrierInfo {
+  string barrier_id = 1;
+  uint64 barrier_ts = 2;
+  int64 ttl_seconds = 3;
+}
+
+message GetGCStateRequest {
+  RequestHeader header = 1;
+
+  KeyspaceScope keyspace_scope = 2;
+  bool exclude_gc_barriers = 3;
+}
+
+message GCState {
+  KeyspaceScope keyspace_scope = 1;
+
+  bool is_keyspace_level_gc = 2;
+  uint64 txn_safe_point = 3;
+  uint64 gc_safe_point = 4;
+  repeated GCBarrierInfo gc_barriers = 5;
+}
+
+message GetGCStateResponse {
+  ResponseHeader header = 1;
+
+  GCState gc_state = 2;
 }
 
 message TsoRequest {

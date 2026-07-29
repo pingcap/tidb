@@ -44,6 +44,7 @@ pub mod driver;
 mod driver_error;
 mod error;
 mod fault_injection;
+pub mod gc_state;
 mod go_is_print;
 mod handle;
 mod inner_txn;
@@ -113,6 +114,11 @@ pub use error::{
 pub use fault_injection::{
     new_injected_storage, new_injected_store, InjectedSnapshot, InjectedStore, InjectedTransaction,
     InjectionConfig, KvSnapshot, KvStorage, KvTransaction,
+};
+pub use gc_state::{
+    GcStateCache, GcStateLoadError, TxnSafePointLoader, TxnSafePointRefresher, VisibilityError,
+    GC_CPU_TIME_INACCURACY_BOUND, GC_STATE_CACHE_INTERVAL, POLL_TXN_SAFE_POINT_INTERVAL,
+    POLL_TXN_SAFE_POINT_QUICK_REPEAT_INTERVAL, UNIFIED_TXN_SAFE_POINT_PATH,
 };
 pub use handle::{
     CommonHandle, Handle, HandleCompareError, HandleMap, IntHandle, MemAwareHandleMap,
