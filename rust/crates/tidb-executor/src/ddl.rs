@@ -81,7 +81,8 @@
 //!   there even when TiDB's own planner would have rewritten the expression.
 
 use crate::driver::{Catalog, DriverError};
-use crate::kv_table::{KvColumn, KvIndex, KvTable, TableCharset};
+use crate::kv_table::{FkAction, KvColumn, KvForeignKey, KvIndex, KvTable, TableCharset};
+use crate::SchemaErrorKind;
 use tidb_ast::CiString;
 use tidb_ast::{ColumnDef, ColumnTypeArg, DdlStmt, Stmt};
 use tidb_datatype::{
@@ -947,6 +948,7 @@ pub fn run_drop_table_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
+    foreign_key_checks: bool,
 ) -> Result<(), DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let drop = match &stmt {
@@ -968,6 +970,19 @@ pub fn run_drop_table_in(
         return Err(DriverError::Unsupported(
             "temporary tables are not supported yet",
         ));
+    }
+
+    // Go `checkDropTableHasForeignKeyReferredInOwner` runs over the WHOLE
+    // statement before anything is dropped, so a parent and its child dropped
+    // together succeed regardless of the order they are listed in, while a
+    // parent alone fails without dropping any of the named tables.
+    if foreign_key_checks {
+        let mut dropping = Vec::with_capacity(drop.names.len());
+        for path in &drop.names {
+            let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
+            dropping.push((database.to_owned(), name.to_owned()));
+        }
+        crate::foreign_key::check_drop_tables(catalog, &dropping)?;
     }
 
     let mut missing: Option<String> = None;
@@ -1129,6 +1144,115 @@ fn table_indexes(
     Ok(indexes)
 }
 
+/// Go `ddl.buildFKInfo`: the `FOREIGN KEY` table constraints, resolved
+/// against the table being created and against the referenced table.
+///
+/// `foreign_key_checks` is the session switch: with it OFF, Go skips the
+/// reference-resolution checks entirely and stores the constraint as written
+/// (`ddl.checkTableInfoValid` -> `checkAndCreateForeignKey`), which is what
+/// lets a child table be created before its parent.
+///
+/// NOT MODELLED (documented): a column-level `REFERENCES` clause, a `MATCH
+/// PARTIAL` mode, and a prefix-length or expression key part -- each is
+/// refused rather than silently dropped, so a table never claims a
+/// constraint it does not enforce.
+fn table_foreign_keys(
+    create: &tidb_ast::CreateTableStmt,
+    columns: &[ColumnInfo],
+    catalog: &Catalog,
+    database: &str,
+    foreign_key_checks: bool,
+) -> Result<Vec<KvForeignKey>, DriverError> {
+    let mut keys = Vec::new();
+    for constraint in &create.table_constraints {
+        let tidb_ast::TableConstraint::ForeignKey(definition) = constraint else {
+            continue;
+        };
+        if definition.reference.match_type == tidb_ast::ForeignKeyMatch::Partial {
+            return Err(DriverError::Unsupported(
+                "MATCH PARTIAL is not supported yet",
+            ));
+        }
+        let mut cols = Vec::with_capacity(definition.parts.len());
+        for name in index_part_names(&definition.parts)? {
+            let offset = columns
+                .iter()
+                .position(|column| column.name.original().eq_ignore_ascii_case(&name))
+                .ok_or(DriverError::Unsupported(
+                    "a foreign key names a column the table does not define",
+                ))?;
+            cols.push(offset);
+        }
+        let Some(path) = &definition.reference.table else {
+            return Err(DriverError::Unsupported(
+                "a foreign key needs a referenced table",
+            ));
+        };
+        let (ref_schema, ref_table) = match path.as_slice() {
+            [name] => (database.to_owned(), name.clone()),
+            [schema, name] => (schema.clone(), name.clone()),
+            _ => return Err(DriverError::Unsupported("empty referenced table name")),
+        };
+        let ref_cols = match &definition.reference.parts {
+            Some(parts) => index_part_names(parts)?,
+            None => Vec::new(),
+        };
+        if ref_cols.len() != cols.len() {
+            return Err(DriverError::WrongFkDef {
+                name: definition.name.clone().unwrap_or_default(),
+                reason: "Key reference and table reference don't match".to_owned(),
+            });
+        }
+        if foreign_key_checks {
+            // Go `checkTableInfoValid`: an unresolvable reference is
+            // `ErrNoReferencedRow`-adjacent at DDL time, not at write time.
+            let parent = catalog.get_in(&ref_schema, &ref_table).ok_or_else(|| {
+                DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                    "{ref_schema}.{ref_table}"
+                )))
+            })?;
+            let parent_columns = parent.column_names();
+            for name in &ref_cols {
+                if !parent_columns
+                    .iter()
+                    .any(|column| column.eq_ignore_ascii_case(name))
+                {
+                    return Err(DriverError::UnknownColumnInTable {
+                        column: name.clone(),
+                        table: ref_table.clone(),
+                    });
+                }
+            }
+        }
+        keys.push(KvForeignKey {
+            name: definition
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("fk_{}", keys.len() + 1)),
+            cols,
+            ref_schema,
+            ref_table,
+            ref_cols,
+            on_delete: fk_action(definition.reference.on_delete),
+            on_update: fk_action(definition.reference.on_update),
+        });
+    }
+    Ok(keys)
+}
+
+/// Go `ast.ReferOptionType` -> the behaviour it actually produces. See
+/// [`FkAction`] for why three of the six spellings collapse into `Restrict`.
+fn fk_action(action: Option<tidb_ast::ReferentialAction>) -> FkAction {
+    match action.unwrap_or(tidb_ast::ReferentialAction::NoOption) {
+        tidb_ast::ReferentialAction::Cascade => FkAction::Cascade,
+        tidb_ast::ReferentialAction::SetNull => FkAction::SetNull,
+        tidb_ast::ReferentialAction::NoOption
+        | tidb_ast::ReferentialAction::Restrict
+        | tidb_ast::ReferentialAction::NoAction
+        | tidb_ast::ReferentialAction::SetDefault => FkAction::Restrict,
+    }
+}
+
 /// Go `isIntCol`: whether the column's type can carry a handle.
 fn is_int_column(column: &ColumnInfo) -> bool {
     matches!(
@@ -1172,10 +1296,16 @@ fn primary_key_column(
         }
     }
     for constraint in &create.table_constraints {
-        let tidb_ast::TableConstraint::Index(index) = constraint else {
-            return Err(DriverError::Unsupported(
-                "only key table constraints are supported yet",
-            ));
+        let index = match constraint {
+            tidb_ast::TableConstraint::Index(index) => index,
+            // A foreign key is collected by `table_foreign_keys`, and never
+            // contributes a primary key.
+            tidb_ast::TableConstraint::ForeignKey(_) => continue,
+            _ => {
+                return Err(DriverError::Unsupported(
+                    "only key and foreign-key table constraints are supported yet",
+                ))
+            }
         };
         if index.kind != tidb_ast::IndexConstraintKind::PrimaryKey {
             // Unique and secondary keys are collected by `table_indexes`.
@@ -1420,7 +1550,7 @@ fn field_type_of(def: &ColumnDef, table: TableCharset) -> Result<FieldType, Driv
 /// registering a TiKV-byte-backed table in `catalog`. Returns whether a table
 /// was created (`false` only for `IF NOT EXISTS` over an existing name).
 pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, DriverError> {
-    run_create_table_in(sql, catalog, tidb_executor_default_database())
+    run_create_table_in(sql, catalog, tidb_executor_default_database(), true)
 }
 
 /// The default schema an unqualified `CREATE TABLE` lands in.
@@ -1433,6 +1563,7 @@ pub fn run_create_table_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
+    foreign_key_checks: bool,
 ) -> Result<bool, DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
 
@@ -1647,6 +1778,15 @@ pub fn run_create_table_in(
     }
     for index in table_indexes(create, &info.columns, clustered)? {
         table.add_index(index);
+    }
+    for foreign_key in table_foreign_keys(
+        create,
+        &info.columns,
+        catalog,
+        &database,
+        foreign_key_checks,
+    )? {
+        table.add_foreign_key(foreign_key);
     }
     catalog.register_kv_in(&database, name, table);
     Ok(true)

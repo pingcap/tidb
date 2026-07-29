@@ -104,6 +104,10 @@ pub struct StmtContext {
     /// so a context with no session behind it behaves like a stock one.
     default_week_format: i64,
     div_precision_increment: u32,
+    /// Go `SessionVars.ForeignKeyChecks` (`@@foreign_key_checks`, ON by
+    /// default): whether referential integrity is enforced at all. A context
+    /// with no session behind it enforces, as a stock session does.
+    foreign_key_checks: bool,
 }
 
 impl StmtContext {
@@ -132,6 +136,7 @@ impl StmtContext {
             auto_increment_zero_is_explicit: false,
             only_full_group_by: false,
             default_week_format: 0,
+            foreign_key_checks: true,
             div_precision_increment: 4,
         }
     }
@@ -160,6 +165,19 @@ impl StmtContext {
     #[must_use]
     pub fn only_full_group_by(&self) -> bool {
         self.only_full_group_by
+    }
+
+    /// Sets `@@foreign_key_checks` for this statement.
+    #[must_use]
+    pub fn with_foreign_key_checks(mut self, foreign_key_checks: bool) -> Self {
+        self.foreign_key_checks = foreign_key_checks;
+        self
+    }
+
+    /// Whether this statement enforces referential integrity.
+    #[must_use]
+    pub fn foreign_key_checks(&self) -> bool {
+        self.foreign_key_checks
     }
 
     /// Attaches the session state the builtins read: Go reads both from
@@ -260,6 +278,7 @@ impl StmtContext {
             auto_increment_zero_is_explicit: false,
             only_full_group_by: false,
             default_week_format: 0,
+            foreign_key_checks: true,
             div_precision_increment: 4,
         }
     }

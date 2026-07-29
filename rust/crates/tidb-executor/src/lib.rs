@@ -52,6 +52,7 @@ pub mod driver;
 pub mod executor;
 pub mod explain;
 mod farmhash;
+pub(crate) mod foreign_key;
 pub mod hash_agg;
 mod hash_join;
 mod index_range;

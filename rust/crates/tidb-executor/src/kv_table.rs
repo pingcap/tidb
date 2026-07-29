@@ -169,6 +169,50 @@ pub struct KvIndex {
     pub visible: bool,
 }
 
+/// What a parent-side mutation does to the rows that reference it: Go's
+/// `ast.ReferOptionType` reduced to the three behaviours that differ.
+///
+/// `NO ACTION`, `SET DEFAULT` and a missing clause all collapse into
+/// [`FkAction::Restrict`]. That is not an approximation: MySQL's InnoDB --
+/// and TiDB after it -- never implemented `SET DEFAULT`, and `NO ACTION` is
+/// not deferred to commit either, so all three reject the parent mutation
+/// outright (re-confirmed via `gorun`, not assumed).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FkAction {
+    /// Reject the parent mutation while a referencing row exists.
+    #[default]
+    Restrict,
+    /// Delete the referencing rows, or repoint them at the new value.
+    Cascade,
+    /// Null out the referencing columns.
+    SetNull,
+}
+
+/// One foreign key of a [`KvTable`]: Go `model.FKInfo`, reduced to what a
+/// referential check and a cascade need.
+///
+/// The referencing side is stored as column OFFSETS because the constraint
+/// lives on the table that declares it, so its own schema is fixed here; the
+/// referenced side is stored as NAMES because the parent is resolved by name
+/// at check time, exactly as Go resolves it through the information schema.
+#[derive(Clone, Debug)]
+pub struct KvForeignKey {
+    /// The constraint name, which a violation reports.
+    pub name: String,
+    /// The referencing columns' offsets in this table's rows.
+    pub cols: Vec<usize>,
+    /// The referenced schema.
+    pub ref_schema: String,
+    /// The referenced table.
+    pub ref_table: String,
+    /// The referenced columns' names, in the same order as `cols`.
+    pub ref_cols: Vec<String>,
+    /// Go `FKInfo.OnDelete`.
+    pub on_delete: FkAction,
+    /// Go `FKInfo.OnUpdate`.
+    pub on_update: FkAction,
+}
+
 /// A column of a [`KvTable`]: name, column id, and type.
 #[derive(Clone, Debug)]
 pub struct KvColumn {
@@ -403,6 +447,11 @@ pub struct KvTable {
     /// Go `TableInfo.Charset`/`Collate`: the table's default character set and
     /// collation, which its unqualified string columns inherit.
     charset: TableCharset,
+    /// Go `TableInfo.ForeignKeys`: the constraints this table DECLARES, i.e.
+    /// the child side. The parent side is found by scanning the catalog for
+    /// the tables whose foreign keys name this one, as Go's
+    /// `ReferredFKInfo` index does.
+    foreign_keys: Vec<KvForeignKey>,
 }
 
 /// A failure while encoding or decoding table bytes.
@@ -503,7 +552,19 @@ impl KvTable {
             auto_increment_offset: None,
             auto_id: AutoIdAllocator::new(),
             charset: TableCharset::default(),
+            foreign_keys: Vec::new(),
         }
+    }
+
+    /// Records a foreign key this table declares.
+    pub fn add_foreign_key(&mut self, foreign_key: KvForeignKey) {
+        self.foreign_keys.push(foreign_key);
+    }
+
+    /// The foreign keys this table declares (the child side).
+    #[must_use]
+    pub fn foreign_keys(&self) -> &[KvForeignKey] {
+        &self.foreign_keys
     }
 
     /// Sets the table's default character set and collation.

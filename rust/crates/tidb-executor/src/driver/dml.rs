@@ -318,10 +318,17 @@ pub(crate) fn run_insert_traced(
         new_rows.push(row);
         inserted += 1;
     }
-    match table {
-        TableEntry::View(_) => unreachable!("INSERT through a view is refused above"),
-        TableEntry::Mem(mem) => mem.rows.extend(new_rows),
-        TableEntry::Kv(kv) => {
+    // A matrix table has neither an allocator nor constraints, so it is
+    // finished here; everything below is the byte-backed write path.
+    if let TableEntry::Mem(mem) = table {
+        mem.rows.extend(new_rows);
+        return Ok((inserted, first_allocated));
+    }
+    {
+        let TableEntry::Kv(kv) = table else {
+            unreachable!("INSERT through a view is refused above")
+        };
+        {
             // The allocator lives on the table, so the ids are handed out here
             // rather than while the rows were being built.
             for index in &auto_rows {
@@ -340,12 +347,43 @@ pub(crate) fn run_insert_traced(
                     ctx.record_given_insert_id(given);
                 }
             }
+        }
+    }
+    // Go's `FKCheckExec` sits between the row build and the write, which is
+    // why the table's own borrow is released for it: the check reads the
+    // PARENT tables, which the statement never named.
+    let fk_verdicts = if ctx.foreign_key_checks() {
+        crate::foreign_key::check_child_rows(catalog, &database, &table_name, &new_rows)?
+    } else {
+        vec![None; new_rows.len()]
+    };
+    if !insert.ignore {
+        if let Some(error) = fk_verdicts.iter().flatten().next() {
+            return Err(error.clone());
+        }
+    }
+    let table = catalog
+        .get_mut_in(&database, &table_name)
+        .ok_or(DriverError::Unsupported("table not found in catalog"))?;
+    let TableEntry::Kv(kv) = table else {
+        unreachable!("INSERT through a view is refused above")
+    };
+    {
+        {
             // Go resolves a conflict per row, before the row is written:
             // REPLACE deletes every row it collides with, ON DUPLICATE KEY
             // UPDATE applies its assignments to the first one, and IGNORE
             // skips the row with the duplicate reported as a warning.
             inserted = 0;
-            for row in &new_rows {
+            for (position, row) in new_rows.iter().enumerate() {
+                // Go's `FKCheckExec` runs per row, before the row is added,
+                // and under `INSERT IGNORE` its violation is a warning and a
+                // skip rather than a statement error.
+                if let Some(error) = &fk_verdicts[position] {
+                    let warning = error.clone().to_mysql_error();
+                    ctx.append_warning_parts(warning.code, &warning.message);
+                    continue;
+                }
                 let conflicts = kv
                     .conflicting_handles(row)
                     .map_err(|e| DriverError::Parse(format!("conflict lookup failed: {e:?}")))?;
@@ -955,6 +993,7 @@ pub(crate) fn run_update_traced(
         .ok_or(DriverError::Unsupported("unknown table"))?;
 
     let mut changed = 0u64;
+    let mut rewrites: Vec<(crate::kv_table::TableHandle, Vec<Datum>, Vec<Datum>)> = Vec::new();
     match entry {
         // Go's planner rejects an UPDATE whose target is a view.
         TableEntry::View(_) => return Err(DriverError::TableNotUpdatable(name.clone())),
@@ -995,6 +1034,10 @@ pub(crate) fn run_update_traced(
                 ctx,
             )?;
             scanned = rows.len() as u64;
+            // The rewrites are STAGED rather than applied, because both
+            // referential checks need the table released: the child-side
+            // check reads the parent tables, and the parent-side cascade
+            // writes the dependent ones.
             for (handle, row) in rows {
                 // Go's `LIMIT` is a plan operator over the rows the statement
                 // reaches, so it counts MATCHED rows -- not the subset whose
@@ -1013,15 +1056,40 @@ pub(crate) fn run_update_traced(
                     ctx,
                     &mut matched,
                 )? {
-                    kv.update_row(&handle, &new_row).map_err(|e| match e {
-                        crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
-                            DriverError::DuplicateEntry { value, key }
-                        }
-                        other => DriverError::Parse(format!("row encode failed: {other:?}")),
-                    })?;
-                    changed += 1;
+                    rewrites.push((handle, row, new_row));
                 }
             }
+        }
+    }
+    if !rewrites.is_empty() {
+        if ctx.foreign_key_checks() {
+            let new_rows: Vec<Vec<Datum>> = rewrites
+                .iter()
+                .map(|(_, _, new_row)| new_row.clone())
+                .collect();
+            crate::foreign_key::require_child_rows(catalog, &database, &name, &new_rows)?;
+            let changes: Vec<crate::foreign_key::ParentChange<'_>> = rewrites
+                .iter()
+                .map(
+                    |(_, old, new_row)| crate::foreign_key::ParentChange::Update {
+                        old,
+                        new: new_row,
+                    },
+                )
+                .collect();
+            crate::foreign_key::cascade_parent_changes(catalog, &database, &name, &changes)?;
+        }
+        let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
+            unreachable!("only a byte-backed table stages rewrites")
+        };
+        for (handle, _, new_row) in &rewrites {
+            kv.update_row(handle, new_row).map_err(|e| match e {
+                crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
+                    DriverError::DuplicateEntry { value, key }
+                }
+                other => DriverError::Parse(format!("row encode failed: {other:?}")),
+            })?;
+            changed += 1;
         }
     }
     if let Some(trace) = trace {
@@ -1145,6 +1213,10 @@ pub(crate) fn run_delete_traced(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
 ) -> Result<u64, DriverError> {
+    // `DELETE IGNORE` differs from a plain `DELETE` only in what it does with
+    // a referential violation: Go downgrades it from a statement error to a
+    // per-row skip with a warning. `QUICK` is an index-maintenance hint with
+    // no visible behaviour, and is still refused rather than ignored.
     if delete.quick {
         return Err(DriverError::Unsupported(
             "DELETE QUICK is not supported yet",
@@ -1210,6 +1282,7 @@ pub(crate) fn run_delete_traced(
         .ok_or(DriverError::Unsupported("unknown table"))?;
 
     let mut deleted = 0u64;
+    let mut doomed: Vec<(crate::kv_table::TableHandle, Vec<Datum>)> = Vec::new();
     match entry {
         TableEntry::View(_) => return Err(DriverError::DeleteViewUnsupported(name.clone())),
         TableEntry::Mem(mem) => {
@@ -1237,17 +1310,55 @@ pub(crate) fn run_delete_traced(
                 ctx,
             )?;
             scanned = rows.len() as u64;
+            // Selected first, deleted after: the parent-side cascade below
+            // needs the table released, because it writes the DEPENDENT
+            // tables the statement never named.
             for (handle, row) in rows {
                 // Go's LIMIT caps the rows DELETED, not the rows examined.
-                if row_limit.is_some_and(|cap| deleted >= cap) {
+                if row_limit.is_some_and(|cap| doomed.len() as u64 >= cap) {
                     break;
                 }
                 if row_is_selected(&row, &field_types, &predicate, ctx)? {
-                    kv.delete_row(&handle)
-                        .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
-                    deleted += 1;
+                    doomed.push((handle, row));
                 }
             }
+        }
+    }
+    if !doomed.is_empty() {
+        if ctx.foreign_key_checks() {
+            // Under IGNORE each row stands or falls alone, so the cascade
+            // runs per row and a restricted row is dropped from the
+            // statement with a warning instead of failing it.
+            if delete.ignore {
+                let mut surviving = Vec::with_capacity(doomed.len());
+                for (handle, row) in doomed {
+                    let changes = [crate::foreign_key::ParentChange::Delete(&row)];
+                    match crate::foreign_key::cascade_parent_changes(
+                        catalog, &database, &name, &changes,
+                    ) {
+                        Ok(()) => surviving.push((handle, row.clone())),
+                        Err(error) => {
+                            let warning = error.to_mysql_error();
+                            ctx.append_warning_parts(warning.code, &warning.message);
+                        }
+                    }
+                }
+                doomed = surviving;
+            } else {
+                let changes: Vec<crate::foreign_key::ParentChange<'_>> = doomed
+                    .iter()
+                    .map(|(_, row)| crate::foreign_key::ParentChange::Delete(row))
+                    .collect();
+                crate::foreign_key::cascade_parent_changes(catalog, &database, &name, &changes)?;
+            }
+        }
+        let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
+            unreachable!("only a byte-backed table stages deletions")
+        };
+        for (handle, _) in &doomed {
+            kv.delete_row(handle)
+                .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
+            deleted += 1;
         }
     }
     if let Some(trace) = trace {

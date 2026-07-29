@@ -226,6 +226,33 @@ pub enum DriverError {
     ColumnCannotBeNull(String),
     /// Go `ErrNoDefaultForField` (1364).
     NoDefaultForField(String),
+    /// Go `dbterror.ErrWrongFkDef` (1239): the constraint itself is
+    /// malformed, which DDL reports before any row is looked at.
+    WrongFkDef {
+        /// The constraint name as written, empty when it was unnamed.
+        name: String,
+        /// Go's `%s` reason clause.
+        reason: String,
+    },
+    /// Go `ErrNoReferencedRow2` (1452): a child-side `INSERT`/`UPDATE` named
+    /// a parent row that does not exist.
+    ForeignKeyNoReferencedRow {
+        /// The referencing schema and table.
+        table: String,
+        /// The constraint as `SHOW CREATE TABLE` would print it.
+        constraint: String,
+    },
+    /// Go `ErrRowIsReferenced2` (1451): a parent-side `DELETE`/`UPDATE` would
+    /// have orphaned a referencing row, and the constraint restricts it.
+    ForeignKeyRowIsReferenced {
+        /// The referencing schema and table.
+        table: String,
+        /// The constraint as `SHOW CREATE TABLE` would print it.
+        constraint: String,
+    },
+    /// Go `ErrFkExceedMaxDepth` (3008): a cascade recursed deeper than
+    /// MySQL's 15 levels.
+    ForeignKeyCascadeTooDeep,
     /// Go `ErrDupEntry` (1062).
     DuplicateEntry {
         /// The rejected key value.
@@ -660,6 +687,36 @@ impl DriverError {
             1364,
             *b"HY000",
             format!("Field '{name}' doesn't have a default value"),
+        ),
+        // Go: "Incorrect foreign key definition for '%-.192s': %s".
+        DriverError::WrongFkDef { name, reason } => MysqlError::new(
+            1239,
+            *b"42000",
+            format!("Incorrect foreign key definition for '{name}': {reason}"),
+        ),
+        // Go: "Cannot add or update a child row: a foreign key constraint
+        // fails (%.192s)".
+        DriverError::ForeignKeyNoReferencedRow { table, constraint } => MysqlError::new(
+            1452,
+            *b"23000",
+            format!(
+                "Cannot add or update a child row: a foreign key constraint fails ({table}, {constraint})"
+            ),
+        ),
+        // Go: "Cannot delete or update a parent row: a foreign key
+        // constraint fails (%.192s)".
+        DriverError::ForeignKeyRowIsReferenced { table, constraint } => MysqlError::new(
+            1451,
+            *b"23000",
+            format!(
+                "Cannot delete or update a parent row: a foreign key constraint fails ({table}, {constraint})"
+            ),
+        ),
+        // Go: "Foreign key cascade delete/update exceeds max depth of %v.".
+        DriverError::ForeignKeyCascadeTooDeep => MysqlError::new(
+            3008,
+            *b"HY000",
+            "Foreign key cascade delete/update exceeds max depth of 15.".to_owned(),
         ),
         // Go: "Duplicate entry '%-.64s' for key '%-.192s'".
         DriverError::DuplicateEntry { value, key } => MysqlError::new(

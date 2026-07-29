@@ -407,6 +407,32 @@ impl Catalog {
         self.get_in(DEFAULT_DATABASE, name)
     }
 
+    /// Every `(database, table)` in the catalog, which is how referential
+    /// integrity finds the tables that REFER to a given one -- Go keeps the
+    /// same relation as `infoschema`'s referred-foreign-key index.
+    pub(crate) fn table_paths(&self) -> Vec<(String, String)> {
+        let mut paths = Vec::new();
+        for database in self.databases.values() {
+            for name in database.tables.keys() {
+                paths.push((database.name.clone(), name.clone()));
+            }
+        }
+        // The catalog is a hash map, so a stable order has to be imposed here
+        // for a cascade to visit dependents deterministically.
+        paths.sort();
+        paths
+    }
+
+    /// A mutable handle for the referential-integrity paths, which reach
+    /// tables the statement did not name.
+    pub(crate) fn get_mut_for_foreign_key(
+        &mut self,
+        database: &str,
+        name: &str,
+    ) -> Option<&mut TableEntry> {
+        self.get_mut_in(database, name)
+    }
+
     /// A mutable handle on a table of `database`, for the write paths.
     ///
     /// Taking it bumps [`Catalog::version`], which is what a transaction's

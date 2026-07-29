@@ -1922,19 +1922,27 @@ impl Session {
                 }
                 DdlStmt::DropTable(_) => {
                     let current_db = self.current_db.clone();
+                    let foreign_key_checks = self.foreign_key_checks();
                     self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_table_in(sql, catalog, &current_db)?;
+                        tidb_executor::run_drop_table_in(
+                            sql,
+                            catalog,
+                            &current_db,
+                            foreign_key_checks,
+                        )?;
                         // MySQL answers DDL with a zero affected-row count.
                         Ok(StmtOutput::Affected(0))
                     })
                 }
                 DdlStmt::CreateTable(_) => {
                     let current_db = self.current_db.clone();
+                    let foreign_key_checks = self.foreign_key_checks();
                     self.with_catalog_mut(|catalog| {
                         Ok(StmtOutput::Done(tidb_executor::run_create_table_in(
                             sql,
                             catalog,
                             &current_db,
+                            foreign_key_checks,
                         )?))
                     })
                 }
@@ -2319,6 +2327,18 @@ impl Session {
         .with_clock(clock, zone)
         .with_auto_increment_step_default(self.auto_increment_step_is_default())
         .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
+        .with_foreign_key_checks(self.foreign_key_checks())
+    }
+
+    /// Go `SessionVars.ForeignKeyChecks`, read off `@@foreign_key_checks`.
+    /// The registry stores a boolean as `ON`/`OFF`, and an unreadable value
+    /// falls back to the ON default rather than silently disabling the
+    /// checks.
+    fn foreign_key_checks(&self) -> bool {
+        !matches!(
+            self.vars.get_system("foreign_key_checks").as_deref(),
+            Ok("OFF") | Ok("off") | Ok("0")
+        )
     }
 
     /// Whether `@@auto_increment_increment` and `@@auto_increment_offset` are
