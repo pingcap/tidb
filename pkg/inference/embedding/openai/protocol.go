@@ -14,6 +14,8 @@
 
 package openai
 
+import "github.com/pingcap/tidb/pkg/inference/embedding/base"
+
 // OpenAI embeddings protocol reference:
 // https://platform.openai.com/docs/api-reference/embeddings/create
 
@@ -26,12 +28,8 @@ type Request struct {
 
 // Response is the model for OpenAI embeddings API response.
 type Response struct {
-	Model string `json:"model"`
-	Data  []struct {
-		Object    string `json:"object"`
-		Index     int    `json:"index"`
-		Embedding []byte `json:"embedding"` // We always use base64 encoding_format
-	} `json:"data"`
+	Model string                        `json:"model"`
+	Data  []base.IndexedBase64Embedding `json:"data"`
 }
 
 // ErrorResponse is the model for OpenAI embeddings API response when an error occurs.

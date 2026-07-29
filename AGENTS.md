@@ -164,7 +164,6 @@ Command details for package, integration-test, and RealTiKV surfaces live in `do
 
 - Prefer extending existing test suites and fixtures over creating new scaffolding.
 - Keep test changes minimal and deterministic; avoid broad golden/testdata churn unless required.
-- Follow `.agents/skills/tidb-test-guidelines` for placement, naming, `shard_count` guidance, planner-specific casetest rules, and related testdata conventions.
 - When recording outputs, verify changed result files before reporting completion.
 
 ### Docs and command snippets

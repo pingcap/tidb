@@ -369,8 +369,10 @@ func setGlobalMemArbitratorWorkModeText(str string) {
 
 // SetGlobalMemArbitratorWorkMode sets the work mode of the global memory arbitrator.
 func SetGlobalMemArbitratorWorkMode(str string) bool {
-	if intest.InTest && mockinitGlobalMemArbitrator == nil {
-		return false
+	if intest.InTest {
+		if mockinitGlobalMemArbitrator == nil {
+			return false
+		}
 	}
 
 	if !globalArbitrator.metrics.init.Load() {
