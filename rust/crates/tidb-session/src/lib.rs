@@ -978,6 +978,28 @@ impl Session {
     /// the in-process bytes (`MemTableStorage::clone_box`). Restoring the
     /// image is the same observable effect as `Cleanup()`.
     ///
+    /// # What the image does NOT undo
+    ///
+    /// The restore takes back exactly what `TableStorage::clone_box` copied by
+    /// VALUE. `MemTableStorage` copies its bytes, so the rows come back. A
+    /// storage whose `clone_box` clones a shared HANDLE does not: the image
+    /// and the original write into the same place, so a failed statement's
+    /// rows survive this restore. `tidb_executor::cluster_storage` is exactly
+    /// that -- its `MutationBuffer` and snapshot are `Arc`s shared by every
+    /// table of the session -- so on the cluster path the guard is NOT this
+    /// function. It is the statement savepoint the convergence node takes over
+    /// the buffer itself (`tidb_server`'s `ClusterServerSession::with_statement`:
+    /// `MutationBuffer::staged()` before the statement, `restore()` on its
+    /// error arm), which is the same `Staging()`/`Cleanup()` pair one tier
+    /// down. Any future front end that drives a `Session` over cluster storage
+    /// must bring such a savepoint with it; this restore alone will not roll
+    /// its writes back.
+    ///
+    /// What the image DOES undo on either storage is the table state that is
+    /// not bytes: `KvTable::next_handle`, the `_tidb_rowid` counter, is a
+    /// plain field, so a failed statement gives back the handles it consumed.
+    /// `AutoIdAllocator` is deliberately not, per the paragraph below.
+    ///
     /// AUTO_INCREMENT deliberately survives the restore: Go allocates ids
     /// outside transaction semantics and never returns a consumed one, and
     /// `KvTable`'s `AutoIdAllocator` is a SHARED cell that a catalog copy

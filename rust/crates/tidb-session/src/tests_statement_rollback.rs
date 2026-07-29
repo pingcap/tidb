@@ -21,6 +21,16 @@
 //! `StmtCommit`/`StmtRollback` over the membuffer staging handle
 //! (`pkg/kv/union_store.go`: `Staging()` / `Release()` / `Cleanup()`), chosen
 //! between by `pkg/executor/adapter.go` on the statement's success or failure.
+//!
+//! SCOPE: every session here runs on in-process `MemTableStorage`, whose
+//! `clone_box` copies bytes, so what these tests prove is
+//! [`Session::with_staged_catalog`]'s catalog image doing the rollback. They
+//! prove NOTHING about a session over cluster storage, where that image shares
+//! one `Arc` buffer with its original and a different mechanism -- the
+//! convergence node's own buffer savepoint -- is what rolls a statement back.
+//! That property is pinned where it lives, in `tidb_server`'s
+//! `cluster_session_node` tests
+//! (`a_failed_statement_leaves_no_bytes_of_its_own_in_the_mutation_buffer`).
 
 #![cfg(test)]
 

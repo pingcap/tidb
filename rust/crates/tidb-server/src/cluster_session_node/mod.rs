@@ -1182,6 +1182,7 @@ mod tests {
     use tidb_executor::storage::StorageError;
     use tidb_model::column::ColumnInfo as ModelColumnInfo;
     use tidb_model::db::DBInfo;
+    use tidb_model::index::{IndexColumn, IndexInfo};
     use tidb_model::{SchemaState, TableInfo};
     use tidb_txnkv::transaction::{
         CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
@@ -1600,6 +1601,32 @@ mod tests {
             state: SchemaState::PUBLIC,
             ..TableInfo::default()
         };
+        // `app.hnd(v BIGINT UNIQUE)`: no primary key, so its row handles come
+        // from `KvTable`'s own `next_handle` counter (Go's `_tidb_rowid`)
+        // rather than from a column, and the unique index gives a failure that
+        // lands AFTER earlier rows of the same statement are already staged.
+        // Both are what the rollback tests below need.
+        let hnd = TableInfo {
+            id: 105,
+            name: CiString::new("hnd"),
+            columns: vec![column(1, 0, "v", false)],
+            indices: vec![IndexInfo {
+                id: 1,
+                name: CiString::new("uv"),
+                table: CiString::new("hnd"),
+                columns: vec![IndexColumn {
+                    name: CiString::new("v"),
+                    offset: 0,
+                    length: -1,
+                    ..IndexColumn::default()
+                }],
+                unique: true,
+                state: SchemaState::PUBLIC,
+                ..IndexInfo::default()
+            }],
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
         let pending = TableInfo {
             id: 103,
             name: CiString::new("t_pending"),
@@ -1615,7 +1642,7 @@ mod tests {
                     name: CiString::new("app"),
                     ..DBInfo::default()
                 },
-                tables: vec![t, g, pending, acct],
+                tables: vec![t, g, pending, acct, hnd],
             }],
         }
     }
@@ -2269,6 +2296,111 @@ mod tests {
             .execute_write("INSERT INTO t (id, v) VALUES (7, 70)")
             .expect("the next statement still runs");
         assert_eq!(cluster.rows(), 1);
+    }
+
+    /// The staged record handles of one table, in key order: the row handles
+    /// this session would publish if it committed right now.
+    fn staged_handles(session: &ClusterServerSession, table_id: i64) -> Vec<i64> {
+        session
+            .buffer
+            .staged()
+            .into_iter()
+            .filter_map(|(key, _)| {
+                match tidb_tablecodec::table_key::decode_record_key(key.as_bytes()) {
+                    Ok((id, tidb_tablecodec::table_key::RecordHandle::Int(handle)))
+                        if id == table_id =>
+                    {
+                        Some(handle)
+                    }
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    /// A statement that fails AFTER staging some of its own rows leaves the
+    /// mutation buffer byte-for-byte where it found it.
+    ///
+    /// This asserts the property on the cluster seam itself, which no other
+    /// test here does. It matters because the guard is not the one a reader of
+    /// [`tidb_session::Session`] would assume: a cluster-backed
+    /// `TableStorage::clone_box` clones `Arc` HANDLES, so the catalog image
+    /// the session restores on a failed statement cannot take back a staged
+    /// row -- the image and the original write into the SAME buffer. What
+    /// takes the row back is [`ClusterServerSession::with_statement`]'s
+    /// savepoint, and this is the test that fails when it is removed.
+    ///
+    /// The failure shape is the load-bearing part: `VALUES (1,10),(2,20),
+    /// (3,99)` stages two rows and only then hits the duplicate handle, so a
+    /// missing savepoint leaves REAL bytes behind. The sibling tests all fail
+    /// their statement during planning, which stages nothing and therefore
+    /// passes either way.
+    #[test]
+    fn a_failed_statement_leaves_no_bytes_of_its_own_in_the_mutation_buffer() {
+        let (mut session, cluster) = open_session();
+        session.control_transaction("BEGIN").expect("begin");
+        session
+            .execute_write("INSERT INTO t (id, v) VALUES (3, 30)")
+            .expect("first insert");
+        let staged_before = session.buffer.staged();
+        assert_eq!(staged_handles(&session, 101), vec![3]);
+
+        assert!(session
+            .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20), (3, 99)")
+            .is_err());
+        // Not merely "no new rows are visible": the staged bytes ARE the ones
+        // the failing statement started from.
+        assert_eq!(session.buffer.staged(), staged_before);
+
+        session.control_transaction("COMMIT").expect("commit");
+        assert_eq!(cluster.rows(), 1);
+        assert_eq!(
+            rows(&mut session, "SELECT id FROM t"),
+            vec![vec![Datum::Int(3)]]
+        );
+    }
+
+    /// The two counters a failed statement moves are rolled back differently,
+    /// and the difference is deliberate.
+    ///
+    /// `KvTable::next_handle` -- the `_tidb_rowid` counter of a table with no
+    /// primary key -- is a plain field of the table, so the catalog image the
+    /// session restores DOES take it back: the row after a failed statement
+    /// reuses the handle that statement consumed. `AutoIdAllocator` is a
+    /// SHARED cell the image keeps pointing at, so an AUTO_INCREMENT burn
+    /// survives instead, which is Go's rule and which
+    /// `tidb_session`'s `tests_statement_rollback` pins in process. On the
+    /// cluster path only the first counter is reachable at all:
+    /// [`crate::cluster_session`]'s `cluster_table` sets no auto-increment
+    /// offset, so no statement here can consume the allocator.
+    #[test]
+    fn a_failed_statement_gives_back_the_row_handle_it_consumed() {
+        let (mut session, cluster) = open_session();
+        session.control_transaction("BEGIN").expect("begin");
+        session
+            .execute_write("INSERT INTO hnd (v) VALUES (10)")
+            .expect("first insert");
+        assert_eq!(staged_handles(&session, 105), vec![1]);
+
+        // Row `20` stages at handle 2; row `10` then duplicates the unique
+        // index and ends the statement.
+        assert!(session
+            .execute_write("INSERT INTO hnd (v) VALUES (20), (10)")
+            .is_err());
+        assert_eq!(staged_handles(&session, 105), vec![1]);
+
+        session
+            .execute_write("INSERT INTO hnd (v) VALUES (30)")
+            .expect("third insert");
+        // Handle 2, not 3: the counter came back with the catalog image.
+        assert_eq!(staged_handles(&session, 105), vec![1, 2]);
+
+        session.control_transaction("COMMIT").expect("commit");
+        assert_eq!(
+            rows(&mut session, "SELECT v FROM hnd ORDER BY v"),
+            vec![vec![Datum::Int(10)], vec![Datum::Int(30)]]
+        );
+        assert!(cluster.rows() > 0);
     }
 
     /// A refused publication does not leave the writes staged for the next
