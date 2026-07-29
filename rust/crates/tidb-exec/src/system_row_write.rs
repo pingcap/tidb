@@ -477,6 +477,28 @@ pub fn declared_default(
     )
 }
 
+/// The datum one column's declared `DEFAULT` materialises to when the caller
+/// has no statement clock to evaluate a functional default against.
+///
+/// [`declared_default`] answers `CURRENT_TIMESTAMP` with the caller's `now`,
+/// which is right for a writer materialising one row at one instant and wrong
+/// for a *catalog loader*, which would freeze that instant into every future
+/// row. This one therefore refuses every non-literal default -- an expression
+/// default, and `CURRENT_TIMESTAMP` -- so a loader can admit exactly the
+/// columns whose DEFAULT it can carry across verbatim and refuse the rest by
+/// name instead of silently dropping it.
+pub fn literal_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEncodeError> {
+    if column.default_is_expr {
+        return Err(unmaterialisable(column, table));
+    }
+    if let Some(ColumnDefaultValue::Str(bytes)) = column.default_value.as_ref() {
+        if String::from_utf8_lossy(bytes).eq_ignore_ascii_case(CURRENT_TIMESTAMP) {
+            return Err(unmaterialisable(column, table));
+        }
+    }
+    materialise(column, column.default_value.as_ref(), table, None)
+}
+
 /// The datum one column's `OriginDefaultValue` materialises to.
 ///
 /// This is what a *read* substitutes for a column the stored row has no entry

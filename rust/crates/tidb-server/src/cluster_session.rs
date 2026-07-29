@@ -165,21 +165,48 @@ fn cluster_table(table: &TableInfo, storage: &ClusterTableStorage) -> Result<KvT
     // The row layout is keyed by column id, so a column's *offset* is only a
     // position in the tuple the driver builds; both must come from the same
     // public-column list, which is why the offsets below are indexes into it.
-    let kv_columns: Vec<KvColumn> = columns
-        .iter()
-        .map(|column| KvColumn {
-            name: column.name.original().to_owned(),
+    //
+    // A DEFAULT is stored on the cluster's `ColumnInfo` as a Go `any`, and the
+    // driver's INSERT path reads it off `KvColumn` instead -- one fact in two
+    // places. Dropping the second copy is NOT the safe side of that: a
+    // nullable column whose DEFAULT this loader forgets stores NULL where
+    // TiDB stores the default, silently, with no error to see. So the value
+    // is materialised HERE, in the one call that builds the `KvColumn`, by
+    // the same `system_row_write` rule the system-row writer uses; a default
+    // that cannot be carried across verbatim (an expression, or
+    // `CURRENT_TIMESTAMP`, whose instant is per-INSERT and not per-load)
+    // refuses the whole table by name, the way a prefix index does below.
+    let mut kv_columns: Vec<KvColumn> = Vec::with_capacity(columns.len());
+    for column in &columns {
+        let name = column.name.original().to_owned();
+        // `None` is Go's nil default -- "no DEFAULT was written" -- which is
+        // not the same fact as a `DEFAULT NULL`, so it must stay `None`
+        // rather than become `Some(Null)`: only the first makes an omitted
+        // NOT NULL column the 1364 it is in Go.
+        let default_value = match column.default_value {
+            None => None,
+            Some(_) => Some(
+                tidb_exec::system_row_write::literal_default(column, table.name.original())
+                    .map_err(|error| format!("its column {name} has a default {error}"))?,
+            ),
+        };
+        let origin_default = match column.get_origin_default_value() {
+            None => None,
+            Some(_) => Some(
+                tidb_exec::system_row_write::origin_default(column, table.name.original())
+                    .map_err(|error| {
+                        format!("its column {name} has an original default {error}")
+                    })?,
+            ),
+        };
+        kv_columns.push(KvColumn {
+            name,
             id: column.id,
             field_type: column.field_type.clone(),
-            // Stored DEFAULTs are Go `any` values that need the source's
-            // `GetColDefaultValue` conversion; until that path is shared, a
-            // cluster table takes no default rather than a guessed one, and an
-            // INSERT that omits such a column is refused instead of writing a
-            // wrong value.
-            default_value: None,
-            origin_default: None,
-        })
-        .collect();
+            default_value,
+            origin_default,
+        });
+    }
     let mut kv_table = KvTable::with_storage(table.id, kv_columns, storage.clone_box());
     kv_table.set_name(table.name.original());
     if table.pk_is_handle {
@@ -347,7 +374,7 @@ mod tests {
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
     use tidb_executor::storage::StorageError;
-    use tidb_model::column::ColumnInfo;
+    use tidb_model::column::{ColumnDefaultValue, ColumnInfo};
     use tidb_model::db::DBInfo;
     use tidb_model::index::{IndexColumn, IndexInfo};
     use tidb_session::StmtResult;
@@ -491,6 +518,78 @@ mod tests {
         };
         assert_eq!(rows.len(), 2);
         assert!(snapshot.lock().unwrap().data.is_empty());
+    }
+
+    /// One database `app` holding `d(id BIGINT PRIMARY KEY, v BIGINT DEFAULT
+    /// 7)`, as the loader receives it from the cluster: the DEFAULT lives on
+    /// the stored `ColumnInfo`, not on anything this node builds by hand.
+    fn default_catalog() -> ClusterCatalog {
+        let mut v = column(2, 1, "v", false);
+        v.default_value = Some(ColumnDefaultValue::str("7"));
+        v.origin_default_value = Some(ColumnDefaultValue::str("7"));
+        let table = TableInfo {
+            id: 301,
+            name: CiString::new("d"),
+            columns: vec![column(1, 0, "id", true), v],
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        ClusterCatalog {
+            schema_version: 7,
+            databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
+                info: DBInfo {
+                    id: 5,
+                    name: CiString::new("app"),
+                    ..DBInfo::default()
+                },
+                tables: vec![table],
+            }],
+        }
+    }
+
+    /// A column's DEFAULT is stored twice once a table is loaded: on the
+    /// cluster's `ColumnInfo` (where `SHOW CREATE TABLE` and the system-row
+    /// writer read it) and on the `KvColumn` the driver's INSERT path reads.
+    /// The loader must carry it across, or an omitted column silently stores
+    /// NULL where TiDB stores the default -- a wrong row, written without a
+    /// word.
+    #[test]
+    fn a_cluster_columns_declared_default_reaches_the_row_an_insert_writes() {
+        let (storage, _, _) = cluster_storage();
+        let (mut session, skipped) =
+            session_with_cluster_storage(&default_catalog(), &storage, &StatsSnapshot::new());
+        assert!(
+            skipped.is_empty(),
+            "a table with a literal DEFAULT is served"
+        );
+        session.run("USE app").unwrap();
+        session.run("INSERT INTO d (id) VALUES (1)").unwrap();
+        let StmtResult::Rows(rows) = session.run("SELECT v FROM d").unwrap() else {
+            panic!("expected rows");
+        };
+        assert_eq!(rows, vec![vec![tidb_datatype::Datum::Int(7)]]);
+    }
+
+    /// A default whose value is not a literal -- `CURRENT_TIMESTAMP`, whose
+    /// instant belongs to each INSERT and not to the moment the catalog was
+    /// loaded -- refuses the table by name. Carrying it as the frozen load
+    /// instant, or dropping it, would both write rows TiDB does not.
+    #[test]
+    fn a_cluster_column_whose_default_is_not_a_literal_refuses_the_table() {
+        let mut catalog = default_catalog();
+        let column = &mut catalog.databases[0].tables[0].columns[1];
+        column.default_value = Some(ColumnDefaultValue::str("CURRENT_TIMESTAMP"));
+        column.origin_default_value = None;
+        let (storage, _, _) = cluster_storage();
+        let (_, skipped) = session_with_cluster_storage(&catalog, &storage, &StatsSnapshot::new());
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].name, "app.d");
+        assert!(
+            skipped[0].reason.starts_with("its column v has a default"),
+            "{}",
+            skipped[0].reason
+        );
     }
 
     /// One database `app` holding `ci(id BIGINT PRIMARY KEY, c VARCHAR(32)
