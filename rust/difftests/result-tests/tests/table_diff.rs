@@ -69,34 +69,14 @@ fn corpus_dir() -> PathBuf {
 /// from its very first statement (usually a `CREATE TABLE ... FOREIGN KEY`
 /// or the clause itself), not a narrower per-statement gap.
 const UNSUPPORTED_TOPICS: &[(&str, &str)] = &[
-    ("foreign_key", "FOREIGN KEY constraints are not modelled"),
-    (
-        "foreign_key_fixture",
-        "FOREIGN KEY constraints are not modelled",
-    ),
-    (
-        "foreign_key_checks",
-        "FOREIGN KEY constraints are not modelled",
-    ),
-    (
-        "foreign_key_ignore",
-        "FOREIGN KEY constraints are not modelled",
-    ),
-    (
-        "foreign_key_parent_side",
-        "FOREIGN KEY constraints are not modelled",
-    ),
-    (
-        "foreign_key_parent_side_update",
-        "FOREIGN KEY constraints are not modelled",
-    ),
+    // The seven other `foreign_key*` topics came OFF this list when FOREIGN KEY
+    // was transcreated -- removing a topic is the point of a capability unit.
+    // This one stays for a DIFFERENT reason than it was first skipped for: its
+    // FK half now passes, and it is the multi-table `DELETE ... USING` in its
+    // second half that this tier still refuses.
     (
         "delete_ignore_foreign_key",
-        "FOREIGN KEY constraints are not modelled",
-    ),
-    (
-        "savepoint_foreign_key_source",
-        "FOREIGN KEY constraints are not modelled",
+        "multi-table DELETE ... USING is not modelled",
     ),
     ("recursive_cte", "WITH RECURSIVE is not modelled"),
     ("union_cte", "WITH RECURSIVE is not modelled"),
@@ -190,7 +170,7 @@ fn table_execution_matches_go_engine() {
     // deletable, so the count is 1, and the later `foreign_key_checks = 0`
     // delete then finds nothing left. Both belong to FOREIGN KEY support,
     // not to multi-table DML.
-    const KNOWN_DIVERGENCES: usize = 76;
+    const KNOWN_DIVERGENCES: usize = 61;
 
     assert!(
         failures.len() <= KNOWN_DIVERGENCES,
