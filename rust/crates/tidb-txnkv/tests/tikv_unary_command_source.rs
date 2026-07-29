@@ -83,7 +83,9 @@ fn command_adapters_share_one_transport_authority_and_exact_paths() {
     assert!(!core.contains("ChannelPool::new()"));
 
     let runtime = include_str!("../src/rpc/transport_runtime.rs");
-    assert_eq!(runtime.matches("ChannelPool::new()").count(), 1);
+    // The worker builds the pool through the security-aware constructor so
+    // every TiKV channel routes through the shared `secure_endpoint` helper.
+    assert_eq!(runtime.matches("ChannelPool::with_security(").count(), 1);
     assert_eq!(runtime.matches("Builder::new_multi_thread()").count(), 1);
     assert!(runtime.contains("WorkerCommand::UnarySend"));
     assert!(runtime.contains("WorkerCommand::BatchSubmit"));

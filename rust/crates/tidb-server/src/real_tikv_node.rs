@@ -276,9 +276,10 @@ impl RealTiKvSessionFactory {
 /// continues outside MDL). Refusing to start because etcd was unreachable
 /// would trade an availability property for a latency one.
 pub(crate) fn connect_schema_notifier(config: &NodeConfig) -> Option<Arc<EtcdClient>> {
-    match EtcdClient::connect(
+    match EtcdClient::connect_with_security(
         config.pd_endpoints.iter().map(String::as_str),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
+        Arc::new(config.cluster_security.clone()),
     ) {
         Ok(client) => Some(Arc::new(client)),
         Err(error) => {
@@ -299,9 +300,10 @@ pub(crate) fn spawn_schema_version_watch(
     reloader: &CatalogReloader,
 ) -> Option<EtcdWatcher> {
     let waker = reloader.waker();
-    match EtcdWatcher::spawn(
+    match EtcdWatcher::spawn_with_security(
         config.pd_endpoints.iter().map(String::as_str),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
+        Arc::new(config.cluster_security.clone()),
         DDL_GLOBAL_SCHEMA_VERSION_KEY,
         move |event| {
             eprintln!(
@@ -332,9 +334,10 @@ pub(crate) fn spawn_privilege_watch(
     reloader: Option<&PrivilegeReloader>,
 ) -> Option<EtcdWatcher> {
     let waker = reloader?.waker();
-    match EtcdWatcher::spawn(
+    match EtcdWatcher::spawn_with_security(
         config.pd_endpoints.iter().map(String::as_str),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
+        Arc::new(config.cluster_security.clone()),
         PRIVILEGE_UPDATE_KEY,
         move |event| {
             eprintln!(
@@ -363,9 +366,10 @@ pub(crate) fn spawn_sysvar_watch(
     reloader: Option<&crate::cluster_sysvar_seam::SysvarReloader>,
 ) -> Option<EtcdWatcher> {
     let waker = reloader?.waker();
-    match EtcdWatcher::spawn(
+    match EtcdWatcher::spawn_with_security(
         config.pd_endpoints.iter().map(String::as_str),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
+        Arc::new(config.cluster_security.clone()),
         SYSVAR_UPDATE_KEY,
         move |event| {
             eprintln!(

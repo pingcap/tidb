@@ -18,3 +18,5 @@ tonic.workspace = true
 
 [dev-dependencies]
 prost.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+tokio-stream = { workspace = true, features = ["net"] }

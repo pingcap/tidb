@@ -26,6 +26,7 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use bytes::{Buf, BufMut};
+use tidb_pd_client::ClusterSecurity;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 
 use crate::client::PhysicalChannelIdentity;
@@ -261,7 +262,15 @@ impl Clone for RawTransportClient {
 
 impl RawTransportClient {
     pub(super) fn new() -> Result<Self, DirectUnaryClientError> {
-        let owner = TransportRuntime::new()?;
+        Self::with_security(Arc::new(ClusterSecurity::plaintext()))
+    }
+
+    /// Builds the transport with cluster TLS material applied to every TiKV
+    /// channel. Plaintext security keeps [`Self::new`]'s `http://` behavior.
+    pub(super) fn with_security(
+        security: Arc<ClusterSecurity>,
+    ) -> Result<Self, DirectUnaryClientError> {
+        let owner = TransportRuntime::new(security)?;
         Ok(Self {
             handle: Some(owner.handle()),
             shutdown_cancellation: owner.shutdown_cancellation(),

@@ -14,14 +14,17 @@
 
 //! One-shot TiKV gRPC health checking.
 //!
-//! This leaf creates an independent foreground Health/Check channel, maps the
-//! wire result into shared store liveness, and returns. It deliberately owns no
-//! retry, background loop, store mutation, TLS policy, or channel-pool close.
+//! This leaf creates an independent foreground Health/Check channel through the
+//! shared [`tidb_pd_client::secure_endpoint`] helper (so the health probe is
+//! secured with the same cluster TLS material as the data-plane channels), maps
+//! the wire result into shared store liveness, and returns. It deliberately owns
+//! no retry, background loop, store mutation, TLS policy decision, or
+//! channel-pool close.
 
 use std::time::Duration;
 
 use prost::Message;
-use tonic::transport::Endpoint;
+use tidb_pd_client::{secure_endpoint, ClusterSecurity};
 
 use crate::region::StoreLiveness;
 
@@ -60,16 +63,12 @@ pub(super) fn check_liveness(
     runtime: &tokio::runtime::Runtime,
     address: &str,
     timeout: Duration,
+    security: &ClusterSecurity,
 ) -> StoreLiveness {
     if timeout.is_zero() {
         return StoreLiveness::Unreachable;
     }
-    let uri = if address.contains("://") {
-        address.to_owned()
-    } else {
-        format!("http://{address}")
-    };
-    let Ok(endpoint) = Endpoint::from_shared(uri) else {
+    let Ok(endpoint) = secure_endpoint(address, security) else {
         return StoreLiveness::Unreachable;
     };
     let channel = {

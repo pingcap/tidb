@@ -1398,6 +1398,7 @@ mod tests {
             connection_timeout: Duration::from_secs(5),
             max_topn_rows: 1_024,
             schema_lease: Duration::from_millis(45_000),
+            cluster_security: tidb_pd_client::ClusterSecurity::plaintext(),
         }
     }
 

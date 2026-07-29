@@ -10,6 +10,7 @@ mod client;
 mod error;
 mod etcd;
 mod model;
+mod security;
 mod tso;
 
 pub use client::{
@@ -27,3 +28,4 @@ pub use model::{
     PdBucketStats, PdBuckets, PdGcState, PdKeyRange, PdMemberSet, PdNodeState, PdPeer, PdRegion,
     PdRegionEpoch, PdStore, PdStoreState,
 };
+pub use security::{secure_endpoint, ClusterSecurity, TlsConfigError};

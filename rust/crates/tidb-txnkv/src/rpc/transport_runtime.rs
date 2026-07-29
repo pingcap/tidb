@@ -15,9 +15,11 @@
 //! Sole Tokio runtime, channel pool, and transport lifecycle worker.
 
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use tidb_pd_client::ClusterSecurity;
 use tokio::sync::watch;
 
 use crate::region::StoreLiveness;
@@ -108,7 +110,7 @@ impl TransportShutdownCancellation {
 }
 
 impl TransportRuntime {
-    pub(super) fn new() -> Result<Self, DirectUnaryClientError> {
+    pub(super) fn new(security: Arc<ClusterSecurity>) -> Result<Self, DirectUnaryClientError> {
         let (commands, receiver) = mpsc::channel();
         let worker_commands = commands.clone();
         let (shutdown, shutdown_rx) = watch::channel(false);
@@ -129,7 +131,7 @@ impl TransportRuntime {
             if ready_tx.send(Ok(())).is_err() {
                 return;
             }
-            run_worker(runtime, receiver, worker_commands, shutdown_rx);
+            run_worker(runtime, receiver, worker_commands, shutdown_rx, security);
         });
         match ready_rx.recv() {
             Ok(Ok(())) => Ok(Self {
@@ -343,8 +345,9 @@ fn run_worker(
     receiver: mpsc::Receiver<WorkerCommand>,
     commands: mpsc::Sender<WorkerCommand>,
     shutdown: watch::Receiver<bool>,
+    security: Arc<ClusterSecurity>,
 ) {
-    let mut channels = ChannelPool::new();
+    let mut channels = ChannelPool::with_security(Arc::clone(&security));
     let mut batch = BatchTransportState::new(shutdown);
     while let Ok(command) = receiver.recv() {
         match command {
@@ -406,7 +409,7 @@ fn run_worker(
                 timeout,
                 reply,
             } => {
-                let result = check_liveness(&runtime, &address, timeout);
+                let result = check_liveness(&runtime, &address, timeout, &security);
                 let _ = reply.send(result);
             }
             WorkerCommand::Inspect { address, reply } => {

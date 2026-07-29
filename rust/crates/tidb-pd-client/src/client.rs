@@ -28,8 +28,9 @@ use crate::tso::{
     TimestampParts, MAX_TSO_RETRIES,
 };
 use crate::{
-    PdBucketStats, PdBuckets, PdClientError, PdClientShutdownError, PdGcState, PdKeyRange,
-    PdMemberSet, PdNodeState, PdOperation, PdPeer, PdRegion, PdRegionEpoch, PdStore, PdStoreState,
+    secure_endpoint, ClusterSecurity, PdBucketStats, PdBuckets, PdClientError,
+    PdClientShutdownError, PdGcState, PdKeyRange, PdMemberSet, PdNodeState, PdOperation, PdPeer,
+    PdRegion, PdRegionEpoch, PdStore, PdStoreState,
 };
 
 /// Exact method paths generated from the checked source projection.
@@ -154,6 +155,21 @@ impl PdClient {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
+        Self::connect_seeds_with_security(seeds, timeout, Arc::new(ClusterSecurity::plaintext()))
+    }
+
+    /// Connects through one or more seeds, securing every PD channel with the
+    /// given cluster TLS material. Plaintext security keeps the backward-compatible
+    /// `http://` behavior of [`Self::connect_seeds`].
+    pub fn connect_seeds_with_security<I, S>(
+        seeds: I,
+        timeout: Duration,
+        security: Arc<ClusterSecurity>,
+    ) -> Result<Self, PdClientError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
         let raw_seeds = seeds.into_iter().map(Into::into).collect::<Vec<String>>();
         let bootstrap_endpoint = raw_seeds
             .first()
@@ -175,7 +191,7 @@ impl PdClient {
                     return;
                 }
             };
-            let mut clients = HashMap::new();
+            let mut clients = PdChannelCache::new(security);
             let members = match bootstrap_members(
                 &runtime,
                 &mut clients,
@@ -582,7 +598,7 @@ impl Drop for PdClient {
 
 fn run_worker(
     runtime: tokio::runtime::Runtime,
-    mut clients: HashMap<String, TonicPdClient<Channel>>,
+    mut clients: PdChannelCache,
     receiver: mpsc::Receiver<WorkerCommand>,
     timeout: Duration,
     state: Arc<RwLock<PdSharedState>>,
@@ -850,7 +866,7 @@ fn run_worker(
 
 fn get_timestamp_with_retry(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     control: RpcControl<'_>,
     deadline: Instant,
     state: &Arc<RwLock<PdSharedState>>,
@@ -942,7 +958,7 @@ fn get_timestamp_with_retry(
 
 fn refresh_membership_before_deadline(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     timeout: Duration,
     deadline: Instant,
     state: &Arc<RwLock<PdSharedState>>,
@@ -985,7 +1001,7 @@ fn refresh_membership_before_deadline(
 
 fn bootstrap_members(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     seeds: &[String],
     timeout: Duration,
     shutdown: &watch::Receiver<bool>,
@@ -1016,7 +1032,7 @@ fn bootstrap_members(
 
 fn get_members(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     endpoint: &str,
     timeout: Duration,
     shutdown: &watch::Receiver<bool>,
@@ -1057,7 +1073,7 @@ fn get_members(
 
 fn get_region(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     endpoint: &str,
     control: RpcControl<'_>,
     cluster_id: u64,
@@ -1083,7 +1099,7 @@ fn get_region(
 
 fn get_prev_region(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     endpoint: &str,
     control: RpcControl<'_>,
     cluster_id: u64,
@@ -1118,7 +1134,7 @@ fn get_prev_region(
 
 fn get_region_by_id(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     endpoint: &str,
     control: RpcControl<'_>,
     cluster_id: u64,
@@ -1153,7 +1169,7 @@ fn get_region_by_id(
 
 fn scan_regions(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     endpoint: &str,
     timeout: Duration,
     shutdown: &watch::Receiver<bool>,
@@ -1176,7 +1192,7 @@ fn scan_regions(
 
 fn batch_scan_regions(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     endpoint: &str,
     timeout: Duration,
     shutdown: &watch::Receiver<bool>,
@@ -1209,7 +1225,7 @@ fn batch_scan_regions(
 
 fn get_store(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     endpoint: &str,
     timeout: Duration,
     shutdown: &watch::Receiver<bool>,
@@ -1235,7 +1251,7 @@ fn get_store(
 
 fn get_region_with_failover(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
@@ -1306,7 +1322,7 @@ fn get_region_with_failover(
 
 fn get_prev_region_with_failover(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
@@ -1335,7 +1351,7 @@ fn get_prev_region_with_failover(
 
 fn get_region_by_id_with_failover(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
@@ -1364,7 +1380,7 @@ fn get_region_by_id_with_failover(
 
 fn scan_regions_with_failover(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
@@ -1386,7 +1402,7 @@ fn scan_regions_with_failover(
 
 fn batch_scan_regions_with_failover(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
@@ -1408,19 +1424,14 @@ fn batch_scan_regions_with_failover(
 
 fn foreground_with_failover<T, F>(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
     mut action: F,
 ) -> Result<T, PdClientError>
 where
-    F: FnMut(
-        &tokio::runtime::Runtime,
-        &mut HashMap<String, TonicPdClient<Channel>>,
-        &str,
-        u64,
-    ) -> Result<T, PdClientError>,
+    F: FnMut(&tokio::runtime::Runtime, &mut PdChannelCache, &str, u64) -> Result<T, PdClientError>,
 {
     let snapshot = state.read().expect("PD state lock poisoned").clone();
     let mut attempted = HashSet::new();
@@ -1473,17 +1484,12 @@ where
 
 fn foreground_leader_only<T, F>(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     state: &Arc<RwLock<PdSharedState>>,
     mut action: F,
 ) -> Result<T, PdClientError>
 where
-    F: FnMut(
-        &tokio::runtime::Runtime,
-        &mut HashMap<String, TonicPdClient<Channel>>,
-        &str,
-        u64,
-    ) -> Result<T, PdClientError>,
+    F: FnMut(&tokio::runtime::Runtime, &mut PdChannelCache, &str, u64) -> Result<T, PdClientError>,
 {
     let snapshot = state.read().expect("PD state lock poisoned").clone();
     action(
@@ -1496,7 +1502,7 @@ where
 
 fn get_gc_state(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     endpoint: &str,
     timeout: Duration,
     shutdown: &watch::Receiver<bool>,
@@ -1535,7 +1541,7 @@ fn get_gc_state(
 
 fn get_gc_state_with_failover(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
@@ -1619,7 +1625,7 @@ pub fn is_unimplemented(error: &PdClientError) -> bool {
 
 fn get_store_with_failover(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
@@ -1689,7 +1695,7 @@ fn get_store_with_failover(
 
 fn refresh_membership(
     runtime: &tokio::runtime::Runtime,
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &mut PdChannelCache,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
     shutdown: &watch::Receiver<bool>,
@@ -1783,15 +1789,46 @@ fn is_retryable_endpoint_error(
             ))
 }
 
+/// The worker-owned PD channel cache, paired with the cluster TLS security so
+/// every channel this client opens routes through the one shared
+/// [`crate::secure_endpoint`] helper and none is left plaintext by omission.
+pub(crate) struct PdChannelCache {
+    clients: HashMap<String, TonicPdClient<Channel>>,
+    security: Arc<ClusterSecurity>,
+}
+
+impl PdChannelCache {
+    fn new(security: Arc<ClusterSecurity>) -> Self {
+        Self {
+            clients: HashMap::new(),
+            security,
+        }
+    }
+}
+
+impl std::ops::Deref for PdChannelCache {
+    type Target = HashMap<String, TonicPdClient<Channel>>;
+    fn deref(&self) -> &Self::Target {
+        &self.clients
+    }
+}
+
+impl std::ops::DerefMut for PdChannelCache {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.clients
+    }
+}
+
 fn tonic_client<'a>(
     runtime: &tokio::runtime::Runtime,
-    clients: &'a mut HashMap<String, TonicPdClient<Channel>>,
+    clients: &'a mut PdChannelCache,
     endpoint: &str,
 ) -> Result<&'a mut TonicPdClient<Channel>, PdClientError> {
-    match clients.entry(endpoint.to_owned()) {
+    let security = Arc::clone(&clients.security);
+    match clients.clients.entry(endpoint.to_owned()) {
         std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
         std::collections::hash_map::Entry::Vacant(entry) => {
-            let parsed = Endpoint::from_shared(endpoint.to_owned()).map_err(|error| {
+            let parsed = secure_endpoint(endpoint, &security).map_err(|error| {
                 PdClientError::InvalidEndpoint {
                     endpoint: endpoint.to_owned(),
                     message: error.to_string(),
@@ -1806,10 +1843,7 @@ fn tonic_client<'a>(
     }
 }
 
-fn retain_member_clients(
-    clients: &mut HashMap<String, TonicPdClient<Channel>>,
-    members: &PdMemberSet,
-) {
+fn retain_member_clients(clients: &mut PdChannelCache, members: &PdMemberSet) {
     clients.retain(|endpoint, _| members.member_urls.contains(endpoint));
 }
 

@@ -26,6 +26,7 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use tidb_pd_client::ClusterSecurity;
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 
 const DEFAULT_MAX_CONNECTIONS: usize = 8;
@@ -155,6 +156,11 @@ pub struct NodeConfig {
     /// re-reads the catalog every `schema_lease / 2`, so it is never more than
     /// one lease behind the cluster's schema version.
     pub schema_lease: Duration,
+    /// Cluster-facing gRPC transport security (TiDB's `[security]`
+    /// `cluster-ssl-ca` / `cluster-ssl-cert` / `cluster-ssl-key` /
+    /// `cluster-verify-cn`). Plaintext by default; setting a CA path engages
+    /// TLS for the PD, TiKV, and etcd transports.
+    pub cluster_security: ClusterSecurity,
 }
 
 /// Startup configuration failure.
@@ -239,6 +245,10 @@ impl NodeConfig {
         let mut schema_lease_ms = None;
         let mut load_privileges = false;
         let mut cluster_session = false;
+        let mut cluster_ssl_ca = None;
+        let mut cluster_ssl_cert = None;
+        let mut cluster_ssl_key = None;
+        let mut cluster_verify_cn = None;
 
         while let Some(argument) = pending.next() {
             if argument == "--help" || argument == "-h" {
@@ -308,6 +318,10 @@ impl NodeConfig {
                 "--load-table" => load_tables.push(parse_loaded_table_name(&value)?),
                 "--max-topn-rows" => set_once(&mut max_topn_rows, option, value)?,
                 "--lease-ms" => set_once(&mut schema_lease_ms, option, value)?,
+                "--cluster-ssl-ca" => set_once(&mut cluster_ssl_ca, option, value)?,
+                "--cluster-ssl-cert" => set_once(&mut cluster_ssl_cert, option, value)?,
+                "--cluster-ssl-key" => set_once(&mut cluster_ssl_key, option, value)?,
+                "--cluster-verify-cn" => set_once(&mut cluster_verify_cn, option, value)?,
                 _ => return Err(NodeConfigError::UnknownOption(option.to_owned())),
             }
         }
@@ -379,6 +393,12 @@ impl NodeConfig {
             Some(value) => parse_positive_number("--lease-ms", &value)?,
             None => DEFAULT_SCHEMA_LEASE_MS,
         });
+        let cluster_security = build_cluster_security(
+            cluster_ssl_ca,
+            cluster_ssl_cert,
+            cluster_ssl_key,
+            cluster_verify_cn,
+        )?;
 
         Ok(Self {
             host,
@@ -394,6 +414,7 @@ impl NodeConfig {
             schema_lease,
             load_privileges,
             cluster_session,
+            cluster_security,
         })
     }
 
@@ -410,7 +431,9 @@ impl NodeConfig {
 [--max-topn-rows <rows>] [--lease-ms <milliseconds>] \
 [--auth-file <mode-0600-tsv> | --load-privileges] \
 [--host <loopback-ip>] [-P <port>|--port <port>] [--store tikv] \
-[--max-allowed-packet <bytes>]"
+[--max-allowed-packet <bytes>] \
+[--cluster-ssl-ca <ca-pem> [--cluster-ssl-cert <cert-pem> --cluster-ssl-key <key-pem>] \
+[--cluster-verify-cn <cn[,cn...]>]]"
     }
 }
 
@@ -776,6 +799,57 @@ fn parse_pd_endpoints(value: String) -> Result<Vec<String>, NodeConfigError> {
     Ok(endpoints)
 }
 
+/// Assembles the cluster transport security from the parsed `[security]`
+/// options, mirroring client-go's `Security.ToTLSConfig`: TLS engages only
+/// when a CA is set, and the client key pair is loaded only when both the
+/// cert and key are present. A cert or key without a CA, or one without the
+/// other, is a misconfiguration the node rejects at startup rather than
+/// silently ignore.
+fn build_cluster_security(
+    ca: Option<String>,
+    cert: Option<String>,
+    key: Option<String>,
+    verify_cn: Option<String>,
+) -> Result<ClusterSecurity, NodeConfigError> {
+    if ca.is_none() && (cert.is_some() || key.is_some() || verify_cn.is_some()) {
+        return Err(invalid(
+            "--cluster-ssl-ca",
+            "cluster TLS material requires --cluster-ssl-ca; without a CA the transport stays plaintext",
+        ));
+    }
+    match (&cert, &key) {
+        (Some(_), None) => {
+            return Err(invalid(
+                "--cluster-ssl-key",
+                "--cluster-ssl-cert requires --cluster-ssl-key",
+            ))
+        }
+        (None, Some(_)) => {
+            return Err(invalid(
+                "--cluster-ssl-cert",
+                "--cluster-ssl-key requires --cluster-ssl-cert",
+            ))
+        }
+        _ => {}
+    }
+    let verify_cn = verify_cn
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(ClusterSecurity::new(
+        ca.unwrap_or_default(),
+        cert.unwrap_or_default(),
+        key.unwrap_or_default(),
+        verify_cn,
+    ))
+}
+
 fn invalid(option: &str, reason: &str) -> NodeConfigError {
     NodeConfigError::InvalidValue {
         option: option.to_owned(),
@@ -786,6 +860,80 @@ fn invalid(option: &str, reason: &str) -> NodeConfigError {
 #[cfg(test)]
 mod tests {
     use super::{parse_column_descriptor, ConfiguredReadColumnKind, NodeConfig, NodeConfigError};
+
+    /// The cluster TLS options thread into a `ClusterSecurity`, and their
+    /// consistency rules (CA required for any material, cert⇔key together)
+    /// are enforced at startup rather than deferred to a connect failure.
+    #[test]
+    fn cluster_tls_options_build_security_and_reject_partial_material() {
+        let base = [
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+            "--auth-file",
+            "/tmp/users.tsv",
+        ];
+
+        // No security options: plaintext, backward compatible.
+        let plaintext = NodeConfig::parse(base).unwrap();
+        assert!(!plaintext.cluster_security.is_tls_enabled());
+
+        // CA + client key pair + verify-CN list: full mutual TLS.
+        let secured = NodeConfig::parse(
+            base.iter()
+                .copied()
+                .chain([
+                    "--cluster-ssl-ca",
+                    "/tls/ca.pem",
+                    "--cluster-ssl-cert",
+                    "/tls/cert.pem",
+                    "--cluster-ssl-key",
+                    "/tls/key.pem",
+                    "--cluster-verify-cn",
+                    "tidb,tikv",
+                ])
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        assert!(secured.cluster_security.is_tls_enabled());
+        assert_eq!(secured.cluster_security.ca_path(), "/tls/ca.pem");
+        assert_eq!(secured.cluster_security.cert_path(), "/tls/cert.pem");
+        assert_eq!(secured.cluster_security.verify_cn(), ["tidb", "tikv"]);
+
+        // Cert without key is rejected.
+        assert!(matches!(
+            NodeConfig::parse(
+                base.iter()
+                    .copied()
+                    .chain([
+                        "--cluster-ssl-ca",
+                        "/tls/ca.pem",
+                        "--cluster-ssl-cert",
+                        "/tls/cert.pem"
+                    ])
+                    .collect::<Vec<_>>(),
+            ),
+            Err(NodeConfigError::InvalidValue { .. })
+        ));
+
+        // Client material without a CA is rejected.
+        assert!(matches!(
+            NodeConfig::parse(
+                base.iter()
+                    .copied()
+                    .chain([
+                        "--cluster-ssl-cert",
+                        "/tls/cert.pem",
+                        "--cluster-ssl-key",
+                        "/tls/key.pem"
+                    ])
+                    .collect::<Vec<_>>(),
+            ),
+            Err(NodeConfigError::InvalidValue { .. })
+        ));
+    }
 
     /// The command-line descriptor field must parse back to the same typed
     /// kind for every admitted shape, including the CHAR length as a fourth

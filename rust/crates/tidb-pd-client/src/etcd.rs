@@ -45,10 +45,10 @@ use tidb_proto::etcdserverpb::{
 };
 use tidb_proto::mvccpb::event::EventType;
 use tokio::sync::watch;
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::Channel;
 
 use crate::client::normalize_endpoints;
-use crate::PdClientError;
+use crate::{secure_endpoint, ClusterSecurity, PdClientError};
 
 /// Exact generated method path for the schema-version PUT.
 pub const ETCD_PUT_PATH: &str = "/etcdserverpb.KV/Put";
@@ -212,6 +212,21 @@ impl EtcdClient {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
+        Self::connect_with_security(endpoints, timeout, Arc::new(ClusterSecurity::plaintext()))
+    }
+
+    /// Starts the worker, securing every etcd channel with the given cluster
+    /// TLS material. Plaintext security keeps [`Self::connect`]'s `http://`
+    /// behavior.
+    pub fn connect_with_security<I, S>(
+        endpoints: I,
+        timeout: Duration,
+        security: Arc<ClusterSecurity>,
+    ) -> Result<Self, EtcdError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
         let endpoints = normalize_endpoints(endpoints, false)?;
         if endpoints.is_empty() {
             return Err(EtcdError::NoEndpoint);
@@ -235,6 +250,7 @@ impl EtcdClient {
                     &runtime,
                     &worker_endpoints,
                     timeout,
+                    &security,
                     &receiver,
                     &shutdown_rx,
                 );
@@ -363,6 +379,7 @@ fn run_kv_worker(
     runtime: &tokio::runtime::Runtime,
     endpoints: &[String],
     timeout: Duration,
+    security: &ClusterSecurity,
     receiver: &mpsc::Receiver<EtcdCommand>,
     shutdown: &watch::Receiver<bool>,
 ) {
@@ -388,6 +405,7 @@ fn run_kv_worker(
                     endpoints,
                     &mut clients,
                     timeout,
+                    security,
                     |runtime, client| {
                         let request = PutRequest {
                             key: key.clone(),
@@ -407,6 +425,7 @@ fn run_kv_worker(
                     endpoints,
                     &mut clients,
                     timeout,
+                    security,
                     |runtime, client| {
                         let request = RangeRequest {
                             key: key.clone(),
@@ -447,12 +466,13 @@ fn across_endpoints<T>(
     endpoints: &[String],
     clients: &mut HashMap<String, KvClient<Channel>>,
     timeout: Duration,
+    security: &ClusterSecurity,
     mut call: impl FnMut(&tokio::runtime::Runtime, &mut KvClient<Channel>) -> Result<T, tonic::Status>,
 ) -> Result<T, EtcdError> {
     let mut last = None;
     for endpoint in endpoints {
         if !clients.contains_key(endpoint) {
-            match connect_channel(runtime, endpoint, timeout) {
+            match connect_channel(runtime, endpoint, timeout, security) {
                 Ok(channel) => {
                     clients.insert(endpoint.clone(), KvClient::new(channel));
                 }
@@ -484,8 +504,9 @@ fn connect_channel(
     runtime: &tokio::runtime::Runtime,
     endpoint: &str,
     timeout: Duration,
+    security: &ClusterSecurity,
 ) -> Result<Channel, EtcdError> {
-    let channel = Endpoint::from_shared(endpoint.to_owned())
+    let channel = secure_endpoint(endpoint, security)
         .map_err(|error| EtcdError::InvalidEndpoint {
             endpoint: endpoint.to_owned(),
             message: error.to_string(),
@@ -569,6 +590,28 @@ impl EtcdWatcher {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
+        Self::spawn_with_security(
+            endpoints,
+            timeout,
+            Arc::new(ClusterSecurity::plaintext()),
+            key,
+            on_event,
+        )
+    }
+
+    /// Starts a watch, securing the stream channel with the given cluster TLS
+    /// material. Plaintext security keeps [`Self::spawn`]'s `http://` behavior.
+    pub fn spawn_with_security<I, S>(
+        endpoints: I,
+        timeout: Duration,
+        security: Arc<ClusterSecurity>,
+        key: impl Into<Vec<u8>>,
+        on_event: impl Fn(&EtcdWatchEvent) + Send + 'static,
+    ) -> Result<Self, EtcdError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
         let endpoints = normalize_endpoints(endpoints, false)?;
         if endpoints.is_empty() {
             return Err(EtcdError::NoEndpoint);
@@ -589,6 +632,7 @@ impl EtcdWatcher {
                 runtime.block_on(watch_forever(
                     &endpoints,
                     timeout,
+                    &security,
                     &key,
                     &on_event,
                     &worker_stats,
@@ -631,6 +675,7 @@ const WATCH_RECONNECT_DELAY: Duration = Duration::from_secs(1);
 async fn watch_forever(
     endpoints: &[String],
     timeout: Duration,
+    security: &ClusterSecurity,
     key: &[u8],
     on_event: &(impl Fn(&EtcdWatchEvent) + Send + 'static),
     stats: &WatchCounters,
@@ -649,7 +694,17 @@ async fn watch_forever(
                 stats.reconnects.fetch_add(1, Ordering::AcqRel);
                 established = false;
             }
-            if watch_one_stream(endpoint, timeout, key, on_event, stats, &mut shutdown).await {
+            if watch_one_stream(
+                endpoint,
+                timeout,
+                security,
+                key,
+                on_event,
+                stats,
+                &mut shutdown,
+            )
+            .await
+            {
                 established = true;
                 break;
             }
@@ -668,12 +723,13 @@ async fn watch_forever(
 async fn watch_one_stream(
     endpoint: &str,
     timeout: Duration,
+    security: &ClusterSecurity,
     key: &[u8],
     on_event: &(impl Fn(&EtcdWatchEvent) + Send + 'static),
     stats: &WatchCounters,
     shutdown: &mut watch::Receiver<bool>,
 ) -> bool {
-    let Ok(channel) = Endpoint::from_shared(endpoint.to_owned()) else {
+    let Ok(channel) = secure_endpoint(endpoint, security) else {
         return false;
     };
     let Ok(channel) = channel.connect_timeout(timeout).connect().await else {

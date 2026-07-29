@@ -13,8 +13,10 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use tonic::transport::{Channel, Endpoint};
+use tidb_pd_client::{secure_endpoint, ClusterSecurity};
+use tonic::transport::Channel;
 
 use crate::client::PhysicalChannelIdentity;
 
@@ -35,14 +37,19 @@ impl VersionedChannel {
 pub(super) struct ChannelPool {
     channels: HashMap<String, VersionedChannel>,
     versions: HashMap<String, u64>,
+    security: Arc<ClusterSecurity>,
     closed: bool,
 }
 
 impl ChannelPool {
-    pub(super) fn new() -> Self {
+    /// Builds a pool whose every TiKV channel is secured with the given
+    /// cluster TLS material. A plaintext [`ClusterSecurity`] keeps the
+    /// backward-compatible `http://` behavior.
+    pub(super) fn with_security(security: Arc<ClusterSecurity>) -> Self {
         Self {
             channels: HashMap::new(),
             versions: HashMap::new(),
+            security,
             closed: false,
         }
     }
@@ -59,16 +66,12 @@ impl ChannelPool {
             return Ok(channel.clone());
         }
 
-        let uri = if address.contains("://") {
-            address.to_owned()
-        } else {
-            format!("http://{address}")
-        };
-        let endpoint =
-            Endpoint::from_shared(uri).map_err(|error| DirectUnaryClientError::InvalidAddress {
+        let endpoint = secure_endpoint(address, &self.security).map_err(|error| {
+            DirectUnaryClientError::InvalidAddress {
                 address: address.to_owned(),
                 message: error.to_string(),
-            })?;
+            }
+        })?;
         let version = self
             .versions
             .get(address)

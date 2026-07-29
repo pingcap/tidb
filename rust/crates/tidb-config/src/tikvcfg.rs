@@ -547,6 +547,31 @@ mod tests {
         );
     }
 
+    // The `[security]` cluster TLS keys deserialize from their TiDB config
+    // names (`cluster-ssl-ca` / `cluster-ssl-cert` / `cluster-ssl-key` /
+    // `cluster-verify-cn`), and an absent section stays plaintext.
+    #[test]
+    fn security_cluster_tls_keys_parse() {
+        let security: Security = toml::from_str(
+            r#"
+cluster-ssl-ca = "/etc/tls/ca.pem"
+cluster-ssl-cert = "/etc/tls/cert.pem"
+cluster-ssl-key = "/etc/tls/key.pem"
+cluster-verify-cn = ["tidb", "tikv"]
+"#,
+        )
+        .unwrap();
+        assert_eq!(security.cluster_ssl_ca, "/etc/tls/ca.pem");
+        assert_eq!(security.cluster_ssl_cert, "/etc/tls/cert.pem");
+        assert_eq!(security.cluster_ssl_key, "/etc/tls/key.pem");
+        assert_eq!(security.cluster_verify_cn, ["tidb", "tikv"]);
+
+        // No keys: the backward-compatible plaintext default.
+        let empty: Security = toml::from_str("").unwrap();
+        assert_eq!(empty, Security::default());
+        assert!(empty.cluster_ssl_ca.is_empty());
+    }
+
     #[test]
     fn defaults_and_valid() {
         let c = Config::default();
