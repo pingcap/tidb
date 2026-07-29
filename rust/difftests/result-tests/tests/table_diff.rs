@@ -186,7 +186,7 @@ fn table_execution_matches_go_engine() {
     // two remaining `foundations` cases are CORRELATED subqueries in an
     // aggregate's argument, which need an Apply BELOW the aggregation --
     // refused by name, not counted as fixed.
-    const KNOWN_DIVERGENCES: usize = 21;
+    const KNOWN_DIVERGENCES: usize = 11;
 
     assert!(
         failures.len() <= KNOWN_DIVERGENCES,
