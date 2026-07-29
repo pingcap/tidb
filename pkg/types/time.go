@@ -702,9 +702,9 @@ func (t *Time) Sub(ctx Context, t1 *Time) Duration {
 	var duration gotime.Duration
 	if t.Type() == mysql.TypeTimestamp && t1.Type() == mysql.TypeTimestamp {
 		a, err := t.GoTime(ctx.Location())
-		terror.Log(errors.Trace(err))
+		logTimeSubGoTimeErr(ctx, err)
 		b, err := t1.GoTime(ctx.Location())
-		terror.Log(errors.Trace(err))
+		logTimeSubGoTimeErr(ctx, err)
 		duration = a.Sub(b)
 	} else {
 		seconds, microseconds, neg := calcTimeTimeDiff(t.coreTime, t1.coreTime, 1)
@@ -723,6 +723,22 @@ func (t *Time) Sub(ctx Context, t1 *Time) Duration {
 		Duration: duration,
 		Fsp:      fsp,
 	}
+}
+
+// logTimeSubGoTimeErr logs a GoTime conversion error produced by Time.Sub for
+// TIMESTAMP operands. Such errors are expected when the context tolerates
+// invalid/zero dates (e.g. zero TIMESTAMP values read from stats under relaxed
+// SQL modes), and are suppressed there to avoid log noise; in strict contexts
+// the original terror.Log behavior is preserved.
+func logTimeSubGoTimeErr(ctx Context, err error) {
+	if err == nil {
+		return
+	}
+	flags := ctx.Flags()
+	if flags.IgnoreInvalidDateErr() || flags.IgnoreZeroInDate() {
+		return
+	}
+	terror.Log(errors.Trace(err))
 }
 
 // Add adds d to t, returns the result time value.
