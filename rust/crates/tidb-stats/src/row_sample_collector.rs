@@ -40,6 +40,20 @@
 //! backwards would understate every column's distinct-value count by exactly
 //! the sample rate.
 //!
+//! # The memory bound
+//!
+//! Neither sampler bounds its kept rows by memory on its own: the reservoir
+//! is bounded by `WITH n SAMPLES`, and the Bernoulli one only by
+//! `sample_rate * table_rows`, so `WITH 1.0 SAMPLERATE` on a large table
+//! materialises every row. Go bounds it the same way for both, from the
+//! outside: the analyze executors consume every sample item into
+//! `GlobalAnalyzeMemoryTracker`, whose limit is `tidb_mem_quota_analyze`
+//! (`pkg/executor/select.go:141`). Exceeding it aborts the statement --
+//! `globalPanicOnExceed` panics and `getAnalyzePanicErr` turns that into
+//! `errAnalyzeOOM` -- rather than quietly sampling less, because a silently
+//! smaller sample is a wrong histogram. [`SampleMemoryQuota`] is that bound,
+//! and Go's default (`-1`) is no bound at all.
+//!
 //! # Slots, and why they are not just columns
 //!
 //! Go's collector counts one slot per analyzed column *plus* one per
@@ -145,6 +159,59 @@ pub fn adjusted_sample_rate(realtime_count: Option<i64>, approximate_count: Opti
     1.0_f64.min(DEF_ROWS_FOR_SAMPLE_RATE / realtime as f64)
 }
 
+/// Go's analyze memory quota, as one `ANALYZE` reads it.
+///
+/// `tidb_mem_quota_analyze` is a byte count whose default is `-1`
+/// (`vardef.DefTiDBMemQuotaAnalyze`), which Go's `memory.Tracker` reads as
+/// unlimited. Any value `<= 0` means the same here.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SampleMemoryQuota(Option<u64>);
+
+impl SampleMemoryQuota {
+    /// Go's default: no bound.
+    #[must_use]
+    pub const fn unlimited() -> Self {
+        Self(None)
+    }
+
+    /// The quota as `tidb_mem_quota_analyze` states it: bytes, or `<= 0` for
+    /// unlimited.
+    #[must_use]
+    pub const fn from_setting(bytes: i64) -> Self {
+        if bytes <= 0 {
+            return Self(None);
+        }
+        Self(Some(bytes.unsigned_abs()))
+    }
+
+    /// The byte limit, when there is one.
+    #[must_use]
+    pub const fn bytes(self) -> Option<u64> {
+        self.0
+    }
+}
+
+/// The sample outgrew [`SampleMemoryQuota`].
+///
+/// Go reports this as `errAnalyzeOOM` (`pkg/executor/analyze_utils.go:88`),
+/// and its text is reproduced exactly: it is what a user sees, and it names
+/// the knob that fixes it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SampleMemoryExceeded;
+
+impl std::fmt::Display for SampleMemoryExceeded {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "analyze panic due to memory quota exceeds, please try with smaller \
+             samplerate(refer to {}/count)",
+            DEF_ROWS_FOR_SAMPLE_RATE as i64
+        )
+    }
+}
+
+impl std::error::Error for SampleMemoryExceeded {}
+
 /// What one collector slot counted over the whole scan.
 #[derive(Clone, Debug, Default)]
 pub struct SlotStats {
@@ -184,12 +251,27 @@ pub struct RowSampleCollector {
     /// weight at zero and never evicts, exactly as Go's does.
     samples: Vec<(i64, Vec<Datum>, i64)>,
     scanned_ordinal: i64,
+    /// The bound the kept rows are held to, and what they have consumed of
+    /// it. Go tracks the same quantity -- the sample items' datums and their
+    /// payloads -- through `GlobalAnalyzeMemoryTracker`.
+    quota: SampleMemoryQuota,
+    consumed_bytes: u64,
 }
 
 impl RowSampleCollector {
     /// Creates a collector with `slot_count` slots under `policy`.
     #[must_use]
     pub fn new(slot_count: usize, policy: SamplePolicy) -> Self {
+        Self::with_memory_quota(slot_count, policy, SampleMemoryQuota::unlimited())
+    }
+
+    /// Creates a collector whose kept rows are bounded by `quota`.
+    #[must_use]
+    pub fn with_memory_quota(
+        slot_count: usize,
+        policy: SamplePolicy,
+        quota: SampleMemoryQuota,
+    ) -> Self {
         Self {
             policy,
             count: 0,
@@ -199,6 +281,8 @@ impl RowSampleCollector {
                 .collect(),
             samples: Vec::new(),
             scanned_ordinal: 0,
+            quota,
+            consumed_bytes: 0,
         }
     }
 
@@ -210,12 +294,20 @@ impl RowSampleCollector {
 
     /// Offers one scanned row.
     ///
+    /// The whole-table facts (`count`, `null_count`, the sizes and the FM
+    /// sketches) are recorded before the sampling decision and cost nothing
+    /// per row, so only the *kept* rows are charged against the quota -- the
+    /// same items Go's tracker consumes. An error means the statement is
+    /// over `tidb_mem_quota_analyze` and must stop: continuing without the
+    /// rows it could not keep would answer with a histogram built from a
+    /// sample smaller than the one the rate describes.
+    ///
     /// # Panics
     ///
     /// Panics when the row does not carry one value per slot: a short row
     /// would silently stop counting the slots it omits, which is a wrong
     /// answer rather than an error.
-    pub fn collect(&mut self, row: &ScannedRow<'_>) {
+    pub fn collect(&mut self, row: &ScannedRow<'_>) -> Result<(), SampleMemoryExceeded> {
         assert_eq!(
             row.slots.len(),
             self.slots.len(),
@@ -235,37 +327,71 @@ impl RowSampleCollector {
         }
         let ordinal = self.scanned_ordinal;
         self.scanned_ordinal += 1;
-        self.sample_row(row.columns, ordinal);
+        self.sample_row(row.columns, ordinal)
     }
 
-    fn sample_row(&mut self, columns: &[Datum], ordinal: i64) {
+    /// The bytes one kept row costs.
+    ///
+    /// Go's `SampleItem` accounting (`pkg/statistics/row_sampler.go:77`) is
+    /// the datum structs plus the bytes they point at, which is what a row
+    /// held in the sample actually occupies.
+    fn row_bytes(columns: &[Datum]) -> u64 {
+        let structs = columns.len() as u64 * std::mem::size_of::<Datum>() as u64;
+        let payload: u64 = columns
+            .iter()
+            .map(|column| match column {
+                Datum::Bytes(bytes) => bytes.len() as u64,
+                Datum::String(string) => string.bytes().len() as u64,
+                _ => 0,
+            })
+            .sum();
+        structs + payload
+    }
+
+    /// Charges one kept row, or reports the quota exhausted.
+    fn charge(&mut self, columns: &[Datum]) -> Result<(), SampleMemoryExceeded> {
+        let Some(limit) = self.quota.bytes() else {
+            return Ok(());
+        };
+        self.consumed_bytes = self.consumed_bytes.saturating_add(Self::row_bytes(columns));
+        if self.consumed_bytes > limit {
+            return Err(SampleMemoryExceeded);
+        }
+        Ok(())
+    }
+
+    fn sample_row(&mut self, columns: &[Datum], ordinal: i64) -> Result<(), SampleMemoryExceeded> {
         match self.policy {
             SamplePolicy::Bernoulli { sample_rate } => {
                 if random_float64() > sample_rate {
-                    return;
+                    return Ok(());
                 }
+                self.charge(columns)?;
                 self.samples.push((0, columns.to_vec(), ordinal));
             }
             SamplePolicy::Reservoir { max_sample_size } => {
                 if max_sample_size == 0 {
-                    return;
+                    return Ok(());
                 }
                 let weight = random_int63();
                 if self.samples.len() < max_sample_size {
+                    self.charge(columns)?;
                     self.samples.push((weight, columns.to_vec(), ordinal));
                     if self.samples.len() == max_sample_size {
                         self.heapify();
                     }
-                    return;
+                    return Ok(());
                 }
                 // Keeping the `max_sample_size` largest of uniformly drawn
-                // weights is a uniform sample of the rows.
+                // weights is a uniform sample of the rows. An eviction leaves
+                // the sample's size where it was, so it is not charged again.
                 if self.samples[0].0 < weight {
                     self.samples[0] = (weight, columns.to_vec(), ordinal);
                     self.sift_down(0);
                 }
             }
         }
+        Ok(())
     }
 
     /// Answers the scan's totals: rows scanned, per-slot facts, and the kept

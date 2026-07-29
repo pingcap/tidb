@@ -117,7 +117,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
-use tidb_exec::cluster_analyze::AnalyzeStatement;
+use tidb_exec::cluster_analyze::{AnalyzeStatement, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE};
 use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::cop_scan::CopScanSource;
 use tidb_exec::real_tikv_analyze::prepare_cluster_analyze;
@@ -680,6 +680,9 @@ impl ClusterServerSession {
         // is no bound.
         let memory_quota = self.analyze_memory_quota();
         for statement in tables {
+            let mut statement = statement.clone();
+            statement.options.memory_quota = memory_quota;
+            let statement = &statement;
             let report = self
                 .analyze
                 .execute(statement)

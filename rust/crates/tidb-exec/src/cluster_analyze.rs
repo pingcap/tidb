@@ -90,6 +90,8 @@ pub enum AnalyzeError {
     /// A table shape whose statistics this node does not produce. The detail
     /// names it.
     Unsupported(String),
+    /// The kept sample outgrew `tidb_mem_quota_analyze`.
+    MemoryQuota(SampleMemoryExceeded),
 }
 
 impl std::fmt::Display for AnalyzeError {
@@ -98,6 +100,7 @@ impl std::fmt::Display for AnalyzeError {
             Self::Read(error) => write!(formatter, "{error}"),
             Self::Encode(detail) => write!(formatter, "a sampled value did not encode: {detail}"),
             Self::Unsupported(detail) => formatter.write_str(detail),
+            Self::MemoryQuota(exceeded) => write!(formatter, "{exceeded}"),
         }
     }
 }
@@ -130,6 +133,9 @@ pub struct AnalyzeOptions {
     pub default_num_buckets: usize,
     /// `tidb_analyze_default_num_topn`.
     pub default_num_topn: usize,
+    /// `tidb_mem_quota_analyze`: the bound on what the kept sample may
+    /// occupy. Go's default is `-1`, no bound.
+    pub memory_quota: SampleMemoryQuota,
 }
 
 impl Default for AnalyzeOptions {
@@ -141,6 +147,7 @@ impl Default for AnalyzeOptions {
             sample_rate: None,
             default_num_buckets: tidb_stats::constants::DEFAULT_HISTOGRAM_BUCKETS,
             default_num_topn: tidb_stats::constants::DEFAULT_TOP_N_VALUE,
+            memory_quota: SampleMemoryQuota::unlimited(),
         }
     }
 }
@@ -169,6 +176,14 @@ pub struct AnalyzeStatement {
     /// The effective knobs.
     pub options: AnalyzeOptions,
 }
+
+pub use tidb_stats::row_sample_collector::{SampleMemoryExceeded, SampleMemoryQuota};
+
+/// The system variable that carries [`AnalyzeOptions::memory_quota`].
+///
+/// Named here so the caller that reads a session's variables does not have to
+/// depend on the variable registry to spell it.
+pub const MEM_QUOTA_ANALYZE_VARIABLE: &str = "tidb_mem_quota_analyze";
 
 /// Whether this statement is an `ANALYZE TABLE` this node runs, and against
 /// which tables.
@@ -331,7 +346,8 @@ pub fn analyze_table<S: MetaSnapshot>(
     })?;
 
     let view = SystemTableView::project(table.name.original(), table, &plan.column_names());
-    let mut collector = RowSampleCollector::new(plan.slot_count(), policy);
+    let mut collector =
+        RowSampleCollector::with_memory_quota(plan.slot_count(), policy, options.memory_quota);
     for (key, value) in scan_system_table(snapshot, &view)? {
         let stored = SystemRow::parse(&view, &key, &value)?;
         let mut columns = Vec::with_capacity(plan.columns.len());
@@ -348,10 +364,12 @@ pub fn analyze_table<S: MetaSnapshot>(
                 is_null: slot.is_null,
             })
             .collect();
-        collector.collect(&ScannedRow {
-            columns: &row.stored,
-            slots: &slots,
-        });
+        collector
+            .collect(&ScannedRow {
+                columns: &row.stored,
+                slots: &slots,
+            })
+            .map_err(AnalyzeError::MemoryQuota)?;
     }
     let (scanned_rows, slot_stats, sampled) = collector.into_parts();
 
