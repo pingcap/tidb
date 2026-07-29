@@ -169,6 +169,21 @@ func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {
 	require.True(t, matched)
 }
 
+func TestReadIndexStepExecutorInitRunsLocalDiskPrecheck(t *testing.T) {
+	expectedErr := errors.New("local disk precheck failed")
+	precheckCalled := false
+	executor := &readIndexStepExecutor{
+		localDiskPrecheck: func(context.Context) error {
+			precheckCalled = true
+			return expectedErr
+		},
+	}
+
+	err := executor.Init(context.Background())
+	require.ErrorIs(t, err, expectedErr)
+	require.True(t, precheckCalled)
+}
+
 func TestPickBackfillType(t *testing.T) {
 	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
 	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
