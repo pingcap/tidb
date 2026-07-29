@@ -467,7 +467,7 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, compressedio.DecompressConfig{
+	openReader, reader, err := mydump.NewReaderOpener(ctx, &dataFileMeta, p.srcStorage, compressedio.DecompressConfig{
 		ZStdDecodeConcurrency: 1,
 	})
 	if err != nil {
@@ -491,9 +491,15 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
+<<<<<<< HEAD
 		parser, err = mydump.NewParquetParser(
 			ctx, p.srcStorage, reader,
 			dataFileMeta.Path, mydump.ParquetFileMeta{},
+=======
+		parser, err = parquetfile.NewParser(
+			ctx, p.srcStorage, openReader,
+			dataFileMeta.Path, 0, parquetfile.FileMeta{},
+>>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250))
 		)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -624,7 +630,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage, compressedio.DecompressConfig{
+	openReader, reader, err := mydump.NewReaderOpener(ctx, &sampleFile, p.srcStorage, compressedio.DecompressConfig{
 		ZStdDecodeConcurrency: 1,
 	})
 	if err != nil {
@@ -667,9 +673,15 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
+<<<<<<< HEAD
 		parser, err = mydump.NewParquetParser(
 			ctx, p.srcStorage, reader,
 			sampleFile.Path, mydump.ParquetFileMeta{},
+=======
+		parser, err = parquetfile.NewParser(
+			ctx, p.srcStorage, openReader,
+			sampleFile.Path, 0, parquetfile.FileMeta{},
+>>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250))
 		)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)

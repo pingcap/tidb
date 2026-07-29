@@ -1742,12 +1742,15 @@ func newLoadDataParser(
 	dataStore storeapi.Storage,
 	dataFileInfo LoadDataReaderInfo,
 ) (parser mydump.Parser, err error) {
-	reader, err2 := dataFileInfo.Opener(ctx)
-	if err2 != nil {
-		return nil, err2
+	var reader io.ReadSeekCloser
+	if format != DataFormatParquet {
+		reader, err = dataFileInfo.Opener(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer func() {
-		if err != nil {
+		if err != nil && reader != nil {
 			if err3 := reader.Close(); err3 != nil && logger != nil {
 				logger.Warn("failed to close reader", zap.Error(err3))
 			}
@@ -1782,8 +1785,9 @@ func newLoadDataParser(
 		parser, err = mydump.NewParquetParser(
 			ctx,
 			dataStore,
-			reader,
+			dataFileInfo.Opener,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.FileSize,
 			dataFileInfo.Remote.ParquetMeta,
 		)
 	default:

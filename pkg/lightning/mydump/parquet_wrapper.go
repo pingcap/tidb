@@ -20,6 +20,7 @@ import (
 	"io"
 	"math"
 
+	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -34,12 +35,12 @@ import (
 const maxDictHeaderSize int64 = 100
 
 var (
-	// rowGroupInMemoryThreshold controls when we preload an entire row group.
-	// If the row-group size is no larger than this threshold, we read it once
-	// into memory and let all column readers share that buffer. This reduces
-	// number of GET requests for files with many small columns, where first-byte
-	// latency can dominate read time. 128 MiB is an heuristic value which we can
-	// tolerate the extra memory usage for row group.
+	// wholeFileInMemoryThreshold caps whole-file preloading. The lower limit
+	// keeps the per-parser memory cost bounded while retaining the object-store
+	// request reduction for small files.
+	wholeFileInMemoryThreshold = 32 * units.MiB
+	// rowGroupInMemoryThreshold caps per-row-group preloading. Larger row groups
+	// fall back to per-column streaming.
 	rowGroupInMemoryThreshold = 128 * units.MiB
 )
 
@@ -49,9 +50,15 @@ type readerAtSeekerCloser interface {
 	io.Closer
 }
 
+<<<<<<< HEAD:pkg/lightning/mydump/parquet_wrapper.go
 // parquetWrapper implements parquet.ReaderAtSeeker.
 type parquetWrapper struct {
 	storeapi.ReadSeekCloser
+=======
+// readerWrapper implements parquet.ReaderAtSeeker.
+type readerWrapper struct {
+	io.ReadSeekCloser
+>>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/reader_wrapper.go
 	lastOff int64
 	skipBuf []byte
 }
@@ -243,6 +250,27 @@ func (w *inMemoryParquetWrapper) Seek(offset int64, whence int) (int64, error) {
 
 func (*inMemoryParquetWrapper) Close() error {
 	return nil
+}
+
+func prepareReader(
+	ctx context.Context,
+	store storeapi.Storage,
+	openReader func(context.Context) (io.ReadSeekCloser, error),
+	path string,
+	fileSize int64,
+) (parquet.ReaderAtSeeker, *inMemoryReaderBase, io.ReadSeekCloser, error) {
+	if fileSize > 0 && fileSize <= int64(wholeFileInMemoryThreshold) {
+		base, err := newInMemoryReaderBase(ctx, store, path, rowGroupRange{start: 0, end: fileSize})
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		return &inMemoryReaderWrapper{base: base, fileSize: fileSize}, base, nil, nil
+	}
+	r, err := openReader(ctx)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+	return &readerWrapper{ReadSeekCloser: r}, nil, r, nil
 }
 
 // Copied from https://github.com/apache/arrow-go/blob/bbf7ab7523a6411e25c7a08566a40e8759cc6c13/parquet/file/row_group_reader.go
