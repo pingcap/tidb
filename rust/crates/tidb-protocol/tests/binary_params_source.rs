@@ -43,7 +43,7 @@ fn param(tp: u8, is_unsigned: bool, is_null: bool, val: &[u8]) -> BinaryParam {
 // The single-parameter shape shared by every TestParseExecArgs case: one
 // non-bound argument, a one-byte NULL bitmap, and a `[type, flag]` pair.
 fn split_one(param_types: &[u8], param_values: &[u8]) -> Result<BinaryParam, BinaryParamError> {
-    let parsed = parse_binary_params(1, &[None], &[0x0], param_types, param_values)?;
+    let parsed = parse_binary_params(1, &[None], &[0x0], param_types, param_values, "utf8mb4")?;
     assert_eq!(parsed.len(), 1);
     Ok(parsed.into_iter().next().unwrap())
 }
@@ -146,7 +146,7 @@ fn a_declared_type_null_param_is_null_with_no_bytes() {
 fn the_null_bitmap_yields_a_type_null_param() {
     // Bit 0 set in the bitmap marks parameter 0 absent; Go emits BinaryParam{Tp:
     // TypeNull} with the is_null field left false (the tag itself is the signal).
-    let parsed = parse_binary_params(1, &[None], &[0x1], &[1, 0], &[]).unwrap();
+    let parsed = parse_binary_params(1, &[None], &[0x1], &[1, 0], &[], "utf8mb4").unwrap();
     assert_eq!(parsed, vec![param(TYPE_NULL, false, false, &[])]);
 }
 
@@ -155,7 +155,7 @@ fn a_send_long_data_bound_param_is_used_directly() {
     // A value delivered earlier via COM_STMT_SEND_LONG_DATA: declared String
     // (0xfe) keeps its type and passes through the utf8-identity decoder.
     let bound: &[u8] = b"xyz";
-    let parsed = parse_binary_params(1, &[Some(bound)], &[0x0], &[0xfe, 0], &[]).unwrap();
+    let parsed = parse_binary_params(1, &[Some(bound)], &[0x0], &[0xfe, 0], &[], "utf8mb4").unwrap();
     assert_eq!(parsed, vec![param(0xfe, false, false, b"xyz")]);
 }
 
@@ -164,7 +164,8 @@ fn positions_advance_across_multiple_params() {
     // Two params share one value buffer; the second must start where the first
     // ended: Tiny(1 byte) then Short(2 bytes).
     let parsed =
-        parse_binary_params(2, &[None, None], &[0x0], &[1, 0, 2, 0], &[0x05, 0x06, 0x07]).unwrap();
+        parse_binary_params(2, &[None, None], &[0x0], &[1, 0, 2, 0], &[0x05, 0x06, 0x07], "utf8mb4")
+        .unwrap();
     assert_eq!(
         parsed,
         vec![
@@ -239,4 +240,42 @@ fn length_encoded_int_matches_the_mysql_widths() {
     assert_eq!(parse_length_encoded_int(&[]), None);
     assert_eq!(parse_length_encoded_int(&[0xfc, 0x01]), None);
     assert_eq!(parse_length_encoded_int(&[0xfe, 0x01]), None);
+}
+
+/// Go `TestParseExecArgsAndEncode` (`pkg/server/conn_stmt_params_test.go:319`):
+/// a parameter from a client whose charset is not UTF-8 is decoded through the
+/// connection's `InputDecoder` before it becomes a value.
+///
+/// Both Go rows use the same gbk bytes `b2 e2 ca d4` for `测试`, once as an
+/// inline `TypeVarchar` value (length-prefixed) and once as a
+/// `COM_STMT_SEND_LONG_DATA` bound value declared `TypeString`. The decode
+/// happens on both paths, so both are asserted; the two rows after them pin
+/// the boundary of the decode, which is what makes the charset argument
+/// load-bearing rather than decorative.
+#[test]
+fn a_gbk_client_string_param_is_decoded_to_utf8() {
+    const GBK_TEST: &[u8] = &[0xb2, 0xe2, 0xca, 0xd4];
+    let expected = "测试".as_bytes();
+
+    // Row 1: inline TypeVarchar value, `[len, bytes...]`.
+    let mut values = vec![u8::try_from(GBK_TEST.len()).unwrap()];
+    values.extend_from_slice(GBK_TEST);
+    let parsed = parse_binary_params(1, &[None], &[0x0], &[15, 0], &values, "gbk").unwrap();
+    assert_eq!(parsed[0].val, expected, "an inline gbk varchar parameter");
+
+    // Row 2: the value arrived through COM_STMT_SEND_LONG_DATA, declared
+    // TypeString, so the bound branch decodes it too.
+    let parsed = parse_binary_params(1, &[Some(GBK_TEST)], &[0x0], &[254, 0], &[], "gbk").unwrap();
+    assert_eq!(parsed[0].val, expected, "a bound gbk string parameter");
+
+    // The same bytes on a utf8mb4 connection are NOT transformed
+    // (`FindEncodingTakeUTF8AsNoop`), which is why the charset must travel
+    // with the parameters rather than being assumed.
+    let parsed = parse_binary_params(1, &[None], &[0x0], &[15, 0], &values, "utf8mb4").unwrap();
+    assert_eq!(parsed[0].val, GBK_TEST, "utf8mb4 input is a no-op");
+
+    // A BLOB parameter is not in the string group at all: Go never gives it
+    // to the decoder, so its bytes stay raw even on a gbk connection.
+    let parsed = parse_binary_params(1, &[None], &[0x0], &[252, 0], &values, "gbk").unwrap();
+    assert_eq!(parsed[0].val, GBK_TEST, "a BLOB parameter is not decoded");
 }

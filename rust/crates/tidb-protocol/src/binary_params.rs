@@ -22,6 +22,8 @@
 //! step (Go `expression.ExecBinaryParam`), so this port needs no temporal or
 //! decimal parser. See the HANDOFF risk register for the Unit A / Unit B split.
 
+use tidb_datatype::{find_encoding_take_utf8_as_noop, TransformOp};
+
 use crate::{
     TYPE_BIT, TYPE_BLOB, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM,
     TYPE_FLOAT, TYPE_GEOMETRY, TYPE_INT24, TYPE_LONG, TYPE_LONGLONG, TYPE_LONG_BLOB,
@@ -159,17 +161,18 @@ fn take_binary_param_value(
 /// for parameter `i`, or `None`. `param_types` is the two-bytes-per-parameter
 /// `[type, flags]` vector; `null_bitmap` is the `COM_STMT_EXECUTE` NULL bitmap.
 ///
-/// Charset note: Go decodes the string group through the connection's
-/// `InputDecoder`. For the configured node's utf8mb4 input that decoder is a
-/// no-op (`charset.FindEncodingTakeUTF8AsNoop`), so the raw bytes pass through
-/// unchanged here; a non-utf8 client charset would need a real charset
-/// transform, which is deferred (see HANDOFF).
+/// `input_charset` is the connection's client charset, applied to the string
+/// group exactly as Go's `util.InputDecoder` is (see `decode_string_input`):
+/// for `utf8mb4`/`utf8` it is the identity, and for a legacy charset such as
+/// `gbk` the parameter's bytes are decoded to UTF-8 here, before any value
+/// reaches the expression layer.
 pub fn parse_binary_params(
     param_count: usize,
     bound_params: &[Option<&[u8]>],
     null_bitmap: &[u8],
     param_types: &[u8],
     param_values: &[u8],
+    input_charset: &str,
 ) -> Result<Vec<BinaryParam>, BinaryParamError> {
     let mut params = Vec::with_capacity(param_count);
     let mut pos = 0usize;
@@ -186,7 +189,7 @@ pub fn parse_binary_params(
                 match declared {
                     TYPE_VARCHAR | TYPE_VAR_STRING | TYPE_STRING | TYPE_BIT => {
                         tp = declared;
-                        val = decode_string_input(val);
+                        val = decode_string_input(val, input_charset);
                     }
                     TYPE_BLOB | TYPE_TINY_BLOB | TYPE_MEDIUM_BLOB | TYPE_LONG_BLOB => {
                         tp = declared;
@@ -273,7 +276,7 @@ pub fn parse_binary_params(
         let (raw, next_pos) = take_binary_param_value(param_values, pos, length)?;
         let mut val = raw.to_vec();
         if decode_with_decoder {
-            val = decode_string_input(val);
+            val = decode_string_input(val, input_charset);
         }
         params.push(BinaryParam {
             tp,
@@ -287,11 +290,24 @@ pub fn parse_binary_params(
     Ok(params)
 }
 
-/// Applies the string group's `InputDecoder`. The configured node speaks
-/// utf8mb4, whose Go decoder is a no-op (`charset.FindEncodingTakeUTF8AsNoop`),
-/// so this is the identity. A non-utf8 client charset would transform here;
-/// that charset path is deferred (see HANDOFF) — this node asserts utf8 input.
-#[inline]
-fn decode_string_input(val: Vec<u8>) -> Vec<u8> {
-    val
+/// Applies the string group's `InputDecoder`: source
+/// `util.NewInputDecoder(chs).DecodeInput`, which is
+/// `FindEncodingTakeUTF8AsNoop(chs)` transformed with `OpDecode`, keeping the
+/// original bytes when the transform reports an error.
+///
+/// "Take UTF-8 as no-op" is why a utf8mb4 connection copies its bytes
+/// through: only a legacy client charset (`gbk`, `gb18030`) has a decode step
+/// at all. Skipping it stores a gbk client's bytes as if they were UTF-8.
+fn decode_string_input(val: Vec<u8>, input_charset: &str) -> Vec<u8> {
+    let (decoded, error) = find_encoding_take_utf8_as_noop(input_charset)
+        .transform(&val, TransformOp::DECODE)
+        .into_parts();
+    // Go returns the source unchanged when the transform fails, so an
+    // undecodable parameter reaches the expression layer as its raw bytes
+    // rather than as a connection error.
+    if error.is_some() {
+        val
+    } else {
+        decoded
+    }
 }

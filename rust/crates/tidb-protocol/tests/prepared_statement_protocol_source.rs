@@ -126,6 +126,33 @@ fn execute_decodes_a_string_parameter() {
     );
 }
 
+/// The other half of Go `TestParseExecArgsAndEncode`
+/// (`pkg/server/conn_stmt_params_test.go:319`), on the decoder the SERVER
+/// actually runs.
+///
+/// `parse_binary_params` (the direct port of Go `parseBinaryParams`) takes the
+/// connection's charset and decodes a string parameter through it -- see
+/// `binary_params_source::a_gbk_client_string_param_is_decoded_to_utf8`. This
+/// second decoder, the one `mysql_connection` calls for `COM_STMT_EXECUTE`,
+/// has no charset seam at all: a gbk client's `测试` reaches the session as the
+/// raw bytes `b2 e2 ca d4`, which are not even valid UTF-8. TiDB's answer is
+/// asserted here so the gap is tracked; closing it means giving this decoder
+/// the connection charset, which is a change to the `mysql_connection` seam.
+#[test]
+#[ignore = "decode_prepared_statement_execute has no connection-charset seam yet (a gbk param keeps its raw bytes)"]
+fn execute_decodes_a_gbk_string_parameter_to_utf8() {
+    let decoded = decode_prepared_statement_execute(
+        &execute_payload_typed(7, 0x0f, 0, &[0x04, 0xb2, 0xe2, 0xca, 0xd4]),
+        1,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        decoded.values,
+        vec![PreparedValue::String("测试".as_bytes().to_vec())]
+    );
+}
+
 #[test]
 fn execute_decodes_one_signed_bigint_and_retains_type_reuse_representation() {
     let first = decode_prepared_statement_execute(&execute_payload(7, true, -42), 1, None).unwrap();
