@@ -411,3 +411,57 @@ fn go_test_convert_type_out_of_range_enum_keeps_the_empty_enum() {
         .expect("Go returns the zero Enum beside ErrTruncated");
     assert_eq!(value, Datum::new_enum(MysqlEnum::default(), collation));
 }
+
+/// Complete translation of `pkg/types/datum_test.go:124::TestToInt64`.
+///
+/// Go's helper runs with `WithIgnoreTruncateErr(true)` and requires no error,
+/// so every row asserts the value while the recoverable event is ignored --
+/// which is exactly what that flag means.
+#[test]
+fn go_test_to_int64() {
+    fn to_int64(value: &Datum) -> i64 {
+        value
+            .convert_to_signed(FieldTypeCode::LongLong, crate::DEFAULT_STATEMENT_FLAGS)
+            .unwrap_or_else(|error| panic!("{value:?}: {error:?}"))
+            .value
+    }
+
+    let timestamp = parse_datetime_fsp("2011-11-10 11:11:11.999999", TimeType::Timestamp, 0);
+    let parsed = crate::parse_duration(b"11:11:11.999999", 6).unwrap();
+    let duration = MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+    // Go's row is `Convert(3.1415926, decimal(_,5))`, whose stored value is
+    // 3.14159.
+    let decimal = Decimal::from_signed_literal("3.14159");
+
+    for (value, expected) in [
+        (Datum::new_string("0"), 0_i64),
+        (Datum::Int(0), 0),
+        (Datum::UInt(0), 0),
+        (Datum::Float32(f64::from(3.1_f32)), 3),
+        (Datum::Real(3.1), 3),
+        (
+            Datum::new_binary_literal(BinaryLiteral::from_uint(100, None)),
+            100,
+        ),
+        (
+            Datum::new_enum(
+                parse_enum_value(&["a"], 1).unwrap(),
+                Collation::Utf8Mb4GeneralCi,
+            ),
+            1,
+        ),
+        (
+            Datum::new_set(
+                parse_set_value(&["a"], 1).unwrap(),
+                Collation::Utf8Mb4GeneralCi,
+            ),
+            1,
+        ),
+        (Datum::new_json(BinaryJSON::parse("3").unwrap()), 3),
+        (Datum::new_time(timestamp), 20_111_110_111_112),
+        (Datum::new_duration(duration), 111_112),
+        (Datum::new_decimal(decimal), 3),
+    ] {
+        assert_eq!(to_int64(&value), expected, "{value:?}");
+    }
+}
