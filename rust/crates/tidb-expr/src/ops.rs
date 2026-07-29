@@ -244,7 +244,13 @@ pub(crate) fn eval_binary_full(
     // Int/Float or Decimal/Float pair promotes BOTH operands to `f64`,
     // not to `Decimal` (confirmed via goeval: `1.5e2 + 3.14` is
     // `FLOAT:153.14`, not a `Decimal`).
-    if matches!(l, Datum::Real(_)) || matches!(r, Datum::Real(_)) {
+    // `Float32` is the same ETReal domain as `Real`, just the 4-byte storage a
+    // `FLOAT` column reads back as; leaving it out of this dispatch dropped it
+    // through to the integer-only path below, whose `unreachable!` then
+    // panicked on any FLOAT-vs-integer comparison or arithmetic.
+    if matches!(l, Datum::Real(_) | Datum::Float32(_))
+        || matches!(r, Datum::Real(_) | Datum::Float32(_))
+    {
         return float_binary(op, l, r, ctx);
     }
     // `/` always promotes both operands to Decimal and produces a Decimal
