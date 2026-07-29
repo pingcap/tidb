@@ -135,7 +135,7 @@ func TestAlternativeEngineRestrictedRounds(t *testing.T) {
 	// c = 5: sum(b) = 500 + 50*4950 = 248000.
 	tk.MustQuery(engineRoundPointSQL).Check(testkit.Rows("248000"))
 	// Rows joining a=1..5, 100 rows per key: sum(b) = 247500 + 100*a per group.
-	tk.MustQuery("select sum(alt_engine_flash.b) from alt_engine_flash join alt_engine_norep"+
+	tk.MustQuery("select sum(alt_engine_flash.b) from alt_engine_flash join alt_engine_norep" +
 		" on alt_engine_flash.a = alt_engine_norep.a group by alt_engine_flash.c").Sort().
 		Check(testkit.Rows("247600", "247700", "247800", "247900", "248000"))
 	tk.MustQuery("select @@tidb_isolation_read_engines").Check(enginesBefore)
