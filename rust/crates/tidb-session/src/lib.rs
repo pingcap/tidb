@@ -1983,17 +1983,43 @@ impl Session {
 
     /// The instant every `NOW()` in one statement shares, which Go fixes on
     /// the statement context.
+    ///
+    /// Go `sessionexpr.getStmtTimestamp`: a `@@timestamp` left at its `0`
+    /// default means the live clock, and any other value PINS the statement's
+    /// whole time family (`NOW`, `CURDATE`, `UTC_TIMESTAMP`, ...) to that
+    /// epoch instant. The split is `math.Modf` on a `float64`, kept here
+    /// exactly: `SET timestamp = 1700000000.654321` really does land on
+    /// 654320955ns, which is why the truncating readers report `.654320`
+    /// while the rounding ones report `.654321`.
     fn statement_clock(&self, zone: &tidb_executor::SessionTimeZone) -> (i64, u32, i32) {
         use tidb_executor::SessionTimeZone;
+        let pinned = self
+            .vars
+            .get_system("timestamp")
+            .ok()
+            .filter(|value| value != "0")
+            .and_then(|value| value.parse::<f64>().ok());
         let utc = chrono::Utc::now();
-        let seconds = utc.timestamp();
-        let nanos = utc.timestamp_subsec_nanos();
+        let (seconds, nanos) = match pinned {
+            #[expect(clippy::cast_possible_truncation, reason = "Go's int64(seconds)")]
+            #[expect(clippy::cast_sign_loss, reason = "@@timestamp's MinValue is 0")]
+            Some(timestamp) => (
+                timestamp.trunc() as i64,
+                (timestamp.fract() * 1e9) as u32 % 1_000_000_000,
+            ),
+            None => (utc.timestamp(), utc.timestamp_subsec_nanos()),
+        };
         let offset = match zone {
             SessionTimeZone::Fixed { offset_secs, .. } => *offset_secs,
             SessionTimeZone::Named(zone) => {
                 use chrono::TimeZone;
-                chrono::Offset::fix(&zone.offset_from_utc_datetime(&utc.naive_utc()))
-                    .local_minus_utc()
+                // A named zone's offset is a property of the INSTANT (DST), so
+                // it has to be taken at the statement's own instant -- the
+                // pinned one when `@@timestamp` fixes the clock.
+                let at = chrono::DateTime::from_timestamp(seconds, nanos)
+                    .unwrap_or(utc)
+                    .naive_utc();
+                chrono::Offset::fix(&zone.offset_from_utc_datetime(&at)).local_minus_utc()
             }
         };
         (seconds, nanos, offset)
