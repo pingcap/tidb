@@ -3410,6 +3410,103 @@ fn set_var_hint_overlays_one_statement() {
     );
 }
 
+/// Go `havingWindowAndOrderbyExprResolver` walks the WHOLE expression tree,
+/// so an aggregate in `HAVING`/`ORDER BY` is hoisted to an aggregation output
+/// column no matter which form encloses it -- `BETWEEN`, `IN`, `IS NULL`,
+/// `LIKE`, `IF()`, `CASE`, or a subquery comparison. A subquery's own SELECT
+/// is NOT descended into; the operand beside it still is.
+///
+/// Captured from TiDB (`testkit`, `pkg/executor`) over
+/// `ha (id, v) = (1,10),(1,20),(2,30),(2,40),(3,50)`:
+///
+/// ```text
+/// having count(*) between 1 and 5     [[1 2] [2 2] [3 1]]
+/// having count(*) in (2)              [[1 2] [2 2]]
+/// having count(*) is not null         [[1 2] [2 2] [3 1]]
+/// having count(*) in (select 2)       [[1 2] [2 2]]
+/// having count(*) like '1'            [[3 1]]
+/// having if(count(*) = 2, 1, 0)       [[1] [2]]
+/// having case count(*) when 2 then 1 else 0 end   [[1] [2]]
+/// having count(*) not between 2 and 9 [[3]]
+/// having sum(v) > 20                  [[1] [2] [3]]
+/// order by count(*) desc, id          [[1] [2] [3]]
+/// having count(*) in (select count(*) from ha)    []
+/// having exists (select 1 from ha)    [[1] [2] [3]]
+/// having count(*) = any (select 2)    [[1] [2]]
+/// ```
+#[test]
+fn having_hoists_an_aggregate_out_of_any_enclosing_form() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE ha (id INT, v INT)").unwrap();
+    session
+        .run("INSERT INTO ha VALUES (1,10),(1,20),(2,30),(2,40),(3,50)")
+        .unwrap();
+    let cases: &[(&str, &[&[&str]])] = &[
+        (
+            "SELECT id, COUNT(*) FROM ha GROUP BY id HAVING COUNT(*) BETWEEN 1 AND 5 ORDER BY id",
+            &[&["1", "2"], &["2", "2"], &["3", "1"]],
+        ),
+        (
+            "SELECT id, COUNT(*) FROM ha GROUP BY id HAVING COUNT(*) IN (2) ORDER BY id",
+            &[&["1", "2"], &["2", "2"]],
+        ),
+        (
+            "SELECT id, COUNT(*) FROM ha GROUP BY id HAVING COUNT(*) IS NOT NULL ORDER BY id",
+            &[&["1", "2"], &["2", "2"], &["3", "1"]],
+        ),
+        (
+            "SELECT id, COUNT(*) FROM ha GROUP BY id HAVING COUNT(*) IN (SELECT 2) ORDER BY id",
+            &[&["1", "2"], &["2", "2"]],
+        ),
+        (
+            "SELECT id, COUNT(*) FROM ha GROUP BY id HAVING COUNT(*) LIKE '1' ORDER BY id",
+            &[&["3", "1"]],
+        ),
+        (
+            "SELECT id FROM ha GROUP BY id HAVING IF(COUNT(*) = 2, 1, 0) ORDER BY id",
+            &[&["1"], &["2"]],
+        ),
+        (
+            "SELECT id FROM ha GROUP BY id HAVING CASE COUNT(*) WHEN 2 THEN 1 ELSE 0 END \
+             ORDER BY id",
+            &[&["1"], &["2"]],
+        ),
+        (
+            "SELECT id FROM ha GROUP BY id HAVING COUNT(*) NOT BETWEEN 2 AND 9 ORDER BY id",
+            &[&["3"]],
+        ),
+        (
+            "SELECT id FROM ha GROUP BY id HAVING SUM(v) > 20 ORDER BY id",
+            &[&["1"], &["2"], &["3"]],
+        ),
+        (
+            "SELECT id FROM ha GROUP BY id ORDER BY COUNT(*) DESC, id",
+            &[&["1"], &["2"], &["3"]],
+        ),
+        (
+            "SELECT id FROM ha GROUP BY id HAVING COUNT(*) IN (SELECT COUNT(*) FROM ha) \
+             ORDER BY id",
+            &[],
+        ),
+        (
+            "SELECT id FROM ha GROUP BY id HAVING EXISTS (SELECT 1 FROM ha) ORDER BY id",
+            &[&["1"], &["2"], &["3"]],
+        ),
+        (
+            "SELECT id FROM ha GROUP BY id HAVING COUNT(*) = ANY (SELECT 2) ORDER BY id",
+            &[&["1"], &["2"]],
+        ),
+    ];
+    for (sql, want) in cases {
+        let got = row_text(session.run(sql));
+        let want: Vec<Vec<String>> = want
+            .iter()
+            .map(|row| row.iter().map(|v| (*v).to_owned()).collect())
+            .collect();
+        assert_eq!(got, want, "{sql}");
+    }
+}
+
 /// ALTER TABLE MODIFY / CHANGE COLUMN, checked against captured TiDB
 /// output (`alter table t modify column ...` on a mock store).
 ///

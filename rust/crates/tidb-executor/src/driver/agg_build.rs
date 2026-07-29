@@ -357,6 +357,162 @@ impl ColumnResolver for AggOutputResolver {
 /// Only the expression forms the expression rewriter itself supports are
 /// walked (literals, parentheses, unary, binary, columns, aggregates); any
 /// other form would fail to rewrite anyway and is returned unchanged.
+/// The in-place walk [`substitute_aggregates`] runs: each aggregate,
+/// `GROUPING()` call or unprojected column becomes a reference to an
+/// aggregation output column, appending that column when it is new.
+struct AggregateSubstitutor<'a, 'r> {
+    agg_funcs: &'a mut Vec<AggFunc>,
+    names: &'a mut Vec<String>,
+    types: &'a mut Vec<FieldType>,
+    grouping_specs: &'a mut Vec<GroupingSpec>,
+    group_by_names: &'a [String],
+    resolver: &'a ScopeResolver<'r>,
+    /// The first failure, which stops the walk.
+    error: Option<DriverError>,
+}
+
+impl AggregateSubstitutor<'_, '_> {
+    /// Rewrites one node, reporting whether its children still need walking.
+    fn substitute(&mut self, expr: &mut tidb_ast::Expr) -> Result<bool, DriverError> {
+        use tidb_ast::Expr;
+        // GROUPING() is hoisted the same way an aggregate is: the value is
+        // computed by the rollup pass into an output column, and the clause
+        // reads that column. A GROUPING() only HAVING or ORDER BY needs
+        // becomes a hidden column and is trimmed by the final projection.
+        if let Some(args) = grouping_call_args(expr) {
+            let display = expr.restore();
+            let (name, _) = add_grouping_column(
+                args,
+                display,
+                self.agg_funcs,
+                self.names,
+                self.types,
+                self.grouping_specs,
+                self.group_by_names,
+            )?;
+            *expr = Expr::Column(vec![name]);
+            return Ok(false);
+        }
+        match expr {
+            // A subquery carries its own scope; nothing inside it is this
+            // aggregation's to hoist. The operand BESIDE the subquery still
+            // is, which is what makes `HAVING COUNT(*) IN (SELECT 2)` work.
+            Expr::Subquery(_) | Expr::Exists { .. } => Ok(false),
+            Expr::InSubquery { expr: operand, .. } => {
+                let mut owned = std::mem::replace(operand.as_mut(), Expr::Null);
+                self.walk(&mut owned);
+                *operand.as_mut() = owned;
+                Ok(false)
+            }
+            Expr::CompareSubquery { left, .. } => {
+                let mut owned = std::mem::replace(left.as_mut(), Expr::Null);
+                self.walk(&mut owned);
+                *left.as_mut() = owned;
+                Ok(false)
+            }
+            // A hoisted window column is computed ABOVE the aggregation, so it
+            // is neither grouped nor aggregated and must be left alone here; it
+            // resolves once the window stage has appended it.
+            Expr::Column(path)
+                if path
+                    .last()
+                    .is_some_and(|name| crate::window::is_window_column(name)) =>
+            {
+                Ok(false)
+            }
+            // A column that HAVING/ORDER BY references but the select list does
+            // not project: Go carries it out of the aggregation as a hidden
+            // FIRST_ROW column, exactly as it does for a selected group column,
+            // whether or not the column is grouped. Whether an UNGROUPED one
+            // may be read at all is `only_full_group_by`'s question, asked once
+            // at the top of the pipeline over the clauses as written -- this
+            // path must not re-decide it from the grouped-name list alone,
+            // which knows nothing of the candidate-key dependency that permits
+            // `GROUP BY id ORDER BY z` on a primary-keyed table.
+            Expr::Column(path) => {
+                let name = path.last().cloned().unwrap_or_default();
+                // `__apply_N` is not a real column: it is the placeholder a
+                // correlated subquery's extraction left behind, standing in for
+                // the column an Apply appends above the aggregation once the
+                // subquery is bound and run. It carries no ONLY_FULL_GROUP_BY
+                // obligation of its own, so it passes through untouched.
+                if name.starts_with("__apply_")
+                    || self
+                        .names
+                        .iter()
+                        .any(|candidate| candidate.eq_ignore_ascii_case(&name))
+                {
+                    return Ok(false);
+                }
+                let carrier = rewrite_expr_resolved(expr, self.resolver)
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                let ftype = carrier
+                    .static_type()
+                    .cloned()
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                self.agg_funcs.push(AggFunc {
+                    kind: AggKind::FirstRow,
+                    arg: Some(carrier),
+                    extra_args: Vec::new(),
+                    distinct: false,
+                    order_by: Vec::new(),
+                });
+                self.names.push(name.clone());
+                self.types.push(ftype);
+                *expr = Expr::Column(vec![name]);
+                Ok(false)
+            }
+            // GROUP_CONCAT is substituted the same way: the aggregate is
+            // hoisted and the field becomes a reference to its output column.
+            // Its ARGUMENTS are not walked -- they belong to the aggregate,
+            // which reads the source rows, not the aggregation's output.
+            Expr::Aggregate { .. } | Expr::GroupConcat { .. } => {
+                let text = expr.restore();
+                if !self
+                    .names
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(&text))
+                {
+                    let (func, ftype) = build_agg_func(expr, self.resolver)?;
+                    self.agg_funcs.push(func);
+                    self.names.push(text.clone());
+                    self.types.push(ftype);
+                }
+                *expr = Expr::Column(vec![text]);
+                Ok(false)
+            }
+            _ => Ok(true),
+        }
+    }
+
+    /// Walks one child expression the enclosing node is skipping.
+    fn walk(&mut self, expr: &mut tidb_ast::Expr) {
+        tidb_ast::Visitable::accept(expr, self);
+    }
+}
+
+impl tidb_ast::Visitor for AggregateSubstitutor<'_, '_> {
+    fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+        if self.error.is_some() {
+            return true;
+        }
+        let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+            return false;
+        };
+        match self.substitute(expr) {
+            Ok(walk_children) => !walk_children,
+            Err(error) => {
+                self.error = Some(error);
+                true
+            }
+        }
+    }
+
+    fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+        self.error.is_none()
+    }
+}
+
 pub(crate) fn substitute_aggregates(
     expr: &tidb_ast::Expr,
     agg_funcs: &mut Vec<AggFunc>,
@@ -366,133 +522,21 @@ pub(crate) fn substitute_aggregates(
     group_by_names: &[String],
     resolver: &ScopeResolver<'_>,
 ) -> Result<tidb_ast::Expr, DriverError> {
-    use tidb_ast::Expr;
-    // GROUPING() is hoisted the same way an aggregate is: the value is
-    // computed by the rollup pass into an output column, and the clause reads
-    // that column. A GROUPING() only HAVING or ORDER BY needs becomes a hidden
-    // column and is trimmed by the final projection.
-    if let Some(args) = grouping_call_args(expr) {
-        let display = expr.restore();
-        let (name, _) = add_grouping_column(
-            args,
-            display,
-            agg_funcs,
-            names,
-            types,
-            grouping_specs,
-            group_by_names,
-        )?;
-        return Ok(Expr::Column(vec![name]));
+    let mut owned = expr.clone();
+    let mut substitutor = AggregateSubstitutor {
+        agg_funcs,
+        names,
+        types,
+        grouping_specs,
+        group_by_names,
+        resolver,
+        error: None,
+    };
+    tidb_ast::Visitable::accept(&mut owned, &mut substitutor);
+    match substitutor.error {
+        Some(error) => Err(error),
+        None => Ok(owned),
     }
-    Ok(match expr {
-        // A column that HAVING/ORDER BY references but the select list does
-        // not project: Go carries it out of the aggregation as a hidden
-        // FIRST_ROW column, exactly as it does for a selected group column,
-        // whether or not the column is grouped. Whether an UNGROUPED one may
-        // be read at all is `only_full_group_by`'s question, asked once at the
-        // top of the pipeline over the clauses as written -- this path must
-        // not re-decide it from the grouped-name list alone, which knows
-        // nothing of the candidate-key dependency that permits
-        // `GROUP BY id ORDER BY z` on a primary-keyed table.
-        // A hoisted window column is computed ABOVE the aggregation, so it is
-        // neither grouped nor aggregated and must be left alone here; it
-        // resolves once the window stage has appended it.
-        Expr::Column(path)
-            if path
-                .last()
-                .is_some_and(|name| crate::window::is_window_column(name)) =>
-        {
-            expr.clone()
-        }
-        Expr::Column(path) => {
-            let name = path.last().cloned().unwrap_or_default();
-            // `__apply_N` is not a real column: it is the placeholder a
-            // correlated subquery's extraction left behind, standing in for
-            // the column an Apply appends above the aggregation once the
-            // subquery is bound and run. It carries no ONLY_FULL_GROUP_BY
-            // obligation of its own, so it passes through untouched.
-            if name.starts_with("__apply_") {
-                return Ok(expr.clone());
-            }
-            if names
-                .iter()
-                .any(|candidate| candidate.eq_ignore_ascii_case(&name))
-            {
-                return Ok(expr.clone());
-            }
-            let carrier = rewrite_expr_resolved(expr, resolver)
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-            let ftype = carrier
-                .static_type()
-                .cloned()
-                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-            agg_funcs.push(AggFunc {
-                kind: AggKind::FirstRow,
-                arg: Some(carrier),
-                extra_args: Vec::new(),
-                distinct: false,
-                order_by: Vec::new(),
-            });
-            names.push(name.clone());
-            types.push(ftype);
-            Expr::Column(vec![name])
-        }
-        // GROUP_CONCAT is substituted the same way: the aggregate is hoisted
-        // and the field becomes a reference to its output column.
-        Expr::Aggregate { .. } | Expr::GroupConcat { .. } => {
-            let text = expr.restore();
-            if !names.iter().any(|name| name.eq_ignore_ascii_case(&text)) {
-                let (func, ftype) = build_agg_func(expr, resolver)?;
-                agg_funcs.push(func);
-                names.push(text.clone());
-                types.push(ftype);
-            }
-            Expr::Column(vec![text])
-        }
-        Expr::Paren(inner) => Expr::Paren(Box::new(substitute_aggregates(
-            inner,
-            agg_funcs,
-            names,
-            types,
-            grouping_specs,
-            group_by_names,
-            resolver,
-        )?)),
-        Expr::Unary(op, inner) => Expr::Unary(
-            *op,
-            Box::new(substitute_aggregates(
-                inner,
-                agg_funcs,
-                names,
-                types,
-                grouping_specs,
-                group_by_names,
-                resolver,
-            )?),
-        ),
-        Expr::Binary(op, lhs, rhs) => Expr::Binary(
-            *op,
-            Box::new(substitute_aggregates(
-                lhs,
-                agg_funcs,
-                names,
-                types,
-                grouping_specs,
-                group_by_names,
-                resolver,
-            )?),
-            Box::new(substitute_aggregates(
-                rhs,
-                agg_funcs,
-                names,
-                types,
-                grouping_specs,
-                group_by_names,
-                resolver,
-            )?),
-        ),
-        other => other.clone(),
-    })
 }
 
 /// The window-call index a select field IS, once
