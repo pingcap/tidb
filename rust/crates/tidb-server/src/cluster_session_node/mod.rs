@@ -116,25 +116,17 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidb_exec::catalog_reload::ReloadedCatalog;
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_ddl::DdlStatement;
-use tidb_exec::cluster_table_storage::{
-    commit_staged_buffer, SessionTransaction, StatementSnapshot,
-};
 use tidb_exec::cop_scan::CopScanSource;
-use tidb_exec::pessimistic_lock_error::LockSqlError;
-use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, reload_catalog_from_cluster};
-use tidb_exec::real_tikv_ddl::{
-    commit_cluster_ddl, prepare_cluster_ddl, ClusterDdlReport, SchemaVersionNotifier,
-};
-use tidb_exec::real_tikv_read::{ProductionReadProcessAuthority, RealOptimisticTransactionOpener};
+use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
+use tidb_exec::real_tikv_ddl::prepare_cluster_ddl;
+use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
 use tidb_executor::pushdown_scan::PushdownScanner;
-use tidb_pd_client::EtcdClient;
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_session::privilege::PrivilegeRegistry;
@@ -159,194 +151,14 @@ use crate::sql_node::{
 /// same one the bounded node applies.
 const CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Everything a connection needs from the cluster's transaction tier: one
-/// fresh read snapshot per autocommit statement, one publication of its staged
-/// writes, and the single transaction an explicit `BEGIN` holds open.
-///
-/// The seam exists so the statement lifecycle -- which is the correctness core
-/// of this mode -- is exercised without a cluster. The production
-/// implementation is [`RealClusterTransactions`]; the tests drive the same
-/// lifecycle against an in-memory committed store.
-pub trait ClusterTransactions: Send + Sync {
-    /// Opens one autocommit statement's read snapshot at its own timestamp.
-    fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
+mod ddl;
+mod transactions;
 
-    /// Publishes one autocommit statement's staged writes as its own
-    /// transaction, then empties the buffer. An empty buffer publishes nothing.
-    ///
-    /// The error is the client-visible one, because a publication TiKV refused
-    /// has a code of its own: a lost race is 9007, not a generic failure.
-    fn commit(&self, buffer: &MutationBuffer) -> Result<(), SqlQueryError>;
-
-    /// Opens the one transaction an explicit `BEGIN` holds until `COMMIT` or
-    /// `ROLLBACK`.
-    fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String>;
-}
-
-/// The transaction an explicit `BEGIN` holds open across its statements.
-///
-/// Every statement of the transaction reads through [`Self::snapshot`], so they
-/// all share the timestamp `BEGIN` took, and [`Self::commit`] prewrites at that
-/// same timestamp -- which is what makes a racing writer a write conflict
-/// instead of a silent overwrite.
-pub trait OpenClusterTransaction: Send {
-    /// One statement's read handle. Dropping it ends the statement, never the
-    /// transaction.
-    fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
-
-    /// Publishes the staged writes at the transaction's own start timestamp and
-    /// empties the buffer.
-    ///
-    /// The error is the client-visible one: a transaction whose prewrite lost
-    /// the race against a newer commit reports 9007, as Go's does.
-    fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), SqlQueryError>;
-
-    /// Ends the transaction without publishing anything.
-    fn rollback(self: Box<Self>) -> Result<(), String>;
-}
-
-/// The production transaction tier: real read-only transactions and the
-/// optimistic 2PC, both over the node's one process authority.
-pub struct RealClusterTransactions {
-    opener: Arc<RealOptimisticTransactionOpener>,
-    timeout: Duration,
-}
-
-impl RealClusterTransactions {
-    /// Binds the tier to an already-connected authority's write capability.
-    #[must_use]
-    pub fn new(opener: RealOptimisticTransactionOpener, timeout: Duration) -> Self {
-        Self {
-            opener: Arc::new(opener),
-            timeout,
-        }
-    }
-}
-
-impl ClusterTransactions for RealClusterTransactions {
-    fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
-        StatementSnapshot::open(Arc::clone(&self.opener), self.timeout)
-            .map(|snapshot| Box::new(snapshot) as Box<dyn ClusterSnapshot>)
-            .map_err(|error| error.to_string())
-    }
-
-    fn commit(&self, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {
-        commit_staged_buffer(&self.opener, buffer, self.timeout)
-            .map(|_| ())
-            .map_err(sql_error)
-    }
-
-    fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
-        SessionTransaction::begin(Arc::clone(&self.opener), self.timeout)
-            .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
-            .map_err(|error| error.to_string())
-    }
-}
-
-impl OpenClusterTransaction for SessionTransaction {
-    fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
-        SessionTransaction::snapshot(self).map_err(|error| error.to_string())
-    }
-
-    fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {
-        SessionTransaction::commit(*self, buffer)
-            .map(|_| ())
-            .map_err(sql_error)
-    }
-
-    fn rollback(self: Box<Self>) -> Result<(), String> {
-        SessionTransaction::rollback(*self)
-    }
-}
-
-/// This node's one route to the cluster's stored schema.
-///
-/// The seam exists for the same reason [`ClusterTransactions`] does: the
-/// routing decision -- which statements become catalog changes, what happens
-/// to an open transaction, when the connection's tables are rebuilt -- is
-/// exercised without a cluster. The production implementation is
-/// [`RealClusterDdl`].
-pub trait ClusterDdl: Send + Sync {
-    /// Publishes one admitted catalog change, then brings this node's own
-    /// catalog up to it before answering.
-    ///
-    /// The two halves are one method because a caller that published without
-    /// refreshing would answer the next statement from a catalog it knows to
-    /// be stale.
-    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, String>;
-}
-
-/// The production catalog writer: the optimistic 2PC over the node's one
-/// process authority, followed by an inline reload of the node's own catalog.
-pub struct RealClusterDdl {
-    opener: Arc<RealOptimisticTransactionOpener>,
-    catalog: Arc<SharedClusterCatalog>,
-    timeout: Duration,
-    /// The etcd client this node announces its catalog changes through, so
-    /// peers' watches fire promptly. `None` leaves them to their lease tick;
-    /// a failed announcement is a warning, never a failed DDL.
-    notifier: Option<Arc<EtcdClient>>,
-}
-
-impl RealClusterDdl {
-    /// Binds the writer to an already-connected authority and the catalog slot
-    /// the reload thread publishes into.
-    #[must_use]
-    pub fn new(
-        opener: RealOptimisticTransactionOpener,
-        catalog: Arc<SharedClusterCatalog>,
-        timeout: Duration,
-        notifier: Option<Arc<EtcdClient>>,
-    ) -> Self {
-        Self {
-            opener: Arc::new(opener),
-            catalog,
-            timeout,
-            notifier,
-        }
-    }
-
-    /// Runs one reload pass inline, on the statement's own thread.
-    ///
-    /// Go's DDL owner PUTs the new version to etcd so every *other* node's
-    /// watch fires; this node is the one that just wrote the change, so it
-    /// needs no notification -- it reloads at once instead of waiting up to
-    /// `lease/2` for the reload thread's tick. Both publishers replace the
-    /// catalog whole in the same slot, so neither can observe the other
-    /// half-applied.
-    ///
-    /// A failed reload is not a failed DDL: the change is committed in the
-    /// cluster, and the lease tick will pick it up. Reporting the statement as
-    /// failed would be a lie about what the cluster now holds, so the failure
-    /// is emitted and the statement stands.
-    fn refresh_catalog(&self) {
-        let current = self.catalog.load();
-        match reload_catalog_from_cluster(&self.opener, self.timeout, &current) {
-            Ok(ReloadedCatalog::Unchanged { .. }) => {}
-            Ok(ReloadedCatalog::Diffs { catalog, .. } | ReloadedCatalog::Full { catalog, .. }) => {
-                self.catalog.store(catalog);
-            }
-            Err(error) => eprintln!(
-                "{{\"event\":\"catalog_reload_after_ddl_failed\",\"schema_version\":{},\"error\":{:?}}}",
-                current.schema_version,
-                error.to_string()
-            ),
-        }
-    }
-}
-
-impl ClusterDdl for RealClusterDdl {
-    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, String> {
-        let notifier = self
-            .notifier
-            .as_ref()
-            .map(|client| Arc::as_ref(client) as &dyn SchemaVersionNotifier);
-        let report = commit_cluster_ddl(&self.opener, statement, self.timeout, notifier)
-            .map_err(|error| error.to_string())?;
-        self.refresh_catalog();
-        Ok(report)
-    }
-}
+pub use ddl::{ClusterDdl, RealClusterDdl};
+pub use tidb_exec::real_tikv_ddl::ClusterDdlReport;
+#[cfg(test)]
+use transactions::sql_error;
+pub use transactions::{ClusterTransactions, OpenClusterTransaction, RealClusterTransactions};
 
 /// Which of this node's three paths one statement takes.
 ///
@@ -1050,12 +862,6 @@ impl QuerySession for ClusterServerSession {
         })?;
         Ok(QueryResult::new(Box::new(source)))
     }
-}
-
-/// Carries a commit's own client-visible triple onto the wire, so a 9007 stays
-/// a 9007 instead of collapsing into the generic 1105.
-fn sql_error(error: LockSqlError) -> SqlQueryError {
-    SqlQueryError::new(error.code, error.state, error.message)
 }
 
 fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
