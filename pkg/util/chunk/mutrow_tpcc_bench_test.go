@@ -25,9 +25,37 @@ import (
 )
 
 var (
-	mutRowVarLenColumnTPCCSink *Column
-	mutRowTPCCSink             MutRow
+	mutRowVarLenColumnTPCCSink   *Column
+	mutRowFixedLenColumnTPCCSink *Column
+	mutRowTPCCSink               MutRow
 )
+
+func BenchmarkNewMutRowFixedLenColumnTPCC(b *testing.B) {
+	cases := []struct {
+		name string
+		size int
+	}{
+		{name: "float32", size: 4},
+		{name: "integer-or-duration", size: 8},
+		{name: "time", size: sizeTime},
+		{name: "decimal", size: types.MyDecimalStructSize},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				mutRowFixedLenColumnTPCCSink = newMutRowFixedLenColumn(tc.size)
+			}
+			b.StopTimer()
+			require.Len(b, mutRowFixedLenColumnTPCCSink.elemBuf, tc.size)
+			require.Len(b, mutRowFixedLenColumnTPCCSink.data, tc.size)
+			require.Len(b, mutRowFixedLenColumnTPCCSink.nullBitmap, 1)
+			require.Equal(b, &mutRowFixedLenColumnTPCCSink.elemBuf[0], &mutRowFixedLenColumnTPCCSink.data[0])
+			require.False(b, &mutRowFixedLenColumnTPCCSink.data[0] == &mutRowFixedLenColumnTPCCSink.nullBitmap[0])
+			require.Equal(b, byte(1), mutRowFixedLenColumnTPCCSink.nullBitmap[0])
+		})
+	}
+}
 
 func BenchmarkNewMutRowVarLenColumnTPCC(b *testing.B) {
 	for _, size := range []int{0, 2, 24, 50, 500} {
@@ -133,6 +161,32 @@ func TestNewMutRowVarLenColumnIndependenceAndGrowth(t *testing.T) {
 	require.Equal(t, []int64{0, 0}, second.offsets)
 	require.Empty(t, second.data)
 	require.Equal(t, byte(1), second.nullBitmap[0])
+}
+
+func TestNewMutRowFixedLen8ColumnIndependence(t *testing.T) {
+	first := MutRowFromValues(uint64(1))
+	second := MutRowFromValues(uint64(2))
+	firstCol := first.c.columns[0]
+	secondCol := second.c.columns[0]
+
+	require.Len(t, firstCol.elemBuf, sizeInt64)
+	require.Len(t, firstCol.data, sizeInt64)
+	require.Len(t, firstCol.nullBitmap, 1)
+	require.Equal(t, sizeInt64, cap(firstCol.elemBuf))
+	require.Equal(t, sizeInt64, cap(firstCol.data))
+	require.Equal(t, 1, cap(firstCol.nullBitmap))
+	require.Equal(t, &firstCol.elemBuf[0], &firstCol.data[0])
+	require.False(t, &firstCol.data[0] == &firstCol.nullBitmap[0])
+	require.False(t, &firstCol.data[0] == &secondCol.data[0])
+	require.False(t, &firstCol.nullBitmap[0] == &secondCol.nullBitmap[0])
+
+	first.SetValue(0, uint64(3))
+	require.Equal(t, uint64(3), first.ToRow().GetUint64(0))
+	require.Equal(t, uint64(2), second.ToRow().GetUint64(0))
+	firstCol.nullBitmap[0] = 0
+	require.True(t, first.ToRow().IsNull(0))
+	require.False(t, second.ToRow().IsNull(0))
+	require.Equal(t, byte(1), secondCol.nullBitmap[0])
 }
 
 func tpccUpdateFieldTypes() (

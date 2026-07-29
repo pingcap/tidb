@@ -182,6 +182,18 @@ func makeMutRowColumn(in any) *Column {
 }
 
 func newMutRowFixedLenColumn(elemSize int) *Column {
+	if elemSize == sizeInt64 {
+		storage := &mutRowFixedLen8ColumnStorage{}
+		storage.nullBitmap[0] = 1
+		storage.col = Column{
+			length:     1,
+			elemBuf:    storage.data[:],
+			data:       storage.data[:],
+			nullBitmap: storage.nullBitmap[:],
+		}
+		return &storage.col
+	}
+
 	buf := make([]byte, elemSize)
 	col := &Column{
 		length:     1,
@@ -191,6 +203,12 @@ func newMutRowFixedLenColumn(elemSize int) *Column {
 	}
 	col.nullBitmap[0] = 1
 	return col
+}
+
+type mutRowFixedLen8ColumnStorage struct {
+	col        Column
+	data       [sizeInt64]byte
+	nullBitmap [1]byte
 }
 
 func newMutRowVarLenColumn(valSize int) *Column {
