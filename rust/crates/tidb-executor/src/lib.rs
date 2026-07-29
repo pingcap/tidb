@@ -23,12 +23,26 @@
 //! and `tidb-datatype`.
 //!
 //! SEED SCOPE: the `Executor` trait core (open/next/close/schema/ret_field_types/
-//! init_cap/max_chunk_size/new_chunk) plus [`TableDualExec`] (the FROM-less
-//! source), [`ProjectionExec`] (evaluates expressions per row), and
-//! [`SelectionExec`] (the `WHERE` filter). Together they run
-//! `SELECT <expr> [WHERE <pred>]` end-to-end. DEFERRED (documented): the Go
-//! `context.Context`/`sessionctx` propagation, runtime stats, the SQL killer,
-//! `Detach`, parallel projection, and the many other operators.
+//! init_cap/max_chunk_size/new_chunk) plus the operator set: `TableDualExec`,
+//! `ProjectionExec`, `SelectionExec`, `HashAggExec`, `SortExec`, `LimitExec`,
+//! `HashJoinExec`/`JoinExec`, `WindowExec`, `ApplyExec`, `ExplainExec`, the KV
+//! table scan and index-range/access-path sources, and the `driver` that builds
+//! them from an AST. One file per Go operator, comments citing the Go symbol.
+//!
+//! THIS IS THE LIVE ENGINE. Every TCP connection through the convergence node
+//! and every in-process `tidb-session` query executes these operators — the
+//! same code on both paths (`tidb-session` -> `run_select_meta_stmt`). The
+//! `Executor` trait is an INTERNAL contract: `driver::run_select*` is the only
+//! public entry, and no crate outside this one drives `Executor::next`.
+//!
+//! It stays a separate crate from `tidb-exec` so the engine builds without that
+//! crate's cluster/session bulk; the edge runs `tidb-exec` -> `tidb-executor`,
+//! so this one is upstream and never sees it. (The older "only three deps, seed
+//! scope" framing was outgrown: the real dependency set is 11 crates, and
+//! `tidb-exec` carries a second, non-production engine — see its crate doc.)
+//!
+//! DEFERRED (documented): the Go `context.Context`/`sessionctx` propagation,
+//! runtime stats, the SQL killer, `Detach`, and parallel projection.
 
 pub mod access_path;
 pub mod apply;

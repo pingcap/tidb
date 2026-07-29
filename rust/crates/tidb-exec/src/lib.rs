@@ -11,7 +11,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A minimal query executor — the Phase-1 seed of the design's `tidb-exec`.
+//! The cluster and session subsystems: catalog load and watch, DDL, real-TiKV
+//! read/write, privileges, sysvars, `mysql.*` bootstrap, statistics, slow log,
+//! process info, and DAG/coprocessor request building. This crate is ~84k lines
+//! across ~223 files, and the list above is what production runs.
+//!
+//! IT IS NOT THE QUERY ENGINE. The live operator tree — the one every TCP
+//! connection and every in-process session executes — is `tidb-executor`
+//! (`Executor` trait, chunk-based, pull-driven; `hash_agg`/`sort`/`limit`/
+//! `join`/`window`). `tidb-session` reaches it directly and does not depend on
+//! this crate at all. The edge runs `tidb-exec` -> `tidb-executor`, and only
+//! for storage/scan seam types (`cluster_storage`, `pushdown_scan`,
+//! `scan_pushdown`, `StorageError`) — no operator ever crosses.
+//!
+//! The [`Database`] engine documented below ([`select`], [`aggregate`],
+//! [`window`], [`order`], [`dml`], [`setopr`], [`subquery`], [`cte`]) is a
+//! SECOND, EARLIER engine: datum-based (`Row = Vec<Datum>`), fully eager, with
+//! linear-scan grouping and O(n^2) RANGE framing. It is reachable only from
+//! this crate's own tests and `tidb-server`'s test files — with one live
+//! exception: the bounded single-table node borrows [`order`]'s sort and
+//! `aggregate::aggregate_distinct` (see `tidb-server`'s `sorting_result_set`
+//! and `distinct_result_set`). Because it duplicates SQL SEMANTICS rather than
+//! mechanics, the two engines can disagree; known divergences are ORDER BY
+//! collation, GROUP BY key collation, and window RANGE frames over NULL keys.
+//! Slated for deletion once its `gorun`-verified behaviors are harvested into
+//! `tidb-executor`'s tests. Do not build new work on it.
 //!
 //! Two entry points share the same operators:
 //! - [`execute`] runs a *table-less* `SELECT` / set operation over a single
