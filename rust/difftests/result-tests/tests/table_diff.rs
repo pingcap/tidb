@@ -181,7 +181,7 @@ fn table_execution_matches_go_engine() {
     // DOWN. A permanently red suite would destroy the signal every other gate
     // depends on, and deleting the cases would destroy the evidence -- so the
     // debt is carried as a number that fails the moment it grows.
-    const KNOWN_DIVERGENCES: usize = 125;
+    const KNOWN_DIVERGENCES: usize = 79;
 
     assert!(
         failures.len() <= KNOWN_DIVERGENCES,

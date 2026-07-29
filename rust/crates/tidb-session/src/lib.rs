@@ -858,6 +858,10 @@ impl Session {
             working,
             base_version,
             mode: self.resolve_begin_txn_mode(tidb_ast::TransactionMode::Default),
+            // A transaction opened lazily by `autocommit = 0` carries the same
+            // savepoint stack an explicit BEGIN does -- Go makes no distinction
+            // between the two once `InTxn()` holds, so SAVEPOINT works here too.
+            savepoints: Vec::new(),
         });
         Ok(())
     }
