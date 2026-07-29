@@ -640,3 +640,7 @@ pub fn charset_of_collation(collation: Collation) -> &'static str {
 pub fn collation_matches_charset(collation: Collation, charset: &str) -> bool {
     charset.eq_ignore_ascii_case(charset_of_collation(collation))
 }
+
+#[cfg(test)]
+#[path = "collation_derive_go_tests.rs"]
+mod go_tests;
