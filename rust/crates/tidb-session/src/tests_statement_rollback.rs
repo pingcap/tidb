@@ -231,3 +231,45 @@ fn statement_rollback_undoes_the_rows_but_never_the_auto_increment_burn() {
         [["1", "1"], ["3", "9"]]
     );
 }
+
+/// A statement that PANICS inside a transaction restores the staged catalog
+/// exactly as a statement that returns an error does, so `COMMIT` never
+/// publishes a half-applied statement.
+///
+/// The restore rides a `Drop` guard rather than the error arm precisely for
+/// this: an unwind skips an `inspect_err`, and inside `BEGIN` the catalog
+/// being mutated is the transaction's own working copy under NO lock -- so
+/// nothing else would have caught the half-mutation, and `COMMIT` would have
+/// published a table the failed statement had already dropped.
+/// `with_staged_catalog` is driven directly because no supported statement
+/// panics on purpose.
+#[test]
+fn a_panicking_statement_inside_a_transaction_leaves_the_working_catalog_intact() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE p1 (a INT PRIMARY KEY)").unwrap();
+    session.run("INSERT INTO p1 VALUES (1)").unwrap();
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO p1 VALUES (2)").unwrap();
+
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        session.with_staged_catalog(|catalog| {
+            catalog.drop_table_in("test", "p1");
+            panic!("a statement blew up halfway through");
+            #[allow(unreachable_code)]
+            Ok(())
+        })
+    }));
+    assert!(panicked.is_err(), "the panic reached the caller");
+
+    // The transaction is intact: the table the panicking statement dropped is
+    // still there with both rows, and COMMIT publishes exactly those.
+    assert_eq!(
+        rows(&mut session, "SELECT a FROM p1 ORDER BY a"),
+        [["1"], ["2"]]
+    );
+    session.run("COMMIT").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a FROM p1 ORDER BY a"),
+        [["1"], ["2"]]
+    );
+}

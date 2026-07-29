@@ -313,6 +313,24 @@ fn datum_text(value: &Datum) -> Option<String> {
     }
 }
 
+/// The image of the catalog a statement started from, restored on ANY exit
+/// that is not an explicit disarm -- an `Err` returned by the statement, and
+/// a panic unwinding out of it (see [`Session::with_staged_catalog`]).
+struct CatalogStage<'a> {
+    /// The catalog the statement mutates in place.
+    catalog: &'a mut Catalog,
+    /// The image to put back, taken away once the statement has succeeded.
+    stage: Option<Catalog>,
+}
+
+impl Drop for CatalogStage<'_> {
+    fn drop(&mut self) {
+        if let Some(stage) = self.stage.take() {
+            *self.catalog = stage;
+        }
+    }
+}
+
 impl Session {
     /// A fresh session with its own empty catalog.
     #[must_use]
@@ -1008,15 +1026,28 @@ impl Session {
     /// stores nothing and the next successful insert skips the burned id).
     ///
     /// Making this the one door every mutating statement goes through is the
-    /// point: the restore lives in the funnel's own error arm, so no exit of
-    /// `body` -- and no DML arm added later -- can forget it.
+    /// point: the restore lives in a guard's `Drop`, so no exit of `body` --
+    /// and no DML arm added later -- can forget it.
+    ///
+    /// The guard rather than an error arm is what makes a PANIC take the same
+    /// path as an `Err`. An `inspect_err` restore is skipped entirely when
+    /// `body` unwinds, and inside `BEGIN` the catalog being mutated is the
+    /// transaction's own working copy, held behind no lock -- so a caught
+    /// panic would leave a HALF-APPLIED statement for `COMMIT` to publish.
     fn with_staged_catalog<T>(
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         self.with_catalog_mut(|catalog| {
-            let stage = catalog.clone();
-            body(catalog).inspect_err(|_| *catalog = stage)
+            let mut guard = CatalogStage {
+                stage: Some(catalog.clone()),
+                catalog,
+            };
+            // `?` and an unwind both drop the guard while it is still armed;
+            // only reaching the disarm below keeps the statement's writes.
+            let value = body(guard.catalog)?;
+            guard.stage = None;
+            Ok(value)
         })
     }
 
@@ -1890,6 +1921,7 @@ impl Session {
         .with_rand_session(Rc::clone(&self.rand))
         .with_clock(clock, zone)
         .with_auto_increment_step_default(self.auto_increment_step_is_default())
+        .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
     }
 
     /// Whether `@@auto_increment_increment` and `@@auto_increment_offset` are

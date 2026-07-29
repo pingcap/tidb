@@ -74,6 +74,11 @@ pub struct StmtContext {
     /// their defaults of 1. A statement that would have to honour a different
     /// step is refused; see [`StmtContext::auto_increment_step_is_default`].
     auto_increment_step_is_default: bool,
+    /// Go `SessionVars.SQLMode.HasNoAutoValueOnZeroMode()`: whether an
+    /// explicit `0` in an AUTO_INCREMENT column is a value rather than a
+    /// request for the next id. A statement that would have to honour it is
+    /// refused; see [`StmtContext::auto_increment_zero_is_explicit`].
+    auto_increment_zero_is_explicit: bool,
     /// Go `SessionVars.SQLMode.HasOnlyFullGroupBy()`: whether a grouped query
     /// must justify every non-aggregated value it reports. `ONLY_FULL_GROUP_BY`
     /// is in TiDB's DEFAULT `sql_mode`, so a session leaves this on; a context
@@ -101,6 +106,7 @@ impl StmtContext {
             rand_seeded: Rc::default(),
             last_insert_id: Rc::default(),
             auto_increment_step_is_default: true,
+            auto_increment_zero_is_explicit: false,
             only_full_group_by: false,
         }
     }
@@ -211,6 +217,7 @@ impl StmtContext {
             rand_seeded: Rc::default(),
             last_insert_id: Rc::default(),
             auto_increment_step_is_default: true,
+            auto_increment_zero_is_explicit: false,
             only_full_group_by: false,
         }
     }
@@ -259,6 +266,24 @@ impl StmtContext {
     pub fn with_auto_increment_step_default(mut self, is_default: bool) -> Self {
         self.auto_increment_step_is_default = is_default;
         self
+    }
+
+    /// Declares whether `NO_AUTO_VALUE_ON_ZERO` is in the session's
+    /// `sql_mode`.
+    #[must_use]
+    pub fn with_auto_increment_zero_explicit(mut self, is_explicit: bool) -> Self {
+        self.auto_increment_zero_is_explicit = is_explicit;
+        self
+    }
+
+    /// Whether an explicit `0` written to an AUTO_INCREMENT column must be
+    /// STORED as zero, which is what `NO_AUTO_VALUE_ON_ZERO` asks for.
+    ///
+    /// This tier always allocates over a zero, so a statement under that mode
+    /// is REFUSED rather than answered with a different row than Go stores.
+    #[must_use]
+    pub fn auto_increment_zero_is_explicit(&self) -> bool {
+        self.auto_increment_zero_is_explicit
     }
 
     /// Whether the session's auto-increment step and offset are both 1.

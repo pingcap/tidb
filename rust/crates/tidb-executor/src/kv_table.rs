@@ -43,7 +43,7 @@ use crate::pushdown_scan::{
 use crate::scan_pushdown::ScanComparison;
 use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
@@ -229,39 +229,136 @@ impl Default for TableCharset {
 /// the rows while keeping the burn. As a plain field, "returned on rollback"
 /// would be the normal path and every failure site would need its own burn
 /// fixup.
+///
+/// The counter holds Go's `allocator.base` -- the id LAST handed out, not the
+/// next one -- as a raw 64-bit PATTERN, with the column's signedness deciding
+/// how that pattern is read. Both choices come straight from Go and each one
+/// removes a whole class of edge case:
+///
+/// * Last-allocated is the representation `Rebase` is written against
+///   (`rebase4Signed`: `if requiredBase <= alloc.base { return }`), so
+///   rebasing to an explicit id is a plain maximum with no `+ 1` to overflow
+///   at `i64::MAX`.
+/// * The pattern plus `unsigned` is Go's `isUnsigned` split
+///   (`rebase4Unsigned`/`alloc4Unsigned` read the same field as `uint64`), so
+///   a `BIGINT UNSIGNED` id above `i64::MAX` keeps its own domain end to end
+///   instead of turning negative and being ignored by the rebase.
 #[derive(Clone, Debug)]
-struct AutoIdAllocator(Arc<AtomicI64>);
+struct AutoIdAllocator {
+    /// Go `allocator.base`: the id last handed out, as its 64-bit pattern.
+    last: Arc<AtomicU64>,
+    /// Go `allocator.isUnsigned`: which domain the pattern is read in.
+    unsigned: bool,
+}
+
+/// Go `autoid.ErrAutoincReadFailed` (1467): the allocator has no id left.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutoIncrementExhausted;
 
 impl AutoIdAllocator {
-    /// An allocator whose next id is `base`.
-    fn new(base: i64) -> Self {
-        AutoIdAllocator(Arc::new(AtomicI64::new(base)))
+    /// A fresh signed allocator, whose first id is 1.
+    fn new() -> Self {
+        AutoIdAllocator {
+            last: Arc::new(AtomicU64::new(0)),
+            unsigned: false,
+        }
     }
 
-    /// Consumes and returns the next id.
-    fn alloc(&self) -> i64 {
-        self.0.fetch_add(1, Ordering::SeqCst)
+    /// Go `allocator.isUnsigned`, set from the AUTO_INCREMENT column's type.
+    fn set_unsigned(&mut self, unsigned: bool) {
+        self.unsigned = unsigned;
     }
 
-    /// The id the next allocation will return.
-    fn base(&self) -> i64 {
-        self.0.load(Ordering::SeqCst)
+    /// How many ids remain above `last` in the column's domain.
+    const fn headroom(&self, last: u64) -> u128 {
+        if self.unsigned {
+            (u64::MAX as u128) - (last as u128)
+        } else {
+            // Read in the signed domain, where `last` is at most `i64::MAX`
+            // and may in principle be negative.
+            ((i64::MAX as i128) - (last as i64 as i128)) as u128
+        }
+    }
+
+    /// True when `value` ranks after `other` in the column's domain.
+    const fn exceeds(&self, value: u64, other: u64) -> bool {
+        if self.unsigned {
+            value > other
+        } else {
+            (value as i64) > (other as i64)
+        }
+    }
+
+    /// Consumes and returns the next id, as its 64-bit pattern.
+    ///
+    /// Go's `alloc4Signed`/`alloc4Unsigned` both refuse before the counter can
+    /// wrap -- `if math.MaxInt64-alloc.base <= n1 { return ErrAutoincReadFailed }`
+    /// with `n1 == 1` for a one-row insert -- so the last id an allocator ever
+    /// hands out is one BELOW the type's maximum. Captured from TiDB: on a
+    /// `BIGINT` at `9223372036854775806` and on a `BIGINT UNSIGNED` at
+    /// `18446744073709551614`, the next insert fails with
+    /// `[autoid:1467]`. Saturating instead would silently re-issue an id that
+    /// already exists.
+    fn alloc(&self) -> Result<u64, AutoIncrementExhausted> {
+        let mut last = self.last.load(Ordering::SeqCst);
+        loop {
+            if self.headroom(last) <= 1 {
+                return Err(AutoIncrementExhausted);
+            }
+            let next = last.wrapping_add(1);
+            match self
+                .last
+                .compare_exchange_weak(last, next, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => return Ok(next),
+                Err(observed) => last = observed,
+            }
+        }
+    }
+
+    /// The id the next allocation will return, as a pattern. Meaningful only
+    /// while ids remain, which is what `SHOW TABLE STATUS` reports.
+    fn next(&self) -> u64 {
+        self.last.load(Ordering::SeqCst).wrapping_add(1)
     }
 
     /// Go `Allocator.Rebase`: moves the counter so the next id exceeds
     /// `value`. A value the counter is already past is ignored, which is why
     /// an explicit id SMALLER than the counter -- and an `ALTER TABLE ...
     /// AUTO_INCREMENT=` that names a smaller number -- changes nothing.
-    fn rebase(&self, value: i64) {
-        self.0.fetch_max(value + 1, Ordering::SeqCst);
+    fn rebase(&self, value: u64) {
+        let mut last = self.last.load(Ordering::SeqCst);
+        while self.exceeds(value, last) {
+            match self
+                .last
+                .compare_exchange_weak(last, value, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => return,
+                Err(observed) => last = observed,
+            }
+        }
     }
 
-    /// Starts the counter over at `base`, ignoring how far it had run.
+    /// Go's `AUTO_INCREMENT = n` table option: the counter moves so the NEXT
+    /// id is `n`, which is a rebase to its predecessor. `n` at the bottom of
+    /// the domain has no predecessor and leaves the counter alone.
+    fn rebase_to_next(&self, next: u64) {
+        let last = if self.unsigned {
+            next.checked_sub(1)
+        } else {
+            (next as i64).checked_sub(1).map(|value| value as u64)
+        };
+        if let Some(last) = last {
+            self.rebase(last);
+        }
+    }
+
+    /// Starts the counter over, so the next id is 1 again.
     ///
     /// Go reaches this by replacing the table (TRUNCATE builds a new table id
     /// with a fresh allocator), so unlike `rebase` it also moves DOWN.
-    fn reset(&self, base: i64) {
-        self.0.store(base, Ordering::SeqCst);
+    fn reset(&self) {
+        self.last.store(0, Ordering::SeqCst);
     }
 }
 
@@ -396,7 +493,7 @@ impl KvTable {
             indexes: Vec::new(),
             common_handle_offsets: Vec::new(),
             auto_increment_offset: None,
-            auto_id: AutoIdAllocator::new(1),
+            auto_id: AutoIdAllocator::new(),
             charset: TableCharset::default(),
         }
     }
@@ -413,8 +510,17 @@ impl KvTable {
     }
 
     /// Marks the AUTO_INCREMENT column.
+    ///
+    /// The column's signedness travels to the allocator here, because it is
+    /// what decides the domain every later id is compared and counted in
+    /// (Go's `isUnsigned`, taken from the same `ColumnInfo` flag).
     pub fn set_auto_increment_offset(&mut self, offset: usize) {
         self.auto_increment_offset = Some(offset);
+        let unsigned = self
+            .columns
+            .get(offset)
+            .is_some_and(|column| column.field_type.is_unsigned());
+        self.auto_id.set_unsigned(unsigned);
     }
 
     /// The AUTO_INCREMENT column's offset, if any.
@@ -430,7 +536,7 @@ impl KvTable {
     /// (`ALTER TABLE ... AUTO_INCREMENT=n`) it is a Rebase, which only ever
     /// moves the counter UP -- naming a smaller number leaves it alone.
     pub fn rebase_auto_increment(&mut self, next_id: i64) {
-        self.auto_id.rebase(next_id - 1);
+        self.auto_id.rebase_to_next(next_id as u64);
     }
 
     /// Go `adjustAutoIncrementDatum`: fills the auto-increment column.
@@ -438,26 +544,47 @@ impl KvTable {
     /// An omitted, NULL or zero value takes the next allocated id; an explicit
     /// non-zero value is kept and REBASES the allocator so later rows exceed
     /// it. Returns the id allocated for this row, which the statement reports
-    /// as `LAST_INSERT_ID` for the first such row.
+    /// as `LAST_INSERT_ID` for the first such row. Fails with Go's
+    /// `ErrAutoincReadFailed` (1467) once the column's domain is exhausted.
     ///
-    /// DEFERRED (documented): the `NO_AUTO_VALUE_ON_ZERO` sql_mode, under
-    /// which Go keeps an explicit zero instead of allocating.
-    pub fn apply_auto_increment(&mut self, row: &mut [Datum]) -> Option<i64> {
-        let offset = self.auto_increment_offset?;
+    /// The explicit value is carried as its 64-bit PATTERN rather than as an
+    /// `i64`, so a `BIGINT UNSIGNED` id above `i64::MAX` rebases the allocator
+    /// in its own domain. Reading it as a signed integer made it negative, the
+    /// rebase then ignored it, and the allocator went on to hand out ids the
+    /// table already held (captured: `INSERT ... VALUES
+    /// (18446744073709551615)` leaves the next insert with no id at all,
+    /// `[autoid:1467]`, never with a duplicate).
+    ///
+    /// An explicit `0` always allocates here. `NO_AUTO_VALUE_ON_ZERO`, under
+    /// which Go keeps the zero, is REFUSED by the INSERT path rather than
+    /// silently ignored (`StmtContext::auto_increment_zero_is_explicit`).
+    pub fn apply_auto_increment(
+        &mut self,
+        row: &mut [Datum],
+    ) -> Result<Option<i64>, AutoIncrementExhausted> {
+        let Some(offset) = self.auto_increment_offset else {
+            return Ok(None);
+        };
         let current = match row.get(offset) {
-            Some(Datum::Int(value)) => *value,
-            Some(Datum::UInt(value)) => *value as i64,
+            Some(Datum::Int(value)) => *value as u64,
+            Some(Datum::UInt(value)) => *value,
             _ => 0,
         };
         if current != 0 {
             // Go rebases so the next allocation is past the explicit value,
             // and a value the counter is already past changes nothing.
             self.auto_id.rebase(current);
-            return None;
+            return Ok(None);
         }
-        let allocated = self.auto_id.alloc();
-        row[offset] = Datum::Int(allocated);
-        Some(allocated)
+        let allocated = self.auto_id.alloc()?;
+        // The allocated id skips the per-column cast the written values went
+        // through, so it is placed in the column's own domain here.
+        row[offset] = if self.auto_id.unsigned {
+            Datum::UInt(allocated)
+        } else {
+            Datum::Int(allocated as i64)
+        };
+        Ok(Some(allocated as i64))
     }
 
     /// Marks the columns whose encoding is the clustered row handle, which Go
@@ -553,7 +680,7 @@ impl KvTable {
     pub fn truncate(&mut self) {
         self.store.clear();
         self.next_handle = 1;
-        self.auto_id.reset(1);
+        self.auto_id.reset();
     }
 
     /// Sets the table's name, used to qualify a duplicate-key error.
@@ -903,7 +1030,8 @@ impl KvTable {
     /// which is the NULL Go reports there.
     #[must_use]
     pub fn next_auto_increment(&self) -> Option<i64> {
-        self.auto_increment_offset.map(|_| self.auto_id.base())
+        self.auto_increment_offset
+            .map(|_| self.auto_id.next() as i64)
     }
 
     /// The table's indexes: every one of them, which is what index
@@ -2356,5 +2484,75 @@ mod tests {
         assert!(key < k2);
         let (low, high) = get_table_handle_key_range(42);
         assert!(low < key && key < high);
+    }
+
+    /// A table whose only column is an AUTO_INCREMENT `BIGINT`, signed or not.
+    fn auto_increment_table(unsigned: bool) -> KvTable {
+        let mut table = KvTable::new(
+            7,
+            vec![KvColumn {
+                name: "id".to_owned(),
+                id: 1,
+                field_type: long().with_unsigned(unsigned),
+                default_value: None,
+                origin_default: None,
+            }],
+        );
+        table.set_auto_increment_offset(0);
+        table
+    }
+
+    /// An explicit id at the domain's end leaves the allocator with nothing to
+    /// hand out, and it says so instead of wrapping or repeating.
+    ///
+    /// Captured from TiDB: `BIGINT` at `9223372036854775807` and `BIGINT
+    /// UNSIGNED` at both `18446744073709551614` and `18446744073709551615` all
+    /// answer the next insert with `[autoid:1467]`. The unsigned pair is here
+    /// rather than in the session tests because a literal above `i64::MAX` is
+    /// not yet expressible in this tier's SQL.
+    #[test]
+    fn the_allocator_refuses_at_the_end_of_the_columns_domain() {
+        for (unsigned, explicit) in [
+            (false, Datum::Int(i64::MAX)),
+            (true, Datum::UInt(u64::MAX)),
+            (true, Datum::UInt(u64::MAX - 1)),
+        ] {
+            let mut table = auto_increment_table(unsigned);
+            let mut row = [explicit];
+            assert_eq!(table.apply_auto_increment(&mut row), Ok(None));
+            let mut row = [Datum::Null];
+            assert_eq!(
+                table.apply_auto_increment(&mut row),
+                Err(AutoIncrementExhausted),
+                "unsigned={unsigned}"
+            );
+        }
+    }
+
+    /// An explicit UNSIGNED id above `i64::MAX` rebases the allocator in its
+    /// own domain, and the id that follows it is the next unsigned integer --
+    /// not the low id a signed reading of the counter would have re-issued on
+    /// top of the row just written.
+    #[test]
+    fn an_unsigned_explicit_id_rebases_in_the_unsigned_domain() {
+        let mut table = auto_increment_table(true);
+        let mut row = [Datum::UInt(1 << 63)];
+        assert_eq!(table.apply_auto_increment(&mut row), Ok(None));
+        let mut row = [Datum::Null];
+        table.apply_auto_increment(&mut row).unwrap();
+        assert_eq!(row[0], Datum::UInt((1 << 63) + 1));
+    }
+
+    /// The same explicit id on a SIGNED column is a value the counter is
+    /// already past (Go's rebase only ever moves up), so allocation carries on
+    /// from where it was.
+    #[test]
+    fn a_signed_explicit_id_below_the_counter_does_not_move_it() {
+        let mut table = auto_increment_table(false);
+        let mut row = [Datum::Int(-5)];
+        assert_eq!(table.apply_auto_increment(&mut row), Ok(None));
+        let mut row = [Datum::Null];
+        table.apply_auto_increment(&mut row).unwrap();
+        assert_eq!(row[0], Datum::Int(1));
     }
 }

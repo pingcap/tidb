@@ -221,6 +221,15 @@ pub(crate) fn run_insert_traced(
             "@@auto_increment_increment / @@auto_increment_offset other than 1 is not supported yet",
         ));
     }
+    // REFUSED for the same reason: under `NO_AUTO_VALUE_ON_ZERO` Go STORES an
+    // explicit zero, while this tier allocates over it. Allocating anyway
+    // would write a different row than Go writes, which is worse than an
+    // error the session can see.
+    if auto_increment_offset.is_some() && ctx.auto_increment_zero_is_explicit() {
+        return Err(DriverError::Unsupported(
+            "the NO_AUTO_VALUE_ON_ZERO sql_mode is not supported yet",
+        ));
+    }
     let mut auto_rows: Vec<usize> = Vec::new();
     let mut first_allocated: Option<i64> = None;
 
@@ -316,7 +325,10 @@ pub(crate) fn run_insert_traced(
             // The allocator lives on the table, so the ids are handed out here
             // rather than while the rows were being built.
             for index in &auto_rows {
-                if let Some(allocated) = kv.apply_auto_increment(&mut new_rows[*index]) {
+                let allocated = kv
+                    .apply_auto_increment(&mut new_rows[*index])
+                    .map_err(|_| DriverError::AutoincReadFailed)?;
+                if let Some(allocated) = allocated {
                     // Go keeps the FIRST allocated id of the statement.
                     if first_allocated.is_none() {
                         first_allocated = Some(allocated);

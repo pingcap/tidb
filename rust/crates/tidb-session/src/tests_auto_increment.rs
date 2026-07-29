@@ -281,3 +281,75 @@ fn force_auto_increment_is_refused() {
         .run("ALTER TABLE ai FORCE AUTO_INCREMENT = 1")
         .is_err());
 }
+
+/// The signed domain ENDS in an error, never in a wrapped or repeated id.
+///
+/// Captured on `BIGINT` (signed): after `INSERT ... VALUES
+/// (9223372036854775807)` the next allocation is
+/// `[autoid:1467]Failed to read auto-increment value from storage engine`,
+/// and the same at `9223372036854775806` -- Go's `alloc4Signed` refuses while
+/// `math.MaxInt64 - base <= 1`, so the counter never reaches the type's end.
+#[test]
+fn the_signed_allocator_reports_1467_instead_of_overflowing() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE big (id BIGINT AUTO_INCREMENT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO big VALUES (9223372036854775807, 1)")
+        .unwrap();
+    let error = session
+        .run("INSERT INTO big (v) VALUES (2)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1467);
+    assert_eq!(
+        error.message,
+        "Failed to read auto-increment value from storage engine"
+    );
+    // The explicit row is still the only one: a refused allocation writes
+    // nothing rather than a duplicate of the id already there.
+    assert_eq!(
+        one(&mut session, "SELECT id FROM big"),
+        "9223372036854775807"
+    );
+}
+
+/// A `BIGINT UNSIGNED` allocator crosses `i64::MAX` into its OWN domain: the
+/// id after an explicit `9223372036854775807` is `9223372036854775808`.
+///
+/// Captured on `BIGINT UNSIGNED`, and this is the whole of the signed/unsigned
+/// split -- reading the explicit id as an `i64` made the rebase see a value the
+/// counter was already past, so the next insert took a LOW id on top of rows
+/// that already existed. (The allocator's behavior at the unsigned domain's own
+/// end is covered in `tidb-executor`'s `kv_table` tests, because a literal
+/// above `i64::MAX` is not yet expressible in this tier's SQL.)
+#[test]
+fn an_unsigned_id_above_the_signed_maximum_rebases_the_allocator() {
+    let mut session = table(None);
+    session
+        .run("INSERT INTO ai VALUES (9223372036854775807, 1)")
+        .unwrap();
+    session.run("INSERT INTO ai (v) VALUES (2)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM ai ORDER BY id"),
+        [["9223372036854775807", "1"], ["9223372036854775808", "2"]]
+    );
+}
+
+/// REFUSED, not silently ignored: under `NO_AUTO_VALUE_ON_ZERO` Go STORES an
+/// explicit `0` (captured: the row is `0` and the next insert gets `1`), while
+/// this tier allocates over it. Writing a different row than Go writes is
+/// worse than failing, so the insert fails while the mode is on.
+#[test]
+fn the_no_auto_value_on_zero_sql_mode_is_refused_rather_than_ignored() {
+    let mut session = table(None);
+    session
+        .run("SET SESSION sql_mode = 'NO_AUTO_VALUE_ON_ZERO'")
+        .unwrap();
+    assert!(session.run("INSERT INTO ai VALUES (0, 1)").is_err());
+    session.run("SET SESSION sql_mode = ''").unwrap();
+    // With the mode off, a zero allocates as it always did.
+    session.run("INSERT INTO ai VALUES (0, 1)").unwrap();
+    assert_eq!(one(&mut session, "SELECT id FROM ai"), "1");
+}

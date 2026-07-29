@@ -39,6 +39,9 @@ pub enum DriverError {
     Var(VarErrorKind),
     /// A schema statement failed.
     Schema(SchemaErrorKind),
+    /// Go `autoid.ErrAutoincReadFailed` (1467): the AUTO_INCREMENT column has
+    /// no id left in its domain, which Go raises rather than reusing one.
+    AutoincReadFailed,
     /// Go `ErrDupFieldName` (1060).
     DuplicateColumnName(String),
     /// Go `ErrDupKeyName` (1061).
@@ -1283,6 +1286,13 @@ impl DriverError {
             1366,
             *b"HY000",
             format!("Incorrect {type_name} value: '{value}' for column '{column}' at row {row}"),
+        ),
+        // Go: "Failed to read auto-increment value from storage engine",
+        // which is what an exhausted allocator reports.
+        DriverError::AutoincReadFailed => MysqlError::new(
+            1467,
+            *b"HY000",
+            "Failed to read auto-increment value from storage engine".to_owned(),
         ),
         DriverError::CatalogPoisoned => {
             MysqlError::unknown("the shared catalog is unusable after a failed statement")
