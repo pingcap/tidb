@@ -252,6 +252,37 @@ impl SessionVars {
             .unwrap_or_else(|| def.value.to_owned()))
     }
 
+    /// A snapshot of the session overrides `name` (and its alias) currently
+    /// hold, for a statement-scoped write to put back afterwards.
+    ///
+    /// `None` for a name with no override records the ABSENCE, so restoring it
+    /// leaves the variable tracking the registry default rather than pinning
+    /// it to the default's text.
+    #[must_use]
+    pub fn snapshot_system(&self, name: &str) -> Vec<(String, Option<String>)> {
+        let key = name.to_ascii_lowercase();
+        let mut keys = vec![key.clone()];
+        if let Some(other) = alias_of(&key) {
+            keys.push(other.to_owned());
+        }
+        keys.into_iter()
+            .map(|key| {
+                let previous = self.systems.get(&key).cloned();
+                (key, previous)
+            })
+            .collect()
+    }
+
+    /// Puts back what [`Self::snapshot_system`] recorded.
+    pub fn restore_system(&mut self, snapshot: Vec<(String, Option<String>)>) {
+        for (key, previous) in snapshot {
+            match previous {
+                Some(value) => self.systems.insert(key, value),
+                None => self.systems.remove(&key),
+            };
+        }
+    }
+
     /// Reads `@@global.name`: always the shared table's live value, never
     /// this session's own copy. Go's `ErrIncorrectGlobalLocalVar` (1238) when
     /// the variable has no GLOBAL scope at all to read.

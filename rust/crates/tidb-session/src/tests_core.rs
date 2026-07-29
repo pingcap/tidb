@@ -3314,6 +3314,102 @@ fn sql_select_limit_caps_a_statement_that_wrote_no_limit() {
     );
 }
 
+/// Go `hint.go`'s `set_var` arm and `optimize.go`'s application of
+/// `StmtHints.SetVars`: a `SET_VAR` hint overlays a session variable for ONE
+/// statement, first occurrence wins, and the overlay is put back whether the
+/// statement succeeded or failed.
+///
+/// Captured from TiDB (`testkit`, `pkg/executor`):
+///
+/// ```text
+/// select @@sql_safe_updates                                        [[0]]
+/// select /*+ SET_VAR(sql_safe_updates=1) */ @@sql_safe_updates      [[1]]
+/// select @@sql_safe_updates                                        [[0]]
+/// select /*+ SET_VAR(sql_safe_updates=1) SET_VAR(sql_safe_updates=0) */
+///        @@sql_safe_updates                                        [[1]]
+/// set sql_safe_updates=1
+/// select /*+ SET_VAR(sql_safe_updates=0) */ @@sql_safe_updates      [[0]]
+/// select @@sql_safe_updates                                        [[1]]
+/// select /*+ SET_VAR(sql_safe_updates=0) */ no_such_column
+///     ERR errno=1054 "[planner:1054]Unknown column 'no_such_column' in
+///                     'field list'"
+/// select @@sql_safe_updates                                        [[1]]
+/// select /*+ SET_VAR(no_such_variable=1) */ @@sql_safe_updates      [[1]]
+/// select /*+ SET_VAR(sql_safe_updates=99) */ @@sql_safe_updates     [[1]]
+/// set sql_safe_updates=0
+/// select /*+ SET_VAR(max_execution_time=123) */ @@max_execution_time [[123]]
+/// select @@max_execution_time                                      [[0]]
+/// select /*+ SET_VAR(sql_select_limit=1) */ 1 union all select 2    [[1]]
+/// ```
+#[test]
+fn set_var_hint_overlays_one_statement() {
+    let mut session = Session::new();
+    assert_eq!(row_text(session.run("SELECT @@sql_safe_updates")), [["0"]]);
+    assert_eq!(
+        row_text(session.run("SELECT /*+ SET_VAR(sql_safe_updates=1) */ @@sql_safe_updates")),
+        [["1"]]
+    );
+    // The overlay does not outlive the statement.
+    assert_eq!(row_text(session.run("SELECT @@sql_safe_updates")), [["0"]]);
+
+    // Two hints for one name: the FIRST wins.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT /*+ SET_VAR(sql_safe_updates=1) SET_VAR(sql_safe_updates=0) */ \
+             @@sql_safe_updates"
+        )),
+        [["1"]]
+    );
+
+    // The overlay is a write, not a floor: it can also turn a value OFF.
+    session.apply_set("SET sql_safe_updates = 1").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT /*+ SET_VAR(sql_safe_updates=0) */ @@sql_safe_updates")),
+        [["0"]]
+    );
+    assert_eq!(row_text(session.run("SELECT @@sql_safe_updates")), [["1"]]);
+
+    // A statement that FAILS restores it too. Go reports 1054 "Unknown column
+    // 'no_such_column' in 'field list'" here; this tier still answers a
+    // FROM-less unresolved column with 1105, a SEPARATE gap that predates this
+    // overlay -- what is asserted is the failure and the restore.
+    assert!(session
+        .run("SELECT /*+ SET_VAR(sql_safe_updates=0) */ no_such_column")
+        .is_err());
+    assert_eq!(row_text(session.run("SELECT @@sql_safe_updates")), [["1"]]);
+
+    // An unknown name and a value the registry rejects are both ignored
+    // rather than failing the statement.
+    assert_eq!(
+        row_text(session.run("SELECT /*+ SET_VAR(no_such_variable=1) */ @@sql_safe_updates")),
+        [["1"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT /*+ SET_VAR(sql_safe_updates=99) */ @@sql_safe_updates")),
+        [["1"]]
+    );
+    assert_eq!(row_text(session.run("SELECT @@sql_safe_updates")), [["1"]]);
+
+    // Any hint-writable variable, not just the boolean: a numeric one
+    // restores to its default rather than to the default's text.
+    session.apply_set("SET sql_safe_updates = 0").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT /*+ SET_VAR(max_execution_time=123) */ @@max_execution_time")),
+        [["123"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT @@max_execution_time")),
+        [["0"]]
+    );
+
+    // A set operation's hints are its FIRST term's, and they reach the
+    // statement-level `sql_select_limit` cap.
+    assert_eq!(
+        row_text(session.run("SELECT /*+ SET_VAR(sql_select_limit=1) */ 1 UNION ALL SELECT 2")),
+        [["1"]]
+    );
+}
+
 /// ALTER TABLE MODIFY / CHANGE COLUMN, checked against captured TiDB
 /// output (`alter table t modify column ...` on a mock store).
 ///

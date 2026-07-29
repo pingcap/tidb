@@ -165,6 +165,10 @@ pub struct Session {
     /// The id the last statement allocated, which the OK packet carries and
     /// which is 0 for a statement that allocated nothing.
     statement_insert_id: u64,
+    /// Go `StmtCtx.AddSetVarHintRestore`: the session overrides a `SET_VAR`
+    /// hint overwrote for the duration of ONE statement, put back when that
+    /// statement finishes whether it succeeded or failed.
+    set_var_hint_restore: Vec<(String, Option<String>)>,
     /// Go `StmtCtx.PrevAffectedRows`, which is all `ROW_COUNT()` reports: the
     /// preceding statement's affected rows, `-1` after a SELECT, `0`
     /// otherwise. Derived once at the statement boundary from
@@ -270,6 +274,7 @@ impl Default for Session {
             connection_id: None,
             last_insert_id: 0,
             statement_insert_id: 0,
+            set_var_hint_restore: Vec::new(),
             prev_row_count: 0,
             statement_kind: StatementKind::Other,
             published_last_insert_id: Rc::default(),
@@ -1254,6 +1259,7 @@ impl Session {
             connection_id: None,
             last_insert_id: 0,
             statement_insert_id: 0,
+            set_var_hint_restore: Vec::new(),
             prev_row_count: 0,
             statement_kind: StatementKind::Other,
             published_last_insert_id: Rc::default(),
@@ -1693,6 +1699,12 @@ impl Session {
         self.statement_kind = StatementKind::Other;
         self.published_last_insert_id.set(None);
         let result = self.execute_statement(sql);
+        // Go `ExecStmt` puts a `SET_VAR` hint's variables back when the
+        // statement finishes, from the restore list the optimizer built --
+        // which is why an overlay survives neither a successful statement nor
+        // a failing one.
+        let restore = std::mem::take(&mut self.set_var_hint_restore);
+        self.vars.restore_system(restore);
         self.publish_statement_status(&result);
         if let Some(guard) = &self.process {
             guard
@@ -1770,6 +1782,11 @@ impl Session {
         let mut stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
         // `@@x` / `@x` read the session's own state, so they are bound before
         // the statement reaches the driver.
+        // A `SET_VAR` hint overlays the session BEFORE anything reads a
+        // variable, which is where Go applies it too: the optimizer installs
+        // it, and expression rewriting -- the `@@x` reads below -- happens
+        // after.
+        self.apply_set_var_hints(&stmt);
         self.bind_variables(&mut stmt)?;
         self.try_add_extra_limit(&mut stmt);
         // Only an allocating INSERT sets it; every other statement reports 0.
@@ -2436,6 +2453,55 @@ impl Session {
             ));
         }
         Ok(())
+    }
+
+    /// Go `hint.go`'s `set_var` arm plus `optimize.go`'s application of
+    /// `StmtHints.SetVars`: each `SET_VAR(name = value)` writes the session
+    /// variable for the duration of THIS statement only, and where the same
+    /// name appears twice the FIRST occurrence wins.
+    ///
+    /// The snapshot goes on [`Session::set_var_hint_restore`], which
+    /// [`Session::run_with_columns`] puts back once the statement is over --
+    /// so a statement that FAILS restores the overlay too, as Go's does.
+    ///
+    /// DEFERRED (documented): Go's two hint warnings. An unknown name is
+    /// `ErrUnresolvedHintName` and a name whose registry entry is not
+    /// `IsHintUpdatableVerified` is `ErrNotHintUpdatable` -- the second needs a
+    /// registry field this tier's generated table does not carry. A name this
+    /// registry rejects is skipped, which is the outcome Go reaches for an
+    /// unknown name.
+    fn apply_set_var_hints(&mut self, stmt: &Stmt) {
+        let Stmt::Query(query) = stmt else { return };
+        // Go attaches a statement's hints to its first SELECT, so a set
+        // operation's hints are the first term's.
+        let hints = match &**query {
+            tidb_ast::QueryStmt::Select(select) => &select.hints,
+            tidb_ast::QueryStmt::SetOpr(set_opr) => match set_opr.terms.first() {
+                Some(term) => match &term.body {
+                    tidb_ast::SetOprTermBody::Select(select) => &select.hints,
+                    _ => return,
+                },
+                None => return,
+            },
+        };
+        for hint in hints {
+            let tidb_ast::HintKind::SetVar { var_name, value } = &hint.kind else {
+                continue;
+            };
+            let name = var_name.to_ascii_lowercase();
+            // The first hint for a name wins; a later one is ignored.
+            if self
+                .set_var_hint_restore
+                .iter()
+                .any(|(restored, _)| *restored == name)
+            {
+                continue;
+            }
+            let snapshot = self.vars.snapshot_system(&name);
+            if self.vars.set_system(&name, value.clone()).is_ok() {
+                self.set_var_hint_restore.extend(snapshot);
+            }
+        }
     }
 
     /// Go `preprocess.go:TryAddExtraLimit`: while `sql_select_limit` is not
