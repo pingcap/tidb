@@ -139,6 +139,7 @@ use tidb_session::{GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, Sto
 
 use crate::cluster_account_seam::{ClusterAccountWriter, RealClusterAccountWriter};
 use crate::cluster_session::{cluster_session_catalog, SkippedTable};
+use crate::cluster_sysvar_seam::{ClusterSysvarWriter, RealClusterSysvarWriter};
 use crate::node_config::NodeConfig;
 use crate::pipeline_session::MaterializedResultSetSource;
 use crate::real_tikv_node::{
@@ -349,6 +350,8 @@ enum StatementRoute {
     Ddl(DdlStatement),
     /// One `mysql.*` account change.
     Accounts,
+    /// One `SET GLOBAL` change to `mysql.global_variables`.
+    GlobalVars,
 }
 
 /// Opens one cluster-backed wide-SQL [`Session`] per authenticated connection.
@@ -361,6 +364,9 @@ pub struct ClusterSessionFactory {
     /// The route a stored-account change takes; see
     /// [`crate::cluster_account_seam`].
     accounts: Arc<dyn ClusterAccountWriter>,
+    /// The route a `SET GLOBAL` change takes; see
+    /// [`crate::cluster_sysvar_seam`].
+    sysvars: Arc<dyn ClusterSysvarWriter>,
     /// The cluster catalog, republished whole by the reload thread and by a
     /// DDL's own inline reload. A connection takes one `Arc` per statement, so
     /// no session ever sees a half-updated catalog.
@@ -386,18 +392,21 @@ impl ClusterSessionFactory {
         transactions: Arc<dyn ClusterTransactions>,
         ddl: Arc<dyn ClusterDdl>,
         accounts: Arc<dyn ClusterAccountWriter>,
+        sysvars: Arc<dyn ClusterSysvarWriter>,
         catalog: Arc<SharedClusterCatalog>,
         privileges: PrivilegeRegistry,
+        global_vars: GlobalSysvars,
     ) -> Self {
         let boot_skipped = cluster_session_catalog(&catalog.load(), &detached_storage()).skipped;
         Self {
             transactions,
             ddl,
             accounts,
+            sysvars,
             catalog,
             privileges,
             processes: ProcessRegistry::default(),
-            global_vars: GlobalSysvars::default(),
+            global_vars,
             boot_skipped,
         }
     }
@@ -466,6 +475,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             ddl: Arc::clone(&self.ddl),
             accounts: Arc::clone(&self.accounts),
+            sysvars: Arc::clone(&self.sysvars),
             catalog: Arc::clone(&self.catalog),
             schema_version: loaded.schema_version,
             explicit: None,
@@ -492,6 +502,9 @@ pub struct ClusterServerSession {
     /// The route a stored-account change takes; see
     /// [`crate::cluster_account_seam`].
     accounts: Arc<dyn ClusterAccountWriter>,
+    /// The route a `SET GLOBAL` change takes; see
+    /// [`crate::cluster_sysvar_seam`].
+    sysvars: Arc<dyn ClusterSysvarWriter>,
     /// The node's catalog, which this connection follows.
     catalog: Arc<SharedClusterCatalog>,
     /// The schema version `session`'s tables were built from. A move in
@@ -680,6 +693,7 @@ impl ClusterServerSession {
         {
             StoredStateChange::None => Ok(StatementRoute::Ordinary),
             StoredStateChange::Accounts => Ok(StatementRoute::Accounts),
+            StoredStateChange::GlobalVars => Ok(StatementRoute::GlobalVars),
             StoredStateChange::Schema => {
                 match prepare_cluster_ddl(sql, self.session.current_database()) {
                     Ok(Some(statement)) => Ok(StatementRoute::Ddl(statement)),
@@ -729,6 +743,46 @@ impl ClusterServerSession {
         }
         // Go answers an account statement with an OK packet carrying no rows,
         // whether it changed anything or was an `IF [NOT] EXISTS` no-op.
+        Ok(WriteOutcome {
+            affected_rows: 0,
+            last_insert_id: 0,
+        })
+    }
+
+    /// Performs one `SET GLOBAL` change.
+    ///
+    /// Mirrors [`Self::run_account_statement`] exactly, against the sysvar
+    /// seam instead of the account one: the assignments run through
+    /// [`tidb_session::Session::apply_set`] against a *scratch*
+    /// [`GlobalSysvars`] read from the cluster inside this change's own
+    /// transaction, so an unknown variable, a wrong scope or a wrong value
+    /// is refused before anything is persisted, and a statement that fails
+    /// never reaches storage nor the node's live table.
+    ///
+    /// An open transaction is committed first, for the same reason a DDL or
+    /// account statement commits one.
+    fn run_global_var_statement(&mut self, sql: &str) -> Result<WriteOutcome, SqlQueryError> {
+        if self.explicit.is_some() || self.session.in_transaction() {
+            self.control_transaction("COMMIT")?;
+        }
+        let pending = self.sysvars.begin().map_err(SqlQueryError::unknown)?;
+        let scratch = pending.table();
+        let live = self.session.swap_globals(scratch);
+        let applied = self.session.apply_set(sql).map_err(map_error);
+        // Restoring the live table is unconditional: a statement that failed
+        // must not leave the connection reading the scratch copy, and a
+        // session-scoped assignment mixed into the same `SET` must still
+        // land on the connection's own live-seeded copies.
+        self.session.swap_globals(live);
+        applied?;
+        let changed = pending.commit().map_err(SqlQueryError::unknown)?;
+        if !changed.is_empty() {
+            eprintln!(
+                "{{\"event\":\"cluster_sysvars_changed\",\"variables\":{}}}",
+                serde_json::to_string(&changed).unwrap_or_else(|_| "[]".to_owned())
+            );
+        }
+        // Go answers a `SET` with an OK packet carrying no rows.
         Ok(WriteOutcome {
             affected_rows: 0,
             last_insert_id: 0,
@@ -796,6 +850,7 @@ impl QuerySession for ClusterServerSession {
         match self.schema_route(sql)? {
             StatementRoute::Ddl(statement) => return self.run_ddl(&statement).map(Some),
             StatementRoute::Accounts => return self.run_account_statement(sql).map(Some),
+            StatementRoute::GlobalVars => return self.run_global_var_statement(sql).map(Some),
             StatementRoute::Ordinary => {}
         }
         if self.session.apply_set(sql).map_err(map_error)?.is_some() {
@@ -877,6 +932,11 @@ impl QuerySession for ClusterServerSession {
                     .run_account_statement(statement.sql())
                     .map(GeneralExecuteOutcome::Write)
             }
+            StatementRoute::GlobalVars => {
+                return self
+                    .run_global_var_statement(statement.sql())
+                    .map(GeneralExecuteOutcome::Write)
+            }
             StatementRoute::Ordinary => {}
         }
         let params = crate::pipeline_session::prepared_parameters(values);
@@ -915,6 +975,12 @@ impl QuerySession for ClusterServerSession {
             }
             StatementRoute::Accounts => {
                 self.run_account_statement(sql)?;
+                return Ok(QueryResult::new(Box::new(
+                    crate::pipeline_session::affected_rows_source(0),
+                )));
+            }
+            StatementRoute::GlobalVars => {
+                self.run_global_var_statement(sql)?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));
@@ -992,6 +1058,19 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
     // a peer's `GRANT` reach this node at all, and this watch is what makes it
     // arrive in a round trip instead of an interval.
     let privilege_watcher = spawn_privilege_watch(&config, privilege_reloader.as_ref());
+    // The sysvar half of the same division: a Go peer's `SET GLOBAL` is
+    // durable in `mysql.global_variables` the instant it commits, and this
+    // reloader is what makes THIS node notice it -- one tick, or one round
+    // trip if the etcd watch fires first. Ticks at the same `schema_lease / 2`
+    // cadence [`node_accounts`] uses for the privilege reloader.
+    let sysvar_reloader = crate::cluster_sysvar_seam::SysvarReloader::spawn(
+        users.global_vars(),
+        authority.transaction_opener(),
+        config.schema_lease / 2,
+        CONTROL_PLANE_TIMEOUT,
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    let sysvar_watcher = crate::real_tikv_node::spawn_sysvar_watch(&config, Some(&sysvar_reloader));
     let factory = Arc::new(ClusterSessionFactory::new(
         Arc::new(RealClusterTransactions::new(
             authority.transaction_opener(),
@@ -1009,8 +1088,15 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             CONTROL_PLANE_TIMEOUT,
             crate::real_tikv_node::connect_schema_notifier(&config),
         )),
+        Arc::new(RealClusterSysvarWriter::new(
+            Arc::new(authority.transaction_opener()),
+            users.global_vars(),
+            CONTROL_PLANE_TIMEOUT,
+            crate::real_tikv_node::connect_schema_notifier(&config),
+        )),
         catalog,
         users.accounts(),
+        users.global_vars(),
     ));
     let skipped = render_skipped(factory.boot_skipped_tables());
 
@@ -1021,9 +1107,19 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             reloader,
             privilege_watcher,
             privilege_reloader,
+            sysvar_watcher,
+            sysvar_reloader,
         ),
         authority,
-        move |(factory, watcher, reloader, privilege_watcher, privilege_reloader)| {
+        move |(
+            factory,
+            watcher,
+            reloader,
+            privilege_watcher,
+            privilege_reloader,
+            sysvar_watcher,
+            sysvar_reloader,
+        )| {
             let node =
                 ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                     crate::real_tikv_node::emit_connections_startup_failure(&error);
@@ -1052,6 +1148,8 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             drop(reloader);
             drop(privilege_watcher);
             drop(privilege_reloader);
+            drop(sysvar_watcher);
+            drop(sysvar_reloader);
             outcome
         },
     )
@@ -1537,6 +1635,7 @@ mod tests {
         catalog: Arc<SharedClusterCatalog>,
         ddl: Arc<MockDdl>,
         accounts: Arc<MockAccountWriter>,
+        sysvars: Arc<MockSysvarWriter>,
     }
 
     /// The account seam without a cluster: the "stored" accounts are one
@@ -1610,6 +1709,76 @@ mod tests {
         }
     }
 
+    /// The sysvar seam without a cluster, mirroring [`MockAccountWriter`]
+    /// exactly: the "stored" overrides are one [`GlobalSysvars`] table, and a
+    /// change is persisted by publishing the scratch copy into it.
+    struct MockSysvarWriter {
+        stored: GlobalSysvars,
+        live: GlobalSysvars,
+        persists: Arc<AtomicBool>,
+    }
+
+    impl MockSysvarWriter {
+        fn new() -> Self {
+            Self {
+                stored: GlobalSysvars::default(),
+                live: GlobalSysvars::default(),
+                persists: Arc::new(AtomicBool::new(true)),
+            }
+        }
+    }
+
+    impl crate::cluster_sysvar_seam::ClusterSysvarWriter for MockSysvarWriter {
+        fn begin(
+            &self,
+        ) -> Result<Box<dyn crate::cluster_sysvar_seam::PendingSysvarChange>, String> {
+            let scratch = GlobalSysvars::from_cluster_rows(self.stored.overrides());
+            Ok(Box::new(MockPendingSysvarChange {
+                scratch,
+                stored: self.stored.clone(),
+                live: self.live.clone(),
+                persists: Arc::clone(&self.persists),
+            }))
+        }
+    }
+
+    struct MockPendingSysvarChange {
+        scratch: GlobalSysvars,
+        stored: GlobalSysvars,
+        live: GlobalSysvars,
+        persists: Arc<AtomicBool>,
+    }
+
+    impl crate::cluster_sysvar_seam::PendingSysvarChange for MockPendingSysvarChange {
+        fn table(&self) -> GlobalSysvars {
+            self.scratch.clone()
+        }
+
+        fn commit(self: Box<Self>) -> Result<Vec<String>, String> {
+            if !self.persists.load(Ordering::Acquire) {
+                return Err("the persist was rejected".to_owned());
+            }
+            let before = self.stored.overrides();
+            let after = self.scratch.overrides();
+            let changed: Vec<String> = after
+                .iter()
+                .filter(|(name, value)| before.get(*name) != Some(*value))
+                .map(|(name, _)| name.clone())
+                .chain(
+                    before
+                        .keys()
+                        .filter(|name| !after.contains_key(*name))
+                        .cloned(),
+                )
+                .collect();
+            self.stored
+                .replace_from(&GlobalSysvars::from_cluster_rows(after));
+            self.live
+                .replace_from(&GlobalSysvars::from_cluster_rows(self.stored.overrides()));
+            Ok(changed)
+        }
+    }
+
     /// A detached copy of one registry's rows, since
     /// [`PrivilegeRegistry::replace_from`] empties its source.
     fn clone_registry(source: &PrivilegeRegistry) -> PrivilegeRegistry {
@@ -1649,6 +1818,7 @@ mod tests {
                 cluster: Arc::new(MockCluster::default()),
                 ddl: Arc::new(MockDdl::new(Arc::clone(&catalog))),
                 accounts: Arc::new(MockAccountWriter::new()),
+                sysvars: Arc::new(MockSysvarWriter::new()),
                 catalog,
             }
         }
@@ -1671,8 +1841,10 @@ mod tests {
             Arc::new(MockTransactions(cluster)),
             Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
             Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
+            Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
             Arc::clone(&node.catalog),
             node.accounts.live.clone(),
+            node.sysvars.live.clone(),
         );
         let users =
             ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))

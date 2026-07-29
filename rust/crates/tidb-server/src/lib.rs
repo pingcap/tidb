@@ -35,6 +35,7 @@ pub mod cluster_account_seam;
 mod cluster_privileges;
 pub mod cluster_session;
 pub mod cluster_session_node;
+pub mod cluster_sysvar_seam;
 mod compressed_command_io;
 mod configured_user_store;
 pub mod connection_resultset;

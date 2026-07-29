@@ -18,8 +18,14 @@
 //! `GlobalVarAccessor`; this node instead reads the whole table once, at
 //! startup, into [`tidb_session::GlobalSysvars`] -- the same one-shot
 //! trade-off [`crate::cluster_privilege_load`] already documents for
-//! accounts: whatever a Go node's later `SET GLOBAL` writes is invisible here
-//! until this node restarts.
+//! accounts. A node that only does this one-shot startup load (no
+//! `crate::cluster_sysvar_write` seam wired in) never sees a peer's later
+//! `SET GLOBAL` until it restarts; the convergence node closes that gap for
+//! its OWN `SET GLOBAL` statements the same way `cluster_account_write`
+//! closes it for account statements -- see `tidb_server::cluster_sysvar_seam`
+//! -- but still relies on its 30-second etcd-backed reload tick (mirroring
+//! Go's `LoadSysVarCacheLoop`) to notice a Go peer's write, since this
+//! module's own read is snapshot-once by design.
 //!
 //! `mysql.global_variables` carries exactly two columns, `VARIABLE_NAME` and
 //! `VARIABLE_VALUE` (see

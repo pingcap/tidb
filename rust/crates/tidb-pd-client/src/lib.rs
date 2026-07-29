@@ -21,7 +21,7 @@ pub use error::{PdClientError, PdClientShutdownError, PdOperation};
 pub use etcd::{
     EtcdClient, EtcdError, EtcdWatchEvent, EtcdWatchStats, EtcdWatcher,
     DDL_GLOBAL_SCHEMA_VERSION_KEY, ETCD_PUT_PATH, ETCD_RANGE_PATH, ETCD_WATCH_PATH,
-    PRIVILEGE_UPDATE_KEY,
+    PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY,
 };
 pub use model::{
     PdBucketStats, PdBuckets, PdGcState, PdKeyRange, PdMemberSet, PdNodeState, PdPeer, PdRegion,

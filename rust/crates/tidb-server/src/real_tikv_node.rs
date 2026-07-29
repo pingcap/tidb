@@ -43,6 +43,7 @@ use tidb_exec::real_tikv_read::{
 };
 use tidb_pd_client::{
     EtcdClient, EtcdWatchStats, EtcdWatcher, DDL_GLOBAL_SCHEMA_VERSION_KEY, PRIVILEGE_UPDATE_KEY,
+    SYSVAR_UPDATE_KEY,
 };
 use tidb_planner::aggregation_descriptor::AggregateKind;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
@@ -347,6 +348,36 @@ pub(crate) fn spawn_privilege_watch(
         Ok(watcher) => Some(watcher),
         Err(error) => {
             emit_warning("privilege_watch_unavailable", &error.to_string());
+            None
+        }
+    }
+}
+
+/// Starts the watch on the key TiDB announces `SET GLOBAL` changes under, so
+/// this node's sysvar reloader runs within a round trip of a Go TiDB's
+/// `SET GLOBAL` instead of waiting out its interval.
+///
+/// Mirrors [`spawn_privilege_watch`] exactly, on the sysvar key.
+pub(crate) fn spawn_sysvar_watch(
+    config: &NodeConfig,
+    reloader: Option<&crate::cluster_sysvar_seam::SysvarReloader>,
+) -> Option<EtcdWatcher> {
+    let waker = reloader?.waker();
+    match EtcdWatcher::spawn(
+        config.pd_endpoints.iter().map(String::as_str),
+        PRODUCTION_CONTROL_PLANE_TIMEOUT,
+        SYSVAR_UPDATE_KEY,
+        move |event| {
+            eprintln!(
+                "{{\"event\":\"sysvar_watch_fired\",\"mod_revision\":{}}}",
+                event.mod_revision
+            );
+            waker.nudge();
+        },
+    ) {
+        Ok(watcher) => Some(watcher),
+        Err(error) => {
+            emit_warning("sysvar_watch_unavailable", &error.to_string());
             None
         }
     }

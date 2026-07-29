@@ -82,6 +82,19 @@ pub const PRIVILEGE_UPDATE_KEY: &str = "/tidb/privilege";
 /// partial list that missed a row would be a silently stale grant.
 const PRIVILEGE_UPDATE_ALL_EVENT: &str = r#"{"All":true,"ServerID":0,"UserList":null}"#;
 
+/// The etcd key TiDB notifies `SET GLOBAL` changes on.
+///
+/// Source of truth: `pkg/domain/domain.go` `sysVarCacheKey` ("/tidb/sysvars"),
+/// watched by `Domain.LoadSysVarCacheLoop` and written by
+/// `Domain.NotifyUpdateSysVarCache` -- which Go's own `SetGlobalSysVar`
+/// (`pkg/session/session.go`) calls right after it `REPLACE INTO
+/// mysql.global_variables`s the row, in the same call path rather than
+/// leaving it to the loop's own ticker. Like the privilege key, the value
+/// carries no state; every reader reloads the whole table from `mysql.*`
+/// on any write to this key, and `LoadSysVarCacheLoop`'s 30-second ticker is
+/// the fallback for a watch event a reader missed.
+pub const SYSVAR_UPDATE_KEY: &str = "/tidb/sysvars";
+
 /// Why an etcd call or watch could not be completed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EtcdError {
@@ -291,6 +304,14 @@ impl EtcdClient {
             PRIVILEGE_UPDATE_KEY.as_bytes(),
             PRIVILEGE_UPDATE_ALL_EVENT.as_bytes(),
         )
+    }
+
+    /// Announces that this node changed a `SET GLOBAL` value, so every
+    /// peer's sysvar watch reloads instead of waiting out its own tick. The
+    /// PUT carries no payload, matching Go's own empty-value write to this
+    /// key (see [`SYSVAR_UPDATE_KEY`]).
+    pub fn notify_sysvar_update(&self) -> Result<(), EtcdError> {
+        self.put(SYSVAR_UPDATE_KEY.as_bytes(), b"")
     }
 
     /// Reads back whatever schema version the cluster last published.

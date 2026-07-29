@@ -577,6 +577,7 @@ pub mod cluster_ddl;
 pub mod cluster_index_id;
 pub mod cluster_privilege_load;
 pub mod cluster_sysvar_load;
+pub mod cluster_sysvar_write;
 pub mod cluster_table_storage;
 pub mod concurrent_entry_map;
 pub mod config_int_json;

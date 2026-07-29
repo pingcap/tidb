@@ -143,11 +143,33 @@ impl GlobalSysvars {
 
     /// Every variable this table currently overrides from its default, for
     /// [`SessionVars::seed_from_globals`] and `SHOW GLOBAL VARIABLES`.
-    fn overrides(&self) -> HashMap<String, String> {
+    pub fn overrides(&self) -> HashMap<String, String> {
         self.values
             .lock()
             .expect("global sysvar lock poisoned")
             .clone()
+    }
+
+    /// A fresh table seeded from a cluster's stored
+    /// `mysql.global_variables` rows -- the scratch copy a convergence node
+    /// validates one `SET GLOBAL` against before persisting it, the same
+    /// shape [`crate::privilege::PrivilegeRegistry`]'s cluster scratch table
+    /// takes for an account statement.
+    #[must_use]
+    pub fn from_cluster_rows<I: IntoIterator<Item = (String, String)>>(rows: I) -> Self {
+        let table = Self::new();
+        table.load_from_cluster(rows);
+        table
+    }
+
+    /// Publishes `fresh`'s values into every existing clone of this table.
+    ///
+    /// Mirrors [`crate::privilege::PrivilegeRegistry::replace_from`]: this
+    /// table has one `Arc<Mutex<..>>` handle rather than several, so the swap
+    /// is a single lock instead of one per sub-table.
+    pub fn replace_from(&self, fresh: &Self) {
+        *self.values.lock().expect("global sysvar lock poisoned") =
+            std::mem::take(&mut *fresh.values.lock().expect("global sysvar lock poisoned"));
     }
 }
 
@@ -273,6 +295,16 @@ impl SessionVars {
     /// variable is SESSION-only, so there is no global copy to set.
     pub fn set_global(&mut self, name: &str, value: String) -> Result<(), VarError> {
         self.globals.set(name, value)
+    }
+
+    /// Points this session at a different shared GLOBAL table for one
+    /// statement, answering the one it was using -- the `GlobalSysvars` twin
+    /// of [`crate::privilege::PrivilegeRegistry`]'s `swap_privileges`. A
+    /// convergence node validates one `SET GLOBAL` against a scratch table
+    /// read from the cluster before persisting it, and must be able to put
+    /// the live table back unconditionally if the statement fails.
+    pub fn swap_globals(&mut self, globals: GlobalSysvars) -> GlobalSysvars {
+        std::mem::replace(&mut self.globals, globals)
     }
 
     /// `SET GLOBAL name = DEFAULT`.

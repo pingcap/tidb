@@ -97,6 +97,29 @@ pub enum StoredStateChange {
     Schema,
     /// The stored accounts: `mysql.user`, `mysql.db` and the role edges.
     Accounts,
+    /// The stored `SET GLOBAL` overrides: `mysql.global_variables`.
+    GlobalVars,
+}
+
+/// Whether a `SET` statement carries at least one GLOBAL-scoped assignment.
+///
+/// A statement can mix `SESSION` and `GLOBAL` assignments in one `SET`
+/// (Go allows this), so the whole statement is routed to the GLOBAL path the
+/// moment any assignment is GLOBAL-scoped; the session-scoped assignments in
+/// the same statement still run, against the same driver, once routed.
+fn has_global_assignment(session: &tidb_ast::SessionStmt) -> bool {
+    fn is_global(assignment: &tidb_ast::SystemVariableAssignment) -> bool {
+        assignment.scope == tidb_ast::SystemVariableScope::Global
+    }
+    match session {
+        tidb_ast::SessionStmt::Set(set) => set.assignments.iter().any(is_global),
+        tidb_ast::SessionStmt::SetCharset { assignments, .. } => assignments.iter().any(is_global),
+        tidb_ast::SessionStmt::SetMixed(items) => items.iter().any(|item| match item {
+            tidb_ast::SetItem::System(assignment) => is_global(assignment),
+            tidb_ast::SetItem::Charset { .. } => false,
+        }),
+        _ => false,
+    }
 }
 
 /// A process-wide catalog shared by every session, as Go's domain-owned
@@ -518,9 +541,18 @@ impl Session {
     /// re-parsing. Go's `SetExecutor` walks the assignments in source order
     /// and stops at the first error, which this reproduces.
     ///
-    /// DEFERRED (documented): `SET GLOBAL` changes only this session here,
-    /// because there is no persisted global tier yet; resource groups and
-    /// the other non-variable `SET` forms stay unsupported.
+    /// `SET GLOBAL` writes straight into the shared [`vars::GlobalSysvars`]
+    /// this call was given (see [`Self::attach_globals`],
+    /// [`Self::swap_globals`]), which is this process's only copy unless a
+    /// front end also persists it: the convergence node's
+    /// `crate::cluster_sysvar_seam` (in `tidb-server`) is what makes that
+    /// table itself a scratch read of `mysql.global_variables`, validates
+    /// this call against it, and persists the result. A front end with no
+    /// such seam (an in-process session, or a node that serves no cluster)
+    /// keeps the in-memory-only behavior this always had.
+    ///
+    /// DEFERRED (documented): resource groups and the other non-variable
+    /// `SET` forms stay unsupported.
     pub fn apply_set(&mut self, sql: &str) -> Result<Option<()>, DriverError> {
         let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
         let Stmt::Session(session_stmt) = &stmt else {
@@ -1012,6 +1044,13 @@ impl Session {
             {
                 StoredStateChange::Accounts
             }
+            // `SET GLOBAL x = v` (alone or mixed with SESSION assignments in
+            // the same statement) writes `mysql.global_variables`. A `SET`
+            // with no GLOBAL-scoped assignment at all changes only this
+            // session's own copies, so it takes the ordinary path.
+            Stmt::Session(session) if has_global_assignment(session) => {
+                StoredStateChange::GlobalVars
+            }
             Stmt::Admin(_) | Stmt::Session(_) | Stmt::Query(_) | Stmt::Dml(_) => {
                 StoredStateChange::None
             }
@@ -1088,6 +1127,19 @@ impl Session {
     /// happens exactly once, here, rather than on every read.
     pub fn attach_globals(&mut self, globals: vars::GlobalSysvars) {
         self.vars.seed_from_globals(globals);
+    }
+
+    /// Points this session at a different shared GLOBAL-scope sysvar table
+    /// for one statement, answering the one it was using.
+    ///
+    /// Unlike [`Self::attach_globals`] this does not reseed the session's own
+    /// `@@x` copies: a front end running a `SET GLOBAL` against a scratch
+    /// table read from the cluster (validate-then-persist, exactly like
+    /// [`Self::swap_privileges`]) must be able to put the live table back
+    /// unconditionally if the statement fails, without disturbing anything
+    /// else this session has already seeded from it.
+    pub fn swap_globals(&mut self, globals: vars::GlobalSysvars) -> vars::GlobalSysvars {
+        self.vars.swap_globals(globals)
     }
 
     /// Go `SessionVars.ActiveRoles`, for the privilege checks and the
