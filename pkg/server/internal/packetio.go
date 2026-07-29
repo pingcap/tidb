@@ -141,14 +141,13 @@ func (p *PacketIO) SetReadTimeout(timeout time.Duration) {
 
 func (p *PacketIO) readOnePacket() ([]byte, error) {
 	var header [4]byte
-	r := io.NopCloser(p.bufReadConn)
 	if p.readTimeout > 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
 			return nil, err
 		}
 	}
 	if p.compressionAlgorithm == mysql.CompressionNone {
-		if _, err := io.ReadFull(r, header[:]); err != nil {
+		if _, err := io.ReadFull(p.bufReadConn, header[:]); err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
@@ -185,17 +184,13 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 		}
 	}
 	if p.compressionAlgorithm == mysql.CompressionNone {
-		if _, err := io.ReadFull(r, data); err != nil {
+		if _, err := io.ReadFull(p.bufReadConn, data); err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
 		if _, err := io.ReadFull(p.compressedReader, data); err != nil {
 			return nil, errors.Trace(err)
 		}
-	}
-	err := r.Close()
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 	return data, nil
 }
