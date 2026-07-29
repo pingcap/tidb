@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -69,9 +70,10 @@ const (
 )
 
 type embeddingCall struct {
-	done    chan struct{}
-	cancel  context.CancelFunc
-	waiters int
+	done      chan struct{}
+	cancel    context.CancelFunc
+	waiters   int
+	completed bool
 
 	embedding []float32
 	err       error
@@ -83,6 +85,7 @@ type EmbedFn struct {
 	embedder *batcher.Batch
 	cache    *ristretto.Cache
 
+	wg       util.WaitGroupWrapper
 	mu       sync.Mutex
 	inFlight map[string]*embeddingCall
 	closed   bool
@@ -221,8 +224,8 @@ func (e *EmbedFn) EmbedWithContext(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := contextWithCancelCheck(ctx, shouldCancel)
-	defer cancel()
+	ctx, cleanup := contextWithCancelCheck(ctx, shouldCancel)
+	defer cleanup()
 	if err := ctx.Err(); err != nil {
 		return nil, context.Cause(ctx)
 	}
@@ -230,7 +233,7 @@ func (e *EmbedFn) EmbedWithContext(
 	if opts == nil {
 		opts = map[string]any{}
 	}
-	optsSnapshot, err := snapshotEmbeddingOptions(opts)
+	optsSnapshot, err := snapshotOptions(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +241,7 @@ func (e *EmbedFn) EmbedWithContext(
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize opts: %w", err)
 	}
-	cacheKey := embeddingCacheKey(
+	cacheKey := makeCacheKey(
 		modelWithProvider,
 		text,
 		optsSnapshot,
@@ -272,7 +275,7 @@ func (e *EmbedFn) EmbedWithContext(
 	}
 }
 
-func contextWithCancelCheck(parent context.Context, shouldCancel func() bool) (context.Context, context.CancelFunc) {
+func contextWithCancelCheck(parent context.Context, shouldCancel func() bool) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(parent)
 	if shouldCancel == nil {
 		return ctx, cancel
@@ -281,7 +284,8 @@ func contextWithCancelCheck(parent context.Context, shouldCancel func() bool) (c
 		cancel()
 		return ctx, cancel
 	}
-	go func() {
+	var watcher util.WaitGroupWrapper
+	watcher.RunWithRecover(func() {
 		ticker := time.NewTicker(embedCancelCheckInterval)
 		defer ticker.Stop()
 		for {
@@ -295,8 +299,15 @@ func contextWithCancelCheck(parent context.Context, shouldCancel func() bool) (c
 				return
 			}
 		}
-	}()
-	return ctx, cancel
+	}, func(r any) {
+		if r != nil {
+			cancel()
+		}
+	})
+	return ctx, func() {
+		cancel()
+		watcher.Wait()
+	}
 }
 
 func (e *EmbedFn) acquireCall(
@@ -330,7 +341,13 @@ func (e *EmbedFn) acquireCall(
 		waiters: 1,
 	}
 	e.inFlight[key] = call
-	go e.runCall(reqCtx, key, call, modelWithProvider, text, opts)
+	e.wg.RunWithRecover(func() {
+		e.runCall(reqCtx, key, call, modelWithProvider, text, opts)
+	}, func(r any) {
+		if r != nil {
+			e.completeCall(key, call, nil, fmt.Errorf("embedding request panicked: %v", r))
+		}
+	})
 	return call, nil, false, nil
 }
 
@@ -356,7 +373,15 @@ func (e *EmbedFn) runCall(
 		}
 	}
 
+	e.completeCall(key, call, embedding, err)
+}
+
+func (e *EmbedFn) completeCall(key string, call *embeddingCall, embedding []float32, err error) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
+	if call.completed {
+		return
+	}
 	if err == nil && !e.closed && call.waiters > 0 && e.cache.Set(key, cloneEmbedding(embedding), 1) {
 		e.cache.Wait()
 	}
@@ -365,8 +390,8 @@ func (e *EmbedFn) runCall(
 	if e.inFlight[key] == call {
 		delete(e.inFlight, key)
 	}
+	call.completed = true
 	close(call.done)
-	e.mu.Unlock()
 	call.cancel()
 }
 
@@ -385,74 +410,86 @@ func (e *EmbedFn) releaseCall(key string, call *embeddingCall) {
 	call.cancel()
 }
 
-func embeddingCacheKey(modelWithProvider, text string, opts map[string]any, optsJSON []byte, configVersion uint64) string {
+func makeCacheKey(modelWithProvider, text string, opts map[string]any, optsJSON []byte, configVersion uint64) string {
 	hash := sha256.New()
-	writeEmbeddingCacheKeyPart(hash, []byte(modelWithProvider))
-	writeEmbeddingCacheKeyPart(hash, []byte(text))
-	writeEmbeddingCacheKeyPart(hash, optsJSON)
-	writeEmbeddingCacheKeyPart(hash, embeddingOptionTypeSignature(opts))
+	writeKeyPart(hash, []byte(modelWithProvider))
+	writeKeyPart(hash, []byte(text))
+	writeKeyPart(hash, optsJSON)
+	writeKeyPart(hash, optionTypeSig(opts))
 	var versionBytes [8]byte
 	binary.LittleEndian.PutUint64(versionBytes[:], configVersion)
 	_, _ = hash.Write(versionBytes[:])
 	return string(hash.Sum(nil))
 }
 
-func writeEmbeddingCacheKeyPart(writer interface{ Write([]byte) (int, error) }, value []byte) {
+func writeKeyPart(writer interface{ Write([]byte) (int, error) }, value []byte) {
 	var length [8]byte
 	binary.LittleEndian.PutUint64(length[:], uint64(len(value)))
 	_, _ = writer.Write(length[:])
 	_, _ = writer.Write(value)
 }
 
-func embeddingOptionTypeSignature(opts map[string]any) []byte {
+func optionTypeSig(opts map[string]any) []byte {
 	var signature bytes.Buffer
-	appendEmbeddingOptionType(&signature, reflect.ValueOf(opts))
+	appendOptionType(&signature, reflect.ValueOf(opts))
 	return signature.Bytes()
 }
 
-func appendEmbeddingOptionType(signature *bytes.Buffer, value reflect.Value) {
+func appendOptionType(signature *bytes.Buffer, value reflect.Value) {
 	if !value.IsValid() {
-		writeEmbeddingCacheKeyPart(signature, nil)
+		writeKeyPart(signature, nil)
 		return
 	}
 	typeName := value.Type().PkgPath() + "/" + value.Type().String()
-	writeEmbeddingCacheKeyPart(signature, []byte(typeName))
+	writeKeyPart(signature, []byte(typeName))
 
 	switch value.Kind() {
 	case reflect.Interface, reflect.Pointer:
 		if value.IsNil() {
-			writeEmbeddingCacheKeyPart(signature, nil)
+			writeKeyPart(signature, nil)
 			return
 		}
-		appendEmbeddingOptionType(signature, value.Elem())
+		appendOptionType(signature, value.Elem())
 	case reflect.Map:
 		if value.IsNil() {
-			writeEmbeddingCacheKeyPart(signature, nil)
+			writeKeyPart(signature, nil)
 			return
 		}
-		if value.Type().Key().Kind() != reflect.String {
-			return
+		type mapEntry struct {
+			keySig []byte
+			value  reflect.Value
 		}
-		keys := value.MapKeys()
-		sort.Slice(keys, func(i, j int) bool {
-			return keys[i].String() < keys[j].String()
+		entries := make([]mapEntry, 0, value.Len())
+		for _, key := range value.MapKeys() {
+			var keySig bytes.Buffer
+			appendOptionType(&keySig, key)
+			writeKeyPart(&keySig, []byte(fmt.Sprintf("%#v", key.Interface())))
+			entries = append(entries, mapEntry{keySig: keySig.Bytes(), value: value.MapIndex(key)})
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			return bytes.Compare(entries[i].keySig, entries[j].keySig) < 0
 		})
-		for _, key := range keys {
-			writeEmbeddingCacheKeyPart(signature, []byte(key.String()))
-			appendEmbeddingOptionType(signature, value.MapIndex(key))
+		for _, entry := range entries {
+			writeKeyPart(signature, entry.keySig)
+			appendOptionType(signature, entry.value)
 		}
 	case reflect.Array, reflect.Slice:
 		if value.Kind() == reflect.Slice && value.IsNil() {
-			writeEmbeddingCacheKeyPart(signature, nil)
+			writeKeyPart(signature, nil)
 			return
 		}
 		for i := range value.Len() {
-			appendEmbeddingOptionType(signature, value.Index(i))
+			appendOptionType(signature, value.Index(i))
+		}
+	case reflect.Struct:
+		for i := range value.NumField() {
+			writeKeyPart(signature, []byte(value.Type().Field(i).Name))
+			appendOptionType(signature, value.Field(i))
 		}
 	}
 }
 
-func snapshotEmbeddingOptions(opts map[string]any) (map[string]any, error) {
+func snapshotOptions(opts map[string]any) (map[string]any, error) {
 	snapshot, err := copystructure.Copy(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to snapshot opts: %w", err)
@@ -481,6 +518,7 @@ func (e *EmbedFn) Close() {
 		call.cancel()
 	}
 	e.mu.Unlock()
+	e.wg.Wait()
 	e.cache.Close()
 }
 

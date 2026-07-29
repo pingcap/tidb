@@ -183,12 +183,12 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 					context.Background(),
 					e.Ctx().GetSessionVars(),
 					name,
-					redactGlobalSysVarValueForAudit(name, valStr),
+					redactSysVarValue(name, valStr),
 				)
 			}
 			return nil
 		})
-		showValStr := redactGlobalSysVarValueForLog(name, valStr)
+		showValStr := redactSysVarValue(name, valStr)
 		logstr := "set global var"
 		if v.IsInstance {
 			logstr = "set instance var"
@@ -283,28 +283,20 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	return nil
 }
 
-func redactGlobalSysVarValueForAudit(name, value string) string {
-	if isEmbeddingAPIKeySysVar(name) {
-		return redactAPIKey(value)
-	}
-	return value
-}
-
-func redactGlobalSysVarValueForLog(name, value string) string {
-	if isEmbeddingAPIKeySysVar(name) {
-		return redactAPIKey(value)
-	}
-	switch name {
+func redactSysVarValue(name, value string) string {
+	switch strings.ToLower(name) {
 	case vardef.TiDBCloudStorageURI:
 		return ast.RedactURL(value)
+	case vardef.TiDBExpEmbedJinaAIAPIKey,
+		vardef.TiDBExpEmbedOpenAIAPIKey,
+		vardef.TiDBExpEmbedCohereAPIKey,
+		vardef.TiDBExpEmbedHuggingFaceAPIKey,
+		vardef.TiDBExpEmbedNvidiaNIMAPIKey,
+		vardef.TiDBExpEmbedGeminiAPIKey:
+		return redactAPIKey(value)
 	default:
 		return value
 	}
-}
-
-func isEmbeddingAPIKeySysVar(name string) bool {
-	name = strings.ToLower(name)
-	return strings.HasPrefix(name, "tidb_exp_embed_") && strings.HasSuffix(name, "_api_key")
 }
 
 func redactAPIKey(value string) string {

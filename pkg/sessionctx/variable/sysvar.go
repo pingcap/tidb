@@ -94,14 +94,14 @@ func newEmbeddingAPIKeySysVar(name string, load func() string, swap func(string)
 			return nil
 		},
 		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-			return maskEmbeddingAPIKeyForDisplay(load()), nil
+			return maskEmbeddingAPIKey(load()), nil
 		},
 	}
 }
 
-// maskEmbeddingAPIKeyForDisplay keeps a short suffix so SQL users can identify
+// maskEmbeddingAPIKey keeps a short suffix so SQL users can identify
 // the configured credential. Log paths must fully redact the value instead.
-func maskEmbeddingAPIKeyForDisplay(key string) string {
+func maskEmbeddingAPIKey(key string) string {
 	if key == "" {
 		return ""
 	}

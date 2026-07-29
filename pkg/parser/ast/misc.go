@@ -1036,8 +1036,17 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 }
 
 func isEmbeddingAPIKeySysVar(name string) bool {
-	name = strings.ToLower(name)
-	return strings.HasPrefix(name, "tidb_exp_embed_") && strings.HasSuffix(name, "_api_key")
+	_, ok := embeddingAPIKeySysVars[strings.ToLower(name)]
+	return ok
+}
+
+var embeddingAPIKeySysVars = map[string]struct{}{
+	"tidb_exp_embed_jina_ai_api_key":     {},
+	"tidb_exp_embed_openai_api_key":      {},
+	"tidb_exp_embed_cohere_api_key":      {},
+	"tidb_exp_embed_huggingface_api_key": {},
+	"tidb_exp_embed_nvidia_nim_api_key":  {},
+	"tidb_exp_embed_gemini_api_key":      {},
 }
 
 // Accept implements Node interface.

@@ -135,7 +135,7 @@ func TestEmbeddingAPIKeySysVars(t *testing.T) {
 		require.Equal(t, "******"+value[len(value)-4:], masked)
 	}
 
-	require.Equal(t, "", maskEmbeddingAPIKeyForDisplay(""))
-	require.Equal(t, "******", maskEmbeddingAPIKeyForDisplay("short"))
-	require.Equal(t, "******7890", maskEmbeddingAPIKeyForDisplay("1234567890"))
+	require.Equal(t, "", maskEmbeddingAPIKey(""))
+	require.Equal(t, "******", maskEmbeddingAPIKey("short"))
+	require.Equal(t, "******7890", maskEmbeddingAPIKey("1234567890"))
 }

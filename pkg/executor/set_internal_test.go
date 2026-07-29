@@ -17,11 +17,12 @@ package executor
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
-func TestRedactGlobalSysVarValueForLog(t *testing.T) {
+func TestRedactSysVarValue(t *testing.T) {
 	for _, name := range []string{
 		vardef.TiDBExpEmbedJinaAIAPIKey,
 		vardef.TiDBExpEmbedOpenAIAPIKey,
@@ -30,15 +31,13 @@ func TestRedactGlobalSysVarValueForLog(t *testing.T) {
 		vardef.TiDBExpEmbedNvidiaNIMAPIKey,
 		vardef.TiDBExpEmbedGeminiAPIKey,
 	} {
-		require.Equal(t, "******", redactGlobalSysVarValueForLog(name, "secret-api-key"))
-		require.Empty(t, redactGlobalSysVarValueForLog(name, ""))
-		require.Equal(t, "******", redactGlobalSysVarValueForAudit(name, "secret-api-key"))
-		require.Empty(t, redactGlobalSysVarValueForAudit(name, ""))
+		require.Equal(t, "******", redactSysVarValue(name, "secret-api-key"))
+		require.Empty(t, redactSysVarValue(name, ""))
 	}
-	require.Equal(t, "ordinary-value", redactGlobalSysVarValueForLog("ordinary-variable", "ordinary-value"))
-	require.Equal(t, "ordinary-value", redactGlobalSysVarValueForAudit("ordinary-variable", "ordinary-value"))
-	require.Equal(t, "s3://bucket?secret-access-key=secret", redactGlobalSysVarValueForAudit(
+	require.Equal(t, "ordinary-value", redactSysVarValue("ordinary-variable", "ordinary-value"))
+	storageURL := "s3://bucket?secret-access-key=secret"
+	require.Equal(t, ast.RedactURL(storageURL), redactSysVarValue(
 		vardef.TiDBCloudStorageURI,
-		"s3://bucket?secret-access-key=secret",
+		storageURL,
 	))
 }

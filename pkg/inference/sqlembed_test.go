@@ -138,7 +138,7 @@ func TestEmbedFnCacheIsolationAndInvalidation(t *testing.T) {
 	opts := map[string]any{}
 	optsJSON, err := json.Marshal(opts)
 	require.NoError(t, err)
-	cacheKey := embeddingCacheKey("static/model", "already cached", opts, optsJSON, vardef.EmbeddingConfigVersion.Load())
+	cacheKey := makeCacheKey("static/model", "already cached", opts, optsJSON, vardef.EmbeddingConfigVersion.Load())
 	require.True(t, embedFn.cache.Set(cacheKey, []float32{4, 5, 6}, 1))
 	embedFn.cache.Wait()
 	call, cached, cacheHit, err := embedFn.acquireCall(context.Background(), cacheKey, "static/model", "already cached", opts)
@@ -164,21 +164,77 @@ func TestEmbeddingCacheKeyAndOptionsSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, string(intJSON), string(floatJSON))
 	require.NotEqual(t,
-		embeddingCacheKey("provider/model", "text", intOpts, intJSON, 1),
-		embeddingCacheKey("provider/model", "text", floatOpts, floatJSON, 1),
+		makeCacheKey("provider/model", "text", intOpts, intJSON, 1),
+		makeCacheKey("provider/model", "text", floatOpts, floatJSON, 1),
 	)
 
 	// Length-prefixing keeps component boundaries unambiguous even when model
 	// names and input text contain NUL bytes.
 	require.NotEqual(t,
-		embeddingCacheKey("a", "b\x00c", nil, nil, 1),
-		embeddingCacheKey("a\x00b", "c", nil, nil, 1),
+		makeCacheKey("a", "b\x00c", nil, nil, 1),
+		makeCacheKey("a\x00b", "c", nil, nil, 1),
 	)
 
-	snapshot, err := snapshotEmbeddingOptions(intOpts)
+	type directOption struct {
+		Value any `json:"value"`
+	}
+	structIntOpts := map[string]any{"nested": directOption{Value: int(1)}}
+	structFloatOpts := map[string]any{"nested": directOption{Value: float64(1)}}
+	structIntJSON, err := json.Marshal(structIntOpts)
+	require.NoError(t, err)
+	structFloatJSON, err := json.Marshal(structFloatOpts)
+	require.NoError(t, err)
+	require.JSONEq(t, string(structIntJSON), string(structFloatJSON))
+	require.NotEqual(t,
+		makeCacheKey("provider/model", "text", structIntOpts, structIntJSON, 1),
+		makeCacheKey("provider/model", "text", structFloatOpts, structFloatJSON, 1),
+	)
+
+	mapIntOpts := map[string]any{"nested": map[int]any{1: int(1)}}
+	mapFloatOpts := map[string]any{"nested": map[int]any{1: float64(1)}}
+	mapIntJSON, err := json.Marshal(mapIntOpts)
+	require.NoError(t, err)
+	mapFloatJSON, err := json.Marshal(mapFloatOpts)
+	require.NoError(t, err)
+	require.JSONEq(t, string(mapIntJSON), string(mapFloatJSON))
+	require.NotEqual(t,
+		makeCacheKey("provider/model", "text", mapIntOpts, mapIntJSON, 1),
+		makeCacheKey("provider/model", "text", mapFloatOpts, mapFloatJSON, 1),
+	)
+
+	mixedMapOpts := map[string]any{"nested": map[int]any{1: int(1), 2: float64(2)}}
+	mixedMapJSON, err := json.Marshal(mixedMapOpts)
+	require.NoError(t, err)
+	mixedMapKey := makeCacheKey("provider/model", "text", mixedMapOpts, mixedMapJSON, 1)
+	for range 10 {
+		require.Equal(t, mixedMapKey, makeCacheKey("provider/model", "text", mixedMapOpts, mixedMapJSON, 1))
+	}
+
+	snapshot, err := snapshotOptions(intOpts)
 	require.NoError(t, err)
 	intOpts["nested"].(map[string]any)["dimensions"] = int(512)
 	require.Equal(t, int(128), snapshot["nested"].(map[string]any)["dimensions"])
+}
+
+func TestEmbedFnCloseWaitsForInFlightCall(t *testing.T) {
+	embedFn := NewEmbedFn()
+	t.Cleanup(embedFn.Close)
+	provider := &controlledEmbedder{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		canceled: make(chan struct{}),
+	}
+	embedFn.MustRegisterEmbedder("controlled", provider)
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := embedFn.Embed(nil, "controlled/model", "hello", nil)
+		result <- err
+	}()
+	waitForChannel(t, provider.started, "provider request to start")
+
+	embedFn.Close()
+	require.ErrorIs(t, receiveFromChannel(t, result, "embedding request to finish after close"), context.Canceled)
 }
 
 func TestEmbedFnSharedCallCancellation(t *testing.T) {

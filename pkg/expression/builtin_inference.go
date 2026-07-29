@@ -71,7 +71,7 @@ func (b *builtinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) 
 		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT is only supported in starter deployment mode")
 	}
 
-	sessionEvalCtx, ok := unwrapInferenceSessionEvalContext(ctx)
+	sessionEvalCtx, ok := unwrapSessionEvalContext(ctx)
 	if !ok {
 		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT requires session context")
 	}
@@ -147,7 +147,7 @@ func (b *builtinEmbedTextSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet
 	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 
-func unwrapInferenceSessionEvalContext(ctx EvalContext) (*sessionexpr.EvalContext, bool) {
+func unwrapSessionEvalContext(ctx EvalContext) (*sessionexpr.EvalContext, bool) {
 	if assertionCtx, ok := ctx.(*assertionEvalContext); ok {
 		ctx = assertionCtx.EvalContext
 	}

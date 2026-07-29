@@ -65,6 +65,8 @@ func NormalizeOpenAIEmbeddingAPIBase(base string) (string, error) {
 		}
 		normalized += path
 	}
+	// The OpenAI provider builds the request endpoint by appending /embeddings,
+	// so normalize an endpoint-form input to the base URL used internally.
 	return strings.TrimSuffix(normalized, "/embeddings"), nil
 }
 

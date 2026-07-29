@@ -472,6 +472,14 @@ func TestSetStmtSecureTextRedactsEmbeddingAPIKeys(t *testing.T) {
 	stmt := node.(*ast.SetStmt)
 	require.Contains(t, stmt.SecureText(), "ordinary-user-value")
 	require.NotContains(t, stmt.SecureText(), "******")
+
+	// A system variable that merely shares the old prefix/suffix pattern must
+	// not be redacted unless it is one of the explicitly supported API-key variables.
+	node, err = p.ParseOneStmt("SET @@GLOBAL.tidb_exp_embed_future_api_key = 'ordinary-system-value'", "", "")
+	require.NoError(t, err)
+	stmt = node.(*ast.SetStmt)
+	require.Contains(t, stmt.SecureText(), "ordinary-system-value")
+	require.NotContains(t, stmt.SecureText(), "******")
 }
 
 func TestSetPwdStmtSecureText(t *testing.T) {

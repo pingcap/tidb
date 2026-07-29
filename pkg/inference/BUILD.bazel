@@ -22,6 +22,7 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_dgraph_io_ristretto//:ristretto",
@@ -36,7 +37,7 @@ go_test(
     srcs = ["sqlembed_test.go"],
     embed = [":inference"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/sessionctx/vardef",
         "@com_github_stretchr_testify//require",
