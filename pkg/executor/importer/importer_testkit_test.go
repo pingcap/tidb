@@ -230,11 +230,11 @@ func TestPostProcess(t *testing.T) {
 	// verify checksum failed
 	localChecksum := verify.NewKVGroupChecksumForAdd()
 	localChecksum.AddRawGroup(verify.DataKVGroupID, 1, 2, 1)
-	require.ErrorIs(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger), common.ErrChecksumMismatch)
+	require.ErrorIs(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, verify.KVChecksum{}, true, logger), common.ErrChecksumMismatch)
 	// success
 	localChecksum = verify.NewKVGroupChecksumForAdd()
 	localChecksum.AddRawGroup(verify.DataKVGroupID, 1, 1, 1)
-	require.NoError(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger))
+	require.NoError(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, verify.KVChecksum{}, true, logger))
 	// rebase success
 	tk.MustExec("create table db.tb2(id int auto_increment primary key)")
 	table, err = do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("db"), pmodel.NewCIStr("tb2"))
@@ -253,7 +253,7 @@ func TestPostProcess(t *testing.T) {
 	tidbCfg.Path = testEtcdCluster.Members[0].ClientURLs[0].String()
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), map[autoid.AllocatorType]int64{
 		autoid.RowIDAllocType: 123,
-	}, plan, localChecksum, logger))
+	}, plan, localChecksum, verify.KVChecksum{}, true, logger))
 	allocators := table.Allocators(tk.Session().GetTableCtx())
 	nextGlobalAutoID, err := allocators.Get(autoid.RowIDAllocType).NextGlobalAutoID()
 	require.NoError(t, err)

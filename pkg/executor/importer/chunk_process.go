@@ -49,8 +49,9 @@ var (
 )
 
 type rowToEncode struct {
-	row   []types.Datum
-	rowID int64
+	row          []types.Datum
+	rowID        int64
+	autoIDAssign autoIDAssignment
 	// endOffset represents the offset of lower level reader after parsing the
 	// current row , it mostly > the offset where parser has parsed.
 	// we use this offset for progress reporting, we meet a case in lightning
@@ -90,8 +91,11 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 		}
 		lastRow := parser.LastRow()
 		data = rowToEncode{
-			row:       lastRow.Row,
-			rowID:     lastRow.RowID,
+			row:   lastRow.Row,
+			rowID: lastRow.RowID,
+			autoIDAssign: autoIDAssignment{
+				incrementID: lastRow.RowID,
+			},
 			endOffset: currOffset,
 			startPos:  readPos,
 			resetFn:   func() { parser.RecycleRow(lastRow) },
@@ -136,12 +140,25 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum)
 	}
 	row = chkRow.GetDatumRowWithBuffer(r.currChk.Fields, row)
 	r.cursor++
+	rowID := r.currChk.RowIDOffset + int64(r.cursor)
+	autoIDAssign := autoIDAssignment{
+		incrementID: rowID,
+	}
+	if r.currChk.AutoIDOptions != nil {
+		autoIDOptions := r.currChk.AutoIDOptions
+		autoIDAssign = autoIDAssignment{
+			incrementID: autoIDOptions.AutoIncrementIDOffset + int64(r.cursor)*autoIDOptions.AutoIncrementIDIncrement,
+			randomShard: autoIDOptions.AutoRandomShard,
+			randomID:    autoIDOptions.AutoRandomIDBase + int64(r.cursor)*autoIDOptions.AutoRandomIDIncrement,
+		}
+	}
 	data = rowToEncode{
-		row:       row,
-		rowID:     r.currChk.RowIDOffset + int64(r.cursor),
-		endOffset: -1,
-		startPos:  -1,
-		resetFn:   func() {},
+		row:          row,
+		rowID:        rowID,
+		autoIDAssign: autoIDAssign,
+		endOffset:    -1,
+		startPos:     -1,
+		resetFn:      func() {},
 	}
 	return
 }
@@ -327,7 +344,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		readDur += time.Since(readDurStart)
 
 		encodeDurStart := time.Now()
-		kvs, encodeErr := p.encoder.Encode(data.row, data.rowID)
+		kvs, encodeErr := p.encoder.encodeWithAutoIDAssignment(data.row, data.rowID, data.autoIDAssign)
 		currOffset = data.endOffset
 		data.resetFn()
 		if encodeErr != nil {
@@ -542,11 +559,21 @@ func (p *dataDeliver) summaryFields() []zap.Field {
 	}
 }
 
+// AutoIDOptions contains options on auto allocate id
+type AutoIDOptions struct {
+	AutoIncrementIDOffset    int64
+	AutoIncrementIDIncrement int64
+	AutoRandomShard          int64
+	AutoRandomIDBase         int64
+	AutoRandomIDIncrement    int64
+}
+
 // QueryChunk is a chunk from query result.
 type QueryChunk struct {
-	Fields      []*types.FieldType
-	Chk         *chunk.Chunk
-	RowIDOffset int64
+	Fields        []*types.FieldType
+	Chk           *chunk.Chunk
+	RowIDOffset   int64
+	AutoIDOptions *AutoIDOptions
 }
 
 func newQueryChunkProcessor(

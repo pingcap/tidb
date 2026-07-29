@@ -89,7 +89,8 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
 		Table: &resolve.TableNameW{
 			TableName: &ast.TableName{
-				Name: pmodel.NewCIStr("t"),
+				Schema: pmodel.NewCIStr("test"),
+				Name:   pmodel.NewCIStr("t"),
 			},
 			DBInfo: &model.DBInfo{
 				Name: pmodel.NewCIStr("test"),

@@ -3757,6 +3757,7 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBImportIntoPrecheckConcurrency, Value: strconv.Itoa(DefTiDBImportIntoPrecheckConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency},
 	{Scope: ScopeGlobal, Name: TiDBAccelerateUserCreationUpdate, Value: BoolToOnOff(DefTiDBAccelerateUserCreationUpdate), Type: TypeBool,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			AccelerateUserCreationUpdate.Store(TiDBOptOn(val))

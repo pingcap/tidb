@@ -85,12 +85,20 @@ func newTableKVEncoderInner(
 
 // Encode implements the KVEncoder interface.
 func (en *TableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
+	return en.encodeWithAutoIDAssignment(row, rowID, autoIDAssignment{
+		incrementID: rowID,
+	})
+}
+
+// encodeWithAutoIDAssignment encodes a row with independent row ID and
+// auto_increment ID sequences.
+func (en *TableKVEncoder) encodeWithAutoIDAssignment(row []types.Datum, rowID int64, autoIDAssign autoIDAssignment) (*kv.Pairs, error) {
 	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
 	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
 	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
 	// unable to release. So we truncate the warnings here.
 	defer en.TruncateWarns()
-	record, err := en.parserData2TableData(row, rowID)
+	record, err := en.parserData2TableData(row, rowID, autoIDAssign)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +107,7 @@ func (en *TableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 }
 
 // todo merge with code in load_data.go
-func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
+func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64, autoIDAssign autoIDAssignment) ([]types.Datum, error) {
 	if cap(en.insertColumnRowCache) < len(en.insertColumns) {
 		en.insertColumnRowCache = make([]types.Datum, 0, len(en.insertColumns))
 	}
@@ -166,7 +174,7 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 	}
 
 	// a new row buffer will be allocated in getRow
-	newRow, err := en.getRow(row, hasValue, rowID)
+	newRow, err := en.getRow(row, hasValue, rowID, autoIDAssign)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +186,7 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 // The input values from these two statements are datums instead of
 // expressions which are used in `insert into set x=y`.
 // copied from InsertValues
-func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
+func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int64, autoIDAssign autoIDAssignment) ([]types.Datum, error) {
 	row := make([]types.Datum, len(en.Columns))
 	for i := range en.insertColumns {
 		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
@@ -190,10 +198,10 @@ func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int6
 		row[offset] = casted
 	}
 
-	return en.fillRow(row, hasValue, rowID)
+	return en.fillRow(row, hasValue, rowID, autoIDAssign)
 }
 
-func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
+func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int64, autoIDAssign autoIDAssignment) ([]types.Datum, error) {
 	var value types.Datum
 	var err error
 
@@ -204,6 +212,15 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 		if hasValue[i] {
 			theDatum = &row[i]
 			doCast = false
+		} else {
+			autoIDDatum, ok, err := en.generatedAutoIDDatum(col, autoIDAssign)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				theDatum = &autoIDDatum
+				doCast = true
+			}
 		}
 		value, err = en.ProcessColDatum(col, rowID, theDatum, doCast)
 		if err != nil {
@@ -231,6 +248,26 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	}
 
 	return record, nil
+}
+
+func (en *TableKVEncoder) generatedAutoIDDatum(col *table.Column, autoIDAssign autoIDAssignment) (types.Datum, bool, error) {
+	if kv.IsAutoIncCol(col.ToInfo()) {
+		return types.NewIntDatum(autoIDAssign.incrementID), true, nil
+	}
+	if !en.IsAutoRandomCol(col.ToInfo()) || autoIDAssign.randomID <= 0 {
+		return types.Datum{}, false, nil
+	}
+
+	shardFmt := autoid.NewShardIDFormat(&col.FieldType, en.TableMeta().AutoRandomBits, en.TableMeta().AutoRandomRangeBits)
+	if shardFmt.IncrementalMask()&autoIDAssign.randomID != autoIDAssign.randomID {
+		return types.Datum{}, false, autoid.ErrAutoRandReadFailed
+	}
+	autoRandomID := shardFmt.Compose(autoIDAssign.randomShard, autoIDAssign.randomID)
+	autoRandomDatum := types.NewIntDatum(autoRandomID)
+	if mysql.HasUnsignedFlag(col.GetFlag()) {
+		autoRandomDatum = types.NewUintDatum(uint64(autoRandomID))
+	}
+	return autoRandomDatum, true, nil
 }
 
 // Close the TableKVEncoder.

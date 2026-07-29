@@ -12,6 +12,8 @@ const (
 	TiDBEnableSPPlanCache = "tidb_enable_sp_plan_cache"
 	// TiDBCreateFromSelectUsingImport indicates whether to use import into to create table as select.
 	TiDBCreateFromSelectUsingImport = "tidb_create_from_select_using_import"
+	// TiDBImportIntoPrecheckConcurrency controls the worker concurrency of IMPORT INTO conflict precheck.
+	TiDBImportIntoPrecheckConcurrency = "tidb_import_into_precheck_concurrency"
 	// TiDBXEnableTiKVLocalCall indicates whether to enable TiKV local calls.
 	TiDBXEnableTiKVLocalCall = "tidbx_enable_tikv_local_call"
 	// TiDBXEnablePDLocalCall indicates whether to use Inter-Process Call for PD.
@@ -47,6 +49,8 @@ const (
 	DefPKDBExtraDataType               = false
 	DefPKDBEnableEAL                   = false
 	DefPKDBCommentByteLengthLimit      = int64(0)
+
+	DefTiDBImportIntoPrecheckConcurrency = 8
 )
 
 // UnspecifiedServerID indicates the unspecified server id.

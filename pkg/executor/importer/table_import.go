@@ -665,9 +665,14 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	}
 
 	var (
-		mu       sync.Mutex
-		checksum = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
+		mu                    sync.Mutex
+		checksum              = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
+		baseChecksum          verify.KVChecksum
+		baseChecksumAvailable bool
 	)
+	if baseChecksum, baseChecksumAvailable, err = initializeImportFromSelectChecksum(ctx, se, ti.Plan, ti.logger); err != nil {
+		return nil, err
+	}
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	for i := 0; i < ti.ThreadCnt; i++ {
 		eg.Go(func() error {
@@ -689,6 +694,13 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	if err != nil {
 		return nil, err
 	}
+	closedIndexEngine, err := indexEngine.Close(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err = ti.precheckConflictForImportFromSelect(ctx, closedDataEngine, closedIndexEngine); err != nil {
+		return nil, err
+	}
 	failpoint.Inject("mockImportFromSelectErr", func() {
 		failpoint.Return(nil, errors.New("mock import from select error"))
 	})
@@ -699,11 +711,6 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		return nil, err
 	}
 	dataKVCount := ti.backend.GetImportedKVCount(closedDataEngine.GetUUID())
-
-	closedIndexEngine, err := indexEngine.Close(ctx)
-	if err != nil {
-		return nil, err
-	}
 	if err = closedIndexEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
@@ -717,7 +724,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		autoid.AutoIncrementType: allocators.Get(autoid.AutoIncrementType).Base(),
 		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
 	}
-	if err = PostProcess(ctx, se, maxIDs, ti.Plan, checksum, ti.logger); err != nil {
+	if err = PostProcess(ctx, se, maxIDs, ti.Plan, checksum, baseChecksum, baseChecksumAvailable, ti.logger); err != nil {
 		return nil, err
 	}
 
@@ -760,6 +767,8 @@ func PostProcess(
 	maxIDs map[autoid.AllocatorType]int64,
 	plan *Plan,
 	localChecksum *verify.KVGroupChecksum,
+	baseChecksum verify.KVChecksum,
+	baseChecksumAvailable bool,
 	logger *zap.Logger,
 ) (err error) {
 	callLog := log.BeginTask(logger.With(zap.Object("checksum", localChecksum)), "post process")
@@ -771,6 +780,11 @@ func PostProcess(
 		return err
 	}
 
+	if plan.Checksum == config.OpLevelOptional && !baseChecksumAvailable {
+		logger.Warn("base checksum is unavailable, skip checksum verification for IMPORT INTO FROM SELECT")
+		return nil
+	}
+
 	remoteChecksumFn := func() (*local.RemoteChecksum, error) {
 		return RemoteChecksumTableBySQL(ctx, se, plan, logger)
 	}
@@ -780,7 +794,9 @@ func PostProcess(
 		}
 	}
 
-	return VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+	mergedChecksum := localChecksum.MergedChecksum()
+	mergedChecksum.Add(&baseChecksum)
+	return VerifyChecksum(ctx, plan, mergedChecksum, logger,
 		remoteChecksumFn,
 	)
 }
