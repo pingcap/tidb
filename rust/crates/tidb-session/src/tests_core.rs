@@ -2922,11 +2922,9 @@ fn grouping_with_rollup() {
     {
         StmtOutput::Rows { columns, .. } => {
             let (name, ftype) = &columns[0];
-            // Go names the column with the ORIGINAL text, `grouping(a)`;
-            // this tier names every unaliased field by its restored form,
-            // a pre-existing tier-wide naming gap rather than one this
-            // function introduces.
-            assert_eq!(name, "GROUPING(`a`)");
+            // Go names the column with the ORIGINAL written text,
+            // `GROUPING(a)` -- no backticks, since none were written.
+            assert_eq!(name, "GROUPING(a)");
             assert_eq!(ftype.code(), tidb_datatype::FieldTypeCode::LongLong);
             assert!(ftype.is_unsigned());
             assert_eq!(ftype.flen(), 20);

@@ -17,7 +17,18 @@ difftest = { path = ".." }
 tidb-ast = { path = "../../crates/tidb-ast" }
 tidb-parser = { path = "../../crates/tidb-parser" }
 tidb-expr = { path = "../../crates/tidb-expr" }
+tidb-datatype = { path = "../../crates/tidb-datatype" }
+tidb-executor = { path = "../../crates/tidb-executor" }
+tidb-session = { path = "../../crates/tidb-session" }
 
 [[test]]
 name = "expr_diff"
 path = "tests/expr_diff.rs"
+
+[[test]]
+name = "query_diff"
+path = "tests/query_diff.rs"
+
+[[test]]
+name = "table_diff"
+path = "tests/table_diff.rs"

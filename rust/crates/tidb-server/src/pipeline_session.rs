@@ -611,11 +611,14 @@ mod tests {
     }
 
     #[test]
-    fn expression_fields_use_restored_text_names() {
+    fn expression_fields_use_their_written_text_as_the_name() {
+        // Go names an unaliased field after `SelectField.Text`, the
+        // ORIGINAL SQL bytes, not the AST's normalized/restored form --
+        // `1 + 1` (with the written spacing) rather than `1+1`.
         let mut session = open_session();
         let mut result = session.execute("SELECT 1 + 1").expect("dual select");
         let (columns, rows) = drain(&mut result, 8);
-        assert_eq!(columns[0].name, "1+1");
+        assert_eq!(columns[0].name, "1 + 1");
         assert_eq!(rows, vec![vec![Datum::Int(2)]]);
     }
 

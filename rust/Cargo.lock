@@ -341,8 +341,11 @@ version = "0.0.0"
 dependencies = [
  "difftest",
  "tidb-ast",
+ "tidb-datatype",
+ "tidb-executor",
  "tidb-expr",
  "tidb-parser",
+ "tidb-session",
 ]
 
 [[package]]
