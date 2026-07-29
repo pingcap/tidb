@@ -238,6 +238,7 @@ func TestMultiSchemaChangeReplaceNonclusteredPrimaryKeyPrerequisites(t *testing.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+
 	tk.MustExec("set session tidb_enable_clustered_index = off")
 	tk.MustExec("create table t_replace_allow_auto_inc (" +
 		"id bigint not null, sort_id int not null auto_increment, " +
@@ -356,6 +357,37 @@ func TestMultiSchemaChangeReplacePrimaryKeyDuplicateRollbackRestoresFlags(t *tes
 		"add primary key (shared_id) nonclustered", errno.ErrDupEntry)
 	assertReplacementRollbackMetadata(t, tk, "t_replace_duplicate", oldPrimaryKeyID, "old_part", "shared_id")
 	tk.MustQuery("select * from t_replace_duplicate order by old_part").Check(testkit.Rows("1 7", "2 7"))
+}
+
+func TestMultiSchemaChangeReplacePrimaryKeyCancellationRestoresFlags(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_dist_task = 0")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0")
+	tk.MustExec("create table t_replace_cancel (" +
+		"old_part int not null, shared_id int not null, " +
+		"primary key (old_part, shared_id) nonclustered)")
+	tk.MustExec("insert into t_replace_cancel values (1, 7), (2, 8)")
+	oldPrimaryKeyID := external.GetTableByName(t, tk, "test", "t_replace_cancel").Meta().GetPrimaryKey().ID
+
+	cancelHook := newCancelJobHook(t, store, func(job *model.Job) bool {
+		if job.Type != model.ActionMultiSchemaChange || job.MultiSchemaInfo == nil {
+			return false
+		}
+		for _, subJob := range job.MultiSchemaInfo.SubJobs {
+			if subJob.Type == model.ActionAddPrimaryKey && subJob.SchemaState == model.StateWriteReorganization {
+				return true
+			}
+		}
+		return false
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cancelHook.OnJobUpdated)
+	tk.MustGetErrCode("alter table t_replace_cancel drop primary key, "+
+		"add primary key (shared_id) nonclustered", errno.ErrCancelledDDLJob)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	cancelHook.MustCancelDone(t)
+	assertReplacementRollbackMetadata(t, tk, "t_replace_cancel", oldPrimaryKeyID, "old_part", "shared_id")
 }
 
 func TestMultiSchemaChangeReplacePrimaryKeyOwnerTransfer(t *testing.T) {
