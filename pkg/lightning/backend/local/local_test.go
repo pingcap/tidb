@@ -2220,11 +2220,6 @@ func TestDoImport(t *testing.T) {
 			releaseWorker,
 		)
 
-		oldFakeRegionJobs := fakeRegionJobs
-		t.Cleanup(func() {
-			fakeRegionJobs = oldFakeRegionJobs
-		})
-
 		jobRange := engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}}
 		data := &blockingDecRefIngestData{
 			mockIngestData: mockIngestData{
