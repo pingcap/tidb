@@ -32,7 +32,7 @@
 
 use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_codec::Encoder;
-use tidb_datatype::{Collation, Datum, FieldTypeCode, MysqlEnum, Time};
+use tidb_datatype::{parse_enum, parse_set_name, Collation, Datum, FieldType, FieldTypeCode, Time};
 use tidb_model::column::{ColumnDefaultValue, ColumnInfo};
 use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::{
@@ -176,7 +176,7 @@ fn encode_row(table: &TableInfo, values: &RowValues) -> Result<Vec<u8>, RowEncod
             ))
         })?;
         column_ids.push(column.id);
-        row.push(typed_value(value, column.get_type()));
+        row.push(typed_value(value, &column.field_type)?);
     }
     encode_table_row(None, &row, &column_ids, true, None)
         .map_err(|error| encode_error(error.to_string()))
@@ -212,7 +212,7 @@ fn index_entries(
                     index.name.original()
                 ))
             })?;
-            indexed.push(typed_value(value, column.get_type()));
+            indexed.push(typed_value(value, &column.field_type)?);
         }
         let (index_key, distinct) = generate_index_key(
             Encoder::new(true),
@@ -314,7 +314,7 @@ pub fn declared_default(
                         Datum::Int(parsed)
                     }
                 }
-                code => typed_value(&text, code),
+                _ => typed_value(&text, &column.field_type)?,
             }
         }
     };
@@ -324,18 +324,56 @@ pub fn declared_default(
 /// Re-types a value for the column it lands in.
 ///
 /// Every value a caller states is spelled as text, because that is how Go's
-/// own `INSERT` spells it; a column whose declared type is `ENUM` needs it as
-/// the member it names, not as a string, or the row decodes as the wrong type.
-pub fn typed_value(value: &Datum, code: FieldTypeCode) -> Datum {
-    match (value, code) {
-        (Datum::Bytes(bytes), FieldTypeCode::Enum) => {
-            // Go's `mysql.user` privilege enums are `ENUM('N','Y')`, so `N` is
-            // member 1 and `Y` is member 2.
-            let name = String::from_utf8_lossy(bytes).into_owned();
-            let position = if name.eq_ignore_ascii_case(YES) { 2 } else { 1 };
-            Datum::new_enum(MysqlEnum::new(name, position), Collation::Binary)
-        }
-        _ => value.clone(),
+/// own `INSERT` spells it; a column whose declared type is `ENUM` or `SET`
+/// needs it as the member(s) it names, not as a string, or the row decodes as
+/// the wrong type. Both carry the element's numeric position as well as its
+/// name, and that number comes from the column's own declaration -- so a value
+/// naming an element the column does not declare is refused rather than
+/// written with an invented position.
+pub fn typed_value(value: &Datum, field_type: &FieldType) -> Result<Datum, RowEncodeError> {
+    let Datum::Bytes(bytes) = value else {
+        return Ok(value.clone());
+    };
+    let code = field_type.code();
+    if !matches!(code, FieldTypeCode::Enum | FieldTypeCode::Set) {
+        return Ok(value.clone());
+    }
+    let name = String::from_utf8_lossy(bytes).into_owned();
+    let elements = field_type.elems();
+    if elements.is_empty() {
+        return Err(RowEncodeError(format!(
+            "a {code:?} column that declares no elements cannot store `{name}`"
+        )));
+    }
+    // The stored spelling is the declared one, so name matching runs under the
+    // column's own collation -- which is how Go's `ParseEnum`/`ParseSet` do it.
+    let collation = Collation::from_name(field_type.collation_name()).unwrap_or(Collation::Binary);
+    if code == FieldTypeCode::Enum {
+        let member = parse_enum(elements, &name, collation)
+            .map_err(|error| RowEncodeError(error.to_string()))?;
+        Ok(Datum::new_enum(member, collation))
+    } else {
+        // Go stores a SET as the declaration-ordered bit mask plus the joined
+        // names; `parse_set_name` computes both, and answers the empty set for
+        // the empty string rather than treating it as an unknown element.
+        let members = parse_set_name(elements, &name, collation)
+            .map_err(|error| RowEncodeError(error.to_string()))?;
+        Ok(Datum::new_set(members, collation))
+    }
+}
+
+/// The spelling a value of this column reads back as once stored.
+///
+/// A `SET` is why this exists: the row stores it as a bit mask, so it always
+/// reads back with its element names in *declaration* order, whatever order
+/// the caller wrote them in. A writer comparing a desired value against a
+/// stored one has to compare the two in the same spelling or it rewrites the
+/// row forever.
+pub fn canonical_text(field_type: &FieldType, text: &str) -> Result<String, RowEncodeError> {
+    match typed_value(&Datum::Bytes(text.as_bytes().to_vec()), field_type)? {
+        Datum::Set(members, _) => Ok(members.name().to_owned()),
+        Datum::Enum(member, _) => Ok(member.name().to_owned()),
+        _ => Ok(text.to_owned()),
     }
 }
 
@@ -406,12 +444,19 @@ mod tests {
         assert!(row_id_of(&[0, 1, 2]).is_err());
     }
 
+    fn declared(code: FieldTypeCode, elements: &[&str]) -> FieldType {
+        let mut field_type = FieldType::new(code);
+        field_type.set_elems(elements.iter().map(|e| (*e).to_owned()).collect());
+        field_type
+    }
+
     #[test]
     fn a_privilege_enum_is_written_as_its_member_not_as_a_string() {
         // A `Y` stored as `Bytes` decodes as the wrong type on a real TiDB,
         // which is what makes this conversion load-bearing rather than tidy.
-        let yes = typed_value(&Datum::Bytes(b"Y".to_vec()), FieldTypeCode::Enum);
-        let no = typed_value(&Datum::Bytes(b"N".to_vec()), FieldTypeCode::Enum);
+        let enum_type = declared(FieldTypeCode::Enum, &[NO, YES]);
+        let yes = typed_value(&Datum::Bytes(b"Y".to_vec()), &enum_type).expect("Y is declared");
+        let no = typed_value(&Datum::Bytes(b"N".to_vec()), &enum_type).expect("N is declared");
         match (yes, no) {
             (Datum::Enum(yes, _), Datum::Enum(no, _)) => {
                 assert_eq!((yes.name(), yes.value()), ("Y", 2));
@@ -419,5 +464,64 @@ mod tests {
             }
             other => panic!("the enums did not survive typing: {other:?}"),
         }
+    }
+
+    /// `mysql.tables_priv`.`Table_priv`'s own element list, in declaration
+    /// order -- which is what fixes each privilege's bit.
+    const TABLE_PRIV_ELEMENTS: &[&str] = &[
+        "Select",
+        "Insert",
+        "Update",
+        "Delete",
+        "Create",
+        "Drop",
+        "Grant",
+        "Index",
+        "Alter",
+        "Create View",
+        "Show View",
+        "Trigger",
+        "References",
+    ];
+
+    #[test]
+    fn a_set_column_is_written_as_the_bit_mask_go_stores() {
+        // Captured from a real TiDB: after `GRANT SELECT, UPDATE ON test.trows
+        // ... WITH GRANT OPTION`, `SELECT Table_priv, Table_priv+0 FROM
+        // mysql.tables_priv` answered `Select,Update,Grant` and `69`
+        // (`go test -tags=intest ./pkg/executor/ -run TestZZDumpTablesPriv`).
+        let set_type = declared(FieldTypeCode::Set, TABLE_PRIV_ELEMENTS);
+        let value = typed_value(&Datum::Bytes(b"Select,Update,Grant".to_vec()), &set_type)
+            .expect("every named element is declared");
+        match value {
+            Datum::Set(members, _) => {
+                assert_eq!(members.value(), 69);
+                assert_eq!(members.name(), "Select,Update,Grant");
+            }
+            other => panic!("the SET did not survive typing: {other:?}"),
+        }
+
+        // An empty SET is the empty mask, not an unknown element -- that is the
+        // value a `tables_priv` row carries when only its columns are granted.
+        match typed_value(&Datum::Bytes(Vec::new()), &set_type).expect("the empty SET is valid") {
+            Datum::Set(members, _) => assert_eq!((members.name(), members.value()), ("", 0)),
+            other => panic!("the empty SET did not survive typing: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_element_the_column_does_not_declare_is_refused_rather_than_invented() {
+        // A privilege spelled wrong would otherwise be written with a made-up
+        // bit, which a Go TiDB would read back as a different privilege.
+        let set_type = declared(FieldTypeCode::Set, TABLE_PRIV_ELEMENTS);
+        assert!(typed_value(&Datum::Bytes(b"Select,Reload".to_vec()), &set_type).is_err());
+        let enum_type = declared(FieldTypeCode::Enum, &[NO, YES]);
+        assert!(typed_value(&Datum::Bytes(b"maybe".to_vec()), &enum_type).is_err());
+        // And a column whose declaration was never loaded cannot be guessed at.
+        assert!(typed_value(
+            &Datum::Bytes(b"Select".to_vec()),
+            &FieldType::new(FieldTypeCode::Set)
+        )
+        .is_err());
     }
 }

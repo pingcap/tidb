@@ -95,13 +95,6 @@
 //!
 //! # What this mode refuses, and why
 //!
-//! * A table- or column-scoped `GRANT`/`REVOKE`. Every other account change
-//!   (`CREATE USER`, `DROP USER`, a global or database-scoped `GRANT`, a
-//!   `SET PASSWORD`, a role) is routed to the [`ClusterAccountWriter`] seam
-//!   and written into the cluster's own `mysql.*` rows; `mysql.tables_priv`
-//!   and `mysql.columns_priv` store their privileges in a `SET` column that
-//!   writer does not encode, so it refuses them at persist time rather than
-//!   dropping them.
 //! * Every stored-schema change the cluster DDL path cannot express: `ALTER`,
 //!   `TRUNCATE`, `RENAME`, `CREATE VIEW`/`INDEX`/`SEQUENCE`, and the
 //!   `CREATE TABLE` clauses [`tidb_exec::table_info_build`] refuses (foreign

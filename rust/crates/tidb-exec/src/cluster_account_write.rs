@@ -36,15 +36,14 @@
 //! registry seeded from *this same snapshot*, the diff is precisely the
 //! statement's own effect and never reverts a change another node made.
 //!
-//! # What it writes, and what it refuses
+//! # What it writes
 //!
-//! `mysql.user`, `mysql.db`, `mysql.global_grants`, `mysql.role_edges` and
-//! `mysql.default_roles` are written. `mysql.tables_priv` and
-//! `mysql.columns_priv` are only ever *deleted from* (when the account they
-//! belong to is gone); a plan that would have to write one is refused by name,
-//! because their `SET` privilege columns are a value shape this writer does not
-//! encode yet, and a table-scoped grant silently dropped is worse than a
-//! refused statement.
+//! Every `mysql.*` table the loader reads: `user`, `db`, `global_grants`,
+//! `role_edges`, `default_roles`, `tables_priv` and `columns_priv`. The last
+//! two store their privileges in `SET` columns, which
+//! [`crate::system_row_write`] encodes as the declaration-ordered bit mask Go
+//! stores, so a table- or column-scoped `GRANT` run on this node is a row a Go
+//! TiDB's `SHOW GRANTS` renders.
 
 use std::collections::BTreeMap;
 
@@ -61,8 +60,8 @@ use crate::mysql_system_tables::{
     scan_system_table_keyed, SystemTableError, SystemTableView, SYSTEM_DB,
 };
 use crate::system_row_write::{
-    defaults_row, delete_row, indexed_columns, insert_row, row_id_of, update_row, RowEncodeError,
-    RowValues, NO, YES,
+    canonical_text, defaults_row, delete_row, indexed_columns, insert_row, row_id_of, update_row,
+    RowEncodeError, RowValues, NO, YES,
 };
 
 /// Why an account image could not be written.
@@ -149,8 +148,20 @@ const DB_TABLE: &str = "db";
 const GLOBAL_GRANTS_TABLE: &str = "global_grants";
 const ROLE_EDGES_TABLE: &str = "role_edges";
 const DEFAULT_ROLES_TABLE: &str = "default_roles";
-/// The two tables this writer only ever deletes from.
-const SCOPED_GRANT_TABLES: &[&str] = &["tables_priv", "columns_priv"];
+const TABLES_PRIV_TABLE: &str = "tables_priv";
+const COLUMNS_PRIV_TABLE: &str = "columns_priv";
+
+/// The `mysql.tables_priv`.`Table_priv` elements that are *also*
+/// `Column_priv` elements.
+///
+/// Go's `composeTablePrivUpdateForGrant` writes `Column_priv` as the table
+/// grant intersected with `mysql.AllColumnPrivs` -- it is a projection of
+/// `Table_priv`, NOT the union of the row's `mysql.columns_priv` rows.
+/// (Captured: after `GRANT SELECT, UPDATE ... WITH GRANT OPTION` plus
+/// `GRANT SELECT(a), INSERT(b)`, the `tables_priv` row read back
+/// `Table_priv='Select,Update,Grant'` and `Column_priv='Select,Update'` --
+/// no `Insert`, even though `columns_priv` holds one.)
+const COLUMN_SCOPE_ELEMENTS: &[&str] = &["Select", "Insert", "Update", "References"];
 
 /// Plans the mutations that make the cluster's `mysql.*` rows equal `desired`.
 ///
@@ -173,6 +184,8 @@ pub fn plan_account_write<S: MetaSnapshot>(
         (global_grants_table(), dynamic_rows(desired)),
         (role_edges_table(), role_edge_rows(desired)),
         (default_roles_table(), default_role_rows(desired)),
+        (tables_priv_table(), table_grant_rows(desired)),
+        (columns_priv_table(), column_grant_rows(desired)),
     ] {
         reconcile(
             snapshot,
@@ -180,27 +193,6 @@ pub fn plan_account_write<S: MetaSnapshot>(
             &table,
             &desired_rows,
             now,
-            &mut plan,
-            &mut changed,
-        )?;
-    }
-
-    // The scoped-grant tables are not modelled, so the only change they may
-    // take is losing the rows of an account that no longer exists. Anything
-    // else -- a granted, revoked or altered table/column privilege -- is
-    // refused by name, because silently dropping one is far worse.
-    let live: std::collections::BTreeSet<(String, String)> = desired
-        .users
-        .iter()
-        .map(|user| (user.host.clone(), user.user.clone()))
-        .collect();
-    for name in SCOPED_GRANT_TABLES {
-        reconcile_scoped_grants(
-            snapshot,
-            catalog,
-            name,
-            desired,
-            &live,
             &mut plan,
             &mut changed,
         )?;
@@ -247,6 +239,22 @@ fn default_roles_table() -> AccountTable {
         name: DEFAULT_ROLES_TABLE,
         key_columns: &["host", "user", "default_role_host", "default_role_user"],
         value_columns: &[],
+    }
+}
+
+fn tables_priv_table() -> AccountTable {
+    AccountTable {
+        name: TABLES_PRIV_TABLE,
+        key_columns: &["host", "user", "db", "table_name"],
+        value_columns: &["table_priv", "column_priv"],
+    }
+}
+
+fn columns_priv_table() -> AccountTable {
+    AccountTable {
+        name: COLUMNS_PRIV_TABLE,
+        key_columns: &["host", "user", "db", "table_name", "column_name"],
+        value_columns: &["column_priv"],
     }
 }
 
@@ -354,6 +362,59 @@ fn db_rows(desired: &ClusterPrivileges) -> LogicalRows {
                 grant.database.clone(),
             ],
             values,
+        );
+    }
+    rows
+}
+
+/// One `mysql.tables_priv` row per table-scoped grant.
+///
+/// `Table_priv` is the grant itself; `Column_priv` is that grant projected
+/// onto [`COLUMN_SCOPE_ELEMENTS`], which is what Go writes there. `Grantor`
+/// and `Timestamp` are deliberately not owned: an existing row keeps what it
+/// holds and a new one takes its declared `DEFAULT`, because nothing reads
+/// them back and inventing a grantor would be a lie about who granted it.
+fn table_grant_rows(desired: &ClusterPrivileges) -> LogicalRows {
+    let mut rows = LogicalRows::new();
+    for grant in &desired.table_grants {
+        let table_priv = grant.privileges.join(",");
+        let column_priv = grant
+            .privileges
+            .iter()
+            .filter(|element| {
+                COLUMN_SCOPE_ELEMENTS
+                    .iter()
+                    .any(|scoped| scoped.eq_ignore_ascii_case(element))
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(",");
+        rows.insert(
+            vec![
+                grant.host.clone(),
+                grant.user.clone(),
+                grant.database.clone(),
+                grant.table.clone(),
+            ],
+            BTreeMap::from([("table_priv", table_priv), ("column_priv", column_priv)]),
+        );
+    }
+    rows
+}
+
+/// One `mysql.columns_priv` row per column-scoped grant.
+fn column_grant_rows(desired: &ClusterPrivileges) -> LogicalRows {
+    let mut rows = LogicalRows::new();
+    for grant in &desired.column_grants {
+        rows.insert(
+            vec![
+                grant.host.clone(),
+                grant.user.clone(),
+                grant.database.clone(),
+                grant.table.clone(),
+                grant.column.clone(),
+            ],
+            BTreeMap::from([("column_priv", grant.privileges.join(","))]),
         );
     }
     rows
@@ -477,22 +538,29 @@ fn stored_text(values: &RowValues, column_id: i64) -> String {
         Some(Datum::Bytes(bytes)) => String::from_utf8_lossy(bytes).into_owned(),
         Some(Datum::String(string)) => String::from_utf8_lossy(string.bytes()).into_owned(),
         Some(Datum::Enum(member, _)) => member.name().to_owned(),
+        Some(Datum::Set(members, _)) => members.name().to_owned(),
         _ => String::new(),
     }
 }
 
-fn column_id(table: &TableInfo, column: &str) -> Result<i64, AccountWriteError> {
+fn declared_column<'table>(
+    table: &'table TableInfo,
+    column: &str,
+) -> Result<&'table tidb_model::column::ColumnInfo, AccountWriteError> {
     table
         .cols()
-        .iter()
+        .into_iter()
         .find(|stored| stored.name.lowercase() == column)
-        .map(|stored| stored.id)
         .ok_or_else(|| {
             AccountWriteError::MissingTable(format!(
                 "{SYSTEM_DB}.{}.{column}",
                 table.name.original()
             ))
         })
+}
+
+fn column_id(table: &TableInfo, column: &str) -> Result<i64, AccountWriteError> {
+    declared_column(table, column).map(|stored| stored.id)
 }
 
 /// Makes one table's rows match `desired`.
@@ -540,10 +608,13 @@ fn reconcile<S: MetaSnapshot>(
         .iter()
         .map(|column| column_id(table, column))
         .collect::<Result<_, _>>()?;
-    let value_ids: Vec<(&'static str, i64)> = account_table
+    let value_ids: Vec<(&'static str, i64, tidb_datatype::FieldType)> = account_table
         .value_columns
         .iter()
-        .map(|column| column_id(table, column).map(|id| (*column, id)))
+        .map(|column| {
+            declared_column(table, column)
+                .map(|stored| (*column, stored.id, stored.field_type.clone()))
+        })
         .collect::<Result<_, _>>()?;
 
     let stored = read_rows(snapshot, table)?;
@@ -561,9 +632,12 @@ fn reconcile<S: MetaSnapshot>(
         match by_key.remove(identity) {
             Some(mut row) => {
                 let mut moved = false;
-                for (column, id) in &value_ids {
+                for (column, id, field_type) in &value_ids {
                     let wanted = values.get(column).cloned().unwrap_or_default();
-                    if stored_text(&row.values, *id) != wanted {
+                    // A `SET` column reads back in declaration order, so the
+                    // two sides are compared in the column's own spelling
+                    // rather than in whatever order the image listed them.
+                    if stored_text(&row.values, *id) != canonical_text(field_type, &wanted)? {
                         row.values.insert(*id, Datum::Bytes(wanted.into_bytes()));
                         moved = true;
                     }
@@ -584,7 +658,7 @@ fn reconcile<S: MetaSnapshot>(
                 for (position, id) in key_ids.iter().enumerate() {
                     fresh.insert(*id, Datum::Bytes(identity[position].clone().into_bytes()));
                 }
-                for (column, id) in &value_ids {
+                for (column, id, _) in &value_ids {
                     let wanted = values.get(column).cloned().unwrap_or_default();
                     fresh.insert(*id, Datum::Bytes(wanted.into_bytes()));
                 }
@@ -688,95 +762,4 @@ fn system_db_id(catalog: &ClusterCatalog) -> Result<i64, AccountWriteError> {
         .find(|database| database.info.name.lowercase() == SYSTEM_DB)
         .map(|database| database.info.id)
         .ok_or_else(|| AccountWriteError::MissingTable(SYSTEM_DB.to_owned()))
-}
-
-/// Removes every `mysql.tables_priv`/`mysql.columns_priv` row whose account no
-/// longer exists -- the one change to those tables this writer makes -- and
-/// refuses any other difference by name.
-///
-/// The comparison is exact: what the cluster stores for accounts that survive
-/// must already equal what the desired image holds. That is true for every
-/// statement whose effect is global- or database-scoped, and false for exactly
-/// the table- and column-scoped grants this writer cannot encode.
-#[allow(clippy::too_many_arguments)]
-fn reconcile_scoped_grants<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &ClusterCatalog,
-    name: &str,
-    desired: &ClusterPrivileges,
-    live: &std::collections::BTreeSet<(String, String)>,
-    plan: &mut AccountWritePlan,
-    changed: &mut std::collections::BTreeSet<String>,
-) -> Result<(), AccountWriteError> {
-    let Ok(table) = locate(catalog, name) else {
-        return Ok(());
-    };
-    let host_id = column_id(table, "host")?;
-    let user_id = column_id(table, "user")?;
-    let mut surviving = std::collections::BTreeSet::new();
-    for row in read_rows(snapshot, table)? {
-        let identity = (
-            stored_text(&row.values, host_id),
-            stored_text(&row.values, user_id),
-        );
-        if !live.contains(&identity) {
-            plan.mutations
-                .extend(delete_row(table, &row.key, &row.values)?);
-            changed.insert(format!("'{}'@'{}'", identity.1, identity.0));
-            continue;
-        }
-        surviving.insert(scoped_identity(table, &row.values, name)?);
-    }
-    let wanted: std::collections::BTreeSet<Vec<String>> = if name == "tables_priv" {
-        desired
-            .table_grants
-            .iter()
-            .map(|grant| {
-                vec![
-                    grant.host.clone(),
-                    grant.user.clone(),
-                    grant.database.clone(),
-                    grant.table.clone(),
-                ]
-            })
-            .collect()
-    } else {
-        desired
-            .column_grants
-            .iter()
-            .map(|grant| {
-                vec![
-                    grant.host.clone(),
-                    grant.user.clone(),
-                    grant.database.clone(),
-                    grant.table.clone(),
-                    grant.column.clone(),
-                ]
-            })
-            .collect()
-    };
-    if surviving != wanted {
-        return Err(AccountWriteError::Unsupported(format!(
-            "this node cannot change {SYSTEM_DB}.{name}: it stores privileges in a SET column \
-             this node does not encode; run this table- or column-scoped grant on a TiDB server"
-        )));
-    }
-    Ok(())
-}
-
-/// One scoped-grant row's identity, in the column order the desired image
-/// spells it.
-fn scoped_identity(
-    table: &TableInfo,
-    values: &RowValues,
-    name: &str,
-) -> Result<Vec<String>, AccountWriteError> {
-    let mut columns = vec!["host", "user", "db", "table_name"];
-    if name == "columns_priv" {
-        columns.push("column_name");
-    }
-    columns
-        .into_iter()
-        .map(|column| column_id(table, column).map(|id| stored_text(values, id)))
-        .collect()
 }

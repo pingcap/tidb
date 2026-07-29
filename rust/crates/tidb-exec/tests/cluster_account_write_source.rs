@@ -31,7 +31,7 @@ use tidb_exec::cluster_catalog::{
 };
 use tidb_exec::cluster_privilege_load::{
     load_cluster_privileges, ClusterPrivileges, LoadedDbGrant, LoadedDefaultRole,
-    LoadedDynamicGrant, LoadedRoleEdge, LoadedTableGrant, LoadedUser,
+    LoadedColumnGrant, LoadedDynamicGrant, LoadedRoleEdge, LoadedTableGrant, LoadedUser,
 };
 use tidb_exec::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment};
 use tidb_txnkv::transaction::{OptimisticMutation, OptimisticMutationKind};
@@ -314,13 +314,14 @@ fn an_image_the_cluster_already_holds_plans_nothing() {
 }
 
 #[test]
-fn a_table_scoped_grant_is_refused_by_name_rather_than_silently_dropped() {
-    // `mysql.tables_priv` stores its privileges in a `SET` column this writer
-    // does not encode. Dropping such a grant on the floor would be a silent
-    // privilege change, so the plan refuses and says which table stopped it.
+fn a_table_and_column_scoped_grant_round_trip_through_their_set_columns() {
+    // `mysql.tables_priv`/`mysql.columns_priv` store their privileges in `SET`
+    // columns. This used to be refused by name; the proof that it no longer
+    // has to be is the same round-trip every other table gets -- the node's own
+    // loader reads back exactly the grants that were planned, which means the
+    // stored mask decodes to the element names Go's own `SHOW GRANTS` renders.
     let mut store = bootstrapped();
     let root = root(&mut store);
-    let catalog = store.catalog();
     let desired = ClusterPrivileges {
         users: vec![root, user("bob", "%", &[])],
         table_grants: vec![LoadedTableGrant {
@@ -328,17 +329,79 @@ fn a_table_scoped_grant_is_refused_by_name_rather_than_silently_dropped() {
             user: "bob".to_owned(),
             database: "app".to_owned(),
             table: "t".to_owned(),
+            // The order here is deliberately NOT declaration order: a `SET` is
+            // stored as a mask, so it must read back in declaration order
+            // regardless, and a writer comparing the two spellings naively
+            // would rewrite the row on every statement.
+            privileges: vec!["Grant".to_owned(), "Select".to_owned(), "Update".to_owned()],
+        }],
+        column_grants: vec![LoadedColumnGrant {
+            host: "%".to_owned(),
+            user: "bob".to_owned(),
+            database: "app".to_owned(),
+            table: "t".to_owned(),
+            column: "a".to_owned(),
             privileges: vec!["Select".to_owned()],
         }],
         ..ClusterPrivileges::default()
     };
-    let refusal = plan_account_write(&mut store, &catalog, &desired, timestamp())
-        .expect_err("a table-scoped grant must be refused");
-    let message = refusal.to_string();
-    assert!(
-        message.contains("mysql.tables_priv"),
-        "the refusal does not name what stopped it: {message}"
+    let read_back = store.write(&desired);
+    assert_eq!(
+        read_back.table_grants,
+        vec![LoadedTableGrant {
+            host: "%".to_owned(),
+            user: "bob".to_owned(),
+            database: "app".to_owned(),
+            table: "t".to_owned(),
+            privileges: vec!["Select".to_owned(), "Update".to_owned(), "Grant".to_owned()],
+        }]
     );
+    assert_eq!(read_back.column_grants, desired.column_grants);
+
+    // And writing the image back is a no-op, which is what proves the stored
+    // spelling and the desired one compare equal rather than merely converge.
+    let catalog = store.catalog();
+    let again = plan_account_write(&mut store, &catalog, &read_back, timestamp())
+        .expect("the stored image is writable");
+    assert!(
+        again.is_empty(),
+        "re-writing the scoped grants planned {} mutations",
+        again.mutations.len()
+    );
+}
+
+#[test]
+fn revoking_the_last_scoped_grant_removes_its_row() {
+    let mut store = bootstrapped();
+    let root = root(&mut store);
+    let granted = ClusterPrivileges {
+        users: vec![root.clone(), user("bob", "%", &[])],
+        table_grants: vec![LoadedTableGrant {
+            host: "%".to_owned(),
+            user: "bob".to_owned(),
+            database: "app".to_owned(),
+            table: "t".to_owned(),
+            privileges: vec!["Select".to_owned()],
+        }],
+        column_grants: vec![LoadedColumnGrant {
+            host: "%".to_owned(),
+            user: "bob".to_owned(),
+            database: "app".to_owned(),
+            table: "t".to_owned(),
+            column: "a".to_owned(),
+            privileges: vec!["Select".to_owned()],
+        }],
+        ..ClusterPrivileges::default()
+    };
+    assert_eq!(store.write(&granted).table_grants.len(), 1);
+
+    let revoked = ClusterPrivileges {
+        users: vec![root, user("bob", "%", &[])],
+        ..ClusterPrivileges::default()
+    };
+    let read_back = store.write(&revoked);
+    assert!(read_back.table_grants.is_empty());
+    assert!(read_back.column_grants.is_empty());
 }
 
 #[test]
