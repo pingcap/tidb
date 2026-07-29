@@ -424,11 +424,12 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	if !exist {
 		// Lazy initialize it to release ssMap.mutex ASAP.
 		summary = new(stmtSummaryByDigest)
+		summary.isInternal = sei.IsInternal
 		ssMap.summaryMap.Put(key, summary)
 	} else {
 		summary = value.(*stmtSummaryByDigest)
+		summary.isInternal = summary.isInternal && sei.IsInternal
 	}
-	summary.isInternal = summary.isInternal && sei.IsInternal
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
 	}
@@ -461,7 +462,7 @@ func (ssMap *stmtSummaryByDigestMap) clearInternal() {
 	defer ssMap.Unlock()
 
 	for _, key := range ssMap.summaryMap.Keys() {
-		summary, ok := ssMap.summaryMap.Get(key)
+		summary, ok := ssMap.summaryMap.Peek(key)
 		if !ok {
 			continue
 		}

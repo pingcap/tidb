@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -162,6 +163,58 @@ func TestModifyColumn(t *testing.T) {
 		} else {
 			require.EqualError(t, err, tt.err.Error())
 		}
+	}
+}
+
+func TestProcessModifyColumnOptionsGenerated(t *testing.T) {
+	sctx := mock.NewContext()
+
+	// Test that ProcessModifyColumnOptions sets RestoreWithoutSchemaName | RestoreWithoutTableName
+	// when restoring generated column expressions, so table-qualified column references are stripped.
+	// This covers the same behavior as create_table.go, add_column.go, etc.
+	testCases := []struct {
+		alterTableSQL  string
+		colName        string
+		expectedExpr   string
+		expectedStored bool
+	}{
+		{
+			alterTableSQL:  "ALTER TABLE t MODIFY COLUMN b INT GENERATED ALWAYS AS (t.a + 1) STORED",
+			colName:        "b",
+			expectedExpr:   "`a` + 1",
+			expectedStored: true,
+		},
+		{
+			alterTableSQL:  "ALTER TABLE t MODIFY COLUMN c VARCHAR(100) GENERATED ALWAYS AS (LOWER(t.a)) STORED",
+			colName:        "c",
+			expectedExpr:   "lower(`a`)",
+			expectedStored: true,
+		},
+		{
+			alterTableSQL:  "ALTER TABLE t MODIFY COLUMN d INT GENERATED ALWAYS AS (t.a * t.b) VIRTUAL",
+			colName:        "d",
+			expectedExpr:   "`a` * `b`",
+			expectedStored: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		stmt, err := parser.New().ParseOneStmt(tc.alterTableSQL, "", "")
+		require.NoError(t, err)
+		alterStmt := stmt.(*ast.AlterTableStmt)
+		options := alterStmt.Specs[0].NewColumns[0].Options
+
+		col := &table.Column{
+			ColumnInfo: &model.ColumnInfo{
+				Name: ast.NewCIStr(tc.colName),
+			},
+		}
+
+		err = ProcessModifyColumnOptions(sctx, col, options)
+		require.NoError(t, err)
+		require.Equal(t, tc.expectedExpr, col.GeneratedExprString, "generated expr string mismatch for %q", tc.alterTableSQL)
+		require.Equal(t, tc.expectedStored, col.GeneratedStored)
+		require.NotNil(t, col.GeneratedExpr)
 	}
 }
 

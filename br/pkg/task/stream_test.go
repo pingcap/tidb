@@ -88,6 +88,16 @@ func TestShouldOpenPiTRAddIndexSQLStorage(t *testing.T) {
 	}
 }
 
+func TestMarkRestoreConcurrencyPerStoreAdjusted(t *testing.T) {
+	cfg := RestoreConfig{}
+	cfg.ConcurrencyPerStore.Value = 132
+
+	cfg.ConcurrencyPerStore = markRestoreConcurrencyPerStoreAdjusted(cfg.ConcurrencyPerStore)
+
+	require.Equal(t, uint(132), cfg.ConcurrencyPerStore.Value)
+	require.True(t, cfg.ConcurrencyPerStore.Modified)
+}
+
 func TestCheckLogRange(t *testing.T) {
 	cases := []struct {
 		restoreFrom uint64

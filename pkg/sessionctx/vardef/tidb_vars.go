@@ -1111,6 +1111,9 @@ const (
 	// TiDBOptEnableHashJoin indicates whether to enable hash join.
 	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
 
+	// TiDBEnableFullOuterJoin indicates whether to enable FULL OUTER JOIN.
+	TiDBEnableFullOuterJoin = "tidb_enable_full_outer_join"
+
 	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 	TiDBHashJoinVersion = "tidb_hash_join_version"
 
@@ -1519,13 +1522,15 @@ const (
 	DefInitChunkSize                    = 32
 	DefMinPagingSize                    = int(paging.MinPagingSize)
 	DefMaxPagingSize                    = int(paging.MinAllowedMaxPagingSize)
-	// DefPagingSizeBytes defaults byte-budget paging to 4 MiB. It takes effect only when Resource Control
-	// is enabled and the active Resource Group is non-burstable (has limited burst).
+	// DefPagingSizeBytes defaults to 0 (byte-budget paging disabled).
+	// A non-zero value takes effect only when Resource Control is enabled and the active Resource Group
+	// is non-burstable (has limited burst).
 	// Regression tests across cap-bound and under-cap TPC-C, FullScan, and Join workloads found no
-	// material performance regression. Among the tested 1, 2, 4, 8, and 16 MiB candidates, 4 MiB
-	// provided the best overall balance of throughput, tail latency, RU stability, RPC overhead, CPU,
-	// and RU efficiency.
-	DefPagingSizeBytes                      = 4 * 1024 * 1024
+	// material performance regression with byte-budget paging. Among the tested 1, 2, 4, 8, and 16 MiB
+	// candidates, 4 MiB provided the best overall balance of throughput, tail latency, RU stability,
+	// RPC overhead, CPU, and RU efficiency. Consider setting this to 4 MiB (4194304) when enabling
+	// byte-budget paging for resource groups with limited burst.
+	DefPagingSizeBytes                      = 0
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
 	DefMaxPreparedStmtCount                 = -1
@@ -1819,6 +1824,7 @@ const (
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
+	DefTiDBEnableFullOuterJoin                        = false
 	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionOptimized
 	DefTiDBOptIndexJoinBuild                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
