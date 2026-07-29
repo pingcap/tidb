@@ -460,6 +460,119 @@ mod tests {
         assert!(snapshot.lock().unwrap().data.is_empty());
     }
 
+    /// A `utf8mb4_general_ci` string column, so the convergence node's
+    /// operators must compare it case-insensitively rather than byte-wise.
+    fn ci_column(id: i64, offset: i32, name: &str) -> ColumnInfo {
+        let mut field_type = FieldType::new(FieldTypeCode::Varchar)
+            .with_charset_name("utf8mb4")
+            .with_collation_name("utf8mb4_general_ci");
+        field_type.set_flen(20);
+        let mut column = ColumnInfo::new(id, name, field_type);
+        column.offset = offset;
+        column
+    }
+
+    /// One database `app` holding `w(id BIGINT PRIMARY KEY, s VARCHAR(20)
+    /// CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)`.
+    fn ci_catalog() -> ClusterCatalog {
+        let base = TableInfo {
+            id: 201,
+            name: CiString::new("w"),
+            columns: vec![column(1, 0, "id", true), ci_column(2, 1, "s")],
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        ClusterCatalog {
+            schema_version: 8,
+            databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
+                info: DBInfo {
+                    id: 6,
+                    name: CiString::new("app"),
+                    ..DBInfo::default()
+                },
+                tables: vec![base],
+            }],
+        }
+    }
+
+    /// Regression guard for the convergence-node collation path: `cluster_table`
+    /// clones each column's `FieldType` verbatim (`field_type.clone()`), so the
+    /// derived collation of a `utf8mb4_general_ci` column reaches every operator.
+    /// ORDER BY, SELECT DISTINCT, GROUP BY, and a self-join therefore fold case
+    /// exactly as Go's collation-aware operators do -- not the byte order a
+    /// hardcoded `utf8mb4_bin` would produce. If a future change dropped the
+    /// collation from the clone, ORDER BY would return the byte order
+    /// `B, C, a, b` and this test would fail.
+    #[test]
+    fn convergence_node_sorts_and_groups_a_ci_column_by_collation() {
+        let (storage, _, _) = cluster_storage();
+        let (mut session, skipped) =
+            session_with_cluster_storage(&ci_catalog(), &storage, &StatsSnapshot::new());
+        // The ci table is admitted, not refused.
+        assert!(skipped.is_empty(), "ci table must load: {skipped:?}");
+        session.run("USE app").unwrap();
+        session
+            .run("INSERT INTO w (id, s) VALUES (1, 'a'), (2, 'B'), (3, 'b'), (4, 'C')")
+            .unwrap();
+
+        let strings = |result: StmtResult| -> Vec<String> {
+            use tidb_datatype::Datum;
+            let StmtResult::Rows(rows) = result else {
+                panic!("expected rows");
+            };
+            rows.iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|cell| match cell {
+                            Datum::String(s) => {
+                                String::from_utf8(s.bytes().to_vec()).expect("utf8 cell")
+                            }
+                            Datum::Int(n) => n.to_string(),
+                            other => format!("{other:?}"),
+                        })
+                        .collect::<Vec<_>>()
+                        .join("|")
+                })
+                .collect()
+        };
+
+        // (1) ORDER BY: collation order a, B, b, C -- not byte order B, C, a, b.
+        assert_eq!(
+            strings(session.run("SELECT s FROM w ORDER BY s").unwrap()),
+            vec!["a", "B", "b", "C"]
+        );
+        // (2) SELECT DISTINCT: B and b fold to one group -> 3 rows, not 4.
+        assert_eq!(
+            strings(session.run("SELECT DISTINCT s FROM w ORDER BY s").unwrap()).len(),
+            3
+        );
+        // (3) GROUP BY: B and b share a group whose COUNT(*) is 2.
+        assert_eq!(
+            strings(
+                session
+                    .run("SELECT s, COUNT(*) FROM w GROUP BY s ORDER BY s")
+                    .unwrap()
+            ),
+            vec!["a|1", "B|2", "C|1"]
+        );
+        // (4) self-join on s = s: 'B' and 'b' cross-match -> 6 result rows.
+        assert_eq!(
+            strings(
+                session
+                    .run("SELECT w1.s FROM w w1 JOIN w w2 ON w1.s = w2.s")
+                    .unwrap()
+            )
+            .len(),
+            6
+        );
+        // (5) `=` predicate: 'A' matches 'a' case-insensitively.
+        assert_eq!(
+            strings(session.run("SELECT s FROM w WHERE s = 'A'").unwrap()),
+            vec!["a"]
+        );
+    }
+
     #[test]
     fn a_snapshot_row_is_visible_and_shadowed_by_a_staged_write() {
         let (storage, _, snapshot) = cluster_storage();
