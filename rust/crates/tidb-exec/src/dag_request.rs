@@ -38,7 +38,7 @@ use tidb_planner::{
 };
 use tidb_proto::tipb::{
     ChunkMemoryLayout, ColumnInfo, DagRequest, EncodeType, Endian, EngineType, ExecType, Executor,
-    IndexScan, Selection, TableScan,
+    IndexScan, Limit, Selection, TableScan,
 };
 
 /// Go's default `div_precision_increment`; the field is omitted at this value.
@@ -176,7 +176,26 @@ pub fn construct_dag_req(
     context: &DagRequestContext,
     plans: &[TiKvScanPlan<'_>],
 ) -> Result<DagRequest, DagRequestBuildError> {
-    construct_dag_req_inner(context, plans, None, None)
+    construct_dag_req_inner(context, plans, None, None, None)
+}
+
+/// Go's `PhysicalLimit.ToPB` in the TiKV list form: the coprocessor stops
+/// after `limit` rows, so the rows past the cap never leave the region.
+///
+/// The cap is `offset + count`, because the coprocessor has no offset of its
+/// own -- the client skips the offset in the rows it receives, which is what
+/// Go's pushed `Limit` does too.
+#[must_use]
+pub fn limit_to_pb(limit: u64) -> Executor {
+    Executor {
+        tp: Some(ExecType::TypeLimit as i32),
+        tbl_scan: None,
+        idx_scan: None,
+        selection: None,
+        limit: Some(Limit { limit: Some(limit) }),
+        executor_id: Some(String::new()),
+        parent_idx: None,
+    }
 }
 
 /// Ports Go's TiKV list DAG for one scan and an optional physical Selection.
@@ -191,7 +210,20 @@ pub fn construct_read_only_dag_req(
     selection: Option<&PhysicalSelectionPlan>,
     output_offsets: &[u32],
 ) -> Result<DagRequest, DagRequestBuildError> {
-    construct_dag_req_inner(context, &[scan], selection, Some(output_offsets))
+    construct_dag_req_inner(context, &[scan], selection, Some(output_offsets), None)
+}
+
+/// [`construct_read_only_dag_req`] with a coprocessor-side row cap appended
+/// above the Selection, which is the executor list Go builds for a `LIMIT`
+/// pushed into a TiKV reader.
+pub fn construct_capped_read_only_dag_req(
+    context: &DagRequestContext,
+    scan: TiKvScanPlan<'_>,
+    selection: Option<&PhysicalSelectionPlan>,
+    limit: Option<u64>,
+    output_offsets: &[u32],
+) -> Result<DagRequest, DagRequestBuildError> {
+    construct_dag_req_inner(context, &[scan], selection, Some(output_offsets), limit)
 }
 
 fn construct_dag_req_inner(
@@ -199,6 +231,7 @@ fn construct_dag_req_inner(
     plans: &[TiKvScanPlan<'_>],
     selection: Option<&PhysicalSelectionPlan>,
     requested_output_offsets: Option<&[u32]>,
+    limit: Option<u64>,
 ) -> Result<DagRequest, DagRequestBuildError> {
     let [plan] = plans else {
         return Err(DagRequestBuildError::PlanCount {
@@ -233,6 +266,9 @@ fn construct_dag_req_inner(
     let mut executors = vec![scan_executor];
     if let Some(selection) = selection {
         executors.push(selection_to_pb(selection, scan_columns)?);
+    }
+    if let Some(limit) = limit {
+        executors.push(limit_to_pb(limit));
     }
     let (encode_type, chunk_memory_layout) = match context.encode_type {
         DistSqlEncodeType::Default => (EncodeType::TypeDefault, None),
@@ -296,6 +332,7 @@ fn selection_to_pb(
         tbl_scan: None,
         idx_scan: None,
         selection: Some(Selection { conditions }),
+        limit: None,
         // PhysicalSelection.ToPB always takes the address of executorID; it
         // remains empty for TiKV's list form.
         executor_id: Some(String::new()),
@@ -365,6 +402,7 @@ fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuil
         }),
         idx_scan: None,
         selection: None,
+        limit: None,
         // PhysicalTableScan.ToPB takes the address of its initially empty ID
         // even for TiKV, so field 10 is present with an empty string.
         executor_id: Some(String::new()),
@@ -389,6 +427,7 @@ fn index_scan_to_pb(plan: &PhysicalIndexScanPlan) -> Result<Executor, DagRequest
         tbl_scan: None,
         idx_scan: Some(index_payload_to_pb(spec, plan)),
         selection: None,
+        limit: None,
         executor_id: None,
         parent_idx: None,
     })

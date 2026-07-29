@@ -15,6 +15,7 @@ enum ExecType {
   TypeTableScan = 0;
   TypeIndexScan = 1;
   TypeSelection = 2;
+  TypeLimit = 5;
 }
 
 enum EngineType {
@@ -112,11 +113,19 @@ message Selection {
   repeated Expr conditions = 1;
 }
 
+// The coprocessor-side row cap. The upstream message also carries a child
+// executor and a partition_by list for the tree-based TiFlash form; neither
+// has a place in the TiKV list form this projection covers.
+message Limit {
+  optional uint64 limit = 1;
+}
+
 message Executor {
   optional ExecType tp = 1;
   optional TableScan tbl_scan = 2;
   optional IndexScan idx_scan = 3;
   optional Selection selection = 4;
+  optional Limit limit = 7;
   optional string executor_id = 10;
   optional uint32 parent_idx = 25;
 }

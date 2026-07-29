@@ -586,6 +586,7 @@ pub mod configured_inner_join;
 pub mod configured_ordered_query;
 pub mod configured_topn;
 pub mod context_id;
+pub mod cop_scan;
 mod cte;
 pub mod cte_first_error;
 pub mod cume_dist;

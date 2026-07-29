@@ -281,6 +281,12 @@ impl<F, S: Clone> Clone for RealTiKvReadSessionOpener<F, S> {
 }
 
 impl<F, S> RealTiKvReadSessionOpener<F, S> {
+    /// The transport-opening capability this opener was built over.
+    #[must_use]
+    pub fn transport_factory(&self) -> Arc<F> {
+        Arc::clone(&self.transport_factory)
+    }
+
     /// Retains already-bootstrapped process capabilities.
     ///
     /// Construction is intentionally generic until the lower DistSQL layer
@@ -701,6 +707,16 @@ impl ProductionReadProcessAuthority {
                 pd: ProductionPdLifecycle::Running(pd),
             },
         })
+    }
+
+    /// The process-owned capability that opens worker-local transports.
+    ///
+    /// This is what a coprocessor-backed scan source needs and all it needs:
+    /// it opens no PD client, no region cache and no runtime of its own (see
+    /// [`RealTiKvSessionTransportFactory`]).
+    #[must_use]
+    pub fn transport_factory(&self) -> Arc<ProductionReadSessionFactory> {
+        self.opener_ref().transport_factory()
     }
 
     /// Cloneable session-opening capability without process shutdown authority.

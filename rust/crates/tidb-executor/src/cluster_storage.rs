@@ -86,6 +86,17 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
     /// Reads every pair in `[start, end)` at the snapshot's timestamp, in key
     /// order.
     fn scan(&mut self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError>;
+
+    /// The timestamp every read of this snapshot is served at.
+    ///
+    /// A remote scan has to name it: a coprocessor request that read at any
+    /// other timestamp would not be the statement's snapshot, which is the
+    /// whole basis of repeatable read and of the staged-buffer merge. `0` is
+    /// the answer of a backend that has no MVCC timestamp, and refuses a
+    /// remote scan for exactly that reason.
+    fn start_ts(&self) -> u64 {
+        0
+    }
 }
 
 /// The session's staged writes: Go's `kv.MemBuffer`.
@@ -244,6 +255,12 @@ impl ClusterSnapshot for SwappableSnapshot {
     fn scan(&mut self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError> {
         self.snapshot()?.scan(start, end)
     }
+
+    fn start_ts(&self) -> u64 {
+        self.bound
+            .as_ref()
+            .map_or(0, |snapshot| snapshot.start_ts())
+    }
 }
 
 /// A table's view of cluster storage: staged writes in front of a snapshot.
@@ -377,8 +394,14 @@ impl TableStorage for ClusterTableStorage {
         if let Err(error) = self.check_usable() {
             return Some(Err(error));
         }
+        let snapshot_ts = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .start_ts();
         let staged = self.buffer.range(&request.start, &request.end);
         let mut request = request.clone();
+        request.snapshot_ts = snapshot_ts;
         if !staged.is_empty() {
             request.limit = None;
         }

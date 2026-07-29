@@ -1031,6 +1031,9 @@ impl KvTable {
             handle_index,
             comparisons: comparisons.to_vec(),
             limit,
+            // The storage that owns the snapshot fills this in; the table has
+            // no timestamp of its own.
+            snapshot_ts: 0,
             start,
             end,
         };

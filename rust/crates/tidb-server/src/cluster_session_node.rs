@@ -122,6 +122,7 @@ use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::cluster_table_storage::{
     commit_staged_buffer, SessionTransaction, StatementSnapshot,
 };
+use tidb_exec::cop_scan::CopScanSource;
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, reload_catalog_from_cluster};
 use tidb_exec::real_tikv_ddl::{
@@ -132,6 +133,7 @@ use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
+use tidb_executor::pushdown_scan::PushdownScanner;
 use tidb_pd_client::EtcdClient;
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
@@ -387,6 +389,9 @@ pub struct ClusterSessionFactory {
     /// Go's one `sessmgr.Manager` per TiDB instance: what `SHOW PROCESSLIST`
     /// reads and `KILL` reaches into.
     processes: ProcessRegistry,
+    /// The coprocessor this node's sessions serve base-table scans with, when
+    /// it was given one. `None` keeps every scan on the raw key/value path.
+    cop_scans: Option<Arc<dyn PushdownScanner>>,
     /// Go's one process-wide `GlobalVarsAccessor`.
     global_vars: GlobalSysvars,
     /// The tables of the boot catalog no session can include, kept so the
@@ -422,6 +427,7 @@ impl ClusterSessionFactory {
             catalog,
             privileges,
             processes: ProcessRegistry::default(),
+            cop_scans: None,
             global_vars,
             boot_skipped,
             stats,
@@ -433,6 +439,19 @@ impl ClusterSessionFactory {
     #[must_use]
     pub fn stats(&self) -> &Arc<SharedStats> {
         &self.stats
+    }
+
+    /// Serves this node's base-table scans through `scanner`, so a `WHERE`
+    /// is evaluated at the region instead of after the range's bytes have
+    /// crossed the network.
+    ///
+    /// The staged-write half is untouched: a session's uncommitted rows are
+    /// merged client-side and re-tested by the same predicate (see
+    /// [`tidb_executor::pushdown_scan`]).
+    #[must_use]
+    pub fn with_cop_scans(mut self, scanner: Arc<dyn PushdownScanner>) -> Self {
+        self.cop_scans = Some(scanner);
+        self
     }
 
     /// The boot catalog's tables this node cannot serve, with their reasons.
@@ -463,7 +482,10 @@ impl QuerySessionFactory for ClusterSessionFactory {
         let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
         let buffer = MutationBuffer::new();
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&slot) as _;
-        let storage = ClusterTableStorage::new(buffer.clone(), handle);
+        let mut storage = ClusterTableStorage::new(buffer.clone(), handle);
+        if let Some(scanner) = self.cop_scans.as_ref() {
+            storage = storage.with_pushdown_scanner(Arc::clone(scanner));
+        }
         let loaded = self.catalog.load();
         let built = cluster_session_catalog(&loaded, &storage);
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
@@ -1114,34 +1136,44 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let sysvar_watcher = crate::real_tikv_node::spawn_sysvar_watch(&config, Some(&sysvar_reloader));
-    let factory = Arc::new(ClusterSessionFactory::new(
-        Arc::new(RealClusterTransactions::new(
-            authority.transaction_opener(),
-            CONTROL_PLANE_TIMEOUT,
-        )),
-        Arc::new(RealClusterDdl::new(
-            authority.transaction_opener(),
-            Arc::clone(&catalog),
-            CONTROL_PLANE_TIMEOUT,
-            crate::real_tikv_node::connect_schema_notifier(&config),
-        )),
-        Arc::new(RealClusterAccountWriter::new(
-            Arc::new(authority.transaction_opener()),
+    // The node's coprocessor: base-table scans now carry their predicate,
+    // their row cap and their column list to the region, and only the
+    // surviving rows come back. The session's own staged writes are merged on
+    // top of them client-side, which is Go's `UnionScan` over a distsql
+    // reader.
+    let cop_scans: Arc<dyn PushdownScanner> =
+        Arc::new(CopScanSource::new(authority.transport_factory(), "UTC", 0));
+    let factory = Arc::new(
+        ClusterSessionFactory::new(
+            Arc::new(RealClusterTransactions::new(
+                authority.transaction_opener(),
+                CONTROL_PLANE_TIMEOUT,
+            )),
+            Arc::new(RealClusterDdl::new(
+                authority.transaction_opener(),
+                Arc::clone(&catalog),
+                CONTROL_PLANE_TIMEOUT,
+                crate::real_tikv_node::connect_schema_notifier(&config),
+            )),
+            Arc::new(RealClusterAccountWriter::new(
+                Arc::new(authority.transaction_opener()),
+                users.accounts(),
+                CONTROL_PLANE_TIMEOUT,
+                crate::real_tikv_node::connect_schema_notifier(&config),
+            )),
+            Arc::new(RealClusterSysvarWriter::new(
+                Arc::new(authority.transaction_opener()),
+                users.global_vars(),
+                CONTROL_PLANE_TIMEOUT,
+                crate::real_tikv_node::connect_schema_notifier(&config),
+            )),
+            catalog,
             users.accounts(),
-            CONTROL_PLANE_TIMEOUT,
-            crate::real_tikv_node::connect_schema_notifier(&config),
-        )),
-        Arc::new(RealClusterSysvarWriter::new(
-            Arc::new(authority.transaction_opener()),
             users.global_vars(),
-            CONTROL_PLANE_TIMEOUT,
-            crate::real_tikv_node::connect_schema_notifier(&config),
-        )),
-        catalog,
-        users.accounts(),
-        users.global_vars(),
-        Arc::clone(&stats),
-    ));
+            Arc::clone(&stats),
+        )
+        .with_cop_scans(cop_scans),
+    );
     let skipped = render_skipped(factory.boot_skipped_tables());
     let stats_receipt = stats.receipt();
 

@@ -101,6 +101,9 @@ pub struct PushdownScanRequest {
     pub comparisons: Vec<ScanComparison>,
     /// A row cap the backend may stop at. Best-effort: see the module doc.
     pub limit: Option<u64>,
+    /// The timestamp the remote scan must read at: the statement's own
+    /// snapshot, filled in by the storage that owns it.
+    pub snapshot_ts: u64,
     /// Start of the scanned record range, inclusive.
     pub start: Key,
     /// End of the scanned record range, exclusive.
