@@ -109,6 +109,7 @@ go_library(
         "//pkg/types",
         "//pkg/types/parser_driver",
         "//pkg/util",
+        "//pkg/util/backoff",
         "//pkg/util/chunk",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
@@ -216,5 +217,6 @@ go_test(
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

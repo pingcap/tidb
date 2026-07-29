@@ -1102,11 +1102,11 @@ select /*+ set_var(tidb_paging_size_bytes=1048576) */ @@tidb_paging_size_bytes;
 1048576
 select @@tidb_paging_size_bytes;
 @@tidb_paging_size_bytes
-4194304
+0
 set @@tidb_paging_size_bytes=default;
 select @@tidb_paging_size_bytes;
 @@tidb_paging_size_bytes
-4194304
+0
 set @@tidb_paging_size_bytes=0;
 select @@tidb_paging_size_bytes;
 @@tidb_paging_size_bytes
@@ -1118,7 +1118,7 @@ select @@tidb_paging_size_bytes;
 set @@tidb_paging_size_bytes=default;
 select @@tidb_paging_size_bytes;
 @@tidb_paging_size_bytes
-4194304
+0
 select /*+ set_var(tidb_enable_cascades_planner=0) */ @@tidb_enable_cascades_planner;
 @@tidb_enable_cascades_planner
 0
