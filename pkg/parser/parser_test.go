@@ -41,6 +41,9 @@ func TestMaxParenthesesDepth(t *testing.T) {
 	nestedFuncExpr := func(depth int) string {
 		return "select " + strings.Repeat("f(", depth) + "1" + strings.Repeat(")", depth)
 	}
+	nestedLeadingHint := func(depth int) string {
+		return "select /*+ LEADING(" + strings.Repeat("(", depth) + "t" + strings.Repeat(")", depth) + ") */ * from t"
+	}
 
 	_, err := p.ParseOneStmt(nestedExpr(10000), "", "")
 	require.NoError(t, err)
@@ -50,6 +53,10 @@ func TestMaxParenthesesDepth(t *testing.T) {
 	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
 
 	_, err = p.ParseOneStmt(nestedFuncExpr(10001), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+
+	_, err = p.ParseOneStmt(nestedLeadingHint(10000), "", "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
 }

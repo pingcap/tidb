@@ -238,16 +238,10 @@ func (s *Scanner) Lex(v *yySymType) (tok int) {
 	var pos Pos
 	var lit string
 	tok, pos, lit = s.scan()
-	if tok == int('(') {
-		s.parenDepth++
-		if s.parenDepth > maxParenthesesDepth {
-			s.AppendError(ErrParse.GenWithStackByArgs("parentheses nesting depth exceeds maximum", strconv.Itoa(maxParenthesesDepth)))
-			return invalid
-		}
-	} else if tok == int(')') && s.parenDepth > 0 {
-		s.parenDepth--
-	}
 	s.lastScanOffset = pos.Offset
+	if !s.updateParenthesesDepth(tok) {
+		return invalid
+	}
 	s.lastKeyword3 = s.lastKeyword2
 	s.lastKeyword2 = s.lastKeyword
 	s.lastKeyword = 0
@@ -363,6 +357,19 @@ func (s *Scanner) Lex(v *yySymType) (tok int) {
 	}
 
 	return tok
+}
+
+func (s *Scanner) updateParenthesesDepth(tok int) bool {
+	if tok == int('(') {
+		s.parenDepth++
+		if s.parenDepth > maxParenthesesDepth {
+			s.AppendError(newParserDepthLimitError("parentheses nesting depth exceeds maximum", maxParenthesesDepth))
+			return false
+		}
+	} else if tok == int(')') && s.parenDepth > 0 {
+		s.parenDepth--
+	}
+	return true
 }
 
 // LexLiteral returns the value of the converted literal
@@ -1035,8 +1042,38 @@ func (s *Scanner) lastErrorAsWarn() {
 	if len(s.errs) == 0 {
 		return
 	}
+	if isParserDepthLimitError(s.errs[len(s.errs)-1]) {
+		return
+	}
 	s.warns = append(s.warns, s.errs[len(s.errs)-1])
 	s.errs = s.errs[:len(s.errs)-1]
+}
+
+type parserDepthLimitError struct {
+	err error
+}
+
+func newParserDepthLimitError(message string, maxDepth int) error {
+	return &parserDepthLimitError{
+		err: ErrParse.GenWithStackByArgs(message, strconv.Itoa(maxDepth)),
+	}
+}
+
+func (e *parserDepthLimitError) Error() string {
+	return e.err.Error()
+}
+
+func (e *parserDepthLimitError) Cause() error {
+	return e.err
+}
+
+func (e *parserDepthLimitError) Unwrap() error {
+	return e.err
+}
+
+func isParserDepthLimitError(err error) bool {
+	_, ok := err.(*parserDepthLimitError)
+	return ok
 }
 
 type reader struct {

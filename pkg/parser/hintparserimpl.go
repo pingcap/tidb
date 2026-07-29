@@ -101,6 +101,9 @@ func (hs *hintScanner) updateSetVarValueState(tok int) {
 func (hs *hintScanner) Lex(lval *yyhintSymType) int {
 	tok, pos, lit := hs.scan()
 	hs.lastScanOffset = pos.Offset
+	if !hs.updateParenthesesDepth(tok) {
+		return hintInvalid
+	}
 	var errorTokenType string
 	returnToken := func(tok int) int {
 		hs.updateSetVarValueState(tok)
