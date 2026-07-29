@@ -53,7 +53,9 @@
 //!   table id plus an unsafe-destroy-range, not as "empty the container".
 //!   Emptying the *buffer* would silently leave every committed row in place,
 //!   so `clear` poisons the handle instead: every later operation reports a
-//!   backend error naming the reason.
+//!   backend error naming the reason. It poisons THAT table's handle only --
+//!   the buffer and the snapshot stay shared, so the session's other tables
+//!   keep working, as they do in Go.
 //! * [`key_count`](TableStorage::key_count) reports the staged key count only.
 //!   TiKV has no exact count, and the seam's own doc already says so.
 
@@ -271,7 +273,15 @@ impl ClusterSnapshot for SwappableSnapshot {
 pub struct ClusterTableStorage {
     buffer: MutationBuffer,
     snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-    truncated: Arc<Mutex<bool>>,
+    /// Whether THIS table handle was truncated (see [`Self::check_usable`]).
+    ///
+    /// Deliberately a plain `bool` and not shared: the buffer and the snapshot
+    /// belong to the SESSION and every table of it stages into them, but a
+    /// TRUNCATE names ONE table. Sharing the flag made one `TRUNCATE TABLE t`
+    /// refuse every subsequent statement on every other table of the
+    /// connection, which Go never does -- it swaps the truncated table for a
+    /// fresh one with a new id and the session carries on.
+    truncated: bool,
     /// The coprocessor capability, when the node was given one. `None` keeps
     /// every scan on the byte-level merge below.
     scanner: Option<Arc<dyn PushdownScanner>>,
@@ -284,7 +294,7 @@ impl ClusterTableStorage {
         ClusterTableStorage {
             buffer,
             snapshot,
-            truncated: Arc::new(Mutex::new(false)),
+            truncated: false,
             scanner: None,
         }
     }
@@ -308,11 +318,7 @@ impl ClusterTableStorage {
     }
 
     fn check_usable(&self) -> Result<(), StorageError> {
-        if *self
-            .truncated
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-        {
+        if self.truncated {
             return Err(StorageError::Backend(
                 "TRUNCATE is not a cluster storage operation; this table handle is no longer usable"
                     .to_owned(),
@@ -419,10 +425,7 @@ impl TableStorage for ClusterTableStorage {
     }
 
     fn clear(&mut self) {
-        *self
-            .truncated
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner()) = true;
+        self.truncated = true;
     }
 
     fn clone_box(&self) -> Box<dyn TableStorage> {
@@ -748,5 +751,29 @@ mod tests {
             store.set(key(b"a"), Vec::new()),
             Err(StorageError::Backend(_))
         ));
+    }
+
+    /// A TRUNCATE names ONE table, so its refusal must not reach the OTHER
+    /// tables of the same session -- which share this storage's buffer and
+    /// snapshot by design. Go's TRUNCATE swaps the truncated table for a
+    /// fresh one and the connection carries on; captured from TiDB, a query
+    /// on a different table right after `TRUNCATE TABLE ai` answers normally.
+    #[test]
+    fn truncating_one_table_leaves_the_sessions_other_tables_usable() {
+        let (mut truncated, _snapshot, buffer) = storage(&[(b"a", b"1")]);
+        // The second table of the same session: same buffer, same snapshot.
+        let mut other = truncated.clone();
+        truncated.clear();
+        assert!(
+            matches!(truncated.get(&key(b"a")), Err(StorageError::Backend(_))),
+            "the truncated handle stays refused"
+        );
+        assert_eq!(
+            other.get(&key(b"a")).unwrap(),
+            b"1".to_vec(),
+            "a sibling table of the same session still reads"
+        );
+        other.set(key(b"b"), b"2".to_vec()).unwrap();
+        assert_eq!(buffer.len(), 1, "and still stages into the session buffer");
     }
 }
