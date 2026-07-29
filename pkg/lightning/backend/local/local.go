@@ -1706,7 +1706,7 @@ func (local *Backend) doImport(
 		// Notify the worker-pool goroutine that all jobs are finished. It will
 		// release the pool and close the result channel.
 		wctx.Cancel()
-		return nil
+		return wctx.OperatorErr()
 	})
 
 	err := workGroup.Wait()
