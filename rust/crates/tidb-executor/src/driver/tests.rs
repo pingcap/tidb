@@ -1482,6 +1482,10 @@ fn grouped_correlated_subqueries() {
         ),
         Err(DriverError::Unsupported(_))
     ));
+    // The same refusal, now reached for the NESTED form too: the fold gate
+    // recognises a subquery inside a `CASE` inside an aggregate's argument, so
+    // this reports the aggregate-argument refusal by name instead of falling
+    // through to the expression rewriter's generic message.
     assert!(matches!(
         run_select_on(
             "SELECT g, SUM(CASE WHEN EXISTS(SELECT 1 FROM s WHERE s.k = t.g) THEN v ELSE 0 END) \
@@ -1489,7 +1493,7 @@ fn grouped_correlated_subqueries() {
             &catalog,
             &crate::StmtContext::for_query()
         ),
-        Err(DriverError::Exec(_))
+        Err(DriverError::Unsupported(_))
     ));
 
     // A HAVING clause referencing a non-grouped, non-aggregated column

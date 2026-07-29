@@ -298,3 +298,105 @@ fn correlated_subquery_in_aggregate_select() {
         ]
     );
 }
+
+/// An UNCORRELATED scalar subquery is a constant, and folds wherever it
+/// appears -- including places the fold pass used to walk past: inside a
+/// `CASE`, inside a function call, and inside an AGGREGATE's own argument.
+///
+/// The bug this pins was not where its symptom pointed: the aggregate cases
+/// reported `driver::agg_build`'s "subquery inside an aggregate function's
+/// argument" refusal and the `CASE` case reported the expression rewriter's
+/// generic refusal, but both came from `select_has_uncorrelated_subquery` --
+/// the GATE deciding whether the fold pass runs at all -- not recognising a
+/// subquery in those positions, so nothing was ever folded.
+///
+/// Captured from Go (`rust/difftests/gorun`), over
+/// `d1(id,name) = (1,eng),(2,sales),(9,ops)` and `t1(id,v) = (1,10),(2,20)`:
+///
+/// ```text
+/// select sum((select max(id) from d1)) from t1                  RS:18
+/// select count((select max(id) from d1)) from t1                RS:2
+/// select max((select 3)) from t1                                RS:3
+/// select sum(v + (select count(*) from d1)) from t1             RS:36
+/// select id, case when (select count(*) from d1) > 1
+///        then 'multi' else 'single' end from t1 where id = 1    RS:1|multi
+/// select case (select 2) when 2 then 'two' else 'other' end     RS:two
+/// select concat('n=', (select count(*) from d1))                RS:n=3
+/// ```
+#[test]
+fn an_uncorrelated_subquery_folds_inside_case_function_and_aggregate_arguments() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE d1 (id INT PRIMARY KEY, name VARCHAR(8))")
+        .unwrap();
+    session
+        .run("INSERT INTO d1 VALUES (1,'eng'),(2,'sales'),(9,'ops')")
+        .unwrap();
+    session
+        .run("CREATE TABLE t1 (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO t1 VALUES (1,10),(2,20)").unwrap();
+
+    // An aggregate's own argument: the subquery is the same constant for
+    // every source row, so SUM adds it once per row and COUNT counts the rows.
+    assert_eq!(
+        row_text(session.run("SELECT SUM((SELECT MAX(id) FROM d1)) FROM t1")),
+        [vec!["18".to_owned()]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT COUNT((SELECT MAX(id) FROM d1)) FROM t1")),
+        [vec!["2".to_owned()]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT MAX((SELECT 3)) FROM t1")),
+        [vec!["3".to_owned()]]
+    );
+    // ... and nested deeper inside that argument.
+    assert_eq!(
+        row_text(session.run("SELECT SUM(v + (SELECT COUNT(*) FROM d1)) FROM t1")),
+        [vec!["36".to_owned()]]
+    );
+
+    // A CASE condition, and the simple CASE's compare value.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT id, CASE WHEN (SELECT COUNT(*) FROM d1) > 1 THEN 'multi' \
+                 ELSE 'single' END FROM t1 WHERE id = 1"
+        )),
+        [vec!["1".to_owned(), "multi".to_owned()]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT CASE (SELECT 2) WHEN 2 THEN 'two' ELSE 'other' END")),
+        [vec!["two".to_owned()]]
+    );
+
+    // An ordinary function argument.
+    assert_eq!(
+        row_text(session.run("SELECT CONCAT('n=', (SELECT COUNT(*) FROM d1))")),
+        [vec!["n=3".to_owned()]]
+    );
+}
+
+/// The neighbouring CORRELATED case is still refused BY NAME: a subquery in an
+/// aggregate's argument that reads the outer row has to run once per SOURCE
+/// row, below the aggregation, which this driver does not build (it builds one
+/// Apply ABOVE the aggregation, over already-grouped values). Go answers
+/// `select count((select id from d2 where d2.id = d1.id)) from d1` with 3;
+/// this tier must say so rather than answer wrongly.
+#[test]
+fn a_correlated_subquery_in_an_aggregate_argument_is_refused_by_name() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE dc (id INT PRIMARY KEY)").unwrap();
+    session.run("INSERT INTO dc VALUES (1),(2),(9)").unwrap();
+    let error = session
+        .run("SELECT COUNT((SELECT id FROM dc d2 WHERE d2.id = dc.id)) FROM dc")
+        .unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            DriverError::Unsupported(message)
+                if message.contains("subquery inside an aggregate function's argument")
+        ),
+        "unexpected error: {error:?}"
+    );
+}

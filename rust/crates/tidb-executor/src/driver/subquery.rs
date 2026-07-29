@@ -736,6 +736,24 @@ pub(crate) fn expr_has_subquery(expr: &tidb_ast::Expr) -> bool {
         Expr::In { expr, list, .. } => {
             expr_has_subquery(expr) || list.iter().any(expr_has_subquery)
         }
+        // The forms below must stay in step with `fold_subqueries`' own walk:
+        // this predicate is the GATE that decides whether the fold pass runs
+        // at all, so a form the fold could handle but this cannot is a
+        // subquery that never gets folded and fails to plan instead.
+        Expr::Case {
+            value,
+            when_clauses,
+            else_clause,
+        } => {
+            value.as_deref().is_some_and(expr_has_subquery)
+                || when_clauses.iter().any(|(condition, result)| {
+                    expr_has_subquery(condition) || expr_has_subquery(result)
+                })
+                || else_clause.as_deref().is_some_and(expr_has_subquery)
+        }
+        Expr::Func { args, .. } | Expr::Aggregate { args, .. } => {
+            args.iter().any(expr_has_subquery)
+        }
         _ => false,
     }
 }
@@ -880,8 +898,71 @@ fn fold_subqueries(
                 list,
             )
         }
-        // Walk the forms the expression rewriter itself supports; anything
-        // else is returned unchanged and fails to rewrite as it already does.
+        // Walk the child-bearing forms. A form missing from this list carries
+        // its subquery past the fold and into the rewriter, which knows no
+        // subqueries at all: the statement then FAILS to plan (never answers
+        // wrongly), which is what makes adding a form here purely a matter of
+        // reach rather than of correctness.
+        Expr::Case {
+            value,
+            when_clauses,
+            else_clause,
+        } => Expr::Case {
+            value: match value {
+                Some(value) => Some(Box::new(fold_subqueries(
+                    value, outer, catalog, current_db, ctx,
+                )?)),
+                None => None,
+            },
+            when_clauses: when_clauses
+                .iter()
+                .map(|(condition, result)| {
+                    Ok((
+                        fold_subqueries(condition, outer, catalog, current_db, ctx)?,
+                        fold_subqueries(result, outer, catalog, current_db, ctx)?,
+                    ))
+                })
+                .collect::<Result<_, DriverError>>()?,
+            else_clause: match else_clause {
+                Some(else_clause) => Some(Box::new(fold_subqueries(
+                    else_clause,
+                    outer,
+                    catalog,
+                    current_db,
+                    ctx,
+                )?)),
+                None => None,
+            },
+        },
+        Expr::Func {
+            name,
+            args,
+            origin_position,
+        } => Expr::Func {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|arg| fold_subqueries(arg, outer, catalog, current_db, ctx))
+                .collect::<Result<_, _>>()?,
+            origin_position: *origin_position,
+        },
+        // An aggregate's own argument: an UNCORRELATED subquery in it is a
+        // constant and folds here, which is the only reason `SUM((SELECT MAX(id)
+        // FROM d))` can run at all -- a CORRELATED one has to run once per
+        // SOURCE row, below the aggregation, and `driver::agg_build` refuses it
+        // by name after this fold has had its chance.
+        Expr::Aggregate {
+            name,
+            distinct,
+            args,
+        } => Expr::Aggregate {
+            name: name.clone(),
+            distinct: *distinct,
+            args: args
+                .iter()
+                .map(|arg| fold_subqueries(arg, outer, catalog, current_db, ctx))
+                .collect::<Result<_, _>>()?,
+        },
         Expr::Paren(inner) => Expr::Paren(Box::new(fold_subqueries(
             inner, outer, catalog, current_db, ctx,
         )?)),

@@ -179,7 +179,14 @@ fn table_execution_matches_go_engine() {
     // typed from the value the session holds the way Go's
     // `BuildGetVarFunction` picks its signature -- the whole
     // `user_var_scalar` topic.
-    const KNOWN_DIVERGENCES: usize = 23;
+    //
+    // 23 -> 21: the uncorrelated-subquery FOLD GATE now recognises a subquery
+    // inside a `CASE`, a function call, or an aggregate's argument, so those
+    // constants fold instead of reaching a tier that knows no subqueries. The
+    // two remaining `foundations` cases are CORRELATED subqueries in an
+    // aggregate's argument, which need an Apply BELOW the aggregation --
+    // refused by name, not counted as fixed.
+    const KNOWN_DIVERGENCES: usize = 21;
 
     assert!(
         failures.len() <= KNOWN_DIVERGENCES,
