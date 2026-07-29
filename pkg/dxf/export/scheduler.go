@@ -87,9 +87,6 @@ func (s *exportScheduler) startGCKeeper() error {
 		s.logger.Warn("storage does not support PD, skip GC safepoint keeper")
 		return nil
 	}
-	if s.gcCancel != nil {
-		s.gcCancel()
-	}
 	mgr := gc.NewManager(pdStore.GetPDClient(), s.store.GetCodec().GetKeyspaceID())
 	gcCtx, cancel := context.WithCancel(s.ctx)
 	s.gcCancel = cancel
@@ -98,6 +95,16 @@ func (s *exportScheduler) startGCKeeper() error {
 		TTL:      gcTTL,
 		BackupTS: s.taskMeta.SnapshotTS,
 	}, mgr)
+}
+
+// Close implements scheduler.Scheduler. It stops this node's GC keeper without
+// deleting the safepoint: on failover the next node keeps the same safepoint
+// alive, and OnDone deletes it once the task is done.
+func (s *exportScheduler) Close() {
+	if s.gcCancel != nil {
+		s.gcCancel()
+	}
+	s.BaseScheduler.Close()
 }
 
 // OnTick implements scheduler.Extension.
