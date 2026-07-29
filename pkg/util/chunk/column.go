@@ -147,11 +147,25 @@ type fixedLen8ColumnStorage struct {
 
 // newVarLenColumn creates a variable length Column with initial data capacity.
 func newVarLenColumn(capacity int) *Column {
-	return &Column{
-		offsets:    make([]int64, 1, getInitOffsetsCap(capacity)),
-		data:       make([]byte, 0, getInitDataMemCap(capacity, estimatedElemLen)),
-		nullBitmap: make([]byte, 0, getInitNullBitmapCap(capacity)),
+	if capacity != InitialCapacity {
+		return &Column{
+			offsets:    make([]int64, 1, getInitOffsetsCap(capacity)),
+			data:       make([]byte, 0, getInitDataMemCap(capacity, estimatedElemLen)),
+			nullBitmap: make([]byte, 0, getInitNullBitmapCap(capacity)),
+		}
 	}
+
+	storage := &varLenColumnStorage{}
+	storage.col.offsets = storage.offsets[:1]
+	storage.col.data = make([]byte, 0, getInitDataMemCap(capacity, estimatedElemLen))
+	storage.col.nullBitmap = storage.nullBitmap[:0]
+	return &storage.col
+}
+
+type varLenColumnStorage struct {
+	col        Column
+	offsets    [InitialCapacity + 1]int64
+	nullBitmap [(InitialCapacity + 7) / 8]byte
 }
 
 func getInitDataMemCap(capacity int, elemLen int) int64 {
