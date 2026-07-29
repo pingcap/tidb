@@ -642,7 +642,7 @@ impl RealTiKvServerSession {
                     &opener,
                     mode,
                     crate::session_transaction::session_fair_locking(),
-                    crate::session_transaction::session_commit_protocol(),
+                    tidb_exec::session_commit_protocol::session_commit_protocol(),
                     table,
                     PRODUCTION_CONTROL_PLANE_TIMEOUT,
                 )
