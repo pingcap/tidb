@@ -515,6 +515,23 @@ pub fn derive_tree_collation(expr: &mut Expression) -> Result<(), EvalError> {
     let name = func.func_name.lowercase().to_owned();
     let ec = crate::collation_derive::derive_collation(&name, &func.args, ret_type)?;
     crate::collation_derive::apply_derived_collation(expr, &ec);
+    // Go's `unhexFunctionClass`/`base64FunctionClass.fromBase64` call
+    // `types.SetBinChsClnFlag(bf.tp)` AFTER `newBaseBuiltinFuncWithTp` builds
+    // `bf.tp` from the generically derived collation -- so the forced binary
+    // charset/collation is always the LAST word for these two, regardless of
+    // what `deriveCollation`'s generic (non-string-in-string-out) default arm
+    // computed from the connection charset. `derive_tree_collation` runs
+    // this generic derivation as a bottom-up walk over an already-built
+    // tree, i.e. strictly after `builtin_return_type` gave "unhex"/
+    // "from_base64" their forced binary type, so without this re-assertion
+    // the generic pass would silently overwrite it back to a character type.
+    if let Expression::ScalarFunction(func) = expr {
+        if matches!(func.func_name.lowercase(), "unhex" | "from_base64") {
+            if let Some(ft) = func.ret_type.as_mut() {
+                set_binary_charset(ft);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -979,11 +996,32 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             // a gbk-charset argument transcodes on the way in, which is why
             // `HEX(CAST(gbk_col AS BINARY))` reports the GBK bytes.
             let args = wrap_binary_literals("cast", ret_type.charset_name(), vec![arg]);
-            Ok(Expression::ScalarFunction(ScalarFunction::new(
+            let charset_name = ret_type.charset_name().to_owned();
+            let collation_name = ret_type.collation_name().to_owned();
+            let mut node = Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(name),
                 ret_type,
                 args,
-            )))
+            ));
+            // `cast_target` already computes the FULL correct target type
+            // per cast kind (including `set_binary_charset` for `AS
+            // BINARY`), mirroring the dedicated `types.SetBinChsClnFlag`
+            // override Go's cast builtins apply after their own generic
+            // collation derivation. `derive_tree_collation`'s later walk has
+            // no `cast_*` case of its own, so without marking this node
+            // derived here it would fall into the generic default arm and,
+            // for a string result, overwrite this target charset with the
+            // connection charset -- silently undoing `CAST(x AS BINARY)`.
+            crate::collation_derive::apply_derived_collation(
+                &mut node,
+                &crate::expr_collation::ExprCollation {
+                    coer: crate::expr_collation::Coercibility::IMPLICIT,
+                    repe: crate::expr_collation::Repertoire::UNICODE,
+                    charset: charset_name,
+                    collation: collation_name,
+                },
+            );
+            Ok(node)
         }
         // `CONVERT(expr USING charset)` -- Go `convertFunctionClass`. The
         // target charset is a build-time keyword, so it becomes a constant

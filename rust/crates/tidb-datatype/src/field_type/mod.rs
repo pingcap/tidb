@@ -975,17 +975,31 @@ impl FieldType {
     }
 
     /// Mirrors Go `FieldType.SetCollate`: sets the collation name.
+    ///
+    /// Go re-resolves the collation from this string on every read
+    /// (`GetCollate() == charset.CollationBin`). This port additionally
+    /// caches the resolved [`Collation`] enum so [`is_binary_string`]
+    /// (Self::is_binary_string) and friends can read it cheaply instead of
+    /// re-parsing the name; that cache is refreshed right here, in the same
+    /// call that changes the name, so there is no separate step a caller can
+    /// forget and no way for the two representations to fall out of sync.
+    /// An unrecognized spelling leaves the cached enum unchanged, matching
+    /// `with_collation_name`'s fallback behavior.
     pub fn set_collation_name(&mut self, collation: impl Into<String>) {
-        self.collation_name = collation.into();
+        let collation = collation.into();
+        if let Some(registered) = Collation::from_name(&collation) {
+            self.collation = registered;
+        }
+        self.collation_name = collation;
     }
 
     /// Sets the cached [`Collation`] enum directly, without touching the
-    /// parser-owned name strings. Go's own `FieldType` has no equivalent --
-    /// it stores only the collation name and re-resolves it on demand -- but
-    /// this port additionally caches the resolved `Collation` (read by
-    /// [`is_binary_string`](Self::is_binary_string) and friends), so any
-    /// caller that changes a type's collation via the name-only setters must
-    /// call this too or the two representations fall out of sync.
+    /// parser-owned name strings. Prefer
+    /// [`set_collation_name`](Self::set_collation_name), which keeps both
+    /// representations in sync from a single call; use this only when a
+    /// caller already holds a resolved `Collation` it wants to apply without
+    /// also rewriting the name string (for example when the name is being
+    /// set separately to a non-canonical spelling).
     pub fn set_collation(&mut self, collation: Collation) {
         self.collation = collation;
     }
@@ -1556,6 +1570,51 @@ mod tests {
 
         ft.set_elems(vec!["a".to_string(), "b".to_string()]);
         assert_eq!(ft.elems(), &["a".to_string(), "b".to_string()]);
+    }
+
+    /// Regression for the dual charset/collation cache: `FieldType` stores
+    /// the collation both as parser-owned name strings and as a cached
+    /// [`Collation`] enum that [`is_binary_string`](FieldType::is_binary_string)
+    /// reads exclusively. Every call site that derives a binary result type
+    /// (`collation_derive::apply_derived_collation`,
+    /// `collation_derive::set_explicit_collation`,
+    /// `builtin_arithmetic`'s binary-flagged numeric results,
+    /// `table_info_build`'s column type resolution) reaches the type only
+    /// through `set_collation_name`, so fixing that one setter to resolve
+    /// and refresh the cached enum closes the whole class of bugs
+    /// structurally instead of requiring every caller to also call
+    /// `set_collation`.
+    #[test]
+    fn set_collation_name_keeps_cached_enum_in_sync() {
+        // Starts as a character type (utf8mb4, non-binary).
+        let mut ft = FieldType::new(FieldTypeCode::VarString);
+        assert!(!ft.is_binary_string());
+
+        // Mirrors what `apply_derived_collation` / `set_explicit_collation`
+        // do: set the charset string, then the collation string.
+        ft.set_charset_name("binary");
+        ft.set_collation_name("binary");
+        assert_eq!(ft.collation(), Collation::Binary);
+        assert!(ft.is_binary_string());
+
+        // Mirrors `builtin_arithmetic`'s binary-flagged numeric result path:
+        // same two calls, starting from a fresh binary-by-default type. A
+        // numeric type is never a "string" so `is_binary_string` stays
+        // false, but the cached `Collation` enum -- what `collation_of_node`
+        // and collation-aware comparisons read -- must still resolve to
+        // `Binary` rather than staying stuck at whatever it was before.
+        let mut arith =
+            FieldType::new(FieldTypeCode::LongLong).with_collation(Collation::Utf8Mb4Bin);
+        arith.set_charset_name("binary");
+        arith.set_collation_name("binary");
+        assert_eq!(arith.collation(), Collation::Binary);
+        assert!(!arith.is_binary_string());
+
+        // Switching back to a character collation must also flip the cache.
+        ft.set_charset_name("utf8mb4");
+        ft.set_collation_name("utf8mb4_bin");
+        assert_eq!(ft.collation(), Collation::Utf8Mb4Bin);
+        assert!(!ft.is_binary_string());
     }
     use crate::{Charset, Collation};
 
