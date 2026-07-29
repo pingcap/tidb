@@ -2298,8 +2298,17 @@ impl Session {
             .ok()
             .and_then(|value| value.parse::<u32>().ok())
             .unwrap_or(4);
+        // Go `SessionVars.CTEMaxRecursionDepth`, the `WITH RECURSIVE` round
+        // bound; the registry default is 1000.
+        let cte_depth = self
+            .vars
+            .get_system("cte_max_recursion_depth")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(1000);
         if !is_dml {
             return tidb_executor::StmtContext::for_query()
+                .with_cte_max_recursion_depth(cte_depth)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
                 .with_session_state(current_db, version)
                 .with_user(self.current_user.clone(), self.login_user.clone())
@@ -2328,6 +2337,7 @@ impl Session {
         .with_auto_increment_step_default(self.auto_increment_step_is_default())
         .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
         .with_foreign_key_checks(self.foreign_key_checks())
+        .with_cte_max_recursion_depth(cte_depth)
     }
 
     /// Go `SessionVars.ForeignKeyChecks`, read off `@@foreign_key_checks`.

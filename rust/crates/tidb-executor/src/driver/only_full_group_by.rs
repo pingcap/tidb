@@ -296,7 +296,7 @@ fn is_exempt(expr: &tidb_ast::Expr) -> bool {
 
 /// Whether `expr` contains an aggregate anywhere, which is what makes a
 /// `GROUP BY`-less query a grouped one (Go's `hasAggFuncOrAnyValue`).
-fn aggregates_anywhere(expr: &tidb_ast::Expr) -> bool {
+pub(super) fn aggregates_anywhere(expr: &tidb_ast::Expr) -> bool {
     struct Found(bool);
     impl tidb_ast::Visitor for Found {
         fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {

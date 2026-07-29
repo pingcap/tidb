@@ -298,6 +298,28 @@ pub enum DriverError {
     /// own `(c1, c2)` alias column list reports the SAME error when it does
     /// not match the subquery's width (captured).
     ViewWrongList,
+    /// Go `plannererrors.ErrCTERecursiveRequiresUnion` (3573): a CTE inside a
+    /// `WITH RECURSIVE` clause names itself but its body is a bare `SELECT`
+    /// with no `UNION` to separate a seed from a recursive block (captured).
+    CteRecursiveRequiresUnion(String),
+    /// Go `plannererrors.ErrCTERecursiveRequiresNonRecursiveFirst` (3574): the
+    /// self-referencing blocks are not a trailing run -- the first block names
+    /// the CTE, or a non-recursive block follows a recursive one (captured).
+    CteRecursiveRequiresNonRecursiveFirst(String),
+    /// Go `plannererrors.ErrCTERecursiveForbidsAggregation` (3575): a recursive
+    /// block aggregates (`GROUP BY` or an aggregate/window call) (captured).
+    CteRecursiveForbidsAggregation(String),
+    /// Go `plannererrors.ErrCTERecursiveForbiddenJoinOrder` (3577): a recursive
+    /// block names the CTE other than exactly once as a plain `FROM` table --
+    /// twice (a self-join), zero times after an earlier block named it, or from
+    /// inside a derived table or scalar subquery (captured).
+    CteRecursiveForbiddenJoinOrder(String),
+    /// Go `exeerrors.ErrCTEMaxRecursionDepth` (3636): the fixpoint ran one more
+    /// round than `@@cte_max_recursion_depth` allows. The payload is the round
+    /// count Go reports, which is the limit PLUS ONE -- the round it refused to
+    /// run (captured: a limit of `3` reports `4`, the default `1000` reports
+    /// `1001`).
+    CteMaxRecursionDepth(u64),
     /// Go `plannererrors.ErrInvalidLateralJoin` (3809): a `LATERAL` derived
     /// table in a join shape `buildLateralJoin` refuses. The payload is Go's
     /// own reason text, which the message interpolates.
@@ -1012,6 +1034,43 @@ impl DriverError {
             "In definition of view, derived table or common table expression, SELECT list and \
              column names list have different column counts"
                 .to_owned(),
+        ),
+        DriverError::CteRecursiveRequiresUnion(name) => MysqlError::new(
+            3573,
+            *b"HY000",
+            format!("Recursive Common Table Expression '{name}' should contain a UNION"),
+        ),
+        DriverError::CteRecursiveRequiresNonRecursiveFirst(name) => MysqlError::new(
+            3574,
+            *b"HY000",
+            format!(
+                "Recursive Common Table Expression '{name}' should have one or more \
+                 non-recursive query blocks followed by one or more recursive ones"
+            ),
+        ),
+        DriverError::CteRecursiveForbidsAggregation(name) => MysqlError::new(
+            3575,
+            *b"HY000",
+            format!(
+                "Recursive Common Table Expression '{name}' can contain neither aggregation \
+                 nor window functions in recursive query block"
+            ),
+        ),
+        DriverError::CteRecursiveForbiddenJoinOrder(name) => MysqlError::new(
+            3577,
+            *b"HY000",
+            format!(
+                "In recursive query block of Recursive Common Table Expression '{name}', the \
+                 recursive table must be referenced only once, and not in any subquery"
+            ),
+        ),
+        DriverError::CteMaxRecursionDepth(rounds) => MysqlError::new(
+            3636,
+            *b"HY000",
+            format!(
+                "Recursive query aborted after {rounds} iterations. Try increasing \
+                 @@cte_max_recursion_depth to a larger value"
+            ),
         ),
         // Go `ErrInvalidLateralJoin`: "Invalid use of LATERAL: %s".
         DriverError::InvalidLateralJoin(reason) => MysqlError::new(

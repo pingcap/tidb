@@ -108,6 +108,12 @@ pub struct StmtContext {
     /// default): whether referential integrity is enforced at all. A context
     /// with no session behind it enforces, as a stock session does.
     foreign_key_checks: bool,
+    /// Go `SessionVars.CTEMaxRecursionDepth` (`@@cte_max_recursion_depth`,
+    /// default `1000`): how many rounds a `WITH RECURSIVE` fixpoint may run
+    /// before `ErrCTEMaxRecursionDepth`. Go's variable is signed and a
+    /// non-positive value simply means "no round may run", which is what
+    /// clamping to `0` here expresses.
+    cte_max_recursion_depth: u64,
 }
 
 impl StmtContext {
@@ -138,6 +144,7 @@ impl StmtContext {
             default_week_format: 0,
             foreign_key_checks: true,
             div_precision_increment: 4,
+            cte_max_recursion_depth: 1000,
         }
     }
 
@@ -151,6 +158,20 @@ impl StmtContext {
         self.default_week_format = default_week_format;
         self.div_precision_increment = div_precision_increment;
         self
+    }
+
+    /// Sets `@@cte_max_recursion_depth`; a non-positive session value clamps
+    /// to `0`, which refuses the very first recursive round.
+    #[must_use]
+    pub fn with_cte_max_recursion_depth(mut self, depth: i64) -> Self {
+        self.cte_max_recursion_depth = u64::try_from(depth).unwrap_or(0);
+        self
+    }
+
+    /// See [`StmtContext::with_cte_max_recursion_depth`].
+    #[must_use]
+    pub fn cte_max_recursion_depth(&self) -> u64 {
+        self.cte_max_recursion_depth
     }
 
     /// Sets whether `ONLY_FULL_GROUP_BY` is in effect, which a session reads
@@ -280,6 +301,7 @@ impl StmtContext {
             default_week_format: 0,
             foreign_key_checks: true,
             div_precision_increment: 4,
+            cte_max_recursion_depth: 1000,
         }
     }
 

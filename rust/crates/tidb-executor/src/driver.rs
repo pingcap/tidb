@@ -573,6 +573,7 @@ mod errors;
 mod from;
 mod multi_dml;
 mod only_full_group_by;
+mod recursive_cte;
 
 // Re-exported flat, so every caller inside and outside this module keeps
 // naming these as `driver::…` exactly as before the split.
@@ -897,42 +898,30 @@ fn sort_rows_by_output(
 /// (`buildWith`), and a later CTE may reference an earlier one; materializing
 /// them in written order gives that.
 ///
-/// DEFERRED (documented): `WITH RECURSIVE`, which needs the iterate-to-fixpoint
-/// executor, and is rejected rather than run as if it were non-recursive --
-/// that would silently return only the seed rows.
+/// `WITH RECURSIVE` reaches the same loop: `RECURSIVE` is a clause-level flag
+/// that only PERMITS a CTE to name itself, so it is passed through to
+/// [`recursive_cte::materialize_cte_body`] rather than branched on here.
 fn materialize_ctes(
     with: &tidb_ast::WithClause,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Catalog, DriverError> {
-    if with.recursive {
-        return Err(DriverError::Unsupported(
-            "WITH RECURSIVE is not supported yet",
-        ));
-    }
     // The scratch catalog carries the real tables too, since the CTE bodies
     // and the outer query both read them.
     let mut scratch = catalog.clone();
     for cte in &with.ctes {
-        let tidb_ast::QueryStmt::Select(select) = &*cte.query else {
-            return Err(DriverError::Unsupported(
-                "a set-operation CTE is not supported yet",
-            ));
-        };
         // Each CTE sees the ones already materialized, which is what lets a
         // later one reference an earlier one.
-        let (mut columns, rows) = run_select_stmt(select, &scratch, current_db, ctx)?;
-        if !cte.columns.is_empty() {
-            if cte.columns.len() != columns.len() {
-                return Err(DriverError::Unsupported(
-                    "the CTE column list does not match its query's columns",
-                ));
-            }
-            for (column, name) in columns.iter_mut().zip(&cte.columns) {
-                column.0 = name.clone();
-            }
-        }
+        let (columns, rows) = recursive_cte::materialize_cte_body(
+            &cte.name,
+            &cte.columns,
+            &cte.query,
+            &scratch,
+            current_db,
+            ctx,
+            with.recursive,
+        )?;
         scratch.register_mem_in(current_db, &cte.name, MemTable { columns, rows });
     }
     Ok(scratch)
