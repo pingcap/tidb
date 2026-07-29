@@ -34,8 +34,15 @@
 //!    `PhysicalIndexScan`, `PhysicalIndexLookUpReader` otherwise -- because
 //!    the double read is exactly what makes a broad index lose to a full
 //!    scan, and a model without it would always pick the index.
-//! 4. **Choose.** [`choose_access_path`] takes the strict minimum, keeping
-//!    the incumbent on a tie the way Go's `compareTaskCost` does.
+//! 4. **Prune.** [`crate::skyline`] runs Go's `skylinePruning` /
+//!    `compareCandidates` BEFORE the minimum is taken, dropping any candidate
+//!    another one dominates on a partial order of structural facts -- access
+//!    columns, index-back scan, `=`/`IN` count. Two candidates that both
+//!    estimate one row are separable there and nowhere else. That module's
+//!    doc names which of Go's dimensions are live and which are excluded.
+//! 5. **Choose.** [`choose_access_path`] takes the strict minimum over the
+//!    survivors, keeping the incumbent on a tie the way Go's
+//!    `compareTaskCost` does.
 //!
 //! # Pseudo statistics
 //!
@@ -66,34 +73,31 @@
 //!   BEFORE cost-based selection, and so does [`crate::driver::access`].
 //!   They are not costed here for the same reason Go does not cost them.
 //!
-//! # Skyline pruning is NOT ported, and one case shows it
+//! # The case that made pruning necessary
 //!
-//! Go does not cost every path it enumerates: `skylinePruning` /
-//! `compareCandidates` (`find_best_task.go`) first drops any path another one
-//! DOMINATES on four metrics at once -- access-condition coverage
-//! (`util.CompareCol2Len` over `accessCondsColMap`), index-back scan
-//! (`compareIndexBack`), the required physical property, and global-index
-//! preference -- with further risk-ratio and pseudo-statistics heuristics on
-//! top. Only the survivors reach the cost formula.
-//!
-//! Costing every candidate instead is not equivalent, and a live differential
-//! against a v8.5.6 playground shows exactly where. On
-//! `t(id PK, bucket, rare, payload, KEY idx_bucket(bucket), KEY idx_rare(rare),
-//! KEY idx_cover(bucket, rare))` with 2000 analyzed rows:
+//! On `t(id PK, bucket, rare, payload, KEY idx_bucket(bucket),
+//! KEY idx_rare(rare), KEY idx_cover(bucket, rare))` with 2000 analyzed rows,
+//! a v8.5.6 playground answers
 //!
 //! ```text
 //! SELECT * FROM t WHERE bucket = 1 AND rare = 7
-//!   GO    IndexRangeScan  1.00  index:idx_cover(bucket, rare)  range:[1 7,1 7]
-//!   OURS  IndexRangeScan  1.00  index:idx_rare(rare)           range:[7,7]
+//!   IndexRangeScan  1.00  index:idx_cover(bucket, rare)  range:[1 7,1 7]
 //! ```
 //!
-//! Both estimate one row, so the cost formula cannot separate them and the
-//! narrower single-column index wins on its smaller index row size. Go never
-//! costs `idx_rare` at all: `idx_cover`'s access conditions are a strict
-//! superset of it, so `idx_rare` is pruned. Porting that is its own unit --
-//! the four metrics need the physical property and the risk ratio this tier
-//! does not carry -- so it is named here rather than approximated by a
-//! tie-break rule that would happen to fix this one query.
+//! while costing every candidate picked `idx_rare(rare)`. Both estimate one
+//! row, so no cost formula can separate them: the narrower single-column
+//! index simply has the smaller index row size and wins. Go never costs
+//! `idx_rare` at all, because `idx_cover`'s access conditions are a STRICT
+//! SUPERSET of it. That is a pruning answer, not a costing one, which is why
+//! it is [`crate::skyline`] and not a tie-break rule here.
+//!
+//! An enumeration gap that pruning makes visible, and that this module still
+//! has: Go keeps a covering index with NO access conditions
+//! (`keepIndex := ... || path.IsSingleScan`), which then dominates the table
+//! path, so `SELECT bucket FROM t` reads `IndexFullScan` on `idx_bucket`
+//! where this tier reads the whole table. That is an enumeration refusal --
+//! [`enumerate_paths`] only builds an index candidate the detacher ranged --
+//! and it costs rows read, not correctness.
 
 use std::collections::BTreeMap;
 
@@ -112,6 +116,7 @@ use tidb_planner::cardinality::row_size::{
 
 use crate::kv_table::{IndexRange, KvColumn, KvIndex, KvTable};
 use crate::plan_trace::PSEUDO_ROW_COUNT;
+use crate::skyline::{skyline_pruning, Candidate, ColSet, PruningContext};
 
 /// Go `defaultVer2Factors.TiKVScan`.
 const TIKV_SCAN_FACTOR: f64 = 40.70;
@@ -319,17 +324,29 @@ pub(crate) fn enumerate_paths(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     limit: Option<&PushedLimit<'_>>,
     stats: Option<&TableStatistics>,
-) -> Vec<AccessPath> {
+) -> Vec<Candidate<AccessPath>> {
     let realtime = realtime_row_count(stats);
-    let mut paths = vec![table_scan_path(
-        table,
-        where_clause,
-        resolver,
-        stats,
-        realtime,
-    )];
+    let table_scan = table_scan_path(table, where_clause, resolver, stats, realtime);
+    // Go's `getTableCandidate`: a table path is always a single scan, its
+    // access-condition map is empty because this tier builds no primary-key
+    // range (a point read is settled before costing, see the module doc), and
+    // its range is therefore always the full one.
+    let mut candidates = vec![Candidate {
+        access_columns: ColSet::new(),
+        index_columns: ColSet::new(),
+        single_scan: true,
+        eq_or_in_count: 0,
+        full_range: true,
+        count_after_access: table_scan.estimate.rows,
+        pseudo: is_pseudo(stats),
+        index_width: 0,
+        empty_range: false,
+        index_filter_count: 0,
+        table_filter_count: 0,
+        path: table_scan,
+    }];
     let Some(where_clause) = where_clause else {
-        return paths;
+        return candidates;
     };
     for index in table.indexes() {
         let index_columns: Vec<(String, FieldType)> = index
@@ -345,7 +362,16 @@ pub(crate) fn enumerate_paths(
         else {
             continue;
         };
-        paths.push(index_path(
+        let empty_range = built.ranges.is_empty();
+        let access_columns: ColSet = built
+            .access_columns
+            .iter()
+            .filter_map(|position| index.column_offsets.get(*position).copied())
+            .collect();
+        let full_index_columns = full_index_columns(index, table);
+        let (index_columns_map, index_filter_count, table_filter_count) =
+            split_index_filter_conditions(&built.residual, &full_index_columns, resolver);
+        let path = index_path(
             table,
             index,
             built.ranges,
@@ -353,9 +379,74 @@ pub(crate) fn enumerate_paths(
             limit,
             stats,
             realtime,
-        ));
+        );
+        candidates.push(Candidate {
+            // Go `indexCondsColMap` is `ExtractCol2Len(AccessConds ++
+            // IndexFilters, FullIdxCols)`, so the access columns join the
+            // index filters' columns in one map.
+            index_columns: access_columns.union(&index_columns_map).copied().collect(),
+            access_columns,
+            single_scan: is_covering(index, table, needed_columns),
+            eq_or_in_count: built.eq_or_in_count,
+            full_range: false,
+            count_after_access: path.estimate.rows,
+            // Go `isCandidatesPseudo`: an index with no loaded histogram is
+            // pseudo even on a table whose other statistics are real.
+            pseudo: stats.is_none_or(|stats| !stats.indexes.contains_key(&index.id)),
+            index_width: index.column_offsets.len(),
+            empty_range,
+            index_filter_count,
+            table_filter_count,
+            path,
+        });
     }
-    paths
+    candidates
+}
+
+/// Go `fillIndexPath`'s `FullIdxCols`: the index's own columns, plus the
+/// integer primary key that every secondary index entry carries as its
+/// handle. Go appends it only for a non-unique, non-primary index whose
+/// handle column is signed, and only when the index does not already name it.
+fn full_index_columns(index: &KvIndex, table: &KvTable) -> ColSet {
+    let mut columns: ColSet = index.column_offsets.iter().copied().collect();
+    if !index.unique {
+        if let Some(handle) = table.pk_handle_offset() {
+            columns.insert(handle);
+        }
+    }
+    columns
+}
+
+/// Go `splitIndexFilterConditions`: a residual condition the index can
+/// evaluate on its own -- every column it reads is stored in the index -- is
+/// an index filter; anything else waits for the row lookup.
+///
+/// Returns the index filters' columns, then how many index and table filters
+/// there are. A condition whose columns [`crate::column_prune`] refuses to
+/// classify counts as a table filter, which is the conservative side: it
+/// cannot make an index look like it filters more than it does.
+fn split_index_filter_conditions(
+    residual: &[&tidb_ast::Expr],
+    full_index_columns: &ColSet,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+) -> (ColSet, usize, usize) {
+    let mut columns = ColSet::new();
+    let (mut index_filters, mut table_filters) = (0, 0);
+    for condition in residual {
+        let read = crate::column_prune::expr_column_offsets(condition, resolver);
+        match read {
+            Some(read)
+                if read
+                    .iter()
+                    .all(|offset| full_index_columns.contains(offset)) =>
+            {
+                columns.extend(read);
+                index_filters += 1;
+            }
+            _ => table_filters += 1,
+        }
+    }
+    (columns, index_filters, table_filters)
 }
 
 /// The full-scan candidate: a `PhysicalTableReader` over a
@@ -716,9 +807,22 @@ fn column_ranges(
 /// The cheapest candidate, keeping the incumbent on an exact tie -- Go
 /// `compareTaskCost`, which replaces the best task only on a strictly lower
 /// cost.
-pub(crate) fn choose_access_path(paths: Vec<AccessPath>) -> Option<AccessPath> {
+pub(crate) fn choose_access_path(
+    candidates: Vec<Candidate<AccessPath>>,
+    stats: Option<&TableStatistics>,
+    has_limit: bool,
+) -> Option<AccessPath> {
+    let context = PruningContext {
+        table_pseudo: is_pseudo(stats),
+        row_count: realtime_row_count(stats),
+        // Go `vardef.DefOptPreferRangeScan`, and this tier has no `SET` that
+        // moves `tidb_opt_prefer_range_scan` off its default.
+        prefer_range: true,
+        has_limit,
+    };
     let mut best: Option<AccessPath> = None;
-    for path in paths {
+    for candidate in skyline_pruning(candidates, &context) {
+        let path = candidate.path;
         let better = best.as_ref().is_none_or(|current| path.cost < current.cost);
         if better {
             best = Some(path);

@@ -178,8 +178,18 @@ pub(crate) struct Candidate<T> {
     /// which for an index path asks `ColAndIdxExistenceMap.HasAnalyzed(index)`
     /// rather than reusing the table's own flag.
     pub(crate) pseudo: bool,
-    /// Whether this is the table path. Go asks `path.IsTablePath()`.
-    pub(crate) table_path: bool,
+    /// How many columns the index declares, Go's `len(path.Index.Columns)`,
+    /// which only `isFullIndexMatch` reads. Zero for the table path.
+    pub(crate) index_width: usize,
+    /// Go's `len(path.Ranges) == 0`: the conditions are contradictory, so no
+    /// row can qualify and every other candidate is pointless.
+    pub(crate) empty_range: bool,
+    /// Go `len(path.IndexFilters)` and `len(path.TableFilters)`: the residual
+    /// conditions the index can and cannot evaluate before the row lookup.
+    /// The `preferRange` filter reads their relative size.
+    pub(crate) index_filter_count: usize,
+    /// See [`Candidate::index_filter_count`].
+    pub(crate) table_filter_count: usize,
 }
 
 /// Go `compareIndexBack`.
@@ -205,8 +215,8 @@ fn compare_eq_or_in<T>(lhs: &Candidate<T>, rhs: &Candidate<T>) -> i32 {
 /// Go `isFullIndexMatch`, for the non-DNF shape this tier builds: the index
 /// has an `=`/`IN` prefix and its index-condition columns reach every column
 /// the index declares.
-fn is_full_index_match<T>(candidate: &Candidate<T>, index_width: usize) -> bool {
-    candidate.eq_or_in_count > 0 && candidate.index_columns.len() >= index_width
+fn is_full_index_match<T>(candidate: &Candidate<T>) -> bool {
+    candidate.eq_or_in_count > 0 && candidate.index_columns.len() >= candidate.index_width
 }
 
 /// Go `comparePseudo`.
@@ -266,8 +276,6 @@ pub(crate) fn compare_candidates<T>(
     lhs: &Candidate<T>,
     rhs: &Candidate<T>,
     context: &PruningContext,
-    lhs_index_width: usize,
-    rhs_index_width: usize,
 ) -> (i32, bool) {
     let (lhs_pseudo, rhs_pseudo) = (
         context.table_pseudo || lhs.pseudo,
@@ -295,8 +303,8 @@ pub(crate) fn compare_candidates<T>(
         let pseudo_result = compare_pseudo(
             lhs_pseudo,
             rhs_pseudo,
-            is_full_index_match(lhs, lhs_index_width),
-            is_full_index_match(rhs, rhs_index_width),
+            is_full_index_match(lhs),
+            is_full_index_match(rhs),
             eq_or_in_result,
             lhs.eq_or_in_count,
             rhs.eq_or_in_count,
@@ -347,30 +355,21 @@ pub(crate) fn compare_candidates<T>(
 
 /// Go `skylinePruning`: the candidates that survive the partial order, in
 /// enumeration order.
-///
-/// `index_width` gives each candidate's declared index column count, which
-/// only `isFullIndexMatch` reads; a table path's is irrelevant and may be 0.
 pub(crate) fn skyline_pruning<T>(
     candidates: Vec<Candidate<T>>,
-    index_widths: &[usize],
     context: &PruningContext,
-    empty_ranges: &[bool],
 ) -> Vec<Candidate<T>> {
-    debug_assert_eq!(candidates.len(), index_widths.len());
-    debug_assert_eq!(candidates.len(), empty_ranges.len());
-    let mut kept: Vec<(Candidate<T>, usize)> = Vec::with_capacity(candidates.len());
+    let mut survivors: Vec<Candidate<T>> = Vec::with_capacity(candidates.len());
     let mut index_missing_stats = false;
-    for (position, candidate) in candidates.into_iter().enumerate() {
+    for candidate in candidates {
         // Go returns a lone candidate the moment one path proves no row
         // qualifies; every other path would read rows only to discard them.
-        if empty_ranges[position] {
+        if candidate.empty_range {
             return vec![candidate];
         }
-        let width = index_widths[position];
         let mut pruned = false;
-        for i in (0..kept.len()).rev() {
-            let (result, winner_pseudo) =
-                compare_candidates(&kept[i].0, &candidate, context, kept[i].1, width);
+        for i in (0..survivors.len()).rev() {
+            let (result, winner_pseudo) = compare_candidates(&survivors[i], &candidate, context);
             if winner_pseudo {
                 index_missing_stats = true;
             }
@@ -379,15 +378,13 @@ pub(crate) fn skyline_pruning<T>(
                 break;
             }
             if result == -1 {
-                kept.remove(i);
+                survivors.remove(i);
             }
         }
         if !pruned {
-            kept.push((candidate, width));
+            survivors.push(candidate);
         }
     }
-    let mut survivors: Vec<Candidate<T>> =
-        kept.into_iter().map(|(candidate, _)| candidate).collect();
 
     // Go narrows the master switch before letting it drop full scans: with
     // real statistics on every path there is no reason to distrust the cost
@@ -395,27 +392,17 @@ pub(crate) fn skyline_pruning<T>(
     let prefer_range = context.prefer_range
         && (index_missing_stats || context.table_pseudo || context.row_count < 1.0);
     if prefer_range && survivors.len() > 1 {
-        let preferred: Vec<usize> = survivors
-            .iter()
-            .enumerate()
-            .filter(|(_, candidate)| {
-                // Go also keeps forced / TiFlash / global / MV paths here;
-                // none of those exist in this tier (module doc).
-                let index_filters = candidate.eq_or_in_count > 0;
-                // `prop.IsSortItemEmpty()` is true for this tier's only
-                // invocation, so the property half of Go's condition holds.
-                (candidate.single_scan || index_filters) && !candidate.full_range
-            })
-            .map(|(position, _)| position)
-            .collect();
-        if !preferred.is_empty() {
-            let keep: BTreeSet<usize> = preferred.into_iter().collect();
-            let mut position = 0;
-            survivors.retain(|_| {
-                let kept = keep.contains(&position);
-                position += 1;
-                kept
-            });
+        // Go also keeps forced / TiFlash / global / MV paths unconditionally
+        // here; none of those exist in this tier (module doc).
+        let preferred = |candidate: &Candidate<T>| {
+            let index_filters = candidate.eq_or_in_count > 0
+                || candidate.table_filter_count < candidate.index_filter_count;
+            // `prop.IsSortItemEmpty()` is true for this tier's only
+            // invocation, so the property half of Go's condition holds.
+            (candidate.single_scan || index_filters) && !candidate.full_range
+        };
+        if survivors.iter().any(preferred) {
+            survivors.retain(preferred);
         }
     }
     survivors
@@ -430,6 +417,7 @@ mod tests {
         index: &[usize],
         single_scan: bool,
         eq_or_in_count: usize,
+        index_width: usize,
     ) -> Candidate<&'static str> {
         Candidate {
             path: "path",
@@ -440,8 +428,19 @@ mod tests {
             full_range: false,
             count_after_access: 1.0,
             pseudo: false,
-            table_path: false,
+            index_width,
+            empty_range: false,
+            index_filter_count: 0,
+            table_filter_count: 0,
         }
+    }
+
+    /// The full-scan candidate: no access conditions, always a single scan,
+    /// and its range is the whole table.
+    fn table_candidate() -> Candidate<&'static str> {
+        let mut table = candidate(&[], &[], true, 0, 0);
+        table.full_range = true;
+        table
     }
 
     fn context() -> PruningContext {
@@ -457,20 +456,20 @@ mod tests {
     fn a_strict_superset_of_access_columns_dominates() {
         // `idx_cover(bucket, rare)` vs `idx_rare(rare)` under
         // `WHERE bucket = 1 AND rare = 7`, the case Go prunes before costing.
-        let cover = candidate(&[1, 2], &[1, 2], false, 2);
-        let rare = candidate(&[2], &[2], false, 1);
-        assert_eq!(compare_candidates(&cover, &rare, &context(), 2, 1).0, 1);
-        assert_eq!(compare_candidates(&rare, &cover, &context(), 1, 2).0, -1);
+        let cover = candidate(&[1, 2], &[1, 2], false, 2, 2);
+        let rare = candidate(&[2], &[2], false, 1, 1);
+        assert_eq!(compare_candidates(&cover, &rare, &context()).0, 1);
+        assert_eq!(compare_candidates(&rare, &cover, &context()).0, -1);
     }
 
     #[test]
     fn equal_sized_but_different_access_columns_are_incomparable() {
         // `idx_a(a)` vs `idx_b(b)` under `WHERE a = 1 AND b = 2`: Go's
         // `CompareCol2Len` reports "not comparable" and neither is pruned.
-        let a = candidate(&[0], &[0], false, 1);
-        let b = candidate(&[1], &[1], false, 1);
-        assert_eq!(compare_candidates(&a, &b, &context(), 1, 1), (0, false));
-        assert_eq!(compare_candidates(&b, &a, &context(), 1, 1), (0, false));
+        let a = candidate(&[0], &[0], false, 1, 1);
+        let b = candidate(&[1], &[1], false, 1, 1);
+        assert_eq!(compare_candidates(&a, &b, &context()), (0, false));
+        assert_eq!(compare_candidates(&b, &a, &context()), (0, false));
     }
 
     #[test]
@@ -478,12 +477,10 @@ mod tests {
         // Identical access conditions, so only `compareIndexBack` separates
         // them: `SELECT bucket, rare FROM t WHERE bucket = 1` prunes
         // `idx_bucket` in favour of the covering `idx_cover`.
-        let covering = candidate(&[1], &[1, 2], true, 1);
-        let lookup = candidate(&[1], &[1], false, 1);
-        assert_eq!(
-            compare_candidates(&covering, &lookup, &context(), 2, 1).0,
-            1
-        );
+        let covering = candidate(&[1], &[1, 2], true, 1, 2);
+        let lookup = candidate(&[1], &[1], false, 1, 1);
+        assert_eq!(compare_candidates(&covering, &lookup, &context()).0, 1);
+        assert_eq!(compare_candidates(&lookup, &covering, &context()).0, -1);
     }
 
     #[test]
@@ -491,97 +488,71 @@ mod tests {
         // Go's stated invariant: a table scan is always a single scan, so its
         // `scanResult` of +1 cancels the index's `accessResult`, and
         // `totalSum` lands on 0.
-        let mut table = candidate(&[], &[], true, 0);
-        table.table_path = true;
-        let index = candidate(&[1], &[1], false, 1);
-        assert_eq!(compare_candidates(&table, &index, &context(), 0, 1).0, 0);
-        assert_eq!(compare_candidates(&index, &table, &context(), 1, 0).0, 0);
+        let table = table_candidate();
+        let index = candidate(&[1], &[1], false, 1, 1);
+        assert_eq!(compare_candidates(&table, &index, &context()).0, 0);
+        assert_eq!(compare_candidates(&index, &table, &context()).0, 0);
     }
 
     #[test]
     fn a_covering_index_with_access_conditions_prunes_the_table_path() {
         // Both are single scans, so `scanResult` is 0 and the index's larger
         // access-column set carries `totalSum` on its own.
-        let mut table = candidate(&[], &[], true, 0);
-        table.table_path = true;
-        let covering = candidate(&[1], &[1, 2], true, 1);
-        assert_eq!(compare_candidates(&covering, &table, &context(), 2, 0).0, 1);
+        let table = table_candidate();
+        let covering = candidate(&[1], &[1, 2], true, 1, 2);
+        assert_eq!(compare_candidates(&covering, &table, &context()).0, 1);
     }
 
     #[test]
     fn pruning_keeps_enumeration_order_and_drops_the_dominated() {
-        let table = {
-            let mut table = candidate(&[], &[], true, 0);
-            table.table_path = true;
-            table.full_range = true;
-            table
-        };
-        let bucket = candidate(&[1], &[1], false, 1);
-        let rare = candidate(&[2], &[2], false, 1);
-        let cover = candidate(&[1, 2], &[1, 2], false, 2);
-        let survivors = skyline_pruning(
-            vec![table, bucket, rare, cover],
-            &[0, 1, 1, 2],
-            &context(),
-            &[false; 4],
-        );
+        let table = table_candidate();
+        let bucket = candidate(&[1], &[1], false, 1, 1);
+        let rare = candidate(&[2], &[2], false, 1, 1);
+        let cover = candidate(&[1, 2], &[1, 2], false, 2, 2);
+        let survivors = skyline_pruning(vec![table, bucket, rare, cover], &context());
         // The table path survives (see the invariant above); both narrow
         // indexes lose to the covering superset.
         assert_eq!(survivors.len(), 2);
-        assert!(survivors[0].table_path);
+        assert!(survivors[0].access_columns.is_empty());
         assert_eq!(survivors[1].access_columns.len(), 2);
     }
 
     #[test]
     fn an_empty_range_short_circuits_to_that_candidate_alone() {
-        let table = candidate(&[], &[], true, 0);
-        let contradiction = candidate(&[1], &[1], false, 1);
-        let survivors = skyline_pruning(
-            vec![table, contradiction],
-            &[0, 1],
-            &context(),
-            &[false, true],
-        );
+        let table = table_candidate();
+        let mut contradiction = candidate(&[1], &[1], false, 1, 1);
+        contradiction.empty_range = true;
+        let survivors = skyline_pruning(vec![table, contradiction], &context());
         assert_eq!(survivors.len(), 1);
-        assert_eq!(survivors[0].access_columns.len(), 1);
+        assert!(survivors[0].empty_range);
     }
 
     #[test]
     fn prefer_range_drops_the_full_scan_only_under_pseudo_statistics() {
-        let table = {
-            let mut table = candidate(&[], &[], true, 0);
-            table.table_path = true;
-            table.full_range = true;
-            table
-        };
-        let rare = candidate(&[2], &[2], false, 1);
+        let table = table_candidate();
+        let rare = candidate(&[2], &[2], false, 1, 1);
         let analyzed = context();
         assert_eq!(
-            skyline_pruning(
-                vec![table.clone(), rare.clone()],
-                &[0, 1],
-                &analyzed,
-                &[false; 2]
-            )
-            .len(),
+            skyline_pruning(vec![table.clone(), rare.clone()], &analyzed).len(),
             2
         );
         let pseudo = PruningContext {
             table_pseudo: true,
             ..analyzed
         };
-        let survivors = skyline_pruning(vec![table, rare], &[0, 1], &pseudo, &[false; 2]);
+        let survivors = skyline_pruning(vec![table, rare], &pseudo);
         assert_eq!(survivors.len(), 1);
-        assert!(!survivors[0].table_path);
+        assert!(!survivors[0].full_range);
     }
 
     #[test]
     fn a_thousandfold_smaller_access_count_wins_on_its_own() {
-        let mut broad = candidate(&[1], &[1], false, 1);
+        let mut broad = candidate(&[1], &[1], false, 1, 1);
         broad.count_after_access = 200_000.0;
-        let mut narrow = candidate(&[2], &[2], false, 1);
+        let mut narrow = candidate(&[2], &[2], false, 1, 1);
         narrow.count_after_access = 150.0;
         // Incomparable access columns, so only Fix45132 can separate them.
-        assert_eq!(compare_candidates(&broad, &narrow, &context(), 1, 1).0, -1);
+        assert_eq!(compare_candidates(&broad, &narrow, &context()).0, -1);
+        assert_eq!(compare_candidates(&narrow, &broad, &context()).0, 1);
     }
 }

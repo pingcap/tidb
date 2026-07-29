@@ -325,6 +325,8 @@ pub(crate) fn choose_index_range_path(
         cap,
         satisfied_by: &satisfied_by,
     });
+    let stats = catalog.table_statistics(table.table_id);
+    let stats = stats.as_ref().map(AsRef::as_ref);
     let paths = crate::access_cost::enumerate_paths(
         table,
         columns,
@@ -332,9 +334,11 @@ pub(crate) fn choose_index_range_path(
         &needed,
         &resolver,
         limit.as_ref(),
-        catalog.table_statistics(table.table_id).map(AsRef::as_ref),
+        stats,
     );
-    let best = crate::access_cost::choose_access_path(paths)?;
+    // Go's `prop.ExpectedCnt != math.MaxFloat64`: a row cap on the required
+    // property is what disables Fix45132's row-ratio rule inside pruning.
+    let best = crate::access_cost::choose_access_path(paths, stats, cap.is_some())?;
     let (index_id, ranges) = best.index?;
     Some((index_id, ranges, best.estimate))
 }
