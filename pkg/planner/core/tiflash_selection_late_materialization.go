@@ -303,16 +303,12 @@ func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalSelection *
 	// group the conditions by columns and sort them by selectivity
 	sortedConds := groupByColumnsSortBySelectivity(sctx, remainingConds, physicalTableScan)
 
-	selectedConds := slices.Clone(forcedConds)
+	selectedConds := make([]expression.Expression, 0, len(remainingConds))
 	selectedIncome := 0.0
 	selectedColumnCount := 0
+	selectedSelectivity := 1.0
 	totalColumnCount := len(physicalTableScan.Columns)
 	tableRowCount := physicalTableScan.StatsInfo().RowCount
-	selectedSelectivity := calcLateMaterializationSelectivity(sctx, physicalTableScan, selectedConds)
-	if len(selectedConds) > 0 {
-		selectedColumnCount = expression.ExtractColumnSet(selectedConds...).Len()
-		selectedIncome = (1 - selectedSelectivity) * tableRowCount * (float64(totalColumnCount) - float64(selectedColumnCount))
-	}
 
 	for _, exprGroup := range sortedConds {
 		mergedConds := append(selectedConds, exprGroup.exprs...)

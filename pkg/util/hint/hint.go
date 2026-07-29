@@ -876,7 +876,10 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				},
 			})
 		case HintTiFlashLMFilter:
-			if len(hint.Indexes) == 0 {
+			// TableOptimizerHint reuses Indexes to store the identifier list after the table name.
+			// For TIFLASH_LM_FILTER, these identifiers are column names instead of index names.
+			columns := hint.Indexes
+			if len(columns) == 0 {
 				warnHandler.SetHintWarning("The TIFLASH_LM_FILTER hint is not used correctly, please specify at least one column name.")
 				continue
 			}
@@ -888,7 +891,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				DBName:       dbName,
 				TblName:      hint.Tables[0].TableName,
 				SelectOffset: hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
-				Columns:      hint.Indexes,
+				Columns:      columns,
 			})
 		case HintReadFromStorage:
 			switch hint.HintData.(pmodel.CIStr).L {
