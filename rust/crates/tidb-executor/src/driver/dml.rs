@@ -945,6 +945,9 @@ pub(crate) fn run_update_traced(
             let mut updates = Vec::new();
             scanned = mem.rows.len() as u64;
             for (index, row) in mem.rows.iter().enumerate() {
+                if row_limit.is_some_and(|cap| matched >= cap) {
+                    break;
+                }
                 if let Some(new_row) = compute_updated_row(
                     row,
                     &field_types,
@@ -976,7 +979,12 @@ pub(crate) fn run_update_traced(
             )?;
             scanned = rows.len() as u64;
             for (handle, row) in rows {
-                if row_limit.is_some_and(|cap| changed >= cap) {
+                // Go's `LIMIT` is a plan operator over the rows the statement
+                // reaches, so it counts MATCHED rows -- not the subset whose
+                // value ended up different. Counting changed rows lets a run of
+                // no-op updates slip the cap and reach rows the statement was
+                // never allowed to touch.
+                if row_limit.is_some_and(|cap| matched >= cap) {
                     break;
                 }
                 if let Some(new_row) = compute_updated_row(

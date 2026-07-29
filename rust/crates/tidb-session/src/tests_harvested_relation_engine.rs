@@ -481,6 +481,30 @@ fn moving_a_row_onto_an_occupied_primary_key_is_a_duplicate_entry() {
 /// `ORDER BY ... LIMIT` on the key column picks the rows the same way: `gorun`
 /// over `(1,10),(2,20),(3,30)` answers `1|10;2|20;103|30` for
 /// `SET a = a + 100 ORDER BY a DESC LIMIT 1`.
+/// `UPDATE ... LIMIT n` caps the rows the statement REACHES, not the rows whose
+/// value ends up different.
+///
+/// `gorun` over `(1,5),(2,5),(3,9)` for `UPDATE l SET b = 5 LIMIT 2` answers
+/// `1|5;2|5;3|9`: rows 1 and 2 match, both are already `5`, and the cap is
+/// spent on them regardless -- so row 3 is never reached and keeps its `9`.
+/// Counting changed rows instead would let those two no-ops slip the cap and
+/// overwrite a row the statement had no licence to touch.
+#[test]
+fn update_limit_counts_the_rows_it_reaches_not_the_rows_it_changes() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE l (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO l VALUES (1, 5), (2, 5), (3, 9)")
+        .unwrap();
+    session.run("UPDATE l SET b = 5 LIMIT 2").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a,b FROM l ORDER BY a"),
+        [["1", "5"], ["2", "5"], ["3", "9"]]
+    );
+}
+
 #[test]
 fn a_multi_row_key_update_moves_rows_one_at_a_time_in_order_by_order() {
     let mut session = Session::new();
