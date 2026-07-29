@@ -139,6 +139,9 @@ func makeMutRowColumn(in any) *Column {
 		*(*uint32)(unsafe.Pointer(&col.data[0])) = math.Float32bits(x)
 		return col
 	case string:
+		if len(x) == 0 {
+			return newMutRowEmptyVarLenColumn()
+		}
 		return makeMutRowBytesColumn(hack.Slice(x))
 	case []byte:
 		return makeMutRowBytesColumn(x)
@@ -200,6 +203,24 @@ func newMutRowVarLenColumn(valSize int) *Column {
 	}
 	col.nullBitmap[0] = 1
 	return col
+}
+
+func newMutRowEmptyVarLenColumn() *Column {
+	storage := &mutRowVarLenColumnStorage{}
+	storage.nullBitmap[0] = 1
+	storage.col = Column{
+		length:     1,
+		offsets:    storage.offsets[:],
+		data:       storage.nullBitmap[:0],
+		nullBitmap: storage.nullBitmap[:],
+	}
+	return &storage.col
+}
+
+type mutRowVarLenColumnStorage struct {
+	col        Column
+	offsets    [2]int64
+	nullBitmap [1]byte
 }
 
 func makeMutRowUint64Column(val uint64) *Column {
