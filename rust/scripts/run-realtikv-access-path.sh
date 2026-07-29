@@ -39,7 +39,8 @@
 #      pruning and the cost formula makes the call.
 #   9. an EMPTY range: `bucket = 1 AND bucket = 2` is contradictory, and Go
 #      returns that one candidate alone rather than letting a full scan
-#      survive beside it.
+#      survive beside it. Judged on the rows the query READS, because the two
+#      nodes name the resulting plan differently (see the shape note below).
 #
 #  10. every one of the above BEFORE and AFTER `ANALYZE TABLE`, so the
 #      pseudo -> real transition is visible on both nodes at once.
@@ -278,13 +279,30 @@ rust_index() {
 # because two different paths legitimately estimate different row counts.
 EST_TOLERANCE=${ACCESS_PATH_EST_TOLERANCE:-0.05}
 
-# There is no known-divergence escape hatch here any more. The one this
+# The known-divergence escape hatch for PRUNING is gone. The one this
 # differential used to carry -- Go picking idx_cover where costing alone picked
 # idx_rare -- is what `tidb_executor::skyline` now reproduces, so every case
-# below must MATCH, and a divergence is a failure.
+# below must choose the same path, and a divergence is a failure.
+#
+# Two cases carry a NON-pruning divergence instead, each named and counted
+# separately so it cannot hide a path divergence:
+#
+#   "estimator"  the two nodes agree on the path but not on estRows. That is
+#                `get_index_row_count_for_stats_v2` against Go's own
+#                `GetRowCountByIndexRanges`, a different unit from this one.
+#   "shape"      Go renders a provably empty scan as a `TableDual` and this
+#                tier renders it as an index scan over zero ranges. Both read
+#                no rows -- the case asserts that directly -- so this is the
+#                plan TEXT, not the plan. Pruning itself agrees: Go's
+#                `if len(path.Ranges) == 0 { return one candidate }` is ported
+#                and does return that one candidate.
+ESTIMATOR_NOTES=0
+SHAPE_NOTES=0
 
+# `compare <label> <query> [estimator]`: passing `estimator` reports an estRows
+# mismatch as a note instead of a failure. The PATH is judged either way.
 compare() {
-  local label=$1 query=$2
+  local label=$1 query=$2 tolerate=${3:-}
   local gp ge gi rp re ri
   gp=$(go_path "${query}")
   ge=$(go_est "${query}")
@@ -308,9 +326,41 @@ compare() {
     DIFFERENT_PATHS=$((DIFFERENT_PATHS + 1))
     return
   fi
+  if [[ "${tolerate}" == "estimator" ]] \
+    && ! awk -v a="${ge}" -v b="${re}" -v tol="${EST_TOLERANCE}" \
+      'BEGIN { if (a == 0 && b == 0) exit 0; d = a - b; if (d < 0) d = -d; exit !(a > 0 && d / a <= tol) }'; then
+    echo "      ESTIMATOR NOTE: same path, estRows ${ge} vs ${re} -- index row-count"
+    echo "                      estimation, not path choice; see this script's header"
+    ESTIMATOR_NOTES=$((ESTIMATOR_NOTES + 1))
+    return
+  fi
   check "${label}: same path, and estRows within ${EST_TOLERANCE}" \
     awk -v a="${ge}" -v b="${re}" -v tol="${EST_TOLERANCE}" \
     'BEGIN { if (a == 0 && b == 0) exit 0; d = a - b; if (d < 0) d = -d; exit !(a > 0 && d / a <= tol) }'
+}
+
+# The contradictory filter, judged on what it READS rather than on what it is
+# called. Go plans a `TableDual`; this tier plans an index scan over zero
+# ranges. Both must return no row, and the plan-text difference is counted as
+# a shape note.
+compare_empty_range() {
+  local query=$1
+  local gp rp gr rr
+  gp=$(go_path "${query}")
+  rp=$(rust_path "${query}")
+  gr=$(go_sql -Nse "USE pathdiff; SELECT COUNT(*) FROM (${query}) AS c")
+  rr=$(rust_sql -Nse "USE pathdiff; SELECT COUNT(*) FROM (${query}) AS c")
+  echo
+  echo "--- a contradictory filter reads nothing on both nodes"
+  echo "    ${query}"
+  printf '      GO    %-16s rows read %s\n' "${gp:-<none>}" "${gr}"
+  printf '      RUST  %-16s rows read %s\n' "${rp:-<none>}" "${rr}"
+  check "contradictory filter: both nodes read zero rows" \
+    test "${gr}" = "0" -a "${rr}" = "0"
+  if [[ "${gp}" != "${rp}" ]]; then
+    echo "      SHAPE NOTE: ${gp} vs ${rp} -- the plan text, not the plan; see the header"
+    SHAPE_NOTES=$((SHAPE_NOTES + 1))
+  fi
 }
 
 Q_LEADING="SELECT * FROM t WHERE bucket = 1"
@@ -332,16 +382,17 @@ CASES=(
   "selective enough for an index|${Q_SELECTIVE}"
   "broad enough for the full scan|${Q_BROAD}"
   "covering beats non-covering on identical access conditions|${Q_COVERING}"
-  "strict superset where the extra column is a RANGE, not an equality|${Q_SUPERSET_RANGE}"
+  "strict superset where the extra column is a RANGE, not an equality|${Q_SUPERSET_RANGE}|estimator"
   "no candidate dominates, so cost decides|${Q_INCOMPARABLE}"
-  "a contradictory filter leaves one candidate|${Q_EMPTY_RANGE}"
 )
 
 echo
 echo "==================== BEFORE ANALYZE (pseudo statistics) ===================="
 for pair in "${CASES[@]}"; do
-  compare "${pair%%|*}" "${pair#*|}"
+  IFS='|' read -r case_label case_query case_tolerate <<<"${pair}"
+  compare "${case_label}" "${case_query}" "${case_tolerate}"
 done
+compare_empty_range "${Q_EMPTY_RANGE}"
 
 # `stats:pseudo` must be on both sides here: this is the pre-ANALYZE state,
 # and a node that printed a real-looking estimate would be inventing one.
@@ -386,8 +437,10 @@ done
 echo
 echo "==================== AFTER ANALYZE (real statistics) ===================="
 for pair in "${CASES[@]}"; do
-  compare "${pair%%|*}" "${pair#*|}"
+  IFS='|' read -r case_label case_query case_tolerate <<<"${pair}"
+  compare "${case_label}" "${case_query}" "${case_tolerate}"
 done
+compare_empty_range "${Q_EMPTY_RANGE}"
 
 go_pseudo=$(go_sql -Nse "USE pathdiff; EXPLAIN ${Q_BROAD}" | grep -c "stats:pseudo" || true)
 rust_pseudo=$(rust_sql -Nse "USE pathdiff; EXPLAIN ${Q_BROAD}" | grep -c "stats:pseudo" || true)
@@ -437,6 +490,9 @@ cat <<'NOTE'
 NOTE
 
 echo
+if [[ "${ESTIMATOR_NOTES}" -gt 0 || "${SHAPE_NOTES}" -gt 0 ]]; then
+  echo "${ESTIMATOR_NOTES} estimator note(s) and ${SHAPE_NOTES} shape note(s), both non-pruning -- see the header"
+fi
 if [[ "${DIFFERENT_PATHS}" -gt 0 ]]; then
   echo "${DIFFERENT_PATHS} NEW case(s) where the two planners chose differently -- see the FINDING lines above" >&2
 fi
