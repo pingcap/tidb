@@ -277,7 +277,9 @@ func createConflictHandlerChannels(
 	for i := range handlerChs {
 		handlerChs[i] = pairCh
 		if needDispatch {
-			handlerChs[i] = make(chan *simplesst.KVPair)
+			// A handler processes BufferedHandleLimit index handles in one batch.
+			// Buffer one batch so a busy handler does not block dispatch to the others.
+			handlerChs[i] = make(chan *simplesst.KVPair, conflictedkv.BufferedHandleLimit)
 		}
 	}
 	return handlerChs, needDispatch

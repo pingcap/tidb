@@ -132,6 +132,7 @@ go_test(
         "//pkg/dxf/framework/taskexecutor",
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/dxf/framework/testutil",
+        "//pkg/dxf/importinto/conflictedkv",
         "//pkg/dxf/importinto/mock",
         "//pkg/dxf/operator",
         "//pkg/executor/importer",

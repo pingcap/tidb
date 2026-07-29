@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
@@ -51,7 +52,7 @@ type notifyingCodec struct {
 
 func (c *notifyingCodec) DecodeKey(key []byte) ([]byte, error) {
 	decodedKey, err := c.Codec.DecodeKey(key)
-	close(c.decoded)
+	c.decoded <- struct{}{}
 	return decodedKey, err
 }
 
@@ -158,7 +159,7 @@ func TestDispatchMVIndexKVPairs(t *testing.T) {
 				for i, handlerCh := range handlerChs {
 					if testCase.needDispatch {
 						require.NotEqual(t, pairCh, handlerCh)
-						require.Zero(t, cap(handlerCh))
+						require.Equal(t, conflictedkv.BufferedHandleLimit, cap(handlerCh))
 						for j := range i {
 							require.NotEqual(t, handlerChs[j], handlerCh)
 						}
@@ -280,13 +281,16 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 	})
 
 	t.Run("canceled while sending", func(t *testing.T) {
-		decoded := make(chan struct{})
+		pairCount := conflictedkv.BufferedHandleLimit + 1
+		decoded := make(chan struct{}, pairCount)
 		store := &codecStorage{codec: &notifyingCodec{
 			Codec:   tikv.NewCodecV1(tikv.ModeTxn),
 			decoded: decoded,
 		}}
-		pairCh := make(chan *simplesst.KVPair, 1)
-		pairCh <- makeUniqueIndexKVPair(t, store, 1, tidbkv.IntHandle(1))
+		pairCh := make(chan *simplesst.KVPair, pairCount)
+		for i := range pairCount {
+			pairCh <- makeUniqueIndexKVPair(t, store, int64(i), tidbkv.IntHandle(1))
+		}
 		close(pairCh)
 		handlerChs, needDispatch := createConflictHandlerChannels(pairCh, 2, targetIdx)
 		require.True(t, needDispatch)
@@ -297,10 +301,12 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 			errCh <- dispatchMVIndexKVPairs(ctx, store, pairCh, handlerChs, targetIdx)
 		}()
 
-		select {
-		case <-decoded:
-		case <-time.After(5 * time.Second):
-			t.Fatal("dispatcher did not reach the collector send")
+		for range pairCount {
+			select {
+			case <-decoded:
+			case <-time.After(5 * time.Second):
+				t.Fatal("dispatcher did not reach the collector send")
+			}
 		}
 		cancel()
 		select {
@@ -310,7 +316,7 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 			t.Fatal("dispatcher did not exit after cancellation")
 		}
 		for _, handlerCh := range handlerChs {
-			requireKVPairChannelClosed(t, handlerCh)
+			drainClosedKVPairChannel(t, handlerCh, func(*simplesst.KVPair) {})
 		}
 	})
 }
