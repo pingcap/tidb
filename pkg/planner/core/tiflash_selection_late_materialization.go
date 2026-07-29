@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -159,7 +158,7 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 	return exprGroups
 }
 
-func splitForcedLateMaterializationConds(sctx base.PlanContext, conds []expression.Expression, physicalTableScan *PhysicalTableScan) ([]expression.Expression, []expression.Expression) {
+func splitForcedLateMaterializationConds(conds []expression.Expression, physicalTableScan *PhysicalTableScan) ([]expression.Expression, []expression.Expression) {
 	if len(physicalTableScan.ForcedLateMaterializationFilterColumnIDs) == 0 {
 		return nil, conds
 	}
@@ -170,7 +169,6 @@ func splitForcedLateMaterializationConds(sctx base.PlanContext, conds []expressi
 	}
 	forcedConds := make([]expression.Expression, 0)
 	remainingConds := make([]expression.Expression, 0, len(conds))
-	pushDownCtx := util.GetPushDownCtx(sctx)
 	for _, cond := range conds {
 		columns := expression.ExtractColumns(cond)
 		if len(columns) == 0 {
@@ -184,7 +182,7 @@ func splitForcedLateMaterializationConds(sctx base.PlanContext, conds []expressi
 				break
 			}
 		}
-		if matched && expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cond}, kv.TiFlash) {
+		if matched {
 			forcedConds = append(forcedConds, cond)
 			continue
 		}
@@ -285,7 +283,7 @@ func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalSelection *
 		return
 	}
 
-	forcedConds, remainingConds := splitForcedLateMaterializationConds(sctx, conds, physicalTableScan)
+	forcedConds, remainingConds := splitForcedLateMaterializationConds(conds, physicalTableScan)
 	// When the user specifies TIFLASH_LM_FILTER, only the matching conditions are pushed down.
 	if len(physicalTableScan.ForcedLateMaterializationFilterColumnIDs) > 0 {
 		if len(forcedConds) == 0 {
