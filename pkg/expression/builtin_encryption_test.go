@@ -15,8 +15,11 @@
 package expression
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
 	"crypto/md5"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -32,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -557,6 +561,25 @@ func decodeHex(str string) []byte {
 	return ret
 }
 
+func makeCompressedPayload(t *testing.T, declaredLength uint32, data []byte) []byte {
+	var compressed bytes.Buffer
+	writer := zlib.NewWriter(&compressed)
+	_, err := writer.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	payload := make([]byte, 4+compressed.Len())
+	binary.LittleEndian.PutUint32(payload, declaredLength)
+	copy(payload[4:], compressed.Bytes())
+	return payload
+}
+
+func requireLastZlibWarning(t *testing.T, ctx *mock.Context, expected error) {
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+	require.NotEmpty(t, warnings)
+	require.Truef(t, terror.ErrorEqual(expected, warnings[len(warnings)-1].Err), "warning %v", warnings[len(warnings)-1].Err)
+}
+
 func TestCompress(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.Compress]
@@ -622,6 +645,71 @@ func TestUncompress(t *testing.T) {
 		}
 		require.Equalf(t, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin), out, "%v", test)
 	}
+}
+
+func TestUncompressRejectsInflatedDataLargerThanDeclaredLength(t *testing.T) {
+	ctx := createContext(t)
+	declaredLength := uint32(32)
+	payload := makeCompressedPayload(t, declaredLength, bytes.Repeat([]byte{0}, 1<<20))
+	tracker := ctx.GetSessionVars().StmtCtx.MemTracker
+
+	fc := funcs[ast.Uncompress]
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewBytesDatum(payload)}))
+	require.NoError(t, err)
+	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, out.IsNull())
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.LessOrEqual(t, tracker.MaxConsumed(), int64(declaredLength))
+	requireLastZlibWarning(t, ctx, errZlibZBuf)
+}
+
+func TestUncompressTracksInflateMemory(t *testing.T) {
+	ctx := createContext(t)
+	data := bytes.Repeat([]byte{1}, 4096)
+	payload := makeCompressedPayload(t, uint32(len(data)), data)
+	tracker := ctx.GetSessionVars().StmtCtx.MemTracker
+	action := &memory.LogOnExceed{}
+	exceedCount := 0
+	action.SetLogHook(func(uint64) {
+		exceedCount++
+	})
+	tracker.SetBytesLimit(32)
+	tracker.SetActionOnExceed(action)
+
+	fc := funcs[ast.Uncompress]
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewBytesDatum(payload)}))
+	require.NoError(t, err)
+	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.NewCollationStringDatum(string(data), charset.CollationBin), out)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.GreaterOrEqual(t, tracker.MaxConsumed(), int64(len(data)))
+	require.Equal(t, 1, exceedCount)
+}
+
+func TestUncompressRejectsInflatedDataLargerThanDeclaredLengthVectorized(t *testing.T) {
+	ctx := createContext(t)
+	declaredLength := uint32(32)
+	payload := makeCompressedPayload(t, declaredLength, bytes.Repeat([]byte{0}, 1<<20))
+	argTp := types.NewFieldType(mysql.TypeBlob)
+	arg := &Column{Index: 0, RetType: argTp}
+	tracker := ctx.GetSessionVars().StmtCtx.MemTracker
+
+	fc := funcs[ast.Uncompress]
+	f, err := fc.getFunction(ctx, []Expression{arg})
+	require.NoError(t, err)
+	require.True(t, f.isChildrenVectorized())
+	input := chunk.New([]*types.FieldType{argTp}, 1, 1)
+	input.AppendBytes(0, payload)
+	result := chunk.NewColumn(f.getRetTp(), 1)
+
+	err = f.vecEvalString(ctx, input, result)
+	require.NoError(t, err)
+	require.True(t, result.IsNull(0))
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.LessOrEqual(t, tracker.MaxConsumed(), int64(declaredLength))
+	requireLastZlibWarning(t, ctx, errZlibZBuf)
 }
 
 func TestUncompressLength(t *testing.T) {
