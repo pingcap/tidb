@@ -2060,6 +2060,8 @@ mod tests_global_vars;
 #[cfg(test)]
 mod tests_grants;
 #[cfg(test)]
+mod tests_harvested_relation_engine;
+#[cfg(test)]
 mod tests_json;
 #[cfg(test)]
 mod tests_show;
