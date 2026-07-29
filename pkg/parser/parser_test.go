@@ -38,6 +38,9 @@ func TestMaxParenthesesDepth(t *testing.T) {
 	nestedExpr := func(depth int) string {
 		return "select " + strings.Repeat("(", depth) + "1" + strings.Repeat(")", depth)
 	}
+	nestedFuncExpr := func(depth int) string {
+		return "select " + strings.Repeat("f(", depth) + "1" + strings.Repeat(")", depth)
+	}
 
 	_, err := p.ParseOneStmt(nestedExpr(10000), "", "")
 	require.NoError(t, err)
@@ -45,6 +48,38 @@ func TestMaxParenthesesDepth(t *testing.T) {
 	_, err = p.ParseOneStmt(nestedExpr(10001), "", "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+
+	_, err = p.ParseOneStmt(nestedFuncExpr(10001), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+}
+
+func TestMaxASTDepth(t *testing.T) {
+	p := parser.New()
+	nestedCaseExpr := func(depth int) string {
+		return "select " + strings.Repeat("case when true then ", depth) + "1" + strings.Repeat(" else 0 end", depth)
+	}
+	for _, tc := range []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "binary operation chain",
+			sql:  "select " + strings.Repeat("1+", 11000) + "1",
+		},
+		{
+			name: "unary operation chain",
+			sql:  "select " + strings.Repeat("!", 11000) + "1",
+		},
+		{
+			name: "case expression chain",
+			sql:  nestedCaseExpr(11000),
+		},
+	} {
+		_, err := p.ParseOneStmt(tc.sql, "", "")
+		require.Error(t, err, tc.name)
+		require.Contains(t, err.Error(), "AST nesting depth exceeds maximum", tc.name)
+	}
 }
 
 func TestSimple(t *testing.T) {
