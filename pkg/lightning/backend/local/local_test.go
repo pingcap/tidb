@@ -1185,13 +1185,13 @@ func (m mockIngestData) Finish(_, _ int64) {}
 
 type blockingDecRefIngestData struct {
 	mockIngestData
-	decRefStarted chan<- struct{}
-	allowDecRef   <-chan struct{}
+	allowDecRef <-chan struct{}
+	decRefDone  chan<- struct{}
 }
 
 func (m *blockingDecRefIngestData) DecRef() {
-	close(m.decRefStarted)
 	<-m.allowDecRef
+	close(m.decRefDone)
 }
 
 var dummyRegionInfo = &split.RegionInfo{
@@ -2204,6 +2204,7 @@ func TestDoImport(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		allowDecRef := make(chan struct{})
+		decRefDone := make(chan struct{})
 		var allowDecRefOnce sync.Once
 		releaseWorker := func() {
 			allowDecRefOnce.Do(func() {
@@ -2214,6 +2215,10 @@ func TestDoImport(t *testing.T) {
 			cancel()
 			releaseWorker()
 		})
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeReleaseRegionJobWorkerPool",
+			releaseWorker,
+		)
 
 		oldFakeRegionJobs := fakeRegionJobs
 		t.Cleanup(func() {
@@ -2221,13 +2226,12 @@ func TestDoImport(t *testing.T) {
 		})
 
 		jobRange := engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}}
-		decRefStarted := make(chan struct{})
 		data := &blockingDecRefIngestData{
 			mockIngestData: mockIngestData{
 				{[]byte{'a'}, []byte{'a'}},
 			},
-			decRefStarted: decRefStarted,
-			allowDecRef:   allowDecRef,
+			allowDecRef: allowDecRef,
+			decRefDone:  decRefDone,
 		}
 		fakeRegionJobs = map[[2]string]struct {
 			jobs []*regionJob
@@ -2269,24 +2273,17 @@ func TestDoImport(t *testing.T) {
 			t.Fatal("timed out waiting for region job worker to start")
 		}
 		cancel()
-		select {
-		case <-decRefStarted:
-		case <-time.After(10 * time.Second):
-			t.Fatal("timed out waiting for region job worker to release ingest data")
-		}
 
-		select {
-		case err := <-errCh:
-			require.FailNow(t, "doImport returned before its running worker exited", "error: %v", err)
-		case <-time.After(100 * time.Millisecond):
-		}
-
-		releaseWorker()
 		select {
 		case err := <-errCh:
 			require.ErrorIs(t, err, context.Canceled)
 		case <-time.After(10 * time.Second):
 			t.Fatal("timed out waiting for doImport to return")
+		}
+		select {
+		case <-decRefDone:
+		default:
+			require.FailNow(t, "doImport returned before its running worker exited")
 		}
 	})
 
