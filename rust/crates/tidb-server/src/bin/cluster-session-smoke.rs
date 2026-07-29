@@ -44,6 +44,7 @@ use tidb_exec::cluster_table_storage::{
 use tidb_exec::cop_scan::{CopScanSource, CopScanStats};
 use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
 use tidb_exec::real_tikv_read::{ProductionReadProcessAuthority, ProductionReadSessionFactory};
+use tidb_exec::stats_watch::StatsSnapshot;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
@@ -270,7 +271,8 @@ fn run_in_transaction(
     sql: &str,
     start_ts: u64,
 ) -> Result<(), String> {
-    let (mut session, skipped) = session_with_cluster_storage(catalog, storage);
+    let (mut session, skipped) =
+        session_with_cluster_storage(catalog, storage, &StatsSnapshot::new());
     for table in &skipped {
         println!("skipped {}: {}", table.name, table.reason);
     }
@@ -308,7 +310,8 @@ fn run_statement(
         .lock()
         .map_err(|_| "the snapshot handle is poisoned".to_owned())?
         .start_ts();
-    let (mut session, skipped) = session_with_cluster_storage(catalog, &storage);
+    let (mut session, skipped) =
+        session_with_cluster_storage(catalog, &storage, &StatsSnapshot::new());
     for table in &skipped {
         println!("skipped {}: {}", table.name, table.reason);
     }

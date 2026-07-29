@@ -110,6 +110,21 @@ use tidb_expr::rewriter::ColumnResolver;
 
 use crate::driver::{FromScope, FromTable};
 
+/// The scope offsets one expression reads, or `None` when it reads something
+/// this walk refuses to classify (see [`collect_expr_columns`]).
+///
+/// This is the same exhaustive walk column pruning uses, exposed so the
+/// access-path costing can ask "which column does this conjunct constrain?"
+/// without a second, laxer column collector that could disagree with it.
+pub(crate) fn expr_column_offsets(
+    expr: &Expr,
+    resolver: &dyn ColumnResolver,
+) -> Option<Vec<usize>> {
+    let mut wanted = BTreeSet::new();
+    collect_expr_columns(expr, resolver, &mut wanted)?;
+    Some(wanted.into_iter().collect())
+}
+
 /// The scan-output offsets a statement actually reads, when the statement is
 /// in the narrow slice this module can prune. `None` means "not eligible":
 /// the caller must keep the full-width path unchanged.

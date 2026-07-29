@@ -1410,6 +1410,8 @@ dependencies = [
  "tidb-expr",
  "tidb-model",
  "tidb-parser",
+ "tidb-planner",
+ "tidb-stats",
  "tidb-tablecodec",
  "tidb-txnkv",
 ]

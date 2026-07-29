@@ -914,9 +914,12 @@ pub(crate) fn run_update_traced(
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
             trace,
-            table_ref,
-            &database,
-            &name,
+            catalog,
+            DmlTarget {
+                table_ref,
+                database: &database,
+                name: &name,
+            },
             &column_list,
             &update.where_clause,
             current_db,
@@ -1144,9 +1147,12 @@ pub(crate) fn run_delete_traced(
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
             trace,
-            table_ref,
-            &database,
-            &name,
+            catalog,
+            DmlTarget {
+                table_ref,
+                database: &database,
+                name: &name,
+            },
             &column_list,
             &delete.where_clause,
             current_db,
@@ -1213,17 +1219,40 @@ pub(crate) fn run_delete_traced(
 /// Records the read plan a single-table write performs to find its target
 /// rows: always a whole-table scan, with a `Selection` above it for the
 /// `WHERE` (`explain`'s divergence 8).
+///
+/// The table a single-table write reads, as the statement names it.
+struct DmlTarget<'a> {
+    /// The `FROM`-side reference, which carries the alias `EXPLAIN` prints.
+    table_ref: &'a tidb_ast::TableRef,
+    /// The schema the name resolved in.
+    database: &'a str,
+    /// The stored table name.
+    name: &'a str,
+}
+
 fn trace_dml_source(
     trace: &mut PlanTrace,
-    table_ref: &tidb_ast::TableRef,
-    database: &str,
-    name: &str,
+    catalog: &Catalog,
+    target: DmlTarget<'_>,
     columns: &[(String, FieldType)],
     where_clause: &Option<tidb_ast::Expr>,
     current_db: &str,
 ) {
+    let DmlTarget {
+        table_ref,
+        database,
+        name,
+    } = target;
     let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
-    trace.table_full_scan(&visible);
+    let (estimate, selectivity) = single_table_trace_estimate(
+        catalog,
+        database,
+        name,
+        &visible,
+        columns,
+        where_clause.as_ref(),
+    );
+    trace.table_full_scan(&visible, estimate);
     let Some(predicate) = where_clause else {
         return;
     };
@@ -1238,6 +1267,7 @@ fn trace_dml_source(
             db: current_db,
             scope: &scope,
         },
+        selectivity,
     );
 }
 

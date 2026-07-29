@@ -44,6 +44,7 @@
 //! DEFERRED (documented): the Go `context.Context`/`sessionctx` propagation,
 //! runtime stats, the SQL killer, `Detach`, and parallel projection.
 
+pub mod access_cost;
 pub mod access_path;
 pub mod apply;
 mod approx_count_distinct;

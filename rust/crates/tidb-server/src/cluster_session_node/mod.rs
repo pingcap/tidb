@@ -239,7 +239,8 @@ impl ClusterSessionFactory {
         global_vars: GlobalSysvars,
         stats: Arc<SharedStats>,
     ) -> Self {
-        let boot_skipped = cluster_session_catalog(&catalog.load(), &detached_storage()).skipped;
+        let boot_skipped =
+            cluster_session_catalog(&catalog.load(), &detached_storage(), &stats.load()).skipped;
         Self {
             transactions,
             ddl,
@@ -309,7 +310,8 @@ impl QuerySessionFactory for ClusterSessionFactory {
             storage = storage.with_pushdown_scanner(Arc::clone(scanner));
         }
         let loaded = self.catalog.load();
-        let built = cluster_session_catalog(&loaded, &storage);
+        let statistics = self.stats.load();
+        let built = cluster_session_catalog(&loaded, &storage, &statistics);
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
 
         let identity = &context.identity;
@@ -347,6 +349,8 @@ impl QuerySessionFactory for ClusterSessionFactory {
             analyze: Arc::clone(&self.analyze),
             catalog: Arc::clone(&self.catalog),
             schema_version: loaded.schema_version,
+            stats: Arc::clone(&self.stats),
+            statistics,
             explicit: None,
             skipped: built.skipped,
         })
@@ -382,6 +386,14 @@ pub struct ClusterServerSession {
     /// The schema version `session`'s tables were built from. A move in
     /// `catalog` past this is what makes the connection rebuild them.
     schema_version: i64,
+    /// The node's statistics, republished on its own cadence by the stats
+    /// reload thread -- an `ANALYZE` changes these without changing the
+    /// schema version, so they are followed separately.
+    stats: Arc<SharedStats>,
+    /// The exact snapshot this connection's catalog carries. A `store` on
+    /// `stats` always publishes a NEW `Arc`, so pointer identity is what
+    /// tells the connection its statistics moved.
+    statistics: Arc<tidb_exec::stats_watch::StatsSnapshot>,
     /// The transaction an explicit `BEGIN` holds open. `None` is autocommit,
     /// where each statement gets its own timestamp.
     explicit: Option<Box<dyn OpenClusterTransaction>>,
@@ -536,15 +548,22 @@ impl ClusterServerSession {
             return;
         }
         let loaded = self.catalog.load();
-        if loaded.schema_version == self.schema_version {
+        let statistics = self.stats.load();
+        // Either half can move on its own: a DDL bumps the schema version, an
+        // `ANALYZE` republishes the statistics. Both are rebuilt through the
+        // same path, so a connection never plans against one half of a pair.
+        if loaded.schema_version == self.schema_version
+            && Arc::ptr_eq(&statistics, &self.statistics)
+        {
             return;
         }
-        let built = cluster_session_catalog(&loaded, &self.storage);
+        let built = cluster_session_catalog(&loaded, &self.storage, &statistics);
         let shared = self.session.shared_catalog();
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
         *catalog = built.catalog;
         drop(catalog);
         self.schema_version = loaded.schema_version;
+        self.statistics = statistics;
         self.skipped = built.skipped;
     }
 

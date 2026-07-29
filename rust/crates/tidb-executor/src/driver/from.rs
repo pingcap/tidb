@@ -179,7 +179,7 @@ pub(crate) fn build_from(
             // paths in `run_select_stmt` REPLACE this node at the same
             // moment they replace the executor it describes.
             if let Some(trace) = trace.as_deref_mut() {
-                trace.table_full_scan(&visible);
+                trace.table_full_scan(&visible, full_scan_estimate(catalog, entry));
             }
             if let TableEntry::View(view) = entry {
                 let (exec, scope) = build_view_source(

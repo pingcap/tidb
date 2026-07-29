@@ -50,7 +50,18 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
 
+use crate::access_cost::ScanEstimate;
 use crate::driver::{FromScope, FromTable};
+
+/// Go's `, stats:pseudo` marker, printed on a scan whose estimate came from
+/// `statistics.PseudoTable` and omitted on one that read real statistics.
+fn pseudo_suffix(estimate: ScanEstimate) -> &'static str {
+    if estimate.pseudo {
+        ", stats:pseudo"
+    } else {
+        ""
+    }
+}
 use crate::executor::{ExecError, Executor};
 use crate::kv_table::TableHandle;
 
@@ -306,12 +317,18 @@ impl PlanTrace {
     }
 
     /// A whole-table read.
-    pub(crate) fn table_full_scan(&mut self, visible: &str) {
+    ///
+    /// `estimate` is the access-path choice's own answer for this table (see
+    /// [`crate::access_cost`]): the analyzed row count when the table has
+    /// statistics, `statistics.PseudoTable`'s constant when it has not. Go
+    /// appends `stats:pseudo` on exactly the second case
+    /// (`physical_table_scan.go`: `StatsVersion == statistics.PseudoVersion`).
+    pub(crate) fn table_full_scan(&mut self, visible: &str, estimate: ScanEstimate) {
         self.push(PlanNode::new(
             "TableFullScan",
-            Some(PSEUDO_ROW_COUNT),
+            Some(estimate.rows),
             format!("table:{visible}"),
-            "keep order:false, stats:pseudo".to_owned(),
+            format!("keep order:false{}", pseudo_suffix(estimate)),
         ));
     }
 
@@ -353,21 +370,24 @@ impl PlanTrace {
         index_name: &str,
         index_columns: &[&str],
         ranges: &[crate::kv_table::IndexRange],
+        estimate: ScanEstimate,
     ) {
         let printed: Vec<String> = ranges.iter().map(range_text).collect();
         self.replace_top(PlanNode::new(
             "IndexRangeScan",
-            // The ranges narrow the read, but by how much needs the
-            // per-column histogram this tier has no statistics for, so the
-            // estimate is the same stats-less one Go falls back to.
-            Some(PSEUDO_ROW_COUNT / PSEUDO_LESS_RATE),
+            // The rows the RANGES cover, which is Go's `CountAfterAccess`:
+            // the index histogram's answer when the index was analyzed, the
+            // pseudo rate when it was not. Both come from
+            // [`crate::access_cost`], the same place that costed the path.
+            Some(estimate.rows),
             format!(
                 "table:{visible}, index:{index_name}({})",
                 index_columns.join(", ")
             ),
             format!(
-                "range:{}, keep order:false, stats:pseudo",
-                printed.join(", ")
+                "range:{}, keep order:false{}",
+                printed.join(", "),
+                pseudo_suffix(estimate)
             ),
         ));
         self.consumed = true;
@@ -382,11 +402,20 @@ impl PlanTrace {
     /// plain full scan consumed nothing, so only there does the filter
     /// reduce the estimate -- which is exactly how Go's 10000 -> 3333.33
     /// arises.
-    pub(crate) fn selection(&mut self, predicate: &tidb_ast::Expr, qualify: &Qualifier<'_>) {
+    ///
+    /// `stats_selectivity` is `cardinality.Selectivity`'s answer when the
+    /// table has loaded statistics; without it the stats-less rates above
+    /// stand, which is Go's `pseudoSelectivity`.
+    pub(crate) fn selection(
+        &mut self,
+        predicate: &tidb_ast::Expr,
+        qualify: &Qualifier<'_>,
+        stats_selectivity: Option<f64>,
+    ) {
         let est = if self.consumed {
             Est::Inherit
         } else {
-            Est::Scale(selectivity(predicate))
+            Est::Scale(stats_selectivity.unwrap_or_else(|| pseudo_selectivity(predicate)))
         };
         self.wrap("Selection", est, qualify.expr(predicate));
     }
@@ -709,7 +738,7 @@ fn datum_go_text(value: &Datum) -> String {
 /// Go's stats-less selectivity for one predicate, from
 /// `cardinality.pseudoSelectivity`: the minimum over the conjuncts of the
 /// per-operator rate, starting at `SelectivityFactor`.
-fn selectivity(predicate: &tidb_ast::Expr) -> f64 {
+pub(crate) fn pseudo_selectivity(predicate: &tidb_ast::Expr) -> f64 {
     let mut factor = SELECTIVITY_FACTOR;
     let mut conjuncts = Vec::new();
     collect_and(predicate, &mut conjuncts);
@@ -731,7 +760,7 @@ fn selectivity(predicate: &tidb_ast::Expr) -> f64 {
     factor
 }
 
-fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
+pub(crate) fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
     if let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, lhs, rhs) = expr {
         collect_and(lhs, out);
         collect_and(rhs, out);

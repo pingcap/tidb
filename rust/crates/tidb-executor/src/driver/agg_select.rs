@@ -145,6 +145,7 @@ pub(crate) fn run_aggregate_select(
         from_source,
         &mut state,
         resolver,
+        catalog,
         current_db,
         ctx,
         trace.as_deref_mut(),
@@ -641,6 +642,7 @@ fn build_aggregation(
     from_source: Option<Box<dyn Executor>>,
     state: &mut AggPipelineState,
     resolver: &ScopeResolver<'_>,
+    catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
@@ -687,7 +689,11 @@ fn build_aggregation(
         ));
         if let Some(trace) = trace.as_deref_mut() {
             if let Some(written) = &traced_select.where_clause {
-                trace.selection(written, &qualify);
+                trace.selection(
+                    written,
+                    &qualify,
+                    select_stats_selectivity(select, catalog, current_db, resolver.scope),
+                );
                 source = trace.meter(source);
             }
         }

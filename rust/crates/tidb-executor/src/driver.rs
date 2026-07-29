@@ -43,6 +43,7 @@ use crate::selection::SelectionExec;
 use crate::sort::{SortByItem, SortExec};
 use crate::table_dual::TableDualExec;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tidb_ast::{JoinNode, QueryStmt, SelectField, Stmt};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_expr::column::Column;
@@ -115,6 +116,15 @@ pub struct Catalog {
     /// catalog moved under it (Go detects the same at commit through TiKV's
     /// optimistic conflict check on the written keys).
     version: u64,
+    /// Loaded statistics by physical table id, Go's `StatsHandle` cache as
+    /// the planner sees it.
+    ///
+    /// A missing entry is Go's `statistics.PseudoTable`, and that is what
+    /// makes an unanalyzed table's `EXPLAIN` print `stats:pseudo`. The map
+    /// lives on the catalog rather than on a table because it is loaded from
+    /// `mysql.stats_*` on its own cadence (see `tidb-exec`'s `stats_watch`),
+    /// so the two are published independently.
+    statistics: HashMap<i64, Arc<crate::access_cost::TableStatistics>>,
 }
 
 impl Default for Catalog {
@@ -149,6 +159,7 @@ impl Default for Catalog {
             databases,
             next_table_id: 0,
             version: 0,
+            statistics: HashMap::new(),
         }
     }
 }
@@ -387,6 +398,25 @@ impl Catalog {
     #[must_use]
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// Publishes one table's loaded statistics, which the access-path choice
+    /// and `EXPLAIN`'s `estRows` then read instead of the pseudo constants.
+    pub fn set_table_statistics(
+        &mut self,
+        table_id: i64,
+        statistics: Arc<crate::access_cost::TableStatistics>,
+    ) {
+        self.statistics.insert(table_id, statistics);
+    }
+
+    /// One table's loaded statistics; `None` is Go's `PseudoTable`.
+    #[must_use]
+    pub fn table_statistics(
+        &self,
+        table_id: i64,
+    ) -> Option<&Arc<crate::access_cost::TableStatistics>> {
+        self.statistics.get(&table_id)
     }
 
     /// A mutable table of `database`, for the schema-changing statements.
@@ -1066,7 +1096,11 @@ pub(crate) fn run_select_traced(
     if executed_where.is_none() && select.where_clause.is_some() {
         if let Some(trace) = trace.as_deref_mut() {
             if let Some(written) = &traced_select.where_clause {
-                trace.selection(written, &qualify);
+                trace.selection(
+                    written,
+                    &qualify,
+                    select_stats_selectivity(select, catalog, current_db, &scope),
+                );
                 source = trace.meter(source);
             }
         }
@@ -1164,7 +1198,11 @@ pub(crate) fn run_select_traced(
             // stays out of the trace rather than changing the shape EXPLAIN
             // reports.
             if let Some(written) = &traced_select.where_clause {
-                trace.selection(written, &qualify);
+                trace.selection(
+                    written,
+                    &qualify,
+                    select_stats_selectivity(select, catalog, current_db, &scope),
+                );
                 source = trace.meter(source);
             }
         }
@@ -6197,7 +6235,10 @@ mod tests {
             let QueryStmt::Select(select) = &**query else {
                 panic!("not a select")
             };
-            try_index_ranges(select, table, &columns)
+            let scope =
+                crate::plan_trace::PlanTrace::single_table_scope("q", None, columns.clone());
+            choose_index_range_path(select, &catalog, &scope, table, &columns)
+                .map(|(id, ranges, _)| (id, ranges))
         };
 
         // Go: GT is (v, MaxValue], LT is [MinNotNull, v).

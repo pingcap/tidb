@@ -37,11 +37,15 @@
 
 use std::sync::{Arc, Mutex};
 use tidb_exec::cluster_catalog::ClusterCatalog;
+use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
+use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
+use tidb_executor::access_cost::TableStatistics;
 use tidb_executor::cluster_storage::ClusterTableStorage;
 use tidb_executor::driver::Catalog;
 use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable};
 use tidb_executor::storage::TableStorage;
 use tidb_model::{SchemaState, TableInfo};
+use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
 use tidb_session::{Session, SharedCatalog};
 
 /// Go `mysql.PriKeyFlag`: what marks the column `PKIsHandle` points at.
@@ -75,6 +79,7 @@ pub struct ClusterSessionCatalog {
 pub fn cluster_session_catalog(
     loaded: &ClusterCatalog,
     storage: &ClusterTableStorage,
+    stats: &StatsSnapshot,
 ) -> ClusterSessionCatalog {
     let mut catalog = Catalog::default();
     let mut skipped = Vec::new();
@@ -84,6 +89,18 @@ pub fn cluster_session_catalog(
         for table in &database.tables {
             match cluster_table(table, storage) {
                 Ok(kv_table) => {
+                    // A table the cluster reports as never analyzed
+                    // (`TableStatsState::Pseudo`) or one this node has not
+                    // loaded yet is left OUT of the map, which is exactly what
+                    // makes the planner treat it as `statistics.PseudoTable`.
+                    if let Some(loaded_stats) =
+                        stats.get(&table.id).and_then(TableStatsState::loaded)
+                    {
+                        catalog.set_table_statistics(
+                            table.id,
+                            Arc::new(planner_statistics(loaded_stats, table)),
+                        );
+                    }
                     catalog.register_kv_in(&schema, table.name.original(), kv_table);
                 }
                 Err(reason) => skipped.push(SkippedTable {
@@ -105,8 +122,10 @@ pub fn cluster_session_catalog(
 pub fn session_with_cluster_storage(
     loaded: &ClusterCatalog,
     storage: &ClusterTableStorage,
+    stats: &StatsSnapshot,
 ) -> (Session, Vec<SkippedTable>) {
-    let ClusterSessionCatalog { catalog, skipped } = cluster_session_catalog(loaded, storage);
+    let ClusterSessionCatalog { catalog, skipped } =
+        cluster_session_catalog(loaded, storage, stats);
     let shared: SharedCatalog = Arc::new(Mutex::new(catalog));
     (Session::with_catalog(shared), skipped)
 }
@@ -190,6 +209,67 @@ fn cluster_table(table: &TableInfo, storage: &ClusterTableStorage) -> Result<KvT
         });
     }
     Ok(kv_table)
+}
+
+/// Go `mysql.MaxUnsignedFlag` (`UnsignedFlag`), which the out-of-range
+/// scaling in the estimator reads off a column.
+const UNSIGNED_FLAG: u32 = 1 << 5;
+
+/// Translates one table's loaded `mysql.stats_*` rows into the shape the
+/// planner's estimator reads.
+///
+/// This is the ONE place the storage form and the estimation form meet: the
+/// loader ([`tidb_exec::cluster_stats_load`]) owns how a histogram is stored,
+/// [`tidb_planner::cardinality`] owns how it is read, and neither has to know
+/// the other. A histogram whose `hist_id` names no current column or index --
+/// a dropped one whose stats rows have not been GC'd -- is skipped, because
+/// the estimator keys on the live schema.
+fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStatistics {
+    let mut columns = std::collections::BTreeMap::new();
+    for column in table.cols() {
+        let Some(item) = stats.column(column.id) else {
+            continue;
+        };
+        columns.insert(
+            column.id,
+            ColumnStats {
+                histogram: item.histogram.clone(),
+                topn: item.topn.clone(),
+                cms: item.cms.clone(),
+                stats_ver: item.stats_ver,
+                unsigned: column.field_type.flags() & UNSIGNED_FLAG != 0,
+            },
+        );
+    }
+    let mut indexes = std::collections::BTreeMap::new();
+    for index in &table.indices {
+        let Some(item) = stats.index(index.id) else {
+            continue;
+        };
+        indexes.insert(
+            index.id,
+            index_statistics(item, index.columns.len(), index.unique),
+        );
+    }
+    TableStatistics {
+        row_count: i64::try_from(stats.row_count).unwrap_or(i64::MAX),
+        modify_count: stats.modify_count,
+        columns,
+        indexes,
+    }
+}
+
+/// One index histogram, with the two schema facts the estimator needs that
+/// the stored row does not carry.
+fn index_statistics(item: &ClusterStatsItem, num_columns: usize, unique: bool) -> IndexStats {
+    IndexStats {
+        histogram: item.histogram.clone(),
+        topn: item.topn.clone(),
+        cms: item.cms.clone(),
+        stats_ver: item.stats_ver,
+        num_columns,
+        unique,
+    }
 }
 
 /// The public-column offsets of a clustered composite handle, in key order.
@@ -312,7 +392,8 @@ mod tests {
     #[test]
     fn wide_sql_runs_on_cluster_storage_without_committing() {
         let (storage, buffer, snapshot) = cluster_storage();
-        let (mut session, skipped) = session_with_cluster_storage(&loaded_catalog(), &storage);
+        let (mut session, skipped) =
+            session_with_cluster_storage(&loaded_catalog(), &storage, &StatsSnapshot::new());
         // The unserved table is named in the refusal rather than silently
         // vanishing from the session's catalog.
         assert_eq!(skipped.len(), 1);
@@ -367,7 +448,8 @@ mod tests {
     #[test]
     fn a_snapshot_row_is_visible_and_shadowed_by_a_staged_write() {
         let (storage, _, snapshot) = cluster_storage();
-        let (mut session, _) = session_with_cluster_storage(&loaded_catalog(), &storage);
+        let (mut session, _) =
+            session_with_cluster_storage(&loaded_catalog(), &storage, &StatsSnapshot::new());
         session.run("USE app").unwrap();
         // Write one row through the driver, promote its staged bytes into the
         // snapshot, and start over: that is what a COMMIT leaves behind for the

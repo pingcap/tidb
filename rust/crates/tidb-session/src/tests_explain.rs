@@ -94,10 +94,21 @@ fn explain_select() {
         ]
     );
 
-    // An indexed column's range scan. TiDB prints the same 3333.33 and
-    // the same `table:t, index:ub(b)` access object; it wraps the scan in
-    // a TableReader/cop task (divergence 1) and its Selection sits in the
-    // cop task rather than above the scan.
+    // A filter on an INDEXED column that real TiDB nevertheless answers with
+    // a FULL SCAN. Captured from a live v8.5.6 playground on this exact
+    // schema, with no analyzed statistics:
+    //
+    //   TableReader_7        3333.33  root                 data:Selection_6
+    //   └─Selection_6        3333.33  cop[tikv]            gt(ac.t.b, "x")
+    //     └─TableFullScan_5  10000.00 cop[tikv]  table:t   keep order:false, stats:pseudo
+    //
+    // `SELECT *` needs `c`, which `ub(b)` does not store, so the index path
+    // is an `IndexLookUp` and pays Go's double-read request cost
+    // (`indexRows / IndexLookupSize * 32 * tidb_request_factor`, 6e6 per
+    // task) -- which a 3333-row range cannot repay. This assertion is the
+    // receipt for the cost-based choice: the earlier "first index whose
+    // leading column is constrained" rule printed `IndexRangeScan` here and
+    // did NOT match Go.
     assert_eq!(
         row_text(session.run("EXPLAIN SELECT * FROM t WHERE b > 'x'")),
         vec![
@@ -118,11 +129,11 @@ fn explain_select() {
                 "gt(test.t.b, \"x\")".to_owned(),
             ],
             vec![
-                "  └─IndexRangeScan_1".to_owned(),
-                "3333.33".to_owned(),
+                "  └─TableFullScan_1".to_owned(),
+                "10000.00".to_owned(),
                 "root".to_owned(),
-                "table:t, index:ub(b)".to_owned(),
-                "range:(\"x\",+inf], keep order:false, stats:pseudo".to_owned(),
+                "table:t".to_owned(),
+                "keep order:false, stats:pseudo".to_owned(),
             ],
         ]
     );

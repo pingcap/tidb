@@ -20,8 +20,9 @@
 //! 1. [`commit_fast_path_source`] -- Go's `TryFastPlan`. A single-table
 //!    `SELECT` whose `WHERE` pins the handle or a whole unique index reads
 //!    those rows directly ([`try_batch_point_get`], [`try_point_get`]);
-//!    otherwise an index whose leading column the `WHERE` constrains supplies
-//!    ranges ([`try_index_ranges`]). Each fast path installs a *streaming*
+//!    otherwise the cheapest access path [`crate::access_cost`] enumerates
+//!    supplies ranges ([`choose_index_range_path`]), which may be the full
+//!    scan itself. Each fast path installs a *streaming*
 //!    source over the narrowed path, and the `WHERE` stays in the pipeline
 //!    above: these narrow the source, they never replace the filter.
 //! 2. [`prune_scan_columns`] -- the kept-column offer.
@@ -38,11 +39,11 @@
 //!
 //! # Why this is its own file
 //!
-//! The path choice here stands in for Go's cost-based access-path selection,
-//! which needs statistics this tier does not yet carry: it takes the index
-//! that pins the most columns rather than the cheapest one. Keeping the
-//! choice and the negotiation that follows it in one place is what makes that
-//! replaceable without touching the rest of the driver.
+//! The path choice is Go's cost-based one ([`crate::access_cost`] holds the
+//! enumeration, the estimates and the cost formula); this file is where that
+//! choice meets the executor it commits to and the negotiation that follows
+//! it. Keeping the two together is what keeps a costed path and a runnable
+//! path from drifting apart.
 
 use super::*;
 
@@ -97,7 +98,9 @@ pub(crate) fn commit_fast_path_source(
     // full scan with the rows the index covers, and the WHERE stays above to
     // apply the conditions the ranges did not consume.
     if try_point_get(select, &table, &columns)?.is_none() {
-        if let Some((index_id, ranges)) = try_index_ranges(select, &table, &columns) {
+        if let Some((index_id, ranges, estimate)) =
+            choose_index_range_path(select, catalog, scope, &table, &columns)
+        {
             let exec = IndexRangeSourceExec::new(
                 ExecutorMeta::new(
                     Schema::new(source_schema_columns(&columns)),
@@ -114,7 +117,7 @@ pub(crate) fn commit_fast_path_source(
                     .indexes()
                     .iter()
                     .find(|index| index.id == index_id)
-                    .expect("try_index_ranges returns an index of this table")
+                    .expect("the chosen path names an index of this table")
                     .column_offsets
                     .clone(),
                 single_range: ranges.len() == 1,
@@ -124,7 +127,7 @@ pub(crate) fn commit_fast_path_source(
                     .indexes()
                     .iter()
                     .find(|index| index.id == index_id)
-                    .expect("try_index_ranges returns an index of this table");
+                    .expect("the chosen path names an index of this table");
                 let index_columns: Vec<&str> = index
                     .column_offsets
                     .iter()
@@ -135,6 +138,7 @@ pub(crate) fn commit_fast_path_source(
                     &index.name,
                     &index_columns,
                     &ranges,
+                    estimate,
                 );
                 trace.set_scan_act_rows(exec.produced_rows());
             }
@@ -280,51 +284,168 @@ pub(crate) fn offer_scan_limit(
         access.accept_scan_limit(cap);
     }
 }
-/// The index access path for a `WHERE`, when one applies.
+/// The index access path a `WHERE` should be read through, when an index
+/// beats the full table scan.
 ///
 /// Go's `DetachCondAndBuildRangeForIndex` splits a predicate into access
 /// conditions, which become index ranges, and filter conditions, which stay
-/// above the read. This builds ranges for the conditions on one index's
-/// leading column and leaves the whole `WHERE` in the pipeline, so the filter
-/// half is applied by the selection rather than dropped.
+/// above the read; `findBestTask` then costs every path that split produced
+/// and keeps the cheapest. This does the same through
+/// [`crate::access_cost`], and returns `None` when the winner is the full
+/// scan -- so a filter too broad to pay for an index simply leaves the scan
+/// in place, which is the case a "first index that fits" rule always got
+/// wrong.
 ///
-/// The ranges come from [`crate::index_range`], which ports Go's point
-/// algebra and the detacher's column walk; see that module for the shapes it
-/// covers and the ones it defers. Among the indexes the `WHERE` constrains,
-/// this takes the one whose ranges pin the most index columns, then the one
-/// that consumed the most conditions, then declaration order -- a stand-in for
-/// Go's cost-based access-path choice, which needs statistics this crate does
-/// not carry.
-pub(crate) fn try_index_ranges(
+/// The whole `WHERE` stays in the pipeline either way, so the filter half of
+/// the split is applied by the selection rather than dropped.
+pub(crate) fn choose_index_range_path(
     select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    scope: &FromScope,
     table: &KvTable,
     columns: &[(String, FieldType)],
-) -> Option<(i64, Vec<IndexRange>)> {
+) -> Option<(i64, Vec<IndexRange>, crate::access_cost::ScanEstimate)> {
     let where_clause = select.where_clause.as_ref()?;
+    // The columns the statement reads, which decides whether an index path
+    // covers (Go `isCoveringIndex`) and therefore whether it pays for a
+    // double read. A statement outside the pruner's slice reads everything.
+    let needed: Vec<usize> = crate::column_prune::prunable_columns(select, scope)
+        .unwrap_or_else(|| (0..columns.len()).collect());
+    let resolver = ScopeResolver { scope };
+    // The `LIMIT` an index path may be costed under. `scan_limit_cap`'s own
+    // refusals for things between the source and the LIMIT apply here too;
+    // the residual `WHERE` is the one it cannot know yet, because which
+    // conjuncts the source accepts is settled after the path is chosen. Go
+    // has the same ordering and resolves it through the physical property.
+    let cap = costing_limit_cap(select);
+    let satisfied_by = |offsets: &[usize], single_range: bool| {
+        select.order_by.is_empty() || order_is_index_order(select, offsets, single_range, &resolver)
+    };
+    let limit = cap.map(|cap| crate::access_cost::PushedLimit {
+        cap,
+        satisfied_by: &satisfied_by,
+    });
+    let paths = crate::access_cost::enumerate_paths(
+        table,
+        columns,
+        Some(where_clause),
+        &needed,
+        &resolver,
+        limit.as_ref(),
+        catalog.table_statistics(table.table_id).map(AsRef::as_ref),
+    );
+    let best = crate::access_cost::choose_access_path(paths)?;
+    let (index_id, ranges) = best.index?;
+    Some((index_id, ranges, best.estimate))
+}
 
-    let mut best: Option<(i64, crate::index_range::IndexRanges)> = None;
-    for index in table.indexes() {
-        let index_columns: Vec<(String, FieldType)> = index
-            .column_offsets
-            .iter()
-            .filter_map(|offset| columns.get(*offset).cloned())
-            .collect();
-        if index_columns.len() != index.column_offsets.len() {
-            continue;
-        }
-        let Some(built) =
-            crate::index_range::detach_cond_and_build_range_for_index(&index_columns, where_clause)
-        else {
-            continue;
-        };
-        let better = best.as_ref().is_none_or(|(_, current)| {
-            (built.column_count, built.access_count) > (current.column_count, current.access_count)
-        });
-        if better {
-            best = Some((index.id, built));
-        }
+/// The `offset + count` an index path may be costed under, when nothing
+/// between the source and the `LIMIT` can drop or add a row.
+///
+/// This is [`scan_limit_cap`]'s rule minus the two halves that are not known
+/// until a path is committed: the residual `WHERE`, and which index supplies
+/// the order (the caller supplies that as `satisfied_by`).
+fn costing_limit_cap(select: &tidb_ast::SelectStmt) -> Option<f64> {
+    let limit = select.limit.as_ref()?;
+    let count = eval_limit_bound(&limit.count).ok()?;
+    let offset = match &limit.offset {
+        Some(expr) => eval_limit_bound(expr).ok()?,
+        None => 0,
+    };
+    if select.distinct
+        || select.having.is_some()
+        || !select.group_by.is_empty()
+        || crate::window::select_has_window(select)
+    {
+        return None;
     }
-    best.map(|(id, built)| (id, built.ranges))
+    Some(offset.checked_add(count)? as f64)
+}
+
+/// The estimate `EXPLAIN` prints for a table read that stayed a full scan.
+///
+/// This is the same [`crate::access_cost`] answer the path choice used, so
+/// the printed plan and the costed plan cannot disagree. A table with no
+/// loaded statistics is Go's `PseudoTable`, and the estimate says so.
+pub(crate) fn full_scan_estimate(
+    catalog: &Catalog,
+    entry: &TableEntry,
+) -> crate::access_cost::ScanEstimate {
+    let stats = match entry {
+        TableEntry::Kv(table) => catalog.table_statistics(table.table_id),
+        // A memory table's rows are computed at query time and an
+        // INFORMATION_SCHEMA view has no `mysql.stats_*` row, so there is
+        // nothing to have analyzed; Go prints the pseudo constant for these
+        // too.
+        TableEntry::Mem(_) | TableEntry::View(_) => None,
+    };
+    match stats {
+        Some(stats) => crate::access_cost::ScanEstimate {
+            rows: stats.row_count.max(0) as f64,
+            pseudo: false,
+        },
+        None => crate::access_cost::ScanEstimate::pseudo(crate::plan_trace::PSEUDO_ROW_COUNT),
+    }
+}
+
+/// `cardinality.Selectivity` for a single base table's `WHERE`, when that
+/// table has loaded statistics; `None` leaves the stats-less rates in force.
+///
+/// This is what makes a `Selection` over a full scan print the estRows Go
+/// prints, instead of the pseudo `0.8`/`1/3`/`1/1000` rates.
+pub(crate) fn stats_selectivity(
+    catalog: &Catalog,
+    table: &KvTable,
+    scope: &FromScope,
+    where_clause: Option<&tidb_ast::Expr>,
+) -> Option<f64> {
+    let predicate = where_clause?;
+    let stats = catalog.table_statistics(table.table_id)?;
+    Some(crate::access_cost::selectivity(
+        predicate,
+        table,
+        &scope_resolver(scope),
+        Some(stats.as_ref()),
+    ))
+}
+
+/// `cardinality.Selectivity` for a `SELECT`'s `WHERE` over a single base
+/// table, when that table has loaded statistics.
+pub(crate) fn select_stats_selectivity(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    scope: &FromScope,
+) -> Option<f64> {
+    let table = single_kv_table(&select.from, catalog, current_db)?;
+    stats_selectivity(catalog, &table, scope, select.where_clause.as_ref())
+}
+
+/// The full-scan estimate and stats-backed selectivity a single-table write's
+/// recorded read plan prints, resolved from the catalog by name.
+pub(crate) fn single_table_trace_estimate(
+    catalog: &Catalog,
+    database: &str,
+    name: &str,
+    visible: &str,
+    columns: &[(String, FieldType)],
+    where_clause: Option<&tidb_ast::Expr>,
+) -> (crate::access_cost::ScanEstimate, Option<f64>) {
+    let Some(entry) = catalog.get_in(database, name) else {
+        return (
+            crate::access_cost::ScanEstimate::pseudo(crate::plan_trace::PSEUDO_ROW_COUNT),
+            None,
+        );
+    };
+    let estimate = full_scan_estimate(catalog, entry);
+    let TableEntry::Kv(table) = entry else {
+        return (estimate, None);
+    };
+    let scope = PlanTrace::single_table_scope(visible, None, columns.to_vec());
+    (
+        estimate,
+        stats_selectivity(catalog, table, &scope, where_clause),
+    )
 }
 
 /// Splits a `WHERE` over one base table into the conjuncts the scan can apply
@@ -763,18 +884,37 @@ fn scan_limit_cap(
     }
     // An ORDER BY the access path already produces.
     let order = index_order?;
-    if !order.single_range || select.order_by.len() > order.column_offsets.len() {
-        return None;
+    order_is_index_order(select, &order.column_offsets, order.single_range, resolver).then_some(cap)
+}
+
+/// Whether an index access path over `column_offsets` already produces the
+/// order the `ORDER BY` asks for.
+///
+/// The by-items must be a prefix of the index's columns, all ascending, over
+/// a single range: the storage iterator walks encoded index keys in ascending
+/// order, several ranges are walked one after another (so their concatenation
+/// is not index order), and the codec's order is the collation order the sort
+/// would have used.
+fn order_is_index_order(
+    select: &tidb_ast::SelectStmt,
+    column_offsets: &[usize],
+    single_range: bool,
+    resolver: &ScopeResolver<'_>,
+) -> bool {
+    if !single_range || select.order_by.len() > column_offsets.len() {
+        return false;
     }
-    for (item, offset) in select.order_by.iter().zip(&order.column_offsets) {
-        // The cursor is forward-only, so a descending key is not this order.
-        if item.desc {
-            return None;
-        }
-        match rewrite_expr_resolved(&item.expr, resolver).ok()? {
-            Expression::Column(column) if usize::try_from(column.index).ok()? == *offset => {}
-            _ => return None,
-        }
-    }
-    Some(cap)
+    select
+        .order_by
+        .iter()
+        .zip(column_offsets)
+        .all(|(item, offset)| {
+            // The cursor is forward-only, so a descending key is not this order.
+            !item.desc
+                && matches!(
+                    rewrite_expr_resolved(&item.expr, resolver),
+                    Ok(Expression::Column(column))
+                        if usize::try_from(column.index).ok() == Some(*offset)
+                )
+        })
 }
