@@ -85,9 +85,22 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
     /// `not_found`, which the caller turns into [`StorageError::NotFound`].
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError>;
 
-    /// Reads every pair in `[start, end)` at the snapshot's timestamp, in key
-    /// order.
-    fn scan(&mut self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError>;
+    /// Reads the pairs of `[start, end)` at the snapshot's timestamp, in key
+    /// order, at most `limit` of them.
+    ///
+    /// `limit` is the whole basis of an incremental scan: a cursor asks for
+    /// one batch, consumes it, and asks again from the key after the last one
+    /// it got, so a range whose consumer stops early is never read past the
+    /// batch it stopped in. An implementation MUST honour it -- returning
+    /// fewer pairs than `limit` means the range is drained, and returning more
+    /// means the caller reads rows it asked not to be sent. `None` asks for
+    /// the whole range.
+    fn scan(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError>;
 
     /// The timestamp every read of this snapshot is served at.
     ///
@@ -254,8 +267,13 @@ impl ClusterSnapshot for SwappableSnapshot {
         self.snapshot()?.get(key)
     }
 
-    fn scan(&mut self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError> {
-        self.snapshot()?.scan(start, end)
+    fn scan(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        self.snapshot()?.scan(start, end, limit)
     }
 
     fn start_ts(&self) -> u64 {
@@ -333,13 +351,6 @@ impl ClusterTableStorage {
             .unwrap_or_else(|poison| poison.into_inner())
             .get(key)
     }
-
-    fn snapshot_scan(&self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError> {
-        self.snapshot
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .scan(start, end)
-    }
 }
 
 impl TableStorage for ClusterTableStorage {
@@ -375,12 +386,13 @@ impl TableStorage for ClusterTableStorage {
                 "cluster storage requires a bounded scan range".to_owned(),
             ));
         };
-        if end <= start {
-            return Ok(Box::new(MergedIterator::new(Vec::new())));
-        }
-        let snapshot = self.snapshot_scan(start, end)?;
         let staged = self.buffer.range(start, end);
-        Ok(Box::new(MergedIterator::new(merge(snapshot, staged))))
+        Ok(Box::new(MergedIterator::open(
+            Arc::clone(&self.snapshot),
+            start.clone(),
+            end.clone(),
+            staged,
+        )?))
     }
 
     /// Serves the scan through the node's coprocessor when it has one, and
@@ -433,83 +445,157 @@ impl TableStorage for ClusterTableStorage {
     }
 }
 
-/// Merges the snapshot pairs and the staged entries of one range.
+/// How many snapshot pairs one refill asks the cluster for.
 ///
-/// Both inputs are already sorted, so this is one linear pass: the staged
-/// entry wins on a tie (it is the transaction's own newer write), and a
-/// tombstone drops the key entirely.
-fn merge(snapshot: SnapshotPairs, staged: Vec<(Key, Option<Vec<u8>>)>) -> Vec<(Key, Vec<u8>)> {
-    let mut merged = Vec::with_capacity(snapshot.len() + staged.len());
-    let mut snapshot = snapshot.into_iter().peekable();
-    let mut staged = staged.into_iter().peekable();
-    loop {
-        let order = match (snapshot.peek(), staged.peek()) {
-            (None, None) => break,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some((snapshot_key, _)), Some((staged_key, _))) => {
-                snapshot_key.as_slice().cmp(staged_key.as_bytes())
-            }
-        };
-        match order {
-            std::cmp::Ordering::Less => {
-                let (key, value) = snapshot.next().expect("peeked");
-                merged.push((Key::from_bytes(key), value));
-            }
-            std::cmp::Ordering::Greater => {
-                let (key, value) = staged.next().expect("peeked");
-                if let Some(value) = value {
-                    merged.push((key, value));
-                }
-            }
-            std::cmp::Ordering::Equal => {
-                snapshot.next();
-                let (key, value) = staged.next().expect("peeked");
-                if let Some(value) = value {
-                    merged.push((key, value));
-                }
-            }
-        }
-    }
-    merged
-}
+/// It is the transport's own page size (`SCAN_PAGE_LIMIT` in the coordinator),
+/// so a batch is one round trip rather than a fraction or a multiple of one.
+const SNAPSHOT_BATCH: usize = 256;
 
-/// A forward cursor over one already-merged range.
+/// A forward cursor over one range, merging the snapshot with the session's
+/// staged writes as it goes -- Go's `unionIter` over `kv.Iterator`.
 ///
-/// The range is materialized because a cluster scan is answered page by page
-/// anyway; the source's streaming `Iterator` shape is preserved at the seam,
-/// not in the transport.
+/// Both halves are pulled, not materialized:
+///
+/// * the snapshot is read one [`SNAPSHOT_BATCH`] at a time, each refill
+///   starting at the key just past the last one served, so a consumer that
+///   stops after one row (a `LIMIT 1`) leaves every later batch unread. This
+///   is what makes an early-stopping cursor cost what it reads instead of what
+///   its range holds.
+/// * the staged half is the transaction's own uncommitted writes for this
+///   range, taken from the session's `BTreeMap` once at open. That copy is
+///   deliberate and is not the eager read this shape exists to avoid: it is
+///   process-local memory bounded by what this transaction itself wrote, and
+///   borrowing it lazily instead would mean holding the session's buffer lock
+///   for the whole lifetime of the cursor -- including across the cluster
+///   round trips above, and against the same statement's own writes.
+///
+/// The merge is the linear walk it always was: the staged entry wins a tie (it
+/// is the transaction's newer write) and a tombstone drops the key entirely,
+/// so a staged row still shadows, inserts and deletes at exactly its position
+/// in key order.
 #[derive(Debug)]
 struct MergedIterator {
-    pairs: Vec<(Key, Vec<u8>)>,
-    position: usize,
+    snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+    /// Where the next refill starts, or `None` once the snapshot half of the
+    /// range is drained.
+    cursor: Option<Key>,
+    end: Key,
+    batch: SnapshotPairs,
+    batch_position: usize,
+    staged: Vec<(Key, Option<Vec<u8>>)>,
+    staged_position: usize,
+    /// The pair `key`/`value` report, which the seam hands out as borrows.
+    current: Option<(Key, Vec<u8>)>,
     empty_key: Key,
 }
 
 impl MergedIterator {
-    fn new(pairs: Vec<(Key, Vec<u8>)>) -> Self {
-        MergedIterator {
-            pairs,
-            position: 0,
+    /// Opens the cursor on the first merged pair of `[start, end)`, reading
+    /// one snapshot batch to find it.
+    fn open(
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        start: Key,
+        end: Key,
+        staged: Vec<(Key, Option<Vec<u8>>)>,
+    ) -> Result<Self, StorageError> {
+        let empty = end <= start;
+        let mut iterator = MergedIterator {
+            snapshot,
+            cursor: (!empty).then_some(start),
+            end,
+            batch: Vec::new(),
+            batch_position: 0,
+            staged: if empty { Vec::new() } else { staged },
+            staged_position: 0,
+            current: None,
             empty_key: Key::default(),
+        };
+        iterator.advance()?;
+        Ok(iterator)
+    }
+
+    /// Reads the next snapshot batch when the current one is spent.
+    fn refill(&mut self) -> Result<(), StorageError> {
+        if self.batch_position < self.batch.len() {
+            return Ok(());
+        }
+        let Some(start) = self.cursor.take() else {
+            return Ok(());
+        };
+        if start >= self.end {
+            return Ok(());
+        }
+        let pairs = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .scan(&start, &self.end, Some(SNAPSHOT_BATCH))?;
+        // A short batch is the end of the range; a full one may not be, so the
+        // next refill resumes at the smallest key this batch cannot have
+        // covered.
+        if pairs.len() >= SNAPSHOT_BATCH {
+            if let Some((last, _)) = pairs.last() {
+                let mut next = last.clone();
+                next.push(0);
+                self.cursor = Some(Key::from_bytes(next));
+            }
+        }
+        self.batch = pairs;
+        self.batch_position = 0;
+        Ok(())
+    }
+
+    /// Produces the next merged pair, or `None` at the end of the range.
+    fn advance(&mut self) -> Result<(), StorageError> {
+        loop {
+            self.refill()?;
+            let snapshot_head = self.batch.get(self.batch_position).map(|(key, _)| key);
+            let staged_head = self.staged.get(self.staged_position).map(|(key, _)| key);
+            let order = match (snapshot_head, staged_head) {
+                (None, None) => {
+                    self.current = None;
+                    return Ok(());
+                }
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (Some(snapshot_key), Some(staged_key)) => {
+                    snapshot_key.as_slice().cmp(staged_key.as_bytes())
+                }
+            };
+            if order != std::cmp::Ordering::Greater {
+                let (key, value) = self.batch[self.batch_position].clone();
+                self.batch_position += 1;
+                if order == std::cmp::Ordering::Less {
+                    self.current = Some((Key::from_bytes(key), value));
+                    return Ok(());
+                }
+                // Equal: the transaction's own write replaces this key.
+            }
+            let (key, value) = self.staged[self.staged_position].clone();
+            self.staged_position += 1;
+            if let Some(value) = value {
+                self.current = Some((key, value));
+                return Ok(());
+            }
+            // A tombstone yields nothing; keep walking.
         }
     }
 }
 
 impl StorageIterator for MergedIterator {
     fn valid(&self) -> bool {
-        self.position < self.pairs.len()
+        self.current.is_some()
     }
 
     fn key(&self) -> &Key {
-        self.pairs
-            .get(self.position)
+        self.current
+            .as_ref()
             .map_or(&self.empty_key, |(key, _)| key)
     }
 
     fn value(&self) -> &[u8] {
-        self.pairs
-            .get(self.position)
+        self.current
+            .as_ref()
             .map_or(&[][..], |(_, value)| value.as_slice())
     }
 
@@ -517,12 +603,15 @@ impl StorageIterator for MergedIterator {
         if !self.valid() {
             return Err(StorageError::InvalidIterator);
         }
-        self.position += 1;
-        Ok(())
+        self.advance()
     }
 
     fn close(&mut self) {
-        self.position = self.pairs.len();
+        self.current = None;
+        self.cursor = None;
+        self.batch = Vec::new();
+        self.batch_position = 0;
+        self.staged_position = self.staged.len();
     }
 }
 
@@ -537,6 +626,8 @@ mod tests {
         data: BTreeMap<Vec<u8>, Vec<u8>>,
         gets: Vec<Vec<u8>>,
         scans: Vec<(Vec<u8>, Vec<u8>)>,
+        /// Every pair this snapshot handed back, summed over all scans.
+        rows_read: usize,
         fail_with: Option<StorageError>,
     }
 
@@ -549,17 +640,27 @@ mod tests {
             Ok(self.data.get(key.as_bytes()).cloned())
         }
 
-        fn scan(&mut self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError> {
+        fn scan(
+            &mut self,
+            start: &Key,
+            end: &Key,
+            limit: Option<usize>,
+        ) -> Result<SnapshotPairs, StorageError> {
             if let Some(error) = self.fail_with.clone() {
                 return Err(error);
             }
             self.scans
                 .push((start.as_bytes().to_vec(), end.as_bytes().to_vec()));
-            Ok(self
+            let pairs: SnapshotPairs = self
                 .data
                 .range(start.as_bytes().to_vec()..end.as_bytes().to_vec())
+                .take(limit.unwrap_or(usize::MAX))
                 .map(|(key, value)| (key.clone(), value.clone()))
-                .collect())
+                .collect();
+            // What the cluster actually served, which is the cost a scan pays
+            // whether or not the caller goes on to consume it.
+            self.rows_read += pairs.len();
+            Ok(pairs)
         }
     }
 
@@ -775,5 +876,117 @@ mod tests {
         );
         other.set(key(b"b"), b"2".to_vec()).unwrap();
         assert_eq!(buffer.len(), 1, "and still stages into the session buffer");
+    }
+
+    /// A key wide enough that byte order and numeric order agree.
+    fn row_key(index: usize) -> Vec<u8> {
+        format!("row{index:06}").into_bytes()
+    }
+
+    /// A storage over `rows` snapshot rows, with every tenth row also staged
+    /// (a newer value) and every hundredth staged as a tombstone.
+    fn large_storage(
+        rows: usize,
+    ) -> (
+        ClusterTableStorage,
+        Arc<Mutex<MockSnapshot>>,
+        MutationBuffer,
+    ) {
+        let snapshot = Arc::new(Mutex::new(MockSnapshot {
+            data: (0..rows)
+                .map(|index| (row_key(index), format!("snap{index}").into_bytes()))
+                .collect(),
+            ..MockSnapshot::default()
+        }));
+        let buffer = MutationBuffer::new();
+        for index in (0..rows).step_by(10) {
+            if index % 100 == 0 {
+                buffer.delete(Key::from_bytes(row_key(index)));
+            } else {
+                buffer.set(
+                    Key::from_bytes(row_key(index)),
+                    format!("mine{index}").into_bytes(),
+                );
+            }
+        }
+        let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
+        (
+            ClusterTableStorage::new(buffer.clone(), handle),
+            snapshot,
+            buffer,
+        )
+    }
+
+    /// A cursor the caller stops after one row must cost one batch, not the
+    /// range. This is the `LIMIT 1` over a big table: while `iter` merged the
+    /// whole range at open, all 10_000 rows crossed the seam before the first
+    /// was returned, and dropping the cursor saved nothing -- the reading was
+    /// already done.
+    #[test]
+    fn a_cursor_dropped_after_one_row_reads_one_batch_not_the_range() {
+        let rows = 10_000;
+        let (mut store, snapshot, _buffer) = large_storage(rows);
+        let start = key(b"row");
+        let end = key(b"rox");
+        {
+            let iterator = store.iter(Some(&start), Some(&end)).unwrap();
+            assert!(iterator.valid());
+            // row000000 is staged as a tombstone, so the first merged row is
+            // the snapshot's row000001: the merge is live, not skipped.
+            assert_eq!(iterator.key().as_bytes(), row_key(1).as_slice());
+            assert_eq!(iterator.value(), b"snap1");
+            // The caller has its one row and abandons the cursor.
+        }
+        let read = snapshot.lock().unwrap().rows_read;
+        assert!(
+            read <= SNAPSHOT_BATCH,
+            "a LIMIT 1 read {read} rows of {rows}; one batch of {SNAPSHOT_BATCH} is the budget"
+        );
+    }
+
+    /// The batched merge must answer exactly what a one-shot merge did,
+    /// including at a batch boundary: a staged insert that lands at the seam
+    /// between two batches has no snapshot row to be compared against until
+    /// the next batch has been pulled.
+    #[test]
+    fn batched_reading_yields_the_same_rows_as_one_shot_reading() {
+        let rows = 1_000;
+        let (mut store, snapshot, _buffer) = large_storage(rows);
+        store
+            .set(key(b"row000255a"), b"inserted-at-the-seam".to_vec())
+            .unwrap();
+        store
+            .set(key(b"row000512a"), b"inserted-past-a-seam".to_vec())
+            .unwrap();
+        let mut expected: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        for index in 0..rows {
+            if index % 100 == 0 {
+                // A staged tombstone hides the snapshot's row entirely.
+            } else if index % 10 == 0 {
+                expected.push((row_key(index), format!("mine{index}").into_bytes()));
+            } else {
+                expected.push((row_key(index), format!("snap{index}").into_bytes()));
+            }
+            if index == 255 {
+                expected.push((b"row000255a".to_vec(), b"inserted-at-the-seam".to_vec()));
+            }
+            if index == 512 {
+                expected.push((b"row000512a".to_vec(), b"inserted-past-a-seam".to_vec()));
+            }
+        }
+        let mut seen: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let mut iterator = store.iter(Some(&key(b"row")), Some(&key(b"rox"))).unwrap();
+        while iterator.valid() {
+            seen.push((
+                iterator.key().as_bytes().to_vec(),
+                iterator.value().to_vec(),
+            ));
+            iterator.next().unwrap();
+        }
+        assert_eq!(seen, expected);
+        assert!(
+            snapshot.lock().unwrap().scans.len() > 1,
+            "a 1000-row range is more than one batch, so it took more than one scan"
+        );
     }
 }

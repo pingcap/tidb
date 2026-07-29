@@ -78,6 +78,9 @@ enum TransactionRequest {
     Scan {
         start: Vec<u8>,
         end: Vec<u8>,
+        /// At most this many pairs, so an incremental cursor pays for the
+        /// batch it consumes rather than for its whole range.
+        limit: Option<usize>,
         reply: Sender<Result<SnapshotPairs, StorageError>>,
     },
     /// Publishes `mutations` at the transaction's original `start_ts` and ends
@@ -261,9 +264,14 @@ fn serve_transaction(
                     .map_err(classify);
                 let _ = reply.send(answer);
             }
-            TransactionRequest::Scan { start, end, reply } => {
+            TransactionRequest::Scan {
+                start,
+                end,
+                limit,
+                reply,
+            } => {
                 let answer = transaction
-                    .snapshot_scan(&start, &end, call)
+                    .snapshot_scan(&start, &end, limit, call)
                     .map_err(classify);
                 let _ = reply.send(answer);
             }
@@ -347,12 +355,18 @@ impl ClusterSnapshot for StatementSnapshot {
         })
     }
 
-    fn scan(&mut self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError> {
+    fn scan(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
         let start = start.as_bytes().to_vec();
         let end = end.as_bytes().to_vec();
         ask(&self.thread.sender()?, |reply| TransactionRequest::Scan {
             start,
             end,
+            limit,
             reply,
         })
     }
@@ -481,12 +495,18 @@ impl ClusterSnapshot for SessionSnapshot {
         })
     }
 
-    fn scan(&mut self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError> {
+    fn scan(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
         let start = start.as_bytes().to_vec();
         let end = end.as_bytes().to_vec();
         ask(&self.requests, |reply| TransactionRequest::Scan {
             start,
             end,
+            limit,
             reply,
         })
     }

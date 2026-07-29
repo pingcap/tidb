@@ -213,10 +213,16 @@ mod tests {
             Ok(self.data.get(key.as_bytes()).cloned())
         }
 
-        fn scan(&mut self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError> {
+        fn scan(
+            &mut self,
+            start: &Key,
+            end: &Key,
+            limit: Option<usize>,
+        ) -> Result<SnapshotPairs, StorageError> {
             Ok(self
                 .data
                 .range(start.as_bytes().to_vec()..end.as_bytes().to_vec())
+                .take(limit.unwrap_or(usize::MAX))
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect())
         }
@@ -247,7 +253,7 @@ mod tests {
             let mut store = MemTableStorage::new();
             {
                 let mut snapshot = self.snapshot.lock().unwrap();
-                for (key, value) in snapshot.scan(&request.start, &request.end).unwrap() {
+                for (key, value) in snapshot.scan(&request.start, &request.end, None).unwrap() {
                     store.set(Key::from_bytes(key), value).unwrap();
                 }
             }

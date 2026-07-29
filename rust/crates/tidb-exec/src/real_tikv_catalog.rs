@@ -72,7 +72,7 @@ where
             ));
         };
         self.transaction
-            .snapshot_scan(prefix, &end, &self.call)
+            .snapshot_scan(prefix, &end, None, &self.call)
             .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
     }
 }

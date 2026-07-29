@@ -2212,8 +2212,11 @@ impl Executor for TableScanExec {
         let cap = self.meta.max_chunk_size();
         while req.num_rows() < cap {
             if self.limit.is_some_and(|limit| self.emitted >= limit) {
-                // Early stop: the cursor is dropped, so the rows past the
-                // cap are never read, let alone decoded.
+                // Early stop: the cursor is dropped, so nothing past the
+                // batch the cap fell in is read, and no row past the cap is
+                // decoded. The backend cursor pulls the snapshot one batch at
+                // a time, so "dropped" is what actually stops the reading --
+                // it did not when the cursor materialized its whole range.
                 self.cursor = None;
                 self.remote = None;
                 return Ok(());

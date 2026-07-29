@@ -729,12 +729,23 @@ where
     /// cannot make the caller see half of one schema version and half of
     /// another — that single-snapshot property is what makes this usable as a
     /// catalog read.
+    ///
+    /// `limit` caps how many pairs come back, which is what makes an
+    /// incremental caller possible: a cursor that asks for one batch, then
+    /// asks again from the key after the last one it got, spends only the
+    /// pages it actually consumes. `None` reads the whole range, which is what
+    /// a catalog load wants. Fewer pairs than `limit` means the range is
+    /// drained, never that one page came back short.
     pub fn snapshot_scan(
         &mut self,
         start_key: &[u8],
         end_key: &[u8],
+        limit: Option<usize>,
         call: &UnaryCallContext,
     ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
+        if limit == Some(0) {
+            return Ok(Vec::new());
+        }
         if start_key.is_empty() {
             return Err(OptimisticCoordinatorError::SnapshotGet(
                 "scan start key is empty".to_owned(),
@@ -762,10 +773,18 @@ where
             } else {
                 region_end.clone()
             };
+            // A caller that wants fewer rows than a full page must not make
+            // TiKV read a full page: the page itself shrinks to what is left
+            // of the caller's budget.
+            let page_limit = limit.map_or(SCAN_PAGE_LIMIT, |limit| {
+                u32::try_from(limit - pairs.len())
+                    .unwrap_or(SCAN_PAGE_LIMIT)
+                    .min(SCAN_PAGE_LIMIT)
+            });
             let request = KvrpcScanRequest {
                 start_key: cursor.clone(),
                 end_key: page_end.clone(),
-                limit: SCAN_PAGE_LIMIT,
+                limit: page_limit,
                 version: self.start_ts,
                 ..KvrpcScanRequest::default()
             };
@@ -835,7 +854,10 @@ where
                 region: route.region(),
                 publication: response.publication,
             });
-            if page_len == SCAN_PAGE_LIMIT as usize {
+            if limit.is_some_and(|limit| pairs.len() >= limit) {
+                break;
+            }
+            if page_len == page_limit as usize {
                 // The page filled up; the next key after the last one served
                 // is the smallest key this page could not have covered.
                 cursor = last_key;

@@ -235,10 +235,16 @@ mod tests {
             Ok(self.data.get(key.as_bytes()).cloned())
         }
 
-        fn scan(&mut self, start: &Key, end: &Key) -> Result<SnapshotPairs, StorageError> {
+        fn scan(
+            &mut self,
+            start: &Key,
+            end: &Key,
+            limit: Option<usize>,
+        ) -> Result<SnapshotPairs, StorageError> {
             Ok(self
                 .data
                 .range(start.as_bytes().to_vec()..end.as_bytes().to_vec())
+                .take(limit.unwrap_or(usize::MAX))
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect())
         }
