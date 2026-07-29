@@ -379,3 +379,43 @@ fn a_cascade_is_taken_back_by_rollback_to_savepoint() {
     );
     session.run("ROLLBACK").unwrap();
 }
+
+/// `SHOW CREATE TABLE` round-trips the constraint, byte for byte against
+/// real TiDB -- including the implicit `KEY` TiDB adds for the referencing
+/// columns, and its absence when an existing key already covers them.
+#[test]
+fn show_create_table_prints_the_constraint_and_its_implicit_index() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE p (id INT PRIMARY KEY)").unwrap();
+    session
+        .run(
+            "CREATE TABLE c (id INT, pid INT, \
+             FOREIGN KEY (pid) REFERENCES p(id) ON DELETE CASCADE)",
+        )
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SHOW CREATE TABLE c")[0][1],
+        "CREATE TABLE `c` (\n  \
+         `id` int(11) DEFAULT NULL,\n  \
+         `pid` int(11) DEFAULT NULL,\n  \
+         KEY `fk_1` (`pid`),\n  \
+         CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `p` (`id`) ON DELETE CASCADE\n\
+         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+    // A key whose PREFIX is the referencing columns already covers the
+    // constraint, so no implicit index is added; one that merely contains
+    // them does not.
+    session
+        .run("CREATE TABLE e (pid INT, k INT, KEY kk (pid, k), FOREIGN KEY (pid) REFERENCES p(id))")
+        .unwrap();
+    assert!(!rows(&mut session, "SHOW CREATE TABLE e")[0][1].contains("KEY `fk_1`"));
+    session
+        .run("CREATE TABLE f (pid INT, k INT, KEY kk (k, pid), FOREIGN KEY (pid) REFERENCES p(id))")
+        .unwrap();
+    assert!(rows(&mut session, "SHOW CREATE TABLE f")[0][1].contains("KEY `fk_1` (`pid`)"));
+    // The clustered primary key covers it too.
+    session
+        .run("CREATE TABLE g (pid INT PRIMARY KEY, FOREIGN KEY (pid) REFERENCES p(id))")
+        .unwrap();
+    assert!(!rows(&mut session, "SHOW CREATE TABLE g")[0][1].contains("KEY `fk_1`"));
+}

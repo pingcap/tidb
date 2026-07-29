@@ -1786,6 +1786,33 @@ pub fn run_create_table_in(
         &database,
         foreign_key_checks,
     )? {
+        // Go `addForeignKeyIndex`: a foreign key needs an index on its
+        // referencing columns, and TiDB adds one named after the constraint
+        // UNLESS an existing key -- the clustered primary key included --
+        // already has those columns as a PREFIX. Captured: a child whose FK
+        // column is its primary key, and one with `KEY kk (pid, k)`, get no
+        // extra index, while one with `KEY kk (k, pid)` does.
+        let covered = |offsets: &[usize]| offsets.starts_with(&foreign_key.cols);
+        let clustered: &[usize] = if pk_is_handle {
+            pk_offsets.as_slice()
+        } else {
+            common_handle_offsets.as_slice()
+        };
+        if !covered(clustered)
+            && !table
+                .indexes()
+                .iter()
+                .any(|index| covered(&index.column_offsets))
+        {
+            let id = table.next_index_id();
+            table.add_index(KvIndex {
+                id,
+                name: foreign_key.name.clone(),
+                unique: false,
+                column_offsets: foreign_key.cols.clone(),
+                visible: true,
+            });
+        }
         table.add_foreign_key(foreign_key);
     }
     catalog.register_kv_in(&database, name, table);

@@ -164,6 +164,38 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
         }
     }
 
+    // Go prints the referential constraints after every key, each on its own
+    // line, with the `ON DELETE`/`ON UPDATE` clause only when one was
+    // written. `RESTRICT` is the stored form of NO ACTION/SET DEFAULT/no
+    // clause, so the three are indistinguishable here -- the one place this
+    // engine's collapse of them is visible.
+    for foreign_key in table.foreign_keys() {
+        let columns = foreign_key
+            .cols
+            .iter()
+            .map(|offset| escape_name(&table.columns[*offset].name))
+            .collect::<Vec<_>>()
+            .join(",");
+        let referenced = foreign_key
+            .ref_cols
+            .iter()
+            .map(|name| escape_name(name))
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut clause = format!(
+            "  CONSTRAINT {} FOREIGN KEY ({columns}) REFERENCES {} ({referenced})",
+            escape_name(&foreign_key.name),
+            escape_name(&foreign_key.ref_table),
+        );
+        if let Some(action) = referential_action_sql(foreign_key.on_delete) {
+            clause.push_str(&format!(" ON DELETE {action}"));
+        }
+        if let Some(action) = referential_action_sql(foreign_key.on_update) {
+            clause.push_str(&format!(" ON UPDATE {action}"));
+        }
+        clauses.push(clause);
+    }
+
     out.push_str(&clauses.join(",\n"));
     out.push_str(&format!(
         "\n) ENGINE=InnoDB DEFAULT CHARSET={} COLLATE={}",
@@ -171,6 +203,17 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
         table_charset.collation.name()
     ));
     out
+}
+
+/// The `ON DELETE`/`ON UPDATE` spelling `SHOW CREATE TABLE` prints, or
+/// `None` for the default -- Go prints no clause for `RESTRICT`, which is
+/// also what an omitted clause stores.
+fn referential_action_sql(action: tidb_executor::FkAction) -> Option<&'static str> {
+    match action {
+        tidb_executor::FkAction::Restrict => None,
+        tidb_executor::FkAction::Cascade => Some("CASCADE"),
+        tidb_executor::FkAction::SetNull => Some("SET NULL"),
+    }
 }
 
 /// The ` CHARACTER SET x COLLATE y` tail a column clause carries when its own
