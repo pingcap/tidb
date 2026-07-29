@@ -353,3 +353,49 @@ fn the_no_auto_value_on_zero_sql_mode_is_refused_rather_than_ignored() {
     session.run("INSERT INTO ai VALUES (0, 1)").unwrap();
     assert_eq!(one(&mut session, "SELECT id FROM ai"), "1");
 }
+
+/// DDL implicitly COMMITS the open transaction before it runs, so a TRUNCATE
+/// inside `BEGIN` is durable and the counter it resets is the SURVIVING
+/// table's, not a working copy's.
+///
+/// Captured from TiDB over `INSERT (committed); BEGIN; INSERT; TRUNCATE;
+/// ROLLBACK`: the table is EMPTY afterwards -- the ROLLBACK takes nothing
+/// back, because the TRUNCATE committed what preceded it -- and the next
+/// insert gets id 1.
+#[test]
+fn truncate_inside_a_transaction_implicitly_commits_it() {
+    let mut session = table(None);
+    session.run("INSERT INTO ai (v) VALUES (1)").unwrap();
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO ai (v) VALUES (2)").unwrap();
+    session.run("TRUNCATE TABLE ai").unwrap();
+    session.run("ROLLBACK").unwrap();
+    assert!(
+        rows(&mut session, "SELECT id, v FROM ai").is_empty(),
+        "the TRUNCATE committed, so the ROLLBACK restores nothing"
+    );
+    session.run("INSERT INTO ai (v) VALUES (3)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM ai"),
+        [["1", "3"]],
+        "the counter the TRUNCATE reset is the one the next insert allocates from"
+    );
+}
+
+/// The same implicit commit on the `ALTER TABLE ... AUTO_INCREMENT` path,
+/// where the discriminator is the row rather than the counter. Captured: the
+/// row inserted inside the transaction SURVIVES the ROLLBACK.
+#[test]
+fn alter_auto_increment_inside_a_transaction_implicitly_commits_it() {
+    let mut session = table(None);
+    session.run("INSERT INTO ai (v) VALUES (1)").unwrap();
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO ai (v) VALUES (2)").unwrap();
+    session.run("ALTER TABLE ai AUTO_INCREMENT=100").unwrap();
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM ai ORDER BY id"),
+        [["1", "1"], ["2", "2"]],
+        "the ALTER committed the row staged before it"
+    );
+}

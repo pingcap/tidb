@@ -349,8 +349,31 @@ impl Session {
     ///
     /// Returns `Some(output)` for those statements and `None` for anything
     /// else, so a caller can dispatch without re-parsing.
+    ///
+    /// This is also where DDL's IMPLICIT COMMIT lives, because every DDL
+    /// statement passes through here before reaching its own arm --
+    /// see the `Stmt::Ddl` arm below.
     pub fn apply_schema_statement(&mut self, sql: &str) -> Result<Option<StmtOutput>, DriverError> {
         let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        if matches!(stmt, Stmt::Ddl(_)) {
+            // Go commits the open transaction before running any DDL
+            // (`session.ExecuteStmt`, which calls `sessiontxn`'s
+            // `OnStmtStart` -> `checkBeforeNewTxn` for a DDL node), so the
+            // DDL and everything staged before it are already durable when
+            // it starts. Captured from TiDB: after
+            // `INSERT; BEGIN; INSERT; TRUNCATE TABLE d; ROLLBACK` the table
+            // is EMPTY -- the ROLLBACK takes nothing back, because the
+            // TRUNCATE committed the insert that preceded it -- and the same
+            // `ALTER TABLE ... AUTO_INCREMENT` sequence leaves the in-
+            // transaction row stored.
+            //
+            // Doing this before the DDL runs is also what keeps the DDL off
+            // the transaction's WORKING COPY of the catalog: with no open
+            // transaction, `with_catalog_mut` reaches the shared catalog, so
+            // a TRUNCATE's counter reset lands on the table that survives
+            // rather than on a copy about to be discarded.
+            self.commit()?;
+        }
         match &stmt {
             Stmt::Session(session_stmt) => match &**session_stmt {
                 SessionStmt::Use(name) => {
