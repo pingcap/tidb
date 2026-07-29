@@ -1603,6 +1603,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-planner",
+ "tidb-tablecodec",
  "tidb-util",
 ]
 

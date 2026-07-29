@@ -406,13 +406,34 @@ pub(crate) fn run_insert_traced(
                     .map_err(|e| DriverError::Parse(format!("conflict lookup failed: {e:?}")))?;
                 if !conflicts.is_empty() {
                     if insert.replace {
-                        // Captured: the affected count is one per deleted row
-                        // plus one for the inserted row.
+                        // Go `InsertValues.removeRow` (`insert_common.go`):
+                        // a conflicting row IDENTICAL to the one being
+                        // written is left in place -- not deleted and not
+                        // rewritten -- and counts ONE, not the two a
+                        // delete-plus-insert would. This is also the site
+                        // `tidb_lock_unchanged_keys` governs, which is why
+                        // Go's `TestInsertLockUnchangedKeys` drives it with
+                        // `replace into t values (1)` over the same row.
+                        let mut unchanged = false;
                         for handle in &conflicts {
+                            let existing = kv.get_row_by_handle(handle).map_err(|e| {
+                                DriverError::Parse(format!("row read failed: {e:?}"))
+                            })?;
+                            if existing.as_deref() == Some(row) {
+                                inserted += 1;
+                                unchanged = true;
+                                break;
+                            }
+                            // Otherwise the conflicting row goes, and the
+                            // affected count is one per deleted row plus one
+                            // for the inserted row.
                             kv.delete_row(handle).map_err(|e| {
                                 DriverError::Parse(format!("row delete failed: {e:?}"))
                             })?;
                             inserted += 1;
+                        }
+                        if unchanged {
+                            continue;
                         }
                     } else if !insert.on_duplicate.is_empty() {
                         inserted += apply_on_duplicate(

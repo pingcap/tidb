@@ -20,5 +20,10 @@ tidb-util = { path = "../tidb-util" }
 sha1 = { workspace = true }
 sha2 = { workspace = true }
 
+[dev-dependencies]
+# `tests_dml_lock_keys` classifies the raw keys a DML statement leaves behind
+# as record or index keys, which is `tablecodec`'s judgement to make.
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+
 [lints]
 workspace = true

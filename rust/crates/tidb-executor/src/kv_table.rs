@@ -1159,6 +1159,32 @@ impl KvTable {
         self.store.key_count() == 0
     }
 
+    /// Every raw key this table's backend currently holds, in key order:
+    /// record keys and index keys together.
+    ///
+    /// This is the set a statement's *locks* would have to cover, which is
+    /// what ports of Go's `TestDeleteLockKey` / `TestInsertLockUnchangedKeys`
+    /// assert against. Go reads the same fact out of the membuffer
+    /// (`pkg/kv/union_store.go`); this tier gives each table its own
+    /// [`crate::storage::TableStorage`], so the whole key set is readable
+    /// directly.
+    pub fn stored_keys(&mut self) -> Result<Vec<Vec<u8>>, KvTableError> {
+        let mut iterator = self
+            .store
+            .iter(None, None)
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        let mut keys = Vec::new();
+        while iterator.valid() {
+            keys.push(iterator.key().as_slice().to_vec());
+            iterator
+                .next()
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        }
+        iterator.close();
+        keys.sort_unstable();
+        Ok(keys)
+    }
+
     /// Inserts one row (a `Datum` per column, in schema order): encodes the
     /// record key from the next handle and the value through the v2 row format,
     /// exactly the bytes a TiKV-backed table would store.
