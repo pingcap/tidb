@@ -356,6 +356,10 @@ impl ClusterSnapshot for StatementSnapshot {
             reply,
         })
     }
+
+    fn start_ts(&self) -> u64 {
+        self.thread.start_ts
+    }
 }
 
 /// One connection's open `BEGIN` ... `COMMIT`: a single transaction that every
@@ -408,6 +412,7 @@ impl SessionTransaction {
     pub fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
         Ok(Box::new(SessionSnapshot {
             requests: self.thread.sender()?,
+            start_ts: self.thread.start_ts,
         }))
     }
 
@@ -453,11 +458,17 @@ impl SessionTransaction {
 /// statement, and the transaction stays open for the next one.
 struct SessionSnapshot {
     requests: Sender<TransactionRequest>,
+    /// The timestamp the transaction opened at, which every statement of it
+    /// reads at; a remote scan has to name it.
+    start_ts: u64,
 }
 
 impl fmt::Debug for SessionSnapshot {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("SessionSnapshot").finish()
+        formatter
+            .debug_struct("SessionSnapshot")
+            .field("start_ts", &self.start_ts)
+            .finish()
     }
 }
 
@@ -478,6 +489,10 @@ impl ClusterSnapshot for SessionSnapshot {
             end,
             reply,
         })
+    }
+
+    fn start_ts(&self) -> u64 {
+        self.start_ts
     }
 }
 

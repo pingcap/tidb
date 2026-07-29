@@ -58,7 +58,7 @@
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -76,6 +76,7 @@ use tidb_executor::storage::StorageError;
 use tidb_planner::physical_selection::PhysicalSelectionPlan;
 use tidb_planner::physical_table_scan::PhysicalTableScanPlan;
 use tidb_planner::scan_pushdown::{ScanColumnInfo, TiKvTableScanSpec};
+use tidb_proto::tipb::ExecType;
 use tidb_txnkv::KeyRange;
 
 use crate::dag_request::{construct_capped_read_only_dag_req, DagRequestContext, TiKvScanPlan};
@@ -119,6 +120,10 @@ pub struct CopScanSource<F> {
     /// Scans this node served remotely, against the ones it refused.
     scans_served: Arc<AtomicU64>,
     scans_refused: Arc<AtomicU64>,
+    /// The executor list of each DAG this node sent, read back from the
+    /// encoded request. This is the receipt that the Selection and the cap
+    /// really travelled, rather than a claim that they did.
+    requests: Arc<Mutex<Vec<String>>>,
 }
 
 impl<F> fmt::Debug for CopScanSource<F> {
@@ -133,7 +138,7 @@ impl<F> fmt::Debug for CopScanSource<F> {
 }
 
 /// What a node's coprocessor scans have done so far, as plain counters.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CopScanStats {
     /// Rows the coprocessor sent to this node.
     pub rows_returned: u64,
@@ -141,6 +146,8 @@ pub struct CopScanStats {
     pub scans_served: u64,
     /// Scans refused, which fell back to the byte-level cursor.
     pub scans_refused: u64,
+    /// One line per sent request, naming its DAG executors.
+    pub requests: Vec<String>,
 }
 
 impl<F> CopScanSource<F> {
@@ -154,6 +161,7 @@ impl<F> CopScanSource<F> {
             rows_returned: Arc::new(AtomicU64::new(0)),
             scans_served: Arc::new(AtomicU64::new(0)),
             scans_refused: Arc::new(AtomicU64::new(0)),
+            requests: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -164,6 +172,11 @@ impl<F> CopScanSource<F> {
             rows_returned: self.rows_returned.load(Ordering::Relaxed),
             scans_served: self.scans_served.load(Ordering::Relaxed),
             scans_refused: self.scans_refused.load(Ordering::Relaxed),
+            requests: self
+                .requests
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .clone(),
         }
     }
 }
@@ -232,6 +245,7 @@ where
         )
         .map_err(|error| PushdownScannerError::Unsupported(error.to_string()))?;
 
+        let summary = dag_summary(&dag);
         let key_range = KeyRange::new(request.start.clone(), request.end.clone());
         let mut shapes = vec![ExecutorShape::new(ExecutorKind::TableScan)];
         if selection.is_some() {
@@ -257,12 +271,62 @@ where
                 PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
             })?;
         self.scans_served.fetch_add(1, Ordering::Relaxed);
+        self.requests
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .push(summary);
         Ok(Box::new(CopRowStream {
             batches: Some(batches),
             pending: Vec::new().into_iter(),
             returned: 0,
         }))
     }
+}
+
+/// The DAG's executor list, read back out of the built request.
+///
+/// A receipt is worth more than an assertion here: this reads what is about to
+/// be encoded, so it cannot claim a Selection the request does not carry.
+fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
+    let executors: Vec<String> = dag
+        .executors
+        .iter()
+        .map(|executor| match executor.tp {
+            Some(tp) if tp == ExecType::TypeTableScan as i32 => {
+                let columns = executor
+                    .tbl_scan
+                    .as_ref()
+                    .map_or(0, |scan| scan.columns.len());
+                let table = executor
+                    .tbl_scan
+                    .as_ref()
+                    .and_then(|scan| scan.table_id)
+                    .unwrap_or_default();
+                format!("TableScan(table {table}, {columns} columns)")
+            }
+            Some(tp) if tp == ExecType::TypeSelection as i32 => format!(
+                "Selection({} conditions)",
+                executor
+                    .selection
+                    .as_ref()
+                    .map_or(0, |selection| selection.conditions.len())
+            ),
+            Some(tp) if tp == ExecType::TypeLimit as i32 => format!(
+                "Limit({})",
+                executor
+                    .limit
+                    .as_ref()
+                    .and_then(|limit| limit.limit)
+                    .unwrap_or_default()
+            ),
+            other => format!("executor {other:?}"),
+        })
+        .collect();
+    format!(
+        "{} -> output offsets {:?}",
+        executors.join(" | "),
+        dag.output_offsets
+    )
 }
 
 /// Everything the reader thread needs, owned independently of the caller.

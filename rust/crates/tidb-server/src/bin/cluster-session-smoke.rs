@@ -41,11 +41,13 @@ use tidb_exec::cluster_catalog::{configure_loaded_table, ClusterCatalog};
 use tidb_exec::cluster_table_storage::{
     commit_staged_buffer, statement_storage, SessionTransaction,
 };
+use tidb_exec::cop_scan::{CopScanSource, CopScanStats};
 use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
-use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
+use tidb_exec::real_tikv_read::{ProductionReadProcessAuthority, ProductionReadSessionFactory};
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
+use tidb_executor::pushdown_scan::PushdownScanner;
 use tidb_server::cluster_session::session_with_cluster_storage;
 use tidb_session::StmtResult;
 
@@ -61,12 +63,18 @@ fn main() -> ExitCode {
     }
 }
 
+/// The node's coprocessor capability, retained typed so the run can print its
+/// counters as a receipt.
+type CopScans = Arc<CopScanSource<ProductionReadSessionFactory>>;
+
 struct Arguments {
     pd: String,
     schema: String,
     statements: Vec<String>,
     commit: bool,
     transaction: bool,
+    /// Read base tables through the coprocessor rather than through raw KV.
+    cop: bool,
 }
 
 fn parse_arguments() -> Result<Arguments, String> {
@@ -75,6 +83,7 @@ fn parse_arguments() -> Result<Arguments, String> {
     let mut statements = Vec::new();
     let mut commit = false;
     let mut transaction = false;
+    let mut cop = false;
     let mut argv = std::env::args().skip(1);
     while let Some(flag) = argv.next() {
         match flag.as_str() {
@@ -83,6 +92,7 @@ fn parse_arguments() -> Result<Arguments, String> {
             "--sql" => statements.push(argv.next().ok_or("--sql needs a statement")?),
             "--commit" => commit = true,
             "--transaction" => transaction = true,
+            "--cop" => cop = true,
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -96,6 +106,7 @@ fn parse_arguments() -> Result<Arguments, String> {
         },
         commit,
         transaction,
+        cop,
     })
 }
 
@@ -131,11 +142,30 @@ fn run() -> Result<(), String> {
 
     let opener = Arc::new(authority.transaction_opener());
     let buffer = MutationBuffer::new();
+    let cop_scans: Option<CopScans> = arguments
+        .cop
+        .then(|| Arc::new(CopScanSource::new(authority.transport_factory(), "UTC", 0)));
     let failure = if arguments.transaction {
-        run_explicit_transaction(&opener, &buffer, &catalog, &arguments)
+        run_explicit_transaction(&opener, &buffer, &catalog, &arguments, cop_scans.as_ref())
     } else {
-        run_autocommit(&opener, &buffer, &catalog, &arguments)
+        run_autocommit(&opener, &buffer, &catalog, &arguments, cop_scans.as_ref())
     };
+    if let Some(scans) = cop_scans.as_ref() {
+        let CopScanStats {
+            rows_returned,
+            scans_served,
+            scans_refused,
+            requests,
+        } = scans.stats();
+        for request in &requests {
+            println!("coprocessor request: {request}");
+        }
+        println!(
+            "coprocessor scans: served {scans_served}, refused {scans_refused}, \
+             rows across the wire {rows_returned}"
+        );
+    }
+    drop(cop_scans);
     // The opener clone holds PD request handles; the authority's shutdown
     // drains and refuses to stop while any are live (the drain footgun only a
     // real cluster exposes) -- release ours before asking it to stop.
@@ -155,9 +185,12 @@ fn run_autocommit(
     buffer: &MutationBuffer,
     catalog: &ClusterCatalog,
     arguments: &Arguments,
+    cop_scans: Option<&CopScans>,
 ) -> Option<String> {
     for sql in &arguments.statements {
-        if let Err(error) = run_statement(opener, buffer, catalog, &arguments.schema, sql) {
+        if let Err(error) =
+            run_statement(opener, buffer, catalog, &arguments.schema, sql, cop_scans)
+        {
             return Some(error);
         }
     }
@@ -184,6 +217,7 @@ fn run_explicit_transaction(
     buffer: &MutationBuffer,
     catalog: &ClusterCatalog,
     arguments: &Arguments,
+    cop_scans: Option<&CopScans>,
 ) -> Option<String> {
     let transaction = match SessionTransaction::begin(Arc::clone(opener), TIMEOUT) {
         Ok(transaction) => transaction,
@@ -193,7 +227,10 @@ fn run_explicit_transaction(
     println!("BEGIN at start_ts {start_ts}");
     let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
     let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&slot) as _;
-    let storage = ClusterTableStorage::new(buffer.clone(), handle);
+    let mut storage = ClusterTableStorage::new(buffer.clone(), handle);
+    if let Some(scans) = cop_scans {
+        storage = storage.with_pushdown_scanner(Arc::clone(scans) as Arc<dyn PushdownScanner>);
+    }
     for sql in &arguments.statements {
         let snapshot = match transaction.snapshot() {
             Ok(snapshot) => snapshot,
@@ -260,9 +297,13 @@ fn run_statement(
     catalog: &ClusterCatalog,
     schema: &str,
     sql: &str,
+    cop_scans: Option<&CopScans>,
 ) -> Result<(), String> {
-    let (storage, snapshot) = statement_storage(Arc::clone(opener), buffer.clone(), TIMEOUT)
+    let (mut storage, snapshot) = statement_storage(Arc::clone(opener), buffer.clone(), TIMEOUT)
         .map_err(|error| error.to_string())?;
+    if let Some(scans) = cop_scans {
+        storage = storage.with_pushdown_scanner(Arc::clone(scans) as Arc<dyn PushdownScanner>);
+    }
     let start_ts = snapshot
         .lock()
         .map_err(|_| "the snapshot handle is poisoned".to_owned())?

@@ -141,3 +141,73 @@ fn the_wide_lowering_refuses_everything_outside_the_signed_bigint_shape() {
         Err(WideScanSelectionError::UnsupportedLiteral { offset: 2 })
     );
 }
+
+/// The pushed row cap becomes a coprocessor `Limit` above the Selection, so
+/// the rows past it never leave the region. Go builds the same executor list
+/// for a `LIMIT` pushed into a TiKV reader.
+#[test]
+fn a_pushed_cap_becomes_a_limit_executor_above_the_selection() {
+    let scan = PhysicalTableScanPlan::init(
+        0,
+        0,
+        TiKvTableScanSpec::new(114, vec![column_info(1, 3), column_info(2, 0)]),
+    );
+    let selection = wide_scan_selection_plan(&[pushed(
+        0,
+        ScanComparisonOp::Gt,
+        Datum::Int(195),
+        true,
+    )])
+    .expect("a signed BIGINT comparison lowers");
+    let dag = tidb_exec::dag_request::construct_capped_read_only_dag_req(
+        &DagRequestContext::new("UTC", 0, 0, DistSqlEncodeType::Default),
+        TiKvScanPlan::Table(&scan),
+        Some(&selection),
+        Some(5),
+        &[0, 1],
+    )
+    .expect("the capped request builds");
+
+    let kinds: Vec<i32> = dag
+        .executors
+        .iter()
+        .map(|executor| executor.tp.expect("every executor names its type"))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ExecType::TypeTableScan as i32,
+            ExecType::TypeSelection as i32,
+            ExecType::TypeLimit as i32,
+        ],
+        "the cap is the last executor: it counts rows the Selection kept"
+    );
+    assert_eq!(
+        dag.executors[2]
+            .limit
+            .as_ref()
+            .and_then(|limit| limit.limit),
+        Some(5)
+    );
+
+    // The encoded bytes are what TiKV reads, so the cap has to survive them.
+    let decoded = DagRequest::decode(dag.encode_to_vec().as_slice()).expect("the DAG round-trips");
+    assert_eq!(
+        decoded.executors[2]
+            .limit
+            .as_ref()
+            .and_then(|limit| limit.limit),
+        Some(5)
+    );
+
+    // Without a cap the executor list is the pair it always was.
+    let uncapped = tidb_exec::dag_request::construct_capped_read_only_dag_req(
+        &DagRequestContext::new("UTC", 0, 0, DistSqlEncodeType::Default),
+        TiKvScanPlan::Table(&scan),
+        Some(&selection),
+        None,
+        &[0, 1],
+    )
+    .expect("the uncapped request builds");
+    assert_eq!(uncapped.executors.len(), 2);
+}
