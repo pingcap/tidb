@@ -16,13 +16,10 @@
 //! shared [`ExecutorMeta`] base state, and concrete operators.
 //!
 //! This crate is the execution *spine* -- the pull-based `Open`/`Next(chunk)`/
-//! `Close` driver that ties parsed plans to results. It is a native-boundary
-//! split of `pkg/executor` (kept separate from the large `tidb-exec` crate of
-//! individual operator fragments so the wired engine builds fast). It depends
-//! only on `tidb-chunk` (the row batches), `tidb-expr` (expression evaluation),
-//! and `tidb-datatype`.
+//! `Close` driver that ties parsed plans to results, a native-boundary split of
+//! `pkg/executor`.
 //!
-//! SEED SCOPE: the `Executor` trait core (open/next/close/schema/ret_field_types/
+//! SCOPE: the `Executor` trait core (open/next/close/schema/ret_field_types/
 //! init_cap/max_chunk_size/new_chunk) plus the operator set: `TableDualExec`,
 //! `ProjectionExec`, `SelectionExec`, `HashAggExec`, `SortExec`, `LimitExec`,
 //! `HashJoinExec`/`JoinExec`, `WindowExec`, `ApplyExec`, `ExplainExec`, the KV
@@ -37,9 +34,9 @@
 //!
 //! It stays a separate crate from `tidb-exec` so the engine builds without that
 //! crate's cluster/session bulk; the edge runs `tidb-exec` -> `tidb-executor`,
-//! so this one is upstream and never sees it. (The older "only three deps, seed
-//! scope" framing was outgrown: the real dependency set is 11 crates, and
-//! `tidb-exec` carries a second, non-production engine — see its crate doc.)
+//! so this one is upstream and never sees it. `tidb-exec` once carried a
+//! second, non-production query engine; it was deleted, and this is now the
+//! only one.
 //!
 //! DEFERRED (documented): the Go `context.Context`/`sessionctx` propagation,
 //! runtime stats, the SQL killer, `Detach`, and parallel projection.
