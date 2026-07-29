@@ -56,9 +56,7 @@ use crate::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::cluster_privilege_load::{
     ClusterPrivileges, DB_PRIVILEGE_COLUMNS, USER_PRIVILEGE_COLUMNS,
 };
-use crate::mysql_system_tables::{
-    scan_system_table_keyed, SystemTableError, SystemTableView, SYSTEM_DB,
-};
+use crate::mysql_system_tables::{scan_system_table, SystemTableError, SystemTableView, SYSTEM_DB};
 use crate::system_row_write::{
     canonical_text, defaults_row, delete_row, indexed_columns, insert_row, row_id_of, update_row,
     RowEncodeError, RowValues, NO, YES,
@@ -511,7 +509,7 @@ fn read_rows<S: MetaSnapshot>(
 ) -> Result<Vec<StoredRow>, AccountWriteError> {
     let view = full_view(table);
     let mut rows = Vec::new();
-    for (key, value) in scan_system_table_keyed(snapshot, &view)? {
+    for (key, value) in scan_system_table(snapshot, &view)? {
         let values = tidb_tablecodec::decode_table_row_to_map(&value, &column_types(table), None)
             .map_err(|error| {
             AccountWriteError::Read(SystemTableError::Decode {

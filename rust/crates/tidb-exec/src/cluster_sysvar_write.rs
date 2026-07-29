@@ -36,9 +36,7 @@ use tidb_txnkv::transaction::OptimisticMutation;
 
 use crate::cluster_catalog::ClusterCatalog;
 use crate::cluster_catalog::MetaSnapshot;
-use crate::mysql_system_tables::{
-    scan_system_table_keyed, SystemTableError, SystemTableView, SYSTEM_DB,
-};
+use crate::mysql_system_tables::{scan_system_table, SystemTableError, SystemTableView, SYSTEM_DB};
 use crate::system_row_write::{
     defaults_row, delete_row, insert_row, row_id_of, update_row, RowEncodeError, RowValues,
 };
@@ -123,7 +121,7 @@ pub fn plan_sysvar_write<S: MetaSnapshot>(
 
     let view = full_view(table);
     let mut by_name: BTreeMap<String, StoredRow> = BTreeMap::new();
-    for (key, value) in scan_system_table_keyed(snapshot, &view)? {
+    for (key, value) in scan_system_table(snapshot, &view)? {
         let values = tidb_tablecodec::decode_table_row_to_map(&value, &column_types(table), None)
             .map_err(|error| {
             SysvarWriteError::Read(SystemTableError::Decode {
@@ -253,7 +251,7 @@ fn first_free_row_id<S: MetaSnapshot>(
     };
     let highest = {
         let view = full_view(table);
-        scan_system_table_keyed(snapshot, &view)?
+        scan_system_table(snapshot, &view)?
             .into_iter()
             .map(|(key, _)| row_id_of(&key))
             .collect::<Result<Vec<_>, _>>()?

@@ -27,6 +27,7 @@ tidb-parser = { path = "../tidb-parser" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-stats = { path = "../tidb-stats" }
 tidb-protocol = { path = "../tidb-protocol" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }

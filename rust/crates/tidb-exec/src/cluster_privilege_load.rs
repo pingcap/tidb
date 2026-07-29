@@ -361,8 +361,8 @@ pub fn read_bootstrap_state<S: MetaSnapshot>(
     };
     let mut bootstrapped = false;
     let mut version = None;
-    for value in scan_system_table(snapshot, &view)? {
-        let row = SystemRow::parse(&view, &value)?;
+    for (key, value) in scan_system_table(snapshot, &view)? {
+        let row = SystemRow::parse(&view, &key, &value)?;
         let Some(name) = row.text("variable_name")? else {
             continue;
         };
@@ -395,8 +395,8 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
     let mut loaded = ClusterPrivileges::default();
 
     let users = SystemTableView::locate(catalog, "user", USER_COLUMNS)?;
-    for value in scan_system_table(snapshot, &users)? {
-        let row = SystemRow::parse(&users, &value)?;
+    for (key, value) in scan_system_table(snapshot, &users)? {
+        let row = SystemRow::parse(&users, &key, &value)?;
         loaded.users.push(LoadedUser {
             host: row.text("host")?.unwrap_or_default(),
             user: row.text("user")?.unwrap_or_default(),
@@ -409,8 +409,8 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
     }
 
     if let Ok(view) = SystemTableView::locate(catalog, "db", DB_COLUMNS) {
-        for value in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &value)?;
+        for (key, value) in scan_system_table(snapshot, &view)? {
+            let row = SystemRow::parse(&view, &key, &value)?;
             loaded.db_grants.push(LoadedDbGrant {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -425,8 +425,8 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
         "tables_priv",
         &["host", "user", "db", "table_name", "table_priv"],
     ) {
-        for value in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &value)?;
+        for (key, value) in scan_system_table(snapshot, &view)? {
+            let row = SystemRow::parse(&view, &key, &value)?;
             loaded.table_grants.push(LoadedTableGrant {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -449,8 +449,8 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
             "column_priv",
         ],
     ) {
-        for value in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &value)?;
+        for (key, value) in scan_system_table(snapshot, &view)? {
+            let row = SystemRow::parse(&view, &key, &value)?;
             loaded.column_grants.push(LoadedColumnGrant {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -467,8 +467,8 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
         "global_grants",
         &["host", "user", "priv", "with_grant_option"],
     ) {
-        for value in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &value)?;
+        for (key, value) in scan_system_table(snapshot, &view)? {
+            let row = SystemRow::parse(&view, &key, &value)?;
             loaded.dynamic_grants.push(LoadedDynamicGrant {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),
@@ -483,8 +483,8 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
         "role_edges",
         &["from_host", "from_user", "to_host", "to_user"],
     ) {
-        for value in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &value)?;
+        for (key, value) in scan_system_table(snapshot, &view)? {
+            let row = SystemRow::parse(&view, &key, &value)?;
             loaded.role_edges.push(LoadedRoleEdge {
                 role_host: row.text("from_host")?.unwrap_or_default(),
                 role_user: row.text("from_user")?.unwrap_or_default(),
@@ -499,8 +499,8 @@ pub fn load_cluster_privileges<S: MetaSnapshot>(
         "default_roles",
         &["host", "user", "default_role_host", "default_role_user"],
     ) {
-        for value in scan_system_table(snapshot, &view)? {
-            let row = SystemRow::parse(&view, &value)?;
+        for (key, value) in scan_system_table(snapshot, &view)? {
+            let row = SystemRow::parse(&view, &key, &value)?;
             loaded.default_roles.push(LoadedDefaultRole {
                 host: row.text("host")?.unwrap_or_default(),
                 user: row.text("user")?.unwrap_or_default(),

@@ -57,8 +57,8 @@ pub fn load_cluster_sysvars<S: MetaSnapshot>(
         return Ok(Vec::new());
     };
     let mut loaded = Vec::new();
-    for value in scan_system_table(snapshot, &view)? {
-        let row = SystemRow::parse(&view, &value)?;
+    for (key, value) in scan_system_table(snapshot, &view)? {
+        let row = SystemRow::parse(&view, &key, &value)?;
         let Some(name) = row.text("variable_name")? else {
             continue;
         };
