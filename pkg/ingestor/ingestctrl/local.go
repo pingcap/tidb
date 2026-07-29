@@ -1666,19 +1666,20 @@ func (local *Backend) doImport(
 		e.SetWorkerPool(pool)
 	}
 
+	skipStartWorker := false
 	failpoint.Inject("skipStartWorker", func() {
-		failpoint.Goto("afterStartWorker")
+		skipStartWorker = true
 	})
 
 	workGroup.Go(func() error {
-		pool.Start(wctx)
+		if !skipStartWorker {
+			pool.Start(wctx)
+		}
 		<-wctx.Done()
 		failpoint.InjectCall("beforeReleaseRegionJobWorkerPool")
 		pool.Release()
 		return wctx.OperatorErr()
 	})
-
-	failpoint.Label("afterStartWorker")
 
 	workGroup.Go(func() error {
 		err := local.prepareAndSendJob(
