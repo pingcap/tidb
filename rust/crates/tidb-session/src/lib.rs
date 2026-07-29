@@ -2614,6 +2614,8 @@ mod tests_core;
 #[cfg(test)]
 mod tests_explain;
 #[cfg(test)]
+mod tests_foreign_key;
+#[cfg(test)]
 mod tests_global_vars;
 #[cfg(test)]
 mod tests_grants;
