@@ -800,6 +800,7 @@ func (b *builtinUncompressSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	if err != nil {
 		return err
 	}
+	var out bytes.Buffer
 	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -819,7 +820,7 @@ func (b *builtinUncompressSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 			continue
 		}
 		length := binary.LittleEndian.Uint32([]byte(payload[0:4]))
-		bytes, err := inflate([]byte(payload[4:]), length, tracker)
+		bytes, err := inflate([]byte(payload[4:]), length, tracker, &out)
 		if err != nil {
 			if errZlibZBuf.Equal(err) {
 				tc.AppendWarning(errZlibZBuf)

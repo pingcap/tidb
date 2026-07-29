@@ -810,51 +810,46 @@ func deflate(data []byte) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-type trackedLimitedBuffer struct {
+type limitedBuffer struct {
 	// Keep bytes.Buffer as a named field so io.Copy must go through Write.
-	buf      bytes.Buffer
-	limit    int64
-	tracker  *memory.Tracker
-	consumed int64
+	buf   *bytes.Buffer
+	limit int64
 }
 
-func (b *trackedLimitedBuffer) Write(p []byte) (int, error) {
+func (b *limitedBuffer) Write(p []byte) (int, error) {
 	if int64(len(p)) > b.limit-int64(b.buf.Len()) {
 		return 0, errZlibZBuf
-	}
-	if b.tracker != nil {
-		delta := int64(len(p))
-		b.consumed += delta
-		b.tracker.Consume(delta)
 	}
 	return b.buf.Write(p)
 }
 
-func (b *trackedLimitedBuffer) release() {
-	if b.tracker != nil && b.consumed > 0 {
-		b.tracker.Consume(-b.consumed)
-		b.consumed = 0
-	}
-}
-
 // inflate uncompresses a string using the DEFLATE format with a hard output limit.
-func inflate(compressStr []byte, declaredLength uint32, tracker *memory.Tracker) ([]byte, error) {
+func inflate(compressStr []byte, declaredLength uint32, tracker *memory.Tracker, out *bytes.Buffer) ([]byte, error) {
 	reader := bytes.NewReader(compressStr)
-	out := trackedLimitedBuffer{
-		limit:   int64(declaredLength),
-		tracker: tracker,
-	}
-	defer out.release()
 	r, err := zlib.NewReader(reader)
 	if err != nil {
 		return nil, err
 	}
 	defer r.Close()
+	if out == nil {
+		out = &bytes.Buffer{}
+	} else {
+		out.Reset()
+	}
+	limit := int64(declaredLength)
+	if tracker != nil && limit > 0 {
+		defer tracker.Consume(-limit)
+		tracker.Consume(limit)
+	}
+	limitedOut := limitedBuffer{
+		buf:   out,
+		limit: limit,
+	}
 	/* #nosec G110 */
-	if _, err = io.Copy(&out, r); err != nil {
+	if _, err = io.Copy(&limitedOut, r); err != nil {
 		return nil, err
 	}
-	return out.buf.Bytes(), nil
+	return out.Bytes(), nil
 }
 
 type compressFunctionClass struct {
@@ -998,7 +993,7 @@ func (b *builtinUncompressSig) evalString(ctx EvalContext, row chunk.Row) (strin
 	if err != nil {
 		return "", true, err
 	}
-	bytes, err := inflate([]byte(payload[4:]), length, tracker)
+	bytes, err := inflate([]byte(payload[4:]), length, tracker, nil)
 	if err != nil {
 		if errZlibZBuf.Equal(err) {
 			tc.AppendWarning(errZlibZBuf)
