@@ -108,13 +108,9 @@ func openParser(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
-<<<<<<< HEAD
-		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path, chunk.FileMeta.ParquetMeta)
-=======
-		parser, err = parquetfile.NewParser(
+		parser, err = mydump.NewParquetParser(
 			ctx, store, openReader, chunk.FileMeta.Path, chunk.FileMeta.FileSize, chunk.FileMeta.ParquetMeta,
 		)
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250))
 		if err != nil {
 			return nil, err
 		}

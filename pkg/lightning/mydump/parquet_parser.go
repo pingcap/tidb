@@ -416,15 +416,11 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	return nil
 }
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser.go
-func (pp *ParquetParser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
-=======
 // getBuilder picks a column-reader strategy for the current row group:
 //   - whole-file preload, when prepareReader has already loaded the file;
 //   - per-row-group preload, when the row group fits rowGroupInMemoryThreshold;
 //   - per-column streaming, otherwise.
-func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser.go
+func (pp *ParquetParser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -622,34 +618,22 @@ func ReadParquetFileRowCountByFile(
 	return reader.MetaData().NumRows, nil
 }
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser.go
-// NewParquetParser generates a parquet parser.
-func NewParquetParser(
-=======
-// NewParser creates a Parquet parser. A positive fileSize must be exact and may
+// NewParquetParser creates a Parquet parser. A positive fileSize must be exact and may
 // enable whole-file preloading without calling openReader; pass 0 to disable it.
-func NewParser(
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser.go
+func NewParquetParser(
 	ctx context.Context,
 	store storeapi.Storage,
 	openReader func(context.Context) (io.ReadSeekCloser, error),
 	path string,
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser.go
+	fileSize int64,
 	meta ParquetFileMeta,
 ) (*ParquetParser, error) {
-	logger := log.Wrap(logutil.Logger(ctx))
-	wrapper := &parquetWrapper{ReadSeekCloser: r}
-=======
-	fileSize int64,
-	meta FileMeta,
-) (*Parser, error) {
 	logger := log.Wrap(logutil.Logger(ctx))
 	wrapper, preloadBase, r, err := prepareReader(ctx, store, openReader, path, fileSize)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser.go
 	defer func() {
 		if r != nil {
 			_ = r.Close()
@@ -754,20 +738,7 @@ func NewParser(
 		return make([]types.Datum, numColumns)
 	})
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser.go
 	parser := &ParquetParser{
-		fileMeta: fileMeta,
-		colTypes: colTypes,
-		colNames: colNames,
-		ctx:      ctx,
-		store:    store,
-		path:     path,
-		prop:     prop,
-		alloc:    allocator,
-		logger:   logger,
-		rowPool:  &pool,
-=======
-	parser := &Parser{
 		fileMeta:    fileMeta,
 		colTypes:    colTypes,
 		colNames:    colNames,
@@ -779,7 +750,6 @@ func NewParser(
 		logger:      logger,
 		rowPool:     &pool,
 		preloadBase: preloadBase,
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser.go
 	}
 	if err := parser.Init(effectiveLoc); err != nil {
 		return nil, errors.Trace(err)
@@ -798,18 +768,9 @@ func SampleStatisticsFromParquet(
 	avgRowSize float64,
 	err error,
 ) {
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser.go
-	r, err := store.Open(ctx, path, nil)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{})
-=======
-	parser, err := NewParser(ctx, store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+	parser, err := NewParquetParser(ctx, store, func(ctx context.Context) (io.ReadSeekCloser, error) {
 		return store.Open(ctx, path, nil)
-	}, path, 0, FileMeta{})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser.go
+	}, path, 0, ParquetFileMeta{})
 	if err != nil {
 		return 0, 0, err
 	}
@@ -927,7 +888,7 @@ func (a *trackingAllocator) Reallocate(size int, b []byte) []byte {
 }
 
 // preloadBufferBytes returns buffer size allocated outside the allocator.
-func (pp *Parser) preloadBufferBytes() (int64, error) {
+func (pp *ParquetParser) preloadBufferBytes() (int64, error) {
 	if pp.preloadBase != nil {
 		return int64(len(pp.preloadBase.buffer)), nil
 	}
@@ -956,13 +917,9 @@ func EstimateParquetReaderMemory(
 	fileSize int64,
 ) (int64, error) {
 	allocator := &trackingAllocator{}
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser.go
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator})
-=======
-	parser, err := NewParser(ctx, store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+	parser, err := NewParquetParser(ctx, store, func(ctx context.Context) (io.ReadSeekCloser, error) {
 		return store.Open(ctx, path, nil)
-	}, path, fileSize, FileMeta{allocator: allocator})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser.go
+	}, path, fileSize, ParquetFileMeta{allocator: allocator})
 	if err != nil {
 		return 0, err
 	}

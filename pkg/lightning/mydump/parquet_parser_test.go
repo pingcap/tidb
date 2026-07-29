@@ -36,11 +36,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-=======
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
@@ -86,29 +82,17 @@ func newParquetParserForTest(
 	t *testing.T,
 	dir string,
 	fileName string,
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
+	fileSize int64,
 	meta ParquetFileMeta,
 ) *ParquetParser {
-=======
-	fileSize int64,
-	meta FileMeta,
-) *Parser {
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
 	t.Helper()
 
 	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-	r, err := store.Open(ctx, fileName, nil)
-	require.NoError(t, err)
-
-	parser, err := NewParquetParser(ctx, store, r, fileName, meta)
-=======
-	parser, err := NewParser(ctx, store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+	parser, err := NewParquetParser(ctx, store, func(ctx context.Context) (io.ReadSeekCloser, error) {
 		return store.Open(ctx, fileName, nil)
 	}, fileName, fileSize, meta)
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -165,11 +149,7 @@ func TestParquetParser(t *testing.T) {
 	name := "test123.parquet"
 	WriteParquetFile(dir, name, pc, 100)
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-	reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{})
-=======
-	reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+	reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{})
 
 	require.Equal(t, []string{"ss", "a_a"}, reader.Columns())
 
@@ -238,9 +218,6 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-	parser := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
-=======
 	info, err := os.Stat(filepath.Join(dir, fileName))
 	require.NoError(t, err)
 	for _, tc := range []struct {
@@ -251,12 +228,11 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 		{name: "whole-file-preload", fileSize: info.Size()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			parser := newParquetParserForTest(context.Background(), t, dir, fileName, tc.fileSize, FileMeta{})
+			parser := newParquetParserForTest(context.Background(), t, dir, fileName, tc.fileSize, ParquetFileMeta{})
 			require.Greater(t, parser.fileMeta.NumRowGroups(), 1)
 			if tc.fileSize > 0 {
 				require.NotNil(t, parser.preloadBase)
 			}
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
 
 			for i := range 50 {
 				require.NoError(t, parser.ReadRow())
@@ -367,11 +343,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "test123.parquet"
 		WriteParquetFile(dir, name, pc, 1)
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
-=======
-		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: time.UTC})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: time.UTC})
 
 		require.Len(t, reader.colNames, 10)
 		require.NoError(t, reader.ReadRow())
@@ -457,11 +429,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "logical-timestamps.parquet"
 		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: asiaShanghai})
-=======
-		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: asiaShanghai})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: asiaShanghai})
 		require.Equal(t, schema.ConvertedTypes.TimestampMillis, reader.colTypes[0].converted)
 		require.Equal(t, schema.ConvertedTypes.TimestampMicros, reader.colTypes[1].converted)
 		require.Equal(t, schema.ConvertedTypes.TimestampMillis, reader.colTypes[2].converted)
@@ -516,11 +484,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "logical-time-local.parquet"
 		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: asiaShanghai})
-=======
-		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: asiaShanghai})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: asiaShanghai})
 		require.Equal(t, schema.ConvertedTypes.TimeMillis, reader.colTypes[0].converted)
 		require.Equal(t, schema.ConvertedTypes.TimeMicros, reader.colTypes[1].converted)
 		require.False(t, reader.colTypes[0].IsAdjustedToUTC)
@@ -558,15 +522,9 @@ func TestParquetVariousTypes(t *testing.T) {
 
 		store, err := objstore.NewLocalStorage(dir)
 		require.NoError(t, err)
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-		r, err := store.Open(context.Background(), name, nil)
-		require.NoError(t, err)
-		parser, err := NewParquetParser(context.Background(), store, r, name, ParquetFileMeta{Loc: time.UTC})
-=======
-		parser, err := NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+		parser, err := NewParquetParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
 			return store.Open(ctx, name, nil)
-		}, name, 0, FileMeta{Loc: time.UTC})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+		}, name, 0, ParquetFileMeta{Loc: time.UTC})
 		require.ErrorContains(t, err, "unsupported timestamp time unit")
 		require.Nil(t, parser)
 	})
@@ -588,11 +546,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "int96-rounds-sub-microsecond.parquet"
 		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
-=======
-		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: time.UTC})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: time.UTC})
 		require.Equal(t, "", reader.colTypes[0].sparkRebaseMicros.timeZoneID)
 		require.NoError(t, reader.ReadRow())
 
@@ -703,11 +657,7 @@ func TestParquetVariousTypes(t *testing.T) {
 					),
 				)
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-				reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
-=======
-				reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: time.UTC})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+				reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: time.UTC})
 				require.NotNil(t, reader.fileMeta.KeyValueMetadata().FindValue("org.apache.spark.version"))
 				if tc.name == "legacy" {
 					version := sparkVersionFromMetadata(reader.fileMeta)
@@ -883,11 +833,7 @@ func TestParquetVariousTypes(t *testing.T) {
 					),
 				)
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-				reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
-=======
-				reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: time.UTC})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+				reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: time.UTC})
 				for _, colType := range reader.colTypes {
 					require.Equal(t, tc.timeZoneID, colType.sparkRebaseMicros.timeZoneID)
 				}
@@ -936,11 +882,7 @@ func TestParquetVariousTypes(t *testing.T) {
 			),
 		)
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
-=======
-		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{Loc: time.UTC})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: time.UTC})
 		require.Equal(t, sparkRebaseDefaultTimeZoneID, reader.colTypes[0].sparkRebaseMicros.timeZoneID)
 		require.NoError(t, reader.ReadRow())
 
@@ -982,11 +924,7 @@ func TestParquetVariousTypes(t *testing.T) {
 			),
 		)
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{})
-=======
-		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{})
 		require.Equal(t, "Asia/Shanghai", reader.loc.String())
 		require.Equal(t, "Asia/Shanghai", reader.colTypes[0].sparkRebaseMicros.timeZoneID)
 	})
@@ -1056,11 +994,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		fileName := "test.02.parquet"
 		WriteParquetFile(dir, fileName, pc, 7)
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-		reader := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
-=======
-		reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+		reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, ParquetFileMeta{})
 
 		for i, expectValue := range expectedValues {
 			assert.NoError(t, reader.ReadRow())
@@ -1095,11 +1029,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		fileName := "test.bool.parquet"
 		WriteParquetFile(dir, fileName, pc, 2)
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-		reader := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
-=======
-		reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+		reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, ParquetFileMeta{})
 
 		// because we always reuse the datums in reader.lastRow.Row, so we can't directly
 		// compare will `DeepEqual` here
@@ -1151,13 +1081,8 @@ func BenchmarkRebaseSparkJulianToGregorianMicros(b *testing.B) {
 }
 
 func TestParquetAurora(t *testing.T) {
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
 	fileName := "test.parquet"
-	parser := newParquetParserForTest(context.TODO(), t, "examples", fileName, ParquetFileMeta{})
-=======
-	fileName := "aurora_snapshot.parquet"
-	parser := newParquetParserForTest(context.TODO(), t, "testfiles", fileName, 0, FileMeta{})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+	parser := newParquetParserForTest(context.TODO(), t, "examples", fileName, 0, ParquetFileMeta{})
 
 	require.Equal(t, []string{"id", "val1", "val2", "d1", "d2", "d3", "d4", "d5", "d6"}, parser.Columns())
 
@@ -1211,15 +1136,9 @@ func TestParquetAurora(t *testing.T) {
 }
 
 func TestHiveParquetParser(t *testing.T) {
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
 	name := "000000_0.parquet"
 	dir := "./parquet/"
-	reader := newParquetParserForTest(context.TODO(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
-=======
-	name := "hive_dump.parquet"
-	dir := "./testfiles"
-	reader := newParquetParserForTest(context.TODO(), t, dir, name, 0, FileMeta{Loc: time.UTC})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+	reader := newParquetParserForTest(context.TODO(), t, dir, name, 0, ParquetFileMeta{Loc: time.UTC})
 	// UTC+0:00
 	results := []time.Time{
 		time.Date(2022, 9, 10, 9, 9, 0, 0, time.UTC),
@@ -1299,11 +1218,7 @@ func TestBasicReadFile(t *testing.T) {
 		readBatchSize = origBatchSize
 	}()
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-	reader := newParquetParserForTest(context.TODO(), t, dir, fileName, ParquetFileMeta{})
-=======
-	reader := newParquetParserForTest(context.TODO(), t, dir, fileName, 0, FileMeta{})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+	reader := newParquetParserForTest(context.TODO(), t, dir, fileName, 0, ParquetFileMeta{})
 	for i := range rowCnt {
 		require.NoError(t, reader.ReadRow())
 		require.Equal(t, string(generated[i]), reader.lastRow.Row[0].GetString())
@@ -1370,11 +1285,7 @@ func TestParquetParserWrapper(t *testing.T) {
 			rowGroupInMemoryThreshold = origThreshold
 		}()
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-		parser := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
-=======
-		parser := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
+		parser := newParquetParserForTest(context.Background(), t, dir, fileName, 0, ParquetFileMeta{})
 
 		gotFixed := make([]string, 0, rowCnt)
 		gotInt := make([]int64, 0, rowCnt)
@@ -1479,69 +1390,6 @@ func TestEstimateParquetReaderMemoryCtxLifetime(t *testing.T) {
 	require.Greater(t, peak, int64(0))
 }
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-=======
-func TestParquetParserLargePagePeakMemory(t *testing.T) {
-	const (
-		rows                      = 64
-		valueSize                 = 512 << 10 // One plain page holds 32 MiB of values.
-		maxStreamingAllocatorPeak = 4 << 20
-	)
-
-	origThreshold := rowGroupInMemoryThreshold
-	rowGroupInMemoryThreshold = 1
-	t.Cleanup(func() { rowGroupInMemoryThreshold = origThreshold })
-
-	makeValue := func(row int) []byte {
-		value := make([]byte, valueSize)
-		for i := range value {
-			value[i] = byte(row + i)
-		}
-		return value
-	}
-
-	dir := t.TempDir()
-	const fileName = "large-page.parquet"
-	columns := []testutils.ParquetColumn{{
-		Name:      "data",
-		Type:      parquet.Types.ByteArray,
-		Converted: schema.ConvertedTypes.UTF8,
-		Gen: func(numRows int) (any, []int16) {
-			data := make([]parquet.ByteArray, numRows)
-			definitionLevels := make([]int16, numRows)
-			for i := range numRows {
-				data[i] = makeValue(i)
-				definitionLevels[i] = 1
-			}
-			return data, definitionLevels
-		},
-	}}
-	require.NoError(t, testutils.WriteParquetFile(dir, fileName, columns, rows,
-		parquet.WithDictionaryFor("data", false),
-		parquet.WithCompressionFor("data", compress.Codecs.Uncompressed),
-		parquet.WithDataPageSize(int64(rows)*valueSize*2),
-	))
-
-	allocator := &trackingAllocator{}
-	reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{allocator: allocator})
-	require.True(t, reader.prop.BufferedStreamEnabled)
-	require.True(t, reader.prop.PageStreamingEnabled)
-	require.Equal(t, int64(1024), reader.prop.BufferSize)
-
-	columnChunk, err := reader.fileMeta.RowGroup(0).ColumnChunk(0)
-	require.NoError(t, err)
-	require.Greater(t, columnChunk.TotalUncompressedSize(), int64(20<<20))
-
-	for i := range rows {
-		require.NoError(t, reader.ReadRow())
-		require.Equal(t, makeValue(i), reader.lastRow.Row[0].GetBytes())
-	}
-	require.ErrorIs(t, reader.ReadRow(), io.EOF)
-	// Allow a few streaming chunks and decoder bookkeeping, while ensuring the
-	// 32 MiB page is never materialized in the tracking allocator.
-	require.Less(t, allocator.peakAllocation.Load(), int64(maxStreamingAllocatorPeak))
-}
-
 func TestParquetParserWholeFileInMemory(t *testing.T) {
 	require.Equal(t, 32<<20, wholeFileInMemoryThreshold)
 	require.Equal(t, 128<<20, rowGroupInMemoryThreshold)
@@ -1550,7 +1398,7 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 	dir := t.TempDir()
 	fileName := "whole-file.parquet"
 
-	pc := []testutils.ParquetColumn{
+	pc := []ParquetColumn{
 		{
 			Name:      "v",
 			Type:      parquet.Types.Int64,
@@ -1566,7 +1414,7 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, testutils.WriteParquetFile(dir, fileName, pc, rowCnt))
+	require.NoError(t, WriteParquetFile(dir, fileName, pc, rowCnt))
 
 	info, err := os.Stat(filepath.Join(dir, fileName))
 	require.NoError(t, err)
@@ -1574,11 +1422,11 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(dir, fileName))
 	require.NoError(t, err)
 
-	read := func(t *testing.T, fileSize int64) (*Parser, *recording.AccessStats) {
+	read := func(t *testing.T, fileSize int64) (*ParquetParser, *recording.AccessStats) {
 		store, accessStats := newParquetS3StoreForTest(t, fileName, data)
-		parser, err := NewParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+		parser, err := NewParquetParser(context.Background(), store, func(ctx context.Context) (io.ReadSeekCloser, error) {
 			return store.Open(ctx, fileName, nil)
-		}, fileName, fileSize, FileMeta{})
+		}, fileName, fileSize, ParquetFileMeta{})
 		require.NoError(t, err)
 		t.Cleanup(func() {
 			require.NoError(t, parser.Close())
@@ -1634,7 +1482,6 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 	})
 }
 
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/parser_test.go
 // getStringFromParquetByteOld is the previous implementation used to convert
 // parquet byte to string. It's only used to generate expected results in tests.
 func getStringFromParquetByteOld(rawBytes []byte, scale int) string {

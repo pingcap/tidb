@@ -50,15 +50,9 @@ type readerAtSeekerCloser interface {
 	io.Closer
 }
 
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_wrapper.go
 // parquetWrapper implements parquet.ReaderAtSeeker.
 type parquetWrapper struct {
-	storeapi.ReadSeekCloser
-=======
-// readerWrapper implements parquet.ReaderAtSeeker.
-type readerWrapper struct {
 	io.ReadSeekCloser
->>>>>>> ab79433f43c (importer, mydump: preload small parquet files in a single read (#68250)):pkg/dumpformat/parquetfile/reader_wrapper.go
 	lastOff int64
 	skipBuf []byte
 }
@@ -264,13 +258,13 @@ func prepareReader(
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
-		return &inMemoryReaderWrapper{base: base, fileSize: fileSize}, base, nil, nil
+		return &inMemoryParquetWrapper{base: base, fileSize: fileSize}, base, nil, nil
 	}
 	r, err := openReader(ctx)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	return &readerWrapper{ReadSeekCloser: r}, nil, r, nil
+	return &parquetWrapper{ReadSeekCloser: r}, nil, r, nil
 }
 
 // Copied from https://github.com/apache/arrow-go/blob/bbf7ab7523a6411e25c7a08566a40e8759cc6c13/parquet/file/row_group_reader.go
