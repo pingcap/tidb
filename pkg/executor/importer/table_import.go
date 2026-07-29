@@ -345,8 +345,8 @@ func (ti *TableImporter) GetKVStore() tidbkv.Storage {
 }
 
 // EstimateParquetReaderMemory estimates parser memory for the parquet file path.
-func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path string) (int64, error) {
-	return parquetfile.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path)
+func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path string, fileSize int64) (int64, error) {
+	return parquetfile.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path, fileSize)
 }
 
 func (e *LoadDataController) getParser(ctx context.Context, chunk *Chunk) (mydump.Parser, error) {
