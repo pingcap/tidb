@@ -85,8 +85,6 @@ func (s *exportScheduler) startGCKeeper() error {
 		s.logger.Warn("storage does not support PD, skip GC safepoint keeper")
 		return nil
 	}
-	// Cancel a keeper from a previous Init (e.g. after a scheduler failover)
-	// before starting a new one, so the old goroutine does not leak.
 	if s.gcCancel != nil {
 		s.gcCancel()
 	}
