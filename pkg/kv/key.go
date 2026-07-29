@@ -275,8 +275,27 @@ func (IntHandle) ExtraMemSize() uint64 {
 
 // CommonHandle implements the Handle interface for non-int64 type handle.
 type CommonHandle struct {
-	encoded       []byte
-	colEndOffsets []uint16
+	encoded            []byte
+	colEndOffsets      [commonHandleInlineColumnCount]uint16
+	extraColEndOffsets any
+}
+
+const commonHandleInlineColumnCount = 4
+
+type commonHandleInlineColumns uint8
+
+type commonHandleOffsetStorage4 struct {
+	offsets [commonHandleInlineColumnCount]uint16
+	length  int
+}
+
+type commonHandleOffsetStorage12 struct {
+	offsets [12]uint16
+	length  int
+}
+
+type commonHandleOffsetStorageSlice struct {
+	offsets []uint16
 }
 
 // NewCommonHandle creates a CommonHandle from a encoded bytes which is encoded by code.EncodeKey.
@@ -289,6 +308,9 @@ func NewCommonHandle(encoded []byte) (*CommonHandle, error) {
 	}
 	remain := encoded
 	endOff := uint16(0)
+	var offsets [16]uint16
+	var extraOffsets []uint16
+	columnCount := 0
 	for len(remain) > 0 {
 		if remain[0] == 0 {
 			// padded data
@@ -301,7 +323,32 @@ func NewCommonHandle(encoded []byte) (*CommonHandle, error) {
 			return nil, err
 		}
 		endOff += uint16(len(col))
-		ch.colEndOffsets = append(ch.colEndOffsets, endOff)
+		if columnCount < len(offsets) {
+			offsets[columnCount] = endOff
+		} else {
+			if extraOffsets == nil {
+				extraOffsets = make([]uint16, len(offsets)-commonHandleInlineColumnCount, len(offsets)*2-commonHandleInlineColumnCount)
+				copy(extraOffsets, offsets[commonHandleInlineColumnCount:])
+			}
+			extraOffsets = append(extraOffsets, endOff)
+		}
+		columnCount++
+	}
+
+	copy(ch.colEndOffsets[:], offsets[:min(columnCount, commonHandleInlineColumnCount)])
+	switch {
+	case columnCount <= commonHandleInlineColumnCount:
+		ch.extraColEndOffsets = commonHandleInlineColumns(columnCount)
+	case columnCount <= 8:
+		storage := &commonHandleOffsetStorage4{length: columnCount - commonHandleInlineColumnCount}
+		copy(storage.offsets[:], offsets[commonHandleInlineColumnCount:columnCount])
+		ch.extraColEndOffsets = storage
+	case columnCount <= len(offsets):
+		storage := &commonHandleOffsetStorage12{length: columnCount - commonHandleInlineColumnCount}
+		copy(storage.offsets[:], offsets[commonHandleInlineColumnCount:columnCount])
+		ch.extraColEndOffsets = storage
+	default:
+		ch.extraColEndOffsets = &commonHandleOffsetStorageSlice{offsets: extraOffsets}
 	}
 	return ch, nil
 }
@@ -313,11 +360,25 @@ func (ch *CommonHandle) Copy() Handle {
 	}
 	encoded := make([]byte, len(ch.encoded))
 	copy(encoded, ch.encoded)
-	colEndOffsets := make([]uint16, len(ch.colEndOffsets))
-	copy(colEndOffsets, ch.colEndOffsets)
+	extraColEndOffsets := ch.extraColEndOffsets
+	switch offsets := ch.extraColEndOffsets.(type) {
+	case *commonHandleOffsetStorage4:
+		copied := *offsets
+		extraColEndOffsets = &copied
+	case *commonHandleOffsetStorage12:
+		copied := *offsets
+		extraColEndOffsets = &copied
+	case *commonHandleOffsetStorageSlice:
+		copied := &commonHandleOffsetStorageSlice{
+			offsets: make([]uint16, len(offsets.offsets)),
+		}
+		copy(copied.offsets, offsets.offsets)
+		extraColEndOffsets = copied
+	}
 	return &CommonHandle{
-		encoded:       encoded,
-		colEndOffsets: colEndOffsets,
+		encoded:            encoded,
+		colEndOffsets:      ch.colEndOffsets,
+		extraColEndOffsets: extraColEndOffsets,
 	}
 }
 
@@ -335,8 +396,9 @@ func (*CommonHandle) IntValue() int64 {
 // Note that the returned encoded field is not guaranteed to be able to decode.
 func (ch *CommonHandle) Next() Handle {
 	return &CommonHandle{
-		encoded:       Key(ch.encoded).PrefixNext(),
-		colEndOffsets: ch.colEndOffsets,
+		encoded:            Key(ch.encoded).PrefixNext(),
+		colEndOffsets:      ch.colEndOffsets,
+		extraColEndOffsets: ch.extraColEndOffsets,
 	}
 }
 
@@ -365,16 +427,40 @@ func (ch *CommonHandle) Len() int {
 
 // NumCols implements the Handle interface.
 func (ch *CommonHandle) NumCols() int {
-	return len(ch.colEndOffsets)
+	if columnCount, ok := ch.extraColEndOffsets.(commonHandleInlineColumns); ok {
+		return int(columnCount)
+	}
+	return commonHandleInlineColumnCount + len(ch.extraColEndOffsetSlice())
+}
+
+func (ch *CommonHandle) extraColEndOffsetSlice() []uint16 {
+	switch offsets := ch.extraColEndOffsets.(type) {
+	case *commonHandleOffsetStorage4:
+		return offsets.offsets[:offsets.length]
+	case *commonHandleOffsetStorage12:
+		return offsets.offsets[:offsets.length]
+	case *commonHandleOffsetStorageSlice:
+		return offsets.offsets
+	}
+	return nil
 }
 
 // EncodedCol implements the Handle interface.
 func (ch *CommonHandle) EncodedCol(idx int) []byte {
-	colStartOffset := uint16(0)
-	if idx > 0 {
-		colStartOffset = ch.colEndOffsets[idx-1]
+	if idx < commonHandleInlineColumnCount {
+		colStartOffset := uint16(0)
+		if idx > 0 {
+			colStartOffset = ch.colEndOffsets[idx-1]
+		}
+		return ch.encoded[colStartOffset:ch.colEndOffsets[idx]]
 	}
-	return ch.encoded[colStartOffset:ch.colEndOffsets[idx]]
+	extraIdx := idx - commonHandleInlineColumnCount
+	extraOffsets := ch.extraColEndOffsetSlice()
+	colStartOffset := ch.colEndOffsets[commonHandleInlineColumnCount-1]
+	if extraIdx > 0 {
+		colStartOffset = extraOffsets[extraIdx-1]
+	}
+	return ch.encoded[colStartOffset:extraOffsets[extraIdx]]
 }
 
 // Data implements the Handle interface.
@@ -410,14 +496,21 @@ func (ch *CommonHandle) String() string {
 
 // MemUsage implements the Handle interface.
 func (ch *CommonHandle) MemUsage() uint64 {
-	// 48 is used by the 2 slice fields.
-	return 48 + ch.ExtraMemSize()
+	return uint64(unsafe.Sizeof(*ch)) + ch.ExtraMemSize()
 }
 
 // ExtraMemSize implements the Handle interface.
 func (ch *CommonHandle) ExtraMemSize() uint64 {
-	// colEndOffsets is a slice of uint16.
-	return uint64(cap(ch.encoded) + cap(ch.colEndOffsets)*2)
+	extra := uint64(cap(ch.encoded))
+	switch offsets := ch.extraColEndOffsets.(type) {
+	case *commonHandleOffsetStorage4:
+		extra += uint64(unsafe.Sizeof(*offsets))
+	case *commonHandleOffsetStorage12:
+		extra += uint64(unsafe.Sizeof(*offsets))
+	case *commonHandleOffsetStorageSlice:
+		extra += uint64(unsafe.Sizeof(*offsets) + uintptr(cap(offsets.offsets))*unsafe.Sizeof(offsets.offsets[0]))
+	}
+	return extra
 }
 
 // HandleMap is the map for Handle.
