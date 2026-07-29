@@ -993,15 +993,20 @@ impl FieldType {
         self.collation_name = collation;
     }
 
-    /// Sets the cached [`Collation`] enum directly, without touching the
-    /// parser-owned name strings. Prefer
-    /// [`set_collation_name`](Self::set_collation_name), which keeps both
-    /// representations in sync from a single call; use this only when a
-    /// caller already holds a resolved `Collation` it wants to apply without
-    /// also rewriting the name string (for example when the name is being
-    /// set separately to a non-canonical spelling).
+    /// Sets the collation from an already-resolved [`Collation`], refreshing
+    /// the name strings that spell it.
+    ///
+    /// Go stores only the names and resolves them on demand; this port also
+    /// caches the resolved enum, so both setters -- this one and
+    /// [`set_collation_name`](Self::set_collation_name) -- write BOTH
+    /// representations. There is deliberately no setter that writes one
+    /// alone: that was how the cached enum went stale and
+    /// [`is_binary_string`](Self::is_binary_string), which reads only the
+    /// enum, answered for a type nobody had.
     pub fn set_collation(&mut self, collation: Collation) {
         self.collation = collation;
+        self.charset_name = collation.charset().name().to_owned();
+        self.collation_name = collation.name().to_owned();
     }
 
     /// Mirrors Go `FieldType.SetElems`: replaces the ENUM/SET elements.
@@ -1609,6 +1614,17 @@ mod tests {
         arith.set_collation_name("binary");
         assert_eq!(arith.collation(), Collation::Binary);
         assert!(!arith.is_binary_string());
+
+        // The enum-shaped setter is symmetric with the name-shaped one: it
+        // writes the name strings too, so neither setter can leave the two
+        // representations disagreeing. `set_collation` wrote the enum alone
+        // and had no caller left at all -- the shape survived only as a trap
+        // for the next one.
+        let mut both = FieldType::new(FieldTypeCode::VarString);
+        both.set_collation(Collation::Binary);
+        assert!(both.is_binary_string());
+        assert_eq!(both.collation_name(), "binary");
+        assert_eq!(both.charset_name(), "binary");
 
         // Switching back to a character collation must also flip the cache.
         ft.set_charset_name("utf8mb4");

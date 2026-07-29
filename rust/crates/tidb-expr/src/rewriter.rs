@@ -60,15 +60,10 @@ impl ColumnResolver for NoResolver {
 /// flag every non-string literal type carries.
 fn set_binary_charset(ft: &mut FieldType) {
     ft.set_charset_name("binary");
+    // `set_collation_name` resolves the cached `Collation` enum that
+    // `is_binary_string` reads, so naming the collation once is enough; there
+    // is no second call here to keep in sync.
     ft.set_collation_name("binary");
-    // `set_collation_name` only mirrors Go's `FieldType.SetCollate` (a plain
-    // string field in Go). This port additionally caches the collation as
-    // `Collation` enum (`FieldType.collation`), which `is_binary_string`
-    // reads -- so the enum must be kept in sync here too, or a value this
-    // function marks binary (hex/bit literals, `UNHEX`, `CAST AS BINARY`,
-    // ...) still reads as a character string to anything that checks the
-    // enum instead of the name strings.
-    ft.set_collation(tidb_datatype::Collation::Binary);
     ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
 }
 
