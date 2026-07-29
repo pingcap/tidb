@@ -34,7 +34,7 @@ use crate::row::Row;
 use tidb_datatype::{Datum, FieldType, MyDecimal, MySqlDuration, Time};
 
 /// Go `chunk.Chunk`: a columnar batch of rows.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Chunk {
     /// Go `sel`: the selected physical row indices, or `None` when all rows are
     /// selected.
@@ -122,6 +122,13 @@ impl Chunk {
             None => idx,
         };
         Row::new(self, physical)
+    }
+
+    /// Go `numVirtualRows`: the field itself, which the join copy helpers and
+    /// their tests assert on directly.
+    #[must_use]
+    pub fn num_virtual_rows(&self) -> usize {
+        self.num_virtual_rows
     }
 
     /// Go `SetNumVirtualRows`.
@@ -315,6 +322,16 @@ impl Chunk {
     /// The chunk's columns (for row accessors within the crate).
     pub(crate) fn columns(&self) -> &[Column] {
         &self.columns
+    }
+
+    /// Go `c.sel != nil`: whether a selection vector is installed.
+    pub(crate) fn has_sel(&self) -> bool {
+        self.sel.is_some()
+    }
+
+    /// Go `numVirtualRows += n`.
+    pub(crate) fn add_virtual_rows(&mut self, n: usize) {
+        self.num_virtual_rows += n;
     }
 }
 

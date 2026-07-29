@@ -92,7 +92,7 @@ pub fn get_fixed_len(field_type: &FieldType) -> i64 {
 }
 
 /// Go `chunk.Column`: a single columnar column of values.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Column {
     length: usize,
     /// Bit `i` records row `i`: 0 = null, 1 = not-null (Go `nullBitmap`).
@@ -486,11 +486,316 @@ impl Column {
         }
         self.length += 1;
     }
+
+    /// Go `nullCount`: the number of null rows currently stored.
+    #[must_use]
+    pub fn null_count(&self) -> usize {
+        let mut cnt = 0;
+        let mut i = 0;
+        while i + 8 <= self.length {
+            // 0 is null and 1 is not null.
+            cnt += 8 - self.null_bitmap[i >> 3].count_ones() as usize;
+            i += 8;
+        }
+        while i < self.length {
+            if self.is_null(i) {
+                cnt += 1;
+            }
+            i += 1;
+        }
+        cnt
+    }
+
+    /// Go `reconstruct`: compact this column in place so that row `n` becomes
+    /// what row `sel[n]` used to be. `sel` must be ascending, which is what
+    /// every caller (`Chunk.sel` filtering) produces; the compaction copies
+    /// backwards over itself and relies on `dst <= src`.
+    pub fn reconstruct(&mut self, sel: &[usize]) {
+        if self.is_fixed() {
+            let elem_len = self.elem_buf.len();
+            for (dst, &src) in sel.iter().enumerate() {
+                let idx = dst >> 3;
+                let pos = dst & 7;
+                if self.is_null(src) {
+                    self.null_bitmap[idx] &= !(1u8 << pos);
+                } else {
+                    self.data
+                        .copy_within(src * elem_len..src * elem_len + elem_len, dst * elem_len);
+                    self.null_bitmap[idx] |= 1u8 << pos;
+                }
+            }
+            self.data.truncate(sel.len() * elem_len);
+        } else {
+            let mut tail = 0usize;
+            for (dst, &src) in sel.iter().enumerate() {
+                let idx = dst >> 3;
+                let pos = dst & 7;
+                if self.is_null(src) {
+                    self.null_bitmap[idx] &= !(1u8 << pos);
+                    self.offsets[dst + 1] = tail as i64;
+                } else {
+                    let start = self.offsets[src] as usize;
+                    let end = self.offsets[src + 1] as usize;
+                    self.data.copy_within(start..end, tail);
+                    tail += end - start;
+                    self.offsets[dst + 1] = tail as i64;
+                    self.null_bitmap[idx] |= 1u8 << pos;
+                }
+            }
+            self.data.truncate(tail);
+            self.offsets.truncate(sel.len() + 1);
+        }
+        self.length = sel.len();
+
+        // clean nullBitmap
+        self.null_bitmap.truncate((sel.len() + 7) >> 3);
+        let idx = sel.len() >> 3;
+        if idx < self.null_bitmap.len() {
+            let pos = sel.len() & 7;
+            self.null_bitmap[idx] &= ((1u16 << pos) - 1) as u8;
+        }
+    }
+
+    /// Go `appendMultiSameNullBitmap`: extend the bitmap by `num` rows that all
+    /// share the same nullity.
+    pub(crate) fn append_multi_same_null_bitmap(&mut self, not_null: bool, num: usize) {
+        let num_new_bytes = ((self.length + num + 7) >> 3) - self.null_bitmap.len();
+        let b = if not_null { 0xffu8 } else { 0u8 };
+        for _ in 0..num_new_bytes {
+            self.null_bitmap.push(b);
+        }
+        if !not_null {
+            return;
+        }
+        // 1. Set all the remaining bits in the last slot of the old bitmap to 1.
+        let num_remaining_bits = self.length % 8;
+        let bit_mask = !(((1u16 << num_remaining_bits) - 1) as u8);
+        self.null_bitmap[self.length / 8] |= bit_mask;
+        // 2. Set all the redundant bits in the last slot of the new bitmap to 0.
+        let num_redundant_bits = self.null_bitmap.len() * 8 - self.length - num;
+        let bit_mask = ((1u16 << (8 - num_redundant_bits)) as u8).wrapping_sub(1);
+        let last = self.null_bitmap.len() - 1;
+        self.null_bitmap[last] &= bit_mask;
+    }
+
+    /// Go `CopyExpectedRowsWithRowIDFunc`: append to this column the rows of
+    /// `src` in `start..end` whose `selected` flag equals `expected_result`,
+    /// reading `src` at `row_id_fn(i)`.
+    pub(crate) fn copy_expected_rows_with_row_id_func(
+        &mut self,
+        src: &Column,
+        selected: &[bool],
+        expected_result: bool,
+        start: usize,
+        end: usize,
+        row_id_fn: impl Fn(usize) -> usize,
+    ) {
+        for (i, sel) in selected.iter().enumerate().take(end).skip(start) {
+            if *sel != expected_result {
+                continue;
+            }
+            self.append_cell_from(src, row_id_fn(i));
+        }
+    }
+
+    /// Go `CopyRows`: append to this column the `src` rows named by `selected`.
+    pub(crate) fn copy_rows_from(&mut self, src: &Column, selected: &[usize]) {
+        for &row_id in selected {
+            self.append_cell_from(src, row_id);
+        }
+    }
+
+    /// Go `copySameOuterRows`' per-column body: append `num_rows` copies of the
+    /// `src` block that starts at `row_idx`. For a fixed-length column this is
+    /// the contiguous run `row_idx..row_idx+num_rows`; Go relies on all outer
+    /// rows in the source being identical, so the run reads as `num_rows`
+    /// repeats of the same value.
+    pub(crate) fn copy_same_rows_from(&mut self, src: &Column, row_idx: usize, num_rows: usize) {
+        self.append_multi_same_null_bitmap(!src.is_null(row_idx), num_rows);
+        self.length += num_rows;
+        if src.is_fixed() {
+            let elem_len = src.elem_buf.len();
+            let start = row_idx * elem_len;
+            let end = start + num_rows * elem_len;
+            self.data.extend_from_slice(&src.data[start..end]);
+        } else {
+            let start = src.offsets[row_idx] as usize;
+            let end = src.offsets[row_idx + num_rows] as usize;
+            self.data.extend_from_slice(&src.data[start..end]);
+            let elem_len = src.offsets[row_idx + 1] - src.offsets[row_idx];
+            for _ in 0..num_rows {
+                let last = *self.offsets.last().expect("var-len column keeps offset 0");
+                self.offsets.push(last + elem_len);
+            }
+        }
+    }
+
+    /// The row count as the crate's chunk-level copies track it.
+    pub(crate) fn length(&self) -> usize {
+        self.length
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Stands in for Go's `rand` in the reconstruct tests: those tests draw a
+    /// fresh random selection and null pattern on every run, so a fixed
+    /// generator run over several seeds keeps the same coverage while staying
+    /// reproducible when it fails.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next_u64(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        /// Go `rand.Intn(10)`.
+        fn intn10(&mut self) -> u64 {
+            self.next_u64() % 10
+        }
+
+        /// Go `rand.Int63()`.
+        fn int63(&mut self) -> i64 {
+            (self.next_u64() >> 1) as i64
+        }
+    }
+
+    /// Go `TestReconstructFixedLen` (`pkg/util/chunk/column_test.go:432`).
+    #[test]
+    fn reconstruct_fixed_len() {
+        for seed in 1..=8u64 {
+            let mut rng = Rng(seed);
+            let mut col = Column::new_column(
+                &FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                1024,
+            );
+            let mut results: Vec<i64> = Vec::with_capacity(1024);
+            let mut nulls: Vec<bool> = Vec::with_capacity(1024);
+            let mut sel: Vec<usize> = Vec::with_capacity(1024);
+            for i in 0..1024 {
+                if rng.intn10() < 6 {
+                    sel.push(i);
+                }
+                if rng.intn10() < 2 {
+                    col.append_null();
+                    nulls.push(true);
+                    results.push(0);
+                    continue;
+                }
+                let v = rng.int63();
+                col.append_int64(v);
+                results.push(v);
+                nulls.push(false);
+            }
+
+            col.reconstruct(&sel);
+            let mut null_cnt = 0;
+            for (n, &i) in sel.iter().enumerate() {
+                if nulls[i] {
+                    null_cnt += 1;
+                    assert!(col.is_null(n), "seed {seed}: row {n} should be null");
+                } else {
+                    assert_eq!(results[i], col.get_int64(n), "seed {seed}: row {n}");
+                }
+            }
+            assert_eq!(col.null_count(), null_cnt);
+            assert_eq!(sel.len(), col.length);
+
+            for i in 0..128i64 {
+                if i % 2 == 0 {
+                    col.append_null();
+                } else {
+                    col.append_int64(i * i * i);
+                }
+            }
+
+            assert_eq!(sel.len(), col.length - 128);
+            assert_eq!(null_cnt + 128 / 2, col.null_count());
+            for i in 0..128usize {
+                if i % 2 == 0 {
+                    assert!(col.is_null(sel.len() + i));
+                } else {
+                    let v = i as i64;
+                    assert_eq!(v * v * v, col.get_int64(sel.len() + i));
+                    assert!(!col.is_null(sel.len() + i));
+                }
+            }
+        }
+    }
+
+    /// Go `TestReconstructVarLen` (`pkg/util/chunk/column_test.go:488`).
+    #[test]
+    fn reconstruct_var_len() {
+        for seed in 1..=8u64 {
+            let mut rng = Rng(seed);
+            let mut col = Column::new_column(
+                &FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                1024,
+            );
+            let mut results: Vec<String> = Vec::with_capacity(1024);
+            let mut nulls: Vec<bool> = Vec::with_capacity(1024);
+            let mut sel: Vec<usize> = Vec::with_capacity(1024);
+            for i in 0..1024 {
+                if rng.intn10() < 6 {
+                    sel.push(i);
+                }
+                if rng.intn10() < 2 {
+                    col.append_null();
+                    nulls.push(true);
+                    results.push(String::new());
+                    continue;
+                }
+                let v = rng.int63().to_string();
+                col.append_string(&v);
+                results.push(v);
+                nulls.push(false);
+            }
+
+            col.reconstruct(&sel);
+            let mut null_cnt = 0;
+            for (n, &i) in sel.iter().enumerate() {
+                if nulls[i] {
+                    null_cnt += 1;
+                    assert!(col.is_null(n), "seed {seed}: row {n} should be null");
+                } else {
+                    assert_eq!(
+                        results[i].as_bytes(),
+                        col.get_bytes(n),
+                        "seed {seed}: row {n}"
+                    );
+                }
+            }
+            assert_eq!(col.null_count(), null_cnt);
+            assert_eq!(sel.len(), col.length);
+
+            for i in 0..128usize {
+                if i % 2 == 0 {
+                    col.append_null();
+                } else {
+                    col.append_string(&(i * i * i).to_string());
+                }
+            }
+
+            assert_eq!(sel.len(), col.length - 128);
+            assert_eq!(null_cnt + 128 / 2, col.null_count());
+            for i in 0..128usize {
+                if i % 2 == 0 {
+                    assert!(col.is_null(sel.len() + i));
+                } else {
+                    assert_eq!(
+                        (i * i * i).to_string().as_bytes(),
+                        col.get_bytes(sel.len() + i)
+                    );
+                    assert!(!col.is_null(sel.len() + i));
+                }
+            }
+        }
+    }
 
     #[test]
     fn fixed_int64_append_get_null() {

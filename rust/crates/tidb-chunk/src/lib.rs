@@ -24,5 +24,6 @@
 //! and a `str`-typed `GetString`.
 
 pub mod chunk;
+pub mod chunk_util;
 pub mod column;
 pub mod row;
