@@ -241,6 +241,61 @@ fn prefix_next(mut key: Vec<u8>) -> Vec<u8> {
     key
 }
 
+/// Go `convertPointInPlace`: casts one endpoint into the indexed column's
+/// type, then repairs `excl` when the cast moved the value.
+///
+/// This is what makes `a >= -2147483648` on an UNSIGNED column collapse to
+/// `[0,+inf]` and `col_float > 1e39` collapse to nothing: `convert_to`
+/// saturates at the target boundary and reports the overflow, and the
+/// exclusivity repair below turns the saturated endpoint back into the
+/// smallest/largest interval that means the same thing.
+fn convert_point_in_place(p: &mut Point, target: &FieldType) {
+    match p.value {
+        Datum::MaxValue | Datum::MinNotNull | Datum::Null => return,
+        _ => {}
+    }
+    // Go tolerates exactly the overflow/truncation events below and keeps the
+    // saturated boundary value; anything it propagates as an error leaves the
+    // point untouched here, which is the conservative (wider range) choice.
+    let Ok(converted) = p.value.convert_to(target, tidb_datatype::STRICT_FLAGS) else {
+        return;
+    };
+    let casted = converted.value;
+    let Ok(order) = tidb_expr::compare_datums(&p.value, &casted) else {
+        return;
+    };
+    p.value = casted;
+    if order == Ordering::Equal {
+        return;
+    }
+    if p.start {
+        if p.excl {
+            // e.g. "a > 1.9" converts to "a >= 2".
+            if order == Ordering::Less {
+                p.excl = false;
+            }
+        } else if order == Ordering::Greater {
+            // e.g. "a >= 1.1" converts to "a > 1".
+            p.excl = true;
+        }
+    } else if p.excl {
+        // e.g. "a < 1.1" converts to "a <= 1".
+        if order == Ordering::Greater {
+            p.excl = false;
+        }
+    } else if order == Ordering::Less {
+        // e.g. "a <= 1.9" converts to "a < 2".
+        p.excl = true;
+    }
+}
+
+/// Go `convertPointsInPlace`.
+fn convert_points_in_place(points: &mut [Point], target: &FieldType) {
+    for p in points {
+        convert_point_in_place(p, target);
+    }
+}
+
 /// Go `points2Ranges`: consecutive endpoint pairs become single-column
 /// ranges, dropping the empty ones.
 fn points_to_ranges(points: &[Point]) -> Vec<IndexRange> {
@@ -373,10 +428,17 @@ fn is_column(expr: &Expr, name: &str) -> bool {
 
 /// A constant expression's value, when it is one.
 fn constant_value(expr: &Expr) -> Option<Datum> {
-    let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(expr, &NoResolver) else {
-        return None;
-    };
-    constant.eval().ok()
+    match rewrite_expr_resolved(expr, &NoResolver) {
+        Ok(Expression::Constant(constant)) => constant.eval().ok(),
+        // The rewriter only folds a bare literal into a `Constant`; anything
+        // built out of literals -- `-100` is `unaryminus(100)`, and Go folds it
+        // before the ranger ever sees it -- stays a `ScalarFunction`. Evaluating
+        // it against no columns folds it here and fails for anything that
+        // actually reads a column, which is exactly the constant test Go's
+        // `FoldConstant` applies.
+        Ok(_) => tidb_expr::eval(expr).ok(),
+        Err(_) => None,
+    }
 }
 
 /// Go `flip`: the operator with its operands swapped.
@@ -757,6 +819,16 @@ fn build_cnf_ranges<'a>(
         }
     }
 
+    // Go `points2Ranges`/`appendPoints2Ranges` convert every endpoint into the
+    // column's own type first, which is where unsigned narrowing and overflow
+    // clamping happen.
+    for (i, points) in eq_in_points.iter_mut().enumerate() {
+        convert_points_in_place(points, &index_columns[i].1);
+    }
+    if let Some(tail) = tail.as_mut() {
+        convert_points_in_place(tail, &index_columns[eq_in_count].1);
+    }
+
     let mut ranges: Vec<IndexRange> = Vec::new();
     let mut column_count = 0;
     for (i, points) in eq_in_points.iter().enumerate() {
@@ -929,19 +1001,38 @@ mod tests {
     fn columns(names: &[&str]) -> Vec<(String, FieldType)> {
         names
             .iter()
-            // Only the column name is read by the derivation; the field type
-            // rides along for the eventual type-conversion step Go performs
-            // in `convertPointInPlace`.
+            // The corpus table is `t(a int, b int, c int, s varchar(255))`;
+            // the field type matters now that `convertPointInPlace` casts
+            // every endpoint into the column's own type.
             .map(|name| {
-                (
-                    (*name).to_owned(),
-                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                )
+                let code = if *name == "s" {
+                    tidb_datatype::FieldTypeCode::VarString
+                } else {
+                    tidb_datatype::FieldTypeCode::LongLong
+                };
+                ((*name).to_owned(), FieldType::new(code))
             })
             .collect()
     }
 
     fn derive(index: &[&str], where_sql: &str) -> String {
+        let typed: Vec<(String, FieldType)> = columns(index);
+        derive_with_columns(&typed, where_sql)
+    }
+
+    /// [`derive`] with the index columns' real field types supplied, which is
+    /// what the unsigned/overflow corpus needs: Go's `convertPointInPlace`
+    /// converts every range endpoint to the indexed column's type before
+    /// building, and that conversion is the whole subject of those rows.
+    fn derive_typed(index: &[(&str, FieldType)], where_sql: &str) -> String {
+        let typed: Vec<(String, FieldType)> = index
+            .iter()
+            .map(|(name, ft)| ((*name).to_owned(), ft.clone()))
+            .collect();
+        derive_with_columns(&typed, where_sql)
+    }
+
+    fn derive_with_columns(index: &[(String, FieldType)], where_sql: &str) -> String {
         let sql = format!("SELECT * FROM t WHERE {where_sql}");
         let stmt = tidb_parser::parse(&sql).expect("the corpus SQL parses");
         let tidb_ast::Stmt::Query(query) = &stmt else {
@@ -954,7 +1045,7 @@ mod tests {
             .where_clause
             .as_ref()
             .expect("the corpus has a WHERE");
-        match detach_cond_and_build_range_for_index(&columns(index), where_clause) {
+        match detach_cond_and_build_range_for_index(index, where_clause) {
             Some(built) => render(&built.ranges),
             None => "<no range>".to_owned(),
         }
@@ -1082,5 +1173,279 @@ mod tests {
         assert_eq!(derive(&["a"], "a is not null"), "<no range>");
         assert_eq!(derive(&["s"], "s like '%abc'"), "<no range>");
         assert_eq!(derive(&["s"], "s like '%'"), "<no range>");
+    }
+
+    /// A negative bound is `unaryminus(literal)` in the AST, not a literal, so
+    /// before constant folding reached [`constant_value`] every one of these
+    /// derived no range at all and the read fell back to a full scan. Go folds
+    /// the constant long before the ranger runs, so it has always ranged them.
+    #[test]
+    fn negative_bounds_derive_ranges() {
+        assert_eq!(derive(&["a"], "a >= -2147483648"), "[-2147483648,+inf]");
+        assert_eq!(derive(&["a"], "a < -1"), "[-inf,-1)");
+        assert_eq!(derive(&["a"], "a > -100"), "(-100,+inf]");
+        assert_eq!(derive(&["a"], "a < -1 and a < 1"), "[-inf,-1)");
+    }
+
+    fn ft(code: tidb_datatype::FieldTypeCode) -> FieldType {
+        FieldType::new(code)
+    }
+
+    fn unsigned(code: tidb_datatype::FieldTypeCode) -> FieldType {
+        FieldType::new(code).with_unsigned(true)
+    }
+
+    /// Go `TestIndexRangeForUnsignedAndOverflow`
+    /// (`pkg/util/ranger/ranger_test.go:314`), all 19 rows, against the table
+    ///
+    /// ```sql
+    /// create table t(
+    ///   a smallint(5) unsigned, decimal_unsigned decimal unsigned,
+    ///   float_unsigned float unsigned, double_unsigned double unsigned,
+    ///   col_int bigint, col_float float, ...)
+    /// ```
+    ///
+    /// `resultStr` is Go's `fmt.Sprintf("%v", res.Ranges)`; the expectation
+    /// below is the same list in this crate's `range:`-cell rendering (outer
+    /// brackets dropped, ranges joined by `", "`), and `""` is Go's empty
+    /// range list.
+    ///
+    /// Every row here turns on `convertPointInPlace`: Go converts each range
+    /// endpoint to the indexed column's type before building, so `a >= -2147483648`
+    /// on an UNSIGNED column collapses to `[0,+inf]` rather than keeping the
+    /// negative bound. This crate's derivation does not convert endpoints at
+    /// all yet, so the rows that need it are `#[ignore]`d below with Go's
+    /// answer asserted -- they are the spec for the conversion step.
+    /// One index column of a corpus row: name, type code, and whether the
+    /// column is UNSIGNED.
+    type IndexColumnSpec = (&'static str, tidb_datatype::FieldTypeCode, bool);
+
+    const GO_UNSIGNED_AND_OVERFLOW: &[(&[IndexColumnSpec], &str, &str)] = &[
+        // (index columns as (name, type code, unsigned), expr, Go's ranges)
+        (
+            &[
+                ("a", tidb_datatype::FieldTypeCode::Short, true),
+                ("col_int", tidb_datatype::FieldTypeCode::LongLong, false),
+            ],
+            "a = 1 and a = 2",
+            "",
+        ),
+        (
+            &[("a", tidb_datatype::FieldTypeCode::Short, true)],
+            "a not in (0, 1, 2)",
+            "(NULL,0), (2,+inf]",
+        ),
+        (
+            &[("a", tidb_datatype::FieldTypeCode::Short, true)],
+            "a not in (-1, 1, 2)",
+            "(NULL,1), (2,+inf]",
+        ),
+        (
+            &[("a", tidb_datatype::FieldTypeCode::Short, true)],
+            "a not in (-2, -1, 1, 2)",
+            "(NULL,1), (2,+inf]",
+        ),
+        (
+            &[("a", tidb_datatype::FieldTypeCode::Short, true)],
+            "a not in (111)",
+            "[-inf,111), (111,+inf]",
+        ),
+        (
+            &[("a", tidb_datatype::FieldTypeCode::Short, true)],
+            "a not in (1, 2, 9223372036854775810)",
+            "(NULL,1), (2,9223372036854775810), (9223372036854775810,+inf]",
+        ),
+        (
+            &[("a", tidb_datatype::FieldTypeCode::Short, true)],
+            "a >= -2147483648",
+            "[0,+inf]",
+        ),
+        (
+            &[("a", tidb_datatype::FieldTypeCode::Short, true)],
+            "a > -2147483648",
+            "[0,+inf]",
+        ),
+        (
+            &[("a", tidb_datatype::FieldTypeCode::Short, true)],
+            "a != -2147483648",
+            "[0,+inf]",
+        ),
+        (
+            &[("a", tidb_datatype::FieldTypeCode::Short, true)],
+            "a < -1 or a < 1",
+            "[-inf,1)",
+        ),
+        (
+            &[("a", tidb_datatype::FieldTypeCode::Short, true)],
+            "a < -1 and a < 1",
+            "",
+        ),
+        (
+            &[(
+                "decimal_unsigned",
+                tidb_datatype::FieldTypeCode::NewDecimal,
+                true,
+            )],
+            "decimal_unsigned > -100",
+            "[0,+inf]",
+        ),
+        (
+            &[("float_unsigned", tidb_datatype::FieldTypeCode::Float, true)],
+            "float_unsigned > -100",
+            "[0,+inf]",
+        ),
+        (
+            &[(
+                "double_unsigned",
+                tidb_datatype::FieldTypeCode::Double,
+                true,
+            )],
+            "double_unsigned > -100",
+            "[0,+inf]",
+        ),
+        (
+            &[("col_int", tidb_datatype::FieldTypeCode::LongLong, false)],
+            "col_int != 9223372036854775808",
+            "[-inf,+inf]",
+        ),
+        (
+            &[("col_int", tidb_datatype::FieldTypeCode::LongLong, false)],
+            "col_int > 9223372036854775808",
+            "",
+        ),
+        (
+            &[("col_int", tidb_datatype::FieldTypeCode::LongLong, false)],
+            "col_int < 9223372036854775808",
+            "[-inf,+inf]",
+        ),
+        (
+            &[("col_float", tidb_datatype::FieldTypeCode::Float, false)],
+            "col_float > 1000000000000000000000000000000000000000",
+            "",
+        ),
+        (
+            &[("col_float", tidb_datatype::FieldTypeCode::Float, false)],
+            "col_float < -1000000000000000000000000000000000000000",
+            "",
+        ),
+    ];
+
+    fn derive_unsigned_row(index: &[IndexColumnSpec], where_sql: &str) -> String {
+        let cols: Vec<(&str, FieldType)> = index
+            .iter()
+            .map(|(name, code, uns)| (*name, if *uns { unsigned(*code) } else { ft(*code) }))
+            .collect();
+        derive_typed(&cols, where_sql)
+    }
+
+    /// How many of [`GO_UNSIGNED_AND_OVERFLOW`]'s rows this derivation
+    /// reproduces today. A ratchet, not a pass: the full table is asserted by
+    /// the `#[ignore]`d test below, which names every row that is still wrong.
+    #[test]
+    fn unsigned_and_overflow_rows_that_already_match_go() {
+        let mut matched = 0;
+        let mut diverged = Vec::new();
+        for (index, where_sql, expected) in GO_UNSIGNED_AND_OVERFLOW {
+            let got = derive_unsigned_row(index, where_sql);
+            if got == *expected {
+                matched += 1;
+            } else {
+                diverged.push(format!("  {where_sql:<50} go={expected:<40} rust={got}"));
+            }
+        }
+        // This assertion is a ratchet, not a pass: it records how many of Go's
+        // 19 rows this derivation reproduces today. It must never fall.
+        assert!(
+            matched >= 7,
+            "only {matched} of {} Go rows match; diverging rows:\n{}",
+            GO_UNSIGNED_AND_OVERFLOW.len(),
+            diverged.join("\n")
+        );
+    }
+
+    /// The full Go table asserted verbatim. This fails until endpoint type
+    /// conversion (`convertPointInPlace`) lands, and the failure message names
+    /// every row that is still wrong -- that list is the work item.
+    #[test]
+    #[ignore = "12 of 19 rows still need Go's handleUnsignedCol signedness clamping and expression-level RefineCompareArgs for out-of-domain constants"]
+    fn unsigned_and_overflow_ranges_match_go() {
+        let mut mismatches = Vec::new();
+        for (index, where_sql, expected) in GO_UNSIGNED_AND_OVERFLOW {
+            let got = derive_unsigned_row(index, where_sql);
+            if got != *expected {
+                mismatches.push(format!("  {where_sql:<50} go={expected:<40} rust={got}"));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "{} of {} Go rows diverge:\n{}",
+            mismatches.len(),
+            GO_UNSIGNED_AND_OVERFLOW.len(),
+            mismatches.join("\n")
+        );
+    }
+
+    /// Go `TestPrefixIndexRange` (`pkg/util/ranger/ranger_test.go:2342`), all
+    /// 10 rows, against
+    ///
+    /// ```sql
+    /// create table t(a varchar(50), b varchar(50), c text(50), d varbinary(50),
+    ///   index idx_a(a(2)), index idx_ab(a(2), b(2)),
+    ///   index idx_c(c(2)), index idx_d(d(2)))
+    /// ```
+    ///
+    /// with `tidb_opt_prefix_index_single_scan = 1`.
+    ///
+    /// Prefix indexes are refused at catalog load in this engine, and
+    /// `detach_cond_and_build_range_for_index` takes no per-column prefix
+    /// length, so these rows cannot run against today's API. They are recorded
+    /// with Go's answers so they become the acceptance spec for the eventual
+    /// prefix-index unit; the ranges Go prints here are prefix-length
+    /// independent (they are NULL/not-NULL boundaries and one equality), so
+    /// the expectations stay valid once a length parameter exists.
+    const GO_PREFIX_INDEX_RANGE: &[(&[&str], &str, &str)] = &[
+        (&["a"], "a is null", "[NULL,NULL]"),
+        // accessConds is empty here: Go detaches nothing and falls back to the
+        // full range, which this crate reports as "<no range>".
+        (&["a"], "isnull(a) or a in (1,2,3,4)", "[NULL,+inf]"),
+        (&["a"], "isnull(a) and a in (1,2,3,4)", "[NULL,NULL]"),
+        (&["a"], "a is not null", "[-inf,+inf]"),
+        (
+            &["a", "b"],
+            "a = 'a' and b is null",
+            "[\"a\" NULL,\"a\" NULL]",
+        ),
+        (
+            &["a", "b"],
+            "a = 'a' and b is not null",
+            "[\"a\" -inf,\"a\" +inf]",
+        ),
+        (&["c"], "c is null", "[NULL,NULL]"),
+        (&["c"], "c is not null", "[-inf,+inf]"),
+        (&["d"], "d is null", "[NULL,NULL]"),
+        (&["d"], "d is not null", "[-inf,+inf]"),
+    ];
+
+    #[test]
+    #[ignore = "prefix indexes are refused at catalog load and the range API takes no prefix length; Go's answers below are the spec for that unit"]
+    fn prefix_index_ranges_match_go() {
+        let mut mismatches = Vec::new();
+        for (index, where_sql, expected) in GO_PREFIX_INDEX_RANGE {
+            let cols: Vec<(&str, FieldType)> = index
+                .iter()
+                .map(|name| (*name, ft(tidb_datatype::FieldTypeCode::VarString)))
+                .collect();
+            let got = derive_typed(&cols, where_sql);
+            if got != *expected {
+                mismatches.push(format!("  {where_sql:<40} go={expected:<28} rust={got}"));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "{} of {} Go rows diverge:\n{}",
+            mismatches.len(),
+            GO_PREFIX_INDEX_RANGE.len(),
+            mismatches.join("\n")
+        );
     }
 }
