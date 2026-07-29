@@ -18,6 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"go.uber.org/zap"
 )
@@ -25,22 +27,36 @@ import (
 const (
 	// readChunkSize is the row capacity of the read buffer chunk.
 	readChunkSize = 1024
-	// chunkScanConcurrency is the cop-scan concurrency for one chunk; the whole
-	// subtask's read parallelism is this times the worker count.
-	chunkScanConcurrency = 4
+	// chunkScanConcurrency is the per-chunk cop-scan concurrency. It is 1, as in
+	// add-index's keep-order read (index_cop.go), so keep-order results are
+	// reliably in handle order; read parallelism comes from the worker pool
+	// running many chunks at once, not from within one chunk.
+	chunkScanConcurrency = 1
 )
+
+// chunkExporter carries the per-worker, table-independent scan context so it is
+// built once per worker rather than once per chunk.
+type chunkExporter struct {
+	exprCtx *exprstatic.ExprContext
+	distCtx *distsqlctx.DistSQLContext
+}
+
+func (e *dumpStepExecutor) newChunkExporter() *chunkExporter {
+	return &chunkExporter{
+		exprCtx: newExportExprCtx(),
+		distCtx: newExportDistSQLCtx(e.store.GetClient()),
+	}
+}
 
 // exportChunk reads one chunk's key range at the snapshot in handle order,
 // encodes the rows to CSV and uploads them as a group of files named by the
 // chunk's ordinal.
-func (e *dumpStepExecutor) exportChunk(ctx context.Context, c Chunk) error {
+func (e *dumpStepExecutor) exportChunk(ctx context.Context, ce *chunkExporter, c Chunk) error {
 	tbl := e.taskMeta.Tables[c.TableIdx]
 	tblInfo := tbl.TableInfo
 	colInfos, fieldTps := exportColumns(tblInfo)
 
-	exprCtx := newExportExprCtx()
-	distCtx := newExportDistSQLCtx(e.store.GetClient())
-	rs, err := buildScan(ctx, exprCtx, distCtx, tblInfo, c.PhysicalID, colInfos, fieldTps,
+	rs, err := buildScan(ctx, ce.exprCtx, ce.distCtx, tblInfo, c.PhysicalID, colInfos, fieldTps,
 		e.taskMeta.SnapshotTS, chunkScanConcurrency, c.Start, c.End)
 	if err != nil {
 		return err
@@ -49,11 +65,15 @@ func (e *dumpStepExecutor) exportChunk(ctx context.Context, c Chunk) error {
 		_ = rs.Close()
 	}()
 
+	fileSize := e.taskMeta.FileSize
+	if fileSize <= 0 {
+		fileSize = defaultFileSize
+	}
 	enc := newRowEncoder(tblInfo.Name.O, colInfos)
 	w := &chunkWriter{
 		ctx:      ctx,
 		objStore: e.objStore,
-		fileSize: e.taskMeta.FileSize,
+		fileSize: fileSize,
 		db:       tbl.DBName,
 		table:    tblInfo.Name.O,
 		ordinal:  c.Ordinal,
@@ -86,7 +106,9 @@ func (e *dumpStepExecutor) exportChunk(ctx context.Context, c Chunk) error {
 		return err
 	}
 	e.summary.RowCnt.Add(rows)
+	e.summary.Processed.Add(w.written)
 	e.logger.Debug("export chunk done",
-		zap.Int("table-idx", c.TableIdx), zap.Int("ordinal", c.Ordinal), zap.Int64("rows", rows))
+		zap.Int("table-idx", c.TableIdx), zap.Int("ordinal", c.Ordinal),
+		zap.Int64("rows", rows), zap.Int64("bytes", w.written))
 	return nil
 }
