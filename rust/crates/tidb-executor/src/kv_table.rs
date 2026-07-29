@@ -900,14 +900,10 @@ impl KvTable {
     /// the table it came from, so it carries its own copy of everything
     /// decoding reads. The copy is a snapshot of the schema at cursor-open
     /// time, which is the schema the statement planned against.
-    fn row_decoder(&self) -> RowDecoder {
-        self.row_decoder_projected(None)
-    }
-
-    /// [`KvTable::row_decoder`] narrowed to the columns at `keep` (offsets
+    /// The row decoder for this table, optionally narrowed to the columns at `keep` (offsets
     /// into [`KvTable::columns`], ascending and unique): the row codec is
     /// asked for only those columns' ids, so an unreferenced column is never
-    /// decoded.
+    /// decoded. `None` keeps the whole schema.
     fn row_decoder_projected(&self, keep: Option<&[usize]>) -> RowDecoder {
         let kept: Option<std::collections::BTreeSet<usize>> =
             keep.map(|keep| keep.iter().copied().collect());
