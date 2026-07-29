@@ -419,3 +419,35 @@ fn show_create_table_prints_the_constraint_and_its_implicit_index() {
         .unwrap();
     assert!(!rows(&mut session, "SHOW CREATE TABLE g")[0][1].contains("KEY `fk_1`"));
 }
+
+/// A constraint addresses its own side by column offset and the other side
+/// by table name, so a layout change or a rename would silently repoint it.
+/// Both are REFUSED on a participating table -- on either side of the
+/// constraint -- rather than corrupting it. (Real TiDB rewrites the affected
+/// `FKInfo`s instead; this is the honest refusal until that lands.)
+#[test]
+fn a_layout_change_or_rename_is_refused_on_either_side_of_a_constraint() {
+    for statement in [
+        "ALTER TABLE c ADD COLUMN extra INT",
+        "ALTER TABLE c DROP COLUMN id",
+        "ALTER TABLE c MODIFY COLUMN pid INT FIRST",
+        "ALTER TABLE c RENAME TO cc",
+        "ALTER TABLE p ADD COLUMN extra INT",
+        "ALTER TABLE p RENAME TO pp",
+        "RENAME TABLE c TO cc",
+        "RENAME TABLE p TO pp",
+    ] {
+        let mut session = pair("");
+        assert!(
+            session.run(statement).is_err(),
+            "{statement} should be refused"
+        );
+    }
+    // An index change touches neither addressing scheme, so it still runs.
+    let mut session = pair("");
+    session.run("ALTER TABLE c ADD INDEX kid (id)").unwrap();
+    // And a table with no foreign key at all is unaffected.
+    session.run("CREATE TABLE plain (a INT)").unwrap();
+    session.run("ALTER TABLE plain ADD COLUMN b INT").unwrap();
+    session.run("RENAME TABLE plain TO plainer").unwrap();
+}

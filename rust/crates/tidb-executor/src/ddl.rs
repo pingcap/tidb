@@ -146,6 +146,13 @@ pub fn run_rename_table_in(
                 format!("{to_db}.{to_name}"),
             )));
         }
+        // A foreign key names the referenced table, so moving one side would
+        // leave the constraint pointing at a name that no longer resolves.
+        if crate::foreign_key::participates(catalog, &from_db, &from_name) {
+            return Err(DriverError::Unsupported(
+                "renaming a table involved in a FOREIGN KEY is not supported yet",
+            ));
+        }
         catalog.rename_table(&from_db, &from_name, &to_db, &to_name);
     }
     Ok(())
@@ -395,7 +402,26 @@ pub fn run_alter_table_in(
         )));
     }
 
+    // A constraint addresses its own side by column offset and the other side
+    // by table name, so a layout change or a rename would silently repoint
+    // it. Refused rather than corrupted; see `foreign_key::participates`.
+    let participates = crate::foreign_key::participates(catalog, &database, &name);
     for action in &alter.actions {
+        if participates
+            && matches!(
+                action,
+                tidb_ast::AlterTableAction::AddColumn { .. }
+                    | tidb_ast::AlterTableAction::AddColumns { .. }
+                    | tidb_ast::AlterTableAction::ModifyColumn { .. }
+                    | tidb_ast::AlterTableAction::ChangeColumn { .. }
+                    | tidb_ast::AlterTableAction::DropColumn { .. }
+                    | tidb_ast::AlterTableAction::RenameTable { .. }
+            )
+        {
+            return Err(DriverError::Unsupported(
+                "changing the columns or name of a table involved in a FOREIGN KEY is not supported yet",
+            ));
+        }
         match action {
             tidb_ast::AlterTableAction::AddColumn {
                 column, position, ..

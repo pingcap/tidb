@@ -485,6 +485,19 @@ fn rewrite_rows(
     Ok(())
 }
 
+/// Whether a table takes part in any foreign key, as the declaring child or
+/// as the referenced parent.
+///
+/// A constraint stores its referencing side as column OFFSETS and its
+/// referenced side as a table NAME, so a DDL that repositions the columns or
+/// moves the table would leave it pointing somewhere else. Both are REFUSED
+/// on a participating table rather than silently corrupting the constraint;
+/// Go rewrites the affected `FKInfo`s instead, which is the graduation path.
+pub(crate) fn participates(catalog: &Catalog, database: &str, table: &str) -> bool {
+    let (declared_keys, _) = declared(catalog, database, table);
+    !declared_keys.is_empty() || !referring(catalog, database, table).is_empty()
+}
+
 /// Go `checkDropTableHasForeignKeyReferredInOwner`: a table may not be
 /// dropped while a table OUTSIDE this statement still references it.
 pub(crate) fn check_drop_tables(
