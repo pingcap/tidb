@@ -490,6 +490,24 @@ impl<'view> SystemRow<'view> {
         self.value(column)
     }
 
+    /// Reads one projected column, keeping "absent from the row value" apart
+    /// from "stored as SQL NULL".
+    ///
+    /// `Some(&Datum::Null)` is a row that stores NULL there; `None` is a row
+    /// with no entry for the column at all, which is every row written before
+    /// an `ALTER TABLE ... ADD COLUMN` and whose read value is the column's
+    /// `OriginDefaultValue`, not NULL. The row codec records an explicit NULL
+    /// (`RawRowValue::Null`) separately from a missing column
+    /// (`RawRowValue::Missing`), which is what makes the distinction
+    /// available at all.
+    ///
+    /// [`Self::datum`] collapses the two, which is right for the `mysql.*`
+    /// readers: their columns predate every row they read.
+    pub fn stored_datum(&self, column: &str) -> Result<Option<&Datum>, SystemTableError> {
+        let id = self.view.column_id(column)?;
+        Ok(self.values.get(&id))
+    }
+
     fn wrong_value(&self, column: &str, wanted: &'static str, stored: &Datum) -> SystemTableError {
         SystemTableError::UnexpectedColumnValue {
             name: self.view.name.clone(),

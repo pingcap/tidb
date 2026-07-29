@@ -75,6 +75,7 @@ use tidb_stats::sample_bytes::MAX_SAMPLE_VALUE_LENGTH;
 use crate::cluster_catalog::MetaSnapshot;
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use crate::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
+use crate::system_row_write::origin_default;
 
 /// `statistics.Version2`, the only generation this node writes.
 pub const STATS_VERSION_2: i64 = 2;
@@ -352,7 +353,14 @@ pub fn analyze_table<S: MetaSnapshot>(
         let stored = SystemRow::parse(&view, &key, &value)?;
         let mut columns = Vec::with_capacity(plan.columns.len());
         for column in &plan.columns {
-            columns.push(stored.datum(&column.name)?.cloned().unwrap_or(Datum::Null));
+            // `stored_datum`, not `datum`: a stored NULL is NULL, while a
+            // column the row has no entry for reads as its origin default.
+            columns.push(
+                stored
+                    .stored_datum(&column.name)?
+                    .cloned()
+                    .unwrap_or_else(|| column.absent_value.clone()),
+            );
         }
         let row = plan.row_of(&columns)?;
         let slots: Vec<SlotValue<'_>> = row
@@ -483,6 +491,16 @@ pub fn analyze_table<S: MetaSnapshot>(
 struct AnalyzedColumn {
     id: i64,
     name: String,
+    /// What a row with no entry for this column at all reads as.
+    ///
+    /// Not NULL: a row written before an `ALTER TABLE ... ADD COLUMN` carries
+    /// nothing for the added column, and TiDB substitutes the column's
+    /// `OriginDefaultValue` on read -- Go encodes it into the analyze scan
+    /// request itself (`pkg/executor/builder.go:3246`
+    /// `tables.SetPBColumnsDefaultValue`). Reading those rows as NULL would
+    /// give the column a `null_count` of every old row and no bucket covering
+    /// the default, so `WHERE c = <default>` would estimate ~0 rows.
+    absent_value: Datum,
     /// The collation whose sort key replaces the value, when the column has
     /// one. `None` covers every non-string column and `ENUM`/`SET`, whose
     /// order is their declaration order rather than any collation's.
@@ -562,11 +580,23 @@ impl AnalyzePlan {
             } else {
                 None
             };
+            // Materialised once, here, so a column whose origin default this
+            // node cannot express refuses the whole ANALYZE instead of
+            // silently analyzing its pre-DDL rows as NULL.
+            let absent_value = origin_default(column, table.name.original()).map_err(|error| {
+                AnalyzeError::Unsupported(format!(
+                    "this node does not analyze `{}`.`{}`: a row written before the column \
+                     existed reads as its origin default, which it cannot materialise ({error})",
+                    table.name.original(),
+                    column.name.original()
+                ))
+            })?;
             by_offset.insert(column.offset, columns.len());
             columns.push(AnalyzedColumn {
                 id: column.id,
                 name: column.name.lowercase().to_owned(),
                 collation,
+                absent_value,
             });
         }
         if columns.is_empty() {

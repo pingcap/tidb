@@ -466,24 +466,64 @@ pub fn declared_default(
     table: &str,
     current_timestamp: Time,
 ) -> Result<Datum, RowEncodeError> {
-    let refuse = || {
-        encode_error(format!(
-            "{table}.{} declares a default this path cannot materialise",
-            column.name.original()
-        ))
-    };
     if column.default_is_expr {
-        return Err(refuse());
+        return Err(unmaterialisable(column, table));
     }
+    materialise(
+        column,
+        column.default_value.as_ref(),
+        table,
+        Some(current_timestamp),
+    )
+}
+
+/// The datum one column's `OriginDefaultValue` materialises to.
+///
+/// This is what a *read* substitutes for a column the stored row has no entry
+/// for at all, which is every row written before an `ALTER TABLE ... ADD
+/// COLUMN`: Go encodes it into the coprocessor request
+/// (`tables.SetPBColumnsDefaultValue` ->
+/// `GetColOriginDefaultValueWithoutStrictSQLMode`), so the scan -- and the
+/// `ANALYZE` reading through it -- sees the default rather than NULL.
+///
+/// `None` is Go's nil `OriginDefaultValue`, whose read *is* NULL
+/// (`pkg/table/column.go`'s `getColDefaultValueFromNil`). Unlike a declared
+/// default this one is always a literal: the DDL that added the column
+/// evaluated any expression once, at that moment, and stored the result.
+pub fn origin_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEncodeError> {
+    materialise(
+        column,
+        column.get_origin_default_value().as_ref(),
+        table,
+        None,
+    )
+}
+
+fn unmaterialisable(column: &ColumnInfo, table: &str) -> RowEncodeError {
+    encode_error(format!(
+        "{table}.{} declares a default this path cannot materialise",
+        column.name.original()
+    ))
+}
+
+/// The shared literal-to-datum rule. `current_timestamp` is `Some` only for a
+/// declared default, the one kind that may still spell `CURRENT_TIMESTAMP`.
+fn materialise(
+    column: &ColumnInfo,
+    declared: Option<&ColumnDefaultValue>,
+    table: &str,
+    current_timestamp: Option<Time>,
+) -> Result<Datum, RowEncodeError> {
+    let refuse = || unmaterialisable(column, table);
     // A `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` column stores that very word as
     // its default: an `INSERT` evaluates it, so a writer that stores the word
     // instead writes a row TiDB rejects as an `Incorrect time value`.
-    if let Some(ColumnDefaultValue::Str(bytes)) = column.default_value.as_ref() {
+    if let (Some(ColumnDefaultValue::Str(bytes)), Some(now)) = (declared, current_timestamp) {
         if String::from_utf8_lossy(bytes).eq_ignore_ascii_case(CURRENT_TIMESTAMP) {
-            return Ok(Datum::new_time(current_timestamp));
+            return Ok(Datum::new_time(now));
         }
     }
-    let Some(default) = column.default_value.as_ref() else {
+    let Some(default) = declared else {
         // No declared default: an `INSERT` stores NULL, and the column is
         // nullable or the schema would not have parsed.
         return Ok(Datum::Null);
