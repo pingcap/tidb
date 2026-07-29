@@ -45,6 +45,15 @@
 #  10. every one of the above BEFORE and AFTER `ANALYZE TABLE`, so the
 #      pseudo -> real transition is visible on both nodes at once.
 #
+#  11. the DOUBLE READ'S BATCHING FACTOR, over a 50000-row table, at three
+#      points on the selectivity curve: one row, 1/50th, and a quarter. Go's
+#      cost model prices a double read at `rows/IndexLookupSize*32` table-side
+#      requests because Go's `IndexLookUpExecutor` batches handles that way;
+#      this tier's `IndexRangeSourceExec` issues one kvrpc Get per index entry.
+#      These cases report the REQUESTS TIKV ACTUALLY SERVED for each node, read
+#      off TiKV's own grpc counters -- so the receipt shows requests issued,
+#      not costs claimed.
+#
 # estRows is compared with a tolerance, and every case where the two nodes
 # CHOSE DIFFERENTLY is reported as a finding rather than tuned away.
 #
@@ -52,7 +61,7 @@
 
 set -euo pipefail
 
-for prerequisite in tiup cargo nc grep awk; do
+for prerequisite in tiup cargo nc grep awk curl; do
   if ! command -v "${prerequisite}" >/dev/null 2>&1; then
     echo "missing access-path-differential prerequisite: ${prerequisite}" >&2
     exit 1
@@ -195,6 +204,26 @@ CREATE TABLE u (
   KEY idx_a (a),
   KEY idx_b (b)
 );
+-- The third table is the one where the DOUBLE READ'S BATCHING FACTOR decides
+-- the plan. It is an order of magnitude larger than the other two on purpose:
+-- the cost of a double read grows with the rows looked up, the cost of a full
+-- scan grows with the table, and only a table big enough to separate those two
+-- slopes can show where the crossover really is.
+--
+-- Three selectivities on one table, so one fixture covers the whole curve:
+--   rare  -- unique, so `rare = k` looks up ONE row;
+--   mid   -- 50 values, so `mid = k` looks up ~1/50th of the table;
+--   bucket-- 4 values, so `bucket = k` looks up a quarter of it.
+CREATE TABLE big (
+  id BIGINT PRIMARY KEY,
+  bucket BIGINT NOT NULL,
+  mid BIGINT NOT NULL,
+  rare BIGINT NOT NULL,
+  payload VARCHAR(64) NOT NULL,
+  KEY idx_big_bucket (bucket),
+  KEY idx_big_mid (mid),
+  KEY idx_big_rare (rare)
+);
 SQL
 
 echo "seeding 2000 rows into each table"
@@ -221,6 +250,24 @@ echo "seeding 2000 rows into each table"
   done
 } >"${WORK_DIR}/seed.sql"
 go_sql <"${WORK_DIR}/seed.sql"
+
+BIG_ROWS=${ACCESS_PATH_BIG_ROWS:-50000}
+echo "seeding ${BIG_ROWS} rows into pathdiff.big, in chunks"
+{
+  echo "USE pathdiff;"
+  for i in $(seq 1 "${BIG_ROWS}"); do
+    if (( i % 1000 == 1 )); then
+      echo "INSERT INTO big VALUES"
+    fi
+    sep=","
+    if (( i % 1000 == 0 || i == BIG_ROWS )); then sep=";"; fi
+    echo "(${i}, $((i % 4)), $((i % 50)), ${i}, 'r${i}')${sep}"
+  done
+} >"${WORK_DIR}/seed-big.sql"
+go_sql <"${WORK_DIR}/seed-big.sql"
+seeded=$(go_sql -Nse "SELECT COUNT(*) FROM pathdiff.big")
+[[ "${seeded}" == "${BIG_ROWS}" ]] \
+  || { echo "pathdiff.big did not seed ${BIG_ROWS} rows, got ${seeded}" >&2; exit 1; }
 
 for fixture in t u; do
   seeded=$(go_sql -Nse "SELECT COUNT(*) FROM pathdiff.${fixture}")
@@ -406,6 +453,7 @@ echo
 echo "==================== ANALYZE, on the GO node ===================="
 go_sql -e "ANALYZE TABLE pathdiff.t"
 go_sql -e "ANALYZE TABLE pathdiff.u"
+go_sql -e "ANALYZE TABLE pathdiff.big"
 # The Go server loads a histogram lazily; a synchronous-load query on each
 # compared column is what makes its own EXPLAIN read the statistics rather
 # than the absence of them.
@@ -428,7 +476,9 @@ done
 echo "waiting for the Rust node's stats reload to pick the ANALYZE up"
 for _ in $(seq 1 60); do
   if ! rust_sql -Nse "USE pathdiff; EXPLAIN ${Q_BROAD}" | grep -q "stats:pseudo" \
-    && ! rust_sql -Nse "USE pathdiff; EXPLAIN ${Q_INCOMPARABLE}" | grep -q "stats:pseudo"; then
+    && ! rust_sql -Nse "USE pathdiff; EXPLAIN ${Q_INCOMPARABLE}" | grep -q "stats:pseudo" \
+    && ! rust_sql -Nse "USE pathdiff; EXPLAIN SELECT * FROM big WHERE mid = 7" \
+      | grep -q "stats:pseudo"; then
     break
   fi
   sleep 2
@@ -447,6 +497,98 @@ rust_pseudo=$(rust_sql -Nse "USE pathdiff; EXPLAIN ${Q_BROAD}" | grep -c "stats:
 echo
 check "after ANALYZE neither node prints stats:pseudo (go=${go_pseudo} rust=${rust_pseudo})" \
   test "${go_pseudo}" -eq 0 -a "${rust_pseudo}" -eq 0
+
+echo
+echo "==================== THE DOUBLE READ, PRICED AND MEASURED ===================="
+cat <<'NOTE'
+  Go's cost model prices a double read at `rows/IndexLookupSize*32` table-side
+  requests -- 0.0016 per index row -- and Go's `IndexLookUpExecutor` earns it:
+  `fetchHandles` gathers `IndexLookupSize` handles and `buildTableReader`
+  issues cop tasks for the whole batch (pkg/executor/distsql.go).
+
+  This tier's `IndexRangeSourceExec` calls `get_row_by_handle` once per index
+  entry, which is one kvrpc Get per row. The three cases below sit at three
+  points on the selectivity curve of one 50000-row table, and each one reports
+  the REQUESTS TIKV ACTUALLY SERVED for each node -- read straight off TiKV's
+  own grpc counters, so it is a measurement and not a restatement of the cost
+  formula. A different path is a FINDING, not something to tune away.
+NOTE
+
+TIKV_STATUS_PORT=$((20180 + PORT_OFFSET))
+
+# One TiKV grpc message type's served count, cluster-wide. `kv_get` is a point
+# read, `coprocessor` is a pushed-down scan: the two shapes a double read can
+# take, and the whole difference between the batched reader and ours.
+tikv_msg_count() {
+  local type=$1
+  curl -sf "http://127.0.0.1:${TIKV_STATUS_PORT}/metrics" 2>/dev/null \
+    | awk -v t="type=\"${type}\"" '
+        $0 ~ /^tikv_grpc_msg_duration_seconds_count/ && index($0, t) { total += $NF }
+        END { printf "%d\n", total }'
+}
+
+# Runs `query` on one node and reports how many kvrpc Gets and coprocessor
+# requests TiKV served while it ran. Idle traffic (heartbeats, stats) does not
+# touch these two counters, so the delta is the statement's own.
+measure_requests() {
+  local node=$1 query=$2
+  local before_get before_cop after_get after_cop
+  before_get=$(tikv_msg_count kv_get)
+  before_cop=$(tikv_msg_count coprocessor)
+  if [[ "${node}" == "go" ]]; then
+    go_sql -Nse "USE pathdiff; ${query}" >/dev/null
+  else
+    rust_sql -Nse "USE pathdiff; ${query}" >/dev/null
+  fi
+  after_get=$(tikv_msg_count kv_get)
+  after_cop=$(tikv_msg_count coprocessor)
+  echo "$((after_get - before_get)) $((after_cop - before_cop))"
+}
+
+# `compare_double_read <label> <expected rows> <query>`: the plan each node
+# chose, and the requests each one really issued to get there.
+compare_double_read() {
+  local label=$1 expected=$2 query=$3
+  local gp rp gm rm gg gc rg rc grows rrows
+  gp=$(go_path "${query}")
+  rp=$(rust_path "${query}")
+  # SELECT COUNT(*) would let the planner cover the query with the index and
+  # skip the lookup entirely; the row projection is what forces the double
+  # read this section is about.
+  grows=$(go_sql -Nse "USE pathdiff; SELECT COUNT(*) FROM (${query}) AS c")
+  rrows=$(rust_sql -Nse "USE pathdiff; SELECT COUNT(*) FROM (${query}) AS c")
+  gm=$(measure_requests go "${query}")
+  rm=$(measure_requests rust "${query}")
+  read -r gg gc <<<"${gm}"
+  read -r rg rc <<<"${rm}"
+  echo
+  echo "--- ${label}"
+  echo "    ${query}"
+  printf '      %-6s %-16s %-10s %-12s %-12s %s\n' \
+    "" "path" "rows" "kv_get" "coprocessor" "rows read"
+  printf '      %-6s %-16s %-10s %-12s %-12s %s\n' \
+    "GO" "${gp:-<none>}" "${expected}" "${gg}" "${gc}" "${grows}"
+  printf '      %-6s %-16s %-10s %-12s %-12s %s\n' \
+    "RUST" "${rp:-<none>}" "${expected}" "${rg}" "${rc}" "${rrows}"
+  check "${label}: both nodes returned the same rows" test "${grows}" = "${rrows}"
+  if [[ "${gp}" != "${rp}" ]]; then
+    echo "      FINDING: the two planners chose DIFFERENT paths (${gp} vs ${rp})" >&2
+    DIFFERENT_PATHS=$((DIFFERENT_PATHS + 1))
+  fi
+  # The point of the section: when THIS node reads through an index, does it
+  # issue one request per row?
+  if [[ "${rp}" == "IndexRangeScan" ]] && (( rg >= expected )); then
+    echo "      UNBATCHED: ${rg} kvrpc Gets for ${expected} index rows -- one round"
+    echo "                 trip per row, which is what access_cost.rs now prices"
+  fi
+}
+
+compare_double_read "one row: a unique index over a large table" 1 \
+  "SELECT * FROM big WHERE rare = 7"
+compare_double_read "mid selectivity: 1/50th of a large table, near the crossover" 1000 \
+  "SELECT * FROM big WHERE mid = 7"
+compare_double_read "a quarter of a large table, where the scan must win" 12500 \
+  "SELECT * FROM big WHERE bucket = 1"
 
 echo
 echo "=== the two planners' full plans, side by side, after ANALYZE ==="
