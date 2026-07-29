@@ -1958,6 +1958,10 @@ func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec
 }
 
 func (b *executorBuilder) buildHashJoin(v *physicalop.PhysicalHashJoin) exec.Executor {
+	if v.JoinType == base.FullOuterJoin {
+		b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+		return nil
+	}
 	if b.sctx.GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && v.CanUseHashJoinV2() {
 		return b.buildHashJoinV2(v)
 	}

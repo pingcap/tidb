@@ -741,18 +741,28 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return b.buildResultSetNode(ctx, joinNode.Left, false)
 	}
 
-	if joinNode.Tp == ast.FullJoin {
-		// Reject FULL OUTER JOIN before LATERAL handling. Otherwise the
-		// LogicalApply path can consume the join type and treat it as an inner join.
-		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
-	}
-
 	// Detect whether the right subtree contains any LATERAL table source.
 	// This is used only to decide whether to push outerSchemas before building
 	// the right side, so that nested LATERAL sources can resolve outer columns.
 	// The decision to produce a LogicalApply is deferred until after rightPlan is
 	// built (see below), where a tighter check is applied.
 	isLateral := containsLateralTableSource(joinNode.Right)
+	if joinNode.Tp == ast.FullJoin {
+		// Current FULL OUTER JOIN limitations:
+		// 1) NATURAL/USING/full-join-without-ON are still out of scope.
+		// 2) FULL OUTER JOIN is enabled in volcano path only.
+		// 3) LATERAL is rejected before the LogicalApply path can consume the
+		//    join type and silently turn it into an inner apply.
+		if !b.ctx.GetSessionVars().EnableFullOuterJoin {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+		}
+		if b.ctx.GetSessionVars().GetEnableCascadesPlanner() {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN with cascades planner")
+		}
+		if joinNode.NaturalJoin || joinNode.Using != nil || joinNode.On == nil || isLateral {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+		}
+	}
 
 	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagJoinKeyTypeCast
 	// Don't enable join reorder for LATERAL (similar to StraightJoin)
@@ -859,6 +869,13 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin | rule.FlagOuterJoinToSemiJoin
 		joinPlan.JoinType = base.RightOuterJoin
 		util.ResetNotNullFlag(joinPlan.Schema(), 0, leftPlan.Schema().Len())
+	case ast.FullJoin:
+		// The rule EliminateOuterJoin does not remove full outer joins, but
+		// null-rejected predicates may simplify a full outer join into a
+		// one-sided outer join or an inner join.
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
+		joinPlan.JoinType = base.FullOuterJoin
+		util.ResetNotNullFlag(joinPlan.Schema(), 0, joinPlan.Schema().Len())
 	default:
 		joinPlan.JoinType = base.InnerJoin
 	}
@@ -901,6 +918,8 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	// Clear NotNull flag for the inner side schema if it's an outer join.
 	if joinNode.Tp == ast.LeftJoin || joinNode.Tp == ast.RightJoin {
 		util.ResetNotNullFlag(joinPlan.FullSchema, lFullSchema.Len(), joinPlan.FullSchema.Len())
+	} else if joinNode.Tp == ast.FullJoin {
+		util.ResetNotNullFlag(joinPlan.FullSchema, 0, joinPlan.FullSchema.Len())
 	}
 
 	// Merge sub-plan's FullNames into this join plan, similar to the FullSchema logic above.
@@ -1152,6 +1171,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		util.ResetNotNullFlag(rsc, 0, rsc.Len())
 	} else if joinTp == ast.RightJoin {
 		util.ResetNotNullFlag(lsc, 0, lsc.Len())
+	} else if joinTp == ast.FullJoin {
+		util.ResetNotNullFlag(lsc, 0, lsc.Len())
+		util.ResetNotNullFlag(rsc, 0, rsc.Len())
 	}
 	lColumns, rColumns := lsc.Columns, rsc.Columns
 	lNames, rNames := leftPlan.OutputNames().Shallow(), rightPlan.OutputNames().Shallow()
