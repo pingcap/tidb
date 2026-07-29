@@ -54,6 +54,16 @@
 #      off TiKV's own grpc counters -- so the receipt shows requests issued,
 #      not costs claimed.
 #
+#      Those counters are CLUSTER-WIDE and published asynchronously, so each
+#      delta also contains whatever else touched TiKV in the window (both
+#      nodes' own catalog and statistics reads, which run to tens of requests
+#      a second). Read them for SHAPE -- which request type each node uses,
+#      and whether a count tracks the row count -- not as exact per-statement
+#      counts. The exact "one point get per index row" claim is proved
+#      deterministically instead, by an in-process counter, in
+#      `tidb_executor::access_path`'s
+#      `the_double_read_issues_one_point_get_per_index_row`.
+#
 # estRows is compared with a tolerance, and every case where the two nodes
 # CHOSE DIFFERENTLY is reported as a finding rather than tuned away.
 #
@@ -583,12 +593,6 @@ compare_double_read() {
   if [[ "${gp}" != "${rp}" ]]; then
     echo "      FINDING: the two planners chose DIFFERENT paths (${gp} vs ${rp})" >&2
     DIFFERENT_PATHS=$((DIFFERENT_PATHS + 1))
-  fi
-  # The point of the section: when THIS node reads through an index, does it
-  # issue one request per row?
-  if [[ "${rp}" == "IndexRangeScan" ]] && (( rg >= expected )); then
-    echo "      UNBATCHED: ${rg} kvrpc Gets for ${expected} index rows -- one round"
-    echo "                 trip per row, which is what access_cost.rs now prices"
   fi
 }
 
