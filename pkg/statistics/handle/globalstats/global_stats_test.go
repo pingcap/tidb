@@ -16,6 +16,7 @@ package globalstats_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -25,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -33,6 +36,49 @@ import (
 )
 
 const asyncMergeWarn = "Warning 1105 The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged."
+
+type saveResultStatsHandle struct {
+	// Embed methods outside the persistence operation exercised by this test.
+	types.StatsHandle
+	saveResults []error
+	saveCalls   int
+}
+
+func (h *saveResultStatsHandle) SaveColOrIdxStatsToStorage(
+	_ int64,
+	_, _ int64,
+	_ int,
+	_ *statistics.Histogram,
+	_ *statistics.CMSketch,
+	_ *statistics.TopN,
+	_ int,
+	_ bool,
+	_ string,
+) error {
+	result := h.saveResults[h.saveCalls]
+	h.saveCalls++
+	return result
+}
+
+// TestWriteGlobalStatsToStoragePreservesFirstError verifies that persistence
+// continues after a failure without hiding it. It injects a failure followed by
+// success and expects both a partial-update result and the first error.
+func TestWriteGlobalStatsToStoragePreservesFirstError(t *testing.T) {
+	firstErr := errors.New("first histogram write failed")
+	handle := &saveResultStatsHandle{saveResults: []error{firstErr, nil}}
+	globalStats := &globalstats.GlobalStats{
+		Hg:   []*statistics.Histogram{{ID: 1}, {ID: 2}},
+		Cms:  make([]*statistics.CMSketch, 2),
+		TopN: make([]*statistics.TopN, 2),
+		Num:  2,
+	}
+
+	updated, err := globalstats.WriteGlobalStatsToStorage(handle, globalStats, &types.GlobalStatsInfo{}, 42)
+
+	require.True(t, updated)
+	require.ErrorIs(t, err, firstErr)
+	require.Equal(t, 2, handle.saveCalls)
+}
 
 func TestShowGlobalStatsWithAsyncMergeGlobal(t *testing.T) {
 	testShowGlobalStats(t, true)

@@ -226,6 +226,10 @@ type StatsCache interface {
 	// To work with auto-analyze's needs, we'll update all table's stats meta into memory.
 	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
 
+	// UpdateTableStatsMeta refreshes only the count and modify count for the requested tables.
+	// It preserves cached histograms and the pseudo state when ANALYZE did not persist new global stats.
+	UpdateTableStatsMeta(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error
+
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
 
@@ -470,11 +474,12 @@ type GlobalStatsInfo struct {
 // StatsGlobal is used to manage partition table global stats.
 type StatsGlobal interface {
 	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.
+	// The returned boolean reports whether at least one global stats record was persisted.
 	MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
 		info *GlobalStatsInfo,
 		physicalID int64,
-	) (err error)
+	) (updated bool, err error)
 }
 
 // DDL is used to handle ddl events.

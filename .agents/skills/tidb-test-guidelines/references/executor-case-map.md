@@ -258,7 +258,7 @@
 
 ### Tests
 - `pkg/executor/test/analyzetest/analyze_bench_test.go` - executor/test/analyzetest: Tests analyze partition.
-- `pkg/executor/test/analyzetest/analyze_test.go` - executor/test/analyzetest: Tests analyze partition.
+- `pkg/executor/test/analyzetest/analyze_test.go` - executor/test/analyzetest: Tests partition analyze execution and stats refresh.
 - `pkg/executor/test/analyzetest/main_test.go` - Configures default goleak settings and registers testdata.
 
 ## pkg/executor/test/analyzetest/columns

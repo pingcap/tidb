@@ -98,7 +98,7 @@
 
 ### Tests
 - `pkg/statistics/handle/globalstats/global_stats_internal_test.go` - statistics/handle/globalstats: Tests global stats internal.
-- `pkg/statistics/handle/globalstats/global_stats_test.go` - statistics/handle/globalstats: Tests show global stats with async merge global.
+- `pkg/statistics/handle/globalstats/global_stats_test.go` - statistics/handle/globalstats: Tests global stats merge and persistence behavior.
 - `pkg/statistics/handle/globalstats/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/statistics/handle/globalstats/topn_bench_test.go` - statistics/handle/globalstats: Tests merge part top N to global top N with hists.
 - `pkg/statistics/handle/globalstats/topn_test.go` - statistics/handle/globalstats: Tests merge part top N to global top N without hists.
@@ -132,7 +132,7 @@
 
 ### Tests
 - `pkg/statistics/handle/handletest/statstest/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/statistics/handle/handletest/statstest/stats_test.go` - statistics/handle/handletest: Tests stats cache process.
+- `pkg/statistics/handle/handletest/statstest/stats_test.go` - statistics/handle/handletest: Tests full and targeted stats cache updates.
 
 ## pkg/statistics/handle/lockstats
 

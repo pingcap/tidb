@@ -48,18 +48,19 @@ func NewStatsGlobal(statsHandler statstypes.StatsHandle) statstypes.StatsGlobal 
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
+// The returned boolean reports whether at least one global stats record was persisted.
 func (sg *statsGlobalImpl) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
 	info *statstypes.GlobalStatsInfo,
 	physicalID int64,
-) (err error) {
+) (updated bool, err error) {
 	globalStats, err := MergePartitionStats2GlobalStatsByTableID(sc, sg.statsHandler, opts, is, physicalID, info.IsIndex == 1, info.HistIDs)
 	if err != nil {
 		if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 			// When we find some partition-level stats are missing, we need to report warning.
 			sc.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
-		return err
+		return false, err
 	}
 	return WriteGlobalStatsToStorage(sg.statsHandler, globalStats, info, physicalID)
 }
@@ -359,8 +360,10 @@ func blockingMergePartitionStats2GlobalStats(
 	return
 }
 
-// WriteGlobalStatsToStorage is to write global stats to storage
-func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (err error) {
+// WriteGlobalStatsToStorage writes global stats to storage. It continues after
+// individual write errors, reports whether any record was persisted, and returns
+// the first write error.
+func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (updated bool, firstErr error) {
 	// Dump global-level stats to kv.
 	for i := range globalStats.Num {
 		hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
@@ -369,7 +372,7 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			continue
 		}
 		// fms for global stats doesn't need to dump to kv.
-		err = statsHandle.SaveColOrIdxStatsToStorage(gid,
+		saveErr := statsHandle.SaveColOrIdxStatsToStorage(gid,
 			globalStats.Count,
 			globalStats.ModifyCount,
 			info.IsIndex,
@@ -380,10 +383,15 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			true,
 			util.StatsMetaHistorySourceAnalyze,
 		)
-		if err != nil {
+		if saveErr != nil {
+			if firstErr == nil {
+				firstErr = saveErr
+			}
 			statslogutil.StatsLogger().Warn("save global-level stats to storage failed",
-				zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", gid))
+				zap.Int64("histID", hg.ID), zap.Error(saveErr), zap.Int64("tableID", gid))
+		} else {
+			updated = true
 		}
 	}
-	return err
+	return updated, firstErr
 }
