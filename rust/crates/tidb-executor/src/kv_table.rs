@@ -162,6 +162,11 @@ pub struct KvIndex {
     pub unique: bool,
     /// The indexed columns' offsets in the row, in index order.
     pub column_offsets: Vec<usize>,
+    /// Go `!IndexInfo.Invisible`. An invisible index is maintained by every
+    /// write and reported by `SHOW INDEX` exactly like any other, and is only
+    /// hidden from the *planner*: it never becomes an access path, and naming
+    /// it in `USE INDEX`/`FORCE INDEX` is Go's 1176 "Key ... doesn't exist".
+    pub visible: bool,
 }
 
 /// A column of a [`KvTable`]: name, column id, and type.
@@ -901,10 +906,20 @@ impl KvTable {
         self.auto_increment_offset.map(|_| self.auto_id.base())
     }
 
-    /// The table's indexes.
+    /// The table's indexes: every one of them, which is what index
+    /// maintenance, `SHOW INDEX`, and `information_schema` read.
     #[must_use]
     pub fn indexes(&self) -> &[KvIndex] {
         &self.indexes
+    }
+
+    /// The indexes a plan may read through, which is [`Self::indexes`] minus
+    /// the invisible ones (Go's `IndexInfo.Invisible`). Every site that
+    /// *chooses* an access path -- the cost-based index candidates and the
+    /// unique-index point-get paths -- goes through here, so an index the
+    /// planner must not pick is excluded once rather than at each chooser.
+    pub fn plan_indexes(&self) -> impl Iterator<Item = &KvIndex> {
+        self.indexes.iter().filter(|index| index.visible)
     }
 
     /// Marks the column at `offset` as the table's handle column, which Go

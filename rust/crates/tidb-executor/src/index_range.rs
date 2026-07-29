@@ -34,10 +34,17 @@
 //! composes with predicate push-down without any condition being applied
 //! twice in a way that changes the result.
 //!
+//! A prefix index is NOT one of these. Go cuts each stored key to the prefix
+//! length, so an uncut range over it is a SUBSET, not a superset: `KEY (s(4))`
+//! stores `'alph'` for `'alphabet'`, and seeking `["alphabet","alphabet"]`
+//! finds nothing at all -- rows go missing with no residual predicate able to
+//! bring them back. No prefix length reaches this crate's `KvIndex`, so a
+//! prefix index never gets here: [`crate::kv_table::KvTable`] is only built
+//! for tables without one (the cluster loader refuses such a table outright,
+//! and `CREATE TABLE` refuses the index).
+//!
 //! DEFERRED (documented, each a superset --- the residual predicate still
 //! filters, so the answer stays correct):
-//!   * prefix indexes (`KEY (s(4))`): Go cuts points to the prefix length and
-//!     re-unions; no prefix length reaches this crate's `KvIndex` yet.
 //!   * the handle columns Go appends to a non-clustered index's tail, so
 //!     `a = 1 AND b = 2 AND id > 5` on `(a, b)` reads `(1 2 5, 1 2 +inf]`.
 //!   * `extractBestCNFItemRanges` / `chooseBetweenRangeAndPoint`: Go's

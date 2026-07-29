@@ -479,6 +479,7 @@ mod tests {
                     name: "ib".to_owned(),
                     unique: false,
                     column_offsets: vec![1],
+                    visible: true,
                 })
                 .unwrap();
         }

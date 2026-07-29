@@ -645,7 +645,7 @@ pub(crate) fn try_batch_point_get(
 
     // The unique-index path.
     let mut table = table.clone();
-    for index in table.indexes().to_vec() {
+    for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
         if !index.unique || index.column_offsets.len() != 1 {
             continue;
         }
@@ -773,7 +773,7 @@ pub(crate) fn try_point_get(
 
     // The unique-index path: every column of some unique index is pinned.
     let mut table = table.clone();
-    for index in table.indexes().to_vec() {
+    for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
         if !index.unique {
             continue;
         }

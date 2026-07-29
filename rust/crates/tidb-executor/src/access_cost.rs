@@ -348,7 +348,7 @@ pub(crate) fn enumerate_paths(
     let Some(where_clause) = where_clause else {
         return candidates;
     };
-    for index in table.indexes() {
+    for index in table.plan_indexes() {
         let index_columns: Vec<(String, FieldType)> = index
             .column_offsets
             .iter()

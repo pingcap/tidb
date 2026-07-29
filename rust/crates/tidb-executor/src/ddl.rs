@@ -280,6 +280,7 @@ fn add_index_to_table(
             name: index_name.to_owned(),
             unique,
             column_offsets: offsets,
+            visible: true,
         })
         .map_err(|e| match e {
             crate::kv_table::KvTableError::DuplicateKeyName(name) => {
@@ -1014,6 +1015,7 @@ fn table_indexes(
             name,
             unique,
             column_offsets: offsets,
+            visible: true,
         });
     }
     let mut indexes: Vec<KvIndex> = Vec::new();

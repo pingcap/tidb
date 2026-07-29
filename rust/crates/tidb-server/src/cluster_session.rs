@@ -198,6 +198,20 @@ fn cluster_table(table: &TableInfo, storage: &ClusterTableStorage) -> Result<KvT
         if index.state != SchemaState::PUBLIC {
             continue;
         }
+        // A prefix index (`KEY idx(s(4))`) stores each column value CUT to the
+        // prefix, and nothing on either side of this seam cuts: the key
+        // builder encodes whole column values, so a read would seek a key that
+        // is not there (missing rows, silently) and a write would store an
+        // entry Go cannot find. The whole table is refused, and reported,
+        // rather than half-supported -- the same answer the ANALYZE path and
+        // the `CREATE TABLE` path already give a prefix index.
+        if index.has_prefix_index() {
+            return Err(format!(
+                "its index {} is a prefix index, whose entries are each column value cut to \
+                 the prefix length, which this node neither reads nor writes that way",
+                index.name.original()
+            ));
+        }
         let mut offsets = Vec::with_capacity(index.columns.len());
         for column in &index.columns {
             let offset = columns
@@ -217,6 +231,7 @@ fn cluster_table(table: &TableInfo, storage: &ClusterTableStorage) -> Result<KvT
             name: index.name.original().to_owned(),
             unique: index.unique,
             column_offsets: offsets,
+            visible: !index.invisible,
         });
     }
     Ok(kv_table)
@@ -334,6 +349,7 @@ mod tests {
     use tidb_executor::storage::StorageError;
     use tidb_model::column::ColumnInfo;
     use tidb_model::db::DBInfo;
+    use tidb_model::index::{IndexColumn, IndexInfo};
     use tidb_session::StmtResult;
     use tidb_txnkv::Key;
 
@@ -615,5 +631,138 @@ mod tests {
         };
         assert_eq!(format!("{rows:?}"), "[[Int(91)]]");
         assert_eq!(snapshot.lock().unwrap().data.len(), 1);
+    }
+
+    /// An index on a column, as the cluster stores it. `prefix` is Go's
+    /// `IndexColumn.Length`, which is `UnspecifiedLength` (-1) for a whole
+    /// column and a byte count for a prefix index.
+    fn index(id: i64, name: &str, column: &str, offset: i32, prefix: i32) -> IndexInfo {
+        IndexInfo {
+            id,
+            name: CiString::new(name),
+            columns: vec![IndexColumn {
+                name: CiString::new(column),
+                offset,
+                length: prefix,
+                ..IndexColumn::default()
+            }],
+            state: SchemaState::PUBLIC,
+            ..IndexInfo::default()
+        }
+    }
+
+    fn one_table_catalog(table: TableInfo) -> ClusterCatalog {
+        ClusterCatalog {
+            schema_version: 7,
+            databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
+                info: DBInfo {
+                    id: 5,
+                    name: CiString::new("app"),
+                    ..DBInfo::default()
+                },
+                tables: vec![table],
+            }],
+        }
+    }
+
+    /// A prefix index stores each value CUT to the prefix length. Nothing on
+    /// this side of the seam cuts, so a range built from whole values is a
+    /// SUBSET of what the index holds and matches nothing -- rows would go
+    /// missing with no error. The table is refused, by name and with a reason,
+    /// rather than answering wrongly.
+    ///
+    /// Before this refusal the index loaded as an ordinary full-value one and
+    /// the planner picked it, so the query below returned zero rows.
+    #[test]
+    fn a_table_with_a_prefix_index_is_refused_by_name() {
+        let (storage, _buffer, _snapshot) = cluster_storage();
+        let table = TableInfo {
+            id: 201,
+            name: CiString::new("p"),
+            columns: vec![column(1, 0, "id", true), column(2, 1, "s", false)],
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            indices: vec![index(1, "idx", "s", 1, 4)],
+            ..TableInfo::default()
+        };
+        let (mut session, skipped) = session_with_cluster_storage(
+            &one_table_catalog(table),
+            &storage,
+            &StatsSnapshot::new(),
+        );
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].name, "app.p");
+        assert!(
+            skipped[0]
+                .reason
+                .contains("its index idx is a prefix index"),
+            "{}",
+            skipped[0].reason
+        );
+        session.run("USE app").unwrap();
+        // Refused loudly: the table is not there at all, rather than there and
+        // answering with rows missing.
+        assert!(session
+            .run("SELECT id FROM p WHERE s = 'alphabet'")
+            .is_err());
+    }
+
+    /// Go never chooses an INVISIBLE index for an access path (captured:
+    /// `EXPLAIN` shows a full table scan, and `USE INDEX(inv)` is
+    /// `[planner:1176]Key 'inv' doesn't exist in table 'iv'`). The index is
+    /// still loaded and still maintained by writes -- only the planner is
+    /// blind to it -- and the full table scan answers the query exactly.
+    ///
+    /// Before this, `IndexInfo.Invisible` was dropped on the floor and the
+    /// cost-based chooser preferred the invisible index's cheap point range.
+    #[test]
+    fn an_invisible_index_is_loaded_but_never_chosen() {
+        let table = TableInfo {
+            id: 202,
+            name: CiString::new("iv"),
+            columns: vec![column(1, 0, "id", true), column(2, 1, "a", false)],
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            indices: vec![index(1, "inv", "a", 1, -1)],
+            ..TableInfo::default()
+        };
+        let mut invisible = table.clone();
+        invisible.indices[0].invisible = true;
+
+        for (info, expect_plan_index) in [(table, true), (invisible, false)] {
+            // Each pass gets its own storage: the two catalogs describe the
+            // same table id, so a shared buffer would collide on the handle.
+            let (storage, _buffer, _snapshot) = cluster_storage();
+            let (mut session, skipped) = session_with_cluster_storage(
+                &one_table_catalog(info),
+                &storage,
+                &StatsSnapshot::new(),
+            );
+            assert!(skipped.is_empty());
+            session.run("USE app").unwrap();
+            session
+                .run("INSERT INTO iv (id, a) VALUES (1, 10), (2, 20), (3, 30)")
+                .unwrap();
+            // The answer is the same either way: with the index hidden the
+            // full table scan still returns exactly the matching row.
+            let StmtResult::Rows(rows) = session.run("SELECT id FROM iv WHERE a = 20").unwrap()
+            else {
+                panic!("expected rows");
+            };
+            assert_eq!(format!("{rows:?}"), "[[Int(2)]]");
+
+            // The index is loaded and maintained either way; only the
+            // planner's view of it differs.
+            let catalog = session.shared_catalog();
+            let catalog = catalog.lock().unwrap();
+            let tidb_executor::driver::TableEntry::Kv(kv) = catalog
+                .table_in("app", "iv")
+                .expect("the table is in the catalog")
+            else {
+                panic!("a cluster table is a kv table");
+            };
+            assert_eq!(kv.indexes().len(), 1);
+            assert_eq!(kv.plan_indexes().count(), usize::from(expect_plan_index));
+        }
     }
 }
