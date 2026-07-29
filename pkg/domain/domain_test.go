@@ -280,6 +280,7 @@ func TestUpdateExternalWorkloadTTLJobEnableOnlyFromMaster(t *testing.T) {
 }
 
 func TestShouldStartTTLJobManagerWithExternalWorkloadRole(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
 	dom := NewMockDomain()
 	require.True(t, dom.shouldStartTTLJobManager())
 
@@ -288,6 +289,18 @@ func TestShouldStartTTLJobManagerWithExternalWorkloadRole(t *testing.T) {
 
 	dom.SetExternalWorkloadManager(&fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker})
 	require.True(t, dom.shouldStartTTLJobManager())
+
+	dom.SetExternalWorkloadManager(nil)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.ExternalWorkload.Enable = true
+		conf.ExternalWorkload.Role = config.RoleMaster
+	})
+	require.False(t, dom.shouldStartTTLJobManager())
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.ExternalWorkload.Role = config.RoleTTLTaskWorker
+	})
+	require.False(t, dom.shouldStartTTLJobManager())
 }
 
 // ETCD use ip:port as unix socket address, however this address is invalid on windows.
