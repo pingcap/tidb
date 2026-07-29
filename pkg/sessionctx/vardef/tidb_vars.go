@@ -622,6 +622,10 @@ const (
 	// TiDBDDLReorgMaxWriteSpeed defines the max write limitation for the lightning local backend
 	TiDBDDLReorgMaxWriteSpeed = "tidb_ddl_reorg_max_write_speed"
 
+	// TiDBEnableHistogramForPresplitIndexRegion controls whether DDL auto pre-split
+	// uses Histogram buckets when generating index region boundaries.
+	TiDBEnableHistogramForPresplitIndexRegion = "tidb_enable_histogram_for_presplit_index_region"
+
 	// TiDBEnableAutoIncrementInGenerated disables the mysql compatibility check on using auto-incremented columns in
 	// expression indexes and generated columns described here https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
 	TiDBEnableAutoIncrementInGenerated = "tidb_enable_auto_increment_in_generated"
@@ -1444,6 +1448,10 @@ const (
 	// ConservativeResolveConcurrency is the resolve_lock concurrency in conservative mode
 	ConservativeResolveConcurrency = 2
 )
+
+// DefTiDBEnableHistogramForPresplitIndexRegion enables Histogram buckets for
+// DDL auto pre-split by default.
+const DefTiDBEnableHistogramForPresplitIndexRegion = true
 
 // Default TiDB system variable values.
 const (

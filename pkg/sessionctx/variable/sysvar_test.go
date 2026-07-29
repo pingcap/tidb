@@ -2063,6 +2063,14 @@ func TestScope(t *testing.T) {
 	t.Run("DDL auto presplit interval is not user-facing", func(t *testing.T) {
 		require.Nil(t, GetSysVar("tidb_ddl_auto_presplit_interval"))
 	})
+
+	t.Run("auto presplit Histogram flag is GLOBAL only and defaults on", func(t *testing.T) {
+		sysVar := GetSysVar(vardef.TiDBEnableHistogramForPresplitIndexRegion)
+		require.NotNil(t, sysVar)
+		require.True(t, sysVar.HasGlobalScope())
+		require.False(t, sysVar.HasSessionScope())
+		require.Equal(t, vardef.On, sysVar.Value)
+	})
 }
 
 // TestSkipInitIsUsed ensures that no new variables are added with skipInit: true.

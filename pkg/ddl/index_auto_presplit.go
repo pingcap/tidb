@@ -48,6 +48,7 @@ type autoPresplitStatsProvider interface {
 		physicalTableID, columnID int64,
 		colInfo *model.ColumnInfo,
 		limit int,
+		loadHistogram bool,
 	) (*handle.AutoPresplitColumnStats, error)
 }
 
@@ -81,9 +82,46 @@ func persistAutoPresplitInterval(job *model.Job) {
 	job.AddSystemVars(autoPresplitIntervalJobKey, fixedAutoPresplitInterval)
 }
 
+// persistAutoPresplitSettings captures submission-time settings in the DDL job
+// so owner changes do not alter auto pre-split behavior.
+func persistAutoPresplitSettings(sctx sessionctx.Context, job *model.Job) error {
+	persistAutoPresplitInterval(job)
+	value, err := sctx.GetSessionVars().GetGlobalSystemVar(
+		context.Background(), vardef.TiDBEnableHistogramForPresplitIndexRegion)
+	if err != nil {
+		return fmt.Errorf("failed to get %s: %w",
+			vardef.TiDBEnableHistogramForPresplitIndexRegion, err)
+	}
+	job.AddSystemVars(vardef.TiDBEnableHistogramForPresplitIndexRegion, value)
+	return nil
+}
+
 // autoPresplitIntervalForJob intentionally ignores values persisted by older versions.
 func autoPresplitIntervalForJob(*model.Job) string {
 	return fixedAutoPresplitInterval
+}
+
+func enableHistogramForAutoPresplitJob(job *model.Job) bool {
+	value, ok := job.GetSystemVars(vardef.TiDBEnableHistogramForPresplitIndexRegion)
+	if !ok {
+		return vardef.DefTiDBEnableHistogramForPresplitIndexRegion
+	}
+	return value == vardef.On
+}
+
+func hasAutoPresplitSubJob(info *model.MultiSchemaInfo) bool {
+	for _, subJob := range info.SubJobs {
+		args, ok := subJob.JobArgs.(*model.ModifyIndexArgs)
+		if !ok {
+			continue
+		}
+		for _, indexArg := range args.IndexArgs {
+			if indexArg.AutoPresplit {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func parseAutoPresplitInterval(value string) (*big.Rat, error) {
@@ -102,6 +140,7 @@ func planAutoPresplitIndexRegions(
 	idxInfo *model.IndexInfo,
 	cfg autoPresplitConfig,
 	intervalValue string,
+	enableHistogram bool,
 ) ([][]byte, string, error) {
 	interval, err := parseAutoPresplitInterval(intervalValue)
 	if err != nil {
@@ -168,7 +207,8 @@ func planAutoPresplitIndexRegions(
 	loaded := &handle.AutoPresplitColumnStats{Column: colStats}
 	if loadNeeded {
 		loaded, err = statsProvider.LoadColumnStatsForAutoPresplit(
-			ctx, sctx, tblInfo.ID, leadingCol.ID, leadingCol, cfg.maxTopNKeysPerPhysical)
+			ctx, sctx, tblInfo.ID, leadingCol.ID, leadingCol,
+			cfg.maxTopNKeysPerPhysical, enableHistogram)
 		if cause := context.Cause(ctx); cause != nil {
 			return nil, "", cause
 		}
@@ -211,18 +251,20 @@ func planAutoPresplitIndexRegions(
 		}
 	}
 
-	if loaded.HistogramError != nil {
-		logAutoPresplitComponentFailure(tblInfo, idxInfo, "Histogram", loaded.HistogramError)
-	} else {
-		histogramEvents, err := buildAutoPresplitHistogramEvents(
-			sctx, &loaded.Column.Histogram, leadingCol)
-		if cause := context.Cause(ctx); cause != nil {
-			return nil, "", cause
-		}
-		if err != nil {
-			logAutoPresplitComponentFailure(tblInfo, idxInfo, "Histogram", err)
+	if enableHistogram {
+		if loaded.HistogramError != nil {
+			logAutoPresplitComponentFailure(tblInfo, idxInfo, "Histogram", loaded.HistogramError)
 		} else {
-			events = append(events, histogramEvents...)
+			histogramEvents, err := buildAutoPresplitHistogramEvents(
+				sctx, &loaded.Column.Histogram, leadingCol)
+			if cause := context.Cause(ctx); cause != nil {
+				return nil, "", cause
+			}
+			if err != nil {
+				logAutoPresplitComponentFailure(tblInfo, idxInfo, "Histogram", err)
+			} else {
+				events = append(events, histogramEvents...)
+			}
 		}
 	}
 	events, totalCount, err := mergeAutoPresplitEvents(events)
