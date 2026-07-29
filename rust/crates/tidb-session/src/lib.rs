@@ -1396,14 +1396,18 @@ impl Session {
                 DmlStmt::Insert(_) => {
                     let current_db = self.current_db.clone();
                     let ctx = self.statement_context(true);
-                    let (affected, allocated) = self.with_catalog_mut(|catalog| {
+                    let result = self.with_catalog_mut(|catalog| {
                         tidb_executor::run_insert_reporting(sql, catalog, &current_db, &ctx)
-                    })?;
+                    });
                     self.drain_eval_warnings(&ctx);
-                    self.statement_insert_id = allocated.unwrap_or(0).max(0) as u64;
-                    if let Some(allocated) = allocated {
-                        self.last_insert_id = allocated.max(0) as u64;
+                    // The published id outlives a failing statement, exactly
+                    // as Go's `StmtCtx.LastInsertID` does, so it is read
+                    // before the error is propagated.
+                    if let Some(published) = ctx.published_last_insert_id() {
+                        self.last_insert_id = published;
                     }
+                    let (affected, allocated) = result?;
+                    self.statement_insert_id = allocated.unwrap_or(0).max(0) as u64;
                     Ok(StmtOutput::Affected(affected))
                 }
                 DmlStmt::Update(_) => {
@@ -1823,6 +1827,17 @@ impl Session {
         .with_connection_id(self.connection_id)
         .with_rand_session(Rc::clone(&self.rand))
         .with_clock(clock, zone)
+        .with_auto_increment_step_default(self.auto_increment_step_is_default())
+    }
+
+    /// Whether `@@auto_increment_increment` and `@@auto_increment_offset` are
+    /// both at their default of 1, which is the only step the allocator can
+    /// answer; an insert into a table with an auto column is refused when
+    /// they are not.
+    fn auto_increment_step_is_default(&self) -> bool {
+        ["auto_increment_increment", "auto_increment_offset"]
+            .iter()
+            .all(|name| self.vars.get_system(name).as_deref() == Ok("1"))
     }
 
     /// Moves what evaluation recorded into the statement's warning buffer.
@@ -2045,6 +2060,8 @@ fn collect_noop_in_expr(expr: &tidb_ast::Expr, out: &mut Vec<&'static str>) {
     }
 }
 
+#[cfg(test)]
+mod tests_auto_increment;
 #[cfg(test)]
 mod tests_charset;
 #[cfg(test)]

@@ -477,6 +477,9 @@ pub fn run_alter_table_in(
             } => {
                 drop_index_from_table(catalog, &database, &name, index_name, *if_exists)?;
             }
+            tidb_ast::AlterTableAction::SetTableOptions { options } => {
+                set_table_options_action(catalog, &database, &name, options)?;
+            }
             _ => {
                 return Err(DriverError::Unsupported(
                     "this ALTER TABLE action is not supported yet",
@@ -484,6 +487,40 @@ pub fn run_alter_table_in(
             }
         }
     }
+    Ok(())
+}
+
+/// One `ALTER TABLE ... <table options>`.
+///
+/// Only `AUTO_INCREMENT=` is carried: Go rebases the allocator, which moves
+/// the counter up to the named value and leaves it alone when it has already
+/// run past. Any other option is refused rather than silently accepted.
+fn set_table_options_action(
+    catalog: &mut Catalog,
+    database: &str,
+    name: &str,
+    options: &[tidb_ast::TableOption],
+) -> Result<(), DriverError> {
+    let seed = auto_increment_option(options)?;
+    if options.len() != usize::from(seed.is_some()) {
+        return Err(DriverError::Unsupported(
+            "this ALTER TABLE table option is not supported yet",
+        ));
+    }
+    let Some(seed) = seed else { return Ok(()) };
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
+        return Err(DriverError::Unsupported(
+            "ALTER TABLE ... AUTO_INCREMENT needs a storage-backed table",
+        ));
+    };
+    if table.auto_increment_offset().is_none() {
+        // Go `ErrInvalidAutoRandom`-adjacent path: without an auto column
+        // there is no allocator to rebase.
+        return Err(DriverError::Unsupported(
+            "ALTER TABLE ... AUTO_INCREMENT needs an AUTO_INCREMENT column",
+        ));
+    }
+    table.rebase_auto_increment(seed);
     Ok(())
 }
 
@@ -1187,6 +1224,31 @@ fn table_charset_of(options: &[tidb_ast::TableOption]) -> Result<TableCharset, D
     resolve_pair(charset, collation, TableCharset::default())
 }
 
+/// The `AUTO_INCREMENT [=] n` table option's value, if the list carries one.
+///
+/// Go reads the same option at CREATE (seeding the allocator) and at ALTER
+/// (rebasing it). `FORCE AUTO_INCREMENT`, which lets Go move the counter
+/// DOWN, is refused rather than silently treated as the plain form.
+fn auto_increment_option(options: &[tidb_ast::TableOption]) -> Result<Option<i64>, DriverError> {
+    let mut seed = None;
+    for option in options {
+        match option {
+            tidb_ast::TableOption::AutoIncrement(value) => {
+                seed = Some(value.parse::<i64>().map_err(|_| {
+                    DriverError::Unsupported("AUTO_INCREMENT= needs an integer value")
+                })?);
+            }
+            tidb_ast::TableOption::ForceAutoIncrement(_) => {
+                return Err(DriverError::Unsupported(
+                    "FORCE AUTO_INCREMENT is not supported yet",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(seed)
+}
+
 /// Whether the declared type name is one whose representation IS binary --
 /// Go's `BINARY`/`VARBINARY` and the BLOB family, which carry charset
 /// `binary` no matter what the table's default is.
@@ -1542,6 +1604,9 @@ pub fn run_create_table_in(
     let clustered = pk_is_handle || !common_handle_offsets.is_empty();
     if let Some(offset) = auto_increment_offset {
         table.set_auto_increment_offset(offset);
+        if let Some(seed) = auto_increment_option(&create.table_options)? {
+            table.rebase_auto_increment(seed);
+        }
     }
     for index in table_indexes(create, &info.columns, clustered)? {
         table.add_index(index);

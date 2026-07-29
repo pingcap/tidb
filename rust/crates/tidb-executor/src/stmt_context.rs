@@ -14,7 +14,7 @@
 
 //! The per-statement evaluation context, which is Go's `StatementContext`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -60,6 +60,20 @@ pub struct StmtContext {
     /// builds a new `builtinFunc` per plan) and advanced once per row by the
     /// evaluator, keyed by the call site's stable identity.
     rand_seeded: Rc<RefCell<HashMap<usize, MysqlRng>>>,
+    /// Go `StatementContext.LastInsertID`/`LastInsertIDSet`: the id this
+    /// statement publishes as `LAST_INSERT_ID()`.
+    ///
+    /// It rides the context rather than the statement's return value because
+    /// Go publishes it the moment a row is ACCEPTED for insertion -- long
+    /// before a deferred unique-key check can fail the statement -- so a
+    /// statement that ends in an error still publishes. Returning it would
+    /// make the failing case unreachable and force a second, error-shaped
+    /// channel for exactly that case.
+    last_insert_id: Rc<Cell<Option<u64>>>,
+    /// Whether `@@auto_increment_increment`/`@@auto_increment_offset` are at
+    /// their defaults of 1. A statement that would have to honour a different
+    /// step is refused; see [`StmtContext::auto_increment_step_is_default`].
+    auto_increment_step_is_default: bool,
 }
 
 impl StmtContext {
@@ -80,6 +94,8 @@ impl StmtContext {
             time_zone: None,
             rand_session: None,
             rand_seeded: Rc::default(),
+            last_insert_id: Rc::default(),
+            auto_increment_step_is_default: true,
         }
     }
 
@@ -173,6 +189,8 @@ impl StmtContext {
             time_zone: None,
             rand_session: None,
             rand_seeded: Rc::default(),
+            last_insert_id: Rc::default(),
+            auto_increment_step_is_default: true,
         }
     }
 
@@ -197,6 +215,39 @@ impl StmtContext {
     /// Records a warning the driver rendered itself.
     pub fn append_warning_parts(&self, code: u16, message: &str) {
         self.append_warning(code, message);
+    }
+
+    /// Go `SessionVars.SetLastInsertID`: publishes the id `LAST_INSERT_ID()`
+    /// reports after this statement. The first publication of a statement
+    /// wins, as Go's statement-scoped `e.lastInsertID` does.
+    pub fn publish_last_insert_id(&self, id: u64) {
+        if self.last_insert_id.get().is_none() {
+            self.last_insert_id.set(Some(id));
+        }
+    }
+
+    /// The id this statement published, if any.
+    #[must_use]
+    pub fn published_last_insert_id(&self) -> Option<u64> {
+        self.last_insert_id.get()
+    }
+
+    /// Declares whether `@@auto_increment_increment` and
+    /// `@@auto_increment_offset` are both 1.
+    #[must_use]
+    pub fn with_auto_increment_step_default(mut self, is_default: bool) -> Self {
+        self.auto_increment_step_is_default = is_default;
+        self
+    }
+
+    /// Whether the session's auto-increment step and offset are both 1.
+    ///
+    /// The allocator here hands out consecutive ids only, so a statement that
+    /// would have to honour a different step is REFUSED rather than answered
+    /// with the wrong ids.
+    #[must_use]
+    pub fn auto_increment_step_is_default(&self) -> bool {
+        self.auto_increment_step_is_default
     }
 
     /// The warnings evaluation recorded, in the order they were raised.

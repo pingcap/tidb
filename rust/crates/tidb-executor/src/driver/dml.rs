@@ -213,6 +213,14 @@ pub(crate) fn run_insert_traced(
         TableEntry::Mem(_) => None,
         TableEntry::View(_) => unreachable!("INSERT through a view is refused above"),
     };
+    // REFUSED, not approximated: the allocator hands out consecutive ids, so
+    // a session that asked for a different step would be answered with the
+    // wrong ids rather than none.
+    if auto_increment_offset.is_some() && !ctx.auto_increment_step_is_default() {
+        return Err(DriverError::Unsupported(
+            "@@auto_increment_increment / @@auto_increment_offset other than 1 is not supported yet",
+        ));
+    }
     let mut auto_rows: Vec<usize> = Vec::new();
     let mut first_allocated: Option<i64> = None;
 
@@ -357,6 +365,16 @@ pub(crate) fn run_insert_traced(
                         }
                         continue;
                     }
+                }
+                // Go publishes the statement's first allocated id the moment
+                // a row is ACCEPTED for insertion (`addRecord` ->
+                // `SetLastInsertID`), which is why a hard duplicate publishes
+                // -- its deferred unique-key check fails the statement only
+                // afterwards -- while an IGNORE-skipped row and a row
+                // redirected into ON DUPLICATE KEY UPDATE never reach here
+                // and so publish nothing.
+                if let Some(allocated) = first_allocated {
+                    ctx.publish_last_insert_id(allocated.max(0) as u64);
                 }
                 kv.insert_row(row).map_err(|e| match e {
                     crate::kv_table::KvTableError::DuplicateEntry { value, key } => {

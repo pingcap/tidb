@@ -86,32 +86,19 @@ fn replace_deletes_the_row_found_through_a_unique_non_primary_key() {
     assert_eq!(rows(&mut session, "SELECT a,b FROM u"), [["2", "10"]]);
 }
 
-/// BUG (four distinct divergences): `AUTO_INCREMENT` allocation and
-/// publication.
-///
 /// An `AUTO_INCREMENT` id is CONSUMED before a statement can fail, and the
 /// consumption is permanent: a hard duplicate-key insert, an `INSERT IGNORE`
-/// that skips its row, and an insert inside a rolled-back transaction each burn
-/// an id that no later statement ever reuses. `LAST_INSERT_ID()` reports the
-/// FIRST id of a multi-row insert, and only a real publication updates it —
-/// a hard failure publishes the id it consumed, an `INSERT IGNORE` does not.
+/// that skips its row, and an insert inside a rolled-back transaction each
+/// burn an id that no later statement ever reuses. `LAST_INSERT_ID()` reports
+/// the FIRST id of a multi-row insert, and only a row actually handed to
+/// storage publishes it -- a hard duplicate publishes (its unique-key check
+/// is deferred past the write), an `INSERT IGNORE` does not (its row never
+/// reaches the write).
 ///
-/// `gorun` over a table seeded `AUTO_INCREMENT=100`: ids land on 100, 101, then
-/// 104 (102 burned by the failure, 103 by the IGNORE), and after a rolled-back
-/// insert the next row takes 106, never 105.
-///
-/// The live engine diverges four ways:
-///  1. the `AUTO_INCREMENT=100` table option is ignored and the counter starts
-///     at 1;
-///  2. a hard duplicate-key failure does NOT publish its consumed id;
-///  3. an `INSERT IGNORE` DOES publish its consumed id — the exact inverse of
-///     both rules above;
-///  4. an id consumed inside a rolled-back transaction is returned to the pool
-///     and handed to the next insert.
-///
-/// Only the burn count for the failure/IGNORE pair (two ids) is already right.
+/// `gorun` over a table seeded `AUTO_INCREMENT=100`: ids land on 100, 101,
+/// then 104 (102 burned by the failure, 103 by the IGNORE), and after a
+/// rolled-back insert the next row takes 106, never 105.
 #[test]
-#[ignore = "live-engine bug: AUTO_INCREMENT seed, publication, and rollback burn all diverge"]
 fn auto_increment_ids_are_burned_by_failures_and_by_rollback() {
     let mut session = Session::new();
     session

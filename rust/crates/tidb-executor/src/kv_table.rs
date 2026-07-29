@@ -43,6 +43,8 @@ use crate::pushdown_scan::{
 use crate::scan_pushdown::ScanComparison;
 use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
     encode_index_seek_key, encode_row_key_with_handle, get_table_handle_key_range, RecordHandle,
@@ -209,6 +211,55 @@ impl Default for TableCharset {
     }
 }
 
+/// Go `autoid.Allocator`: the AUTO_INCREMENT counter, which lives OUTSIDE
+/// transaction semantics.
+///
+/// Go allocates auto ids against the meta store in a transaction of their
+/// own, so an id is consumed the moment a row asks for one and is never
+/// handed back -- not by a statement that fails afterwards, and not by a
+/// transaction that rolls back. Holding the counter in a SHARED cell rather
+/// than as a plain field is what reproduces that here: a transaction stages a
+/// COPY of the catalog, and the copied tables allocate from the very counter
+/// the committed ones do, so dropping the staged copy on ROLLBACK discards
+/// the rows while keeping the burn. As a plain field, "returned on rollback"
+/// would be the normal path and every failure site would need its own burn
+/// fixup.
+#[derive(Clone, Debug)]
+struct AutoIdAllocator(Arc<AtomicI64>);
+
+impl AutoIdAllocator {
+    /// An allocator whose next id is `base`.
+    fn new(base: i64) -> Self {
+        AutoIdAllocator(Arc::new(AtomicI64::new(base)))
+    }
+
+    /// Consumes and returns the next id.
+    fn alloc(&self) -> i64 {
+        self.0.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// The id the next allocation will return.
+    fn base(&self) -> i64 {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    /// Go `Allocator.Rebase`: moves the counter so the next id exceeds
+    /// `value`. A value the counter is already past is ignored, which is why
+    /// an explicit id SMALLER than the counter -- and an `ALTER TABLE ...
+    /// AUTO_INCREMENT=` that names a smaller number -- changes nothing.
+    fn rebase(&self, value: i64) {
+        self.0.fetch_max(value + 1, Ordering::SeqCst);
+    }
+
+    /// Starts the counter over at `base`, ignoring how far it had run.
+    ///
+    /// Go reaches this by replacing the table (TRUNCATE builds a new table id
+    /// with a fresh allocator), so unlike `rebase` it also moves DOWN.
+    fn reset(&self, base: i64) {
+        self.0.store(base, Ordering::SeqCst);
+    }
+}
+
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
 #[derive(Clone, Debug)]
 pub struct KvTable {
@@ -232,8 +283,9 @@ pub struct KvTable {
     indexes: Vec<KvIndex>,
     /// The AUTO_INCREMENT column's offset, if the table has one.
     auto_increment_offset: Option<usize>,
-    /// Go's auto-id allocator base: the next value to hand out.
-    next_auto_id: i64,
+    /// Go's auto-id allocator, shared across the copies a transaction stages
+    /// so that a consumed id is never returned (see [`AutoIdAllocator`]).
+    auto_id: AutoIdAllocator,
     /// Go `TableInfo.IsCommonHandle`: the clustered primary key's column
     /// offsets, whose encoding IS the row handle. Empty when the table has no
     /// clustered common handle.
@@ -339,7 +391,7 @@ impl KvTable {
             indexes: Vec::new(),
             common_handle_offsets: Vec::new(),
             auto_increment_offset: None,
-            next_auto_id: 1,
+            auto_id: AutoIdAllocator::new(1),
             charset: TableCharset::default(),
         }
     }
@@ -366,6 +418,16 @@ impl KvTable {
         self.auto_increment_offset
     }
 
+    /// Go's `AUTO_INCREMENT=n` table option: the first id the table hands out.
+    ///
+    /// Go seeds the allocator so the next id is `n`, so `AUTO_INCREMENT=100`
+    /// at CREATE makes the first row land on 100. On an existing table
+    /// (`ALTER TABLE ... AUTO_INCREMENT=n`) it is a Rebase, which only ever
+    /// moves the counter UP -- naming a smaller number leaves it alone.
+    pub fn rebase_auto_increment(&mut self, next_id: i64) {
+        self.auto_id.rebase(next_id - 1);
+    }
+
     /// Go `adjustAutoIncrementDatum`: fills the auto-increment column.
     ///
     /// An omitted, NULL or zero value takes the next allocated id; an explicit
@@ -383,14 +445,12 @@ impl KvTable {
             _ => 0,
         };
         if current != 0 {
-            // Go rebases so the next allocation is past the explicit value.
-            if current >= self.next_auto_id {
-                self.next_auto_id = current + 1;
-            }
+            // Go rebases so the next allocation is past the explicit value,
+            // and a value the counter is already past changes nothing.
+            self.auto_id.rebase(current);
             return None;
         }
-        let allocated = self.next_auto_id;
-        self.next_auto_id += 1;
+        let allocated = self.auto_id.alloc();
         row[offset] = Datum::Int(allocated);
         Some(allocated)
     }
@@ -488,7 +548,7 @@ impl KvTable {
     pub fn truncate(&mut self) {
         self.store.clear();
         self.next_handle = 1;
-        self.next_auto_id = 1;
+        self.auto_id.reset(1);
     }
 
     /// Sets the table's name, used to qualify a duplicate-key error.
@@ -838,7 +898,7 @@ impl KvTable {
     /// which is the NULL Go reports there.
     #[must_use]
     pub fn next_auto_increment(&self) -> Option<i64> {
-        self.auto_increment_offset.map(|_| self.next_auto_id)
+        self.auto_increment_offset.map(|_| self.auto_id.base())
     }
 
     /// The table's indexes.
