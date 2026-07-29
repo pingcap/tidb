@@ -31,6 +31,7 @@
 //! assert!(!raw_key.is_empty());
 //! ```
 
+pub mod element;
 pub mod error;
 pub mod key;
 pub mod structure;

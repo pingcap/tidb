@@ -134,10 +134,20 @@ pub fn auto_table_id_key(table_id: i64) -> Vec<u8> {
     prefixed_id(AUTO_TABLE_ID_PREFIX, table_id)
 }
 
+/// Go `ParseAutoTableIDKey`.
+pub fn parse_auto_table_id_key(field: &[u8]) -> Result<i64> {
+    parse_prefixed_id(AUTO_TABLE_ID_PREFIX, field)
+}
+
 /// Go `AutoIncrementIDKey`.
 #[must_use]
 pub fn auto_increment_id_key(table_id: i64) -> Vec<u8> {
     prefixed_id(AUTO_INCREMENT_ID_PREFIX, table_id)
+}
+
+/// Go `ParseAutoIncrementIDKey`.
+pub fn parse_auto_increment_id_key(field: &[u8]) -> Result<i64> {
+    parse_prefixed_id(AUTO_INCREMENT_ID_PREFIX, field)
 }
 
 /// Go `AutoRandomTableIDKey`.
@@ -146,10 +156,20 @@ pub fn auto_random_table_id_key(table_id: i64) -> Vec<u8> {
     prefixed_id(AUTO_RANDOM_ID_PREFIX, table_id)
 }
 
+/// Go `ParseAutoRandomTableIDKey`.
+pub fn parse_auto_random_table_id_key(field: &[u8]) -> Result<i64> {
+    parse_prefixed_id(AUTO_RANDOM_ID_PREFIX, field)
+}
+
 /// Go `SequenceKey`.
 #[must_use]
 pub fn sequence_key(sequence_id: i64) -> Vec<u8> {
     prefixed_id(SEQUENCE_PREFIX, sequence_id)
+}
+
+/// Go `ParseSequenceKey`.
+pub fn parse_sequence_key(field: &[u8]) -> Result<i64> {
+    parse_prefixed_id(SEQUENCE_PREFIX, field)
 }
 
 /// Go `Mutator.sequenceCycleKey`.

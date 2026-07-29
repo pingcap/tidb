@@ -1088,6 +1088,31 @@ fn table_indexes(
             visible,
         });
     }
+    /// Go `GetName4AnonymousIndex` (`pkg/ddl/executor.go`): an index written
+    /// without a name is named after its FIRST column, and a collision with an
+    /// index already on the table appends `_2`, `_3`, ... until it is free.
+    /// `PRIMARY` is never taken as an anonymous name, so a column called
+    /// `primary` yields `primary_2`.
+    ///
+    /// Captured: `create table n3 (a int, b int, unique key (a), key (a))`
+    /// prints `UNIQUE KEY \`a\` (\`a\`)` and `KEY \`a_2\` (\`a\`)`.
+    fn anonymous_index_name(indexes: &[KvIndex], first_column: &str) -> String {
+        let mut id = 2;
+        let mut name = if first_column.eq_ignore_ascii_case("primary") {
+            id = 3;
+            format!("{first_column}_2")
+        } else {
+            first_column.to_owned()
+        };
+        while indexes
+            .iter()
+            .any(|index| index.name.eq_ignore_ascii_case(&name))
+        {
+            name = format!("{first_column}_{id}");
+            id += 1;
+        }
+        name
+    }
     let mut indexes: Vec<KvIndex> = Vec::new();
 
     for constraint in &create.table_constraints {
@@ -1134,10 +1159,15 @@ fn table_indexes(
         }
         let name = match index.kind {
             tidb_ast::IndexConstraintKind::PrimaryKey => "PRIMARY".to_owned(),
-            _ => index
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("idx_{}", indexes.len() + 1)),
+            _ => match index.name.clone() {
+                Some(given) => given,
+                None => {
+                    let Some(tidb_ast::IndexPart::Column { name, .. }) = index.parts.first() else {
+                        return Err(DriverError::Unsupported("an index names no column"));
+                    };
+                    anonymous_index_name(&indexes, name)
+                }
+            },
         };
         push(
             &mut indexes,

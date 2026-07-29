@@ -322,6 +322,37 @@ fn show_create_table() {
              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
     );
 
+    // An index written WITHOUT a name is named after its first column, and a
+    // collision appends `_2` (Go `GetName4AnonymousIndex`). Captured with
+    // `rust/difftests/gorun`: this engine used to call them `idx_1`/`idx_2`,
+    // which is the name a duplicate-key error prints and the name
+    // `DROP INDEX` needs.
+    assert_eq!(
+        create(
+            &mut session,
+            "create table n2 (a bigint, b bigint, unique key (a, b))",
+            "n2"
+        ),
+        "CREATE TABLE `n2` (\n  \
+             `a` bigint(20) DEFAULT NULL,\n  \
+             `b` bigint(20) DEFAULT NULL,\n  \
+             UNIQUE KEY `a` (`a`,`b`)\n\
+             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+    assert_eq!(
+        create(
+            &mut session,
+            "create table n3 (a bigint, b bigint, unique key (a), key (a))",
+            "n3"
+        ),
+        "CREATE TABLE `n3` (\n  \
+             `a` bigint(20) DEFAULT NULL,\n  \
+             `b` bigint(20) DEFAULT NULL,\n  \
+             UNIQUE KEY `a` (`a`),\n  \
+             KEY `a_2` (`a`)\n\
+             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+    );
+
     // A string primary key is now a clustered common handle, so this
     // matches TiDB's captured output exactly. The previous commit
     // reported NONCLUSTERED, truthfully, because no common handle

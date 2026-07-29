@@ -406,14 +406,13 @@ fn insert_ignore_of_a_duplicate_leaves_one_row_on_pk_and_on_unique_key() {
         affected(&mut session, "INSERT IGNORE INTO ipk VALUES (1)"),
         0
     );
-    // Go turns the duplicate into a warning rather than an error. Read it
+    // Go turns the duplicate into a warning rather than an error, and names
+    // the key it collided with. Captured with `rust/difftests/gorun`:
+    // `Warning|1062|Duplicate entry '1' for key 'ipk.PRIMARY'`. Read it
     // immediately: any statement in between clears the warning list.
     assert_eq!(
-        rows(&mut session, "SHOW WARNINGS")
-            .into_iter()
-            .filter(|warning| warning.contains("Duplicate entry"))
-            .count(),
-        1
+        rows(&mut session, "SHOW WARNINGS"),
+        ["Warning|1062|Duplicate entry '1' for key 'ipk.PRIMARY'"]
     );
     assert_eq!(rows(&mut session, "SELECT c FROM ipk"), ["1"]);
     assert_eq!(key_shapes(&session, "ipk"), ["record"]);
@@ -424,12 +423,11 @@ fn insert_ignore_of_a_duplicate_leaves_one_row_on_pk_and_on_unique_key() {
         affected(&mut session, "INSERT IGNORE INTO iuk VALUES (1)"),
         0
     );
+    // Go names an anonymous unique index after its column, so the key here is
+    // `iuk.c` -- captured, `Warning|1062|Duplicate entry '1' for key 'iuk.c'`.
     assert_eq!(
-        rows(&mut session, "SHOW WARNINGS")
-            .into_iter()
-            .filter(|warning| warning.contains("Duplicate entry"))
-            .count(),
-        1
+        rows(&mut session, "SHOW WARNINGS"),
+        ["Warning|1062|Duplicate entry '1' for key 'iuk.c'"]
     );
     assert_eq!(rows(&mut session, "SELECT c FROM iuk"), ["1"]);
     assert_eq!(key_shapes(&session, "iuk"), ["index", "record"]);
