@@ -1365,25 +1365,66 @@ impl KvTable {
     /// row back under the same record key when the handle column did not
     /// change).
     pub fn update_row(&mut self, handle: &TableHandle, row: &[Datum]) -> Result<(), KvTableError> {
-        // Go removes the old index entries and writes the new ones.
+        // A clustered primary key IS the row handle, and the record value omits
+        // the handle columns entirely, so an UPDATE that assigns to the primary
+        // key MOVES the row: it is stored under the handle its new values
+        // produce, not the one it was scanned under. Go `tables.UpdateRecord`
+        // takes exactly this path -- when the handle changes it removes the old
+        // record and calls `AddRecord` for the new one.
+        //
+        // Deriving the destination handle for every update makes the move the
+        // general case; an update that leaves the key alone is the same code
+        // with `new_handle == handle`, so there is no "did the handle change"
+        // branch to get wrong. A table with no clustered key keeps the handle
+        // it was scanned under, because its handle is an allocated `_tidb_rowid`
+        // that the row's values do not determine.
+        let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
+        let new_handle = if clustered {
+            self.handle_of_row(row)?
+        } else {
+            handle.clone()
+        };
+        // Moving onto an occupied handle is a primary-key duplicate, reported
+        // exactly as `INSERT` reports one: `Duplicate entry '2' for key
+        // 't.PRIMARY'`. Checked before anything is written, so the rejected
+        // statement leaves the table untouched.
+        if new_handle != *handle && self.row_exists(&new_handle)? {
+            return Err(KvTableError::DuplicateEntry {
+                value: clustered_key_text(self, row),
+                key: self.qualified_key("PRIMARY"),
+            });
+        }
+        // Go removes the old index entries and writes the new ones. They point
+        // AT the handle, so a moved row needs them rewritten even when the
+        // indexed values did not change.
         if !self.indexes.is_empty() {
-            if let Some(old) = self.read_row(handle)? {
-                self.delete_index_entries(&old, handle)?;
+            let old = self.read_row(handle)?;
+            if let Some(old) = &old {
+                self.delete_index_entries(old, handle)?;
             }
-            if let Err(error) = self.write_index_entries(row, handle) {
+            if let Err(error) = self.write_index_entries(row, &new_handle) {
                 // Restore the entries the failed update removed, so a rejected
                 // statement leaves the index as it found it.
-                if let Some(old) = self.read_row(handle)? {
-                    self.write_index_entries(&old, handle)?;
+                if let Some(old) = &old {
+                    self.write_index_entries(old, handle)?;
                 }
                 return Err(error);
             }
         }
         // The handle columns stay out of the value, as on insert.
         let value = self.encode_row_value(row)?;
+        if new_handle != *handle {
+            let old_key = Key::from_bytes(encode_row_key_with_handle(
+                self.table_id,
+                &handle.record_handle(),
+            ));
+            self.store
+                .delete(old_key)
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        }
         let key = Key::from_bytes(encode_row_key_with_handle(
             self.table_id,
-            &handle.record_handle(),
+            &new_handle.record_handle(),
         ));
         self.store
             .set(key, value)

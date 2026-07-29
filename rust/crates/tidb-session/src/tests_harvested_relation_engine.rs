@@ -371,17 +371,14 @@ fn decimal_division_and_avg_grow_the_scale_by_four() {
 // Each test asserts the CAPTURED GO ANSWER and is left failing on purpose.
 // ---------------------------------------------------------------------------
 
-/// BUG: updating an INTEGER PRIMARY KEY column is silently discarded.
+/// An integer PRIMARY KEY is the row handle, so assigning to it MOVES the row.
 ///
-/// `UPDATE pk SET a = a + 10 WHERE a = 1` reports one affected row, but the row
-/// is unchanged afterwards — the write is lost while the statement claims
-/// success. `gorun` over `(1,10),(2,20)` answers `2|20;11|10`: the row is
-/// rewritten under its new handle. The live engine answers `1|10;2|20`.
-///
-/// The same UPDATE against a table with NO primary key does mutate `a`, so the
-/// loss is specific to rebasing the integer row handle.
+/// `gorun` over `(1,10),(2,20)`: `UPDATE pk SET a = a + 10 WHERE a = 1` answers
+/// `2|20;11|10` — the row is rewritten under its new handle. The engine used to
+/// write the new value back to the OLD handle, where the record format omits
+/// the handle column, so the change was silently discarded and the reported
+/// `Affected(1)` was a lie.
 #[test]
-#[ignore = "live-engine bug: an UPDATE of an integer PRIMARY KEY is silently discarded"]
 fn update_of_an_integer_primary_key_rewrites_the_row() {
     let mut session = Session::new();
     session
@@ -393,6 +390,163 @@ fn update_of_an_integer_primary_key_rewrites_the_row() {
         rows(&mut session, "SELECT a,b FROM pk ORDER BY a"),
         [["2", "20"], ["11", "10"]]
     );
+}
+
+/// A clustered COMMON handle (a non-integer primary key) moves the same way:
+/// `gorun` over `('x',10),('y',20)` answers `y|20;z|10` for
+/// `UPDATE ch SET a = 'z' WHERE a = 'x'`.
+#[test]
+fn update_of_a_clustered_common_handle_rewrites_the_row() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ch (a VARCHAR(16) PRIMARY KEY CLUSTERED, b INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO ch VALUES ('x',10),('y',20)")
+        .unwrap();
+    session.run("UPDATE ch SET a = 'z' WHERE a = 'x'").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a,b FROM ch ORDER BY a"),
+        [["y", "20"], ["z", "10"]]
+    );
+}
+
+/// A moved row's secondary index entries point AT its handle, so they are
+/// rewritten even though the indexed column did not change: `gorun` answers
+/// `11|10` for `SELECT a,b FROM si WHERE b = 10` after the move.
+///
+/// An UPDATE that leaves the primary key alone still rewrites in place:
+/// `gorun` over `(1,10),(2,20)` answers `1|11;2|20` for `SET b = b + 1`.
+#[test]
+fn a_moved_row_keeps_its_secondary_index_entries_and_a_non_key_update_stays_put() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE si (a INT PRIMARY KEY, b INT, KEY kb(b))")
+        .unwrap();
+    session.run("INSERT INTO si VALUES (1,10),(2,20)").unwrap();
+    session.run("UPDATE si SET a = a + 10 WHERE a = 1").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a,b FROM si WHERE b = 10"),
+        [["11", "10"]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT a,b FROM si ORDER BY a"),
+        [["2", "20"], ["11", "10"]]
+    );
+
+    session
+        .run("CREATE TABLE nopk (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO nopk VALUES (1,10),(2,20)")
+        .unwrap();
+    session
+        .run("UPDATE nopk SET b = b + 1 WHERE a = 1")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a,b FROM nopk ORDER BY a"),
+        [["1", "11"], ["2", "20"]]
+    );
+}
+
+/// Moving a row onto an occupied handle is a primary-key duplicate, reported
+/// exactly as an INSERT's is. `gorun`:
+/// `[kv:1062]Duplicate entry '2' for key 'col1.PRIMARY'`, and the table is left
+/// as it was.
+///
+/// Assigning the primary key its existing value changes nothing, so `gorun`
+/// reports zero affected rows rather than a self-collision.
+#[test]
+fn moving_a_row_onto_an_occupied_primary_key_is_a_duplicate_entry() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE col1 (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO col1 VALUES (1,10),(2,20)")
+        .unwrap();
+    let error = session
+        .run("UPDATE col1 SET a = 2 WHERE a = 1")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1062);
+    assert_eq!(error.message, "Duplicate entry '2' for key 'col1.PRIMARY'");
+    assert_eq!(
+        rows(&mut session, "SELECT a,b FROM col1 ORDER BY a"),
+        [["1", "10"], ["2", "20"]]
+    );
+
+    session
+        .run("CREATE TABLE nn (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session.run("INSERT INTO nn VALUES (1,10)").unwrap();
+    session.run("UPDATE nn SET a = 1 WHERE a = 1").unwrap();
+    assert_eq!(rows(&mut session, "SELECT a,b FROM nn"), [["1", "10"]]);
+}
+
+/// A multi-row UPDATE moves one row at a time and checks the primary key as it
+/// goes, so whether `a = a + 1` over `(1,10),(2,20)` succeeds depends on the
+/// ORDER BY: descending vacates `2` before `1` needs it and `gorun` answers
+/// `2|10;3|20`, while ascending walks straight into the row still sitting at
+/// `2` and `gorun` errors with
+/// `[kv:1062]Duplicate entry '2' for key 'mr2.PRIMARY'`.
+///
+/// `ORDER BY ... LIMIT` on the key column picks the rows the same way: `gorun`
+/// over `(1,10),(2,20),(3,30)` answers `1|10;2|20;103|30` for
+/// `SET a = a + 100 ORDER BY a DESC LIMIT 1`.
+#[test]
+fn a_multi_row_key_update_moves_rows_one_at_a_time_in_order_by_order() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE mr (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session.run("INSERT INTO mr VALUES (1,10),(2,20)").unwrap();
+    session
+        .run("UPDATE mr SET a = a + 1 ORDER BY a DESC")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a,b FROM mr ORDER BY a"),
+        [["2", "10"], ["3", "20"]]
+    );
+
+    session
+        .run("CREATE TABLE mr2 (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session.run("INSERT INTO mr2 VALUES (1,10),(2,20)").unwrap();
+    let error = session
+        .run("UPDATE mr2 SET a = a + 1 ORDER BY a ASC")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1062);
+    assert_eq!(error.message, "Duplicate entry '2' for key 'mr2.PRIMARY'");
+
+    session
+        .run("CREATE TABLE ol (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO ol VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    session
+        .run("UPDATE ol SET a = a + 100 ORDER BY a DESC LIMIT 1")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a,b FROM ol ORDER BY a"),
+        [["1", "10"], ["2", "20"], ["103", "30"]]
+    );
+}
+
+/// A `SET` list that swaps a clustered handle column with a plain one both
+/// reads the original row and moves it: `gorun` over `(1,10)` with `a` the
+/// integer PRIMARY KEY answers `10|1` for `SET a = b, b = a`.
+#[test]
+fn a_set_list_can_swap_a_clustered_handle_column_with_a_plain_one() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE sw3 (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session.run("INSERT INTO sw3 VALUES (1,10)").unwrap();
+    session.run("UPDATE sw3 SET a = b, b = a").unwrap();
+    assert_eq!(rows(&mut session, "SELECT a,b FROM sw3"), [["10", "1"]]);
 }
 
 /// Every `SET` assignment reads the row as it was BEFORE the statement, so
