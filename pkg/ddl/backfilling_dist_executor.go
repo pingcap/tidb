@@ -221,6 +221,11 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	s.taskMeta = bgm
 	// TODO: Recheck local disk when users increase concurrency with ADMIN ALTER DDL JOB.
 	if len(s.taskMeta.CloudStorageURI) == 0 && s.task.Step == proto.BackfillStepReadIndex {
+		// This precheck reserves future growth only for local-sort DXF backfills. Local-sort
+		// IMPORT INTO FROM FILE is excluded because its quota-based import/reset mechanism
+		// manages temporary-disk growth. IMPORT INTO FROM SELECT is excluded because its final
+		// size cannot be reliably estimated. Their current disk usage is reflected in the
+		// filesystem's available space.
 		runningJobCount, runningJobRuntimeSlots, runningJobUsedBytes, err :=
 			s.getRunningLocalSortJobDiskUsage(ctx)
 		if err != nil {
@@ -248,6 +253,8 @@ func (s *backfillDistExecutor) getRunningLocalSortJobDiskUsage(
 	taskSlots := s.ExecutorTaskSlotsSnapshot()
 	for taskID, taskRuntimeSlots := range taskSlots {
 		if taskID == s.task.ID {
+			// Resume does not guarantee cleanup of this task's previous local files. Any
+			// remaining files reduce available space, while its full growth budget is reserved again.
 			continue
 		}
 
