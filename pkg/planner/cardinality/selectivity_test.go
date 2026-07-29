@@ -367,6 +367,79 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	}
 }
 
+// TestColEstimateCacheRescalesWithRealtimeCounts verifies that the statement
+// column estimate cache, whose key intentionally excludes RealtimeCount and
+// ModifyCount, still produces count-correct estimates: a lookup that hits a
+// shape cached under different realtime counts must return exactly what a
+// cold-cache computation with the current counts would.
+func TestColEstimateCacheRescalesWithRealtimeCounts(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+				State:     model.StatePublic,
+			},
+		},
+	}
+	statsTbl := mockStatsTable(tblInfo, 3000)
+	// Uniform histogram over [300, 900), 5 rows per value.
+	colValues, err := generateIntDatum(1, 600)
+	require.NoError(t, err)
+	for i := range colValues {
+		colValues[i].SetInt64(int64(i) + 300)
+	}
+	col := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 5, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	statsTbl.SetCol(1, col)
+
+	sctx := mock.NewContext()
+	sc := sctx.GetSessionVars().StmtCtx
+	baseRealtime := statsTbl.RealtimeCount
+
+	// Cover the distinct scaling paths: an in-range interval (increase factor
+	// and clamps), a partially out-of-range interval (ScaleOutOfRangeShape),
+	// an unmatched in-range point (uniform-distribution fallback), and the
+	// last bucket's end value (underrepresentation heuristic).
+	testRanges := [][]*ranger.Range{
+		getRange(310, 330),
+		getRange(800, 1200),
+		getRange(500, 500),
+		getRange(899, 899),
+	}
+	for _, ranges := range testRanges {
+		sc.ColEstimateCache = nil
+		baseCold, err := getColumnRowCount(sctx, col, ranges, baseRealtime, 0, false)
+		require.NoError(t, err)
+		baseWarm, err := getColumnRowCount(sctx, col, ranges, baseRealtime, 0, false)
+		require.NoError(t, err)
+		require.Equal(t, baseCold, baseWarm)
+
+		// The table grew after the shape was cached: the warm lookup must match
+		// a cold-cache computation under the new counts.
+		grownRealtime := baseRealtime * 2
+		modifyCount := baseRealtime
+		grownWarm, err := getColumnRowCount(sctx, col, ranges, grownRealtime, modifyCount, false)
+		require.NoError(t, err)
+		sc.ColEstimateCache = nil
+		grownCold, err := getColumnRowCount(sctx, col, ranges, grownRealtime, modifyCount, false)
+		require.NoError(t, err)
+		require.Equal(t, grownCold, grownWarm)
+		// Sanity: the counts actually influence the estimate, so the equality
+		// above proves rescaling rather than a stale-value round trip.
+		require.NotEqual(t, baseCold.Est, grownCold.Est)
+	}
+}
+
 // TestRiskRangeSkewRatio tests that tidb_opt_risk_range_skew_ratio affects cardinality estimation
 // for out-of-range queries. When the ratio is increased, the estimated count should be higher.
 // This test specifically uses out-of-range queries where MaxEst > Est is expected.

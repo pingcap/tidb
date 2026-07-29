@@ -30,13 +30,11 @@ func TestBuildColEstimateCacheKeyRangesLimit(t *testing.T) {
 
 	// Typical predicate: key is built and carries the identifying fields.
 	small := []*ranger.Range{pointRange(types.NewIntDatum(1)), pointRange(types.NewIntDatum(2))}
-	key, ok := buildColEstimateCacheKey(10, 20, true, small, 100, 5)
+	key, ok := buildColEstimateCacheKey(10, 20, true, small)
 	require.True(t, ok)
 	require.Equal(t, int64(10), key.physicalID)
 	require.Equal(t, int64(20), key.colInfoID)
 	require.True(t, key.pkIsHandle)
-	require.Equal(t, int64(100), key.realtimeCount)
-	require.Equal(t, int64(5), key.modifyCount)
 	require.NotEmpty(t, key.rangesKey)
 
 	// Range-count fast path: more ranges than can fit under the byte limit
@@ -45,12 +43,12 @@ func TestBuildColEstimateCacheKeyRangesLimit(t *testing.T) {
 	for i := range manyRanges {
 		manyRanges[i] = pointRange(types.NewIntDatum(int64(i)))
 	}
-	_, ok = buildColEstimateCacheKey(10, 20, false, manyRanges, 100, 5)
+	_, ok = buildColEstimateCacheKey(10, 20, false, manyRanges)
 	require.False(t, ok)
 
 	// Byte-limit path: few ranges, but oversized serialized values must also
 	// bail so a pathological statement cannot retain arbitrary cache memory.
 	hugeVal := types.NewStringDatum(strings.Repeat("x", colEstimateCacheRangesKeyLimit+1))
-	_, ok = buildColEstimateCacheKey(10, 20, false, []*ranger.Range{pointRange(hugeVal)}, 100, 5)
+	_, ok = buildColEstimateCacheKey(10, 20, false, []*ranger.Range{pointRange(hugeVal)})
 	require.False(t, ok)
 }
