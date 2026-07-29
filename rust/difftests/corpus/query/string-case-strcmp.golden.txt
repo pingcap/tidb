@@ -30,3 +30,10 @@ RS:0
 RS:0
 RS:BYTES_HEX:61FF
 RS:1
+RS:-1
+RS:0
+RS:-1
+RS:-1
+RS:-1
+RS:-1
+RS:1

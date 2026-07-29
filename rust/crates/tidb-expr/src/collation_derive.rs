@@ -453,7 +453,20 @@ pub fn derive_collation(
         // Comparison: aggregate when the compare type is string, then report
         // the RESULT as a NUMERIC/ASCII int (the aggregated collation stays on
         // the result type, which is where the comparer reads it from).
-        "ge" | "le" | "gt" | "lt" | "eq" | "ne" | "nulleq" | "strcmp" => {
+        // `STRCMP` shares the comparison arm's SHAPE but not its condition:
+        // Go tests `argTps[0] == types.ETString`, the DECLARED argument type,
+        // and `strcmpFunctionClass` declares `ETString, ETString` whatever it
+        // is handed (`builtin_string.go`'s `newBaseBuiltinFuncWithTp`). So
+        // `STRCMP(123, '123 ')` still aggregates a collation and still pads --
+        // Go answers 0 -- where the comparison operators would have promoted
+        // to REAL and consulted none.
+        "strcmp" if args.len() == 2 => {
+            let mut ec = check_and_derive_collation_from_exprs(func_name, EvalType::Int, args)?;
+            ec.coer = Coercibility::NUMERIC;
+            ec.repe = Repertoire::ASCII;
+            Ok(ec)
+        }
+        "ge" | "le" | "gt" | "lt" | "eq" | "ne" | "nulleq" => {
             if args.len() == 2 && compare_is_string(args) {
                 let mut ec = check_and_derive_collation_from_exprs(func_name, EvalType::Int, args)?;
                 ec.coer = Coercibility::NUMERIC;
