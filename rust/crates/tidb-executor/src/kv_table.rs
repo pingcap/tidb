@@ -1365,6 +1365,11 @@ pub struct TableScanExec {
     meta: ExecutorMeta,
     table: KvTable,
     emitted: bool,
+    /// Conjuncts this scan took over from the `Selection` above it.
+    filter: Option<crate::scan_pushdown::ScanFilterProbe>,
+    /// Rows this scan read before filtering -- what Go's `TableFullScan`
+    /// reports as `actRows`, which a filter above it must not change.
+    scanned: std::rc::Rc<std::cell::Cell<u64>>,
 }
 
 impl TableScanExec {
@@ -1375,7 +1380,15 @@ impl TableScanExec {
             meta,
             table,
             emitted: false,
+            filter: None,
+            scanned: std::rc::Rc::new(std::cell::Cell::new(0)),
         }
+    }
+
+    /// The live count of rows read from storage, before any pushed filter.
+    #[must_use]
+    pub fn scanned_rows(&self) -> std::rc::Rc<std::cell::Cell<u64>> {
+        std::rc::Rc::clone(&self.scanned)
     }
 }
 
@@ -1394,7 +1407,13 @@ impl Executor for TableScanExec {
             .table
             .scan_rows()
             .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
+        self.scanned.set(rows.len() as u64);
         for row in &rows {
+            if let Some(filter) = self.filter.as_mut() {
+                if !filter.admits(row)? {
+                    continue;
+                }
+            }
             for (c, value) in row.iter().enumerate() {
                 req.append_datum(c, value);
             }
@@ -1417,6 +1436,31 @@ impl Executor for TableScanExec {
 
     fn init_cap(&self) -> usize {
         self.meta.init_cap()
+    }
+
+    /// `scan_rows` reads the storage seam's merged stream -- the statement
+    /// snapshot with the session's staged mutation buffer already merged in
+    /// (`ClusterTableStorage`) -- and every row of it is tested here. That is
+    /// what lets the driver drop these conjuncts from the `Selection` above:
+    /// no row, staged or committed, can reach the output untested.
+    fn accept_scan_filter(
+        &mut self,
+        filter: &crate::scan_pushdown::PushedScanFilter,
+        ctx: &crate::StmtContext,
+    ) -> bool {
+        if filter.is_empty() {
+            return false;
+        }
+        self.filter = Some(crate::scan_pushdown::ScanFilterProbe::new(
+            filter.clone(),
+            ctx.clone(),
+            self.meta.new_chunk(),
+        ));
+        true
+    }
+
+    fn scanned_rows_counter(&self) -> Option<std::rc::Rc<std::cell::Cell<u64>>> {
+        Some(self.scanned_rows())
     }
 
     fn max_chunk_size(&self) -> usize {

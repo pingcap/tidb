@@ -586,3 +586,77 @@ fn explain_refuses_what_it_cannot_plan() {
         Err(DriverError::Unsupported("unknown EXPLAIN format name"))
     ));
 }
+
+/// Predicate push-down does not change the plan EXPLAIN prints.
+///
+/// Captured from Go (`pkg/executor/zz_dump_pushdown_test.go`, mock store,
+/// `explain format='brief'`): for `select a, b from t where a > 5`, for the
+/// split `where a > 5 and b + 1 < 10`, and for the wholly unpushable
+/// `where a > 5 or b < 10`, Go prints the SAME three-row shape --
+/// `TableReader` over ONE `Selection` over `TableFullScan(10000.00)`. Go's
+/// coprocessor accepts every one of those predicates, so its own split never
+/// surfaces as a second, root-side `Selection`; only the estimate moves
+/// (`3333.33` for the single `>`, `2666.67` for the split).
+///
+/// This tier prints no `TableReader` and no `cop[tikv]` task (explain module
+/// doc, divergence 1) and always builds a `Projection` (divergence 3), so the
+/// same plan reads as `Projection` over `Selection` over `TableFullScan` --
+/// whichever half of the predicate the scan itself took over.
+#[test]
+fn pushing_a_predicate_into_the_scan_keeps_the_captured_plan_shape() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
+
+    for (sql, printed) in [
+        ("SELECT a, b FROM t WHERE a > 5", "gt(test.t.a, 5)"),
+        (
+            "SELECT a, b FROM t WHERE a > 5 AND b + 1 < 10",
+            "and(gt(test.t.a, 5), lt(plus(test.t.b, 1), 10))",
+        ),
+        (
+            "SELECT a, b FROM t WHERE a > 5 OR b < 10",
+            "or(gt(test.t.a, 5), lt(test.t.b, 10))",
+        ),
+    ] {
+        let rows = row_text(session.run(&format!("EXPLAIN {sql}")));
+        assert_eq!(rows.len(), 3, "{sql}");
+        assert_eq!(rows[0][0], "Projection_3", "{sql}");
+        assert_eq!(rows[1][0], "\u{2514}\u{2500}Selection_2", "{sql}");
+        assert_eq!(rows[1][4], printed, "{sql}");
+        assert_eq!(rows[2][0], "  \u{2514}\u{2500}TableFullScan_1", "{sql}");
+        assert_eq!(rows[2][1], "10000.00", "{sql}");
+        // No second Selection, and no task column ever leaves `root`.
+        for row in &rows {
+            assert_eq!(row[2], "root", "{sql}");
+        }
+    }
+
+    // The single `>` keeps Go's captured 3333.33 estimate, which the split
+    // must not disturb.
+    let rows = row_text(session.run("EXPLAIN SELECT a, b FROM t WHERE a > 5"));
+    assert_eq!(rows[1][1], "3333.33");
+}
+
+/// `EXPLAIN ANALYZE` over a scan that took the whole `WHERE`: the
+/// `TableFullScan` still reports the rows it READ, not the rows the pushed
+/// predicate let through.
+///
+/// This is the counter that would silently break if a filtering scan reported
+/// its output as its scanned count: Go's capture for
+/// `explain analyze select * from t where v > 2` over `(1,1),(2,2),(3,3),
+/// (4,10)` is `4` for `TableFullScan` and `2` for `Selection`.
+#[test]
+fn a_filtering_scan_still_reports_the_rows_it_read() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,10)")
+        .unwrap();
+    let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t WHERE v > 2"));
+    assert_eq!(rows[1][0], "\u{2514}\u{2500}Selection_2");
+    assert_eq!(rows[1][2], "2", "rows that passed the predicate");
+    assert_eq!(rows[2][0], "  \u{2514}\u{2500}TableFullScan_1");
+    assert_eq!(rows[2][2], "4", "rows the scan read, before filtering");
+}

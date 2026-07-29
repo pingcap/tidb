@@ -708,6 +708,7 @@ pub mod varpop;
 pub mod varsamp;
 pub mod vec_group_checker_int;
 pub mod warning_publication;
+pub mod wide_scan_selection;
 mod window;
 pub mod window_value_int;
 

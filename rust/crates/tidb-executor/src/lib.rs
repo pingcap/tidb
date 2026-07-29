@@ -45,6 +45,7 @@ pub mod limit;
 pub mod mem_table;
 mod plan_trace;
 pub mod projection;
+pub mod scan_pushdown;
 pub mod selection;
 pub mod sort;
 mod stmt_context;
@@ -77,6 +78,7 @@ pub use kv_table::{IndexRange, KvColumn, KvIndex, KvTable, TableCharset, TableSc
 pub use limit::LimitExec;
 pub use mem_table::MemTableSourceExec;
 pub use projection::ProjectionExec;
+pub use scan_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp};
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::StmtContext;

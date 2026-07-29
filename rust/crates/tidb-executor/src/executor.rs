@@ -86,6 +86,34 @@ pub trait Executor {
 
     /// Go `NewChunk`: allocate a result chunk sized for this operator's output.
     fn new_chunk(&self) -> Chunk;
+
+    /// Offers `filter` to this source, as Go's predicate push-down offers a
+    /// conjunct to the node below it.
+    ///
+    /// Returning `true` is a promise the driver relies on to *remove* those
+    /// conjuncts from the `Selection` above: the source must apply every one
+    /// of them to **every** row it emits, including rows merged in from the
+    /// session's staged mutation buffer, which never passed through a
+    /// coprocessor. A source that cannot promise that leaves the default
+    /// `false` and the whole `WHERE` stays where it was.
+    ///
+    /// See [`crate::scan_pushdown`] for the split rule and the reasoning.
+    fn accept_scan_filter(
+        &mut self,
+        filter: &crate::scan_pushdown::PushedScanFilter,
+        ctx: &crate::StmtContext,
+    ) -> bool {
+        let _ = (filter, ctx);
+        false
+    }
+
+    /// The live count of rows this source read from storage, before any
+    /// filter it accepted -- `TableFullScan`'s `actRows`, which a pushed
+    /// predicate must not change. `None` for anything that is not such a
+    /// scan.
+    fn scanned_rows_counter(&self) -> Option<std::rc::Rc<std::cell::Cell<u64>>> {
+        None
+    }
 }
 
 /// Go `exec.executorMeta`: the schema/id/children/result-type base state shared

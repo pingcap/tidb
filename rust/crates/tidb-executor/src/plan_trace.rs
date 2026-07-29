@@ -266,6 +266,18 @@ impl PlanTrace {
         }
     }
 
+    /// Replaces the top node's `actRows` source with a scan's own row
+    /// counter, for a scan that filters internally: `TableFullScan` reports
+    /// the rows it read, not the rows a pushed predicate let through.
+    pub(crate) fn set_scan_act_rows(&mut self, scanned: Rc<Cell<u64>>) {
+        if !self.counting {
+            return;
+        }
+        if let Some(node) = self.stack.last_mut() {
+            node.act_rows = Some(scanned);
+        }
+    }
+
     /// Records the top node's real row count directly, for a site that
     /// materializes its rows rather than streaming them through an executor
     /// (a point get's handle lookup, a write's own scan).
@@ -581,6 +593,18 @@ impl Executor for CountExec {
 
     fn new_chunk(&self) -> Chunk {
         self.child.new_chunk()
+    }
+
+    fn accept_scan_filter(
+        &mut self,
+        filter: &crate::scan_pushdown::PushedScanFilter,
+        ctx: &crate::StmtContext,
+    ) -> bool {
+        self.child.accept_scan_filter(filter, ctx)
+    }
+
+    fn scanned_rows_counter(&self) -> Option<Rc<Cell<u64>>> {
+        self.child.scanned_rows_counter()
     }
 }
 

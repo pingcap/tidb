@@ -20,6 +20,7 @@
 //! of a specific Go executor; it stands in for one, and is documented as such.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::scan_pushdown::{PushedScanFilter, ScanFilterProbe};
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
@@ -29,6 +30,9 @@ pub struct MemTableSourceExec {
     meta: ExecutorMeta,
     rows: Vec<Vec<Datum>>,
     emitted: bool,
+    /// Conjuncts this source took over from the `Selection` above it; every
+    /// row it emits has passed all of them.
+    filter: Option<ScanFilterProbe>,
 }
 
 impl MemTableSourceExec {
@@ -39,6 +43,7 @@ impl MemTableSourceExec {
             meta,
             rows,
             emitted: false,
+            filter: None,
         }
     }
 }
@@ -55,6 +60,11 @@ impl Executor for MemTableSourceExec {
             return Ok(());
         }
         for row in &self.rows {
+            if let Some(filter) = self.filter.as_mut() {
+                if !filter.admits(row)? {
+                    continue;
+                }
+            }
             for (c, value) in row.iter().enumerate() {
                 req.append_datum(c, value);
             }
@@ -85,5 +95,19 @@ impl Executor for MemTableSourceExec {
 
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
+    }
+
+    /// Every row this source can emit is in `rows`, and each one is tested,
+    /// so the promise `accept_scan_filter` makes holds unconditionally.
+    fn accept_scan_filter(&mut self, filter: &PushedScanFilter, ctx: &crate::StmtContext) -> bool {
+        if filter.is_empty() {
+            return false;
+        }
+        self.filter = Some(ScanFilterProbe::new(
+            filter.clone(),
+            ctx.clone(),
+            self.meta.new_chunk(),
+        ));
+        true
     }
 }

@@ -37,6 +37,7 @@ use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
 use crate::plan_trace::{PlanTrace, Qualifier};
 use crate::projection::ProjectionExec;
+use crate::scan_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp};
 use crate::selection::SelectionExec;
 use crate::sort::{SortByItem, SortExec};
 use crate::table_dual::TableDualExec;
@@ -950,6 +951,10 @@ pub(crate) fn run_select_traced(
     // instead of scanning. The WHERE stays in the pipeline below, so an
     // unsatisfied extra condition still filters the row out -- the point get
     // narrows the source, it does not replace the filter.
+    // A fast path REPLACES the scan with rows it has already read, so the
+    // predicate push-down below (which only a scan can honour) must not fire
+    // over one.
+    let mut source_replaced = false;
     if let Some(table) = single_kv_table(&select.from, catalog, current_db) {
         let columns = scope.column_list();
         // Go tries the batch point get before the single one.
@@ -979,6 +984,7 @@ pub(crate) fn run_select_traced(
                     col
                 })
                 .collect();
+            source_replaced = true;
             from_source = Some(Box::new(MemTableSourceExec::new(
                 ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
                 rows,
@@ -1032,6 +1038,7 @@ pub(crate) fn run_select_traced(
                         col
                     })
                     .collect();
+                source_replaced = true;
                 from_source = Some(Box::new(MemTableSourceExec::new(
                     ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
                     rows,
@@ -1061,6 +1068,7 @@ pub(crate) fn run_select_traced(
                     col
                 })
                 .collect();
+            source_replaced = true;
             from_source = Some(Box::new(MemTableSourceExec::new(
                 ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
                 rows,
@@ -1138,7 +1146,45 @@ pub(crate) fn run_select_traced(
     // The scope the rows above the WHERE have: the FROM tables, plus the
     // column a correlated WHERE subquery's Apply appends.
     let mut current_scope = scope.clone();
-    if let Some(predicate) = &select.where_clause {
+    // Predicate push-down: over a single base table whose scan the fast paths
+    // left alone, offer the scan the conjuncts it can apply itself. Only the
+    // residual then needs a `Selection`; when the scan takes the whole
+    // `WHERE` there is no `Selection` executor left, but the recorded plan is
+    // unchanged either way -- Go prints one `Selection` over the scan for
+    // both halves (captured, `pkg/executor/zz_dump_pushdown_test.go`), and
+    // this tier prints no `TableReader`/`cop[tikv]` task to distinguish them.
+    let executed_where = match (&select.where_clause, source_replaced, scope.tables.len()) {
+        (Some(predicate), false, 1) => {
+            let (pushed, residual) =
+                split_scan_predicates(predicate, &ScopeResolver { scope: &scope });
+            if !pushed.is_empty() && source.accept_scan_filter(&pushed, ctx) {
+                // `TableFullScan`'s `actRows` counts rows read, not rows
+                // kept, so it is taken from the scan itself rather than from
+                // the (now filtered) chunks leaving it.
+                if let (Some(trace), Some(scanned)) =
+                    (trace.as_deref_mut(), source.scanned_rows_counter())
+                {
+                    trace.set_scan_act_rows(scanned);
+                }
+                residual
+            } else {
+                Some(predicate.clone())
+            }
+        }
+        (where_clause, _, _) => where_clause.clone(),
+    };
+    // A `WHERE` whose conjuncts all moved into the scan still records its
+    // `Selection`, over the predicate as written, and meters the filtered
+    // rows the scan now emits.
+    if executed_where.is_none() && select.where_clause.is_some() {
+        if let Some(trace) = trace.as_deref_mut() {
+            if let Some(written) = &traced_select.where_clause {
+                trace.selection(written, &qualify);
+                source = trace.meter(source);
+            }
+        }
+    }
+    if let Some(predicate) = &executed_where {
         let mut correlated = None;
         let appended = scope.width();
         let predicate = extract_correlated_subquery(
@@ -3653,6 +3699,85 @@ pub(crate) fn try_index_ranges(
     None
 }
 
+/// Splits a `WHERE` over one base table into the conjuncts the scan can apply
+/// itself and the predicate that must stay above it.
+///
+/// This is Go's `rule_predicate_push_down` split narrowed to the shape the
+/// bounded TiKV Selection lowering already speaks -- see
+/// [`crate::scan_pushdown`] for the rule and for why the pushed half may be
+/// removed from the `Selection` only when the source promises to apply it to
+/// every row, staged writes included.
+///
+/// The residual is the remaining conjuncts re-joined with `AND` in their
+/// original order, so what runs above the scan is the `WHERE` minus exactly
+/// what moved into it. `None` means every conjunct was pushed.
+pub(crate) fn split_scan_predicates(
+    where_clause: &tidb_ast::Expr,
+    resolver: &impl ColumnResolver,
+) -> (PushedScanFilter, Option<tidb_ast::Expr>) {
+    let mut conjuncts = Vec::new();
+    collect_conjuncts(where_clause, &mut conjuncts);
+    let mut comparisons = Vec::new();
+    let mut filters = Vec::new();
+    let mut residual: Vec<&tidb_ast::Expr> = Vec::new();
+    for conjunct in conjuncts {
+        match scan_comparison(conjunct, resolver).and_then(|comparison| {
+            Some((comparison, rewrite_expr_resolved(conjunct, resolver).ok()?))
+        }) {
+            Some((comparison, filter)) => {
+                comparisons.push(comparison);
+                filters.push(filter);
+            }
+            None => residual.push(conjunct),
+        }
+    }
+    let residual = residual.into_iter().cloned().reduce(|left, right| {
+        tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new(left),
+            Box::new(right),
+        )
+    });
+    (PushedScanFilter::new(comparisons, filters), residual)
+}
+
+/// One conjunct as a column-versus-constant comparison, when it is one.
+fn scan_comparison(
+    conjunct: &tidb_ast::Expr,
+    resolver: &impl ColumnResolver,
+) -> Option<ScanComparison> {
+    let tidb_ast::Expr::Binary(op, lhs, rhs) = conjunct else {
+        return None;
+    };
+    let op = ScanComparisonOp::from_ast(*op)?;
+    // Go accepts the constant on either side and the protobuf preserves the
+    // operand order it was written in, so the side is recorded rather than
+    // normalized away.
+    let (column, value, column_on_left) = match (&**lhs, &**rhs) {
+        (tidb_ast::Expr::Column(path), other) => (path, other, true),
+        (other, tidb_ast::Expr::Column(path)) => (path, other, false),
+        _ => return None,
+    };
+    // A second column reference on the "constant" side leaves the shape.
+    let (offset, column_type, _) = resolver.resolve(column)?;
+    let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(value, &NoResolver) else {
+        return None;
+    };
+    let literal = constant.eval().ok()?;
+    // A NULL constant makes the comparison unknown for every row; that is a
+    // whole-predicate property Go handles in the ranger, not a filter shape.
+    if literal == Datum::Null {
+        return None;
+    }
+    Some(ScanComparison {
+        column_offset: u32::try_from(offset).ok()?,
+        column_type,
+        op,
+        literal,
+        column_on_left,
+    })
+}
+
 /// Flattens an `AND` chain into its conjuncts.
 fn collect_conjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
     match expr {
@@ -4436,6 +4561,76 @@ mod tests {
             run_select("SELECT a FROM missing"),
             Err(DriverError::Unsupported(_))
         ));
+    }
+
+    /// The split rule itself, at the shape boundary: a column-versus-constant
+    /// comparison moves into the scan and everything else stays above it.
+    #[test]
+    fn the_scan_takes_comparisons_against_constants_and_nothing_else() {
+        use tidb_datatype::FieldTypeCode;
+        let scope = FromScope {
+            tables: vec![FromTable {
+                name: "t".to_owned(),
+                database: None,
+                columns: vec![
+                    ("a".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
+                    ("b".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
+                ],
+                offset: 0,
+            }],
+        };
+        let split = |sql: &str| {
+            let stmt = tidb_parser::parse(sql).expect("a select");
+            let Stmt::Query(query) = &stmt else {
+                panic!("a select");
+            };
+            let QueryStmt::Select(statement) = &**query else {
+                panic!("a select");
+            };
+            let where_clause = statement.where_clause.clone().expect("a where clause");
+            let (pushed, residual) =
+                split_scan_predicates(&where_clause, &ScopeResolver { scope: &scope });
+            (
+                pushed
+                    .comparisons()
+                    .iter()
+                    .map(|c| (c.column_offset, c.op, c.literal.clone(), c.column_on_left))
+                    .collect::<Vec<_>>(),
+                residual.map(|expr| expr.restore()),
+            )
+        };
+
+        // Either operand order pushes, and the order is preserved.
+        assert_eq!(
+            split("SELECT 1 FROM t WHERE a > 5"),
+            (vec![(0, ScanComparisonOp::Gt, Datum::Int(5), true)], None)
+        );
+        assert_eq!(
+            split("SELECT 1 FROM t WHERE 5 < a"),
+            (vec![(0, ScanComparisonOp::Lt, Datum::Int(5), false)], None)
+        );
+        // A qualified name resolves to the same column.
+        assert_eq!(
+            split("SELECT 1 FROM t WHERE t.b = 1").0,
+            vec![(1, ScanComparisonOp::Eq, Datum::Int(1), true)]
+        );
+        // Mixed: the comparison pushes, the arithmetic does not.
+        let (pushed, residual) = split("SELECT 1 FROM t WHERE a > 5 AND b + 1 < 10");
+        assert_eq!(pushed, vec![(0, ScanComparisonOp::Gt, Datum::Int(5), true)]);
+        assert!(residual.is_some(), "the arithmetic conjunct stays above");
+        // Shapes that push nothing: a disjunction, a column-to-column
+        // comparison, a NULL constant, an operator outside the accepted set.
+        for sql in [
+            "SELECT 1 FROM t WHERE a > 5 OR b < 10",
+            "SELECT 1 FROM t WHERE a > b",
+            "SELECT 1 FROM t WHERE a = NULL",
+            "SELECT 1 FROM t WHERE a IS NULL",
+            "SELECT 1 FROM t WHERE a <=> 5",
+        ] {
+            let (pushed, residual) = split(sql);
+            assert!(pushed.is_empty(), "{sql} must not push");
+            assert!(residual.is_some(), "{sql} keeps its whole predicate");
+        }
     }
 
     fn test_catalog() -> Catalog {
