@@ -148,6 +148,26 @@ pub enum DriverError {
     /// resolves to an aggregate or window-function select field, which
     /// cannot itself be grouped on.
     WrongGroupField(String),
+    /// Go `plannererrors.ErrFieldNotInGroupBy` (1055): under
+    /// `ONLY_FULL_GROUP_BY`, an expression reports a column that `GROUP BY`
+    /// neither pins nor functionally determines.
+    FieldNotInGroupBy {
+        /// The offending expression's 1-based position in its clause.
+        position: usize,
+        /// The clause, as Go names it: `SELECT list` or `ORDER BY`.
+        clause: &'static str,
+        /// The column, qualified as Go qualifies it (`db.tbl.col`).
+        column: String,
+    },
+    /// Go `plannererrors.ErrMixOfGroupFuncAndFieldsIncompatible` (8123): the
+    /// same rule for a query that aggregates with no `GROUP BY` at all, where
+    /// every row collapses into one and so no bare column has a value.
+    FieldNotInAggregatedQuery {
+        /// The offending select field's 1-based position.
+        position: usize,
+        /// The column, qualified as Go qualifies it.
+        column: String,
+    },
     /// Go `types.ErrInvalidDefault` (1067).
     InvalidDefault(String),
     /// Go `ErrDataTooLong` (1406).
@@ -1216,6 +1236,24 @@ impl DriverError {
             1056,
             *b"42000",
             format!("Can't group on '{field}'"),
+        ),
+        DriverError::FieldNotInGroupBy { position, clause, column } => MysqlError::new(
+            1055,
+            *b"42000",
+            format!(
+                "Expression #{position} of {clause} is not in GROUP BY clause and contains \
+                 nonaggregated column '{column}' which is not functionally dependent on columns \
+                 in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by"
+            ),
+        ),
+        DriverError::FieldNotInAggregatedQuery { position, column } => MysqlError::new(
+            8123,
+            *b"HY000",
+            format!(
+                "In aggregated query without GROUP BY, expression #{position} of SELECT list \
+                 contains nonaggregated column '{column}'; this is incompatible with \
+                 sql_mode=only_full_group_by"
+            ),
         ),
         // Go: "Invalid default value for '%-.192s'".
         DriverError::InvalidDefault(column) => MysqlError::new(

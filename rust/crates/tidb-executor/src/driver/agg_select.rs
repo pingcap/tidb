@@ -85,7 +85,8 @@ fn agg_output_resolver(state: &AggPipelineState) -> AggOutputResolver {
 /// Faithful scope (deferred items documented): `COUNT`/`SUM` (Go models
 /// `COUNT(*)` as the literal-`1` argument, which counts every row identically);
 /// any non-aggregate select field becomes a `FIRST_ROW` carrier (Go's planner
-/// does the same; `ONLY_FULL_GROUP_BY` validation is deferred); `DISTINCT`
+/// does the same, once [`super::only_full_group_by`] has established the
+/// group determines a value for it); `DISTINCT`
 /// and other aggregate functions are rejected as unsupported. `WITH ROLLUP`
 /// runs through [`run_rollup_aggregate`] (plain-column grouping only).
 /// `HAVING` and `ORDER BY` run over the aggregation's output, as in Go: an
@@ -111,6 +112,12 @@ pub(crate) fn run_aggregate_select(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
 ) -> Result<SelectMeta, DriverError> {
+    // Stage 0: ONLY_FULL_GROUP_BY. Go runs this before the GROUP BY
+    // expressions are rewritten, on the clauses AS WRITTEN, which is also the
+    // only point where the select list still distinguishes a bare column from
+    // the FIRST_ROW carrier the stages below turn it into.
+    super::only_full_group_by::check_only_full_group_by(select, resolver.scope, ctx)?;
+
     let mut state = AggPipelineState {
         group_by_names: group_by_display_names(select),
         ..AggPipelineState::default()
@@ -442,6 +449,44 @@ fn lower_select_fields(
 /// Mirrors Go's `resolveHavingAndOrderBy` + `buildProjection4Having`: an
 /// aggregate appearing only in these clauses is appended as a hidden
 /// aggregation output column and trimmed again by the final projection.
+/// Go's `havingWindowAndOrderbyExprResolver` for `HAVING`: the clause is
+/// resolved against the AGGREGATION's output, not the source rows, so it may
+/// name a grouped column, a select-list output (its own alias included) or an
+/// aggregate -- and nothing else.
+///
+/// An ungrouped source column is `ErrUnknownColumn` naming the `having
+/// clause`, in EVERY `sql_mode`: captured from TiDB, `SELECT k, count(*) FROM
+/// gg GROUP BY k HAVING v > 0` reports 1054 with `ONLY_FULL_GROUP_BY` both on
+/// and off. That is why this is a name-resolution rule of its own rather than
+/// part of [`super::only_full_group_by`], whose `ORDER BY` counterpart is
+/// mode-gated and does admit a functionally dependent column.
+fn check_having_names(
+    having: &tidb_ast::Expr,
+    state: &AggPipelineState,
+) -> Result<(), DriverError> {
+    for path in super::only_full_group_by::bare_columns(having) {
+        let name = path.last().cloned().unwrap_or_default();
+        // `__apply_N` is the placeholder a correlated subquery leaves behind,
+        // and a hoisted window value is computed above the aggregation; both
+        // are made real later and neither is a source column.
+        if name.starts_with("__apply_") || crate::window::is_window_column(&name) {
+            continue;
+        }
+        let known = |candidates: &[String]| {
+            candidates
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(&name))
+        };
+        if !known(&state.names) && !known(&state.group_by_names) {
+            return Err(DriverError::UnknownColumnInClause {
+                column: name,
+                clause: "having clause".to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn hoist_having_and_order_by(
     select: &tidb_ast::SelectStmt,
     state: &mut AggPipelineState,
@@ -455,6 +500,7 @@ fn hoist_having_and_order_by(
     // aggregates remain become aggregation output columns.
     let having_expr = match &select.having {
         Some(having) => {
+            check_having_names(having, state)?;
             let (expr, found) = extract_and_hoist_subquery(
                 having,
                 resolver.scope,
@@ -723,6 +769,7 @@ fn build_apply_chain(
                     .zip(state.types.iter().cloned())
                     .collect(),
                 offset: 0,
+                determinants: Vec::new(),
             }],
         };
         state.types.push(value_type);
@@ -823,6 +870,7 @@ fn build_window_stage(
                     .zip(state.types.iter().cloned())
                     .collect(),
                 offset: 0,
+                determinants: Vec::new(),
             }],
         };
         let rows = drain_executor_rows(root, &state.types)?;

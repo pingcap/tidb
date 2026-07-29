@@ -1802,8 +1802,15 @@ impl Session {
         let version = self.vars.get_system("version").ok();
         let zone = self.session_time_zone();
         let clock = self.statement_clock(&zone);
+        let mode = self
+            .vars
+            .get_system("sql_mode")
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        let has = |flag: &str| mode.split(',').any(|part| part.trim() == flag);
         if !is_dml {
             return tidb_executor::StmtContext::for_query()
+                .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
                 .with_session_state(current_db, version)
                 .with_user(self.current_user.clone(), self.login_user.clone())
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
@@ -1811,16 +1818,11 @@ impl Session {
                 .with_rand_session(Rc::clone(&self.rand))
                 .with_clock(clock, zone);
         }
-        let mode = self
-            .vars
-            .get_system("sql_mode")
-            .unwrap_or_default()
-            .to_ascii_uppercase();
-        let has = |flag: &str| mode.split(',').any(|part| part.trim() == flag);
         tidb_executor::StmtContext::for_dml(
             has("ERROR_FOR_DIVISION_BY_ZERO"),
             has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
         )
+        .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
         .with_session_state(current_db, version)
         .with_user(self.current_user.clone(), self.login_user.clone())
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))

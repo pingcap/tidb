@@ -1205,6 +1205,7 @@ pub(crate) fn compute_windows(
         database: None,
         columns,
         offset,
+        determinants: Vec::new(),
     });
     Ok((out_rows, out_scope))
 }

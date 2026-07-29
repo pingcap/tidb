@@ -664,16 +664,15 @@ fn a_group_by_position_names_a_select_field_or_reports_which_one_it_cannot() {
     }
 }
 
-/// BUG: `ONLY_FULL_GROUP_BY` is not enforced — a bare ungrouped column is
-/// silently answered from an arbitrary row.
+/// `ONLY_FULL_GROUP_BY` rejects a bare ungrouped column rather than answering
+/// it from an arbitrary row.
 ///
 /// `gorun` rejects both queries below. `SELECT v, count(*) FROM gg` mixes a
-/// bare column with an aggregate and no `GROUP BY`; the live engine answers
+/// bare column with an aggregate and no `GROUP BY`; the engine used to answer
 /// `10|3`, inventing a value. The pinning rule is also purely SYNTACTIC:
 /// `GROUP BY k+0` does NOT pin bare `k` even though `k+0` determines it, and
-/// `gorun` rejects that too, while the live engine answers `1|2;2|1`.
+/// `gorun` rejects that too, while the engine used to answer `1|2;2|1`.
 #[test]
-#[ignore = "live-engine bug: ONLY_FULL_GROUP_BY is not enforced for bare ungrouped columns"]
 fn a_bare_ungrouped_column_is_rejected() {
     let mut session = Session::new();
     session.run("CREATE TABLE gg (k INT, v INT)").unwrap();
@@ -685,6 +684,181 @@ fn a_bare_ungrouped_column_is_rejected() {
     assert!(session
         .run("SELECT k, count(*) FROM gg GROUP BY k+0")
         .is_err());
+}
+
+/// The whole `ONLY_FULL_GROUP_BY` surface, captured from TiDB in both modes.
+///
+/// The captured answers over `gg(k,v) = (1,10),(1,20),(2,30)` and
+/// `pk(id PRIMARY KEY, w, z) = (1,10,100),(2,20,200)`:
+///
+/// | query | ONLY_FULL_GROUP_BY on | off |
+/// |---|---|---|
+/// | `SELECT v, count(*) FROM gg` | 8123 | `10\|3` |
+/// | `SELECT k, count(*) ... GROUP BY k+0` | 1055 | `1\|2;2\|1` |
+/// | `SELECT k+v FROM gg GROUP BY k` | 1055 (names `test.gg.v`) | `11;32` |
+/// | `SELECT gg.v, count(*) FROM gg, pk GROUP BY pk.id` | 1055 | permitted |
+/// | `SELECT k, count(*) ... GROUP BY k ORDER BY v` | 1055 in `ORDER BY` | `1\|2;2\|1` |
+/// | `SELECT k, count(*) FROM gg ORDER BY TRUE` | 8123 | `1\|3` |
+/// | `SELECT k, count(*) ... GROUP BY k` | permitted | permitted |
+/// | `SELECT (k), count(*) ... GROUP BY k` | permitted | permitted |
+/// | `SELECT k, count(*) ... GROUP BY (k)` | permitted | permitted |
+/// | `SELECT k+0, count(*) ... GROUP BY k+0` | permitted | permitted |
+/// | `SELECT any_value(v), count(*) ... GROUP BY k` | permitted | permitted |
+/// | `SELECT v, count(*) FROM gg WHERE v = 10` | permitted | permitted |
+/// | `SELECT w, count(*) FROM pk GROUP BY id` | permitted | permitted |
+/// | `SELECT z, w, count(*) FROM pk GROUP BY id` | permitted | permitted |
+/// | `SELECT count(*) FROM pk GROUP BY id ORDER BY z` | permitted | permitted |
+///
+/// The functionally-dependent case is the one that surprises: Go PERMITS
+/// `SELECT w, count(*) FROM pk GROUP BY id`, because grouping by the whole
+/// primary key leaves every other column of that table a single value per
+/// group -- and it permits it in `ORDER BY` too. That is a real dependency
+/// through a candidate key, not the syntactic `k+0` "determines it" argument
+/// Go rejects.
+///
+/// Both halves of the table are asserted: the check is gated on the mode, so
+/// clearing `ONLY_FULL_GROUP_BY` must restore every permissive answer.
+///
+/// NOT ASSERTED (a SEPARATE, pre-existing gap, not this rule's): `SELECT
+/// k + count(v) FROM gg GROUP BY k` is permitted by TiDB under both modes and
+/// answers `3;3` — a column inside a larger expression alongside an aggregate
+/// is exempt, which the check below implements — but this engine's expression
+/// rewriter cannot yet build that select field at all, so the query fails on
+/// its own unrelated boundary. The exemption itself is covered by the
+/// `any_value(v)` row.
+#[test]
+fn only_full_group_by_pins_by_name_by_where_equality_and_by_candidate_key() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE gg (k INT, v INT)").unwrap();
+    session
+        .run("INSERT INTO gg VALUES (1,10),(1,20),(2,30)")
+        .unwrap();
+    session
+        .run("CREATE TABLE pk (id INT PRIMARY KEY, w INT, z INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO pk VALUES (1,10,100),(2,20,200)")
+        .unwrap();
+
+    let rejected = [
+        (
+            "SELECT v, count(*) FROM gg",
+            8123,
+            "expression #1 of SELECT list contains nonaggregated column 'v'",
+        ),
+        (
+            "SELECT k, count(*) FROM gg ORDER BY TRUE",
+            8123,
+            "expression #1 of SELECT list contains nonaggregated column 'k'",
+        ),
+        (
+            "SELECT k, count(*) FROM gg GROUP BY k+0",
+            1055,
+            "Expression #1 of SELECT list is not in GROUP BY clause",
+        ),
+        (
+            "SELECT k+v FROM gg GROUP BY k",
+            1055,
+            "nonaggregated column 'test.gg.v'",
+        ),
+        (
+            "SELECT gg.v, count(*) FROM gg, pk GROUP BY pk.id",
+            1055,
+            "nonaggregated column 'test.gg.v'",
+        ),
+        (
+            "SELECT k, count(*) FROM gg GROUP BY k ORDER BY v",
+            1055,
+            "Expression #1 of ORDER BY is not in GROUP BY clause",
+        ),
+    ];
+    let permitted = [
+        "SELECT k, count(*) FROM gg GROUP BY k",
+        "SELECT (k), count(*) FROM gg GROUP BY k",
+        "SELECT k, count(*) FROM gg GROUP BY (k)",
+        "SELECT k+0, count(*) FROM gg GROUP BY k+0",
+        "SELECT v, count(*) FROM gg WHERE v = 10",
+        "SELECT w, count(*) FROM pk GROUP BY id",
+        "SELECT z, w, count(*) FROM pk GROUP BY id",
+        "SELECT count(*) FROM pk GROUP BY id ORDER BY z",
+    ];
+
+    for (sql, code, message) in rejected {
+        let err = session.run(sql).expect_err(sql).to_mysql_error();
+        assert_eq!(err.code, code, "{sql}: {err:?}");
+        assert!(err.message.contains(message), "{sql}: {}", err.message);
+    }
+    for sql in permitted {
+        session.run(sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+    }
+    // `ANY_VALUE()` is exempt, so the check lets this through -- the query
+    // then fails on a SEPARATE gap (the builtin has no chunk evaluator yet),
+    // which is exactly what "not rejected by this rule" has to mean until
+    // that builtin lands.
+    let sql = "SELECT any_value(v), count(*) FROM gg GROUP BY k";
+    let code = session.run(sql).expect_err(sql).to_mysql_error().code;
+    assert!(code != 1055 && code != 8123, "{sql}: {code}");
+
+    // Clearing the mode restores the permissive answers, values included.
+    session.run("SET sql_mode = 'STRICT_TRANS_TABLES'").unwrap();
+    for (sql, _, _) in rejected {
+        session.run(sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+    }
+    assert_eq!(
+        rows(&mut session, "SELECT v, count(*) FROM gg"),
+        [["10", "3"]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT k, count(*) FROM gg GROUP BY k+0"),
+        [["1", "2"], ["2", "1"]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT k+v FROM gg GROUP BY k"),
+        [["11"], ["32"]]
+    );
+}
+
+/// `HAVING` resolves against the AGGREGATION's output, so an ungrouped source
+/// column is not visible there at all — and that is a name-resolution rule,
+/// not an `ONLY_FULL_GROUP_BY` one.
+///
+/// `gorun` answers `[planner:1054]Unknown column 'v' in 'having clause'` for
+/// both queries below with `ONLY_FULL_GROUP_BY` ON **and** OFF, where the
+/// `ORDER BY` counterpart (`... GROUP BY k ORDER BY v`) is mode-gated and
+/// runs fine with the mode cleared. The two clauses are checked by different
+/// rules for exactly that reason.
+#[test]
+fn having_cannot_see_an_ungrouped_column_in_any_sql_mode() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE gg (k INT, v INT)").unwrap();
+    session
+        .run("INSERT INTO gg VALUES (1,10),(1,20),(2,30)")
+        .unwrap();
+
+    for mode in ["DEFAULT", "'STRICT_TRANS_TABLES'"] {
+        session.run(&format!("SET sql_mode = {mode}")).unwrap();
+        for sql in [
+            "SELECT k, count(*) FROM gg GROUP BY k HAVING v > 0",
+            "SELECT count(*) FROM gg HAVING v > 0",
+        ] {
+            let err = session.run(sql).expect_err(sql).to_mysql_error();
+            assert_eq!(err.code, 1054, "{mode} {sql}: {err:?}");
+            assert!(
+                err.message
+                    .contains("Unknown column 'v' in 'having clause'"),
+                "{mode} {sql}: {}",
+                err.message
+            );
+        }
+        // An aggregate, and a grouped column, are both readable there.
+        assert_eq!(
+            rows(
+                &mut session,
+                "SELECT k FROM gg GROUP BY k HAVING count(*) > 1"
+            ),
+            [["1"]]
+        );
+    }
 }
 
 /// `CHAR_LENGTH` picks its byte-counting or character-counting signature

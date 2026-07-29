@@ -74,6 +74,11 @@ pub struct StmtContext {
     /// their defaults of 1. A statement that would have to honour a different
     /// step is refused; see [`StmtContext::auto_increment_step_is_default`].
     auto_increment_step_is_default: bool,
+    /// Go `SessionVars.SQLMode.HasOnlyFullGroupBy()`: whether a grouped query
+    /// must justify every non-aggregated value it reports. `ONLY_FULL_GROUP_BY`
+    /// is in TiDB's DEFAULT `sql_mode`, so a session leaves this on; a context
+    /// with no session behind it (a test, a DDL-time fold) is permissive.
+    only_full_group_by: bool,
 }
 
 impl StmtContext {
@@ -96,7 +101,22 @@ impl StmtContext {
             rand_seeded: Rc::default(),
             last_insert_id: Rc::default(),
             auto_increment_step_is_default: true,
+            only_full_group_by: false,
         }
+    }
+
+    /// Sets whether `ONLY_FULL_GROUP_BY` is in effect, which a session reads
+    /// off its `sql_mode`.
+    #[must_use]
+    pub fn with_only_full_group_by(mut self, only_full_group_by: bool) -> Self {
+        self.only_full_group_by = only_full_group_by;
+        self
+    }
+
+    /// Whether `ONLY_FULL_GROUP_BY` is in effect for this statement.
+    #[must_use]
+    pub fn only_full_group_by(&self) -> bool {
+        self.only_full_group_by
     }
 
     /// Attaches the session state the builtins read: Go reads both from
@@ -191,6 +211,7 @@ impl StmtContext {
             rand_seeded: Rc::default(),
             last_insert_id: Rc::default(),
             auto_increment_step_is_default: true,
+            only_full_group_by: false,
         }
     }
 

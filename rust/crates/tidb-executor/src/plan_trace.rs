@@ -584,6 +584,7 @@ impl PlanTrace {
                 database,
                 columns,
                 offset: 0,
+                determinants: Vec::new(),
             }],
         }
     }

@@ -487,6 +487,7 @@ mod agg_select;
 mod dml;
 mod errors;
 mod from;
+mod only_full_group_by;
 
 // Re-exported flat, so every caller inside and outside this module keeps
 // naming these as `driver::…` exactly as before the split.
@@ -1097,6 +1098,7 @@ pub(crate) fn run_select_traced(
                 database: None,
                 columns: vec![(format!("__apply_{appended}"), value_type)],
                 offset: appended,
+                determinants: Vec::new(),
             });
             let columns: Vec<Column> = applied
                 .column_list()
@@ -1248,6 +1250,7 @@ pub(crate) fn run_select_traced(
                 database: None,
                 columns: vec![(format!("__apply_{appended}"), value_type)],
                 offset: appended,
+                determinants: Vec::new(),
             });
             let columns: Vec<Column> = current_scope
                 .column_list()
@@ -2240,9 +2243,13 @@ fn substitute_aggregates(
     Ok(match expr {
         // A column that HAVING/ORDER BY references but the select list does
         // not project: Go carries it out of the aggregation as a hidden
-        // FIRST_ROW column, exactly as it does for a selected group column.
-        // A column that is not grouped is rejected, which is what
-        // ONLY_FULL_GROUP_BY reports in Go.
+        // FIRST_ROW column, exactly as it does for a selected group column,
+        // whether or not the column is grouped. Whether an UNGROUPED one may
+        // be read at all is `only_full_group_by`'s question, asked once at the
+        // top of the pipeline over the clauses as written -- this path must
+        // not re-decide it from the grouped-name list alone, which knows
+        // nothing of the candidate-key dependency that permits
+        // `GROUP BY id ORDER BY z` on a primary-keyed table.
         // A hoisted window column is computed ABOVE the aggregation, so it is
         // neither grouped nor aggregated and must be left alone here; it
         // resolves once the window stage has appended it.
@@ -2268,14 +2275,6 @@ fn substitute_aggregates(
                 .any(|candidate| candidate.eq_ignore_ascii_case(&name))
             {
                 return Ok(expr.clone());
-            }
-            if !group_by_names
-                .iter()
-                .any(|candidate| candidate.eq_ignore_ascii_case(&name))
-            {
-                return Err(DriverError::Unsupported(
-                    "this clause references a column that is neither grouped nor aggregated",
-                ));
             }
             let carrier = rewrite_expr_resolved(expr, resolver)
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
@@ -3485,6 +3484,15 @@ pub(crate) struct FromTable {
     pub(crate) database: Option<String>,
     pub(crate) columns: Vec<(String, FieldType)>,
     pub(crate) offset: usize,
+    /// Go `checkColFuncDepend`'s candidate keys: each entry is a set of this
+    /// source's column names that together determine the whole row, so once
+    /// `GROUP BY` pins all of them every other column of the source is a
+    /// single value per group and `ONLY_FULL_GROUP_BY` permits it. Only a
+    /// base table has any: the primary key, plus every UNIQUE index whose
+    /// columns are all `NOT NULL` (a nullable unique key permits repeated
+    /// NULLs and so determines nothing). A derived table, a view or a
+    /// synthetic scope carries none.
+    pub(crate) determinants: Vec<Vec<String>>,
 }
 
 /// One `GROUPING(c1, ..., cn)` call hoisted into an aggregation output column.
@@ -3953,6 +3961,7 @@ mod tests {
                     ("b".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
                 ],
                 offset: 0,
+                determinants: Vec::new(),
             }],
         };
         let split = |sql: &str| {
@@ -5301,10 +5310,11 @@ mod tests {
             Err(DriverError::Exec(_))
         ));
 
-        // DEFERRED: a HAVING clause referencing a non-grouped, non-aggregated
-        // column stays ONLY_FULL_GROUP_BY-refused even with a correlated
-        // subquery alongside it -- the subquery does not launder the column
-        // reference.
+        // A HAVING clause referencing a non-grouped, non-aggregated column
+        // stays refused even with a correlated subquery alongside it -- the
+        // subquery does not launder the column reference. Captured from
+        // TiDB, this is `ErrUnknownColumn` naming the `having clause` (HAVING
+        // resolves against the aggregation's output), in every sql_mode.
         assert!(matches!(
             run_select_on(
                 "SELECT g, SUM(v) FROM t GROUP BY g \
@@ -5312,7 +5322,7 @@ mod tests {
                 &catalog,
                 &crate::StmtContext::for_query()
             ),
-            Err(DriverError::Unsupported(_))
+            Err(DriverError::UnknownColumnInClause { .. })
         ));
 
         // DEFERRED: two-level nesting (a correlated subquery whose own body

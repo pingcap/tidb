@@ -357,6 +357,7 @@ pub(crate) fn pruned_scope(scope: &FromScope, keep: &[usize]) -> FromScope {
                 .map(|offset| table.columns[*offset].clone())
                 .collect(),
             offset: 0,
+            determinants: table.determinants.clone(),
         }],
     }
 }
