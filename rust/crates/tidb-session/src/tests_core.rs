@@ -3149,6 +3149,86 @@ fn read_only_noop_variables_need_the_noop_gate() {
     ));
 }
 
+/// Go `buildValuesListOfInsert`: `INSERT t VALUES ()` is a row of nothing
+/// but defaults, legal only while BOTH the column list and the first value
+/// list are empty.
+///
+/// Captured from TiDB (`testkit`, `pkg/executor`):
+///
+/// ```text
+/// create table ev1 (a int default 7, b varchar(4) default 'zz', c int)
+/// insert into ev1 values ()          OK
+/// select * from ev1                  [[7 zz <nil>]]
+/// insert into ev1 (a) values ()      ERR errno=1136 "[planner:1136]Column count
+///                                        doesn't match value count at row 1"
+/// insert into ev1 values (), ()      OK   -- select count(*) -> [[3]]
+///
+/// create table ev2 (a int not null, b int)
+/// insert into ev2 values ()          ERR errno=1364 "[table:1364]Field 'a'
+///                                        doesn't have a default value"
+/// select * from ev2                  []
+///
+/// create table ev3 (id int auto_increment primary key, v int)
+/// insert into ev3 values () x2       OK
+/// select * from ev3                  [[1 <nil>] [2 <nil>]]
+/// select last_insert_id()            [[2]]
+/// ```
+#[test]
+fn insert_with_an_empty_values_row_takes_every_default() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ev1 (a INT DEFAULT 7, b VARCHAR(4) DEFAULT 'zz', c INT)")
+        .unwrap();
+    session.run("INSERT INTO ev1 VALUES ()").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a, b, c FROM ev1")),
+        [["7", "zz", "NULL"]]
+    );
+
+    // A named column list still demands a matching arity: only the pairing of
+    // "no columns" with "no values" is the all-defaults row.
+    assert!(session.run("INSERT INTO ev1 (a) VALUES ()").is_err());
+
+    // Every later row must match the first, so `(), ()` is two default rows.
+    session.run("INSERT INTO ev1 VALUES (), ()").unwrap();
+    assert_eq!(row_text(session.run("SELECT COUNT(*) FROM ev1")), [["3"]]);
+    // ... while mixing widths is not a row of defaults at all.
+    assert!(session
+        .run("INSERT INTO ev1 VALUES (), (1, 'q', 2)")
+        .is_err());
+    assert!(session
+        .run("INSERT INTO ev1 VALUES (1, 'q', 2), ()")
+        .is_err());
+
+    // A NOT NULL column with no default has no value to take, which is the
+    // ordinary 1364 -- not an arity error.
+    session
+        .run("CREATE TABLE ev2 (a INT NOT NULL, b INT)")
+        .unwrap();
+    let error = session.run("INSERT INTO ev2 VALUES ()").unwrap_err();
+    assert!(
+        matches!(&error, DriverError::NoDefaultForField(name) if name == "a"),
+        "expected 1364 for field a, got {error:?}"
+    );
+    let rendered = error.to_mysql_error();
+    assert_eq!(rendered.code, 1364);
+    assert_eq!(rendered.message, "Field 'a' doesn't have a default value");
+    assert!(row_text(session.run("SELECT a FROM ev2")).is_empty());
+
+    // The auto-increment column is allocated over the empty row, so the two
+    // rows get 1 and 2 and LAST_INSERT_ID() reports the second.
+    session
+        .run("CREATE TABLE ev3 (id INT AUTO_INCREMENT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO ev3 VALUES ()").unwrap();
+    session.run("INSERT INTO ev3 VALUES ()").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id, v FROM ev3 ORDER BY id")),
+        [["1", "NULL"], ["2", "NULL"]]
+    );
+    assert_eq!(row_text(session.run("SELECT LAST_INSERT_ID()")), [["2"]]);
+}
+
 /// ALTER TABLE MODIFY / CHANGE COLUMN, checked against captured TiDB
 /// output (`alter table t modify column ...` on a mock store).
 ///

@@ -242,19 +242,36 @@ pub(crate) fn run_insert_traced(
     };
     let row_count = source_rows.as_ref().map_or(insert.rows.len(), Vec::len);
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
+    // Go `buildValuesListOfInsert` checks arity in two steps: the FIRST row
+    // against the target columns, and every later row against the one before
+    // it. The first check is skipped when both the column list and the first
+    // value list are empty, which is what makes `INSERT t VALUES ()` -- a row
+    // of nothing but defaults -- legal; chaining the later rows to their
+    // predecessor is then what still rejects `VALUES (), (1)`. An empty row
+    // assigns nothing, so the default, auto-increment and NOT NULL rules
+    // below fill the whole row.
+    let names_a_column = insert.set_syntax || insert.columns_specified;
+    let mut previous_width = target_offsets.len();
     for index in 0..row_count {
         let width = match source_rows.as_ref() {
             Some(_) => value_rows.get(index).map_or(0, Vec::len),
             None => insert.rows[index].len(),
         };
-        if width != target_offsets.len() {
+        let expected = if index == 0 {
+            target_offsets.len()
+        } else {
+            previous_width
+        };
+        let arity_is_checked = index > 0 || source_rows.is_some() || names_a_column || width > 0;
+        if arity_is_checked && width != expected {
             return Err(DriverError::Unsupported(
                 "VALUES arity does not match the column list",
             ));
         }
+        previous_width = width;
         let mut row = vec![Datum::Null; column_list.len()];
         let mut assigned = vec![false; column_list.len()];
-        for (position, &offset) in target_offsets.iter().enumerate() {
+        for (position, &offset) in target_offsets.iter().enumerate().take(width) {
             let value = match source_rows.as_ref() {
                 Some(_) => value_rows[index][position].clone(),
                 None => {
