@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/pkg/caller"
 	gatomic "go.uber.org/atomic"
@@ -77,6 +78,8 @@ type Dumper struct {
 
 // NewDumper returns a new Dumper
 func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
+	redact.InitRedact(true)
+
 	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
 		path := val.(string)
 		b, err := objstore.ParseBackend(path, nil)
@@ -111,6 +114,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 
 	err = adjustConfig(conf,
 		buildTLSConfig,
+		validatePackedBackup,
 		validateSpecifiedSQL,
 		adjustFileFormat)
 	if err != nil {
@@ -126,6 +130,14 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 			}
 		}()
 	})
+
+	if conf.PackedBackup != "" {
+		err = runSteps(d,
+			initLogger,
+			createExternalStore,
+			startHTTPService)
+		return d, err
+	}
 
 	err = runSteps(d,
 		initLogger,
@@ -149,6 +161,9 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 // nolint: gocyclo
 func (d *Dumper) Dump() (dumpErr error) {
 	initColTypeRowReceiverMap()
+	if d.conf.PackedBackup != "" {
+		return d.dumpPacked()
+	}
 	var (
 		conn    *sql.Conn
 		err     error

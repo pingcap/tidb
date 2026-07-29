@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	formatutil "github.com/pingcap/tidb/pkg/util/format"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
@@ -163,13 +164,7 @@ func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder
 			tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
 			buffer = dump.LengthEncodedString(buffer, tmp)
 		case mysql.TypeYear:
-			year := row.GetInt64(i)
-			tmp = tmp[:0]
-			if year == 0 {
-				tmp = append(tmp, '0', '0', '0', '0')
-			} else {
-				tmp = strconv.AppendInt(tmp, year, 10)
-			}
+			tmp = formatutil.AppendFormatYear(tmp[:0], row.GetInt64(i))
 			buffer = dump.LengthEncodedString(buffer, tmp)
 		case mysql.TypeLonglong:
 			if mysql.HasUnsignedFlag(uint(columns[i].Flag)) {
