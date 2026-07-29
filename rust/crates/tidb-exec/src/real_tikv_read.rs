@@ -1453,4 +1453,15 @@ where
             })?
             .protocol_columns_for_plan(plan)
     }
+
+    /// Updates both relations' `time_zone` in lockstep, so a `SET time_zone`
+    /// on this two-table session is visible to every DAG request either
+    /// relation's reader builds afterward, matching the single-table
+    /// session's [`RealTiKvReadSession::set_time_zone`].
+    pub fn set_time_zone(&mut self, name: impl Into<String>, offset_secs: i32) {
+        let name = name.into();
+        for reader in &mut self.readers {
+            reader.set_time_zone(name.clone(), offset_secs);
+        }
+    }
 }

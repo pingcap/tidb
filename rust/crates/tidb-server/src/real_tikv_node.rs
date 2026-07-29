@@ -484,9 +484,9 @@ pub struct RealTiKvServerSession {
 /// of UTC. Only fixed offsets and the bare `UTC`/`SYSTEM` spellings are
 /// supported — this node carries no IANA timezone database.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct RealTiKvSessionTimeZone {
-    name: String,
-    offset_secs: i32,
+pub(crate) struct RealTiKvSessionTimeZone {
+    pub(crate) name: String,
+    pub(crate) offset_secs: i32,
 }
 
 impl Default for RealTiKvSessionTimeZone {
@@ -503,7 +503,7 @@ impl RealTiKvSessionTimeZone {
     /// `UTC`, and fixed `+HH:MM`/`-HH:MM` offsets. Named IANA zones are
     /// refused rather than silently approximated, matching this node's
     /// generally-UTC-only temporal seed.
-    fn parse(value: &str) -> Option<Self> {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
         if value.eq_ignore_ascii_case("SYSTEM") || value.eq_ignore_ascii_case("UTC") {
             return Some(Self {
                 name: value.to_owned(),
@@ -539,7 +539,7 @@ fn parse_fixed_tz_offset(s: &str) -> Option<i32> {
 /// (case-insensitively; `GLOBAL` is left unmatched, so it falls through to this
 /// node's ordinary unsupported-statement handling rather than silently
 /// changing session state) and returns the unquoted, un-lowercased value text.
-fn parse_set_time_zone(sql: &str) -> Option<&str> {
+pub(crate) fn parse_set_time_zone(sql: &str) -> Option<&str> {
     let trimmed = sql.trim().trim_end_matches(';').trim_end();
     let lower = trimmed.to_ascii_lowercase();
     let mut rest = lower.strip_prefix("set")?.trim_start();
