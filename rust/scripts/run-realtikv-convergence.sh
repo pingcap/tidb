@@ -105,6 +105,13 @@ rust_sql() {
     -u appuser -papppw --protocol=TCP "$@"
 }
 
+# The cluster's own `root`, on the Rust node -- for the statements that read or
+# change `mysql.*` itself.
+rust_root_sql() {
+  "${MYSQL_CLIENT}" "${MYSQL_PLUGIN_ARGS[@]}" -h 127.0.0.1 -P "${RUST_SQL_PORT}" \
+    -u root --protocol=TCP "$@"
+}
+
 echo "starting playground (tag ${TAG})"
 tiup playground v8.5.6 --without-monitor --tag "${TAG}" \
   --db 1 --pd 1 --kv 1 --tiflash 0 --port-offset "${PORT_OFFSET}" \
@@ -152,6 +159,15 @@ expect() {
   fi
   echo "  ok  ${label}: ${actual}"
 }
+
+# The statement that used to abort this node's SQL worker outright:
+# `mysql.user`'s privilege columns are `ENUM('N','Y')`, and appending an ENUM
+# cell to an output chunk panicked. It must now answer, with the element NAMES
+# MySQL prints -- so this reads a privilege column, not just the key columns.
+ACCOUNTS=$(rust_root_sql -N -B -e "
+  SELECT user, host, Select_priv FROM mysql.user WHERE user = 'appuser';
+" | tr '\n' ';')
+expect "SELECT over mysql.user (the ENUM columns)" $'appuser\t%\tN;' "${ACCOUNTS}"
 
 echo "wide SQL, as the Go-created user, on the Rust node"
 
@@ -258,18 +274,6 @@ grep -Fq "CREATE TABLE, DROP TABLE" "${WORK_DIR}/ddl.out" \
   || { echo "ALTER failed for the wrong reason:"; cat "${WORK_DIR}/ddl.out"; exit 1; }
 echo "  ok  ALTER refused by name: $(tail -1 "${WORK_DIR}/ddl.out")"
 
-# A table-scoped GRANT still is refused, by name: `mysql.tables_priv` stores
-# its privileges in a SET column the account writer does not encode, and
-# dropping such a grant silently would be far worse than refusing it.
-if rust_sql -e "GRANT SELECT ON conv.orders TO 'appuser'@'%';" \
-  >"${WORK_DIR}/scoped.out" 2>&1; then
-  echo "a table-scoped GRANT was accepted, but this mode must refuse it" >&2
-  exit 1
-fi
-grep -Fq "mysql.tables_priv" "${WORK_DIR}/scoped.out" \
-  || { echo "the table-scoped GRANT failed for the wrong reason:"; cat "${WORK_DIR}/scoped.out"; exit 1; }
-echo "  ok  table-scoped GRANT refused by name: $(tail -1 "${WORK_DIR}/scoped.out")"
-
 echo "accounts through the Rust node: the client creates one, the Go TiDB sees it"
 
 # The client CREATEs an account and GRANTs it, through the RUST node. Both go
@@ -311,7 +315,21 @@ GO_LOGIN=$("${MYSQL_CLIENT}" "${MYSQL_PLUGIN_ARGS[@]}" -h 127.0.0.1 -P "${GO_SQL
   -u rustmade -prustpw --protocol=TCP -N -B -e "SELECT CURRENT_USER();" | tr '\n' ';')
 expect "the Go TiDB accepts the Rust-created account's password" "rustmade@%;" "${GO_LOGIN}"
 
+echo "scoped grants: the SET columns of mysql.tables_priv and mysql.columns_priv"
+
+# A table-scoped and a column-scoped GRANT, through the RUST node. Both land in
+# `SET` columns (`Table_priv`, `Column_priv`), which is the encoding this node
+# used to refuse by name. The proof is that the GO TiDB's own SHOW GRANTS
+# renders them: only a correct bit mask decodes to those element names.
+rust_root_sql -e "
+  GRANT SELECT, UPDATE ON conv.orders TO 'rustmade'@'%';
+  GRANT SELECT (customer) ON conv.orders TO 'rustmade'@'%';
+"
+wait_for_go_grant "GRANT SELECT,UPDATE ON \`conv\`.\`orders\` TO 'rustmade'@'%'"
+wait_for_go_grant "GRANT SELECT(\`customer\`) ON \`conv\`.\`orders\` TO 'rustmade'@'%'"
+
 echo "and the other direction: the Go TiDB grants, the Rust node's watch fires"
+
 
 # The GO TiDB grants a privilege the Rust node must pick up. Go PUTs the same
 # /tidb/privilege key, and the Rust node's own privilege watch nudges its
@@ -332,6 +350,11 @@ wait_for_rust_grant() {
   return 1
 }
 wait_for_rust_grant "UPDATE"
+# The reverse leg for a scoped grant: the GO TiDB writes the tables_priv row and
+# the RUST node's SHOW GRANTS renders it, which is the decode half of the same
+# SET column.
+go_sql -e "GRANT INSERT ON conv.customers TO 'rustmade'@'%';"
+wait_for_rust_grant "INSERT ON \`conv\`.\`customers\`"
 grep -F '"event":"privilege_watch_fired"' "${RUST_LOG_FILE}" >/dev/null \
   || { echo "the Rust node's privilege watch never fired; it only ticked" >&2; exit 1; }
 
