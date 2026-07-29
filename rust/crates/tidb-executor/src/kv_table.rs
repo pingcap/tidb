@@ -299,6 +299,14 @@ impl AutoIdAllocator {
     /// `18446744073709551614`, the next insert fails with
     /// `[autoid:1467]`. Saturating instead would silently re-issue an id that
     /// already exists.
+    ///
+    /// DIVERGENCE (documented): the capture shows one exception -- an `ALTER
+    /// TABLE ... AUTO_INCREMENT = 9223372036854775807` followed by an insert
+    /// DOES hand out `9223372036854775807` in Go, from the same counter value
+    /// that refuses a plain insert. That is Go's batch cache reaching past its
+    /// own guard on the ALTER path, not a rule; refusing one id earlier is the
+    /// safe side of it, since the id at the very end of the domain is one this
+    /// allocator then never issues twice.
     fn alloc(&self) -> Result<u64, AutoIncrementExhausted> {
         let mut last = self.last.load(Ordering::SeqCst);
         loop {
