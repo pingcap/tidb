@@ -184,7 +184,10 @@ pub(crate) fn build_from(
             };
             Ok((meter(exec, trace), scope))
         }
-        JoinNode::Join(join) => build_join(join, catalog, current_db, ctx, trace),
+        JoinNode::Join(join) => {
+            // A nested join builds full width: see `build_join`'s `prune`.
+            build_join(join, catalog, current_db, ctx, trace, None)
+        }
         JoinNode::Derived {
             subquery,
             alias,
@@ -646,14 +649,32 @@ pub(crate) fn build_view_source(
 }
 
 /// Builds one join node (or passes through the single-table wrapper).
+///
+/// `prune` carries the statement whose column needs may narrow this join's
+/// two sides, and is `Some` only for a query's OUTERMOST `FROM` node. That
+/// restriction is load-bearing rather than tidiness: a nested join's sides
+/// must never be narrowed, because the enclosing join's `ON` can name their
+/// columns and is not visible from inside. `None` therefore means "build this
+/// relation full width", which is what every recursive and non-`SELECT`
+/// caller passes. See [`crate::column_prune`].
 pub(crate) fn build_join(
     join: &tidb_ast::Join,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
+    prune: Option<&tidb_ast::SelectStmt>,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
-    let (left_exec, left_scope) =
+    // `FROM a, b` parses as the single-relation wrapper AROUND the real join,
+    // while `FROM a JOIN b ON ...` is the join node itself. Unwrapping here
+    // keeps the two spellings one shape for the prune request below --
+    // otherwise the comma form would drop it and silently never prune.
+    if join.right.is_none() && join.on.is_none() && join.using.is_empty() && !join.natural {
+        if let JoinNode::Join(inner) = &join.left {
+            return build_join(inner, catalog, current_db, ctx, trace, prune);
+        }
+    }
+    let (mut left_exec, left_scope) =
         build_from(&join.left, catalog, current_db, ctx, trace.as_deref_mut())?;
     let Some(right_node) = &join.right else {
         // The single-table wrapper the parser always produces.
@@ -687,11 +708,11 @@ pub(crate) fn build_join(
             "NATURAL and USING joins are not supported yet",
         ));
     }
-    let (right_exec, right_scope) =
+    let (mut right_exec, right_scope) =
         build_from(right_node, catalog, current_db, ctx, trace.as_deref_mut())?;
 
     // The joined scope: the right tables' columns follow the left's.
-    let left_width = left_scope.width();
+    let mut left_width = left_scope.width();
     let mut scope = left_scope;
     for table in right_scope.tables {
         scope.tables.push(FromTable {
@@ -700,6 +721,26 @@ pub(crate) fn build_join(
             columns: table.columns,
             offset: table.offset + left_width,
         });
+    }
+
+    // Column pruning across the join, BEFORE the `ON` below is rewritten:
+    // each side is offered only the columns the statement (its `ON`
+    // included) reads from it. The two sides answer independently, so the
+    // widths below are read back off the narrowed scope rather than assumed.
+    if let Some(select) = prune {
+        if let Some((left_columns, right_columns)) = crate::column_prune::prune_join_sides(
+            select,
+            join,
+            &scope,
+            &mut left_exec,
+            &mut right_exec,
+        ) {
+            left_width = left_columns.len();
+            scope.tables[0].columns = left_columns;
+            scope.tables[0].offset = 0;
+            scope.tables[1].columns = right_columns;
+            scope.tables[1].offset = left_width;
+        }
     }
 
     let column_list = scope.column_list();

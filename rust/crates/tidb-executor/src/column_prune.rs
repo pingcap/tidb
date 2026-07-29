@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Column pruning for a single-table scan: Go's `rule_column_pruning.go`,
-//! restricted to the one plan shape where it can be proved correct here.
+//! Column pruning for a single-table scan and for a two-base-table join:
+//! Go's `rule_column_pruning.go`, restricted to the plan shapes where it can
+//! be proved correct here.
 //!
 //! # Why a narrow slice, and what "narrow" means
 //!
@@ -41,8 +42,9 @@
 //! for every shape below, and `None` is also what any expression form it does
 //! not explicitly understand produces:
 //!
-//! * a `FROM` that is not exactly one base KV table (join, derived table,
-//!   lateral, view, memory table, no `FROM` at all);
+//! * a `FROM` that is not exactly one base KV table (derived table, lateral,
+//!   view, memory table, no `FROM` at all) -- with the single widening of
+//!   [`prunable_join_columns`] below;
 //! * `SELECT *` or `SELECT t.*` (a wildcard names every column);
 //! * a `WITH` clause, `WITH ROLLUP`, a `WINDOW` clause, `VALUES`,
 //!   `INTO OUTFILE`, or a locking clause;
@@ -58,6 +60,29 @@
 //! [`collect_expr_columns`] matches [`tidb_ast::Expr`] **exhaustively, with no
 //! wildcard arm**, so a new expression variant is a compile error here rather
 //! than a silently unvisited subtree.
+//!
+//! # The join widening
+//!
+//! [`prunable_join_columns`] adds exactly one shape: a `FROM` of **two base
+//! tables**, joined by an ordinary `ON` (or by nothing, with the predicate in
+//! the `WHERE`). Every statement-level refusal above still applies, and the
+//! join's own `ON` is walked alongside the statement's clauses -- an `ON`
+//! column dropped from a side would be a silently wrong join.
+//!
+//! The prune-before-expressions rule is what fixes *where* that gate runs. A
+//! join's `ON` is built from the concatenated scope inside `build_join`, so
+//! the gate runs at the one moment when both sides exist as executors and no
+//! expression has been rewritten yet. Each side is then handed offsets in its
+//! own local space and answers independently; the concatenated scope is
+//! rebuilt afterwards from whatever widths the two sides settled on, and only
+//! then is the `ON` rewritten. Nothing is renumbered, because at the moment
+//! of narrowing no offset yet exists.
+//!
+//! Three or more tables stay refused, and the reason is structural rather
+//! than cautious: `build_join` recurses, so an inner join's sides would be
+//! offered a prune while the enclosing join's `ON` -- which may name their
+//! columns -- is nowhere in view. `prune` is therefore passed only to a
+//! query's outermost `FROM` node.
 //!
 //! # What the scan promises
 //!
@@ -80,6 +105,7 @@ use std::collections::BTreeSet;
 
 use tidb_ast::{Expr, SelectField, SelectStmt};
 
+use tidb_datatype::FieldType;
 use tidb_expr::rewriter::ColumnResolver;
 
 use crate::driver::{FromScope, FromTable};
@@ -119,13 +145,175 @@ pub(crate) fn prunable_columns(select: &SelectStmt, scope: &FromScope) -> Option
 
     let resolver = crate::driver::scope_resolver(scope);
     let mut wanted = BTreeSet::new();
+    collect_statement_columns(select, &resolver, &mut wanted)?;
+    Some(wanted.into_iter().collect())
+}
+
+/// The scope offsets a two-base-table join reads, when the join is in the
+/// widened slice; `None` keeps both sides full width.
+///
+/// # Why joins need their own gate, and why it stops at two tables
+///
+/// The single-table gate runs on an already-built source, because nothing has
+/// been built from the scope yet at that point. A join is different: its `ON`
+/// condition is an expression built from the *concatenated* scope, inside
+/// [`crate::driver::from::build_join`]. So the prune-before-expressions rule
+/// puts this gate at the one moment when both sides exist as executors but the
+/// `ON` has not been rewritten yet -- and the kept set must therefore include
+/// the `ON`'s own columns, which is why [`Join::on`] is walked here alongside
+/// every clause the single-table gate walks.
+///
+/// Both sides must be plain base tables (`JoinNode::Table`). A nested join is
+/// refused for a reason that is not merely caution: `build_join` recurses, so
+/// an inner join's sides would be offered a prune while the *outer* join's
+/// `ON` -- which can name an inner table's column -- is nowhere in view. There
+/// is no scope in which those references can be seen from inside, so the only
+/// safe answer is to refuse the whole shape. `a JOIN b JOIN c` therefore keeps
+/// the unchanged full-width path throughout.
+///
+/// [`Join::on`]: tidb_ast::Join::on
+fn prunable_join_columns(
+    select: &SelectStmt,
+    join: &tidb_ast::Join,
+    scope: &FromScope,
+) -> Option<Vec<usize>> {
+    // Exactly two base tables, joined by an ordinary ON (or nothing). The
+    // scope width check is the one that matters -- it is what makes
+    // `tables[0]`/`tables[1]` below name the two sides -- and the node checks
+    // are what make each side a relation this walk can reason about.
+    if scope.tables.len() != 2 {
+        return None;
+    }
+    if !matches!(peel_relation(&join.left), tidb_ast::JoinNode::Table(_)) {
+        return None;
+    }
+    match &join.right {
+        Some(right) if matches!(peel_relation(right), tidb_ast::JoinNode::Table(_)) => {}
+        _ => return None,
+    }
+    // `USING` and `NATURAL` name columns implicitly -- by the two sides'
+    // shared names rather than by any expression this walk can reach.
+    if join.natural || !join.using.is_empty() {
+        return None;
+    }
+    if select.with.is_some()
+        || select.rollup
+        || !select.windows.is_empty()
+        || !select.values.is_empty()
+        || select.into_outfile.is_some()
+        || select.lock.is_some()
+    {
+        return None;
+    }
+
+    let resolver = crate::driver::scope_resolver(scope);
+    let mut wanted = BTreeSet::new();
+    collect_statement_columns(select, &resolver, &mut wanted)?;
+    if let Some(on) = &join.on {
+        collect_expr_columns(on, &resolver, &mut wanted)?;
+    }
+    Some(wanted.into_iter().collect())
+}
+
+/// One join side's `(name, type)` column list, in row order -- the same shape
+/// [`FromTable::columns`] holds.
+type JoinSideColumns = Vec<(String, FieldType)>;
+
+/// Offers each side of a two-table join the columns that side actually
+/// contributes, and reports the narrowed `(left, right)` column lists when a
+/// side took the offer.
+///
+/// # How the concatenated offsets stay consistent
+///
+/// The kept set is split at `left_width`, so each side is handed offsets in
+/// its own local space -- exactly what [`Executor::accept_column_prune`]
+/// expects. Each side then answers independently and fail-closed, so a
+/// refusal on one side leaves that side full width without touching the
+/// other. Nothing is renumbered here: the caller rebuilds the concatenated
+/// scope from whatever widths the two sides ended up with, and every
+/// expression in the statement -- the `ON` included -- is rewritten against
+/// that final scope afterwards. There is therefore no offset in existence at
+/// the moment of narrowing that could go stale.
+///
+/// A side whose kept set is empty stays full width: the scan refuses an empty
+/// prune (a zero-column row is not a shape this tier's sources emit), so the
+/// cross-join side that no clause mentions is simply left alone.
+///
+/// [`Executor::accept_column_prune`]: crate::executor::Executor::accept_column_prune
+pub(crate) fn prune_join_sides(
+    select: &SelectStmt,
+    join: &tidb_ast::Join,
+    scope: &FromScope,
+    left: &mut Box<dyn crate::executor::Executor>,
+    right: &mut Box<dyn crate::executor::Executor>,
+) -> Option<(JoinSideColumns, JoinSideColumns)> {
+    let keep = prunable_join_columns(select, join, scope)?;
+    let left_columns = &scope.tables[0].columns;
+    let right_columns = &scope.tables[1].columns;
+    let left_width = left_columns.len();
+
+    let left_keep: Vec<usize> = keep.iter().copied().filter(|o| *o < left_width).collect();
+    let right_keep: Vec<usize> = keep
+        .iter()
+        .filter(|o| **o >= left_width)
+        .map(|o| o - left_width)
+        .collect();
+
+    let left_pruned = left_keep.len() < left_width && left.accept_column_prune(&left_keep);
+    let right_pruned =
+        right_keep.len() < right_columns.len() && right.accept_column_prune(&right_keep);
+    if !left_pruned && !right_pruned {
+        return None;
+    }
+    Some((
+        narrowed(left_columns, &left_keep, left_pruned),
+        narrowed(right_columns, &right_keep, right_pruned),
+    ))
+}
+
+/// `columns` narrowed to `keep` when the side took the prune, unchanged
+/// otherwise.
+fn narrowed(columns: &[(String, FieldType)], keep: &[usize], pruned: bool) -> JoinSideColumns {
+    if !pruned {
+        return columns.to_vec();
+    }
+    keep.iter().map(|offset| columns[*offset].clone()).collect()
+}
+
+/// A `FROM` node with the parser's single-relation wrappers peeled off.
+///
+/// `FROM a, b` parses as `Join { left: Join { left: a }, right: b }`: the
+/// left side is a real relation wearing a wrapper, not a nested join. Peeling
+/// makes the comma and `JOIN ... ON` spellings the same shape to the gate,
+/// and a genuine nested join -- which has a `right` -- is left alone and so
+/// still fails the `Table` check above.
+fn peel_relation(node: &tidb_ast::JoinNode) -> &tidb_ast::JoinNode {
+    let mut node = node;
+    while let tidb_ast::JoinNode::Join(inner) = node {
+        if inner.right.is_some() || inner.on.is_some() || !inner.using.is_empty() || inner.natural {
+            break;
+        }
+        node = &inner.left;
+    }
+    node
+}
+
+/// Adds every scope column the statement's clauses read to `wanted`.
+///
+/// This is the whole statement *except* a `FROM`-local expression: the
+/// single-table shape has none, and the join shape adds its `ON` separately.
+fn collect_statement_columns(
+    select: &SelectStmt,
+    resolver: &dyn ColumnResolver,
+    wanted: &mut BTreeSet<usize>,
+) -> Option<()> {
     for field in select.fields.fields() {
         match field {
             // A wildcard names every column of the scope, so there is
             // nothing to prune and no expression to walk.
             SelectField::Wildcard(_) => return None,
             SelectField::Expr { expr, alias: _ } => {
-                collect_expr_columns(expr, &resolver, &mut wanted)?;
+                collect_expr_columns(expr, resolver, wanted)?;
             }
         }
     }
@@ -133,21 +321,21 @@ pub(crate) fn prunable_columns(select: &SelectStmt, scope: &FromScope) -> Option
         .into_iter()
         .flatten()
     {
-        collect_expr_columns(predicate, &resolver, &mut wanted)?;
+        collect_expr_columns(predicate, resolver, wanted)?;
     }
     for item in &select.group_by {
-        collect_expr_columns(&item.expr, &resolver, &mut wanted)?;
+        collect_expr_columns(&item.expr, resolver, wanted)?;
     }
     for item in &select.order_by {
-        collect_expr_columns(&item.expr, &resolver, &mut wanted)?;
+        collect_expr_columns(&item.expr, resolver, wanted)?;
     }
     if let Some(limit) = &select.limit {
-        collect_expr_columns(&limit.count, &resolver, &mut wanted)?;
+        collect_expr_columns(&limit.count, resolver, wanted)?;
         if let Some(offset) = &limit.offset {
-            collect_expr_columns(offset, &resolver, &mut wanted)?;
+            collect_expr_columns(offset, resolver, wanted)?;
         }
     }
-    Some(wanted.into_iter().collect())
+    Some(())
 }
 
 /// `scope` narrowed to `keep`, whose offsets index the single table's column
