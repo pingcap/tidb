@@ -689,7 +689,7 @@ fn handle_text(handle: &TableHandle) -> String {
 
 /// Go's range notation: a square bracket includes the bound, a parenthesis
 /// excludes it, and an absent bound is an infinity.
-fn range_text(range: &crate::kv_table::IndexRange) -> String {
+pub(crate) fn range_text(range: &crate::kv_table::IndexRange) -> String {
     let low = bound_text(&range.low, "-inf");
     let high = bound_text(&range.high, "+inf");
     let open = if range.low_exclusive { '(' } else { '[' };
