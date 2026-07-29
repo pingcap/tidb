@@ -383,7 +383,7 @@ use func::{eval_func, eval_in_list, negate_if};
 use like::like_match;
 use ops::{
     effective_div_precision_increment, eval_binary, eval_binary_with_div_precision, eval_unary,
-    logic_and, truthy_with_mysql_string,
+    logic_and,
 };
 use regexp::regexp_match;
 use row::row_compare;
@@ -722,8 +722,8 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             let v = eval_in(expr, cols)?;
             let holds = match target {
                 IsTarget::Null | IsTarget::Unknown => v == Datum::Null,
-                IsTarget::True => truthy_with_mysql_string(&v)? == Some(true),
-                IsTarget::False => truthy_with_mysql_string(&v)? == Some(false),
+                IsTarget::True => truthy_of(&v)? == Some(true),
+                IsTarget::False => truthy_of(&v)? == Some(false),
             };
             Ok(bool_int(holds ^ not))
         }
@@ -856,7 +856,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
                 None => {
                     let mut taken = None;
                     for (cond, result) in when_clauses {
-                        if truthy_with_mysql_string(&eval_in(cond, cols)?)? == Some(true) {
+                        if truthy_of(&eval_in(cond, cols)?)? == Some(true) {
                             taken = Some(result);
                             break;
                         }

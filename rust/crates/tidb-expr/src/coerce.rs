@@ -92,29 +92,36 @@ pub(crate) fn bool_int(value: bool) -> Datum {
     Datum::Int(i64::from(value))
 }
 
-/// The truthiness of a definite numeric scalar.
+/// A value's truth in SQL boolean context: source `Datum.ToBool`, which is the
+/// single conversion `expression.EvalBool` applies to every `WHERE`/`ON`/`IF`
+/// condition.
+///
+/// `NULL` is the only unknown ([`None`]); every other kind converts, including
+/// the ones a type-native reading would call "not a number":
+///
+/// * a string or byte string takes MySQL's numeric prefix, so `'1abc'` and
+///   `'.5'` are true while `'abc'`, `''` and `'0.0'` are false -- a reading
+///   that returned "unknown" here dropped every row a `WHERE varchar_col`
+///   should have returned;
+/// * a JSON value compares against JSON `0` (Go `BinaryJSON.IsZero`), so JSON
+///   `false`, `[]` and `null` are all *true*;
+/// * a float32 vector is true unless it is the zero vector.
+///
+/// The conversion's truncation disposition (`str_to_float`'s event) is
+/// DEFERRED here: Go's `EvalBool` hands the event to the statement context,
+/// which raises warning 1292 for `WHERE '1abc'`. The truth VALUE is
+/// unaffected, and no caller of this function carries a statement context.
 pub fn truthy_of(value: &Datum) -> Result<Option<bool>, EvalError> {
-    Ok(match value {
-        Datum::Int(value) => Some(*value != 0),
-        Datum::UInt(value) => Some(*value != 0),
-        Datum::Decimal(value) => Some(!value.is_zero()),
-        Datum::Real(value) => Some(*value != 0.0),
-        Datum::Float32(value) => Some((*value as f32) != 0.0),
-        Datum::BinaryLiteral(value) | Datum::Bit(value) => Some(binary_literal_value(value) != 0),
-        Datum::Enum(value, _) => Some(value.value() != 0),
-        Datum::Set(value, _) => Some(value.value() != 0),
-        Datum::Duration(value) => Some(value.nanoseconds() != 0),
-        Datum::Time(value) => Some(!value.is_zero()),
-        Datum::Null
-        | Datum::String(_)
-        | Datum::Bytes(_)
-        | Datum::Json(_)
-        | Datum::Raw(_)
-        | Datum::VectorFloat32(_) => None,
-        Datum::MinNotNull | Datum::MaxValue => {
-            return Err(EvalError::Unsupported("range sentinel truth coercion"));
-        }
-    })
+    if matches!(value, Datum::Null) {
+        return Ok(None);
+    }
+    match value.to_bool() {
+        Ok(converted) => Ok(Some(converted.value != 0)),
+        // `Datum::Raw` and the range sentinels have no Go `Datum` kind, so
+        // Go's own `default` arm errors on them too rather than guessing a
+        // truth value that would silently keep or drop a row.
+        Err(_) => Err(EvalError::Unsupported("truth coercion of a non-SQL datum")),
+    }
 }
 
 /// Returns a string datum's UTF-8 text without replacement.

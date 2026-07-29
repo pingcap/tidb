@@ -2624,6 +2624,8 @@ mod tests_column_prune;
 #[cfg(test)]
 mod tests_core;
 #[cfg(test)]
+mod tests_eval_bool;
+#[cfg(test)]
 mod tests_explain;
 #[cfg(test)]
 mod tests_foreign_key;

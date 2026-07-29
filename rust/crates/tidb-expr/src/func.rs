@@ -126,16 +126,10 @@ pub(crate) fn eval_func(
             return Err(EvalError::Unsupported("bad IF arguments"));
         };
         let condition = eval_in(condition, cols)?;
-        // Go's `wrapWithIsTrue` maps string/bytes conditions to the real
-        // signature, whose `EvalReal` consumes a numeric prefix (`0.1` is
-        // true, while `0.0` is false).  Other scalar values use their native
-        // truthiness; NULL remains false because `keepNull` is disabled.
-        let take_true = match condition {
-            Datum::String(_) | Datum::Bytes(_) => {
-                crate::ops::to_f64_with_mysql_string(&condition) != 0.0
-            }
-            _ => truthy_of(&condition)? == Some(true),
-        };
+        // Go's `wrapWithIsTrue` gives the condition the same `Datum.ToBool`
+        // reading every other boolean context uses; NULL is false because
+        // `keepNull` is disabled.
+        let take_true = truthy_of(&condition)? == Some(true);
         return eval_in(if take_true { when_true } else { when_false }, cols);
     }
     let vals: Vec<Datum> = args
@@ -211,45 +205,6 @@ fn eval_session_state(
     })
 }
 
-/// Evaluates a builtin whose result is a pure function of its
-/// already-evaluated argument values — the values-only subset of
-/// [`eval_func`]'s eager path. This is the bridge entry
-/// `crate::scalar_function::ScalarFunction::eval` uses to run builtins over
-/// chunk rows; `eval_func` calls it too, so there is exactly ONE
-/// implementation of each function.
-///
-/// Deliberately OUTSIDE this entry (they stay AST/session-bound in
-/// `eval_func`):
-/// - lazy control forms: `IF` (Go's `builtinIf*Sig` evaluates exactly one
-///   branch, so eager-evaluating both would change semantics, e.g. a guarded
-///   `1/0`), `CASE`, and the `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE`
-///   family whose second argument is an `Expr::Interval`, not a value;
-/// - session-state functions: `RAND` (needs
-///   the argument AST and per-call `function_key` for generator identity),
-///   the sequence functions (`NEXTVAL`/`LASTVAL`/`SETVAL`), and the
-///   `time_fn` family (its dispatch takes `Columns` for the statement clock,
-///   time zone, and `default_week_format`);
-/// - the `LENGTH`/`OCTET_LENGTH`/`CHAR_LENGTH`/`CHARACTER_LENGTH` family: Go
-///   selects the signature from the argument expression's FieldType via
-///   `BuildContext::build_string_length_for_expr` BEFORE seeing any runtime
-///   value, so it genuinely needs the argument AST, not just the value.
-///
-/// `COALESCE` is eager here exactly as in `eval_func`'s existing eager path
-/// (Go's `builtinCoalesceSig` evaluates arguments in order over values, not
-/// lazily over unevaluated branches — no guarded-error semantics to protect).
-/// Go's truth test for the `IS TRUE`/`IS FALSE` family: `None` for NULL,
-/// otherwise whether the value is non-zero.
-fn datum_truth(value: &Datum) -> Option<bool> {
-    match value {
-        Datum::Null => None,
-        Datum::Int(v) => Some(*v != 0),
-        Datum::UInt(v) => Some(*v != 0),
-        Datum::Real(v) => Some(*v != 0.0),
-        Datum::Decimal(d) => Some(!d.is_zero()),
-        _ => Some(true),
-    }
-}
-
 /// [`eval_func_values`] plus the statement-context side effects Go attaches
 /// to a builtin whose VALUE is still a pure function of its arguments.
 ///
@@ -283,6 +238,32 @@ pub(crate) fn eval_func_values_in(
     Some(result)
 }
 
+/// Evaluates a builtin whose result is a pure function of its
+/// already-evaluated argument values — the values-only subset of
+/// [`eval_func`]'s eager path. This is the bridge entry
+/// `crate::scalar_function::ScalarFunction::eval` uses to run builtins over
+/// chunk rows; `eval_func` calls it too, so there is exactly ONE
+/// implementation of each function.
+///
+/// Deliberately OUTSIDE this entry (they stay AST/session-bound in
+/// `eval_func`):
+/// - lazy control forms: `IF` (Go's `builtinIf*Sig` evaluates exactly one
+///   branch, so eager-evaluating both would change semantics, e.g. a guarded
+///   `1/0`), `CASE`, and the `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE`
+///   family whose second argument is an `Expr::Interval`, not a value;
+/// - session-state functions: `RAND` (needs
+///   the argument AST and per-call `function_key` for generator identity),
+///   the sequence functions (`NEXTVAL`/`LASTVAL`/`SETVAL`), and the
+///   `time_fn` family (its dispatch takes `Columns` for the statement clock,
+///   time zone, and `default_week_format`);
+/// - the `LENGTH`/`OCTET_LENGTH`/`CHAR_LENGTH`/`CHARACTER_LENGTH` family: Go
+///   selects the signature from the argument expression's FieldType via
+///   `BuildContext::build_string_length_for_expr` BEFORE seeing any runtime
+///   value, so it genuinely needs the argument AST, not just the value.
+///
+/// `COALESCE` is eager here exactly as in `eval_func`'s existing eager path
+/// (Go's `builtinCoalesceSig` evaluates arguments in order over values, not
+/// lazily over unevaluated branches — no guarded-error semantics to protect).
 pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
     if let Some(result) = crate::math_fn::dispatch_values(name, vals) {
         return Some(result);
@@ -313,11 +294,11 @@ pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datu
         "ISNULL" if vals.len() == 1 => Ok(Datum::Int(i64::from(vals[0] == Datum::Null))),
         // Go `builtinIntIsTrueSig` with keepNull false: NULL and zero are 0.
         "ISTRUE" if vals.len() == 1 => {
-            Ok(Datum::Int(i64::from(datum_truth(&vals[0]) == Some(true))))
+            truthy_of(&vals[0]).map(|t| Datum::Int(i64::from(t == Some(true))))
         }
         // Go `builtinIntIsFalseSig`: 1 only for a non-NULL zero.
         "ISFALSE" if vals.len() == 1 => {
-            Ok(Datum::Int(i64::from(datum_truth(&vals[0]) == Some(false))))
+            truthy_of(&vals[0]).map(|t| Datum::Int(i64::from(t == Some(false))))
         }
         // COALESCE returns the first non-NULL argument.
         "COALESCE" => Ok(vals

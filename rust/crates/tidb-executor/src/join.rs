@@ -214,7 +214,7 @@ impl<C: Columns> JoinExec<C> {
         let row = chunk.get_row(0);
         for condition in &self.conditions {
             let value = condition.eval(&self.ctx, row)?;
-            if !truthy(&value) {
+            if !truthy(&value)? {
                 return Ok(false);
             }
         }
@@ -421,15 +421,10 @@ fn key_error(_: KeyError) -> ExecError {
     ExecError::Unsupported("join key value outside its column's comparison domain")
 }
 
-/// Go's condition truth test: NULL and zero are false.
-fn truthy(value: &Datum) -> bool {
-    match value {
-        Datum::Null => false,
-        Datum::Int(v) => *v != 0,
-        Datum::UInt(v) => *v != 0,
-        Datum::Real(v) => *v != 0.0,
-        _ => true,
-    }
+/// Go's condition truth test (`Datum.ToBool` via `expression.EvalBool`):
+/// NULL and zero are false, and a string takes its numeric prefix.
+fn truthy(value: &Datum) -> Result<bool, ExecError> {
+    Ok(tidb_expr::truthy_of(value)? == Some(true))
 }
 
 impl<C: Columns> Executor for JoinExec<C> {

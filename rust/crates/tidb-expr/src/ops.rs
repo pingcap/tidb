@@ -35,7 +35,7 @@ pub(crate) fn eval_unary(op: UnaryOp, v: Datum) -> Result<Datum, EvalError> {
     }
     // Logical NOT is three-valued truthiness, shared by Int and Decimal.
     if let Not | NotKeyword = op {
-        return match truthy_with_mysql_string(&v)? {
+        return match truthy_of(&v)? {
             Some(t) => Ok(bool_int(!t)),
             None => Ok(Datum::Null),
         };
@@ -977,7 +977,7 @@ fn shift_right(a: u64, b: u64) -> u64 {
 /// Also called directly from `crate::eval_in`'s `BETWEEN` handling (`x >= lo
 /// AND x <= hi`), not just from `eval_binary`'s `LogicAnd` arm.
 pub(crate) fn logic_and(l: Datum, r: Datum) -> Result<Datum, EvalError> {
-    Ok(match (logic_truthy(&l)?, logic_truthy(&r)?) {
+    Ok(match (truthy_of(&l)?, truthy_of(&r)?) {
         (Some(false), _) | (_, Some(false)) => Datum::Int(0),
         (Some(true), Some(true)) => Datum::Int(1),
         _ => Datum::Null,
@@ -986,7 +986,7 @@ pub(crate) fn logic_and(l: Datum, r: Datum) -> Result<Datum, EvalError> {
 
 fn logic_or(l: Datum, r: Datum) -> Result<Datum, EvalError> {
     // TRUE dominates; otherwise NULL propagates if either side is unknown.
-    Ok(match (logic_truthy(&l)?, logic_truthy(&r)?) {
+    Ok(match (truthy_of(&l)?, truthy_of(&r)?) {
         (Some(true), _) | (_, Some(true)) => Datum::Int(1),
         (Some(false), Some(false)) => Datum::Int(0),
         _ => Datum::Null,
@@ -994,33 +994,10 @@ fn logic_or(l: Datum, r: Datum) -> Result<Datum, EvalError> {
 }
 
 fn logic_xor(l: Datum, r: Datum) -> Result<Datum, EvalError> {
-    Ok(match (logic_truthy(&l)?, logic_truthy(&r)?) {
+    Ok(match (truthy_of(&l)?, truthy_of(&r)?) {
         (Some(a), Some(b)) => bool_int(a ^ b),
         _ => Datum::Null,
     })
-}
-
-/// Truthiness for logical binary operators. TiDB's `LogicAnd`, `LogicOr`,
-/// and `LogicXor` signatures evaluate both arguments as `ETInt`; only this
-/// path must coerce a string by MySQL's numeric-prefix rule. All other scalar
-/// variants retain the shared, type-native [`truthy_of`] behavior, while
-/// `NULL` stays unknown for three-valued logic.
-fn logic_truthy(value: &Datum) -> Result<Option<bool>, EvalError> {
-    truthy_with_mysql_string(value)
-}
-
-/// Truthiness for predicate/unary contexts that use TiDB's implicit numeric
-/// coercion.  Unlike [`truthy_of`], this includes strings and raw byte values:
-/// Go's `EvalReal` consumes a numeric prefix (`'0.3'` is true, while `'aaa'`
-/// is false) before `NOT`, `IS TRUE`, `IS FALSE`, and the corresponding
-/// control-function wrappers inspect the result.  `NULL` remains unknown so
-/// callers can preserve either three-valued logic or the always-definite `IS`
-/// predicate result as appropriate.
-pub(crate) fn truthy_with_mysql_string(value: &Datum) -> Result<Option<bool>, EvalError> {
-    match value {
-        Datum::String(_) | Datum::Bytes(_) => Ok(Some(to_f64_with_mysql_string(value) != 0.0)),
-        _ => truthy_of(value),
-    }
 }
 
 /// Only ever called from `eval_binary`'s own `NullEq` arm, AFTER its

@@ -295,7 +295,7 @@ impl ScalarFunction {
             for pair in pairs.by_ref() {
                 let condition = pair[0].eval(ctx, row)?;
                 // A NULL condition is not a match, the same as false.
-                if crate::truthy_of(&condition)?.unwrap_or(false) {
+                if crate::truthy_of(&condition)? == Some(true) {
                     return self.coerce_to_ret_type(pair[1].eval(ctx, row)?);
                 }
             }
@@ -309,7 +309,7 @@ impl ScalarFunction {
         // branch is evaluated, so an error in the other never surfaces.
         if name == "if" && self.args.len() == 3 {
             let condition = self.args[0].eval(ctx, row)?;
-            let branch = if crate::truthy_of(&condition)?.unwrap_or(false) {
+            let branch = if crate::truthy_of(&condition)? == Some(true) {
                 1
             } else {
                 2
