@@ -1653,26 +1653,24 @@ func (local *Backend) doImport(
 		clusterID,
 	)
 	wctx := workerpool.NewContext(workerCtx)
+	releasePool := sync.OnceFunc(pool.Release)
 
 	if e, ok := engine.(*external.Engine); ok {
 		e.SetWorkerPool(pool)
 	}
 
-	skipStartWorker := false
 	failpoint.Inject("skipStartWorker", func() {
-		skipStartWorker = true
+		failpoint.Goto("afterStartWorker")
 	})
 
 	workGroup.Go(func() error {
-		if !skipStartWorker {
-			pool.Start(wctx)
-		}
+		pool.Start(wctx)
 		<-wctx.Done()
 		failpoint.InjectCall("beforeReleaseRegionJobWorkerPool")
-		pool.Release()
-		// Get OperatorErr after all workers have exited.
 		return wctx.OperatorErr()
 	})
+
+	failpoint.Label("afterStartWorker")
 
 	workGroup.Go(func() error {
 		err := local.prepareAndSendJob(
@@ -1703,13 +1701,22 @@ func (local *Backend) doImport(
 			})
 		}
 
-		// Notify the worker-pool goroutine that all jobs are finished. It will
-		// release the pool and close the result channel.
 		wctx.Cancel()
-		return wctx.OperatorErr()
+		pool.Wait()
+		if err := wctx.OperatorErr(); err != nil {
+			return err
+		}
+		if err := workerCtx.Err(); err != nil {
+			return err
+		}
+
+		// Close the result channel only after all workers exit without error.
+		releasePool()
+		return nil
 	})
 
 	err := workGroup.Wait()
+	releasePool()
 	if err != nil && !common.IsContextCanceledError(err) {
 		tidblogutil.Logger(ctx).Error("do import meets error", zap.Error(err))
 	}
