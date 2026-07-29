@@ -891,24 +891,21 @@ pub(crate) fn run_update_traced(
         .ok_or(DriverError::Unsupported("unknown table"))?
         .column_list();
 
-    // SET targets, as offsets into the row.
+    // An alias REPLACES the table name as the only usable qualifier, in the
+    // SET list as much as the WHERE: `UPDATE u AS x SET x.v = 1` resolves and
+    // `SET u.v = 1` is Go's unknown-column error. Resolving both sides through
+    // the one resolver is what makes those two cases the same case.
+    let resolver = TableResolver {
+        table_name: table_ref.alias.as_deref().unwrap_or(&name),
+        columns: &column_list,
+    };
     let mut assignments = Vec::with_capacity(update.assignments.len());
     for assignment in &update.assignments {
-        let column = assignment
-            .col
-            .last()
-            .ok_or(DriverError::Unsupported("empty assignment target"))?;
-        let offset = column_list
-            .iter()
-            .position(|(candidate, _)| candidate.eq_ignore_ascii_case(column))
+        let (offset, _, _) = resolver
+            .resolve(&assignment.col)
             .ok_or(DriverError::Unsupported("unknown column in SET"))?;
         assignments.push((offset, assignment.value.clone()));
     }
-
-    let resolver = TableResolver {
-        table_name: &name,
-        columns: &column_list,
-    };
     let predicate = match &update.where_clause {
         Some(expr) => Some(
             rewrite_expr_resolved(expr, &resolver)
@@ -1155,8 +1152,10 @@ pub(crate) fn run_delete_traced(
         .get_in(&database, &name)
         .ok_or(DriverError::Unsupported("unknown table"))?
         .column_list();
+    // As in UPDATE: `DELETE FROM u AS y WHERE y.id = 1` resolves and
+    // `WHERE u.id = 1` does not.
     let resolver = TableResolver {
-        table_name: &name,
+        table_name: table_ref.alias.as_deref().unwrap_or(&name),
         columns: &column_list,
     };
     let predicate = match &delete.where_clause {
