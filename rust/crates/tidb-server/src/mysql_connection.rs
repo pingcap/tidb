@@ -36,8 +36,8 @@ use crate::connection_resultset::{
 use crate::handshake::{
     negotiate_capabilities, parse_response, InitialHandshake, AUTH_NATIVE_PASSWORD,
     CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41,
-    CLIENT_SECURE_CONNECTION,
-    DEFAULT_COLLATION_ID, SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_IN_TRANS,
+    CLIENT_SECURE_CONNECTION, DEFAULT_COLLATION_ID, SERVER_STATUS_AUTOCOMMIT,
+    SERVER_STATUS_IN_TRANS,
 };
 use crate::native_password::generate_handshake_salt;
 use crate::resultset_source::ResultSetSource;
