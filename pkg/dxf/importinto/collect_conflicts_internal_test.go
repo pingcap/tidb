@@ -23,9 +23,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
-	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -56,7 +55,7 @@ func (c *notifyingCodec) DecodeKey(key []byte) ([]byte, error) {
 	return decodedKey, err
 }
 
-func requireKVPairChannelClosed(t *testing.T, ch <-chan *simplesst.KVPair) {
+func requireKVPairChannelClosed(t *testing.T, ch <-chan *external.KVPair) {
 	t.Helper()
 	select {
 	case _, ok := <-ch:
@@ -68,8 +67,8 @@ func requireKVPairChannelClosed(t *testing.T, ch <-chan *simplesst.KVPair) {
 
 func drainClosedKVPairChannel(
 	t *testing.T,
-	ch <-chan *simplesst.KVPair,
-	visit func(*simplesst.KVPair),
+	ch <-chan *external.KVPair,
+	visit func(*external.KVPair),
 ) {
 	t.Helper()
 	for {
@@ -90,12 +89,12 @@ func makeUniqueIndexKVPair(
 	store *codecStorage,
 	indexValue int64,
 	handle tidbkv.Handle,
-) *simplesst.KVPair {
+) *external.KVPair {
 	t.Helper()
 	encodedValue, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(indexValue))
 	require.NoError(t, err)
 	key := tablecodec.EncodeIndexSeekKey(1, 2, encodedValue)
-	return &simplesst.KVPair{
+	return &external.KVPair{
 		Key:   store.GetCodec().EncodeKey(key),
 		Value: tablecodec.EncodeHandleInUniqueIndexValue(handle, false),
 	}
@@ -104,7 +103,7 @@ func makeUniqueIndexKVPair(
 func TestCollectConflictsKVGroupIndexInfo(t *testing.T) {
 	var tableImporter *importer.TableImporter
 
-	indexInfo, err := getKVGroupIndexInfo(tableImporter, globalsort.DataKVGroup)
+	indexInfo, err := getKVGroupIndexInfo(tableImporter, external.DataKVGroup)
 	require.NoError(t, err)
 	require.Nil(t, indexInfo)
 
@@ -120,11 +119,11 @@ func TestCollectConflictsKVGroupIndexInfo(t *testing.T) {
 		LoadDataController: &importer.LoadDataController{Table: mockTable},
 	}
 
-	indexInfo, err = getKVGroupIndexInfo(tableImporter, globalsort.IndexID2KVGroup(targetIdx.ID))
+	indexInfo, err = getKVGroupIndexInfo(tableImporter, external.IndexID2KVGroup(targetIdx.ID))
 	require.NoError(t, err)
 	require.Same(t, targetIdx, indexInfo)
 
-	_, err = getKVGroupIndexInfo(tableImporter, globalsort.IndexID2KVGroup(3))
+	_, err = getKVGroupIndexInfo(tableImporter, external.IndexID2KVGroup(3))
 	require.EqualError(t, err, `index 3 from KV group "3" not found in table t`)
 }
 
@@ -135,7 +134,7 @@ func TestDispatchMVIndexKVPairs(t *testing.T) {
 		Columns: []*model.IndexColumn{{}},
 	}
 	t.Run("channel selection", func(t *testing.T) {
-		pairCh := make(chan *simplesst.KVPair)
+		pairCh := make(chan *external.KVPair)
 		testCases := []struct {
 			name         string
 			concurrency  int
@@ -185,7 +184,7 @@ func TestDispatchMVIndexKVPairs(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &codecStorage{codec: tikvCodec}
-			pairCh := make(chan *simplesst.KVPair, len(handles)*2)
+			pairCh := make(chan *external.KVPair, len(handles)*2)
 			for i, handle := range handles {
 				pairCh <- makeUniqueIndexKVPair(t, store, int64(i*2+1), handle)
 				pairCh <- makeUniqueIndexKVPair(t, store, int64(i*2+2), handle)
@@ -193,9 +192,9 @@ func TestDispatchMVIndexKVPairs(t *testing.T) {
 			close(pairCh)
 
 			const handlerCount = 4
-			handlerChs := make([]chan *simplesst.KVPair, handlerCount)
+			handlerChs := make([]chan *external.KVPair, handlerCount)
 			for i := range handlerChs {
-				handlerChs[i] = make(chan *simplesst.KVPair, len(handles)*2)
+				handlerChs[i] = make(chan *external.KVPair, len(handles)*2)
 			}
 			require.NoError(t, dispatchMVIndexKVPairs(
 				context.Background(),
@@ -207,7 +206,7 @@ func TestDispatchMVIndexKVPairs(t *testing.T) {
 
 			routes := make(map[string][]int, len(handles))
 			for handlerIdx, handlerCh := range handlerChs {
-				drainClosedKVPairChannel(t, handlerCh, func(pair *simplesst.KVPair) {
+				drainClosedKVPairChannel(t, handlerCh, func(pair *external.KVPair) {
 					key, err := store.GetCodec().DecodeKey(pair.Key)
 					require.NoError(t, err)
 					handle, err := tablecodec.DecodeIndexHandle(key, pair.Value, len(targetIdx.Columns))
@@ -237,10 +236,10 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 		codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 1})
 		require.NoError(t, err)
 		store := &codecStorage{codec: codecV2}
-		pairCh := make(chan *simplesst.KVPair, 1)
-		pairCh <- &simplesst.KVPair{Key: []byte("key")}
+		pairCh := make(chan *external.KVPair, 1)
+		pairCh <- &external.KVPair{Key: []byte("key")}
 		close(pairCh)
-		handlerChs := []chan *simplesst.KVPair{make(chan *simplesst.KVPair, 1)}
+		handlerChs := []chan *external.KVPair{make(chan *external.KVPair, 1)}
 
 		err = dispatchMVIndexKVPairs(context.Background(), store, pairCh, handlerChs, targetIdx)
 		require.Error(t, err)
@@ -249,14 +248,14 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 
 	t.Run("decode index handle error", func(t *testing.T) {
 		store := &codecStorage{codec: tikv.NewCodecV1(tikv.ModeTxn)}
-		pairCh := make(chan *simplesst.KVPair, 1)
+		pairCh := make(chan *external.KVPair, 1)
 		badKey := tablecodec.EncodeIndexSeekKey(1, 2, []byte{0xff})
-		pairCh <- &simplesst.KVPair{
+		pairCh <- &external.KVPair{
 			Key:   store.GetCodec().EncodeKey(badKey),
 			Value: tablecodec.EncodeHandleInUniqueIndexValue(tidbkv.IntHandle(1), false),
 		}
 		close(pairCh)
-		handlerChs := []chan *simplesst.KVPair{make(chan *simplesst.KVPair, 1)}
+		handlerChs := []chan *external.KVPair{make(chan *external.KVPair, 1)}
 
 		err := dispatchMVIndexKVPairs(context.Background(), store, pairCh, handlerChs, targetIdx)
 		require.Error(t, err)
@@ -267,12 +266,12 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 		store := &codecStorage{codec: tikv.NewCodecV1(tikv.ModeTxn)}
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		handlerChs := []chan *simplesst.KVPair{make(chan *simplesst.KVPair, 1)}
+		handlerChs := []chan *external.KVPair{make(chan *external.KVPair, 1)}
 
 		err := dispatchMVIndexKVPairs(
 			ctx,
 			store,
-			make(chan *simplesst.KVPair),
+			make(chan *external.KVPair),
 			handlerChs,
 			targetIdx,
 		)
@@ -287,7 +286,7 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 			Codec:   tikv.NewCodecV1(tikv.ModeTxn),
 			decoded: decoded,
 		}}
-		pairCh := make(chan *simplesst.KVPair, pairCount)
+		pairCh := make(chan *external.KVPair, pairCount)
 		for i := range pairCount {
 			pairCh <- makeUniqueIndexKVPair(t, store, int64(i), tidbkv.IntHandle(1))
 		}
@@ -316,7 +315,7 @@ func TestDispatchMVIndexKVPairsErrorsAndCancellation(t *testing.T) {
 			t.Fatal("dispatcher did not exit after cancellation")
 		}
 		for _, handlerCh := range handlerChs {
-			drainClosedKVPairChannel(t, handlerCh, func(*simplesst.KVPair) {})
+			drainClosedKVPairChannel(t, handlerCh, func(*external.KVPair) {})
 		}
 	})
 }

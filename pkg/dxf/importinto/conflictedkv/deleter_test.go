@@ -23,13 +23,8 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-=======
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
-	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/table"
@@ -136,12 +131,8 @@ func TestDeleter(t *testing.T) {
 
 		encoder := getEncoder(t, tbl)
 		trafficRec := &mockTrafficRecorder{}
-<<<<<<< HEAD
-		deleter := conflictedkv.NewDeleter(tbl, logger, store, kvGroup, encoder, trafficRec)
-=======
 		codecStore := &storageWithCodec{Storage: store, codec: codec}
-		deleter := conflictedkv.NewDeleter(tbl, logger, codecStore, kvGroup, encoder, nil, trafficRec)
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
+		deleter := conflictedkv.NewDeleter(tbl, logger, codecStore, kvGroup, encoder, trafficRec)
 		eg := util.NewErrorGroupWithRecover()
 		ch := make(chan *external.KVPair)
 		eg.Go(func() error {
@@ -153,13 +144,8 @@ func TestDeleter(t *testing.T) {
 				conflictedKVs[i], conflictedKVs[j] = conflictedKVs[j], conflictedKVs[i]
 			})
 			for _, kv := range conflictedKVs {
-<<<<<<< HEAD
-				encodedKey := store.GetCodec().EncodeKey(kv.Key)
-				encodedKV := external.KVPair{Key: encodedKey, Value: kv.Value}
-=======
 				encodedKey := codec.EncodeKey(kv.Key)
-				encodedKV := simplesst.KVPair{Key: encodedKey, Value: kv.Value}
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
+				encodedKV := external.KVPair{Key: encodedKey, Value: kv.Value}
 				// sending the conflicted KV twice
 				for range 2 {
 					kvCopy := encodedKV
@@ -181,36 +167,20 @@ func TestDeleter(t *testing.T) {
 	conflictedkv.BufferedKeyCountLimit = 2
 
 	t.Run("data kv conflicts", func(t *testing.T) {
-<<<<<<< HEAD
-		runDeleterFn(t, external.DataKVGroup, 7)
-		tk.MustQuery("select * from tc").Sort().Equal(testkit.Rows(
-			"8 8 8", "9 9 9", "10 10 10",
-		))
-		tk.MustExec("admin check table tc")
-=======
 		for _, testCase := range codecs {
 			t.Run(testCase.name, func(t *testing.T) {
-				runDeleterFn(t, globalsort.DataKVGroup, 7, testCase.codec)
+				runDeleterFn(t, external.DataKVGroup, 7, testCase.codec)
 				tk.MustQuery("select * from tc").Sort().Equal(testkit.Rows(
 					"8 8 8", "9 9 9", "10 10 10",
 				))
 				tk.MustExec("admin check table tc")
 			})
 		}
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 	})
 
 	t.Run("index kv conflicts", func(t *testing.T) {
 		// 2 is the unique index ID for index c
-<<<<<<< HEAD
 		kvGroup := external.IndexID2KVGroup(2)
-		runDeleterFn(t, kvGroup, 5)
-		tk.MustQuery("select * from tc").Sort().Equal(testkit.Rows(
-			"6 6 6", "7 7 7", "8 8 8", "9 9 9", "10 10 10",
-		))
-		tk.MustExec("admin check table tc")
-=======
-		kvGroup := globalsort.IndexID2KVGroup(2)
 		for _, testCase := range codecs {
 			t.Run(testCase.name, func(t *testing.T) {
 				runDeleterFn(t, kvGroup, 5, testCase.codec)
@@ -220,6 +190,5 @@ func TestDeleter(t *testing.T) {
 				tk.MustExec("admin check table tc")
 			})
 		}
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 	})
 }

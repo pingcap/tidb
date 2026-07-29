@@ -108,14 +108,9 @@ func TestHandler(t *testing.T) {
 				kvPairCnt += int64(len(kvPairs.Pairs))
 				return nil
 			})
-<<<<<<< HEAD
-			baseHdl := conflictedkv.NewBaseHandler(tbl, external.DataKVGroup, encoder, mockEncodedKVHdl, logger)
-=======
-			progressCollector := &execute.TestCollector{}
 			baseHdl := conflictedkv.NewBaseHandler(
-				tbl, globalsort.DataKVGroup, store.GetCodec(), encoder, mockEncodedKVHdl, progressCollector, logger,
+				tbl, external.DataKVGroup, store.GetCodec(), encoder, mockEncodedKVHdl, logger,
 			)
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 			dataKVHdl := conflictedkv.NewDataKVHandler(baseHdl)
 			t.Cleanup(func() {
 				require.NoError(t, dataKVHdl.Close(ctx))
@@ -192,15 +187,10 @@ func TestHandler(t *testing.T) {
 				return nil
 			})
 			var targetIndexID int64 = 2
-<<<<<<< HEAD
-			baseHdl := conflictedkv.NewBaseHandler(tbl, external.IndexID2KVGroup(targetIndexID), encoder, mockEncodedKVHdl, logger)
-=======
-			progressCollector := &execute.TestCollector{}
 			baseHdl := conflictedkv.NewBaseHandler(
-				tbl, globalsort.IndexID2KVGroup(targetIndexID), store.GetCodec(),
-				encoder, mockEncodedKVHdl, progressCollector, logger,
+				tbl, external.IndexID2KVGroup(targetIndexID), store.GetCodec(),
+				encoder, mockEncodedKVHdl, logger,
 			)
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 			trafficRec := &mockTrafficRecorder{}
 			indexKVHdl := conflictedkv.NewIndexKVHandler(
 				baseHdl,
@@ -251,8 +241,6 @@ func TestHandler(t *testing.T) {
 			require.EqualValues(t, 3, rowCnt)
 			require.EqualValues(t, expectedKVs, kvPairCnt)
 			require.EqualValues(t, map[string]struct{}{"2": {}, "4": {}, "5": {}}, handledHandles)
-<<<<<<< HEAD
-=======
 			for _, handle := range []int64{2, 4, 5} {
 				rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(handle))
 				require.True(t, locallyProcessedRowKeys.Contains(rowKey))
@@ -261,8 +249,6 @@ func TestHandler(t *testing.T) {
 				rowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(handle))
 				require.False(t, locallyProcessedRowKeys.Contains(rowKey))
 			}
-			require.EqualValues(t, 16, progressCollector.ProcessedCnt.Load())
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 		}
 
 		t.Run("clustered pk table", func(t *testing.T) {
@@ -301,15 +287,13 @@ func TestHandler(t *testing.T) {
 		})
 
 		targetIdx := tbl.Meta().Indices[0]
-		progressCollector := &execute.TestCollector{}
 		indexKVHdl := conflictedkv.NewIndexKVHandler(
 			conflictedkv.NewBaseHandler(
 				tbl,
-				globalsort.IndexID2KVGroup(targetIdx.ID),
+				external.IndexID2KVGroup(targetIdx.ID),
 				store.GetCodec(),
 				getEncoder(t, tbl),
 				mockEncodedKVHdl,
-				progressCollector,
 				logger,
 			),
 			conflictedkv.NewLazyRefreshedSnapshot(store, nil),
@@ -321,7 +305,7 @@ func TestHandler(t *testing.T) {
 		t.Cleanup(func() {
 			require.NoError(t, fixtureEncoder.Close())
 		})
-		indexKVsForRow := func(handle int64, jsonText string) []*simplesst.KVPair {
+		indexKVsForRow := func(handle int64, jsonText string) []*external.KVPair {
 			jsonValue, err := types.ParseBinaryJSONFromString(jsonText)
 			require.NoError(t, err)
 			pairs, err := fixtureEncoder.Encode(
@@ -329,7 +313,7 @@ func TestHandler(t *testing.T) {
 				handle,
 			)
 			require.NoError(t, err)
-			indexKVs := make([]*simplesst.KVPair, 0, 2)
+			indexKVs := make([]*external.KVPair, 0, 2)
 			for _, pair := range pairs.Pairs {
 				if tablecodec.IsRecordKey(pair.Key) {
 					continue
@@ -337,7 +321,7 @@ func TestHandler(t *testing.T) {
 				indexID, err := tablecodec.DecodeIndexID(pair.Key)
 				require.NoError(t, err)
 				if indexID == targetIdx.ID {
-					indexKVs = append(indexKVs, &simplesst.KVPair{
+					indexKVs = append(indexKVs, &external.KVPair{
 						Key:   store.GetCodec().EncodeKey(pair.Key),
 						Value: pair.Val,
 					})
@@ -353,7 +337,7 @@ func TestHandler(t *testing.T) {
 		require.Len(t, row2KVs, 1)
 		require.Len(t, row3KVs, 1)
 
-		ch := make(chan *simplesst.KVPair, 4)
+		ch := make(chan *external.KVPair, 4)
 		// Handle 1 appears in two different flushes:
 		// [handle 1, handle 2], then [handle 3, handle 1].
 		ch <- row1KVs[0]
@@ -367,7 +351,6 @@ func TestHandler(t *testing.T) {
 		expectedRowKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, tidbkv.IntHandle(1))
 		require.Equal(t, []tidbkv.Key{expectedRowKey}, handledRowKeys)
 		require.True(t, localSet.Contains(expectedRowKey))
-		require.EqualValues(t, 4, progressCollector.ProcessedCnt.Load())
 	})
 
 	t.Run("index row is marked local only after successful handling", func(t *testing.T) {
@@ -397,11 +380,10 @@ func TestHandler(t *testing.T) {
 		indexKVHdl := conflictedkv.NewIndexKVHandler(
 			conflictedkv.NewBaseHandler(
 				tbl,
-				globalsort.IndexID2KVGroup(targetIdx.ID),
+				external.IndexID2KVGroup(targetIdx.ID),
 				store.GetCodec(),
 				getEncoder(t, tbl),
 				mockEncodedKVHdl,
-				nil,
 				logger,
 			),
 			conflictedkv.NewLazyRefreshedSnapshot(store, nil),
@@ -418,7 +400,7 @@ func TestHandler(t *testing.T) {
 			1,
 		)
 		require.NoError(t, err)
-		var indexKV *simplesst.KVPair
+		var indexKV *external.KVPair
 		for _, pair := range pairs.Pairs {
 			if tablecodec.IsRecordKey(pair.Key) {
 				continue
@@ -426,7 +408,7 @@ func TestHandler(t *testing.T) {
 			indexID, err := tablecodec.DecodeIndexID(pair.Key)
 			require.NoError(t, err)
 			if indexID == targetIdx.ID {
-				indexKV = &simplesst.KVPair{
+				indexKV = &external.KVPair{
 					Key:   store.GetCodec().EncodeKey(pair.Key),
 					Value: pair.Val,
 				}

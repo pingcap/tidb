@@ -34,11 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
-	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -181,21 +176,16 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 
-<<<<<<< HEAD
-	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
-
-=======
 	targetIdx, err := getKVGroupIndexInfo(e.tableImporter, kvGroup)
 	if err != nil {
 		return err
 	}
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 	encoders, err := createEncoders(concurrency, e.tableImporter)
 	if err != nil {
 		return err
 	}
 
-	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
 	collectorChs, needDispatch := createConflictHandlerChannels(pairCh, concurrency, targetIdx)
 
 	var (
@@ -250,11 +240,11 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 }
 
 func getKVGroupIndexInfo(tableImporter *importer.TableImporter, kvGroup string) (*model.IndexInfo, error) {
-	if kvGroup == globalsort.DataKVGroup {
+	if kvGroup == external.DataKVGroup {
 		return nil, nil
 	}
 
-	indexID, err := globalsort.KVGroup2IndexID(kvGroup)
+	indexID, err := external.KVGroup2IndexID(kvGroup)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -268,11 +258,11 @@ func getKVGroupIndexInfo(tableImporter *importer.TableImporter, kvGroup string) 
 }
 
 func createConflictHandlerChannels(
-	pairCh chan *simplesst.KVPair,
+	pairCh chan *external.KVPair,
 	concurrency int,
 	targetIdx *model.IndexInfo,
-) ([]chan *simplesst.KVPair, bool) {
-	handlerChs := make([]chan *simplesst.KVPair, concurrency)
+) ([]chan *external.KVPair, bool) {
+	handlerChs := make([]chan *external.KVPair, concurrency)
 	// there might be multiple UK KV for MV index for a single row, when they
 	// are handled concurrently, we want to make sure UK KVs for some row route
 	// to the same handler to properly handle them.
@@ -282,7 +272,7 @@ func createConflictHandlerChannels(
 		if needDispatch {
 			// A handler processes BufferedHandleLimit index handles in one batch.
 			// Buffer one batch so a busy handler does not block dispatch to the others.
-			handlerChs[i] = make(chan *simplesst.KVPair, conflictedkv.BufferedHandleLimit)
+			handlerChs[i] = make(chan *external.KVPair, conflictedkv.BufferedHandleLimit)
 		}
 	}
 	return handlerChs, needDispatch
@@ -291,8 +281,8 @@ func createConflictHandlerChannels(
 func dispatchMVIndexKVPairs(
 	ctx context.Context,
 	store tidbkv.Storage,
-	pairCh <-chan *simplesst.KVPair,
-	handlerChs []chan *simplesst.KVPair,
+	pairCh <-chan *external.KVPair,
+	handlerChs []chan *external.KVPair,
 	targetIdx *model.IndexInfo,
 ) error {
 	defer func() {
@@ -302,7 +292,7 @@ func dispatchMVIndexKVPairs(
 	}()
 
 	for {
-		var pair *simplesst.KVPair
+		var pair *external.KVPair
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

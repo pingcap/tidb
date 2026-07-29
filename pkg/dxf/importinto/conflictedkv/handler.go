@@ -19,12 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-=======
-	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -87,20 +81,14 @@ var _ Handler = (*BaseHandler)(nil)
 type BaseHandler struct {
 	targetTable table.Table
 	kvGroup     string
-<<<<<<< HEAD
-	encoder     *importer.TableKVEncoder
-	logger      *zap.Logger
-=======
 	// the codec used to decoded encoded keys.
 	// in next-gen, the encoded key is prepended with keyspace prefix before
 	// store to object store to make later ingest step easier to process. but
 	// when resolving conflicts, we need to use transaction to access those keys,
 	// and the keys must not have the keyspace prefix.
-	codec     tikv.Codec
-	encoder   *importer.TableKVEncoder
-	collector execute.Collector
-	logger    *zap.Logger
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
+	codec   tikv.Codec
+	encoder *importer.TableKVEncoder
+	logger  *zap.Logger
 	EncodedRowHandler
 
 	KVHandler
@@ -194,13 +182,8 @@ func NewDataKVHandler(base *BaseHandler) *DataKVHandler {
 }
 
 // Handle implements KVHandler interface.
-<<<<<<< HEAD
 func (h *DataKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
-	key, err := stripKeyspacePrefix(kv.Key)
-=======
-func (h *DataKVHandler) Handle(ctx context.Context, kv *simplesst.KVPair) error {
 	key, err := h.codec.DecodeKey(kv.Key)
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 	if err != nil {
 		return err
 	}
@@ -271,13 +254,8 @@ func (h *IndexKVHandler) PreRun() error {
 }
 
 // Handle implements KVHandler interface.
-<<<<<<< HEAD
 func (h *IndexKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
-	key, err := stripKeyspacePrefix(kv.Key)
-=======
-func (h *IndexKVHandler) Handle(ctx context.Context, kv *simplesst.KVPair) error {
 	key, err := h.codec.DecodeKey(kv.Key)
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 	if err != nil {
 		return err
 	}

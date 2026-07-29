@@ -81,11 +81,7 @@ func NewDeleter(
 		snapshot:   NewLazyRefreshedSnapshot(store, trafficRec),
 		trafficRec: trafficRec,
 	}
-<<<<<<< HEAD
-	base := NewBaseHandler(targetTbl, kvGroup, encoder, deleter, logger)
-=======
-	base := NewBaseHandler(targetTbl, kvGroup, store.GetCodec(), encoder, deleter, progressCollector, logger)
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
+	base := NewBaseHandler(targetTbl, kvGroup, store.GetCodec(), encoder, deleter, logger)
 	var h Handler
 	if kvGroup == external.DataKVGroup {
 		h = NewDataKVHandler(base)

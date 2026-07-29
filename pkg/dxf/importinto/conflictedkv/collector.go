@@ -128,11 +128,7 @@ func NewCollector(
 		result:              NewCollectResult(codec.GetKeyspace()),
 		sharedTotalFileSize: sharedTotalFileSize,
 	}
-<<<<<<< HEAD
-	base := NewBaseHandler(targetTbl, kvGroup, encoder, collector, logger)
-=======
-	base := NewBaseHandler(targetTbl, kvGroup, codec, encoder, collector, progressCollector, logger)
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
+	base := NewBaseHandler(targetTbl, kvGroup, codec, encoder, collector, logger)
 	var h Handler
 	if kvGroup == external.DataKVGroup {
 		h = NewDataKVHandler(base)
@@ -158,21 +154,6 @@ func (c *Collector) Run(ctx context.Context, ch chan *external.KVPair) (err erro
 // HandleEncodedRow handles the re-encoded row from conflict KV.
 func (c *Collector) HandleEncodedRow(ctx context.Context, _ tidbkv.Key,
 	row []types.Datum, kvPairs *kv.Pairs) error {
-<<<<<<< HEAD
-	// every conflicted row from data KV group must be recorded, but for index KV
-	// group, they might come from the same row, so we only need to record it on
-	// the first time we meet it.
-	// currently, we use memory to do this check, if it's too large, we just skip
-	// the checking and skip later checksum.
-	//
-	// an alternative solution is to upload those handles to sort storage and
-	// check them in another pass later.
-	if c.kvGroup != external.DataKVGroup {
-		c.hdlSet.Add(handle)
-	}
-
-=======
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 	if err := c.recordRowToFile(ctx, row); err != nil {
 		return err
 	}

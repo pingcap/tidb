@@ -140,12 +140,8 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 	}
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
-<<<<<<< HEAD
 	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
-=======
-	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
 	deleterChs, needDispatch := createConflictHandlerChannels(pairCh, concurrency, targetIdx)
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 	for i := range concurrency {
 		encoder := encoders[i]
 		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder, e.GetMeterRecorder())

@@ -26,11 +26,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
-	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -150,10 +145,10 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 		}}
 		coll := NewCollector(
 			nil, logger, objStore, store, "test",
-			globalsort.DataKVGroup, nil, nil, nil, nil, nil, nil,
+			external.DataKVGroup, nil, nil, nil, nil, nil,
 		)
-		ch := make(chan *simplesst.KVPair, 1)
-		ch <- &simplesst.KVPair{Key: []byte("encoded-key")}
+		ch := make(chan *external.KVPair, 1)
+		ch <- &external.KVPair{Key: []byte("encoded-key")}
 		close(ch)
 
 		require.ErrorIs(t, coll.Run(ctx, ch), decodeErr)
@@ -176,11 +171,7 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 		localSet := NewBoundedKeySet(logger, &sharedSize, units.MiB)
 		coll := NewCollector(
 			nil, logger, objStore, store, "test",
-<<<<<<< HEAD
-			kvGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
-=======
-			kvGroup, nil, nil, localSet, &sharedTotalFileSize, nil, nil,
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
+			kvGroup, nil, nil, localSet, &sharedTotalFileSize, nil,
 		)
 		rowCount := 48
 		for i := range rowCount {
@@ -190,17 +181,9 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 			require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
 		}
 		require.NoError(t, coll.Close(ctx))
-<<<<<<< HEAD
-		if kvGroup == external.DataKVGroup {
-			require.Empty(t, coll.hdlSet.handles)
-		} else {
-			require.Equal(t, rowCount, len(coll.hdlSet.handles))
-		}
-=======
 		// Local row-key tracking is owned by IndexKVHandler after it loads and
 		// handles a row, not by Collector.HandleEncodedRow.
 		require.Empty(t, localSet.rowKeys)
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
 		kvBytes := 184 + rowCount*len(store.GetCodec().GetKeyspace())
 		// for nextgen, the crc sum of keyspace is 0 since the row number is even.
 		crcSum := uint64(14672641476652606594)
@@ -264,11 +247,7 @@ func TestCollectorHandleEncodedRowMaxTotalFileSize(t *testing.T) {
 	var sharedTotalFileSize atomic.Int64
 	coll := NewCollector(
 		nil, logger, objStore, store, "test",
-<<<<<<< HEAD
-		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
-=======
-		globalsort.DataKVGroup, nil, nil, NewBoundedKeySet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
+		external.DataKVGroup, nil, nil, NewBoundedKeySet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
 	)
 
 	rowCount := 5
@@ -362,19 +341,11 @@ func TestCollectorHandleEncodedRowMaxTotalFileSizeSharedByCollectors(t *testing.
 	var sharedTotalFileSize atomic.Int64
 	coll1 := NewCollector(
 		nil, logger, objStore, store, "test1",
-<<<<<<< HEAD
-		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
+		external.DataKVGroup, nil, nil, NewBoundedKeySet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
 	)
 	coll2 := NewCollector(
 		nil, logger, objStore, store, "test2",
-		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
-=======
-		globalsort.DataKVGroup, nil, nil, NewBoundedKeySet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
-	)
-	coll2 := NewCollector(
-		nil, logger, objStore, store, "test2",
-		globalsort.DataKVGroup, nil, nil, NewBoundedKeySet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
->>>>>>> a96506e2ad7 (importinto: fix conflict row identity and MVI deduplication (#70076))
+		external.DataKVGroup, nil, nil, NewBoundedKeySet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
 	)
 
 	row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}
