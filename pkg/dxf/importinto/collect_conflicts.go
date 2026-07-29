@@ -178,7 +178,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 
-	targetIdx, err := e.getKVGroupIndexInfo(kvGroup)
+	targetIdx, err := getKVGroupIndexInfo(e.tableImporter, kvGroup)
 	if err != nil {
 		return err
 	}
@@ -240,10 +240,6 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 
 	e.sharedRowKeySet.Merge(mergedLocalSet)
 	return nil
-}
-
-func (e *collectConflictsStepExecutor) getKVGroupIndexInfo(kvGroup string) (*model.IndexInfo, error) {
-	return getKVGroupIndexInfo(e.tableImporter, kvGroup)
 }
 
 func getKVGroupIndexInfo(tableImporter *importer.TableImporter, kvGroup string) (*model.IndexInfo, error) {

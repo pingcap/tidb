@@ -102,13 +102,13 @@ func makeUniqueIndexKVPair(
 }
 
 func TestCollectConflictsKVGroupIndexInfo(t *testing.T) {
-	executor := &collectConflictsStepExecutor{}
+	var tableImporter *importer.TableImporter
 
-	indexInfo, err := executor.getKVGroupIndexInfo(globalsort.DataKVGroup)
+	indexInfo, err := getKVGroupIndexInfo(tableImporter, globalsort.DataKVGroup)
 	require.NoError(t, err)
 	require.Nil(t, indexInfo)
 
-	_, err = executor.getKVGroupIndexInfo("not-an-index-id")
+	_, err = getKVGroupIndexInfo(tableImporter, "not-an-index-id")
 	require.Error(t, err)
 
 	tableInfo := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")}
@@ -116,15 +116,15 @@ func TestCollectConflictsKVGroupIndexInfo(t *testing.T) {
 	require.NotNil(t, mockTable)
 	targetIdx := &model.IndexInfo{ID: 2, Name: ast.NewCIStr("mv"), MVIndex: true}
 	tableInfo.Indices = []*model.IndexInfo{targetIdx}
-	executor.tableImporter = &importer.TableImporter{
+	tableImporter = &importer.TableImporter{
 		LoadDataController: &importer.LoadDataController{Table: mockTable},
 	}
 
-	indexInfo, err = executor.getKVGroupIndexInfo(globalsort.IndexID2KVGroup(targetIdx.ID))
+	indexInfo, err = getKVGroupIndexInfo(tableImporter, globalsort.IndexID2KVGroup(targetIdx.ID))
 	require.NoError(t, err)
 	require.Same(t, targetIdx, indexInfo)
 
-	_, err = executor.getKVGroupIndexInfo(globalsort.IndexID2KVGroup(3))
+	_, err = getKVGroupIndexInfo(tableImporter, globalsort.IndexID2KVGroup(3))
 	require.EqualError(t, err, `index 3 from KV group "3" not found in table t`)
 }
 
