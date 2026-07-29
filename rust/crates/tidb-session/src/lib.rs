@@ -261,6 +261,31 @@ struct Transaction {
     /// here. It is still resolved and kept, because it is what the client
     /// asked for and what the real-TiKV tier consumes.
     mode: SessionTxnMode,
+    /// The transaction's savepoint stack, oldest first -- Go's
+    /// `TxnCtx.Savepoints` (`pkg/sessionctx/variable/session.go`).
+    savepoints: Vec<Savepoint>,
+}
+
+/// One entry of a transaction's savepoint stack.
+///
+/// Go records a `tikv.MemDBCheckpoint` -- a position in the transaction's
+/// membuffer that `RollbackMemDBToCheckpoint` truncates back to. This tier's
+/// transaction stages its writes in a private catalog copy rather than a
+/// membuffer, so the mark is an IMAGE of that copy, restored by assignment.
+/// It is the same primitive [`Session::with_staged_catalog`] already uses for
+/// statement-level rollback, just held under a name for longer than one
+/// statement.
+struct Savepoint {
+    /// The name, lowercased: Go's `AddSavepoint`/`RollbackToSavepoint` match
+    /// `strings.ToLower(name)`, so `SAVEPOINT SP1` and `ROLLBACK TO sp1` are
+    /// the same savepoint.
+    name: String,
+    /// The transaction's working catalog as of this savepoint.
+    ///
+    /// Kept even after a `ROLLBACK TO` restores from it, because Go's
+    /// `RollbackToSavepoint` truncates the stack to `[:idx+1]` -- the named
+    /// savepoint SURVIVES its own rollback and can be rolled back to again.
+    image: Catalog,
 }
 
 pub use tidb_executor::TxnErrorKind;
@@ -991,6 +1016,7 @@ impl Session {
                     working,
                     base_version,
                     mode,
+                    savepoints: Vec::new(),
                 });
                 Ok(Some(true))
             }
@@ -999,17 +1025,95 @@ impl Session {
                 Ok(Some(false))
             }
             SessionStmt::Rollback { savepoint, .. } => {
-                if savepoint.is_some() {
-                    return Err(DriverError::Unsupported(
-                        "ROLLBACK TO SAVEPOINT is not supported yet",
-                    ));
+                if let Some(name) = savepoint {
+                    // ROLLBACK TO does NOT end the transaction: it restores
+                    // the data and leaves everything else running.
+                    self.rollback_to_savepoint(name)?;
+                    return Ok(Some(true));
                 }
                 // Dropping the staged copy discards every staged write.
                 self.txn = None;
                 Ok(Some(false))
             }
+            SessionStmt::Savepoint(name) => {
+                self.set_savepoint(name);
+                Ok(Some(self.txn.is_some()))
+            }
+            SessionStmt::ReleaseSavepoint(name) => {
+                self.release_savepoint(name)?;
+                Ok(Some(true))
+            }
             _ => Ok(None),
         }
+    }
+
+    /// `SAVEPOINT name` -- Go `SimpleExec.executeSavepoint`.
+    ///
+    /// Outside an explicit transaction Go returns `nil` without recording
+    /// anything (`!sessVars.InTxn() && sessVars.IsAutocommit()`), so the
+    /// statement succeeds and a later `ROLLBACK TO` that name still reports
+    /// 1305. That no-op is reproduced here.
+    ///
+    /// Redefining an existing name is `AddSavepoint`: DELETE the old entry,
+    /// then APPEND the new one. The distinction matters -- the redefinition
+    /// moves the name to the END of the stack, so savepoints that were taken
+    /// after the original are no longer "after" it, and a later `ROLLBACK TO`
+    /// the redefined name no longer drops them.
+    fn set_savepoint(&mut self, name: &str) {
+        let Some(txn) = &mut self.txn else {
+            return;
+        };
+        let name = name.to_lowercase();
+        let image = txn.working.clone();
+        txn.savepoints.retain(|savepoint| savepoint.name != name);
+        txn.savepoints.push(Savepoint { name, image });
+    }
+
+    /// `ROLLBACK TO [SAVEPOINT] name` -- Go's `executeRollback` savepoint arm
+    /// plus `TxnCtx.RollbackToSavepoint`.
+    ///
+    /// Restores the transaction's data to the savepoint (Go:
+    /// `RollbackMemDBToCheckpoint`) and truncates the stack to `[:idx+1]`, so
+    /// the savepoint itself survives and every savepoint taken after it is
+    /// gone. The transaction stays OPEN -- Go returns before the
+    /// `SetInTxn(false)` that a plain `ROLLBACK` reaches.
+    ///
+    /// With no transaction open Go's `txn.Valid()` is false and the error is
+    /// the same 1305 an unknown name gets.
+    fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
+        let lowered = name.to_lowercase();
+        let txn = self
+            .txn
+            .as_mut()
+            .ok_or_else(|| DriverError::SavepointNotExists(name.to_owned()))?;
+        let index = txn
+            .savepoints
+            .iter()
+            .position(|savepoint| savepoint.name == lowered)
+            .ok_or_else(|| DriverError::SavepointNotExists(name.to_owned()))?;
+        txn.working = txn.savepoints[index].image.clone();
+        txn.savepoints.truncate(index + 1);
+        Ok(())
+    }
+
+    /// `RELEASE SAVEPOINT name` -- Go `SimpleExec.executeReleaseSavepoint`
+    /// plus `TxnCtx.ReleaseSavepoint`: drops the named savepoint AND every
+    /// savepoint taken after it (`Savepoints[:i]`), touching no data.
+    fn release_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
+        let lowered = name.to_lowercase();
+        let index = self
+            .txn
+            .as_ref()
+            .and_then(|txn| {
+                txn.savepoints
+                    .iter()
+                    .position(|savepoint| savepoint.name == lowered)
+            })
+            .ok_or_else(|| DriverError::SavepointNotExists(name.to_owned()))?;
+        if let Some(txn) = &mut self.txn {
+            txn.savepoints.truncate(index);
+        }
+        Ok(())
     }
 
     /// Publishes the open transaction's staged writes, or refuses when the
@@ -2340,6 +2444,8 @@ mod tests_grants;
 mod tests_harvested_relation_engine;
 #[cfg(test)]
 mod tests_json;
+#[cfg(test)]
+mod tests_savepoint;
 #[cfg(test)]
 mod tests_show;
 #[cfg(test)]

@@ -91,6 +91,11 @@ pub enum DriverError {
         /// The value that does not fit.
         value: String,
     },
+    /// Go `exeerrors.ErrSavepointNotExists` (`ErrSpDoesNotExist`, 1305):
+    /// `ROLLBACK TO` or `RELEASE` named a savepoint the transaction does not
+    /// hold. Carries the name AS WRITTEN -- Go matches savepoint names
+    /// case-insensitively but reports back the spelling the statement used.
+    SavepointNotExists(String),
     /// Go `ErrWrongParamCount` (1210).
     WrongParamCount,
     /// Go `plannererrors.ErrWrongArguments` (1210), carrying the function
@@ -706,6 +711,14 @@ impl DriverError {
             8200,
             *b"HY000",
             format!("Unsupported modify column: {reason}"),
+        ),
+        // Go `ErrSpDoesNotExist`: "%s %s does not exist", which
+        // `executeReleaseSavepoint` and the ROLLBACK TO path both fill in
+        // with the literal "SAVEPOINT" and the name.
+        DriverError::SavepointNotExists(name) => MysqlError::new(
+            1305,
+            *b"42000",
+            format!("SAVEPOINT {name} does not exist"),
         ),
         // Go: "Incorrect arguments to EXECUTE".
         DriverError::WrongParamCount => MysqlError::new(
