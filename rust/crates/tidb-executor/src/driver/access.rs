@@ -379,15 +379,13 @@ pub(crate) fn full_scan_estimate(
         // too.
         TableEntry::Mem(_) | TableEntry::View(_) => None,
     };
-    match stats {
-        // The row count is real whenever a `mysql.stats_meta` row exists,
-        // even when no histogram was ever analyzed -- and in that state Go
-        // prints the real count AND `stats:pseudo`.
-        Some(stats) => crate::access_cost::ScanEstimate {
-            rows: stats.row_count.max(0) as f64,
-            pseudo: stats.pseudo,
-        },
-        None => crate::access_cost::ScanEstimate::pseudo(crate::plan_trace::PSEUDO_ROW_COUNT),
+    // The row count is real whenever a `mysql.stats_meta` row carries one,
+    // even when no histogram was ever analyzed -- and in that state Go prints
+    // the real count AND `stats:pseudo`. `realtime_row_count` owns the rule,
+    // so this row and the cost that chose it agree by construction.
+    crate::access_cost::ScanEstimate {
+        rows: crate::access_cost::realtime_row_count(stats.map(AsRef::as_ref)),
+        pseudo: stats.is_none_or(|stats| stats.pseudo),
     }
 }
 

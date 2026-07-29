@@ -238,6 +238,10 @@ fn row_size_column(column: &KvColumn, stats: Option<&TableStatistics>) -> RowSiz
     }
 }
 
+/// Go `HistColl.RealtimeCount`, which is what a full scan reads.
+///
+/// Kept public to the crate so `EXPLAIN`'s full-scan row and the cost that
+/// chose the full scan cannot answer this question differently.
 /// Go `chunk.GetFixedLen`'s type classification, as `row_size` names it.
 fn row_size_type(field_type: &FieldType) -> RowSizeType {
     match field_type.code() {
@@ -267,12 +271,20 @@ fn is_pseudo(stats: Option<&TableStatistics>) -> bool {
     stats.is_none_or(|stats| stats.pseudo)
 }
 
-fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
+pub(crate) fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
     match stats {
         Some(stats) if stats.row_count > 0 => stats.row_count as f64,
-        // A `stats_meta` row that says zero is still a real answer, but Go's
-        // `PseudoTable` path is what an *unanalyzed* table gets; an analyzed
-        // empty table estimates 0 rows and every formula below handles it.
+        // A count of zero on a table with no histograms is not the statement
+        // "this table is empty" -- it is `mysql.stats_meta` not having caught
+        // up with the rows yet, and Go answers it with
+        // `PseudoHistColl`'s `RealtimeCount: PseudoRowCount`
+        // (`pkg/statistics/table.go`). Taking the zero literally makes every
+        // path cost nothing and the choice arbitrary; a live playground shows
+        // exactly that on a freshly loaded table, where Go still says 10000.
+        //
+        // An ANALYZED table that really is empty keeps its zero: it is not
+        // pseudo, and `0` is then a measurement.
+        Some(stats) if stats.pseudo => PSEUDO_ROW_COUNT,
         Some(stats) => stats.row_count.max(0) as f64,
         None => PSEUDO_ROW_COUNT,
     }

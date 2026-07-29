@@ -197,7 +197,7 @@ grep -F '"event":"cluster_session_node_ready"' "${RUST_LOG_FILE}" >/dev/null \
 # SCAN row -- the operator that names the path -- which both do print.
 go_path() {
   go_sql -Nse "USE pathdiff; EXPLAIN $1" \
-    | awk -F '\t' '$1 ~ /(TableFullScan|IndexRangeScan|IndexFullScan|TableRangeScan|Point_Get|Batch_Point_Get)/ { gsub(/[^A-Za-z_]/, "", $1); print $1; exit }'
+    | awk -F '\t' 'match($1, /Batch_Point_Get|Point_Get|TableFullScan|IndexRangeScan|IndexFullScan|TableRangeScan/) { print substr($1, RSTART, RLENGTH); exit }'
 }
 go_est() {
   go_sql -Nse "USE pathdiff; EXPLAIN $1" \
@@ -209,7 +209,7 @@ go_index() {
 }
 rust_path() {
   rust_sql -Nse "USE pathdiff; EXPLAIN $1" \
-    | awk -F '\t' '$1 ~ /(TableFullScan|IndexRangeScan|IndexFullScan|TableRangeScan|Point_Get|Batch_Point_Get)/ { gsub(/[^A-Za-z_]/, "", $1); print $1; exit }'
+    | awk -F '\t' 'match($1, /Batch_Point_Get|Point_Get|TableFullScan|IndexRangeScan|IndexFullScan|TableRangeScan/) { print substr($1, RSTART, RLENGTH); exit }'
 }
 rust_est() {
   rust_sql -Nse "USE pathdiff; EXPLAIN $1" \
