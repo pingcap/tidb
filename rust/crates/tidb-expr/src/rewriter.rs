@@ -242,6 +242,24 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // `FieldType` over the builder's (`*bf.tp = *ft`), so the charset,
         // collation, flen and decimal all pass through untouched.
         "any_value" if args.len() == 1 => args.first()?.static_type()?.clone(),
+        // Reading a user variable: Go's `BuildGetVarFunction` picks one of its
+        // typed `GETVAR` signatures from the type the session currently holds
+        // for the name, so the CHOICE is made before the rewriter runs and
+        // arrives encoded in the name -- the same "build-time decision lives
+        // in the function name" shape `cast_*` and `date_add_*` use. The
+        // declared type must agree with the value the evaluator returns,
+        // because the chunk tier appends into a column of exactly this type.
+        "getvar_int" if args.len() == 1 => int(),
+        "getvar_uint" if args.len() == 1 => {
+            let mut ft = int();
+            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            ft
+        }
+        "getvar_real" if args.len() == 1 => FieldType::new(FieldTypeCode::Double),
+        "getvar_decimal" if args.len() == 1 => FieldType::new(FieldTypeCode::NewDecimal),
+        "getvar_string" if args.len() == 1 => text(),
+        // `SETVAR` reports -- and stores -- its value argument's type.
+        "setvar" if args.len() == 2 => args[1].static_type().cloned().unwrap_or_else(text),
         // Go reads these from `SessionVars`; each returns a string.
         "database" | "schema" | "version" | "current_user" | "current_role" | "user"
         | "session_user" | "system_user" => text(),
@@ -781,6 +799,30 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             Ok(Expression::Constant(Constant::new(
                 Datum::BinaryLiteral(literal),
                 ft,
+            )))
+        }
+        // The inline `@name := expr` assignment expression: Go's
+        // `builtinSetVar*Sig`, whose whole point is the SIDE EFFECT on the
+        // session, performed once per row. The name is a build-time token, so
+        // it rides as a constant argument, and the result type comes from the
+        // value -- which is also the type the assignment stores.
+        //
+        // A bare `@name` READ has no arm here on purpose: its result type is
+        // the type of the value the session currently holds (Go picks one of
+        // its typed `GetVar` signatures from `GetUserVarType` at build time),
+        // and the session encodes that choice in the function NAME before the
+        // rewriter runs -- see `getvar_*` in [`builtin_return_type`].
+        Expr::Assign { name, value } => {
+            let args = vec![
+                constant_string(name),
+                rewrite_expr_resolved(value, resolver)?,
+            ];
+            let ret_type = builtin_return_type("setvar", &args)
+                .ok_or(EvalError::Unsupported("setvar has no result type"))?;
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("setvar"),
+                ret_type,
+                args,
             )))
         }
         Expr::Paren(inner) => rewrite_expr_resolved(inner, resolver),

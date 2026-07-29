@@ -55,6 +55,14 @@ pub struct StmtContext {
     /// context with no session behind it (a test, a DEFAULT expression
     /// folded at DDL time), where `RAND()` is unsupported rather than wrong.
     rand_session: Option<Rc<RefCell<MysqlRng>>>,
+    /// Go `SessionVars.userVars`: the session's user variables, keyed
+    /// lowercased. The SESSION owns the map and lends it here, because `@x :=
+    /// expr` writes it MID-STATEMENT, once per row, and a later select-list
+    /// item of the same row must read what the earlier one wrote -- so it
+    /// cannot be a value copied in and out at the statement boundary. `None`
+    /// is a context with no session behind it, where a user variable reads as
+    /// NULL (Go's own answer for an unset one) and an assignment is dropped.
+    user_vars: Option<Rc<RefCell<HashMap<String, Datum>>>>,
     /// Go `builtinRandSig`'s per-call `*mathutil.MysqlRng`: one generator per
     /// constant `RAND(N)` occurrence, created fresh for each STATEMENT (Go
     /// builds a new `builtinFunc` per plan) and advanced once per row by the
@@ -133,6 +141,7 @@ impl StmtContext {
             now: None,
             time_zone: None,
             rand_session: None,
+            user_vars: None,
             rand_seeded: Rc::default(),
             last_insert_id: Rc::default(),
             prev_last_insert_id: 0,
@@ -251,6 +260,15 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the session's user-variable map, which `@x` reads and `@x :=
+    /// expr` writes THROUGH -- see the field's own doc for why this is a
+    /// shared handle rather than a copy.
+    #[must_use]
+    pub fn with_user_vars(mut self, user_vars: Rc<RefCell<HashMap<String, Datum>>>) -> Self {
+        self.user_vars = Some(user_vars);
+        self
+    }
+
     /// Fixes the statement's clock, which Go does once per statement so
     /// every `NOW()` in it agrees.
     #[must_use]
@@ -290,6 +308,7 @@ impl StmtContext {
             now: None,
             time_zone: None,
             rand_session: None,
+            user_vars: None,
             rand_seeded: Rc::default(),
             last_insert_id: Rc::default(),
             prev_last_insert_id: 0,
@@ -462,6 +481,21 @@ impl Columns for StmtContext {
 
     fn connection_id(&self) -> Option<u64> {
         self.connection_id
+    }
+
+    /// Go `SessionVars.GetUserVarVal`: names are case-insensitive, and an
+    /// unset one is NULL rather than an error.
+    fn get_uservar(&self, name: &str) -> Option<Datum> {
+        let vars = self.user_vars.as_ref()?;
+        vars.borrow().get(&name.to_ascii_lowercase()).cloned()
+    }
+
+    /// Go `SessionVars.SetUserVarVal`. A NULL value never reaches here -- the
+    /// evaluator keeps Go's rule that `@x := NULL` leaves the variable alone.
+    fn set_uservar(&self, name: &str, value: Datum) {
+        if let Some(vars) = self.user_vars.as_ref() {
+            vars.borrow_mut().insert(name.to_ascii_lowercase(), value);
+        }
     }
 
     fn rand_next(&self) -> Option<f64> {

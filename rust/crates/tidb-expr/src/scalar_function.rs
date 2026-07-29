@@ -255,6 +255,16 @@ impl ScalarFunction {
             .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION)
     }
 
+    /// The user-variable name a `getvar`/`setvar` call carries in its first
+    /// argument, which the rewriter built as a constant because the name is a
+    /// build-time token rather than a value.
+    fn uservar_name(&self) -> Option<String> {
+        let Expression::Constant(name) = self.args.first()? else {
+            return None;
+        };
+        name.value.sql_string().ok()
+    }
+
     /// Go `ScalarFunction.Eval`: evaluate the function against one row.
     ///
     /// The binary operators, the lazy control forms (`CASE`/`IF`), `LIKE`,
@@ -340,6 +350,39 @@ impl ScalarFunction {
                 crate::like_match_with_collation(&text, &pattern, escape, self.derived_collation())
             };
             return Ok(Datum::Int(i64::from(matched)));
+        }
+        // Go's `GETVAR`/`SETVAR` families (`pkg/expression/builtin_other.go`):
+        // the variable NAME is a build-time constant, so the rewriter passes
+        // it as the first argument, and the session state both reach lives
+        // behind `Columns::get_uservar`/`set_uservar`.
+        //
+        // `SETVAR` is the inline `@x := expr` assignment expression, whose
+        // whole point is the SIDE EFFECT: it is evaluated once per row, and a
+        // LATER select-list item of the same row (or the next row) sees what
+        // it wrote, which is what makes the MySQL running-total idiom work.
+        // Go's `builtinSet*VarSig` returns NULL WITHOUT touching the existing
+        // variable when the value is NULL -- unlike top-level `SET @x = NULL`,
+        // which clears it.
+        if let Some(var) = self.uservar_name() {
+            if let Some(kind) = name.strip_prefix("getvar_") {
+                if self.args.len() == 1 {
+                    let value = ctx.get_uservar(&var).unwrap_or(Datum::Null);
+                    // The name fixed the DECLARED type from what the session
+                    // held when the statement was built; an assignment earlier
+                    // in the same statement may since have stored another kind
+                    // (Go has the same build-time/run-time seam), so the value
+                    // is converted onto the declared type rather than trusted
+                    // to match it.
+                    return uservar_as_kind(kind, value);
+                }
+            }
+            if name == "setvar" && self.args.len() == 2 {
+                let value = self.args[1].eval(ctx, row)?;
+                if !value.is_null() {
+                    ctx.set_uservar(&var, value.clone());
+                }
+                return Ok(value);
+            }
         }
         // Go `builtinRegexpLikeSig`: both operands are stringified, NULL in
         // either propagates, and `NOT REGEXP` is a separate unary NOT wrapped
@@ -650,6 +693,34 @@ impl ScalarFunction {
 /// The cast a `cast_*` function name describes, with the width and scale its
 /// result type carries. Go stores the same fact as the chosen
 /// `builtinCast*As*Sig`.
+/// Converts a user variable's stored value onto the kind its `getvar_<kind>`
+/// call declared. NULL stays NULL, and a value already of that kind passes
+/// through untouched -- the conversion only matters when an assignment made
+/// during this same statement changed the kind out from under the plan.
+fn uservar_as_kind(kind: &str, value: Datum) -> Result<Datum, EvalError> {
+    use tidb_ast::CastType;
+    if value.is_null() {
+        return Ok(Datum::Null);
+    }
+    let target = match (kind, &value) {
+        ("int", Datum::Int(_)) | ("uint", Datum::UInt(_)) | ("real", Datum::Real(_)) => {
+            return Ok(value)
+        }
+        ("decimal", Datum::Decimal(_)) => return Ok(value),
+        ("string", Datum::String(_) | Datum::Bytes(_)) => return Ok(value),
+        ("int", _) => CastType::Signed,
+        ("uint", _) => CastType::Unsigned,
+        ("real", _) => CastType::Double,
+        ("decimal", _) => CastType::Decimal { flen: 0, scale: 0 },
+        ("string", _) => CastType::Char {
+            len: None,
+            charset: None,
+        },
+        _ => return Err(EvalError::Unsupported("unknown user-variable kind")),
+    };
+    crate::cast::eval_cast(&target, value)
+}
+
 fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType, EvalError> {
     use tidb_ast::CastType;
     let len = || u32::try_from(ret_type.flen()).ok();

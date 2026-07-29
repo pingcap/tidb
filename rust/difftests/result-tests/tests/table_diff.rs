@@ -172,7 +172,14 @@ fn table_execution_matches_go_engine() {
     // `SetUserVarVal` keeps a `types.Datum`) and a `SET` right-hand side has
     // its own variable references bound before evaluation, so `@x + 1` is
     // integer arithmetic and `SET @z = @x + 1` runs at all.
-    const KNOWN_DIVERGENCES: usize = 28;
+    //
+    // 28 -> 23: the inline `@x := expr` assignment expression now runs in the
+    // live tier (Go's `SETVAR` builtin), evaluated per row with the session's
+    // variable map lent to the statement context, and a bare `@x` read is
+    // typed from the value the session holds the way Go's
+    // `BuildGetVarFunction` picks its signature -- the whole
+    // `user_var_scalar` topic.
+    const KNOWN_DIVERGENCES: usize = 23;
 
     assert!(
         failures.len() <= KNOWN_DIVERGENCES,

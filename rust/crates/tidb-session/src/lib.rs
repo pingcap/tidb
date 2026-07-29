@@ -28,6 +28,7 @@
 //! to remove when the driver's runners take parsed statements.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -186,6 +187,14 @@ pub struct Session {
     /// [`tidb_executor::StmtContext`] the statement builds, so an allocating
     /// INSERT and `LAST_INSERT_ID(expr)` write one place, not two.
     published_last_insert_id: Rc<Cell<Option<u64>>>,
+    /// Go `SessionVars.userVars`: this session's user variables, keyed
+    /// lowercased, each holding a TYPED value (`SetUserVarVal` stores a
+    /// `types.Datum`, which is why `SET @i = 5` and `SET @s = '5'` differ).
+    ///
+    /// The session owns the map and lends the handle to every statement
+    /// context, because `@x := expr` writes it from INSIDE expression
+    /// evaluation -- once per row, visible to the next select-list item.
+    user_vars: Rc<RefCell<HashMap<String, Datum>>>,
     /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
     /// Empty means no database is selected, which is Go's `ErrNoDB` case.
     current_db: String,
@@ -278,6 +287,7 @@ impl Default for Session {
             prev_row_count: 0,
             statement_kind: StatementKind::Other,
             published_last_insert_id: Rc::default(),
+            user_vars: Rc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
             has_process_priv: false,
@@ -386,28 +396,26 @@ fn sysvar_native_expr(name: &str, value: String) -> tidb_ast::Expr {
     }
 }
 
-/// The literal expression a typed value substitutes as, so a user variable
-/// reaching the rewriter keeps the TYPE it was stored with instead of
-/// collapsing to text.
+/// The call `@name` becomes: Go's `BuildGetVarFunction` chooses one of its
+/// typed `GETVAR` signatures from the type the session holds for the name, and
+/// the choice rides in the function name so the rewriter -- which has no
+/// session -- can type the node (see `getvar_*` in `tidb_expr`'s
+/// `builtin_return_type`).
 ///
-/// Every arm restores to SQL the rewriter reads back as the same value:
-/// `Datum::Real` goes through `Expr::Float`, whose restore is a float literal,
-/// and a decimal stays a decimal rather than becoming a float. Anything with
-/// no literal form (a temporal, a JSON document, a duration) falls back to its
-/// text, which is what a string-typed operand of that value would have been
-/// anyway.
-fn datum_literal_expr(value: &Datum) -> tidb_ast::Expr {
-    use tidb_ast::Expr;
-    match value {
-        Datum::Null => Expr::Null,
-        Datum::Int(v) => Expr::Int(v.to_string()),
-        Datum::UInt(v) => Expr::Int(v.to_string()),
-        Datum::Real(v) => Expr::Float(*v),
-        Datum::Decimal(d) => Expr::Decimal(d.to_string()),
-        other => match datum_text(other) {
-            Some(text) => Expr::String(text),
-            None => Expr::Null,
-        },
+/// An UNSET variable has no type to read; Go's own answer is a string-typed
+/// NULL, which `getvar_string` produces.
+fn uservar_read_expr(name: &str, value: Option<&Datum>) -> tidb_ast::Expr {
+    let kind = match value {
+        Some(Datum::Int(_)) => "int",
+        Some(Datum::UInt(_)) => "uint",
+        Some(Datum::Real(_)) => "real",
+        Some(Datum::Decimal(_)) => "decimal",
+        _ => "string",
+    };
+    tidb_ast::Expr::Func {
+        name: format!("getvar_{kind}"),
+        args: vec![tidb_ast::Expr::String(name.to_owned())],
+        origin_position: 0,
     }
 }
 
@@ -797,8 +805,16 @@ impl Session {
             SessionStmt::SetUserVar(set) => {
                 for assignment in &set.assignments {
                     let value = self.eval_value(&assignment.value)?;
-                    let value = (!matches!(value, Datum::Null)).then_some(value);
-                    self.vars.set_user(&assignment.name, value);
+                    let key = assignment.name.to_ascii_lowercase();
+                    // Go's `SET @x = NULL` CLEARS the variable
+                    // (`UnsetUserVar`), which is the opposite of the inline
+                    // `@x := NULL` assignment expression -- that one leaves
+                    // the existing value alone.
+                    if matches!(value, Datum::Null) {
+                        self.user_vars.borrow_mut().remove(&key);
+                    } else {
+                        self.user_vars.borrow_mut().insert(key, value);
+                    }
                 }
                 Ok(Some(()))
             }
@@ -1083,12 +1099,23 @@ impl Session {
                     Err(error) => return Err(var_error(error)),
                 }
             }
-            // A user variable substitutes as a TYPED literal, so `SET @i = 5`
-            // followed by `@i + 1` is integer arithmetic as in Go, not the
-            // string `'5'`. An unset (or NULL-valued) variable is `NULL`.
-            Expr::UserVar(name) => match self.vars.get_user(name) {
-                Some(value) => datum_literal_expr(&value),
-                None => Expr::Null,
+            // A user variable's VALUE is not substituted -- it becomes a
+            // `getvar_<kind>` call the evaluator resolves against the
+            // session's own map, which is the only way `SELECT @last := v,
+            // @last FROM t` can see the assignment made for the CURRENT row.
+            // What IS decided here is the kind, from the value the session
+            // holds now: Go's `BuildGetVarFunction` picks its typed signature
+            // the same way, at build time.
+            Expr::UserVar(name) => uservar_read_expr(
+                name,
+                self.user_vars.borrow().get(&name.to_ascii_lowercase()),
+            ),
+            // The assignment expression keeps its own shape (the rewriter
+            // types it from the value), but its value may itself read
+            // variables.
+            Expr::Assign { name, value } => Expr::Assign {
+                name: name.clone(),
+                value: Box::new(self.bind_variables_in(value)?),
             },
             Expr::Paren(inner) => Expr::Paren(Box::new(self.bind_variables_in(inner)?)),
             Expr::Unary(op, inner) => Expr::Unary(*op, Box::new(self.bind_variables_in(inner)?)),
@@ -1314,6 +1341,7 @@ impl Session {
             prev_row_count: 0,
             statement_kind: StatementKind::Other,
             published_last_insert_id: Rc::default(),
+            user_vars: Rc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
             has_process_priv: false,
@@ -2386,6 +2414,7 @@ impl Session {
                 .with_connection_id(self.connection_id)
                 .with_rand_session(Rc::clone(&self.rand))
                 .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
+                .with_user_vars(Rc::clone(&self.user_vars))
                 .with_previous_statement(self.last_insert_id, self.prev_row_count)
                 .with_week_and_division_scale(week_format, div_scale)
                 .with_clock(clock, zone);
@@ -2401,6 +2430,7 @@ impl Session {
         .with_connection_id(self.connection_id)
         .with_rand_session(Rc::clone(&self.rand))
         .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
+        .with_user_vars(Rc::clone(&self.user_vars))
         .with_previous_statement(self.last_insert_id, self.prev_row_count)
         .with_week_and_division_scale(week_format, div_scale)
         .with_clock(clock, zone)

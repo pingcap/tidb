@@ -148,3 +148,84 @@ fn a_scalar_subquery_value_is_evaluated_and_its_cardinality_enforced() {
     assert_eq!(reported.code, 1242);
     assert_eq!(reported.message, "Subquery returns more than 1 row");
 }
+
+/// The inline `@x := expr` assignment expression, evaluated LEFT TO RIGHT
+/// within a row: a later select-list item sees what an earlier one assigned.
+/// Captured from Go:
+///
+/// ```text
+/// set @i = 3                 OK
+/// select @i := @i + 1, @i    RS:4|4
+/// select @i                  RS:4
+/// select @A := 7             RS:7
+/// select @a                  RS:7
+/// select @n2 := 5            RS:5
+/// select @n2 + 1             RS:6
+/// ```
+#[test]
+fn an_inline_assignment_is_visible_to_the_rest_of_its_own_row() {
+    let mut session = Session::new();
+    session.run("SET @i = 3").unwrap();
+    assert_eq!(one_row(&mut session, "SELECT @i := @i + 1, @i"), ["4", "4"]);
+    // The assignment OUTLIVES the statement.
+    assert_eq!(one_row(&mut session, "SELECT @i"), ["4"]);
+    // NOT asserted, and not a user-variable gap: Go answers
+    // `select @c := 0, @c := @c + 1, @c` with `RS:0|1|1` even though `@c` was
+    // unset when the statement was built, because an unset variable is typed
+    // as a string (Go does the same) and Go's arithmetic COERCES a string
+    // operand. This tier's arithmetic refuses one outright -- see
+    // `tidb_expr::ops`'s "string operand" -- which is a separate gap in
+    // numeric coercion, reachable with no user variable in sight.
+    //
+    // The assigned name is case-insensitive, and the assigned value keeps its
+    // type for a LATER statement's arithmetic. (Within the SAME statement the
+    // read was already typed from the pre-statement value -- as Go's own
+    // build-time signature choice is -- which is why `@n2 := 5, @n2 + 1`
+    // lands on the string-operand gap noted above rather than here.)
+    assert_eq!(one_row(&mut session, "SELECT @A := 7"), ["7"]);
+    assert_eq!(one_row(&mut session, "SELECT @a, @a + 1"), ["7", "8"]);
+}
+
+/// `@x := NULL` returns NULL and LEAVES THE VARIABLE ALONE -- Go's
+/// `builtinSetVar*Sig` skips the write for a NULL value. This is the opposite
+/// of the top-level `SET @x = NULL`, which clears it. Captured from Go:
+///
+/// ```text
+/// set @i = 3                 OK
+/// select @i := @i + 1, @i    RS:4|4
+/// select @i := null          RS:<nil>
+/// select @i                  RS:4      <- still 4
+/// ```
+#[test]
+fn an_inline_assignment_of_null_leaves_the_variable_alone() {
+    let mut session = Session::new();
+    session.run("SET @i = 4").unwrap();
+    assert_eq!(one_row(&mut session, "SELECT @i := NULL"), ["NULL"]);
+    assert_eq!(one_row(&mut session, "SELECT @i"), ["4"]);
+    // ... while the statement form clears it.
+    session.run("SET @i = NULL").unwrap();
+    assert_eq!(one_row(&mut session, "SELECT @i"), ["NULL"]);
+}
+
+/// Assigning FROM a column runs once per row, so after the statement the
+/// variable holds the LAST row's value in the statement's own row order.
+/// Captured from Go: `select @s := v, @s from t2 order by v` =>
+/// `RS:a|a;b|b;c|c`, then `select @s` => `RS:c`.
+#[test]
+fn an_inline_assignment_from_a_column_runs_once_per_row() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE uvc (v VARCHAR(8))").unwrap();
+    session
+        .run("INSERT INTO uvc VALUES ('a'),('b'),('c')")
+        .unwrap();
+    session.run("SET @s = 'seed'").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @s := v, @s FROM uvc ORDER BY v")),
+        [
+            vec!["a".to_owned(), "a".to_owned()],
+            vec!["b".to_owned(), "b".to_owned()],
+            vec!["c".to_owned(), "c".to_owned()]
+        ]
+    );
+    assert_eq!(one_row(&mut session, "SELECT @s"), ["c"]);
+}
