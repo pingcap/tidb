@@ -58,6 +58,18 @@ impl ColumnResolver for NoResolver {
 
 /// Go `types.SetBinChsClnFlag`: the binary charset/collation plus the binary
 /// flag every non-string literal type carries.
+/// The builtins whose result is a BINARY string: Go's `getFunction` for each
+/// ends with `types.SetBinChsClnFlag(bf.tp)` (`unhexFunctionClass`,
+/// `base64FunctionClass.fromBase64` in `pkg/expression/builtin_string.go`;
+/// `inet6AtonFunctionClass` in `pkg/expression/builtin_miscellaneous.go`).
+///
+/// This is the single list both places that force it consult -- the result
+/// type built in [`builtin_return_type`] and the re-assertion after generic
+/// collation derivation -- so the two cannot drift apart.
+fn returns_binary_string(name: &str) -> bool {
+    matches!(name, "unhex" | "from_base64" | "inet6_aton")
+}
+
 fn set_binary_charset(ft: &mut FieldType) {
     ft.set_charset_name("binary");
     // `set_collation_name` resolves the cached `Collation` enum that
@@ -207,6 +219,11 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // `NULLIF` keeps its first argument's type; the second only decides
         // whether the result is NULL.
         "nullif" => args.first()?.static_type()?.clone(),
+        // `ANY_VALUE` is the identity on both value AND type: Go
+        // `anyValueFunctionClass.getFunction` clones the argument's whole
+        // `FieldType` over the builder's (`*bf.tp = *ft`), so the charset,
+        // collation, flen and decimal all pass through untouched.
+        "any_value" if args.len() == 1 => args.first()?.static_type()?.clone(),
         // Go reads these from `SessionVars`; each returns a string.
         "database" | "schema" | "version" | "current_user" | "current_role" | "user"
         | "session_user" | "system_user" => text(),
@@ -216,6 +233,145 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
             ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
             ft
         }
+        // Go `rowCountFunctionClass` (`pkg/expression/builtin_info.go`): a
+        // plain signed `LongLong` with no flen of its own -- unlike
+        // `LAST_INSERT_ID` below, `ROW_COUNT()` is signed, because a failed
+        // statement reports -1.
+        "row_count" if args.is_empty() => int(),
+        // Go `lastInsertIDFunctionClass` adds `mysql.UnsignedFlag`, which is
+        // what makes `LAST_INSERT_ID(-1)` report 18446744073709551615 rather
+        // than -1. Both the zero-argument and one-argument forms are the same
+        // class and so the same result type.
+        "last_insert_id" if args.len() <= 1 => {
+            let mut ft = int();
+            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            ft
+        }
+        // Go `bitCountFunctionClass` (`pkg/expression/builtin_other.go`):
+        // int in, int out, flen 2 (a 64-bit word has at most 64 set bits).
+        "bit_count" if args.len() == 1 => {
+            let mut ft = int();
+            ft.set_flen(2);
+            ft
+        }
+        // Go `isNullFunctionClass` (`pkg/expression/builtin_op.go`): the
+        // one-digit boolean shape. This is the FUNCTION spelling `ISNULL(x)`;
+        // the `x IS NULL` operator is rewritten onto the same name by the
+        // `Expr::Is` arm below, so both spellings share this type.
+        "isnull" if args.len() == 1 => {
+            let mut ft = int();
+            ft.set_flen(1);
+            ft
+        }
+        // The hash family (`pkg/expression/builtin_encryption.go`). Each
+        // returns hex TEXT in the CONNECTION charset -- explicitly NOT
+        // binary, unlike `UNHEX`/`FROM_BASE64` above -- with a fixed flen:
+        // `sha1FunctionClass` 40 (one SHA-1 digest hexed) and
+        // `sha2FunctionClass` 128 (sized for its widest variant, SHA-512).
+        "sha" | "sha1" if args.len() == 1 => {
+            let mut ft = text();
+            ft.set_flen(40);
+            ft
+        }
+        "sha2" if args.len() == 2 => {
+            let mut ft = text();
+            ft.set_flen(128);
+            ft
+        }
+        // Go `ordFunctionClass` (`pkg/expression/builtin_string.go`): string
+        // in, int out, flen 10 -- the code point of the first CHARACTER under
+        // the argument's charset, so a binary argument yields its first byte.
+        "ord" if args.len() == 1 => {
+            let mut ft = int();
+            ft.set_flen(10);
+            ft
+        }
+        // Go `toBase64FunctionClass`: connection-charset text whose flen is
+        // derived from the argument's via `base64NeededEncodedLength`, and
+        // stays unspecified when the argument's is (which is the case for
+        // every expression this tier types as `text()`).
+        "to_base64" if args.len() == 1 => {
+            let mut ft = text();
+            let arg_flen = args.first()?.static_type()?.flen();
+            ft.set_flen(base64_needed_encoded_length(arg_flen));
+            ft
+        }
+        // The IP-address family (`pkg/expression/builtin_miscellaneous.go`).
+        // `INET_ATON` is UNSIGNED -- that flag is the whole reason
+        // `INET_ATON('255.255.255.255')` reports 4294967295 rather than a
+        // negative number once it is widened.
+        "inet_aton" if args.len() == 1 => {
+            let mut ft = int();
+            ft.set_flen(21);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            ft
+        }
+        "inet_ntoa" if args.len() == 1 => {
+            let mut ft = text();
+            ft.set_flen(93);
+            ft.set_decimal(0);
+            ft
+        }
+        // `INET6_ATON` returns raw address BYTES, so Go stamps it binary
+        // (`types.SetBinChsClnFlag`) exactly as it does `UNHEX`; `INET6_NTOA`
+        // returns printable text in the connection charset.
+        "inet6_aton" if args.len() == 1 => {
+            let mut ft = text();
+            set_binary_charset(&mut ft);
+            ft.set_flen(16);
+            ft.set_decimal(0);
+            ft
+        }
+        "inet6_ntoa" if args.len() == 1 => {
+            let mut ft = text();
+            ft.set_flen(117);
+            ft.set_decimal(0);
+            ft
+        }
+        // The address/UUID predicates: one-digit boolean ints.
+        "is_ipv4" | "is_ipv4_compat" | "is_ipv4_mapped" | "is_ipv6" | "is_uuid"
+            if args.len() == 1 =>
+        {
+            let mut ft = int();
+            ft.set_flen(1);
+            ft
+        }
+        // Go `uuidVersionFunctionClass`: an int with flen 10, NOT the boolean
+        // shape above -- it reports the version nibble, not a yes/no.
+        "uuid_version" if args.len() == 1 => {
+            let mut ft = int();
+            ft.set_flen(10);
+            ft
+        }
+        // Go `intervalFunctionClass` (`pkg/expression/builtin_compare.go`):
+        // always an int (the index of the containing bucket), with no flen of
+        // its own. Whether the arguments are compared as ints or as reals is
+        // an ARGUMENT-side choice that does not reach the result type.
+        "interval" if args.len() >= 2 => int(),
+        // Go `formatBytesFunctionClass`/`formatNanoTimeFunctionClass`
+        // (`pkg/expression/builtin_info.go`): real in, connection-charset
+        // text out, with no fixed flen.
+        "format_bytes" | "format_nano_time" if args.len() == 1 => text(),
+        // Go `timeFormatFunctionClass` (`pkg/expression/builtin_time.go`):
+        // a DURATION and a format string in, text out, with the flen sized
+        // from the FORMAT argument's -- `(flen + 1) / 2 * 11`, an upper bound
+        // on how much one format specifier can expand.
+        "time_format" if args.len() == 2 => {
+            let mut ft = text();
+            let format_flen = args[1].static_type()?.flen();
+            if format_flen != tidb_datatype::UNSPECIFIED_LENGTH {
+                ft.set_flen((format_flen + 1) / 2 * 11);
+            }
+            ft
+        }
+        // Go `toSecondsFunctionClass`: datetime in, plain int out. It sits
+        // beside `TO_DAYS` in the int family above but arrives here because
+        // it takes the zero-date `calcDaynr` path in `time_fn::calendar`.
+        "to_seconds" if args.len() == 1 => int(),
+        // `JSON_SEARCH` is typed `ETJson` by Go; it carries the same
+        // JSON-as-canonical-text divergence documented for the JSON family
+        // above, so its result cell is a string here.
+        "json_search" if args.len() >= 3 => text(),
         // String in, number out.
         "length" | "octet_length" | "char_length" | "character_length" | "bit_length" | "ascii"
         | "instr" | "locate" | "position" | "find_in_set" | "strcmp" | "field" => int(),
@@ -280,6 +436,22 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         }
         _ => return None,
     })
+}
+
+/// The flen `TO_BASE64` reports for an argument of flen `n`.
+///
+/// Port of `base64NeededEncodedLength` (`pkg/expression/builtin_string.go`),
+/// including its two sentinels: an unspecified argument length stays
+/// unspecified, and a length whose encoding would overflow a signed word
+/// reports -1 (which is the same value as `UNSPECIFIED_LENGTH`, exactly as in
+/// Go -- both mean "no usable bound"). The `+ (length - 1) / 76` term is the
+/// newline every 76 output characters that MySQL's base64 inserts.
+fn base64_needed_encoded_length(n: i64) -> i64 {
+    if n == tidb_datatype::UNSPECIFIED_LENGTH || n > 6_827_690_988_321_067_803 {
+        return tidb_datatype::UNSPECIFIED_LENGTH;
+    }
+    let length = (n + 2) / 3 * 4;
+    length + (length - 1) / 76
 }
 
 /// The function name and result type a `CAST(expr AS type)` becomes.
@@ -510,18 +682,19 @@ pub fn derive_tree_collation(expr: &mut Expression) -> Result<(), EvalError> {
     let name = func.func_name.lowercase().to_owned();
     let ec = crate::collation_derive::derive_collation(&name, &func.args, ret_type)?;
     crate::collation_derive::apply_derived_collation(expr, &ec);
-    // Go's `unhexFunctionClass`/`base64FunctionClass.fromBase64` call
-    // `types.SetBinChsClnFlag(bf.tp)` AFTER `newBaseBuiltinFuncWithTp` builds
-    // `bf.tp` from the generically derived collation -- so the forced binary
-    // charset/collation is always the LAST word for these two, regardless of
-    // what `deriveCollation`'s generic (non-string-in-string-out) default arm
-    // computed from the connection charset. `derive_tree_collation` runs
-    // this generic derivation as a bottom-up walk over an already-built
-    // tree, i.e. strictly after `builtin_return_type` gave "unhex"/
-    // "from_base64" their forced binary type, so without this re-assertion
-    // the generic pass would silently overwrite it back to a character type.
+    // The builtins whose `getFunction` calls `types.SetBinChsClnFlag(bf.tp)`
+    // AFTER `newBaseBuiltinFuncWithTp` has built `bf.tp` from the generically
+    // derived collation -- so the forced binary charset/collation is always
+    // the LAST word for them, regardless of what `deriveCollation`'s generic
+    // (non-string-in-string-out) default arm computed from the connection
+    // charset. `derive_tree_collation` runs that generic derivation as a
+    // bottom-up walk over an already-built tree, i.e. strictly after
+    // `builtin_return_type` gave these names their forced binary type, so
+    // without this re-assertion the generic pass would silently overwrite it
+    // back to a character type -- and a `VARBINARY` result reported as
+    // `utf8mb4` makes `CHAR_LENGTH` count characters where TiDB counts bytes.
     if let Expression::ScalarFunction(func) = expr {
-        if matches!(func.func_name.lowercase(), "unhex" | "from_base64") {
+        if returns_binary_string(func.func_name.lowercase()) {
             if let Some(ft) = func.ret_type.as_mut() {
                 set_binary_charset(ft);
             }
@@ -1355,5 +1528,257 @@ mod literal_tests {
             };
             assert_eq!(literal.as_bytes(), bytes, "{text} bytes");
         }
+    }
+}
+
+/// The chunk evaluator's builtin gate is [`builtin_return_type`]: a name it
+/// does not type is refused outright, however complete the value
+/// implementation behind it is. These tests pin the RESULT TYPE each newly
+/// gated builtin reports against the `getFunction` that fixes it in
+/// `pkg/expression/builtin_*.go`, and the VALUES against a `goeval` capture --
+/// a builtin that returns the right string with the wrong flen, charset, or
+/// unsigned flag is a latent bug, not a passing port.
+#[cfg(test)]
+mod builtin_type_tests {
+    use super::*;
+
+    fn rewrite(sql_expr: &str) -> Expression {
+        let stmt = tidb_parser::parse(&format!("SELECT {sql_expr}")).expect("parses");
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("expected a query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("expected a SELECT")
+        };
+        let tidb_ast::SelectField::Expr { expr, .. } = &select.fields.fields()[0] else {
+            panic!("expected an expression field")
+        };
+        rewrite_expr_resolved(expr, &NoResolver).expect("rewrites")
+    }
+
+    fn ret_type(sql_expr: &str) -> FieldType {
+        match rewrite(sql_expr) {
+            Expression::ScalarFunction(f) => f.ret_type.expect("a builtin call has a result type"),
+            other => panic!("expected a scalar function for {sql_expr}, got {other:?}"),
+        }
+    }
+
+    fn eval(sql_expr: &str) -> Datum {
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        chunk.set_num_virtual_rows(1);
+        rewrite(sql_expr)
+            .eval(&crate::context::NoColumns, chunk.get_row(0))
+            .expect("evaluates")
+    }
+
+    fn text_datum(value: &str) -> Datum {
+        Datum::new_string(value.as_bytes().to_vec())
+    }
+
+    fn is_unsigned(ft: &FieldType) -> bool {
+        ft.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED != 0
+    }
+
+    /// The integer-returning builtins, with the flen each `getFunction`
+    /// fixes. `INET_ATON` and `LAST_INSERT_ID` are the UNSIGNED ones -- that
+    /// flag is what makes `INET_ATON('255.255.255.255')` report 4294967295
+    /// and `LAST_INSERT_ID(-1)` report 18446744073709551615 rather than a
+    /// negative number.
+    #[test]
+    fn int_returning_builtins_carry_gos_flen_and_sign() {
+        // Go's `newBaseBuiltinFuncWithTp` gives an `ETInt` result
+        // `mysql.MaxIntWidth` when the class sets no flen of its own, which is
+        // the same default `FieldType::new(LongLong)` carries.
+        let default_int_width = 20;
+        for (expr, flen, unsigned) in [
+            // `ordFunctionClass` / `uuidVersionFunctionClass`: flen 10.
+            ("ord('a')", 10, false),
+            ("uuid_version('x')", 10, false),
+            // The one-digit boolean family.
+            ("is_ipv4('1.2.3.4')", 1, false),
+            ("is_ipv4_compat('x')", 1, false),
+            ("is_ipv4_mapped('x')", 1, false),
+            ("is_ipv6('::1')", 1, false),
+            ("is_uuid('x')", 1, false),
+            ("isnull(null)", 1, false),
+            // `bitCountFunctionClass`: flen 2 (at most 64 set bits).
+            ("bit_count(255)", 2, false),
+            // `inetAtonFunctionClass`: flen 21 AND unsigned.
+            ("inet_aton('1.2.3.4')", 21, true),
+            // No flen of their own.
+            ("interval(1, 2, 3)", default_int_width, false),
+            ("to_seconds('2009-11-29')", default_int_width, false),
+            // `ROW_COUNT()` is SIGNED -- a failed statement reports -1.
+            ("row_count()", default_int_width, false),
+            ("last_insert_id()", default_int_width, true),
+            ("last_insert_id(5)", default_int_width, true),
+        ] {
+            let ft = ret_type(expr);
+            assert_eq!(ft.code(), FieldTypeCode::LongLong, "{expr} type");
+            assert_eq!(ft.flen(), flen, "{expr} flen");
+            assert_eq!(is_unsigned(&ft), unsigned, "{expr} unsigned");
+        }
+    }
+
+    /// The string-returning builtins. The hash family and `INET_NTOA` are
+    /// explicitly NOT binary -- Go stamps them with the CONNECTION charset --
+    /// while `INET6_ATON` returns raw address bytes and IS binary, the same
+    /// distinction `UNHEX` carries.
+    #[test]
+    fn string_returning_builtins_carry_gos_flen_and_charset() {
+        let unspecified = tidb_datatype::UNSPECIFIED_LENGTH;
+        for (expr, flen, binary) in [
+            // `sha1FunctionClass` flen 40, `sha2FunctionClass` flen 128.
+            ("sha('x')", 40, false),
+            ("sha1('x')", 40, false),
+            ("sha2('x', 256)", 128, false),
+            // `inetNtoaFunctionClass` flen 93; `inet6NtoaFunctionClass` 117.
+            ("inet_ntoa(0)", 93, false),
+            ("inet6_ntoa('x')", 117, false),
+            // `inet6AtonFunctionClass` flen 16, binary charset.
+            ("inet6_aton('::1')", 16, true),
+            // No fixed flen.
+            ("format_bytes(0)", unspecified, false),
+            ("format_nano_time(0)", unspecified, false),
+            ("json_search('[\"a\"]', 'one', 'a')", unspecified, false),
+        ] {
+            let ft = ret_type(expr);
+            assert_eq!(ft.code(), FieldTypeCode::VarString, "{expr} type");
+            assert_eq!(ft.flen(), flen, "{expr} flen");
+            assert_eq!(
+                ft.charset_name() == "binary",
+                binary,
+                "{expr} charset is {:?}",
+                ft.charset_name()
+            );
+        }
+    }
+
+    /// `TO_BASE64`'s flen is derived from its ARGUMENT's via
+    /// `base64NeededEncodedLength`, and stays unspecified when the argument's
+    /// is. A 3-byte literal encodes to 4 characters; a line break appears
+    /// once the encoding exceeds 76 characters.
+    #[test]
+    fn to_base64_flen_follows_the_argument() {
+        assert_eq!(base64_needed_encoded_length(0), 0);
+        assert_eq!(base64_needed_encoded_length(1), 4);
+        assert_eq!(base64_needed_encoded_length(3), 4);
+        assert_eq!(base64_needed_encoded_length(57), 76);
+        // 58 bytes encode to 80 characters, which crosses one line break.
+        assert_eq!(base64_needed_encoded_length(58), 81);
+        assert_eq!(
+            base64_needed_encoded_length(tidb_datatype::UNSPECIFIED_LENGTH),
+            tidb_datatype::UNSPECIFIED_LENGTH
+        );
+        // Go's overflow sentinel is -1, which is `UNSPECIFIED_LENGTH` itself.
+        assert_eq!(
+            base64_needed_encoded_length(6_827_690_988_321_067_804),
+            tidb_datatype::UNSPECIFIED_LENGTH
+        );
+        // A string LITERAL carries no flen in this tier (`constant_string`
+        // leaves it unspecified where Go's `DefaultTypeForValue` sets the
+        // literal's length), so the derived flen is unspecified too -- which
+        // is the formula's own rule, not a special case here. `TO_BASE64` is
+        // connection-charset text, never binary.
+        let ft = ret_type("to_base64('abc')");
+        assert_eq!(ft.code(), FieldTypeCode::VarString);
+        assert_eq!(ft.flen(), tidb_datatype::UNSPECIFIED_LENGTH);
+        assert_ne!(ft.charset_name(), "binary");
+    }
+
+    /// `TIME_FORMAT`'s flen is `(format_flen + 1) / 2 * 11`, an upper bound
+    /// on how far one specifier can expand. As with `TO_BASE64` above, a
+    /// string literal carries no flen in this tier, so a literal format
+    /// leaves the result's unspecified rather than inventing a bound; a
+    /// COLUMN format, whose flen the schema does fix, derives one.
+    #[test]
+    fn time_format_flen_follows_the_format_argument() {
+        let ft = ret_type("time_format('23:00:00', '%H %k')");
+        assert_eq!(ft.code(), FieldTypeCode::VarString);
+        assert_eq!(ft.flen(), tidb_datatype::UNSPECIFIED_LENGTH);
+    }
+
+    /// `ANY_VALUE` is the identity on the whole `FieldType`, not merely the
+    /// value: Go copies the argument's type over the builder's
+    /// (`*bf.tp = *ft`). This is also what unblocks it in the planner -- the
+    /// `ONLY_FULL_GROUP_BY` exemption already recognized `ANY_VALUE`, but the
+    /// chunk evaluator refused it, so the exemption could only be observed as
+    /// "some error other than 1055/8123".
+    #[test]
+    fn any_value_reports_its_argument_type() {
+        assert_eq!(ret_type("any_value(1)").code(), FieldTypeCode::LongLong);
+        assert_eq!(
+            ret_type("any_value(3.14)").code(),
+            FieldTypeCode::NewDecimal
+        );
+        assert_eq!(ret_type("any_value('x')").code(), FieldTypeCode::VarString);
+        assert_eq!(eval("any_value(1234)"), Datum::Int(1234));
+        assert_eq!(eval("any_value(null)"), Datum::Null);
+    }
+
+    /// Edge cases the result corpus does not carry, captured from Go with
+    /// `rust/difftests/goeval`. Every one of these runs through the CHUNK
+    /// evaluator (`rewrite` + `ScalarFunction::eval`), which is the path the
+    /// result gate refused before these builtins were typed.
+    #[test]
+    fn go_captured_edge_case_values() {
+        // NULL propagates through every one of them.
+        for expr in [
+            "ord(null)",
+            "sha(null)",
+            "sha1(null)",
+            "sha2('x', null)",
+            "sha2(null, 224)",
+            "inet_aton(null)",
+            "inet_ntoa(null)",
+            "is_ipv4(null)",
+            "is_ipv6(null)",
+            "is_uuid(null)",
+            "uuid_version(null)",
+            "to_base64(null)",
+            "format_bytes(null)",
+            "format_nano_time(null)",
+            "to_seconds(null)",
+        ] {
+            assert_eq!(eval(expr), Datum::Null, "{expr}");
+        }
+        // `ORD('')` is 0, not NULL -- the empty string has no first code
+        // point but the signature still returns an integer.
+        assert_eq!(eval("ord('')"), Datum::Int(0));
+        // A multi-byte first character contributes its whole UTF-8 encoding
+        // read as a big-endian number: 0xE4BDA0 = 14990752.
+        assert_eq!(eval("ord('你好')"), Datum::Int(14_990_752));
+        // `TO_BASE64('')` is the empty string, NOT NULL.
+        assert_eq!(eval("to_base64('')"), text_datum(""));
+        // `SHA('')` still hashes: SHA-1 of zero bytes.
+        assert_eq!(
+            eval("sha('')"),
+            text_datum("da39a3ee5e6b4b0d3255bfef95601890afd80709")
+        );
+        // `SHA2`'s length argument: 0 means 256, and any value outside
+        // {0, 224, 256, 384, 512} yields NULL rather than an error.
+        assert_eq!(eval("sha2('pingcap', 0)"), eval("sha2('pingcap', 256)"));
+        assert_eq!(eval("sha2('x', 255)"), Datum::Null);
+        // `BIT_COUNT(-1)` counts the two's-complement bits: all 64.
+        assert_eq!(eval("bit_count(-1)"), Datum::Int(64));
+        // `INTERVAL` with a NULL first argument is -1, not NULL: Go's
+        // `builtinIntervalRealSig` reports "below every bucket".
+        assert_eq!(eval("interval(null, 1, 2)"), Datum::Int(-1));
+        // `INET_NTOA` refuses an out-of-range address with NULL.
+        assert_eq!(eval("inet_ntoa(-1)"), Datum::Null);
+        assert_eq!(eval("inet_ntoa(0)"), text_datum("0.0.0.0"));
+        assert_eq!(eval("inet_ntoa(4294967295)"), text_datum("255.255.255.255"));
+        // A dotted-quad prefix is left-extended, so `'127'` is 127.
+        assert_eq!(eval("inet_aton('127')"), Datum::UInt(127));
+        assert_eq!(eval("isnull(null)"), Datum::Int(1));
+        assert_eq!(eval("isnull(0)"), Datum::Int(0));
+        // The zero date has no seconds count.
+        assert_eq!(eval("to_seconds('0000-00-00')"), Datum::Null);
+        assert_eq!(eval("to_seconds(950501)"), Datum::Int(62_966_505_600));
+        assert_eq!(eval("format_bytes(0)"), text_datum("0 bytes"));
+        assert_eq!(
+            eval("time_format('23:00:00', '%H %k')"),
+            text_datum("23 23")
+        );
     }
 }

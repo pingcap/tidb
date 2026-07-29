@@ -163,14 +163,30 @@ pub(crate) fn eval_func(
     if let Some(result) = eval_func_values_in(name.as_str(), &vals, cols) {
         return result;
     }
-    match name.as_str() {
-        "ROW_COUNT" => match vals.as_slice() {
-            [] => cols
-                .row_count()
-                .map(Datum::Int)
-                .ok_or(EvalError::Unsupported("ROW_COUNT requires a session")),
-            _ => Err(EvalError::Unsupported("bad function arity")),
-        },
+    // Family extension modules (`crate::builtin_ext`), the shared values-only
+    // arms, and the session-state functions all live in
+    // `eval_func_values_in`, tried above; only the session-clock time family
+    // remains.
+    crate::time_fn::dispatch(name.as_str(), &vals, cols)
+        .unwrap_or(Err(EvalError::Unsupported("unsupported function")))
+}
+
+/// The builtins whose result is a function of their argument values AND the
+/// session: `ROW_COUNT()` and both forms of `LAST_INSERT_ID`. `None` if
+/// `name` is not one of them.
+///
+/// Ports `builtinRowCountSig.evalInt` and the `builtinLastInsertID*Sig` pair
+/// (`pkg/expression/builtin_info.go`).
+fn eval_session_state(
+    name: &str,
+    vals: &[Datum],
+    cols: &dyn Columns,
+) -> Option<Result<Datum, EvalError>> {
+    Some(match (name, vals) {
+        ("ROW_COUNT", []) => cols
+            .row_count()
+            .map(Datum::Int)
+            .ok_or(EvalError::Unsupported("ROW_COUNT requires a session")),
         // `LAST_INSERT_ID()` reads the value promoted from the preceding
         // statement. Its one-argument form instead coerces through Go's
         // `EvalInt`, records the raw uint64 bits for NEXT-statement
@@ -178,25 +194,21 @@ pub(crate) fn eval_func(
         // Keeping these forms together makes their same-statement separation
         // explicit: `LAST_INSERT_ID(5), LAST_INSERT_ID()` is `5, old`, not
         // `5, 5` (pkg/executor/select.go's statement-context promotion).
-        "LAST_INSERT_ID" => match vals.as_slice() {
-            [] => cols
-                .last_insert_id()
-                .map(Datum::UInt)
-                .ok_or(EvalError::Unsupported("LAST_INSERT_ID requires a session")),
-            [Datum::Null] => Ok(Datum::Null),
-            [value] => {
-                let id = last_insert_id_arg(value)?;
+        ("LAST_INSERT_ID", []) => cols
+            .last_insert_id()
+            .map(Datum::UInt)
+            .ok_or(EvalError::Unsupported("LAST_INSERT_ID requires a session")),
+        ("LAST_INSERT_ID", [Datum::Null]) => Ok(Datum::Null),
+        ("LAST_INSERT_ID", [value]) => match last_insert_id_arg(value) {
+            Ok(id) => {
                 cols.set_last_insert_id(id);
                 Ok(Datum::UInt(id))
             }
-            _ => Err(EvalError::Unsupported("bad function arity")),
+            Err(e) => Err(e),
         },
-        // Family extension modules (`crate::builtin_ext`) and the shared
-        // values-only arms live in `eval_func_values`, tried above; only the
-        // session-state functions and the session-clock time family remain.
-        _ => crate::time_fn::dispatch(name.as_str(), &vals, cols)
-            .unwrap_or(Err(EvalError::Unsupported("unsupported function"))),
-    }
+        ("ROW_COUNT" | "LAST_INSERT_ID", _) => Err(EvalError::Unsupported("bad function arity")),
+        _ => return None,
+    })
 }
 
 /// Evaluates a builtin whose result is a pure function of its
@@ -212,7 +224,7 @@ pub(crate) fn eval_func(
 ///   branch, so eager-evaluating both would change semantics, e.g. a guarded
 ///   `1/0`), `CASE`, and the `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE`
 ///   family whose second argument is an `Expr::Interval`, not a value;
-/// - session-state functions: `ROW_COUNT`, `LAST_INSERT_ID`, `RAND` (needs
+/// - session-state functions: `RAND` (needs
 ///   the argument AST and per-call `function_key` for generator identity),
 ///   the sequence functions (`NEXTVAL`/`LASTVAL`/`SETVAL`), and the
 ///   `time_fn` family (its dispatch takes `Columns` for the statement clock,
@@ -251,6 +263,16 @@ pub(crate) fn eval_func_values_in(
     vals: &[Datum],
     cols: &dyn Columns,
 ) -> Option<Result<Datum, EvalError>> {
+    // The session-state builtins: pure functions of their argument VALUES
+    // plus the session, which `cols` supplies. They live here rather than in
+    // `eval_func_values` (values alone) so the row path and the chunk path
+    // run the SAME implementation -- `eval_func`'s own arms used to be the
+    // only ones, which is why `ROW_COUNT()` in a chunk-evaluated statement
+    // reported "not yet ported" while the identical AST-evaluated statement
+    // answered.
+    if let Some(result) = eval_session_state(name, vals, cols) {
+        return Some(result);
+    }
     let result = eval_func_values(name, vals)?;
     if name == "JSON_MERGE" && matches!(result, Ok(ref value) if *value != Datum::Null) {
         cols.append_warning(
