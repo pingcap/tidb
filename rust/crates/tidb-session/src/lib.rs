@@ -960,6 +960,44 @@ impl Session {
         }
     }
 
+    /// Runs one DML statement over a STAGE of the catalog this statement sees,
+    /// so a statement that fails partway leaves the tables as it found them.
+    ///
+    /// This is Go's statement-level rollback. A statement opens a staging
+    /// handle on the transaction's membuffer (`pkg/kv/union_store.go`:
+    /// `MemBuffer.Staging()`), writes into it, and
+    /// `pkg/executor/adapter.go` chooses between
+    /// `pkg/session/session.go`'s `StmtCommit` -- `Release()`, folding the
+    /// stage into the transaction -- and `StmtRollback` -- `Cleanup()`,
+    /// dropping it. The transaction itself is untouched either way, which is
+    /// why a failed statement inside `BEGIN` discards only its own writes and
+    /// the statements around it survive to `COMMIT`.
+    ///
+    /// The stage here is an image of the catalog rather than an undo log,
+    /// because this tier's tables ARE the buffer: `Catalog::clone` deep-copies
+    /// the in-process bytes (`MemTableStorage::clone_box`). Restoring the
+    /// image is the same observable effect as `Cleanup()`.
+    ///
+    /// AUTO_INCREMENT deliberately survives the restore: Go allocates ids
+    /// outside transaction semantics and never returns a consumed one, and
+    /// `KvTable`'s `AutoIdAllocator` is a SHARED cell that a catalog copy
+    /// keeps pointing at -- so the burn is retained with no exclusion rule
+    /// here (captured: a failed one-row insert into an `AUTO_INCREMENT` table
+    /// stores nothing and the next successful insert skips the burned id).
+    ///
+    /// Making this the one door every mutating statement goes through is the
+    /// point: the restore lives in the funnel's own error arm, so no exit of
+    /// `body` -- and no DML arm added later -- can forget it.
+    fn with_staged_catalog<T>(
+        &mut self,
+        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        self.with_catalog_mut(|catalog| {
+            let stage = catalog.clone();
+            body(catalog).inspect_err(|_| *catalog = stage)
+        })
+    }
+
     /// Classifies a statement by parsing alone (no execution), so a caller can
     /// choose the protocol answer shape before running it.
     ///
@@ -1396,7 +1434,7 @@ impl Session {
                 DmlStmt::Insert(_) => {
                     let current_db = self.current_db.clone();
                     let ctx = self.statement_context(true);
-                    let result = self.with_catalog_mut(|catalog| {
+                    let result = self.with_staged_catalog(|catalog| {
                         tidb_executor::run_insert_reporting(sql, catalog, &current_db, &ctx)
                     });
                     self.drain_eval_warnings(&ctx);
@@ -1413,7 +1451,7 @@ impl Session {
                 DmlStmt::Update(_) => {
                     let current_db = self.current_db.clone();
                     let ctx = self.statement_context(true);
-                    let output = self.with_catalog_mut(|catalog| {
+                    let output = self.with_staged_catalog(|catalog| {
                         Ok(StmtOutput::Affected(tidb_executor::run_update_in(
                             sql,
                             catalog,
@@ -1427,7 +1465,7 @@ impl Session {
                 DmlStmt::Delete(_) => {
                     let current_db = self.current_db.clone();
                     let ctx = self.statement_context(true);
-                    let output = self.with_catalog_mut(|catalog| {
+                    let output = self.with_staged_catalog(|catalog| {
                         Ok(StmtOutput::Affected(tidb_executor::run_delete_in(
                             sql,
                             catalog,
@@ -2084,6 +2122,8 @@ mod tests_harvested_relation_engine;
 mod tests_json;
 #[cfg(test)]
 mod tests_show;
+#[cfg(test)]
+mod tests_statement_rollback;
 #[cfg(test)]
 mod tests_subquery;
 #[cfg(test)]

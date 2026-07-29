@@ -506,6 +506,15 @@ fn a_multi_row_key_update_moves_rows_one_at_a_time_in_order_by_order() {
         .to_mysql_error();
     assert_eq!(error.code, 1062);
     assert_eq!(error.message, "Duplicate entry '2' for key 'mr2.PRIMARY'");
+    // The failed statement leaves the table exactly as it was (`gorun`:
+    // `1|10;2|20`). Here the collision happens on the FIRST row, so nothing
+    // had been written yet -- but the guarantee is statement-level rollback,
+    // not first-row luck; see `tests_statement_rollback` for the same shape
+    // with rows already moved before the collision.
+    assert_eq!(
+        rows(&mut session, "SELECT a,b FROM mr2 ORDER BY a"),
+        [["1", "10"], ["2", "20"]]
+    );
 
     session
         .run("CREATE TABLE ol (a INT PRIMARY KEY, b INT)")
