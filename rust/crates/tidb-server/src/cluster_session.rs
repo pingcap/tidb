@@ -179,6 +179,24 @@ fn cluster_table(table: &TableInfo, storage: &ClusterTableStorage) -> Result<KvT
     let mut kv_columns: Vec<KvColumn> = Vec::with_capacity(columns.len());
     for column in &columns {
         let name = column.name.original().to_owned();
+        // AUTO_INCREMENT is stated on the column's type flags and acted on
+        // through `KvTable::auto_increment_offset`, which this loader cannot
+        // set honestly: the ids belong to the cluster's own autoid allocator,
+        // handed out in a transaction of their own and shared with every
+        // other node, and a counter invented here would re-issue ids that
+        // already exist. Loading the table as if the column were ordinary
+        // left an INSERT that omits it answering 1364 -- the right outcome
+        // for the wrong reason, and only because AUTO_INCREMENT implies NOT
+        // NULL. Refused by name instead, like a prefix index below.
+        if column
+            .field_type
+            .has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT)
+        {
+            return Err(format!(
+                "its column {name} is AUTO_INCREMENT, whose ids come from the cluster's own \
+                 autoid allocator, which this node does not consume"
+            ));
+        }
         // `None` is Go's nil default -- "no DEFAULT was written" -- which is
         // not the same fact as a `DEFAULT NULL`, so it must stay `None`
         // rather than become `Some(Null)`: only the first makes an omitted
@@ -768,6 +786,43 @@ mod tests {
                 tables: vec![table],
             }],
         }
+    }
+
+    /// AUTO_INCREMENT is stated on the column's own type flags and acted on
+    /// through `KvTable::auto_increment_offset`, which this loader never set:
+    /// the table loaded as if the column were ordinary, and an INSERT that
+    /// omitted it answered 1364 "doesn't have a default value" -- the right
+    /// outcome for the wrong reason, and only because AUTO_INCREMENT implies
+    /// NOT NULL. The ids belong to the cluster's own autoid allocator, which
+    /// this node does not consume, so the table is refused by name instead.
+    #[test]
+    fn a_cluster_columns_auto_increment_refuses_the_table_by_name() {
+        let mut v = column(2, 1, "v", false);
+        v.field_type
+            .add_flags(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT | 1);
+        let table = TableInfo {
+            id: 401,
+            name: CiString::new("ai"),
+            columns: vec![column(1, 0, "id", true), v],
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        let (storage, _, _) = cluster_storage();
+        let (_, skipped) = session_with_cluster_storage(
+            &one_table_catalog(table),
+            &storage,
+            &StatsSnapshot::new(),
+        );
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].name, "app.ai");
+        assert!(
+            skipped[0]
+                .reason
+                .starts_with("its column v is AUTO_INCREMENT"),
+            "{}",
+            skipped[0].reason
+        );
     }
 
     /// A prefix index stores each value CUT to the prefix length. Nothing on
