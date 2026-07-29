@@ -142,8 +142,16 @@ func TestPartialIndex(t *testing.T) {
 		}
 	}
 
+	// A TIMESTAMP partial index condition is time zone dependent because its literal is evaluated
+	// without the writer session's time zone. See issue #70099.
+	tk.MustGetDBError(
+		"create table t_timestamp (id int primary key, k int, ts timestamp, unique index uk(k) where ts >= '2025-01-01 00:00:00')",
+		dbterror.ErrUnsupportedAddPartialIndex)
+	tk.MustExec("create table t_timestamp (id int primary key, k int, ts timestamp, index idx(k) where ts is null)")
+	tk.MustExec("drop table t_timestamp")
+
 	// test comparing between time column and string constant is allowed.
-	timeColumnTypes := []string{"timestamp", "datetime", "date", "time"}
+	timeColumnTypes := []string{"datetime", "date", "time"}
 	allowedLiterals := []string{"'2025-07-28 12:34:56'", "'2025-07-28'", "'12:34:56'"}
 	notAllowedLiterals := []string{"1", "1.0", "true", "null"}
 	checkColumnTypes(timeColumnTypes, allowedLiterals, true)
