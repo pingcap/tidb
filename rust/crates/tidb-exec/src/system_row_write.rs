@@ -15,20 +15,33 @@
 //! Writing one row of a `mysql.*` table the way TiDB's own `INSERT`,
 //! `UPDATE` and `DELETE` write it.
 //!
-//! Every `mysql.*` table this node writes is *non-clustered* — `pk_is_handle`
-//! and `is_common_handle` are both false, because TiDB declares their primary
-//! keys `NONCLUSTERED` — so a row is three things at once and a writer that
-//! produces fewer leaves the row half-visible:
+//! A stored row is several things at once, and a writer that produces fewer
+//! leaves it half-visible:
 //!
-//! 1. the record, under an implicit `_tidb_rowid` handle;
+//! 1. the record, under its handle;
 //! 2. one entry per public index, since nothing backfills them;
-//! 3. for an insert, the row-ID allocator key, so the next writer does not
-//!    hand out a handle this one already used.
+//! 3. for a table with no clustered handle, the row-ID allocator key, so the
+//!    next writer does not hand out a handle this one already used.
 //!
 //! [`crate::mysql_bootstrap`] proved this encoding against a real TiDB (a Go
 //! server reads the rows it seeds); this module is that same encoding lifted
 //! out of the bootstrap's one-shot shape so the account path can also update
 //! and delete rows that already exist.
+//!
+//! # Two handle shapes, because `mysql.*` has two
+//!
+//! The account tables TiDB declares `NONCLUSTERED`, so their rows live under
+//! an allocated `_tidb_rowid` and every declared column is in the row value:
+//! [`insert_row`], [`update_row`], [`delete_row`].
+//!
+//! The statistics tables are `CLUSTERED` — `mysql.stats_meta` on `table_id`,
+//! `mysql.stats_histograms` and `mysql.stats_buckets` on their whole
+//! `(table_id, is_index, hist_id[, bucket_id])` tuple. Their handle columns
+//! live in the record *key* and are absent from the row value, which is the
+//! same rule the reader states in `SystemTableView::project`:
+//! [`clustered_record_key`], [`store_clustered_row`],
+//! [`delete_clustered_row`]. `mysql.stats_top_n` is the odd one out, with no
+//! clustered handle at all, and takes the first set.
 
 use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_codec::Encoder;
@@ -40,7 +53,9 @@ use tidb_tablecodec::{
     IndexInfo as CodecIndexInfo, TableColumn as CodecTableColumn, TableInfo as CodecTableInfo,
 };
 use tidb_txnkv::transaction::OptimisticMutation;
-use tidb_txnkv::{Handle, IntHandle};
+use tidb_txnkv::{CommonHandle, Handle, IntHandle};
+
+use crate::mysql_system_tables::HandleLayout;
 
 /// Go `ast.CurrentTimestamp`, as a column default stores it.
 pub(crate) const CURRENT_TIMESTAMP: &str = "CURRENT_TIMESTAMP";
@@ -96,7 +111,12 @@ pub fn insert_row(
     let key = encode_row_key_with_handle(table.id, &RecordHandle::Int(row_id));
     let mut mutations = vec![OptimisticMutation::insert(key, encode_row(table, values)?)
         .map_err(|error| encode_error(error.to_string()))?];
-    mutations.extend(index_entries(table, row_id, values, IndexOp::Put)?);
+    mutations.extend(index_entries(
+        table,
+        &Handle::Int(IntHandle::new(row_id)),
+        values,
+        IndexOp::Put,
+    )?);
     Ok(mutations)
 }
 
@@ -124,7 +144,146 @@ pub fn delete_row(
     let row_id = row_id_of(key)?;
     let mut mutations = vec![OptimisticMutation::delete(key.to_vec())
         .map_err(|error| encode_error(error.to_string()))?];
-    mutations.extend(index_entries(table, row_id, values, IndexOp::Delete)?);
+    mutations.extend(index_entries(
+        table,
+        &Handle::Int(IntHandle::new(row_id)),
+        values,
+        IndexOp::Delete,
+    )?);
+    Ok(mutations)
+}
+
+/// The record key and handle one row of a CLUSTERED table lives under.
+///
+/// A clustered table's primary key *is* its handle: `mysql.stats_meta` keys
+/// on `table_id`, `mysql.stats_histograms` and `mysql.stats_buckets` on their
+/// whole `(table_id, is_index, hist_id[, bucket_id])` tuple. Nothing
+/// allocates a `_tidb_rowid` for them, and nothing needs to: a row's identity
+/// is its own values, so an `ANALYZE` that rewrites a table's statistics
+/// overwrites exactly the keys the previous one wrote.
+///
+/// A table with no clustered handle is refused rather than given some
+/// invented key: [`insert_row`] is that table's writer.
+pub fn clustered_record_key(
+    table: &TableInfo,
+    values: &RowValues,
+) -> Result<(Vec<u8>, Handle), RowEncodeError> {
+    let layout = HandleLayout::of(table);
+    let named = |name: &str| -> Result<&Datum, RowEncodeError> {
+        let column = table
+            .cols()
+            .into_iter()
+            .find(|column| column.name.lowercase() == name)
+            .ok_or_else(|| encode_error(format!("{} has no column `{name}`", table_name(table))))?;
+        values.get(&column.id).ok_or_else(|| {
+            encode_error(format!(
+                "{}.{name} has no value in the row being written",
+                table_name(table)
+            ))
+        })
+    };
+    match &layout {
+        HandleLayout::RowId => Err(encode_error(format!(
+            "{} has no clustered handle; its rows are written under an allocated _tidb_rowid",
+            table_name(table)
+        ))),
+        HandleLayout::Int(column) => {
+            let value = named(column)?;
+            let handle = match value {
+                Datum::Int(value) => *value,
+                Datum::UInt(value) => *value as i64,
+                other => {
+                    return Err(encode_error(format!(
+                        "{}.{column} is the record handle but holds {other:?}",
+                        table_name(table)
+                    )))
+                }
+            };
+            Ok((
+                encode_row_key_with_handle(table.id, &RecordHandle::Int(handle)),
+                Handle::Int(IntHandle::new(handle)),
+            ))
+        }
+        HandleLayout::Common(columns) => {
+            let mut datums = Vec::with_capacity(columns.len());
+            for column in columns {
+                datums.push(named(column)?.clone());
+            }
+            let encoded =
+                tidb_codec::encode_key(&datums).map_err(|error| encode_error(error.to_string()))?;
+            let handle = CommonHandle::new(encoded.clone())
+                .map_err(|error| encode_error(error.to_string()))?;
+            Ok((
+                encode_row_key_with_handle(table.id, &RecordHandle::Common(encoded)),
+                Handle::Common(handle),
+            ))
+        }
+    }
+}
+
+/// The mutations that store one row of a clustered table.
+///
+/// `existing` is the row already living under that key, as this planner's own
+/// snapshot read it, or `None` when there is none. It decides two things a
+/// caller must not guess:
+///
+/// * which assertion the record mutation carries -- TiKV rejects an `Insert`
+///   over a key that exists and a `Delete`/`Put` over one that does not, so
+///   an `ANALYZE` that guessed would fail either the first time or every time
+///   after;
+/// * which index entries to retract. An index entry's key contains the
+///   indexed value, so moving that value (`mysql.stats_meta.idx_ver`, which
+///   every `ANALYZE` moves) leaves the old entry pointing at the row unless
+///   it is deleted by the value it was written with.
+pub fn store_clustered_row(
+    table: &TableInfo,
+    existing: Option<&RowValues>,
+    values: &RowValues,
+) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+    let (key, handle) = clustered_record_key(table, values)?;
+    let encoded = encode_row(table, values)?;
+    let mut mutations = Vec::new();
+    match existing {
+        Some(existing) => {
+            mutations.push(
+                OptimisticMutation::put_existing(key, encoded)
+                    .map_err(|error| encode_error(error.to_string()))?,
+            );
+            // Retracting first and writing second matters only when the value
+            // moved; when it did not, the two entries share a key and the
+            // retraction would delete what the write just stored, so the
+            // unchanged case skips both.
+            let stale = index_entries(table, &handle, existing, IndexOp::Delete)?;
+            let fresh = index_entries(table, &handle, values, IndexOp::Put)?;
+            for (retract, store) in stale.into_iter().zip(fresh) {
+                if retract.key() == store.key() {
+                    continue;
+                }
+                mutations.push(retract);
+                mutations.push(store);
+            }
+        }
+        None => {
+            mutations.push(
+                OptimisticMutation::insert(key, encoded)
+                    .map_err(|error| encode_error(error.to_string()))?,
+            );
+            mutations.extend(index_entries(table, &handle, values, IndexOp::Put)?);
+        }
+    }
+    Ok(mutations)
+}
+
+/// The mutations that remove one row of a clustered table and every index
+/// entry it owns.
+pub fn delete_clustered_row(
+    table: &TableInfo,
+    values: &RowValues,
+) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+    let (key, handle) = clustered_record_key(table, values)?;
+    let mut mutations =
+        vec![OptimisticMutation::delete(key).map_err(|error| encode_error(error.to_string()))?];
+    mutations.extend(index_entries(table, &handle, values, IndexOp::Delete)?);
     Ok(mutations)
 }
 
@@ -165,9 +324,18 @@ enum IndexOp {
 }
 
 fn encode_row(table: &TableInfo, values: &RowValues) -> Result<Vec<u8>, RowEncodeError> {
+    // A clustered handle's columns live in the record key and nowhere else --
+    // the same rule the reader states in `SystemTableView::project`. A writer
+    // that also put them in the value would store a second copy TiDB never
+    // wrote.
+    let handle = HandleLayout::of(table);
+    let key_columns = handle.columns();
     let mut column_ids = Vec::with_capacity(table.columns.len());
     let mut row = Vec::with_capacity(table.columns.len());
     for column in table.cols() {
+        if key_columns.iter().any(|key| key == column.name.lowercase()) {
+            continue;
+        }
         let value = values.get(&column.id).ok_or_else(|| {
             encode_error(format!(
                 "{}.{} has no value in the row being written",
@@ -184,11 +352,11 @@ fn encode_row(table: &TableInfo, values: &RowValues) -> Result<Vec<u8>, RowEncod
 
 fn index_entries(
     table: &TableInfo,
-    row_id: i64,
+    handle: &Handle,
     values: &RowValues,
     op: IndexOp,
 ) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
-    let handle = Handle::Int(IntHandle::new(row_id));
+    let handle = handle.clone();
     let codec_table = codec_table_info(table);
     let mut mutations = Vec::new();
     for (position, index) in table.indices.iter().enumerate() {

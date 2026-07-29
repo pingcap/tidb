@@ -476,6 +476,20 @@ impl<'view> SystemRow<'view> {
             .filter(|datum| !matches!(datum, Datum::Null)))
     }
 
+    /// Reads one projected column as the stored [`Datum`] itself.
+    ///
+    /// The typed accessors below each know what one `mysql.*` column means.
+    /// A reader of an arbitrary *user* table -- which is what `ANALYZE TABLE`
+    /// is ([`crate::cluster_analyze`]) -- knows the column's declared type
+    /// instead and needs the value in the domain that type describes, so this
+    /// is the one accessor that does not interpret.
+    ///
+    /// `None` is a column the stored row does not carry, which is
+    /// indistinguishable from SQL NULL and is treated as NULL by every caller.
+    pub fn datum(&self, column: &str) -> Result<Option<&Datum>, SystemTableError> {
+        self.value(column)
+    }
+
     fn wrong_value(&self, column: &str, wanted: &'static str, stored: &Datum) -> SystemTableError {
         SystemTableError::UnexpectedColumnValue {
             name: self.view.name.clone(),

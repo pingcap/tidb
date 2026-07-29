@@ -117,8 +117,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
+use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::cop_scan::CopScanSource;
+use tidb_exec::real_tikv_analyze::prepare_cluster_analyze;
 use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
 use tidb_exec::real_tikv_ddl::prepare_cluster_ddl;
 use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
@@ -134,6 +136,7 @@ use tidb_session::process::ProcessRegistry;
 use tidb_session::{GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange};
 
 use crate::cluster_account_seam::{ClusterAccountWriter, RealClusterAccountWriter};
+use crate::cluster_analyze_seam::{ClusterAnalyze, RealClusterAnalyze};
 use crate::cluster_session::{cluster_session_catalog, SkippedTable};
 use crate::cluster_sysvar_seam::{ClusterSysvarWriter, RealClusterSysvarWriter};
 use crate::node_config::NodeConfig;
@@ -176,6 +179,8 @@ enum StatementRoute {
     Accounts,
     /// One `SET GLOBAL` change to `mysql.global_variables`.
     GlobalVars,
+    /// One `ANALYZE TABLE`, per table it named.
+    Analyze(Vec<AnalyzeStatement>),
 }
 
 /// Opens one cluster-backed wide-SQL [`Session`] per authenticated connection.
@@ -191,6 +196,9 @@ pub struct ClusterSessionFactory {
     /// The route a `SET GLOBAL` change takes; see
     /// [`crate::cluster_sysvar_seam`].
     sysvars: Arc<dyn ClusterSysvarWriter>,
+    /// The route an `ANALYZE TABLE` takes; see
+    /// [`crate::cluster_analyze_seam`].
+    analyze: Arc<dyn ClusterAnalyze>,
     /// The cluster catalog, republished whole by the reload thread and by a
     /// DDL's own inline reload. A connection takes one `Arc` per statement, so
     /// no session ever sees a half-updated catalog.
@@ -225,6 +233,7 @@ impl ClusterSessionFactory {
         ddl: Arc<dyn ClusterDdl>,
         accounts: Arc<dyn ClusterAccountWriter>,
         sysvars: Arc<dyn ClusterSysvarWriter>,
+        analyze: Arc<dyn ClusterAnalyze>,
         catalog: Arc<SharedClusterCatalog>,
         privileges: PrivilegeRegistry,
         global_vars: GlobalSysvars,
@@ -236,6 +245,7 @@ impl ClusterSessionFactory {
             ddl,
             accounts,
             sysvars,
+            analyze,
             catalog,
             privileges,
             processes: ProcessRegistry::default(),
@@ -334,6 +344,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             ddl: Arc::clone(&self.ddl),
             accounts: Arc::clone(&self.accounts),
             sysvars: Arc::clone(&self.sysvars),
+            analyze: Arc::clone(&self.analyze),
             catalog: Arc::clone(&self.catalog),
             schema_version: loaded.schema_version,
             explicit: None,
@@ -363,6 +374,9 @@ pub struct ClusterServerSession {
     /// The route a `SET GLOBAL` change takes; see
     /// [`crate::cluster_sysvar_seam`].
     sysvars: Arc<dyn ClusterSysvarWriter>,
+    /// The route an `ANALYZE TABLE` takes; see
+    /// [`crate::cluster_analyze_seam`].
+    analyze: Arc<dyn ClusterAnalyze>,
     /// The node's catalog, which this connection follows.
     catalog: Arc<SharedClusterCatalog>,
     /// The schema version `session`'s tables were built from. A move in
@@ -552,6 +566,15 @@ impl ClusterServerSession {
             StoredStateChange::None => Ok(StatementRoute::Ordinary),
             StoredStateChange::Accounts => Ok(StatementRoute::Accounts),
             StoredStateChange::GlobalVars => Ok(StatementRoute::GlobalVars),
+            StoredStateChange::Statistics => {
+                match prepare_cluster_analyze(sql, self.session.current_database()) {
+                    Ok(Some(tables)) if !tables.is_empty() => Ok(StatementRoute::Analyze(tables)),
+                    Ok(_) => Err(SqlQueryError::unknown(
+                        "this node runs ANALYZE TABLE for a named table only",
+                    )),
+                    Err(refusal) => Err(SqlQueryError::unknown(refusal.to_string())),
+                }
+            }
             StoredStateChange::Schema => {
                 match prepare_cluster_ddl(sql, self.session.current_database()) {
                     Ok(Some(statement)) => Ok(StatementRoute::Ddl(statement)),
@@ -601,6 +624,48 @@ impl ClusterServerSession {
         }
         // Go answers an account statement with an OK packet carrying no rows,
         // whether it changed anything or was an `IF [NOT] EXISTS` no-op.
+        Ok(WriteOutcome {
+            affected_rows: 0,
+            last_insert_id: 0,
+        })
+    }
+
+    /// Performs one `ANALYZE TABLE`, one table at a time.
+    ///
+    /// Each table is its own transaction, which is what Go does too: an
+    /// `ANALYZE TABLE t1, t2` is two analyses, and holding one transaction
+    /// open across both would make the second table's row count describe the
+    /// moment the first was read.
+    ///
+    /// An open transaction is committed first, for the same reason a DDL or
+    /// an account statement commits one: MySQL and Go both commit implicitly
+    /// before a statement that changes stored state outside it.
+    fn run_analyze(&mut self, tables: &[AnalyzeStatement]) -> Result<WriteOutcome, SqlQueryError> {
+        if self.explicit.is_some() || self.session.in_transaction() {
+            self.control_transaction("COMMIT")?;
+        }
+        for statement in tables {
+            let report = self
+                .analyze
+                .execute(statement)
+                .map_err(SqlQueryError::unknown)?;
+            eprintln!(
+                "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\
+                 \"table_id\":{},\"version\":{},\"scanned_rows\":{},\"sampled_rows\":{},\
+                 \"sample_rate\":{},\"histograms\":{},\"buckets\":{},\"topn\":{}}}",
+                serde_json::to_string(&statement.schema).unwrap_or_else(|_| "\"\"".to_owned()),
+                serde_json::to_string(&statement.table).unwrap_or_else(|_| "\"\"".to_owned()),
+                report.table_id,
+                report.version,
+                report.scanned_rows,
+                report.sampled_rows,
+                report.sample_rate,
+                report.histogram_count,
+                report.bucket_count,
+                report.topn_count,
+            );
+        }
+        // Go answers `ANALYZE TABLE` with an OK packet carrying no rows.
         Ok(WriteOutcome {
             affected_rows: 0,
             last_insert_id: 0,
@@ -709,6 +774,7 @@ impl QuerySession for ClusterServerSession {
             StatementRoute::Ddl(statement) => return self.run_ddl(&statement).map(Some),
             StatementRoute::Accounts => return self.run_account_statement(sql).map(Some),
             StatementRoute::GlobalVars => return self.run_global_var_statement(sql).map(Some),
+            StatementRoute::Analyze(tables) => return self.run_analyze(&tables).map(Some),
             StatementRoute::Ordinary => {}
         }
         if self.session.apply_set(sql).map_err(map_error)?.is_some() {
@@ -795,6 +861,9 @@ impl QuerySession for ClusterServerSession {
                     .run_global_var_statement(statement.sql())
                     .map(GeneralExecuteOutcome::Write)
             }
+            StatementRoute::Analyze(tables) => {
+                return self.run_analyze(&tables).map(GeneralExecuteOutcome::Write)
+            }
             StatementRoute::Ordinary => {}
         }
         let params = crate::pipeline_session::prepared_parameters(values);
@@ -839,6 +908,12 @@ impl QuerySession for ClusterServerSession {
             }
             StatementRoute::GlobalVars => {
                 self.run_global_var_statement(sql)?;
+                return Ok(QueryResult::new(Box::new(
+                    crate::pipeline_session::affected_rows_source(0),
+                )));
+            }
+            StatementRoute::Analyze(tables) => {
+                self.run_analyze(&tables)?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));
@@ -972,6 +1047,11 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
                 users.global_vars(),
                 CONTROL_PLANE_TIMEOUT,
                 crate::real_tikv_node::connect_schema_notifier(&config),
+            )),
+            Arc::new(RealClusterAnalyze::new(
+                Arc::new(authority.transaction_opener()),
+                Arc::clone(&stats),
+                CONTROL_PLANE_TIMEOUT,
             )),
             catalog,
             users.accounts(),
@@ -1744,6 +1824,25 @@ mod tests {
         (session, node)
     }
 
+    /// The mock node has no rows in a TiKV to sample, so its analyzer refuses
+    /// by name: what these tests exercise is the ROUTE -- that `ANALYZE TABLE`
+    /// reaches the statistics seam at all, and that its refusal reaches the
+    /// client -- not the histogram arithmetic, which
+    /// [`tidb_stats::builder`] owns and tests directly.
+    struct MockAnalyze;
+
+    impl ClusterAnalyze for MockAnalyze {
+        fn execute(
+            &self,
+            statement: &AnalyzeStatement,
+        ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, String> {
+            Err(format!(
+                "the mock node stores no statistics for `{}`.`{}`",
+                statement.schema, statement.table
+            ))
+        }
+    }
+
     /// A second connection to the same mock node, which is what makes a racing
     /// writer -- or a peer that must notice a DDL -- expressible in SQL rather
     /// than in raw keys.
@@ -1754,6 +1853,7 @@ mod tests {
             Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
             Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
             Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+            Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
             Arc::clone(&node.catalog),
             node.accounts.live.clone(),
             node.sysvars.live.clone(),
@@ -2228,6 +2328,52 @@ mod tests {
             .execute_write("CREATE USER 'bob'@'%'")
             .expect_err("a duplicate account must be refused by the driver");
         assert!(node.accounts.stored.user_exists("bob", "%"));
+    }
+
+    /// `ANALYZE TABLE` reaches the statistics seam rather than the ordinary
+    /// statement path.
+    ///
+    /// The mock analyzer refuses by naming the table, so the assertion is
+    /// that ITS refusal is what the client is told: had the statement stayed
+    /// on the ordinary path it would have come back as an unsupported
+    /// administrative statement instead, which is a different sentence and
+    /// would have left the cluster's statistics silently untouched.
+    #[test]
+    fn analyze_table_routes_to_the_statistics_seam() {
+        let (mut session, _node) = open_session();
+        let refusal = session
+            .execute_write("ANALYZE TABLE t")
+            .expect_err("the mock node has no statistics to store")
+            .message;
+        assert!(
+            refusal.contains("the mock node stores no statistics for"),
+            "the statistics seam's own refusal must reach the client: {refusal}"
+        );
+        assert!(
+            refusal.contains("`t`"),
+            "the refusal must name the table: {refusal}"
+        );
+    }
+
+    /// The clauses of `ANALYZE TABLE` this node does not run are refused at
+    /// admission -- before a transaction is opened -- and each names itself.
+    #[test]
+    fn analyze_clauses_this_node_does_not_run_are_refused_by_name() {
+        let (mut session, _node) = open_session();
+        for (sql, expected) in [
+            ("ANALYZE TABLE t INDEX i", "INDEX"),
+            ("ANALYZE TABLE t PREDICATE COLUMNS", "every column"),
+            ("ANALYZE TABLE t WITH 3 CMSKETCH DEPTH", "CMSketch"),
+        ] {
+            let refusal = session
+                .execute_write(sql)
+                .expect_err("this clause is not one the node runs")
+                .message;
+            assert!(
+                refusal.contains(expected),
+                "`{sql}` must be refused by naming `{expected}`: {refusal}"
+            );
+        }
     }
 
     /// A stored-schema change the cluster DDL path cannot express keeps a

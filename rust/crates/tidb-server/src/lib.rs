@@ -32,6 +32,7 @@ mod auth_session;
 mod auth_token;
 mod bootstrap;
 pub mod cluster_account_seam;
+pub mod cluster_analyze_seam;
 mod cluster_privileges;
 pub mod cluster_session;
 pub mod cluster_session_node;

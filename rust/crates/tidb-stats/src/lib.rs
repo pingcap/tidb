@@ -41,6 +41,7 @@ pub mod average_count;
 pub mod batch_update;
 pub mod bootstrap_sql;
 pub mod bounded_min_heap;
+pub mod builder;
 pub mod cache_metrics_labels;
 pub mod cmsketch;
 pub mod constants;
@@ -87,6 +88,7 @@ pub mod pseudo_cache_policy;
 pub mod queue_gate;
 pub mod refresher_state;
 pub mod row_estimate;
+pub mod row_sample_collector;
 pub mod sample_bytes;
 pub mod scalar_geometry;
 pub mod special_global_index;
@@ -150,6 +152,9 @@ pub use average_count::avg_count_per_not_null_value;
 pub use batch_update::BatchUpdate;
 pub use bootstrap_sql::{gen_init_stats_histograms_sql, gen_init_stats_meta_sql, HistSqlOptions};
 pub use bounded_min_heap::BoundedMinHeap;
+pub use builder::{
+    build_hist_and_topn, BuildOptions, HistogramAndTopN, SampleCollector, SampleItem,
+};
 pub use cache_metrics_labels::{
     stats_cache_counter_labels, stats_cache_gauge_labels, STATS_CACHE_COUNTER_LABELS,
     STATS_CACHE_GAUGE_LABELS,
@@ -234,6 +239,10 @@ pub use queue_gate::{
 };
 pub use refresher_state::should_rebuild_queue;
 pub use row_estimate::{calculate_skew_ratio_counts, default_row_est, RowEstimate};
+pub use row_sample_collector::{
+    adjusted_sample_rate, RowSampleCollector, SamplePolicy, SampledRow, ScannedRow, SlotStats,
+    SlotValue, DEF_ROWS_FOR_SAMPLE_RATE,
+};
 pub use sample_bytes::{
     calc_total_size, sample_value_is_usable, MAX_FIELD_VARCHAR_LENGTH, MAX_SAMPLE_VALUE_LENGTH,
 };

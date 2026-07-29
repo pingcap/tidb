@@ -99,6 +99,9 @@ pub enum StoredStateChange {
     Accounts,
     /// The stored `SET GLOBAL` overrides: `mysql.global_variables`.
     GlobalVars,
+    /// The stored statistics: `mysql.stats_meta` and its histogram tables.
+    /// `ANALYZE TABLE` is the only statement that writes them.
+    Statistics,
 }
 
 /// Whether a `SET` statement carries at least one GLOBAL-scoped assignment.
@@ -1050,6 +1053,19 @@ impl Session {
             // session's own copies, so it takes the ordinary path.
             Stmt::Session(session) if has_global_assignment(session) => {
                 StoredStateChange::GlobalVars
+            }
+            // `ANALYZE TABLE` writes `mysql.stats_*`, which every node in the
+            // cluster reads. Running it against this process's own loaded
+            // statistics would answer OK to a client whose table's histograms
+            // did not move anywhere.
+            Stmt::Admin(admin)
+                if matches!(
+                    admin.as_ref(),
+                    tidb_ast::AdminStmt::AnalyzeTable(_)
+                        | tidb_ast::AdminStmt::AnalyzeIncremental(_)
+                ) =>
+            {
+                StoredStateChange::Statistics
             }
             Stmt::Admin(_) | Stmt::Session(_) | Stmt::Query(_) | Stmt::Dml(_) => {
                 StoredStateChange::None
