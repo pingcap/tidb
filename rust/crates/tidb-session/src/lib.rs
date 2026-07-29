@@ -1517,11 +1517,26 @@ impl Session {
                     // The published id outlives a failing statement, exactly
                     // as Go's `StmtCtx.LastInsertID` does, so it is read
                     // before the error is propagated.
+                    // Go `session.LastInsertID()`, the OK packet's field:
+                    // `StmtCtx.LastInsertID` when the statement PUBLISHED an
+                    // allocated id, `StmtCtx.InsertID` -- the last explicit
+                    // value -- otherwise. Both come off the same context the
+                    // publication above reads, so the wire and
+                    // `LAST_INSERT_ID()` cannot drift apart: what differs is
+                    // only the fallback Go itself applies.
+                    //
+                    // Captured from TiDB: an allocating insert reports the id
+                    // on both; `INSERT INTO t (id,v) VALUES (50,2)` reports 50
+                    // on the wire while `LAST_INSERT_ID()` stays where it was;
+                    // an `INSERT IGNORE` whose only row is a duplicate burns
+                    // an id but reports 0 on the wire.
                     if let Some(published) = ctx.published_last_insert_id() {
                         self.last_insert_id = published;
                     }
-                    let (affected, allocated) = result?;
-                    self.statement_insert_id = allocated.unwrap_or(0).max(0) as u64;
+                    self.statement_insert_id = ctx
+                        .published_last_insert_id()
+                        .unwrap_or_else(|| ctx.given_insert_id());
+                    let (affected, _) = result?;
                     Ok(StmtOutput::Affected(affected))
                 }
                 DmlStmt::Update(_) => {

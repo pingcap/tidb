@@ -354,6 +354,49 @@ fn the_no_auto_value_on_zero_sql_mode_is_refused_rather_than_ignored() {
     assert_eq!(one(&mut session, "SELECT id FROM ai"), "1");
 }
 
+/// The OK packet's insert id and `LAST_INSERT_ID()` come off the SAME
+/// publication, so they can only differ where Go itself differs: the wire
+/// falls back to the statement's explicit auto value (Go `StmtCtx.InsertID`)
+/// and the function never follows one.
+///
+/// Captured from TiDB, `session.LastInsertID()` (the field `writeOkWith`
+/// sends) beside `SELECT LAST_INSERT_ID()`: allocating insert 1/1, explicit
+/// `VALUES (50,2)` 50/1, `UPDATE` 0/1, an `INSERT IGNORE` whose only row is a
+/// duplicate 0/1 -- it BURNS an id but reports none.
+#[test]
+fn the_ok_packets_insert_id_follows_gos_two_fallbacks() {
+    let mut session = table(None);
+    session.run("INSERT INTO ai (v) VALUES (1)").unwrap();
+    assert_eq!(session.statement_insert_id(), 1);
+    assert_eq!(one(&mut session, "SELECT last_insert_id()"), "1");
+
+    session.run("INSERT INTO ai (id,v) VALUES (50,2)").unwrap();
+    assert_eq!(
+        session.statement_insert_id(),
+        50,
+        "the wire reports the explicit value"
+    );
+    assert_eq!(
+        one(&mut session, "SELECT last_insert_id()"),
+        "1",
+        "the function does not follow it"
+    );
+
+    session.run("UPDATE ai SET v = 3 WHERE id = 50").unwrap();
+    assert_eq!(session.statement_insert_id(), 0);
+    assert_eq!(one(&mut session, "SELECT last_insert_id()"), "1");
+
+    // The burned-id case: the row is skipped, so nothing is published and the
+    // wire reports 0 even though the allocator moved.
+    session.run("INSERT IGNORE INTO ai (v) VALUES (3)").unwrap();
+    assert_eq!(
+        session.statement_insert_id(),
+        0,
+        "an id burned by a skipped row never reaches the wire"
+    );
+    assert_eq!(one(&mut session, "SELECT last_insert_id()"), "1");
+}
+
 /// DDL implicitly COMMITS the open transaction before it runs, so a TRUNCATE
 /// inside `BEGIN` is durable and the counter it resets is the SURVIVING
 /// table's, not a working copy's.

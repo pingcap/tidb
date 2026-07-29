@@ -70,6 +70,9 @@ pub struct StmtContext {
     /// make the failing case unreachable and force a second, error-shaped
     /// channel for exactly that case.
     last_insert_id: Rc<Cell<Option<u64>>>,
+    /// Go `StmtCtx.InsertID`: the explicit value a row gave the
+    /// `AUTO_INCREMENT` column, which the OK packet falls back to.
+    given_insert_id: Rc<Cell<u64>>,
     /// Whether `@@auto_increment_increment`/`@@auto_increment_offset` are at
     /// their defaults of 1. A statement that would have to honour a different
     /// step is refused; see [`StmtContext::auto_increment_step_is_default`].
@@ -105,6 +108,7 @@ impl StmtContext {
             rand_session: None,
             rand_seeded: Rc::default(),
             last_insert_id: Rc::default(),
+            given_insert_id: Rc::default(),
             auto_increment_step_is_default: true,
             auto_increment_zero_is_explicit: false,
             only_full_group_by: false,
@@ -216,6 +220,7 @@ impl StmtContext {
             rand_session: None,
             rand_seeded: Rc::default(),
             last_insert_id: Rc::default(),
+            given_insert_id: Rc::default(),
             auto_increment_step_is_default: true,
             auto_increment_zero_is_explicit: false,
             only_full_group_by: false,
@@ -258,6 +263,26 @@ impl StmtContext {
     #[must_use]
     pub fn published_last_insert_id(&self) -> Option<u64> {
         self.last_insert_id.get()
+    }
+
+    /// Go `StmtCtx.InsertID`: the explicit non-zero value a row GAVE the
+    /// `AUTO_INCREMENT` column. Go overwrites it per row, so the LAST such
+    /// value of the statement is the one that survives.
+    pub fn record_given_insert_id(&self, id: u64) {
+        self.given_insert_id.set(id);
+    }
+
+    /// The explicit auto-increment value this statement last saw, or 0.
+    ///
+    /// This is the OK packet's fallback: Go's `session.LastInsertID()` answers
+    /// `StmtCtx.LastInsertID` when the statement PUBLISHED one and
+    /// `StmtCtx.InsertID` otherwise, which is why
+    /// `INSERT INTO t (id,v) VALUES (50,2)` reports 50 on the wire while
+    /// `LAST_INSERT_ID()` -- which never follows an explicit value -- does not
+    /// move (captured).
+    #[must_use]
+    pub fn given_insert_id(&self) -> u64 {
+        self.given_insert_id.get()
     }
 
     /// Declares whether `@@auto_increment_increment` and

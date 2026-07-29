@@ -595,6 +595,22 @@ impl KvTable {
         Ok(Some(allocated as i64))
     }
 
+    /// Go `StmtCtx.InsertID`: the EXPLICIT non-zero value a row gave the
+    /// `AUTO_INCREMENT` column, which is set at the same site Go rebases from
+    /// (`insert_common.go`: `if recordID != 0 { ...; StmtCtx.InsertID = ... }`).
+    /// `None` when the column allocated instead, or when there is no such
+    /// column.
+    #[must_use]
+    pub fn given_auto_increment_value(&self, row: &[Datum]) -> Option<u64> {
+        let offset = self.auto_increment_offset?;
+        let given = match row.get(offset) {
+            Some(Datum::Int(value)) => *value as u64,
+            Some(Datum::UInt(value)) => *value,
+            _ => 0,
+        };
+        (given != 0).then_some(given)
+    }
+
     /// Marks the columns whose encoding is the clustered row handle, which Go
     /// records as `TableInfo.IsCommonHandle`.
     pub fn set_common_handle_offsets(&mut self, offsets: Vec<usize>) {

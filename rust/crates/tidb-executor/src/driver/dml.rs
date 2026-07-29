@@ -333,6 +333,11 @@ pub(crate) fn run_insert_traced(
                     if first_allocated.is_none() {
                         first_allocated = Some(allocated);
                     }
+                } else if let Some(given) = kv.given_auto_increment_value(&new_rows[*index]) {
+                    // Go records the explicit value at the same site, and the
+                    // LAST row's wins; the OK packet falls back to it when the
+                    // statement published nothing.
+                    ctx.record_given_insert_id(given);
                 }
             }
             // Go resolves a conflict per row, before the row is written:

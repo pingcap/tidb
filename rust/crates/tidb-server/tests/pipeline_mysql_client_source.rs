@@ -658,6 +658,36 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         run_query(&mut client, &mut reader, "SELECT LAST_INSERT_ID()"),
         vec![vec!["2".to_owned()]]
     );
+    // An EXPLICIT auto value reaches the wire too -- Go's OK packet reports
+    // `StmtCtx.LastInsertID` when the statement allocated and
+    // `StmtCtx.InsertID`, the given value, otherwise. Captured from TiDB:
+    // after `INSERT INTO g VALUES (50, 2)` the OK packet carries 50 while
+    // `LAST_INSERT_ID()`, which only ever follows an ALLOCATED id, does not
+    // move. Both are asserted here so the two can never diverge unseen.
+    assert_eq!(
+        run_write_insert_id(
+            &mut client,
+            &mut reader,
+            "INSERT INTO gen (id, v) VALUES (50, 4)"
+        ),
+        50,
+        "the OK packet reports the explicit auto value"
+    );
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT LAST_INSERT_ID()"),
+        vec![vec!["2".to_owned()]],
+        "LAST_INSERT_ID() does not follow an explicit value"
+    );
+    // A statement that allocates nothing at all reports 0 on the wire and
+    // still leaves the function where it was.
+    assert_eq!(
+        run_write_insert_id(&mut client, &mut reader, "UPDATE gen SET v = 5 WHERE id = 50"),
+        0
+    );
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT LAST_INSERT_ID()"),
+        vec![vec!["2".to_owned()]]
+    );
 
     // A transaction over the wire: BEGIN/COMMIT answer with OK packets whose
     // status advertises SERVER_STATUS_IN_TRANS, and the staged write is
