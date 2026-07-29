@@ -226,6 +226,18 @@ where
             })?)
         };
 
+        // The cap may only travel with a predicate that travelled WHOLE. A
+        // conjunct left behind means TiKV counts its `limit` rows against a
+        // weaker filter, and the conjuncts applied here then remove some of
+        // those -- fewer rows than the query asked for, with nothing to say so.
+        // This is the same hazard the staged buffer already guards against by
+        // dropping the cap whenever rows are merged in locally.
+        let remote_limit = if lowered.len() == request.comparisons.len() {
+            request.limit
+        } else {
+            None
+        };
+
         let mut spec = TiKvTableScanSpec::new(request.table_id, columns);
         // The merge above reads the remote rows in record-key order, which is
         // the order it merges the staged buffer against.
@@ -240,7 +252,7 @@ where
             ),
             TiKvScanPlan::Table(&scan),
             selection.as_ref(),
-            request.limit,
+            remote_limit,
             &output_offsets,
         )
         .map_err(|error| PushdownScannerError::Unsupported(error.to_string()))?;
@@ -251,7 +263,7 @@ where
         if selection.is_some() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
-        if request.limit.is_some() {
+        if remote_limit.is_some() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
         let plan = RemoteScanPlan {
