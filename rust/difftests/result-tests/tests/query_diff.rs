@@ -163,8 +163,12 @@ fn query_result_matches_go_engine() {
     // debt is carried as a number that fails the moment it grows.
     const KNOWN_DIVERGENCES: usize = 0;
 
-    if failures.len() > KNOWN_DIVERGENCES {
-        panic!(
+    // One comparison, both directions: `>` is a regression, `<` means the
+    // constant is stale. Written as a match on Ordering rather than two
+    // inequalities so it still reads correctly at zero, where `len() >= 0`
+    // would be vacuously true for a usize.
+    match failures.len().cmp(&KNOWN_DIVERGENCES) {
+        std::cmp::Ordering::Greater => panic!(
             "{} of {} in-domain queries diverged from the Go engine, up from {} \
              ({} skipped) -- a new divergence appeared:{}",
             failures.len(),
@@ -172,15 +176,15 @@ fn query_result_matches_go_engine() {
             KNOWN_DIVERGENCES,
             skipped,
             failures.join("")
-        );
+        ),
+        std::cmp::Ordering::Less => panic!(
+            "only {} of {} queries diverge now, down from {}. Lower \
+             KNOWN_DIVERGENCES to {} so the ratchet holds.",
+            failures.len(),
+            matched + failures.len(),
+            KNOWN_DIVERGENCES,
+            failures.len()
+        ),
+        std::cmp::Ordering::Equal => {}
     }
-    assert!(
-        failures.len() >= KNOWN_DIVERGENCES,
-        "only {} of {} queries diverge now, down from {}. Lower KNOWN_DIVERGENCES \
-         to {} so the ratchet holds.",
-        failures.len(),
-        matched + failures.len(),
-        KNOWN_DIVERGENCES,
-        failures.len()
-    );
 }
