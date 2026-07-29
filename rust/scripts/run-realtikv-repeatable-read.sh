@@ -7,13 +7,15 @@
 # and the rows. The Rust node is started in cluster-session mode and told only
 # the PD address. Two independent client connections then prove, on the wire:
 #
-#   * session A opens BEGIN and reads a row;
+#   * session A opens BEGIN OPTIMISTIC and reads a row;
 #   * session B, a separate connection in autocommit, commits a new value for
 #     that row;
 #   * A re-reads and still sees its own BEGIN-time value -- repeatable read,
 #     which is only possible because A never took a newer timestamp;
 #   * A writes the row and COMMITs, and is refused with 9007, because its
-#     prewrite carries the BEGIN start_ts and B's commit is newer;
+#     prewrite carries the BEGIN start_ts and B's commit is newer -- which is
+#     what two real Go TiDB sessions answer for BEGIN OPTIMISTIC (a pessimistic
+#     transaction instead re-locks at a newer for_update_ts and commits);
 #   * B's value is the durable one, and the creating Go TiDB agrees.
 #
 # A per-statement-timestamp session fails the third and fourth checks, which is

@@ -56,7 +56,15 @@ def repeatable_read(args: argparse.Namespace) -> None:
         emit("baseline", row=before)
         original = before[1]
 
-        run(reader, "BEGIN", name="A BEGIN")
+        # OPTIMISTIC by name, because the mode decides the answer and Go's
+        # default is the other one. Captured from two real Go TiDB sessions
+        # running this exact dance (pkg/session, mock store): under BEGIN
+        # OPTIMISTIC, A's COMMIT is refused with 9007 and the row keeps the
+        # racing writer's value; under BEGIN PESSIMISTIC, A's UPDATE takes a
+        # lock at a newer for_update_ts, its COMMIT succeeds, and A's value
+        # wins. The node's transaction tier is the optimistic 2PC, so the
+        # optimistic answer is the one it owes.
+        run(reader, "BEGIN OPTIMISTIC", name="A BEGIN")
         expect_row(reader, select_sql, before, name="A's first read")
         emit("a_read_before_the_race", balance=original)
 

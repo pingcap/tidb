@@ -66,6 +66,8 @@ use tidb_txnkv::transaction::{
 };
 use tidb_txnkv::Key;
 
+use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
+
 /// One request the transaction's own thread serves, with the channel its answer
 /// goes back on.
 enum TransactionRequest {
@@ -413,21 +415,33 @@ impl SessionTransaction {
     ///
     /// An empty buffer publishes nothing and takes no commit timestamp, as
     /// Go's `COMMIT` of a transaction that wrote nothing does.
+    ///
+    /// # Errors
+    ///
+    /// Returns the client-visible error of any 2PC that did not commit -- the
+    /// 9007 of a lost race above all. The coordinator reports a rolled-back
+    /// transaction as an `Ok` value carrying the cause, so the outcome is
+    /// classified here rather than treated as success.
     pub fn commit(
         mut self,
         buffer: &MutationBuffer,
-    ) -> Result<Option<OptimisticCommitOutcome>, String> {
-        let (mutations, _) = staged_mutations(buffer).map_err(|error| error.to_string())?;
+    ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
+        let (mutations, _) = staged_mutations(buffer).map_err(coordinator_sql_error)?;
         if mutations.is_empty() {
-            self.thread.finish().map_err(|error| error.to_string())?;
+            self.thread.finish().map_err(storage_sql_error)?;
             return Ok(None);
         }
-        let outcome = self.thread.commit(mutations)?;
+        let outcome = self.thread.commit(mutations).map_err(engine_sql_error)?;
+        commit_outcome_to_sql_error(&outcome)?;
         buffer.reset();
         Ok(Some(outcome))
     }
 
     /// Ends the transaction without publishing anything.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of ending the transaction's own read side.
     pub fn rollback(mut self) -> Result<(), String> {
         self.thread.finish().map_err(|error| error.to_string())
     }
@@ -539,16 +553,39 @@ pub fn commit_staged_buffer(
     opener: &RealOptimisticTransactionOpener,
     buffer: &MutationBuffer,
     timeout: Duration,
-) -> Result<Option<OptimisticCommitOutcome>, OptimisticCoordinatorError> {
-    let (mutations, planned_bytes) = staged_mutations(buffer)?;
+) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
+    let (mutations, planned_bytes) = staged_mutations(buffer).map_err(coordinator_sql_error)?;
     if mutations.is_empty() {
         return Ok(None);
     }
-    let transaction = opener.begin(mutations.len(), planned_bytes)?;
+    let transaction = opener
+        .begin(mutations.len(), planned_bytes)
+        .map_err(coordinator_sql_error)?;
     let call = UnaryCallContext::with_timeout(timeout);
-    let outcome = transaction.commit(mutations, &call)?;
+    let outcome = transaction
+        .commit(mutations, &call)
+        .map_err(coordinator_sql_error)?;
+    commit_outcome_to_sql_error(&outcome)?;
     buffer.reset();
     Ok(Some(outcome))
+}
+
+/// The generic client-visible failure of a commit that never reached TiKV's
+/// verdict. Only an outcome TiKV returned can carry a code of its own.
+fn coordinator_sql_error(error: OptimisticCoordinatorError) -> LockSqlError {
+    engine_sql_error(error.to_string())
+}
+
+fn storage_sql_error(error: StorageError) -> LockSqlError {
+    engine_sql_error(error.to_string())
+}
+
+fn engine_sql_error(detail: impl fmt::Display) -> LockSqlError {
+    LockSqlError {
+        code: 1105,
+        state: *b"HY000",
+        message: format!("[kv:1105]transaction failed: {detail}"),
+    }
 }
 
 #[cfg(test)]

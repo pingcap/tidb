@@ -122,6 +122,7 @@ use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::cluster_table_storage::{
     commit_staged_buffer, SessionTransaction, StatementSnapshot,
 };
+use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, reload_catalog_from_cluster};
 use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl, prepare_cluster_ddl, ClusterDdlReport, SchemaVersionNotifier,
@@ -169,7 +170,10 @@ pub trait ClusterTransactions: Send + Sync {
 
     /// Publishes one autocommit statement's staged writes as its own
     /// transaction, then empties the buffer. An empty buffer publishes nothing.
-    fn commit(&self, buffer: &MutationBuffer) -> Result<(), String>;
+    ///
+    /// The error is the client-visible one, because a publication TiKV refused
+    /// has a code of its own: a lost race is 9007, not a generic failure.
+    fn commit(&self, buffer: &MutationBuffer) -> Result<(), SqlQueryError>;
 
     /// Opens the one transaction an explicit `BEGIN` holds until `COMMIT` or
     /// `ROLLBACK`.
@@ -189,7 +193,10 @@ pub trait OpenClusterTransaction: Send {
 
     /// Publishes the staged writes at the transaction's own start timestamp and
     /// empties the buffer.
-    fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), String>;
+    ///
+    /// The error is the client-visible one: a transaction whose prewrite lost
+    /// the race against a newer commit reports 9007, as Go's does.
+    fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), SqlQueryError>;
 
     /// Ends the transaction without publishing anything.
     fn rollback(self: Box<Self>) -> Result<(), String>;
@@ -220,10 +227,10 @@ impl ClusterTransactions for RealClusterTransactions {
             .map_err(|error| error.to_string())
     }
 
-    fn commit(&self, buffer: &MutationBuffer) -> Result<(), String> {
+    fn commit(&self, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {
         commit_staged_buffer(&self.opener, buffer, self.timeout)
             .map(|_| ())
-            .map_err(|error| error.to_string())
+            .map_err(sql_error)
     }
 
     fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
@@ -238,8 +245,10 @@ impl OpenClusterTransaction for SessionTransaction {
         SessionTransaction::snapshot(self).map_err(|error| error.to_string())
     }
 
-    fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), String> {
-        SessionTransaction::commit(*self, buffer).map(|_| ())
+    fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {
+        SessionTransaction::commit(*self, buffer)
+            .map(|_| ())
+            .map_err(sql_error)
     }
 
     fn rollback(self: Box<Self>) -> Result<(), String> {
@@ -613,7 +622,7 @@ impl ClusterServerSession {
             Ok(()) => Ok(()),
             Err(error) => {
                 self.buffer.reset();
-                Err(SqlQueryError::unknown(error))
+                Err(error)
             }
         }
     }
@@ -632,7 +641,7 @@ impl ClusterServerSession {
             Ok(()) => Ok(()),
             Err(error) => {
                 self.buffer.reset();
-                Err(SqlQueryError::unknown(error))
+                Err(error)
             }
         }
     }
@@ -1006,6 +1015,12 @@ impl QuerySession for ClusterServerSession {
     }
 }
 
+/// Carries a commit's own client-visible triple onto the wire, so a 9007 stays
+/// a 9007 instead of collapsing into the generic 1105.
+fn sql_error(error: LockSqlError) -> SqlQueryError {
+    SqlQueryError::new(error.code, error.state, error.message)
+}
+
 fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
     let mapped = error.to_mysql_error();
     SqlQueryError::new(mapped.code, mapped.state, mapped.message)
@@ -1190,11 +1205,16 @@ mod tests {
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_exec::cluster_catalog::{ClusterCatalog, LoadedDatabase};
+    use tidb_exec::pessimistic_lock_error::{commit_outcome_to_sql_error, ERR_WRITE_CONFLICT};
     use tidb_executor::cluster_storage::SnapshotPairs;
     use tidb_executor::storage::StorageError;
     use tidb_model::column::ColumnInfo as ModelColumnInfo;
     use tidb_model::db::DBInfo;
     use tidb_model::{SchemaState, TableInfo};
+    use tidb_txnkv::transaction::{
+        CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
+        RolledBackTransaction, TransactionCause,
+    };
     use tidb_txnkv::Key;
 
     const ABC_HASH: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
@@ -1243,13 +1263,27 @@ mod tests {
 
         /// Publishes `staged` at `commit_ts`, refusing any key another
         /// transaction committed after `start_ts`.
+        ///
+        /// A refusal is returned the way the real coordinator returns one: as
+        /// an `Ok` outcome carrying its cause, not as an `Err`. That is the
+        /// shape a caller can mistake for success, so the mock reproduces it
+        /// and lets the production classifier decide what the client is told.
         fn publish(
             self: &Arc<Self>,
             staged: Vec<(Key, Option<Vec<u8>>)>,
             start_ts: u64,
-        ) -> Result<(), String> {
+        ) -> OptimisticCommitOutcome {
+            let receipt = OptimisticTransactionReceipt::new(1, start_ts, b"primary".to_vec(), 1);
+            let rolled_back = |cause| {
+                OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+                    receipt: OptimisticTransactionReceipt::new(1, start_ts, b"primary".to_vec(), 1),
+                    cause,
+                })
+            };
             if self.fail_commit.load(Ordering::Acquire) {
-                return Err("the mock cluster refused this publication".to_owned());
+                return rolled_back(TransactionCause::Transport {
+                    detail: "the mock cluster refused this publication".to_owned(),
+                });
             }
             let mut versions = self.versions.lock().expect("versions");
             for (key, _) in &staged {
@@ -1257,9 +1291,9 @@ mod tests {
                     .get(key.as_bytes())
                     .is_some_and(|last| *last > start_ts)
                 {
-                    return Err(format!(
-                        "[kv:9007]Write conflict, startTS={start_ts} [try again later]"
-                    ));
+                    return rolled_back(TransactionCause::WriteConflict {
+                        detail: format!("txnStartTS={start_ts}"),
+                    });
                 }
             }
             let commit_ts = self.timestamp();
@@ -1274,7 +1308,10 @@ mod tests {
             drop(committed);
             drop(versions);
             self.publications.fetch_add(1, Ordering::AcqRel);
-            Ok(())
+            OptimisticCommitOutcome::Committed(CommittedTransaction {
+                receipt,
+                secondary_failures: Vec::new(),
+            })
         }
     }
 
@@ -1320,7 +1357,7 @@ mod tests {
             }))
         }
 
-        fn commit(&self, buffer: &MutationBuffer) -> Result<(), String> {
+        fn commit(&self, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {
             let staged = buffer.staged();
             if staged.is_empty() {
                 return Ok(());
@@ -1329,7 +1366,8 @@ mod tests {
             // before it can conflict -- exactly what an implicit
             // single-statement transaction does.
             let start_ts = self.0.timestamp();
-            self.0.publish(staged, start_ts)?;
+            let outcome = self.0.publish(staged, start_ts);
+            commit_outcome_to_sql_error(&outcome).map_err(sql_error)?;
             buffer.reset();
             Ok(())
         }
@@ -1363,12 +1401,13 @@ mod tests {
             }))
         }
 
-        fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), String> {
+        fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {
             let staged = buffer.staged();
             if staged.is_empty() {
                 return Ok(());
             }
-            self.cluster.publish(staged, self.start_ts)?;
+            let outcome = self.cluster.publish(staged, self.start_ts);
+            commit_outcome_to_sql_error(&outcome).map_err(sql_error)?;
             buffer.reset();
             Ok(())
         }
@@ -2133,6 +2172,10 @@ mod tests {
         let error = loser
             .control_transaction("COMMIT")
             .expect_err("a prewrite at the BEGIN timestamp must lose to a newer commit");
+        // The code, not just the text: the client is told 9007, which is the
+        // one thing a caller that only looked for `Err` from the coordinator
+        // could never report.
+        assert_eq!(error.code, ERR_WRITE_CONFLICT, "{}", error.message);
         assert!(
             error.message.contains("9007"),
             "a lost race is a write conflict, got: {}",

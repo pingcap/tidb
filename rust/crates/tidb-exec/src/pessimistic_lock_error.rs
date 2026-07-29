@@ -28,7 +28,7 @@
 //! after `innodb_lock_wait_timeout`, raises `[tikv:1205]Lock wait timeout
 //! exceeded; try restarting transaction`.
 
-use tidb_txnkv::transaction::PessimisticLockFailure;
+use tidb_txnkv::transaction::{OptimisticCommitOutcome, PessimisticLockFailure, TransactionCause};
 
 /// Go `errno.ErrLockWaitTimeout`.
 pub const ERR_LOCK_WAIT_TIMEOUT: u16 = 1205;
@@ -98,6 +98,58 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
     }
 }
 
+/// Maps a terminal commit outcome to what the client is told.
+///
+/// Only `Committed` may answer `COMMIT` with success. Every other outcome
+/// means the writes are not durable, and the coordinator reports those as an
+/// `Ok` value carrying the cause rather than as an `Err` -- so a caller that
+/// only checks for `Err` tells the client its transaction committed when TiKV
+/// rolled it back. Every commit path goes through here for that reason.
+///
+/// # Errors
+///
+/// Returns the client-visible error for any outcome other than `Committed`.
+pub fn commit_outcome_to_sql_error(outcome: &OptimisticCommitOutcome) -> Result<(), LockSqlError> {
+    match outcome {
+        OptimisticCommitOutcome::Committed(_) => Ok(()),
+        OptimisticCommitOutcome::RolledBack(rolled_back) => {
+            Err(transaction_cause_to_sql_error(&rolled_back.cause))
+        }
+        OptimisticCommitOutcome::CleanupFailed(failed) => {
+            Err(transaction_cause_to_sql_error(&failed.cause))
+        }
+        OptimisticCommitOutcome::Undetermined(_) => Err(LockSqlError {
+            code: 1105,
+            state: DEFAULT_SQL_STATE,
+            message: "[kv:8005]transaction result is undetermined; the commit was published but \
+                      its outcome is unknown"
+                .to_owned(),
+        }),
+    }
+}
+
+/// Renders a transaction-ending cause as the error TiDB reports for it.
+///
+/// A write conflict is the one cause with a code of its own: Go's
+/// `kv.ErrWriteConflict` (9007) is what an optimistic transaction that lost the
+/// race reports at `COMMIT`. Everything else keeps its exact diagnostic under
+/// the generic 1105 rather than being disguised as a retryable conflict.
+#[must_use]
+pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError {
+    match cause {
+        TransactionCause::WriteConflict { detail } => LockSqlError {
+            code: ERR_WRITE_CONFLICT,
+            state: DEFAULT_SQL_STATE,
+            message: format!("[kv:9007]Write conflict, {detail} [try again later]"),
+        },
+        other => LockSqlError {
+            code: 1105,
+            state: DEFAULT_SQL_STATE,
+            message: format!("[kv:1105]transaction failed: {other}"),
+        },
+    }
+}
+
 /// Whether the SQL layer may retry only the statement, under a newer
 /// `for_update_ts`, instead of ending the transaction.
 ///
@@ -112,12 +164,80 @@ pub const fn is_retryable_statement_failure(failure: &PessimisticLockFailure) ->
 
 #[cfg(test)]
 mod tests {
+    use super::{commit_outcome_to_sql_error, transaction_cause_to_sql_error};
     use super::{
         is_retryable_statement_failure, lock_failure_to_sql_error,
         ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET, ERR_LOCK_DEADLOCK, ERR_LOCK_WAIT_TIMEOUT,
         ERR_WRITE_CONFLICT,
     };
-    use tidb_txnkv::transaction::{DeadlockDetail, PessimisticLockFailure};
+    use tidb_txnkv::transaction::{
+        CommittedTransaction, DeadlockDetail, OptimisticCommitOutcome,
+        OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction,
+        TransactionCause, UndeterminedTransaction,
+    };
+
+    fn receipt() -> OptimisticTransactionReceipt {
+        OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1)
+    }
+
+    /// The regression this exists for: the coordinator reports a 2PC TiKV
+    /// refused as an `Ok` value carrying the cause. A commit path that reads
+    /// that as success tells the client its transaction committed while the
+    /// rows were rolled back -- the silent-wrong COMMIT.
+    #[test]
+    fn a_rolled_back_outcome_is_a_failure_with_its_own_code() {
+        let refused = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+            receipt: receipt(),
+            cause: TransactionCause::WriteConflict {
+                detail: "conflictStartTS=7".to_owned(),
+            },
+        });
+        let error = commit_outcome_to_sql_error(&refused)
+            .expect_err("a rolled-back commit can never answer OK");
+        assert_eq!(error.code, ERR_WRITE_CONFLICT);
+        assert!(error.message.contains("conflictStartTS=7"));
+    }
+
+    #[test]
+    fn only_a_committed_outcome_answers_ok() {
+        assert!(
+            commit_outcome_to_sql_error(&OptimisticCommitOutcome::Committed(
+                CommittedTransaction {
+                    receipt: receipt(),
+                    secondary_failures: Vec::new(),
+                }
+            ))
+            .is_ok()
+        );
+        let undetermined = OptimisticCommitOutcome::Undetermined(UndeterminedTransaction {
+            receipt: receipt(),
+            cause: TransactionCause::Transport {
+                detail: "connection reset".to_owned(),
+            },
+        });
+        assert_eq!(
+            commit_outcome_to_sql_error(&undetermined)
+                .expect_err("an undetermined commit is not a durable one")
+                .code,
+            1105
+        );
+    }
+
+    #[test]
+    fn a_write_conflict_is_the_only_cause_with_a_code_of_its_own() {
+        assert_eq!(
+            transaction_cause_to_sql_error(&TransactionCause::WriteConflict {
+                detail: "d".to_owned()
+            })
+            .code,
+            ERR_WRITE_CONFLICT
+        );
+        let other = transaction_cause_to_sql_error(&TransactionCause::Region {
+            detail: "epoch not match".to_owned(),
+        });
+        assert_eq!(other.code, 1105);
+        assert!(other.message.contains("epoch not match"));
+    }
 
     #[test]
     fn nowait_reports_3572_exactly_as_tidb_does() {

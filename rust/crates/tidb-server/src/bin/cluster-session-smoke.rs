@@ -173,7 +173,7 @@ fn run_autocommit(
             println!("commit: {outcome:?}");
             None
         }
-        Err(error) => Some(error.to_string()),
+        Err(error) => Some(error.message),
     }
 }
 
@@ -220,7 +220,7 @@ fn run_explicit_transaction(
             println!("commit: {outcome:?}");
             None
         }
-        Err(error) => Some(error),
+        Err(error) => Some(error.message),
     }
 }
 

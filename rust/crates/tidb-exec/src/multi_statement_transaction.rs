@@ -60,12 +60,13 @@ use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     LockKeepAlive, LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError,
     OptimisticMutationKind, PessimisticLockFailure, ProductionOptimisticTransaction,
-    ProductionPessimisticTransaction, RealOptimisticTransactionOpener, TransactionCause,
-    TransactionMutationBuffer, MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    ProductionPessimisticTransaction, RealOptimisticTransactionOpener, TransactionMutationBuffer,
+    MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 
 use crate::pessimistic_lock_error::{
-    is_retryable_statement_failure, lock_failure_to_sql_error, LockSqlError, ERR_WRITE_CONFLICT,
+    commit_outcome_to_sql_error, is_retryable_statement_failure, lock_failure_to_sql_error,
+    transaction_cause_to_sql_error, LockSqlError,
 };
 use crate::real_tikv_dml::{
     plan_configured_write, ConfiguredWriteError, ConfiguredWritePlan, ConfiguredWriteReport,
@@ -430,7 +431,7 @@ impl MultiStatementTransaction {
                         .collect::<Vec<_>>();
                     if let Err(cause) = transaction.pessimistic_rollback(&added, &call) {
                         return Err(TransactionStatementError::Transaction(
-                            transaction_cause_error(&cause),
+                            transaction_cause_to_sql_error(&cause),
                         ));
                     }
                     if !is_retryable_statement_failure(&failure) || attempt >= MAX_LOCK_RETRIES {
@@ -519,7 +520,9 @@ impl MultiStatementTransaction {
                     transaction
                         .pessimistic_rollback(&held, &call)
                         .map_err(|cause| {
-                            TransactionStatementError::Transaction(transaction_cause_error(&cause))
+                            TransactionStatementError::Transaction(transaction_cause_to_sql_error(
+                                &cause,
+                            ))
                         })?;
                     transaction
                         .into_two_pc()
@@ -621,53 +624,15 @@ fn written_handles(write: &ConfiguredPreparedWrite) -> Vec<i64> {
     }
 }
 
-/// Maps a terminal commit outcome to what the client is told.
+/// Maps a terminal commit outcome onto this transaction's error shape.
 ///
-/// Only `Committed` may answer `COMMIT` with success: every other state means
-/// the writes are not durable, and a write conflict among them is the 9007 an
-/// optimistic transaction exists to report.
+/// The classification itself is shared with every other commit path in
+/// [`commit_outcome_to_sql_error`]; what is local here is that a failed commit
+/// ends the transaction rather than one statement.
 fn classify_commit_outcome(
     outcome: &OptimisticCommitOutcome,
 ) -> Result<(), TransactionStatementError> {
-    match outcome {
-        OptimisticCommitOutcome::Committed(_) => Ok(()),
-        OptimisticCommitOutcome::RolledBack(rolled_back) => Err(
-            TransactionStatementError::Transaction(transaction_cause_error(&rolled_back.cause)),
-        ),
-        OptimisticCommitOutcome::CleanupFailed(failed) => Err(
-            TransactionStatementError::Transaction(transaction_cause_error(&failed.cause)),
-        ),
-        OptimisticCommitOutcome::Undetermined(_) => {
-            Err(TransactionStatementError::Transaction(LockSqlError {
-                code: 1105,
-                state: *b"HY000",
-                message: "[kv:8005]transaction result is undetermined; the commit was published \
-                          but its outcome is unknown"
-                    .to_owned(),
-            }))
-        }
-    }
-}
-
-/// Renders a transaction-ending cause as the error TiDB reports for it.
-///
-/// A write conflict is the one cause with a code of its own: Go's
-/// `kv.ErrWriteConflict` (9007) is what an optimistic transaction that lost the
-/// race reports at `COMMIT`. Everything else keeps its exact diagnostic under
-/// the generic 1105 rather than being disguised as a retryable conflict.
-fn transaction_cause_error(cause: &TransactionCause) -> LockSqlError {
-    match cause {
-        TransactionCause::WriteConflict { detail } => LockSqlError {
-            code: ERR_WRITE_CONFLICT,
-            state: *b"HY000",
-            message: format!("[kv:9007]Write conflict, {detail} [try again later]"),
-        },
-        other => LockSqlError {
-            code: 1105,
-            state: *b"HY000",
-            message: format!("[kv:1105]transaction failed: {other}"),
-        },
-    }
+    commit_outcome_to_sql_error(outcome).map_err(TransactionStatementError::Transaction)
 }
 
 fn coordinator_error(error: OptimisticCoordinatorError) -> TransactionStatementError {
@@ -680,10 +645,8 @@ fn coordinator_error(error: OptimisticCoordinatorError) -> TransactionStatementE
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        classify_commit_outcome, transaction_cause_error, written_handles,
-        TransactionStatementError, ERR_WRITE_CONFLICT,
-    };
+    use super::{classify_commit_outcome, written_handles, TransactionStatementError};
+    use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, ERR_WRITE_CONFLICT};
     use tidb_planner::prepared_dml::{
         ConfiguredAssignment, ConfiguredPreparedWrite, PreparedBindValue,
     };
@@ -760,13 +723,13 @@ mod tests {
     #[test]
     fn a_write_conflict_is_the_only_cause_with_a_code_of_its_own() {
         assert_eq!(
-            transaction_cause_error(&TransactionCause::WriteConflict {
+            transaction_cause_to_sql_error(&TransactionCause::WriteConflict {
                 detail: "d".to_owned()
             })
             .code,
             ERR_WRITE_CONFLICT
         );
-        let other = transaction_cause_error(&TransactionCause::AlreadyExists {
+        let other = transaction_cause_to_sql_error(&TransactionCause::AlreadyExists {
             key: b"k".to_vec(),
             detail: "duplicate".to_owned(),
         });
