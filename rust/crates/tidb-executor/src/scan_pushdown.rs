@@ -44,7 +44,7 @@
 //! half only, a staged row that fails the predicate would be returned and a
 //! staged row that satisfies it could be dropped.
 //!
-//! That is why [`Executor::accept_scan_filter`] is opt-in and defaults to
+//! That is why [`TableAccess::accept_scan_filter`] is opt-in and defaults to
 //! refusing: a source may only return `true` when it applies every pushed
 //! conjunct to *every* row it emits, merged rows included. A future
 //! coprocessor-backed source that filters only the snapshot half must either
@@ -52,7 +52,7 @@
 //! in which case the driver leaves the whole `WHERE` in the `Selection` and
 //! nothing changes.
 //!
-//! [`Executor::accept_scan_filter`]: crate::executor::Executor::accept_scan_filter
+//! [`TableAccess::accept_scan_filter`]: crate::table_access::TableAccess::accept_scan_filter
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};

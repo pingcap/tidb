@@ -1091,7 +1091,11 @@ pub(crate) fn run_select_traced(
     // fail-closed -- the same rule the pushed filter and row cap follow.
     if let Some(source) = from_source.as_mut() {
         if let Some(keep) = crate::column_prune::prunable_columns(select, &scope) {
-            if keep.len() < scope.width() && source.accept_column_prune(&keep) {
+            if keep.len() < scope.width()
+                && source
+                    .table_access()
+                    .is_some_and(|access| access.accept_column_prune(&keep))
+            {
                 scope = crate::column_prune::pruned_scope(&scope, &keep);
             }
         }
@@ -1182,13 +1186,20 @@ pub(crate) fn run_select_traced(
         (Some(predicate), 1) => {
             let (pushed, residual) =
                 split_scan_predicates(predicate, &ScopeResolver { scope: &scope });
-            if !pushed.is_empty() && source.accept_scan_filter(&pushed, ctx) {
+            let accepted = !pushed.is_empty()
+                && source
+                    .table_access()
+                    .is_some_and(|access| access.accept_scan_filter(&pushed, ctx));
+            if accepted {
                 // `TableFullScan`'s `actRows` counts rows read, not rows
                 // kept, so it is taken from the scan itself rather than from
                 // the (now filtered) chunks leaving it.
-                if let (Some(trace), Some(scanned)) =
-                    (trace.as_deref_mut(), source.scanned_rows_counter())
-                {
+                if let (Some(trace), Some(scanned)) = (
+                    trace.as_deref_mut(),
+                    source
+                        .table_access()
+                        .and_then(|access| access.scanned_rows_counter()),
+                ) {
                     trace.set_scan_act_rows(scanned);
                 }
                 residual
@@ -1208,7 +1219,9 @@ pub(crate) fn run_select_traced(
         index_order.as_ref(),
         &resolver,
     ) {
-        source.accept_scan_limit(cap);
+        if let Some(access) = source.table_access() {
+            access.accept_scan_limit(cap);
+        }
     }
 
     // A `WHERE` whose conjuncts all moved into the scan still records its

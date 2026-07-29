@@ -86,8 +86,8 @@
 //!
 //! # What the scan promises
 //!
-//! [`Executor::accept_column_prune`] is opt-in and defaults to refusing, the
-//! same shape [`Executor::accept_scan_filter`] uses. A source returns `true`
+//! [`TableAccess::accept_column_prune`] is opt-in and defaults to refusing, the
+//! same shape [`TableAccess::accept_scan_filter`] uses. A source returns `true`
 //! only when it will emit exactly the requested columns, in the requested
 //! order, for every row -- and [`TableScanExec`] additionally asks the table
 //! to decode only those columns' ids, which is what makes pruning save work
@@ -97,8 +97,8 @@
 //! `column_offset` is computed against the already-narrowed scope; the kept
 //! set contains the `WHERE`'s columns by construction.
 //!
-//! [`Executor::accept_column_prune`]: crate::executor::Executor::accept_column_prune
-//! [`Executor::accept_scan_filter`]: crate::executor::Executor::accept_scan_filter
+//! [`TableAccess::accept_column_prune`]: crate::table_access::TableAccess::accept_column_prune
+//! [`TableAccess::accept_scan_filter`]: crate::table_access::TableAccess::accept_scan_filter
 //! [`TableScanExec`]: crate::kv_table::TableScanExec
 
 use std::collections::BTreeSet;
@@ -226,7 +226,7 @@ type JoinSideColumns = Vec<(String, FieldType)>;
 /// # How the concatenated offsets stay consistent
 ///
 /// The kept set is split at `left_width`, so each side is handed offsets in
-/// its own local space -- exactly what [`Executor::accept_column_prune`]
+/// its own local space -- exactly what [`TableAccess::accept_column_prune`]
 /// expects. Each side then answers independently and fail-closed, so a
 /// refusal on one side leaves that side full width without touching the
 /// other. Nothing is renumbered here: the caller rebuilds the concatenated
@@ -239,7 +239,7 @@ type JoinSideColumns = Vec<(String, FieldType)>;
 /// prune (a zero-column row is not a shape this tier's sources emit), so the
 /// cross-join side that no clause mentions is simply left alone.
 ///
-/// [`Executor::accept_column_prune`]: crate::executor::Executor::accept_column_prune
+/// [`TableAccess::accept_column_prune`]: crate::table_access::TableAccess::accept_column_prune
 pub(crate) fn prune_join_sides(
     select: &SelectStmt,
     join: &tidb_ast::Join,
@@ -259,9 +259,14 @@ pub(crate) fn prune_join_sides(
         .map(|o| o - left_width)
         .collect();
 
-    let left_pruned = left_keep.len() < left_width && left.accept_column_prune(&left_keep);
-    let right_pruned =
-        right_keep.len() < right_columns.len() && right.accept_column_prune(&right_keep);
+    let left_pruned = left_keep.len() < left_width
+        && left
+            .table_access()
+            .is_some_and(|access| access.accept_column_prune(&left_keep));
+    let right_pruned = right_keep.len() < right_columns.len()
+        && right
+            .table_access()
+            .is_some_and(|access| access.accept_column_prune(&right_keep));
     if !left_pruned && !right_pruned {
         return None;
     }

@@ -41,7 +41,7 @@
 //! staged mutation buffer is merged into the read client-side and never
 //! passed through TiKV, so a caller that lowers a predicate through here must
 //! keep applying the full predicate to the merged staged rows. That is the
-//! promise [`tidb_executor::executor::Executor::accept_scan_filter`] governs,
+//! promise [`tidb_executor::table_access::TableAccess::accept_scan_filter`] governs,
 //! and a source that cannot keep it must refuse the push-down instead.
 
 use std::error::Error;

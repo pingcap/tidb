@@ -154,7 +154,23 @@ impl Executor for HandleSourceExec {
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
     }
+
+    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+        Some(self)
+    }
 }
+
+/// This source refuses every offer, on purpose, by taking the fail-closed
+/// defaults of [`crate::table_access`] wholesale.
+///
+/// It is listed as an access path rather than left unnegotiable so the refusal
+/// is a stated position instead of an omission: the handle list is fixed by the
+/// statement text, so a cap would duplicate the `LimitExec` above (Go likewise
+/// keeps `Limit_10 | root` over `Batch_Point_Get_12`), the `WHERE` that pinned
+/// the handles is still applied above by design (`TryFastPlan` narrows the
+/// source, it does not replace the filter), and there is no scanned-row count
+/// to report because nothing is scanned.
+impl crate::table_access::TableAccess for HandleSourceExec {}
 
 /// Walks a set of index ranges in index order, reading each row it finds:
 /// Go's `IndexRangeScan` with the table-row lookup above it, collapsed into
@@ -304,6 +320,12 @@ impl Executor for IndexRangeSourceExec {
         self.meta.new_chunk()
     }
 
+    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+        Some(self)
+    }
+}
+
+impl crate::table_access::TableAccess for IndexRangeSourceExec {
     /// The ranges are walked in plan order and each one in index order, so a
     /// cap truncates the same prefix the `LimitExec` above would have kept.
     /// The driver only offers one when nothing above this source filters the
@@ -316,8 +338,8 @@ impl Executor for IndexRangeSourceExec {
     /// The rows this source emits are read through the same storage seam a
     /// full scan reads -- the snapshot with the session's staged mutation
     /// buffer merged in, for both the index entries and the row lookups --
-    /// and every one of them is tested here, so the driver may drop these
-    /// conjuncts from the `Selection` above (see [`crate::scan_pushdown`]).
+    /// and every one of them is tested here, which is how the staged-row
+    /// promise in [`crate::table_access`] is kept.
     fn accept_scan_filter(
         &mut self,
         filter: &crate::scan_pushdown::PushedScanFilter,

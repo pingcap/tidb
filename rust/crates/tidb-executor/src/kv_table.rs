@@ -1985,11 +1985,26 @@ impl Executor for TableScanExec {
         self.meta.init_cap()
     }
 
+    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+        Some(self)
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
+
+impl crate::table_access::TableAccess for TableScanExec {
     /// `scan_rows` reads the storage seam's merged stream -- the statement
     /// snapshot with the session's staged mutation buffer already merged in
-    /// (`ClusterTableStorage`) -- and every row of it is tested here. That is
-    /// what lets the driver drop these conjuncts from the `Selection` above:
-    /// no row, staged or committed, can reach the output untested.
+    /// (`ClusterTableStorage`) -- and every row of it is tested here, whether
+    /// it came from the byte cursor, from the coprocessor's answer, or from
+    /// the staged overlay merged in below. That is what makes the promise in
+    /// [`crate::table_access`] hold on both cursors.
     fn accept_scan_filter(
         &mut self,
         filter: &crate::scan_pushdown::PushedScanFilter,
@@ -2060,14 +2075,6 @@ impl Executor for TableScanExec {
         // replace.
         self.keep = keep.iter().map(|offset| self.keep[*offset]).collect();
         true
-    }
-
-    fn max_chunk_size(&self) -> usize {
-        self.meta.max_chunk_size()
-    }
-
-    fn new_chunk(&self) -> Chunk {
-        self.meta.new_chunk()
     }
 }
 

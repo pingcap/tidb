@@ -649,27 +649,11 @@ impl Executor for CountExec {
         self.child.new_chunk()
     }
 
-    fn accept_scan_filter(
-        &mut self,
-        filter: &crate::scan_pushdown::PushedScanFilter,
-        ctx: &crate::StmtContext,
-    ) -> bool {
-        self.child.accept_scan_filter(filter, ctx)
-    }
-
-    /// Metering must not change what runs, so the push-down offers pass
+    /// Metering must not change what runs, so the whole negotiation passes
     /// through to the real source -- otherwise `EXPLAIN ANALYZE` would
     /// measure a differently-planned query than the one it was asked about.
-    fn accept_scan_limit(&mut self, cap: u64) -> bool {
-        self.child.accept_scan_limit(cap)
-    }
-
-    fn scanned_rows_counter(&self) -> Option<Rc<Cell<u64>>> {
-        self.child.scanned_rows_counter()
-    }
-
-    fn accept_column_prune(&mut self, keep: &[usize]) -> bool {
-        self.child.accept_column_prune(keep)
+    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+        self.child.table_access()
     }
 }
 

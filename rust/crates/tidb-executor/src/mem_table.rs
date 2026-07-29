@@ -97,8 +97,15 @@ impl Executor for MemTableSourceExec {
         self.meta.new_chunk()
     }
 
+    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
+        Some(self)
+    }
+}
+
+impl crate::table_access::TableAccess for MemTableSourceExec {
     /// Every row this source can emit is in `rows`, and each one is tested,
-    /// so the promise `accept_scan_filter` makes holds unconditionally.
+    /// so the promise `accept_scan_filter` makes holds unconditionally --
+    /// there is no second, unfiltered half of the stream to lose.
     fn accept_scan_filter(&mut self, filter: &PushedScanFilter, ctx: &crate::StmtContext) -> bool {
         if filter.is_empty() {
             return false;

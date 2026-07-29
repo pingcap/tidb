@@ -55,6 +55,7 @@ pub mod selection;
 pub mod sort;
 mod stmt_context;
 pub mod storage;
+pub mod table_access;
 pub mod table_dual;
 pub mod view;
 mod window;
@@ -87,6 +88,7 @@ pub use scan_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp};
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::StmtContext;
+pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
 pub use tidb_expr::{
     eval_in, like_match_with_collation, truthy_of, Columns, EvalError, JsonError, MysqlRng,
