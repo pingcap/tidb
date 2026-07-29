@@ -32,6 +32,7 @@ type ExecDetails struct {
 	CommitDetail         *util.CommitDetails
 	LockKeysDetail       *util.LockKeysDetails
 	SharedLockKeysDetail *util.LockKeysDetails
+	ReadPoolTaskDetails  *util.PoolTaskDetails
 	CopTime              time.Duration
 	LockKeysDuration     time.Duration
 	RequestCount         int
@@ -146,6 +147,8 @@ const (
 	LockKeysTimeStr = "LockKeys_time"
 	// RequestCountStr means the request count.
 	RequestCountStr = "Request_count"
+	// ReadPoolTaskDetailsStr is the slow-query field name for read-pool task details.
+	ReadPoolTaskDetailsStr = "Read_pool_task_details"
 	// WaitPrewriteBinlogTimeStr means the time of waiting prewrite binlog finished when transaction committing.
 	WaitPrewriteBinlogTimeStr = "Wait_prewrite_binlog_time"
 	// GetCommitTSTimeStr means the time of getting commit ts.
@@ -180,6 +183,12 @@ const (
 	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 	// RocksdbBlockReadTimeStr means the time spent on rocksdb block read.
 	RocksdbBlockReadTimeStr = "Rocksdb_block_read_time"
+	// IARemoteReadSegmentCountStr means the number of IA remote segment reads.
+	IARemoteReadSegmentCountStr = "IA_remote_read_segment_count"
+	// IARemoteReadSegmentSizeStr means the number of bytes returned from IA remote segment reads.
+	IARemoteReadSegmentSizeStr = "IA_remote_read_segment_size"
+	// IARemoteReadSegmentWaitTimeStr means the total time spent waiting for IA remote segment reads.
+	IARemoteReadSegmentWaitTimeStr = "IA_remote_read_segment_wait_time"
 
 	// The following constants define the set of fields for SlowQueryLogItems
 	// that are relevant to evaluating and triggering SlowLogRules.
@@ -204,9 +213,28 @@ const (
 	PrewriteRegionStr = "Prewrite_region"
 )
 
+// IARemoteReadSegmentStats contains IA remote-read scan statistics.
+type IARemoteReadSegmentStats struct {
+	Count    uint64
+	Bytes    uint64
+	WaitTime time.Duration
+}
+
+// GetIARemoteReadSegmentStats reads IA remote-read scan statistics from client-go ScanDetail.
+func GetIARemoteReadSegmentStats(scanDetail *util.ScanDetail) IARemoteReadSegmentStats {
+	if scanDetail == nil {
+		return IARemoteReadSegmentStats{}
+	}
+	return IARemoteReadSegmentStats{
+		Count:    scanDetail.IaRemoteReadSegmentCount,
+		Bytes:    scanDetail.IaRemoteReadSegmentBytes,
+		WaitTime: scanDetail.IaRemoteReadSegmentDuration,
+	}
+}
+
 // String implements the fmt.Stringer interface.
 func (d ExecDetails) String() string {
-	parts := make([]string, 0, 8)
+	parts := make([]string, 0, 9)
 	if d.CopTime > 0 {
 		parts = append(parts, CopTimeStr+": "+strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64))
 	}
@@ -227,6 +255,9 @@ func (d ExecDetails) String() string {
 	}
 	if d.RequestCount > 0 {
 		parts = append(parts, RequestCountStr+": "+strconv.FormatInt(int64(d.RequestCount), 10))
+	}
+	if !d.ReadPoolTaskDetails.Empty() {
+		parts = append(parts, ReadPoolTaskDetailsStr+": "+d.ReadPoolTaskDetails.String())
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
@@ -347,6 +378,9 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.ScanDetail != nil && d.ScanDetail.ProcessedKeys > 0 {
 		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ScanDetail.ProcessedKeys, 10)))
 	}
+	if !d.ReadPoolTaskDetails.Empty() {
+		fields = append(fields, zap.String(strings.ToLower(ReadPoolTaskDetailsStr), d.ReadPoolTaskDetails.String()))
+	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
 		if commitDetails.PrewriteTime > 0 {
@@ -459,6 +493,28 @@ func (s *SyncExecDetails) mergeScanDetail(scanDetail *util.ScanDetail) {
 func (s *SyncExecDetails) mergeTimeDetail(timeDetail util.TimeDetail) {
 	s.execDetails.TimeDetail.ProcessTime += timeDetail.ProcessTime
 	s.execDetails.TimeDetail.WaitTime += timeDetail.WaitTime
+}
+
+// MergeReadPoolTaskDetails merges an aggregate without changing cop-task counts or
+// other execution details.
+func (s *SyncExecDetails) MergeReadPoolTaskDetails(details *util.PoolTaskDetails) {
+	if details.Empty() {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.execDetails.ReadPoolTaskDetails = mergeReadPoolTaskDetails(s.execDetails.ReadPoolTaskDetails, details)
+}
+
+func mergeReadPoolTaskDetails(dst, src *util.PoolTaskDetails) *util.PoolTaskDetails {
+	if src.Empty() {
+		return dst
+	}
+	if dst == nil {
+		return src.Clone()
+	}
+	dst.Merge(src)
+	return dst
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.

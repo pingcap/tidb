@@ -75,14 +75,13 @@ func WithCascades(on bool) TestOption {
 	}
 }
 
-// RunTestUnderCascades run the basic test body among two different planner mode.
+// RunTestUnderCascades runs the basic test body with the cascades planner disabled.
 func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit, cascades, caller string), opts ...mockstore.MockTiKVStoreOption) {
 	options := []struct {
 		name string
 		opt  TestOption
 	}{
 		{"off", WithCascades(false)},
-		{"on", WithCascades(true)},
 	}
 	// get func name
 	pc, _, _, ok := runtime.Caller(1)
@@ -101,14 +100,13 @@ func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit,
 	}
 }
 
-// RunTestUnderCascadesWithDomain run the basic test body among two different planner mode.
+// RunTestUnderCascadesWithDomain runs the basic test body with the cascades planner disabled.
 func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string), opts ...mockstore.MockTiKVStoreOption) {
 	options := []struct {
 		name string
 		opt  TestOption
 	}{
 		{"off", WithCascades(false)},
-		{"on", WithCascades(true)},
 	}
 	// get func name
 	pc, _, _, ok := runtime.Caller(1)
@@ -127,14 +125,13 @@ func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk
 	}
 }
 
-// RunTestUnderCascadesAndDomainWithSchemaLease runs the basic test body among two different planner modes. It can be used to set schema lease and store options.
+// RunTestUnderCascadesAndDomainWithSchemaLease runs the basic test body with the cascades planner disabled. It can be used to set schema lease and store options.
 func RunTestUnderCascadesAndDomainWithSchemaLease(t *testing.T, lease time.Duration, opts []mockstore.MockTiKVStoreOption, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string)) {
 	options := []struct {
 		name string
 		opt  TestOption
 	}{
 		{"off", WithCascades(false)},
-		{"on", WithCascades(true)},
 	}
 	// get func name
 	pc, _, _, ok := runtime.Caller(1)

@@ -435,19 +435,16 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 	return res, err
 }
 
-// GetTasksInStates gets the tasks in the states(order by priority asc, create_time acs, id asc).
-func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error) {
-	if len(states) == 0 {
-		return task, nil
-	}
-
+// GetCleanupTasks gets finished tasks, limited by the configured cleanup batch size.
+func (mgr *TaskManager) GetCleanupTasks(ctx context.Context) (task []*proto.Task, err error) {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		"select "+TaskColumns+" from mysql.tidb_global_task t "+
-			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
-			" order by priority asc, create_time asc, id asc", states...)
+			"where state in (%?, %?, %?) limit %?",
+		proto.TaskStateFailed, proto.TaskStateReverted, proto.TaskStateSucceed,
+		proto.GetTaskCleanupBatchSize())
 	if err != nil {
 		return task, err
 	}
@@ -596,7 +593,7 @@ func (mgr *TaskManager) GetSubtasksByExecIDAndStepAndStates(ctx context.Context,
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
-	args := []any{execID, taskID, step}
+	args := []any{execID, TaskIDToKey(taskID), step}
 	for _, state := range states {
 		args = append(args, state)
 	}
@@ -619,7 +616,7 @@ func (mgr *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID stri
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
-	args := []any{tidbID, taskID, step}
+	args := []any{tidbID, TaskIDToKey(taskID), step}
 	for _, state := range states {
 		args = append(args, state)
 	}
@@ -644,7 +641,7 @@ func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state in (%?, %?)`,
-		taskID, proto.SubtaskStatePending, proto.SubtaskStateRunning)
+		TaskIDToKey(taskID), proto.SubtaskStatePending, proto.SubtaskStateRunning)
 	if err != nil {
 		return nil, err
 	}
@@ -662,7 +659,7 @@ func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+SubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state = %? and step = %?`,
-		taskID, state, step)
+		TaskIDToKey(taskID), state, step)
 	if err != nil {
 		return nil, err
 	}
@@ -687,7 +684,7 @@ func (mgr *TaskManager) GetAllSubtaskSummaryByStep(
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select summary from mysql.tidb_background_subtask
 		where task_key = %? and step = %?`,
-		taskID, step)
+		TaskIDToKey(taskID), step)
 	if err != nil {
 		return nil, err
 	}
@@ -717,7 +714,7 @@ func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 			union all
 			select summary from mysql.tidb_background_subtask_history where task_key = %? and step = %?
 		) as combined`,
-		taskID, step, taskID, step)
+		TaskIDToKey(taskID), step, TaskIDToKey(taskID), step)
 	if err != nil {
 		return 0, err
 	}
@@ -753,7 +750,7 @@ func (mgr *TaskManager) GetSubtaskCntGroupByStates(ctx context.Context, taskID i
 		from mysql.tidb_background_subtask
 		where task_key = %? and step = %?
 		group by state`,
-		taskID, step)
+		TaskIDToKey(taskID), step)
 	if err != nil {
 		return nil, err
 	}
@@ -776,7 +773,7 @@ func (mgr *TaskManager) GetSubtaskStateCntAndErrorsByStep(ctx context.Context, t
 		`select state, error
 			from mysql.tidb_background_subtask
 			where task_key = %? and step = %?`,
-		taskID, step)
+		TaskIDToKey(taskID), step)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -809,7 +806,7 @@ func (mgr *TaskManager) GetSubtaskErrors(ctx context.Context, taskID int64) ([]e
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select error from mysql.tidb_background_subtask
-             where task_key = %? AND state in (%?, %?)`, taskID, proto.SubtaskStateFailed, proto.SubtaskStateCanceled)
+             where task_key = %? AND state in (%?, %?)`, TaskIDToKey(taskID), proto.SubtaskStateFailed, proto.SubtaskStateCanceled)
 	if err != nil {
 		return nil, err
 	}
@@ -994,7 +991,7 @@ func (mgr *TaskManager) SwitchTaskStepInBatch(
 		// some subtasks may be inserted by other schedulers, we can skip them.
 		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			select count(1) from mysql.tidb_background_subtask
-			where task_key = %? and step = %?`, task.ID, nextStep)
+			where task_key = %? and step = %?`, TaskIDToKey(task.ID), nextStep)
 		if err != nil {
 			return err
 		}
@@ -1066,7 +1063,7 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 	err = mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 			`select `+SubtaskColumns+` from mysql.tidb_background_subtask where task_key = %? and step = %?`,
-			taskID, step,
+			TaskIDToKey(taskID), step,
 		)
 		if err != nil {
 			return err
@@ -1076,7 +1073,7 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 		// when the user show import jobs, we need to check the history table.
 		rsFromHistory, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 			`select `+SubtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %? and step = %?`,
-			taskID, step,
+			TaskIDToKey(taskID), step,
 		)
 		if err != nil {
 			return err

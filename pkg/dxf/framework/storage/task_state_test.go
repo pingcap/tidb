@@ -37,6 +37,13 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
+func TestIsCancelledErr(t *testing.T) {
+	require.False(t, storage.IsCancelledErr(nil))
+	require.False(t, storage.IsCancelledErr(errors.New("some err")))
+	require.False(t, storage.IsCancelledErr(context.Canceled))
+	require.True(t, storage.IsCancelledErr(errors.New("cancelled by user")))
+}
+
 func TestTaskState(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 

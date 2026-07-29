@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUpgradeToVer259BackfillsIgnoreInlistPlanDigest(t *testing.T) {
+func TestUpgradeToVer279BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
@@ -38,18 +38,18 @@ func TestUpgradeToVer259BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	ver258 := version258
-	seV258 := CreateSessionAndSetID(t, store)
+	ver278 := version278
+	seV278 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(ver258))
+	err = m.FinishBootstrap(int64(ver278))
 	require.NoError(t, err)
-	RevertVersionAndVariables(t, seV258, ver258)
+	RevertVersionAndVariables(t, seV278, ver278)
 
 	// Simulate a cluster upgraded through the old path where the variable existed in code
 	// but its row was never backfilled into mysql.global_variables.
-	MustExec(t, seV258, fmt.Sprintf(
+	MustExec(t, seV278, fmt.Sprintf(
 		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 		vardef.TiDBIgnoreInlistPlanDigest,
 	))
@@ -57,7 +57,7 @@ func TestUpgradeToVer259BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 	require.NoError(t, err)
 	store.SetOption(StoreBootstrappedKey, nil)
 
-	res := MustExecToRecodeSet(t, seV258, fmt.Sprintf(
+	res := MustExecToRecodeSet(t, seV278, fmt.Sprintf(
 		"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 		vardef.TiDBIgnoreInlistPlanDigest,
 	))
@@ -94,7 +94,7 @@ func TestUpgradeToVer259BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 	require.NoError(t, res.Close())
 }
 
-func TestUpgradeToVer262RefreshesBindingDigest(t *testing.T) {
+func TestUpgradeToVer282RefreshesBindingDigest(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
@@ -115,9 +115,9 @@ func TestUpgradeToVer262RefreshesBindingDigest(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start from bootstrap version 250 so the next bootstrap runs through the
-	// later upgrade chain, including upgradeToVer262.
+	// later upgrade chain, including upgradeToVer282.
 	// The test still executes on current code, so rows created below need their
-	// persisted digest fields rewritten to the pre-v262 algorithm explicitly.
+	// persisted digest fields rewritten to the pre-v282 algorithm explicitly.
 	ver, err := GetBootstrapVersion(seV250)
 	require.NoError(t, err)
 	require.Equal(t, int64(ver250), ver)
@@ -130,7 +130,7 @@ func TestUpgradeToVer262RefreshesBindingDigest(t *testing.T) {
 	issueBindSQL := "select /*+ use_index(t_issue, idx_issue_b) */ * from t_issue where ((a = 1) and (b = 1))"
 	// These extra bindings only differ by redundant parentheses. Before the
 	// issue #67363 digest fix they have different sql_digest values, but after
-	// upgradeToVer262 refreshes the digest they collapse to the same binding key.
+	// upgradeToVer282 refreshes the digest they collapse to the same binding key.
 	// Their timestamps are older than the binding created through SQL above, so
 	// that row remains the deterministic winner and these rows become losers.
 	duplicateIssueBindings := []struct {
@@ -155,25 +155,25 @@ func TestUpgradeToVer262RefreshesBindingDigest(t *testing.T) {
 	MustExec(t, seV250, "create global binding for select * from t_simple where a = 1 using "+simpleBindSQL)
 	MustExec(t, seV250, "create global binding for select * from t_issue where ((a = 1) and (b = 1)) using "+issueBindSQL)
 
-	issueDigestV262 := getEnabledBindingSQLDigest(t, seV250, "idx_issue_b")
-	issuePlanDigest := "issue-plan-digest-v262"
-	require.NotEmpty(t, issueDigestV262)
-	simpleOriginalPreV262, simpleDigestPreV262 := normalizeBindingDigestBeforeVer262(t, simpleBindSQL, "test")
-	issueOriginalPreV262, issueDigestPreV262 := normalizeBindingDigestBeforeVer262(t, issueBindSQL, "test")
-	// Simulate bindings that were persisted before version 262. The simple
+	issueDigestV282 := getEnabledBindingSQLDigest(t, seV250, "idx_issue_b")
+	issuePlanDigest := "issue-plan-digest-v282"
+	require.NotEmpty(t, issueDigestV282)
+	simpleOriginalPreV282, simpleDigestPreV282 := normalizeBindingDigestBeforeVer282(t, simpleBindSQL, "test")
+	issueOriginalPreV282, issueDigestPreV282 := normalizeBindingDigestBeforeVer282(t, issueBindSQL, "test")
+	// Simulate bindings that were persisted before version 282. The simple
 	// binding should normalize to the same digest after upgrade, while the issue
-	// binding should move from the old parenthesized digest to issueDigestV262.
-	MustExec(t, seV250, "update mysql.bind_info set original_sql = ?, sql_digest = ? where bind_sql like ?", simpleOriginalPreV262, simpleDigestPreV262, "%idx_simple_b%")
-	MustExec(t, seV250, "update mysql.bind_info set original_sql = ?, sql_digest = ?, plan_digest = ? where bind_sql like ?", issueOriginalPreV262, issueDigestPreV262, issuePlanDigest, "%idx_issue_b%")
-	oldIssueDigests := map[string]struct{}{issueDigestPreV262: {}}
+	// binding should move from the old parenthesized digest to issueDigestV282.
+	MustExec(t, seV250, "update mysql.bind_info set original_sql = ?, sql_digest = ? where bind_sql like ?", simpleOriginalPreV282, simpleDigestPreV282, "%idx_simple_b%")
+	MustExec(t, seV250, "update mysql.bind_info set original_sql = ?, sql_digest = ?, plan_digest = ? where bind_sql like ?", issueOriginalPreV282, issueDigestPreV282, issuePlanDigest, "%idx_issue_b%")
+	oldIssueDigests := map[string]struct{}{issueDigestPreV282: {}}
 	for _, duplicate := range duplicateIssueBindings {
 		duplicateDigest := insertBindingWithOldDigest(t, seV250, duplicate.bindSQL, duplicate.createTime, duplicate.updateTime, issuePlanDigest)
 		require.NotContains(t, oldIssueDigests, duplicateDigest)
 		oldIssueDigests[duplicateDigest] = struct{}{}
 	}
-	// Keep one unparsable row on the post-v262 digest pair. Even though it cannot
-	// be refreshed, upgradeToVer262 must clear its plan_digest; otherwise updating
-	// a valid row to issueDigestV262 could hit digest_index.
+	// Keep one unparsable row on the post-v282 digest pair. Even though it cannot
+	// be refreshed, upgradeToVer282 must clear its plan_digest; otherwise updating
+	// a valid row to issueDigestV282 could hit digest_index.
 	invalidBindSQL := "invalid binding"
 	MustExec(t, seV250, `insert into mysql.bind_info
 		(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest)
@@ -187,15 +187,15 @@ func TestUpgradeToVer262RefreshesBindingDigest(t *testing.T) {
 		"",
 		"",
 		"manual",
-		issueDigestV262,
+		issueDigestV282,
 		issuePlanDigest,
 	)
 
 	simpleDigestBefore := getBindingSQLDigest(t, seV250, "idx_simple_b")
-	issueDigestBefore := issueDigestPreV262
+	issueDigestBefore := issueDigestPreV282
 
 	// Reboot the store into the current bootstrap version. This is the point
-	// where upgradeToVer262 scans mysql.bind_info and refreshes binding digests.
+	// where upgradeToVer282 scans mysql.bind_info and refreshes binding digests.
 	store.SetOption(StoreBootstrappedKey, nil)
 	seV250.Close()
 	dom.Close()
@@ -223,7 +223,7 @@ func TestUpgradeToVer262RefreshesBindingDigest(t *testing.T) {
 	for _, duplicate := range duplicateIssueBindings {
 		requireBindingDeletedAndDigestPairCleared(t, seCurVer, duplicate.bindSQL)
 	}
-	requireBindingPlanDigestCleared(t, seCurVer, invalidBindSQL, issueDigestV262)
+	requireBindingPlanDigestCleared(t, seCurVer, invalidBindSQL, issueDigestV282)
 
 	// The deleted duplicates should not matter to query behavior. Every
 	// parenthesis variant now normalizes to the enabled winner and can still take
@@ -244,7 +244,7 @@ func TestUpgradeToVer262RefreshesBindingDigest(t *testing.T) {
 	}
 }
 
-func TestUpgradeToVer261BackfillsDefaultStringMatchSelectivity(t *testing.T) {
+func TestUpgradeToVer281BackfillsDefaultStringMatchSelectivity(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
@@ -253,18 +253,18 @@ func TestUpgradeToVer261BackfillsDefaultStringMatchSelectivity(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	ver260 := version260
-	seV260 := CreateSessionAndSetID(t, store)
+	ver280 := version280
+	seV280 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(ver260))
+	err = m.FinishBootstrap(int64(ver280))
 	require.NoError(t, err)
-	RevertVersionAndVariables(t, seV260, ver260)
+	RevertVersionAndVariables(t, seV280, ver280)
 
 	// Simulate a cluster upgraded through the old path where the variable existed in code
 	// but its row was never backfilled into mysql.global_variables.
-	MustExec(t, seV260, fmt.Sprintf(
+	MustExec(t, seV280, fmt.Sprintf(
 		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 		vardef.TiDBDefaultStrMatchSelectivity,
 	))
@@ -272,7 +272,7 @@ func TestUpgradeToVer261BackfillsDefaultStringMatchSelectivity(t *testing.T) {
 	require.NoError(t, err)
 	store.SetOption(StoreBootstrappedKey, nil)
 
-	res := MustExecToRecodeSet(t, seV260, fmt.Sprintf(
+	res := MustExecToRecodeSet(t, seV280, fmt.Sprintf(
 		"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 		vardef.TiDBDefaultStrMatchSelectivity,
 	))
@@ -309,7 +309,7 @@ func TestUpgradeToVer261BackfillsDefaultStringMatchSelectivity(t *testing.T) {
 	require.NoError(t, res.Close())
 }
 
-func TestUpgradeToVer263BackfillsAnalyzeDefaultOptions(t *testing.T) {
+func TestUpgradeToVer283BackfillsAnalyzeDefaultOptions(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
@@ -326,17 +326,17 @@ func TestUpgradeToVer263BackfillsAnalyzeDefaultOptions(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	ver262 := version262
-	seV262 := CreateSessionAndSetID(t, store)
+	ver282 := version282
+	seV282 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(ver262))
+	err = m.FinishBootstrap(int64(ver282))
 	require.NoError(t, err)
-	RevertVersionAndVariables(t, seV262, ver262)
+	RevertVersionAndVariables(t, seV282, ver282)
 
 	for _, variable := range analyzeDefaults {
-		MustExec(t, seV262, fmt.Sprintf(
+		MustExec(t, seV282, fmt.Sprintf(
 			"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 			variable.name,
 		))
@@ -346,7 +346,7 @@ func TestUpgradeToVer263BackfillsAnalyzeDefaultOptions(t *testing.T) {
 	store.SetOption(StoreBootstrappedKey, nil)
 
 	for _, variable := range analyzeDefaults {
-		res := MustExecToRecodeSet(t, seV262, fmt.Sprintf(
+		res := MustExecToRecodeSet(t, seV282, fmt.Sprintf(
 			"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 			variable.name,
 		))
@@ -387,7 +387,7 @@ func TestUpgradeToVer263BackfillsAnalyzeDefaultOptions(t *testing.T) {
 }
 
 func insertBindingWithOldDigest(t *testing.T, se sessionapi.Session, bindSQL, createTime, updateTime, planDigest string) string {
-	originalSQL, sqlDigest := normalizeBindingDigestBeforeVer262(t, bindSQL, "test")
+	originalSQL, sqlDigest := normalizeBindingDigestBeforeVer282(t, bindSQL, "test")
 	MustExec(t, se, `insert into mysql.bind_info
 		(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest)
 		values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -406,7 +406,7 @@ func insertBindingWithOldDigest(t *testing.T, se sessionapi.Session, bindSQL, cr
 	return sqlDigest
 }
 
-func normalizeBindingDigestBeforeVer262(t *testing.T, sql, defaultDB string) (string, string) {
+func normalizeBindingDigestBeforeVer282(t *testing.T, sql, defaultDB string) (string, string) {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
