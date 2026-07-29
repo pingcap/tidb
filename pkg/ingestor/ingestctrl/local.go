@@ -1678,6 +1678,7 @@ func (local *Backend) doImport(
 		<-wctx.Done()
 		failpoint.InjectCall("beforeReleaseRegionJobWorkerPool")
 		pool.Release()
+		// Get OperatorErr after all workers have exited.
 		return wctx.OperatorErr()
 	})
 
