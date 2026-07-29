@@ -598,6 +598,49 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     assert_eq!(close_count.get(), 1, "close is idempotent");
 }
 
+/// `set_time_zone` reaches every DAG request from that point on — the same
+/// fresh-per-query read Go's `ConstructDAGReq` performs against
+/// `SessionVars.Location()` — matching `pkg/executor/internal/builder`'s
+/// `dagReq.TimeZoneName, dagReq.TimeZoneOffset =
+/// timeutil.Zone(ctx.GetSessionVars().Location())`. A session that never
+/// calls `SET time_zone` still sends `"UTC"`/`0`, this session's default.
+#[test]
+fn set_time_zone_threads_into_every_subsequent_dag_request() {
+    let timestamps = ScriptedTimestampSource::new([1, 2]);
+    let state = Rc::new(SharedTransportState::default());
+    let next_count = Rc::new(Cell::new(0));
+    let close_count = Rc::new(Cell::new(0));
+    let responses = [
+        response(&[1], Rc::clone(&next_count), Rc::clone(&close_count)),
+        response(&[1], Rc::clone(&next_count), Rc::clone(&close_count)),
+    ];
+    let mut engine = RealTiKvReadSession::new(
+        configured_table(),
+        transport(responses, Rc::clone(&state)),
+        timestamps,
+    );
+
+    engine
+        .execute("SELECT id FROM test.accounts")
+        .expect("default-zone query must reach the transport");
+    engine.set_time_zone("+05:00", 18_000);
+    engine
+        .execute("SELECT id FROM test.accounts")
+        .expect("re-zoned query must reach the transport");
+
+    let requests = state.requests.borrow();
+    let [first, second] = requests.as_slice() else {
+        panic!("exactly two requests must be sent");
+    };
+    let first_dag = DagRequest::decode(first.data.as_slice()).expect("request data is a DAG");
+    assert_eq!(first_dag.time_zone_name.as_deref(), Some("UTC"));
+    assert_eq!(first_dag.time_zone_offset, Some(0));
+
+    let second_dag = DagRequest::decode(second.data.as_slice()).expect("request data is a DAG");
+    assert_eq!(second_dag.time_zone_name.as_deref(), Some("+05:00"));
+    assert_eq!(second_dag.time_zone_offset, Some(18_000));
+}
+
 #[test]
 fn caller_cancellation_remains_the_query_transport_authority() {
     let state = Rc::new(SharedTransportState::default());

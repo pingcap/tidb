@@ -350,11 +350,12 @@ pub enum NoWriteReason {
 pub fn plan_insert(
     table: &ConfiguredTable,
     rows: &[ConfiguredInsertRow],
+    tz_offset_secs: i32,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
     let mut mutations = Vec::with_capacity(rows.len());
     let mut handles = Vec::with_capacity(rows.len());
     for row in rows {
-        let (handle, columns) = split_row(table, row)?;
+        let (handle, columns) = split_row(table, row, tz_offset_secs)?;
         if handles.contains(&handle) {
             return Err(ConfiguredWriteError::DuplicateHandle(handle));
         }
@@ -394,6 +395,7 @@ pub fn plan_update(
     column_index: usize,
     assignment: ConfiguredAssignment,
     stored: Option<&[u8]>,
+    tz_offset_secs: i32,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
     let Some(stored) = stored else {
         return Ok(ConfiguredWritePlan::NoWrite {
@@ -421,7 +423,9 @@ pub fn plan_update(
         // (`configured_stored_value`): the same type check, range check,
         // truncation, and `NULL`-into-nullable-column rule, so `SET col = ?`
         // admits and refuses exactly what `INSERT ... (col) VALUES (?)` does.
-        ConfiguredAssignment::Set(value) => configured_stored_value(assigned, &value)?,
+        ConfiguredAssignment::Set(value) => {
+            configured_stored_value(assigned, &value, tz_offset_secs)?
+        }
         ConfiguredAssignment::Add(addend) => plan_typed_add(assigned, &stored_value, &addend)?,
     };
     // An UPDATE whose value does not change writes nothing (Go `AddTouchedRows`
@@ -610,16 +614,18 @@ fn admit_decimal_value(
 /// (`fsp`) exactly as `parse_time`/`parse_duration` already do for the read
 /// path's literal folding.
 ///
-/// `TIMESTAMP` is parsed and stored as the literal wall-clock value with no
-/// session-timezone-to-UTC conversion: this bounded write boundary has no
-/// session timezone threaded to it yet (see `ConfiguredScalarType::Timestamp`'s
-/// own doc, which notes the conversion happens server-side on read). This is a
-/// known, narrower behavior than Go's `TIMESTAMP`, tracked as a follow-up
-/// rather than silently guessed.
+/// `TIMESTAMP` is parsed as a wall-clock value in the session's own
+/// `tz_offset_secs`, range-checked, then converted to UTC for storage —
+/// matching Go's `checkTimestampType` (parses/validates the literal in
+/// `SessionVars.Location()`) and `pkg/tablecodec/tablecodec.go`'s `flatten`
+/// (`t.ConvertTimeZone(loc, time.UTC)` when `loc != time.UTC`). `DATE`/
+/// `DATETIME`/`TIME` carry no timezone and are stored exactly as written,
+/// same as Go.
 fn admit_temporal_value(
     column: &ConfiguredColumn,
     bytes: &[u8],
     scalar_type: ConfiguredScalarType,
+    tz_offset_secs: i32,
 ) -> Result<Datum, ConfiguredWriteError> {
     let invalid = |message: String| ConfiguredWriteError::InvalidTemporal {
         column: column.name().to_owned(),
@@ -647,17 +653,32 @@ fn admit_temporal_value(
             Ok(Datum::Time(parsed.time))
         }
         ConfiguredScalarType::Timestamp { fsp } => {
-            let parsed = parse_time(
+            let session_tz = chrono::FixedOffset::east_opt(tz_offset_secs)
+                .expect("session time_zone offset is always in FixedOffset's range");
+            let mut parsed = parse_time(
                 text,
                 TimeType::Timestamp,
                 i64::from(fsp),
                 false,
                 false,
                 false,
-                &chrono::Utc,
+                &session_tz,
             )
-            .map_err(|error| invalid(format!("{text}: {error}")))?;
-            Ok(Datum::Time(parsed.time))
+            .map_err(|error| invalid(format!("{text}: {error}")))?
+            .time;
+            let overflow = parsed
+                .is_overflow(&session_tz)
+                .map_err(|error| invalid(format!("{text}: {error}")))?;
+            if overflow {
+                return Err(invalid(format!(
+                    "{text}: timestamp out of range for column '{}'",
+                    column.name()
+                )));
+            }
+            parsed
+                .convert_time_zone(&session_tz, &chrono::Utc)
+                .map_err(|error| invalid(format!("{text}: {error}")))?;
+            Ok(Datum::Time(parsed))
         }
         ConfiguredScalarType::Duration { fsp } => {
             let parsed = parse_duration(bytes, i64::from(fsp))
@@ -808,6 +829,7 @@ fn index_delete_mutation(
 fn split_row(
     table: &ConfiguredTable,
     row: &ConfiguredInsertRow,
+    tz_offset_secs: i32,
 ) -> Result<(i64, Vec<(i64, Datum)>), ConfiguredWriteError> {
     let mut handle = 0;
     let mut columns = Vec::with_capacity(row.values().len());
@@ -819,7 +841,10 @@ fn split_row(
                 handle = expect_integer_column_value(column, value)?;
             }
             ConfiguredColumnKind::Stored => {
-                columns.push((column.id(), configured_stored_value(column, value)?));
+                columns.push((
+                    column.id(),
+                    configured_stored_value(column, value, tz_offset_secs)?,
+                ));
             }
         }
     }
@@ -877,6 +902,7 @@ fn type_mismatch(column: &ConfiguredColumn, value_is_bytes: bool) -> ConfiguredW
 fn configured_stored_value(
     column: &ConfiguredColumn,
     value: &PreparedBindValue,
+    tz_offset_secs: i32,
 ) -> Result<Datum, ConfiguredWriteError> {
     if matches!(value, PreparedBindValue::Null) {
         return if column.is_nullable() {
@@ -965,7 +991,7 @@ fn configured_stored_value(
             let PreparedBindValue::Bytes(bytes) = value else {
                 return Err(type_mismatch(column, false));
             };
-            admit_temporal_value(column, bytes, scalar_type)
+            admit_temporal_value(column, bytes, scalar_type, tz_offset_secs)
         }
     }
 }
@@ -1125,10 +1151,17 @@ fn check_column_value(column: &ConfiguredColumn, value: i64) -> Result<(), Confi
 /// configured table can produce.
 pub fn planned_publication_bounds(
     write: &ConfiguredPreparedWrite,
+    tz_offset_secs: i32,
 ) -> Result<(usize, usize), ConfiguredWriteError> {
     match write {
         ConfiguredPreparedWrite::InsertRows { table, rows } => {
-            let ConfiguredWritePlan::Write { mutations, .. } = plan_insert(table, rows)? else {
+            // Re-plans with the statement's real `time_zone` so a `TIMESTAMP`
+            // literal that only overflows (or only fits) under this session's
+            // own zone is admitted/refused identically here and in the real
+            // plan `execute_configured_write` runs inside the transaction.
+            let ConfiguredWritePlan::Write { mutations, .. } =
+                plan_insert(table, rows, tz_offset_secs)?
+            else {
                 return Err(ConfiguredWriteError::Mutations(MutationSetError::Empty));
             };
             let bytes = mutations
@@ -1304,13 +1337,14 @@ pub fn commit_configured_write(
     opener: &RealOptimisticTransactionOpener,
     write: &ConfiguredPreparedWrite,
     timeout: Duration,
+    tz_offset_secs: i32,
 ) -> Result<ConfiguredWriteReport, ConfiguredWriteError> {
     // Bounds are computed before the transaction opens so an oversized
     // statement never spends a real PD timestamp.
-    let (planned_mutations, planned_bytes) = planned_publication_bounds(write)?;
+    let (planned_mutations, planned_bytes) = planned_publication_bounds(write, tz_offset_secs)?;
     let transaction = opener.begin(planned_mutations, planned_bytes)?;
     let call = UnaryCallContext::with_timeout(timeout);
-    match execute_configured_write(transaction, write, &call)? {
+    match execute_configured_write(transaction, write, &call, tz_offset_secs)? {
         ConfiguredWriteOutcome::Published {
             outcome,
             affected_rows,
@@ -1371,9 +1405,12 @@ pub fn plan_configured_write<S: WritePlanningSnapshot>(
     snapshot: &mut S,
     write: &ConfiguredPreparedWrite,
     call: &UnaryCallContext,
+    tz_offset_secs: i32,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
     match write {
-        ConfiguredPreparedWrite::InsertRows { table, rows } => plan_insert(table, rows),
+        ConfiguredPreparedWrite::InsertRows { table, rows } => {
+            plan_insert(table, rows, tz_offset_secs)
+        }
         ConfiguredPreparedWrite::UpdatePoint {
             table,
             handle,
@@ -1388,6 +1425,7 @@ pub fn plan_configured_write<S: WritePlanningSnapshot>(
                 *column_index,
                 assignment.clone(),
                 observed.as_deref(),
+                tz_offset_secs,
             )
         }
         ConfiguredPreparedWrite::DeletePoint { table, handle } => {
@@ -1408,13 +1446,14 @@ pub fn execute_configured_write<C, L, T>(
     mut transaction: RealOptimisticTransaction<C, L, T>,
     write: &ConfiguredPreparedWrite,
     call: &UnaryCallContext,
+    tz_offset_secs: i32,
 ) -> Result<ConfiguredWriteOutcome, ConfiguredWriteError>
 where
     C: TransactionCommandClient + LockRecoveryClient,
     L: RegionRecoveryLoader,
     T: TimestampSource,
 {
-    match plan_configured_write(&mut transaction, write, call)? {
+    match plan_configured_write(&mut transaction, write, call, tz_offset_secs)? {
         ConfiguredWritePlan::Write {
             mutations,
             affected_rows,

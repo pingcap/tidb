@@ -116,7 +116,7 @@ fn a_mixed_int_and_string_insert_routes_each_value_by_column_type() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
-    } = plan_insert(&table, &rows).expect("insert must plan")
+    } = plan_insert(&table, &rows, 0).expect("insert must plan")
     else {
         panic!("an INSERT always publishes");
     };
@@ -148,7 +148,7 @@ fn a_string_bound_to_an_integer_column_is_rejected() {
         panic!("expected an INSERT command");
     };
     assert!(matches!(
-        plan_insert(&table, &rows),
+        plan_insert(&table, &rows, 0),
         Err(ConfiguredWriteError::ColumnTypeMismatch { .. })
     ));
 }
@@ -195,7 +195,7 @@ fn one_insert_row_becomes_one_not_exists_mutation_and_one_affected_row() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
-    } = plan_insert(&table, &rows).expect("insert must plan")
+    } = plan_insert(&table, &rows, 0).expect("insert must plan")
     else {
         panic!("an INSERT always publishes");
     };
@@ -220,7 +220,7 @@ fn every_inserted_row_counts_exactly_once() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
-    } = plan_insert(&table, &rows).expect("insert must plan")
+    } = plan_insert(&table, &rows, 0).expect("insert must plan")
     else {
         panic!("an INSERT always publishes");
     };
@@ -246,7 +246,7 @@ fn the_written_column_order_never_changes_the_persisted_bytes() {
             panic!("expected an INSERT command");
         };
         let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_insert(&table, &rows).expect("insert must plan")
+            plan_insert(&table, &rows, 0).expect("insert must plan")
         else {
             panic!("an INSERT always publishes");
         };
@@ -264,7 +264,7 @@ fn one_statement_cannot_insert_the_same_handle_twice() {
         panic!("expected an INSERT command");
     };
     assert_eq!(
-        plan_insert(&table, &rows),
+        plan_insert(&table, &rows, 0),
         Err(ConfiguredWriteError::DuplicateHandle(10))
     );
 }
@@ -284,7 +284,7 @@ fn a_changed_row_publishes_one_exists_mutation_and_reports_one_row() {
         BALANCE_INDEX,
         ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
         Some(&stored_row(100)),
-    )
+    0)
     .expect("update must plan")
     else {
         panic!("a changed row publishes");
@@ -307,7 +307,7 @@ fn an_unchanged_row_publishes_nothing_without_client_found_rows() {
             BALANCE_INDEX,
             ConfiguredAssignment::Set(PreparedBindValue::Int(100)),
             Some(&stored_row(100)),
-        ),
+        0),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::UnchangedRow,
         })
@@ -320,7 +320,7 @@ fn an_unchanged_row_publishes_nothing_without_client_found_rows() {
             BALANCE_INDEX,
             ConfiguredAssignment::Add(PreparedBindValue::Int(0)),
             Some(&stored_row(100)),
-        ),
+        0),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::UnchangedRow,
         })
@@ -364,7 +364,7 @@ fn a_missing_row_matches_nothing_and_publishes_nothing() {
             BALANCE_INDEX,
             ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
             None,
-        ),
+        0),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::MissingRow,
         })
@@ -379,7 +379,7 @@ fn arithmetic_update_reads_the_snapshot_value_it_adds_to() {
         BALANCE_INDEX,
         ConfiguredAssignment::Add(PreparedBindValue::Int(7)),
         Some(&stored_row(150)),
-    )
+    0)
     .expect("update must plan") else {
         panic!("a changed row publishes");
     };
@@ -397,7 +397,7 @@ fn signed_addition_fails_closed_exactly_where_go_overflows() {
             BALANCE_INDEX,
             ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
             Some(&stored_row(i64::MAX)),
-        ),
+        0),
         Err(ConfiguredWriteError::Overflow {
             column: "balance".to_owned(),
             current: i64::MAX,
@@ -411,7 +411,7 @@ fn signed_addition_fails_closed_exactly_where_go_overflows() {
             BALANCE_INDEX,
             ConfiguredAssignment::Add(PreparedBindValue::Int(-1)),
             Some(&stored_row(i64::MIN)),
-        ),
+        0),
         Err(ConfiguredWriteError::Overflow {
             column: "balance".to_owned(),
             current: i64::MIN,
@@ -426,7 +426,7 @@ fn signed_addition_fails_closed_exactly_where_go_overflows() {
         BALANCE_INDEX,
         ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
         Some(&stored_row(i64::MAX - 1)),
-    )
+    0)
     .expect("the boundary value must remain admitted") else {
         panic!("a changed row publishes");
     };
@@ -445,7 +445,7 @@ fn a_row_missing_its_configured_column_fails_closed() {
             BALANCE_INDEX,
             ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
             Some(&foreign_row),
-        ),
+        0),
         Err(ConfiguredWriteError::RowRead(_))
     ));
     assert!(matches!(
@@ -455,7 +455,7 @@ fn a_row_missing_its_configured_column_fails_closed() {
             BALANCE_INDEX,
             ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
             Some(b"not a row"),
-        ),
+        0),
         Err(ConfiguredWriteError::RowRead(_))
     ));
 }
@@ -488,7 +488,7 @@ fn an_update_rewrites_every_stored_column_not_just_the_assigned_one() {
         BALANCE_INDEX,
         ConfiguredAssignment::Set(PreparedBindValue::Int(150)),
         Some(&stored),
-    )
+    0)
     .expect("update must plan") else {
         panic!("a changed row publishes");
     };
@@ -566,7 +566,7 @@ fn an_int_column_persists_the_same_bytes_as_a_bigint_of_the_same_value() {
 
     let mutation_bytes = |table: &ConfiguredTable, rows: &[ConfiguredInsertRow]| {
         let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_insert(table, rows).expect("insert must plan")
+            plan_insert(table, rows, 0).expect("insert must plan")
         else {
             panic!("an INSERT always publishes");
         };
@@ -597,7 +597,7 @@ fn an_int_column_reports_int_scan_metadata_not_bigint() {
 fn an_insert_outside_the_int_domain_fails_closed() {
     let (table, over) = bound_int_insert(&[10, i64::from(i32::MAX) + 1]);
     assert_eq!(
-        plan_insert(&table, &over),
+        plan_insert(&table, &over, 0),
         Err(ConfiguredWriteError::ValueOutOfRange {
             column: "balance".to_owned(),
             value: i64::from(i32::MAX) + 1,
@@ -606,14 +606,14 @@ fn an_insert_outside_the_int_domain_fails_closed() {
     );
     let (table, under) = bound_int_insert(&[10, i64::from(i32::MIN) - 1]);
     assert!(matches!(
-        plan_insert(&table, &under),
+        plan_insert(&table, &under, 0),
         Err(ConfiguredWriteError::ValueOutOfRange { .. })
     ));
 
     // The exact boundary is admitted.
     let (table, max) = bound_int_insert(&[10, i64::from(i32::MAX)]);
     assert!(matches!(
-        plan_insert(&table, &max),
+        plan_insert(&table, &max, 0),
         Ok(ConfiguredWritePlan::Write { .. })
     ));
 }
@@ -630,7 +630,7 @@ fn an_int_arithmetic_update_overflows_at_the_i32_bound_not_the_i64_bound() {
             BALANCE_INDEX,
             ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
             Some(&stored),
-        ),
+        0),
         Err(ConfiguredWriteError::ValueOutOfRange {
             column: "balance".to_owned(),
             value: i64::from(i32::MAX) + 1,
@@ -646,7 +646,7 @@ fn an_int_arithmetic_update_overflows_at_the_i32_bound_not_the_i64_bound() {
         BALANCE_INDEX,
         ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
         Some(&bigint_stored),
-    )
+    0)
     .expect("a BIGINT admits values beyond the INT range") else {
         panic!("a changed row publishes");
     };
@@ -667,7 +667,7 @@ fn a_direct_int_update_outside_the_domain_fails_closed() {
             BALANCE_INDEX,
             ConfiguredAssignment::Set(PreparedBindValue::Int(i64::from(i32::MAX) + 1)),
             Some(&stored),
-        ),
+        0),
         Err(ConfiguredWriteError::ValueOutOfRange {
             column: "balance".to_owned(),
             value: i64::from(i32::MAX) + 1,
@@ -715,7 +715,7 @@ fn insert_adds_one_non_unique_index_entry_beside_the_record() {
     let ConfiguredWritePlan::Write {
         mutations,
         affected_rows,
-    } = plan_insert(&table, &rows).expect("insert must plan")
+    } = plan_insert(&table, &rows, 0).expect("insert must plan")
     else {
         panic!("an INSERT always publishes");
     };
@@ -761,7 +761,7 @@ fn updating_the_indexed_column_moves_its_entry_from_old_to_new() {
         BALANCE_INDEX,
         ConfiguredAssignment::Set(PreparedBindValue::Int(250)),
         Some(&stored_row(100)),
-    )
+    0)
     .expect("update must plan") else {
         panic!("a changed row publishes");
     };
@@ -796,7 +796,7 @@ fn updating_an_unindexed_column_leaves_the_index_alone() {
         2, // column index of `b`, the unindexed column
         ConfiguredAssignment::Set(PreparedBindValue::Int(999)),
         Some(&stored),
-    )
+    0)
     .expect("update must plan") else {
         panic!("a changed row publishes");
     };
@@ -839,7 +839,7 @@ fn updating_an_int_column_preserves_the_char_columns_of_a_mixed_row() {
         1, // column index of `k`
         ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
         Some(&stored),
-    )
+    0)
     .expect("update must plan")
     else {
         panic!("a changed row publishes");
@@ -873,7 +873,7 @@ fn a_set_that_would_overflow_the_int_column_still_fails_on_a_mixed_row() {
             1,
             ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
             Some(&stored),
-        ),
+        0),
         Err(ConfiguredWriteError::ValueOutOfRange { .. })
     ));
 }
@@ -921,7 +921,7 @@ fn a_char_and_an_int_assignment_reject_the_wrong_parameter_kind() {
         panic!("expected an UPDATE command");
     };
     assert!(matches!(
-        plan_update(&mixed_table(), 1, 2, assignment, Some(&stored)),
+        plan_update(&mixed_table(), 1, 2, assignment, Some(&stored), 0),
         Err(ConfiguredWriteError::ColumnTypeMismatch { .. })
     ));
 
@@ -936,7 +936,7 @@ fn a_char_and_an_int_assignment_reject_the_wrong_parameter_kind() {
         panic!("expected an UPDATE command");
     };
     assert!(matches!(
-        plan_update(&mixed_table(), 1, 1, assignment, Some(&stored)),
+        plan_update(&mixed_table(), 1, 1, assignment, Some(&stored), 0),
         Err(ConfiguredWriteError::ColumnTypeMismatch { .. })
     ));
 }
@@ -955,7 +955,7 @@ fn setting_a_char_column_replaces_only_its_bytes_and_keeps_the_int_columns() {
         2, // column index of `c`
         ConfiguredAssignment::Set(PreparedBindValue::Bytes(b"new value".to_vec())),
         Some(&stored),
-    )
+    0)
     .expect("update must plan")
     else {
         panic!("a changed row publishes");
@@ -985,7 +985,7 @@ fn setting_a_char_column_to_its_current_value_writes_nothing() {
             2,
             ConfiguredAssignment::Set(PreparedBindValue::Bytes(b"same".to_vec())),
             Some(&stored),
-        ),
+        0),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::UnchangedRow,
         })
@@ -1000,7 +1000,7 @@ fn updating_k_on_an_indexed_mixed_table_moves_the_index_and_keeps_char_columns()
     let table = mixed_table().with_indexes([ConfiguredIndex::non_unique(7, 2)]);
     let stored = stored_mixed_row(50, b"hi", b"pad");
     let ConfiguredWritePlan::Write { mutations, .. } =
-        plan_update(&table, 1, 1, ConfiguredAssignment::Add(PreparedBindValue::Int(1)), Some(&stored))
+        plan_update(&table, 1, 1, ConfiguredAssignment::Add(PreparedBindValue::Int(1)), Some(&stored), 0)
             .expect("update must plan")
     else {
         panic!("a changed row publishes");
@@ -1052,7 +1052,7 @@ fn the_update_byte_budget_covers_a_max_length_char_row() {
         column_index: 1,
         assignment: ConfiguredAssignment::Add(PreparedBindValue::Int(1)),
     };
-    let (_, planned_bytes) = planned_publication_bounds(&write).expect("bounds compute");
+    let (_, planned_bytes) = planned_publication_bounds(&write, 0).expect("bounds compute");
     let (key, value) = encode_expected_row(
         900,
         1,
@@ -1085,7 +1085,7 @@ fn an_insert_string_longer_than_its_char_column_is_data_too_long() {
         panic!("expected an INSERT command");
     };
     assert!(matches!(
-        plan_insert(&table, &rows),
+        plan_insert(&table, &rows, 0),
         Err(ConfiguredWriteError::DataTooLong {
             max_length: 120,
             char_length: 121,
@@ -1104,7 +1104,7 @@ fn an_insert_string_exactly_at_the_char_limit_is_admitted() {
     ]) else {
         panic!("expected an INSERT command");
     };
-    assert!(plan_insert(&table, &rows).is_ok());
+    assert!(plan_insert(&table, &rows, 0).is_ok());
 }
 
 #[test]
@@ -1117,7 +1117,7 @@ fn updating_a_char_column_beyond_its_length_is_data_too_long() {
             2, // column index of `c` (CHAR(120))
             ConfiguredAssignment::Set(PreparedBindValue::Bytes(vec![b'z'; 121])),
             Some(&stored),
-        ),
+        0),
         Err(ConfiguredWriteError::DataTooLong {
             max_length: 120,
             char_length: 121,
@@ -1140,7 +1140,7 @@ fn updating_a_char_column_with_trailing_space_overflow_truncates_to_the_limit() 
         2,
         ConfiguredAssignment::Set(PreparedBindValue::Bytes(value)),
         Some(&stored),
-    )
+    0)
     .expect("a whitespace overflow truncates and publishes") else {
         panic!("a changed row publishes");
     };
@@ -1202,7 +1202,7 @@ fn plan_configured_write_plans_an_insert_without_reading() {
         observed: None,
         reads: Vec::new(),
     };
-    let plan = plan_configured_write(&mut snapshot, &write, &call()).expect("insert plans");
+    let plan = plan_configured_write(&mut snapshot, &write, &call(), 0).expect("insert plans");
     assert!(snapshot.reads.is_empty(), "an INSERT reads no row");
     let ConfiguredWritePlan::Write {
         mutations,
@@ -1226,7 +1226,7 @@ fn plan_configured_write_reads_the_row_then_plans_an_update() {
         observed: Some(stored_row(100)),
         reads: Vec::new(),
     };
-    let plan = plan_configured_write(&mut snapshot, &write, &call()).expect("update plans");
+    let plan = plan_configured_write(&mut snapshot, &write, &call(), 0).expect("update plans");
     assert_eq!(
         snapshot.reads.len(),
         1,
@@ -1247,7 +1247,7 @@ fn plan_configured_write_reads_then_reports_no_write_for_a_missing_delete() {
         observed: None,
         reads: Vec::new(),
     };
-    let plan = plan_configured_write(&mut snapshot, &write, &call()).expect("delete plans");
+    let plan = plan_configured_write(&mut snapshot, &write, &call(), 0).expect("delete plans");
     assert_eq!(snapshot.reads.len(), 1, "the DELETE reads its own row");
     assert_eq!(
         plan,
@@ -1265,7 +1265,7 @@ fn plan_configured_write_reads_then_plans_a_present_delete() {
         observed: Some(stored_row(100)),
         reads: Vec::new(),
     };
-    let plan = plan_configured_write(&mut snapshot, &write, &call()).expect("delete plans");
+    let plan = plan_configured_write(&mut snapshot, &write, &call(), 0).expect("delete plans");
     assert_eq!(snapshot.reads.len(), 1);
     let ConfiguredWritePlan::Write {
         mutations,
@@ -1388,7 +1388,7 @@ fn a_nullable_column_admits_null_and_round_trips_it() {
         panic!("expected an INSERT command");
     };
     let ConfiguredWritePlan::Write { mutations, .. } =
-        plan_insert(&table, &rows).expect("INSERT of an explicit NULL must plan a write")
+        plan_insert(&table, &rows, 0).expect("INSERT of an explicit NULL must plan a write")
     else {
         panic!("an INSERT always publishes");
     };
@@ -1403,7 +1403,7 @@ fn a_nullable_column_admits_null_and_round_trips_it() {
         BALANCE_INDEX,
         ConfiguredAssignment::Set(PreparedBindValue::Int(1)),
         Some(&stored_value),
-    )
+    0)
     .expect("a stored NULL decodes cleanly for a point UPDATE of the same row");
     assert!(matches!(decoded, ConfiguredWritePlan::Write { .. }));
 
@@ -1433,7 +1433,7 @@ fn null_is_refused_into_a_not_null_column() {
         panic!("expected an INSERT command");
     };
     let error =
-        plan_insert(&table, &rows).expect_err("NULL must be refused for a NOT NULL column");
+        plan_insert(&table, &rows, 0).expect_err("NULL must be refused for a NOT NULL column");
     assert!(
         matches!(error, ConfiguredWriteError::NullNotAllowed { .. }),
         "expected NullNotAllowed, found {error}"
@@ -1463,6 +1463,16 @@ fn insert_one(
     table: &ConfiguredTable,
     value: PreparedBindValue,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    insert_one_at_tz(table, value, 0)
+}
+
+/// Same as [`insert_one`] but planned under an explicit session
+/// `time_zone` offset (seconds east of UTC), for `TIMESTAMP` fidelity tests.
+fn insert_one_at_tz(
+    table: &ConfiguredTable,
+    value: PreparedBindValue,
+    tz_offset_secs: i32,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
     let catalog = ConfiguredCatalog::new([table.clone()]).expect("catalog must validate");
     let ConfiguredPreparedWrite::InsertRows { table, rows } = lower_prepared_write(
         &tidb_parser::parse("INSERT INTO widen.t (id, v) VALUES (?, ?)").expect("SQL must parse"),
@@ -1474,7 +1484,7 @@ fn insert_one(
     else {
         panic!("expected an INSERT command");
     };
-    plan_insert(&table, &rows)
+    plan_insert(&table, &rows, tz_offset_secs)
 }
 
 fn decode_one(table: &ConfiguredTable, value_bytes: &[u8]) -> Datum {
@@ -1513,7 +1523,7 @@ fn update_one(
     else {
         panic!("expected an UPDATE command");
     };
-    plan_update(table, 1, 1, assignment, Some(&stored))
+    plan_update(table, 1, 1, assignment, Some(&stored), 0)
 }
 
 /// Same seed-then-plan shape as [`update_one`], but for `SET v = v + ?`
@@ -1540,7 +1550,7 @@ fn add_one(
     else {
         panic!("expected an UPDATE command");
     };
-    plan_update(table, 1, 1, assignment, Some(&stored))
+    plan_update(table, 1, 1, assignment, Some(&stored), 0)
 }
 
 #[test]
@@ -1633,6 +1643,93 @@ fn datetime_rounds_to_its_declared_fsp_and_rejects_an_invalid_literal() {
     let error = insert_one(&table, PreparedBindValue::Bytes(b"not-a-date".to_vec()))
         .expect_err("an invalid datetime literal must be refused");
     assert!(matches!(error, ConfiguredWriteError::InvalidTemporal { .. }));
+}
+
+/// `TIMESTAMP` session-`time_zone` round trip, pinned against the captured Go
+/// behavior in `pkg/executor/zz_dump_tsz_test.go` (`TestDumpTsz`): a literal
+/// bound under session `time_zone='+05:00'` stores the UTC instant, so a
+/// UTC-session read prints it shifted five hours earlier — `'2020-01-01
+/// 10:00:00'` at `+05:00` decodes as `'2020-01-01 05:00:00'` UTC — matching
+/// the captured `SELECT` row (`ts=2020-01-01 05:00:00`) exactly. A `DATETIME`
+/// literal carries no timezone and is stored and read back byte-identical to
+/// what was written, also matching the capture's unaffected `dt` column.
+#[test]
+fn timestamp_converts_session_local_literal_to_utc_for_storage() {
+    let table = widened_table(ConfiguredColumn::stored_timestamp_not_null("v", 2, 0));
+    // +05:00 is 18,000 seconds east of UTC.
+    let ConfiguredWritePlan::Write { mutations, .. } = insert_one_at_tz(
+        &table,
+        PreparedBindValue::Bytes(b"2020-01-01 10:00:00".to_vec()),
+        18_000,
+    )
+    .expect("insert must plan")
+    else {
+        panic!("an INSERT always publishes");
+    };
+    let Datum::Time(time) = decode_one(&table, mutations[0].value()) else {
+        panic!("expected a temporal value");
+    };
+    assert_eq!(time.to_string(), "2020-01-01 05:00:00");
+
+    // The same literal planned at UTC (session tz offset 0) stores unchanged,
+    // proving the shift above comes from the session zone and not the parser.
+    let datetime_table = widened_table(ConfiguredColumn::stored_datetime_not_null("v", 2, 0));
+    let ConfiguredWritePlan::Write {
+        mutations: datetime_mutations,
+        ..
+    } = insert_one_at_tz(
+        &datetime_table,
+        PreparedBindValue::Bytes(b"2020-01-01 10:00:00".to_vec()),
+        18_000,
+    )
+    .expect("insert must plan")
+    else {
+        panic!("an INSERT always publishes");
+    };
+    let Datum::Time(datetime_time) = decode_one(&datetime_table, datetime_mutations[0].value())
+    else {
+        panic!("expected a temporal value");
+    };
+    // DATETIME carries no timezone: the literal is stored exactly as written,
+    // unlike the TIMESTAMP column above.
+    assert_eq!(datetime_time.to_string(), "2020-01-01 10:00:00");
+}
+
+/// The captured boundary errors from `TestDumpTsz`: a session `time_zone` that
+/// pushes a literal outside `['1970-01-01 00:00:01', '2038-01-19 03:14:07']`
+/// UTC once converted is refused, exactly as Go's `checkTimestampType` refuses
+/// it before storage — not silently clamped or wrapped.
+#[test]
+fn timestamp_out_of_range_after_session_tz_conversion_is_refused() {
+    let table = widened_table(ConfiguredColumn::stored_timestamp_not_null("v", 2, 0));
+
+    // Session tz +14:00 (50,400s east): the literal's local midnight converts
+    // to 1969-12-31 10:00:00 UTC, before MIN_TIMESTAMP.
+    let low_error = insert_one_at_tz(
+        &table,
+        PreparedBindValue::Bytes(b"1970-01-01 00:00:00".to_vec()),
+        50_400,
+    )
+    .expect_err("a literal that underflows MIN_TIMESTAMP after tz conversion must be refused");
+    assert!(matches!(low_error, ConfiguredWriteError::InvalidTemporal { .. }));
+
+    // Session tz -12:00 (-43,200s east): the literal converts to
+    // 2038-01-19 15:14:07 UTC, past MAX_TIMESTAMP.
+    let high_error = insert_one_at_tz(
+        &table,
+        PreparedBindValue::Bytes(b"2038-01-19 03:14:07".to_vec()),
+        -43_200,
+    )
+    .expect_err("a literal that overflows MAX_TIMESTAMP after tz conversion must be refused");
+    assert!(matches!(high_error, ConfiguredWriteError::InvalidTemporal { .. }));
+
+    // The same high-boundary literal at UTC (offset 0) is exactly in range.
+    insert_one_at_tz(
+        &table,
+        PreparedBindValue::Bytes(b"2038-01-19 03:14:07".to_vec()),
+        0,
+    )
+    .expect("MAX_TIMESTAMP itself, at UTC, must be admitted");
 }
 
 #[test]

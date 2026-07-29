@@ -341,6 +341,7 @@ impl MultiStatementTransaction {
     pub fn execute_write(
         &mut self,
         write: &ConfiguredPreparedWrite,
+        tz_offset_secs: i32,
     ) -> Result<ConfiguredWriteReport, TransactionStatementError> {
         if self.mode.is_pessimistic() {
             let handles = written_handles(write);
@@ -350,7 +351,7 @@ impl MultiStatementTransaction {
                 self.lock_handles(&handles, ReadLockWait::Blocking)?;
             }
         }
-        let plan = plan_configured_write(self, write, &self.call.clone())
+        let plan = plan_configured_write(self, write, &self.call.clone(), tz_offset_secs)
             .map_err(|error| TransactionStatementError::write(&error))?;
         match plan {
             ConfiguredWritePlan::Write {

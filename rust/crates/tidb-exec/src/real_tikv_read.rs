@@ -1068,6 +1068,14 @@ pub struct RealTiKvReadSession<T = ProductionReadTransport, S = PdTimestampSourc
     identity: RealTiKvReadSessionIdentity,
     last_snapshot_ts: Option<u64>,
     _lease: Option<ReadSessionLease>,
+    /// This session's `time_zone`, threaded into every DAG request's
+    /// `TimeZoneName`/`TimeZoneOffset` fields exactly as Go's `ConstructDAGReq`
+    /// reads `ctx.GetSessionVars().Location()` fresh on every query. Defaults
+    /// to `UTC`/`0`, matching a fresh connection's default zone; [`Self::set_time_zone`]
+    /// updates it in place on `SET time_zone`, so every read after that point
+    /// (not merely the next one) observes the new zone.
+    time_zone_name: String,
+    time_zone_offset_secs: i32,
 }
 
 impl RealTiKvReadSession<ProductionReadTransport, PdTimestampSource> {
@@ -1106,6 +1114,8 @@ where
             },
             last_snapshot_ts: None,
             _lease: None,
+            time_zone_name: "UTC".to_owned(),
+            time_zone_offset_secs: 0,
         }
     }
 
@@ -1125,7 +1135,17 @@ where
             identity,
             last_snapshot_ts: None,
             _lease: lease,
+            time_zone_name: "UTC".to_owned(),
+            time_zone_offset_secs: 0,
         }
+    }
+
+    /// Updates this session's `time_zone`, consulted fresh by every DAG
+    /// request from this point on — the same fresh-per-query read Go's
+    /// `ConstructDAGReq` performs against `SessionVars.Location()`.
+    pub fn set_time_zone(&mut self, name: impl Into<String>, offset_secs: i32) {
+        self.time_zone_name = name.into();
+        self.time_zone_offset_secs = offset_secs;
     }
 
     /// Returns the real PD cluster identity, or zero for an injected test engine.
@@ -1303,7 +1323,12 @@ where
         let snapshot_ts = snapshot_ts.expect("nonempty plans require a supplied snapshot");
 
         let dag = construct_read_only_dag_req(
-            &DagRequestContext::new("UTC", 0, 0, EncodeType::Default),
+            &DagRequestContext::new(
+                self.time_zone_name.clone(),
+                i64::from(self.time_zone_offset_secs),
+                0,
+                EncodeType::Default,
+            ),
             TiKvScanPlan::Table(plan.table_scan()),
             plan.selection(),
             plan.projection_output_offsets(),

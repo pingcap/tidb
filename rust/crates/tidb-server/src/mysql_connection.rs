@@ -1639,7 +1639,7 @@ mod prepared_execute_wire_tests {
             panic!("expected an INSERT command");
         };
         let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_insert(&table, &rows).expect("insert must plan")
+            plan_insert(&table, &rows, 0).expect("insert must plan")
         else {
             panic!("an INSERT always publishes");
         };
@@ -1677,7 +1677,7 @@ mod prepared_execute_wire_tests {
             panic!("expected an INSERT command");
         };
         let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_insert(&table, &rows).expect("insert must plan")
+            plan_insert(&table, &rows, 0).expect("insert must plan")
         else {
             panic!("an INSERT always publishes");
         };
@@ -1728,7 +1728,7 @@ mod prepared_execute_wire_tests {
             panic!("expected an INSERT command");
         };
         let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_insert(&seeded_table, &rows).expect("seed insert must plan")
+            plan_insert(&seeded_table, &rows, 0).expect("seed insert must plan")
         else {
             panic!("an INSERT always publishes");
         };
@@ -1755,7 +1755,7 @@ mod prepared_execute_wire_tests {
             panic!("expected an UPDATE command");
         };
         let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_update(&table, handle, column_index, assignment, Some(&stored))
+            plan_update(&table, handle, column_index, assignment, Some(&stored), 0)
                 .expect("update must plan")
         else {
             panic!("a changed row publishes");

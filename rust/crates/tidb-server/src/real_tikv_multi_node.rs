@@ -403,8 +403,11 @@ impl QuerySession for RealTiKvMultiServerSession {
             .template()
             .bind(parameters)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        // This multi-relation node has no `SET time_zone` session state yet
+        // (unlike `RealTiKvServerSession`); `TIMESTAMP` literals here still
+        // round-trip as UTC, a narrower behavior tracked as a follow-up.
         let report =
-            commit_configured_write(&self.transaction_opener, &bound, CONTROL_PLANE_TIMEOUT)
+            commit_configured_write(&self.transaction_opener, &bound, CONTROL_PLANE_TIMEOUT, 0)
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
