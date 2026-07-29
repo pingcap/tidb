@@ -822,6 +822,13 @@ impl QuerySession for ClusterServerSession {
         }))
     }
 
+    /// The catalog is refreshed first so a schema another node created since
+    /// this connection opened is selectable, exactly as it is for a statement.
+    fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
+        self.rebuild_catalog_if_stale();
+        self.session.select_database(name).map_err(map_error)
+    }
+
     fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
         let parameter_count = self.session.parameter_count(sql).map_err(map_error)?;
         let kind = self.session.statement_kind(sql).map_err(map_error)?;

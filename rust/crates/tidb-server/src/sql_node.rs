@@ -590,7 +590,26 @@ pub trait QuerySession {
     fn execute_write(&mut self, _sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
         Ok(None)
     }
+
+    /// Selects this session's current schema (Go `clientConn.useDB`).
+    ///
+    /// The handshake's initial database and `COM_INIT_DB` are the same
+    /// operation in Go, and they are the same operation here. Sessions that
+    /// have no schema concept fail closed rather than accept a name they will
+    /// then ignore: a connection that reports success and silently resolves
+    /// nothing is worse than one that refuses.
+    fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
+        Err(SqlQueryError::new(
+            ER_BAD_DB_ERROR,
+            *b"42000",
+            format!("Unknown database '{name}'"),
+        ))
+    }
 }
+
+/// Go `mysql.ErrBadDB` (1049): the errno a schema that does not exist gets.
+/// A missing schema is emphatically not an access-denied failure.
+pub const ER_BAD_DB_ERROR: u16 = 1049;
 
 /// Process-owned factory invoked only after authentication, inside a worker.
 pub trait QuerySessionFactory: Send + Sync + 'static {

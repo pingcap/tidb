@@ -535,6 +535,25 @@ impl Session {
         Ok(Some(StmtOutput::Rows { columns, rows }))
     }
 
+    /// Go `clientConn.useDB`: selects a schema outside the statement path.
+    ///
+    /// The connection front end reaches this for the handshake's initial
+    /// database and for `COM_INIT_DB`, which Go both route through `useDB`.
+    /// Taking the name directly instead of re-rendering `use \`name\`` keeps
+    /// backquotes and other identifier syntax out of the picture entirely.
+    /// The process-list row is refreshed for the same reason a statement
+    /// refreshes it: a peer's `SHOW PROCESSLIST` reports the schema now
+    /// selected.
+    pub fn select_database(&mut self, name: &str) -> Result<(), DriverError> {
+        self.use_database(name)?;
+        if let Some(guard) = &self.process {
+            guard
+                .registry()
+                .statement_finished(guard.id(), &self.current_db, &self.status_text());
+        }
+        Ok(())
+    }
+
     /// Go `executeUse`: an unknown schema is `ErrDatabaseNotExists`, and the
     /// switch also updates `collation_database`.
     fn use_database(&mut self, name: &str) -> Result<(), DriverError> {

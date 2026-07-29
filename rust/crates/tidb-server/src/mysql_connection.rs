@@ -35,7 +35,8 @@ use crate::connection_resultset::{
 };
 use crate::handshake::{
     negotiate_capabilities, parse_response, InitialHandshake, AUTH_NATIVE_PASSWORD,
-    CLIENT_CONNECT_ATTRS, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
+    CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41,
+    CLIENT_SECURE_CONNECTION,
     DEFAULT_COLLATION_ID, SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_IN_TRANS,
 };
 use crate::native_password::generate_handshake_salt;
@@ -92,7 +93,17 @@ fn write_bind_parameters(values: Vec<PreparedValue>) -> Vec<PreparedBindValue> {
 }
 
 const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
+/// Go's `defaultCapability` (`pkg/server/server.go`) restricted to what this
+/// node actually serves.
+///
+/// `CLIENT_CONNECT_WITH_DB` is load-bearing beyond selecting a schema. A real
+/// libmysqlclient sets that bit in its *response* unconditionally, but only
+/// writes the database field when the *server* advertised the bit. Omitting it
+/// here therefore produced a response whose capability flags promised a field
+/// the packet did not contain, so every field after the auth data -- database,
+/// auth plugin, connection attributes -- was read one field early.
 const SERVER_CAPABILITIES: u32 = CLIENT_PROTOCOL_41
+    | CLIENT_CONNECT_WITH_DB
     | CLIENT_SECURE_CONNECTION
     | CLIENT_PLUGIN_AUTH
     | CLIENT_CONNECT_ATTRS
@@ -585,6 +596,20 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             });
         }
     };
+    // Go's `openSessionAndDoAuth`: the handshake's initial database is applied
+    // before the connection is reported ready, and a schema that does not
+    // exist ends the connection with its own errno rather than the OK packet.
+    if !response.db_name.is_empty() {
+        if let Err(error) = engine.select_database(&response.db_name) {
+            write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;
+            return Ok(ConnectionReport {
+                connection_id,
+                queries: 0,
+                commands: *commands,
+                exit: ConnectionExit::SessionRejected,
+            });
+        }
+    }
     write_ok(&mut output, response_sequence, protocol_41)?;
 
     let options = ResultSetOptions {
@@ -1236,8 +1261,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     }
                 }
             }
-            Command::InitDb(_)
-            | Command::FieldList(_)
+            // The `mysql` client implements `USE db` as COM_INIT_DB, not as a
+            // query, so this is the command an interactive `USE` arrives on.
+            Command::InitDb(name) => {
+                let name = String::from_utf8_lossy(&name).into_owned();
+                match engine.select_database(&name) {
+                    Ok(()) => write_ok(&mut output, 1, protocol_41)?,
+                    Err(error) => write_query_error(&mut output, &error, protocol_41)?,
+                }
+            }
+            Command::FieldList(_)
             | Command::SetOption(_)
             | Command::ResetConnection
             | Command::Unknown { .. } => write_error(
