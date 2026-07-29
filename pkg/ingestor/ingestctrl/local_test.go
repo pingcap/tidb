@@ -1183,6 +1183,17 @@ func (m mockIngestData) DecRef() {}
 
 func (m mockIngestData) Finish(_, _ int64) {}
 
+type blockingDecRefIngestData struct {
+	mockIngestData
+	decRefStarted chan<- struct{}
+	allowDecRef   <-chan struct{}
+}
+
+func (m *blockingDecRefIngestData) DecRef() {
+	close(m.decRefStarted)
+	<-m.allowDecRef
+}
+
 var dummyRegionInfo = &split.RegionInfo{
 	Region: &metapb.Region{Id: 1, Peers: []*metapb.Peer{{Id: 1, StoreId: 1}}},
 	Leader: &metapb.Peer{Id: 1, StoreId: 1},
@@ -2177,6 +2188,108 @@ func TestDoImport(t *testing.T) {
 		}
 	})
 
+	t.Run("context cancellation waits for running workers", func(t *testing.T) {
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockRunJobSucceed",
+			"return",
+		)
+		workerStarted := make(chan struct{})
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
+			func(ctx context.Context) {
+				close(workerStarted)
+				<-ctx.Done()
+			},
+		)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		allowDecRef := make(chan struct{})
+		var allowDecRefOnce sync.Once
+		releaseWorker := func() {
+			allowDecRefOnce.Do(func() {
+				close(allowDecRef)
+			})
+		}
+		t.Cleanup(func() {
+			cancel()
+			releaseWorker()
+		})
+
+		oldFakeRegionJobs := fakeRegionJobs
+		t.Cleanup(func() {
+			fakeRegionJobs = oldFakeRegionJobs
+		})
+
+		jobRange := engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}}
+		decRefStarted := make(chan struct{})
+		data := &blockingDecRefIngestData{
+			mockIngestData: mockIngestData{
+				{[]byte{'a'}, []byte{'a'}},
+			},
+			decRefStarted: decRefStarted,
+			allowDecRef:   allowDecRef,
+		}
+		fakeRegionJobs = map[[2]string]struct {
+			jobs []*regionJob
+			err  error
+		}{
+			{"a", "b"}: {
+				jobs: []*regionJob{{
+					keyRange:   jobRange,
+					ingestData: data,
+					region:     dummyRegionInfo,
+				}},
+			},
+		}
+
+		mockEngine := &mockEngineWithData{
+			data:          data,
+			ranges:        []engineapi.Range{jobRange},
+			waitForCancel: true,
+		}
+		local := &Backend{
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: toAtomic(1),
+			},
+		}
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- local.doImport(
+				ctx,
+				mockEngine,
+				[][]byte{jobRange.Start, jobRange.End},
+				int64(config.SplitRegionSize),
+				int64(config.SplitRegionKeys),
+			)
+		}()
+
+		select {
+		case <-workerStarted:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for region job worker to start")
+		}
+		cancel()
+		select {
+		case <-decRefStarted:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for region job worker to release ingest data")
+		}
+
+		select {
+		case err := <-errCh:
+			require.FailNow(t, "doImport returned before its running worker exited", "error: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+
+		releaseWorker()
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for doImport to return")
+		}
+	})
+
 	t.Run("dispatcher propagates context cancellation", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -3133,8 +3246,9 @@ func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
 
 // mockEngineWithData is a mock engine that implements engineapi.Engine
 type mockEngineWithData struct {
-	data   engineapi.IngestData
-	ranges []engineapi.Range
+	data          engineapi.IngestData
+	ranges        []engineapi.Range
+	waitForCancel bool
 }
 
 func (m *mockEngineWithData) ID() string {
@@ -3149,6 +3263,10 @@ func (m *mockEngineWithData) LoadIngestData(ctx context.Context, ch chan<- engin
 		Data:         m.data,
 		SortedRanges: m.ranges,
 	}:
+	}
+	if m.waitForCancel {
+		<-ctx.Done()
+		return ctx.Err()
 	}
 	// Don't close the channel here - generateAndSendJob will close it
 	return nil

@@ -1673,6 +1673,7 @@ func (local *Backend) doImport(
 	workGroup.Go(func() error {
 		pool.Start(wctx)
 		<-wctx.Done()
+		pool.Release()
 		return wctx.OperatorErr()
 	})
 
@@ -1707,12 +1708,10 @@ func (local *Backend) doImport(
 			})
 		}
 
-		// Close the pool, as well as the channel.
+		// Notify the worker-pool goroutine that all jobs are finished. It will
+		// release the pool and close the result channel.
 		wctx.Cancel()
-		pool.Release()
-		// The worker may set operator error after jobWg.Wait() is unblocked. Re-check
-		// here to avoid losing worker errors due to cancellation ordering.
-		return wctx.OperatorErr()
+		return nil
 	})
 
 	err := workGroup.Wait()
