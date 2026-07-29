@@ -131,6 +131,17 @@ pub fn session_with_cluster_storage(
 }
 
 /// Translates one stored `TableInfo` into a table over cluster storage.
+///
+/// Unlike the bounded node's `configure_loaded_column`, this one applies NO
+/// charset/collation gate, and must not: the wide path keeps the stored
+/// `FieldType` verbatim, so every collation-consuming site downstream --
+/// `SortExec` (`collation_of_node`), `HashAggExec`'s group key (which is also
+/// how `SELECT DISTINCT` is built), the hash-join key class, and the compare
+/// builtins' `derived_collation` -- reads the column's REAL collation and
+/// runs under it. Refusing a `utf8mb4_general_ci` table here would deny a
+/// table this tier serves correctly. (The bounded node needs its gate because
+/// its own comparator hardcodes `utf8mb4_bin`; the two tiers share no
+/// execution code.)
 fn cluster_table(table: &TableInfo, storage: &ClusterTableStorage) -> Result<KvTable, String> {
     if table.is_view() {
         return Err("it is a view".to_owned());
@@ -460,75 +471,82 @@ mod tests {
         assert!(snapshot.lock().unwrap().data.is_empty());
     }
 
-    /// A `utf8mb4_general_ci` string column, so the convergence node's
-    /// operators must compare it case-insensitively rather than byte-wise.
-    fn ci_column(id: i64, offset: i32, name: &str) -> ColumnInfo {
-        let mut field_type = FieldType::new(FieldTypeCode::Varchar)
-            .with_charset_name("utf8mb4")
-            .with_collation_name("utf8mb4_general_ci");
-        field_type.set_flen(20);
-        let mut column = ColumnInfo::new(id, name, field_type);
-        column.offset = offset;
-        column
-    }
-
-    /// One database `app` holding `w(id BIGINT PRIMARY KEY, s VARCHAR(20)
-    /// CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)`.
+    /// One database `app` holding `ci(id BIGINT PRIMARY KEY, c VARCHAR(32)
+    /// COLLATE utf8mb4_general_ci)`, built the way the cluster loader builds
+    /// it: the column's `FieldType` is the one decoded from the stored
+    /// descriptor, collation name and all.
     fn ci_catalog() -> ClusterCatalog {
-        let base = TableInfo {
+        // Decoded from the stored descriptor rather than built by hand, so
+        // this exercises the same `From<JsonFieldType>` the catalog loader
+        // uses -- including its duty to fill BOTH the collation name and the
+        // cached `Collation` enum.
+        let text: FieldType = serde_json::from_str(
+            r#"{"Tp":15,"Flag":0,"Flen":32,"Decimal":0,"Charset":"utf8mb4",
+                "Collate":"utf8mb4_general_ci","Elems":null,
+                "ElemsIsBinaryLit":null,"Array":false}"#,
+        )
+        .unwrap();
+        assert_eq!(text.collation(), tidb_datatype::Collation::Utf8Mb4GeneralCi);
+        let mut c = ColumnInfo::new(2, "c", text);
+        c.offset = 1;
+        let table = TableInfo {
             id: 201,
-            name: CiString::new("w"),
-            columns: vec![column(1, 0, "id", true), ci_column(2, 1, "s")],
+            name: CiString::new("ci"),
+            columns: vec![column(1, 0, "id", true), c],
             pk_is_handle: true,
             state: SchemaState::PUBLIC,
             ..TableInfo::default()
         };
         ClusterCatalog {
-            schema_version: 8,
+            schema_version: 7,
             databases: vec![tidb_exec::cluster_catalog::LoadedDatabase {
                 info: DBInfo {
-                    id: 6,
+                    id: 5,
                     name: CiString::new("app"),
                     ..DBInfo::default()
                 },
-                tables: vec![base],
+                tables: vec![table],
             }],
         }
     }
 
-    /// Regression guard for the convergence-node collation path: `cluster_table`
-    /// clones each column's `FieldType` verbatim (`field_type.clone()`), so the
-    /// derived collation of a `utf8mb4_general_ci` column reaches every operator.
-    /// ORDER BY, SELECT DISTINCT, GROUP BY, and a self-join therefore fold case
-    /// exactly as Go's collation-aware operators do -- not the byte order a
-    /// hardcoded `utf8mb4_bin` would produce. If a future change dropped the
-    /// collation from the clone, ORDER BY would return the byte order
-    /// `B, C, a, b` and this test would fail.
+    /// A `utf8mb4_general_ci` column loaded FROM THE CLUSTER keeps its
+    /// collation all the way into execution: `cluster_table` copies the
+    /// stored `FieldType`, the planner's `Column` carries it, and
+    /// `collation_of_node` reads the collation name back off that type. So
+    /// `ORDER BY`, `SELECT DISTINCT` and `GROUP BY` all run case-insensitively
+    /// on the convergence node, where a byte-ordered comparator would give
+    /// `B, C, a, b` and four groups.
+    ///
+    /// (This is the tier the bounded node's `configured_string_is_binary`
+    /// gate exists to protect: THAT node's `compare_prepared_rows` hardcodes
+    /// `utf8mb4_bin`, so it refuses such a column at load. The wide path
+    /// needs no gate because it never reaches that comparator.)
     #[test]
-    fn convergence_node_sorts_and_groups_a_ci_column_by_collation() {
+    fn a_case_insensitive_cluster_column_orders_groups_and_dedups_by_its_collation() {
         let (storage, _, _) = cluster_storage();
         let (mut session, skipped) =
             session_with_cluster_storage(&ci_catalog(), &storage, &StatsSnapshot::new());
-        // The ci table is admitted, not refused.
-        assert!(skipped.is_empty(), "ci table must load: {skipped:?}");
+        assert!(skipped.is_empty(), "a _ci table is served, not refused");
         session.run("USE app").unwrap();
         session
-            .run("INSERT INTO w (id, s) VALUES (1, 'a'), (2, 'B'), (3, 'b'), (4, 'C')")
+            .run("INSERT INTO ci (id, c) VALUES (1,'a'),(2,'B'),(3,'b'),(4,'C')")
             .unwrap();
 
-        let strings = |result: StmtResult| -> Vec<String> {
-            use tidb_datatype::Datum;
-            let StmtResult::Rows(rows) = result else {
+        let text = |result: Result<StmtResult, _>| -> Vec<String> {
+            let StmtResult::Rows(rows) = result.unwrap_or_else(|_| panic!("expected rows")) else {
                 panic!("expected rows");
             };
             rows.iter()
                 .map(|row| {
                     row.iter()
-                        .map(|cell| match cell {
-                            Datum::String(s) => {
-                                String::from_utf8(s.bytes().to_vec()).expect("utf8 cell")
+                        .map(|d| match d {
+                            tidb_datatype::Datum::Bytes(b) => {
+                                String::from_utf8_lossy(b).into_owned()
                             }
-                            Datum::Int(n) => n.to_string(),
+                            tidb_datatype::Datum::String(s) => {
+                                String::from_utf8_lossy(s.bytes()).into_owned()
+                            }
                             other => format!("{other:?}"),
                         })
                         .collect::<Vec<_>>()
@@ -537,39 +555,29 @@ mod tests {
                 .collect()
         };
 
-        // (1) ORDER BY: collation order a, B, b, C -- not byte order B, C, a, b.
+        // ORDER BY: `_ci` folds case, and equal keys keep insertion order.
         assert_eq!(
-            strings(session.run("SELECT s FROM w ORDER BY s").unwrap()),
+            text(session.run("SELECT c FROM ci ORDER BY c")),
             vec!["a", "B", "b", "C"]
         );
-        // (2) SELECT DISTINCT: B and b fold to one group -> 3 rows, not 4.
+        // DISTINCT: 'b' folds into 'B', so three rows, not four.
         assert_eq!(
-            strings(session.run("SELECT DISTINCT s FROM w ORDER BY s").unwrap()).len(),
-            3
+            text(session.run("SELECT DISTINCT c FROM ci ORDER BY c")),
+            vec!["a", "B", "C"]
         );
-        // (3) GROUP BY: B and b share a group whose COUNT(*) is 2.
+        // GROUP BY: the same identity gives the folded pair one group of 2.
         assert_eq!(
-            strings(
-                session
-                    .run("SELECT s, COUNT(*) FROM w GROUP BY s ORDER BY s")
-                    .unwrap()
-            ),
-            vec!["a|1", "B|2", "C|1"]
+            text(session.run("SELECT c, COUNT(*) FROM ci GROUP BY c ORDER BY c")),
+            vec!["a|Int(1)", "B|Int(2)", "C|Int(1)"]
         );
-        // (4) self-join on s = s: 'B' and 'b' cross-match -> 6 result rows.
+        // WHERE string equality and a self-join key derive the same collation.
         assert_eq!(
-            strings(
-                session
-                    .run("SELECT w1.s FROM w w1 JOIN w w2 ON w1.s = w2.s")
-                    .unwrap()
-            )
-            .len(),
-            6
+            text(session.run("SELECT COUNT(*) FROM ci WHERE c = 'B'")),
+            vec!["Int(2)"]
         );
-        // (5) `=` predicate: 'A' matches 'a' case-insensitively.
         assert_eq!(
-            strings(session.run("SELECT s FROM w WHERE s = 'A'").unwrap()),
-            vec!["a"]
+            text(session.run("SELECT COUNT(*) FROM ci a, ci b WHERE a.c = b.c")),
+            vec!["Int(6)"]
         );
     }
 
