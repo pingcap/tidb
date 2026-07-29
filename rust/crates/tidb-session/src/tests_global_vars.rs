@@ -36,14 +36,15 @@ fn two_sessions_sharing_globals() -> (Session, Session, vars::GlobalSysvars) {
 /// visible to a peer's `@@global.x` immediately, but the peer's own plain
 /// `@@x` (its session copy, made at connect) does not move -- and a THIRD
 /// session opened after the `SET GLOBAL` inherits the new value into ITS
-/// session copy.
+/// session copy. (`autocommit` is `TypeBool`, so the reads report Go's
+/// integer domain, `1`/`0`, while the stored form stays `ON`/`OFF`.)
 #[test]
 fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
     let (mut first, mut second, globals) = two_sessions_sharing_globals();
 
     assert_eq!(
         second.run("SELECT @@autocommit").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("ON")]])
+        StmtResult::Rows(vec![vec![Datum::Int(1)]])
     );
 
     first.run("SET GLOBAL autocommit = OFF").unwrap();
@@ -51,12 +52,12 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
     // The peer's own session copy is untouched...
     assert_eq!(
         second.run("SELECT @@autocommit").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("ON")]])
+        StmtResult::Rows(vec![vec![Datum::Int(1)]])
     );
     // ...but the peer's @@global read sees it immediately.
     assert_eq!(
         second.run("SELECT @@global.autocommit").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("OFF")]])
+        StmtResult::Rows(vec![vec![Datum::Int(0)]])
     );
 
     // A brand new session opened AFTER the SET GLOBAL inherits it as its own
@@ -66,7 +67,7 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
     fresh.attach_globals(globals);
     assert_eq!(
         fresh.run("SELECT @@autocommit").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("OFF")]])
+        StmtResult::Rows(vec![vec![Datum::Int(0)]])
     );
 }
 

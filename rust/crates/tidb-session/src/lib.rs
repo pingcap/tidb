@@ -276,6 +276,30 @@ pub mod sysvar;
 pub mod vars;
 pub use vars::{GlobalSysvars, SessionVars, VarError};
 
+/// Go `SysVar.GetNativeValType` (`pkg/sessionctx/variable/variable.go:455`),
+/// which `rewriteSystemVariable` applies to every `@@var` it folds into a
+/// constant: the registry's `Type` -- not the variable's name -- decides the
+/// value's domain. `TypeBool` becomes the signed `1`/`0` of `TiDBOptOn`, so
+/// `SELECT @@autocommit` reports `1` and never the stored `ON`; `TypeUnsigned`
+/// becomes a number; every other type stays the stored string.
+///
+/// Go builds a `Uint` datum for `TypeUnsigned`, which this AST has no literal
+/// for: [`Expr::Int`] carries digits that later fail above `i64::MAX`. A value
+/// that does not fit stays a string, which renders identically and keeps the
+/// arithmetic gap where it already is rather than turning a readable variable
+/// into an error.
+fn sysvar_native_expr(name: &str, value: String) -> tidb_ast::Expr {
+    use tidb_ast::Expr;
+    match sysvar::get_sys_var(name).map(|def| def.var_type) {
+        Some(sysvar::VarType::Bool) => {
+            let on = value.eq_ignore_ascii_case("ON") || value == "1";
+            Expr::Int(i32::from(on).to_string())
+        }
+        Some(sysvar::VarType::Unsigned) if value.parse::<i64>().is_ok() => Expr::Int(value),
+        _ => Expr::String(value),
+    }
+}
+
 /// Maps a variable error onto the driver error the wire layer renders.
 fn var_error(error: VarError) -> DriverError {
     DriverError::Var(match error {
@@ -870,7 +894,7 @@ impl Session {
                     self.vars.get_system(name)
                 };
                 match result {
-                    Ok(value) => Expr::String(value),
+                    Ok(value) => sysvar_native_expr(name, value),
                     Err(error) => return Err(var_error(error)),
                 }
             }

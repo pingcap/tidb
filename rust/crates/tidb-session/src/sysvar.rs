@@ -11611,6 +11611,16 @@ impl SysVarDef {
     /// The point of doing it at SET time is that every reader afterwards sees
     /// one canonical form, so no read site has to re-expand anything.
     fn run_validation(&self, validated: Validated) -> Result<Validated, ValidationError> {
+        // Go's `time_zone` validation (`sysvar.go`, the `vardef.TimeZone`
+        // entry): `SYSTEM` in any spelling canonicalizes to upper case, and
+        // every other name is stored exactly as typed -- `SET time_zone='utc'`
+        // reads back `utc`, not `UTC`.
+        if self.name == "time_zone" && validated.value.eq_ignore_ascii_case("SYSTEM") {
+            return Ok(Validated {
+                value: "SYSTEM".to_owned(),
+                truncated: validated.truncated,
+            });
+        }
         if self.name != "sql_mode" {
             return Ok(validated);
         }

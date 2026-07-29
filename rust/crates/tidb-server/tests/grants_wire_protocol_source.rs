@@ -1050,7 +1050,7 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form_over_tcp() {
     authenticate(&mut peer, &mut peer_reader, "root", b"rootpw");
     assert_eq!(
         run_query(&mut peer, &mut peer_reader, "SELECT @@autocommit"),
-        vec![vec!["ON".to_owned()]]
+        vec![vec!["1".to_owned()]]
     );
 
     // root has SUPER by default, so `SET GLOBAL` is not itself refused here
@@ -1063,13 +1063,13 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form_over_tcp() {
     // The already-open peer's own session copy did not move...
     assert_eq!(
         run_query(&mut peer, &mut peer_reader, "SELECT @@autocommit"),
-        vec![vec!["ON".to_owned()]]
+        vec![vec!["1".to_owned()]]
     );
     // ...but its `@@global` read sees the new value immediately, over the
     // real socket, with no reconnect.
     assert_eq!(
         run_query(&mut peer, &mut peer_reader, "SELECT @@global.autocommit"),
-        vec![vec!["OFF".to_owned()]]
+        vec![vec!["0".to_owned()]]
     );
 
     // A THIRD, brand new connection opened AFTER the SET GLOBAL inherits it
@@ -1080,7 +1080,7 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form_over_tcp() {
     authenticate(&mut fresh, &mut fresh_reader, "root", b"rootpw");
     assert_eq!(
         run_query(&mut fresh, &mut fresh_reader, "SELECT @@autocommit"),
-        vec![vec!["OFF".to_owned()]]
+        vec![vec!["0".to_owned()]]
     );
 
     write_packet(&mut root, 0, &[0x01]);

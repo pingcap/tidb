@@ -223,10 +223,13 @@ fn session_variables() {
     // Go's checkBoolSystemVar canonicalizes 0/1 to OFF/ON.
     assert_eq!(session.vars().get_system("autocommit").unwrap(), "OFF");
 
-    // Reading variables back through a query.
+    // Reading variables back through a query. The STORED form is `OFF`, but
+    // Go's `GetNativeValType` gives a `TypeBool` variable the integer domain,
+    // so the query reports `0` (confirmed against Go: `SELECT @@autocommit`
+    // is `1` on a fresh session, never `ON`).
     assert_eq!(
         scalar_text(&mut session, "SELECT @@autocommit"),
-        Some("OFF".to_owned())
+        Some("0".to_owned())
     );
     let comment = scalar_text(&mut session, "SELECT @@version_comment").unwrap();
     assert!(
