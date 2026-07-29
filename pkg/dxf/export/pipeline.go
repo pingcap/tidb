@@ -24,15 +24,8 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// readChunkSize is the row capacity of the read buffer chunk.
-	readChunkSize = 1024
-	// chunkScanConcurrency is the per-chunk cop-scan concurrency. It is 1, as in
-	// add-index's keep-order read (index_cop.go), so keep-order results are
-	// reliably in handle order; read parallelism comes from the worker pool
-	// running many chunks at once, not from within one chunk.
-	chunkScanConcurrency = 1
-)
+// readChunkSize is the row capacity of the read buffer chunk.
+const readChunkSize = 1024
 
 // chunkExporter carries the per-worker, table-independent scan context so it is
 // built once per worker rather than once per chunk.
@@ -56,8 +49,10 @@ func (e *dumpStepExecutor) exportChunk(ctx context.Context, ce *chunkExporter, c
 	tblInfo := tbl.TableInfo
 	colInfos, fieldTps := exportColumns(tblInfo)
 
+	// concurrency 1 with keep-order (as in add-index) keeps rows in handle order;
+	// read parallelism comes from the worker pool, not from within one chunk.
 	rs, err := buildScan(ctx, ce.exprCtx, ce.distCtx, tblInfo, c.PhysicalID, colInfos, fieldTps,
-		e.taskMeta.SnapshotTS, chunkScanConcurrency, c.Start, c.End)
+		e.taskMeta.SnapshotTS, 1, c.Start, c.End)
 	if err != nil {
 		return err
 	}
@@ -65,15 +60,11 @@ func (e *dumpStepExecutor) exportChunk(ctx context.Context, ce *chunkExporter, c
 		_ = rs.Close()
 	}()
 
-	fileSize := e.taskMeta.FileSize
-	if fileSize <= 0 {
-		fileSize = defaultFileSize
-	}
 	enc := newRowEncoder(tblInfo.Name.O, colInfos)
 	w := &chunkWriter{
 		ctx:      ctx,
 		objStore: e.objStore,
-		fileSize: fileSize,
+		fileSize: e.taskMeta.FileSize,
 		db:       tbl.DBName,
 		table:    tblInfo.Name.O,
 		ordinal:  c.Ordinal,
