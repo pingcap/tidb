@@ -415,18 +415,8 @@ pub(crate) fn run_insert_traced(
 /// `ProduceDecWithSpecifiedTp`, whose rounding notice never becomes a
 /// statement error. A STRING source is a different case -- it may not be a
 /// number at all -- so it is never silent.
-pub(crate) fn conversion_event_is_silent(
-    value: &Datum,
-    field_type: &FieldType,
-    event: &tidb_datatype::ScalarConversionEvent,
-) -> bool {
-    let numeric_source = matches!(
-        value,
-        Datum::Int(_) | Datum::UInt(_) | Datum::Real(_) | Datum::Float32(_) | Datum::Decimal(_)
-    );
-    numeric_source
-        && matches!(field_type.eval_type(), tidb_datatype::EvalType::Decimal)
-        && matches!(event, tidb_datatype::ScalarConversionEvent::Truncated)
+pub(crate) fn conversion_event_is_silent(event: &tidb_datatype::ScalarConversionEvent) -> bool {
+    matches!(event, tidb_datatype::ScalarConversionEvent::RoundedToScale)
 }
 
 /// Go `table.CastValue` + `completeInsertErr`: converts one written value into
@@ -458,7 +448,7 @@ pub(crate) fn cast_value_for_column(
     let Some(event) = converted.event else {
         return Ok(converted.value);
     };
-    if conversion_event_is_silent(&value, field_type, &event) {
+    if conversion_event_is_silent(&event) {
         return Ok(converted.value);
     }
     // Go picks the message from the conversion's own error kind: a string
@@ -478,7 +468,10 @@ pub(crate) fn cast_value_for_column(
                 row: row_index + 1,
             }
         }
-        tidb_datatype::ScalarConversionEvent::Truncated => DriverError::IncorrectValue {
+        // `RoundedToScale` already returned above as silent; it is listed only
+        // to keep this match exhaustive.
+        tidb_datatype::ScalarConversionEvent::Truncated
+        | tidb_datatype::ScalarConversionEvent::RoundedToScale => DriverError::IncorrectValue {
             type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
             value: datum_error_text(&value),
             column: column.to_owned(),

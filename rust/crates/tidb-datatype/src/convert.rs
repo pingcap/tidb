@@ -64,6 +64,11 @@ impl std::error::Error for ScalarConversionError {}
 pub enum ScalarConversionEvent {
     /// The accepted numeric prefix did not consume the input.
     Truncated,
+    /// `ProduceDecWithSpecifiedTp` rounded a well-formed value to the target
+    /// scale. Go appends this to the warning list directly rather than
+    /// returning it, so it never becomes a statement error even in strict
+    /// mode -- unlike [`Self::Truncated`], which does.
+    RoundedToScale,
     /// Conversion saturated at a target boundary.
     Overflow(ScalarConversionError),
 }
@@ -989,6 +994,52 @@ pub(crate) fn decimal_text(text: &str) -> Option<Decimal> {
         return None;
     }
     Some(Decimal::from_signed_literal(&expanded))
+}
+
+/// `MyDecimal.FromString`, which is prefix-accepting: it keeps the longest
+/// leading `[space]* [sign] digits [. digits]` it can read and reports
+/// `ErrTruncated` for whatever follows. Go returns that partial value beside
+/// the error, so `'1,999.00'` converts to `1`, not to `0`.
+pub(crate) fn decimal_from_text(text: &str) -> Converted<Decimal> {
+    if let Some(value) = decimal_text(text) {
+        return Converted::exact(value);
+    }
+    let rest = text.trim_start_matches(is_decimal_space);
+    let (sign, rest) = match rest.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => ("", rest.strip_prefix('+').unwrap_or(rest)),
+    };
+    let integral: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    let rest = &rest[integral.len()..];
+    let (fractional, rest) = match rest.strip_prefix('.') {
+        Some(rest) => {
+            let fractional: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            let remaining = &rest[fractional.len()..];
+            (fractional, remaining)
+        }
+        None => (String::new(), rest),
+    };
+    if integral.is_empty() && fractional.is_empty() {
+        return Converted::truncated(Decimal::from_int(0));
+    }
+    let literal = if fractional.is_empty() {
+        format!("{sign}{integral}")
+    } else {
+        format!("{sign}{integral}.{fractional}")
+    };
+    let value = Decimal::from_signed_literal(&literal);
+    // Go only reports truncation when something other than trailing
+    // whitespace follows the number.
+    if rest.trim_matches(is_decimal_space).is_empty() {
+        Converted::exact(value)
+    } else {
+        Converted::truncated(value)
+    }
+}
+
+/// Go `isSpace` from `pkg/types/mydecimal.go`.
+fn is_decimal_space(character: char) -> bool {
+    matches!(character, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c')
 }
 
 /// `ConvertJSONToDecimal`.

@@ -1310,13 +1310,7 @@ fn decimal_to_i64(decimal: Decimal) -> Converted<i64> {
 
 fn decimal_from_bytes(bytes: &[u8]) -> Result<Converted<Decimal>, DatumValueError> {
     let text = std::str::from_utf8(bytes)?;
-    Ok(match crate::convert::decimal_text(text) {
-        Some(value) => Converted { value, event: None },
-        _ => Converted {
-            value: Decimal::from_int(0),
-            event: Some(ScalarConversionEvent::Truncated),
-        },
-    })
+    Ok(crate::convert::decimal_from_text(text))
 }
 
 fn numeric_bytes_to_float(bytes: &[u8]) -> Result<f64, DatumValueError> {
@@ -1879,8 +1873,10 @@ mod tests {
             assert_eq!(datum.to_bytes().unwrap(), expected, "{datum:?}");
         }
 
+        // `MyDecimal.FromString` keeps the accepted `1.1` prefix and reports
+        // ErrTruncated for the trailing `.1`; it does not fall back to zero.
         let malformed = Datum::new_string("1.1.1").to_decimal().unwrap();
-        assert_eq!(malformed.value, Decimal::from_int(0));
+        assert_eq!(malformed.value, Decimal::from_signed_literal("1.1"));
         assert_eq!(
             malformed.event,
             Some(crate::ScalarConversionEvent::Truncated)

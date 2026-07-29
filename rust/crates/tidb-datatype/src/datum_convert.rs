@@ -188,8 +188,27 @@ impl Datum {
                     event: prefer_event(parsed.event, bounded.event),
                 }
             }
-            Self::Time(value) => decimal_to_signed(&value.to_number(), lower, upper, target),
-            Self::Duration(value) => decimal_to_signed(&value.to_number(), lower, upper, target),
+            // Go rounds the temporal value itself before rendering it as a
+            // number, so a carry propagates through the sexagesimal fields:
+            // `11:59:59.999999` becomes 120000, not 115960.
+            Self::Time(value) => decimal_to_signed(
+                &value
+                    .round_frac(crate::DEFAULT_FSP, &Utc)
+                    .map_err(conversion_error)?
+                    .to_number(),
+                lower,
+                upper,
+                target,
+            ),
+            Self::Duration(value) => decimal_to_signed(
+                &value
+                    .round_frac(crate::DEFAULT_FSP)
+                    .map_err(conversion_error)?
+                    .to_number(),
+                lower,
+                upper,
+                target,
+            ),
             Self::Decimal(value) => decimal_to_signed(value, lower, upper, target),
             Self::Enum(value, _) => numeric_outcome(convert_float_to_int(
                 value.to_number(),
@@ -309,7 +328,7 @@ impl Datum {
             if overflowed {
                 event = Some(overflow_event(value.to_string(), target.code()));
             } else if value != original {
-                event = event.or(Some(ScalarConversionEvent::Truncated));
+                event = event.or(Some(ScalarConversionEvent::RoundedToScale));
             }
         }
         if target.is_unsigned() && value.is_negative() {
@@ -409,7 +428,13 @@ impl Datum {
             target.decimal()
         };
         let converted = match self {
-            Self::Time(value) => exact(value.to_duration().map_err(conversion_error)?),
+            Self::Time(value) => exact(
+                value
+                    .to_duration()
+                    .map_err(conversion_error)?
+                    .round_frac(fsp)
+                    .map_err(conversion_error)?,
+            ),
             Self::Duration(value) => exact(value.round_frac(fsp).map_err(conversion_error)?),
             Self::String(value) => duration_from_text(value.as_utf8()?, fsp)?,
             Self::Bytes(value) => duration_from_text(std::str::from_utf8(value)?, fsp)?,
@@ -1027,6 +1052,10 @@ const fn field_target_name(code: FieldTypeCode) -> &'static str {
         _ => "field type",
     }
 }
+
+#[cfg(test)]
+#[path = "datum_convert_go_tests.rs"]
+mod go_tests;
 
 #[cfg(test)]
 mod tests {

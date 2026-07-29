@@ -591,9 +591,11 @@ fn normalize_column_default(
     let checked = normalized
         .convert_to(field_type, tidb_datatype::STRICT_FLAGS)
         .map_err(|_| invalid())?;
-    if checked.event.as_ref().is_some_and(|event| {
-        !crate::driver::conversion_event_is_silent(&normalized, field_type, event)
-    }) {
+    if checked
+        .event
+        .as_ref()
+        .is_some_and(|event| !crate::driver::conversion_event_is_silent(event))
+    {
         return Err(invalid());
     }
     Ok(normalized)
