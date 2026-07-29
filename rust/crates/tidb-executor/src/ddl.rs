@@ -222,7 +222,19 @@ pub fn run_create_index_in(
         &create.name,
         unique,
         &columns,
+        is_visible(&create.options),
     )
+}
+
+/// Go `IndexInfo.Invisible`, read off the statement that declares the index.
+///
+/// The visibility a statement writes and the `visible` flag the planner reads
+/// are the same fact in two places, so it is resolved here, at the single
+/// point where an `IndexOptions` becomes a `KvIndex` -- a `CREATE INDEX`, an
+/// `ALTER TABLE ... ADD INDEX` and a `CREATE TABLE` key all pass through it.
+/// A key with no visibility clause is visible, which is Go's default.
+fn is_visible(options: &tidb_ast::IndexOptions) -> bool {
+    options.visibility != Some(tidb_ast::IndexVisibility::Invisible)
 }
 
 /// The column names an index's key parts name, rejecting the forms this tier
@@ -257,6 +269,7 @@ fn add_index_to_table(
     index_name: &str,
     unique: bool,
     columns: &[String],
+    visible: bool,
 ) -> Result<(), DriverError> {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
@@ -280,7 +293,7 @@ fn add_index_to_table(
             name: index_name.to_owned(),
             unique,
             column_offsets: offsets,
-            visible: true,
+            visible,
         })
         .map_err(|e| match e {
             crate::kv_table::KvTableError::DuplicateKeyName(name) => {
@@ -458,7 +471,15 @@ pub fn run_alter_table_in(
                     .name
                     .clone()
                     .unwrap_or_else(|| columns.first().cloned().unwrap_or_default());
-                add_index_to_table(catalog, &database, &name, &index_name, unique, &columns)?;
+                add_index_to_table(
+                    catalog,
+                    &database,
+                    &name,
+                    &index_name,
+                    unique,
+                    &columns,
+                    is_visible(&index.options),
+                )?;
             }
             // `ALTER TABLE x RENAME TO y` is the same operation as
             // `RENAME TABLE x TO y`.
@@ -1009,13 +1030,19 @@ fn table_indexes(
         }
         Ok(offset)
     };
-    fn push(indexes: &mut Vec<KvIndex>, name: String, unique: bool, offsets: Vec<usize>) {
+    fn push(
+        indexes: &mut Vec<KvIndex>,
+        name: String,
+        unique: bool,
+        offsets: Vec<usize>,
+        visible: bool,
+    ) {
         indexes.push(KvIndex {
             id: (indexes.len() + 1) as i64,
             name,
             unique,
             column_offsets: offsets,
-            visible: true,
+            visible,
         });
     }
     let mut indexes: Vec<KvIndex> = Vec::new();
@@ -1069,7 +1096,13 @@ fn table_indexes(
                 .clone()
                 .unwrap_or_else(|| format!("idx_{}", indexes.len() + 1)),
         };
-        push(&mut indexes, name, unique, offsets);
+        push(
+            &mut indexes,
+            name,
+            unique,
+            offsets,
+            is_visible(&index.options),
+        );
     }
     for def in &create.columns {
         for option in &def.options {
@@ -1077,13 +1110,13 @@ fn table_indexes(
                 match key.kind {
                     tidb_ast::InlineKeyKind::Unique => {
                         let offset = offset_of(&def.name)?;
-                        push(&mut indexes, def.name.clone(), true, vec![offset]);
+                        push(&mut indexes, def.name.clone(), true, vec![offset], true);
                     }
                     // A primary key that is not the row handle still needs an
                     // index to enforce its uniqueness.
                     tidb_ast::InlineKeyKind::Primary { .. } if !pk_is_handle => {
                         let offset = offset_of(&def.name)?;
-                        push(&mut indexes, "PRIMARY".to_owned(), true, vec![offset]);
+                        push(&mut indexes, "PRIMARY".to_owned(), true, vec![offset], true);
                     }
                     tidb_ast::InlineKeyKind::Primary { .. } => {}
                 }
@@ -1656,6 +1689,51 @@ mod tests {
             Datum::String(s) => assert_eq!(s.bytes(), b"x"),
             other => panic!("unexpected string datum {other:?}"),
         }
+    }
+
+    /// An index's visibility is stated by the DDL and read by the planner off
+    /// `KvIndex::visible` -- one fact, two places. Every statement that
+    /// creates an index resolves it at the single point that builds the
+    /// `KvIndex`, so an `INVISIBLE` key is maintained (it is in `indexes()`)
+    /// and hidden from every access path (it is not in `plan_indexes()`),
+    /// which is Go's rule. Hardcoding `visible: true` -- as all three sites
+    /// did -- made the planner choose an index Go never chooses.
+    #[test]
+    fn an_index_declared_invisible_is_maintained_but_never_planned() {
+        let mut catalog = Catalog::default();
+        run_create_table_on(
+            "CREATE TABLE t (a INT, b INT, KEY idx_a (a) INVISIBLE, KEY idx_b (b))",
+            &mut catalog,
+        )
+        .unwrap();
+        run_create_index_in(
+            "CREATE INDEX idx_c ON t (a) INVISIBLE",
+            &mut catalog,
+            crate::driver::DEFAULT_DATABASE,
+        )
+        .unwrap();
+        run_alter_table_in(
+            "ALTER TABLE t ADD INDEX idx_d (b) INVISIBLE",
+            &mut catalog,
+            crate::driver::DEFAULT_DATABASE,
+        )
+        .unwrap();
+
+        let Some(crate::TableEntry::Kv(kv)) = catalog.get_table_for_test("t") else {
+            panic!("expected a kv table");
+        };
+        let maintained: Vec<&str> = kv.indexes().iter().map(|i| i.name.as_str()).collect();
+        let planned: Vec<&str> = kv.plan_indexes().map(|i| i.name.as_str()).collect();
+        assert_eq!(
+            maintained,
+            vec!["idx_a", "idx_b", "idx_c", "idx_d"],
+            "every declared index is maintained by writes"
+        );
+        assert_eq!(
+            planned,
+            vec!["idx_b"],
+            "only the visible one is an access path"
+        );
     }
 
     #[test]
