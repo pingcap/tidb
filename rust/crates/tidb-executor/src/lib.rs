@@ -48,6 +48,7 @@ mod approx_count_distinct;
 pub mod cluster_storage;
 pub(crate) mod column_prune;
 pub mod ddl;
+pub mod ddl_sequence;
 pub mod driver;
 pub mod executor;
 pub mod explain;
@@ -81,6 +82,9 @@ pub use ddl::{
     run_create_table_on, run_drop_index_in, run_drop_table_in, run_rename_table_in,
     run_truncate_table_in,
 };
+pub use ddl_sequence::{
+    run_alter_sequence_in, run_create_sequence_in, run_drop_sequence_in, show_create_sequence,
+};
 pub use driver::{
     bind_parameters, parameter_count, run_delete_in, run_delete_on, run_insert_in, run_insert_on,
     run_insert_reporting, run_select, run_select_meta_in, run_select_meta_on, run_select_meta_stmt,
@@ -105,7 +109,7 @@ pub use projection::ProjectionExec;
 pub use scan_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp};
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
-pub use stmt_context::StmtContext;
+pub use stmt_context::{SequenceSnapshot, StmtContext};
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
 pub use tidb_expr::{

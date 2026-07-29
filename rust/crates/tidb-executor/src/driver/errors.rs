@@ -319,6 +319,19 @@ pub enum DriverError {
     InsertIntoViewUnsupported(String),
     /// Go's plain `DELETE` refusal: `delete view %s is not supported now`.
     DeleteViewUnsupported(String),
+    /// Go's plain `INSERT into sequence` refusal, the sequence twin of
+    /// [`DriverError::InsertIntoViewUnsupported`]. Captured:
+    /// `insert into s1 values (1)` reports
+    /// `insert into sequence s1 is not supported now` with no error class.
+    InsertIntoSequenceUnsupported(String),
+    /// Go's plain `DELETE` refusal for a sequence. Captured:
+    /// `delete from s1` reports `delete sequence s1 is not supported now`.
+    DeleteSequenceUnsupported(String),
+    /// Go `table.ErrSequenceHasRunOut` (4135): `NEXTVAL` has nothing left and
+    /// the sequence does not `CYCLE`. The string is the qualified name.
+    /// Captured: `Sequence 'test.s4' has run out`. NOTE this is a DIFFERENT
+    /// error from the auto-increment allocator's 1467.
+    SequenceHasRunOut(String),
     /// Go `plannererrors.ErrNonUpdatableTable` (1288), which is what an
     /// `UPDATE` through a view reports.
     TableNotUpdatable(String),
@@ -571,6 +584,16 @@ pub enum SchemaErrorKind {
     /// Go `plannererrors.ErrViewInvalid` (1356): the view's own query no
     /// longer runs, typically because a base table was dropped.
     ViewInvalid(String),
+    /// Go `infoschema.ErrSequenceDropExists` (4139): `DROP SEQUENCE` named a
+    /// sequence that does not exist. Captured: `drop sequence nosuch` reports
+    /// `[schema:4139] Unknown SEQUENCE: 'test.nosuch'` -- a different code and
+    /// wording from both 1146 and `DROP TABLE`'s 1051.
+    UnknownSequence(String),
+    /// Go `ddl.ErrSequenceInvalidData` (4136): the option values cannot
+    /// describe a sequence. Captured for `increment by 0`, `cache 0`,
+    /// `minvalue 10 maxvalue 5` and `start with 1 minvalue 5`, each reporting
+    /// `Sequence '<db>.<name>' values are conflicting`.
+    SequenceValuesConflicting(String),
 }
 
 /// Why a session-variable statement failed.
@@ -1006,6 +1029,21 @@ impl DriverError {
         DriverError::Schema(crate::SchemaErrorKind::UnknownTable(name)) => {
             MysqlError::new(1146, *b"42S02", format!("Table '{name}' doesn't exist"))
         }
+        DriverError::Schema(crate::SchemaErrorKind::UnknownSequence(name)) => {
+            MysqlError::new(4139, *b"HY000", format!("Unknown SEQUENCE: '{name}'"))
+        }
+        DriverError::Schema(crate::SchemaErrorKind::SequenceValuesConflicting(name)) => {
+            MysqlError::new(
+                4136,
+                *b"HY000",
+                format!("Sequence '{name}' values are conflicting"),
+            )
+        }
+        DriverError::SequenceHasRunOut(name) => MysqlError::new(
+            4135,
+            *b"HY000",
+            format!("Sequence '{name}' has run out"),
+        ),
         // Go: "'%-.192s.%-.192s' is not %s".
         DriverError::Schema(crate::SchemaErrorKind::NotView(name)) => {
             MysqlError::new(1347, *b"HY000", format!("'{name}' is not VIEW"))
@@ -1053,6 +1091,16 @@ impl DriverError {
             1105,
             *b"HY000",
             format!("delete view {name} is not supported now"),
+        ),
+        DriverError::InsertIntoSequenceUnsupported(name) => MysqlError::new(
+            1105,
+            *b"HY000",
+            format!("insert into sequence {name} is not supported now"),
+        ),
+        DriverError::DeleteSequenceUnsupported(name) => MysqlError::new(
+            1105,
+            *b"HY000",
+            format!("delete sequence {name} is not supported now"),
         ),
         // Go: "In definition of view, derived table or common table
         // expression, SELECT list and column names list have different column

@@ -122,6 +122,82 @@ pub struct StmtContext {
     /// non-positive value simply means "no round may run", which is what
     /// clamping to `0` here expresses.
     cte_max_recursion_depth: u64,
+    /// The sequences reachable from this statement, keyed by lowercase
+    /// `db.name`, plus the session's per-sequence `LASTVAL` record.
+    ///
+    /// Go reaches a sequence through the info schema at evaluation time. Here
+    /// the session hands over a snapshot instead, because every allocator is
+    /// `Arc`-shared: cloning the map costs one reference bump per sequence and
+    /// consuming a value through the snapshot moves the SAME counter the
+    /// catalog holds. That is what keeps a `NEXTVAL` from being undone by a
+    /// rollback or by a staged catalog swap.
+    sequences: Rc<SequenceSnapshot>,
+}
+
+/// The sequence state one statement can see: the allocators it may read and
+/// the session's `LASTVAL` map, which every statement of a session shares.
+#[derive(Debug, Default)]
+pub struct SequenceSnapshot {
+    /// Every sequence in the catalog, keyed by lowercase `db.name`.
+    by_name: HashMap<String, crate::sequence::SequenceAllocator>,
+    /// The schema an unqualified name resolves in.
+    current_db: String,
+    /// Go `SessionVars.SequenceState`: the last value THIS SESSION took from
+    /// each sequence. Shared with the session, so a `NEXTVAL` in one statement
+    /// is visible to a `LASTVAL` in the next.
+    last_values: Rc<RefCell<HashMap<String, i64>>>,
+}
+
+impl SequenceSnapshot {
+    /// A snapshot over `by_name`, resolving unqualified names in `current_db`
+    /// and recording `LASTVAL` into the session's shared `last_values`.
+    #[must_use]
+    pub fn new(
+        by_name: HashMap<String, crate::sequence::SequenceAllocator>,
+        current_db: &str,
+        last_values: Rc<RefCell<HashMap<String, i64>>>,
+    ) -> Self {
+        SequenceSnapshot {
+            by_name,
+            current_db: current_db.to_ascii_lowercase(),
+            last_values,
+        }
+    }
+
+    /// The key a written name path resolves to: `db.name`, lowercased, with an
+    /// unqualified name taking the session's current database.
+    fn key(&self, path: &[String]) -> String {
+        match path {
+            [name] => format!("{}.{}", self.current_db, name.to_ascii_lowercase()),
+            [database, name] => format!(
+                "{}.{}",
+                database.to_ascii_lowercase(),
+                name.to_ascii_lowercase()
+            ),
+            // A longer path cannot name a sequence, and joining it produces a
+            // key nothing matches -- which is the 1146 below.
+            other => other
+                .iter()
+                .map(|part| part.to_ascii_lowercase())
+                .collect::<Vec<_>>()
+                .join("."),
+        }
+    }
+
+    /// The allocator `path` names, or 1146 -- which is what Go reports for a
+    /// name that is not a sequence, whether it is absent or is a table.
+    fn resolve(
+        &self,
+        path: &[String],
+    ) -> Result<(String, &crate::sequence::SequenceAllocator), tidb_expr::EvalError> {
+        let key = self.key(path);
+        match self.by_name.get(&key) {
+            Some(allocator) => Ok((key, allocator)),
+            None => Err(tidb_expr::EvalError::Sequence(
+                tidb_expr::SequenceEvalError::NotASequence(key),
+            )),
+        }
+    }
 }
 
 impl StmtContext {
@@ -154,6 +230,7 @@ impl StmtContext {
             foreign_key_checks: true,
             div_precision_increment: 4,
             cte_max_recursion_depth: 1000,
+            sequences: Rc::default(),
         }
     }
 
@@ -166,6 +243,15 @@ impl StmtContext {
     ) -> Self {
         self.default_week_format = default_week_format;
         self.div_precision_increment = div_precision_increment;
+        self
+    }
+
+    /// Attaches the sequences this statement may read. Without it, a
+    /// `NEXTVAL` reports that it needs a session rather than silently
+    /// answering NULL.
+    #[must_use]
+    pub fn with_sequences(mut self, sequences: Rc<SequenceSnapshot>) -> Self {
+        self.sequences = sequences;
         self
     }
 
@@ -321,6 +407,7 @@ impl StmtContext {
             foreign_key_checks: true,
             div_precision_increment: 4,
             cte_max_recursion_depth: 1000,
+            sequences: Rc::default(),
         }
     }
 
@@ -558,6 +645,33 @@ impl Columns for StmtContext {
     /// insert path's single first-row publication.
     fn set_last_insert_id(&self, value: u64) {
         self.last_insert_id.set(Some(value));
+    }
+
+    fn sequence_nextval(&self, path: &[String]) -> Result<Datum, tidb_expr::EvalError> {
+        let (key, allocator) = self.sequences.resolve(path)?;
+        let value = allocator.next_val().map_err(|_| {
+            tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(key.clone()))
+        })?;
+        // Go records the value in the SESSION's sequence state, which is what
+        // `LASTVAL` reads back.
+        self.sequences.last_values.borrow_mut().insert(key, value);
+        Ok(Datum::Int(value))
+    }
+
+    fn sequence_lastval(&self, path: &[String]) -> Result<Datum, tidb_expr::EvalError> {
+        let (key, _) = self.sequences.resolve(path)?;
+        Ok(self
+            .sequences
+            .last_values
+            .borrow()
+            .get(&key)
+            .copied()
+            .map_or(Datum::Null, Datum::Int))
+    }
+
+    fn sequence_setval(&self, path: &[String], value: i64) -> Result<Datum, tidb_expr::EvalError> {
+        let (_, allocator) = self.sequences.resolve(path)?;
+        Ok(allocator.set_val(value).map_or(Datum::Null, Datum::Int))
     }
 }
 

@@ -201,8 +201,58 @@ fn eval_session_state(
             Err(e) => Err(e),
         },
         ("ROW_COUNT" | "LAST_INSERT_ID", _) => Err(EvalError::Unsupported("bad function arity")),
+        // The sequence builtins. The first argument is the sequence's name
+        // path, substituted for the column reference the parser produced (see
+        // the `nextval` arm of `rewriter::rewrite_expr_resolved`).
+        //
+        // `NEXTVAL` is the one builtin here that MUTATES durable state, and Go
+        // does it outside the statement's transaction, so a rollback does not
+        // give the value back (captured).
+        ("NEXTVAL", [path]) => match sequence_path(path) {
+            Ok(path) => cols.sequence_nextval(&path),
+            Err(e) => Err(e),
+        },
+        ("LASTVAL", [path]) => match sequence_path(path) {
+            Ok(path) => cols.sequence_lastval(&path),
+            Err(e) => Err(e),
+        },
+        ("SETVAL", [path, value]) => match (sequence_path(path), value) {
+            // Go evaluates the second argument as an int; a NULL one makes the
+            // whole call NULL before the sequence is touched
+            // (`builtinSetValSig.evalInt`'s isNull short-circuit).
+            (Ok(_), Datum::Null) => Ok(Datum::Null),
+            (Ok(path), value) => match value.as_int() {
+                Some(value) => cols.sequence_setval(&path, value),
+                None => Err(EvalError::Unsupported("SETVAL needs an integer value")),
+            },
+            (Err(e), _) => Err(e),
+        },
+        ("NEXTVAL" | "LASTVAL" | "SETVAL", _) => Err(EvalError::Unsupported("bad function arity")),
         _ => return None,
     })
+}
+
+/// The name path a sequence builtin's first argument carries on the CHUNK path,
+/// where the rewriter replaced the parser's column reference with one string
+/// constant (see `rewriter::rewrite_expr_resolved`).
+///
+/// The segments are joined by NUL rather than `.` so the split back is exact:
+/// a backquoted identifier may contain a dot, but no identifier can contain a
+/// NUL byte. That keeps the chunk path handing `Columns::sequence_nextval` the
+/// SAME `&[String]` the row path hands it straight from the parser.
+pub(crate) const SEQUENCE_PATH_SEPARATOR: char = '\0';
+
+fn sequence_path(value: &Datum) -> Result<Vec<String>, EvalError> {
+    match value {
+        Datum::Bytes(bytes) => Ok(String::from_utf8(bytes.clone())
+            .map_err(|_| EvalError::Unsupported("a sequence name must be text"))?
+            .split(SEQUENCE_PATH_SEPARATOR)
+            .map(str::to_owned)
+            .collect()),
+        _ => Err(EvalError::Unsupported(
+            "a sequence builtin's first argument must be a name",
+        )),
+    }
 }
 
 /// [`eval_func_values`] plus the statement-context side effects Go attaches

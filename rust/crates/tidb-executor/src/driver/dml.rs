@@ -144,6 +144,13 @@ pub(crate) fn run_insert_traced(
     if table.is_view() {
         return Err(DriverError::InsertIntoViewUnsupported(table_name.clone()));
     }
+    // Go refuses the same way for a sequence, with the same shape of plain
+    // message; captured: `insert into sequence s1 is not supported now`.
+    if table.is_sequence() {
+        return Err(DriverError::InsertIntoSequenceUnsupported(
+            table_name.clone(),
+        ));
+    }
     let column_list = table.column_list();
 
     // Map an explicit column list to table offsets; without one, values map to
@@ -205,13 +212,17 @@ pub(crate) fn run_insert_traced(
             .iter()
             .map(|(name, _)| (None, false, name.clone()))
             .collect(),
-        TableEntry::View(_) => unreachable!("INSERT through a view is refused above"),
+        TableEntry::View(_) | TableEntry::Sequence(_) => {
+            unreachable!("INSERT through a view or sequence is refused above")
+        }
     };
 
     let auto_increment_offset = match table {
         TableEntry::Kv(kv) => kv.auto_increment_offset(),
         TableEntry::Mem(_) => None,
-        TableEntry::View(_) => unreachable!("INSERT through a view is refused above"),
+        TableEntry::View(_) | TableEntry::Sequence(_) => {
+            unreachable!("INSERT through a view or sequence is refused above")
+        }
     };
     // REFUSED, not approximated: the allocator hands out consecutive ids, so
     // a session that asked for a different step would be answered with the
@@ -1035,6 +1046,17 @@ pub(crate) fn run_update_traced(
     match entry {
         // Go's planner rejects an UPDATE whose target is a view.
         TableEntry::View(_) => return Err(DriverError::TableNotUpdatable(name.clone())),
+        // A sequence has no columns, so Go's planner never gets as far as an
+        // updatability check: it fails resolving the assignment's column name
+        // (captured: `update s1 set a = 1` is
+        // `[planner:1054] Unknown column 'a' in 'field list'`). That check
+        // runs before this match, so reaching here means the SET list was
+        // empty, which the parser does not produce.
+        TableEntry::Sequence(_) => {
+            return Err(DriverError::Unsupported(
+                "UPDATE of a sequence is not a statement TiDB accepts",
+            ))
+        }
         TableEntry::Mem(mem) => {
             let mut updates = Vec::new();
             scanned = mem.rows.len() as u64;
@@ -1323,6 +1345,9 @@ pub(crate) fn run_delete_traced(
     let mut doomed: Vec<(crate::kv_table::TableHandle, Vec<Datum>)> = Vec::new();
     match entry {
         TableEntry::View(_) => return Err(DriverError::DeleteViewUnsupported(name.clone())),
+        TableEntry::Sequence(_) => {
+            return Err(DriverError::DeleteSequenceUnsupported(name.clone()))
+        }
         TableEntry::Mem(mem) => {
             let mut kept = Vec::with_capacity(mem.rows.len());
             scanned = mem.rows.len() as u64;

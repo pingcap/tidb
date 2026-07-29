@@ -31,8 +31,9 @@ pub enum EvalError {
     FloatOverflow,
     /// A fixed-point decimal operation exceeded MyDecimal's source buffer.
     DecimalOverflow,
-    /// A sequence operation failed at runtime.
-    Sequence(&'static str),
+    /// A `NEXTVAL`/`LASTVAL`/`SETVAL` failed at runtime. Both cases carry the
+    /// sequence's qualified name because both of TiDB's messages print it.
+    Sequence(SequenceEvalError),
     /// Go `ErrDivisionByZero` (1365) raised at error level.
     DivisionByZero,
     /// A `json`-class error that carries its own MySQL error code.
@@ -71,6 +72,7 @@ impl EvalError {
             EvalError::CollationCharsetMismatch { .. } => Some(1253),
             EvalError::UnknownCollation(_) => Some(1273),
             EvalError::DivisionByZero => Some(1365),
+            EvalError::Sequence(error) => Some(error.code()),
             _ => None,
         }
     }
@@ -87,7 +89,44 @@ impl EvalError {
             )),
             EvalError::UnknownCollation(name) => Some(format!("Unknown collation: '{name}'")),
             EvalError::DivisionByZero => Some("Division by 0".to_owned()),
+            EvalError::Sequence(error) => Some(error.message()),
             _ => None,
+        }
+    }
+}
+
+/// Why a sequence builtin failed, with the code and message TiDB reports.
+///
+/// The two are DIFFERENT error classes in Go, and neither is the auto-id
+/// allocator's 1467: reading past the end of a `NOCYCLE` sequence is
+/// `table.ErrSequenceHasRunOut`, and naming something that is not a sequence
+/// is the ordinary `infoschema.ErrTableNotExists`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SequenceEvalError {
+    /// Go `table.ErrSequenceHasRunOut` (4135). Captured:
+    /// `Sequence 'test.s4' has run out`.
+    RunOut(String),
+    /// Go `infoschema.ErrTableNotExists` (1146). Captured for
+    /// `select nextval(nosuch)`: `Table 'test.nosuch' doesn't exist`.
+    NotASequence(String),
+}
+
+impl SequenceEvalError {
+    /// The MySQL error number.
+    #[must_use]
+    pub fn code(&self) -> u16 {
+        match self {
+            SequenceEvalError::RunOut(_) => 4135,
+            SequenceEvalError::NotASequence(_) => 1146,
+        }
+    }
+
+    /// The message TiDB prints.
+    #[must_use]
+    pub fn message(&self) -> String {
+        match self {
+            SequenceEvalError::RunOut(name) => format!("Sequence '{name}' has run out"),
+            SequenceEvalError::NotASequence(name) => format!("Table '{name}' doesn't exist"),
         }
     }
 }
@@ -361,22 +400,39 @@ pub trait Columns {
         None
     }
 
-    /// Steps the named sequence and returns the new value.
+    /// Go `sequenceOperator.GetSequenceNextVal`: consumes and returns the next
+    /// value of the sequence `path` names -- `[name]` or `[db, name]`, exactly
+    /// as the SQL spelled it, resolved against the session's current database.
+    ///
+    /// Consuming is NOT transactional: Go allocates in its own meta
+    /// transaction, so a rolled-back statement still spends the value
+    /// (captured). Nothing behind this method undoes it either.
+    ///
+    /// This is THE sequence seam, shared by both evaluators: the row path
+    /// (`eval_func`) hands over the parser's own path, and the chunk path
+    /// (`eval_func_values_in`) hands over the string constants the rewriter
+    /// substituted for the column reference. Keeping one method means a
+    /// `NEXTVAL` cannot behave differently depending on which evaluator ran.
     fn sequence_nextval(&self, path: &[String]) -> Result<Datum, EvalError> {
         let _ = path;
-        Err(EvalError::Unsupported("unsupported function"))
+        Err(EvalError::Unsupported("NEXTVAL requires a session"))
     }
 
-    /// Returns the last value produced by this session for the sequence.
+    /// Go `sequenceOperator.GetSequenceLastVal`: the last value THIS SESSION
+    /// took from the sequence, or `Datum::Null` when it has taken none --
+    /// `LASTVAL` is session state, not the stored counter (captured: `lastval`
+    /// on a sequence this session has not read is `<nil>`).
     fn sequence_lastval(&self, path: &[String]) -> Result<Datum, EvalError> {
         let _ = path;
-        Err(EvalError::Unsupported("unsupported function"))
+        Err(EvalError::Unsupported("LASTVAL requires a session"))
     }
 
-    /// Rebases the sequence and returns the requested value when applied.
+    /// Go `sequenceOperator.SetSequenceVal`: moves the sequence forward.
+    /// `Datum::Null` is Go's `alreadySatisfied` -- a sequence never moves
+    /// backwards, and reports NULL rather than an error when asked to.
     fn sequence_setval(&self, path: &[String], value: i64) -> Result<Datum, EvalError> {
         let _ = (path, value);
-        Err(EvalError::Unsupported("unsupported function"))
+        Err(EvalError::Unsupported("SETVAL requires a session"))
     }
 }
 

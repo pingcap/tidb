@@ -381,7 +381,7 @@ pub(crate) fn full_scan_estimate(
         // INFORMATION_SCHEMA view has no `mysql.stats_*` row, so there is
         // nothing to have analyzed; Go prints the pseudo constant for these
         // too.
-        TableEntry::Mem(_) | TableEntry::View(_) => None,
+        TableEntry::Mem(_) | TableEntry::View(_) | TableEntry::Sequence(_) => None,
     };
     // The row count is real whenever a `mysql.stats_meta` row carries one,
     // even when no histogram was ever analyzed -- and in that state Go prints
@@ -568,7 +568,7 @@ pub(crate) fn single_kv_table(
     match catalog.get_in(database, name)? {
         TableEntry::Kv(kv) => Some(kv.clone()),
         // A view stores no rows, so there is no point get to try.
-        TableEntry::Mem(_) | TableEntry::View(_) => None,
+        TableEntry::Mem(_) | TableEntry::View(_) | TableEntry::Sequence(_) => None,
     }
 }
 

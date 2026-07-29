@@ -238,6 +238,12 @@ fn scan_base_table(
                 "a view is not supported in multi-table DML",
             ))
         }
+        // A sequence has no rows to identify either.
+        TableEntry::Sequence(_) => {
+            return Err(DriverError::Unsupported(
+                "a sequence is not supported in multi-table DML",
+            ))
+        }
     };
     let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
     Ok(MultiSource {

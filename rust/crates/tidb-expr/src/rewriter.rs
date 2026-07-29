@@ -274,6 +274,14 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // `LAST_INSERT_ID` below, `ROW_COUNT()` is signed, because a failed
         // statement reports -1.
         "row_count" if args.is_empty() => int(),
+        // Go `nextValFunctionClass` / `lastValFunctionClass` /
+        // `setValFunctionClass` (`pkg/expression/builtin_info.go`): each fixes
+        // a signed `LongLong`. The sequence NAME travels as the first argument,
+        // a string constant the rewriter substitutes for the column reference
+        // the parser produced -- see the `nextval` arm of
+        // `rewrite_expr_resolved`.
+        "nextval" | "lastval" if args.len() == 1 => int(),
+        "setval" if args.len() == 2 => int(),
         // Go `lastInsertIDFunctionClass` adds `mysql.UnsignedFlag`, which is
         // what makes `LAST_INSERT_ID(-1)` report 18446744073709551615 rather
         // than -1. Both the zero-argument and one-argument forms are the same
@@ -1141,6 +1149,38 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         // the shared `eval_func_values` implementation runs it.
         Expr::Func { name, args, .. } => {
             let lowered = name.to_ascii_lowercase();
+            // `NEXTVAL(s)` / `LASTVAL(s)` / `SETVAL(s, n)` name a SEQUENCE, but
+            // the grammar has no place for a table name inside an expression,
+            // so the parser produces a COLUMN reference. Go's expression
+            // rewriter special-cases exactly these three
+            // (`pkg/planner/core/expression_rewriter.go` -> `ast.NextVal` and
+            // friends) and reinterprets the reference as a name path; without
+            // that, `select nextval(seq)` fails resolving a column called
+            // `seq`. The path travels as a string constant so the evaluated
+            // node needs no resolver of its own.
+            if matches!(lowered.as_str(), "nextval" | "lastval" | "setval") {
+                if let Some(Expr::Column(path)) = args.first() {
+                    let mut rewritten = vec![Expression::Constant(crate::constant::Constant::new(
+                        Datum::Bytes(
+                            path.join(&crate::func::SEQUENCE_PATH_SEPARATOR.to_string())
+                                .into_bytes(),
+                        ),
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                    ))];
+                    for arg in &args[1..] {
+                        rewritten.push(rewrite_expr_resolved(arg, resolver)?);
+                    }
+                    let ret_type =
+                        builtin_return_type(&lowered, &rewritten).ok_or(EvalError::Unsupported(
+                            "this builtin is not yet built for chunk evaluation",
+                        ))?;
+                    return Ok(Expression::ScalarFunction(ScalarFunction::new(
+                        CiString::new(&lowered),
+                        ret_type,
+                        rewritten,
+                    )));
+                }
+            }
             // The `DATE_ADD` family's second argument is an `Expr::Interval`
             // — a value AND a unit keyword — not an expression the generic
             // argument loop below can rewrite. The unit is a build-time

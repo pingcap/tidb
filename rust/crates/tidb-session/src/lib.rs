@@ -195,6 +195,12 @@ pub struct Session {
     /// context, because `@x := expr` writes it from INSIDE expression
     /// evaluation -- once per row, visible to the next select-list item.
     user_vars: Rc<RefCell<HashMap<String, Datum>>>,
+    /// Go `SessionVars.SequenceState`: the last value THIS SESSION took from
+    /// each sequence, keyed by lowercase `db.name`, which is what `LASTVAL`
+    /// reports. It is SESSION state, not the sequence's stored counter -- a
+    /// fresh session reads `NULL` from a sequence other sessions have advanced
+    /// (captured: `lastval` before any `nextval` is `<nil>`).
+    sequence_last_values: Rc<RefCell<HashMap<String, i64>>>,
     /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
     /// Empty means no database is selected, which is Go's `ErrNoDB` case.
     current_db: String,
@@ -288,6 +294,7 @@ impl Default for Session {
             statement_kind: StatementKind::Other,
             published_last_insert_id: Rc::default(),
             user_vars: Rc::default(),
+            sequence_last_values: Rc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
             has_process_priv: false,
@@ -1342,6 +1349,7 @@ impl Session {
             statement_kind: StatementKind::Other,
             published_last_insert_id: Rc::default(),
             user_vars: Rc::default(),
+            sequence_last_values: Rc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
             process: None,
             has_process_priv: false,
@@ -2074,6 +2082,32 @@ impl Session {
                         Ok(StmtOutput::Affected(0))
                     })
                 }
+                // Go answers every sequence DDL with a zero affected-row
+                // count, as it does every other DDL.
+                DdlStmt::CreateSequence(create) => {
+                    let current_db = self.current_db.clone();
+                    let create = create.clone();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_create_sequence_in(&create, catalog, &current_db)?;
+                        Ok(StmtOutput::Affected(0))
+                    })
+                }
+                DdlStmt::AlterSequence(alter) => {
+                    let current_db = self.current_db.clone();
+                    let alter = alter.clone();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_alter_sequence_in(&alter, catalog, &current_db)?;
+                        Ok(StmtOutput::Affected(0))
+                    })
+                }
+                DdlStmt::DropSequence(drop) => {
+                    let current_db = self.current_db.clone();
+                    let drop = drop.clone();
+                    self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_drop_sequence_in(&drop, catalog, &current_db)?;
+                        Ok(StmtOutput::Affected(0))
+                    })
+                }
                 DdlStmt::DropView { if_exists, names } => {
                     let current_db = self.current_db.clone();
                     let (if_exists, names) = (*if_exists, names.clone());
@@ -2395,6 +2429,31 @@ impl Session {
     /// for a query, and for a DML statement resolves it from `sql_mode` --
     /// without `ERROR_FOR_DIVISION_BY_ZERO` the condition is ignored, a
     /// non-strict mode warns, and the default strict mode fails the statement.
+    /// The sequences a statement of this session may read, over the catalog it
+    /// sees (the transaction's working copy inside `BEGIN`).
+    ///
+    /// Only the NAMES are snapshotted: the allocators are `Arc` handles, so
+    /// consuming a value through one moves the counter the catalog holds. That
+    /// is deliberate and matches Go, where `NEXTVAL` allocates in its own meta
+    /// transaction -- see `with_statement_stage`'s note about a storage whose
+    /// clone shares a handle rather than copying by value.
+    fn sequence_snapshot(&self) -> Rc<tidb_executor::SequenceSnapshot> {
+        let by_name = match &self.txn {
+            Some(txn) => txn.working.sequence_allocators(),
+            None => match self.catalog.lock() {
+                Ok(catalog) => catalog.sequence_allocators(),
+                // A poisoned catalog is reported by the statement itself; an
+                // empty map here just makes every name unknown.
+                Err(_) => HashMap::new(),
+            },
+        };
+        Rc::new(tidb_executor::SequenceSnapshot::new(
+            by_name,
+            &self.current_db,
+            Rc::clone(&self.sequence_last_values),
+        ))
+    }
+
     fn statement_context(&self, is_dml: bool) -> tidb_executor::StmtContext {
         // Go hands the same `SessionVars` to every expression, which is where
         // `DATABASE()` and `VERSION()` read from.
@@ -2447,6 +2506,7 @@ impl Session {
                 .with_user_vars(Rc::clone(&self.user_vars))
                 .with_previous_statement(self.last_insert_id, self.prev_row_count)
                 .with_week_and_division_scale(week_format, div_scale)
+                .with_sequences(self.sequence_snapshot())
                 .with_clock(clock, zone);
         }
         tidb_executor::StmtContext::for_dml(
@@ -2463,6 +2523,7 @@ impl Session {
         .with_user_vars(Rc::clone(&self.user_vars))
         .with_previous_statement(self.last_insert_id, self.prev_row_count)
         .with_week_and_division_scale(week_format, div_scale)
+        .with_sequences(self.sequence_snapshot())
         .with_clock(clock, zone)
         .with_auto_increment_step_default(self.auto_increment_step_is_default())
         .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
@@ -2928,6 +2989,7 @@ mod tests_multi_table_dml;
 mod tests_recursive_cte;
 #[cfg(test)]
 mod tests_savepoint;
+mod tests_sequence;
 #[cfg(test)]
 mod tests_show;
 #[cfg(test)]

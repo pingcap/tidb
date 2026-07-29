@@ -253,6 +253,18 @@ pub(crate) fn build_from(
                 )?;
                 return Ok((meter(exec, trace), scope));
             }
+            // A sequence is in the table namespace but is not a row source.
+            // Go refuses it in the planner -- captured: `select * from s1` is
+            // `[planner:1051] Unknown table ''`, with the name genuinely
+            // empty in TiDB's own message. That exact wording is not
+            // reproduced here (an empty name would say less than the truth);
+            // what matters is that the read fails rather than reporting a
+            // zero-column row source.
+            if entry.is_sequence() {
+                return Err(DriverError::Unsupported(
+                    "a sequence is not a row source; read it with NEXTVAL",
+                ));
+            }
             let columns = entry.column_list();
             let schema_columns: Vec<Column> = columns
                 .iter()
@@ -274,7 +286,9 @@ pub(crate) fn build_from(
                     kv.clone(),
                 )),
                 // Handled above, before the columns were taken.
-                TableEntry::View(_) => unreachable!("views take the branch above"),
+                TableEntry::View(_) | TableEntry::Sequence(_) => {
+                    unreachable!("views and sequences take the branches above")
+                }
             };
             let scope = FromScope {
                 tables: vec![FromTable {

@@ -646,7 +646,9 @@ mod tests {
 
         // A statement kind that is unsupported regardless of catalog state,
         // so this assertion does not quietly become an unknown-table one.
-        let Err(unsupported) = session.execute("CREATE SEQUENCE seq") else {
+        // (This was `CREATE SEQUENCE seq` until sequences were transcreated --
+        // the assertion needs a kind that really is outside the domain.)
+        let Err(unsupported) = session.execute("FLASHBACK TABLE t") else {
             panic!("an unsupported statement must not produce a result");
         };
         assert_eq!(unsupported.code, 1105);

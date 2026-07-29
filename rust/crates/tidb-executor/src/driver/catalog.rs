@@ -187,6 +187,24 @@ pub enum TableEntry {
     Kv(KvTable),
     /// A view: a stored `SELECT` rather than stored rows.
     View(ViewDef),
+    /// A sequence: a counter rather than rows. It lives in the TABLE
+    /// namespace because Go stores it as a `model.TableInfo` with `Sequence`
+    /// set -- which is why `CREATE TABLE` over a sequence name collides, and
+    /// why `SELECT * FROM <sequence>` and `DROP TABLE <sequence>` are
+    /// errors rather than name-not-found.
+    Sequence(SequenceDef),
+}
+
+/// A sequence in the catalog: the name as written plus its allocator.
+///
+/// The allocator is `Arc`-shared inside, so cloning this entry (as a staged
+/// catalog copy does) shares the counter rather than forking it.
+#[derive(Clone, Debug)]
+pub struct SequenceDef {
+    /// The name as written, for `SHOW CREATE SEQUENCE` and `SHOW TABLES`.
+    pub name: String,
+    /// The value source. See [`crate::sequence`].
+    pub allocator: crate::sequence::SequenceAllocator,
 }
 
 impl TableEntry {
@@ -200,6 +218,10 @@ impl TableEntry {
                 .map(|c| (c.name.clone(), c.field_type.clone()))
                 .collect(),
             TableEntry::View(view) => view.columns.clone(),
+            // Go gives a sequence a fixed one-column schema, but no statement
+            // this tier accepts ever reads it: `SELECT * FROM <sequence>` is
+            // refused, and `nextval` reaches the allocator directly.
+            TableEntry::Sequence(_) => Vec::new(),
         }
     }
 
@@ -219,6 +241,13 @@ impl TableEntry {
     #[must_use]
     pub fn is_view(&self) -> bool {
         matches!(self, TableEntry::View(_))
+    }
+
+    /// Whether this entry is a sequence, which is the other non-row object
+    /// kind a statement may name by mistake.
+    #[must_use]
+    pub fn is_sequence(&self) -> bool {
+        matches!(self, TableEntry::Sequence(_))
     }
 }
 
@@ -467,6 +496,54 @@ impl Catalog {
     #[must_use]
     pub fn is_view_in(&self, database: &str, name: &str) -> bool {
         self.get_in(database, name).is_some_and(TableEntry::is_view)
+    }
+
+    /// Every sequence in the catalog, keyed by lowercase `db.name`, with its
+    /// allocator handle. The handles are `Arc`-shared, so this is a snapshot of
+    /// the NAMES only -- a value consumed through one of them moves the
+    /// counter the catalog holds. See [`crate::SequenceSnapshot`].
+    #[must_use]
+    pub fn sequence_allocators(&self) -> HashMap<String, crate::sequence::SequenceAllocator> {
+        let mut out = HashMap::new();
+        for (database_key, database) in &self.databases {
+            for (table_key, entry) in &database.tables {
+                if let TableEntry::Sequence(sequence) = entry {
+                    out.insert(
+                        format!("{database_key}.{table_key}"),
+                        sequence.allocator.clone(),
+                    );
+                }
+            }
+        }
+        out
+    }
+
+    /// Registers a sequence in `database`, replacing whatever the name held.
+    /// Callers own the name-collision check: Go answers 1050
+    /// `Table 'db.name' already exists` for `CREATE SEQUENCE` over ANY
+    /// existing name, table or sequence (captured).
+    pub fn register_sequence_in(&mut self, database: &str, name: &str, sequence: SequenceDef) {
+        self.register_in(database, name, TableEntry::Sequence(sequence));
+    }
+
+    /// The sequence `name` in `database`, or `None` when the name is absent
+    /// or holds something else.
+    #[must_use]
+    pub fn sequence_in(&self, database: &str, name: &str) -> Option<&SequenceDef> {
+        match self.get_in(database, name) {
+            Some(TableEntry::Sequence(sequence)) => Some(sequence),
+            _ => None,
+        }
+    }
+
+    /// [`Catalog::sequence_in`] for the `ALTER SEQUENCE` path, which replaces
+    /// the options on the entry in place.
+    pub fn sequence_mut_in(&mut self, database: &str, name: &str) -> Option<&mut SequenceDef> {
+        self.version += 1;
+        match self.get_mut_in(database, name) {
+            Some(TableEntry::Sequence(sequence)) => Some(sequence),
+            _ => None,
+        }
     }
 
     /// Whether a table with `name` exists in the default database.

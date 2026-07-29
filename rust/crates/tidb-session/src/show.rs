@@ -1283,8 +1283,14 @@ impl Session {
             tidb_ast::AdminStmt::Kill(kill) => self.kill_stmt(kill),
             // Go `fetchShowCreateTable`.
             tidb_ast::AdminStmt::ShowCreate { kind, name, .. } => {
+                // `SHOW CREATE SEQUENCE` and `SHOW CREATE TABLE` take the
+                // SAME path: Go's `buildShow` picks the column names from
+                // whether the object IS a sequence, not from the keyword
+                // written (captured: `show create table s1` over a sequence
+                // answers `Sequence | Create Sequence` with the
+                // `CREATE SEQUENCE` text).
                 let want_view = match kind {
-                    tidb_ast::ShowCreateKind::Table => false,
+                    tidb_ast::ShowCreateKind::Table | tidb_ast::ShowCreateKind::Sequence => false,
                     tidb_ast::ShowCreateKind::View => true,
                     _ => return Ok(None),
                 };
@@ -1297,7 +1303,7 @@ impl Session {
                 // A view answers either spelling with the same row, which
                 // is Go's own behaviour; only `SHOW CREATE VIEW` on a base
                 // table is refused.
-                let (text, reported, is_view) = self.with_catalog_mut(|catalog| {
+                let (text, reported, is_view, is_sequence) = self.with_catalog_mut(|catalog| {
                     let Some(entry) = catalog.table_in(&database, &table_name) else {
                         return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
                             "{database}.{table_name}"
@@ -1305,14 +1311,21 @@ impl Session {
                     };
                     match entry {
                         tidb_executor::TableEntry::View(view) => {
-                            Ok((show_create_view_text(view), table_name.clone(), true))
+                            Ok((show_create_view_text(view), table_name.clone(), true, false))
                         }
                         _ if want_view => Err(DriverError::Schema(SchemaErrorKind::NotView(
                             format!("{database}.{table_name}"),
                         ))),
+                        tidb_executor::TableEntry::Sequence(sequence) => Ok((
+                            tidb_executor::show_create_sequence(sequence),
+                            sequence.name.clone(),
+                            false,
+                            true,
+                        )),
                         tidb_executor::TableEntry::Kv(table) => Ok((
                             show_create_table_text(&table_name, table),
                             table_name.clone(),
+                            false,
                             false,
                         )),
                         tidb_executor::TableEntry::Mem(_) => Err(DriverError::Unsupported(
@@ -1340,10 +1353,18 @@ impl Session {
                         ]],
                     }));
                 }
+                // Go `buildShow` names these columns from `isSequence`, so a
+                // sequence reports `Sequence | Create Sequence` whichever
+                // keyword was written.
+                let (name_column, text_column) = if is_sequence {
+                    ("Sequence", "Create Sequence")
+                } else {
+                    ("Table", "Create Table")
+                };
                 Ok(Some(StmtOutput::Rows {
                     columns: vec![
-                        ("Table".to_owned(), field_type.clone()),
-                        ("Create Table".to_owned(), field_type),
+                        (name_column.to_owned(), field_type.clone()),
+                        (text_column.to_owned(), field_type),
                     ],
                     rows: vec![vec![
                         Datum::Bytes(reported.into_bytes()),
