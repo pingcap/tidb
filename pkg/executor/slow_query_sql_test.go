@@ -19,21 +19,27 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func TestSlowQueryWithoutSlowLog(t *testing.T) {
@@ -551,6 +557,143 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	tk.MustHavePlan(query, "TableSample")
 	tk.MustExec(query)
 	checkStorageEngines(t, tk, "query like 'select%tablesample%;'", "1 0")
+}
+
+func TestReadPoolTaskDetailsInDiagnostics(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	t.Cleanup(func() {
+		if t.Failed() {
+			if data, err := os.ReadFile(f.Name()); err == nil {
+				t.Logf("slow log contents (%d bytes):\n%s", len(data), data)
+			}
+		}
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, f.Close())
+		require.NoError(t, os.Remove(f.Name()))
+	})
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("set tidb_slow_log_threshold=0")
+	tk.MustExec("set tidb_enable_paging=0")
+	t.Cleanup(func() {
+		tk.MustExec("set tidb_slow_log_threshold=300")
+	})
+
+	tk.MustExec("create table t_read_pool_details (id int primary key, v int)")
+	tk.MustExec("insert into t_read_pool_details values (1, 10), (2, 20), (3, 30)")
+
+	responseHook := func(_ *tikvrpc.Request, resp *tikvrpc.Response) {
+		newExecDetails := func() *kvrpcpb.ExecDetailsV2 {
+			return &kvrpcpb.ExecDetailsV2{
+				ReadPoolTaskDetails: &kvrpcpb.PoolTaskDetails{
+					PollCount:                      4,
+					DispatchCount:                  2,
+					TotalWallNanos:                 uint64((20 * time.Millisecond).Nanoseconds()),
+					TotalQueueWaitNanos:            uint64((6 * time.Millisecond).Nanoseconds()),
+					MaxQueueWaitNanos:              uint64((4 * time.Millisecond).Nanoseconds()),
+					MinQueueWaitNanos:              uint64((2 * time.Millisecond).Nanoseconds()),
+					TotalWakeWaitNanos:             uint64((4 * time.Millisecond).Nanoseconds()),
+					MaxWakeWaitNanos:               uint64((4 * time.Millisecond).Nanoseconds()),
+					MinWakeWaitNanos:               uint64((4 * time.Millisecond).Nanoseconds()),
+					FairQueueEnabled:               true,
+					TotalFairQueueWaitedTaskSlices: 6,
+					MaxFairQueueWaitedTaskSlices:   4,
+					MinFairQueueWaitedTaskSlices:   2,
+					PollCpuNanos:                   uint64((8 * time.Millisecond).Nanoseconds()),
+					MaxPollCpuNanos:                uint64((3 * time.Millisecond).Nanoseconds()),
+					MinPollCpuNanos:                uint64((1 * time.Millisecond).Nanoseconds()),
+					PollWallNanos:                  uint64((12 * time.Millisecond).Nanoseconds()),
+					MaxPollWallNanos:               uint64((5 * time.Millisecond).Nanoseconds()),
+					MinPollWallNanos:               uint64((2 * time.Millisecond).Nanoseconds()),
+				},
+			}
+		}
+
+		switch typedResp := resp.Resp.(type) {
+		case *kvrpcpb.GetResponse:
+			typedResp.ExecDetailsV2 = newExecDetails()
+		case *kvrpcpb.BatchGetResponse:
+			typedResp.ExecDetailsV2 = newExecDetails()
+		case *coprocessor.Response:
+			typedResp.ExecDetailsV2 = newExecDetails()
+		}
+	}
+	unistore.UnistoreRPCClientResponseHook.Store(&responseHook)
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientResponseHook",
+		"return(true)",
+	))
+	t.Cleanup(func() {
+		unistore.UnistoreRPCClientResponseHook.Store(nil)
+		require.NoError(t, failpoint.Disable(
+			"github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientResponseHook",
+		))
+	})
+
+	const expectedDetails = "{tasks:1, poll_count:{total:4, avg:4, max:4, min:4}, " +
+		"dispatch_count:{total:2, max:2, min:2}, " +
+		"task_wall_time:{total:20ms, avg:20ms, max:20ms, min:20ms}, " +
+		"queue_wait:{total:6ms, avg:3ms, max:4ms, min:2ms}, " +
+		"wake_wait:{total:4ms, avg:4ms, max:4ms, min:4ms}, " +
+		"fair_queue:{enabled:true, waited_task_slices:{total:6, avg:3, max:4, min:2}}, " +
+		"poll_cpu:{total:8ms, avg:2ms, max:3ms, min:1ms}, " +
+		"poll_wall:{total:12ms, avg:3ms, max:5ms, min:2ms}}"
+	cases := []struct {
+		name string
+		plan string
+		sql  string
+	}{
+		{
+			name: "point get",
+			plan: "Point_Get",
+			sql:  "select /* read_pool_point_get */ * from t_read_pool_details where id = 1",
+		},
+		{
+			name: "batch point get",
+			plan: "Batch_Point_Get",
+			sql:  "select /* read_pool_batch_point_get */ * from t_read_pool_details where id in (1, 2)",
+		},
+		{
+			name: "cop task",
+			plan: "TableReader",
+			sql:  "select /* read_pool_cop */ * from t_read_pool_details where v >= 10",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			tk.MustHavePlan(testCase.sql, testCase.plan)
+			tk.MustQuery(testCase.sql)
+			tk.EventuallyMustQueryAndCheck(
+				"select read_pool_task_details from information_schema.slow_query "+
+					"where query = '"+testCase.sql+";' "+
+					"order by time desc limit 1",
+				nil,
+				testkit.Rows(expectedDetails),
+				2*time.Second,
+				50*time.Millisecond,
+			)
+
+			rows := tk.MustQuery("explain analyze " + testCase.sql).Rows()
+			foundDetails := false
+			for _, row := range rows {
+				if strings.Contains(fmt.Sprint(row[5]), "read_pool:"+expectedDetails) {
+					foundDetails = true
+					break
+				}
+			}
+			require.True(t, foundDetails, "read-pool task details not found in EXPLAIN ANALYZE output: %v", rows)
+		})
+	}
 }
 
 func TestSessionConnectAttrsInSlowQuery(t *testing.T) {
