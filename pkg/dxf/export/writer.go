@@ -38,8 +38,6 @@ const (
 	// use the bandwidth.
 	uploadConcurrency = 16
 	uploadPartSize    = 8 * 1024 * 1024
-	// defaultFileSize is the file-cut size when the task does not set FileSize.
-	defaultFileSize = 256 * 1024 * 1024
 )
 
 // csvConfig returns the default CSV framing, byte-compatible with Dumpling's
@@ -157,7 +155,6 @@ type chunkWriter struct {
 	fileIdx int
 	obj     objectio.Writer
 	cw      *csvfile.Writer
-	// written accumulates the bytes of all finalized files of this chunk.
 	written int64
 }
 
