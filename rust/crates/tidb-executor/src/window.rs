@@ -1120,14 +1120,23 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
                 .split_first()
                 .ok_or(DriverError::Unsupported(SLICE_MESSAGE))?;
             // Go's `NewWindowFuncDesc` requires a non-negative integer
-            // constant offset (`0` allowed, unlike NTILE/NTH_VALUE, but
-            // `NULL` is not); the parser has already rejected a negative one.
+            // constant offset; the parser has already rejected a negative
+            // one. UNLIKE `NTILE`/`NTH_VALUE`, Go's OWN grammar restricts
+            // `LAG`/`LEAD`'s second argument to a `NumLiteral` (unsigned
+            // int/float literal or a param marker) -- see
+            // `pkg/parser/expr_func_parser.go`'s `parseLeadLagFuncCall`.
+            // A boolean literal can never reach `GetUint64FromConstant`
+            // here at all; `LAG(k, TRUE)` is a Go-side SQL syntax error
+            // (1064), confirmed against real TiDB, not a semantic one. So
+            // this site does NOT get the shared `constant_uint` boolean
+            // reader: doing so would make this engine silently ACCEPT a
+            // query Go rejects at parse time.
             let offset = match rest.first() {
                 None => 1,
-                Some(expr) => match constant_uint(expr) {
-                    Some(Some(count)) => count,
-                    _ => return Err(DriverError::WrongArguments("lag/lead")),
-                },
+                Some(Expr::Int(text)) => text
+                    .parse::<u64>()
+                    .map_err(|_| DriverError::WrongArguments("lag/lead"))?,
+                Some(_) => return Err(DriverError::WrongArguments("lag/lead")),
             };
             WindowKind::LagLead {
                 arg: arg.clone(),
