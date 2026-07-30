@@ -249,9 +249,10 @@ func (s *backfillDistExecutor) checkLocalSortFreeDisk(ctx context.Context) error
 		runningJobUsedBytes,
 		s.task.GetRuntimeSlots(),
 	); err != nil {
-		// Running add-index disk usage is subtracted from the remaining growth budget, so admission failures
-		// indicate persistent non-DDL disk pressure and must remain fatal; operators
-		// must remove logs or other files to resolve it.
+		// The growth reservation is capped by tidb_ddl_disk_quota (100 GiB by default).
+		// Available space also reflects untracked usage such as logs. Reject the task because
+		// insufficient local disk space can degrade SST ingestion. Operators should inspect
+		// the TiDB node for large files that can be safely removed.
 		return err
 	}
 	return nil
