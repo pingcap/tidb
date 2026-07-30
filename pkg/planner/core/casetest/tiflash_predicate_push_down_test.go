@@ -15,6 +15,7 @@
 package casetest
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +81,25 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 			})
 			require.Equal(t, output[i].Plan, normalizedPlanRows, tt)
 		}
+
+		testKit.MustExec("set @@tidb_opt_enable_late_materialization = off")
+		rows := testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' select /*+ tiflash_lm_filter(t1, a, b) */ * from t1 where a + b > 100 and c in (1,2,3)").Rows())
+		plan := strings.Join(rows, "\n")
+		require.Contains(t, plan, "Selection")
+		require.Contains(t, plan, "gt(plus(test.t1.a, test.t1.b)")
+		require.NotContains(t, plan, "pushed down filter")
+
+		// Forced filters also apply below the cost-based small-table threshold.
+		testKit.MustExec("create table t_lm_small (a int, b int)")
+		testKit.MustExec("insert into t_lm_small values (1, 1)")
+		testKit.MustExec("analyze table t_lm_small all columns")
+		testkit.SetTiFlashReplica(t, dom, "test", "t_lm_small")
+		testKit.MustExec("set @@tidb_opt_enable_late_materialization = on")
+		rows = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' select /*+ tiflash_lm_filter(t_lm_small, a) */ * from t_lm_small where a > 1 and b > 1").Rows())
+		plan = strings.Join(rows, "\n")
+		require.Contains(t, plan, "pushed down filter:gt(test.t_lm_small.a, 1)")
+		require.Contains(t, plan, "Selection")
+		require.Contains(t, plan, "gt(test.t_lm_small.b, 1)")
 	})
 }
 
