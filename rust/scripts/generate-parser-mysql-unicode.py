@@ -103,10 +103,23 @@ func main() {{
     return json.loads(output)
 
 
+def read_module_source(root: Path, module_name: str) -> str:
+    """Read a checked-in Rust module's full source, whether it's a single
+    `<module_name>.rs` file or has been split into `<module_name>/*.rs` parts
+    (see the source-size ratchet split playbook). Concatenating the parts is
+    equivalent to the pre-split single file for regex-based verification."""
+    single = root / f"{module_name}.rs"
+    if single.exists():
+        return single.read_text(encoding="utf-8")
+    directory = root / module_name
+    parts = sorted(directory.glob("*.rs"))
+    return "\n".join(part.read_text(encoding="utf-8") for part in parts)
+
+
 def rust_error_snapshot(rust_root: Path) -> dict[str, object]:
     """Parse the deliberately regular checked-in Rust catalog authorities."""
     mysql_root = rust_root / "crates/tidb-error/src/mysql"
-    errcode = (mysql_root / "errcode.rs").read_text(encoding="utf-8")
+    errcode = read_module_source(mysql_root, "errcode")
     codes = [
         {"name": name, "code": int(value.replace("_", ""))}
         for name, value in re.findall(
@@ -119,7 +132,7 @@ def rust_error_snapshot(rust_root: Path) -> dict[str, object]:
     if len(code_by_name) != len(codes):
         raise SystemExit("duplicate Rust parser/mysql error-code declaration")
 
-    errname = (mysql_root / "errname.rs").read_text(encoding="utf-8")
+    errname = read_module_source(mysql_root, "errname")
     pattern = re.compile(
         r"pub const (\w+): ErrMessage = ErrMessage \{\s*"
         r"raw:\s*(\"(?:\\.|[^\"\\])*\")\s*,\s*"
