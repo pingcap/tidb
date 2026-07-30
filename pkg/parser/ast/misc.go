@@ -4311,6 +4311,12 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteName(index.String())
 		}
+	case "tiflash_lm_filter":
+		n.Tables[0].Restore(ctx)
+		for _, column := range n.Indexes {
+			ctx.WritePlain(", ")
+			ctx.WriteName(column.String())
+		}
 	case "qb_name":
 		if len(n.Tables) > 0 {
 			ctx.WritePlain(", ")

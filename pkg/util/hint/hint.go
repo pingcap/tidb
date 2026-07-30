@@ -109,6 +109,8 @@ const (
 	HintIgnorePlanCache = "ignore_plan_cache"
 	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
 	HintLimitToCop = "limit_to_cop"
+	// HintTiFlashLMFilter is a hint to enforce TiFlash late materialization filter columns.
+	HintTiFlashLMFilter = "tiflash_lm_filter"
 	// HintMerge is a hint which can switch turning inline for the CTE.
 	HintMerge = "merge"
 	// HintSemiJoinRewrite is a hint to force we rewrite the semi join operator as much as possible.
@@ -538,6 +540,7 @@ type PlanHints struct {
 	IndexMergeHintList []HintedIndex  // use_index_merge
 	TiFlashTables      []HintedTable  // isolation_read_engines(xx=tiflash)
 	TiKVTables         []HintedTable  // isolation_read_engines(xx=tikv)
+	TiFlashLMFilters   []HintedColumn // tiflash_lm_filter
 	LeadingJoinOrder   []HintedTable  // leading
 	HJBuild            []HintedTable  // hash_join_build
 	HJProbe            []HintedTable  // hash_join_probe
@@ -578,6 +581,36 @@ type HintedIndex struct {
 	// If an HintedIndex is not Matched after building
 	// a Select statement, we will generate a warning for it.
 	Matched bool
+}
+
+// HintedColumn indicates which columns this hint should take effect on.
+type HintedColumn struct {
+	DBName       pmodel.CIStr
+	TblName      pmodel.CIStr
+	SelectOffset int
+	Columns      []pmodel.CIStr
+	Matched      bool
+}
+
+// Match checks whether the hint is matched with the given table alias.
+func (hint *HintedColumn) Match(other *HintedTable) bool {
+	return hint.SelectOffset == other.SelectOffset &&
+		hint.TblName.L == other.TblName.L &&
+		(hint.DBName.L == other.DBName.L ||
+			hint.DBName.L == "*" || other.DBName.L == "*")
+}
+
+// ColumnString formats the HintedColumn as DBName.tableName[, columnNames].
+func (hint *HintedColumn) ColumnString() string {
+	columnList := make([]string, len(hint.Columns))
+	for i := range hint.Columns {
+		columnList[i] = hint.Columns[i].L
+	}
+	columnListString := strings.Join(columnList, ", ")
+	if columnListString != "" {
+		columnListString = fmt.Sprintf(", %s", columnListString)
+	}
+	return fmt.Sprintf("%s.%s%s", hint.DBName, hint.TblName, columnListString)
 }
 
 // Match checks whether the hint is matched with the given dbName and tblName.
@@ -744,6 +777,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		shuffleJoinTables                                                               []HintedTable
 		indexHintList, indexMergeHintList                                               []HintedIndex
 		tiflashTables, tikvTables                                                       []HintedTable
+		tiflashLMFilters                                                                []HintedColumn
 		preferAggType                                                                   uint
 		preferAggToCop                                                                  bool
 		timeRangeHint                                                                   ast.HintTimeRange
@@ -758,7 +792,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
-			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintTiFlashLMFilter, HintLeading:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
 				ctx := format.NewRestoreCtx(0, &sb)
@@ -841,6 +875,24 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 					HintScope:  ast.HintForScan,
 				},
 			})
+		case HintTiFlashLMFilter:
+			// TableOptimizerHint reuses Indexes to store the identifier list after the table name.
+			// For TIFLASH_LM_FILTER, these identifiers are column names instead of index names.
+			columns := hint.Indexes
+			if len(columns) == 0 {
+				warnHandler.SetHintWarning("The TIFLASH_LM_FILTER hint is not used correctly, please specify at least one column name.")
+				continue
+			}
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = pmodel.NewCIStr(currentDB)
+			}
+			tiflashLMFilters = append(tiflashLMFilters, HintedColumn{
+				DBName:       dbName,
+				TblName:      hint.Tables[0].TableName,
+				SelectOffset: hintProcessor.GetHintOffset(getHintTableQBName(hint), currentLevel),
+				Columns:      columns,
+			})
 		case HintReadFromStorage:
 			switch hint.HintData.(pmodel.CIStr).L {
 			case HintTiFlash:
@@ -915,6 +967,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		IndexHintList:      indexHintList,
 		TiFlashTables:      tiflashTables,
 		TiKVTables:         tikvTables,
+		TiFlashLMFilters:   tiflashLMFilters,
 		PreferAggToCop:     preferAggToCop,
 		PreferAggType:      preferAggType,
 		IndexMergeHintList: indexMergeHintList,
@@ -1073,6 +1126,7 @@ func ExtractUnmatchedTables(hintTables []HintedTable) []string {
 func CollectUnmatchedHintWarnings(hintInfo *PlanHints) (warnings []string) {
 	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexHintList, false)...)
 	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexMergeHintList, true)...)
+	warnings = append(warnings, collectUnmatchedColumnHintWarning(HintTiFlashLMFilter, hintInfo.TiFlashLMFilters)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.IndexJoin.INLJTables)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.IndexJoin.INLHJTables)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLMJ, "", hintInfo.IndexJoin.INLMJTables)...)
@@ -1085,6 +1139,28 @@ func CollectUnmatchedHintWarnings(hintInfo *PlanHints) (warnings []string) {
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintLeading, "", hintInfo.LeadingJoinOrder)...)
 	warnings = append(warnings, collectUnmatchedStorageHintWarning(hintInfo.TiFlashTables, hintInfo.TiKVTables)...)
 	return warnings
+}
+
+func collectUnmatchedColumnHintWarning(hintType string, columnHints []HintedColumn) (warnings []string) {
+	for _, hint := range columnHints {
+		if !hint.Matched {
+			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the table(%s.%s) exists",
+				hintType,
+				hint.ColumnString(),
+				hint.DBName,
+				hint.TblName,
+			)
+			warnings = append(warnings, errMsg)
+		}
+	}
+	return warnings
+}
+
+func getHintTableQBName(hint *ast.TableOptimizerHint) pmodel.CIStr {
+	if len(hint.Tables) > 0 && hint.Tables[0].QBName.L != "" {
+		return hint.Tables[0].QBName
+	}
+	return hint.QBName
 }
 
 func collectUnmatchedIndexHintWarning(indexHints []HintedIndex, usedForIndexMerge bool) (warnings []string) {

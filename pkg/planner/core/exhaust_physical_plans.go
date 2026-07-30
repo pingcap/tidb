@@ -995,19 +995,20 @@ func constructInnerTableScanTask(
 		return nil
 	}
 	ts := PhysicalTableScan{
-		Table:           ds.TableInfo,
-		Columns:         ds.Columns,
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		filterCondition: ds.PushedDownConds,
-		Ranges:          ranges,
-		rangeInfo:       rangeInfo,
-		KeepOrder:       keepOrder,
-		Desc:            desc,
-		physicalTableID: ds.PhysicalTableID,
-		isPartition:     ds.PartitionDefIdx != nil,
-		tblCols:         ds.TblCols,
-		tblColHists:     ds.TblColHists,
+		Table:                                    ds.TableInfo,
+		Columns:                                  ds.Columns,
+		TableAsName:                              ds.TableAsName,
+		DBName:                                   ds.DBName,
+		filterCondition:                          ds.PushedDownConds,
+		Ranges:                                   ranges,
+		rangeInfo:                                rangeInfo,
+		KeepOrder:                                keepOrder,
+		Desc:                                     desc,
+		physicalTableID:                          ds.PhysicalTableID,
+		isPartition:                              ds.PartitionDefIdx != nil,
+		tblCols:                                  ds.TblCols,
+		tblColHists:                              ds.TblColHists,
+		ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	if rowCount <= 0 {
@@ -1225,14 +1226,15 @@ func constructInnerIndexScanTask(
 	if !path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
-			Columns:         ds.Columns,
-			Table:           is.Table,
-			TableAsName:     ds.TableAsName,
-			DBName:          ds.DBName,
-			isPartition:     ds.PartitionDefIdx != nil,
-			physicalTableID: ds.PhysicalTableID,
-			tblCols:         ds.TblCols,
-			tblColHists:     ds.TblColHists,
+			Columns:                                  ds.Columns,
+			Table:                                    is.Table,
+			TableAsName:                              ds.TableAsName,
+			DBName:                                   ds.DBName,
+			isPartition:                              ds.PartitionDefIdx != nil,
+			physicalTableID:                          ds.PhysicalTableID,
+			tblCols:                                  ds.TblCols,
+			tblColHists:                              ds.TblColHists,
+			ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		ts.schema = is.dataSourceSchema.Clone()
 		if ds.TableInfo.IsCommonHandle {

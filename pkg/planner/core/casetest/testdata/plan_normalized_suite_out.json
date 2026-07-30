@@ -468,6 +468,24 @@
         ]
       },
       {
+        "SQL": "explain select /*+ tiflash_lm_filter(t1, a, b) */ * from t1 where a + b > 100 and c in (1,2,3)",
+        "Plan": [
+          " TableReader         root         ",
+          " └─ExchangeSender    cop[tiflash] ",
+          "   └─Selection       cop[tiflash] in(test.t1.c, ?, ?, ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(plus(test.t1.a, test.t1.b), ?), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ tiflash_lm_filter(t1, a) */ * from t1 where a > 1 and b > 1",
+        "Plan": [
+          " TableReader         root         ",
+          " └─ExchangeSender    cop[tiflash] ",
+          "   └─Selection       cop[tiflash] gt(test.t1.b, ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+        ]
+      },
+      {
         "SQL": "explain select count(a), max(t) from t1 where a>1",
         "Plan": [
           " HashAgg           root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",

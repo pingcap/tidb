@@ -62,6 +62,8 @@ type DataSource struct {
 	IndexMergeHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.
 	PushedDownConds []expression.Expression
+	// TiFlashLMFilterColumnIDs are columns forced as TiFlash late-materialization filter columns by hints.
+	TiFlashLMFilterColumnIDs []int64
 	// AllConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used in partition pruning/index merge.
 	AllConds []expression.Expression
@@ -157,6 +159,10 @@ func (ds *DataSource) Hash64(h base2.Hasher) {
 	for _, oneCond := range ds.AllConds {
 		oneCond.Hash64(h)
 	}
+	h.HashInt(len(ds.TiFlashLMFilterColumnIDs))
+	for _, colID := range ds.TiFlashLMFilterColumnIDs {
+		h.HashInt64(colID)
+	}
 	// hint and update misc.
 	h.HashInt(ds.PreferStoreType)
 	h.HashBool(ds.IsForUpdateRead)
@@ -177,7 +183,8 @@ func (ds *DataSource) Equals(other any) bool {
 		return false
 	}
 	ok := ds.TableInfo.ID == ds2.TableInfo.ID && ds.TableAsName.L == ds2.TableAsName.L && len(ds.PushedDownConds) == len(ds2.PushedDownConds) &&
-		len(ds.AllConds) == len(ds2.AllConds) && ds.PreferStoreType == ds2.PreferStoreType && ds.IsForUpdateRead == ds2.IsForUpdateRead
+		len(ds.AllConds) == len(ds2.AllConds) && len(ds.TiFlashLMFilterColumnIDs) == len(ds2.TiFlashLMFilterColumnIDs) &&
+		ds.PreferStoreType == ds2.PreferStoreType && ds.IsForUpdateRead == ds2.IsForUpdateRead
 	if !ok {
 		return false
 	}
@@ -186,6 +193,11 @@ func (ds *DataSource) Equals(other any) bool {
 	}
 	for i, oneCond := range ds.AllConds {
 		oneCond.Equals(ds2.AllConds[i])
+	}
+	for i, colID := range ds.TiFlashLMFilterColumnIDs {
+		if colID != ds2.TiFlashLMFilterColumnIDs[i] {
+			return false
+		}
 	}
 	return true
 }
