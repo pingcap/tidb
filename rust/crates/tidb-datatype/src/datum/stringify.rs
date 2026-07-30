@@ -1,0 +1,251 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Datum rendering: diagnostic labels, result-set text, and row text.
+//!
+//! Mirrors `pkg/types/datum.go`'s `Datum.ToString`, `TruncatedStringify`,
+//! `DatumsToString`, `DatumsToStrNoErr`, and `DatumsToStrNoErrSmart`, together
+//! with the printable-string predicate those row renderers consult.
+
+use std::fmt;
+
+use super::{Datum, DatumKind, DatumStringError};
+
+impl Datum {
+    /// Renders the scalar in the existing Go-oracle label format.
+    ///
+    /// Every valid UTF-8 payload keeps the historical `STR:<text>` bytes,
+    /// including embedded NUL and other control characters used by the Go
+    /// differential oracle. Only invalid UTF-8 uses an uppercase hexadecimal
+    /// suffix because it cannot be represented by a Rust [`String`].
+    pub fn label(&self) -> String {
+        match self {
+            Self::Int(value) => format!("INT:{value}"),
+            Self::UInt(value) => format!("UINT:{value}"),
+            Self::Decimal(value) => format!("DEC:{value}"),
+            Self::Real(value) => format!("FLOAT:{value}"),
+            Self::Float32(value) => format!("FLOAT:{value}"),
+            Self::String(value) => label_bytes("STR", value.bytes()),
+            Self::Bytes(value) => label_bytes("STR", value),
+            Self::BinaryLiteral(value) | Self::Bit(value) => label_bytes("STR", value.as_bytes()),
+            Self::Duration(value) => format!("DUR:{value}"),
+            Self::Enum(value, _) => format!("ENUM:{value}"),
+            Self::Set(value, _) => format!("SET:{value}"),
+            Self::Time(value) => format!("TIME:{value}"),
+            Self::Json(value) => format!("JSON:{value}"),
+            Self::Raw(value) => label_bytes("RAW", value),
+            Self::VectorFloat32(value) => format!("VECTOR:{value}"),
+            Self::Null => "NULL".to_string(),
+            Self::MinNotNull => "SKIP:15".to_string(),
+            Self::MaxValue => "SKIP:16".to_string(),
+        }
+    }
+
+    /// Renders TiDB's result-set string form without lossy UTF-8 decoding.
+    ///
+    /// Existing valid UTF-8 behavior is unchanged. Invalid UTF-8 is returned
+    /// to the caller as an error so a semantic coercion cannot silently turn
+    /// raw bytes into replacement text or a hexadecimal diagnostic label.
+    pub fn sql_string(&self) -> Result<String, DatumStringError> {
+        match self {
+            Self::Int(value) => Ok(value.to_string()),
+            Self::UInt(value) => Ok(value.to_string()),
+            Self::Decimal(value) => Ok(value.to_string()),
+            Self::Real(value) => Ok(value.to_string()),
+            Self::Float32(value) => Ok((*value as f32).to_string()),
+            Self::String(value) => decode_bytes(value.bytes()),
+            Self::Bytes(value) => decode_bytes(value),
+            Self::BinaryLiteral(value) | Self::Bit(value) => decode_bytes(value.as_bytes()),
+            Self::Duration(value) => Ok(value.to_string()),
+            Self::Enum(value, _) => Ok(value.to_string()),
+            Self::Set(value, _) => Ok(value.to_string()),
+            Self::Time(value) => Ok(value.to_string()),
+            Self::Json(value) => Ok(value.to_string()),
+            Self::Raw(value) => decode_bytes(value),
+            Self::VectorFloat32(value) => Ok(value.to_string()),
+            Self::Null => Ok(String::new()),
+            Self::MinNotNull => Err(DatumStringError::RangeSentinel(DatumKind::MinNotNull)),
+            Self::MaxValue => Err(DatumStringError::RangeSentinel(DatumKind::MaxValue)),
+        }
+    }
+
+    /// Source `Datum.TruncatedStringify` used by EXPLAIN and diagnostics.
+    pub fn truncated_stringify(&self) -> Result<Vec<u8>, DatumStringError> {
+        let bytes = match self {
+            Self::String(value) => value.bytes().to_vec(),
+            Self::Bytes(value) => value.clone(),
+            Self::Json(value) => value.to_string().into_bytes(),
+            Self::VectorFloat32(value) => return Ok(value.truncated_string().into_bytes()),
+            Self::Int(value) => return Ok(value.to_string().into_bytes()),
+            Self::UInt(value) => return Ok(value.to_string().into_bytes()),
+            other => other.sql_string()?.into_bytes(),
+        };
+        Ok(truncate_diagnostic_bytes(bytes))
+    }
+}
+
+/// Source `DatumsToString`.
+pub fn datums_to_string(
+    datums: &[Datum],
+    handle_special_values: bool,
+    binary_as_hex: bool,
+) -> Result<String, DatumStringError> {
+    use fmt::Write;
+
+    let mut output = String::new();
+    if datums.len() > 1 {
+        output.push('(');
+    }
+    for (index, datum) in datums.iter().enumerate() {
+        if index != 0 {
+            output.push_str(", ");
+        }
+        if handle_special_values {
+            match datum {
+                Datum::Null => {
+                    output.push_str("NULL");
+                    continue;
+                }
+                Datum::MinNotNull => {
+                    output.push_str("-inf");
+                    continue;
+                }
+                Datum::MaxValue => {
+                    output.push_str("+inf");
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        let mut text = datum.sql_string()?;
+        let original_length = (text.len() > 2048).then_some(text.len());
+        if original_length.is_some() {
+            text.truncate(2048);
+        }
+        if matches!(datum, Datum::String(_)) {
+            if binary_as_hex && !is_printable(text.as_bytes()) {
+                write!(output, "0x{}", encode_hex(text.as_bytes()))
+                    .expect("writing to String cannot fail");
+            } else {
+                write!(output, "\"{text}\"").expect("writing to String cannot fail");
+            }
+        } else {
+            output.push_str(&text);
+        }
+        if let Some(length) = original_length {
+            write!(output, " len({length})").expect("writing to String cannot fail");
+        }
+    }
+    if datums.len() > 1 {
+        output.push(')');
+    }
+    Ok(output)
+}
+
+/// Source `DatumsToStrNoErr`.
+pub fn datums_to_string_no_error(datums: &[Datum]) -> String {
+    datums_to_string(datums, true, false).unwrap_or_default()
+}
+
+/// Source `DatumsToStrNoErrSmart`.
+pub fn datums_to_string_no_error_smart(datums: &[Datum]) -> String {
+    datums_to_string(datums, true, true).unwrap_or_default()
+}
+
+/// Source printable-string predicate.
+pub fn is_printable(value: &[u8]) -> bool {
+    std::str::from_utf8(value).is_ok_and(|text| !text.chars().any(char::is_control))
+}
+
+fn truncate_diagnostic_bytes(mut value: Vec<u8>) -> Vec<u8> {
+    const MAX_LEN: usize = 64;
+    if value.len() <= MAX_LEN {
+        return value;
+    }
+    let original_len = value.len();
+    value.truncate(MAX_LEN);
+    value.extend_from_slice(b"...(len:");
+    value.extend_from_slice(original_len.to_string().as_bytes());
+    value.push(b')');
+    value
+}
+
+fn label_bytes(kind: &str, bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => format!("{kind}:{text}"),
+        Err(_) => format!("{kind}_HEX:{}", encode_hex(bytes)),
+    }
+}
+
+fn decode_bytes(bytes: &[u8]) -> Result<String, DatumStringError> {
+    std::str::from_utf8(bytes)
+        .map(str::to_string)
+        .map_err(DatumStringError::InvalidUtf8)
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(encoded, "{byte:02X}").expect("writing to String cannot fail");
+    }
+    encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Datum;
+
+    /// Source: `pkg/types/datum.go::GetString` / `GetBytes`. Diagnostics may
+    /// encode arbitrary octets, but semantic stringification must reject
+    /// invalid UTF-8 instead of replacing or reinterpreting it.
+    #[test]
+    fn diagnostic_labels_are_lossless_but_sql_stringification_is_checked() {
+        assert_eq!(Datum::new_string("TiDB").label(), "STR:TiDB");
+
+        let invalid = Datum::new_bytes(vec![0xff, 0, b'A']);
+        assert_eq!(invalid.label(), "STR_HEX:FF0041");
+        assert!(invalid.sql_string().is_err());
+
+        let embedded_nul = Datum::new_string(vec![b'a', 0, b'b']);
+        assert_eq!(embedded_nul.label().as_bytes(), b"STR:a\0b");
+        assert_eq!(embedded_nul.sql_string().unwrap().as_bytes(), b"a\0b");
+    }
+
+    /// Source `BenchmarkDatumTruncatedStringify` inputs plus the byte-boundary
+    /// contract exercised by the implementation.
+    #[test]
+    fn source_datum_truncated_stringify_rows() {
+        let long = Datum::new_string("1".repeat(128));
+        assert_eq!(
+            long.truncated_stringify().unwrap(),
+            format!("{}...(len:128)", "1".repeat(64)).into_bytes()
+        );
+        assert_eq!(
+            Datum::new_int(2).truncated_stringify().unwrap(),
+            b"2".to_vec()
+        );
+        let split_utf8 = Datum::new_string(format!("{}é", "a".repeat(63)));
+        assert_eq!(
+            split_utf8.truncated_stringify().unwrap(),
+            [
+                "a".repeat(63).into_bytes(),
+                vec![0xc3],
+                b"...(len:65)".to_vec()
+            ]
+            .concat()
+        );
+    }
+}
