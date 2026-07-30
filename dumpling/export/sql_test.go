@@ -300,7 +300,7 @@ func TestBuildSelectField(t *testing.T) {
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, "").
 			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, ""))
-	columnSelectors := newColumnSelectorsForTest(t, ColumnSelectorModeInclude,
+	columnSelectors := newColumnSelectorsForTest(t,
 		ColumnSelector{Matcher: []string{"test.t"}, Columns: []string{"quo`te", "name"}},
 	)
 	selectInfo, err := buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnSelectors)
@@ -315,8 +315,8 @@ func TestBuildSelectField(t *testing.T) {
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, "").
 			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, ""))
-	columnSelectors = newColumnSelectorsForTest(t, ColumnSelectorModeExclude,
-		ColumnSelector{Matcher: []string{"test.t"}, Columns: []string{"name"}},
+	columnSelectors = newColumnSelectorsForTest(t,
+		ColumnSelector{Matcher: []string{"test.t"}, Columns: []string{"*", "!name"}},
 	)
 	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnSelectors)
 	require.NoError(t, err)
@@ -329,8 +329,8 @@ func TestBuildSelectField(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, ""))
-	columnSelectors = newColumnSelectorsForTest(t, ColumnSelectorModeExclude,
-		ColumnSelector{Matcher: []string{"test.t"}, Columns: []string{"id", "name"}},
+	columnSelectors = newColumnSelectorsForTest(t,
+		ColumnSelector{Matcher: []string{"test.t"}, Columns: []string{"*", "!id", "!name"}},
 	)
 	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnSelectors)
 	require.ErrorContains(t, err, "--column-selectors-file selects no writable columns")
@@ -341,19 +341,19 @@ func TestBuildSelectField(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, ""))
-	columnSelectors = newColumnSelectorsForTest(t, ColumnSelectorModeInclude,
+	columnSelectors = newColumnSelectorsForTest(t,
 		ColumnSelector{Matcher: []string{"test.t"}, Columns: []string{"missing"}},
 	)
 	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnSelectors)
-	require.ErrorContains(t, err, "included columns missing do not exist in writable columns")
+	require.ErrorContains(t, err, `included column rules "missing" do not match writable columns`)
 	require.Empty(t, selectInfo)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("g", "int(11)", "NO", "", nil, "VIRTUAL GENERATED"))
-	columnSelectors = newColumnSelectorsForTest(t, ColumnSelectorModeExclude,
-		ColumnSelector{Matcher: []string{"test.t"}, Columns: []string{"g"}},
+	columnSelectors = newColumnSelectorsForTest(t,
+		ColumnSelector{Matcher: []string{"test.t"}, Columns: []string{"*", "!g"}},
 	)
 	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnSelectors)
 	require.NoError(t, err)
@@ -366,7 +366,7 @@ func TestBuildSelectField(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, ""))
-	columnSelectors = newColumnSelectorsForTest(t, ColumnSelectorModeInclude,
+	columnSelectors = newColumnSelectorsForTest(t,
 		ColumnSelector{Matcher: []string{"test.other"}, Columns: []string{"id"}},
 	)
 	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnSelectors)
@@ -380,8 +380,8 @@ func TestBuildSelectField(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, ""))
-	columnSelectors = newColumnSelectorsForTest(t, ColumnSelectorModeExclude,
-		ColumnSelector{Matcher: []string{"test.other"}, Columns: []string{"id"}},
+	columnSelectors = newColumnSelectorsForTest(t,
+		ColumnSelector{Matcher: []string{"test.other"}, Columns: []string{"*", "!id"}},
 	)
 	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnSelectors)
 	require.NoError(t, err)

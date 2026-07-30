@@ -60,27 +60,27 @@ func TestGetConfTables(t *testing.T) {
 
 func TestColumnSelectors(t *testing.T) {
 	selectors := &ColumnSelectors{
-		Mode: ColumnSelectorModeExclude,
 		Selectors: []ColumnSelector{
-			{Matcher: []string{"db1.t1"}, Columns: []string{"C1", "c2"}},
-			{Matcher: []string{"db1.t2"}, Columns: []string{"c3"}},
+			{Matcher: []string{"db1.*"}, Columns: []string{"*", "!c*"}},
+			{Matcher: []string{"db1.t1"}, Columns: []string{"c2"}},
+			{Matcher: []string{"db1.t2"}, Columns: []string{"*", "!c3"}},
 		},
 	}
 	require.NoError(t, selectors.compile(false))
 
-	selectedFields, err := selectors.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3"})
+	selectedFields, err := selectors.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3", "d"})
 	require.NoError(t, err)
-	require.Equal(t, []string{"c3"}, selectedFields)
+	require.Equal(t, []string{"C2", "d"}, selectedFields)
 
 	selectedFields, err = selectors.applyToColumns("db2", "t1", []string{"c1"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1"}, selectedFields)
 
-	selectedFields, err = selectors.applyToColumns("db1", "t2", []string{"c1"})
+	selectedFields, err = selectors.applyToColumns("db1", "t2", []string{"c1", "c3"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1"}, selectedFields)
 
-	selectors = newColumnSelectorsForTest(t, ColumnSelectorModeExclude,
+	selectors = newColumnSelectorsForTest(t,
 		ColumnSelector{Matcher: []string{"db1.t1"}},
 	)
 	selectedFields, err = selectors.applyToColumns("db1", "t1", []string{"c1"})
@@ -90,14 +90,12 @@ func TestColumnSelectors(t *testing.T) {
 
 func TestParseColumnSelectorsFile(t *testing.T) {
 	path := writeColumnSelectorsFileForTest(t, `{
-		"mode": "include",
-		"columnSelectors": [
-			{"matcher": ["db1.t1", "db2.t2"], "columns": ["c1", "C2"]}
-		]
+			"columnSelectors": [
+				{"matcher": ["db1.t1", "db2.t2"], "columns": ["c1", "C2"]}
+			]
 	}`)
 	selectors, err := ParseColumnSelectorsFile(path, false)
 	require.NoError(t, err)
-	require.Equal(t, ColumnSelectorModeInclude, selectors.Mode)
 	selectedFields, err := selectors.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1", "C2"}, selectedFields)
@@ -111,23 +109,18 @@ func TestParseColumnSelectorsFile(t *testing.T) {
 	_, err = ParseColumnSelectorsFile("", false)
 	require.NoError(t, err)
 
-	path = writeColumnSelectorsFileForTest(t, `{"mode": "REWRITE", "columnSelectors": [{"matcher": ["db.t"], "columns": ["c"]}]}`)
+	path = writeColumnSelectorsFileForTest(t, `{"columnSelectors": [{"matcher": ["db.t"], "columns": ["/unterminated"]}]}`)
 	_, err = ParseColumnSelectorsFile(path, false)
-	require.ErrorContains(t, err, "mode must be INCLUDE or EXCLUDE")
-
-	path = writeColumnSelectorsFileForTest(t, `{"mode": "INCLUDE", "columnSelectors": [{"matcher": ["db.t"], "columns": ["c", "C"]}]}`)
-	_, err = ParseColumnSelectorsFile(path, false)
-	require.ErrorContains(t, err, "duplicate column")
+	require.ErrorContains(t, err, "failed to parse --column-selectors-file selector 0 columns")
 }
 
 func TestParseColumnSelectorsFileFlag(t *testing.T) {
 	path := writeColumnSelectorsFileForTest(t, `{
-		"mode": "EXCLUDE",
-		"columnSelectors": [
-			{"matcher": ["db1.t1"], "columns": ["c1", "c2"]},
-			{"matcher": ["db2.t2"], "columns": ["c3"]}
-		]
-	}`)
+			"columnSelectors": [
+				{"matcher": ["db1.t1"], "columns": ["*", "!c1", "!c2"]},
+				{"matcher": ["db2.t2"], "columns": ["*", "!c3"]}
+			]
+		}`)
 	conf := parseConfigFromArgsForTest(t,
 		"--no-schemas",
 		"--column-selectors-file", path,
@@ -155,10 +148,9 @@ func writeColumnSelectorsFileForTest(t *testing.T, content string) string {
 	return path
 }
 
-func newColumnSelectorsForTest(t *testing.T, mode ColumnSelectorMode, selectors ...ColumnSelector) *ColumnSelectors {
+func newColumnSelectorsForTest(t *testing.T, selectors ...ColumnSelector) *ColumnSelectors {
 	t.Helper()
 	columnSelectors := &ColumnSelectors{
-		Mode:      mode,
 		Selectors: selectors,
 	}
 	require.NoError(t, columnSelectors.compile(false))

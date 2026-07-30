@@ -12,29 +12,17 @@ import (
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 )
 
-// ColumnSelectorMode controls how column selector matches are applied.
-type ColumnSelectorMode string
-
-const (
-	// ColumnSelectorModeInclude exports only the union of matched selector columns.
-	ColumnSelectorModeInclude ColumnSelectorMode = "INCLUDE"
-	// ColumnSelectorModeExclude exports all columns except the union of matched selector columns.
-	ColumnSelectorModeExclude ColumnSelectorMode = "EXCLUDE"
-)
-
 // ColumnSelectors stores table matchers and columns used to project data output.
 type ColumnSelectors struct {
-	Mode      ColumnSelectorMode `json:"mode"`
-	Selectors []ColumnSelector   `json:"columnSelectors"`
+	Selectors []ColumnSelector `json:"columnSelectors"`
 }
 
-// ColumnSelector maps a set of table matchers to a set of column names.
+// ColumnSelector maps a set of table matchers to a set of column filter rules.
 type ColumnSelector struct {
 	Matcher []string `json:"matcher"`
 	Columns []string `json:"columns"`
 
 	tableFilter filter.Filter
-	columnSet   map[string]struct{}
 }
 
 // ParseColumnSelectorsFile parses a JSON column selectors file.
@@ -57,13 +45,6 @@ func ParseColumnSelectorsFile(path string, caseSensitive bool) (*ColumnSelectors
 }
 
 func (s *ColumnSelectors) compile(caseSensitive bool) error {
-	mode := ColumnSelectorMode(strings.ToUpper(strings.TrimSpace(string(s.Mode))))
-	switch mode {
-	case ColumnSelectorModeInclude, ColumnSelectorModeExclude:
-		s.Mode = mode
-	default:
-		return errors.Errorf("--column-selectors-file mode must be INCLUDE or EXCLUDE, got %q", s.Mode)
-	}
 	if len(s.Selectors) == 0 {
 		return errors.New("--column-selectors-file requires at least one column selector")
 	}
@@ -71,9 +52,6 @@ func (s *ColumnSelectors) compile(caseSensitive bool) error {
 		selector := &s.Selectors[i]
 		if len(selector.Matcher) == 0 {
 			return errors.Errorf("--column-selectors-file selector %d requires at least one matcher", i)
-		}
-		if s.Mode == ColumnSelectorModeInclude && len(selector.Columns) == 0 {
-			return errors.Errorf("--column-selectors-file selector %d requires at least one column in INCLUDE mode", i)
 		}
 		tableFilter, err := filter.Parse(selector.Matcher)
 		if err != nil {
@@ -83,51 +61,38 @@ func (s *ColumnSelectors) compile(caseSensitive bool) error {
 			tableFilter = filter.CaseInsensitive(tableFilter)
 		}
 		selector.tableFilter = tableFilter
-		selector.columnSet = make(map[string]struct{}, len(selector.Columns))
-		for _, column := range selector.Columns {
-			normalizedColumn := strings.ToLower(strings.TrimSpace(column))
-			if normalizedColumn == "" {
-				return errors.Errorf("--column-selectors-file selector %d contains an empty column name", i)
-			}
-			if _, ok := selector.columnSet[normalizedColumn]; ok {
-				return errors.Errorf("--column-selectors-file selector %d contains duplicate column %q", i, column)
-			}
-			selector.columnSet[normalizedColumn] = struct{}{}
+		if _, err = filter.ParseColumnFilter(activeColumnRules(selector.Columns)); err != nil {
+			return errors.Annotatef(err, "failed to parse --column-selectors-file selector %d columns", i)
 		}
 	}
 	return nil
 }
 
 func (s *ColumnSelectors) applyToColumns(database, table string, sourceColumns []string) ([]string, error) {
-	selectedColumns := s.matchColumns(database, table)
-	if len(selectedColumns) == 0 {
+	columnRules := s.matchColumnRules(database, table)
+	if len(columnRules) == 0 {
 		return sourceColumns, nil
 	}
 
-	var matchedIncludedColumns map[string]struct{}
-	if s.Mode == ColumnSelectorModeInclude {
-		matchedIncludedColumns = make(map[string]struct{}, len(selectedColumns))
+	columnFilter, err := filter.ParseColumnFilter(columnRules)
+	if err != nil {
+		return nil, errors.Annotatef(
+			err,
+			"failed to parse --column-selectors-file columns for table `%s`.`%s`",
+			escapeString(database),
+			escapeString(table),
+		)
 	}
+	if err = validatePositiveColumnRules(database, table, columnRules, sourceColumns); err != nil {
+		return nil, err
+	}
+
 	filteredColumns := make([]string, 0, len(sourceColumns))
 	for _, column := range sourceColumns {
-		if !s.shouldIncludeColumn(selectedColumns, column) {
+		if !columnFilter.MatchColumn(column) {
 			continue
 		}
-		if s.Mode == ColumnSelectorModeInclude {
-			matchedIncludedColumns[strings.ToLower(column)] = struct{}{}
-		}
 		filteredColumns = append(filteredColumns, column)
-	}
-	if s.Mode == ColumnSelectorModeInclude {
-		unmatched := unmatchedColumns(selectedColumns, matchedIncludedColumns)
-		if len(unmatched) > 0 {
-			return nil, errors.Errorf(
-				"included columns %s do not exist in writable columns of table `%s`.`%s`",
-				strings.Join(unmatched, ","),
-				escapeString(database),
-				escapeString(table),
-			)
-		}
 	}
 	if len(sourceColumns) > 0 && len(filteredColumns) == 0 {
 		return nil, errors.Errorf(
@@ -140,34 +105,111 @@ func (s *ColumnSelectors) applyToColumns(database, table string, sourceColumns [
 	return filteredColumns, nil
 }
 
-func (s *ColumnSelectors) matchColumns(database, table string) map[string]struct{} {
-	selectedColumns := make(map[string]struct{})
+func (s *ColumnSelectors) matchColumnRules(database, table string) []string {
+	var columnRules []string
 	for _, selector := range s.Selectors {
 		if !selector.tableFilter.MatchTable(database, table) {
 			continue
 		}
-		for column := range selector.columnSet {
-			selectedColumns[column] = struct{}{}
+		columnRules = append(columnRules, selector.Columns...)
+	}
+	return activeColumnRules(columnRules)
+}
+
+func activeColumnRules(columnRules []string) []string {
+	activeRules := make([]string, 0, len(columnRules))
+	for _, rule := range columnRules {
+		rule = strings.Trim(rule, " \t")
+		if rule == "" || rule[0] == '#' {
+			continue
 		}
+		activeRules = append(activeRules, normalizeColumnRule(rule))
 	}
-	return selectedColumns
+	return activeRules
 }
 
-func (s *ColumnSelectors) shouldIncludeColumn(selectedColumns map[string]struct{}, column string) bool {
-	_, ok := selectedColumns[strings.ToLower(column)]
-	if s.Mode == ColumnSelectorModeInclude {
-		return ok
+func normalizeColumnRule(rule string) string {
+	if rule == "" {
+		return rule
 	}
-	return !ok
+	if rule[0] == '!' {
+		if len(rule) == 1 {
+			return rule
+		}
+		return "!" + normalizeColumnPattern(rule[1:])
+	}
+	return normalizeColumnPattern(rule)
 }
 
-func unmatchedColumns(selectedColumns, matched map[string]struct{}) []string {
+func normalizeColumnPattern(pattern string) string {
+	if pattern == "" {
+		return pattern
+	}
+	switch pattern[0] {
+	case '/', '"', '`', '@':
+		return pattern
+	}
+	if strings.ContainsAny(pattern, `*?[\`) {
+		return pattern
+	}
+	return quoteColumnPattern(pattern)
+}
+
+func quoteColumnPattern(column string) string {
+	return `"` + strings.ReplaceAll(column, `"`, `""`) + `"`
+}
+
+func validatePositiveColumnRules(database, table string, columnRules, sourceColumns []string) error {
+	if len(sourceColumns) == 0 {
+		return nil
+	}
+
 	unmatched := make([]string, 0)
-	for column := range selectedColumns {
-		if _, ok := matched[column]; !ok {
-			unmatched = append(unmatched, column)
+	for _, rule := range columnRules {
+		if !isPositiveColumnRule(rule) {
+			continue
+		}
+		matched, err := columnRuleMatches(rule, sourceColumns)
+		if err != nil {
+			return err
+		}
+		if !matched {
+			unmatched = append(unmatched, rule)
 		}
 	}
 	sort.Strings(unmatched)
-	return unmatched
+	if len(unmatched) == 0 {
+		return nil
+	}
+	return errors.Errorf(
+		"included column rules %s do not match writable columns of table `%s`.`%s`",
+		strings.Join(unmatched, ","),
+		escapeString(database),
+		escapeString(table),
+	)
+}
+
+func isPositiveColumnRule(rule string) bool {
+	if rule == "" {
+		return false
+	}
+	switch rule[0] {
+	case '!', '@':
+		return false
+	default:
+		return true
+	}
+}
+
+func columnRuleMatches(rule string, sourceColumns []string) (bool, error) {
+	columnFilter, err := filter.ParseColumnFilter([]string{rule})
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	for _, column := range sourceColumns {
+		if columnFilter.MatchColumn(column) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

@@ -675,7 +675,7 @@ func TestDumpTableMetaWithColumnSelectorsKeepsSourceColumnsForSplit(t *testing.T
 	require.NoError(t, err)
 	baseConn := newBaseConn(conn, true, nil)
 
-	columnSelectors := newColumnSelectorsForTest(t, ColumnSelectorModeInclude,
+	columnSelectors := newColumnSelectorsForTest(t,
 		ColumnSelector{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"name"}},
 	)
 	conf := DefaultConfig()
@@ -730,8 +730,8 @@ func TestValidateColumnSelectors(t *testing.T) {
 
 	conf := DefaultConfig()
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
-	conf.ColumnSelectors = newColumnSelectorsForTest(t, ColumnSelectorModeExclude,
-		ColumnSelector{Matcher: []string{database + "." + table}, Columns: []string{"missing"}},
+	conf.ColumnSelectors = newColumnSelectorsForTest(t,
+		ColumnSelector{Matcher: []string{database + "." + table}, Columns: []string{"*", "!missing"}},
 	)
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
@@ -757,7 +757,7 @@ func TestValidateColumnSelectorsFailsOnMissingIncludedColumns(t *testing.T) {
 
 	conf := DefaultConfig()
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
-	conf.ColumnSelectors = newColumnSelectorsForTest(t, ColumnSelectorModeInclude,
+	conf.ColumnSelectors = newColumnSelectorsForTest(t,
 		ColumnSelector{Matcher: []string{database + "." + table}, Columns: []string{"missing"}},
 	)
 
@@ -765,7 +765,7 @@ func TestValidateColumnSelectorsFailsOnMissingIncludedColumns(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 	err = validateColumnSelectors(tctx, conf, baseConn)
-	require.ErrorContains(t, err, "included columns missing do not exist in writable columns")
+	require.ErrorContains(t, err, `included column rules "missing" do not match writable columns`)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
