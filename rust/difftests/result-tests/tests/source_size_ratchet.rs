@@ -65,7 +65,6 @@ const GRANDFATHERED: &[(&str, usize)] = &[
     ("crates/tidb-lexer/src/keyword_catalog.rs", 3_450),
     ("crates/tidb-error/src/mysql/errcode.rs", 3_431),
     ("crates/tidb-session/src/privilege.rs", 3_216),
-    ("crates/tidb-ast/src/expr.rs", 3_124),
     ("crates/tidb-server/src/cluster_session_node/mod.rs", 3_111),
     ("crates/tidb-parser/src/select.rs", 2_917),
     ("crates/tidb-parser/src/tests/ddl.rs", 2_852),
