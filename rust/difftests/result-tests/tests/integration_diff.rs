@@ -284,6 +284,15 @@ fn compare(
     report: &mut TopicReport,
 ) -> Result<MatchKind, Option<String>> {
     if let Some(reason) = stmt.blocker {
+        // The recorder rewrote this statement's output, so nothing about it is
+        // comparable -- but mysql-tester still RAN it, and what it did is what
+        // the statements after it read. Skipping the RUN as well silently
+        // rewinds the session: in `session/variable`, `set @@global.x = 1.1`
+        // sits under `--enable_warnings`, so the clamped value it stores never
+        // happened here and the next four `select @@global.x` diverged on a
+        // value this driver had suppressed rather than on anything the engine
+        // does. Run it, discard the outcome, and count the skip.
+        drop(session.run_with_columns(&stmt.sql));
         report.skip(SkipClass::RecorderRewroteOutput(reason));
         return Err(None);
     }
