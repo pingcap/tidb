@@ -56,6 +56,31 @@
 //! `ErrGeneratedColumnFunctionIsNotAllowed` cases (`rand()`, `@x`,
 //! `@@max_connections`, a subquery) along with functions simply not ported
 //! yet.
+//!
+//! # The substitution rule is a unit of its own, and here is its obstacle
+//!
+//! Go rewrites a predicate like `a+1=3` into the indexed virtual generated
+//! column that stores `a+1`, so the index can serve the query
+//! (`pkg/planner/core/rule_generate_column_substitute.go`; the
+//! `explain_generate_column_substitute` topic is its whole test surface). It
+//! is NOT ported here, and the reason is structural rather than a matter of
+//! volume -- the rule itself is ~220 lines of Go, and every other piece it
+//! needs already exists: [`tidb_expr::expression::Expression::equal`] and
+//! `hash_code` give the expression equality it is built on, the cost-based
+//! path choice in [`crate::access_cost`] is what would consume the rewrite,
+//! and an index over a virtual generated column is already maintained
+//! correctly because index entries are written from the materialized row (see
+//! the rule above).
+//!
+//! The obstacle is that the two expressions to compare live in DIFFERENT
+//! COLUMN NAMESPACES. A [`GeneratedColumn::expr`]'s `Column` nodes index the
+//! row by OFFSET -- deliberately, so the evaluation row is the row a write
+//! builds and a read decodes, with no schema mapping between them -- while a
+//! `WHERE` condition's `Column` nodes index the QUERY's schema. Go gets the
+//! comparison for free because both sides are already schema columns
+//! (`expression.ColInfo2Col` against `ds.Schema()`). Here an explicit mapping
+//! has to be built and kept honest across pruning and derived tables before
+//! `equal` means anything, and that mapping -- not the rule -- is the work.
 
 use std::cell::RefCell;
 
