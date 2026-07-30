@@ -31,7 +31,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// ResourceTracker has the method of GetUsage.
+// ResourceTracker reports the current local disk usage in bytes.
 type ResourceTracker interface {
 	GetDiskUsage() uint64
 }
@@ -47,7 +47,8 @@ type DiskRoot interface {
 	UsageInfo() string
 	PreCheckUsage() error
 	StartupCheck() error
-	GetUsage(id int64) uint64
+	// GetJobDiskUsage returns the tracked local disk usage for jobID, or zero if unregistered.
+	GetJobDiskUsage(jobID int64) uint64
 }
 
 const (
@@ -103,11 +104,11 @@ func (d *diskRootImpl) Count() int {
 	return len(d.items)
 }
 
-// GetUsage returns the tracked disk usage for a specific job id.
-func (d *diskRootImpl) GetUsage(id int64) uint64 {
+// GetJobDiskUsage returns the tracked local disk usage for jobID, or zero if unregistered.
+func (d *diskRootImpl) GetJobDiskUsage(jobID int64) uint64 {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	tracker, ok := d.items[id]
+	tracker, ok := d.items[jobID]
 	if !ok {
 		return 0
 	}
