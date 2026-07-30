@@ -60,6 +60,15 @@ bucket: no Rust test carries its name, its words, or a citation of it.
 | 16 | `tidb-session/src/tests_dml_lock_keys.rs` | ONE live bug: `REPLACE` over a row IDENTICAL to the one being written deleted and re-inserted it and reported 2 affected, where Go's `InsertValues.removeRow` leaves it in place and reports 1 -- the very site `tidb_lock_unchanged_keys` governs. Fixed. The DML key sets themselves were right: a `DELETE` does take every index key. No DML lock path exists at all (`tidb_lock_unchanged_keys` is registered and unread, nothing calls `Transaction::lock_keys`), so the blocking halves are `#[ignore]`d with Go's answer, each paired with a RUNNING guard on today's behavior. |
 | 18 | `tidb-meta/tests/key_prefix_and_element_source.rs` | Already covered under another name, and better: `tidb-meta/tests/go_vectors.rs` pins every meta key byte-for-byte against hex captured from Go. The genuine hole was the `Is*Key`/`Parse*Key` round trip for the auto-ID, auto-increment, auto-random and sequence prefixes (no `parse_*` existed), and `meta.Element` -- the DDL reorg backfill element, an on-disk contract -- which had no port at all. Both landed; nothing was found wrong in what already existed. `TestMeta` (`:241`), which drives a live `Mutator` over a store, is still open. |
 
+### Closed from the `pkg/planner/core` pool
+
+Not ranked above -- the ranked table predates the decision to work the 97%
+uncovered `pkg/planner/core` list directly.
+
+| Go tests | Ported to | What the port found |
+| --- | --- | --- |
+| `logical_plans_test.go:202` `TestSimplifyOuterJoin` (8 rows), `:153` `TestOuterWherePredicatePushDown` (3), `:112` `TestJoinPredicatePushDown` (14), `:272` `TestDeriveNotNullConds` (13) | `tidb-session/src/tests_join_predicate_placement.rs` | All 38 rows ported, none dropped. **No row-level divergence:** every result set matches a `gorun` capture of real TiDB cell for cell, so no predicate is placed illegally. **Five plan-shape gaps, all row-correct and cost-wrong,** each `#[ignore]`d with Go's answer beside a running guard on today's behavior: no outer-to-inner join conversion at all (`tidb_planner::outer_to_inner_join` is the rule wrapper over a plan adapter nothing implements -- 4 of the 8 `TestSimplifyOuterJoin` rows), no predicate reaching either scan (19 of the 30 `Left`/`Right` expectations), `<=>` not used as an equal join key, a `WHERE` equality not promoted into the join condition, and `NOT EXISTS` planned as a correlated `Selection` instead of an anti semi join. Separately, the port exposed a TEST-INFRASTRUCTURE bug: `tests_support::row_text` rendered every temporal column as the text `NULL` (it delegated to the *system variable* text function, whose fallback arm covers `Datum::Time`), so any assertion over a `DATE`/`DATETIME`/`TIMESTAMP`/`TIME` column would have pinned a wrong answer. Fixed to use the wire renderer, with a guard. |
+
 Runners-up worth naming: `pkg/meta/model/job_args_test.go` (40 uncovered DDL
 argument round-trips -- every one is a job that would deserialize wrong), and
 `pkg/session/bootstrap_test.go` (37 uncovered upgrade-path tests; each pins one
