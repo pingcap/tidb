@@ -207,7 +207,11 @@ CREATE TABLE t (
   -- a `binary`-versus-`utf8mb4_bin` guess would silently replace.
   cinote VARCHAR(32) COLLATE utf8mb4_general_ci,
   -- Hex digits, so `CONV` has something to convert.
-  hexnote VARCHAR(8)
+  hexnote VARCHAR(8),
+  -- A family the projection gate still refuses, so the difference between a
+  -- refused PREDICATE and a refused SCAN stays observable now that VARCHAR has
+  -- moved to the served side.
+  amount DECIMAL(10, 2)
 );
 SQL
 
@@ -227,7 +231,7 @@ echo "seeding 2000 rows into t (every 7th row NULL in the nullable columns)"
     multi=""
     for _ in $(seq 1 $((i % 5 + 1))); do multi="${multi}é"; done
     ((i % 2 == 0)) && multi="${multi}z"
-    strings="'n${i}', 'n${i}', '${multi}', '${multi}', 'MiXeD${i}', '$(printf '%X' $((i % 4096)))'"
+    strings="'n${i}', 'n${i}', '${multi}', '${multi}', 'MiXeD${i}', '$(printf '%X' $((i % 4096)))', ${i}.25"
     if ((i % 7 == 0)); then
       # A NULL in every nullable integer column, so IS NULL / IS NOT NULL /
       # NOT IN over NULL have something to be UNKNOWN about.
@@ -642,14 +646,24 @@ compare "CHAR_LENGTH over the SAME BYTES as VARBINARY (CharLength)" \
 # And the two really do disagree, so the pair above is not two names for one
 # answer. If this check ever passed by equality, the trap cases would be
 # vacuous and every collation guess would look correct.
-CHARS_ROWS=$(go_sql -Nse "USE pushdiff; SELECT COUNT(*) FROM t WHERE mod(char_length(mnote), 2)")
-BYTES_ROWS=$(go_sql -Nse "USE pushdiff; SELECT COUNT(*) FROM t WHERE mod(char_length(bmnote), 2)")
+#
+# The comparison is between the two ROW SETS and not their counts: over this
+# fixture the two spellings happen to select the same NUMBER of rows while
+# selecting different ones, so a count comparison would report the trap as
+# vacuous when it is not. What has to be true is that swapping the spelling
+# changes WHICH rows come back.
+CHARS_SET=$(go_rows "SELECT id FROM t WHERE mod(char_length(mnote), 2) ORDER BY id")
+BYTES_SET=$(go_rows "SELECT id FROM t WHERE mod(char_length(bmnote), 2) ORDER BY id")
 echo
 echo "--- the two CHAR_LENGTH spellings over identical bytes"
-printf '      characters: %s rows    bytes: %s rows\n' "${CHARS_ROWS}" "${BYTES_ROWS}"
+printf '      characters: %s rows    bytes: %s rows    differing ids: %s\n' \
+  "$(printf '%s' "${CHARS_SET}" | grep -c . || true)" \
+  "$(printf '%s' "${BYTES_SET}" | grep -c . || true)" \
+  "$(comm -3 <(printf '%s\n' "${CHARS_SET}") <(printf '%s\n' "${BYTES_SET}") \
+     | grep -c . || true)"
 check "the UTF-8 and binary CHAR_LENGTH select DIFFERENT rows, \
 so resolving the wrong one is observable" \
-  test "${CHARS_ROWS}" -ne "${BYTES_ROWS}"
+  test "${CHARS_SET}" != "${BYTES_SET}"
 
 compare "CHAR_LENGTH over an ASCII utf8mb4 column" \
   "SELECT id FROM t WHERE mod(char_length(note), 2) ORDER BY id" pushed
@@ -683,10 +697,18 @@ local_eval_divergence "MID over a VARBINARY column, the binary spelling" \
   "SELECT char_length(mid(bmnote, 2, 5)) FROM t WHERE id = 3"
 # CONV, the one collation-blind row: one signature for either spelling, and a
 # result in the CONNECTION charset rather than the argument's.
-compare "CONV from base 16 to base 10" \
-  "SELECT id FROM t WHERE mod(conv(hexnote, 16, 10), 2) ORDER BY id" pushed
+#
+# CONV returns a STRING, so `MOD(CONV(...), 2)` is not the spelling used for
+# the families above: no `MOD` row takes an `ETString` argument -- so the
+# catalog would refuse the conjunct -- and this node's local `MOD` raises
+# `Unsupported("string operand")` for one, so that form would fail rather than
+# measure anything. `CHAR_LENGTH` on top keeps the whole expression inside the
+# catalog and stays selective, because a base-2 conversion's length varies with
+# the value.
+compare "CONV from base 16 to base 2, under CHAR_LENGTH" \
+  "SELECT id FROM t WHERE mod(char_length(conv(hexnote, 16, 2)), 2) ORDER BY id" pushed
 compare "CONV over a VARBINARY column resolves the same single signature" \
-  "SELECT id FROM t WHERE mod(conv(bnote, 36, 10), 2) ORDER BY id" pushed
+  "SELECT id FROM t WHERE mod(char_length(conv(bnote, 36, 2)), 2) ORDER BY id" pushed
 # The composition rules apply to a string builtin exactly as to a math one.
 compare "NOT over a pushed string builtin" \
   "SELECT id FROM t WHERE NOT mod(char_length(mnote), 2) ORDER BY id" pushed
@@ -778,7 +800,7 @@ compare "integer column against a fractional constant" \
 # emit one is not served remotely at all -- a different gap from the predicate
 # lowering, and named here so it cannot be mistaken for one.
 compare "a DECIMAL column in the projection, refused by the projection gate" \
-  "SELECT id, sbig / 2 FROM t WHERE sbig > 900 ORDER BY id" noscan
+  "SELECT id, amount FROM t WHERE sbig > 900 ORDER BY id" noscan
 # An expression over a column is not a predicate shape at all, so it never
 # even reaches the lowering: it stays in the Selection above the scan.
 compare "an expression over a column" \
@@ -801,26 +823,30 @@ compare "LIMIT over a predicate only half of which lowers" \
 echo
 echo "=== what is NOT pushed, and why (not a failure, a scope statement)"
 cat <<'NOTE'
-  Twelve of the 50 expressions in Go's `TestExprPushDownToTiKV` pushed table
-  now push here -- the math family: sin, asin, cos, acos, atan, cot, atan2,
-  pi, round, mod, pow, power. The signature each resolves to is Go's own,
-  chosen by `tidb_expr::pushdown_catalog` from the argument types exactly as
-  Go's per-family `getFunction` does, and the rows-versus-wire cases above are
-  the live proof that TiKV's evaluation of them agrees with this engine's.
+  Nineteen of the 50 expressions in Go's `TestExprPushDownToTiKV` pushed table
+  now push here:
 
-  The other 38 are still refused, each for a reason and not an omission:
+    * the math family -- sin, asin, cos, acos, atan, cot, atan2, pi, round,
+      mod, pow, power;
+    * the string family -- conv, substr/substring/mid, char_length, upper,
+      lower -- whose signature Go chooses by `types.IsBinaryStr` on the first
+      argument and whose leaves carry the column's own collation id.
 
-    * the string family (conv, substr/substring/mid, char_length, upper,
-      lower) resolves its result COLLATION through Go's `deriveCollation` as
-      well as its signature, and its TiPB leaves carry a real collation id --
-      the very thing TiKV compares strings with, so guessing one would change
-      an answer. Note also that a scan projecting a VARCHAR column is refused
-      remotely outright by `cop_scan`'s own PROJECTION gate, which is a
-      separate gap from this one.
+  The signature each resolves to is Go's own, chosen by
+  `tidb_expr::pushdown_catalog` from the argument types exactly as Go's
+  per-family `getFunction` does, and the rows-versus-wire cases above are the
+  live proof that TiKV's evaluation of them agrees with this engine's.
+
+  The other 31 are still refused, each for a reason and not an omission:
+
     * the date family (date_format, hour, minute, second, month, microsecond,
       date, week, datediff) needs the temporal cast wrappers
-      `WrapWithCastAsTime` inserts, which carry a target FieldType of their
-      own rather than the fixed one an ETReal slot has.
+      `WrapWithCastAsTime`/`WrapWithCastAsDuration` insert, whose target
+      FieldType carries an FSP computed from the SOURCE type rather than the
+      fixed shape an ETReal slot has -- and a MysqlTime constant additionally
+      needs `codec.EncodeMySQLTime` against a session time zone this scan path
+      does not put in the DAG request. That is a separate seam from the
+      collation one the string family needed, not more of the same work.
     * the date_add/date_sub/adddate/subdate family additionally sends the
       INTERVAL unit as a third string argument and picks among more than
       twenty signatures by unit and argument type.
@@ -836,8 +862,21 @@ cat <<'NOTE'
   `tidb_executor::scan_pushdown`.
 
   Also still refused, each for a stated reason rather than an omission:
-  string, decimal and temporal comparisons (their constants need the cast
-  and collation resolution Go applies before conversion), and LIKE.
+
+    * string COMPARISON -- `col = 'x'`, `col = other_col`. Go picks the
+      comparison's collation with `deriveCollation`'s ast.EQ case ->
+      CheckAndDeriveCollationFromExprs -> inferCollation, which AGGREGATES
+      coercibility and repertoire across BOTH operands and can land on a
+      collation belonging to neither. The push-down description carries no
+      coercibility at all, so this tier cannot follow that function, and a
+      guess would silently return the wrong rows for every case-insensitive
+      column. Refusing loudly is the only safe answer until the coercibility
+      seam exists.
+    * decimal and temporal comparisons (their constants need the cast and
+      collation resolution Go applies before conversion), and LIKE.
+    * a scan projecting a DECIMAL, temporal or JSON column, which `cop_scan`'s
+      own PROJECTION gate refuses outright -- a separate gap from the
+      predicate lowering, and the `noscan` case above is its live coverage.
 NOTE
 
 echo
