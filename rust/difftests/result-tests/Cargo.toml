@@ -26,6 +26,10 @@ name = "expr_diff"
 path = "tests/expr_diff.rs"
 
 [[test]]
+name = "expr_corpus_holdouts"
+path = "tests/expr_corpus_holdouts.rs"
+
+[[test]]
 name = "query_diff"
 path = "tests/query_diff.rs"
 

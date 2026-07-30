@@ -1,0 +1,134 @@
+## Scalar vectors from pkg/expression/builtin_arithmetic_test.go: :96
+## TestArithmeticPlus, :192 TestArithmeticMinus, :270 TestArithmeticMultiply,
+## :326 TestArithmeticDivide, :395 TestArithmeticIntDivide and :510
+## TestArithmeticMod.
+##
+## The existing decimal_*/float_* topics cover these operators over the Decimal
+## and Float domains; what has had no executable guard is the INTEGER domain
+## and, above all, the four signed/unsigned MOD and DIV signatures. Go picks a
+## different builtin per operand signedness
+## (builtinArithmeticModIntUnsignedSignedSig and its three siblings), and the
+## rows below are the ones that tell them apart:
+##
+##   - MOD keeps the sign of the DIVIDEND, so -13 % 11 is -2 while 13 % -11
+##     is 2. A signed dividend keeps that sign even against an UNSIGNED
+##     divisor (-22 % 10u is -2), which is the whole point of the
+##     SignedUnsigned signature -- reading the dividend as unsigned would give
+##     a huge positive remainder instead.
+##   - MIN_INT64 % 3u is -2, computed without ever negating MIN_INT64 (which
+##     has no positive counterpart).
+##   - 2^63 as UNSIGNED % MIN_INT64 is 0: the two have the same 64-bit
+##     pattern, so an implementation that compares them as signed would see
+##     -2^63 % -2^63 and must still land on 0.
+##   - DIV truncates toward zero, so -13 DIV 11 and 13 DIV -11 are both -1,
+##     not -2: a floor division would round the wrong way for exactly the
+##     mixed-sign rows.
+##   - `/` always promotes to a non-integer result (11/11 is 1, 11/2 is 5.5),
+##     and division or modulo by zero is NULL, never an error. On the
+##     production path that result is a DECIMAL with scale 4, not the float
+##     the unit test's hand-built signature returns; the value is the same and
+##     the golden records the production type.
+##
+## Go rows that raise an out-of-range ERROR rather than returning a value are
+## included below and land in this harness's unasserted `ERR` bucket, so they
+## pin Go's answer in the golden without constraining tidb-expr yet:
+## -1 * MIN_INT64, MIN_INT64 * -1, MIN_INT64 DIV -1, 123456789100000 DIV
+## -0.00001, and the UNSIGNED 1 DIV -1.
+##
+## Refused from the Go tables: TestArithmeticMod's `types.Set{Value: 7}` row
+## (a SET datum has no constant SQL literal), and every assertion in those
+## tests about which builtin*Sig or tipb.ScalarFuncSig was CHOSEN, which
+## observes dispatch rather than the value.
+##
+## Five further rows are held out because tidb-expr cannot evaluate them TODAY;
+## each is pinned, with the Go answer above, by a running guard in
+## `ops.rs::tests_int_arithmetic_source_gaps`, so the gap fails loudly the day
+## it closes rather than staying invisible:
+##
+##   0x20000000000000 + 1                 Go UINT:9007199254740993
+##   b'00011' + 1                         Go INT:4
+##   '1231' % 12                          Go FLOAT:7
+##   '1231' % '12'                        Go FLOAT:7
+##   mod(cast('12:34:56' as time), 122)   Go INT:114
+##
+## The first two need a hex/bit literal to keep its binary-literal identity
+## into arithmetic (where MySQL reads it as an integer, unsigned for `0x`,
+## signed for `b''`); the middle two are the string-arithmetic boundary this
+## evaluator declares in `float_binary`'s neighbourhood and guards at
+## `tests/evaluator_binop.rs`; the last needs `CAST(... AS TIME)`.
+12 + 1
+1.01001e0 + -0.01e0
+null + -0.11101e0
+null + null
+12 - 1
+1.01001e0 - -0.01e0
+null - -0.11101e0
+1.01e0 - null
+null - null
+11 * 11
+cast(11 as unsigned) * cast(11 as unsigned)
+11e0 * 11e0
+null * -0.11101e0
+1.01e0 * null
+null * null
+-1 * -9223372036854775808
+-9223372036854775808 * -1
+11.1111111e0 / 11.1e0
+11.1111111e0 / 0e0
+11 / 11
+11 / 2
+11 / 0
+cast(11 as unsigned) / cast(11 as unsigned)
+cast(11 as unsigned) / cast(2 as unsigned)
+cast(11 as unsigned) / cast(0 as unsigned)
+null / -0.11101e0
+1.01e0 / null
+null / null
+13 div 11
+-13 div 11
+13 div -11
+-13 div -11
+33 div 11
+-33 div 11
+33 div -11
+-33 div -11
+11 div 0
+-11 div 0
+11.01e0 div 1.1e0
+-11.01e0 div 1.1e0
+11.01e0 div -1.1e0
+-11.01e0 div -1.1e0
+null div -0.11101e0
+1.01e0 div null
+null div -1001
+101 div null
+null div null
+123456789100000e0 div -0.00001e0
+-9223372036854775808 div -1e0
+cast(1 as unsigned) div -2e0
+cast(1 as unsigned) div -1e0
+13 % 11
+13 % 0
+cast(13 as unsigned) % 0
+13 % cast(0 as unsigned)
+cast(9223372036854775808 as unsigned) % -9223372036854775808
+-22 % cast(10 as unsigned)
+-9223372036854775808 % cast(3 as unsigned)
+-13 % 11
+13 % -11
+-13 % -11
+33 % 11
+-33 % 11
+33 % -11
+-33 % -11
+11 % 0
+-11 % 0
+1 % 1.1e0
+-1 % 1.1e0
+1 % -1.1e0
+-1 % -1.1e0
+null % -0.11101e0
+1.01e0 % null
+null % -1001
+101 % null
+null % null

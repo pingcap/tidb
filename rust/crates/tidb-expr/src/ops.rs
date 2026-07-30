@@ -807,6 +807,14 @@ fn float_binary(
     if l == Datum::Null || r == Datum::Null {
         return Ok(Datum::Null);
     }
+    // `intDivideFunctionClass.getFunction` stamps the result with
+    // `UnsignedFlag` when EITHER operand carries it, and
+    // `builtinArithmeticIntDivideDecimalSig` then reads the quotient back
+    // through `ConvertDecimalToUint`, which REJECTS a negative quotient rather
+    // than wrapping it. So `1u DIV -1` is an out-of-range error while
+    // `1u DIV -2` is an unsigned 0 -- a distinction that survives the promotion
+    // to `f64` here only if the original signedness is captured first.
+    let unsigned_div = matches!(l, Datum::UInt(_)) || matches!(r, Datum::UInt(_));
     let a = to_f64(l);
     let b = to_f64(r);
     Ok(match op {
@@ -826,7 +834,15 @@ fn float_binary(
                 ctx.handle_division_by_zero()?;
                 Datum::Null
             } else {
-                Datum::Int(f64_to_i64((a / b).trunc()).ok_or(EvalError::IntOverflow)?)
+                let quotient = (a / b).trunc();
+                if unsigned_div {
+                    if quotient < 0.0 {
+                        return Err(EvalError::IntOverflow);
+                    }
+                    Datum::UInt(f64_to_u64(quotient).ok_or(EvalError::IntOverflow)?)
+                } else {
+                    Datum::Int(f64_to_i64(quotient).ok_or(EvalError::IntOverflow)?)
+                }
             }
         }
         Mod => {
@@ -1000,6 +1016,17 @@ fn f64_to_i64(f: f64) -> Option<i64> {
     const I64_MAX_EXCLUSIVE: f64 = 9223372036854775808.0;
     if (I64_MIN..I64_MAX_EXCLUSIVE).contains(&f) {
         Some(f as i64)
+    } else {
+        None
+    }
+}
+
+/// The unsigned counterpart of [`f64_to_i64`], with the same exact-boundary
+/// reasoning: `2^64` is exactly representable, `u64::MAX` is not.
+fn f64_to_u64(f: f64) -> Option<u64> {
+    const U64_MAX_EXCLUSIVE: f64 = 18446744073709551616.0;
+    if (0.0..U64_MAX_EXCLUSIVE).contains(&f) {
+        Some(f as u64)
     } else {
         None
     }
