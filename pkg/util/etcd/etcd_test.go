@@ -20,11 +20,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 )
 
-func testSetupOriginal(t *testing.T) (context.Context, *clientv3.Client, *integration.ClusterV3) {
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+func testSetupOriginal(t *testing.T) (context.Context, *clientv3.Client, *integration.Cluster) {
+	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	return context.Background(), cluster.RandClient(), cluster
 }
 

@@ -46,7 +46,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 	"go.uber.org/atomic"
 )
 
@@ -66,7 +66,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 
 	integration.BeforeTestExternal(t)
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 10})
+	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 10})
 	defer cluster.Terminate(t)
 	keyspaceIDs := map[string]uint32{
 		keyspace.System: 1,

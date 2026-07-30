@@ -20,12 +20,12 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 )
 
 func TestTaskRegister(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	testEtcdCluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
 
 	ctx := context.Background()
@@ -48,7 +48,7 @@ func TestTaskRegister(t *testing.T) {
 
 func TestTaskRegisterOnce(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	testEtcdCluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
 
 	// should not close the client manually, the test will fail, since Terminate will close it too.
@@ -83,7 +83,7 @@ func TestTaskRegisterOnce(t *testing.T) {
 
 func TestTaskRegisterFailedGrant(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1, GRPCKeepAliveInterval: time.Second, GRPCKeepAliveTimeout: 10 * time.Second})
+	testEtcdCluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1, GRPCKeepAliveInterval: time.Second, GRPCKeepAliveTimeout: 10 * time.Second})
 	defer testEtcdCluster.Terminate(t)
 
 	ctx := context.Background()
@@ -127,7 +127,7 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 
 func TestTaskRegisterFailedReput(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1, GRPCKeepAliveInterval: time.Second, GRPCKeepAliveTimeout: 10 * time.Second})
+	testEtcdCluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1, GRPCKeepAliveInterval: time.Second, GRPCKeepAliveTimeout: 10 * time.Second})
 	defer testEtcdCluster.Terminate(t)
 
 	ctx := context.Background()

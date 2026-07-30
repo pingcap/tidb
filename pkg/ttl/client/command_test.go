@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 )
 
 type mockCmdRequest struct {
@@ -38,7 +38,7 @@ type mockCmdResponse struct {
 func TestCommandClient(t *testing.T) {
 	integration.BeforeTestExternal(t)
 
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	etcd := cluster.RandClient()
 

@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 )
 
 type mockEtcdBackend struct {
@@ -278,13 +278,13 @@ func TestJobVersionAndGlobalIndexV1SupportForNextGen(t *testing.T) {
 		fmt.Sprintf("return(`%s`)", string(bytes)),
 	)
 
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	mockStore := &mockEtcdBackend{
 		Storage: store,
-		pdAddrs: []string{cluster.Members[0].GRPCURL()},
+		pdAddrs: []string{cluster.Members[0].GRPCURL},
 	}
 	storeTypeBak := config.GetGlobalConfig().Store
 	config.GetGlobalConfig().Store = config.StoreTypeTiKV

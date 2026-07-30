@@ -119,7 +119,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
-        "@io_etcd_go_etcd_tests_v3//integration",
+        "@io_etcd_go_etcd_tests_v3//framework/integration",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_uber_go_atomic//:atomic",

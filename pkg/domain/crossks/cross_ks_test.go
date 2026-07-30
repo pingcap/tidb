@@ -49,7 +49,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 )
 
 var registerUnistoreOnce sync.Once
@@ -78,7 +78,7 @@ func TestManager(t *testing.T) {
 	}
 	integration.BeforeTestExternal(t)
 	clientCount := 20
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: clientCount})
+	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: clientCount})
 	defer cluster.Terminate(t)
 	keyspaceIDs := map[string]uint32{
 		keyspace.System: 1,
@@ -281,7 +281,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
 	}
 	integration.BeforeTestExternal(t)
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 2})
+	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 2})
 	defer cluster.Terminate(t)
 	keyspaceIDs := map[string]uint32{
 		keyspace.System:     1,
@@ -355,7 +355,7 @@ func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
 		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
 	}
 	integration.BeforeTestExternal(t)
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 2})
+	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 2})
 	t.Cleanup(func() {
 		cluster.Terminate(t)
 	})

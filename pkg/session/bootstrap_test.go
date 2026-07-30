@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 )
 
 func TestMySQLDBTables(t *testing.T) {
@@ -1541,13 +1541,13 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 		require.NoError(t, store.Close())
 	}()
 
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 
 	// Build a mockEtcdBackend.
 	mockStore := &mockEtcdBackend{
 		Storage: store,
-		pdAddrs: []string{cluster.Members[0].GRPCURL()}}
+		pdAddrs: []string{cluster.Members[0].GRPCURL}}
 	etcdClient := cluster.RandClient()
 
 	ctx := context.Background()

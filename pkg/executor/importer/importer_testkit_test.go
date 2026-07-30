@@ -60,7 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
@@ -255,7 +255,7 @@ func TestPostProcess(t *testing.T) {
 	require.NoError(t, err)
 	plan.TableInfo, plan.DesiredTableInfo = table.Meta(), table.Meta()
 	integration.BeforeTestExternal(t)
-	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	testEtcdCluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	t.Cleanup(func() {
 		testEtcdCluster.Terminate(t)
 	})
