@@ -467,6 +467,8 @@ mod tests_grants;
 #[cfg(test)]
 mod tests_harvested_relation_engine;
 #[cfg(test)]
+mod tests_join_predicate_placement;
+#[cfg(test)]
 mod tests_json;
 #[cfg(test)]
 mod tests_multi_table_dml;
