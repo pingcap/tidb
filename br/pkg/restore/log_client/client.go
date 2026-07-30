@@ -421,15 +421,19 @@ func (rc *LogClient) RestoreSSTFileSets(
 	}
 	err := rc.sstRestoreManager.restorer.WaitUntilFinish()
 
+	var totalKvs, totalBytes, totalSize uint64
 	for _, files := range backupFileSets {
 		for _, f := range files.SSTFiles {
-			log.Info("Collected file.", zap.Uint64("total_kv", f.TotalKvs), zap.Uint64("total_bytes", f.TotalBytes), zap.Uint64("size", f.Size_))
+			totalKvs += f.TotalKvs
+			totalBytes += f.TotalBytes
+			totalSize += f.Size_
 			atomic.AddUint64(&rc.restoreStat.restoreSSTKVCount, f.TotalKvs)
 			atomic.AddUint64(&rc.restoreStat.restoreSSTKVSize, f.TotalBytes)
 			atomic.AddUint64(&rc.restoreStat.restoreSSTPhySize, f.Size_)
 		}
 	}
 	atomic.AddUint64(&rc.restoreStat.restoreSSTTakes, uint64(time.Since(begin)))
+	log.Info("Collected files", zap.Uint64("total_kv", totalKvs), zap.Uint64("total_bytes", totalBytes), zap.Uint64("total_size", totalSize))
 	return err
 }
 
