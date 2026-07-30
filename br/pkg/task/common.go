@@ -18,7 +18,6 @@ import (
 
 	gcs "cloud.google.com/go/storage"
 	"github.com/docker/go-units"
-	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -29,14 +28,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/operation"
+	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/tikv/client-go/v2/config"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -169,9 +170,9 @@ func (tls *TLSConfig) ToPDSecurityOption() pd.SecurityOption {
 	return securityOption
 }
 
-// Convert the TLS config to the PD security option.
-func (tls *TLSConfig) ToKVSecurity() config.Security {
-	return config.Security{
+// Convert the TLS config to the KV security option.
+func (tls *TLSConfig) ToKVSecurity() tikvcfg.Security {
+	return tikvcfg.Security{
 		ClusterSSLCA:   tls.CA,
 		ClusterSSLCert: tls.Cert,
 		ClusterSSLKey:  tls.Key,
@@ -426,6 +427,31 @@ func DefaultConfig() Config {
 		log.Panic("infallible operation failed.", zap.Error(err))
 	}
 	return cfg
+}
+
+// ApplyTiDBRuntimeConfig applies runtime PD/TLS settings from TiDB global config
+// to an in-process BR config without changing CLI flag defaults.
+func ApplyTiDBRuntimeConfig(cfg *Config) {
+	tidbCfg := tidbconfig.GetGlobalConfig()
+	if tidbCfg.Path != "" {
+		pds := make([]string, 0, 1)
+		for _, pdAddr := range strings.Split(tidbCfg.Path, ",") {
+			pdAddr = strings.TrimSpace(pdAddr)
+			if pdAddr != "" {
+				pds = append(pds, pdAddr)
+			}
+		}
+		if len(pds) > 0 {
+			cfg.PD = pds
+		}
+	}
+	if tidbCfg.Security.ClusterSSLCA != "" || tidbCfg.Security.ClusterSSLCert != "" || tidbCfg.Security.ClusterSSLKey != "" {
+		cfg.TLS = TLSConfig{
+			CA:   tidbCfg.Security.ClusterSSLCA,
+			Cert: tidbCfg.Security.ClusterSSLCert,
+			Key:  tidbCfg.Security.ClusterSSLKey,
+		}
+	}
 }
 
 // DefineDatabaseFlags defines the required --db flag for `db` subcommand.
@@ -877,28 +903,16 @@ func NewMgr(ctx context.Context,
 	)
 }
 
-// GetStorage gets the storage backend from the config.
-func GetStorage(
-	ctx context.Context,
-	storageName string,
-	cfg *Config,
-) (*backuppb.StorageBackend, storeapi.Storage, error) {
-	u, err := objstore.ParseBackend(storageName, &cfg.BackendOptions)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	s, err := objstore.New(ctx, u, storageOpts(cfg))
-	if err != nil {
-		return nil, nil, errors.Annotate(err, "create storage failed")
-	}
-	return u, s, nil
-}
-
 func storageOpts(cfg *Config) *storeapi.Options {
 	return &storeapi.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
+}
+
+// GetStorage is a thin wrapper around task/common.GetStorage for task.Config callers.
+func GetStorage(ctx context.Context, storageName string, cfg *Config) (*backuppb.StorageBackend, storeapi.Storage, error) {
+	return taskcommon.GetStorage(ctx, storageName, cfg.BackendOptions, cfg.NoCreds, cfg.SendCreds)
 }
 
 // ReadBackupMeta reads the backupmeta file from the storage.
@@ -934,20 +948,13 @@ func ReadBackupMeta(
 		u.GetGcs().Prefix = oldPrefix
 	}
 
-	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid
-	var iv []byte
-	if cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
-		iv = metaData[:metautil.CrypterIvLen]
-	}
-	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], &cfg.CipherInfo, iv)
+	decryptBackupMeta, err := metautil.DecryptFullBackupMetaIfNeeded(metaData, &cfg.CipherInfo)
 	if err != nil {
-		return nil, nil, nil, errors.Annotate(err, "decrypt failed with wrong key")
+		return nil, nil, nil, errors.Trace(err)
 	}
-
-	backupMeta := &backuppb.BackupMeta{}
-	if err = proto.Unmarshal(decryptBackupMeta, backupMeta); err != nil {
-		return nil, nil, nil, errors.Annotate(err,
-			"parse backupmeta failed because of wrong aes cipher")
+	backupMeta, err := taskcommon.DecodeBackupMeta(decryptBackupMeta, nil)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
 	}
 	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptBackupMeta, backupMeta); err != nil {
 		if cfg.CheckRequirements {

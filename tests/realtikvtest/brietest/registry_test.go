@@ -48,7 +48,7 @@ func initRegistryTest(t *testing.T) (*testkit.TestKit, *domain.Domain, glue.Glue
 
 	cfg := config.GetGlobalConfig()
 	cfg.Store = config.StoreTypeTiKV
-	cfg.Path = "127.0.0.1:2379"
+	cfg.Path = realtikvtest.CurrentPDAddr()
 	config.StoreGlobalConfig(cfg)
 
 	tk := testkit.NewTestKit(t, store)

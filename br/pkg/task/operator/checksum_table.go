@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -147,23 +148,32 @@ func (c *checksumTableCtx) getTables(ctx context.Context) (res []tableInDB, err 
 }
 
 func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil.Table, err error) {
-	_, strg, err := task.GetStorage(ctx, c.cfg.Storage, &c.cfg.Config)
+	rootBackend, rootStorage, err := task.GetStorage(
+		ctx,
+		c.cfg.Storage,
+		&c.cfg.Config,
+	)
 	if err != nil {
-		return nil, errors.Annotate(err, "failed to create storage")
+		return nil, errors.Annotate(err, "failed to open backup storage")
 	}
-
-	mPath := metautil.MetaFile
-	metaContent, err := strg.ReadFile(ctx, mPath)
+	resolved := &taskrepo.SnapshotStorageRef{
+		BackupID:    c.cfg.BackupID,
+		RootBackend: rootBackend,
+		RootStorage: rootStorage,
+	}
+	if err := resolved.Validate(ctx); err != nil {
+		return nil, errors.Annotate(err, "failed to init backupmeta storage")
+	}
+	backupMeta, err := resolved.LoadBackupMeta(ctx, &c.cfg.CipherInfo)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to open metafile %s", mPath)
+		return nil, errors.Annotate(err, "failed to load backupmeta")
 	}
 
-	var backupMeta backup.BackupMeta
-	if err := backupMeta.Unmarshal(metaContent); err != nil {
-		return nil, errors.Annotate(err, "failed to parse backupmeta")
-	}
-
-	metaReader := metautil.NewMetaReader(&backupMeta, strg, &c.cfg.CipherInfo)
+	metaReader := metautil.NewMetaReader(
+		backupMeta,
+		resolved.MetadataStorage(),
+		&c.cfg.CipherInfo,
+	)
 
 	tblCh := make(chan *metautil.Table, 1024)
 	errCh := make(chan error, 1)
