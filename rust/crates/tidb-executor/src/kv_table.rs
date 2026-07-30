@@ -69,8 +69,17 @@ pub struct KvTable {
     /// The table's name, which a duplicate-key error qualifies its index with
     /// (`Duplicate entry 'a' for key 'm.code'`).
     pub name: String,
-    /// The columns, in schema order.
+    /// The columns, in schema order, VISIBLE ONES FIRST.
+    ///
+    /// The tail of this vector is the hidden columns an expression index was
+    /// rewritten into (`hidden_columns` counts them). Keeping them contiguous
+    /// at the end is what makes a visible offset and a physical offset the
+    /// same number, so no call site has to translate between the two -- see
+    /// [`crate::expression_index`] for why that matters.
     pub columns: Vec<KvColumn>,
+    /// How many of the TRAILING entries of `columns` are hidden (Go
+    /// `ColumnInfo.Hidden`). Zero for every table with no expression index.
+    hidden_columns: usize,
     /// The byte store, reached through the [`TableStorage`] seam (module
     /// doc), so a TiKV-backed backend replaces it without touching this file.
     store: Box<dyn TableStorage>,
@@ -177,6 +186,7 @@ impl KvTable {
             table_id,
             name: String::new(),
             columns,
+            hidden_columns: 0,
             store,
             next_handle: 1,
             pk_handle_offset: None,
@@ -540,13 +550,51 @@ impl KvTable {
         self.indexes.iter().map(|index| index.id).max().unwrap_or(0) + 1
     }
 
+    /// The columns a user can name or see: everything but the hidden tail.
+    ///
+    /// A visible column's offset in this slice IS its physical offset, which
+    /// is the whole point of keeping the hidden ones last.
+    #[must_use]
+    pub fn visible_columns(&self) -> &[KvColumn] {
+        &self.columns[..self.visible_column_count()]
+    }
+
+    /// How many columns a user can name or see.
+    #[must_use]
+    pub fn visible_column_count(&self) -> usize {
+        self.columns.len() - self.hidden_columns
+    }
+
+    /// Whether the column at `offset` is hidden.
+    #[must_use]
+    pub fn is_hidden(&self, offset: usize) -> bool {
+        offset >= self.visible_column_count()
+    }
+
+    /// Appends a hidden column -- the one an expression index key part is
+    /// rewritten into -- and returns its offset.
+    ///
+    /// It goes at the very end, so no existing offset moves and the tail
+    /// invariant holds by construction.
+    pub fn add_hidden_column(&mut self, column: KvColumn) -> usize {
+        self.columns.push(column);
+        self.hidden_columns += 1;
+        self.columns.len() - 1
+    }
+
     /// Adds a column at `position`, which is Go's ALTER TABLE ADD COLUMN.
     ///
     /// The column takes a fresh id, so rows written earlier simply do not
     /// carry it and read back its origin default. Index and handle offsets
     /// shift with the insertion, since they address columns by position.
+    ///
+    /// `position` is clamped to the VISIBLE width, so `ADD COLUMN` with no
+    /// position lands before the hidden tail rather than after it. Captured
+    /// from Go: after `alter table te add column z int` on a table with an
+    /// expression index, `SHOW CREATE TABLE` prints `a`, `z` and
+    /// `information_schema.columns` gives them ordinals 1 and 2.
     pub fn add_column(&mut self, position: usize, column: KvColumn) {
-        let position = position.min(self.columns.len());
+        let position = position.min(self.visible_column_count());
         self.columns.insert(position, column);
         let shift = |offset: &mut usize| {
             if *offset >= position {
@@ -582,6 +630,9 @@ impl KvTable {
     /// again because nothing lists that id -- Go likewise leaves the old row
     /// values in place until the table is rewritten.
     pub fn drop_column(&mut self, offset: usize) {
+        if self.is_hidden(offset) {
+            self.hidden_columns -= 1;
+        }
         self.columns.remove(offset);
         let shift = |value: &mut usize| {
             if *value > offset {

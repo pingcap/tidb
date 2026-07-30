@@ -54,6 +54,7 @@ pub mod ddl_sequence;
 pub mod driver;
 pub mod executor;
 pub mod explain;
+pub mod expression_index;
 mod farmhash;
 pub(crate) mod foreign_key;
 pub mod generated_column;

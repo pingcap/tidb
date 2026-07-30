@@ -213,6 +213,30 @@ pub enum DriverError {
     },
     /// Go `dbterror.ErrGeneratedColumnNonPrior` (3107).
     GeneratedColumnNonPrior,
+    /// Go `dbterror.ErrFunctionalIndexOnField` (3762): an expression index
+    /// whose expression is nothing but a column, which is a plain index
+    /// written the long way. See [`crate::expression_index`].
+    FunctionalIndexOnField,
+    /// Go `dbterror.ErrFunctionalIndexFunctionIsNotAllowed` (3758), carrying
+    /// the index name: the expression names a subquery, `values(x)`, or a
+    /// variable.
+    FunctionalIndexFunctionNotAllowed(String),
+    /// Go `dbterror.ErrFunctionalIndexRowValueIsNotAllowed` (3800), carrying
+    /// the index name.
+    FunctionalIndexRowValue(String),
+    /// Go `dbterror.ErrExpressionIndexCanNotRefer` (3754), carrying the index
+    /// name: the expression reads an `AUTO_INCREMENT` column.
+    ExpressionIndexCanNotRefer(String),
+    /// Go `dbterror.ErrUnsupportedExpressionIndex` (8200): the expression
+    /// calls a function outside `GAFunction4ExpressionIndex` and the server
+    /// was not started with `allow-expression-index`.
+    UnsafeFunctionInExpressionIndex,
+    /// Go `dbterror.ErrDependentByFunctionalIndex` (3837), carrying the
+    /// column name: a column an expression index reads cannot be dropped or
+    /// renamed.
+    DependentByFunctionalIndex(String),
+    /// Go `dbterror.ErrTooLongIdent` (1059), carrying the identifier Go names.
+    TooLongIdent(String),
     /// Go `dbterror.ErrUnsupportedOnGeneratedColumn` (3106), whose argument
     /// names what was attempted.
     UnsupportedOnGeneratedColumn(String),
@@ -1611,6 +1635,49 @@ impl DriverError {
             3107,
             *b"HY000",
             "Generated column can refer only to generated columns defined prior to it.".to_owned(),
+        ),
+        // The expression-index refusals, each errno and wording captured from
+        // `gorun`. See `crate::expression_index`'s module doc for the script.
+        DriverError::FunctionalIndexOnField => MysqlError::new(
+            3762,
+            *b"HY000",
+            "Expression index on a column is not supported. Consider using a regular index instead"
+                .to_owned(),
+        ),
+        DriverError::FunctionalIndexFunctionNotAllowed(index) => MysqlError::new(
+            3758,
+            *b"HY000",
+            format!("Expression of expression index '{index}' contains a disallowed function"),
+        ),
+        DriverError::FunctionalIndexRowValue(index) => MysqlError::new(
+            3800,
+            *b"HY000",
+            format!("Expression of expression index '{index}' cannot refer to a row value"),
+        ),
+        DriverError::ExpressionIndexCanNotRefer(index) => MysqlError::new(
+            3754,
+            *b"HY000",
+            format!("Expression index '{index}' cannot refer to an auto-increment column"),
+        ),
+        DriverError::UnsafeFunctionInExpressionIndex => MysqlError::new(
+            8200,
+            *b"HY000",
+            "Unsupported creating expression index containing unsafe functions without \
+             allow-expression-index in config"
+                .to_owned(),
+        ),
+        DriverError::DependentByFunctionalIndex(column) => MysqlError::new(
+            3837,
+            *b"HY000",
+            format!(
+                "Column '{column}' has an expression index dependency and cannot be dropped or \
+                 renamed"
+            ),
+        ),
+        DriverError::TooLongIdent(ident) => MysqlError::new(
+            1059,
+            *b"42000",
+            format!("Identifier name '{ident}' is too long"),
         ),
         // Go: "'%s' is not supported for generated columns."
         DriverError::UnsupportedOnGeneratedColumn(reason) => MysqlError::new(
