@@ -180,6 +180,7 @@ type Config struct {
 
 	TableFilter         filter.Filter       `json:"-"`
 	ColumnFilter        *ColumnFilterConfig `json:"-"`
+	writableColumnCache *writableColumnCache
 	Where               string
 	FileType            string
 	ServerInfo          version.ServerInfo

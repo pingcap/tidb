@@ -27,9 +27,13 @@ type TableMeta interface {
 	DatabaseName() string
 	TableName() string
 	ColumnCount() uint
+	// ColumnTypes returns the selected output column types.
 	ColumnTypes() []string
+	// ColumnNames returns the selected output column names.
 	ColumnNames() []string
+	// SourceColumnTypes returns all source writable column types for schema-based logic such as split keys.
 	SourceColumnTypes() []string
+	// SourceColumnNames returns all source writable column names for schema-based logic such as split keys.
 	SourceColumnNames() []string
 	SelectedField() string
 	SelectedLen() int

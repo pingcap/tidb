@@ -682,11 +682,14 @@ func TestDumpTableMetaWithColumnFilterKeepsSourceColumnsForSplit(t *testing.T) {
 	conf.NoSchemas = true
 	conf.ServerInfo.ServerType = version.ServerTypeMySQL
 	conf.ColumnFilter = columnFilter
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+	conf.writableColumnCache = newWritableColumnCache()
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, ""))
+	require.NoError(t, validateColumnFilter(tctx, conf, baseConn))
 	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `name` FROM `%s`.`%s` LIMIT 1", database, table))).
 		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
 			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
@@ -712,6 +715,37 @@ func TestDumpTableMetaWithColumnFilterKeepsSourceColumnsForSplit(t *testing.T) {
 	field, err := getNumericIndex(tctx, baseConn, meta)
 	require.NoError(t, err)
 	require.Equal(t, "id", field)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDumpTableMetaSkipsColumnFilterForView(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	defer cancel()
+	conn, err := db.Conn(tctx)
+	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
+
+	conf := DefaultConfig()
+	conf.NoSchemas = true
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
+	conf.ColumnFilter = newColumnFilterConfigForTest(t,
+		ColumnFilterRule{Matcher: []string{database + ".*"}, Columns: []string{"missing"}},
+	)
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("view_col", "int(11)", "NO", "", nil, ""))
+
+	meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeView, Name: table})
+	require.NoError(t, err)
+	require.Equal(t, "*", meta.SelectedField())
+	require.Equal(t, 1, meta.SelectedLen())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

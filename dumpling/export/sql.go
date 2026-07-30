@@ -1065,18 +1065,44 @@ type selectFieldInfo struct {
 	sourceFieldSQL    string
 }
 
-// buildSelectField returns the selecting fields' string(joined by comma(`,`)),
-// and the number of writable fields.
-func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
-	info, err := buildSelectFieldInfo(tctx, db, dbName, tableName, completeInsert, nil)
-	if err != nil {
-		return "", 0, err
-	}
-	return info.outputFieldSQL, info.outputColumnCount, nil
+type writableColumnInfo struct {
+	names             []string
+	hasGenerateColumn bool
 }
 
-func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnFilter *ColumnFilterConfig) (selectFieldInfo, error) { // revive:disable-line:flag-parameter
-	sourceColumns, hasGenerateColumn, err := getWritableColumnNames(tctx, db, dbName, tableName)
+type writableColumnCache struct {
+	columns map[string]writableColumnInfo
+}
+
+func newWritableColumnCache() *writableColumnCache {
+	return &writableColumnCache{
+		columns: make(map[string]writableColumnInfo),
+	}
+}
+
+func (c *writableColumnCache) get(tctx *tcontext.Context, db *BaseConn, dbName, tableName string) ([]string, bool, error) {
+	if c == nil {
+		return getWritableColumnNames(tctx, db, dbName, tableName)
+	}
+
+	key := dbName + "\x00" + tableName
+	if info, ok := c.columns[key]; ok {
+		return info.names, info.hasGenerateColumn, nil
+	}
+
+	names, hasGenerateColumn, err := getWritableColumnNames(tctx, db, dbName, tableName)
+	if err != nil {
+		return nil, false, err
+	}
+	c.columns[key] = writableColumnInfo{
+		names:             names,
+		hasGenerateColumn: hasGenerateColumn,
+	}
+	return names, hasGenerateColumn, nil
+}
+
+func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnFilter *ColumnFilterConfig, columnCache *writableColumnCache) (selectFieldInfo, error) { // revive:disable-line:flag-parameter
+	sourceColumns, hasGenerateColumn, err := columnCache.get(tctx, db, dbName, tableName)
 	if err != nil {
 		return selectFieldInfo{}, err
 	}

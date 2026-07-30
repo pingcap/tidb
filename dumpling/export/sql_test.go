@@ -46,6 +46,14 @@ const (
 	table    = "bar"
 )
 
+func buildSelectFieldForTest(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
+	info, err := buildSelectFieldInfo(tctx, db, dbName, tableName, completeInsert, nil, nil)
+	if err != nil {
+		return "", 0, err
+	}
+	return info.outputFieldSQL, info.outputColumnCount, nil
+}
+
 func TestBuildSelectAllQuery(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -71,7 +79,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-	selectedField, _, err := buildSelectField(tctx, baseConn, database, table, false)
+	selectedField, _, err := buildSelectFieldForTest(tctx, baseConn, database, table, false)
 	require.NoError(t, err)
 
 	q := buildSelectQuery(database, table, selectedField, "", "", orderByClause)
@@ -88,7 +96,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-	selectedField, _, err = buildSelectField(tctx, baseConn, database, table, false)
+	selectedField, _, err = buildSelectFieldForTest(tctx, baseConn, database, table, false)
 	require.NoError(t, err)
 
 	q = buildSelectQuery(database, table, selectedField, "", "", orderByClause)
@@ -113,7 +121,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-		selectedField, _, err = buildSelectField(tctx, baseConn, database, table, false)
+		selectedField, _, err = buildSelectFieldForTest(tctx, baseConn, database, table, false)
 		require.NoError(t, err, comment)
 
 		q = buildSelectQuery(database, table, selectedField, "", "", orderByClause)
@@ -139,7 +147,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-		selectedField, _, err = buildSelectField(tctx, baseConn, "test", "t", false)
+		selectedField, _, err = buildSelectFieldForTest(tctx, baseConn, "test", "t", false)
 		require.NoError(t, err, comment)
 
 		q := buildSelectQuery(database, table, selectedField, "", "", orderByClause)
@@ -160,7 +168,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-		selectedField, _, err := buildSelectField(tctx, baseConn, "test", "t", false)
+		selectedField, _, err := buildSelectFieldForTest(tctx, baseConn, "test", "t", false)
 		require.NoError(t, err, comment)
 
 		q := buildSelectQuery(database, table, selectedField, "", "", "")
@@ -264,7 +272,7 @@ func TestBuildSelectField(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-	selectedField, _, err := buildSelectField(tctx, baseConn, "test", "t", false)
+	selectedField, _, err := buildSelectFieldForTest(tctx, baseConn, "test", "t", false)
 	require.Equal(t, "*", selectedField)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -276,7 +284,7 @@ func TestBuildSelectField(t *testing.T) {
 			AddRow("name", "varchar(12)", "NO", "", nil, "").
 			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, ""))
 
-	selectedField, _, err = buildSelectField(tctx, baseConn, "test", "t", true)
+	selectedField, _, err = buildSelectFieldForTest(tctx, baseConn, "test", "t", true)
 	require.Equal(t, "`id`,`name`,`quo``te`", selectedField)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -289,12 +297,12 @@ func TestBuildSelectField(t *testing.T) {
 			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, "").
 			AddRow("generated", "varchar(12)", "NO", "", nil, "VIRTUAL GENERATED"))
 
-	selectedField, _, err = buildSelectField(tctx, baseConn, "test", "t", false)
+	selectedField, _, err = buildSelectFieldForTest(tctx, baseConn, "test", "t", false)
 	require.Equal(t, "`id`,`name`,`quo``te`", selectedField)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	// Column selectors use source order for selected fields and leave source fields unfiltered.
+	// Column filters use source order for selected fields and leave source fields unfiltered.
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
@@ -303,7 +311,7 @@ func TestBuildSelectField(t *testing.T) {
 	columnFilter := newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"quo`te", "name"}},
 	)
-	selectInfo, err := buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter)
+	selectInfo, err := buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
 	require.NoError(t, err)
 	require.Equal(t, "`name`,`quo``te`", selectInfo.outputFieldSQL)
 	require.Equal(t, 2, selectInfo.outputColumnCount)
@@ -318,7 +326,7 @@ func TestBuildSelectField(t *testing.T) {
 	columnFilter = newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"*", "!name"}},
 	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter)
+	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
 	require.NoError(t, err)
 	require.Equal(t, "`id`,`quo``te`", selectInfo.outputFieldSQL)
 	require.Equal(t, 2, selectInfo.outputColumnCount)
@@ -332,7 +340,7 @@ func TestBuildSelectField(t *testing.T) {
 	columnFilter = newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"*", "!id", "!name"}},
 	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter)
+	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
 	require.ErrorContains(t, err, "--column-filter-file selects no writable columns")
 	require.Empty(t, selectInfo)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -344,7 +352,7 @@ func TestBuildSelectField(t *testing.T) {
 	columnFilter = newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"missing"}},
 	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter)
+	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
 	require.ErrorContains(t, err, `included column rules "missing" do not match writable columns`)
 	require.Empty(t, selectInfo)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -355,7 +363,7 @@ func TestBuildSelectField(t *testing.T) {
 	columnFilter = newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"*", "!g"}},
 	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter)
+	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
 	require.NoError(t, err)
 	require.Empty(t, selectInfo.outputFieldSQL)
 	require.Equal(t, 0, selectInfo.outputColumnCount)
@@ -369,7 +377,7 @@ func TestBuildSelectField(t *testing.T) {
 	columnFilter = newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{"test.other"}, Columns: []string{"id"}},
 	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter)
+	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
 	require.NoError(t, err)
 	require.Equal(t, "*", selectInfo.outputFieldSQL)
 	require.Equal(t, 2, selectInfo.outputColumnCount)
@@ -383,7 +391,7 @@ func TestBuildSelectField(t *testing.T) {
 	columnFilter = newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{"test.other"}, Columns: []string{"*", "!id"}},
 	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter)
+	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
 	require.NoError(t, err)
 	require.Equal(t, "*", selectInfo.outputFieldSQL)
 	require.Equal(t, 2, selectInfo.outputColumnCount)
@@ -400,7 +408,7 @@ func TestBuildSelectField(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-	selectedField, _, err = buildSelectField(tctx, baseConn, "test", "t", false)
+	selectedField, _, err = buildSelectFieldForTest(tctx, baseConn, "test", "t", false)
 	require.Equal(t, "*", selectedField)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())

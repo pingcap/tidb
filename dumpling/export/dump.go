@@ -264,9 +264,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 	if conf.SQL == "" && conf.ColumnFilter != nil {
-		if err = validateColumnFilter(tctx, conf, baseConn); err != nil {
-			return errors.Trace(err)
-		}
+		conf.writableColumnCache = newWritableColumnCache()
+	} else {
+		conf.writableColumnCache = nil
 	}
 
 	chanSize := defaultTaskChannelCapacity
@@ -294,6 +294,15 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 	// Inject consistency failpoint test after we release the table lock
 	failpoint.Inject("ConsistencyCheck", nil)
+
+	if conf.SQL == "" && conf.ColumnFilter != nil {
+		if err = validateColumnFilter(tctx, conf, baseConn); err != nil {
+			close(taskIn)
+			_ = wg.Wait()
+			_ = baseConn.DBConn.Close()
+			return errors.Trace(err)
+		}
+	}
 
 	if conf.PosAfterConnect {
 		// record again, to provide a location to exit safe mode for DM
@@ -508,7 +517,7 @@ func validateColumnFilter(tctx *tcontext.Context, conf *Config, conn *BaseConn) 
 			if table.Type != TableTypeBase {
 				continue
 			}
-			sourceColumns, _, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
+			sourceColumns, _, err := conf.writableColumnCache.get(tctx, conn, dbName, table.Name)
 			if err != nil {
 				return err
 			}
@@ -1360,7 +1369,17 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 
 func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
-	selectFieldInfo, err := buildSelectFieldInfo(tctx, conn, db, tbl, conf.CompleteInsert, conf.ColumnFilter)
+	var (
+		columnFilter *ColumnFilterConfig
+		columnCache  *writableColumnCache
+	)
+	if table.Type == TableTypeBase {
+		columnFilter = conf.ColumnFilter
+		if columnFilter != nil {
+			columnCache = conf.writableColumnCache
+		}
+	}
+	selectFieldInfo, err := buildSelectFieldInfo(tctx, conn, db, tbl, conf.CompleteInsert, columnFilter, columnCache)
 	if err != nil {
 		return nil, err
 	}
