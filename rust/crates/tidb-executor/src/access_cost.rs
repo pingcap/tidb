@@ -537,6 +537,12 @@ pub(crate) fn enumerate_paths(
 /// reads every index entry AND looks up every row, which the table scan
 /// dominates. Go reaches the same answer through `keepIndex`.
 ///
+/// MEASURED: dropping that refusal changes NO test in this workspace -- the
+/// double read in [`AccessPath::cost`] already makes a non-covering full index
+/// scan lose. It is kept because it is Go's own condition and because a path
+/// Go never costs should not be costed here; it is a fidelity guard, not the
+/// thing producing the answer.
+///
 /// Its skyline coordinates are the table scan's own -- no access columns, no
 /// `=`/`IN` prefix, a single scan over the full range -- so neither dominates
 /// the other and the choice falls to [`AccessPath::cost`], where the index's
