@@ -24,31 +24,37 @@ claim instead of a memory.
 ## Ranked gaps
 
 Ranked by blast radius -- what goes silently wrong if the behavior is wrong --
-not by how many tests are missing. Every entry is a Go test in the `NONE`
-bucket: no Rust test carries its name, its words, or a citation of it.
+not by how many tests are missing.
+
+**Re-verified against the tree, and nine of the twenty rows were stale.** This
+table was written from a `NONE` list, and `NONE` has been wrong in three
+separate ways since (see the audit section below). Every row below now says
+whether a Rust test actually carries it, checked by reading, not by matching.
+The stale rows all failed the same way: the port exists under a name that
+shares no distinctive word with the Go test. Re-verify before working a row.
 
 | # | Go test | Unguarded behavior |
 | --- | --- | --- |
 | 1 | ~~`pkg/types/convert_test.go:44` `TestConvertType`~~ | **CLOSED, and this row was stale.** `tidb-datatype/src/datum_convert.rs` `go_tests::go_test_convert_type` carries it (one row `#[ignore]`d: an out-of-range ENUM ordinal returns `Err` without Go's best-effort empty ENUM). |
 | 2 | ~~`pkg/types/datum_test.go:124` `TestToInt64`~~ | **CLOSED, and this row was stale.** `datum_convert.rs` `go_tests::go_test_to_int64`. |
 | 3 | ~~`pkg/types/convert_test.go:843` `TestGetValidInt`, `:921` `TestGetValidFloat`~~ | **CLOSED.** `TestGetValidFloat` was already ported as `convert.rs` `source_valid_float_prefix_rows` + `source_float_string_to_integer_rows` (all 23 + 17 rows) and this row never noticed. `TestGetValidInt` and `TestRoundIntStr` are ported below. |
-| 4 | `pkg/util/ranger/ranger_test.go:314` `TestIndexRangeForUnsignedAndOverflow` | Index range construction across the signed/unsigned boundary. A wrong range does not error -- it returns fewer rows. |
-| 5 | `pkg/util/ranger/ranger_test.go:1037` `TestPrefixIndexRangeScan` | Prefix-index ranges. This exact area already produced a live bug in this tree (prefix index vs SQL mode). |
-| 6 | `pkg/util/chunk/column_test.go:432` `TestReconstructFixedLen`, `:488` `TestReconstructVarLen` | The columnar buffer every executor writes and every expression reads. Silent corruption, not a crash. |
-| 7 | `pkg/util/chunk/chunk_util_test.go:57` `TestCopySelectedJoinRows` | Join output materialization with a selection vector. Wrong = wrong join result set. |
-| 8 | `pkg/expression/builtin_cast_test.go:292` `TestCastFuncSig` | Every cast signature's result and flag propagation. Feeds comparison, index selection, and pushdown. |
-| 9 | `pkg/expression/collation_test.go:387` `TestDeriveCollation` | Collation derivation for binary operators. Decides string comparison and ordering; already a live-bug source here (order-by collation, cluster collation). |
+| 4 | ~~`pkg/util/ranger/ranger_test.go:314` `TestIndexRangeForUnsignedAndOverflow`~~ | **CLOSED, and this row was stale.** All 19 rows are in `tidb-executor/src/index_range.rs` `unsigned_and_overflow_ranges_match_go`, `#[ignore]`d with Go's answers beside a running guard -- 12 rows still need `handleUnsignedCol` clamping and `RefineCompareArgs`. That remains real work; it is just not *unmeasured* work. |
+| 5 | `pkg/util/ranger/ranger_test.go:1037` `TestPrefixIndexRangeScan` | **OPEN, verified.** Prefix-index ranges. Do not confuse it with `TestPrefixIndexRange` (`:2342`), which IS ported (`prefix_index_ranges_match_go`, `#[ignore]`d) -- the near-miss queue pairs the two, and reading them is how you tell. This exact area already produced a live bug here (prefix index vs SQL mode). |
+| 6 | ~~`pkg/util/chunk/column_test.go:432` `TestReconstructFixedLen`, `:488` `TestReconstructVarLen`~~ | **CLOSED, and this row was stale.** `tidb-chunk/src/column.rs` `reconstruct_fixed_len` / `reconstruct_var_len`, both citing the Go line and both driving the same 8 seeds x 1024 rows. |
+| 7 | ~~`pkg/util/chunk/chunk_util_test.go:57` `TestCopySelectedJoinRows`~~ | **CLOSED, and this row was stale.** `tidb-chunk/src/chunk_util.rs` `copy_selected_join_rows_matches_row_by_row_append`, which is the Go assertion exactly: batch copy must equal row-by-row append. |
+| 8 | `pkg/expression/builtin_cast_test.go:292` `TestCastFuncSig` | **OPEN, verified.** Every cast signature's result and flag propagation. Feeds comparison, index selection, and pushdown. |
+| 9 | ~~`pkg/expression/collation_test.go:387` `TestDeriveCollation`~~ | **CLOSED, and this row was stale.** `tidb-expr/src/collation_derive_go_tests.rs` is a row-for-row translation of the whole table, helper constructors included. |
 | 10 | `pkg/expression/expr_to_pb_test.go:1547` `TestExprPushDownToTiKV`, `:668` `TestExprPushDownToFlash` | Which expressions are pushed to the coprocessor. Push down something the store evaluates differently and rows vanish with no error -- the exact shape of the cop-`LIMIT` bug. |
-| 11 | `pkg/expression/builtin_vectorized_test.go:836` `TestVecEvalBool` | Filter truthiness in the vectorized path, including NULL handling. Governs every `WHERE`. |
-| 12 | `pkg/types/json_binary_test.go:294` `TestCompareBinary` | Binary-JSON ordering across type precedence. Drives `ORDER BY`, index ordering, and comparison of JSON columns. |
-| 13 | `pkg/types/time_test.go:1918` `TestTimeOverflow`, `:1205` `TestCheckTimestamp` | Temporal range admission. Decides whether a value is stored, zeroed, or rejected. |
-| 14 | `pkg/server/conn_stmt_params_test.go:319` `TestParseExecArgsAndEncode` | Binary-protocol parameter decoding for prepared statements. A wrong type tag misreads the client's value on the wire. |
-| 15 | `pkg/server/conn_test.go:434` `TestParseHandshakeResponse`, `:427` `TestMalformHandshakeHeader` | Handshake parsing, including malformed input. Connection-level, and a parsing bug here is reachable pre-auth. |
-| 16 | `pkg/executor/insert_test.go:534` `TestInsertLockUnchangedKeys`, `pkg/executor/delete_test.go:27` `TestDeleteLockKey` | Which keys a DML pessimistically locks. Under-locking is a lost update that no test observes at the SQL layer. |
-| 17 | `pkg/executor/executor_failpoint_test.go:126` `TestPointGetRepeatableRead` | Point-get under repeatable read. Isolation violations are invisible to single-session tests. |
-| 18 | `pkg/meta/meta_test.go:241` `TestMeta`, `:662`-`:753` the key-format tests | Meta key encoding for schemas, tables, auto-IDs, sequences. A wrong key is data written where nothing will look for it. |
-| 19 | `pkg/statistics/histogram_test.go:79` `TestMergePartitionLevelHist`, `:493` `TestMergeBucketNDV` | Histogram merging. Wrong estimates pick wrong plans -- slow, not incorrect, but invisible until production. |
-| 20 | `pkg/types/vector_test.go:24` `TestVectorEndianess`, `:149` `TestVectorSerialize` | Vector column wire bytes. A byte-order mistake is a cross-language corruption that only a differential test catches. |
+| 11 | ~~`pkg/expression/builtin_vectorized_test.go:836` `TestVecEvalBool`~~ | **CLOSED** -- see the porting table below; it found four live bugs. Filter truthiness in the vectorized path, including NULL handling. Governs every `WHERE`. |
+| 12 | `pkg/types/json_binary_test.go:294` `TestCompareBinary` | **OPEN, verified.** Binary-JSON ordering across type precedence. Drives `ORDER BY`, index ordering, and comparison of JSON columns. |
+| 13 | `pkg/types/time_test.go:1918` `TestTimeOverflow`, `:1205` `TestCheckTimestamp` | **OPEN, verified.** Temporal range admission. Decides whether a value is stored, zeroed, or rejected. |
+| 14 | ~~`pkg/server/conn_stmt_params_test.go:319` `TestParseExecArgsAndEncode`~~ | **CLOSED** -- see the porting table below; it found a live charset bug. Binary-protocol parameter decoding for prepared statements. A wrong type tag misreads the client's value on the wire. |
+| 15 | `pkg/server/conn_test.go:434` `TestParseHandshakeResponse`, `:427` `TestMalformHandshakeHeader` | **OPEN, verified.** Handshake parsing, including malformed input. Connection-level, and a parsing bug here is reachable pre-auth. |
+| 16 | ~~`pkg/executor/insert_test.go:534` `TestInsertLockUnchangedKeys`, `pkg/executor/delete_test.go:27` `TestDeleteLockKey`~~ | **CLOSED** -- see the porting table below; it found a live `REPLACE` bug. Which keys a DML pessimistically locks. Under-locking is a lost update that no test observes at the SQL layer. |
+| 17 | `pkg/executor/executor_failpoint_test.go:126` `TestPointGetRepeatableRead` | **OPEN, verified.** Point-get under repeatable read. Isolation violations are invisible to single-session tests. |
+| 18 | `pkg/meta/meta_test.go:241` `TestMeta` (the key-format tests are closed; see below) | **PARTLY OPEN, verified.** Meta key encoding for schemas, tables, auto-IDs, sequences. A wrong key is data written where nothing will look for it. |
+| 19 | `pkg/statistics/histogram_test.go:79` `TestMergePartitionLevelHist`, `:493` `TestMergeBucketNDV` | **OPEN, verified.** Histogram merging. Wrong estimates pick wrong plans -- slow, not incorrect, but invisible until production. |
+| 20 | `pkg/types/vector_test.go:24` `TestVectorEndianess`, `:149` `TestVectorSerialize` | **OPEN, verified.** Vector column wire bytes. A byte-order mistake is a cross-language corruption that only a differential test catches. |
 
 ### Closed by porting
 
