@@ -284,6 +284,98 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	rootStats := stats.GetRootStats(tableReaderID)
 	require.NotNil(t, rootStats)
 	require.True(t, stats.ExistsRootStats(tableReaderID))
+
+	uint64Ptr := func(v uint64) *uint64 {
+		return &v
+	}
+	mslmStats := NewRuntimeStatsColl(nil)
+	mslmTableScanID := 4
+	mslmSummary1 := mockExecutorExecutionSummaryForTiFlash(1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "tablescan_"+strconv.Itoa(mslmTableScanID))
+	mslmSummary1.GetTiflashScanContext().MultiStageLateMaterialization = &tipb.TiFlashMultiStageLateMaterializationScanContext{
+		Streams:          uint64Ptr(1),
+		LateModeBlocks:   uint64Ptr(2),
+		DirectModeBlocks: uint64Ptr(0),
+		PushedFilterRead: &tipb.TiFlashMSLMReadStageContext{
+			DmfileScannedRows: uint64Ptr(100),
+			DmfileSkippedRows: uint64Ptr(10),
+			ReadBytes:         uint64Ptr(1000),
+			ReadTimeMs:        uint64Ptr(3),
+		},
+		CandidateRead: &tipb.TiFlashMSLMReadStageContext{
+			ReadBytes: uint64Ptr(700),
+		},
+		PushedFilter: &tipb.TiFlashMSLMFilterContext{
+			InputRows:    uint64Ptr(1000),
+			SelectedRows: uint64Ptr(200),
+			FilteredRows: uint64Ptr(800),
+		},
+		ResidualFilter: &tipb.TiFlashMSLMFilterContext{
+			InputRows:    uint64Ptr(200),
+			SelectedRows: uint64Ptr(100),
+			FilteredRows: uint64Ptr(100),
+		},
+		RunningTopn: &tipb.TiFlashMSLMRunningTopNContext{
+			InputRows:                       uint64Ptr(100),
+			SelectedRows:                    uint64Ptr(10),
+			BypassRows:                      uint64Ptr(0),
+			FilteredRows:                    uint64Ptr(90),
+			HeapSizeSum:                     uint64Ptr(4),
+			AdaptiveWarmupRows:              uint64Ptr(16),
+			AdaptivePostWarmupInputRows:     uint64Ptr(80),
+			AdaptivePostWarmupCandidateRows: uint64Ptr(20),
+			AdaptiveDisabledStreams:         uint64Ptr(0),
+		},
+		FinalRestInputRows: uint64Ptr(10),
+	}
+	mslmSummary2 := mockExecutorExecutionSummaryForTiFlash(2, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "tablescan_"+strconv.Itoa(mslmTableScanID))
+	mslmSummary2.GetTiflashScanContext().MultiStageLateMaterialization = &tipb.TiFlashMultiStageLateMaterializationScanContext{
+		Streams:          uint64Ptr(2),
+		LateModeBlocks:   uint64Ptr(3),
+		DirectModeBlocks: uint64Ptr(1),
+		PushedFilterRead: &tipb.TiFlashMSLMReadStageContext{
+			DmfileScannedRows: uint64Ptr(50),
+			DmfileSkippedRows: uint64Ptr(5),
+			ReadBytes:         uint64Ptr(500),
+			ReadTimeMs:        uint64Ptr(4),
+		},
+		CandidateRead: &tipb.TiFlashMSLMReadStageContext{
+			ReadBytes:  uint64Ptr(300),
+			ReadTimeMs: uint64Ptr(2),
+		},
+		FinalRestRead: &tipb.TiFlashMSLMReadStageContext{
+			DmfileScannedRows: uint64Ptr(30),
+			DmfileSkippedRows: uint64Ptr(5),
+			ReadBytes:         uint64Ptr(600),
+			ReadTimeMs:        uint64Ptr(6),
+		},
+		PushedFilter: &tipb.TiFlashMSLMFilterContext{
+			InputRows:    uint64Ptr(400),
+			SelectedRows: uint64Ptr(100),
+			FilteredRows: uint64Ptr(300),
+		},
+		ResidualFilter: &tipb.TiFlashMSLMFilterContext{
+			InputRows:    uint64Ptr(100),
+			SelectedRows: uint64Ptr(40),
+			FilteredRows: uint64Ptr(60),
+		},
+		RunningTopn: &tipb.TiFlashMSLMRunningTopNContext{
+			InputRows:               uint64Ptr(40),
+			SelectedRows:            uint64Ptr(2),
+			BypassRows:              uint64Ptr(3),
+			FilteredRows:            uint64Ptr(35),
+			HeapSizeSum:             uint64Ptr(4),
+			AdaptiveDisabledStreams: uint64Ptr(1),
+		},
+		FinalRestInputRows: uint64Ptr(5),
+	}
+	mslmStats.RecordOneCopTask(mslmTableScanID, kv.TiFlash, mslmSummary1)
+	mslmStats.RecordOneCopTask(mslmTableScanID, kv.TiFlash, mslmSummary2)
+
+	mslmCopStats := mslmStats.GetCopStats(mslmTableScanID)
+	require.False(t, mslmCopStats.stats.tiflashStats.scanContext.Empty())
+	expectedMSLM := "multi_stage_late_materialization:{streams:3, late_mode_blocks:5, direct_mode_blocks:1, pushed_filter_read:{dmfile_scanned_rows:150, dmfile_skipped_rows:15, read_bytes:1500, read_time_ms:7}, candidate_read:{read_bytes:1000, read_time_ms:2}, final_rest_read:{dmfile_scanned_rows:30, dmfile_skipped_rows:5, read_bytes:600, read_time_ms:6}, pushed_filter:{input_rows:1400, selected_rows:300, filtered_rows:1100}, residual_filter:{input_rows:300, selected_rows:140, filtered_rows:160}, running_topn:{input_rows:140, selected_rows:12, bypass_rows:3, filtered_rows:125, heap_size_sum:8, adaptive_warmup_rows:16, adaptive_post_warmup_input_rows:80, adaptive_post_warmup_candidate_rows:20, adaptive_disabled_streams:1}, final_rest_input_rows:15}"
+	require.Contains(t, mslmCopStats.String(), expectedMSLM)
+	require.Contains(t, mslmCopStats.stats.Clone().String(), expectedMSLM)
 }
 
 func TestVectorSearchStats(t *testing.T) {

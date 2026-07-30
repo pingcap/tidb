@@ -821,36 +821,37 @@ func (e *basicCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionS
 			}
 		}
 		tmp := TiFlashScanContext{
-			dmfileDataScannedRows:     tiflashScanContext.GetDmfileDataScannedRows(),
-			dmfileDataSkippedRows:     tiflashScanContext.GetDmfileDataSkippedRows(),
-			dmfileMvccScannedRows:     tiflashScanContext.GetDmfileMvccScannedRows(),
-			dmfileMvccSkippedRows:     tiflashScanContext.GetDmfileMvccSkippedRows(),
-			dmfileLmFilterScannedRows: tiflashScanContext.GetDmfileLmFilterScannedRows(),
-			dmfileLmFilterSkippedRows: tiflashScanContext.GetDmfileLmFilterSkippedRows(),
-			totalDmfileRsCheckMs:      tiflashScanContext.GetTotalDmfileRsCheckMs(),
-			totalDmfileReadMs:         tiflashScanContext.GetTotalDmfileReadMs(),
-			totalBuildSnapshotMs:      tiflashScanContext.GetTotalBuildSnapshotMs(),
-			localRegions:              tiflashScanContext.GetLocalRegions(),
-			remoteRegions:             tiflashScanContext.GetRemoteRegions(),
-			totalLearnerReadMs:        tiflashScanContext.GetTotalLearnerReadMs(),
-			disaggReadCacheHitBytes:   tiflashScanContext.GetDisaggReadCacheHitBytes(),
-			disaggReadCacheMissBytes:  tiflashScanContext.GetDisaggReadCacheMissBytes(),
-			segments:                  tiflashScanContext.GetSegments(),
-			readTasks:                 tiflashScanContext.GetReadTasks(),
-			deltaRows:                 tiflashScanContext.GetDeltaRows(),
-			deltaBytes:                tiflashScanContext.GetDeltaBytes(),
-			mvccInputRows:             tiflashScanContext.GetMvccInputRows(),
-			mvccInputBytes:            tiflashScanContext.GetMvccInputBytes(),
-			mvccOutputRows:            tiflashScanContext.GetMvccOutputRows(),
-			lmSkipRows:                tiflashScanContext.GetLmSkipRows(),
-			totalBuildBitmapMs:        tiflashScanContext.GetTotalBuildBitmapMs(),
-			totalBuildInputStreamMs:   tiflashScanContext.GetTotalBuildInputstreamMs(),
-			staleReadRegions:          tiflashScanContext.GetStaleReadRegions(),
-			minLocalStreamMs:          tiflashScanContext.GetMinLocalStreamMs(),
-			maxLocalStreamMs:          tiflashScanContext.GetMaxLocalStreamMs(),
-			minRemoteStreamMs:         tiflashScanContext.GetMinRemoteStreamMs(),
-			maxRemoteStreamMs:         tiflashScanContext.GetMaxRemoteStreamMs(),
-			regionsOfInstance:         regionsOfInstance,
+			dmfileDataScannedRows:         tiflashScanContext.GetDmfileDataScannedRows(),
+			dmfileDataSkippedRows:         tiflashScanContext.GetDmfileDataSkippedRows(),
+			dmfileMvccScannedRows:         tiflashScanContext.GetDmfileMvccScannedRows(),
+			dmfileMvccSkippedRows:         tiflashScanContext.GetDmfileMvccSkippedRows(),
+			dmfileLmFilterScannedRows:     tiflashScanContext.GetDmfileLmFilterScannedRows(),
+			dmfileLmFilterSkippedRows:     tiflashScanContext.GetDmfileLmFilterSkippedRows(),
+			totalDmfileRsCheckMs:          tiflashScanContext.GetTotalDmfileRsCheckMs(),
+			totalDmfileReadMs:             tiflashScanContext.GetTotalDmfileReadMs(),
+			totalBuildSnapshotMs:          tiflashScanContext.GetTotalBuildSnapshotMs(),
+			localRegions:                  tiflashScanContext.GetLocalRegions(),
+			remoteRegions:                 tiflashScanContext.GetRemoteRegions(),
+			totalLearnerReadMs:            tiflashScanContext.GetTotalLearnerReadMs(),
+			disaggReadCacheHitBytes:       tiflashScanContext.GetDisaggReadCacheHitBytes(),
+			disaggReadCacheMissBytes:      tiflashScanContext.GetDisaggReadCacheMissBytes(),
+			segments:                      tiflashScanContext.GetSegments(),
+			readTasks:                     tiflashScanContext.GetReadTasks(),
+			deltaRows:                     tiflashScanContext.GetDeltaRows(),
+			deltaBytes:                    tiflashScanContext.GetDeltaBytes(),
+			mvccInputRows:                 tiflashScanContext.GetMvccInputRows(),
+			mvccInputBytes:                tiflashScanContext.GetMvccInputBytes(),
+			mvccOutputRows:                tiflashScanContext.GetMvccOutputRows(),
+			lmSkipRows:                    tiflashScanContext.GetLmSkipRows(),
+			totalBuildBitmapMs:            tiflashScanContext.GetTotalBuildBitmapMs(),
+			totalBuildInputStreamMs:       tiflashScanContext.GetTotalBuildInputstreamMs(),
+			staleReadRegions:              tiflashScanContext.GetStaleReadRegions(),
+			minLocalStreamMs:              tiflashScanContext.GetMinLocalStreamMs(),
+			maxLocalStreamMs:              tiflashScanContext.GetMaxLocalStreamMs(),
+			minRemoteStreamMs:             tiflashScanContext.GetMinRemoteStreamMs(),
+			maxRemoteStreamMs:             tiflashScanContext.GetMaxRemoteStreamMs(),
+			regionsOfInstance:             regionsOfInstance,
+			multiStageLateMaterialization: newTiFlashMSLMScanContext(tiflashScanContext.GetMultiStageLateMaterialization()),
 
 			totalVectorIdxLoadFromS3:           tiflashScanContext.GetTotalVectorIdxLoadFromS3(),
 			totalVectorIdxLoadFromDisk:         tiflashScanContext.GetTotalVectorIdxLoadFromDisk(),
@@ -1041,36 +1042,37 @@ type RuntimeStats interface {
 
 // TiFlashScanContext is used to express the table scan information in tiflash
 type TiFlashScanContext struct {
-	dmfileDataScannedRows     uint64
-	dmfileDataSkippedRows     uint64
-	dmfileMvccScannedRows     uint64
-	dmfileMvccSkippedRows     uint64
-	dmfileLmFilterScannedRows uint64
-	dmfileLmFilterSkippedRows uint64
-	totalDmfileRsCheckMs      uint64
-	totalDmfileReadMs         uint64
-	totalBuildSnapshotMs      uint64
-	localRegions              uint64
-	remoteRegions             uint64
-	totalLearnerReadMs        uint64
-	disaggReadCacheHitBytes   uint64
-	disaggReadCacheMissBytes  uint64
-	segments                  uint64
-	readTasks                 uint64
-	deltaRows                 uint64
-	deltaBytes                uint64
-	mvccInputRows             uint64
-	mvccInputBytes            uint64
-	mvccOutputRows            uint64
-	lmSkipRows                uint64
-	totalBuildBitmapMs        uint64
-	totalBuildInputStreamMs   uint64
-	staleReadRegions          uint64
-	minLocalStreamMs          uint64
-	maxLocalStreamMs          uint64
-	minRemoteStreamMs         uint64
-	maxRemoteStreamMs         uint64
-	regionsOfInstance         map[string]uint64
+	dmfileDataScannedRows         uint64
+	dmfileDataSkippedRows         uint64
+	dmfileMvccScannedRows         uint64
+	dmfileMvccSkippedRows         uint64
+	dmfileLmFilterScannedRows     uint64
+	dmfileLmFilterSkippedRows     uint64
+	totalDmfileRsCheckMs          uint64
+	totalDmfileReadMs             uint64
+	totalBuildSnapshotMs          uint64
+	localRegions                  uint64
+	remoteRegions                 uint64
+	totalLearnerReadMs            uint64
+	disaggReadCacheHitBytes       uint64
+	disaggReadCacheMissBytes      uint64
+	segments                      uint64
+	readTasks                     uint64
+	deltaRows                     uint64
+	deltaBytes                    uint64
+	mvccInputRows                 uint64
+	mvccInputBytes                uint64
+	mvccOutputRows                uint64
+	lmSkipRows                    uint64
+	totalBuildBitmapMs            uint64
+	totalBuildInputStreamMs       uint64
+	staleReadRegions              uint64
+	minLocalStreamMs              uint64
+	maxLocalStreamMs              uint64
+	minRemoteStreamMs             uint64
+	maxRemoteStreamMs             uint64
+	regionsOfInstance             map[string]uint64
+	multiStageLateMaterialization *tiflashMSLMScanContext
 
 	totalVectorIdxLoadFromS3           uint64
 	totalVectorIdxLoadFromDisk         uint64
@@ -1083,39 +1085,352 @@ type TiFlashScanContext struct {
 	totalVectorIdxReadOthersTimeMs     uint64
 }
 
+type tiflashMSLMScanContext struct {
+	streams            *uint64
+	lateModeBlocks     *uint64
+	directModeBlocks   *uint64
+	pushedFilterRead   *tiflashMSLMReadStageContext
+	candidateRead      *tiflashMSLMReadStageContext
+	finalRestRead      *tiflashMSLMReadStageContext
+	pushedFilter       *tiflashMSLMFilterContext
+	residualFilter     *tiflashMSLMFilterContext
+	runningTopN        *tiflashMSLMRunningTopNContext
+	finalRestInputRows *uint64
+}
+
+type tiflashMSLMReadStageContext struct {
+	dmfileScannedRows *uint64
+	dmfileSkippedRows *uint64
+	readBytes         *uint64
+	readTimeMs        *uint64
+}
+
+type tiflashMSLMFilterContext struct {
+	inputRows    *uint64
+	selectedRows *uint64
+	filteredRows *uint64
+}
+
+type tiflashMSLMRunningTopNContext struct {
+	inputRows                       *uint64
+	selectedRows                    *uint64
+	bypassRows                      *uint64
+	filteredRows                    *uint64
+	heapSizeSum                     *uint64
+	adaptiveWarmupRows              *uint64
+	adaptivePostWarmupInputRows     *uint64
+	adaptivePostWarmupCandidateRows *uint64
+	adaptiveDisabledStreams         *uint64
+}
+
+func cloneUint64Ptr(value *uint64) *uint64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func mergeUint64Ptr(dst **uint64, src *uint64) {
+	if src == nil {
+		return
+	}
+	if *dst == nil {
+		*dst = cloneUint64Ptr(src)
+		return
+	}
+	**dst += *src
+}
+
+func appendUint64Field(items []string, name string, value *uint64) []string {
+	if value == nil {
+		return items
+	}
+	return append(items, fmt.Sprintf("%s:%d", name, *value))
+}
+
+func newTiFlashMSLMScanContext(context *tipb.TiFlashMultiStageLateMaterializationScanContext) *tiflashMSLMScanContext {
+	if context == nil {
+		return nil
+	}
+	return &tiflashMSLMScanContext{
+		streams:            cloneUint64Ptr(context.Streams),
+		lateModeBlocks:     cloneUint64Ptr(context.LateModeBlocks),
+		directModeBlocks:   cloneUint64Ptr(context.DirectModeBlocks),
+		pushedFilterRead:   newTiFlashMSLMReadStageContext(context.PushedFilterRead),
+		candidateRead:      newTiFlashMSLMReadStageContext(context.CandidateRead),
+		finalRestRead:      newTiFlashMSLMReadStageContext(context.FinalRestRead),
+		pushedFilter:       newTiFlashMSLMFilterContext(context.PushedFilter),
+		residualFilter:     newTiFlashMSLMFilterContext(context.ResidualFilter),
+		runningTopN:        newTiFlashMSLMRunningTopNContext(context.RunningTopn),
+		finalRestInputRows: cloneUint64Ptr(context.FinalRestInputRows),
+	}
+}
+
+func newTiFlashMSLMReadStageContext(context *tipb.TiFlashMSLMReadStageContext) *tiflashMSLMReadStageContext {
+	if context == nil {
+		return nil
+	}
+	return &tiflashMSLMReadStageContext{
+		dmfileScannedRows: cloneUint64Ptr(context.DmfileScannedRows),
+		dmfileSkippedRows: cloneUint64Ptr(context.DmfileSkippedRows),
+		readBytes:         cloneUint64Ptr(context.ReadBytes),
+		readTimeMs:        cloneUint64Ptr(context.ReadTimeMs),
+	}
+}
+
+func newTiFlashMSLMFilterContext(context *tipb.TiFlashMSLMFilterContext) *tiflashMSLMFilterContext {
+	if context == nil {
+		return nil
+	}
+	return &tiflashMSLMFilterContext{
+		inputRows:    cloneUint64Ptr(context.InputRows),
+		selectedRows: cloneUint64Ptr(context.SelectedRows),
+		filteredRows: cloneUint64Ptr(context.FilteredRows),
+	}
+}
+
+func newTiFlashMSLMRunningTopNContext(context *tipb.TiFlashMSLMRunningTopNContext) *tiflashMSLMRunningTopNContext {
+	if context == nil {
+		return nil
+	}
+	return &tiflashMSLMRunningTopNContext{
+		inputRows:                       cloneUint64Ptr(context.InputRows),
+		selectedRows:                    cloneUint64Ptr(context.SelectedRows),
+		bypassRows:                      cloneUint64Ptr(context.BypassRows),
+		filteredRows:                    cloneUint64Ptr(context.FilteredRows),
+		heapSizeSum:                     cloneUint64Ptr(context.HeapSizeSum),
+		adaptiveWarmupRows:              cloneUint64Ptr(context.AdaptiveWarmupRows),
+		adaptivePostWarmupInputRows:     cloneUint64Ptr(context.AdaptivePostWarmupInputRows),
+		adaptivePostWarmupCandidateRows: cloneUint64Ptr(context.AdaptivePostWarmupCandidateRows),
+		adaptiveDisabledStreams:         cloneUint64Ptr(context.AdaptiveDisabledStreams),
+	}
+}
+
+func (context *tiflashMSLMScanContext) Clone() *tiflashMSLMScanContext {
+	if context == nil {
+		return nil
+	}
+	return &tiflashMSLMScanContext{
+		streams:            cloneUint64Ptr(context.streams),
+		lateModeBlocks:     cloneUint64Ptr(context.lateModeBlocks),
+		directModeBlocks:   cloneUint64Ptr(context.directModeBlocks),
+		pushedFilterRead:   context.pushedFilterRead.Clone(),
+		candidateRead:      context.candidateRead.Clone(),
+		finalRestRead:      context.finalRestRead.Clone(),
+		pushedFilter:       context.pushedFilter.Clone(),
+		residualFilter:     context.residualFilter.Clone(),
+		runningTopN:        context.runningTopN.Clone(),
+		finalRestInputRows: cloneUint64Ptr(context.finalRestInputRows),
+	}
+}
+
+func (context *tiflashMSLMReadStageContext) Clone() *tiflashMSLMReadStageContext {
+	if context == nil {
+		return nil
+	}
+	return &tiflashMSLMReadStageContext{
+		dmfileScannedRows: cloneUint64Ptr(context.dmfileScannedRows),
+		dmfileSkippedRows: cloneUint64Ptr(context.dmfileSkippedRows),
+		readBytes:         cloneUint64Ptr(context.readBytes),
+		readTimeMs:        cloneUint64Ptr(context.readTimeMs),
+	}
+}
+
+func (context *tiflashMSLMFilterContext) Clone() *tiflashMSLMFilterContext {
+	if context == nil {
+		return nil
+	}
+	return &tiflashMSLMFilterContext{
+		inputRows:    cloneUint64Ptr(context.inputRows),
+		selectedRows: cloneUint64Ptr(context.selectedRows),
+		filteredRows: cloneUint64Ptr(context.filteredRows),
+	}
+}
+
+func (context *tiflashMSLMRunningTopNContext) Clone() *tiflashMSLMRunningTopNContext {
+	if context == nil {
+		return nil
+	}
+	return &tiflashMSLMRunningTopNContext{
+		inputRows:                       cloneUint64Ptr(context.inputRows),
+		selectedRows:                    cloneUint64Ptr(context.selectedRows),
+		bypassRows:                      cloneUint64Ptr(context.bypassRows),
+		filteredRows:                    cloneUint64Ptr(context.filteredRows),
+		heapSizeSum:                     cloneUint64Ptr(context.heapSizeSum),
+		adaptiveWarmupRows:              cloneUint64Ptr(context.adaptiveWarmupRows),
+		adaptivePostWarmupInputRows:     cloneUint64Ptr(context.adaptivePostWarmupInputRows),
+		adaptivePostWarmupCandidateRows: cloneUint64Ptr(context.adaptivePostWarmupCandidateRows),
+		adaptiveDisabledStreams:         cloneUint64Ptr(context.adaptiveDisabledStreams),
+	}
+}
+
+func (context *tiflashMSLMScanContext) Merge(other *tiflashMSLMScanContext) {
+	if other == nil {
+		return
+	}
+	mergeUint64Ptr(&context.streams, other.streams)
+	mergeUint64Ptr(&context.lateModeBlocks, other.lateModeBlocks)
+	mergeUint64Ptr(&context.directModeBlocks, other.directModeBlocks)
+	context.pushedFilterRead = mergeTiFlashMSLMReadStageContext(context.pushedFilterRead, other.pushedFilterRead)
+	context.candidateRead = mergeTiFlashMSLMReadStageContext(context.candidateRead, other.candidateRead)
+	context.finalRestRead = mergeTiFlashMSLMReadStageContext(context.finalRestRead, other.finalRestRead)
+	context.pushedFilter = mergeTiFlashMSLMFilterContext(context.pushedFilter, other.pushedFilter)
+	context.residualFilter = mergeTiFlashMSLMFilterContext(context.residualFilter, other.residualFilter)
+	context.runningTopN = mergeTiFlashMSLMRunningTopNContext(context.runningTopN, other.runningTopN)
+	mergeUint64Ptr(&context.finalRestInputRows, other.finalRestInputRows)
+}
+
+func mergeTiFlashMSLMReadStageContext(dst, src *tiflashMSLMReadStageContext) *tiflashMSLMReadStageContext {
+	if src == nil {
+		return dst
+	}
+	if dst == nil {
+		return src.Clone()
+	}
+	mergeUint64Ptr(&dst.dmfileScannedRows, src.dmfileScannedRows)
+	mergeUint64Ptr(&dst.dmfileSkippedRows, src.dmfileSkippedRows)
+	mergeUint64Ptr(&dst.readBytes, src.readBytes)
+	mergeUint64Ptr(&dst.readTimeMs, src.readTimeMs)
+	return dst
+}
+
+func mergeTiFlashMSLMFilterContext(dst, src *tiflashMSLMFilterContext) *tiflashMSLMFilterContext {
+	if src == nil {
+		return dst
+	}
+	if dst == nil {
+		return src.Clone()
+	}
+	mergeUint64Ptr(&dst.inputRows, src.inputRows)
+	mergeUint64Ptr(&dst.selectedRows, src.selectedRows)
+	mergeUint64Ptr(&dst.filteredRows, src.filteredRows)
+	return dst
+}
+
+func mergeTiFlashMSLMRunningTopNContext(dst, src *tiflashMSLMRunningTopNContext) *tiflashMSLMRunningTopNContext {
+	if src == nil {
+		return dst
+	}
+	if dst == nil {
+		return src.Clone()
+	}
+	mergeUint64Ptr(&dst.inputRows, src.inputRows)
+	mergeUint64Ptr(&dst.selectedRows, src.selectedRows)
+	mergeUint64Ptr(&dst.bypassRows, src.bypassRows)
+	mergeUint64Ptr(&dst.filteredRows, src.filteredRows)
+	mergeUint64Ptr(&dst.heapSizeSum, src.heapSizeSum)
+	mergeUint64Ptr(&dst.adaptiveWarmupRows, src.adaptiveWarmupRows)
+	mergeUint64Ptr(&dst.adaptivePostWarmupInputRows, src.adaptivePostWarmupInputRows)
+	mergeUint64Ptr(&dst.adaptivePostWarmupCandidateRows, src.adaptivePostWarmupCandidateRows)
+	mergeUint64Ptr(&dst.adaptiveDisabledStreams, src.adaptiveDisabledStreams)
+	return dst
+}
+
+func (context *tiflashMSLMScanContext) String() string {
+	if context == nil {
+		return ""
+	}
+	var items []string
+	items = appendUint64Field(items, "streams", context.streams)
+	items = appendUint64Field(items, "late_mode_blocks", context.lateModeBlocks)
+	items = appendUint64Field(items, "direct_mode_blocks", context.directModeBlocks)
+	if context.pushedFilterRead != nil {
+		items = append(items, "pushed_filter_read:"+context.pushedFilterRead.String())
+	}
+	if context.candidateRead != nil {
+		items = append(items, "candidate_read:"+context.candidateRead.String())
+	}
+	if context.finalRestRead != nil {
+		items = append(items, "final_rest_read:"+context.finalRestRead.String())
+	}
+	if context.pushedFilter != nil {
+		items = append(items, "pushed_filter:"+context.pushedFilter.String())
+	}
+	if context.residualFilter != nil {
+		items = append(items, "residual_filter:"+context.residualFilter.String())
+	}
+	if context.runningTopN != nil {
+		items = append(items, "running_topn:"+context.runningTopN.String())
+	}
+	items = appendUint64Field(items, "final_rest_input_rows", context.finalRestInputRows)
+	return "{" + strings.Join(items, ", ") + "}"
+}
+
+func (context *tiflashMSLMReadStageContext) String() string {
+	if context == nil {
+		return ""
+	}
+	var items []string
+	items = appendUint64Field(items, "dmfile_scanned_rows", context.dmfileScannedRows)
+	items = appendUint64Field(items, "dmfile_skipped_rows", context.dmfileSkippedRows)
+	items = appendUint64Field(items, "read_bytes", context.readBytes)
+	items = appendUint64Field(items, "read_time_ms", context.readTimeMs)
+	return "{" + strings.Join(items, ", ") + "}"
+}
+
+func (context *tiflashMSLMFilterContext) String() string {
+	if context == nil {
+		return ""
+	}
+	var items []string
+	items = appendUint64Field(items, "input_rows", context.inputRows)
+	items = appendUint64Field(items, "selected_rows", context.selectedRows)
+	items = appendUint64Field(items, "filtered_rows", context.filteredRows)
+	return "{" + strings.Join(items, ", ") + "}"
+}
+
+func (context *tiflashMSLMRunningTopNContext) String() string {
+	if context == nil {
+		return ""
+	}
+	var items []string
+	items = appendUint64Field(items, "input_rows", context.inputRows)
+	items = appendUint64Field(items, "selected_rows", context.selectedRows)
+	items = appendUint64Field(items, "bypass_rows", context.bypassRows)
+	items = appendUint64Field(items, "filtered_rows", context.filteredRows)
+	items = appendUint64Field(items, "heap_size_sum", context.heapSizeSum)
+	items = appendUint64Field(items, "adaptive_warmup_rows", context.adaptiveWarmupRows)
+	items = appendUint64Field(items, "adaptive_post_warmup_input_rows", context.adaptivePostWarmupInputRows)
+	items = appendUint64Field(items, "adaptive_post_warmup_candidate_rows", context.adaptivePostWarmupCandidateRows)
+	items = appendUint64Field(items, "adaptive_disabled_streams", context.adaptiveDisabledStreams)
+	return "{" + strings.Join(items, ", ") + "}"
+}
+
 // Clone implements the deep copy of * TiFlashshScanContext
 func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 	newContext := TiFlashScanContext{
-		dmfileDataScannedRows:     context.dmfileDataScannedRows,
-		dmfileDataSkippedRows:     context.dmfileDataSkippedRows,
-		dmfileMvccScannedRows:     context.dmfileMvccScannedRows,
-		dmfileMvccSkippedRows:     context.dmfileMvccSkippedRows,
-		dmfileLmFilterScannedRows: context.dmfileLmFilterScannedRows,
-		dmfileLmFilterSkippedRows: context.dmfileLmFilterSkippedRows,
-		totalDmfileRsCheckMs:      context.totalDmfileRsCheckMs,
-		totalDmfileReadMs:         context.totalDmfileReadMs,
-		totalBuildSnapshotMs:      context.totalBuildSnapshotMs,
-		localRegions:              context.localRegions,
-		remoteRegions:             context.remoteRegions,
-		totalLearnerReadMs:        context.totalLearnerReadMs,
-		disaggReadCacheHitBytes:   context.disaggReadCacheHitBytes,
-		disaggReadCacheMissBytes:  context.disaggReadCacheMissBytes,
-		segments:                  context.segments,
-		readTasks:                 context.readTasks,
-		deltaRows:                 context.deltaRows,
-		deltaBytes:                context.deltaBytes,
-		mvccInputRows:             context.mvccInputRows,
-		mvccInputBytes:            context.mvccInputBytes,
-		mvccOutputRows:            context.mvccOutputRows,
-		lmSkipRows:                context.lmSkipRows,
-		totalBuildBitmapMs:        context.totalBuildBitmapMs,
-		totalBuildInputStreamMs:   context.totalBuildInputStreamMs,
-		staleReadRegions:          context.staleReadRegions,
-		minLocalStreamMs:          context.minLocalStreamMs,
-		maxLocalStreamMs:          context.maxLocalStreamMs,
-		minRemoteStreamMs:         context.minRemoteStreamMs,
-		maxRemoteStreamMs:         context.maxRemoteStreamMs,
-		regionsOfInstance:         make(map[string]uint64),
+		dmfileDataScannedRows:         context.dmfileDataScannedRows,
+		dmfileDataSkippedRows:         context.dmfileDataSkippedRows,
+		dmfileMvccScannedRows:         context.dmfileMvccScannedRows,
+		dmfileMvccSkippedRows:         context.dmfileMvccSkippedRows,
+		dmfileLmFilterScannedRows:     context.dmfileLmFilterScannedRows,
+		dmfileLmFilterSkippedRows:     context.dmfileLmFilterSkippedRows,
+		totalDmfileRsCheckMs:          context.totalDmfileRsCheckMs,
+		totalDmfileReadMs:             context.totalDmfileReadMs,
+		totalBuildSnapshotMs:          context.totalBuildSnapshotMs,
+		localRegions:                  context.localRegions,
+		remoteRegions:                 context.remoteRegions,
+		totalLearnerReadMs:            context.totalLearnerReadMs,
+		disaggReadCacheHitBytes:       context.disaggReadCacheHitBytes,
+		disaggReadCacheMissBytes:      context.disaggReadCacheMissBytes,
+		segments:                      context.segments,
+		readTasks:                     context.readTasks,
+		deltaRows:                     context.deltaRows,
+		deltaBytes:                    context.deltaBytes,
+		mvccInputRows:                 context.mvccInputRows,
+		mvccInputBytes:                context.mvccInputBytes,
+		mvccOutputRows:                context.mvccOutputRows,
+		lmSkipRows:                    context.lmSkipRows,
+		totalBuildBitmapMs:            context.totalBuildBitmapMs,
+		totalBuildInputStreamMs:       context.totalBuildInputStreamMs,
+		staleReadRegions:              context.staleReadRegions,
+		minLocalStreamMs:              context.minLocalStreamMs,
+		maxLocalStreamMs:              context.maxLocalStreamMs,
+		minRemoteStreamMs:             context.minRemoteStreamMs,
+		maxRemoteStreamMs:             context.maxRemoteStreamMs,
+		regionsOfInstance:             make(map[string]uint64),
+		multiStageLateMaterialization: context.multiStageLateMaterialization.Clone(),
 
 		totalVectorIdxLoadFromS3:           context.totalVectorIdxLoadFromS3,
 		totalVectorIdxLoadFromDisk:         context.totalVectorIdxLoadFromDisk,
@@ -1171,6 +1486,10 @@ func (context *TiFlashScanContext) String() string {
 	if context.minRemoteStreamMs != 0 || context.maxRemoteStreamMs != 0 {
 		remoteStreamInfo = fmt.Sprintf("min_remote_stream:%dms, max_remote_stream:%dms, ", context.minRemoteStreamMs, context.maxRemoteStreamMs)
 	}
+	mslmInfo := ""
+	if context.multiStageLateMaterialization != nil {
+		mslmInfo = ", multi_stage_late_materialization:" + context.multiStageLateMaterialization.String()
+	}
 
 	// note: "tot" is short for "total"
 	output = append(output, fmt.Sprintf("tiflash_scan:{"+
@@ -1202,6 +1521,7 @@ func (context *TiFlashScanContext) String() string {
 		"tot_rs_index_check:%dms, "+
 		"tot_read:%dms"+
 		"%s}"+ // Disagg cache info of DMFile
+		"%s"+ // Multi-stage late materialization info
 		"}",
 		context.mvccInputRows,
 		context.mvccInputBytes,
@@ -1230,6 +1550,7 @@ func (context *TiFlashScanContext) String() string {
 		context.totalDmfileRsCheckMs,
 		context.totalDmfileReadMs,
 		dmfileDisaggInfo,
+		mslmInfo,
 	))
 
 	return strings.Join(output, ", ")
@@ -1292,6 +1613,13 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 	for k, v := range other.regionsOfInstance {
 		context.regionsOfInstance[k] += v
 	}
+	if other.multiStageLateMaterialization != nil {
+		if context.multiStageLateMaterialization == nil {
+			context.multiStageLateMaterialization = other.multiStageLateMaterialization.Clone()
+		} else {
+			context.multiStageLateMaterialization.Merge(other.multiStageLateMaterialization)
+		}
+	}
 }
 
 // Empty check whether TiFlashScanContext is Empty, if scan no pack and skip no pack, we regard it as empty
@@ -1306,7 +1634,8 @@ func (context *TiFlashScanContext) Empty() bool {
 		context.remoteRegions == 0 &&
 		context.totalVectorIdxLoadFromDisk == 0 &&
 		context.totalVectorIdxLoadFromCache == 0 &&
-		context.totalVectorIdxLoadFromS3 == 0
+		context.totalVectorIdxLoadFromS3 == 0 &&
+		context.multiStageLateMaterialization == nil
 	return res
 }
 
