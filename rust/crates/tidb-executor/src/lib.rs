@@ -46,6 +46,7 @@ pub mod access_path;
 pub mod apply;
 mod approx_count_distinct;
 pub mod cluster_storage;
+pub mod column_default;
 pub(crate) mod column_prune;
 pub mod ddl;
 pub mod ddl_sequence;

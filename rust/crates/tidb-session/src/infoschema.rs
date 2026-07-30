@@ -813,8 +813,19 @@ fn column_row(
         text(&column.name),
         Datum::Int((offset + 1) as i64),
         match &column.default_value {
-            Some(Datum::Null) | None => Datum::Null,
-            Some(value) => text(&crate::datum_text(value).unwrap_or_default()),
+            Some(tidb_executor::column_default::ColumnDefault::Value(Datum::Null)) | None => {
+                Datum::Null
+            }
+            // Go `infoschema_reader.go` fills COLUMN_DEFAULT from
+            // `ColDesc.DefaultValue`, the same string `SHOW COLUMNS` reports,
+            // so a computed default reports its stored text unparenthesised.
+            Some(tidb_executor::column_default::ColumnDefault::Value(value)) => {
+                text(&crate::datum_text(value).unwrap_or_default())
+            }
+            Some(computed) => match computed.column_desc_text(field_type) {
+                Some(stored) => text(&stored),
+                None => Datum::Null,
+            },
         },
         text(if not_null { "NO" } else { "YES" }),
         text(&data_type_of(field_type)),

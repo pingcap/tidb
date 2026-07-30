@@ -132,11 +132,23 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
         // a NOT NULL column with no DEFAULT clause; a nullable column with no
         // DEFAULT reports DEFAULT NULL, as MySQL does.
         match &column.default_value {
-            Some(Datum::Null) => clause.push_str(" DEFAULT NULL"),
-            Some(value) => {
-                // Go quotes every non-bit default, integers included.
-                let text = datum_text(value).unwrap_or_default();
-                clause.push_str(&format!(" DEFAULT '{text}'"));
+            Some(tidb_executor::column_default::ColumnDefault::Value(Datum::Null)) => {
+                clause.push_str(" DEFAULT NULL")
+            }
+            Some(default) => {
+                // Go quotes every non-bit LITERAL default, integers included,
+                // and prints the computed forms unquoted -- see
+                // `ColumnDefault::show_create_clause` for which is which.
+                let literal = match default {
+                    tidb_executor::column_default::ColumnDefault::Value(value) => {
+                        datum_text(value).unwrap_or_default()
+                    }
+                    _ => String::new(),
+                };
+                clause.push_str(&format!(
+                    " DEFAULT {}",
+                    default.show_create_clause(&column.field_type, &literal)
+                ));
             }
             None if !not_null => clause.push_str(" DEFAULT NULL"),
             None => {}
@@ -326,7 +338,14 @@ fn column_description(
     };
     let key_flag = column_key_flag(table, offset);
     let default = match &column.default_value {
-        Some(value) => match datum_text(value) {
+        Some(tidb_executor::column_default::ColumnDefault::Value(value)) => match datum_text(value)
+        {
+            Some(text) => Datum::Bytes(text.into_bytes()),
+            None => Datum::Null,
+        },
+        // Go `NewColDesc` reports a computed default's STORED string here,
+        // which is not the parenthesised form `SHOW CREATE TABLE` prints.
+        Some(computed) => match computed.column_desc_text(&column.field_type) {
             Some(text) => Datum::Bytes(text.into_bytes()),
             None => Datum::Null,
         },

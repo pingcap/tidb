@@ -105,7 +105,7 @@ use crate::kv_table::{FkAction, KvColumn, KvForeignKey, KvIndex, KvTable, TableC
 use crate::SchemaErrorKind;
 use tidb_ast::CiString;
 use tidb_ast::{ColumnDef, ColumnTypeArg, DdlStmt, Stmt};
-use tidb_datatype::{Datum, FieldTypeCode};
+use tidb_datatype::FieldTypeCode;
 use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
 
@@ -347,32 +347,53 @@ pub fn run_create_table_in(
     // Go evaluates a constant DEFAULT at DDL time and stores the value on the
     // ColumnInfo; a NOT NULL column with no DEFAULT keeps NoDefaultValueFlag,
     // which is the `None` case here.
-    let mut defaults: Vec<Option<Datum>> = Vec::with_capacity(create.columns.len());
+    let mut defaults: Vec<Option<crate::column_default::ColumnDefault>> =
+        Vec::with_capacity(create.columns.len());
     for def in &create.columns {
         let mut default_value = None;
         for option in &def.options {
             match option {
                 tidb_ast::ColumnOption::Default(expr) => {
-                    let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
-                        expr,
-                        &tidb_expr::rewriter::NoResolver,
-                    )
-                    .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
-                    let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
-                        return Err(DriverError::Unsupported(
-                            "an expression DEFAULT is not supported yet",
-                        ));
-                    };
-                    let value = constant
-                        .eval()
-                        .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
-                    // Go normalizes and checks the written default against
-                    // the column's own type at DDL time.
-                    default_value = Some(normalize_column_default(
-                        value,
-                        &columns[defaults.len()].field_type,
-                        &def.name,
-                    )?);
+                    let field_type = columns[defaults.len()].field_type.clone();
+                    // Go `SetDefaultValue`: a FUNCTION-CALL default takes the
+                    // whitelist route and never the constant folder, which is
+                    // why `DEFAULT (abs(1))` is 3770 in TiDB despite folding.
+                    let built = crate::column_default::build(expr, &field_type, |expr| {
+                        let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+                            expr,
+                            &tidb_expr::rewriter::NoResolver,
+                        )
+                        .map_err(|_| {
+                            crate::column_default::DefaultError::Unsupported(
+                                "a DEFAULT this node cannot evaluate",
+                            )
+                        })?;
+                        // Go `EvalSimpleAst`: the expression is EVALUATED,
+                        // not merely required to be a literal already, which
+                        // is what settles `DEFAULT (1 + 1)` to 2.
+                        let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+                        dual.set_num_virtual_rows(1);
+                        rewritten
+                            .eval(&tidb_expr::NoColumns, dual.get_row(0))
+                            .map_err(|_| {
+                                crate::column_default::DefaultError::Unsupported(
+                                    "a DEFAULT this node cannot evaluate",
+                                )
+                            })
+                    })
+                    .map_err(|error| column_default_error(error, &def.name))?;
+                    // Go normalizes and checks a SETTLED default against the
+                    // column's own type at DDL time; a computed one is cast
+                    // per row instead, exactly as Go's `CastColumnValue` does.
+                    default_value =
+                        Some(match built {
+                            crate::column_default::ColumnDefault::Value(value) => {
+                                crate::column_default::ColumnDefault::Value(
+                                    normalize_column_default(value, &field_type, &def.name)?,
+                                )
+                            }
+                            computed => computed,
+                        });
                 }
                 // AUTO_INCREMENT is its own value source, handled below.
                 tidb_ast::ColumnOption::AutoIncrement => {}
@@ -503,6 +524,19 @@ pub fn run_create_table_in(
     }
     catalog.register_kv_in(&database, name, table);
     Ok(true)
+}
+
+/// Names a column-default DDL refusal the way Go's own error does. Go's 3770
+/// message names both the column and the function, and only the caller knows
+/// the column.
+fn column_default_error(error: crate::column_default::DefaultError, column: &str) -> DriverError {
+    use crate::column_default::DefaultError;
+    match error {
+        DefaultError::FunctionNotAllowed(function) => {
+            DriverError::DefaultFunctionNotAllowed(column.to_owned(), function)
+        }
+        DefaultError::Unsupported(reason) => DriverError::Unsupported(reason),
+    }
 }
 
 /// Names a generated-column DDL refusal the way Go's own error does.

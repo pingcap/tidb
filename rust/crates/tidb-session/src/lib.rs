@@ -468,6 +468,8 @@ mod tests_coalesced_joins;
 #[cfg(test)]
 mod tests_collation;
 #[cfg(test)]
+mod tests_column_defaults;
+#[cfg(test)]
 mod tests_column_prune;
 #[cfg(test)]
 mod tests_core;
@@ -481,7 +483,6 @@ mod tests_explain;
 mod tests_explain_derived;
 #[cfg(test)]
 mod tests_foreign_key;
-#[cfg(test)]
 mod tests_generated_columns;
 #[cfg(test)]
 mod tests_global_vars;

@@ -271,6 +271,6 @@ pub(crate) fn alter_column_default_action(
         default_value: stored,
         ..
     } = &mut table.columns[offset];
-    *stored = Some(normalized);
+    *stored = Some(crate::column_default::ColumnDefault::Value(normalized));
     Ok(())
 }

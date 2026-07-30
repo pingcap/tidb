@@ -225,7 +225,7 @@ pub(crate) fn run_insert_traced(
         c
     };
     // The per-column metadata the default and NOT NULL rules read.
-    let column_meta: Vec<(Option<Datum>, bool, String)> = match table {
+    let column_meta: Vec<ColumnMeta> = match table {
         TableEntry::Kv(kv) => kv
             .columns
             .iter()
@@ -234,6 +234,7 @@ pub(crate) fn run_insert_traced(
                     c.default_value.clone(),
                     c.field_type.flags() & 1 != 0,
                     c.name.clone(),
+                    c.field_type.clone(),
                 )
             })
             .collect(),
@@ -242,7 +243,7 @@ pub(crate) fn run_insert_traced(
         TableEntry::Mem(mem) => mem
             .columns
             .iter()
-            .map(|(name, _)| (None, false, name.clone()))
+            .map(|(name, field_type)| (None, false, name.clone(), field_type.clone()))
             .collect(),
         TableEntry::View(_) | TableEntry::Sequence(_) => {
             unreachable!("INSERT through a view or sequence is refused above")
@@ -362,7 +363,7 @@ pub(crate) fn run_insert_traced(
         // a column can raise ErrNoDefaultForField (Go `fillColValue`).
         for offset in 0..column_list.len() {
             if !assigned[offset] {
-                row[offset] = column_default(&column_meta, offset)?;
+                row[offset] = column_default(&column_meta, offset, ctx, eval_chunk.get_row(0))?;
             }
         }
         // Go `Column.CheckNotNull`: an explicit NULL in a NOT NULL column is
@@ -910,6 +911,16 @@ pub(crate) fn substitute_values_references(
     })
 }
 
+/// One column's share of what the default and NOT NULL rules read:
+/// `(default, NOT NULL, name, type)`. The TYPE is here because a COMPUTED
+/// default is cast into it per row, so the rules cannot be applied without it.
+type ColumnMeta = (
+    Option<crate::column_default::ColumnDefault>,
+    bool,
+    String,
+    tidb_datatype::FieldType,
+);
+
 /// The value an omitted column takes, following Go `GetColDefaultValue` and
 /// `getColDefaultValueFromNil`: the stored `DEFAULT` when one was written, or
 /// NULL for a nullable column; a NOT NULL column with no default is Go's
@@ -919,19 +930,26 @@ pub(crate) fn substitute_values_references(
 /// type's zero value instead of failing. This seed always behaves as strict
 /// mode, which is TiDB's default sql_mode.
 pub(crate) fn column_default(
-    meta: &[(Option<Datum>, bool, String)],
+    meta: &[ColumnMeta],
     offset: usize,
+    ctx: &crate::StmtContext,
+    row: tidb_chunk::row::Row<'_>,
 ) -> Result<Datum, DriverError> {
-    let (default_value, not_null, name) = &meta[offset];
+    let (default_value, not_null, name, field_type) = &meta[offset];
     match default_value {
-        Some(value) => Ok(value.clone()),
+        // A COMPUTED default reads the statement's own clock here rather than
+        // a value settled at DDL time, which is what makes every row of one
+        // `INSERT` share one `CURRENT_TIMESTAMP` reading -- Go's
+        // `GetColDefaultValue` over the same fixed `EvalContext`.
+        Some(default) => crate::column_default::evaluate(default, field_type, ctx, row)
+            .map_err(|e| DriverError::Exec(ExecError::Eval(e))),
         None if *not_null => Err(DriverError::NoDefaultForField(name.clone())),
         None => Ok(Datum::Null),
     }
 }
 
 /// Whether the column at `offset` carries Go's `NotNullFlag`.
-pub(crate) fn column_is_not_null(meta: &[(Option<Datum>, bool, String)], offset: usize) -> bool {
+pub(crate) fn column_is_not_null(meta: &[ColumnMeta], offset: usize) -> bool {
     meta[offset].1
 }
 

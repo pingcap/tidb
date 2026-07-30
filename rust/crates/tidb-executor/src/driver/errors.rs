@@ -208,6 +208,10 @@ pub enum DriverError {
     /// Go `dbterror.ErrUnsupportedOnGeneratedColumn` (3106), whose argument
     /// names what was attempted.
     UnsupportedOnGeneratedColumn(String),
+    /// Go `dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed` (3770): a
+    /// column `DEFAULT` names a function that is not on Go's whitelist for
+    /// defaults, carried as `(column, function)`.
+    DefaultFunctionNotAllowed(String, String),
     /// Go `plannererrors.ErrUnknownTable` (1109): a multi-table `DELETE`
     /// names a target the `FROM`/`USING` clause does not provide -- which
     /// includes naming an aliased source by its stored table name.
@@ -1600,6 +1604,16 @@ impl DriverError {
             3106,
             *b"HY000",
             format!("'{reason}' is not supported for generated columns."),
+        ),
+        // Go: "Default value expression of column '%s' contains a disallowed
+        // function: `%s`."
+        DriverError::DefaultFunctionNotAllowed(column, function) => MysqlError::new(
+            3770,
+            *b"HY000",
+            format!(
+                "Default value expression of column '{column}' contains a disallowed function: \
+                 `{function}`."
+            ),
         ),
         // Go: "Unknown table '%-.192s' in %-.32s".
         DriverError::UnknownTableInMultiDelete(table) => MysqlError::new(

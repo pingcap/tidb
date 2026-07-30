@@ -153,10 +153,11 @@ pub struct KvColumn {
     pub id: i64,
     /// The column type.
     pub field_type: FieldType,
-    /// Go `ColumnInfo.DefaultValue`: the value an omitted column takes.
-    /// `None` means no `DEFAULT` was written, which is not the same as a
-    /// `DEFAULT NULL`.
-    pub default_value: Option<Datum>,
+    /// Go `ColumnInfo.DefaultValue` + `DefaultIsExpr`: where the value of an
+    /// omitted column comes from. `None` means no `DEFAULT` was written,
+    /// which is not the same as a `DEFAULT NULL`. See
+    /// [`crate::column_default`] for the computed forms.
+    pub default_value: Option<crate::column_default::ColumnDefault>,
     /// Go `ColumnInfo.OriginDefaultValue`: what a row written BEFORE this
     /// column existed reads back as. `ADD COLUMN ... DEFAULT 7` gives the
     /// existing rows 7, not NULL, and the row bytes are never rewritten --

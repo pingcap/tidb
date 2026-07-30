@@ -193,10 +193,12 @@ fn cluster_table(table: &TableInfo, storage: &ClusterTableStorage) -> Result<KvT
         // NOT NULL column the 1364 it is in Go.
         let default_value = match column.default_value {
             None => None,
-            Some(_) => Some(
+            // The loader refuses a computed default above, so what survives
+            // is always a settled value.
+            Some(_) => Some(tidb_executor::column_default::ColumnDefault::Value(
                 tidb_exec::system_row_write::literal_default(column, table.name.original())
                     .map_err(|error| format!("its column {name} has a default {error}"))?,
-            ),
+            )),
         };
         let origin_default = match column.get_origin_default_value() {
             None => None,

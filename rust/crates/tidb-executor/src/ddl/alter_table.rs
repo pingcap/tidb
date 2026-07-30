@@ -501,10 +501,16 @@ fn modify_column_action(
             Some(if target > offset { target } else { target + 1 })
         }
     };
+    // An ALTER-written default is always a literal here: the expression forms
+    // are refused above, so the settled value and the ORIGIN_DEFAULT existing
+    // rows read back are the same value.
     let default_value = match default_value {
         Some(value) => Some(normalize_column_default(value, &field_type, &def.name)?),
         None => None,
     };
+    let stored_default = default_value
+        .clone()
+        .map(crate::column_default::ColumnDefault::Value);
     let column = KvColumn {
         name: def.name.clone(),
         id: table.columns[offset].id,
@@ -512,7 +518,7 @@ fn modify_column_action(
         // A generated column option is refused above, so a MODIFY never
         // produces one.
         generated: None,
-        default_value: default_value.clone(),
+        default_value: stored_default,
         origin_default: default_value,
     };
     table
@@ -602,10 +608,16 @@ fn add_column_action(
     if not_null {
         field_type.add_flags(NOT_NULL_FLAG);
     }
+    // An ALTER-written default is always a literal here: the expression forms
+    // are refused above, so the settled value and the ORIGIN_DEFAULT existing
+    // rows read back are the same value.
     let default_value = match default_value {
         Some(value) => Some(normalize_column_default(value, &field_type, &def.name)?),
         None => None,
     };
+    let stored_default = default_value
+        .clone()
+        .map(crate::column_default::ColumnDefault::Value);
     let id = table.next_column_id();
     table.add_column(
         index,
@@ -616,7 +628,7 @@ fn add_column_action(
             // As in MODIFY: `ALTER TABLE ... ADD COLUMN ... AS (...)` is
             // refused above rather than silently added as a plain column.
             generated: None,
-            default_value: default_value.clone(),
+            default_value: stored_default,
             // Rows written before this column existed read back the default.
             origin_default: default_value,
         },
