@@ -124,6 +124,29 @@ fn locate_and_instr_report_byte_offsets_for_a_binary_argument() {
     ]);
 }
 
+/// The three-argument pair, `builtinLocate3ArgsSig` /
+/// `builtinLocate3ArgsUTF8Sig`: `pos` itself is counted in the signature's
+/// units, so a binary search may start INSIDE a multi-byte character.
+#[test]
+fn locate_with_a_start_position_counts_pos_in_the_same_units() {
+    captured(&[
+        ("locate('b', 'aéb', 1)", "INT:3"),
+        ("locate(cast('b' as binary), 'aéb', 1)", "INT:4"),
+        ("locate('b', 'aéb', 3)", "INT:3"),
+        ("locate(cast('b' as binary), 'aéb', 3)", "INT:4"),
+        ("locate(cast('b' as binary), 'aéb', 4)", "INT:4"),
+        ("locate(cast('b' as binary), 'aéb', 5)", "INT:0"),
+        ("locate('é', 'aébé', 3)", "INT:4"),
+        ("locate(cast('é' as binary), 'aébé', 3)", "INT:5"),
+        // An empty needle answers `pos` itself; a missing one and an
+        // out-of-range `pos` are both 0.
+        ("locate(cast('' as binary), 'aéb', 2)", "INT:2"),
+        ("locate('', 'aéb', 2)", "INT:2"),
+        ("locate(cast('z' as binary), 'aéb', 1)", "INT:0"),
+        ("locate('b', 'aéb', 0)", "INT:0"),
+    ]);
+}
+
 #[test]
 fn utf8_and_case_insensitive_signatures_are_untouched() {
     // The seam must not leak into the character signatures: these are the

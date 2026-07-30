@@ -14,8 +14,11 @@
 //! `string2` family builtins. Every builtin here is transcreated from its
 //! implementation in `pkg/expression/builtin_*.go`, cited per function.
 
+use tidb_datatype::Collation;
+
 use crate::coerce::coerce_str;
 use crate::string_fn::{format_num_locale, substring};
+use crate::string_signature::StrUnits;
 use crate::{Datum, EvalError};
 
 /// Dispatches this family's builtins; `None` if `name` isn't one of them.
@@ -102,18 +105,22 @@ fn rtrim(value: &Datum) -> Result<Datum, EvalError> {
     }))
 }
 
-/// `LOCATE(substr, str, pos)`, ported from `builtinLocate3ArgsUTF8Sig` in
-/// `pkg/expression/builtin_string.go`.  The value domain has no collation
-/// metadata, so this is limited to its fixed default exact-character
-/// comparison; session-selected non-binary collations are not represented.
+/// `LOCATE(substr, str, pos)`, ported from `builtinLocate3ArgsSig` and
+/// `builtinLocate3ArgsUTF8Sig` in `pkg/expression/builtin_string.go`. Those
+/// two bodies are the same search over a different unit — bytes when the
+/// derived collation is `binary`, characters otherwise — so [`StrUnits`]
+/// carries the difference and the scan is written once. Case-insensitive
+/// collations, which the UTF-8 signature folds through its own collator, are
+/// not represented in this value-only dispatch.
 fn locate3(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let (Some(needle), Some(haystack), Datum::Int(position)) =
-        (coerce_str(&vals[0])?, coerce_str(&vals[1])?, &vals[2])
-    else {
+    let binary = crate::string_fn::locate_collation(&vals[0], &vals[1]) == Collation::Binary;
+    let (Some(needle), Some(haystack), Datum::Int(position)) = (
+        StrUnits::of_with_signature(&vals[0], binary)?,
+        StrUnits::of_with_signature(&vals[1], binary)?,
+        &vals[2],
+    ) else {
         return Ok(Datum::Null);
     };
-    let needle: Vec<char> = needle.chars().collect();
-    let haystack: Vec<char> = haystack.chars().collect();
     let position = position.wrapping_sub(1);
     if needle.len() > haystack.len()
         || position < 0
@@ -121,11 +128,11 @@ fn locate3(vals: &[Datum]) -> Result<Datum, EvalError> {
     {
         return Ok(Datum::Int(0));
     }
-    if needle.is_empty() {
+    if needle.len() == 0 {
         return Ok(Datum::Int(position + 1));
     }
     for start in position as usize..=haystack.len() - needle.len() {
-        if haystack[start..start + needle.len()] == needle {
+        if haystack.slice(start, start + needle.len()) == needle.bytes() {
             return Ok(Datum::Int(start as i64 + 1));
         }
     }
