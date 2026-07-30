@@ -187,6 +187,12 @@ pub struct Session {
 impl Default for Session {
     /// A session on its own empty catalog, with `test` selected as a fresh
     /// TiDB connection has.
+    ///
+    /// This is the ONE place a [`Session`] is built. Everything a front end
+    /// installs afterwards -- a shared catalog, an identity, a process
+    /// registration, a privilege registry, a globals table -- arrives through a
+    /// setter or through struct-update over this, so a field added to `Session`
+    /// has exactly one place that must name it.
     fn default() -> Self {
         Session {
             catalog: SharedCatalog::default(),
@@ -331,31 +337,14 @@ impl Session {
     }
 
     /// A session sharing `catalog` with its peers.
+    ///
+    /// Every other field comes from [`Session::default`], which is the crate's
+    /// one `Session` construction site -- see its doc.
     #[must_use]
     pub fn with_catalog(catalog: SharedCatalog) -> Self {
         Session {
             catalog,
-            txn: None,
-            vars: SessionVars::new(),
-            warnings: Vec::new(),
-            current_user: None,
-            login_user: None,
-            active_roles: Vec::new(),
-            connection_id: None,
-            last_insert_id: 0,
-            statement_insert_id: 0,
-            set_var_hint_restore: Vec::new(),
-            prev_row_count: 0,
-            statement_kind: StatementKind::Other,
-            published_last_insert_id: Rc::default(),
-            user_vars: Rc::default(),
-            sequence_last_values: Rc::default(),
-            current_db: DEFAULT_DATABASE.to_owned(),
-            process: None,
-            has_process_priv: false,
-            privileges: None,
-            sandbox_mode: false,
-            rand: new_time_seeded_rand(),
+            ..Session::default()
         }
     }
 

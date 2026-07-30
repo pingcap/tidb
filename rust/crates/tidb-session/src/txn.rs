@@ -57,6 +57,29 @@ pub(crate) struct Transaction {
     savepoints: Vec<Savepoint>,
 }
 
+impl Transaction {
+    /// Opens a transaction over `catalog`: the ONE place a [`Transaction`] is
+    /// built.
+    ///
+    /// Both openings -- the explicit `BEGIN` and the lazy one `autocommit = 0`
+    /// performs for the first statement that touches data -- come through here,
+    /// so a field added to the struct has exactly one place it can be forgotten
+    /// and that place will not compile without it.
+    ///
+    /// A transaction opened lazily therefore carries the same empty savepoint
+    /// stack an explicit BEGIN does, which is what Go does: it makes no
+    /// distinction between the two once `InTxn()` holds, so SAVEPOINT works in
+    /// either.
+    fn open(catalog: &Catalog, mode: SessionTxnMode) -> Self {
+        Transaction {
+            working: catalog.clone(),
+            base_version: catalog.version(),
+            mode,
+            savepoints: Vec::new(),
+        }
+    }
+}
+
 /// One entry of a transaction's savepoint stack.
 ///
 /// Go records a `tikv.MemDBCheckpoint` -- a position in the transaction's
@@ -112,20 +135,8 @@ impl Session {
         if self.txn.is_some() || self.is_autocommit() {
             return Ok(());
         }
-        let (working, base_version) = {
-            let catalog = self.lock_catalog()?;
-            (catalog.clone(), catalog.version())
-        };
-        self.txn = Some(Transaction {
-            working,
-            base_version,
-            mode: self.resolve_begin_txn_mode(tidb_ast::TransactionMode::Default),
-            // A transaction opened lazily by `autocommit = 0` carries the same
-            // savepoint stack an explicit BEGIN does -- Go makes no distinction
-            // between the two once `InTxn()` holds, so SAVEPOINT works here too.
-            savepoints: Vec::new(),
-        });
-        Ok(())
+        let mode = self.resolve_begin_txn_mode(tidb_ast::TransactionMode::Default);
+        self.open_transaction(mode)
     }
 
     /// Whether a transaction is open (the wire's `SERVER_STATUS_IN_TRANS`).
@@ -146,6 +157,17 @@ impl Session {
     #[must_use]
     pub fn txn_mode(&self) -> Option<SessionTxnMode> {
         self.txn.as_ref().map(|txn| txn.mode)
+    }
+
+    /// Installs a transaction over the shared catalog as it stands now.
+    ///
+    /// The lock is taken and released here rather than held across the
+    /// installation, because [`Transaction::open`] copies the catalog it is
+    /// given and needs nothing from it afterwards.
+    fn open_transaction(&mut self, mode: SessionTxnMode) -> Result<(), DriverError> {
+        let txn = Transaction::open(&*self.lock_catalog()?, mode);
+        self.txn = Some(txn);
+        Ok(())
     }
 
     /// Go `newProviderWithRequest`: `BEGIN <mode>` wins over `@@tidb_txn_mode`.
@@ -178,16 +200,7 @@ impl Session {
                     self.commit()?;
                 }
                 let mode = self.resolve_begin_txn_mode(begin.mode);
-                let (working, base_version) = {
-                    let catalog = self.lock_catalog()?;
-                    (catalog.clone(), catalog.version())
-                };
-                self.txn = Some(Transaction {
-                    working,
-                    base_version,
-                    mode,
-                    savepoints: Vec::new(),
-                });
+                self.open_transaction(mode)?;
                 Ok(Some(true))
             }
             SessionStmt::Commit(_) => {
