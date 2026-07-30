@@ -374,6 +374,17 @@ fn compare(
                     theirs[1..].sort();
                 }
             }
+            // A CELL may itself contain newlines (`SHOW CREATE TABLE` is the
+            // common one), and the recorder has no escape for that: it writes
+            // the row out and an embedded newline simply becomes another
+            // PHYSICAL line in the `.result` file. Splitting after the sort --
+            // the recorder sorts ROWS, then writes them -- puts both sides in
+            // the same units, so a multi-line cell compares by its text
+            // instead of always diverging on the line count.
+            let ours: Vec<String> = ours
+                .iter()
+                .flat_map(|line| line.split('\n').map(str::to_owned))
+                .collect();
             if ours == theirs {
                 Ok(MatchKind::Rows)
             } else {
