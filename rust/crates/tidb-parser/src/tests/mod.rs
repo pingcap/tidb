@@ -34,6 +34,20 @@ fn r(sql: &str) -> String {
     parse(sql).expect("parse").restore()
 }
 
+/// Unwraps a parsed statement to a specific DDL payload, shared by the
+/// `ddl`, `ddl_create_table`, and `ddl_alter_table` submodules.
+macro_rules! ddl_payload {
+    ($stmt:expr, $variant:ident) => {{
+        let Stmt::Ddl(ddl) = $stmt else {
+            panic!("expected DDL envelope")
+        };
+        let tidb_ast::DdlStmt::$variant(payload) = ddl.into_inner() else {
+            panic!("expected {} payload", stringify!($variant))
+        };
+        payload
+    }};
+}
+
 fn plain_key_parts(names: &[&str]) -> Vec<IndexPart> {
     names
         .iter()
@@ -120,11 +134,13 @@ mod ctas_source;
 mod cte_scalar_union_source;
 mod ddl;
 mod ddl_alter_check_current_user_source;
+mod ddl_alter_table;
 mod ddl_ast_source;
 mod ddl_attributes_source;
 mod ddl_check_time_source;
 mod ddl_column_check_source;
 mod ddl_column_options_source;
+mod ddl_create_table;
 mod ddl_default_source;
 mod ddl_remaining_source;
 mod ddl_table_parser_source;
