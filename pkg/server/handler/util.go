@@ -75,7 +75,12 @@ const (
 
 // WriteError writes error to response.
 func WriteError(w http.ResponseWriter, err error) {
-	w.WriteHeader(http.StatusBadRequest)
+	WriteErrorWithCode(w, http.StatusBadRequest, err)
+}
+
+// WriteErrorWithCode writes error with specific status code to response.
+func WriteErrorWithCode(w http.ResponseWriter, statusCode int, err error) {
+	w.WriteHeader(statusCode)
 	_, err = w.Write([]byte(err.Error()))
 	terror.Log(errors.Trace(err))
 }
