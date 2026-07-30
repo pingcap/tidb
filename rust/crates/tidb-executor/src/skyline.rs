@@ -67,12 +67,53 @@
 //! * `eqOrInResult` -- [`Candidate::eq_or_in_count`], from the detacher's own
 //!   `=`/`IN` prefix walk.
 //! * `riskResult` -- [`compare_risk_ratio`] over the estimator's own
-//!   `MaxCountAfterAccess`/`MinCountAfterAccess` (see that function).
+//!   `MaxCountAfterAccess`/`MinCountAfterAccess` (see that function, and
+//!   "How much `riskResult` can actually change" below).
 //! * the pseudo-statistics rules -- `isCandidatesPseudo` / `comparePseudo`,
 //!   driven by whether THIS index has a loaded histogram.
 //! * Fix45132's 1000x `CountAfterAccess` rule.
 //! * the `preferRange` post-filter, whose master switch
 //!   `tidb_opt_prefer_range_scan` defaults ON (`vardef.DefOptPreferRangeScan`).
+//!
+//! # How much `riskResult` can actually change
+//!
+//! It was carried as this module's known wrong-plan risk while it was held at
+//! zero. Porting it settled how wide that risk really was, and the answer is
+//! narrow -- worth writing down, because "we ported it" is not the same
+//! statement as "it was dangerous".
+//!
+//! In the COMPARABLE branch, `riskResult` can only overturn a decision when
+//! `accessResult + eqOrInResult == 0` while `totalSum > 0`. Enumerate the
+//! three ways that can happen:
+//!
+//! * `accessResult` +1 with `eqOrInResult` -1 is IMPOSSIBLE here. The
+//!   detacher's access conditions are an `=`/`IN` prefix plus at most one
+//!   trailing range, so `eqOrInCount >= |accessColumns| - 1` always; a
+//!   candidate with strictly more access columns can never have strictly
+//!   fewer `=`/`IN` conditions.
+//! * `accessResult` -1 with `eqOrInResult` +1 needs `scanResult` of +2 to keep
+//!   `totalSum` positive, and `scanResult` is bounded by 1.
+//! * `accessResult` 0 with `eqOrInResult` 0 and `scanResult` +1 is the ONE
+//!   real shape: same access columns, same `=`/`IN` count, one path covering.
+//!   It is the case
+//!   [`tests::a_risky_covering_index_no_longer_prunes_the_certain_lookup_go_keeps`]
+//!   pins, on numbers a real cluster produced.
+//!
+//! Even in that shape the CHOSEN path does not move in this tier. Go's first
+//! risk branch requires the safer path's expected count to be no larger, so
+//! the candidate that survives because of `riskResult` is a NON-COVERING path
+//! with no fewer rows than the covering one it used to lose to -- and a double
+//! read costs about 1965 per row here against a covering scan's 45, so the
+//! covering path still wins on cost by a wide margin. For the survivor to win
+//! the covering path would have to estimate more than 40x as many rows for the
+//! SAME access conditions, which no single estimator does.
+//!
+//! So the honest summary: the dimension was a real hole in the partial order
+//! and is now closed, the live differential confirms it fires in both branches
+//! on real statistics, and no chosen path changed. It is a correctness fix
+//! against future divergence -- a different cost model, a different index
+//! shape, or the covering-index enumeration gap being closed -- rather than a
+//! bug that was already biting.
 //!
 //! EXCLUDED, each with its wrong-plan direction:
 //!
@@ -211,6 +252,38 @@ fn compare_index_back<T>(lhs: &Candidate<T>, rhs: &Candidate<T>) -> (i32, bool) 
     (result, true)
 }
 
+/// Whether `TIDB_RUST_SKYLINE_PROBE` was set when this process started.
+///
+/// Pruning decides which candidates the cost model never sees, so when a plan
+/// is wrong the survivors are exactly what you need and exactly what `EXPLAIN`
+/// cannot show: it prints the ONE path that won. This is the only way to read
+/// the partial order's inputs off a running node, and it is what the live
+/// access-path differential uses to check that a dimension fires at all.
+static PROBE: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::var_os("TIDB_RUST_SKYLINE_PROBE").is_some());
+
+/// One `compareCandidates` call's inputs and its risk verdict, for [`PROBE`].
+fn probe<T>(lhs: &Candidate<T>, rhs: &Candidate<T>, risk_result: i32) {
+    let describe = |candidate: &Candidate<T>| {
+        format!(
+            "acc={:?} idx={:?} single={} eq={} cnt={:.4} min={:.4} max={:.4} afterIndex={:.4}",
+            candidate.access_columns,
+            candidate.index_columns,
+            candidate.single_scan,
+            candidate.eq_or_in_count,
+            candidate.count_after_access,
+            candidate.min_count_after_access,
+            candidate.max_count_after_access,
+            candidate.count_after_index,
+        )
+    };
+    eprintln!(
+        "SKYLINE lhs({}) rhs({}) risk={risk_result}",
+        describe(lhs),
+        describe(rhs)
+    );
+}
+
 /// Go `compareRiskRatio` (`pkg/planner/core/find_best_task.go`).
 ///
 /// The dimension asks which candidate's row estimate can be trusted more, not
@@ -344,6 +417,9 @@ pub(crate) fn compare_candidates<T>(
     let global_result = 0;
 
     let risk_result = compare_risk_ratio(lhs, rhs);
+    if *PROBE {
+        probe(lhs, rhs, risk_result);
+    }
     let (access_result, access_comparable) =
         compare_col_sets(&lhs.access_columns, &rhs.access_columns);
     let (scan_result, scan_comparable) = compare_index_back(lhs, rhs);
@@ -504,6 +580,24 @@ mod tests {
         }
     }
 
+    /// Sets one candidate's whole estimate at once: the expected count and
+    /// the worst case the estimator admits for it.
+    ///
+    /// It is written as one call on purpose. Setting `count_after_access`
+    /// without moving `count_after_index` leaves the two describing different
+    /// row counts, and `compareRiskRatio`'s second branch reads
+    /// `count_after_index` -- so a test that moved only one of them could pass
+    /// on a fixture no estimator would ever produce.
+    fn with_estimate(candidate: &mut Candidate<&'static str>, count: f64, max: f64) {
+        candidate.count_after_access = count;
+        candidate.max_count_after_access = max;
+        // The estimators this tier has report a minimum equal to the expected
+        // count unless `adjustCountAfterAccess` moved it, and no index filter
+        // narrows these fixtures, so the post-index count is the access count.
+        candidate.min_count_after_access = count;
+        candidate.count_after_index = count;
+    }
+
     /// The full-scan candidate: no access conditions, always a single scan,
     /// and its range is the whole table.
     fn table_candidate() -> Candidate<&'static str> {
@@ -620,43 +714,69 @@ mod tests {
     #[test]
     fn no_identified_risk_beats_any_identified_risk() {
         let mut certain = candidate(&[1], &[1], false, 1, 1);
-        certain.count_after_access = 30.0;
-        certain.max_count_after_access = 30.0;
-        certain.min_count_after_access = 30.0;
+        with_estimate(&mut certain, 30.0, 30.0);
         let mut risky = candidate(&[2], &[2], false, 1, 1);
-        risky.count_after_access = 3.0;
-        risky.max_count_after_access = 300.0;
-        risky.min_count_after_access = 3.0;
-        // The risky path's expected count is the SMALLER of the two, and it
-        // still loses the dimension: 3 rows that could be 300 is a worse bet
-        // than 30 rows that are 30. The certain side qualifies through Go's
-        // second branch -- its whole interval sits lower.
+        with_estimate(&mut risky, 3.0, 300.0);
+        // The safer path here also has MORE rows, and Go's first branch
+        // requires the safer side to be no larger -- so neither wins, even
+        // though 3 rows that could be 300 is the worse bet. Go's second
+        // branch does not rescue it either: it needs the safer side's own
+        // lower bound or post-index count to be no larger, and 30 is not.
+        // This is the shape that keeps the dimension from overruling the row
+        // counts, and it is why `riskResult` is so much narrower in practice
+        // than the arithmetic suggests.
+        assert_eq!(compare_risk_ratio(&certain, &risky), 0);
+        assert_eq!(compare_risk_ratio(&risky, &certain), 0);
+
+        // Give the safer path the smaller expected count as well and the
+        // dimension does fire, through Go's first branch.
+        with_estimate(&mut certain, 3.0, 3.0);
+        with_estimate(&mut risky, 30.0, 3000.0);
         assert_eq!(compare_risk_ratio(&certain, &risky), 1);
         assert_eq!(compare_risk_ratio(&risky, &certain), -1);
     }
 
-    /// The regression this dimension exists to prevent, stated as the shape
-    /// Go and this port must agree on.
+    /// The regression this dimension exists to prevent, on the numbers a real
+    /// cluster produced.
     ///
-    /// Two candidates over the SAME access column, same `=`/`IN` count, where
-    /// the left is covering and the right is not: `accessResult` 0,
-    /// `scanResult` +1, so `totalSum` is +1 and the left dominates -- UNLESS
-    /// the left is the riskier estimate. Then Go's `predicateResult` is -1,
-    /// `leftDidNotLose` is false, and Go keeps BOTH paths for the cost model
-    /// to judge. Held at zero, `riskResult` would have let the covering path
-    /// prune the one Go keeps, which is a wrong plan and not a slow one.
+    /// `risky(id PK, v, w, KEY idx_v(v), KEY idx_vw(v, w))`, 2000 rows, `v`
+    /// taking 100 distinct values, `ANALYZE TABLE risky WITH 4 BUCKETS` so
+    /// each bucket is 500 rows deep. Then
+    /// `SELECT v, w FROM risky WHERE v BETWEEN 40 AND 42` gives both paths the
+    /// same access column `{v}`, the same `=`/`IN` count of 0, and the same
+    /// expected count of 60 -- but the range lands inside ONE bucket of the
+    /// `(v, w)` histogram, so `idx_vw`'s worst case is that whole 500-row
+    /// bucket while `idx_v`'s estimate is exact. Read off the live node by
+    /// `rust/scripts/run-realtikv-access-path.sh` with
+    /// `TIDB_RUST_SKYLINE_PROBE=1`:
+    ///
+    /// ```text
+    /// SKYLINE lhs(acc={1} idx={1} single=false eq=0 cnt=60 min=60 max=60)
+    ///         rhs(acc={1} idx={1} single=true  eq=0 cnt=60 min=60 max=500) risk=1
+    /// ```
+    ///
+    /// `accessResult` is 0 and `scanResult` is +1 for the covering `idx_vw`,
+    /// so `totalSum` is -1 from the left's point of view and WITHOUT
+    /// `riskResult` the covering path prunes `idx_v` outright. With it,
+    /// `predicateResult` is +1, `rightDidNotLose` is false, and neither prunes
+    /// the other -- which is what Go does with these same numbers, because the
+    /// 500 is Go's own bucket.
+    ///
+    /// This is the whole shape the dimension can flip in the comparable
+    /// branch; see [`compare_risk_ratio`] and the module doc for why there is
+    /// no other.
     #[test]
     fn a_risky_covering_index_no_longer_prunes_the_certain_lookup_go_keeps() {
-        let mut covering = candidate(&[1], &[1, 2], true, 1, 2);
-        covering.count_after_access = 8.0;
-        covering.max_count_after_access = 400.0;
-        covering.min_count_after_access = 8.0;
-        let mut lookup = candidate(&[1], &[1], false, 1, 1);
-        lookup.count_after_access = 40.0;
-        lookup.max_count_after_access = 40.0;
-        lookup.min_count_after_access = 40.0;
+        // `index_columns` is `{v}` for both: `idx_vw`'s `w` is not in the
+        // access conditions and not an index filter, so Go's
+        // `indexCondsColMap` holds only `v` -- which is why `compareIndexBack`
+        // falls through to `IsSingleScan` and nothing else separates them.
+        let mut covering = candidate(&[1], &[1], true, 0, 2);
+        with_estimate(&mut covering, 60.0, 500.0);
+        let mut lookup = candidate(&[1], &[1], false, 0, 1);
+        with_estimate(&mut lookup, 60.0, 60.0);
 
-        assert_eq!(compare_risk_ratio(&covering, &lookup), -1);
+        assert_eq!(compare_risk_ratio(&lookup, &covering), 1);
         // Neither prunes the other, in either argument order.
         assert_eq!(
             compare_candidates(&covering, &lookup, &context()),
@@ -666,42 +786,69 @@ mod tests {
             compare_candidates(&lookup, &covering, &context()),
             (0, false)
         );
-        // And with the risk removed, the covering path dominates again --
-        // which is what makes the assertion above about RISK and not about
-        // some unrelated change to the order.
+        assert_eq!(
+            skyline_pruning(vec![lookup.clone(), covering.clone()], &context()).len(),
+            2
+        );
+
+        // Remove ONLY the risk and the covering path dominates again, exactly
+        // as this port did before the dimension was live. That is what makes
+        // the assertions above about RISK rather than about some unrelated
+        // change to the order.
         let mut certain = covering.clone();
-        certain.max_count_after_access = 8.0;
+        with_estimate(&mut certain, 60.0, 60.0);
         assert_eq!(compare_candidates(&certain, &lookup, &context()).0, 1);
+        assert_eq!(skyline_pruning(vec![lookup, certain], &context()).len(), 1);
     }
 
     /// Go's incomparable-branch escape hatch, which only `riskResult` can
     /// open: two candidates constraining different columns are normally left
     /// alone, but a clear risk difference plus a `predicateResult` big enough
     /// to have survived it names a winner.
+    ///
+    /// The numbers are the live ones again, from the same fixture as
+    /// [`a_risky_covering_index_no_longer_prunes_the_certain_lookup_go_keeps`]
+    /// under `SELECT * FROM risky WHERE v = 40 AND w = 740
+    /// AND c BETWEEN 400 AND 402`:
+    ///
+    /// ```text
+    /// SKYLINE lhs(acc={1,2} idx={1,2} single=false eq=2 cnt=1 min=1 max=1)
+    ///         rhs(acc={3}   idx={3}   single=false eq=0 cnt=3 min=3 max=500) risk=1
+    /// ```
+    ///
+    /// Here `riskResult` ADDS pruning this port previously did not do: with it
+    /// at zero, `idx_c` survived and the cost model judged it. It cannot make
+    /// the port prune something Go keeps -- the arithmetic is Go's, on Go's
+    /// own bucket count.
     #[test]
     fn a_clear_risk_difference_separates_otherwise_incomparable_candidates() {
-        // `idx_ab(a, b)` vs `idx_c(c)`: neither access-column set contains the
+        // `idx_vw(v, w)` vs `idx_c(c)`: neither access-column set contains the
         // other, so `CompareCol2Len` reports incomparable.
-        let mut safe = candidate(&[0, 1], &[0, 1], false, 2, 2);
-        safe.count_after_access = 10.0;
-        safe.max_count_after_access = 10.0;
-        safe.min_count_after_access = 10.0;
-        let mut risky = candidate(&[2], &[2], false, 1, 1);
-        risky.count_after_access = 20.0;
-        risky.max_count_after_access = 900.0;
-        risky.min_count_after_access = 20.0;
-        // riskResult +1, accessResult +1, eqOrInResult +1: predicateResult 3,
+        let mut safe = candidate(&[1, 2], &[1, 2], false, 2, 2);
+        with_estimate(&mut safe, 1.0, 1.0);
+        let mut risky = candidate(&[3], &[3], false, 0, 1);
+        with_estimate(&mut risky, 3.0, 500.0);
+        // riskResult +1, accessResult +1, eqOrInResult +2: predicateResult 4,
         // which clears Go's "> 1" bar.
         assert_eq!(compare_candidates(&safe, &risky, &context()).0, 1);
         assert_eq!(compare_candidates(&risky, &safe, &context()).0, -1);
+        assert_eq!(
+            skyline_pruning(vec![risky.clone(), safe.clone()], &context()).len(),
+            1
+        );
+        // Without the risk the two are simply incomparable and both survive,
+        // which is what this port did before.
+        with_estimate(&mut risky, 3.0, 3.0);
+        assert_eq!(compare_candidates(&safe, &risky, &context()), (0, false));
+        assert_eq!(skyline_pruning(vec![risky, safe], &context()).len(), 2);
     }
 
     #[test]
     fn a_thousandfold_smaller_access_count_wins_on_its_own() {
         let mut broad = candidate(&[1], &[1], false, 1, 1);
-        broad.count_after_access = 200_000.0;
+        with_estimate(&mut broad, 200_000.0, 200_000.0);
         let mut narrow = candidate(&[2], &[2], false, 1, 1);
-        narrow.count_after_access = 150.0;
+        with_estimate(&mut narrow, 150.0, 150.0);
         // Incomparable access columns, so only Fix45132 can separate them.
         assert_eq!(compare_candidates(&broad, &narrow, &context()).0, -1);
         assert_eq!(compare_candidates(&narrow, &broad, &context()).0, 1);

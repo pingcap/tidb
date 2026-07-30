@@ -123,6 +123,13 @@ cleanup() {
     kill "${PLAYGROUND_PID}" 2>/dev/null || true
     wait "${PLAYGROUND_PID}" 2>/dev/null || true
   fi
+  # `ACCESS_PATH_KEEP_LOGS=<dir>` copies both nodes' logs out before the work
+  # directory goes away, which is the only way to read the Rust node's own
+  # diagnostics after a run.
+  if [[ -n "${ACCESS_PATH_KEEP_LOGS:-}" ]]; then
+    mkdir -p "${ACCESS_PATH_KEEP_LOGS}"
+    cp "${RUST_LOG_FILE}" "${PLAYGROUND_LOG}" "${ACCESS_PATH_KEEP_LOGS}/" 2>/dev/null || true
+  fi
   tiup clean "${TAG}" >/dev/null 2>&1 || true
   rm -rf "${HOME}/.tiup/data/${TAG}"
   rm -rf "${WORK_DIR}"
@@ -234,6 +241,31 @@ CREATE TABLE big (
   KEY idx_big_mid (mid),
   KEY idx_big_rare (rare)
 );
+-- The fourth table exists for the RISK RATIO (`compareRiskRatio` over
+-- `MaxCountAfterAccess`). That dimension only has anything to say when the
+-- estimator can name a WORST CASE above its expected count, and the widest
+-- source of one is `Histogram.BetweenRowCount`'s in-bucket skew bound: when
+-- both ends of a range land inside a SINGLE bucket, the worst case is the
+-- whole bucket. A default 256-bucket histogram over 2000 rows has buckets
+-- only ~8 rows deep, so the bound is never far from the estimate. This table
+-- is therefore ANALYZEd WITH 4 BUCKETS, making each bucket 500 rows deep, so
+-- a three-value range inside one bucket has a worst case two orders of
+-- magnitude above its estimate -- and the dimension is loud instead of
+-- inaudible.
+--   v -- 100 distinct values, 20 rows each;
+--   w -- unique;
+--   c -- unique, and indexed ALONE so its access-column set is incomparable
+--        with idx_vw's, which is the other branch riskResult participates in.
+CREATE TABLE risky (
+  id BIGINT PRIMARY KEY,
+  v BIGINT NOT NULL,
+  w BIGINT NOT NULL,
+  c BIGINT NOT NULL,
+  payload VARCHAR(64) NOT NULL,
+  KEY idx_v (v),
+  KEY idx_vw (v, w),
+  KEY idx_c (c)
+);
 SQL
 
 echo "seeding 2000 rows into each table"
@@ -258,6 +290,12 @@ echo "seeding 2000 rows into each table"
     [[ "${i}" -eq 2000 ]] && sep=";"
     echo "(${i}, ${a}, ${b}, 'q${i}')${sep}"
   done
+  echo "INSERT INTO risky VALUES"
+  for i in $(seq 1 2000); do
+    sep=","
+    [[ "${i}" -eq 2000 ]] && sep=";"
+    echo "(${i}, $((i % 100)), ${i}, ${i}, 'k${i}')${sep}"
+  done
 } >"${WORK_DIR}/seed.sql"
 go_sql <"${WORK_DIR}/seed.sql"
 
@@ -279,7 +317,7 @@ seeded=$(go_sql -Nse "SELECT COUNT(*) FROM pathdiff.big")
 [[ "${seeded}" == "${BIG_ROWS}" ]] \
   || { echo "pathdiff.big did not seed ${BIG_ROWS} rows, got ${seeded}" >&2; exit 1; }
 
-for fixture in t u; do
+for fixture in t u risky; do
   seeded=$(go_sql -Nse "SELECT COUNT(*) FROM pathdiff.${fixture}")
   [[ "${seeded}" == 2000 ]] || { echo "pathdiff.${fixture} did not seed 2000 rows, got ${seeded}" >&2; exit 1; }
 done
@@ -431,6 +469,27 @@ Q_COVERING="SELECT bucket, rare FROM t WHERE bucket = 1"
 Q_SUPERSET_RANGE="SELECT * FROM t WHERE bucket = 1 AND rare > 1990"
 Q_INCOMPARABLE="SELECT * FROM u WHERE a = 1 AND b = 2"
 Q_EMPTY_RANGE="SELECT * FROM t WHERE bucket = 1 AND bucket = 2"
+# The risk-ratio cases, over the deliberately coarse `risky` histograms.
+#
+# Q_RISK_COVERING is the shape that `riskResult` can flip in the COMPARABLE
+# branch, and the only one: idx_v(v) and idx_vw(v, w) range the SAME access
+# column with the SAME `=`/`IN` count, so `accessResult` and `eqOrInResult` are
+# both 0 and only `compareIndexBack` separates them -- idx_vw covers
+# `SELECT v, w`, idx_v does not. `totalSum` is therefore +1 for idx_vw, which
+# prunes idx_v UNLESS idx_vw is the riskier estimate, in which case Go's
+# `predicateResult` goes to -1 and Go keeps BOTH. The two paths estimate the
+# same predicate against different histograms -- one interpolating over `v`,
+# one over encoded `(v, w)` keys -- which is where an asymmetric worst case can
+# come from at all.
+Q_RISK_COVERING="SELECT v, w FROM risky WHERE v BETWEEN 40 AND 42"
+# Q_RISK_INCOMPARABLE is the other branch: idx_vw's access columns {v, w} and
+# idx_c's {c} are neither equal nor nested, so `CompareCol2Len` reports
+# incomparable and NOTHING but `riskResult` can name a winner there. `c`'s
+# narrow in-bucket range is the risky side.
+Q_RISK_INCOMPARABLE="SELECT * FROM risky WHERE v = 40 AND w = 740 AND c BETWEEN 400 AND 402"
+# And the same risky range with no competitor but the full scan, so the
+# dimension is observed where it cannot be confounded by another one.
+Q_RISK_ALONE="SELECT * FROM risky WHERE c BETWEEN 400 AND 402"
 
 # Every case, in one list, so the two phases below cannot drift apart.
 CASES=(
@@ -441,6 +500,9 @@ CASES=(
   "covering beats non-covering on identical access conditions|${Q_COVERING}"
   "strict superset where the extra column is a RANGE, not an equality|${Q_SUPERSET_RANGE}|estimator"
   "no candidate dominates, so cost decides|${Q_INCOMPARABLE}"
+  "RISK: covering vs non-covering on one access column, coarse buckets|${Q_RISK_COVERING}|estimator"
+  "RISK: incomparable access columns, one of them a risky narrow range|${Q_RISK_INCOMPARABLE}|estimator"
+  "RISK: a risky narrow range against the full scan alone|${Q_RISK_ALONE}|estimator"
 )
 
 echo
@@ -464,6 +526,10 @@ echo "==================== ANALYZE, on the GO node ===================="
 go_sql -e "ANALYZE TABLE pathdiff.t"
 go_sql -e "ANALYZE TABLE pathdiff.u"
 go_sql -e "ANALYZE TABLE pathdiff.big"
+# Four buckets, not the default 256: see the `risky` schema comment. Without
+# this the in-bucket skew bound sits within a rounding error of the estimate
+# and the risk ratio is never far enough from 1 to decide anything.
+go_sql -e "ANALYZE TABLE pathdiff.risky WITH 4 BUCKETS"
 # The Go server loads a histogram lazily; a synchronous-load query on each
 # compared column is what makes its own EXPLAIN read the statistics rather
 # than the absence of them.
@@ -488,7 +554,8 @@ for _ in $(seq 1 60); do
   if ! rust_sql -Nse "USE pathdiff; EXPLAIN ${Q_BROAD}" | grep -q "stats:pseudo" \
     && ! rust_sql -Nse "USE pathdiff; EXPLAIN ${Q_INCOMPARABLE}" | grep -q "stats:pseudo" \
     && ! rust_sql -Nse "USE pathdiff; EXPLAIN SELECT * FROM big WHERE mid = 7" \
-      | grep -q "stats:pseudo"; then
+      | grep -q "stats:pseudo" \
+    && ! rust_sql -Nse "USE pathdiff; EXPLAIN ${Q_RISK_ALONE}" | grep -q "stats:pseudo"; then
     break
   fi
   sleep 2
@@ -605,7 +672,8 @@ compare_double_read "a quarter of a large table, where the scan must win" 12500 
 
 echo
 echo "=== the two planners' full plans, side by side, after ANALYZE ==="
-for query in "${Q_SECOND}" "${Q_BROAD}" "${Q_INCOMPARABLE}"; do
+for query in "${Q_SECOND}" "${Q_BROAD}" "${Q_INCOMPARABLE}" \
+  "${Q_RISK_COVERING}" "${Q_RISK_INCOMPARABLE}"; do
   echo
   echo "  ${query}"
   echo "  --- GO"
@@ -631,12 +699,10 @@ cat <<'NOTE'
     `EXPLAIN FORMAT='verbose'`/`true_card_cost`, and a cost is only ever a
     means to a choice -- the choice and the estRows are what is compared.
   * The pruning dimensions this tier holds at zero: the required physical
-    property (`matchProperty`), global-index preference, and the RISK RATIO
-    (`compareRiskRatio` over `MaxCountAfterAccess`). The first two are exact
-    for the call this tier makes; the risk ratio is a real exclusion that can
-    prune a candidate Go keeps, and `tidb_executor::skyline`'s module doc
-    states its direction. No case below can catch it, because this rewrite
-    does not compute the risk estimate that would make it fire.
+    property (`matchProperty`) and global-index preference. Both are exact for
+    the call this tier makes. The RISK RATIO (`compareRiskRatio` over
+    `MaxCountAfterAccess`) is no longer among them -- it is ported, and the
+    three RISK cases above are the ones that exercise it.
   * A covering index with NO access conditions. Go keeps it
     (`keepIndex := ... || path.IsSingleScan`) and it then prunes the table
     path, so `SELECT bucket FROM t` is an `IndexFullScan` there and a

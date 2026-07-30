@@ -106,7 +106,6 @@ use tidb_planner::cardinality::pseudo::{
     pseudo_row_count_by_index_ranges, IndexRange as PseudoIndexRange, PseudoBoundKind, ScalarRange,
 };
 use tidb_planner::cardinality::row_count_column::RowEstimate;
-use tidb_planner::cardinality::row_count_estimator::TOLERANCE_FACTOR;
 use tidb_planner::cardinality::row_count_estimator::{
     get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, ColumnStats,
     EstimatorOptions, IndexRangeDatums, IndexStats,
@@ -585,9 +584,30 @@ fn table_scan_path(
 /// `ds.StatsInfo().RowCount`: the table's realtime count narrowed by EVERY
 /// pushed condition, estimated per column.
 ///
-/// This is a different estimator from any single path's, which is the entire
-/// point of `adjustCountAfterAccess`: where a path's own access estimate falls
-/// below this, the two disagreed and Go equalizes them.
+/// # Why `adjustCountAfterAccess` is NOT ported on top of this
+///
+/// Go's `adjustCountAfterAccess` (`pkg/planner/core/stats.go`) raises a path's
+/// `CountAfterAccess` to `RowCount / SelectionFactor` whenever the path's own
+/// access estimate falls BELOW this number, and keeps the pre-adjustment value
+/// as `MinCountAfterAccess`. It is excluded here because THIS number is not
+/// yet Go's.
+///
+/// Under pseudo statistics Go reaches its min-based `pseudoSelectivity` only
+/// when the `HistColl` has no column and no index entry at all; otherwise it
+/// runs the full `Selectivity`, which MULTIPLIES the pseudo rates. This tier
+/// always takes the min. On `t(bucket, rare)` with 2000 rows and no analyzed
+/// histogram, `WHERE bucket = 1 AND rare = 7` gives Go `0.01` rows for the
+/// data source and this tier `10`, so a ported adjustment fires here where
+/// Go's does not: the live differential showed the chosen path's `estRows`
+/// going to `10 / 0.8 = 12.50` against Go's `0.10`, with both nodes still
+/// choosing `idx_cover`.
+///
+/// So the adjustment is held out until the pseudo selectivity it reads is
+/// Go's. Direction of the exclusion, for `compareRiskRatio`: a path's
+/// `MinCountAfterAccess` stays at the estimator's own minimum instead of the
+/// pre-adjustment estimate, which only narrows Go's second branch -- the one
+/// that needs `MinCountAfterAccess > 0` AND a lower interval. It cannot make
+/// this port prune a path Go keeps.
 fn source_row_count(
     table: &KvTable,
     where_clause: Option<&tidb_ast::Expr>,
@@ -614,8 +634,7 @@ fn index_path(
     source_row_count: f64,
     index_filter_selectivity: Option<f64>,
 ) -> AccessPath {
-    let mut bounds = index_row_count(index, table, &ranges, stats, realtime);
-    adjust_count_after_access(&mut bounds, source_row_count, realtime);
+    let bounds = index_row_count(index, table, &ranges, stats, realtime);
     let estimated = bounds.est;
     // Go `deriveIndexPathStats`: with index filters the post-index count is
     // the access count narrowed by them, floored at the data source's own row
@@ -759,30 +778,6 @@ fn index_row_count(
     );
     estimate.clamp(0.0, realtime.max(0.0));
     estimate
-}
-
-/// Go `adjustCountAfterAccess` (`pkg/planner/core/stats.go`).
-///
-/// A path whose access estimate falls BELOW the whole data source's row count
-/// was estimated under different assumptions than the data source itself --
-/// per-range against per-column selectivity. Go prefers the data source's
-/// number for consistency, and keeps the pre-adjustment value as the path's
-/// `MinCountAfterAccess`, which is the only record left that this path's own
-/// estimator said something smaller.
-///
-/// That is what makes the bounds asymmetric between two paths over the same
-/// table, and so what `compareRiskRatio` reads.
-fn adjust_count_after_access(estimate: &mut RowEstimate, source_row_count: f64, realtime: f64) {
-    if estimate.est + TOLERANCE_FACTOR >= source_row_count {
-        return;
-    }
-    estimate.min_est = if estimate.min_est > 0.0 {
-        estimate.min_est.min(estimate.est)
-    } else {
-        estimate.est
-    };
-    estimate.est = (source_row_count / crate::plan_trace::SELECTIVITY_FACTOR).min(realtime);
-    estimate.max_est = estimate.est.max(estimate.max_est);
 }
 
 /// The stats-less index estimate: Go `getPseudoRowCountByIndexRanges`
