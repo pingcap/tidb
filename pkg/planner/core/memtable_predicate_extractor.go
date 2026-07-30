@@ -1496,6 +1496,19 @@ type TiFlashSystemTableExtractor struct {
 	// TidbTables represents tidbTables applied to, and we should apply all tidb table if there is no table specified.
 	// e.g: SELECT * FROM information_schema.<table_name> WHERE tidb_table in ('t', 't2').
 	TiDBTables string
+	// TableIDs represents the `table_id` predicates extracted from the WHERE clause.
+	// Only set when the queried table exposes a `table_id` column (currently
+	// `tiflash_tables`, `tiflash_segments`, and `tiflash_indexes`). When non-empty
+	// the retriever pushes a `table_id IN (...)` filter to TiFlash so progress
+	// polling against `information_schema.tiflash_indexes` for a specific table
+	// does not scan all TiFlash local-index metadata.
+	// e.g: SELECT * FROM information_schema.tiflash_indexes WHERE table_id = 12345.
+	TableIDs []int64
+	// IndexIDs represents the `index_id` predicates extracted from the WHERE clause.
+	// Only the `tiflash_indexes` table exposes `index_id`; on the other tables this
+	// is a no-op via `extractCol`'s missing-column fast path.
+	// e.g: SELECT * FROM information_schema.tiflash_indexes WHERE index_id IN (1, 2).
+	IndexIDs []int64
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -1510,14 +1523,43 @@ func (e *TiFlashSystemTableExtractor) Extract(ctx base.PlanContext,
 	remained, databaseSkip, tidbDatabases := e.extractCol(ctx, schema, names, remained, "tidb_database", true)
 	// Extract the `tidb_table` columns.
 	remained, tableSkip, tidbTables := e.extractCol(ctx, schema, names, remained, "tidb_table", true)
-	e.SkipRequest = instanceSkip || databaseSkip || tableSkip
+	// Extract the `table_id` and `index_id` columns when present. Both columns
+	// are declared as TypeLonglong in pkg/infoschema/tables.go; we parse the
+	// extracted values as int64. Parse failures (e.g. an unrelated cast) drop
+	// the extraction so we fall back to a broad query rather than emit invalid
+	// IDs to TiFlash.
+	remained, tableIDSkip, tableIDs := e.extractCol(ctx, schema, names, remained, "table_id", true)
+	remained, indexIDSkip, indexIDs := e.extractCol(ctx, schema, names, remained, "index_id", true)
+	e.SkipRequest = instanceSkip || databaseSkip || tableSkip || tableIDSkip || indexIDSkip
 	if e.SkipRequest {
 		return nil
 	}
 	e.TiFlashInstances = tiflashInstances
 	e.TiDBDatabases = extractStringFromStringSet(tidbDatabases)
 	e.TiDBTables = extractStringFromStringSet(tidbTables)
+	e.TableIDs = parseInt64StringSet(tableIDs)
+	e.IndexIDs = parseInt64StringSet(indexIDs)
 	return remained
+}
+
+// parseInt64StringSet converts the StringSet returned by extractCol for a
+// TypeLonglong column into a sorted []int64. On any parse failure the entire
+// extraction is dropped (returns nil) so the retriever falls back to a broad
+// query instead of emitting an invalid identifier to TiFlash.
+func parseInt64StringSet(s set.StringSet) []int64 {
+	if len(s) == 0 {
+		return nil
+	}
+	out := make([]int64, 0, len(s))
+	for k := range s {
+		v, err := strconv.ParseInt(k, 10, 64)
+		if err != nil {
+			return nil
+		}
+		out = append(out, v)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // ExplainInfo implements base.MemTablePredicateExtractor interface.
@@ -1535,12 +1577,31 @@ func (e *TiFlashSystemTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if len(e.TiDBTables) > 0 {
 		fmt.Fprintf(r, "tidb_tables:[%s], ", e.TiDBTables)
 	}
+	if len(e.TableIDs) > 0 {
+		fmt.Fprintf(r, "table_ids:[%s], ", formatInt64Slice(e.TableIDs))
+	}
+	if len(e.IndexIDs) > 0 {
+		fmt.Fprintf(r, "index_ids:[%s], ", formatInt64Slice(e.IndexIDs))
+	}
 	// remove the last ", " in the message info
 	s := r.String()
 	if len(s) > 2 {
 		return s[:len(s)-2]
 	}
 	return s
+}
+
+// formatInt64Slice renders the IDs as a comma-separated list for ExplainInfo
+// output. The slice is expected to be sorted by the caller.
+func formatInt64Slice(ids []int64) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	return strings.Join(parts, ",")
 }
 
 // StatementsSummaryExtractor is used to extract some predicates of statements summary table.
