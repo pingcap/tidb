@@ -1766,11 +1766,11 @@ func TestCorColRangePredicateAccess(t *testing.T) {
 	})
 }
 
-// TestLateralJoinCardinalityWithBoundedInner verifies the row count estimated for a LATERAL join
-// whose derived table is bounded: an aggregate without GROUP BY produces one row per outer row, and
-// a LIMIT n produces at most n. Such an inner plan does not grow with the number of distinct
-// correlated values, so its estimate must not be scaled down by their NDV.
-func TestLateralJoinCardinalityWithBoundedInner(t *testing.T) {
+// TestLateralJoinCardinality verifies the row count estimated for a LATERAL join. The derived table
+// runs once per outer row and its stats already account for the correlated predicates, so the join
+// produces the product of the two sides. The estimate must not be scaled down by the NDV of the
+// correlated columns, which would apply their selectivity a second time.
+func TestLateralJoinCardinality(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1826,6 +1826,14 @@ func TestLateralJoinCardinalityWithBoundedInner(t *testing.T) {
 		"order by t2.k2 limit 3) f")
 	require.Equal(t, float64(1800), act)
 	require.Equal(t, act, est, "a lateral LIMIT n produces n rows per outer row")
+
+	// An unbounded inner plan is not special either: grouping by k2 yields one row per matching
+	// row of tl_inner, so the join returns every matched row.
+	est, act = applyRowCounts("select o.k1, f.k2 from tl_outer o inner join lateral " +
+		"(select /*+ NO_DECORRELATE() */ t2.k2, count(*) c from tl_inner t2 " +
+		"where t2.k1 = o.k1 group by t2.k2) f")
+	require.Equal(t, float64(30000), act)
+	require.Equal(t, act, est, "a lateral GROUP BY produces one row per group per outer row")
 }
 
 // TestExplainAnalyzeDMLCommit covers the issue #37373.
