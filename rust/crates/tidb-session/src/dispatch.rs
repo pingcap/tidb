@@ -29,6 +29,37 @@ use crate::{
 };
 use crate::{reports_warnings, CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 
+/// Names the AST variant behind a refused statement, for a "not supported
+/// yet" message that says WHAT it refused instead of just that it did.
+///
+/// Every statement enum here derives `Debug`, and a derived `Debug` for an
+/// enum always starts with the bare variant name (`ShowMasterStatus`, or
+/// `Explain(ExplainStmt { .. })` for one carrying a payload) -- so taking the
+/// leading identifier out of `{:?}` names the variant without a second,
+/// separately-maintained match arm per statement kind.
+pub(crate) fn variant_name<T: std::fmt::Debug>(value: &T) -> String {
+    format!("{value:?}")
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .next()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Names a statement one layer deeper than [`Stmt`]'s own variant: naming the
+/// wrapper alone ("Ddl", "Admin") would repeat what the caller already knows
+/// it saw a DDL or admin statement, so this names the DDL/ADMIN/SESSION kind
+/// it wraps instead -- the same depth `explain_stmt`'s own "EXPLAIN of a WITH
+/// clause" / "EXPLAIN of a set operation" messages already name theirs at.
+pub(crate) fn stmt_kind_name(stmt: &Stmt) -> String {
+    match stmt {
+        Stmt::Query(query) => variant_name(&**query),
+        Stmt::Dml(dml) => variant_name(&**dml),
+        Stmt::Ddl(ddl) => variant_name(&**ddl),
+        Stmt::Admin(admin) => variant_name(&**admin),
+        Stmt::Session(session) => variant_name(&**session),
+    }
+}
+
 impl Session {
     /// Applies `USE`, `CREATE DATABASE`, `DROP DATABASE`, `SHOW DATABASES`
     /// and `SHOW TABLES`.
@@ -363,9 +394,10 @@ impl Session {
                     self.drain_eval_warnings(&ctx);
                     output
                 }
-                _ => Err(DriverError::Unsupported(
-                    "this DML statement kind is not supported yet",
-                )),
+                other => Err(DriverError::UnsupportedKind(format!(
+                    "this DML statement kind ({}) is not supported yet",
+                    variant_name(other)
+                ))),
             },
             Stmt::Ddl(ddl) => match &**ddl {
                 DdlStmt::RenameTable(_) => {
@@ -493,13 +525,19 @@ impl Session {
                         Ok(StmtOutput::Affected(0))
                     })
                 }
-                _ => Err(DriverError::Unsupported(
-                    "this DDL statement kind is not supported yet",
-                )),
+                other => Err(DriverError::UnsupportedKind(format!(
+                    "this DDL statement kind ({}) is not supported yet",
+                    variant_name(other)
+                ))),
             },
-            _ => Err(DriverError::Unsupported(
-                "this statement kind is not supported yet",
-            )),
+            Stmt::Admin(admin) => Err(DriverError::UnsupportedKind(format!(
+                "this statement kind (ADMIN {}) is not supported yet",
+                variant_name(&**admin)
+            ))),
+            Stmt::Session(session) => Err(DriverError::UnsupportedKind(format!(
+                "this statement kind ({}) is not supported yet",
+                variant_name(&**session)
+            ))),
         }
     }
 

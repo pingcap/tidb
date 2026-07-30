@@ -102,18 +102,18 @@ impl Session {
                             format,
                         )
                     })?,
-                    _ => {
-                        return Err(DriverError::Unsupported(
-                            "only EXPLAIN ANALYZE of a SELECT, INSERT, UPDATE, or \
-                             DELETE is supported yet",
-                        ));
+                    other => {
+                        return Err(DriverError::UnsupportedKind(format!(
+                            "EXPLAIN ANALYZE of {} is not supported yet",
+                            crate::dispatch::variant_name(other)
+                        )));
                     }
                 },
-                _ => {
-                    return Err(DriverError::Unsupported(
-                        "only EXPLAIN ANALYZE of a SELECT, INSERT, UPDATE, or DELETE \
-                         is supported yet",
-                    ));
+                other => {
+                    return Err(DriverError::UnsupportedKind(format!(
+                        "EXPLAIN ANALYZE of {} is not supported yet",
+                        crate::dispatch::stmt_kind_name(other)
+                    )));
                 }
             };
             self.drain_eval_warnings(&ctx);
@@ -144,16 +144,18 @@ impl Session {
                 tidb_ast::DmlStmt::Delete(delete) => self.with_catalog_mut(|catalog| {
                     tidb_executor::explain_delete_stmt(delete, catalog, &current_db, &ctx, format)
                 })?,
-                _ => {
-                    return Err(DriverError::Unsupported(
-                        "only EXPLAIN of INSERT, UPDATE, or DELETE is supported yet",
-                    ));
+                other => {
+                    return Err(DriverError::UnsupportedKind(format!(
+                        "EXPLAIN of {} is not supported yet",
+                        crate::dispatch::variant_name(other)
+                    )));
                 }
             },
-            _ => {
-                return Err(DriverError::Unsupported(
-                    "only EXPLAIN of a SELECT, INSERT, UPDATE, or DELETE is supported yet",
-                ));
+            other => {
+                return Err(DriverError::UnsupportedKind(format!(
+                    "EXPLAIN of {} is not supported yet",
+                    crate::dispatch::stmt_kind_name(other)
+                )));
             }
         };
         Ok(Some(StmtOutput::Rows { columns, rows }))
