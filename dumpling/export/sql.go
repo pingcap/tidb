@@ -1099,14 +1099,6 @@ func getWritableColumnNames(tctx *tcontext.Context, db *BaseConn, dbName, tableN
 	return sourceColumns, hasGenerateColumn, nil
 }
 
-func columnNamesToSelectFields(columns []string) []string {
-	fields := make([]string, 0, len(columns))
-	for _, column := range columns {
-		fields = append(fields, wrapBackTicks(escapeString(column)))
-	}
-	return fields
-}
-
 func buildWhereClauses(handleColNames []string, handleVals [][]string) []string {
 	if len(handleColNames) == 0 || len(handleVals) == 0 {
 		return nil

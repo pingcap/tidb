@@ -512,23 +512,29 @@ func prepareColumnCache(tctx *tcontext.Context, conf *Config, conn *BaseConn) er
 			if err != nil {
 				return err
 			}
-			sourceFields := columnNamesToSelectFields(sourceColumns)
-			selectedFields := sourceFields
+			selectedColumns := sourceColumns
 			if table.Type == TableTypeBase && conf.ColumnFilter != nil {
-				selectedColumns, err := conf.ColumnFilter.applyToColumns(dbName, table.Name, sourceColumns)
+				selectedColumns, err = conf.ColumnFilter.applyToColumns(dbName, table.Name, sourceColumns)
 				if err != nil {
 					return err
 				}
-				selectedFields = columnNamesToSelectFields(selectedColumns)
 			}
 			conf.columnCache[restore.UniqueTableName{DB: dbName, Table: table.Name}] = columnInfo{
-				sourceFields:      sourceFields,
-				selectedFields:    selectedFields,
+				sourceFields:      columnNamesToSelectFields(sourceColumns),
+				selectedFields:    columnNamesToSelectFields(selectedColumns),
 				hasGenerateColumn: hasGenerateColumn,
 			}
 		}
 	}
 	return nil
+}
+
+func columnNamesToSelectFields(columns []string) []string {
+	fields := make([]string, 0, len(columns))
+	for _, column := range columns {
+		fields = append(fields, wrapBackTicks(escapeString(column)))
+	}
+	return fields
 }
 
 func (d *Dumper) checkPartitionsFlag(tctx *tcontext.Context, conn *BaseConn, allTables DatabaseTables) error {
