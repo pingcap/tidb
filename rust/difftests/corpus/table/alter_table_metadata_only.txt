@@ -25,6 +25,17 @@ alter table amd alter column c1 set default 7
 insert into amd (id, cc) values (2, 20)
 select id, cc, c1 from amd
 alter table amd alter column nosuch set default 7
+## A primary key may not be hidden from the planner (3522), and the primary key
+## Go means is `GetPrimaryKey`'s: `unique(a)` over a NOT NULL column is the
+## IMPLICIT one even though nothing wrote PRIMARY. `amdp2`'s unique column is
+## nullable, so it is not one and may be hidden.
+create table amdp (a int not null, b int, unique uq(a), key kb(b))
+alter table amdp alter index uq invisible
+alter table amdp alter index kb invisible
+create table amdp2 (a int, unique uq2(a))
+alter table amdp2 alter index uq2 invisible
+create table amdp3 (a int not null primary key, b int not null, unique uq3(b))
+alter table amdp3 alter index uq3 invisible
 ## `ALTER COLUMN ... DROP DEFAULT` is deliberately absent: Go accepts it and
 ## sets NoDefaultValueFlag, which turns a later omitting INSERT into 1364 even
 ## on a NULLABLE column. This tier has no such flag, so the action is refused

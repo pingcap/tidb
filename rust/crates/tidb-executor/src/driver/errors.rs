@@ -277,6 +277,10 @@ pub enum DriverError {
     /// which `_tidb_rowid` is the one an `ALTER TABLE ... RENAME COLUMN` can
     /// reach.
     WrongColumnName(String),
+    /// Go `dbterror.ErrPKIndexCantBeInvisible` (3522): the index a statement
+    /// tried to hide from the planner is the table's primary key, explicit or
+    /// implicit.
+    PrimaryKeyCantBeInvisible,
     /// Go `infoschema.ErrKeyNotExists` (1176): the statement named an index
     /// the table does not have. This is 1091's sibling and NOT the same
     /// error: `DROP INDEX` on a missing key is 1091, while `RENAME INDEX`,
@@ -803,6 +807,12 @@ impl DriverError {
             1166,
             *b"42000",
             format!("Incorrect column name '{name}'"),
+        ),
+        // Go: "A primary key index cannot be invisible".
+        DriverError::PrimaryKeyCantBeInvisible => MysqlError::new(
+            3522,
+            *b"HY000",
+            "A primary key index cannot be invisible".to_owned(),
         ),
         // Go: "Key '%-.192s' doesn't exist in table '%-.192s'".
         DriverError::KeyNotExists { key, table } => MysqlError::new(

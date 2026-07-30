@@ -149,6 +149,14 @@ const TOPICS: &[(&str, &str)] = &[
          describable once the plan recorder learned to descend into a derived table",
     ),
     (
+        "ddl/db_rename",
+        "the metadata-only ALTER actions' own gate: `RENAME INDEX`'s three \
+         outcomes -- renamed, ignored as the same spelling, and 1061 naming the \
+         EXISTING index -- decided by the case-sensitivity rule in Go's \
+         `ValidateRenameIndex`, with `ADMIN CHECK INDEX` reading the renamed \
+         key back",
+    ),
+    (
         "planner/core/join_reorder2",
         "join reorder over derived tables specifically -- 12 of its 30 matches are \
          access properties, so a regression in which side of a `FROM (SELECT ...)` is \
