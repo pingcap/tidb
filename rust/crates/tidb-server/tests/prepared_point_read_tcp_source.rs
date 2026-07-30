@@ -90,7 +90,12 @@ fn prepare_and_execute_use_typed_real_session_and_binary_rows() {
 #[test]
 fn single_and_multi_table_sessions_open_the_existing_real_tikv_plan_path() {
     let executor = include_str!("../../tidb-exec/src/real_tikv_read.rs");
-    let single = include_str!("../src/real_tikv_node.rs");
+    // The single-table node is a module directory: its plan path lives in the
+    // root and the query it observes in `query_observability`.
+    let single = concat!(
+        include_str!("../src/real_tikv_node/mod.rs"),
+        include_str!("../src/real_tikv_node/query_observability.rs"),
+    );
     let multi = include_str!("../src/real_tikv_multi_node.rs");
 
     assert!(executor.contains("prepare_configured_point_read"));

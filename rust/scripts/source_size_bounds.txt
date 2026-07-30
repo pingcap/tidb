@@ -7,5 +7,4 @@ crates/tidb-executor/src/kv_table.rs 2705
 crates/tidb-txnkv/src/transaction/coordinator.rs 2629
 crates/tidb-pd-client/src/client.rs 2539
 crates/tidb-txnkv/src/region/cache.rs 2518
-crates/tidb-server/src/real_tikv_node.rs 2310
 crates/tidb-executor/src/ddl.rs 2240

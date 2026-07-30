@@ -13,6 +13,19 @@
 // limitations under the License.
 
 //! Server adapter for one process-owned real-PD/TiKV read authority.
+//!
+//! This root holds the bounded single-table path itself: the session factory,
+//! the statement dispatch over one configured relation, the authority's boot
+//! and its shutdown drain. Three subjects that path uses are stated on their
+//! own:
+//!
+//! * [`schema_following`] -- the reload threads and etcd watches that keep
+//!   this node's catalog, accounts, sysvars and statistics current with a Go
+//!   peer's changes.
+//! * [`session_time_zone`] -- the `time_zone` a session reads and writes in,
+//!   on both sides of the coprocessor round trip.
+//! * [`query_observability`] -- in-flight query accounting, the transport
+//!   evidence a publication reports, and the leases a result set holds.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -71,6 +84,20 @@ use crate::sql_node::{
     SqlNodeError, SqlQueryError, WriteOutcome,
 };
 use crate::transaction_overlay_result_set::{OverlayHandleSource, TransactionOverlayResultSet};
+
+mod query_observability;
+mod schema_following;
+mod session_time_zone;
+
+pub(crate) use query_observability::{
+    install_remote_publication_observer, observe_real_tikv_query, QueryActivity,
+    QueryActivityLease, QueryCompletion,
+};
+pub(crate) use schema_following::{
+    connect_schema_notifier, spawn_catalog_reloader, spawn_node_stats, spawn_privilege_watch,
+    spawn_schema_version_watch, spawn_sysvar_watch,
+};
+pub(crate) use session_time_zone::{parse_set_time_zone, RealTiKvSessionTimeZone};
 
 const PRODUCTION_CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -314,244 +341,6 @@ impl RealTiKvSessionFactory {
     }
 }
 
-/// Connects the best-effort etcd client this node announces its DDL through.
-///
-/// A failure here is a warning, never a startup error: the announcement only
-/// makes peers reload *sooner*, and Go itself carries on when the PUT fails
-/// (`pkg/ddl/job_worker.go` logs "update latest schema version failed" and
-/// continues outside MDL). Refusing to start because etcd was unreachable
-/// would trade an availability property for a latency one.
-pub(crate) fn connect_schema_notifier(config: &NodeConfig) -> Option<Arc<EtcdClient>> {
-    match EtcdClient::connect_with_security(
-        config.pd_endpoints.iter().map(String::as_str),
-        PRODUCTION_CONTROL_PLANE_TIMEOUT,
-        Arc::new(config.cluster_security.clone()),
-    ) {
-        Ok(client) => Some(Arc::new(client)),
-        Err(error) => {
-            emit_warning("schema_version_notifier_unavailable", &error.to_string());
-            None
-        }
-    }
-}
-
-/// Starts the etcd watch that wakes `reloader` as soon as any node publishes a
-/// new schema version.
-///
-/// Like the notifier, a failure is a warning: the `lease/2` tick still keeps
-/// this node current, only less promptly. That is exactly the relationship Go
-/// has between its watch channel and its ticker in `Syncer.SyncLoop`.
-pub(crate) fn spawn_schema_version_watch(
-    config: &NodeConfig,
-    reloader: &CatalogReloader,
-) -> Option<EtcdWatcher> {
-    let waker = reloader.waker();
-    match EtcdWatcher::spawn_with_security(
-        config.pd_endpoints.iter().map(String::as_str),
-        PRODUCTION_CONTROL_PLANE_TIMEOUT,
-        Arc::new(config.cluster_security.clone()),
-        DDL_GLOBAL_SCHEMA_VERSION_KEY,
-        move |event| {
-            eprintln!(
-                "{{\"event\":\"schema_version_watch_fired\",\"mod_revision\":{},\"value\":{}}}",
-                event.mod_revision,
-                json_string(&String::from_utf8_lossy(&event.value))
-            );
-            waker.nudge();
-        },
-    ) {
-        Ok(watcher) => Some(watcher),
-        Err(error) => {
-            emit_warning("schema_version_watch_unavailable", &error.to_string());
-            None
-        }
-    }
-}
-
-/// Starts the watch on the key TiDB announces account changes under, so this
-/// node's privilege reloader runs within a round trip of a Go TiDB's `GRANT`
-/// instead of waiting out its interval.
-///
-/// This is the same division [`spawn_schema_version_watch`] keeps, on the
-/// other key: the watch is an optimisation, the reloader's own tick is the
-/// guarantee, and a node whose etcd is unreachable simply loses the promptness.
-pub(crate) fn spawn_privilege_watch(
-    config: &NodeConfig,
-    reloader: Option<&PrivilegeReloader>,
-) -> Option<EtcdWatcher> {
-    let waker = reloader?.waker();
-    match EtcdWatcher::spawn_with_security(
-        config.pd_endpoints.iter().map(String::as_str),
-        PRODUCTION_CONTROL_PLANE_TIMEOUT,
-        Arc::new(config.cluster_security.clone()),
-        PRIVILEGE_UPDATE_KEY,
-        move |event| {
-            eprintln!(
-                "{{\"event\":\"privilege_watch_fired\",\"mod_revision\":{},\"value\":{}}}",
-                event.mod_revision,
-                json_string(&String::from_utf8_lossy(&event.value))
-            );
-            waker.nudge();
-        },
-    ) {
-        Ok(watcher) => Some(watcher),
-        Err(error) => {
-            emit_warning("privilege_watch_unavailable", &error.to_string());
-            None
-        }
-    }
-}
-
-/// Starts the watch on the key TiDB announces `SET GLOBAL` changes under, so
-/// this node's sysvar reloader runs within a round trip of a Go TiDB's
-/// `SET GLOBAL` instead of waiting out its interval.
-///
-/// Mirrors [`spawn_privilege_watch`] exactly, on the sysvar key.
-pub(crate) fn spawn_sysvar_watch(
-    config: &NodeConfig,
-    reloader: Option<&crate::cluster_sysvar_seam::SysvarReloader>,
-) -> Option<EtcdWatcher> {
-    let waker = reloader?.waker();
-    match EtcdWatcher::spawn_with_security(
-        config.pd_endpoints.iter().map(String::as_str),
-        PRODUCTION_CONTROL_PLANE_TIMEOUT,
-        Arc::new(config.cluster_security.clone()),
-        SYSVAR_UPDATE_KEY,
-        move |event| {
-            eprintln!(
-                "{{\"event\":\"sysvar_watch_fired\",\"mod_revision\":{}}}",
-                event.mod_revision
-            );
-            waker.nudge();
-        },
-    ) {
-        Ok(watcher) => Some(watcher),
-        Err(error) => {
-            emit_warning("sysvar_watch_unavailable", &error.to_string());
-            None
-        }
-    }
-}
-
-fn emit_warning(event: &str, detail: &str) {
-    eprintln!(
-        "{{\"event\":\"{event}\",\"level\":\"warning\",\"error\":{}}}",
-        json_string(detail)
-    );
-}
-
-fn json_string(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "\"unprintable\"".to_owned())
-}
-
-/// Every table's `(table_id, column_types)` a loaded catalog holds -- exactly
-/// the argument [`load_stats_snapshot_from_cluster`] needs to boot-load
-/// statistics for every table this node serves.
-fn stats_targets(
-    catalog: &ClusterCatalog,
-) -> Vec<(
-    i64,
-    std::collections::BTreeMap<i64, tidb_datatype::FieldType>,
-)> {
-    catalog
-        .databases
-        .iter()
-        .flat_map(|database| database.tables.iter())
-        .map(|table| {
-            (
-                table.id,
-                tidb_exec::cluster_stats_load::column_types_of(table),
-            )
-        })
-        .collect()
-}
-
-/// Boot-loads every table a loaded catalog holds and starts following the
-/// cluster's `mysql.stats_*` for them.
-///
-/// This is a one-shot load over every loaded table rather than Go's lazy,
-/// per-column, async sync-load (`pkg/statistics/handle/syncload`, driven by
-/// `collect_column_stats_usage` at plan time with its own worker pool and
-/// priority channels): this node's loaded catalog is small (one process's
-/// worth of served tables, not a whole cluster's schema), so reading every
-/// table's statistics once at boot is a bounded cost, and it keeps the supply
-/// line -- plumbing only, no estimation logic -- decoupled from the planner's
-/// per-column load-on-demand path that a future estimator unit will add.
-/// Documented simplification, not a silent gap: a table analyzed for the
-/// first time after boot is picked up by [`StatsReloader`]'s tick, just not
-/// as promptly as Go's synchronous on-demand load would.
-///
-/// Ticks at the same cadence [`spawn_catalog_reloader`] uses (`schema_lease`,
-/// not halved -- see the [`tidb_exec::stats_watch`] module doc for why there
-/// is no watch to keep prompt the way the catalog's `lease/2` tick is backed
-/// by an etcd watch: Go's own stats refresh has no such key either).
-pub(crate) fn spawn_node_stats(
-    catalog: &ClusterCatalog,
-    authority: &ProductionReadProcessAuthority,
-    schema_lease: Duration,
-    timeout: Duration,
-) -> Result<(Arc<SharedStats>, StatsReloader), StatsReloadError> {
-    let targets = stats_targets(catalog);
-    let snapshot =
-        load_stats_snapshot_from_cluster(&authority.transaction_opener(), timeout, &targets)
-            .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error.to_string())))?;
-    let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
-    eprintln!(
-        "{{\"event\":\"stats_loaded\",\"loaded\":{},\"pseudo\":{}}}",
-        receipt.loaded, receipt.pseudo
-    );
-    let shared = Arc::new(SharedStats::new(snapshot));
-    let opener = authority.transaction_opener();
-    let reloader = StatsReloader::spawn(
-        Arc::clone(&shared),
-        schema_lease,
-        Box::new(move || {
-            load_stats_snapshot_from_cluster(&opener, timeout, &targets)
-                .map_err(|error| error.to_string())
-        }),
-    )?;
-    Ok((shared, reloader))
-}
-
-/// Publishes the startup catalog and starts following the cluster's schema.
-///
-/// Go's domain reloads at `schemaLease / 2` so a node is never more than one
-/// lease behind; the same halving is applied here to the configured lease.
-///
-/// A failed pass is not fatal and does not stop the thread: the previously
-/// published catalog stays in force and the next tick tries again, which is
-/// what Go's reload loop does with a failed `Reload`.
-pub(crate) fn spawn_catalog_reloader(
-    startup: ClusterCatalog,
-    transaction_opener: RealOptimisticTransactionOpener,
-    schema_lease: Duration,
-) -> Result<(Arc<SharedCatalog>, CatalogReloader), CatalogReloadError> {
-    let catalog = Arc::new(SharedCatalog::new(startup));
-    let reloader = CatalogReloader::spawn(
-        Arc::clone(&catalog),
-        schema_lease / 2,
-        Box::new(move |current| {
-            match reload_catalog_from_cluster(
-                &transaction_opener,
-                PRODUCTION_CONTROL_PLANE_TIMEOUT,
-                current,
-            ) {
-                Ok(ReloadedCatalog::Unchanged { .. }) => Ok(CatalogReloadPass::Unchanged),
-                Ok(ReloadedCatalog::Diffs { catalog, .. }) => Ok(CatalogReloadPass::Diffs(catalog)),
-                Ok(ReloadedCatalog::Full { catalog, reason }) => {
-                    eprintln!(
-                        "{{\"event\":\"catalog_full_reload\",\"schema_version\":{},\"reason\":\"{reason}\"}}",
-                        catalog.schema_version
-                    );
-                    Ok(CatalogReloadPass::Full(catalog))
-                }
-                Err(error) => Err(error.to_string()),
-            }
-        }),
-    )?;
-    Ok((catalog, reloader))
-}
-
 impl QuerySessionFactory for RealTiKvSessionFactory {
     type Session = RealTiKvServerSession;
 
@@ -596,149 +385,6 @@ pub struct RealTiKvServerSession {
     /// `SessionVars.Location()` would. `SET time_zone` updates it in place;
     /// a fresh session starts at `UTC`/`0`, matching Go's connection default.
     time_zone: RealTiKvSessionTimeZone,
-}
-
-/// A real-TiKV session's `time_zone` value: a display name for the DAG
-/// request's `TimeZoneName` field, and the same zone's offset in seconds east
-/// of UTC. Only fixed offsets and the bare `UTC`/`SYSTEM` spellings are
-/// supported — this node carries no IANA timezone database.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RealTiKvSessionTimeZone {
-    pub(crate) name: String,
-    pub(crate) offset_secs: i32,
-}
-
-impl Default for RealTiKvSessionTimeZone {
-    fn default() -> Self {
-        Self {
-            name: "UTC".to_owned(),
-            offset_secs: 0,
-        }
-    }
-}
-
-impl RealTiKvSessionTimeZone {
-    /// Parses `SET time_zone = <value>`'s source-observable subset: `SYSTEM`,
-    /// `UTC`, and fixed `+HH:MM`/`-HH:MM` offsets. Named IANA zones are
-    /// refused rather than silently approximated, matching this node's
-    /// generally-UTC-only temporal seed.
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        if value.eq_ignore_ascii_case("SYSTEM") || value.eq_ignore_ascii_case("UTC") {
-            return Some(Self {
-                name: value.to_owned(),
-                offset_secs: 0,
-            });
-        }
-        let offset_secs = parse_fixed_tz_offset(value)?;
-        Some(Self {
-            name: value.to_owned(),
-            offset_secs,
-        })
-    }
-}
-
-/// Parses a fixed UTC offset (`+HH:MM`/`-HH:MM`, e.g. `'+05:00'`, `'-08:00'`)
-/// into whole seconds east of UTC.
-fn parse_fixed_tz_offset(s: &str) -> Option<i32> {
-    let bytes = s.as_bytes();
-    if bytes.len() != 6 || bytes[3] != b':' {
-        return None;
-    }
-    let sign = match bytes[0] {
-        b'+' => 1,
-        b'-' => -1,
-        _ => return None,
-    };
-    let hh: i32 = s.get(1..3)?.parse().ok()?;
-    let mm: i32 = s.get(4..6)?.parse().ok()?;
-    Some(sign * (hh * 3600 + mm * 60))
-}
-
-/// Recognizes `SET [SESSION] time_zone = <value>` / `SET @@time_zone = <value>`
-/// (case-insensitively; `GLOBAL` is left unmatched, so it falls through to this
-/// node's ordinary unsupported-statement handling rather than silently
-/// changing session state) and returns the unquoted, un-lowercased value text.
-pub(crate) fn parse_set_time_zone(sql: &str) -> Option<&str> {
-    let trimmed = sql.trim().trim_end_matches(';').trim_end();
-    let lower = trimmed.to_ascii_lowercase();
-    let mut rest = lower.strip_prefix("set")?.trim_start();
-    rest = rest.strip_prefix("session").map_or(rest, str::trim_start);
-    rest = rest
-        .strip_prefix("@@session.")
-        .or_else(|| rest.strip_prefix("@@"))
-        .map_or(rest, str::trim_start);
-    let rest = rest.strip_prefix("time_zone")?.trim_start();
-    let rest = rest.strip_prefix('=')?;
-    let value_lower = rest.trim();
-    if value_lower.is_empty() {
-        return None;
-    }
-    // `lower` is ASCII-only wherever it overlaps `trimmed`'s SQL keywords, so
-    // the byte offset of the value's start is identical in both strings;
-    // slicing `trimmed` at that offset recovers the value's original case.
-    let start = trimmed.len() - value_lower.len();
-    let value = trimmed[start..].trim();
-    let unquoted = if value.len() >= 2
-        && ((value.starts_with('\'') && value.ends_with('\''))
-            || (value.starts_with('"') && value.ends_with('"')))
-    {
-        &value[1..value.len() - 1]
-    } else {
-        value
-    };
-    Some(unquoted)
-}
-
-#[derive(Default)]
-pub(crate) struct QueryActivity {
-    active: AtomicUsize,
-    max_active: AtomicUsize,
-}
-
-impl QueryActivity {
-    pub(crate) fn begin(self: &Arc<Self>, connection_id: u64, query_id: u64) -> QueryActivityLease {
-        let active = self.active.fetch_add(1, Ordering::AcqRel) + 1;
-        self.max_active.fetch_max(active, Ordering::AcqRel);
-        eprintln!(
-            "{{\"event\":\"query_activity\",\"phase\":\"begin\",\"connection_id\":{connection_id},\"query_id\":{query_id},\"active\":{active},\"max_active\":{}}}",
-            self.max_active.load(Ordering::Acquire)
-        );
-        QueryActivityLease {
-            activity: Arc::clone(self),
-            connection_id,
-            query_id,
-        }
-    }
-}
-
-pub(crate) struct QueryActivityLease {
-    activity: Arc<QueryActivity>,
-    connection_id: u64,
-    query_id: u64,
-}
-
-pub(crate) fn install_remote_publication_observer<E>(
-    snapshot_ts: Option<u64>,
-    install: impl FnOnce() -> Result<(), E>,
-) -> Result<(), E> {
-    if snapshot_ts.is_some() {
-        install()?;
-    }
-    Ok(())
-}
-
-impl Drop for QueryActivityLease {
-    fn drop(&mut self) {
-        let previous = self.activity.active.fetch_sub(1, Ordering::AcqRel);
-        debug_assert!(previous > 0, "query activity count underflow");
-        eprintln!(
-            "{{\"event\":\"query_activity\",\"phase\":\"end\",\"connection_id\":{},\"query_id\":{},\"active\":{},\"max_active\":{}}}",
-            self.connection_id,
-            self.query_id,
-            previous - 1,
-            self.activity.max_active.load(Ordering::Acquire)
-        );
-    }
 }
 
 impl RealTiKvServerSession {
@@ -1327,185 +973,6 @@ impl QuerySession for RealTiKvServerSession {
     }
 }
 
-pub(crate) fn observe_real_tikv_query<'a>(
-    context: &SessionContext,
-    query: RealTiKvQuery,
-    query_id: u64,
-    cancellation_lease: QueryCancellationLease,
-    query_activity: QueryActivityLease,
-    cluster_id: u64,
-    evidence: DirectUnaryTransportEvidenceHandle,
-) -> Result<QueryResult<'a>, SqlQueryError> {
-    let snapshot_ts = query.snapshot_ts();
-    let snapshot_ts_json =
-        snapshot_ts.map_or_else(|| "null".to_owned(), |timestamp| timestamp.to_string());
-    let table_id = query.table_id();
-    let identity = query.session_identity();
-    let executor_kinds = query
-        .plan_evidence()
-        .executor_kinds()
-        .iter()
-        .map(|kind| kind.as_str())
-        .collect::<Vec<_>>();
-    let predicate_count = query.plan_evidence().predicate_count();
-    let output_offsets = query.plan_evidence().output_offsets().to_vec();
-    let handle_range_count = query.plan_evidence().handle_range_count();
-    let handle_ranges = query
-        .plan_evidence()
-        .handle_ranges()
-        .iter()
-        .map(|range| {
-            format!(
-                "{{\"low\":{},\"high\":{},\"low_exclude\":{},\"high_exclude\":{}}}",
-                range.low(),
-                range.high(),
-                range.low_exclude(),
-                range.high_exclude(),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    let connection_id = context.connection_id;
-    let authority_id = identity.authority_id();
-    let session_id = identity.session_id();
-    install_remote_publication_observer(snapshot_ts, || {
-        evidence.set_publication_observer(move |published| {
-            emit_query_transport_publication(
-                connection_id,
-                query_id,
-                authority_id,
-                session_id,
-                published,
-            );
-        })
-    })
-    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-    eprintln!(
-        "{{\"event\":\"query_snapshot\",\"connection_id\":{},\"query_id\":{query_id},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts_json},\"table_id\":{table_id},\"executor_kinds\":{executor_kinds:?},\"predicate_count\":{predicate_count},\"output_offsets\":{output_offsets:?},\"handle_range_count\":{handle_range_count},\"handle_ranges\":[{handle_ranges}],\"user\":{:?},\"host\":{:?}}}",
-        connection_id,
-        authority_id,
-        session_id,
-        context.identity.username(),
-        context.identity.host(),
-    );
-    Ok(QueryResult::new(Box::new(ObservedResultSet {
-        inner: query.into_record_set(),
-        evidence,
-        connection_id,
-        query_id,
-        authority_id,
-        session_id,
-        emitted: false,
-        _completion: QueryCompletion::new(cancellation_lease, query_activity),
-    })))
-}
-
-fn emit_query_transport_publication(
-    connection_id: u64,
-    query_id: u64,
-    authority_id: u64,
-    session_id: u64,
-    published: &PublishedDispatchEvidence,
-) {
-    let publication = &published.publication;
-    let forwarded_host = publication
-        .forwarded_host()
-        .map_or_else(|| "null".to_owned(), |host| format!("{host:?}"));
-    eprintln!(
-        "{{\"event\":\"query_transport_published\",\"connection_id\":{connection_id},\"query_id\":{query_id},\"authority_id\":{authority_id},\"session_id\":{session_id},\"region_id\":{},\"physical_address\":{:?},\"physical_channel_version\":{},\"stream_generation\":{},\"forwarded_host\":{forwarded_host}}}",
-        published.region_id,
-        publication.physical_address(),
-        publication.physical_channel_version(),
-        publication.batch_stream_generation(),
-    );
-}
-
-struct ObservedResultSet {
-    inner: DistSqlRecordSet,
-    evidence: DirectUnaryTransportEvidenceHandle,
-    connection_id: u64,
-    query_id: u64,
-    authority_id: u64,
-    session_id: u64,
-    emitted: bool,
-    _completion: QueryCompletion,
-}
-
-/// Keeps cancellation registration and activity accounting alive until one
-/// query result is finished or dropped. Multi-relation sessions reuse this
-/// guard instead of creating a second lifecycle authority.
-pub(crate) struct QueryCompletion {
-    _cancellation_lease: QueryCancellationLease,
-    _query_activity: QueryActivityLease,
-}
-
-impl QueryCompletion {
-    pub(crate) const fn new(
-        cancellation_lease: QueryCancellationLease,
-        query_activity: QueryActivityLease,
-    ) -> Self {
-        Self {
-            _cancellation_lease: cancellation_lease,
-            _query_activity: query_activity,
-        }
-    }
-}
-
-impl ObservedResultSet {
-    fn emit_evidence(&mut self) {
-        if self.emitted {
-            return;
-        }
-        self.emitted = true;
-        let evidence = self.evidence.snapshot();
-        let located_regions = evidence
-            .located_region_ids
-            .iter()
-            .map(u64::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let dispatched_regions = evidence
-            .dispatched_region_ids
-            .iter()
-            .map(u64::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        eprintln!(
-            "{{\"event\":\"query_transport\",\"connection_id\":{},\"query_id\":{},\"authority_id\":{},\"session_id\":{},\"located_region_ids\":[{located_regions}],\"dispatched_region_ids\":[{dispatched_regions}],\"batch_attempts\":{},\"unary_attempts\":{}}}",
-            self.connection_id,
-            self.query_id,
-            self.authority_id,
-            self.session_id,
-            evidence.batch_attempts,
-            evidence.unary_attempts
-        );
-    }
-}
-
-impl ResultSetSource for ObservedResultSet {
-    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
-        self.inner
-            .next_batch(max_rows)
-            .map_err(|error| error.to_string())
-    }
-
-    fn columns(&mut self) -> Result<Vec<tidb_protocol::ColumnInfo>, String> {
-        Ok(self.inner.columns().to_vec())
-    }
-
-    fn finish(&mut self) -> Result<(), String> {
-        let result = self.inner.finish().map_err(|error| error.to_string());
-        self.emit_evidence();
-        result
-    }
-
-    fn close(&mut self) -> Result<(), String> {
-        let result = self.inner.close().map_err(|error| error.to_string());
-        self.emit_evidence();
-        result
-    }
-}
-
 pub(crate) fn configured_table(table: &ConfiguredReadTable) -> ConfiguredTable {
     let columns: Vec<_> = table
         .columns
@@ -2068,71 +1535,6 @@ mod tests {
     use std::sync::Mutex;
 
     #[test]
-    fn parse_set_time_zone_recognizes_the_source_observable_forms() {
-        assert_eq!(
-            parse_set_time_zone("SET time_zone='+05:00'"),
-            Some("+05:00")
-        );
-        assert_eq!(
-            parse_set_time_zone("set time_zone = '-08:00';"),
-            Some("-08:00")
-        );
-        assert_eq!(
-            parse_set_time_zone("SET SESSION time_zone = 'UTC'"),
-            Some("UTC")
-        );
-        assert_eq!(
-            parse_set_time_zone("SET @@time_zone = 'SYSTEM'"),
-            Some("SYSTEM")
-        );
-        assert_eq!(
-            parse_set_time_zone("SET @@session.time_zone = '+00:00'"),
-            Some("+00:00")
-        );
-        // Unquoted and case-preserved inside the value.
-        assert_eq!(parse_set_time_zone("SET time_zone=SYSTEM"), Some("SYSTEM"));
-        // Not a `time_zone` assignment at all.
-        assert_eq!(parse_set_time_zone("SET autocommit = 0"), None);
-        assert_eq!(parse_set_time_zone("SELECT 1"), None);
-    }
-
-    #[test]
-    fn real_tikv_session_time_zone_parses_fixed_offsets_and_refuses_named_zones() {
-        assert_eq!(
-            RealTiKvSessionTimeZone::parse("+05:00"),
-            Some(RealTiKvSessionTimeZone {
-                name: "+05:00".to_owned(),
-                offset_secs: 18_000,
-            })
-        );
-        assert_eq!(
-            RealTiKvSessionTimeZone::parse("-12:00"),
-            Some(RealTiKvSessionTimeZone {
-                name: "-12:00".to_owned(),
-                offset_secs: -43_200,
-            })
-        );
-        assert_eq!(
-            RealTiKvSessionTimeZone::parse("UTC"),
-            Some(RealTiKvSessionTimeZone {
-                name: "UTC".to_owned(),
-                offset_secs: 0,
-            })
-        );
-        assert_eq!(
-            RealTiKvSessionTimeZone::parse("SYSTEM"),
-            Some(RealTiKvSessionTimeZone {
-                name: "SYSTEM".to_owned(),
-                offset_secs: 0,
-            })
-        );
-        // No IANA timezone database is threaded in, so a named zone is
-        // refused rather than silently approximated.
-        assert_eq!(RealTiKvSessionTimeZone::parse("Asia/Shanghai"), None);
-        assert_eq!(RealTiKvSessionTimeZone::parse("not-a-zone"), None);
-    }
-
-    #[test]
     fn contradiction_then_remote_query_leaves_no_stale_publication_observer() {
         let installed = Cell::new(false);
         let install_calls = Cell::new(0);
@@ -2224,20 +1626,6 @@ mod tests {
         assert_eq!(indexes[0].index_id(), 5);
         assert_eq!(indexes[0].column_id(), 2);
         assert!(!indexes[0].is_unique(), "declared indexes are non-unique");
-    }
-
-    #[test]
-    fn shared_query_completion_owns_activity_and_cancellation_leases() {
-        let activity = Arc::new(QueryActivity::default());
-        let cancellation = crate::sql_node::ConnectionCancellation::default();
-        let cancellation_lease = cancellation.install(Arc::new(CancelHandle::default()));
-        let activity_lease = activity.begin(7, 11);
-        assert_eq!(activity.active.load(Ordering::Acquire), 1);
-
-        let completion = QueryCompletion::new(cancellation_lease, activity_lease);
-        assert_eq!(activity.active.load(Ordering::Acquire), 1);
-        drop(completion);
-        assert_eq!(activity.active.load(Ordering::Acquire), 0);
     }
 
     struct FactoryEvent(Arc<Mutex<Vec<&'static str>>>);
