@@ -496,8 +496,14 @@ fn the_shapes_a_bootstrap_needs_are_admitted_rather_than_refused() {
         // Defaults, literal and CURRENT_TIMESTAMP.
         "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL DEFAULT 3)",
         "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
-        // AUTO_INCREMENT and table options.
-        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY AUTO_INCREMENT, v BIGINT NOT NULL)",
+        // Table options.
+        //
+        // AUTO_INCREMENT is deliberately NOT here: it is refused by the user
+        // DDL path (see
+        // `create_table_with_auto_increment_is_refused_rather_than_written_unservable`).
+        // The bootstrap corpus is untouched by that refusal because it builds
+        // its tables through `build_table_info` directly rather than through
+        // `lower_ddl`, and no bootstrap table declares the clause anyway.
         "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL) ENGINE=InnoDB",
     ] {
         let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
@@ -535,4 +541,54 @@ fn an_unqualified_name_resolves_against_the_sessions_default_schema() {
         panic!("a CREATE TABLE");
     };
     assert_eq!((schema.as_str(), table.as_str()), ("campaign31", "t"));
+}
+
+/// The live bug this fixes: `CREATE TABLE ... AUTO_INCREMENT` was accepted and
+/// written, and the catalog loader then refused the very table the statement
+/// had just created, so its creator answered `table not found in catalog` to
+/// both `INSERT` and `SELECT` (`rust/docs/operations/sysbench-readiness.md`,
+/// blocker 3, from sysbench's own `sbtest1` shape). DDL and the loader now
+/// read one predicate, so the shape is refused BEFORE anything is written.
+#[test]
+fn create_table_with_auto_increment_is_refused_rather_than_written_unservable() {
+    let parsed = tidb_parser::parse(
+        "CREATE TABLE sbtest1 (id INTEGER NOT NULL AUTO_INCREMENT, k INTEGER NOT NULL, \
+         PRIMARY KEY (id))",
+    )
+    .expect("the fixture SQL parses");
+    let refused = lower_ddl(&parsed, "sbtest").expect_err("this shape must be refused");
+    // Go's own errno for a DDL shape a server will not perform:
+    // `dbterror.ErrUnsupportedDDLOperation`, `Unsupported %s`.
+    assert_eq!(refused.code, 8200);
+    assert!(
+        refused
+            .reason
+            .starts_with("Unsupported CREATE TABLE `sbtest`.`sbtest1`:"),
+        "the refusal names the statement it refuses: {}",
+        refused.reason
+    );
+    assert!(
+        refused.reason.contains("its column id is AUTO_INCREMENT"),
+        "the refusal names the offending column: {}",
+        refused.reason
+    );
+}
+
+/// The two halves of the disagreement now read the same predicate: whatever
+/// `CREATE TABLE` admits is a table the loader will serve.
+#[test]
+fn every_create_table_this_node_admits_has_no_auto_increment_column() {
+    for sql in [
+        "CREATE TABLE t (id BIGINT PRIMARY KEY)",
+        "CREATE TABLE t (id BIGINT PRIMARY KEY, v VARCHAR(20))",
+    ] {
+        let DdlStatement::CreateTable { template, .. } = statement(sql) else {
+            panic!("a CREATE TABLE");
+        };
+        assert_eq!(
+            tidb_exec::cluster_auto_increment::auto_increment_refusal(&template),
+            None,
+            "`{sql}` is admitted, so the loader must serve it"
+        );
+    }
 }

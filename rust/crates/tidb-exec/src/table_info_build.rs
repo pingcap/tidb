@@ -97,16 +97,35 @@ pub enum ClusteredIndexDefMode {
 pub struct DdlAdmissionError {
     /// Exact, self-contained explanation naming the offending clause.
     pub reason: String,
+    /// The MySQL error number the client is told, which defaults to the
+    /// generic 1105 and is Go's own code where this node refuses exactly what
+    /// Go names.
+    pub code: u16,
 }
 
 impl DdlAdmissionError {
-    /// Builds a refusal from its explanation.
+    /// Builds a refusal from its explanation, reported as the generic 1105.
     pub fn new(reason: impl Into<String>) -> Self {
         Self {
             reason: reason.into(),
+            code: GENERIC_ERROR_CODE,
+        }
+    }
+
+    /// Go `dbterror.ErrUnsupportedDDLOperation` (8200, `Unsupported %s`): a
+    /// table shape this node will not create because it could not then serve
+    /// it. Refusing under Go's own errno is what lets a client tell "this
+    /// server does not do that" from an internal failure.
+    pub fn unsupported(what: impl Into<String>) -> Self {
+        Self {
+            reason: format!("Unsupported {}", what.into()),
+            code: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
         }
     }
 }
+
+/// The MySQL error number for a refusal that has no Go code of its own.
+const GENERIC_ERROR_CODE: u16 = 1105;
 
 impl fmt::Display for DdlAdmissionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

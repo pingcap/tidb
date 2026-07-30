@@ -656,7 +656,14 @@ impl ClusterServerSession {
                          CREATE DATABASE and DROP DATABASE only; run this statement on a TiDB \
                          server",
                     )),
-                    Err(refusal) => Err(SqlQueryError::unknown(refusal.to_string())),
+                    // The refusal carries Go's own errno where it has one
+                    // (`Unsupported ...` is 8200), so a client can tell a
+                    // shape this server will not do from an internal failure.
+                    Err(refusal) => Err(SqlQueryError::new(
+                        refusal.code,
+                        *b"HY000",
+                        refusal.to_string(),
+                    )),
                 }
             }
         }

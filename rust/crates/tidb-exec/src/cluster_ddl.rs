@@ -54,6 +54,7 @@ use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
 
+use crate::cluster_auto_increment::auto_increment_refusal;
 use crate::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
 };
@@ -208,6 +209,15 @@ fn lower_create_table(
         CATALOG_COLLATION,
         ClusteredIndexDefMode::On,
     )?;
+    // The catalog loader refuses to serve an AUTO_INCREMENT table, so writing
+    // one here would publish a table this very node then answers `table not
+    // found in catalog` for -- a success return that isn't. The refusal reads
+    // the loader's own predicate, which is why the two cannot drift apart.
+    if let Some(refusal) = auto_increment_refusal(&template) {
+        return Err(DdlAdmissionError::unsupported(format!(
+            "CREATE TABLE `{schema}`.`{table}`: {refusal}"
+        )));
+    }
     Ok(DdlStatement::CreateTable {
         schema,
         table,

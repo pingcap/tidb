@@ -152,6 +152,14 @@ fn cluster_table(table: &TableInfo, storage: &ClusterTableStorage) -> Result<KvT
     if table.partition.is_some() {
         return Err("it is partitioned".to_owned());
     }
+    // AUTO_INCREMENT is acted on through `KvTable::auto_increment_offset`,
+    // which this loader cannot set honestly. The reason, and the fact that
+    // this node's `CREATE TABLE` now refuses the same shape rather than
+    // writing a table the loader drops, live in one place:
+    // `tidb_exec::cluster_auto_increment`.
+    if let Some(refusal) = tidb_exec::cluster_auto_increment::auto_increment_refusal(table) {
+        return Err(refusal);
+    }
     if table.state != SchemaState::PUBLIC {
         return Err(format!(
             "its schema state is {} rather than public",
@@ -179,24 +187,6 @@ fn cluster_table(table: &TableInfo, storage: &ClusterTableStorage) -> Result<KvT
     let mut kv_columns: Vec<KvColumn> = Vec::with_capacity(columns.len());
     for column in &columns {
         let name = column.name.original().to_owned();
-        // AUTO_INCREMENT is stated on the column's type flags and acted on
-        // through `KvTable::auto_increment_offset`, which this loader cannot
-        // set honestly: the ids belong to the cluster's own autoid allocator,
-        // handed out in a transaction of their own and shared with every
-        // other node, and a counter invented here would re-issue ids that
-        // already exist. Loading the table as if the column were ordinary
-        // left an INSERT that omits it answering 1364 -- the right outcome
-        // for the wrong reason, and only because AUTO_INCREMENT implies NOT
-        // NULL. Refused by name instead, like a prefix index below.
-        if column
-            .field_type
-            .has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT)
-        {
-            return Err(format!(
-                "its column {name} is AUTO_INCREMENT, whose ids come from the cluster's own \
-                 autoid allocator, which this node does not consume"
-            ));
-        }
         // `None` is Go's nil default -- "no DEFAULT was written" -- which is
         // not the same fact as a `DEFAULT NULL`, so it must stay `None`
         // rather than become `Some(Null)`: only the first makes an omitted
