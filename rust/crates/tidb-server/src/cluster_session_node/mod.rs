@@ -119,35 +119,26 @@ use std::time::Duration;
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::{AnalyzeStatement, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE};
 use tidb_exec::cluster_ddl::DdlStatement;
-use tidb_exec::cop_scan::CopScanSource;
 use tidb_exec::real_tikv_analyze::prepare_cluster_analyze;
-use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
 use tidb_exec::real_tikv_ddl::prepare_cluster_ddl;
-use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::cluster_storage::{
     BufferImage, ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
 use tidb_executor::pushdown_scan::PushdownScanner;
-use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_session::privilege::{GlobalPriv, PrivilegeRegistry};
 use tidb_session::process::ProcessRegistry;
 use tidb_session::{GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange};
 
-use crate::cluster_account_seam::{ClusterAccountWriter, RealClusterAccountWriter};
-use crate::cluster_analyze_seam::{ClusterAnalyze, RealClusterAnalyze};
+use crate::cluster_account_seam::ClusterAccountWriter;
+use crate::cluster_analyze_seam::ClusterAnalyze;
 use crate::cluster_session::{cluster_session_catalog, SkippedTable};
-use crate::cluster_sysvar_seam::{ClusterSysvarWriter, RealClusterSysvarWriter};
-use crate::node_config::NodeConfig;
+use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::pipeline_session::MaterializedResultSetSource;
-use crate::real_tikv_node::{
-    node_accounts, run_with_process_shutdown, spawn_catalog_reloader, spawn_privilege_watch,
-    spawn_schema_version_watch, RunConfiguredNodeError,
-};
 use crate::sql_node::{
-    ConcurrentSqlNode, ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult,
-    QuerySession, QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
+    ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession,
+    QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
 };
 
 /// The PD/TiKV control-plane deadline this node's boot and statements use, the
@@ -157,9 +148,11 @@ const CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Go `errno.ErrTableaccessDenied`.
 const ER_TABLEACCESS_DENIED_ERROR: u16 = 1142;
 
+mod boot;
 mod ddl;
 mod transactions;
 
+pub use boot::run_cluster_session_node;
 pub use ddl::{ClusterDdl, RealClusterDdl};
 pub use tidb_exec::real_tikv_ddl::ClusterDdlReport;
 #[cfg(test)]
@@ -1111,204 +1104,11 @@ fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
     SqlQueryError::new(mapped.code, mapped.state, mapped.message)
 }
 
-/// Starts the convergence node: wide SQL over cluster storage and cluster
-/// accounts, served on the MySQL port.
-pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
-    let mut loaded = None;
-    let authority = ProductionReadProcessAuthority::connect_with_catalog(
-        config.pd_endpoints.clone(),
-        CONTROL_PLANE_TIMEOUT,
-        |opener| {
-            loaded = Some(
-                load_catalog_from_cluster(opener, CONTROL_PLANE_TIMEOUT)
-                    .map_err(|error| error.to_string())?,
-            );
-            // The authority insists on naming one bounded-read table because
-            // the single-relation coprocessor path is built around one
-            // relation. This node never opens a bounded read session -- every
-            // statement goes through the session driver -- so the table is
-            // inert, and naming a real one would only make startup depend on
-            // the cluster happening to hold a table of that shape.
-            Ok(ConfiguredTable::new(
-                "",
-                "",
-                1,
-                Vec::<ConfiguredColumn>::new(),
-            ))
-        },
-    )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    let startup = loaded.expect("the catalog closure ran exactly once");
-    let schema_version = startup.schema_version;
-
-    // `node_accounts` also hands back the privilege reloader (landed in
-    // parallel); it must stay alive for the node's run and drop before the
-    // authority's shutdown drain, like the catalog reloader below.
-    let (users, privilege_reloader) = node_accounts(&config, &authority)?;
-    // Statistics for every table this convergence node's boot catalog holds.
-    // Read before `spawn_catalog_reloader` consumes `startup`, so the boot
-    // load sees the exact table set the node is about to serve. Held in the
-    // `run_with_process_shutdown` tuple below so its reload thread stops
-    // before the authority's shutdown drain, the same discipline every other
-    // reloader here follows.
-    let (stats, stats_reloader) = crate::real_tikv_node::spawn_node_stats(
-        &startup,
-        &authority,
-        config.schema_lease,
-        CONTROL_PLANE_TIMEOUT,
-    )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    let (catalog, reloader) =
-        spawn_catalog_reloader(startup, authority.transaction_opener(), config.schema_lease)
-            .map_err(|error| {
-                RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
-            })?;
-    // The watch only makes the reload *prompt*; the tick above is what makes
-    // it correct. It is listed before the reloader in the tuple below so it is
-    // dropped first: a watch may not outlive the thread it nudges.
-    let watcher = spawn_schema_version_watch(&config, &reloader);
-    // The account half of the same division: the reloader's tick is what makes
-    // a peer's `GRANT` reach this node at all, and this watch is what makes it
-    // arrive in a round trip instead of an interval.
-    let privilege_watcher = spawn_privilege_watch(&config, privilege_reloader.as_ref());
-    // The sysvar half of the same division: a Go peer's `SET GLOBAL` is
-    // durable in `mysql.global_variables` the instant it commits, and this
-    // reloader is what makes THIS node notice it -- one tick, or one round
-    // trip if the etcd watch fires first. Ticks at the same `schema_lease / 2`
-    // cadence [`node_accounts`] uses for the privilege reloader.
-    let sysvar_reloader = crate::cluster_sysvar_seam::SysvarReloader::spawn(
-        users.global_vars(),
-        authority.transaction_opener(),
-        config.schema_lease / 2,
-        CONTROL_PLANE_TIMEOUT,
-    )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    let sysvar_watcher = crate::real_tikv_node::spawn_sysvar_watch(&config, Some(&sysvar_reloader));
-    // The node's coprocessor: base-table scans now carry their predicate,
-    // their row cap and their column list to the region, and only the
-    // surviving rows come back. The session's own staged writes are merged on
-    // top of them client-side, which is Go's `UnionScan` over a distsql
-    // reader.
-    let cop_scans: Arc<dyn PushdownScanner> =
-        Arc::new(CopScanSource::new(authority.transport_factory(), "UTC", 0));
-    let factory = Arc::new(
-        ClusterSessionFactory::new(
-            Arc::new(RealClusterTransactions::new(
-                authority.transaction_opener(),
-                CONTROL_PLANE_TIMEOUT,
-            )),
-            Arc::new(RealClusterDdl::new(
-                authority.transaction_opener(),
-                Arc::clone(&catalog),
-                CONTROL_PLANE_TIMEOUT,
-                crate::real_tikv_node::connect_schema_notifier(&config),
-            )),
-            Arc::new(RealClusterAccountWriter::new(
-                Arc::new(authority.transaction_opener()),
-                users.accounts(),
-                CONTROL_PLANE_TIMEOUT,
-                crate::real_tikv_node::connect_schema_notifier(&config),
-            )),
-            Arc::new(RealClusterSysvarWriter::new(
-                Arc::new(authority.transaction_opener()),
-                users.global_vars(),
-                CONTROL_PLANE_TIMEOUT,
-                crate::real_tikv_node::connect_schema_notifier(&config),
-            )),
-            Arc::new(RealClusterAnalyze::new(
-                Arc::new(authority.transaction_opener()),
-                Arc::clone(&stats),
-                CONTROL_PLANE_TIMEOUT,
-            )),
-            catalog,
-            users.accounts(),
-            users.global_vars(),
-            Arc::clone(&stats),
-        )
-        .with_cop_scans(cop_scans),
-    );
-    let skipped = render_skipped(factory.boot_skipped_tables());
-    let stats_receipt = stats.receipt();
-
-    run_with_process_shutdown(
-        (
-            factory,
-            watcher,
-            reloader,
-            privilege_watcher,
-            privilege_reloader,
-            sysvar_watcher,
-            sysvar_reloader,
-            stats_reloader,
-        ),
-        authority,
-        move |(
-            factory,
-            watcher,
-            reloader,
-            privilege_watcher,
-            privilege_reloader,
-            sysvar_watcher,
-            sysvar_reloader,
-            stats_reloader,
-        )| {
-            let node =
-                ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
-                    crate::real_tikv_node::emit_connections_startup_failure(&error);
-                    RunConfiguredNodeError::Node(error)
-                })?;
-            let address = node.local_addr().map_err(|error| {
-                crate::real_tikv_node::emit_connections_startup_failure(&error);
-                RunConfiguredNodeError::Node(error)
-            })?;
-            let shutdown = node.shutdown_handle();
-            ctrlc::set_handler(move || shutdown.shutdown()).map_err(|error| {
-                crate::real_tikv_node::emit_connections_startup_failure(&error);
-                RunConfiguredNodeError::Signal(error)
-            })?;
-            eprintln!(
-            "{{\"event\":\"cluster_session_node_ready\",\"address\":\"{address}\",\"schema_version\":{schema_version},\"max_connections\":{},\"account_count\":{},\"skipped_tables\":[{skipped}],\"stats_loaded\":{},\"stats_pseudo\":{}}}",
-            config.max_connections,
-            users.len(),
-            stats_receipt.loaded,
-            stats_receipt.pseudo,
-        );
-            let outcome = node.run().map_err(RunConfiguredNodeError::Node);
-            // The reload threads hold their own transaction openers; joining
-            // them here releases those PD handles before the authority's
-            // shutdown drain. The watch goes first: it nudges the reloader,
-            // so it must not outlive it.
-            drop(watcher);
-            drop(reloader);
-            drop(privilege_watcher);
-            drop(privilege_reloader);
-            drop(sysvar_watcher);
-            drop(sysvar_reloader);
-            drop(stats_reloader);
-            outcome
-        },
-    )
-}
-
 /// Storage bound to no snapshot, used only to decide which tables a catalog
 /// *could* be built over. Deciding that reads a `TableInfo`, never a row.
 fn detached_storage() -> ClusterTableStorage {
     let slot: Arc<Mutex<dyn ClusterSnapshot>> = Arc::new(Mutex::new(SwappableSnapshot::new()));
     ClusterTableStorage::new(MutationBuffer::new(), slot)
-}
-
-/// Renders the boot-time refusals for the node's ready event.
-fn render_skipped(skipped: &[SkippedTable]) -> String {
-    skipped
-        .iter()
-        .map(|table| {
-            format!(
-                "{{\"table\":{:?},\"reason\":{:?}}}",
-                table.name, table.reason
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",")
 }
 
 #[cfg(test)]
