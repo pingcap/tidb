@@ -5,8 +5,9 @@
 Every statement `sysbench`'s `oltp_*` workloads issue is accepted and answered
 correctly, with results byte-identical to a real Go `tidb-server` reading the
 same TiKV. What blocks a sysbench *number* is three things around the SQL: the
-client cannot complete the connection, `CREATE INDEX` is refused, and an
-`AUTO_INCREMENT` table becomes invisible to the node that just created it.
+client cannot complete the connection, `CREATE INDEX` is refused, and
+`AUTO_INCREMENT` is not served (originally: silently, by creating a table the
+node then could not see; now, honestly, by refusing the `CREATE`).
 
 Measured on 2026-07-30, `origin/hparser-integration` at `9569d280dd`, release
 build, macOS arm64, against a `tiup playground v8.5.6` cluster (1 PD, 1 TiKV,
@@ -97,7 +98,30 @@ exercise, and the benchmark stops measuring what it is for. Note the node does
 maintain secondary indexes it was configured with (`--read-table`'s trailing
 index section), so this is a DDL-surface gap, not a storage gap.
 
-## Blocker 3: an `AUTO_INCREMENT` table is created and then not served
+## Blocker 3 (FIXED as a refusal): `AUTO_INCREMENT` is now refused at CREATE
+
+**Update.** The create/serve mismatch below is gone: `CREATE TABLE` and the
+catalog loader now read one predicate
+(`tidb_exec::cluster_auto_increment::auto_increment_refusal`), so the node no
+longer writes a table it cannot serve. `CREATE TABLE ... AUTO_INCREMENT`
+answers Go's own errno instead, before any mutation:
+
+```
+ERROR 8200 (HY000): Unsupported CREATE TABLE `sbtest`.`sbtest1`: its column id
+is AUTO_INCREMENT, whose ids come from the cluster's own autoid allocator,
+which this node does not consume
+```
+
+This converts a silent unusable table into an honest refusal. It does **not**
+make sysbench's default schema work — `--auto-inc=off` is still required, and
+the rung-7 result below is unchanged. Serving `AUTO_INCREMENT` needs the
+allocator to get the separate-key home Go gives it (`pkg/meta/meta.go`'s
+`TID:`/`IID:` keys, `pkg/meta/autoid/autoid.go`'s reserve-in-its-own-txn), a
+unit of its own that must prove the counter survives a node restart.
+
+The original report follows.
+
+### Original report: an `AUTO_INCREMENT` table is created and then not served
 
 sysbench's default `id INTEGER NOT NULL AUTO_INCREMENT` is accepted by
 `CREATE TABLE` — and the resulting table is then invisible:
@@ -160,8 +184,9 @@ integer-to-integer.
    (Alternatively, a sysbench built against libmysqlclient rather than
    Connector/C 3.4 would connect today; the one on this machine is not.)
 2. `CREATE INDEX` in the DDL surface, so `prepare` runs unmodified.
-3. Resolve the `AUTO_INCREMENT` create/serve mismatch, or accept
-   `--auto-inc=off` as the documented configuration.
+3. `--auto-inc=off` is now the documented configuration: the create/serve
+   mismatch is resolved as a refusal, and serving the clause needs the
+   persistent allocator unit described under blocker 3.
 
 With those, rungs 4 through 6 should run as written, and rung 5's Rust-vs-Go
 checksum comparison is already in place to keep any resulting number honest.
