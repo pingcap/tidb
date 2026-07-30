@@ -411,3 +411,83 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     assert_eq!(decides("SELECT DISTINCT v FROM bd WHERE id IN (1)"), None);
     assert_eq!(decides("SELECT v FROM bd WHERE id = 1"), None);
 }
+
+/// A constant a point plan keys by must first be moved into the COLUMN's
+/// domain -- Go `getPointGetValue` in `pkg/planner/core/point_get_plan.go`.
+///
+/// The regression: every non-integer constant was treated as "names no
+/// integer handle", so the point plan was still chosen and returned ZERO
+/// rows. `WHERE int_pk = 1.0` silently lost the row, while the same
+/// predicate on an unindexed or merely-indexed column returned it.
+///
+/// Every expectation below is TiDB's own answer, captured with
+/// `rust/difftests/gorun` against a mock-backed session.
+#[test]
+fn a_point_plan_keys_by_the_constant_in_the_columns_domain() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE pk1 (pk BIGINT PRIMARY KEY, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO pk1 VALUES (1, 10)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let rows = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap();
+    let one = vec![vec![Datum::Int(1)]];
+    let none = Vec::<Vec<Datum>>::new();
+
+    // Exactly representable: the point plan keys handle 1 and finds the row.
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk = 1.0"), one);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk = 1.00"), one);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk = 1e0"), one);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk = '1'"), one);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk = '1.0'"), one);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk IN (1.0, 2.0)"), one);
+
+    // Not representable: the point plan is abandoned and the SCAN answers,
+    // which is the same empty result -- the fix must not make these match.
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk = 1.5"), none);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk = 0.5"), none);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk = '1.5'"), none);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk IN (1.5, 2.5)"), none);
+
+    // The inequalities never took the point path and must not move.
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk <> 1.0"), none);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk <> 1.5"), one);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk < 1.5"), one);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk <= 1.0"), one);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk > 0.5"), one);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk >= 1.0"), one);
+    assert_eq!(rows("SELECT pk FROM pk1 WHERE pk BETWEEN 0.5 AND 1.5"), one);
+
+    // A unique index is the same rule through the other arm.
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE uq (id BIGINT PRIMARY KEY, u BIGINT UNIQUE)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO uq VALUES (7, 1)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let rows = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap();
+    assert_eq!(
+        rows("SELECT id FROM uq WHERE u = 1.0"),
+        vec![vec![Datum::Int(7)]]
+    );
+    assert_eq!(
+        rows("SELECT id FROM uq WHERE u IN (1.0, 2.0)"),
+        vec![vec![Datum::Int(7)]]
+    );
+    assert_eq!(
+        rows("SELECT id FROM uq WHERE u = 1.5"),
+        Vec::<Vec<Datum>>::new()
+    );
+}

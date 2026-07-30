@@ -45,6 +45,7 @@
 //! it. Keeping the two together is what keeps a costed path and a runnable
 //! path from drifting apart.
 
+use super::point_get_key::point_get_value;
 use super::*;
 
 /// Commits the narrowed access path a single-table `SELECT` qualifies for,
@@ -813,14 +814,17 @@ pub(crate) fn try_batch_point_get(
     // The handle path.
     if let Some(offset) = table.pk_handle_offset() {
         if columns[offset].0.eq_ignore_ascii_case(name) {
+            // Go `newBatchPointGetPlan` runs every list element through
+            // `getPointGetValue` and returns `nil` -- no batch plan at all --
+            // as soon as one of them is not exactly representable, so a list
+            // mixing `1.0` with `1.5` still answers from a scan rather than
+            // silently dropping the element it cannot key.
             let mut handles = Vec::with_capacity(values.len());
             for value in &values {
-                match value {
-                    Datum::Int(v) => handles.push(TableHandle::Int(*v)),
-                    Datum::UInt(v) => handles.push(TableHandle::Int(*v as i64)),
-                    // A non-integer constant names no integer handle, so it
-                    // simply matches nothing.
-                    _ => {}
+                match point_get_value(&columns[offset].1, value) {
+                    Some(Datum::Int(v)) => handles.push(TableHandle::Int(v)),
+                    Some(Datum::UInt(v)) => handles.push(TableHandle::Int(v as i64)),
+                    _ => return Ok(None),
                 }
             }
             return Ok(Some(handles));
@@ -839,6 +843,15 @@ pub(crate) fn try_batch_point_get(
         {
             continue;
         }
+        let field_type = &columns[index.column_offsets[0]].1;
+        let mut converted = Vec::with_capacity(values.len());
+        for value in &values {
+            let Some(value) = point_get_value(field_type, value) else {
+                return Ok(None);
+            };
+            converted.push(value);
+        }
+        let values = converted;
         let mut handles = Vec::new();
         for value in &values {
             if let Some(handle) = table
@@ -851,6 +864,30 @@ pub(crate) fn try_batch_point_get(
         return Ok(Some(handles));
     }
     Ok(None)
+}
+
+/// Moves every pair's constant into its column's domain, in place.
+///
+/// Returns false when any pair names an unknown column or holds a constant
+/// the column cannot represent exactly, which is Go's "no point plan; let the
+/// scan decide" answer.
+fn convert_pairs_to_column_domain(
+    pairs: &mut [NameValuePair],
+    columns: &[(String, FieldType)],
+) -> bool {
+    for pair in pairs {
+        let Some((_, field_type)) = columns
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&pair.column))
+        else {
+            return false;
+        };
+        let Some(value) = point_get_value(field_type, &pair.value) else {
+            return false;
+        };
+        pair.value = value;
+    }
+    true
 }
 
 /// One `column = constant` equality from a `WHERE`, Go's `nameValuePair`.
@@ -939,6 +976,14 @@ pub(crate) fn try_point_get(
     if !name_value_pairs(where_clause, &mut pairs) || pairs.is_empty() {
         return Ok(None);
     }
+    // Go `getNameValuePairs` moves every constant into its column's domain
+    // before the pair is usable as a key, and abandons the whole point plan
+    // when one of them will not survive the round trip. Doing it here, once
+    // for every pair, is what keeps the handle arm below dealing only in
+    // integers and the unique-index arm dealing only in column-typed values.
+    if !convert_pairs_to_column_domain(&mut pairs, columns) {
+        return Ok(None);
+    }
 
     // The handle path: the primary key pinned by exactly one equality, which
     // is Go's `len(pairs) == 1` condition on the handle pair.
@@ -948,9 +993,9 @@ pub(crate) fn try_point_get(
             return Ok(Some(match &pairs[0].value {
                 Datum::Int(value) => Some(TableHandle::Int(*value)),
                 Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
-                // A non-integer constant cannot name an integer handle, so no
-                // row matches rather than the plan being wrong.
-                _ => None,
+                // Unreachable: the conversion above has already put the value
+                // in the handle column's integer domain or refused the plan.
+                _ => return Ok(None),
             }));
         }
     }

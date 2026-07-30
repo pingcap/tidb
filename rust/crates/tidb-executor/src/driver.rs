@@ -91,6 +91,7 @@ mod grouping;
 mod multi_dml;
 mod only_full_group_by;
 mod params;
+mod point_get_key;
 mod recursive_cte;
 mod set_opr;
 mod subquery;
