@@ -47,11 +47,11 @@ const (
 )
 
 func buildSelectFieldForTest(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
-	info, err := buildSelectFieldInfo(tctx, db, dbName, tableName, completeInsert, nil)
+	selectField, selectLen, _, err := buildSelectField(tctx, db, dbName, tableName, completeInsert, nil)
 	if err != nil {
 		return "", 0, err
 	}
-	return info.outputFieldSQL, info.outputColumnCount, nil
+	return selectField, selectLen, nil
 }
 
 func newColumnCacheForTest(dbName, tableName string, sourceNames []string, hasGenerateColumn bool, selectedNames []string) *writableColumnCache {
@@ -324,11 +324,11 @@ func TestBuildSelectField(t *testing.T) {
 		false,
 		[]string{"name", "quo`te"},
 	)
-	selectInfo, err := buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnCache)
+	selectField, selectLen, sourceFields, err := buildSelectField(tctx, baseConn, "test", "t", false, columnCache)
 	require.NoError(t, err)
-	require.Equal(t, "`name`,`quo``te`", selectInfo.outputFieldSQL)
-	require.Equal(t, 2, selectInfo.outputColumnCount)
-	require.Equal(t, "`id`,`name`,`quo``te`", selectInfo.sourceFieldSQL)
+	require.Equal(t, "`name`,`quo``te`", selectField)
+	require.Equal(t, 2, selectLen)
+	require.Equal(t, "`id`,`name`,`quo``te`", sourceFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	columnCache = newColumnCacheForTest(
@@ -338,11 +338,11 @@ func TestBuildSelectField(t *testing.T) {
 		false,
 		[]string{"id", "quo`te"},
 	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnCache)
+	selectField, selectLen, sourceFields, err = buildSelectField(tctx, baseConn, "test", "t", false, columnCache)
 	require.NoError(t, err)
-	require.Equal(t, "`id`,`quo``te`", selectInfo.outputFieldSQL)
-	require.Equal(t, 2, selectInfo.outputColumnCount)
-	require.Equal(t, "`id`,`name`,`quo``te`", selectInfo.sourceFieldSQL)
+	require.Equal(t, "`id`,`quo``te`", selectField)
+	require.Equal(t, 2, selectLen)
+	require.Equal(t, "`id`,`name`,`quo``te`", sourceFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	columnCache = newColumnCacheForTest(
@@ -352,27 +352,27 @@ func TestBuildSelectField(t *testing.T) {
 		false,
 		[]string{"id"},
 	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnCache)
+	selectField, selectLen, sourceFields, err = buildSelectField(tctx, baseConn, "test", "t", false, columnCache)
 	require.NoError(t, err)
-	require.Equal(t, "`id`", selectInfo.outputFieldSQL)
-	require.Equal(t, 1, selectInfo.outputColumnCount)
-	require.Equal(t, "`id`,`name`", selectInfo.sourceFieldSQL)
+	require.Equal(t, "`id`", selectField)
+	require.Equal(t, 1, selectLen)
+	require.Equal(t, "`id`,`name`", sourceFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	columnCache = newColumnCacheForTest("test", "t", nil, true, nil)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnCache)
+	selectField, selectLen, sourceFields, err = buildSelectField(tctx, baseConn, "test", "t", false, columnCache)
 	require.NoError(t, err)
-	require.Empty(t, selectInfo.outputFieldSQL)
-	require.Equal(t, 0, selectInfo.outputColumnCount)
-	require.Empty(t, selectInfo.sourceFieldSQL)
+	require.Empty(t, selectField)
+	require.Equal(t, 0, selectLen)
+	require.Empty(t, sourceFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	columnCache = newColumnCacheForTest("test", "t", []string{"id", "name"}, false, nil)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnCache)
+	selectField, selectLen, sourceFields, err = buildSelectField(tctx, baseConn, "test", "t", false, columnCache)
 	require.NoError(t, err)
-	require.Equal(t, "*", selectInfo.outputFieldSQL)
-	require.Equal(t, 2, selectInfo.outputColumnCount)
-	require.Empty(t, selectInfo.sourceFieldSQL)
+	require.Equal(t, "*", selectField)
+	require.Equal(t, 2, selectLen)
+	require.Empty(t, sourceFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	// Test build SelectField with retry

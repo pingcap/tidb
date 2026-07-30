@@ -1059,12 +1059,6 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 	return conn, nil
 }
 
-type selectFieldInfo struct {
-	outputFieldSQL    string
-	outputColumnCount int
-	sourceFieldSQL    string
-}
-
 type writableColumnInfo struct {
 	sourceNames        []string
 	selectedNames      []string
@@ -1125,29 +1119,25 @@ func (c *writableColumnCache) setSelectedNames(dbName, tableName string, selecte
 	c.columns[key] = info
 }
 
-func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnCache *writableColumnCache) (selectFieldInfo, error) { // revive:disable-line:flag-parameter
+func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnCache *writableColumnCache) (string, int, string, error) { // revive:disable-line:flag-parameter
 	sourceColumns, hasGenerateColumn, err := columnCache.get(tctx, db, dbName, tableName)
 	if err != nil {
-		return selectFieldInfo{}, err
+		return "", 0, "", err
 	}
 	selectedColumns := sourceColumns
 	if cachedSelectedColumns, ok := columnCache.getSelectedNames(dbName, tableName); ok {
 		selectedColumns = cachedSelectedColumns
 	}
 	selectedFields := columnNamesToSelectFields(selectedColumns)
-	info := selectFieldInfo{
-		outputColumnCount: len(selectedFields),
-	}
+	selectLen := len(selectedFields)
 	if !slices.Equal(sourceColumns, selectedColumns) {
 		sourceFields := columnNamesToSelectFields(sourceColumns)
-		info.outputFieldSQL = strings.Join(selectedFields, ",")
-		info.sourceFieldSQL = strings.Join(sourceFields, ",")
-	} else if completeInsert || hasGenerateColumn {
-		info.outputFieldSQL = strings.Join(selectedFields, ",")
-	} else {
-		info.outputFieldSQL = "*"
+		return strings.Join(selectedFields, ","), selectLen, strings.Join(sourceFields, ","), nil
 	}
-	return info, nil
+	if completeInsert || hasGenerateColumn {
+		return strings.Join(selectedFields, ","), selectLen, "", nil
+	}
+	return "*", selectLen, "", nil
 }
 
 func getWritableColumnNames(tctx *tcontext.Context, db *BaseConn, dbName, tableName string) ([]string, bool, error) {
