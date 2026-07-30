@@ -78,6 +78,20 @@ locate('a', 'AA')
 select locate('a', 'a');
 locate('a', 'a')
 1
+set names latin1;
+select @@collation_connection;
+@@collation_connection
+latin1_bin
+select collation('a'), 'a' = 'A';
+collation('a')	'a' = 'A'
+latin1_bin	0
+set names latin1 collate latin1_swedish_ci;
+select @@collation_connection;
+@@collation_connection
+latin1_swedish_ci
+select collation('a'), 'a' = 'A';
+collation('a')	'a' = 'A'
+latin1_swedish_ci	0
 set names utf8mb4;
 SELECT default_collate_name, maxlen FROM information_schema.character_sets ORDER BY character_set_name;
 default_collate_name	maxlen
@@ -203,3 +217,122 @@ id	task	access object	operator info
 IndexReader	root		index:Selection
 └─Selection	cop[tikv]		eq(cd_test_utf8mb4_0900_bin.t.uuid, "7dce58ba-ba84-4297-94cf-c23cf3a39ed3")
   └─IndexRangeScan	cop[tikv]	table:t, index:idx_uuid(uuid)	range:["7dce58ba-ba84-4297-94cf-c23cf3a39ed3","7dce58ba-ba84-4297-94cf-c23cf3a39ed3"], keep order:false, stats:pseudo
+drop database if exists cd_test_latin1_swedish_ci;
+create database cd_test_latin1_swedish_ci character set latin1 collate latin1_swedish_ci;
+use cd_test_latin1_swedish_ci;
+select @@character_set_database;
+@@character_set_database
+latin1
+select @@collation_database;
+@@collation_database
+latin1_swedish_ci
+drop table if exists t;
+create table t(id int primary key, val varchar(256) charset latin1 collate latin1_swedish_ci, key idx_a(val));
+insert into t values
+(33, '!'),
+(3290422, '256'),
+(13106, '32'),
+(1, 'ÀÁÂÃàáâãÇçÐðÈÉÊËèéêëÌÍÎÏìíîïÑñÒÓÔÕòóôõÙÚÛùúûÜÝüý'),
+(2, 'aaaaaaaaccddeeeeeeeeiiiiiiiinnoooooooouuuuuuyyyy'),
+(6385252, 'and'),
+(4289652, 'Att'),
+(90, 'Z'),
+(91, '['),
+(197, 'Å'),
+(15035233, 'åka'),
+(23387, '[['),
+(92, '\\'),
+(14972001, 'äta'),
+(15103073, 'æta'),
+(23644, '\\\\'),
+(93, ']'),
+(63084, 'öl'),
+(23901, ']]'),
+(95, '_'),
+(216, 'Ø'),
+(248, 'ø'),
+(222, 'Þ'),
+(254, 'þ'),
+(255, 'ÿ'),
+(140, 'Œ'),
+(156, 'œ'),
+(3, '中文／＃１８９５５');
+select id, val = lag(val) over (order by val, id) eq_prev, hex(weight_string(val)) w from t order by val, id;
+id	eq_prev	w
+33	NULL	21
+3290422	0	323536
+13106	0	3332
+4289652	0	417474
+90	0	5A
+91	0	5B
+23387	0	5B5B
+92	0	5C
+23644	0	5C5C
+93	0	5D
+23901	0	5D5D
+95	0	5F
+2	0	616161616161616163636464656565656565656569696969696969696E6E6F6F6F6F6F6F6F6F75757575757579797979
+6385252	0	616E64
+1	0	C380C381C382C383C3A0C3A1C3A2C3A3C387C3A7C390C3B0C388C389C38AC38BC3A8C3A9C3AAC3ABC38CC38DC38EC38FC3ACC3ADC3AEC3AFC391C3B1C392C393C394C395C3B2C3B3C3B4C3B5C399C39AC39BC3B9C3BAC3BBC39CC39DC3BCC3BD
+197	0	C385
+216	0	C398
+222	0	C39E
+14972001	0	C3A47461
+15035233	0	C3A56B61
+15103073	0	C3A67461
+63084	0	C3B66C
+248	0	C3B8
+254	0	C3BE
+255	0	C3BF
+140	0	C592
+156	0	C593
+3	0	E4B8ADE69687EFBC8FEFBC83EFBC91EFBC98EFBC99EFBC95EFBC95
+explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val = 'z' order by id;
+id	task	access object	operator info
+IndexReader	root		index:IndexRangeScan
+└─IndexRangeScan	cop[tikv]	table:t, index:idx_a(val)	range:["z","z"], keep order:true, stats:pseudo
+select /*+ USE_INDEX(t, idx_a) */ id, val from t where val = 'z' order by id;
+id	val
+explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val like 'Ä__' order by id;
+id	task	access object	operator info
+Sort	root		cd_test_latin1_swedish_ci.t.id
+└─IndexReader	root		index:Selection
+  └─Selection	cop[tikv]		like(cd_test_latin1_swedish_ci.t.val, "Ä__", 92)
+    └─IndexRangeScan	cop[tikv]	table:t, index:idx_a(val)	range:["Ä","Å"), keep order:false, stats:pseudo
+select /*+ USE_INDEX(t, idx_a) */ id, val from t where val like 'Ä__' order by id;
+id	val
+explain format='plan_tree' select /*+ USE_INDEX(t, idx_a) */ id, val from t where val > '_' order by id;
+id	task	access object	operator info
+Sort	root		cd_test_latin1_swedish_ci.t.id
+└─IndexReader	root		index:IndexRangeScan
+  └─IndexRangeScan	cop[tikv]	table:t, index:idx_a(val)	range:("_",+inf], keep order:false, stats:pseudo
+select /*+ USE_INDEX(t, idx_a) */ id, val from t where val > '_' order by id;
+id	val
+1	ÀÁÂÃàáâãÇçÐðÈÉÊËèéêëÌÍÎÏìíîïÑñÒÓÔÕòóôõÙÚÛùúûÜÝüý
+2	aaaaaaaaccddeeeeeeeeiiiiiiiinnoooooooouuuuuuyyyy
+3	中文／＃１８９５５
+140	Œ
+156	œ
+197	Å
+216	Ø
+222	Þ
+248	ø
+254	þ
+255	ÿ
+63084	öl
+6385252	and
+14972001	äta
+15035233	åka
+15103073	æta
+explain format='plan_tree' select id, val from t where concat(val, val) between 'ä' and 'ö' order by id;
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		ge(concat(cd_test_latin1_swedish_ci.t.val, cd_test_latin1_swedish_ci.t.val), "ä"), le(concat(cd_test_latin1_swedish_ci.t.val, cd_test_latin1_swedish_ci.t.val), "ö")
+  └─TableFullScan	cop[tikv]	table:t	keep order:true, stats:pseudo
+select id, val from t where concat(val, val) between 'ä' and 'ö' order by id;
+id	val
+14972001	äta
+15035233	åka
+15103073	æta
+use test;
+drop database cd_test_latin1_swedish_ci;
