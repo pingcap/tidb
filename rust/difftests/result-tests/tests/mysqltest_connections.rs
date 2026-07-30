@@ -51,6 +51,26 @@
 //! would silently attribute every following statement's outcome to the wrong
 //! identity, which is the exact failure the script reader already refuses to
 //! commit.
+//!
+//! Four of the 37 refuse for that reason, and each names a real gap rather
+//! than a driver limit:
+//!
+//!  * `privilege/privileges` -- `CREATE USER tcd1, tcd2;` creates NO account
+//!    here, so the `connect (tcd2, ...)` that follows finds no row. The
+//!    several-accounts-in-one-statement form of `CREATE USER` is the gap.
+//!  * `executor/simple` -- `CREATE USER testuser1 ATTRIBUTE '{"name": ...}'`
+//!    is refused, so `testuser1` never exists. The `ATTRIBUTE` clause is the
+//!    gap.
+//!  * `statistics/lock_table_stats` -- `connect (conn1, localhost, myuser,,
+//!    mysql)` cannot select a schema named `mysql`: this tier answers
+//!    `mysql.user` and friends without a catalog DATABASE object for them, so
+//!    `USE mysql` is `UnknownDatabase`. The same absence is why the onboarded
+//!    `executor/admin`'s own `use mysql;` is skipped as out of domain.
+//!  * `executor/cluster_table` and the rest replay; the remaining three
+//!    `UNALIGNED` topics among the 37 (`planner/core/integration`,
+//!    `planner/core/integration_partition`, `planner/core/plan_cache`) fail on
+//!    the READER's pre-existing limits -- a `.result` that is not UTF-8 and an
+//!    echo sequence that does not line up -- not on connections at all.
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
