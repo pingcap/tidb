@@ -4665,7 +4665,6 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
 		importFromServer = objstore.IsLocal(u)
-		// for SEM v2, they are checked by configured rules.
 		if semv1.IsEnabled() {
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
@@ -6318,20 +6317,35 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	return nil
 }
 
-// For nextgen IMPORT INTO with SEM, disallow explicit S3 external ID unless it
-// is the keyspace name. The keyspace name is used as the S3 external ID.
+// For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
+// disallow explicit S3 external ID unless it is the keyspace name. The keyspace
+// name is used as the S3 external ID.
 func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
 	expectedExternalID := config.GetGlobalKeyspaceName()
+	hasAccessKey := false
+	hasSecretAccessKey := false
+	hasRoleARN := false
 	for k, vs := range values {
-		normalizedK := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-		if normalizedK == s3like.S3ExternalID {
+		normalizedK := objstore.NormalizeQueryParameterKey(k)
+		switch normalizedK {
+		case s3like.S3ExternalID:
 			for _, v := range vs {
 				if v != expectedExternalID {
 					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
 				}
 			}
+		case s3like.S3AccessKey:
+			hasAccessKey = hasAccessKey || values.Get(k) != ""
+		case s3like.S3SecretAccessKey:
+			hasSecretAccessKey = hasSecretAccessKey || values.Get(k) != ""
+		case s3like.S3RoleARN:
+			hasRoleARN = hasRoleARN || values.Get(k) != ""
 		}
+	}
+
+	if !hasRoleARN && !(hasAccessKey && hasSecretAccessKey) {
+		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
 
 	return nil
