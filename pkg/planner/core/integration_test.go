@@ -1766,6 +1766,68 @@ func TestCorColRangePredicateAccess(t *testing.T) {
 	})
 }
 
+// TestLateralJoinCardinalityWithBoundedInner verifies the row count estimated for a LATERAL join
+// whose derived table is bounded: an aggregate without GROUP BY produces one row per outer row, and
+// a LIMIT n produces at most n. Such an inner plan does not grow with the number of distinct
+// correlated values, so its estimate must not be scaled down by their NDV.
+func TestLateralJoinCardinalityWithBoundedInner(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tl_inner (k1 int not null, k2 int not null, primary key (k1, k2) clustered)")
+	tk.MustExec("create table tl_outer (id int primary key, k1 int not null, key ik (k1))")
+	var inner, outer strings.Builder
+	for group := range 30 {
+		for i := range 50 {
+			if inner.Len() > 0 {
+				inner.WriteString(",")
+			}
+			fmt.Fprintf(&inner, "(%d,%d)", group, group*1000+i)
+		}
+	}
+	// 600 outer rows over the same 30 distinct keys, so each key drives 20 executions.
+	for i := range 600 {
+		if outer.Len() > 0 {
+			outer.WriteString(",")
+		}
+		fmt.Fprintf(&outer, "(%d,%d)", i, i%30)
+	}
+	tk.MustExec("insert into tl_inner values " + inner.String())
+	tk.MustExec("insert into tl_outer values " + outer.String())
+	tk.MustExec("analyze table tl_inner all columns")
+	tk.MustExec("analyze table tl_outer all columns")
+
+	// applyRowCounts returns the estimated and actual row counts of the Apply operator.
+	applyRowCounts := func(sql string) (float64, float64) {
+		t.Helper()
+		for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+			if !strings.Contains(fmt.Sprintf("%v", row[0]), "Apply") {
+				continue
+			}
+			est, err := strconv.ParseFloat(fmt.Sprintf("%v", row[1]), 64)
+			require.NoError(t, err)
+			act, err := strconv.ParseFloat(fmt.Sprintf("%v", row[2]), 64)
+			require.NoError(t, err)
+			return est, act
+		}
+		require.FailNow(t, "no Apply in plan", sql)
+		return 0, 0
+	}
+
+	// A scalar aggregate returns exactly one row per outer row.
+	est, act := applyRowCounts("select o.k1, f.m from tl_outer o inner join lateral " +
+		"(select /*+ NO_DECORRELATE() */ min(t2.k2) as m from tl_inner t2 where t2.k1 = o.k1) f")
+	require.Equal(t, float64(600), act)
+	require.Equal(t, act, est, "a lateral scalar aggregate produces one row per outer row")
+
+	// LIMIT 3 returns three rows per outer row, since every key has more than three matches.
+	est, act = applyRowCounts("select o.k1, f.k2 from tl_outer o inner join lateral " +
+		"(select /*+ NO_DECORRELATE() */ t2.k2 from tl_inner t2 where t2.k1 = o.k1 " +
+		"order by t2.k2 limit 3) f")
+	require.Equal(t, float64(1800), act)
+	require.Equal(t, act, est, "a lateral LIMIT n produces n rows per outer row")
+}
+
 // TestExplainAnalyzeDMLCommit covers the issue #37373.
 func TestExplainAnalyzeDMLCommit(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {

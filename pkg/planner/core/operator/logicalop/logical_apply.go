@@ -33,6 +33,41 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
+// innerRowCountIsPerOuterRow reports whether the estimated row count of children[idx], the inner
+// side of an Apply, already describes a single execution rather than the total across executions.
+// Stats for the inner subtree are derived as if it were a standalone plan, so normally its row
+// count covers every correlated value at once and has to be scaled down by the outer NDV to become
+// a per-outer-row estimate. That does not hold once the subtree is bounded: an aggregate without
+// GROUP BY returns exactly one row per execution, and a LIMIT/TopN caps every execution, so their
+// row counts do not grow with the number of distinct correlated values driving them.
+//
+// Only operators that cannot increase the row count are traversed, so finding a bound below them
+// still bounds the subtree.
+func innerRowCountIsPerOuterRow(children []base.LogicalPlan, idx int) bool {
+	if idx >= len(children) {
+		return false
+	}
+	for p := children[idx]; p != nil; {
+		switch x := p.(type) {
+		case *LogicalLimit, *LogicalTopN, *LogicalMaxOneRow:
+			return true
+		case *LogicalAggregation:
+			// With GROUP BY the row count is the number of groups, which does grow with the
+			// correlated values, so it still needs to be scaled.
+			return len(x.GroupByItems) == 0
+		case *LogicalProjection, *LogicalSelection, *LogicalSort:
+			// Row count preserving or reducing; a bound below still applies.
+		default:
+			return false
+		}
+		if len(p.Children()) != 1 {
+			return false
+		}
+		p = p.Children()[0]
+	}
+	return false
+}
+
 // LogicalApply gets one row from outer executor and gets one row from inner executor according to outer row.
 type LogicalApply struct {
 	LogicalJoin `hash64-equals:"true"`
@@ -195,17 +230,18 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 			// per-outer-row estimate before multiplying by the left row count, mirroring
 			// the key-based selectivity division in EstimateFullJoinRowCount.
 			//
-			// TODO: when the inner plan is bounded by LIMIT or a scalar aggregate,
-			// rightProfile.RowCount is already effectively per-outer-row (LIMIT caps it;
-			// aggregates always return 1 row). In those cases this formula underestimates
-			// by ~NDV(outerCols). A future improvement should detect the LIMIT/aggregate
-			// case and skip the NDV scaling, restoring the correct left*right product.
-			outerCols := make([]*expression.Column, 0, len(la.CorCols))
-			for i := range la.CorCols {
-				outerCols = append(outerCols, &la.CorCols[i].Column)
+			// A bounded inner plan is the exception: its row count does not grow with the
+			// number of distinct correlated values, so it is already per-outer-row and
+			// scaling it would underestimate the join by ~NDV(outerCols).
+			rowCount = leftProfile.RowCount * rightProfile.RowCount
+			if !innerRowCountIsPerOuterRow(la.Children(), 1) {
+				outerCols := make([]*expression.Column, 0, len(la.CorCols))
+				for i := range la.CorCols {
+					outerCols = append(outerCols, &la.CorCols[i].Column)
+				}
+				outerNDV, _ := cardinality.EstimateColsNDVWithMatchedLen(la.SCtx(), outerCols, childSchema[0], leftProfile)
+				rowCount /= math.Max(outerNDV, 1)
 			}
-			outerNDV, _ := cardinality.EstimateColsNDVWithMatchedLen(la.SCtx(), outerCols, childSchema[0], leftProfile)
-			rowCount = leftProfile.RowCount * rightProfile.RowCount / math.Max(outerNDV, 1)
 		} else {
 			// No correlation at all: decorrelation will convert this to a plain cross
 			// join, so the Cartesian product is the correct upper-bound estimate.
