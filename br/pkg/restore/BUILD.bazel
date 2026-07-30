@@ -114,6 +114,7 @@ go_test(
         "client_test.go",
         "data_test.go",
         "db_test.go",
+        "export_test.go",
         "import_retry_test.go",
         "log_client_test.go",
         "main_test.go",
