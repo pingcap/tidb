@@ -50,8 +50,12 @@
 //! # What it refuses
 //!
 //! A column whose coprocessor descriptor this module cannot build faithfully
-//! -- anything but a signed or unsigned `BIGINT`/`INT` today -- makes the
-//! whole scan fall back to the byte-level cursor. The refusal is
+//! -- anything outside the signed and unsigned integer family
+//! (`BIGINT`/`INT`/`MEDIUMINT`/`SMALLINT`/`TINYINT`) today -- makes the
+//! whole scan fall back to the byte-level cursor. Note that this is a
+//! *projection* gate, separate from the predicate lowering's own type gate: a
+//! table with one `VARCHAR` column in the `SELECT` list cannot be scanned
+//! remotely at all, however pushable its `WHERE` is. The refusal is
 //! [`PushdownScannerError::Unsupported`], which the storage turns into "use
 //! `iter`", so a refused shape is slower and never wrong.
 
@@ -96,6 +100,12 @@ const BINARY_COLLATION_ID: i32 = 63;
 const MYSQL_TYPE_LONGLONG: i32 = 8;
 /// Go `mysql.TypeLong`.
 const MYSQL_TYPE_LONG: i32 = 3;
+/// Go `mysql.TypeInt24`.
+const MYSQL_TYPE_INT24: i32 = 9;
+/// Go `mysql.TypeShort`.
+const MYSQL_TYPE_SHORT: i32 = 2;
+/// Go `mysql.TypeTiny`.
+const MYSQL_TYPE_TINY: i32 = 1;
 
 /// How many decoded rows the reader thread may run ahead of the consumer.
 ///
@@ -489,9 +499,16 @@ impl Drop for CopRowStream {
 /// collation, length or flag set would make TiKV decode a column differently
 /// from the client, which is a wrong answer rather than a slow one.
 fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
+    // The integer family, with MySQL's default display width for each. The
+    // width is metadata TiKV does not evaluate with -- the value is an integer
+    // either way -- but it is what the catalog declares, so it is what the
+    // descriptor carries.
     let (tp, column_len) = match column.field_type.code() {
         FieldTypeCode::LongLong => (MYSQL_TYPE_LONGLONG, 20),
         FieldTypeCode::Long => (MYSQL_TYPE_LONG, 11),
+        FieldTypeCode::Int24 => (MYSQL_TYPE_INT24, 9),
+        FieldTypeCode::Short => (MYSQL_TYPE_SHORT, 6),
+        FieldTypeCode::Tiny => (MYSQL_TYPE_TINY, 4),
         _ => return None,
     };
     let mut flag = 0;
