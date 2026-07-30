@@ -1,0 +1,71 @@
+## Full scalar vectors from pkg/expression/builtin_string_test.go:1034
+## TestLocate and :1968 TestInstr.
+##
+## The two functions share an implementation but NOT an argument order:
+## LOCATE(substr, str[, pos]) versus INSTR(str, substr). Both return a 1-based
+## CHARACTER position (so the CJK rows below must not report a byte offset) and
+## 0 for "not found". An empty needle is found at position 1, except that
+## LOCATE with an explicit pos returns pos itself when pos is in range and 0
+## when it is past the end -- the '' / 2 rows that separate the two rules.
+##
+## Under the default (case-insensitive) collation the mixed-case rows match, so
+## LOCATE('bAr', 'foobArbar') is 4, not 0. Any NULL argument makes the result
+## NULL regardless of the other arguments, including a NULL needle with an
+## out-of-range pos.
+##
+## Refused from the Go table: TestLocate's second table (tbl2), which reaches
+## past the value domain by stamping the binary charset flag onto already-built
+## constants with types.SetBinChsClnFlag. Its point is that a binary operand
+## makes the match case-SENSITIVE; the two `cast(... as binary)` rows below are
+## this corpus's expressible stand-in and carry whatever the Go engine answers.
+locate('bar', 'foobarbar')
+locate('xbar', 'foobar')
+locate('', 'foobar')
+locate('foobar', '')
+locate('', '')
+locate('好世', '你好世界')
+locate('界面', '你好世界')
+locate('b', '中a英b文')
+locate('bAr', 'foobArbar')
+locate(null, 'foobar')
+locate('bar', null)
+locate('bar', 'foobarbar', 5)
+locate('xbar', 'foobar', 1)
+locate('', 'foobar', 2)
+locate('foobar', '', 1)
+locate('', '', 2)
+locate('A', '大A写的A', 0)
+locate('A', '大A写的A', 1)
+locate('A', '大A写的A', 2)
+locate('A', '大A写的A', 3)
+locate('BaR', 'foobarBaR', 5)
+locate(null, null)
+locate('', null)
+locate(null, '')
+locate(null, null, 1)
+locate('', null, 1)
+locate(null, '', 1)
+locate('foo', null, -1)
+locate(null, 'bar', 0)
+locate(cast('BaR' as binary), 'foobArbar')
+locate(cast('bAr' as binary), 'foobarbAr', 5)
+instr('foobarbar', 'bar')
+instr('xbar', 'foobar')
+instr(123456234, 234)
+instr(123456, 567)
+instr(1e10, 1e2)
+instr(1.234, '.234')
+instr(1.234, '')
+instr('', 123)
+instr('', '')
+instr('中文美好', '美好')
+instr('中文美好', '世界')
+instr('中文abc', 'a')
+instr('live long and prosper', 'long')
+instr('not binary string', 'binary')
+instr('upper case', 'upper')
+instr('UPPER CASE', 'CASE')
+instr('中文abc', 'abc')
+instr('foobar', null)
+instr(null, 'foobar')
+instr(null, null)

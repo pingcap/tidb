@@ -1,0 +1,38 @@
+## Scalar vectors from pkg/expression/builtin_string_test.go:2557 TestToBase64
+## and :2249 TestFromBase64.
+##
+## TO_BASE64 encodes the argument's BYTES, so a non-string argument is
+## stringified first (1 -> 'MQ==', 1.1 -> 'MS4x') and whitespace inside the
+## input is data, not separator. FROM_BASE64 is the inverse and additionally
+## IGNORES whitespace in its input -- space, tab, CR and LF may appear anywhere
+## between base64 characters, which the escaped row below is there to pin.
+##
+## Refused from the Go tables: every TO_BASE64 row whose expected output
+## exceeds 76 characters. MySQL wraps the encoding with a newline every 76
+## characters, and this corpus's golden format is one result per line, so a
+## wrapped result cannot be represented. FROM_BASE64 covers the same long
+## vectors from the other direction (its outputs contain no newline), so the
+## wrapping rule is the only thing left unguarded here. For the same
+## one-result-per-line reason, FROM_BASE64('YWIKYw==') -- whose result 'ab\nc'
+## contains a real newline -- is refused; TO_BASE64('ab\nc') below covers that
+## byte from the encoding side. Also refused: the
+## `character_set_connection = 'gbk'` rows, which need session charset state,
+## and the 32-bit-only `strings.Repeat("a", 1589695687)` row.
+to_base64('')
+to_base64('abc')
+to_base64('ab c')
+to_base64(1)
+to_base64(1.1)
+to_base64('ab\nc')
+to_base64('ab\tc')
+to_base64('qwerty123456')
+to_base64(null)
+from_base64('')
+from_base64('YWJj')
+from_base64('YWIgYw==')
+from_base64('YWIJYw==')
+from_base64('cXdlcnR5MTIzNDU2')
+from_base64('QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==')
+from_base64('QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrLw==')
+from_base64('QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv')
+from_base64('QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==')

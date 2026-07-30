@@ -1,0 +1,40 @@
+## Full scalar vectors from pkg/expression/builtin_string_test.go:720 TestStrcmp
+## and :761 TestReplace.
+##
+## STRCMP returns the sign of a byte-wise comparison (-1/0/1), NULL if either
+## argument is NULL -- including when the other is the empty string, the rows
+## that separate "NULL propagates" from "empty compares as less".
+##
+## REPLACE(str, from, to) is a plain substring substitution: an EMPTY `from`
+## matches nothing and returns `str` unchanged (it does NOT splice `to`
+## between every character), an empty `to` deletes every occurrence, and any
+## NULL argument makes the whole call NULL. Non-string arguments are
+## stringified first, so REPLACE(1234, 2, 55) works on '1234'.
+##
+## Refused from the Go tables: the `errors.New("must err")` rows (no SQL
+## literal produces an evaluation failure at that position), and TestReplace's
+## per-row `flen` assertions, which observe the inferred result type rather
+## than the value and are outside this harness's value contract.
+strcmp('123', '123')
+strcmp('123', '1')
+strcmp('1', '123')
+strcmp('123', '45')
+strcmp(123, '123')
+strcmp('12.34', 12.34)
+strcmp(null, '123')
+strcmp('123', null)
+strcmp('', '123')
+strcmp('123', '')
+strcmp('', '')
+strcmp('', null)
+strcmp(null, '')
+strcmp(null, null)
+replace('www.mysql.com', 'mysql', 'pingcap')
+replace('www.mysql.com', 'w', 1)
+replace(1234, 2, 55)
+replace('', 'a', 'b')
+replace('abc', '', 'd')
+replace('aaa', 'a', '')
+replace(null, 'a', 'b')
+replace('a', null, 'b')
+replace('a', 'b', null)

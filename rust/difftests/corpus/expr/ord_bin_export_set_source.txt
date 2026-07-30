@@ -1,0 +1,62 @@
+## Scalar vectors from pkg/expression/builtin_string_test.go:2395 TestOrd,
+## :2496 TestBin, and :2466 TestExportSet.
+##
+## ORD returns the FIRST character's multi-byte code read as a big-endian
+## integer over its encoded bytes -- not a Unicode code point. Under utf8mb4
+## '你' is 0xE4BDA0 = 14990752 and the 4-byte emoji is 4036989325, which is
+## past 2^31 and so pins that the accumulator is 64-bit. Only the first
+## character matters ('23' and 23 both give 50), and an empty string is 0.
+##
+## BIN is CONV(n, 10, 2) over an ETInt-coerced argument, so a numeric-prefix
+## string parses its prefix ('10.2aa' -> 10) and a wholly non-numeric string is
+## 0. A negative value prints the 64-bit two's-complement pattern.
+##
+## One row here does NOT reproduce its Go unit-test expectation: TestBin's
+## table says BIN('') is NULL, but the production expression path (which is
+## what goeval drives, and what a real query runs) answers '0', consistent with
+## BIN('aaa'). The difference lives in the unit test's own harness -- it calls
+## funcs[ast.Bin].getFunction over hand-built constants and skips the implicit
+## cast the builder inserts. The golden records the production answer.
+##
+## EXPORT_SET(bits, on, off, sep, n) walks the bits from LEAST significant
+## upward, joining `on`/`off` with `sep`; n defaults to 64 and CLAMPS to 64, so
+## the n = 133 row must produce exactly the same 64-element string as the
+## defaulted row. The separator defaults to ',' and a numeric separator is
+## stringified.
+##
+## Refused from the Go tables: TestOrd's `character_set_connection = 'gbk'`
+## rows (session charset state, outside the value domain), and TestBin's
+## warning-count expectations.
+ord('2')
+ord(2)
+ord('23')
+ord(23)
+ord(2.3)
+ord(null)
+ord('')
+ord('你好')
+ord('にほん')
+ord('한국')
+ord('👍')
+ord('א')
+bin('10')
+bin('10.2')
+bin('10aa')
+bin('10.2aa')
+bin('aaa')
+bin('')
+bin(10)
+bin(10.0)
+bin(-1)
+bin('-1')
+bin(null)
+export_set(-9223372036854775807, 'Y', 'N', ',', 5)
+export_set(-6, 'Y', 'N', ',', 5)
+export_set(5, 'Y', 'N', ',', 4)
+export_set(5, 'Y', 'N', ',', 0)
+export_set(5, 'Y', 'N', ',', 1)
+export_set(6, '1', '0', ',', 10)
+export_set(333333, 'Ysss', 'sN', '---', 9)
+export_set(7, 'Y', 'N')
+export_set(7, 'Y', 'N', 6)
+export_set(7, 'Y', 'N', 6, 133)

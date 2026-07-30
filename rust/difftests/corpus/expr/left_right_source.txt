@@ -1,0 +1,40 @@
+## Full scalar vectors from pkg/expression/builtin_string_test.go:395 TestLeft
+## and :445 TestRight.
+##
+## LEFT(str, n) / RIGHT(str, n) take a character (not byte) count coerced
+## through ETInt, so a Decimal length ROUNDS (1.2 -> 1, 1.9 -> 2) rather than
+## truncating -- the pair of rows that makes the difference observable. A
+## negative or zero count yields the empty string, a count past the length
+## yields the whole string, and a non-numeric string count coerces to 0.
+## Non-string first arguments are stringified first (1234 -> '1234',
+## 12.34 -> '12.34'), and a hex literal is a byte string whose single-byte
+## slice is the raw byte.
+##
+## Refused from the Go table: the two `errors.New("must err")` rows, which
+## inject an evaluation failure through a Go value that has no SQL literal.
+left('abcde', 3)
+left('abcde', 0)
+left('abcde', 1.2)
+left('abcde', 1.9)
+left('abcde', -1)
+left('abcde', 100)
+left('abcde', null)
+left(null, 3)
+left('abcde', '3')
+left('abcde', 'a')
+left(1234, 3)
+left(12.34, 3)
+left(0x0102, 1)
+right('abcde', 3)
+right('abcde', 0)
+right('abcde', 1.2)
+right('abcde', 1.9)
+right('abcde', -1)
+right('abcde', 100)
+right('abcde', null)
+right(null, 1)
+right('abcde', '3')
+right('abcde', 'a')
+right(1234, 3)
+right(12.34, 3)
+right(0x0102, 1)

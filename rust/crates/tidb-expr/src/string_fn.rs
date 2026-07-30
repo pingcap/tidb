@@ -969,6 +969,11 @@ fn split_bytes<'a>(value: &'a [u8], delim: &[u8]) -> Vec<&'a [u8]> {
 /// starting at 1-based character `pos` with `newstr`. A `pos` outside
 /// `1..=len(str)` leaves `str` unchanged (matching MySQL). `NULL` if any
 /// argument is `NULL`.
+///
+/// A NEGATIVE `len` means "through the end of the string", exactly as an
+/// oversized one does -- `builtinInsertUTF8Sig.evalString` clamps both with the
+/// single condition `length > runeLength-pos+1 || length < 0`. Reading it as
+/// zero instead would splice `newstr` in without removing anything.
 pub(crate) fn str_insert(vals: &[Datum]) -> Result<Datum, EvalError> {
     let (Some(s), Datum::Int(pos), Datum::Int(len), Some(new)) = (
         coerce_str(&vals[0])?,
@@ -984,8 +989,13 @@ pub(crate) fn str_insert(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::new_string(s));
     }
     let start = (*pos - 1) as usize;
-    let take = (*len).max(0) as usize;
-    let end = (start + take).min(n);
+    let remaining = n - start;
+    let take = if *len < 0 || *len as u64 > remaining as u64 {
+        remaining
+    } else {
+        *len as usize
+    };
+    let end = start + take;
     let mut out: String = chars[..start].iter().collect();
     out.push_str(&new);
     out.extend(chars[end..].iter());

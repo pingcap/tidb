@@ -1,0 +1,50 @@
+## Full scalar vectors from pkg/expression/builtin_string_test.go:802
+## TestSubstring and :911 TestSubstringIndex.
+##
+## SUBSTRING's position is 1-based and a NEGATIVE position counts back from the
+## end; position 0 is the empty string (not position 1), and a position past
+## either end is empty. The 3-argument form's length clamps at the end of the
+## string and a zero or negative length is empty. Positions and lengths are
+## character counts, so the multi-byte rows below must not slice mid-codepoint.
+##
+## SUBSTRING_INDEX(str, delim, count) returns everything before the count-th
+## delimiter, counting from the right for a negative count. A count of 0, or an
+## EMPTY delimiter with any count, is the empty string; a delimiter that never
+## occurs, or a count past the number of occurrences, returns the whole string
+## -- the pair of rows that keeps "not found" from collapsing into "empty".
+##
+## Refused from both Go tables: the `errors.New("must error")` rows, which have
+## no SQL literal form.
+substring('Quadratically', 5)
+substring('Sakila', 1)
+substring('Sakila', 2)
+substring('Sakila', -3)
+substring('Sakila', 0)
+substring('Sakila', 100)
+substring('Sakila', -100)
+substring('Quadratically', 5, 6)
+substring('Sakila', -5, 3)
+substring('Sakila', 2, 0)
+substring('Sakila', 2, -1)
+substring('Sakila', 2, 100)
+substring(null, 2, 3)
+substring('Sakila', null, 3)
+substring('Sakila', 2, null)
+substring('中文abc', 2, 2)
+substring_index('www.pingcap.com', '.', 2)
+substring_index('www.pingcap.com', '.', -2)
+substring_index('www.pingcap.com', '.', 0)
+substring_index('www.pingcap.com', '.', 100)
+substring_index('www.pingcap.com', '.', -100)
+substring_index('www.pingcap.com', 'd', 0)
+substring_index('www.pingcap.com', 'd', 1)
+substring_index('www.pingcap.com', 'd', -1)
+substring_index('www.pingcap.com', '', 0)
+substring_index('www.pingcap.com', '', 1)
+substring_index('www.pingcap.com', '', -1)
+substring_index('', '.', 0)
+substring_index('', '.', 1)
+substring_index('', '.', -1)
+substring_index(null, '.', 1)
+substring_index('www.pingcap.com', null, 1)
+substring_index('www.pingcap.com', '.', null)

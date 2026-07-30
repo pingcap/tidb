@@ -1,0 +1,48 @@
+## Full scalar vectors from pkg/expression/builtin_string_test.go:1684
+## TestFindInSet and :2349 TestInsert.
+##
+## FIND_IN_SET(str, strlist) is a comma-separated list lookup, 1-based, 0 when
+## absent. It does NOT trim: ' foo ' is a distinct element from 'foo', and a
+## trailing comma creates a real empty element, so FIND_IN_SET('', 'foo,bar,')
+## is 3 while FIND_IN_SET('', '') is 0. A needle that itself contains a comma
+## can never match. Either argument NULL yields NULL.
+##
+## INSERT(str, pos, len, newstr) replaces `len` characters starting at the
+## 1-based `pos`. An out-of-range pos returns `str` UNCHANGED rather than NULL
+## or an error -- but only when no other argument is NULL, since NULL still
+## wins over the out-of-range pos (the `-1, nil` rows). A negative or
+## overlong len truncates the tail. Positions and lengths are character counts,
+## which the CJK half of the table is there to prove.
+find_in_set('foo', 'foo,bar')
+find_in_set('foo', 'foobar,bar')
+find_in_set(' foo ', 'foo, foo ')
+find_in_set('', 'foo,bar,')
+find_in_set('', '')
+find_in_set(1, 1)
+find_in_set(1, '1')
+find_in_set('1', 1)
+find_in_set('a,b', 'a,b,c')
+find_in_set('foo', null)
+find_in_set(null, 'bar')
+insert('Quadratic', 3, 4, 'What')
+insert('Quadratic', -1, 4, 'What')
+insert('Quadratic', 3, 100, 'What')
+insert(null, 3, 100, 'What')
+insert('Quadratic', null, 4, 'What')
+insert('Quadratic', 3, null, 'What')
+insert('Quadratic', 3, 4, null)
+insert('Quadratic', 3, -1, 'What')
+insert('Quadratic', 3, 1, 'What')
+insert('Quadratic', -1, null, 'What')
+insert('Quadratic', -1, 4, null)
+insert('我叫小雨呀', 3, 2, '王雨叶')
+insert('我叫小雨呀', -1, 2, '王雨叶')
+insert('我叫小雨呀', 3, 100, '王雨叶')
+insert(null, 3, 100, '王雨叶')
+insert('我叫小雨呀', null, 4, '王雨叶')
+insert('我叫小雨呀', 3, null, '王雨叶')
+insert('我叫小雨呀', 3, 4, null)
+insert('我叫小雨呀', 3, -1, '王雨叶')
+insert('我叫小雨呀', 3, 1, '王雨叶')
+insert('我叫小雨呀', -1, null, '王雨叶')
+insert('我叫小雨呀', -1, 2, null)

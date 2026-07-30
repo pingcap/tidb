@@ -1,0 +1,52 @@
+## Scalar vectors from pkg/expression/builtin_string_test.go:2120 TestFormat.
+##
+## FORMAT(x, d) rounds x to d decimals HALF-AWAY-FROM-ZERO and then groups the
+## integer part in threes with ','. The 9.99999/1.99999/1.09999 rows pin that
+## the rounding carries into the integer part rather than truncating, and
+## -2.5000 -> '-3' pins the away-from-zero direction on the negative side.
+## A negative d behaves as 0. Both arguments coerce numerically: a
+## numeric-prefix string keeps its prefix ('12332.123444A' -> 12332.123444,
+## '4A' -> 4) and a wholly non-numeric one is 0, so FORMAT('A123345', '4') is
+## '0.0000' rather than NULL or an error. d clamps at 30 decimals, which the
+## 1024 and 22 rows cover; the 22-decimal row also pins that the value is
+## carried as a float, so digits past its precision are zeros, not the input's.
+##
+## Refused from the Go table: the per-row WARNING counts (statement context,
+## not a value), and the 3-argument locale forms -- 'en_US' is the only locale
+## the Go engine implements, 'zh_CN' returns a "not implemented" error and
+## 'de_GE' a "not support for the specific locale" error ALONGSIDE a value, a
+## two-channel result this harness cannot express.
+format(1.12345, 4)
+format(9.99999, 4)
+format(1.99999, 4)
+format(1.09999, 4)
+format(-2.5000, 0)
+format(12332.123444, 4)
+format(12332.123444, 0)
+format(12332.123444, -4)
+format(-12332.123444, 4)
+format(-12332.123444, 0)
+format(-12332.123444, -4)
+format('12332.123444', '4')
+format('12332.123444A', '4')
+format('-12332.123444', '4')
+format('-12332.123444A', '4')
+format('A123345', '4')
+format('-A123345', '4')
+format('-12332.123444', 'A')
+format('12332.123444', 'A')
+format('-12332.123444', '4A')
+format('12332.123444', '4A')
+format('-A12332.123444', 'A')
+format('A12332.123444', 'A')
+format('-A12332.123444', '4A')
+format('A12332.123444', '4A')
+format('-.12332.123444', '4A')
+format('.12332.123444', '4A')
+format('12332.1234567890123456789012345678901', 22)
+format(null, 22)
+format(1, 1024)
+format('', 1)
+format(1, '')
+format(12332.12341111111111111111111111111111111111111, 4, 'en_US')
+format(null, 22, 'en_US')

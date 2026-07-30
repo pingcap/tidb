@@ -1,0 +1,33 @@
+## Scalar vectors from pkg/expression/builtin_string_test.go:572 TestLower and
+## :630 TestUpper.
+##
+## LOWER/UPPER under the default (utf8mb4) connection charset are full Unicode
+## case mappings, not ASCII-only ones: the Latin-1 accented run and the Roman
+## numerals Ⅺ/Ⅻ change case, while CJK and kana are caseless and pass through.
+## A typographic apostrophe (U+2019) must survive byte-for-byte. A non-string
+## argument is stringified first.
+##
+## Refused from the Go tables: every row that first sets
+## character_set_connection = 'gbk'. Those assert that a GBK connection charset
+## suppresses the non-ASCII case mapping, which is session charset state this
+## value-level differential harness has no way to express.
+lower(null)
+lower('ab')
+lower(1)
+lower('one week’s time TEST')
+lower('one week''s time TEST')
+lower('ABC测试DEF')
+lower('ABCテストDEF')
+lower('ABC')
+lower('一二三')
+lower('àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ')
+upper(null)
+upper('ab')
+upper(1)
+upper('one week’s time TEST')
+upper('one week''s time TEST')
+upper('abc测试def')
+upper('abcテストdef')
+upper('abc')
+upper('àbc')
+upper('àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ')

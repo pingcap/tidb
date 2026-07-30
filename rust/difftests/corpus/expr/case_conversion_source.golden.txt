@@ -1,0 +1,20 @@
+NULL
+STR:ab
+STR:1
+STR:one week’s time test
+STR:one week's time test
+STR:abc测试def
+STR:abcテストdef
+STR:abc
+STR:一二三
+STR:àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅺⅻ
+NULL
+STR:AB
+STR:1
+STR:ONE WEEK’S TIME TEST
+STR:ONE WEEK'S TIME TEST
+STR:ABC测试DEF
+STR:ABCテストDEF
+STR:ABC
+STR:ÀBC
+STR:ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ
