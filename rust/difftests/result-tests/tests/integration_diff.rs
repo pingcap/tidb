@@ -393,9 +393,9 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // deleting a case destroys the evidence, so the debt is a number that
     // fails the moment it grows.
     //
-    // The 36 statements this starts at are ALL access-path decisions: every
+    // The 35 statements remaining are ALL access-path decisions: every
     // row result in these nine topics already matches TiDB's recording exactly,
-    // and so does every `Rows` header. Between them they carry 45 table-level
+    // and so does every `Rows` header. Between them they carry 44 table-level
     // differences, in these causes -- none of them in this driver:
     //
     //  * NO COVERING-INDEX PREFERENCE (17). `select ifnull(null, t1.c1)` reads
@@ -423,15 +423,20 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //    `c1 in (select ...)` folds to a `Batch_Point_Get` here where TiDB
     //    scans -- that one is a BETTER path reaching the same rows, kept in
     //    the count because the property really does differ.
-    //  * A BINARY-STRING COLUMN COMPARED TO A HEX LITERAL (1), which is a
-    //    WRONG ANSWER and not only a plan: `where a = x'01020304'` on a
-    //    `binary(4)` column matches NO row here, with or without an index.
-    //    `a = x'01020304'` evaluates to 0 while `hex(a)` and
-    //    `hex(x'01020304')` agree, and `x'01020304' + 0` shows the literal
-    //    carrying its numeric value 16909060: the comparison is typed as an
-    //    integer where TiDB types it as a binary string. Reported separately
-    //    -- it is a bug in comparison typing, not in access-path selection.
-    const KNOWN_DIVERGENCES: usize = 36;
+    //
+    // FIXED, and the reason this ratchet moved from 36 to 35: a BINARY-STRING
+    // COLUMN COMPARED TO A HEX LITERAL was a WRONG ANSWER and not only a plan
+    // -- `where a = x'FA34...'` on a `binary(16)` column matched NO row, with
+    // or without an index, because the literal was typed as an INTEGER where
+    // TiDB types it as a binary STRING (Go `DefaultTypeForValue`'s
+    // `HexLiteral` arm). `tidb_expr::ops::string_cmp_operand` now carries the
+    // literal's string domain, and `tidb_executor::go_quote` renders a binary
+    // range bound with Go's `%q` instead of a lossy UTF-8 conversion, so the
+    // `select` form's `IndexRangeScan range:["\xfa4\xe1\t<..." "xb",...]`
+    // matches TiDB's recording exactly. The `update` form of the same WHERE
+    // remains, under WRITES DO NOT CHOOSE AN ACCESS PATH above. The row-level
+    // contract is pinned by `corpus/table/hex_literal_comparison`.
+    const KNOWN_DIVERGENCES: usize = 35;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

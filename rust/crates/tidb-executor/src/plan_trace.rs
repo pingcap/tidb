@@ -718,8 +718,13 @@ fn bound_text(values: &[Datum], infinity: &str) -> String {
         .join(" ")
 }
 
-/// A constant as Go's explain prints it: a string in double quotes, a number
-/// bare.
+/// A constant as Go's explain prints it -- `formatDatum` in
+/// `pkg/util/ranger/types.go`: a string in double quotes, a number bare.
+///
+/// The quoting is Go's `%q` ([`crate::go_quote::quote`]), not a lossy UTF-8
+/// conversion. A BINARY index column's bound is arbitrary octets, so
+/// `from_utf8_lossy` replaced every non-UTF-8 byte with U+FFFD and produced a
+/// range no reader (and no oracle) could match against TiDB's own recording.
 fn datum_go_text(value: &Datum) -> String {
     match value {
         Datum::Null => "NULL".to_owned(),
@@ -730,8 +735,12 @@ fn datum_go_text(value: &Datum) -> String {
         Datum::UInt(v) => v.to_string(),
         Datum::Real(v) => v.to_string(),
         Datum::Decimal(d) => d.to_string(),
-        Datum::String(s) => format!("\"{}\"", String::from_utf8_lossy(s.bytes())),
-        Datum::Bytes(b) => format!("\"{}\"", String::from_utf8_lossy(b)),
+        Datum::String(s) => crate::go_quote::quote(s.bytes()),
+        Datum::Bytes(b) => crate::go_quote::quote(b),
+        // `formatDatum`'s enum/set/JSON/binary-literal/bit arm is
+        // `fmt.Sprintf("\"%v\"", ...)` -- the value's own display, quoted but
+        // NOT escaped.
+        Datum::BinaryLiteral(b) | Datum::Bit(b) => format!("\"{b}\""),
         other => format!("{other:?}"),
     }
 }

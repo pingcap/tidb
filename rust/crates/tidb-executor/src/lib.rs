@@ -54,6 +54,7 @@ pub mod executor;
 pub mod explain;
 mod farmhash;
 pub(crate) mod foreign_key;
+mod go_quote;
 pub mod hash_agg;
 mod hash_join;
 mod index_range;
