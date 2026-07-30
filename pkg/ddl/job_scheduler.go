@@ -173,7 +173,6 @@ func (s *jobScheduler) start() {
 			}
 			wk.seqAllocator = &s.seqAllocator
 			wk.sess = sess.NewSession(sessForJob)
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
 		}
 	}
