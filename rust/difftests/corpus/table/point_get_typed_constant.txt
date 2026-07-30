@@ -1,0 +1,77 @@
+## The constant a POINT PLAN keys by is first moved into the COLUMN's
+## domain: Go's `getPointGetValue` (`pkg/planner/core/point_get_plan.go`)
+## converts it to the column's field type and requires the converted value
+## to compare EQUAL to the original, ABANDONING the point plan otherwise so
+## an ordinary scan's own comparison decides the rows.
+##
+## Regression corpus for the silent wrong answer where `int_pk = 1.0`
+## returned no rows -- every non-integer constant was read as "names no
+## integer handle", so a point plan was still committed and could never
+## match, while the same predicate on an unindexed or merely-indexed column
+## returned the row. Its siblings are `hex_literal_comparison` and the
+## decimal sign-in-the-digits bug: all three are a LITERAL's type deciding
+## the comparison domain wrongly.
+##
+## Each operator appears with BOTH an exactly-representable constant and a
+## non-representable one, because the trap of the fix is making `= 1.0`
+## match by also making `= 1.5` match.
+create table pgc (pk int primary key)
+insert into pgc values (1)
+create table pgc_plain (a int)
+insert into pgc_plain values (1)
+create table pgc_idx (a int, key(a))
+insert into pgc_idx values (1)
+create table pgc_clustered (pk int primary key clustered, v int)
+insert into pgc_clustered values (1, 9)
+create table pgc_unsigned (a int unsigned)
+insert into pgc_unsigned values (1)
+create table pgc_decimal (d decimal(10,2))
+insert into pgc_decimal values (1.00)
+create table pgc_unique (id int primary key, u int unique)
+insert into pgc_unique values (7, 1)
+select * from pgc where pk = 1.0
+select * from pgc where pk = 1.5
+select * from pgc where pk = 0.5
+select * from pgc where pk = 1.00
+select * from pgc where pk <> 1.0
+select * from pgc where pk <> 1.5
+select * from pgc where pk < 1.5
+select * from pgc where pk <= 1.0
+select * from pgc where pk <= 1.5
+select * from pgc where pk > 0.5
+select * from pgc where pk >= 1.0
+select * from pgc where pk >= 0.5
+select * from pgc where pk in (1.0, 2.0)
+select * from pgc where pk in (1.5, 2.5)
+select * from pgc where pk between 0.5 and 1.5
+select * from pgc where pk = 1e0
+select * from pgc where pk = 1.0e0
+select * from pgc where pk = '1'
+select * from pgc where pk = '1.0'
+select * from pgc where pk = '1.5'
+select * from pgc_plain where a = 1.0
+select * from pgc_plain where a = 1.5
+select * from pgc_plain where a < 1.5
+select * from pgc_plain where a > 0.5
+select * from pgc_idx where a = 1.0
+select * from pgc_idx where a < 1.5
+select * from pgc_idx where a > 0.5
+select * from pgc_idx where a >= 1.0
+select * from pgc_clustered where pk = 1.0
+select * from pgc_clustered where pk > 0.5
+select * from pgc_unsigned where a = 1.0
+select * from pgc_unsigned where a = 1.5
+select * from pgc_unsigned where a > 0.5
+select * from pgc_unsigned where a > -1.5
+select * from pgc_unsigned where a < -1.5
+select * from pgc_decimal where d = 1
+select * from pgc_decimal where d > 0
+select * from pgc_decimal where d = 1.0
+select id from pgc_unique where u = 1.0
+select id from pgc_unique where u in (1.0, 2.0)
+select id from pgc_unique where u = 1.5
+select 1 = 1.0
+select 1 = 1.5
+select 1 < 1.5
+select 1 = '1.0'
+select 1 = 1e0
