@@ -337,6 +337,12 @@ func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
 	fieldTp.SetFlag(tempFlag)
 	tp := fieldTp.EvalType()
+	// BIT is a hybrid type whose EvalType() returns ETInt, but downstream
+	// consumers (e.g. MIN/MAX aggregation) call EvalString on the result.
+	// Use ETString to match the expectation, consistent with Column.EvalString.
+	if fieldTp.GetType() == mysql.TypeBit {
+		tp = types.ETString
+	}
 
 	argTps := make([]*types.FieldType, 0, l)
 	for i := 0; i < l-1; i += 2 {
@@ -711,6 +717,12 @@ func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 		return nil, err
 	}
 	evalTps := retTp.EvalType()
+	// BIT is a hybrid type whose EvalType() returns ETInt, but downstream
+	// consumers (e.g. MIN/MAX aggregation) call EvalString on the result.
+	// Use ETString to match the expectation, consistent with Column.EvalString.
+	if retTp.GetType() == mysql.TypeBit {
+		evalTps = types.ETString
+	}
 	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
 	if err != nil {
 		return nil, err
@@ -967,6 +979,12 @@ func (c *ifNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := retTp.EvalType()
+	// BIT is a hybrid type whose EvalType() returns ETInt, but downstream
+	// consumers (e.g. MIN/MAX aggregation) call EvalString on the result.
+	// Use ETString to match the expectation, consistent with Column.EvalString.
+	if retTp.GetType() == mysql.TypeBit {
+		evalTps = types.ETString
+	}
 	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, retTp.Clone(), retTp.Clone())
 	if err != nil {
 		return nil, err
