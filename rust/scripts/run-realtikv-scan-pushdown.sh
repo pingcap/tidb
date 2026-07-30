@@ -381,29 +381,24 @@ compare() {
   esac
 }
 
-# `local_eval_divergence <label> <predicate_query> <projection_query>`: a
-# statement whose two nodes return different rows because THIS NODE'S LOCAL
-# BUILTIN disagrees with TiDB -- not because the push-down lowered anything
-# wrongly.
+# `binary_signature_case <label> <predicate_query> <projection_query>`: a
+# statement over a BINARY argument, checked on both sides of the push-down
+# boundary at once.
 #
-# The distinction is not a matter of opinion, and this function proves it with
-# two independent facts:
+# This is where a wrong local signature used to hide. The pushed predicate is
+# evaluated by TiKV, so a rows comparison alone cannot tell a faithful lowering
+# from a faithful local evaluator; the projection control -- the same builtin
+# with NOTHING pushed -- separates them:
 #
-#   1. The coprocessor sent EXACTLY the rows the GO node returns. TiKV
-#      evaluated the pushed signature and answered TiDB's answer, so the
-#      signature that travelled was the right one. If the lowering had chosen
+#   1. The coprocessor sent EXACTLY the rows the GO node returns, so the
+#      signature that travelled is the right one. If the lowering had chosen
 #      the wrong spelling, this count would be the WRONG one instead.
-#   2. The same builtin written as a PROJECTION -- no predicate, nothing
-#      pushed, the local evaluator and nothing else -- diverges the same way.
-#
-# Together those say: the wire is right, the local re-application is wrong, and
-# the bug is upstream of push-down in `tidb_expr`'s builtin dispatch, which
-# threads no collation to the string signatures and so evaluates every
-# `SUBSTRING` with UTF-8 CHARACTER semantics even for a `binary` argument
-# (Go has separate `builtinSubstring2ArgsSig`/`3ArgsSig` that slice BYTES).
-# Recorded here rather than asserted away, because this differential is the
-# only place it is visible.
-local_eval_divergence() {
+#   2. The projection agrees too, so the LOCAL evaluator selected the same
+#      signature. Until `string_signature.rs`, it did not: every string builtin
+#      evaluated the UTF-8 signature and sliced CHARACTERS where Go's
+#      `builtinSubstring3ArgsSig` slices BYTES, which this case reported as a
+#      1600-vs-600 row divergence.
+binary_signature_case() {
   local label=$1 predicate_query=$2 projection_query=$3
   local go_out rust_out go_count go_proj rust_proj
   go_out=$(go_rows "${predicate_query}")
@@ -413,7 +408,7 @@ local_eval_divergence() {
   rust_proj=$(rust_rows "${projection_query}")
   wire "${predicate_query}"
   echo
-  echo "--- ${label}  (KNOWN LOCAL-EVALUATOR DIVERGENCE)"
+  echo "--- ${label}  (BINARY SIGNATURE, BOTH SIDES)"
   echo "    ${predicate_query}"
   printf '      rows: GO %s / RUST %s\n' \
     "${go_count}" "$(printf '%s' "${rust_out}" | grep -c . || true)"
@@ -427,11 +422,13 @@ local_eval_divergence() {
   check "${label}: the coprocessor sent exactly the rows TiDB selects, \
 so the signature that travelled is the right one" \
     test "${WIRE_ROWS}" -eq "${go_count}"
-  # AND THE LOCAL BUILTIN IS NOT: the same expression with nothing pushed
-  # diverges identically, which is what makes this not a push-down defect.
-  check "${label}: the same builtin as a PROJECTION diverges too, \
-so the gap is the local evaluator and not the lowering" \
-    test "${go_proj}" != "${rust_proj}"
+  # Row SETS, not counts: counts coincide while selecting different rows.
+  check "${label}: the same rows, not merely the same number of them" \
+    test "${go_out}" = "${rust_out}"
+  # AND SO IS THE LOCAL EVALUATOR: the same builtin with nothing pushed.
+  check "${label}: the same builtin as a PROJECTION agrees too, \
+so the local signature selection matches the pushed one" \
+    test "${go_proj}" = "${rust_proj}"
 }
 
 # `error_case <label> <query> <known_rust_code>`: a statement that FAILS.
@@ -687,12 +684,11 @@ compare "SUBSTR with three arguments over multibyte text" \
   "SELECT id FROM t WHERE mod(char_length(substr(mnote, 1, 2)), 2) ORDER BY id" pushed
 compare "SUBSTRING with two arguments" \
   "SELECT id FROM t WHERE mod(char_length(substring(mnote, 2)), 2) ORDER BY id" pushed
-# SUBSTRING over a BINARY argument is the one row where the two nodes differ,
-# and the difference is NOT in the push: TiKV answered TiDB's own answer.
-# `tidb_expr`'s builtin dispatch threads no collation to `substring`, so it
-# evaluates `builtinSubstring3ArgsUTF8Sig` for every argument -- slicing
-# CHARACTERS where Go's `builtinSubstring3ArgsSig` slices BYTES.
-local_eval_divergence "MID over a VARBINARY column, the binary spelling" \
+# SUBSTRING over a BINARY argument: `builtinSubstring3ArgsSig` slices BYTES
+# where the UTF-8 rows above slice CHARACTERS, on the wire AND locally.
+# `string_signature.rs` selects that signature from the argument's charset the
+# way `substringFunctionClass.getFunction` does.
+binary_signature_case "MID over a VARBINARY column, the binary spelling" \
   "SELECT id FROM t WHERE mod(char_length(mid(bmnote, 2, 5)), 2) ORDER BY id" \
   "SELECT char_length(mid(bmnote, 2, 5)) FROM t WHERE id = 3"
 # CONV, the one collation-blind row: one signature for either spelling, and a

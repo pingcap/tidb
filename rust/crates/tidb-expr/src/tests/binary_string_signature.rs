@@ -147,6 +147,33 @@ fn locate_with_a_start_position_counts_pos_in_the_same_units() {
     ]);
 }
 
+/// The signatures whose binary branch predates this seam, pinned so the
+/// converged `is_binary_str` rule cannot quietly change them — including the
+/// `CONVERT(... USING binary)` spelling, which reaches the same rule through a
+/// binary COLLATION rather than through a bytes datum.
+#[test]
+fn case_pad_and_ord_keep_their_binary_answers() {
+    captured(&[
+        // builtinUpperSig/builtinLowerSig return binary bytes untouched --
+        // not even ASCII-folded.
+        ("hex(upper(cast('aéb' as binary)))", "STR:61C3A962"),
+        ("hex(lower(cast('aÉb' as binary)))", "STR:61C38962"),
+        ("hex(upper(convert('aéb' using binary)))", "STR:61C3A962"),
+        // ORD reads the argument charset: one byte for binary, the whole
+        // first character folded base-256 otherwise.
+        ("ord(cast('éb' as binary))", "INT:195"),
+        ("ord('éb')", "INT:50089"),
+        ("ord(convert('éb' using binary))", "INT:195"),
+        ("char_length(convert('aéb' using binary))", "INT:4"),
+        ("hex(left(convert('aéb' using binary), 2))", "STR:61C3"),
+        // LPAD/RPAD pad to a BYTE width when EITHER string is binary.
+        ("hex(lpad(cast('aéb' as binary), 5, 'z'))", "STR:7A61C3A962"),
+        ("hex(rpad(cast('aéb' as binary), 5, 'z'))", "STR:61C3A9627A"),
+        ("hex(lpad('aéb', 5, 'z'))", "STR:7A7A61C3A962"),
+        ("hex(lpad('aéb', 5, cast('z' as binary)))", "STR:7A61C3A962"),
+    ]);
+}
+
 #[test]
 fn utf8_and_case_insensitive_signatures_are_untouched() {
     // The seam must not leak into the character signatures: these are the

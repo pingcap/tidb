@@ -51,7 +51,12 @@ pub(crate) fn case_convert(vals: &[Datum], upper: bool) -> Result<Datum, EvalErr
     }
     match &vals[0] {
         Datum::Null => Ok(Datum::Null),
-        Datum::Bytes(bytes) => Ok(Datum::new_bytes(bytes.clone())),
+        // `builtinUpperSig`/`builtinLowerSig` return the argument untouched --
+        // not even ASCII-folded -- for every binary-charset spelling, which is
+        // what `is_binary_str` decides in one place.
+        value if crate::string_signature::is_binary_str(value) => Ok(Datum::new_bytes(
+            coerce_str_bytes(value)?.expect("non-NULL value has bytes"),
+        )),
         value => match coerce_str(value)? {
             Some(text) => Ok(Datum::new_string(if upper {
                 text.to_uppercase()
@@ -88,7 +93,10 @@ pub(crate) fn bit_length(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(Datum::Int((bytes.len() as i64) * 8))
 }
 
-/// LEFT/RIGHT: the first or last `n` characters (`NULL` if any arg is `NULL`).
+/// `LEFT`/`RIGHT`: the first or last `n` units, where `builtinLeftSig` and
+/// `builtinRightSig` count BYTES for a binary argument (preserving invalid
+/// UTF-8) and their `...UTF8Sig` twins count CHARACTERS. `NULL` if either
+/// argument is `NULL`.
 pub(crate) fn str_take(vals: &[Datum], from_left: bool) -> Result<Datum, EvalError> {
     if vals.len() != 2 {
         return Err(EvalError::Unsupported("bad LEFT/RIGHT arguments"));
@@ -97,58 +105,15 @@ pub(crate) fn str_take(vals: &[Datum], from_left: bool) -> Result<Datum, EvalErr
         Datum::Null => return Ok(Datum::Null),
         value => crate::cast::to_i64_signed(value).max(0) as usize,
     };
-    match &vals[0] {
-        Datum::Null => Ok(Datum::Null),
-        // Go selects the binary signature for binary strings, where LEFT and
-        // RIGHT count raw bytes and preserve invalid UTF-8.  Keep that
-        // boundary distinct from the UTF-8 character signature below.
-        Datum::Bytes(bytes) => {
-            let start = if from_left {
-                0
-            } else {
-                bytes.len().saturating_sub(n)
-            };
-            let end = if from_left {
-                bytes.len().min(n)
-            } else {
-                bytes.len()
-            };
-            Ok(Datum::new_bytes(bytes[start..end].to_vec()))
-        }
-        value => {
-            if value.collation() == Some(tidb_datatype::Collation::Binary) {
-                let bytes = coerce_str_bytes(value)?.expect("non-NULL value has bytes");
-                let start = if from_left {
-                    0
-                } else {
-                    bytes.len().saturating_sub(n)
-                };
-                let end = if from_left {
-                    bytes.len().min(n)
-                } else {
-                    bytes.len()
-                };
-                return Ok(Datum::new_bytes(bytes[start..end].to_vec()));
-            }
-            let Some(text) = coerce_str(value)? else {
-                return Ok(Datum::Null);
-            };
-            let chars: Vec<char> = text.chars().collect();
-            let start = if from_left {
-                0
-            } else {
-                chars.len().saturating_sub(n)
-            };
-            let end = if from_left {
-                chars.len().min(n)
-            } else {
-                chars.len()
-            };
-            Ok(Datum::new_string(
-                chars[start..end].iter().collect::<String>(),
-            ))
-        }
-    }
+    let Some(units) = StrUnits::of(&vals[0])? else {
+        return Ok(Datum::Null);
+    };
+    let (start, end) = if from_left {
+        (0, n.min(units.len()))
+    } else {
+        (units.len().saturating_sub(n), units.len())
+    };
+    Ok(units.pack(units.slice(start, end).to_vec()))
 }
 
 /// `SUBSTRING(s, pos[, len])`: 1-indexed, counting in the units of the
@@ -516,11 +481,11 @@ pub(crate) fn pad(vals: &[Datum], left: bool) -> Result<Datum, EvalError> {
     if !(0..=MAX_BLOB_WIDTH).contains(&len) {
         return Ok(Datum::Null);
     }
-    let binary = matches!(vals[0], Datum::Bytes(_))
-        || matches!(vals[2], Datum::Bytes(_))
-        || vals[0].collation() == Some(tidb_datatype::Collation::Binary)
-        || vals[2].collation() == Some(tidb_datatype::Collation::Binary);
-    if binary {
+    // `lpadFunctionClass.getFunction` tests BOTH string arguments, so a binary
+    // pad string makes the whole call byte-based.
+    if crate::string_signature::is_binary_str(&vals[0])
+        || crate::string_signature::is_binary_str(&vals[2])
+    {
         let (Some(s), Some(padstr)) = (coerce_str_bytes(&vals[0])?, coerce_str_bytes(&vals[2])?)
         else {
             return Ok(Datum::Null);
@@ -1275,9 +1240,7 @@ pub(crate) fn ord(vals: &[Datum]) -> Result<Datum, EvalError> {
     // complete first UTF-8 character, exactly as Go's charset transform does;
     // malformed text falls back to that first byte rather than being decoded
     // with replacement.
-    let first = if matches!(value, Datum::Bytes(_))
-        || value.collation() == Some(tidb_datatype::Collation::Binary)
-    {
+    let first = if crate::string_signature::is_binary_str(value) {
         vec![first_byte]
     } else if let Ok(text) = std::str::from_utf8(&bytes) {
         let mut buf = [0_u8; 4];
