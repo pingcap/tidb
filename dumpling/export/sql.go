@@ -17,7 +17,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
@@ -1065,8 +1064,6 @@ type columnInfo struct {
 	selectedFields    []string
 	hasGenerateColumn bool
 }
-
-type columnCache map[restore.UniqueTableName]columnInfo
 
 func buildSelectField(info columnInfo, completeInsert bool) (string, int, string) { // revive:disable-line:flag-parameter
 	selectLen := len(info.selectedFields)

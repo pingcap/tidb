@@ -265,7 +265,11 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 	if conf.SQL == "" {
-		conf.columnCache = make(columnCache)
+		tableCount := 0
+		for _, tables := range conf.Tables {
+			tableCount += len(tables)
+		}
+		conf.columnCache = make(map[restore.UniqueTableName]columnInfo, tableCount)
 		if err = prepareColumnCache(tctx, conf, baseConn); err != nil {
 			_ = baseConn.DBConn.Close()
 			return errors.Trace(err)

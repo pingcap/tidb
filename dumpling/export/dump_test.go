@@ -638,7 +638,7 @@ func TestDumpTableMeta(t *testing.T) {
 
 	conf := DefaultConfig()
 	conf.NoSchemas = true
-	conf.columnCache = columnCache{
+	conf.columnCache = map[restore.UniqueTableName]columnInfo{
 		restore.UniqueTableName{DB: database, Table: table}: {
 			sourceFields:   []string{"`id`"},
 			selectedFields: []string{"`id`"},
@@ -687,7 +687,7 @@ func TestDumpTableMetaWithColumnFilterKeepsSourceColumnsForSplit(t *testing.T) {
 	conf.ServerInfo.ServerType = version.ServerTypeMySQL
 	conf.ColumnFilter = columnFilter
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
-	conf.columnCache = make(columnCache)
+	conf.columnCache = make(map[restore.UniqueTableName]columnInfo, 1)
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
@@ -746,7 +746,7 @@ func TestDumpTableMetaSkipsColumnFilterForView(t *testing.T) {
 	conf.ColumnFilter = newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{database + ".*"}, Columns: []string{"missing"}},
 	)
-	conf.columnCache = make(columnCache)
+	conf.columnCache = make(map[restore.UniqueTableName]columnInfo, 1)
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
@@ -778,7 +778,7 @@ func TestPrepareColumnCache(t *testing.T) {
 	conf.ColumnFilter = newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"*", "!missing"}},
 	)
-	conf.columnCache = make(columnCache)
+	conf.columnCache = make(map[restore.UniqueTableName]columnInfo, 1)
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
@@ -806,7 +806,7 @@ func TestPrepareColumnCacheWithoutColumnFilter(t *testing.T) {
 
 	conf := DefaultConfig()
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
-	conf.columnCache = make(columnCache)
+	conf.columnCache = make(map[restore.UniqueTableName]columnInfo, 1)
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
@@ -837,7 +837,7 @@ func TestPrepareColumnCacheFailsOnEmptyResult(t *testing.T) {
 	conf.ColumnFilter = newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"missing"}},
 	)
-	conf.columnCache = make(columnCache)
+	conf.columnCache = make(map[restore.UniqueTableName]columnInfo, 1)
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).

@@ -20,6 +20,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -180,7 +181,7 @@ type Config struct {
 
 	TableFilter         filter.Filter       `json:"-"`
 	ColumnFilter        *ColumnFilterConfig `json:"-"`
-	columnCache         columnCache
+	columnCache         map[restore.UniqueTableName]columnInfo
 	Where               string
 	FileType            string
 	ServerInfo          version.ServerInfo
