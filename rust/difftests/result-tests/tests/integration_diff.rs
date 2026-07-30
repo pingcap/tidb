@@ -62,7 +62,7 @@ use tidb_session::{Session, StmtOutput};
 /// divergences are a countable list with named causes, so a regression
 /// anywhere in these areas turns the gate red.
 ///
-/// Eight of the nine had ZERO divergences when they were onboarded. The ninth,
+/// Nine of the ten had ZERO divergences when they were onboarded. The tenth,
 /// `explain_easy`, is deliberately on the list at a cost: it is the only topic
 /// here dense enough in plan text to prove the access-property comparison
 /// works at all (53 of its plans match), and it contributes the whole of the
@@ -109,6 +109,12 @@ const TOPICS: &[(&str, &str)] = &[
     (
         "globalindex/insert",
         "INSERT against a global index on a partitioned table -- also nothing skipped",
+    ),
+    (
+        "executor/admin",
+        "ADMIN CHECK/SHOW over real tables, and the topic that PROVES the recursive-CTE \
+         fixpoint is not quadratic: its 100,000-row `WITH RECURSIVE` never terminated \
+         while the fold re-deduplicated the whole accumulated result each round",
     ),
 ];
 
@@ -505,6 +511,30 @@ fn replay_one_topic_from_env() {
 /// ```sh
 /// cargo test -p difftest-result-tests --test integration_diff -- --ignored --nocapture survey
 /// ```
+///
+/// # The crashes the survey still reports, named
+///
+/// 200 topics report a status line; the rest are `UNALIGNED` on this driver's
+/// own limits (a multi-connection `connect (...)` script, or a `.result`
+/// recording that is not valid UTF-8). Eight topics CRASH, and every one of
+/// them is the SAME defect, distinct from the four this driver's arrival
+/// already worked off:
+///
+/// A chunk column's shape comes from a FIELD TYPE while `Chunk::append_datum`
+/// dispatches on the DATUM KIND, so the two must agree -- and an expression's
+/// INFERRED return type does not always match the datum it evaluates to.
+/// `executor/ddl`, `planner/core/casetest/integration` and
+/// `planner/core/issuetest/planner_issue` put an 8-byte value in a
+/// variable-length column; `explain_complex` and `select` cross a decimal's
+/// 40-byte cell with an 8-byte one; `expression/builtin` reaches
+/// `append_datum` with a decimal whose text is not a number at all (`I311`).
+/// `expression/issues` and `expression/json` are a different, expression-side
+/// panic (`tidb-expr/src/ops.rs:349`).
+///
+/// The fix for the first six is expression return-type inference, which
+/// `driver::set_opr` already names as its own DEFERRED item (a set operation's
+/// column metadata comes from the first term, with no type unification). It is
+/// one root cause, not six, and it is why those topics are not onboarded.
 #[test]
 #[ignore = "onboarding tool: replays all 257 topics to rank the next candidates"]
 fn survey_unonboarded_topics() {
