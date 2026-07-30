@@ -1060,10 +1060,9 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 }
 
 type writableColumnInfo struct {
-	sourceNames        []string
-	selectedNames      []string
-	hasGenerateColumn  bool
-	selectedNamesReady bool
+	sourceNames       []string
+	selectedNames     []string
+	hasGenerateColumn bool
 }
 
 type writableColumnCache struct {
@@ -1102,7 +1101,7 @@ func (c *writableColumnCache) getSelectedNames(dbName, tableName string) ([]stri
 		return nil, false
 	}
 	info, ok := c.columns[dbName+"\x00"+tableName]
-	if !ok || !info.selectedNamesReady {
+	if !ok || info.selectedNames == nil {
 		return nil, false
 	}
 	return info.selectedNames, true
@@ -1115,7 +1114,6 @@ func (c *writableColumnCache) setSelectedNames(dbName, tableName string, selecte
 	key := dbName + "\x00" + tableName
 	info := c.columns[key]
 	info.selectedNames = selectedNames
-	info.selectedNamesReady = true
 	c.columns[key] = info
 }
 
