@@ -275,19 +275,22 @@ fn bind_correlated_columns(
     })
 }
 
-/// Whether a bound path and a reference name the same column. A bare `a`
-/// matches a bound `t.a`, since the inner reference may be unqualified.
+/// Whether a bound path and a reference name the same column.
+///
+/// The comparison is the WHOLE path, because every binding was recorded from
+/// the very references it is substituted into ([`collect_outer_columns`] pushes
+/// each path as written), so an unqualified outer reference is bound under its
+/// unqualified path and needs no suffix rule. Matching on the last name alone
+/// would instead bind the INNER query's own same-named column: in
+/// `SELECT id FROM emp WHERE emp.dept_id = dept.id AND emp.id = 10`, the outer
+/// binding for `dept.id` would swallow `emp.id` and the selected `id`, and the
+/// subquery would return NULL for every outer row.
 fn paths_match(bound: &[String], candidate: &[String]) -> bool {
-    if bound.len() == candidate.len() {
-        return bound
+    bound.len() == candidate.len()
+        && bound
             .iter()
             .zip(candidate)
-            .all(|(a, b)| a.eq_ignore_ascii_case(b));
-    }
-    match (bound.last(), candidate.last()) {
-        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
-        _ => false,
-    }
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
 }
 
 /// Substitutes `bindings` for the correlated column references in every clause

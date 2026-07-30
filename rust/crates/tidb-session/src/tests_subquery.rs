@@ -377,19 +377,33 @@ fn an_uncorrelated_subquery_folds_inside_case_function_and_aggregate_arguments()
     );
 }
 
-/// The neighbouring CORRELATED case is still refused BY NAME: a subquery in an
-/// aggregate's argument that reads the outer row has to run once per SOURCE
-/// row, below the aggregation, which this driver does not build (it builds one
-/// Apply ABOVE the aggregation, over already-grouped values). Go answers
-/// `select count((select id from d2 where d2.id = d1.id)) from d1` with 3;
-/// this tier must say so rather than answer wrongly.
+/// The neighbouring CORRELATED case, which used to be refused by name and now
+/// RUNS: a subquery in an aggregate's argument that reads the outer row runs
+/// once per SOURCE row, below the aggregation (`hoist_pre_agg_subqueries` +
+/// `build_pre_agg_applies`). Go answers
+/// `select count((select id from d2 where d2.id = d1.id)) from d1` with 3, and
+/// so does this tier now.
+///
+/// The shapes still refused are the ones whose subquery sits somewhere the
+/// extraction cannot reach -- inside a `CASE` arm, or a function call's
+/// argument -- which stay named rather than answered wrongly.
 #[test]
-fn a_correlated_subquery_in_an_aggregate_argument_is_refused_by_name() {
+fn a_correlated_subquery_in_an_aggregate_argument_runs_below_the_aggregation() {
     let mut session = Session::new();
     session.run("CREATE TABLE dc (id INT PRIMARY KEY)").unwrap();
     session.run("INSERT INTO dc VALUES (1),(2),(9)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT COUNT((SELECT id FROM dc d2 WHERE d2.id = dc.id)) FROM dc")),
+        [["3"]]
+    );
+    // Still refused, by name: a `CASE` arm is not a shape
+    // `extract_correlated_subquery` walks into, so the aggregate's argument
+    // keeps its subquery and `build_agg_func` says so.
     let error = session
-        .run("SELECT COUNT((SELECT id FROM dc d2 WHERE d2.id = dc.id)) FROM dc")
+        .run(
+            "SELECT SUM(CASE WHEN EXISTS(SELECT 1 FROM dc d2 WHERE d2.id = dc.id) \
+             THEN dc.id ELSE 0 END) FROM dc",
+        )
         .unwrap_err();
     assert!(
         matches!(
@@ -401,8 +415,7 @@ fn a_correlated_subquery_in_an_aggregate_argument_is_refused_by_name() {
     );
 }
 
-/// Go's answers for the refused shape, asserted so it is a tracked work item
-/// rather than a wish. Captured via `rust/difftests/gorun` on
+/// Go's answers for the shape, captured via `rust/difftests/gorun` on
 /// `corpus/table/foundations`' own `dept`/`emp`:
 ///
 /// | statement | Go |
@@ -420,19 +433,20 @@ fn a_correlated_subquery_in_an_aggregate_argument_is_refused_by_name() {
 /// accumulator. Any scheme that evaluates the subquery once, or above the
 /// grouping, gets a different number.
 ///
-/// REFUSED as too large for a corpus-tail unit, and named so a future one can
-/// pick it up: `driver::agg_select` is a fixed six-stage builder whose Apply
-/// chain (stage 6) sits ABOVE the aggregation, and `carry_apply_columns` binds
-/// each Apply's correlated columns from the AGGREGATION's output row. This
-/// shape needs a NEW stage between the source and the aggregation: an Apply
-/// over SOURCE rows that appends the scalar, correlated columns bound from the
-/// source schema instead, and the aggregate's argument rewritten onto the
-/// appended column. That is a planner restructuring, not a local fix, and the
-/// uncorrelated sibling (`SELECT SUM((SELECT COUNT(*) FROM emp)) FROM dept`,
-/// Go `12`) already passes through the fold gate, so nothing here is blocked
-/// on the ordinary case.
+/// This is what `driver::agg_select`'s stage 1a
+/// (`hoist_pre_agg_subqueries`) and stage 5b (`build_pre_agg_applies`) were
+/// built for: the Apply chain the pipeline already had (stage 6) sits ABOVE
+/// the aggregation and binds from the grouped output row, which cannot answer
+/// any of these. The new stages take the subquery out of the aggregate's
+/// argument, run it per SOURCE row below the aggregation, and leave the
+/// argument reading the appended column.
+///
+/// `EXPLAIN` in Go prints exactly that shape --
+/// `HashAgg <- Projection <- Apply(dept, MaxOneRow(inner))` -- which is also
+/// where its `1242` comes from: the `MaxOneRow` is per outer row, so a
+/// subquery returning two rows for SOME source row errors at ROW time while
+/// `EXPLAIN` of the same statement succeeds.
 #[test]
-#[ignore = "needs an Apply stage BELOW the aggregation, binding correlated columns from the source row"]
 fn a_correlated_subquery_in_an_aggregate_argument_matches_go() {
     let mut session = Session::new();
     session
@@ -485,5 +499,146 @@ fn a_correlated_subquery_in_an_aggregate_argument_matches_go() {
              FROM dept"
         )),
         [["1"]]
+    );
+
+    // Captured from Go alongside the rows above.
+    //
+    // | statement | Go |
+    // | --- | --- |
+    // | `AVG((SELECT COUNT(*) ...))` | `1.0000` |
+    // | `MIN((SELECT COUNT(*) ...))` | `0` |
+    // | `SUM(sub + dept.id)` | `9` |
+    // | `COUNT(sub + dept.id)` (sub NULL twice) | `1` |
+    // | `COUNT(DISTINCT sub)` | `3` |
+    // | `SUM((SELECT COUNT(*) ...) + (SELECT COUNT(*) ...))` | `3` |
+    // | `SUM((SELECT id ... LIMIT 1))` | `22` |
+    // | `... WHERE dept.id = 3` (no inner row) | `NULL` |
+    // | `... WHERE dept.id > 100` (no SOURCE row) | `0` for COUNT |
+    assert_eq!(
+        row_text(
+            session.run(
+                "SELECT AVG((SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id)) FROM dept"
+            )
+        ),
+        [["1.0000"]]
+    );
+    assert_eq!(
+        row_text(
+            session.run(
+                "SELECT MIN((SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id)) FROM dept"
+            )
+        ),
+        [["0"]]
+    );
+    // A correlated subquery AND a plain source column in the same aggregate
+    // call: both read the same source row, so the appended column simply joins
+    // the argument expression.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT SUM((SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id) + dept.id) \
+             FROM dept"
+        )),
+        [["9"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT COUNT((SELECT id FROM emp WHERE emp.dept_id = dept.id AND emp.id = 10) \
+             + dept.id) FROM dept"
+        )),
+        [["1"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT COUNT(DISTINCT (SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id)) \
+             FROM dept"
+        )),
+        [["3"]]
+    );
+    // TWO correlated subqueries in ONE argument (Go: `3`) is still refused,
+    // and by the extraction's own pre-existing rule rather than anything this
+    // stage added: `extract_correlated_subquery` rejects a second correlated
+    // subquery in the same expression outright, so it cannot be walked one at
+    // a time the way the stage's hoist loop would otherwise take them. Named
+    // here so the next unit inherits the exact obstacle.
+    let error = session
+        .run(
+            "SELECT SUM((SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id) \
+             + (SELECT COUNT(*) FROM emp WHERE emp.id = dept.id)) FROM dept",
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            DriverError::Unsupported(message)
+                if message.contains("more than one correlated subquery")
+        ),
+        "unexpected error: {error:?}"
+    );
+    assert_eq!(
+        row_text(
+            session.run(
+                "SELECT SUM((SELECT id FROM emp WHERE emp.dept_id = dept.id LIMIT 1)) FROM dept"
+            )
+        ),
+        [["22"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT SUM((SELECT id FROM emp WHERE emp.dept_id = dept.id)) FROM dept \
+             WHERE dept.id = 3"
+        )),
+        [["NULL"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT COUNT((SELECT id FROM emp WHERE emp.dept_id = dept.id)) FROM dept \
+             WHERE dept.id > 100"
+        )),
+        [["0"]]
+    );
+
+    // `1242` is a ROW-time error, not a plan-time one: the same statement
+    // succeeds when no source row's subquery returns two rows, and Go's
+    // `EXPLAIN` of the failing statement plans fine (its `MaxOneRow` sits
+    // inside the Apply's probe side).
+    assert_eq!(
+        row_text(session.run(
+            "SELECT SUM((SELECT id FROM emp WHERE emp.dept_id = dept.id)) FROM dept \
+             WHERE dept.id = 2"
+        )),
+        [["12"]]
+    );
+    let error = session
+        .run("SELECT SUM((SELECT id FROM emp WHERE emp.dept_id = dept.id)) FROM dept")
+        .unwrap_err();
+    assert!(
+        matches!(&error, DriverError::SubqueryReturnsMoreThanOneRow),
+        "unexpected error: {error:?}"
+    );
+
+    // GROUP BY runs the Apply per SOURCE row, not per group. A second `eng`
+    // department (`id = 9`, whose one employee is `dan`) takes the grouped SUM
+    // from `eng|2` to `eng|3`: both source rows ran the subquery and the
+    // aggregate summed both results. A per-GROUP Apply would have run once for
+    // `eng` and could not produce 3.
+    session.run("INSERT INTO dept VALUES (9,'eng')").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT dept.name, SUM((SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id)) \
+             FROM dept GROUP BY dept.name ORDER BY dept.name"
+        )),
+        [["eng", "3"], ["ops", "0"], ["sales", "1"]]
+    );
+    // ... and the row-time `1242` fires from inside a group, too: `dept.id = 1`
+    // has two employees.
+    let error = session
+        .run(
+            "SELECT dept.name, COUNT((SELECT id FROM emp WHERE emp.dept_id = dept.id)) \
+             FROM dept GROUP BY dept.name",
+        )
+        .unwrap_err();
+    assert!(
+        matches!(&error, DriverError::SubqueryReturnsMoreThanOneRow),
+        "unexpected error: {error:?}"
     );
 }

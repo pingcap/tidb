@@ -208,7 +208,15 @@ fn table_execution_matches_go_engine() {
     // the value at all reproduces that on every read surface at once
     // (`@@`, `@@session.`, `SHOW VARIABLES` -- all captured as 0), so no read
     // path needs to special-case the two names.
-    const KNOWN_DIVERGENCES: usize = 3;
+    // 3 -> 1: a correlated subquery inside an AGGREGATE'S ARGUMENT now runs as
+    // an Apply BELOW the aggregation, once per SOURCE row, which is where Go
+    // plans it (`EXPLAIN` prints `HashAgg <- Projection <- Apply`) -- see
+    // `agg_select::hoist_pre_agg_subqueries`. Both `foundations` cases were
+    // that shape, and one of them needed a second fix in the shared binder:
+    // an outer `dept.id` binding was matched by LAST NAME, so it also
+    // swallowed the inner query's own `id` and every inner run returned NULL.
+    // The one statement left is `last_insert_id_uint`, an unrelated topic.
+    const KNOWN_DIVERGENCES: usize = 1;
 
     assert!(
         failures.len() <= KNOWN_DIVERGENCES,

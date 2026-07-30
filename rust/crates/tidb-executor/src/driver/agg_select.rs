@@ -15,13 +15,21 @@
 //! The aggregate `SELECT` pipeline, one named stage per planner phase.
 //!
 //! Go's `PlanBuilder.buildSelect` builds a grouped query as a fixed chain of
-//! logical operators -- `DataSource -> Selection(WHERE) -> Aggregation ->
-//! Apply* -> Selection(HAVING) -> Window -> Sort -> Limit -> Projection` --
-//! and every clause is lowered against whichever operator's output it reads.
-//! This module keeps that chain explicit: [`run_aggregate_select`] calls the
-//! stages in plan order and [`AggPipelineState`] carries the aggregation's
-//! growing output columns (names/types/functions) plus each clause's hoisted
-//! remainder between them.
+//! logical operators -- `DataSource -> Selection(WHERE) -> Apply* ->
+//! Aggregation -> Apply* -> Selection(HAVING) -> Window -> Sort -> Limit ->
+//! Projection` -- and every clause is lowered against whichever operator's
+//! output it reads. This module keeps that chain explicit:
+//! [`run_aggregate_select`] calls the stages in plan order and
+//! [`AggPipelineState`] carries the aggregation's growing output columns
+//! (names/types/functions) plus each clause's hoisted remainder between them.
+//!
+//! The two Apply positions are not a duplication. The one BELOW the
+//! aggregation runs a subquery once per SOURCE row, for an aggregate's own
+//! argument ([`hoist_pre_agg_subqueries`]); the one ABOVE it runs once per
+//! GROUP row, for a select field / `HAVING` / `ORDER BY`
+//! ([`build_apply_chain`]). Which one a subquery belongs to is decided by
+//! where it is written, exactly as Go's rewriter decides it by which plan is
+//! current when it reaches the subquery.
 
 use super::*;
 
@@ -63,6 +71,14 @@ struct AggPipelineState {
     /// Correlated subqueries to apply above the aggregation, as
     /// `(subquery, output name, value type)`.
     applies: Vec<(CorrelatedSubquery, String, FieldType)>,
+    /// Correlated subqueries found inside an aggregate's ARGUMENT, to apply
+    /// BELOW the aggregation -- one per appended source column, in the order
+    /// the columns are appended. See [`hoist_pre_agg_subqueries`].
+    pre_agg_applies: Vec<(CorrelatedSubquery, FieldType)>,
+    /// The source scope widened by the [`Self::pre_agg_applies`] columns: the
+    /// scope every source-row expression (an aggregate's argument above all)
+    /// resolves against once the Apply chain below the aggregation exists.
+    pre_agg_scope: Option<FromScope>,
     /// `HAVING` with its aggregates hoisted, over the aggregation's output.
     having_expr: Option<tidb_ast::Expr>,
     /// `ORDER BY` with its aggregates hoisted, as `(expr, desc)`.
@@ -123,20 +139,50 @@ pub(crate) fn run_aggregate_select(
         ..AggPipelineState::default()
     };
 
+    // Stage 1a: hoist correlated subqueries out of the aggregates' ARGUMENTS,
+    // which the Apply chain in stage 5b appends per SOURCE row. Runs before
+    // every stage that lowers an aggregate, so the arguments those stages
+    // build already read the appended column.
+    let pre_agg = hoist_pre_agg_subqueries(select, &mut state, resolver, catalog, current_db, ctx)?;
+    let select = pre_agg.as_ref().unwrap_or(select);
+    // Source-row expressions resolve against the WIDENED scope from here on;
+    // the aggregation sits above the Apply chain, so its input row carries the
+    // appended columns. `resolver` stays the narrow source scope, which is
+    // what the `WHERE` below the Applies reads.
+    let widened_scope = state.pre_agg_scope.clone();
+    let widened = ScopeResolver {
+        scope: widened_scope.as_ref().unwrap_or(resolver.scope),
+    };
+    let source_resolver = &widened;
+
     // Stage 1: hoist window calls out of the select list / ORDER BY.
-    let hoisted = hoist_window_calls(select, &mut state, resolver)?;
+    let hoisted = hoist_window_calls(select, &mut state, source_resolver)?;
     let select = hoisted.as_ref().unwrap_or(select);
 
     // Stage 2: lower the select list into the aggregation.
-    lower_select_fields(select, &mut state, resolver, catalog, current_db, ctx)?;
+    lower_select_fields(
+        select,
+        &mut state,
+        source_resolver,
+        catalog,
+        current_db,
+        ctx,
+    )?;
 
     // Stage 3: lower HAVING / ORDER BY against the aggregation's output.
-    hoist_having_and_order_by(select, &mut state, resolver, catalog, current_db, ctx)?;
+    hoist_having_and_order_by(
+        select,
+        &mut state,
+        source_resolver,
+        catalog,
+        current_db,
+        ctx,
+    )?;
 
     // Stage 4: carry every column an Apply's subquery reads out of the
     // aggregation. Runs after every clause has been walked, so it covers
     // select-field, HAVING and ORDER BY subqueries in one pass.
-    carry_apply_columns(&mut state, resolver)?;
+    carry_apply_columns(&mut state, source_resolver)?;
 
     // Stage 5: Source -> Selection(WHERE) -> Aggregation.
     let root = build_aggregation(
@@ -205,6 +251,255 @@ fn group_by_display_names(
             }
         })
         .collect()
+}
+
+/// Stage 1a (pre-aggregation Apply hoist): pull every correlated subquery out
+/// of an aggregate's ARGUMENT, so the aggregate reads a column an Apply BELOW
+/// the aggregation appends per SOURCE row.
+///
+/// This is the placement Go's expression rewriter produces and `EXPLAIN`
+/// confirms: for `SELECT SUM((SELECT id FROM emp WHERE emp.dept_id =
+/// dept.id)) FROM dept`, TiDB prints `HashAgg <- Projection <- Apply(dept,
+/// MaxOneRow(inner))`. The subquery is correlated to the OUTER query's source
+/// row, and `buildAggregation` runs on the plan the rewriter left behind --
+/// which by then is the Apply, not the DataSource. The consequences, all
+/// captured from Go, are what make the placement observable:
+///
+/// * `SELECT COUNT((SELECT id FROM emp WHERE emp.dept_id = dept.id AND
+///   emp.id = 10)) FROM dept` is `1`: the subquery runs three times, yields
+///   NULL twice, and `COUNT` skips exactly those. Neither a single evaluation
+///   nor a NULL-dropping filter can produce that number.
+/// * With `GROUP BY`, the Apply still runs per SOURCE row: after adding a
+///   second `eng` department the grouped `SUM` goes from `eng|2` to `eng|3`,
+///   which only happens if both source rows ran the subquery and the
+///   aggregate summed both results.
+///
+/// The correlated columns therefore bind from the SOURCE row, which is the
+/// whole difference from [`carry_apply_columns`] / [`build_apply_chain`]
+/// (Applies ABOVE the aggregation, binding from the grouped output row).
+///
+/// Returns the rewritten `SELECT` when anything was hoisted; the caller keeps
+/// reading the original otherwise. A subquery inside a shape
+/// [`extract_correlated_subquery`] does not reach (a `CASE` arm, a function
+/// call) is left in place for [`build_agg_func`]'s refusal.
+fn hoist_pre_agg_subqueries(
+    select: &tidb_ast::SelectStmt,
+    state: &mut AggPipelineState,
+    resolver: &ScopeResolver<'_>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<tidb_ast::SelectStmt>, DriverError> {
+    let mut rewritten = select.clone();
+    let mut hoister = PreAggApplyHoister {
+        outer: resolver.scope,
+        catalog,
+        current_db,
+        ctx,
+        base: resolver.scope.width(),
+        found: Vec::new(),
+        error: None,
+    };
+    // Every clause whose aggregates read source rows: the select list, plus
+    // HAVING / ORDER BY, whose aggregates are hoisted into the same
+    // aggregation by stage 3.
+    for field in rewritten.fields.fields_mut() {
+        if let SelectField::Expr { expr, .. } = field {
+            hoister.visit(expr);
+        }
+    }
+    if let Some(having) = rewritten.having.as_mut() {
+        hoister.visit(having);
+    }
+    for item in &mut rewritten.order_by {
+        hoister.visit(&mut item.expr);
+    }
+    if let Some(error) = hoister.error {
+        return Err(error);
+    }
+    if hoister.found.is_empty() {
+        return Ok(None);
+    }
+    // The scope the aggregate arguments now resolve against: the source's own
+    // columns plus one appended column per hoisted subquery, named exactly the
+    // placeholder the extraction left behind.
+    let mut widened = resolver.scope.clone();
+    for (_, value_type) in &hoister.found {
+        let offset = widened.width();
+        widened.tables.push(FromTable {
+            name: String::new(),
+            database: None,
+            columns: vec![(format!("__apply_{offset}"), value_type.clone())],
+            offset,
+            determinants: Vec::new(),
+        });
+    }
+    state.pre_agg_applies = hoister.found;
+    state.pre_agg_scope = Some(widened);
+    Ok(Some(rewritten))
+}
+
+/// Replaces every correlated subquery in an aggregate's argument with the
+/// placeholder column an Apply below the aggregation will append.
+struct PreAggApplyHoister<'a> {
+    /// The SOURCE scope the subqueries are correlated to.
+    outer: &'a FromScope,
+    catalog: &'a Catalog,
+    current_db: &'a str,
+    ctx: &'a crate::StmtContext,
+    /// The row offset the first appended column lands at.
+    base: usize,
+    found: Vec<(CorrelatedSubquery, FieldType)>,
+    error: Option<DriverError>,
+}
+
+impl PreAggApplyHoister<'_> {
+    fn visit(&mut self, expr: &mut tidb_ast::Expr) {
+        tidb_ast::Visitable::accept(expr, self);
+    }
+
+    /// Hoists every correlated subquery out of one aggregate argument.
+    ///
+    /// The loop is what lets an argument hold more than one
+    /// (`SUM(sub1 + sub2)`): each pass extracts the first one it reaches and
+    /// leaves a placeholder, so the next pass sees the next. It stops as soon
+    /// as a pass finds nothing correlated, which is also how an UNCORRELATED
+    /// subquery (folded elsewhere) leaves the loop.
+    fn hoist_arg(&mut self, arg: &mut tidb_ast::Expr) -> Result<(), DriverError> {
+        while expr_has_subquery(arg) {
+            let index = self.base + self.found.len();
+            let mut correlated = None;
+            let rewritten = extract_correlated_subquery(
+                arg,
+                self.outer,
+                self.catalog,
+                self.current_db,
+                index,
+                &mut correlated,
+                self.ctx,
+            )?;
+            let Some(correlated) = correlated else {
+                return Ok(());
+            };
+            let value_type = if matches!(correlated.kind, SubqueryKind::Scalar) {
+                subquery_result_type(&correlated, self.catalog, self.current_db, self.ctx)
+                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
+            } else {
+                FieldType::new(FieldTypeCode::LongLong)
+            };
+            self.found.push((correlated, value_type));
+            *arg = rewritten;
+        }
+        Ok(())
+    }
+}
+
+impl tidb_ast::Visitor for PreAggApplyHoister<'_> {
+    fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+        if self.error.is_some() {
+            return true;
+        }
+        let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+            return false;
+        };
+        match expr {
+            // The aggregate's own arguments read SOURCE rows, which is what
+            // makes a correlated subquery there an Apply below the
+            // aggregation. Its children are not walked further: an aggregate
+            // cannot nest inside another one's argument.
+            tidb_ast::Expr::Aggregate { args, .. } | tidb_ast::Expr::GroupConcat { args, .. } => {
+                for arg in args.iter_mut() {
+                    if let Err(error) = self.hoist_arg(arg) {
+                        self.error = Some(error);
+                        break;
+                    }
+                }
+                true
+            }
+            // A subquery that is NOT inside an aggregate's argument belongs to
+            // the per-GROUP Apply above the aggregation (stage 6), and an
+            // aggregate INSIDE such a subquery is that subquery's own, over
+            // its own rows -- so this stage does not descend into either.
+            tidb_ast::Expr::Subquery(_)
+            | tidb_ast::Expr::Exists { .. }
+            | tidb_ast::Expr::InSubquery { .. }
+            | tidb_ast::Expr::CompareSubquery { .. } => true,
+            _ => false,
+        }
+    }
+
+    fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+        self.error.is_none()
+    }
+}
+
+/// Stage 5b: the Apply chain BELOW the aggregation, one per correlated
+/// subquery [`hoist_pre_agg_subqueries`] took out of an aggregate's argument.
+///
+/// Mirrors Go's `Apply` under the `HashAgg`: the outer row is the SOURCE row
+/// (post-`WHERE`), so the subquery runs once per source row and its value --
+/// NULL included -- reaches the accumulator as an ordinary column.
+fn build_pre_agg_applies(
+    source: Box<dyn Executor>,
+    state: &mut AggPipelineState,
+    scope: &FromScope,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let mut source = source;
+    let mut scope = scope.clone();
+    for (correlated, value_type) in std::mem::take(&mut state.pre_agg_applies) {
+        let offset = scope.width();
+        // Each Apply binds its correlated columns from the row BELOW it, which
+        // is the source row plus whatever the Applies before it appended.
+        let inner_scope = scope.clone();
+        scope.tables.push(FromTable {
+            name: String::new(),
+            database: None,
+            columns: vec![(format!("__apply_{offset}"), value_type)],
+            offset,
+            determinants: Vec::new(),
+        });
+        let columns: Vec<Column> = scope
+            .column_list()
+            .iter()
+            .enumerate()
+            .map(|(i, (_, ft))| {
+                let mut col = Column::new((i + 1) as i64, ft.clone());
+                col.index = i as i64;
+                col
+            })
+            .collect();
+        // The callback outlives this borrow of the catalog, so it owns a
+        // snapshot (see ApplyExec::new).
+        let inner_catalog = catalog.clone();
+        let inner_db = current_db.to_owned();
+        let inner_ctx = ctx.clone();
+        let runner: crate::apply::InnerRunner = Box::new(move |values: &[Datum]| {
+            run_correlated_subquery(
+                &correlated,
+                values,
+                &inner_scope,
+                &inner_catalog,
+                &inner_db,
+                &inner_ctx,
+            )
+            .map_err(|e| match e {
+                DriverError::Exec(exec) => exec,
+                DriverError::SubqueryReturnsMoreThanOneRow => {
+                    ExecError::SubqueryReturnsMoreThanOneRow
+                }
+                other => ExecError::Unsupported(driver_error_text(&other)),
+            })
+        });
+        source = Box::new(crate::apply::ApplyExec::new(
+            ExecutorMeta::new(Schema::new(columns), 7, INIT_CAP, MAX_CHUNK_SIZE),
+            source,
+            runner,
+        ));
+    }
+    Ok(source)
 }
 
 /// Stage 1 (hoist): pull window calls out of the select list / `ORDER BY`.
@@ -741,6 +1036,10 @@ fn build_aggregation(
             }
         }
     }
+
+    // Stage 5b: the Applies for the aggregates' own arguments, between the
+    // WHERE and the aggregation -- Go's `Apply` under the `HashAgg`.
+    let source = build_pre_agg_applies(source, state, resolver.scope, catalog, current_db, ctx)?;
 
     // The aggregation output schema.
     let out_columns: Vec<Column> = state

@@ -1579,22 +1579,44 @@ fn grouped_correlated_subqueries() {
         ]
     );
 
-    // DEFERRED (documented, not silently wrong): a correlated subquery
-    // inside an AGGREGATE'S OWN ARGUMENT needs a per-SOURCE-ROW Apply
-    // below the aggregation, not the per-GROUP Apply above it this
-    // driver builds -- refused precisely rather than mis-evaluated.
-    assert!(matches!(
+    // A correlated subquery inside an AGGREGATE'S OWN ARGUMENT: the Apply runs
+    // per SOURCE row BELOW the aggregation (stage 5b), so group `1`'s two rows
+    // each contribute the 2 matching `s` rows and the group sums to 4 -- a
+    // per-GROUP Apply would have given 2. The NULL group's `s.k = NULL`
+    // matches nothing, so `COUNT(*)` is 0 there, not NULL. Captured from Go:
+    // `<nil>|0;1|4;2|1;3|0`.
+    assert_eq!(
         run_select_on(
-            "SELECT g, SUM((SELECT COUNT(*) FROM s WHERE s.k = g)) FROM t GROUP BY g",
+            "SELECT g, SUM((SELECT COUNT(*) FROM s WHERE s.k = g)) FROM t GROUP BY g ORDER BY g",
             &catalog,
             &crate::StmtContext::for_query()
-        ),
-        Err(DriverError::Unsupported(_))
-    ));
-    // The same refusal, now reached for the NESTED form too: the fold gate
-    // recognises a subquery inside a `CASE` inside an aggregate's argument, so
-    // this reports the aggregate-argument refusal by name instead of falling
-    // through to the expression rewriter's generic message.
+        )
+        .unwrap(),
+        vec![
+            vec![
+                Datum::Null,
+                Datum::Decimal(tidb_datatype::Decimal::from_int(0))
+            ],
+            vec![
+                Datum::Int(1),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(4))
+            ],
+            vec![
+                Datum::Int(2),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(1))
+            ],
+            vec![
+                Datum::Int(3),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(0))
+            ],
+        ]
+    );
+    // Still REFUSED (documented, not silently wrong), and it is the SHAPE that
+    // refuses, not the placement: `extract_correlated_subquery` does not walk
+    // into a `CASE` arm, so the subquery stays in the aggregate's argument and
+    // `build_agg_func` reports it by name instead of falling through to the
+    // expression rewriter's generic message. Go answers
+    // `<nil>|0;1|30;2|5;3|0`.
     assert!(matches!(
         run_select_on(
             "SELECT g, SUM(CASE WHEN EXISTS(SELECT 1 FROM s WHERE s.k = t.g) THEN v ELSE 0 END) \
