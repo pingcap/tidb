@@ -173,6 +173,7 @@ pub fn run_alter_table_in(
                         ))
                     }
                 }
+                crate::ddl::indexes::reject_partial_index(&index.options)?;
                 let columns = index_part_names(&index.parts)?;
                 let index_name = index
                     .name

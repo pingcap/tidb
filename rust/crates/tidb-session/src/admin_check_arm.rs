@@ -25,10 +25,12 @@
 //! `tests/integrationtest/r/executor/admin.result`, which are TiDB's oracle
 //! and are only ever read here:
 //!
-//! - `admin check table t;` -- NO output at all. An empty result set is the
-//!   whole success contract, which is exactly why the check underneath must
-//!   be real: an `Ok` returned without reading a byte is indistinguishable
-//!   from a passing check, and would be a success return that is not one.
+//! - `admin check table t;` -- NO output at all: Go's `CheckTable` plan has
+//!   an EMPTY schema, so the server sends an OK packet, not a zero-column
+//!   result set (see [`admin_check_passed`]). Producing nothing is the whole
+//!   success contract, which is exactly why the check underneath must be
+//!   real: an `Ok` returned without reading a byte is indistinguishable from
+//!   a passing check, and would be a success return that is not one.
 //! - `admin check index t idx;` -- also no output; the same consistency
 //!   check, narrowed to one index.
 //! - `admin check index t idx (2, 4);` -- a RESULT SET: the indexed columns
@@ -60,11 +62,7 @@ impl Session {
                 };
                 let (database, name) = self.split_table_path(path)?;
                 self.run_admin_check(&database, &name, None)?;
-                // Go's `CheckTableExec` writes no rows.
-                Ok(StmtOutput::Rows {
-                    columns: Vec::new(),
-                    rows: Vec::new(),
-                })
+                Ok(admin_check_passed())
             }
             tidb_ast::AdminCheckStmt::Index {
                 table,
@@ -74,10 +72,7 @@ impl Session {
                 let (database, name) = self.split_table_path(table)?;
                 if handle_ranges.is_empty() {
                     self.run_admin_check(&database, &name, Some(index))?;
-                    return Ok(StmtOutput::Rows {
-                        columns: Vec::new(),
-                        rows: Vec::new(),
-                    });
+                    return Ok(admin_check_passed());
                 }
                 let index = index.clone();
                 let ranges = handle_ranges.clone();
@@ -116,6 +111,18 @@ impl Session {
                 .map_err(admin_check_error)
         })
     }
+}
+
+/// What a passing `ADMIN CHECK TABLE`/`CHECK INDEX` answers.
+///
+/// NOT an empty result set: Go's `CheckTable` plan is a
+/// `SimpleSchemaProducer` that never calls `SetSchema`, so its schema is
+/// EMPTY and the server replies with an OK packet rather than a zero-column
+/// result set. `r/util/admin.result` records the statement with nothing
+/// under it, which a zero-column result set would render as a blank header
+/// line -- one line where TiDB wrote none.
+fn admin_check_passed() -> StmtOutput {
+    StmtOutput::Affected(0)
 }
 
 /// The storage-backed table `ADMIN CHECK` needs, or the refusal that names

@@ -24,7 +24,7 @@
 //! # Why this exists as a real check and not as an OK
 //!
 //! `ADMIN CHECK TABLE` is the one statement in the ADMIN family whose whole
-//! contract is a *negative*: it returns an empty result set and its value is
+//! contract is a *negative*: it produces no output at all and its value is
 //! entirely in the errors it does not raise. Answering it with `Ok` without
 //! reading a byte would be a success return that is not one -- the exact
 //! shape of bug this engine converts into refusals elsewhere. So this module

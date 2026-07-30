@@ -134,6 +134,7 @@ pub(crate) fn table_indexes(
                 ))
             }
         }
+        crate::ddl::indexes::reject_partial_index(&index.options)?;
         let unique = matches!(
             index.kind,
             tidb_ast::IndexConstraintKind::Unique

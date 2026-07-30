@@ -62,6 +62,7 @@ pub fn run_create_index_in(
             ))
         }
     };
+    reject_partial_index(&create.options)?;
     let columns: Vec<String> = index_part_names(&create.parts)?;
     add_index_to_table(
         catalog,
@@ -83,6 +84,27 @@ pub fn run_create_index_in(
 /// A key with no visibility clause is visible, which is Go's default.
 pub(crate) fn is_visible(options: &tidb_ast::IndexOptions) -> bool {
     options.visibility != Some(tidb_ast::IndexVisibility::Invisible)
+}
+
+/// Refuses a PARTIAL index -- `KEY idx(a) WHERE a > 0` -- which this tier
+/// parses but does not maintain.
+///
+/// Creating it anyway would build a FULL index under a partial index's name:
+/// every row would get an entry, including the rows the condition excludes.
+/// That is wrong in both directions at once. A plan that trusted the
+/// condition would read entries for rows that should not be there, and
+/// `ADMIN CHECK TABLE` -- which Go refuses outright on a partial index unless
+/// `tidb_enable_fast_table_check=ON` (8273) -- would call the table
+/// consistent, because the index really is consistent with the wrong
+/// definition. Refusing at CREATE keeps the condition from being silently
+/// dropped.
+pub(crate) fn reject_partial_index(options: &tidb_ast::IndexOptions) -> Result<(), DriverError> {
+    if options.condition.is_some() {
+        return Err(DriverError::Unsupported(
+            "a partial index (KEY ... WHERE) is not supported yet",
+        ));
+    }
+    Ok(())
 }
 
 /// The column names an index's key parts name, rejecting the forms this tier

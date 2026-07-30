@@ -39,15 +39,15 @@ fn error_of(session: &mut Session, sql: &str) -> (u16, String) {
     (mysql.code, mysql.message)
 }
 
-/// Asserts a statement answered with the empty result set `ADMIN CHECK
-/// TABLE` returns on success -- no columns and no rows, which is what
-/// `r/util/admin.result` records for every passing check.
+/// Asserts a statement passed `ADMIN CHECK` and produced NO OUTPUT.
+///
+/// Go's `CheckTable` plan is a `SimpleSchemaProducer` that never sets a
+/// schema, so the server replies with an OK packet rather than a zero-column
+/// result set -- which is why `r/util/admin.result` has nothing at all under
+/// the statement, not even a blank header line.
 fn assert_check_passes(session: &mut Session, sql: &str) {
     match session.run_with_columns(sql).expect(sql) {
-        StmtOutput::Rows { columns, rows } => {
-            assert!(columns.is_empty(), "{sql} produced columns: {columns:?}");
-            assert!(rows.is_empty(), "{sql} produced rows: {rows:?}");
-        }
+        StmtOutput::Affected(0) => {}
         other => panic!("{sql} answered {other:?}"),
     }
 }

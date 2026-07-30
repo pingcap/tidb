@@ -247,6 +247,18 @@ pub fn run_create_table_in(
     if create.like_table.is_some() {
         return Err(DriverError::Unsupported("CREATE TABLE LIKE is deferred"));
     }
+    // `DROP TEMPORARY TABLE` is already refused here; creating one and
+    // storing it as an ORDINARY table is the same gap on the other side, and
+    // the more dangerous half: the table then outlives its session, is
+    // visible to every other one, and answers statements TiDB refuses on a
+    // temporary table outright -- `ADMIN CHECK TABLE` among them (Go's 8006,
+    // `preprocessor.checkAdminCheckTableGrammar`). Refusing at CREATE keeps
+    // the TEMPORARY keyword from being silently dropped.
+    if create.temporary != tidb_ast::CreateTableTemporary::None {
+        return Err(DriverError::Unsupported(
+            "temporary tables are not supported yet",
+        ));
+    }
     if create.columns.is_empty() {
         return Err(DriverError::Unsupported("a table needs columns"));
     }
