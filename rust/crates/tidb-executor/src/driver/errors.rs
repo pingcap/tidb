@@ -115,6 +115,11 @@ pub enum DriverError {
     /// Go `exeerrors.ErrPrepareMulti` (8115): the text a `PREPARE` was given
     /// parsed into more than one statement.
     PrepareMulti,
+    /// Go `plannererrors.ErrUnsupportedPs` (1295): a statement kind that may
+    /// not be prepared at all. `GeneratePlanCacheStmtWithAST` lists them --
+    /// `IMPORT INTO`, `LOAD DATA`, `PREPARE`, `EXECUTE`, `DEALLOCATE`, a
+    /// non-transactional DML, and a `SELECT ... INTO OUTFILE`.
+    UnsupportedPreparedStatement,
     /// Go `plannererrors.ErrWrongArguments` (1210), carrying the function
     /// name the arguments were wrong for (`ntile`).
     WrongArguments(&'static str),
@@ -899,6 +904,11 @@ impl DriverError {
             8115,
             *b"HY000",
             "Can not prepare multiple statements".to_owned(),
+        ),
+        DriverError::UnsupportedPreparedStatement => MysqlError::new(
+            1295,
+            *b"HY000",
+            "This command is not supported in the prepared statement protocol yet".to_owned(),
         ),
         // Go: "Incorrect arguments to %s".
         DriverError::WrongArguments(function) => MysqlError::new(

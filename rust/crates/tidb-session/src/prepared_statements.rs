@@ -70,6 +70,14 @@ pub(crate) struct PreparedStatement {
     /// Go `PlanCacheStmt.ParamCount`: the number of `?` markers the statement
     /// carries, which fixes exactly how many values an `EXECUTE` must supply.
     param_count: usize,
+    /// The marker orders that stand in a `LIMIT`, whose bound values Go admits
+    /// only as a non-negative `int64` or a `uint64`
+    /// (`CheckParamTypeInt64orUint64` / `getUintFromNode`). Captured: with
+    /// `PREPARE l1 FROM 'select a from t order by a limit ?'`,
+    /// `EXECUTE l1 USING @ls` for `@ls = '2'` and `USING @neg` for
+    /// `@neg = -1` are both `[planner:1210]Incorrect arguments to LIMIT`,
+    /// while `@l = 2` runs.
+    limit_markers: Vec<usize>,
 }
 
 /// The per-session store. Go keeps two maps (name -> id, id -> statement);
@@ -108,17 +116,29 @@ impl Session {
             return Err(DriverError::PrepareMulti);
         }
         let mut statement = statements.remove(0);
+        // Go `GeneratePlanCacheStmtWithAST`'s own switch, before any planning.
+        if is_unpreparable(&statement) {
+            return Err(DriverError::UnsupportedPreparedStatement);
+        }
         let param_count = tidb_executor::parameter_count(&text)?;
-        // Restoring is only needed when a column NAME has to be pinned; every
-        // other statement keeps the text the user wrote, so nothing that does
-        // not need normalizing gets it.
-        let sql = if alias_marker_fields(&mut statement) {
+        let limit_markers = limit_marker_orders(&statement);
+        // Only a statement that CARRIES markers is ever restored (that is what
+        // binding does), so only that statement needs its column names pinned
+        // against the restore. A marker-free statement keeps the text the user
+        // wrote and runs through the ordinary path, names and all.
+        let sql = if param_count > 0 && pin_field_names(&mut statement) {
             statement.restore()
         } else {
             text
         };
-        self.prepared_statements
-            .insert(name.to_owned(), PreparedStatement { sql, param_count });
+        self.prepared_statements.insert(
+            name.to_owned(),
+            PreparedStatement {
+                sql,
+                param_count,
+                limit_markers,
+            },
+        );
         Ok(())
     }
 
@@ -171,6 +191,16 @@ impl Session {
                 _ => unreachable!("the parser admits only @variables in USING"),
             })
             .collect();
+        // Go checks a `LIMIT` parameter's KIND, not just its value, so a
+        // string that happens to read as a number is refused as firmly as a
+        // negative integer is.
+        for &order in &prepared.limit_markers {
+            match values.get(order) {
+                Some(Datum::Int(value)) if *value >= 0 => {}
+                Some(Datum::UInt(_)) => {}
+                _ => return Err(DriverError::WrongArguments("LIMIT")),
+            }
+        }
         let sql = if values.is_empty() {
             prepared.sql.clone()
         } else {
@@ -195,32 +225,103 @@ impl Session {
     }
 }
 
-/// Pins the column name of every unaliased top-level select field that carries
-/// a `?`, so binding cannot rename it.
+/// Whether this statement kind may not be prepared at all.
 ///
-/// Go names an unaliased field after its own source text, and a marker's text
-/// is `?` however it is later bound: captured,
-/// `PREPARE st FROM 'select ?+1, ?'; EXECUTE st USING @i, @i` with `@i = 7`
-/// answers `8` and `7` under the headers `?+1` and `?`. Substituting the
-/// literal first would have named them `7+1` and `7`.
+/// Go's `GeneratePlanCacheStmtWithAST` refuses `IMPORT INTO`, `LOAD DATA`,
+/// `PREPARE`, `EXECUTE`, `DEALLOCATE`, a non-transactional DML and a
+/// `SELECT ... INTO OUTFILE` with `ErrUnsupportedPs`. The three the suite
+/// writes are the prepared-statement kinds themselves -- captured:
+/// `prepare pe from 'execute ob using @one'` is
+/// `[executor:1295]This command is not supported in the prepared statement
+/// protocol yet` -- so those are the arms this covers; the loaders and
+/// `INTO OUTFILE` are not modelled by this engine at all and would be refused
+/// on their own.
+fn is_unpreparable(stmt: &Stmt) -> bool {
+    let Stmt::Session(session) = stmt else {
+        return false;
+    };
+    matches!(
+        &**session,
+        tidb_ast::SessionStmt::Prepare { .. }
+            | tidb_ast::SessionStmt::Execute { .. }
+            | tidb_ast::SessionStmt::Deallocate(_)
+    )
+}
+
+/// The marker orders standing in the statement's top-level `LIMIT`, count and
+/// offset alike.
 ///
-/// Returns whether anything was aliased, which tells the caller whether the
+/// A `LIMIT` in a subquery or a set-operation term is not collected: those
+/// reach Go's check through a different builder call and the suite writes none,
+/// so collecting them would be a guess rather than a port.
+fn limit_marker_orders(stmt: &Stmt) -> Vec<usize> {
+    let Stmt::Query(query) = stmt else {
+        return Vec::new();
+    };
+    let limit = match &**query {
+        QueryStmt::Select(select) => select.limit.as_ref(),
+        QueryStmt::SetOpr(set_opr) => set_opr.limit.as_ref(),
+    };
+    let Some(limit) = limit else {
+        return Vec::new();
+    };
+    let mut orders = Vec::new();
+    for expr in std::iter::once(&limit.count).chain(limit.offset.as_ref()) {
+        if let Expr::ParamMarker { order, .. } = expr {
+            orders.push(*order);
+        }
+    }
+    orders
+}
+
+/// Pins the column name of every unaliased top-level select field to the text
+/// the user wrote, so the restore that binding performs cannot rename it.
+///
+/// Go names an unaliased field after its OWN SOURCE TEXT
+/// (`ast.SelectField.Text()`), and nothing about executing a prepared
+/// statement changes that text. This tier binds by restoring the statement,
+/// and restore is a canonical printer rather than the source: it writes
+/// `SUM(`b`)` where the user wrote `sum(b)`, and it writes the bound literal
+/// where the user wrote `?`. Either would rename the column.
+///
+/// Both halves are captured from TiDB:
+///
+/// ```text
+/// prepare stmt from 'select ?+1, ?';  execute stmt using @i, @i  -- @i = 7
+///   RS[?+1|?]      8|7
+/// prepare stmt2 from 'select sum(b) from t ... = ?';  execute stmt2 using @v
+///   RS[sum(b)]     10
+/// ```
+///
+/// Returns whether anything was pinned, which tells the caller whether the
 /// statement has to be restored rather than kept as written.
-fn alias_marker_fields(stmt: &mut Stmt) -> bool {
+fn pin_field_names(stmt: &mut Stmt) -> bool {
     let Stmt::Query(query) = stmt else {
         return false;
     };
     let QueryStmt::Select(select) = &mut **query else {
         return false;
     };
-    let mut aliased = false;
-    for field in select.fields.fields_mut() {
+    // The parser's per-field source bytes, read before the loop takes the
+    // fields mutably. A field whose source was not recorded falls back to its
+    // restored form, which is what the name would have been anyway.
+    let source: Vec<Option<String>> = (0..select.fields.fields().len())
+        .map(|index| {
+            select
+                .fields
+                .original_text(index)
+                .map(|bytes| String::from_utf8_lossy(bytes).trim().to_owned())
+                .filter(|text| !text.is_empty())
+        })
+        .collect();
+    let mut pinned = false;
+    for (field, source) in select.fields.fields_mut().iter_mut().zip(source) {
         if let SelectField::Expr { expr, alias } = field {
-            if alias.is_none() && expr.flags() & tidb_ast::FLAG_HAS_PARAM_MARKER != 0 {
-                *alias = Some(expr.restore());
-                aliased = true;
+            if alias.is_none() {
+                *alias = Some(source.unwrap_or_else(|| expr.restore()));
+                pinned = true;
             }
         }
     }
-    aliased
+    pinned
 }

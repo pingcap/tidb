@@ -555,6 +555,68 @@ fn prepared_statements_are_per_session() {
     assert_eq!(errno(peer.run("EXECUTE mine")), 8111);
 }
 
+/// A prepared statement may not itself be a `PREPARE`, an `EXECUTE` or a
+/// `DEALLOCATE`: Go's `GeneratePlanCacheStmtWithAST` refuses those kinds with
+/// `ErrUnsupportedPs`. Captured:
+/// `prepare pe from 'execute ob using @one'` is
+/// `[executor:1295]This command is not supported in the prepared statement
+/// protocol yet`, and `tests/integrationtest/t/executor/prepared.test` records
+/// the same 1295 for a prepared `deallocate prepare stmt0` and for a prepared
+/// `prepare stmt3 from '...'`.
+#[test]
+fn a_prepared_statement_may_not_be_a_prepared_statement_command() {
+    let mut session = prepared_session();
+    session.run("PREPARE inner0 FROM 'select 1'").unwrap();
+    assert_eq!(
+        errno(session.run("PREPARE outer1 FROM 'execute inner0'")),
+        1295
+    );
+    assert_eq!(
+        errno(session.run("PREPARE outer2 FROM 'deallocate prepare inner0'")),
+        1295
+    );
+    assert_eq!(
+        errno(session.run("PREPARE outer3 FROM \"prepare inner3 from 'select 1'\"")),
+        1295
+    );
+    // The refusal happens at PREPARE, so no name was bound.
+    assert_eq!(errno(session.run("EXECUTE outer1")), 8111);
+}
+
+/// A `LIMIT` parameter is admitted by KIND, not by what its text reads as: Go
+/// takes only a non-negative `int64` or a `uint64`. Captured:
+/// `execute l1 using @ls` for `@ls = '2'` and `execute l1 using @neg` for
+/// `@neg = -1` are both `[planner:1210]Incorrect arguments to LIMIT`, while
+/// `@l = 2` returns two rows. Binding the string would have produced
+/// `LIMIT '2'` -- a different statement, quietly accepted or quietly refused
+/// for the wrong reason.
+#[test]
+fn a_limit_parameter_must_be_a_non_negative_integer() {
+    let mut session = prepared_session();
+    session
+        .run("PREPARE l1 FROM 'select a from t order by a limit ?'")
+        .unwrap();
+    session.run("SET @l = 2").unwrap();
+    session.run("SET @ls = '2'").unwrap();
+    session.run("SET @neg = -1").unwrap();
+    assert_eq!(
+        row_text(session.run("EXECUTE l1 USING @l")),
+        [["NULL"], ["1"]]
+    );
+    assert_eq!(errno(session.run("EXECUTE l1 USING @ls")), 1210);
+    assert_eq!(errno(session.run("EXECUTE l1 USING @neg")), 1210);
+    // A decimal is refused too, even one whose value is a whole number
+    // (captured: `set @dec = 2.0; execute l1 using @dec` is 1210).
+    session.run("SET @dec = 2.0").unwrap();
+    assert_eq!(errno(session.run("EXECUTE l1 USING @dec")), 1210);
+    // The offset slot is checked the same way.
+    session
+        .run("PREPARE lo FROM 'select a from t order by a limit ?, ?'")
+        .unwrap();
+    assert_eq!(errno(session.run("EXECUTE lo USING @neg, @l")), 1210);
+    assert_eq!(errno(session.run("EXECUTE lo USING @l, @ls")), 1210);
+}
+
 /// The `USING` list admits user variables only: a literal and a system
 /// variable are both parse errors, which is why nothing downstream has to
 /// consider them.
