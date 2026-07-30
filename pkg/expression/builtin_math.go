@@ -2155,12 +2155,12 @@ func (b *builtinTruncateIntSig) Clone() builtinFunc {
 func (b *builtinTruncateIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, err
+		return 0, true, err
 	}
 
 	d, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, err
+		return 0, true, err
 	}
 
 	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
@@ -2170,10 +2170,12 @@ func (b *builtinTruncateIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	if d >= 0 {
 		return x, false, nil
 	}
+
 	// -MinInt = MinInt, special case
 	if d == mathutil.MinInt {
 		return 0, false, nil
 	}
+
 	shift := int64(math.Pow10(int(-d)))
 	return x / shift * shift, false, nil
 }
@@ -2196,8 +2198,9 @@ type builtinTruncateUintSig struct {
 func (b *builtinTruncateUintSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, err
+		return 0, true, err
 	}
+
 	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
 		return x, false, nil
 	}
@@ -2205,15 +2208,19 @@ func (b *builtinTruncateUintSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 
 	d, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, err
+		return 0, true, err
 	}
+
 	if d >= 0 {
 		return x, false, nil
 	}
+
 	// -MinInt = MinInt, special case
 	if d == mathutil.MinInt {
 		return 0, false, nil
 	}
+
+	// Truncation logic for d < 0:
 	shift := uint64(math.Pow10(int(-d)))
 	return int64(uintx / shift * shift), false, nil
 }
