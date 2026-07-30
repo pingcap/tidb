@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 //! The two ways a transaction ends without a commit: finishing a statement that
 //! turned out to have nothing to write, and rolling back every key a failed
 //! prewrite may already have locked.

@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 //! Commit: allocating the commit timestamp, committing the primary key that
 //! decides the transaction, then committing the secondaries — and the
 //! async-commit / 1PC paths that reach the same decision without one of those
