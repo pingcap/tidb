@@ -103,6 +103,11 @@ pub enum WideScanSelectionError {
         /// The refused condition's scan input offset.
         offset: u32,
     },
+    /// A described builtin call resolved a signature TiKV evaluates, but one of
+    /// its operands is a leaf the push-down catalog will not encode -- a column
+    /// whose collation this tier does not resolve, an offset outside the scan's
+    /// output, or a constant Go would have folded into another type.
+    UnsupportedBuiltinOperand,
     /// The bounded expression owner rejected the assembled condition.
     Expression(PbPredicateError),
 }
@@ -126,6 +131,8 @@ impl fmt::Display for WideScanSelectionError {
                 "the constant compared with scan input offset {offset} is not an \
                  integer TiKV would compare unrefined"
             ),
+            Self::UnsupportedBuiltinOperand => formatter
+                .write_str("a pushed builtin call has an operand this lowering does not encode"),
             Self::Expression(error) => write!(formatter, "{error}"),
         }
     }
@@ -192,6 +199,22 @@ fn predicate_to_pb(
             let membership = int_in_to_pb(int_column_operand(offset, columns)?, list)?;
             Ok(negate_if(membership, *negated))
         }
+        // A resolved builtin call: the catalog that admitted it is also what
+        // encodes it, including the implicit argument casts Go's
+        // `newBaseBuiltinFuncWithTp` inserts. It refuses a leaf whose TiPB
+        // field type this tier cannot build faithfully, which is a refusal to
+        // send and never a wrong condition.
+        ScanPredicate::Builtin(call) => tidb_expr::pushdown_catalog::to_pb(call, &|offset| {
+            columns.get(offset as usize).map(|column| {
+                tidb_expr::pushdown_catalog::ColumnDescriptor {
+                    tp: column.tp,
+                    flag: u32::try_from(column.flag).unwrap_or(0),
+                    flen: column.column_len,
+                    decimal: column.decimal,
+                }
+            })
+        })
+        .ok_or(WideScanSelectionError::UnsupportedBuiltinOperand),
         ScanPredicate::Or(branches) => {
             let branches = branches
                 .iter()

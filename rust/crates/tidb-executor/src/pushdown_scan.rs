@@ -311,6 +311,9 @@ mod tests {
     /// `Some(true)`, the "did not filter" answer a backend is allowed to give.
     fn admits(predicate: &ScanPredicate, row: &[Datum]) -> Option<bool> {
         match predicate {
+            // A builtin call is outside this fake's integer domain, so it gives
+            // the "did not filter" answer a backend is always allowed to give.
+            ScanPredicate::Builtin(_) => Some(true),
             ScanPredicate::Compare(comparison) => {
                 let (Some(value), Datum::Int(literal)) = (
                     row.get(comparison.column_offset as usize),

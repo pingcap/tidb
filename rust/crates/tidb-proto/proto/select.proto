@@ -101,6 +101,41 @@ enum ScalarFuncSig {
   IntIsNull = 3116;
   // The set-membership group.
   InInt = 4001;
+
+  // The implicit casts `newBaseBuiltinFuncWithTp` inserts when a builtin's
+  // argument does not already evaluate as the type the chosen signature
+  // takes. Only the source families a scan leaf can be are listed.
+  CastIntAsInt = 1;
+  CastIntAsReal = 2;
+  CastRealAsInt = 10;
+  CastRealAsReal = 11;
+  CastDecimalAsInt = 20;
+  CastDecimalAsReal = 21;
+  CastStringAsInt = 30;
+  CastStringAsReal = 31;
+
+  // The arithmetic `MOD` family. Go picks between the four integer
+  // signatures by the two arguments' UNSIGNED flags, not by their width.
+  ModReal = 215;
+  ModDecimal = 216;
+  ModIntUnsignedUnsigned = 223;
+  ModIntUnsignedSigned = 224;
+  ModIntSignedUnsigned = 225;
+  ModIntSignedSigned = 226;
+
+  // The math family TiKV evaluates unconditionally.
+  RoundReal = 2121;
+  RoundInt = 2122;
+  RoundDec = 2123;
+  Pow = 2137;
+  Acos = 2142;
+  Asin = 2143;
+  Atan1Arg = 2144;
+  Atan2Args = 2145;
+  Cos = 2146;
+  Cot = 2147;
+  PI = 2150;
+  Sin = 2152;
 }
 
 // Dependency-closed projection of expression.proto Expr. RPN, aggregate, and

@@ -571,8 +571,67 @@ fn scan_predicate(
                 negated: *not,
             })
         }
-        _ => scan_comparison(conjunct, resolver).map(ScanPredicate::Compare),
+        // A builtin call, when the push-down catalog resolves a signature TiKV
+        // evaluates for it. The whole `WHERE sin(a)` conjunct is then the
+        // Selection condition, evaluated for truth exactly as a `Selection`
+        // above the scan would evaluate it.
+        _ => scan_comparison(conjunct, resolver)
+            .map(ScanPredicate::Compare)
+            .or_else(|| scan_operand_call(conjunct, resolver).map(ScanPredicate::Builtin)),
     }
+}
+
+/// One argument of a described builtin call: a column of the scanned table, an
+/// already-folded integer constant, or a nested call the catalog also resolves.
+///
+/// Anything else -- a non-integer constant, a subquery, a call whose signature
+/// TiKV does not evaluate -- makes the whole conjunct residual, which is Go's
+/// own rule: `scalarFuncToPBExpr` returns nil as soon as one child does.
+fn scan_operand(
+    argument: &tidb_ast::Expr,
+    resolver: &impl ColumnResolver,
+) -> Option<tidb_expr::pushdown_catalog::PbScalar> {
+    use tidb_expr::pushdown_catalog::PbScalar;
+    if let tidb_ast::Expr::Paren(inner) = argument {
+        return scan_operand(inner, resolver);
+    }
+    if let tidb_ast::Expr::Column(_) = argument {
+        let (offset, field_type) = resolve_column(argument, resolver)?;
+        return Some(PbScalar::Column { offset, field_type });
+    }
+    // A constant subtree first, so a folded literal argument (`MOD(a, 3 + 1)`)
+    // is the constant Go would have folded rather than a `plus` call. Only an
+    // integer is describable: every other constant family needs the TiPB
+    // literal encoding this tier does not build.
+    if let Some(Datum::Int(value)) = constant_value(argument) {
+        return Some(PbScalar::IntLiteral(value));
+    }
+    scan_operand_call(argument, resolver)
+}
+
+/// A builtin call as an operand, in either of the two spellings the parser
+/// produces for one: an explicit `Expr::Func`, and the operator form real TiDB
+/// also desugars to a named scalar function -- `MOD(a, b)` parses as the `%`
+/// binary operator, and Go's `ScalarFunction` for it is named `mod` either way.
+fn scan_operand_call(
+    argument: &tidb_ast::Expr,
+    resolver: &impl ColumnResolver,
+) -> Option<tidb_expr::pushdown_catalog::PbScalar> {
+    let (name, args): (String, Vec<&tidb_ast::Expr>) = match argument {
+        tidb_ast::Expr::Func { name, args, .. } => {
+            (name.to_ascii_lowercase(), args.iter().collect())
+        }
+        tidb_ast::Expr::Binary(op, lhs, rhs) => (
+            tidb_expr::scalar_function::binary_op_name(*op).to_owned(),
+            vec![lhs, rhs],
+        ),
+        _ => return None,
+    };
+    let operands = args
+        .into_iter()
+        .map(|nested| scan_operand(nested, resolver))
+        .collect::<Option<Vec<_>>>()?;
+    tidb_expr::pushdown_catalog::build_call(&name, operands)
 }
 
 /// Flattens an `OR` chain into its branches, in source order.

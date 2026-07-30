@@ -355,6 +355,7 @@ mod like;
 mod math_fn;
 mod ops;
 pub mod pb_predicate;
+pub mod pushdown_catalog;
 mod regexp;
 pub mod rewriter;
 mod rng;

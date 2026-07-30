@@ -28,22 +28,41 @@
 //!   either operand order;
 //! * `column IS [NOT] NULL`;
 //! * `column [NOT] IN (constants)`;
-//! * `OR` and `NOT` over any of the above, to any depth.
+//! * `OR` and `NOT` over any of the above, to any depth;
+//! * a **builtin function call** whose `tipb.ScalarFuncSig` the push-down
+//!   catalog resolves and whose signature that catalog says TiKV evaluates
+//!   ([`tidb_expr::pushdown_catalog`]) -- `sin(a)`, `mod(a, 7)`, `round(a)`
+//!   and the rest of the math family today. The catalog is the *only* thing
+//!   that answers either question, so widening the set is adding a row to its
+//!   table rather than a branch here.
 //!
 //! Every other conjunct -- an expression over a column (`b + 1 < 10`), a
 //! column-to-column comparison, `IS TRUE`, NULL-safe equality, a subquery, a
-//! builtin function call, anything referring to a second table -- is residual
-//! and is left for the `Selection` above the scan. A nested `AND` inside an
-//! `OR` branch is residual too: the top-level `AND` is what this split
-//! flattens, and describing an inner one would need a connective the
+//! call the catalog does not hold, anything referring to a second table -- is
+//! residual and is left for the `Selection` above the scan. A nested `AND`
+//! inside an `OR` branch is residual too: the top-level `AND` is what this
+//! split flattens, and describing an inner one would need a connective the
 //! description does not carry.
 //!
-//! Note that the split is deliberately **type-agnostic**: it describes the
-//! conjunct, and the coprocessor lowering
+//! Note that the split is deliberately **type-agnostic** for the predicate
+//! shapes: it describes the conjunct, and the coprocessor lowering
 //! (`tidb_exec::wide_scan_selection`) applies the type gate that decides
 //! whether the description can actually travel. Keeping those two decisions
 //! apart is what lets an in-process source take a conjunct the wire cannot
-//! carry.
+//! carry. A builtin call is not type-agnostic and cannot be: Go picks the
+//! signature *from* the argument types, so the description carries the
+//! resolved signature and the lowering re-checks that the scan descriptor's own
+//! declared column types are the ones it was resolved from.
+//!
+//! # Why pushing a builtin cannot make a query fail that used to work
+//!
+//! A pushed conjunct is evaluated by [`PushedScanFilter::matches`], which is
+//! the same [`Expression::eval`] and the same [`truthy_of`] that
+//! [`SelectionExec`](crate::selection::SelectionExec) applies to a residual
+//! conjunct, with the same [`crate::StmtContext`]. Moving a conjunct from the
+//! `Selection` into the scan therefore changes *where* it runs and nothing
+//! about what it means, including which values are NULL and which statement
+//! warnings it raises.
 //!
 //! Being a strict subset of what Go pushes is safe in the only direction that
 //! matters: a conjunct that stays above the scan is still applied, so the
@@ -146,6 +165,16 @@ pub enum ScanPredicate {
         /// `true` for the `NOT IN` spelling.
         negated: bool,
     },
+    /// A builtin function call whose `tipb.ScalarFuncSig` the push-down
+    /// catalog resolved and whose signature TiKV evaluates.
+    ///
+    /// The whole call -- name, signature, and the operand tree -- lives in
+    /// [`tidb_expr::pushdown_catalog`], which is also what decides whether
+    /// TiKV may evaluate it; nothing here holds a second opinion about
+    /// either. A call reaching this variant has already been admitted;
+    /// whether it can also be *encoded* is the lowering's own question
+    /// (`pushdown_catalog::to_pb`), and refusing there costs network only.
+    Builtin(tidb_expr::pushdown_catalog::PbScalar),
     /// A disjunction of two or more descriptions, flattened out of the source
     /// `OR` chain in source order.
     Or(Vec<ScanPredicate>),
@@ -432,6 +461,21 @@ mod tests {
             "the staged DELETE removed the row `a = 1` matched, and the staged \
              UPDATE created the row `a = 8` matches"
         );
+        // A pushed BUILTIN carries the same obligation, and widening what may
+        // be pushed widens what the obligation covers -- so it is re-proved
+        // here rather than assumed. `MOD(a, 4)` is 0 (false) for `a = 8`, the
+        // value a staged UPDATE created, and truthy for the staged INSERTs; a
+        // source that filtered the snapshot half only would return `a = 8`.
+        assert_eq!(
+            run_select_on("SELECT a FROM t WHERE mod(a, 4) ORDER BY a", &catalog, &ctx).unwrap(),
+            vec![
+                vec![Datum::Int(3)],
+                vec![Datum::Int(7)],
+                vec![Datum::Int(9)],
+            ],
+            "the staged UPDATE's new value `a = 8` fails the pushed builtin and \
+             must not be returned, while the staged inserts that pass it are"
+        );
     }
 
     /// The whole predicate must survive when nothing is pushed, and the split
@@ -544,6 +588,112 @@ mod tests {
         }
     }
 
+    /// A pushed builtin call answers the rows the same call answers as a
+    /// `Selection`, including where the answer is NULL rather than false.
+    ///
+    /// This is the local half of the newly pushed math family: the conjunct is
+    /// removed from the `Selection` above the scan, so the scan is the only
+    /// place it is applied, and every expectation below is the row set MySQL's
+    /// three-valued logic gives for the same predicate.
+    #[test]
+    fn a_pushed_math_builtin_answers_what_the_same_selection_answered() {
+        let mut table = KvTable::new(94, vec![column("a", 1), column("b", 2)]);
+        for (a, b) in [
+            (Datum::Int(0), Datum::Int(3)),
+            (Datum::Int(1), Datum::Int(0)),
+            (Datum::Int(2), Datum::Int(7)),
+            (Datum::Int(7), Datum::Int(7)),
+            (Datum::Null, Datum::Int(1)),
+        ] {
+            table.insert_row(&[a, b]).unwrap();
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("t", table);
+        let ctx = crate::StmtContext::for_query();
+        let int = |value: i64| vec![Datum::Int(value)];
+        let cases: [(&str, Vec<Vec<Datum>>); 8] = [
+            // `SIN(0)` is 0, which is false; the NULL row is UNKNOWN.
+            ("SELECT a FROM t WHERE sin(a)", vec![int(1), int(2), int(7)]),
+            // `MOD(a, 3)` is 0 for a = 0 and a = 3, and NULL for the NULL row.
+            (
+                "SELECT a FROM t WHERE mod(a, 3)",
+                vec![int(1), int(2), int(7)],
+            ),
+            // A zero divisor is NULL in MySQL, so no row qualifies -- and it
+            // must not be an error either, on the scan or above it.
+            ("SELECT a FROM t WHERE mod(a, 0)", vec![]),
+            // `ACOS` of anything outside [-1, 1] is NULL, not an error, and
+            // `ACOS(1)` is exactly 0, which is false -- so only `a = 0`
+            // (`ACOS(0)` = pi/2) qualifies.
+            ("SELECT a FROM t WHERE acos(a)", vec![int(0)]),
+            // `ROUND` over an integer column keeps the integer domain.
+            (
+                "SELECT a FROM t WHERE round(a)",
+                vec![int(1), int(2), int(7)],
+            ),
+            // `PI()` is a nonzero constant, so it selects every row -- the NULL
+            // one included, since the predicate does not read the column.
+            (
+                "SELECT a FROM t WHERE pi()",
+                vec![int(0), int(1), int(2), int(7), vec![Datum::Null]],
+            ),
+            // `POW(a, 2)` is 0 only for a = 0.
+            (
+                "SELECT a FROM t WHERE pow(a, 2)",
+                vec![int(1), int(2), int(7)],
+            ),
+            // A pushed builtin beside a pushed comparison and a residual
+            // conjunct: all three still apply.
+            (
+                "SELECT a FROM t WHERE sin(a) AND a > 1 AND b + 1 > 7",
+                vec![int(2), int(7)],
+            ),
+        ];
+        for (sql, expected) in cases {
+            assert_eq!(
+                run_select_on(sql, &catalog, &ctx).unwrap(),
+                expected,
+                "{sql}"
+            );
+        }
+    }
+
+    /// A call the catalog does not hold stays above the scan, and so does one
+    /// whose argument is not describable -- neither may quietly become a
+    /// pushed conjunct, because the store would then evaluate what only this
+    /// engine evaluates.
+    #[test]
+    fn a_call_outside_the_catalog_stays_above_the_scan() {
+        let mut table = KvTable::new(95, vec![column("a", 1), column("b", 2)]);
+        for a in [1_i64, 2, 3] {
+            table
+                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)])
+                .unwrap();
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("t", table);
+        let ctx = crate::StmtContext::for_query();
+        // `TAN` is deliberately absent from Go's TiKV whitelist (the comment
+        // cites Rust's LLVM math precision), `ABS` is on it but has no catalog
+        // row yet, and `SIN(a + 1)` has an argument the description cannot
+        // carry. All three must still answer correctly.
+        for (sql, expected) in [
+            ("SELECT a FROM t WHERE tan(a)", vec![1_i64, 2, 3]),
+            ("SELECT a FROM t WHERE abs(a)", vec![1, 2, 3]),
+            ("SELECT a FROM t WHERE sin(a + 1)", vec![1, 2, 3]),
+            ("SELECT a FROM t WHERE mod(a, b)", vec![1, 2, 3]),
+        ] {
+            assert_eq!(
+                run_select_on(sql, &catalog, &ctx).unwrap(),
+                expected
+                    .into_iter()
+                    .map(|a| vec![Datum::Int(a)])
+                    .collect::<Vec<_>>(),
+                "{sql}"
+            );
+        }
+    }
+
     #[test]
     fn only_the_lowerable_comparison_operators_are_accepted() {
         assert_eq!(
@@ -569,30 +719,39 @@ mod tests {
 /// `IN` row in the table, which was confirmed against the Go source rather
 /// than assumed.
 ///
-/// That matters for reading the two tests below. What this engine pushes is a
-/// *predicate* set, not a function set: a column-versus-constant comparison
-/// over the whole integer family, `IS [NOT] NULL`, `[NOT] IN`, and the
-/// `OR`/`NOT` composition of those (see [`ScanPredicate`], and
-/// `tidb_exec::wide_scan_selection` for the lowering). Widening that set --
-/// including the widening that made unsigned and narrow integer columns lower
-/// -- provably moves **no** row of this table, because none of these rows is a
-/// predicate shape. Reaching them needs a name-to-`ScalarFuncSig` resolution
-/// catalog and the cast-inserting type inference Go's `getFunction` performs,
-/// neither of which exists here; `ScalarFunction` in this tree carries no
-/// resolved signature at all.
+/// Reaching those rows needs a name-to-`ScalarFuncSig` resolution catalog and
+/// the cast-inserting type inference Go's `getFunction` performs, because
+/// [`ScanPredicate`] describes a *shape* and `ScalarFunction` in this tree
+/// carries no resolved signature at all. That catalog now exists
+/// ([`tidb_expr::pushdown_catalog`]) and is the single owner of both the
+/// signature and TiKV's verdict on it, so a row of Go's table moves here
+/// exactly when the catalog holds its family.
 ///
-/// So every row of Go's table is still refused here, whichever way Go answers.
-/// The two directions of that disagreement are not equally serious, so they
-/// are separate tests:
+/// The table is therefore split in two, and the split is the honest statement
+/// of where this engine stands:
+///
+/// * [`GO_PUSHES_HERE_TOO`] -- the families the catalog holds, asserted
+///   *running* against Go's verdict, with the signature each resolves to
+///   pinned separately in [`tidb_expr::pushdown_catalog`]'s own tests and the
+///   rows-returned agreement proved against a real cluster by
+///   `rust/scripts/run-realtikv-scan-pushdown.sh`.
+/// * [`GO_PUSHES_NOT_HERE_YET`] -- the families it does not, each for a stated
+///   reason. Those keep Go's verdict in the `#[ignore]`d
+///   [`tikv_pushes_what_go_pushes`] and are pinned as still-refused by
+///   [`every_not_yet_pushable_expression_is_still_refused_here`], so a
+///   widening that starts pushing one of them fails a test rather than
+///   drifting silently.
+///
+/// The two directions of a disagreement with Go are not equally serious:
 ///
 /// * **Correctness.** For the rows Go *refuses*, a push here would be a bug:
 ///   the coprocessor would evaluate an expression TiDB deliberately keeps in
 ///   the TiDB layer (`INET_ATON` and friends; `CONV` over a BIT column, Go
 ///   issue 51877), and rows would silently differ. Those rows are asserted
 ///   unconditionally and are live coverage for any future widening.
-/// * **Performance.** For the rows Go *pushes*, refusing them costs network
-///   and CPU but cannot change an answer. Those rows carry Go's verdict in an
-///   `#[ignore]`d test so the gap is tracked rather than forgotten.
+/// * **Performance.** For the rows Go *pushes* and this engine does not,
+///   refusing them costs network and CPU but cannot change an answer, because
+///   the scan source applies every pushed conjunct itself regardless.
 #[cfg(test)]
 mod tests_push_down_verdict {
     use tidb_datatype::{FieldType, FieldTypeCode};
@@ -644,6 +803,25 @@ mod tests_push_down_verdict {
         Some(!pushed.is_empty())
     }
 
+    /// The single builtin-call description `where_expr` pushes, when it pushes
+    /// one, so a test can read the signature the catalog resolved.
+    fn described_call(where_expr: &str) -> Option<tidb_expr::pushdown_catalog::PbScalar> {
+        let sql = format!("SELECT 1 FROM t WHERE {where_expr}");
+        let tidb_ast::Stmt::Query(query) = tidb_parser::parse(&sql).ok()? else {
+            return None;
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            return None;
+        };
+        let where_clause = select.where_clause.clone()?;
+        let scope = scope();
+        let (pushed, _) = split_scan_predicates(&where_clause, &ScopeResolver { scope: &scope });
+        match pushed.predicates() {
+            [super::ScanPredicate::Builtin(call)] => Some(call.clone()),
+            _ => None,
+        }
+    }
+
     /// Every expression Go REFUSES to push to TiKV, in Go's order.
     ///
     /// The IP family is TiDB-only; `CONV` over a BIT column is refused
@@ -662,19 +840,14 @@ mod tests_push_down_verdict {
         "conv(cast(bt as binary), i, i)",
     ];
 
-    /// Every expression Go PUSHES to TiKV, in Go's order.
+    /// The rows of Go's pushed table this engine pushes too: the math family
+    /// whose signatures `tidb_expr::pushdown_catalog` holds.
     ///
-    /// Go's table has five further rows commented out in the source
-    /// (`TRUNCATE`, and four `STR_TO_DATE` spellings), so they pin no verdict
-    /// and are deliberately absent here too.
-    const GO_PUSHES: &[&str] = &[
-        // `CONV` over a string column, and the substring family.
-        "conv(s, i, i)",
-        "substr(s, i, i)",
-        "substring(s, i, i)",
-        "mid(s, i, i)",
-        // The `testcases` table, row for row.
-        "char_length(s)",
+    /// All twelve resolve one of Go's `ETReal`/`ETInt`/`ETDecimal` signatures
+    /// from the argument types alone, with no collation to derive and no
+    /// metadata to encode, which is why this is the family the catalog could
+    /// be completed for first.
+    const GO_PUSHES_HERE_TOO: &[&str] = &[
         "sin(i)",
         "asin(i)",
         "cos(i)",
@@ -682,22 +855,58 @@ mod tests_push_down_verdict {
         "atan(i)",
         "cot(i)",
         "atan2(i, i)",
+        "pi()",
+        "round(i)",
+        "mod(i, i)",
+        "pow(r, r)",
+        "power(r, r)",
+    ];
+
+    /// The rows of Go's pushed table this engine does not push yet, in Go's
+    /// order.
+    ///
+    /// Go's table has five further rows commented out in the source
+    /// (`TRUNCATE`, and four `STR_TO_DATE` spellings), so they pin no verdict
+    /// and are deliberately absent here too.
+    ///
+    /// Each of these needs something the math family did not:
+    ///
+    /// * the string family (`CONV`, the substring family, `CHAR_LENGTH`,
+    ///   `UPPER`, `LOWER`) resolves its signature *and* its result collation
+    ///   through Go's `deriveCollation`, and its TiPB leaves carry a real
+    ///   collation id -- both separate units, and the collation is the one TiKV
+    ///   compares with, so guessing it would change an answer;
+    /// * the date family (`DATE_FORMAT`, `HOUR`, `DATE`, `WEEK`, `DATEDIFF`,
+    ///   ...) needs the temporal cast wrappers `WrapWithCastAsTime` inserts,
+    ///   which carry a target `FieldType` of their own rather than the fixed
+    ///   one an `ETReal` slot has;
+    /// * the `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE` family additionally
+    ///   sends the INTERVAL unit as a third string argument, and picks among
+    ///   more than twenty signatures by unit *and* argument type;
+    /// * the JSON family needs the `ETJson` TiPB field type and the implicit
+    ///   `CAST(... AS JSON)` wrappers;
+    /// * `FROM_UNIXTIME`, `UNIX_TIMESTAMP` and `TIMESTAMPDIFF` need the
+    ///   session time zone in the DAG request, which this scan path does not
+    ///   yet send.
+    const GO_PUSHES_NOT_HERE_YET: &[&str] = &[
+        // `CONV` over a string column, and the substring family.
+        "conv(s, i, i)",
+        "substr(s, i, i)",
+        "substring(s, i, i)",
+        "mid(s, i, i)",
+        // The `testcases` table, row for row.
+        "char_length(s)",
         "date_format(d, s)",
         "hour(d)",
         "minute(d)",
         "second(d)",
         "month(d)",
         "microsecond(d)",
-        "pi()",
-        "round(i)",
         "date(d)",
         "week(d)",
         "datediff(d, d)",
-        "mod(i, i)",
         "upper(s)",
         "lower(s)",
-        "pow(r, r)",
-        "power(r, r)",
         "json_replace(j, s, j, s, j)",
         "json_array_append(j, s, j, s, j)",
         "json_merge_patch(j, j, j)",
@@ -778,26 +987,70 @@ mod tests_push_down_verdict {
         }
     }
 
-    /// PERFORMANCE: this engine pushes none of the *function* rows Go pushes,
-    /// because reaching them needs the signature-resolution catalog the module
-    /// doc describes -- not a wider predicate set. The assertion is written the
-    /// way it must eventually read (Go's verdict), so building that catalog
-    /// turns this test green rather than leaving the gap invisible.
+    /// PERFORMANCE, the part already reached: every row of Go's pushed table
+    /// whose family the catalog holds pushes here, with Go's own verdict.
+    ///
+    /// This runs, unignored: these twelve are a live claim, not a plan.
     #[test]
-    #[ignore = "no expression-level push-down catalog yet: only predicate shapes are lowered, and no row of Go's table is one"]
+    fn tikv_pushes_the_math_family_go_pushes() {
+        for expr in GO_PUSHES_HERE_TOO {
+            assert_eq!(pushes(expr), Some(true), "{expr}: TiDB pushes this to TiKV");
+        }
+    }
+
+    /// And the resolved signature is Go's own, not merely *some* signature: the
+    /// description each of the twelve produces lowers to the `ScalarFuncSig`
+    /// Go's `getFunction` sets, over Go's own column set.
+    ///
+    /// A push with the wrong signature is the one failure mode that returns
+    /// wrong rows rather than slow ones, so it is pinned by name here rather
+    /// than left to the shape assertion above.
+    #[test]
+    fn the_lowered_signature_is_the_one_gos_get_function_resolves() {
+        use tidb_expr::pushdown_catalog::ScalarFuncSig;
+        let cases: [(&str, ScalarFuncSig); 12] = [
+            ("sin(i)", ScalarFuncSig::Sin),
+            ("asin(i)", ScalarFuncSig::Asin),
+            ("cos(i)", ScalarFuncSig::Cos),
+            ("acos(i)", ScalarFuncSig::Acos),
+            ("atan(i)", ScalarFuncSig::Atan1Arg),
+            ("cot(i)", ScalarFuncSig::Cot),
+            ("atan2(i, i)", ScalarFuncSig::Atan2Args),
+            ("pi()", ScalarFuncSig::Pi),
+            // The argument is a signed BIGINT column, so `ROUND` keeps the
+            // integer domain and `MOD` takes the signed/signed signature.
+            ("round(i)", ScalarFuncSig::RoundInt),
+            ("mod(i, i)", ScalarFuncSig::ModIntSignedSigned),
+            ("pow(r, r)", ScalarFuncSig::Pow),
+            ("power(r, r)", ScalarFuncSig::Pow),
+        ];
+        for (expr, expected) in cases {
+            let described = described_call(expr)
+                .unwrap_or_else(|| panic!("{expr} is described as a builtin call"));
+            let tidb_expr::pushdown_catalog::PbScalar::Call { signature, .. } = &described else {
+                panic!("{expr} describes a call");
+            };
+            assert_eq!(signature.sig, expected, "{expr}");
+        }
+    }
+
+    /// PERFORMANCE, the part not reached: Go's verdict on the families the
+    /// catalog does not hold, kept as the assertion it must eventually become.
+    #[test]
+    #[ignore = "the string, date, INTERVAL and JSON families need collation derivation, temporal cast targets, INTERVAL metadata and the ETJson field type -- see GO_PUSHES_NOT_HERE_YET"]
     fn tikv_pushes_what_go_pushes() {
-        for expr in GO_PUSHES {
+        for expr in GO_PUSHES_NOT_HERE_YET {
             assert_eq!(pushes(expr), Some(true), "{expr}: TiDB pushes this to TiKV");
         }
     }
 
     /// The gap the `#[ignore]`d test above would otherwise hide: TODAY every
-    /// pushable row is refused. Pinning that keeps the count honest -- if a
-    /// widening starts pushing some of them, this test fails and the ignored
-    /// one must be re-checked.
+    /// row of the not-yet half is refused. Pinning that keeps the count honest
+    /// -- if a widening starts pushing some of them, this test fails and the
+    /// ignored one must be re-checked, along with the live differential.
     #[test]
-    fn every_go_pushable_expression_is_still_refused_here() {
-        let pushed_here: Vec<&&str> = GO_PUSHES
+    fn every_not_yet_pushable_expression_is_still_refused_here() {
+        let pushed_here: Vec<&&str> = GO_PUSHES_NOT_HERE_YET
             .iter()
             .filter(|expr| pushes(expr) == Some(true))
             .collect();
@@ -807,16 +1060,32 @@ mod tests_push_down_verdict {
         );
     }
 
-    /// Every expression in Go's table parses here, in both halves. This is the
-    /// part of the Go table that *is* fully covered today: the shapes exist as
-    /// expressions even though none of them lowers into the scan, so a
+    /// The two halves of Go's pushed table are the whole of it, with no row
+    /// counted twice or lost while moving one across.
+    ///
+    /// Fifty is the row count of Go's pushed table as ported: the four
+    /// `CONV`/substring rows plus the forty-six live rows of `testcases`,
+    /// with Go's five commented-out rows excluded because they pin no verdict.
+    #[test]
+    fn the_two_halves_reconstruct_gos_pushed_table() {
+        assert_eq!(GO_PUSHES_HERE_TOO.len() + GO_PUSHES_NOT_HERE_YET.len(), 50);
+        for expr in GO_PUSHES_HERE_TOO {
+            assert!(
+                !GO_PUSHES_NOT_HERE_YET.contains(expr),
+                "{expr} is in both halves"
+            );
+        }
+    }
+
+    /// Every expression in Go's table parses here, in all three halves, so a
     /// regression that lost one of these spellings from the grammar would fail
-    /// here rather than silently shrinking the table above.
+    /// here rather than silently shrinking a table above.
     #[test]
     fn every_expression_in_gos_table_parses() {
         let unparsable: Vec<&&str> = GO_REFUSES
             .iter()
-            .chain(GO_PUSHES)
+            .chain(GO_PUSHES_HERE_TOO)
+            .chain(GO_PUSHES_NOT_HERE_YET)
             .filter(|expr| pushes(expr).is_none())
             .collect();
         assert!(

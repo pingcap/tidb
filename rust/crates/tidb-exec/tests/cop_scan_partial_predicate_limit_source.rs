@@ -304,3 +304,83 @@ fn a_limit_over_a_partly_lowered_predicate_returns_every_qualifying_row() {
     );
     assert_eq!(observation.rows_sent, region_rows().len());
 }
+
+/// The same invariant with a **pushed builtin call** as the conjunct that did
+/// travel: `ROUND(id)` lowers through the push-down catalog, `tag = '7'` still
+/// does not, so the predicate is again only half lowered and the cap must again
+/// stay behind.
+///
+/// Widening what can be pushed widens what can be *partly* pushed, so this is
+/// the invariant re-proved for the newly pushable family rather than assumed to
+/// carry over.
+#[test]
+fn a_limit_over_a_partly_lowered_builtin_predicate_returns_every_qualifying_row() {
+    let (catalog, region) = fixture();
+    let rows = run_select_on(
+        "SELECT id FROM t WHERE round(id) AND tag = '7' LIMIT 5",
+        &catalog,
+        &StmtContext::for_query(),
+    )
+    .expect("the scan is served by the coprocessor");
+    assert_eq!(
+        rows,
+        vec![
+            vec![Datum::Int(4)],
+            vec![Datum::Int(8)],
+            vec![Datum::Int(12)],
+            vec![Datum::Int(16)],
+            vec![Datum::Int(20)],
+        ],
+        "every row `ROUND(id) AND tag = 7` selects, up to the cap"
+    );
+
+    let observations = region.observations.lock().unwrap();
+    let [observation] = observations.as_slice() else {
+        panic!("exactly one coprocessor request: {observations:?}");
+    };
+    assert_eq!(
+        observation.conditions, 1,
+        "only `ROUND(id)` lowered; `tag = '7'` stayed behind"
+    );
+    assert_eq!(
+        observation.remote_limit, None,
+        "so the cap must not have travelled with it"
+    );
+    assert_eq!(observation.rows_sent, region_rows().len());
+}
+
+/// And the other side of the same invariant: when the *whole* predicate is a
+/// pushed builtin, the cap does travel, so the widening did not cost the
+/// saving the cap exists for.
+///
+/// Every fixture row has `id >= 1`, so `ROUND(id)` is truthy for all of them
+/// and the rows the cap admits are the rows the query wants.
+#[test]
+fn a_limit_over_a_fully_lowered_builtin_predicate_travels_with_it() {
+    let (catalog, region) = fixture();
+    let rows = run_select_on(
+        "SELECT id FROM t WHERE round(id) LIMIT 5",
+        &catalog,
+        &StmtContext::for_query(),
+    )
+    .expect("the scan is served by the coprocessor");
+    assert_eq!(
+        rows,
+        (1..=5).map(|id| vec![Datum::Int(id)]).collect::<Vec<_>>()
+    );
+
+    let observations = region.observations.lock().unwrap();
+    let [observation] = observations.as_slice() else {
+        panic!("exactly one coprocessor request: {observations:?}");
+    };
+    assert_eq!(observation.conditions, 1);
+    assert_eq!(
+        observation.remote_limit,
+        Some(5),
+        "nothing stayed behind, so the cap travels"
+    );
+    assert_eq!(
+        observation.rows_sent, 5,
+        "and only the capped rows crossed the wire"
+    );
+}
