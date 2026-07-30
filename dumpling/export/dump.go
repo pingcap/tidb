@@ -295,7 +295,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	// Inject consistency failpoint test after we release the table lock
 	failpoint.Inject("ConsistencyCheck", nil)
 
-	if conf.writableColumnCache != nil {
+	if conf.SQL == "" {
 		if err = prepareColumnProjectionCache(tctx, conf, baseConn); err != nil {
 			close(taskIn)
 			_ = wg.Wait()
