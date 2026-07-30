@@ -324,8 +324,13 @@ pub mod infoschema;
 mod noop;
 mod txn;
 mod variables;
+mod warnings;
 pub(crate) use txn::Transaction;
 pub(crate) use variables::datum_text;
+pub(crate) use warnings::{
+    reports_warnings, CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE,
+};
+pub use warnings::{SqlWarning, WarningLevel};
 pub mod privilege;
 pub mod process;
 mod process_arm;
@@ -1351,48 +1356,6 @@ impl Session {
     }
 }
 
-/// Go `ddl.errCheckConstraintIsOff` is built with `errors.NewNoStackError`, so
-/// it carries no MySQL code of its own and `AppendWarning` files it under
-/// `ER_UNKNOWN_ERROR`. Captured through testkit's `SHOW WARNINGS`:
-/// `Warning | 1105 | tidb_enable_check_constraint is off`.
-const CHECK_CONSTRAINT_IS_OFF_CODE: u16 = 1105;
-/// See [`CHECK_CONSTRAINT_IS_OFF_CODE`]; the text is the variable name Go
-/// interpolates, not a sentence, so it is reproduced verbatim.
-const CHECK_CONSTRAINT_IS_OFF_MESSAGE: &str = "tidb_enable_check_constraint is off";
-
-/// A statement warning, which Go keeps in `StmtCtx` and `SHOW WARNINGS`
-/// reports as `Level | Code | Message`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SqlWarning {
-    /// Whether the statement survived it.
-    pub level: WarningLevel,
-    /// The MySQL error code the warning carries.
-    pub code: u16,
-    /// The message text.
-    pub message: String,
-}
-
-/// A warning's `Level` column, which Go fills from
-/// `StmtCtx.warnings[i].Level`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WarningLevel {
-    /// The statement continued.
-    Warning,
-    /// The statement failed; Go records its error in the same buffer.
-    Error,
-}
-
-impl WarningLevel {
-    /// The text the `Level` column shows.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            WarningLevel::Warning => "Warning",
-            WarningLevel::Error => "Error",
-        }
-    }
-}
-
 /// Which non-global `GRANT`/`REVOKE` scope a privilege list is being
 /// validated against -- selects between Go's `mysql.AllDBPrivs` and
 /// `mysql.AllTablePrivs`.
@@ -1498,49 +1461,6 @@ impl Session {
             }
         }
         rows
-    }
-
-    fn warning_output(&self, count_only: bool, errors_only: bool) -> StmtOutput {
-        let reported = self
-            .warnings
-            .iter()
-            .filter(|warning| !errors_only || warning.level == WarningLevel::Error);
-        if count_only {
-            let count = reported.count() as i64;
-            let name = if errors_only {
-                "@@session.error_count"
-            } else {
-                "@@session.warning_count"
-            };
-            return StmtOutput::Rows {
-                columns: vec![(
-                    name.to_owned(),
-                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                )],
-                rows: vec![vec![Datum::Int(count)]],
-            };
-        }
-        let text = || FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let rows = reported
-            .map(|warning| {
-                vec![
-                    Datum::Bytes(warning.level.as_str().as_bytes().to_vec()),
-                    Datum::Int(i64::from(warning.code)),
-                    Datum::Bytes(warning.message.clone().into_bytes()),
-                ]
-            })
-            .collect();
-        StmtOutput::Rows {
-            columns: vec![
-                ("Level".to_owned(), text()),
-                (
-                    "Code".to_owned(),
-                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                ),
-                ("Message".to_owned(), text()),
-            ],
-            rows,
-        }
     }
 
     /// Go `timeutil.ParseTimeZone`: `SYSTEM` is the host zone, a named zone
@@ -1809,23 +1729,6 @@ impl Session {
         };
     }
 
-    /// Moves what evaluation recorded into the statement's warning buffer.
-    fn drain_eval_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
-        for (code, message) in ctx.take_warnings() {
-            self.warnings.push(SqlWarning {
-                level: WarningLevel::Warning,
-                code,
-                message,
-            });
-        }
-    }
-
-    /// The warnings the last statement produced.
-    #[must_use]
-    pub fn warnings(&self) -> &[SqlWarning] {
-        &self.warnings
-    }
-
     /// The query clauses this tier parses but cannot execute.
     ///
     /// `INTO OUTFILE` writes a server-side file, which this seed has no path
@@ -1853,28 +1756,6 @@ impl Session {
         }
         Ok(())
     }
-}
-
-/// Whether the statement reports the warning buffer, and so must not clear it
-/// before running. Go decides this on the parsed node; parsing here would mean
-/// parsing the statement twice, so this reads the leading keywords the same
-/// way the dispatcher's own fast paths do.
-fn reports_warnings(sql: &str) -> bool {
-    let mut words = sql
-        .trim_start()
-        .split(|c: char| c.is_whitespace() || c == '(')
-        .filter(|word| !word.is_empty());
-    if !words
-        .next()
-        .is_some_and(|word| word.eq_ignore_ascii_case("SHOW"))
-    {
-        return false;
-    }
-    // `SHOW WARNINGS`, `SHOW ERRORS`, and the `SHOW COUNT(*) WARNINGS` form.
-    words.any(|word| {
-        let word = word.trim_end_matches(';');
-        word.eq_ignore_ascii_case("WARNINGS") || word.eq_ignore_ascii_case("ERRORS")
-    })
 }
 
 #[cfg(test)]
