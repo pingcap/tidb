@@ -26,7 +26,7 @@
 //! construction, not a convention anyone has to remember. The registry's own
 //! `the_registry_is_complete_and_sorted` test proves it.
 
-use super::{SysVarDef, VarType};
+use super::SysVarDef;
 
 mod concurrency;
 mod connections;
@@ -139,7 +139,7 @@ const fn merged() -> [SysVarDef; TOTAL] {
 }
 
 /// Every system variable this build knows, name-ordered for binary search.
-pub static SYS_VARS: &[SysVarDef] = &{
-    const MERGED: [SysVarDef; TOTAL] = merged();
-    MERGED
+pub static SYS_VARS: &[SysVarDef] = {
+    static MERGED: [SysVarDef; TOTAL] = merged();
+    &MERGED
 };
