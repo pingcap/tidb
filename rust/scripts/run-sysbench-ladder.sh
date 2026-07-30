@@ -244,7 +244,9 @@ for _ in $(seq 1 900); do
     tail -60 "${RUST_LOG_FILE}" | tee -a "${LADDER_LOG}"
     exit 1
   fi
-  if grep -qF '"event":"sql_node_ready"' "${RUST_LOG_FILE}"; then
+  # `--cluster-session` publishes its own readiness event name; the configured
+  # read-table mode publishes `sql_node_ready`. Either one means listening.
+  if grep -qE '"event":"(sql_node_ready|cluster_session_node_ready)"' "${RUST_LOG_FILE}"; then
     rust_ready=true
     break
   fi
@@ -283,8 +285,52 @@ else
     | tee -a "${LADDER_LOG}"
 fi
 
+step "rung 3b: initial-handshake capability flags, Rust node vs Go TiDB"
+python3 - "${RUST_SQL_PORT}" "${GO_SQL_PORT}" <<'PY' 2>&1 | tee -a "${LADDER_LOG}"
+import socket, struct, sys
+
+# CLIENT_SSL is bit 11 of the server's advertised capability flags. sysbench's
+# MariaDB connector consults exactly that bit before deciding whether TLS is
+# possible, so print it side by side with the Go server's.
+def flags(port):
+    s = socket.create_connection(("127.0.0.1", int(port)), timeout=5)
+    header = s.recv(4)
+    length = int.from_bytes(header[:3], "little")
+    body = b""
+    while len(body) < length:
+        body += s.recv(length - len(body))
+    s.close()
+    end = body.index(b"\0", 1)
+    rest = body[end + 1 + 4 + 8 + 1 :]
+    lower = struct.unpack("<H", rest[:2])[0]
+    upper = struct.unpack("<H", rest[2 + 1 + 2 + 2 :][:2])[0]
+    return (upper << 16) | lower
+
+for label, port in (("rust", sys.argv[1]), ("go", sys.argv[2])):
+    try:
+        value = flags(port)
+        print(f"{label}: capabilities=0x{value:08x} CLIENT_SSL={'yes' if value & (1 << 11) else 'no'}")
+    except Exception as error:  # noqa: BLE001 - diagnostic only
+        print(f"{label}: capability probe failed: {error}")
+PY
+
+step "rung 3c: control - sysbench prepare against the Go TiDB on the same cluster"
+"${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" -uroot \
+  "${MYSQL_PLUGIN_ARGS[@]}" -e "CREATE DATABASE IF NOT EXISTS sbtest_go" >/dev/null 2>&1
+CONTROL_LOG="${OUT_DIR}/control-go-prepare.log"
+if sysbench oltp_read_only --db-driver=mysql --mysql-host=127.0.0.1 \
+  --mysql-port="${GO_SQL_PORT}" --mysql-user=root --mysql-db=sbtest_go \
+  --mysql-ssl=off --tables=1 --table-size=100 prepare \
+  >"${CONTROL_LOG}" 2>&1; then
+  note "OK rung 3c: sysbench prepares fine against Go TiDB, so the client is not the problem"
+else
+  note "NOTE rung 3c: sysbench also fails against the Go TiDB - the cause is client-side"
+  tail -8 "${CONTROL_LOG}" | tee -a "${LADDER_LOG}"
+fi
+
 SYSBENCH_CONN=(
   --db-driver=mysql
+  --mysql-ssl=off
   --mysql-host=127.0.0.1
   --mysql-port="${RUST_SQL_PORT}"
   --mysql-user="${AUTH_USER}"
@@ -294,16 +340,27 @@ SYSBENCH_CONN=(
   --table-size="${TABLE_SIZE}"
 )
 
-step "rung 4: sysbench oltp_read_only prepare (--tables=1 --table-size=${TABLE_SIZE})"
-PREPARE_LOG="${OUT_DIR}/prepare.log"
-if sysbench oltp_read_only "${SYSBENCH_CONN[@]}" prepare >"${PREPARE_LOG}" 2>&1; then
-  note "OK rung 4: prepare succeeded"
-  prepared=true
-else
-  note "FAIL rung 4: prepare failed; first failing statement below"
-  tail -30 "${PREPARE_LOG}" | tee -a "${LADDER_LOG}"
-  prepared=false
-fi
+# sysbench's default `id INTEGER NOT NULL AUTO_INCREMENT` is a real
+# possibility for a server and a real gap for this node, so both are attempted
+# and reported: the default first, then sysbench's own `--auto-inc=off`, which
+# declares `id INTEGER NOT NULL` and supplies every id explicitly.
+AUTO_INC_ARGS=()
+prepared=false
+for auto_inc in on off; do
+  step "rung 4 (--auto-inc=${auto_inc}): sysbench oltp_read_only prepare (--tables=1 --table-size=${TABLE_SIZE})"
+  PREPARE_LOG="${OUT_DIR}/prepare-auto-inc-${auto_inc}.log"
+  rust_sql -e "DROP TABLE IF EXISTS ${SYSBENCH_DB}.sbtest1" >/dev/null 2>&1
+  if sysbench oltp_read_only "${SYSBENCH_CONN[@]}" --auto-inc="${auto_inc}" \
+    prepare >"${PREPARE_LOG}" 2>&1; then
+    note "OK rung 4 (--auto-inc=${auto_inc}): prepare succeeded"
+    AUTO_INC_ARGS=(--auto-inc="${auto_inc}")
+    prepared=true
+    break
+  fi
+  note "FAIL rung 4 (--auto-inc=${auto_inc}): prepare failed; tail below"
+  tail -20 "${PREPARE_LOG}" | tee -a "${LADDER_LOG}"
+done
+SYSBENCH_CONN+=("${AUTO_INC_ARGS[@]+"${AUTO_INC_ARGS[@]}"}")
 
 step "rung 5: correctness of the prepared dataset"
 if [[ "${prepared}" == true ]]; then
