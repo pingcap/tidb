@@ -442,7 +442,26 @@ fn compare(
 }
 
 /// Replays one topic against a fresh session.
+///
+/// The replay runs on `difftest::on_deep_stack` for the same reason
+/// `query_diff` does, and the reason is worth stating precisely because it is
+/// NOT a depth limit: Go runs every statement on a goroutine whose stack GROWS
+/// on demand, so no recursion bound is part of the recorded behaviour --
+/// verified by grep over `pkg/parser`, `pkg/expression` and `pkg/planner`,
+/// which contain no nesting-depth guard at all. This tier recurses on a fixed
+/// OS thread stack, so the harness has to supply the room Go's runtime supplies
+/// itself. TiDB's own suite is far past libtest's default 8MB: `select` writes
+/// `select --------------------1`, `executor/window` has a single `INSERT` with
+/// 175 value rows, and `executor/jointest/join` joins 21 tables -- the last two
+/// are recursion over INPUT SIZE, not over nesting the user wrote. Sizing the
+/// replay thread changes nothing about what a statement EVALUATES to; it only
+/// stops the process from aborting before the comparison happens.
 fn run_topic(topic: &str) -> Result<TopicReport, String> {
+    let topic = topic.to_owned();
+    difftest::on_deep_stack(move || run_topic_on_this_stack(&topic))
+}
+
+fn run_topic_on_this_stack(topic: &str) -> Result<TopicReport, String> {
     let dir = integrationtest_dir();
     let script = fs::read_to_string(dir.join(format!("t/{topic}.test")))
         .map_err(|e| format!("read t/{topic}.test: {e}"))?;

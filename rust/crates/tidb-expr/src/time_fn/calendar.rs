@@ -775,7 +775,10 @@ pub(crate) fn date_add(
             },
             None => (0, 0, 0),
         };
-        return Ok(date_add_time(y, m, d, h, mi, sec, sign * n * unit_secs));
+        let Some(delta_secs) = sign.checked_mul(n).and_then(|v| v.checked_mul(unit_secs)) else {
+            return Ok(Datum::Null);
+        };
+        return Ok(date_add_time(y, m, d, h, mi, sec, delta_secs));
     }
     if unit.eq_ignore_ascii_case("MICROSECOND") {
         // This tier's `date_add_time` result has no fractional-second
@@ -794,16 +797,62 @@ pub(crate) fn date_add(
             },
             None => (0, 0, 0),
         };
-        return Ok(date_add_time(y, m, d, h, mi, sec, sign * whole_seconds));
+        let Some(delta_secs) = sign.checked_mul(whole_seconds) else {
+            return Ok(Datum::Null);
+        };
+        return Ok(date_add_time(y, m, d, h, mi, sec, delta_secs));
     }
+    // Every unit below scales the amount and adds it to a day or month count,
+    // and TiDB's own suite hands this an amount that does not fit an `i64` at
+    // all: `select "1000-01-01 00:00:00" + INTERVAL 9223372036854775808 day`
+    // (and the same with `18446744073709551616`, and with `YEAR`,
+    // `MINUTE`, `MICROSECOND`). Real TiDB answers `NULL` for every one of them
+    // -- it is `tests/integrationtest/r/expression/time.result`'s own recording
+    // -- because the computed date leaves `DATE`'s supported range, which is
+    // the SAME answer [`format_ymd_result`] gives for any year outside
+    // `1..=9999`. So an amount that overflows the scaling is not a special
+    // case needing its own rule: it is the out-of-range case arriving early,
+    // and `None` here funnels into that same `NULL`.
+    let scaled = |factor: i64| sign.checked_mul(n).and_then(|v| v.checked_mul(factor));
+    // A day count is bounded as well as checked, and the bound is not a magic
+    // number: it is the exact civil-day span [`format_ymd_result`] accepts --
+    // year `0` (its "zero date" string) through year `9999` -- so rejecting
+    // outside it produces the SAME `NULL` that formatting the computed year
+    // would have, one step earlier. `civil_from_days` itself adds a 719,468-day
+    // epoch shift, which overflows on a day count near `i64::MAX` even though
+    // the addition producing it did not.
+    let shifted_days = |factor: i64| {
+        let days = scaled(factor).and_then(|delta| days_from_civil(y, m, d).checked_add(delta))?;
+        (days_from_civil(0, 1, 1)..=days_from_civil(9999, 12, 31))
+            .contains(&days)
+            .then_some(days)
+    };
     let (y2, m2, d2) = if unit.eq_ignore_ascii_case("DAY") {
-        civil_from_days(days_from_civil(y, m, d) + sign * n)
+        match shifted_days(1) {
+            Some(days) => civil_from_days(days),
+            None => return Ok(Datum::Null),
+        }
     } else if unit.eq_ignore_ascii_case("WEEK") {
-        civil_from_days(days_from_civil(y, m, d) + sign * n * 7)
+        match shifted_days(7) {
+            Some(days) => civil_from_days(days),
+            None => return Ok(Datum::Null),
+        }
     } else if unit.eq_ignore_ascii_case("MONTH") {
-        add_months(y, m, d, sign * n)
+        match scaled(1) {
+            Some(months) => match add_months(y, m, d, months) {
+                Some(ymd) => ymd,
+                None => return Ok(Datum::Null),
+            },
+            None => return Ok(Datum::Null),
+        }
     } else if unit.eq_ignore_ascii_case("YEAR") {
-        add_months(y, m, d, sign * n * 12)
+        match scaled(12) {
+            Some(months) => match add_months(y, m, d, months) {
+                Some(ymd) => ymd,
+                None => return Ok(Datum::Null),
+            },
+            None => return Ok(Datum::Null),
+        }
     } else if unit.eq_ignore_ascii_case("QUARTER") {
         // `parseSingleTimeValue`'s `QUARTER` case is `3 * riv` MONTHs
         // (`pkg/types/time.go`), so it shares `MONTH`/`YEAR`'s calendar-field
@@ -811,7 +860,13 @@ pub(crate) fn date_add(
         // `2024-04-30` (April has 30 days, not an overflow into May), and
         // `2024-11-30 + 1 QUARTER` = `2025-02-28` (clamped into a
         // non-leap February) — both confirmed via `goeval`.
-        add_months(y, m, d, sign * n * 3)
+        match scaled(3) {
+            Some(months) => match add_months(y, m, d, months) {
+                Some(ymd) => ymd,
+                None => return Ok(Datum::Null),
+            },
+            None => return Ok(Datum::Null),
+        }
     } else {
         return Err(EvalError::Unsupported("INTERVAL unit"));
     };
@@ -989,7 +1044,14 @@ fn date_add_composite(
     };
     let (years, months, days, nanos) = parse_composite_value(index, cnt, &format);
     if years != 0 || months != 0 {
-        let (y2, m2, d2) = add_months(y, m, d, sign * (years * 12 + months));
+        let Some((y2, m2, d2)) = years
+            .checked_mul(12)
+            .and_then(|v| v.checked_add(months))
+            .and_then(|v| sign.checked_mul(v))
+            .and_then(|delta| add_months(y, m, d, delta))
+        else {
+            return Ok(Datum::Null);
+        };
         return Ok(format_ymd_result(y2, m2, d2, time_suffix));
     }
     let delta_secs = sign * (days * 86_400 + nanos / 1_000_000_000);
@@ -1531,12 +1593,17 @@ fn round_micros_to_seconds(micros: i64) -> i64 {
     }
 }
 
+/// An amount whose seconds count does not fit an `i64` is `NULL`, for the same
+/// reason as the day/month units above: real TiDB answers `NULL` there because
+/// the date left `DATE`'s range, and an overflow is that case arriving early.
 fn date_add_time(y: i64, m: u32, d: u32, h: u32, mi: u32, sec: u32, delta_secs: i64) -> Datum {
-    let total = days_from_civil(y, m, d) * 86_400
-        + i64::from(h) * 3600
-        + i64::from(mi) * 60
-        + i64::from(sec)
-        + delta_secs;
+    let Some(total) = days_from_civil(y, m, d)
+        .checked_mul(86_400)
+        .and_then(|v| v.checked_add(i64::from(h) * 3600 + i64::from(mi) * 60 + i64::from(sec)))
+        .and_then(|v| v.checked_add(delta_secs))
+    else {
+        return Datum::Null;
+    };
     let day_count = total.div_euclid(86_400);
     let secs_of_day = total.rem_euclid(86_400);
     let (y2, m2, d2) = civil_from_days(day_count);
@@ -1574,12 +1641,26 @@ pub(crate) fn format_ymdhms_result(y: i64, m: u32, d: u32, h: u32, mi: u32, sec:
 /// confirmed via `goeval`, genuinely different from `DAY`'s exact
 /// day-number arithmetic (see [`date_add`]'s doc comment). `YEAR` reuses
 /// this with `n` pre-multiplied by 12, rather than a separate algorithm.
-fn add_months(y: i64, m: u32, d: u32, n: i64) -> (i64, u32, u32) {
-    let total = y * 12 + i64::from(m - 1) + n;
+///
+/// `None` is an `n` whose month total leaves the years
+/// [`format_ymd_result`] can render at all (`0..=9999`) -- including one that
+/// does not fit an `i64` -- which that function answers `NULL` for anyway, so
+/// the caller propagates `NULL` rather than computing a year no result can
+/// carry. TiDB's own `expression/time` script asks for exactly that:
+/// `"1000-01-01 00:00:00" + INTERVAL 9223372036854775808 YEAR`, recorded as
+/// `NULL`.
+fn add_months(y: i64, m: u32, d: u32, n: i64) -> Option<(i64, u32, u32)> {
+    let total = y
+        .checked_mul(12)?
+        .checked_add(i64::from(m - 1))?
+        .checked_add(n)?;
     let y2 = total.div_euclid(12);
+    if !(0..=9999).contains(&y2) {
+        return None;
+    }
     let m2 = (total.rem_euclid(12) + 1) as u32;
     let d2 = d.min(days_in_month(y2, m2));
-    (y2, m2, d2)
+    Some((y2, m2, d2))
 }
 
 /// Formats a computed `(y, m, d)` as `DATE_ADD`/`DATE_SUB`'s result,
@@ -1725,6 +1806,55 @@ pub(crate) fn date_format(date: &Datum, fmt: &Datum) -> Result<Datum, EvalError>
 mod date_add_microsecond_tests {
     use super::{date_add, round_micros_to_seconds};
     use tidb_datatype::Datum;
+
+    /// An `INTERVAL` amount too large for the arithmetic is `NULL`, not a
+    /// panic. TiDB's own `expression/time` script asks for every one of these
+    /// -- `select "1000-01-01 00:00:00" + INTERVAL 9223372036854775808 day`,
+    /// the same with `YEAR`, `MINUTE`, `MICROSECOND`, and with
+    /// `18446744073709551616` -- and
+    /// `tests/integrationtest/r/expression/time.result` records `NULL` for
+    /// all of them, because the computed date leaves `DATE`'s range. Before
+    /// this the day/month/second arithmetic overflowed an `i64` and ABORTED
+    /// the process, which is what made `expression/time` a crashing topic.
+    ///
+    /// A literal in the script is larger than `i64::MAX`, so the parse
+    /// saturates to `i64::MAX` and the OVERFLOW is what has to be caught --
+    /// the amount alone never looks out of range.
+    #[test]
+    fn an_interval_amount_too_large_to_compute_is_null_rather_than_an_overflow() {
+        let date = Datum::new_string("1000-01-01 00:00:00");
+        for unit in [
+            "DAY",
+            "WEEK",
+            "MONTH",
+            "YEAR",
+            "QUARTER",
+            "HOUR",
+            "MINUTE",
+            "SECOND",
+            "MICROSECOND",
+        ] {
+            for sign in [1, -1] {
+                for amount in [i64::MAX, i64::MIN] {
+                    assert_eq!(
+                        date_add(unit, &date, &Datum::Int(amount), sign),
+                        Ok(Datum::Null),
+                        "{unit} {amount} sign {sign}"
+                    );
+                }
+            }
+        }
+        // The CONTROL: an ordinary amount still computes, so the guard above
+        // did not simply turn the unit off.
+        assert_eq!(
+            date_add("DAY", &date, &Datum::Int(1), 1),
+            Ok(Datum::new_string("1000-01-02 00:00:00"))
+        );
+        assert_eq!(
+            date_add("YEAR", &date, &Datum::Int(1), 1),
+            Ok(Datum::new_string("1001-01-01 00:00:00"))
+        );
+    }
 
     /// `DATE_ADD(d, INTERVAL n MICROSECOND)` rounds `n` to the nearest
     /// whole second (this tier's result has no fractional-second slot) and
