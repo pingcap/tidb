@@ -51,10 +51,11 @@
 //!
 //! A column whose coprocessor descriptor this module cannot build faithfully
 //! -- anything outside the signed and unsigned integer family
-//! (`BIGINT`/`INT`/`MEDIUMINT`/`SMALLINT`/`TINYINT`) today -- makes the
-//! whole scan fall back to the byte-level cursor. Note that this is a
-//! *projection* gate, separate from the predicate lowering's own type gate: a
-//! table with one `VARCHAR` column in the `SELECT` list cannot be scanned
+//! (`BIGINT`/`INT`/`MEDIUMINT`/`SMALLINT`/`TINYINT`) and the character-string
+//! family (`VARCHAR`/`CHAR`/the `BLOB`s and their `BINARY` spellings) today --
+//! makes the whole scan fall back to the byte-level cursor. Note that this is
+//! a *projection* gate, separate from the predicate lowering's own type gate:
+//! a table with one `DECIMAL` column in the `SELECT` list cannot be scanned
 //! remotely at all, however pushable its `WHERE` is. The refusal is
 //! [`PushdownScannerError::Unsupported`], which the storage turns into "use
 //! `iter`", so a refused shape is slower and never wrong.
@@ -503,12 +504,28 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     // width is metadata TiKV does not evaluate with -- the value is an integer
     // either way -- but it is what the catalog declares, so it is what the
     // descriptor carries.
-    let (tp, column_len) = match column.field_type.code() {
+    let code = column.field_type.code();
+    let (tp, column_len) = match code {
         FieldTypeCode::LongLong => (MYSQL_TYPE_LONGLONG, 20),
         FieldTypeCode::Long => (MYSQL_TYPE_LONG, 11),
         FieldTypeCode::Int24 => (MYSQL_TYPE_INT24, 9),
         FieldTypeCode::Short => (MYSQL_TYPE_SHORT, 6),
         FieldTypeCode::Tiny => (MYSQL_TYPE_TINY, 4),
+        // The character-string family. Unlike the integer widths above, a
+        // string column's declared LENGTH is not decoration TiKV ignores: it
+        // is what a `VARCHAR(n)` value is checked and compared against, so it
+        // is copied from the catalog rather than defaulted. Go's
+        // `util.ColumnToProto` copies `c.GetFlen()` for every family alike.
+        FieldTypeCode::Varchar
+        | FieldTypeCode::VarString
+        | FieldTypeCode::String
+        | FieldTypeCode::TinyBlob
+        | FieldTypeCode::Blob
+        | FieldTypeCode::MediumBlob
+        | FieldTypeCode::LongBlob => (
+            i32::from(code.mysql_type()),
+            i32::try_from(column.field_type.flen()).unwrap_or(-1),
+        ),
         _ => return None,
     };
     let mut flag = 0;
@@ -518,10 +535,23 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     if column.is_handle {
         flag |= NOT_NULL_FLAG | PRI_KEY_FLAG;
     }
+    // Go `util.ColumnToProto`:
+    // `collate.RewriteNewCollationIDIfNeeded(mysql.CollationNames[c.GetCollate()])`.
+    // An integer column's collation is `binary`, which resolves to the same
+    // constant this used to hard-code; a string column's is its own, and it is
+    // what tells TiKV which collator to compare and case-fold with. The
+    // predicate lowering reads this very field back
+    // (`tidb_exec::wide_scan_selection`), so the leaf and the scan descriptor
+    // cannot disagree about the collator by construction.
+    let collation = if column.field_type.is_string() {
+        tidb_datatype::collation_to_proto(column.field_type.collation_name())
+    } else {
+        BINARY_COLLATION_ID
+    };
     Some(ScanColumnInfo {
         column_id: column.id,
         tp,
-        collation: BINARY_COLLATION_ID,
+        collation,
         column_len,
         decimal: 0,
         flag,

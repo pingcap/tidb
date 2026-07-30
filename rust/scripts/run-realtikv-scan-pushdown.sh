@@ -28,7 +28,17 @@
 #     the implicit `CastIntAsReal` wrappers Go's `newBaseBuiltinFuncWithTp`
 #     inserts. This is the family whose signature depends on the ARGUMENT
 #     TYPES, so a signature resolved from the wrong type is the failure mode
-#     the wire-count equality below exists to catch.
+#     the wire-count equality below exists to catch;
+#   * a BUILTIN CALL of the STRING family -- `CHAR_LENGTH`, `UPPER`, `LOWER`,
+#     `SUBSTR`/`SUBSTRING`/`MID` and `CONV` -- whose signature Go chooses by
+#     `types.IsBinaryStr` on the first argument, and whose TiPB leaves carry
+#     the column's own collation id. The fixture holds the SAME multibyte
+#     bytes as a `VARCHAR` and as a `VARBINARY`, and the two answer DIFFERENT
+#     `CHAR_LENGTH`s, so resolving the wrong spelling changes the rows the
+#     coprocessor sends -- caught by the wire-count equality and by nothing
+#     else. String COMPARISON is deliberately still refused; see that
+#     section's comment for the `deriveCollation` function this tier cannot
+#     follow.
 #
 # and it refuses, on purpose, two shapes Go itself does not send as written: a
 # non-positive constant against an UNSIGNED column (Go's
@@ -109,7 +119,14 @@ cleanup() {
   fi
   tiup clean "${TAG}" >/dev/null 2>&1 || true
   rm -rf "${HOME}/.tiup/data/${TAG}"
-  rm -rf "${WORK_DIR}"
+  # `KEEP_LOGS=1` preserves the two node logs, which are the only evidence of a
+  # startup failure -- without it a node that never opened its port leaves
+  # nothing behind to read.
+  if [[ -n "${KEEP_LOGS:-}" ]]; then
+    echo "logs kept in ${WORK_DIR}" >&2
+  else
+    rm -rf "${WORK_DIR}"
+  fi
 }
 trap cleanup EXIT
 
@@ -175,7 +192,22 @@ CREATE TABLE t (
   sint INT,
   tiny TINYINT,
   small SMALLINT,
-  note VARCHAR(32)
+  note VARCHAR(32),
+  -- The string family's two spellings, over columns that differ in NOTHING
+  -- but their collation, exactly as Go's own `stringColumn` and
+  -- `binaryStringColumn` do.
+  bnote VARBINARY(32),
+  -- The same MULTIBYTE text in both spellings. This pair is the whole point:
+  -- `CHAR_LENGTH` counts CHARACTERS over `mnote` and BYTES over `bmnote`, so
+  -- a signature resolved from the wrong collation returns a different answer
+  -- for the same bytes -- silently, and with no plan difference to see.
+  mnote VARCHAR(16),
+  bmnote VARBINARY(64),
+  -- A case-INSENSITIVE collation, which is a third collator again and the one
+  -- a `binary`-versus-`utf8mb4_bin` guess would silently replace.
+  cinote VARCHAR(32) COLLATE utf8mb4_general_ci,
+  -- Hex digits, so `CONV` has something to convert.
+  hexnote VARCHAR(8)
 );
 SQL
 
@@ -186,12 +218,22 @@ echo "seeding 2000 rows into t (every 7th row NULL in the nullable columns)"
   for i in $(seq 1 2000); do
     sep=","
     [[ "${i}" -eq 2000 ]] && sep=";"
+    # One to five TWO-byte characters, plus zero or one ASCII character.
+    # Character count is `c + a` and byte count is `2c + a`, which differ in
+    # PARITY for every odd `c` -- a three-byte character would have kept the
+    # two counts in step (3c and c share a parity) and made every
+    # characters-versus-bytes case below vacuously equal, which is exactly what
+    # the paired check after them exists to catch.
+    multi=""
+    for _ in $(seq 1 $((i % 5 + 1))); do multi="${multi}é"; done
+    ((i % 2 == 0)) && multi="${multi}z"
+    strings="'n${i}', 'n${i}', '${multi}', '${multi}', 'MiXeD${i}', '$(printf '%X' $((i % 4096)))'"
     if ((i % 7 == 0)); then
       # A NULL in every nullable integer column, so IS NULL / IS NOT NULL /
       # NOT IN over NULL have something to be UNKNOWN about.
-      echo "(${i}, NULL, NULL, NULL, NULL, NULL, 'n${i}')${sep}"
+      echo "(${i}, NULL, NULL, NULL, NULL, NULL, ${strings})${sep}"
     else
-      echo "(${i}, $((i - 1000)), ${i}, $((i % 1000)), $((i % 100 - 50)), $((i % 3000 - 1500)), 'n${i}')${sep}"
+      echo "(${i}, $((i - 1000)), ${i}, $((i % 1000)), $((i % 100 - 50)), $((i % 3000 - 1500)), ${strings})${sep}"
     fi
   done
 } | go_sql
@@ -333,6 +375,59 @@ compare() {
       FAILURES=$((FAILURES + 1))
       ;;
   esac
+}
+
+# `local_eval_divergence <label> <predicate_query> <projection_query>`: a
+# statement whose two nodes return different rows because THIS NODE'S LOCAL
+# BUILTIN disagrees with TiDB -- not because the push-down lowered anything
+# wrongly.
+#
+# The distinction is not a matter of opinion, and this function proves it with
+# two independent facts:
+#
+#   1. The coprocessor sent EXACTLY the rows the GO node returns. TiKV
+#      evaluated the pushed signature and answered TiDB's answer, so the
+#      signature that travelled was the right one. If the lowering had chosen
+#      the wrong spelling, this count would be the WRONG one instead.
+#   2. The same builtin written as a PROJECTION -- no predicate, nothing
+#      pushed, the local evaluator and nothing else -- diverges the same way.
+#
+# Together those say: the wire is right, the local re-application is wrong, and
+# the bug is upstream of push-down in `tidb_expr`'s builtin dispatch, which
+# threads no collation to the string signatures and so evaluates every
+# `SUBSTRING` with UTF-8 CHARACTER semantics even for a `binary` argument
+# (Go has separate `builtinSubstring2ArgsSig`/`3ArgsSig` that slice BYTES).
+# Recorded here rather than asserted away, because this differential is the
+# only place it is visible.
+local_eval_divergence() {
+  local label=$1 predicate_query=$2 projection_query=$3
+  local go_out rust_out go_count go_proj rust_proj
+  go_out=$(go_rows "${predicate_query}")
+  rust_out=$(rust_rows "${predicate_query}")
+  go_count=$(printf '%s' "${go_out}" | grep -c . || true)
+  go_proj=$(go_rows "${projection_query}")
+  rust_proj=$(rust_rows "${projection_query}")
+  wire "${predicate_query}"
+  echo
+  echo "--- ${label}  (KNOWN LOCAL-EVALUATOR DIVERGENCE)"
+  echo "    ${predicate_query}"
+  printf '      rows: GO %s / RUST %s\n' \
+    "${go_count}" "$(printf '%s' "${rust_out}" | grep -c . || true)"
+  printf '      wire: %s rows of %s   dag: %s\n' \
+    "${WIRE_ROWS}" "${TABLE_ROWS}" "${WIRE_SHAPE}"
+  printf '      projection control: GO %s / RUST %s\n' \
+    "$(printf '%s' "${go_proj}" | head -1)" \
+    "$(printf '%s' "${rust_proj}" | head -1)"
+  check "${label}: the DAG carried a Selection" has_selection
+  # THE PUSH IS FAITHFUL: the coprocessor sent TiDB's own answer.
+  check "${label}: the coprocessor sent exactly the rows TiDB selects, \
+so the signature that travelled is the right one" \
+    test "${WIRE_ROWS}" -eq "${go_count}"
+  # AND THE LOCAL BUILTIN IS NOT: the same expression with nothing pushed
+  # diverges identically, which is what makes this not a push-down defect.
+  check "${label}: the same builtin as a PROJECTION diverges too, \
+so the gap is the local evaluator and not the lowering" \
+    test "${go_proj}" != "${rust_proj}"
 }
 
 # `error_case <label> <query> <known_rust_code>`: a statement that FAILS.
@@ -525,6 +620,112 @@ compare "LIMIT over a builtin whose sibling conjunct did not lower" \
   "SELECT id FROM t WHERE acos(tiny) AND sbig = '-950' ORDER BY id LIMIT 3" pushed "${ACOS_ROWS}"
 
 echo
+echo "=== the string family, whose signature is chosen by COLLATION"
+# Every case below wraps the string builtin in `MOD(..., 2)` so the predicate
+# is SELECTIVE: a truth test on the string itself is false for every row here
+# and would prove only that a Selection travelled, not that it filtered the
+# rows the query selects. With `MOD` on top, `wire == qualifying rows` is a
+# real equality over a real split of the table.
+#
+# THE TRAP THIS SECTION EXISTS FOR. `CHAR_LENGTH` over `mnote` counts
+# CHARACTERS and over `bmnote` counts BYTES, and the two columns hold THE SAME
+# BYTES. If the lowering resolved `CharLengthUTF8` for a binary column (or the
+# reverse), TiKV would answer a different length, `MOD(..., 2)` would flip for
+# most rows, and the coprocessor would send the wrong rows -- which no local
+# pass can repair, because the rows it dropped never crossed the network. The
+# `pushed` expectation asserts `wire == the Go node's own qualifying count`,
+# so that is exactly what fails.
+compare "CHAR_LENGTH over a utf8mb4 column (CharLengthUTF8)" \
+  "SELECT id FROM t WHERE mod(char_length(mnote), 2) ORDER BY id" pushed
+compare "CHAR_LENGTH over the SAME BYTES as VARBINARY (CharLength)" \
+  "SELECT id FROM t WHERE mod(char_length(bmnote), 2) ORDER BY id" pushed
+# And the two really do disagree, so the pair above is not two names for one
+# answer. If this check ever passed by equality, the trap cases would be
+# vacuous and every collation guess would look correct.
+CHARS_ROWS=$(go_sql -Nse "USE pushdiff; SELECT COUNT(*) FROM t WHERE mod(char_length(mnote), 2)")
+BYTES_ROWS=$(go_sql -Nse "USE pushdiff; SELECT COUNT(*) FROM t WHERE mod(char_length(bmnote), 2)")
+echo
+echo "--- the two CHAR_LENGTH spellings over identical bytes"
+printf '      characters: %s rows    bytes: %s rows\n' "${CHARS_ROWS}" "${BYTES_ROWS}"
+check "the UTF-8 and binary CHAR_LENGTH select DIFFERENT rows, \
+so resolving the wrong one is observable" \
+  test "${CHARS_ROWS}" -ne "${BYTES_ROWS}"
+
+compare "CHAR_LENGTH over an ASCII utf8mb4 column" \
+  "SELECT id FROM t WHERE mod(char_length(note), 2) ORDER BY id" pushed
+compare "CHAR_LENGTH over a VARBINARY column" \
+  "SELECT id FROM t WHERE mod(char_length(bnote), 2) ORDER BY id" pushed
+compare "CHAR_LENGTH over a case-insensitive collation" \
+  "SELECT id FROM t WHERE mod(char_length(cinote), 2) ORDER BY id" pushed
+# UPPER / LOWER, whose result carries the ARGUMENT's collation -- so the
+# CHAR_LENGTH on top of them must still resolve the same spelling it would
+# have resolved on the column itself.
+compare "UPPER, whose result keeps its argument's collation" \
+  "SELECT id FROM t WHERE mod(char_length(upper(cinote)), 2) ORDER BY id" pushed
+compare "LOWER over a utf8mb4 column" \
+  "SELECT id FROM t WHERE mod(char_length(lower(mnote)), 2) ORDER BY id" pushed
+compare "LOWER over a VARBINARY column, the binary spelling" \
+  "SELECT id FROM t WHERE mod(char_length(lower(bmnote)), 2) ORDER BY id" pushed
+# SUBSTR in both arities and under all three of its registered names, with the
+# UTF-8 spelling counting characters -- so `SUBSTR(mnote, 2)` drops one CJK
+# CHARACTER and not one byte.
+compare "SUBSTR with three arguments over multibyte text" \
+  "SELECT id FROM t WHERE mod(char_length(substr(mnote, 1, 2)), 2) ORDER BY id" pushed
+compare "SUBSTRING with two arguments" \
+  "SELECT id FROM t WHERE mod(char_length(substring(mnote, 2)), 2) ORDER BY id" pushed
+# SUBSTRING over a BINARY argument is the one row where the two nodes differ,
+# and the difference is NOT in the push: TiKV answered TiDB's own answer.
+# `tidb_expr`'s builtin dispatch threads no collation to `substring`, so it
+# evaluates `builtinSubstring3ArgsUTF8Sig` for every argument -- slicing
+# CHARACTERS where Go's `builtinSubstring3ArgsSig` slices BYTES.
+local_eval_divergence "MID over a VARBINARY column, the binary spelling" \
+  "SELECT id FROM t WHERE mod(char_length(mid(bmnote, 2, 5)), 2) ORDER BY id" \
+  "SELECT char_length(mid(bmnote, 2, 5)) FROM t WHERE id = 3"
+# CONV, the one collation-blind row: one signature for either spelling, and a
+# result in the CONNECTION charset rather than the argument's.
+compare "CONV from base 16 to base 10" \
+  "SELECT id FROM t WHERE mod(conv(hexnote, 16, 10), 2) ORDER BY id" pushed
+compare "CONV over a VARBINARY column resolves the same single signature" \
+  "SELECT id FROM t WHERE mod(conv(bnote, 36, 10), 2) ORDER BY id" pushed
+# The composition rules apply to a string builtin exactly as to a math one.
+compare "NOT over a pushed string builtin" \
+  "SELECT id FROM t WHERE NOT mod(char_length(mnote), 2) ORDER BY id" pushed
+compare "a string builtin beside a pushed integer comparison" \
+  "SELECT id FROM t WHERE mod(char_length(mnote), 2) AND sbig > 0 ORDER BY id" pushed
+
+echo
+echo "=== the string family's deliberate refusals"
+# A NON-string argument in a string slot needs Go's WrapWithCastAsString,
+# whose target FieldType takes its flen from a per-source-type table. The
+# catalog has no row for it, so the conjunct stays above the scan.
+compare "CHAR_LENGTH over an integer column, the cast this tier will not build" \
+  "SELECT id FROM t WHERE mod(char_length(sbig), 2) ORDER BY id" refused
+compare "UPPER over an integer column" \
+  "SELECT id FROM t WHERE mod(char_length(upper(sbig)), 2) ORDER BY id" refused
+# A string CONSTANT argument is not describable either: the catalog encodes
+# only integer literals, so a string literal never reaches the wire.
+compare "a string constant in the string slot" \
+  "SELECT id FROM t WHERE mod(char_length(substr('abcdef', sbig)), 2) ORDER BY id" refused
+# ... whereas an integer COLUMN in the integer slot of the same call needs no
+# cast at all and does push, which is what makes the refusal above specific to
+# the string leaf rather than to nested calls in general.
+compare "an integer column as SUBSTR's position argument" \
+  "SELECT id FROM t WHERE mod(char_length(substr(mnote, tiny)), 2) ORDER BY id" pushed
+# String COMPARISON is refused on purpose, and this is the loudest refusal in
+# the change. Go picks the comparison's collation with `deriveCollation`'s
+# ast.EQ case -> CheckAndDeriveCollationFromExprs -> inferCollation, which
+# AGGREGATES coercibility and repertoire across BOTH operands and can pick a
+# collation belonging to NEITHER of them. `PbScalar` carries no coercibility at
+# all, so this tier cannot follow that function, and a comparison sent with a
+# guessed collation returns wrong rows for every case-insensitive column.
+compare "a VARCHAR column against a string constant, refused for its collation" \
+  "SELECT id FROM t WHERE note = 'n500' ORDER BY id" refused
+compare "a case-INSENSITIVE column against a string constant" \
+  "SELECT id FROM t WHERE cinote = 'mixed500' ORDER BY id" refused
+compare "two string columns compared to each other" \
+  "SELECT id FROM t WHERE note = bnote ORDER BY id" refused
+
+echo
 echo "=== the error case of the math family, on both nodes"
 # `COT(0)` is out of DOUBLE range, which TiDB reports as an ERROR and not as
 # NULL. The predicate is pushed, so the expression is evaluated by TiKV -- and
@@ -573,9 +774,11 @@ compare "integer column against a string constant" \
   "SELECT id FROM t WHERE sbig = '500' ORDER BY id" refused
 compare "integer column against a fractional constant" \
   "SELECT id FROM t WHERE sbig > 900.5 ORDER BY id" refused
-# A non-integer column is outside the ETInt family this lowering speaks.
-compare "a VARCHAR column with its collation" \
-  "SELECT id FROM t WHERE note = 'n500' ORDER BY id" noscan
+# A DECIMAL column is still outside the projection gate, so a scan that must
+# emit one is not served remotely at all -- a different gap from the predicate
+# lowering, and named here so it cannot be mistaken for one.
+compare "a DECIMAL column in the projection, refused by the projection gate" \
+  "SELECT id, sbig / 2 FROM t WHERE sbig > 900 ORDER BY id" noscan
 # An expression over a column is not a predicate shape at all, so it never
 # even reaches the lowering: it stays in the Selection above the scan.
 compare "an expression over a column" \
