@@ -292,8 +292,9 @@ pub(crate) fn cascade_parent_changes(
     database: &str,
     table: &str,
     changes: &[ParentChange<'_>],
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    cascade_at_depth(catalog, database, table, changes, 0)
+    cascade_at_depth(catalog, database, table, changes, 0, ctx)
 }
 
 fn cascade_at_depth(
@@ -302,6 +303,7 @@ fn cascade_at_depth(
     table: &str,
     changes: &[ParentChange<'_>],
     depth: usize,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     if depth > MAX_CASCADE_DEPTH {
         return Err(DriverError::ForeignKeyCascadeTooDeep);
@@ -405,7 +407,7 @@ fn cascade_at_depth(
                     .collect();
                 let nested: Vec<ParentChange<'_>> =
                     doomed.iter().map(|row| ParentChange::Delete(row)).collect();
-                cascade_at_depth(catalog, &child_db, &child_table, &nested, depth + 1)?;
+                cascade_at_depth(catalog, &child_db, &child_table, &nested, depth + 1, ctx)?;
                 delete_rows(catalog, &child_db, &child_table, &doomed)?;
             }
             FkAction::Cascade | FkAction::SetNull => {
@@ -428,8 +430,8 @@ fn cascade_at_depth(
                     .iter()
                     .map(|(old, new)| ParentChange::Update { old, new })
                     .collect();
-                cascade_at_depth(catalog, &child_db, &child_table, &nested, depth + 1)?;
-                rewrite_rows(catalog, &child_db, &child_table, &rewritten)?;
+                cascade_at_depth(catalog, &child_db, &child_table, &nested, depth + 1, ctx)?;
+                rewrite_rows(catalog, &child_db, &child_table, &rewritten, ctx)?;
             }
         }
     }
@@ -467,6 +469,7 @@ fn rewrite_rows(
     database: &str,
     table: &str,
     rewrites: &[(Vec<Datum>, Vec<Datum>)],
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let Some(TableEntry::Kv(kv)) = catalog.get_mut_for_foreign_key(database, table) else {
         return Ok(());
@@ -478,7 +481,7 @@ fn rewrite_rows(
     for (handle, row) in stored {
         if let Some(position) = remaining.iter().position(|(old, _)| old[..] == row[..]) {
             let (_, new) = remaining.swap_remove(position);
-            kv.update_row(&handle, new)
+            kv.update_row(&handle, new, ctx)
                 .map_err(|e| DriverError::Parse(format!("row update failed: {e:?}")))?;
         }
     }

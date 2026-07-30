@@ -371,3 +371,127 @@ fn alter_table_with_a_generated_column_is_refused_loudly() {
         .run("ALTER TABLE t1 MODIFY COLUMN b BIGINT AS (a+1) VIRTUAL")
         .is_err());
 }
+
+// A generated column's expression is evaluated under the SQL MODE of the
+// statement that writes the row, exactly as any other expression of that
+// statement is. Evaluating it under no mode at all made
+// `ERROR_FOR_DIVISION_BY_ZERO` unreachable, so a write that TiDB refuses
+// stored a NULL instead -- a silent wrong VALUE in every stored generated
+// column, not an expression-index quirk.
+//
+// The whole script below was captured from real TiDB (mock store, default
+// `sql_mode` = `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,
+// NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,
+// NO_ENGINE_SUBSTITUTION`):
+//
+//   create table d1 (a int, b int as (100/a) stored);
+//   insert into d1 (a) values (5);            -- OK
+//   insert into d1 (a) values (0);            -- ERR 1365 Division by 0
+//   select * from d1;                         -- 5|20
+//   create table d2 (a int, b int as (100/a) virtual);
+//   insert into d2 (a) values (0);            -- ERR 1365 Division by 0
+//   create table e2 (a int);
+//   insert into e2 values (0),(5);
+//   alter table e2 add index i((100/a));      -- ERR 1365 Division by 0
+//   set sql_mode='';
+//   create table d3 (a int, b int as (100/a) stored);
+//   insert into d3 (a) values (0);            -- OK
+//   select * from d3;                         -- 0|<nil>
+//   create table e3 (a int);
+//   insert into e3 values (0),(5);
+//   alter table e3 add index i((100/a));      -- OK
+
+/// The write is refused, and the table keeps only the row that computed.
+/// STORED and VIRTUAL alike: what fails is the EXPRESSION, before the
+/// question of where the value is kept ever arises.
+#[test]
+fn a_zero_divisor_in_a_generated_column_fails_the_write_under_the_default_mode() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE d1 (a INT, b INT AS (100/a) STORED)")
+        .unwrap();
+    session.run("INSERT INTO d1 (a) VALUES (5)").unwrap();
+    assert_eq!(
+        code(&mut session, "INSERT INTO d1 (a) VALUES (0)"),
+        Some(1365)
+    );
+    assert_eq!(
+        message(&mut session, "INSERT INTO d1 (a) VALUES (0)"),
+        "Division by 0"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM d1"),
+        vec![vec!["5".to_owned(), "20".to_owned()]]
+    );
+
+    session
+        .run("CREATE TABLE d2 (a INT, b INT AS (100/a) VIRTUAL)")
+        .unwrap();
+    assert_eq!(
+        code(&mut session, "INSERT INTO d2 (a) VALUES (0)"),
+        Some(1365)
+    );
+    assert!(rows(&mut session, "SELECT * FROM d2").is_empty());
+}
+
+/// An `UPDATE` recomputes the column, so it is the same write and the same
+/// refusal -- and the row it could not compute is left as it was.
+#[test]
+fn an_update_that_makes_a_generated_column_divide_by_zero_is_refused() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE u1 (a INT, b INT AS (100/a) STORED)")
+        .unwrap();
+    session.run("INSERT INTO u1 (a) VALUES (5)").unwrap();
+    assert_eq!(code(&mut session, "UPDATE u1 SET a=0"), Some(1365));
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM u1"),
+        vec![vec!["5".to_owned(), "20".to_owned()]]
+    );
+}
+
+/// An index backfill is a WRITE of the entries it computes, so it evaluates
+/// at the write level too. This is the case that made the bug visible: the
+/// hidden column an expression index adds is generated, and an index built
+/// over a value TiDB refuses to compute is an index over a value that does
+/// not exist.
+#[test]
+fn an_expression_index_backfill_is_refused_when_a_row_divides_by_zero() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE e2 (a INT)").unwrap();
+    session.run("INSERT INTO e2 VALUES (0),(5)").unwrap();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE e2 ADD INDEX i((100/a))"),
+        Some(1365)
+    );
+    // A refused backfill leaves the rows exactly as they were.
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM e2 ORDER BY a"),
+        vec![vec!["0".to_owned()], vec!["5".to_owned()]]
+    );
+}
+
+/// THE CONTROL, and the reason the mode is threaded rather than the division
+/// special-cased: without `ERROR_FOR_DIVISION_BY_ZERO` the very same
+/// statements are ACCEPTED and the column reads NULL. A fix that turned these
+/// into errors would be worse than the bug it removed.
+#[test]
+fn without_error_for_division_by_zero_the_same_writes_are_accepted() {
+    let mut session = Session::new();
+    session.run("SET sql_mode=''").unwrap();
+    session
+        .run("CREATE TABLE d3 (a INT, b INT AS (100/a) STORED)")
+        .unwrap();
+    session.run("INSERT INTO d3 (a) VALUES (0)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM d3"),
+        vec![vec!["0".to_owned(), "NULL".to_owned()]]
+    );
+    session.run("CREATE TABLE e3 (a INT)").unwrap();
+    session.run("INSERT INTO e3 VALUES (0),(5)").unwrap();
+    session.run("ALTER TABLE e3 ADD INDEX i((100/a))").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM e3 ORDER BY a"),
+        vec![vec!["0".to_owned()], vec!["5".to_owned()]]
+    );
+}

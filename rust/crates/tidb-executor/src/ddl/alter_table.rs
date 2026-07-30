@@ -54,6 +54,7 @@ pub fn run_alter_table_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let alter = match &stmt {
@@ -189,10 +190,13 @@ pub fn run_alter_table_in(
                     catalog,
                     &database,
                     &name,
-                    &index_name,
-                    unique,
-                    &index.parts,
-                    is_visible(&index.options),
+                    super::indexes::IndexSpec {
+                        name: &index_name,
+                        unique,
+                        parts: &index.parts,
+                        visible: is_visible(&index.options),
+                    },
+                    ctx,
                 )?;
             }
             // `ALTER TABLE x RENAME TO y` is the same operation as

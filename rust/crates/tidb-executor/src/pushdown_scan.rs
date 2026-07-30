@@ -469,7 +469,7 @@ mod tests {
         for a in 1..=100 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)])
+                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -507,7 +507,7 @@ mod tests {
         for a in 1..=100 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)])
+                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -533,30 +533,34 @@ mod tests {
         let mut fixture = fixture();
         let committed_low = fixture
             .table
-            .insert_row(&[Datum::Int(1), Datum::Int(10)])
+            .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_expr::NoColumns)
             .unwrap();
         fixture
             .table
-            .insert_row(&[Datum::Int(9), Datum::Int(90)])
+            .insert_row(&[Datum::Int(9), Datum::Int(90)], &tidb_expr::NoColumns)
             .unwrap();
         let committed_moved = fixture
             .table
-            .insert_row(&[Datum::Int(2), Datum::Int(20)])
+            .insert_row(&[Datum::Int(2), Datum::Int(20)], &tidb_expr::NoColumns)
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
 
         // One open transaction stages all four shapes.
         fixture
             .table
-            .insert_row(&[Datum::Int(7), Datum::Int(70)])
+            .insert_row(&[Datum::Int(7), Datum::Int(70)], &tidb_expr::NoColumns)
             .unwrap();
         fixture
             .table
-            .insert_row(&[Datum::Int(3), Datum::Int(30)])
+            .insert_row(&[Datum::Int(3), Datum::Int(30)], &tidb_expr::NoColumns)
             .unwrap();
         fixture
             .table
-            .update_row(&committed_moved, &[Datum::Int(8), Datum::Int(80)])
+            .update_row(
+                &committed_moved,
+                &[Datum::Int(8), Datum::Int(80)],
+                &tidb_expr::NoColumns,
+            )
             .unwrap();
         fixture.table.delete_row(&committed_low).unwrap();
         assert!(!fixture.buffer.is_empty(), "the writes are staged");
@@ -600,7 +604,7 @@ mod tests {
         for a in 1..=6 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)])
+                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);
@@ -630,7 +634,7 @@ mod tests {
         for a in 1..=20 {
             fixture
                 .table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)])
+                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
                 .unwrap();
         }
         commit(&fixture.buffer, &fixture.snapshot);

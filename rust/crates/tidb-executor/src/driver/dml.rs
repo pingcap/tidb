@@ -408,8 +408,8 @@ pub(crate) fn run_insert_traced(
             // The generated columns are computed from the finished row, so
             // the conflict lookup and the foreign-key check below see the
             // same values the write will store.
-            kv.materialize_generated(&mut row)
-                .map_err(|e| DriverError::Parse(format!("generated column failed: {e:?}")))?;
+            kv.materialize_generated(&mut row, ctx)
+                .map_err(kv_write_error)?;
         }
         new_rows.push(row);
         inserted += 1;
@@ -548,12 +548,7 @@ pub(crate) fn run_insert_traced(
                 if let Some(allocated) = first_allocated {
                     ctx.publish_last_insert_id(allocated.max(0) as u64);
                 }
-                kv.insert_row(row).map_err(|e| match e {
-                    crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
-                        DriverError::DuplicateEntry { value, key }
-                    }
-                    other => DriverError::Parse(format!("row encode failed: {other:?}")),
-                })?;
+                kv.insert_row(row, ctx).map_err(kv_write_error)?;
                 inserted += 1;
             }
         }
@@ -660,6 +655,26 @@ pub(crate) fn json_write_error(error: &tidb_datatype::DatumValueError) -> Option
     Some(DriverError::Exec(crate::ExecError::Eval(
         tidb_expr::EvalError::Json(json),
     )))
+}
+
+/// The one rendering of a byte-backed write failure, so every write path
+/// reports the same statement error for the same cause.
+///
+/// The generation arm is the reason this is shared rather than repeated: a
+/// generated column's expression fails with an evaluation error that already
+/// carries its own MySQL code (1365 for a zero divisor under
+/// `ERROR_FOR_DIVISION_BY_ZERO`), and rendering it as a generic parse failure
+/// would replace the code an application branches on.
+pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverError {
+    match error {
+        crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
+            DriverError::DuplicateEntry { value, key }
+        }
+        crate::kv_table::KvTableError::Generation {
+            eval: Some(eval), ..
+        } => DriverError::Exec(crate::ExecError::Eval(eval)),
+        other => DriverError::Parse(format!("row encode failed: {other:?}")),
+    }
 }
 
 /// A value as MySQL prints it inside a conversion error message.
@@ -868,12 +883,9 @@ pub(crate) fn apply_on_duplicate(
         // Captured: an update that changes nothing affects no rows.
         return Ok(0);
     }
-    table.update_row(handle, &updated).map_err(|e| match e {
-        crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
-            DriverError::DuplicateEntry { value, key }
-        }
-        other => DriverError::Parse(format!("row encode failed: {other:?}")),
-    })?;
+    table
+        .update_row(handle, &updated, ctx)
+        .map_err(kv_write_error)?;
     Ok(2)
 }
 
@@ -1230,9 +1242,8 @@ pub(crate) fn run_update_traced(
                     // follows -- the checks see exactly the row the write will
                     // store -- and it is idempotent, so `update_row`'s own
                     // recompute stays a no-op.
-                    kv.materialize_generated(&mut new_row).map_err(|e| {
-                        DriverError::Parse(format!("generated column failed: {e:?}"))
-                    })?;
+                    kv.materialize_generated(&mut new_row, ctx)
+                        .map_err(kv_write_error)?;
                     rewrites.push((handle, row, new_row));
                 }
             }
@@ -1254,18 +1265,14 @@ pub(crate) fn run_update_traced(
                     },
                 )
                 .collect();
-            crate::foreign_key::cascade_parent_changes(catalog, &database, &name, &changes)?;
+            crate::foreign_key::cascade_parent_changes(catalog, &database, &name, &changes, ctx)?;
         }
         let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
             unreachable!("only a byte-backed table stages rewrites")
         };
         for (handle, _, new_row) in &rewrites {
-            kv.update_row(handle, new_row).map_err(|e| match e {
-                crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
-                    DriverError::DuplicateEntry { value, key }
-                }
-                other => DriverError::Parse(format!("row encode failed: {other:?}")),
-            })?;
+            kv.update_row(handle, new_row, ctx)
+                .map_err(kv_write_error)?;
             changed += 1;
         }
     }
@@ -1514,7 +1521,7 @@ pub(crate) fn run_delete_traced(
                 for (handle, row) in doomed {
                     let changes = [crate::foreign_key::ParentChange::Delete(&row)];
                     match crate::foreign_key::cascade_parent_changes(
-                        catalog, &database, &name, &changes,
+                        catalog, &database, &name, &changes, ctx,
                     ) {
                         Ok(()) => surviving.push((handle, row.clone())),
                         Err(error) => {
@@ -1529,7 +1536,9 @@ pub(crate) fn run_delete_traced(
                     .iter()
                     .map(|(_, row)| crate::foreign_key::ParentChange::Delete(row))
                     .collect();
-                crate::foreign_key::cascade_parent_changes(catalog, &database, &name, &changes)?;
+                crate::foreign_key::cascade_parent_changes(
+                    catalog, &database, &name, &changes, ctx,
+                )?;
             }
         }
         let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {

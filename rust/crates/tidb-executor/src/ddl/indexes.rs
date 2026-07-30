@@ -39,6 +39,7 @@ pub fn run_create_index_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let Stmt::Ddl(ddl) = &stmt else {
@@ -67,10 +68,13 @@ pub fn run_create_index_in(
         catalog,
         &database,
         &table_name,
-        &create.name,
-        unique,
-        &create.parts,
-        is_visible(&create.options),
+        IndexSpec {
+            name: &create.name,
+            unique,
+            parts: &create.parts,
+            visible: is_visible(&create.options),
+        },
+        ctx,
     )
 }
 
@@ -129,6 +133,20 @@ pub(crate) fn index_part_names(parts: &[tidb_ast::IndexPart]) -> Result<Vec<Stri
     Ok(names)
 }
 
+/// The index a statement asks for, read off either spelling of the request:
+/// `CREATE INDEX` and `ALTER TABLE ... ADD INDEX` name the same four facts in
+/// different AST nodes.
+pub(crate) struct IndexSpec<'a> {
+    /// The index's name.
+    pub name: &'a str,
+    /// Go `IndexInfo.Unique`.
+    pub unique: bool,
+    /// The key parts, each a column or an expression.
+    pub parts: &'a [tidb_ast::IndexPart],
+    /// Go `!IndexInfo.Invisible`.
+    pub visible: bool,
+}
+
 /// Adds one index to a table, shared by `CREATE INDEX` and
 /// `ALTER TABLE ... ADD INDEX`.
 ///
@@ -141,11 +159,15 @@ pub(crate) fn add_index_to_table(
     catalog: &mut Catalog,
     database: &str,
     table_name: &str,
-    index_name: &str,
-    unique: bool,
-    parts: &[tidb_ast::IndexPart],
-    visible: bool,
+    index: IndexSpec<'_>,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    let IndexSpec {
+        name: index_name,
+        unique,
+        parts,
+        visible,
+    } = index;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{table_name}"),
@@ -216,17 +238,27 @@ pub(crate) fn add_index_to_table(
     }
     let id = table.next_index_id();
     let result = table
-        .create_index(KvIndex {
-            id,
-            name: index_name.to_owned(),
-            unique,
-            column_offsets: offsets,
-            visible,
-        })
+        .create_index(
+            KvIndex {
+                id,
+                name: index_name.to_owned(),
+                unique,
+                column_offsets: offsets,
+                visible,
+            },
+            ctx,
+        )
         .map_err(|e| match e {
             crate::kv_table::KvTableError::DuplicateKeyName(name) => {
                 DriverError::DuplicateKeyName(name)
             }
+            // The backfill computes each entry's value from the row, so a
+            // generated column that cannot be evaluated fails the DDL with
+            // its own code -- Go answers 1365 for
+            // `ALTER TABLE t ADD INDEX ((100/a))` over a row with `a = 0`.
+            crate::kv_table::KvTableError::Generation {
+                eval: Some(eval), ..
+            } => DriverError::Exec(crate::ExecError::Eval(eval)),
             crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
                 DriverError::DuplicateEntry { value, key }
             }

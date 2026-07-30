@@ -386,9 +386,15 @@ mod tests {
         );
 
         // Committed half: one row above the predicate, one below.
-        let committed_low = table.insert_row(&[Datum::Int(1), Datum::Int(10)]).unwrap();
-        table.insert_row(&[Datum::Int(9), Datum::Int(90)]).unwrap();
-        let committed_moved = table.insert_row(&[Datum::Int(2), Datum::Int(20)]).unwrap();
+        let committed_low = table
+            .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_expr::NoColumns)
+            .unwrap();
+        table
+            .insert_row(&[Datum::Int(9), Datum::Int(90)], &tidb_expr::NoColumns)
+            .unwrap();
+        let committed_moved = table
+            .insert_row(&[Datum::Int(2), Datum::Int(20)], &tidb_expr::NoColumns)
+            .unwrap();
         commit(&buffer, &snapshot);
         assert!(buffer.is_empty(), "nothing is staged after the commit");
 
@@ -397,10 +403,18 @@ mod tests {
         //   * an INSERT that does not,
         //   * an UPDATE that lifts a committed row across the boundary,
         //   * a DELETE of a committed row that satisfies it.
-        table.insert_row(&[Datum::Int(7), Datum::Int(70)]).unwrap();
-        table.insert_row(&[Datum::Int(3), Datum::Int(30)]).unwrap();
         table
-            .update_row(&committed_moved, &[Datum::Int(8), Datum::Int(80)])
+            .insert_row(&[Datum::Int(7), Datum::Int(70)], &tidb_expr::NoColumns)
+            .unwrap();
+        table
+            .insert_row(&[Datum::Int(3), Datum::Int(30)], &tidb_expr::NoColumns)
+            .unwrap();
+        table
+            .update_row(
+                &committed_moved,
+                &[Datum::Int(8), Datum::Int(80)],
+                &tidb_expr::NoColumns,
+            )
             .unwrap();
         table.delete_row(&committed_low).unwrap();
         assert!(!buffer.is_empty(), "the writes are staged, not committed");
@@ -485,7 +499,9 @@ mod tests {
     fn splitting_a_where_does_not_change_its_result() {
         let mut table = KvTable::new(92, vec![column("a", 1), column("b", 2)]);
         for (a, b) in [(1, 10), (5, 50), (7, 70), (9, 90)] {
-            table.insert_row(&[Datum::Int(a), Datum::Int(b)]).unwrap();
+            table
+                .insert_row(&[Datum::Int(a), Datum::Int(b)], &tidb_expr::NoColumns)
+                .unwrap();
         }
         let mut catalog = Catalog::default();
         catalog.register_kv("t", table);
@@ -541,7 +557,7 @@ mod tests {
             (Datum::Null, Datum::Int(30)),
             (Datum::Int(4), Datum::Int(40)),
         ] {
-            table.insert_row(&[a, b]).unwrap();
+            table.insert_row(&[a, b], &tidb_expr::NoColumns).unwrap();
         }
         let mut catalog = Catalog::default();
         catalog.register_kv("t", table);
@@ -606,7 +622,7 @@ mod tests {
             (Datum::Int(7), Datum::Int(7)),
             (Datum::Null, Datum::Int(1)),
         ] {
-            table.insert_row(&[a, b]).unwrap();
+            table.insert_row(&[a, b], &tidb_expr::NoColumns).unwrap();
         }
         let mut catalog = Catalog::default();
         catalog.register_kv("t", table);
@@ -668,7 +684,7 @@ mod tests {
         let mut table = KvTable::new(95, vec![column("a", 1), column("b", 2)]);
         for a in [1_i64, 2, 3] {
             table
-                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)])
+                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
                 .unwrap();
         }
         let mut catalog = Catalog::default();

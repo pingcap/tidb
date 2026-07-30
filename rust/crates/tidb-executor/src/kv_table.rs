@@ -125,6 +125,10 @@ pub enum KvTableError {
         column: String,
         /// The evaluation failure.
         detail: String,
+        /// The evaluation failure itself, when it carries a MySQL code the
+        /// statement has to report (1365 for a zero divisor under
+        /// `ERROR_FOR_DIVISION_BY_ZERO`).
+        eval: Option<tidb_expr::EvalError>,
     },
     /// Go `ErrDupEntry` (1062): a row with this primary key already exists.
     DuplicateEntry {
@@ -161,6 +165,16 @@ pub enum KvTableError {
     Decode(String),
     /// The storage layer refused a read or write.
     Storage(String),
+}
+
+/// Carries a generation failure across the module boundary without losing the
+/// MySQL code the evaluation error already knows.
+fn generation_error(error: crate::generated_column::GenerationError) -> KvTableError {
+    KvTableError::Generation {
+        column: error.column,
+        detail: error.detail,
+        eval: error.eval,
+    }
 }
 
 impl KvTable {
@@ -357,7 +371,16 @@ impl KvTable {
     /// columns an expression index added are exactly the ones whose value
     /// this call is what produces. Widening in the one place that fills them
     /// means no caller has to know the table has any.
-    pub fn materialize_generated(&self, row: &mut Vec<Datum>) -> Result<(), KvTableError> {
+    /// `ctx` is the writing statement's evaluation context: a generated
+    /// expression obeys the statement's SQL mode exactly as any other
+    /// expression of that statement does, so `b INT AS (100/a)` over `a = 0`
+    /// fails the write under `ERROR_FOR_DIVISION_BY_ZERO` and stores NULL
+    /// without it.
+    pub fn materialize_generated(
+        &self,
+        row: &mut Vec<Datum>,
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<(), KvTableError> {
         if row.len() < self.columns.len() {
             row.resize(self.columns.len(), Datum::Null);
         }
@@ -366,26 +389,39 @@ impl KvTable {
             |i| self.columns[i].name.clone(),
             row,
             false,
+            ctx,
         )
-        .map_err(|error| KvTableError::Generation {
-            column: error.column,
-            detail: error.detail,
-        })
+        .map_err(generation_error)
     }
 
     /// Restores the generated columns a decoded row does not carry: the
     /// VIRTUAL ones, whose value was never written.
+    ///
+    /// The READ path evaluates at Go's query level, where a zero divisor is a
+    /// warning and the column reads NULL -- `ERROR_FOR_DIVISION_BY_ZERO` is
+    /// resolved from the SQL mode for `INSERT`/`UPDATE`/`DELETE` only
+    /// (`errctx.ErrGroupDividedByZero`), and a `SELECT` is not one of those.
+    /// A caller that needs the WRITE level -- an index backfill, whose value
+    /// is about to be persisted -- passes its own context to
+    /// [`Self::fill_virtual_columns_in`].
     fn fill_virtual_columns(&self, row: &mut [Datum]) -> Result<(), KvTableError> {
+        self.fill_virtual_columns_in(row, &tidb_expr::NoColumns)
+    }
+
+    /// [`Self::fill_virtual_columns`] under a caller-chosen context.
+    fn fill_virtual_columns_in(
+        &self,
+        row: &mut [Datum],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<(), KvTableError> {
         crate::generated_column::materialize(
             &self.columns,
             |i| self.columns[i].name.clone(),
             row,
             true,
+            ctx,
         )
-        .map_err(|error| KvTableError::Generation {
-            column: error.column,
-            detail: error.detail,
-        })
+        .map_err(generation_error)
     }
 
     /// The handle a row's values produce.
@@ -484,7 +520,11 @@ impl KvTable {
     /// Creates an index over the existing rows, which Go backfills as part of
     /// the DDL. A unique index whose existing rows already collide is
     /// rejected with the duplicate it found, leaving the table unchanged.
-    pub fn create_index(&mut self, index: KvIndex) -> Result<(), KvTableError> {
+    pub fn create_index(
+        &mut self,
+        index: KvIndex,
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<(), KvTableError> {
         if self
             .indexes
             .iter()
@@ -492,8 +532,18 @@ impl KvTable {
         {
             return Err(KvTableError::DuplicateKeyName(index.name.clone()));
         }
-        // Backfill from the rows that already exist.
-        let rows = self.scan_rows_with_handles()?;
+        // Backfill from the rows that already exist. The scan filled the
+        // virtual columns at the READ level; the entries about to be
+        // PERSISTED are a write, so they are recomputed under the DDL's own
+        // context -- which is what makes `ALTER TABLE t ADD INDEX ((100/a))`
+        // over a row with `a = 0` fail with 1365 under
+        // `ERROR_FOR_DIVISION_BY_ZERO` instead of quietly indexing a NULL.
+        // Recomputation is idempotent, so this changes no value that the
+        // read level already agreed on.
+        let mut rows = self.scan_rows_with_handles()?;
+        for (_, row) in &mut rows {
+            self.fill_virtual_columns_in(row, ctx)?;
+        }
         let mut written = Vec::new();
         for (handle, row) in &rows {
             let (key, distinct) = self.index_key(&index, row, handle)?;
@@ -939,7 +989,11 @@ impl KvTable {
     /// Inserts one row (a `Datum` per column, in schema order): encodes the
     /// record key from the next handle and the value through the v2 row format,
     /// exactly the bytes a TiKV-backed table would store.
-    pub fn insert_row(&mut self, row: &[Datum]) -> Result<TableHandle, KvTableError> {
+    pub fn insert_row(
+        &mut self,
+        row: &[Datum],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<TableHandle, KvTableError> {
         // The generated columns are recomputed HERE, at the one place every
         // row reaches, so the stored bytes, the row handle and the index
         // entries all see the same computed values and no caller can write a
@@ -948,7 +1002,7 @@ impl KvTable {
         let row = if self.columns.iter().any(|c| c.generated.is_some()) {
             owned = row.to_vec();
             owned.resize(self.columns.len(), Datum::Null);
-            self.materialize_generated(&mut owned)?;
+            self.materialize_generated(&mut owned, ctx)?;
             owned.as_slice()
         } else {
             row
@@ -1247,7 +1301,12 @@ impl KvTable {
     /// Replaces the row stored under `handle` (Go's `UPDATE` writes the new
     /// row back under the same record key when the handle column did not
     /// change).
-    pub fn update_row(&mut self, handle: &TableHandle, row: &[Datum]) -> Result<(), KvTableError> {
+    pub fn update_row(
+        &mut self,
+        handle: &TableHandle,
+        row: &[Datum],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<(), KvTableError> {
         // Recomputed, never carried over: an UPDATE that changes a dependency
         // must not leave a STORED generated column holding the value computed
         // from the old dependency.
@@ -1255,7 +1314,7 @@ impl KvTable {
         let row = if self.columns.iter().any(|c| c.generated.is_some()) {
             owned = row.to_vec();
             owned.resize(self.columns.len(), Datum::Null);
-            self.materialize_generated(&mut owned)?;
+            self.materialize_generated(&mut owned, ctx)?;
             owned.as_slice()
         } else {
             row
@@ -1543,8 +1602,11 @@ mod tests {
         let mut handles = Vec::new();
         for i in 0..3 {
             handles.push(
-                t.insert_row(&[Datum::Int(i * 10), Datum::Bytes(b"x".to_vec())])
-                    .unwrap(),
+                t.insert_row(
+                    &[Datum::Int(i * 10), Datum::Bytes(b"x".to_vec())],
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap(),
             );
         }
         let scanned: Vec<TableHandle> = t
@@ -1556,8 +1618,12 @@ mod tests {
         assert_eq!(scanned, handles);
 
         // A row written under an explicit handle round-trips too.
-        t.update_row(&handles[1], &[Datum::Int(99), Datum::Bytes(b"y".to_vec())])
-            .unwrap();
+        t.update_row(
+            &handles[1],
+            &[Datum::Int(99), Datum::Bytes(b"y".to_vec())],
+            &tidb_expr::NoColumns,
+        )
+        .unwrap();
         let rows = t.scan_rows_with_handles().unwrap();
         assert_eq!(rows.len(), 3, "update replaced in place, it did not append");
         assert_eq!(rows[1].0, handles[1]);
@@ -1577,13 +1643,19 @@ mod tests {
     fn scan_covers_the_whole_table_and_stops_at_its_range() {
         let mut t = test_table();
         for i in 0..3 {
-            t.insert_row(&[Datum::Int(i), Datum::Bytes(b"x".to_vec())])
-                .unwrap();
+            t.insert_row(
+                &[Datum::Int(i), Datum::Bytes(b"x".to_vec())],
+                &tidb_expr::NoColumns,
+            )
+            .unwrap();
         }
         // A row of the next table id, written into the same storage layout.
         let mut neighbour = KvTable::new(t.table_id + 1, t.columns.clone());
         neighbour
-            .insert_row(&[Datum::Int(99), Datum::Bytes(b"y".to_vec())])
+            .insert_row(
+                &[Datum::Int(99), Datum::Bytes(b"y".to_vec())],
+                &tidb_expr::NoColumns,
+            )
             .unwrap();
 
         let rows = t.scan_rows().unwrap();
@@ -1601,8 +1673,10 @@ mod tests {
         let mut t = test_table();
         let mut s1 = Datum::Null;
         s1.set_bytes(b"hello".to_vec());
-        t.insert_row(&[Datum::Int(7), s1.clone()]).unwrap();
-        t.insert_row(&[Datum::Int(8), Datum::Null]).unwrap();
+        t.insert_row(&[Datum::Int(7), s1.clone()], &tidb_expr::NoColumns)
+            .unwrap();
+        t.insert_row(&[Datum::Int(8), Datum::Null], &tidb_expr::NoColumns)
+            .unwrap();
         assert_eq!(t.len(), 2);
 
         let rows = t.scan_rows().unwrap();
@@ -1623,7 +1697,8 @@ mod tests {
         let mut t = test_table();
         let mut s = Datum::Null;
         s.set_bytes(b"x".to_vec());
-        t.insert_row(&[Datum::Int(1), s]).unwrap();
+        t.insert_row(&[Datum::Int(1), s], &tidb_expr::NoColumns)
+            .unwrap();
 
         let mut out_cols = Vec::new();
         for (i, ft) in [long(), varstr()].into_iter().enumerate() {

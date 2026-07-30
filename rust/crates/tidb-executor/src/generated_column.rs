@@ -46,7 +46,42 @@
 //!   filled the same way it was written -- by evaluating -- so the read and
 //!   the write cannot disagree.
 //! * An index over a generated column is built from the materialized row, so
-//!   it stores the computed value with no index-specific code at all.
+//!   it stores the computed value with no index-specific code at all. An index
+//!   BACKFILL is therefore a write too, and evaluates at the write level: a
+//!   row the expression cannot compute fails the `ALTER TABLE` rather than
+//!   being indexed under a value that does not exist.
+//! * The expression is evaluated under the SQL MODE of the statement that
+//!   writes the row, exactly as every other expression of that statement is
+//!   ([`materialize`]'s `ctx`). There is no separate rule for generated
+//!   columns and no special case per condition: `100/a` over `a = 0` fails the
+//!   write with 1365 under `ERROR_FOR_DIVISION_BY_ZERO` and stores NULL
+//!   without it, because that is what `errctx.ErrGroupDividedByZero` says for
+//!   an `INSERT`/`UPDATE`/`DELETE`. Evaluating with no context at all made
+//!   that flag unreachable, which turned every such write into a silently
+//!   stored NULL. A READ evaluates at the query level instead -- also not a
+//!   special case, just the level Go's `SELECT` carries -- so restoring a
+//!   virtual column warns and reads NULL.
+//!
+//! # NOT MODELLED (measured, documented, and NOT half-done)
+//!
+//! The CAST of the computed value into the column's declared type still uses
+//! a fixed flag set rather than the statement's, so the STRICT half of the
+//! mode does not reach it. Captured from real TiDB under the default mode,
+//! against what this tier answers today:
+//!
+//! | write | TiDB | here |
+//! | --- | --- | --- |
+//! | `b DATE AS (a) STORED`, `a = '0000-00-00'` | 1292 | stored |
+//! | `b DATE AS (a) STORED`, `a = 'not-a-date'` | 1292 | 1064 |
+//! | `b TINYINT AS (a) STORED`, `a = 1000` | 1264 | clamped to 127 |
+//! | `b INT AS (a) STORED`, `a = '12abc'` | 1366 | truncated to 12 |
+//! | `b INT AS (a+1) STORED NOT NULL`, `a = NULL` | 1048 | stored NULL |
+//!
+//! These are one seam, not five bugs: the statement's
+//! `StatementContext.TypeFlags` and its NOT NULL enforcement have to reach
+//! `Datum::convert_to` for EVERY column write, generated or not. Doing it here
+//! only would give generated columns a strictness ordinary columns do not
+//! have, so it is left whole and named rather than half-threaded.
 //!
 //! # What Go refuses, and this refuses with it
 //!
@@ -143,6 +178,11 @@ pub struct GenerationError {
     pub column: String,
     /// The evaluation failure, rendered.
     pub detail: String,
+    /// The evaluation failure itself, when the EXPRESSION is what failed
+    /// rather than the cast into the column's declared type. It carries the
+    /// MySQL code the statement has to report -- 1365 for a zero divisor
+    /// under `ERROR_FOR_DIVISION_BY_ZERO` -- which a rendered string does not.
+    pub eval: Option<tidb_expr::EvalError>,
 }
 
 /// Go `table.FillVirtualColumnValue` + the generated-column half of
@@ -161,6 +201,7 @@ pub fn materialize<S: GeneratedColumnSlot>(
     names: impl Fn(usize) -> String,
     row: &mut [Datum],
     only_virtual: bool,
+    ctx: &impl tidb_expr::Columns,
 ) -> Result<(), GenerationError> {
     if !columns.iter().any(|c| c.generation().is_some()) {
         return Ok(());
@@ -174,9 +215,10 @@ pub fn materialize<S: GeneratedColumnSlot>(
             continue;
         }
         let value =
-            eval_over_row(&generated.expr, &types, row).map_err(|detail| GenerationError {
+            eval_over_row(&generated.expr, &types, row, ctx).map_err(|error| GenerationError {
                 column: names(offset),
-                detail,
+                detail: format!("{error:?}"),
+                eval: Some(error),
             })?;
         // Go casts the generated value into the column's declared type before
         // it is stored or returned (`table.CastValue`), which is what makes
@@ -191,6 +233,7 @@ pub fn materialize<S: GeneratedColumnSlot>(
                     return Err(GenerationError {
                         column: names(offset),
                         detail: format!("{error:?}"),
+                        eval: None,
                     })
                 }
             }
@@ -202,7 +245,17 @@ pub fn materialize<S: GeneratedColumnSlot>(
 
 /// Evaluates one expression against a row of datums by materializing the row
 /// into the single-row chunk [`Expression::eval`] reads.
-fn eval_over_row(expr: &Expression, types: &[FieldType], row: &[Datum]) -> Result<Datum, String> {
+///
+/// `ctx` is the STATEMENT's evaluation context, not a placeholder: a
+/// generated expression is evaluated under the same SQL mode as any other
+/// expression of the statement that writes the row, which is what decides
+/// whether `100/0` is an error or a NULL.
+fn eval_over_row(
+    expr: &Expression,
+    types: &[FieldType],
+    row: &[Datum],
+    ctx: &impl tidb_expr::Columns,
+) -> Result<Datum, tidb_expr::EvalError> {
     let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(types, 1);
     for (index, value) in row.iter().enumerate() {
         chunk.append_datum(index, value);
@@ -213,8 +266,7 @@ fn eval_over_row(expr: &Expression, types: &[FieldType], row: &[Datum]) -> Resul
     for index in row.len()..types.len() {
         chunk.append_datum(index, &Datum::Null);
     }
-    expr.eval(&tidb_expr::NoColumns, chunk.get_row(0))
-        .map_err(|error| format!("{error:?}"))
+    expr.eval(ctx, chunk.get_row(0))
 }
 
 /// Why DDL refused a generated column.
@@ -465,7 +517,14 @@ mod tests {
     fn a_chain_of_generated_columns_is_computed_left_to_right() {
         let columns = chain(true);
         let mut row = vec![Datum::Int(1), Datum::Null, Datum::Null];
-        materialize(&columns, |i| format!("c{i}"), &mut row, false).unwrap();
+        materialize(
+            &columns,
+            |i| format!("c{i}"),
+            &mut row,
+            false,
+            &tidb_expr::NoColumns,
+        )
+        .unwrap();
         assert_eq!(row, vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)]);
     }
 
@@ -476,9 +535,23 @@ mod tests {
     fn materializing_twice_gives_the_same_row() {
         let columns = chain(true);
         let mut row = vec![Datum::Int(4), Datum::Null, Datum::Null];
-        materialize(&columns, |i| format!("c{i}"), &mut row, false).unwrap();
+        materialize(
+            &columns,
+            |i| format!("c{i}"),
+            &mut row,
+            false,
+            &tidb_expr::NoColumns,
+        )
+        .unwrap();
         let once = row.clone();
-        materialize(&columns, |i| format!("c{i}"), &mut row, false).unwrap();
+        materialize(
+            &columns,
+            |i| format!("c{i}"),
+            &mut row,
+            false,
+            &tidb_expr::NoColumns,
+        )
+        .unwrap();
         assert_eq!(row, once);
     }
 
@@ -489,7 +562,14 @@ mod tests {
         let columns = chain(true);
         let mut row = vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)];
         row[0] = Datum::Int(10);
-        materialize(&columns, |i| format!("c{i}"), &mut row, false).unwrap();
+        materialize(
+            &columns,
+            |i| format!("c{i}"),
+            &mut row,
+            false,
+            &tidb_expr::NoColumns,
+        )
+        .unwrap();
         assert_eq!(row, vec![Datum::Int(10), Datum::Int(11), Datum::Int(12)]);
     }
 
@@ -498,7 +578,14 @@ mod tests {
     fn only_virtual_leaves_a_stored_column_as_decoded() {
         let columns = chain(true);
         let mut row = vec![Datum::Int(1), Datum::Int(99), Datum::Int(98)];
-        materialize(&columns, |i| format!("c{i}"), &mut row, true).unwrap();
+        materialize(
+            &columns,
+            |i| format!("c{i}"),
+            &mut row,
+            true,
+            &tidb_expr::NoColumns,
+        )
+        .unwrap();
         assert_eq!(row, vec![Datum::Int(1), Datum::Int(99), Datum::Int(98)]);
     }
 
@@ -506,7 +593,14 @@ mod tests {
     fn only_virtual_recomputes_a_virtual_column() {
         let columns = chain(false);
         let mut row = vec![Datum::Int(1), Datum::Null, Datum::Null];
-        materialize(&columns, |i| format!("c{i}"), &mut row, true).unwrap();
+        materialize(
+            &columns,
+            |i| format!("c{i}"),
+            &mut row,
+            true,
+            &tidb_expr::NoColumns,
+        )
+        .unwrap();
         assert_eq!(row, vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)]);
     }
 

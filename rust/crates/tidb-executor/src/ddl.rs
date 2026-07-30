@@ -682,12 +682,14 @@ mod tests {
             "CREATE INDEX idx_c ON t (a) INVISIBLE",
             &mut catalog,
             crate::driver::DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
         run_alter_table_in(
             "ALTER TABLE t ADD INDEX idx_d (b) INVISIBLE",
             &mut catalog,
             crate::driver::DEFAULT_DATABASE,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
 

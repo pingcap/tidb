@@ -1126,13 +1126,16 @@ mod tests {
             Box::new(MemTableStorage::new()),
         );
         table
-            .create_index(KvIndex {
-                id: 1,
-                name: "ib".to_owned(),
-                unique: false,
-                column_offsets: vec![1],
-                visible: true,
-            })
+            .create_index(
+                KvIndex {
+                    id: 1,
+                    name: "ib".to_owned(),
+                    unique: false,
+                    column_offsets: vec![1],
+                    visible: true,
+                },
+                &tidb_expr::NoColumns,
+            )
             .unwrap();
         table
     }

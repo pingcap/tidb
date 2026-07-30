@@ -439,8 +439,15 @@ impl Session {
                 }
                 DdlStmt::CreateIndex(_) => {
                     let current_db = self.current_db.clone();
+                    // An index backfill WRITES the entries it computes, so it
+                    // evaluates at the write level: captured from TiDB,
+                    // `alter table t add index i((100/a))` over a row with
+                    // `a = 0` is 1365 under the default SQL mode and succeeds
+                    // under `sql_mode = ''`, exactly as the INSERT of such a
+                    // row does.
+                    let ctx = self.statement_context(true);
                     self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_create_index_in(sql, catalog, &current_db)?;
+                        tidb_executor::run_create_index_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
@@ -453,8 +460,10 @@ impl Session {
                 }
                 DdlStmt::AlterTable(_) => {
                     let current_db = self.current_db.clone();
+                    // `ADD INDEX` backfills, so the same write level applies.
+                    let ctx = self.statement_context(true);
                     self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_alter_table_in(sql, catalog, &current_db)?;
+                        tidb_executor::run_alter_table_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }

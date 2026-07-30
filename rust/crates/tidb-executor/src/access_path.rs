@@ -475,18 +475,24 @@ mod tests {
         );
         if indexed {
             table
-                .create_index(crate::kv_table::KvIndex {
-                    id: 1,
-                    name: "ib".to_owned(),
-                    unique: false,
-                    column_offsets: vec![1],
-                    visible: true,
-                })
+                .create_index(
+                    crate::kv_table::KvIndex {
+                        id: 1,
+                        name: "ib".to_owned(),
+                        unique: false,
+                        column_offsets: vec![1],
+                        visible: true,
+                    },
+                    &tidb_expr::NoColumns,
+                )
                 .unwrap();
         }
         for i in 1..=n {
             table
-                .insert_row(&[Datum::Int(i), Datum::Int(i), Datum::Int(n - i)])
+                .insert_row(
+                    &[Datum::Int(i), Datum::Int(i), Datum::Int(n - i)],
+                    &tidb_expr::NoColumns,
+                )
                 .unwrap();
         }
         let mut catalog = Catalog::default();
@@ -554,7 +560,9 @@ mod tests {
             Box::new(store) as Box<dyn TableStorage>,
         );
         for i in 1..=ROWS {
-            table.insert_row(&[Datum::Int(i)]).unwrap();
+            table
+                .insert_row(&[Datum::Int(i)], &tidb_expr::NoColumns)
+                .unwrap();
         }
         entries.store(0, Ordering::Relaxed);
 

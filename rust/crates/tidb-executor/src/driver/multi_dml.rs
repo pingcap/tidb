@@ -440,7 +440,7 @@ pub(crate) fn run_multi_update(
             }
             let changed = new_row != old;
             if changed {
-                write_row(catalog, table, id, &new_row)?;
+                write_row(catalog, table, id, &new_row, ctx)?;
                 changed_rows += 1;
             }
             once.insert((slot, id.clone()), changed);
@@ -492,6 +492,7 @@ fn write_row(
     table: &SourceTable,
     id: &RowId,
     row: &[Datum],
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let entry = catalog
         .get_mut_in(&table.database, &table.name)
@@ -502,12 +503,7 @@ fn write_row(
             Ok(())
         }
         (TableEntry::Kv(kv), RowId::Kv(handle)) => {
-            kv.update_row(handle, row).map_err(|e| match e {
-                crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
-                    DriverError::DuplicateEntry { value, key }
-                }
-                other => DriverError::Parse(format!("row encode failed: {other:?}")),
-            })
+            kv.update_row(handle, row, ctx).map_err(kv_write_error)
         }
         // The identity was read off this very entry a moment ago.
         _ => Err(DriverError::Unsupported(
