@@ -613,7 +613,19 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //    INT, c INT GENERATED ALWAYS AS (a+2), d INT GENERATED ALWAYS AS
     //    (c+2))`, whose refusal used to put them out of domain. Worked off by
     //    porting Go's `checkOrderByInDistinct`.
-    const KNOWN_DIVERGENCES: usize = 64;
+    //
+    // 64 -> 58 when `tidb_executor::access_cost` learned Go's `keepIndex :=
+    // ... || path.IsSingleScan`: an index the ranger narrowed nothing on is
+    // now a candidate whenever it COVERS the statement, so `explain_easy`
+    // carries 28 where it carried 34 and its `PlanProperty` matches rose 58
+    // -> 64. Not one row changed: `Rows` stayed at 347 and `SideEffect` at
+    // 1211 across the whole gate, which is the check that separates an
+    // access-path fix from a semantics break. `join_reorder_through
+    // _projection` did NOT move: its 26 are all reads of a table INSIDE a
+    // join, and the single-table seam that commits an access path
+    // (`driver::access::commit_fast_path_source`) is never reached for a
+    // join input. That is the next increment there, and it is a bigger one.
+    const KNOWN_DIVERGENCES: usize = 58;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
