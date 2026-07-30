@@ -40,6 +40,74 @@ pub enum Item {
     Echo(String),
     /// A SQL statement.
     Stmt(Stmt),
+    /// A connection command, which records NOTHING: it drives the harness,
+    /// not the server. See [`ConnectionCmd`].
+    Connection(ConnectionCmd),
+}
+
+/// One mysqltest connection command.
+///
+/// These are the three commands that make a script drive SEVERAL sessions.
+/// The forms modelled here are exactly the forms the suite uses -- derived
+/// from the scripts themselves, not from a general grammar:
+///
+/// ```text
+/// connect (conn1, localhost, root,, executor__write)   -- 70 occurrences
+/// connect (conn1, localhost, root,)                    -- password and db omitted
+/// connection conn1;   connection default;              -- 200 occurrences
+/// disconnect conn1;                                    -- 100 occurrences
+/// ```
+///
+/// A form outside those is refused by [`parse_test`] rather than guessed, for
+/// the same reason an unmodelled directive is: a connection command read
+/// wrongly attributes one session's statements to another.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ConnectionCmd {
+    /// `connect (<name>, <host>, <user>, <password>, <db>)`: opens a NEW
+    /// connection and makes it current. `db` is empty when the script omits
+    /// it. The host and password are parsed but not carried: every script
+    /// connects to the local server with the account's real password, so
+    /// neither can decide anything (see `mysqltest_connections`).
+    Open { name: String, user: String, db: String },
+    /// `connection <name>`: makes an already-open connection current.
+    /// `default` names the connection the script started on.
+    Switch(String),
+    /// `disconnect <name>`: closes a connection.
+    Close(String),
+}
+
+/// Parses one `connect`/`connection`/`disconnect` line, or refuses it.
+fn parse_connection_cmd(line: &str) -> Result<ConnectionCmd, String> {
+    let body = line.trim().trim_end_matches(';').trim();
+    let (verb, rest) = body
+        .split_once(|c: char| c == '(' || c == ' ')
+        .map_or((body, ""), |(v, r)| (v.trim(), r.trim()));
+    match verb {
+        "connection" if !rest.is_empty() => Ok(ConnectionCmd::Switch(rest.to_owned())),
+        "disconnect" if !rest.is_empty() => Ok(ConnectionCmd::Close(rest.to_owned())),
+        "connect" => {
+            // Both spellings occur: `connect (conn1, ...)` and `connect(conn1,
+            // ...)`, so the paren is stripped here rather than by the split
+            // above.
+            let inner = rest
+                .trim_start_matches('(')
+                .trim()
+                .strip_suffix(')')
+                .ok_or_else(|| format!("unclosed `connect (` in `{line}`"))?;
+            let fields: Vec<&str> = inner.split(',').map(str::trim).collect();
+            // name, host, user, password, and an optional db: the shortest
+            // form in the suite omits the db and leaves the password empty.
+            if fields.len() < 4 || fields.len() > 5 || fields[0].is_empty() || fields[2].is_empty() {
+                return Err(format!("unmodelled `connect` form `{line}`"));
+            }
+            Ok(ConnectionCmd::Open {
+                name: fields[0].to_owned(),
+                user: fields[2].to_owned(),
+                db: fields.get(4).copied().unwrap_or_default().to_owned(),
+            })
+        }
+        _ => Err(format!("unmodelled connection command `{line}`")),
+    }
 }
 
 /// One statement of a `.test` script with the directives that govern how its
@@ -67,6 +135,7 @@ impl Item {
         match self {
             Item::Echo(text) => vec![text.as_str()],
             Item::Stmt(stmt) => stmt.sql.lines().map(str::trim).collect(),
+            Item::Connection(_) => Vec::new(),
         }
     }
 }
@@ -152,13 +221,15 @@ pub fn parse_test(text: &str) -> Result<Vec<Item>, String> {
             continue;
         }
         // `connect`/`connection`/`disconnect` are mysqltest commands, not SQL:
-        // the script drives SEVERAL sessions, and replaying it against one
-        // would attribute another connection's statements to this one. Reject
-        // the whole topic rather than any part of it.
+        // the script drives SEVERAL sessions. They record nothing of their
+        // own, and an unmodelled form is refused rather than dropped -- a
+        // dropped connection command silently runs one session's statements
+        // on another.
         if buffer.is_empty() {
             let first = trimmed.split(['(', ' ', ';']).next().unwrap_or("");
             if matches!(first, "connect" | "connection" | "disconnect") {
-                return Err(format!("multi-connection script (`{trimmed}`)"));
+                items.push(Item::Connection(parse_connection_cmd(trimmed)?));
+                continue;
             }
         }
         buffer.push(line);
@@ -207,8 +278,14 @@ pub fn align<'a>(items: &'a [Item], result: &str) -> Result<Vec<(&'a Item, Vec<S
         cursor += echo.len();
 
         // The block runs to wherever the NEXT item's whole echo begins; the
-        // last item owns the rest of the file.
-        let end = match items.get(index + 1) {
+        // last item owns the rest of the file. An item that records NOTHING
+        // (a connection command) cannot be that terminator: an empty echo
+        // matches immediately and would give the item before it an empty
+        // block, so the search skips to the next item that records something.
+        let end = match items[index + 1..]
+            .iter()
+            .find(|next| !next.echo_lines().is_empty())
+        {
             Some(next) => {
                 let next_echo = next.echo_lines();
                 let mut probe = cursor;
@@ -279,10 +356,56 @@ mod tests {
             .iter()
             .map(|i| match i {
                 Item::Stmt(s) => s.blocker,
-                Item::Echo(_) => None,
+                Item::Echo(_) | Item::Connection(_) => None,
             })
             .collect();
         assert_eq!(blockers, vec![Some("recorded SHOW WARNINGS block"), None]);
+    }
+
+    #[test]
+    fn connection_commands_record_nothing_and_do_not_split_a_block() {
+        let items = parse_test(
+            "connect (conn1, localhost, u1,, db1);\nselect a from t;\ndisconnect conn1;\n\
+             connection default;\nselect 2;\n",
+        )
+        .unwrap();
+        assert_eq!(
+            items
+                .iter()
+                .filter_map(|i| match i {
+                    Item::Connection(cmd) => Some(cmd),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                &ConnectionCmd::Open {
+                    name: "conn1".to_owned(),
+                    user: "u1".to_owned(),
+                    db: "db1".to_owned()
+                },
+                &ConnectionCmd::Close("conn1".to_owned()),
+                &ConnectionCmd::Switch("default".to_owned()),
+            ]
+        );
+        // The two rows belong to `select a from t`, even though a command that
+        // records nothing sits between it and the next statement.
+        let aligned = align(&items, "select a from t;\na\n1\nselect 2;\n2\n2\n").unwrap();
+        assert_eq!(aligned[1].1, vec!["a", "1"]);
+        assert_eq!(aligned[4].1, vec!["2", "2"]);
+    }
+
+    #[test]
+    fn connect_without_a_database_keeps_the_form_and_a_bad_form_is_refused() {
+        assert_eq!(
+            parse_connection_cmd("connect (conn1, localhost, root,)").unwrap(),
+            ConnectionCmd::Open {
+                name: "conn1".to_owned(),
+                user: "root".to_owned(),
+                db: String::new()
+            }
+        );
+        assert!(parse_connection_cmd("connect (conn1, localhost)").is_err());
+        assert!(parse_connection_cmd("connection").is_err());
     }
 
     #[test]

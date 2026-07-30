@@ -45,6 +45,8 @@
 
 #[path = "integration_plan_property.rs"]
 mod integration_plan_property;
+#[path = "mysqltest_connections.rs"]
+mod mysqltest_connections;
 #[path = "mysqltest_script.rs"]
 mod mysqltest_script;
 
@@ -53,6 +55,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use integration_plan_property::{access_property, plan_statement, PlanStatement};
+use mysqltest_connections::Connections;
 use mysqltest_script::{align, parse_test, Item, Stmt};
 use tidb_datatype::Datum;
 use tidb_session::{Session, StmtOutput};
@@ -339,10 +342,21 @@ fn run_topic(topic: &str) -> Result<TopicReport, String> {
     let aligned = align(&items, &recorded)?;
 
     let mut report = TopicReport::default();
-    let mut session = Session::new();
+    let mut connections = Connections::open(topic)?;
     for (item, block) in aligned {
-        let Item::Stmt(stmt) = item else { continue };
-        match compare(&mut session, stmt, &block, &mut report) {
+        let stmt = match item {
+            Item::Stmt(stmt) => stmt,
+            // A connection command drives the pool, not the server. A command
+            // the pool cannot honour faithfully -- an account it cannot
+            // authenticate above all -- ends the topic here instead of running
+            // the rest on the wrong session.
+            Item::Connection(cmd) => {
+                connections.apply(cmd)?;
+                continue;
+            }
+            Item::Echo(_) => continue,
+        };
+        match compare(connections.current(), stmt, &block, &mut report) {
             Ok(kind) => report.matched(kind),
             Err(None) => {}
             Err(Some(detail)) => report
