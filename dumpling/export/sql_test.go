@@ -63,7 +63,7 @@ func newColumnCacheForTest(dbName, tableName string, sourceNames []string, hasGe
 	if selectedNames != nil {
 		info.selectedNames = selectedNames
 	}
-	cache.columns[dbName+"\x00"+tableName] = info
+	cache.columns[writableColumnCacheKey{dbName: dbName, tableName: tableName}] = info
 	return cache
 }
 

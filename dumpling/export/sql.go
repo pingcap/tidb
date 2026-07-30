@@ -1065,13 +1065,18 @@ type writableColumnInfo struct {
 	hasGenerateColumn bool
 }
 
+type writableColumnCacheKey struct {
+	dbName    string
+	tableName string
+}
+
 type writableColumnCache struct {
-	columns map[string]writableColumnInfo
+	columns map[writableColumnCacheKey]writableColumnInfo
 }
 
 func newWritableColumnCache() *writableColumnCache {
 	return &writableColumnCache{
-		columns: make(map[string]writableColumnInfo),
+		columns: make(map[writableColumnCacheKey]writableColumnInfo),
 	}
 }
 
@@ -1080,7 +1085,7 @@ func (c *writableColumnCache) get(tctx *tcontext.Context, db *BaseConn, dbName, 
 		return getWritableColumnNames(tctx, db, dbName, tableName)
 	}
 
-	key := dbName + "\x00" + tableName
+	key := writableColumnCacheKey{dbName: dbName, tableName: tableName}
 	if info, ok := c.columns[key]; ok {
 		return info.sourceNames, info.hasGenerateColumn, nil
 	}
@@ -1100,7 +1105,7 @@ func (c *writableColumnCache) getSelectedNames(dbName, tableName string) ([]stri
 	if c == nil {
 		return nil, false
 	}
-	info, ok := c.columns[dbName+"\x00"+tableName]
+	info, ok := c.columns[writableColumnCacheKey{dbName: dbName, tableName: tableName}]
 	if !ok || info.selectedNames == nil {
 		return nil, false
 	}
@@ -1111,7 +1116,7 @@ func (c *writableColumnCache) setSelectedNames(dbName, tableName string, selecte
 	if c == nil {
 		return
 	}
-	key := dbName + "\x00" + tableName
+	key := writableColumnCacheKey{dbName: dbName, tableName: tableName}
 	info := c.columns[key]
 	info.selectedNames = selectedNames
 	c.columns[key] = info
