@@ -269,8 +269,6 @@ func (d *Dumper) Dump() (dumpErr error) {
 			_ = baseConn.DBConn.Close()
 			return errors.Trace(err)
 		}
-	} else {
-		conf.writableColumnCache = nil
 	}
 
 	chanSize := defaultTaskChannelCapacity
