@@ -199,7 +199,16 @@ fn table_execution_matches_go_engine() {
     // the allocator (Go's `updateRecord` calls the same `Rebase` an explicit
     // INSERT value does), so an `UPDATE ... SET id = 300` no longer leaves the
     // counter behind for later rows to walk back over.
-    const KNOWN_DIVERGENCES: usize = 7;
+    //
+    // 7 -> 3: the whole `rand_session` tail, and the symptom named the WRONG
+    // component. `MysqlRng` was already an exact port -- its own test asserts
+    // the very values this corpus wanted -- and the gap was the SYSVAR SEAM:
+    // `SET rand_seed1/2` never reached the generator, and the variables kept
+    // the value SET instead of Go's constant `GetSession` of `"0"`. Not storing
+    // the value at all reproduces that on every read surface at once
+    // (`@@`, `@@session.`, `SHOW VARIABLES` -- all captured as 0), so no read
+    // path needs to special-case the two names.
+    const KNOWN_DIVERGENCES: usize = 3;
 
     assert!(
         failures.len() <= KNOWN_DIVERGENCES,

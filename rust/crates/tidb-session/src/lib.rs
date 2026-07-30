@@ -857,6 +857,13 @@ impl Session {
                     self.vars
                         .reset_system(&assignment.name)
                         .map_err(var_error)?;
+                    // Go resolves DEFAULT to the registry's default STRING and
+                    // then calls `SetSession` with it, so `SET rand_seed1 =
+                    // DEFAULT` really does push 0 into the generator rather
+                    // than leaving the seed where the last `SET` put it
+                    // (captured: after `SET rand_seed1 = 19`, two DEFAULTs make
+                    // the next `RAND()` exactly 0).
+                    self.seed_rand_from_sysvar(&assignment.name)?;
                 }
                 return Ok(());
             }
@@ -875,6 +882,7 @@ impl Session {
         self.vars
             .set_system(&assignment.name, value)
             .map_err(var_error)?;
+        self.seed_rand_from_sysvar(&assignment.name)?;
         // Go `sysvar.go`'s `AutoCommit.SetSession`: turning autocommit back
         // ON ends the ongoing transaction ("Implicitly commit the possible
         // ongoing transaction if mode is changed from off to on"). Only the
@@ -889,6 +897,44 @@ impl Session {
             self.commit()?;
         }
         Ok(())
+    }
+
+    /// Go's `rand_seed1`/`rand_seed2` `SetSession` hooks: the value SET is a
+    /// raw seed for this session's `RAND()` generator, and is NOT retained as
+    /// the variable's value.
+    ///
+    /// Both sysvars answer `GetSession` with the constant `"0"` in Go, so
+    /// `@@rand_seed1`, `@@session.rand_seed1` and `SHOW VARIABLES LIKE
+    /// 'rand_seed1'` all report 0 no matter what was set or what the generator
+    /// has advanced to (captured on all three surfaces). Clearing the session
+    /// override here reproduces that everywhere at once -- the variable table
+    /// answers its own default -- instead of teaching each read path to special
+    /// case these two names. Only `GetStateValue`, which serializes session
+    /// state, ever exposes the live seeds, and this tier has no such surface.
+    ///
+    /// The value read back is the one `set_system` already NORMALIZED, so Go's
+    /// clamping travels with it: `2147483648` arrives as `MaxInt32` and a
+    /// negative arrives as 0, which is also what `tidbOptPositiveInt32` would
+    /// have produced.
+    fn seed_rand_from_sysvar(&mut self, name: &str) -> Result<(), DriverError> {
+        let first = name.eq_ignore_ascii_case("rand_seed1");
+        if !first && !name.eq_ignore_ascii_case("rand_seed2") {
+            return Ok(());
+        }
+        let seed = self
+            .vars
+            .get_system(name)
+            .map_err(var_error)?
+            .parse::<u32>()
+            .unwrap_or(0);
+        let mut rand = self.rand.borrow_mut();
+        if first {
+            rand.set_seed1(seed);
+        } else {
+            rand.set_seed2(seed);
+        }
+        drop(rand);
+        self.vars.reset_system(name).map_err(var_error)
     }
 
     /// Go `SessionVars.IsAutocommit()`: whether each statement stands on its

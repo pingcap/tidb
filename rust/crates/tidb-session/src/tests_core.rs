@@ -1791,6 +1791,108 @@ fn rand_constant_sequence_and_order_by_rand() {
     assert_eq!(rows, ["1", "2", "3", "4", "5"]);
 }
 
+/// `SET rand_seed1`/`rand_seed2` are RAW SEEDS for this session's `RAND()`
+/// generator, and are never retained as the variables' values.
+///
+/// Go's two `SysVar`s answer `GetSession` with the constant `"0"`, so every
+/// read surface reports 0 no matter what was set or how far the generator has
+/// advanced. Only `GetStateValue` -- session-state serialization, which this
+/// tier has no surface for -- ever exposes a live seed.
+///
+/// Captured from real TiDB via `rust/difftests/gorun`
+/// (`corpus/table/rand_session`):
+///
+/// | statements | result |
+/// | --- | --- |
+/// | `SET rand_seed1=10000000; SET rand_seed2=1000000;` `SELECT RAND(), RAND(), RAND(), @@rand_seed1, @@rand_seed2` | `0.028870999839968048`, `0.11641535266900002`, `0.49546379455874096`, `0`, `0` |
+/// | `SET rand_seed1=-1; SET rand_seed2=2147483648;` `SELECT RAND(), @@rand_seed1, @@rand_seed2` | `0.0000000009313225754828403`, `0`, `0` |
+/// | `SET rand_seed1=7; SET rand_seed2=11; BEGIN; SET rand_seed1=19; ROLLBACK;` `SELECT RAND(), ...` | `0.00000006332993513283314`, `0`, `0` |
+/// | `SET rand_seed1=DEFAULT; SET rand_seed2=DEFAULT;` `SELECT RAND(), ...` | `0`, `0`, `0` |
+/// | `SET rand_seed1=12345;` `SELECT @@rand_seed1, @@session.rand_seed1` | `0`, `0` |
+/// | `SHOW VARIABLES LIKE 'rand_seed1'` | `rand_seed1`, `0` |
+/// | `SET rand_seed1=0; SET rand_seed2=0;` `SELECT RAND(), RAND()` | `0`, `0.00000003073364499093373` |
+/// | `SET rand_seed1=-5; SET rand_seed2=100;` `SELECT RAND()` | `0.00000009313225754828403` |
+///
+/// Four rules the table pins, each load-bearing:
+///
+///  * out-of-range values arrive NORMALIZED -- `2147483648` clamps to
+///    `MaxInt32` (which is why the seed-1 read yields `1/0x3FFFFFFF`, not
+///    something else), and a negative clamps to 0 exactly as Go's
+///    `tidbOptPositiveInt32` would;
+///  * `DEFAULT` really SEEDS, pushing 0 in rather than leaving the last value;
+///  * the seeds are session metadata, not transaction state, so a `SET` inside
+///    `BEGIN` survives `ROLLBACK`;
+///  * `@@`, `@@session.` and `SHOW VARIABLES` agree on 0.
+#[test]
+fn rand_seed_sysvars_seed_the_generator_and_always_read_back_as_zero() {
+    let mut session = Session::new();
+    session.run("SET rand_seed1 = 10000000").unwrap();
+    session.run("SET rand_seed2 = 1000000").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT RAND(), RAND(), RAND(), @@rand_seed1, @@rand_seed2")),
+        [[
+            "0.028870999839968048",
+            "0.11641535266900002",
+            "0.49546379455874096",
+            "0",
+            "0",
+        ]]
+    );
+
+    // A negative clamps to 0; 2147483648 clamps to MaxInt32.
+    session.run("SET rand_seed1 = -1").unwrap();
+    session.run("SET rand_seed2 = 2147483648").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT RAND(), @@rand_seed1, @@rand_seed2")),
+        [["0.0000000009313225754828403", "0", "0"]]
+    );
+
+    // Session metadata, not transaction state: the SET survives the ROLLBACK.
+    session.run("SET rand_seed1 = 7").unwrap();
+    session.run("SET rand_seed2 = 11").unwrap();
+    session.run("BEGIN").unwrap();
+    session.run("SET rand_seed1 = 19").unwrap();
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT RAND(), @@rand_seed1, @@rand_seed2")),
+        [["0.00000006332993513283314", "0", "0"]]
+    );
+
+    // DEFAULT seeds 0 rather than leaving the 19 in place.
+    session.run("SET rand_seed1 = DEFAULT").unwrap();
+    session.run("SET rand_seed2 = DEFAULT").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT RAND(), @@rand_seed1, @@rand_seed2")),
+        [["0", "0", "0"]]
+    );
+
+    // Every read surface reports 0, including SHOW.
+    session.run("SET rand_seed1 = 12345").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@rand_seed1, @@session.rand_seed1")),
+        [["0", "0"]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW VARIABLES LIKE 'rand_seed1'")),
+        [["rand_seed1", "0"]]
+    );
+
+    // An explicit zero pair is a real seeding, not a no-op.
+    session.run("SET rand_seed1 = 0").unwrap();
+    session.run("SET rand_seed2 = 0").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT RAND(), RAND()")),
+        [["0", "0.00000003073364499093373"]]
+    );
+
+    session.run("SET rand_seed1 = -5").unwrap();
+    session.run("SET rand_seed2 = 100").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT RAND()")),
+        [["0.00000009313225754828403"]]
+    );
+}
+
 /// The date/time family through the chunk executor, checked against
 /// captured TiDB output with `time_zone = '+00:00'`.
 ///
