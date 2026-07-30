@@ -57,7 +57,7 @@ func (c *ColumnFilterConfig) compile(caseSensitive bool) error {
 		if !caseSensitive {
 			tableFilter = filter.CaseInsensitive(tableFilter)
 		}
-		columnRules, err := filter.ParseColumnFilterRules(activeColumnRules(rule.Columns))
+		columnRules, err := filter.ParseColumnFilter(activeColumnRules(rule.Columns))
 		if err != nil {
 			return errors.Annotatef(err, "failed to parse --column-filter-file filter %d columns", i)
 		}
