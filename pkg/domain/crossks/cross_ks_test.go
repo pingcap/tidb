@@ -219,6 +219,7 @@ func TestManager(t *testing.T) {
 				*shouldCloseStore = false
 			},
 		)
+		// Disable the refresher so its session does not race with the initial session count assertion.
 		skipMinJobIDRefresherCalled := false
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/skipMinJobIDRefresher",
 			func(shouldRun *bool) {
