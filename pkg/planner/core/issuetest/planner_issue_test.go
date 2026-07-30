@@ -524,6 +524,24 @@ WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t
 GROUP BY field1;`).Check(testkit.Rows("0"))
 	}
 
+	// binary-string-bit-comparison
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t_bit(c1 bit)")
+		tk.MustExec("create table t_bin(c1 binary(1))")
+		tk.MustExec("create table t_varchar(c1 varchar(1))")
+		tk.MustExec("insert into t_bit values (b'0')")
+		tk.MustExec("insert into t_bin values ('o'), ('E')")
+		tk.MustExec("insert into t_varchar values ('o'), ('E')")
+
+		// issue:65307
+		tk.MustQuery("select hex(c1) from t_bin where c1 in (select c1 from t_bit)").Check(testkit.Rows())
+
+		// Preserve the existing numeric coercion behavior outside the binary string IN-subquery path.
+		tk.MustQuery("select hex(t_bin.c1) from t_bin join t_bit on t_bin.c1 = t_bit.c1").Sort().Check(testkit.Rows("45", "6F"))
+		tk.MustQuery("select hex(c1) from t_varchar where c1 in (select c1 from t_bit)").Sort().Check(testkit.Rows("45", "6F"))
+	}
+
 	// rollup-having-exists-nil-expression
 	{
 		tk := prepareSharedTestKit(t)
