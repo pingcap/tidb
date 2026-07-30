@@ -28,6 +28,11 @@ pub enum DriverError {
     Parse(String),
     /// The statement is not a supported `FROM`-less `SELECT`.
     Unsupported(&'static str),
+    /// Like [`Self::Unsupported`], but the message names the specific
+    /// statement/AST kind the refusal saw -- built at the refusal site from
+    /// the parsed statement's own variant name, so the same top-level
+    /// "not supported yet" wording stays diagnostic instead of generic.
+    UnsupportedKind(String),
     /// Rewriting an expression or executing failed.
     Exec(ExecError),
     /// The shared catalog is unusable because a statement panicked while
@@ -714,6 +719,7 @@ impl DriverError {
             format!("You have an error in your SQL syntax: {message}"),
         ),
         DriverError::Unsupported(message) => MysqlError::unknown(message),
+        DriverError::UnsupportedKind(message) => MysqlError::unknown(message),
         // The `json` error class carries TiDB's own code (3140 malformed
         // document, 3143 malformed path, ...), which applications branch on.
         // Every other eval error is still a porting boundary, not SQL-visible
