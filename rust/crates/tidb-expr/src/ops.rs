@@ -194,7 +194,11 @@ pub(crate) fn eval_binary_full(
     // Two strings compare under the collation the expression derivation
     // aggregated for THIS comparison (byte order and PAD SPACE for
     // `utf8mb4_bin`, case folding for a `_ci` collation, NO PAD for `binary`).
-    if let (Some(a), Some(b)) = (l.as_raw_bytes(), r.as_raw_bytes()) {
+    let comparison = matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq);
+    if let (Some(a), Some(b)) = (
+        string_cmp_operand(&l, comparison),
+        string_cmp_operand(&r, comparison),
+    ) {
         return string_compare(op, a, b, collation);
     }
     // A datetime/date value compares in the TIME domain: Go's
@@ -1029,6 +1033,39 @@ fn f64_to_u64(f: f64) -> Option<u64> {
         Some(f as u64)
     } else {
         None
+    }
+}
+
+/// The bytes `value` contributes to a STRING-domain comparison, or `None` when
+/// it belongs to some other comparison domain.
+///
+/// A hex/bit LITERAL (`x'..'`, `0x..`, `b'..'`) is a string operand, not a
+/// number: Go's `DefaultTypeForValue` gives its `HexLiteral`/`BitLiteral` arms
+/// `TypeVarString` with the binary charset (`pkg/types/field_type.go`), so
+/// `GetAccurateCmpType` selects the ETString comparer whenever the other
+/// operand is also a string, and `Datum.compareBinaryLiteral`
+/// (`pkg/types/datum.go`) then compares the literal's RAW BYTES against a
+/// `KindString`/`KindBytes` operand -- falling back to the literal's INTEGER
+/// value only for every other operand kind. Both halves live here: the literal
+/// joins the byte comparison only against another byte operand, and only under
+/// a comparison operator, so arithmetic (`x'01020304' + 0` is `16909060`) and
+/// numeric-operand comparison (`x'41' > 64` is 1) still take its integer value
+/// through `coerce::integer_of` further down `eval_binary_full`.
+///
+/// The collation is NOT forced to `binary`: a hex literal is only
+/// `CoercibilityCoercible` (Go `deriveCoercibilityForConstant`), so an
+/// `CoercibilityImplicit` column wins the aggregation -- confirmed via `gorun`,
+/// for `varchar(8) collate utf8mb4_general_ci c` holding `'AB'`,
+/// `c = x'6162'` is 1.
+///
+/// `Datum::Bit` -- a BIT COLUMN's value rather than a literal -- deliberately
+/// has no arm: `TypeBit`'s eval type is ETInt, so Go compares a bit column
+/// NUMERICALLY even against a string (confirmed via `gorun`: for `bit(16) b`
+/// holding `b'0100000101000010'`, `b = 'AB'` is 0 while `b = 16706` is 1).
+fn string_cmp_operand(value: &Datum, comparison: bool) -> Option<&[u8]> {
+    match value {
+        Datum::BinaryLiteral(literal) if comparison => Some(literal.as_bytes()),
+        other => other.as_raw_bytes(),
     }
 }
 

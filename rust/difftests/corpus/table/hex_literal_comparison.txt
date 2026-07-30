@@ -1,0 +1,42 @@
+## A hex/bit LITERAL (`x'..'`, `0x..`, `b'..'`) is a binary STRING, not a
+## number: Go's `DefaultTypeForValue` types it `TypeVarString` with the
+## binary charset (`pkg/types/field_type.go`), so `GetAccurateCmpType`
+## picks the ETString comparer against any string operand and
+## `Datum.compareBinaryLiteral` (`pkg/types/datum.go`) compares its RAW
+## BYTES -- while arithmetic and comparison against a NUMBER still use its
+## integer value. Regression corpus for the silent wrong answer where
+## `binary_col = x'..'` returned no rows because the literal had collapsed
+## to an integer at every comparison site.
+create table hexlit (a binary(4) not null, b varchar(2), v varchar(8), bl blob, i int, key(a))
+insert into hexlit values (x'01020304', 'xb', 'abc', 'abc', 65)
+select b from hexlit where a = x'01020304'
+select a = x'01020304', hex(a), hex(x'01020304'), x'01020304' + 0 from hexlit
+select a < x'01020305', a > x'01020303', a between x'01020300' and x'01020400' from hexlit
+select a in (x'01020304'), a in (x'99999999') from hexlit
+select v = x'616263', bl = x'616263', i = x'41' from hexlit
+select b from hexlit where a > x'01020300'
+select b from hexlit where a in (x'01020304', x'05060708')
+select b from hexlit where a between x'01020300' and x'01020400'
+select b from hexlit where v = x'616263'
+select x'0001' = x'01', x'00' = x'0000', x'' = x'00'
+select 0x41 = 'A', 'A' = 0x41, 0x41 = 65, 65 = 0x41
+select b'101' = 5, b'101' = x'05', b'101' + 0
+select x'41' + 0, x'ff' + 0
+select hex(b'101'), hex(x'41')
+select x'41' > 'A', x'42' > 'A', x'41' > 64
+select x'4142' = 'AB', x'4142' < 'AC', x'4142' = 16706
+select x'41' = x'41', x'41' <> x'42', x'41' <=> x'41'
+select coalesce(x'41'), concat(x'41','b'), length(x'0102')
+select cast(x'41' as signed), cast(x'41' as char)
+select x'41' = 65.0, x'41' = 65e0
+create table hexlit_ins (a binary(4), v varchar(8), i int)
+insert into hexlit_ins values (x'01020304', x'616263', x'41')
+select hex(a), v, i from hexlit_ins
+create table hexlit_ci (c varchar(8) collate utf8mb4_general_ci)
+insert into hexlit_ci values ('AB')
+select c = 'ab', c = x'6162', c = x'4142' from hexlit_ci
+## A BIT COLUMN is NOT in this corpus: the chunk layer has no `Bit` column
+## getter yet, so `bit(16) b` panics before any comparison runs. Its Go
+## behavior is captured in `string_cmp_operand`'s own doc instead --
+## `b = 'AB'` is 0 while `b = 16706` is 1, i.e. a bit COLUMN compares
+## NUMERICALLY where a bit LITERAL compares as bytes.
