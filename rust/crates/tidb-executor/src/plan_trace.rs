@@ -363,6 +363,38 @@ impl PlanTrace {
         self.consumed = true;
     }
 
+    /// A read of the WHOLE of a covering index, which also REPLACES the
+    /// source scan.
+    ///
+    /// Go prints no `range:` here -- the ranger narrowed nothing, so there is
+    /// no interval to name -- which is the whole textual difference from
+    /// [`PlanTrace::index_range_scan`]. Captured from a v8.5 `gorun` session:
+    ///
+    /// ```text
+    /// IndexReader_7   10000.00  root
+    /// └─IndexFullScan_6  10000.00  cop[tikv]  table:t, index:idx_c2(c2)  keep order:false, stats:pseudo
+    /// ```
+    pub(crate) fn index_full_scan(
+        &mut self,
+        visible: &str,
+        index_name: &str,
+        index_columns: &[&str],
+        estimate: ScanEstimate,
+    ) {
+        self.replace_top(PlanNode::new(
+            "IndexFullScan",
+            Some(estimate.rows),
+            format!(
+                "table:{visible}, index:{index_name}({})",
+                index_columns.join(", ")
+            ),
+            format!("keep order:false{}", pseudo_suffix(estimate)),
+        ));
+        // `consumed` stays false, unlike every narrowed path above: this one
+        // consumed no condition, so a `Selection` on top of it still scales
+        // the estimate the way Go's does over an `IndexFullScan`.
+    }
+
     /// An index range read, which also REPLACES the source scan.
     pub(crate) fn index_range_scan(
         &mut self,

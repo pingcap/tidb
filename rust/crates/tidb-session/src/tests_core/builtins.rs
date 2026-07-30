@@ -588,9 +588,19 @@ fn like_between_case_and_builtins() {
         [["2"], ["3"]]
     );
     assert_eq!(row_text(session.run(r"SELECT 'a%b' LIKE 'a\%b'")), [["1"]]);
+    // `b` is covered by `kb(b)`, so this reads the whole INDEX, and the rows
+    // therefore leave in index-key order rather than handle order. Captured
+    // (v8.5 `gorun`), which is what fixes the order this used to assert:
+    //
+    // ```text
+    // explain SELECT b FROM t WHERE b LIKE '%'
+    //   IndexFullScan_8  cop[tikv]  table:t, index:kb(b)  keep order:false, stats:pseudo
+    // SELECT group_concat(b) FROM t WHERE b LIKE '%'   ->  Yz,xy,z
+    // SELECT group_concat(a) FROM t WHERE b LIKE '%'   ->  2,1,3
+    // ```
     assert_eq!(
         row_text(session.run("SELECT b FROM t WHERE b LIKE '%'")),
-        [["xy"], ["Yz"], ["z"]]
+        [["Yz"], ["xy"], ["z"]]
     );
 
     // Captured: BETWEEN is inclusive, and its negation is the complement.
@@ -623,15 +633,18 @@ fn like_between_case_and_builtins() {
     );
 
     // Captured: the string builtins, including LENGTH counting bytes
-    // while CHAR_LENGTH counts characters.
+    // while CHAR_LENGTH counts characters. Only `b` is read, so this too is
+    // a covering read of `kb(b)` and arrives in index order -- captured
+    // (v8.5 `gorun`) as `IndexFullScan_6 table:t, index:kb(b)` with
+    // `SELECT group_concat(CONCAT(b,'!')) FROM t  ->  Yz!,xy!,z!`.
     assert_eq!(
         row_text(
             session
                 .run("SELECT CONCAT(b,'!'), UPPER(b), LOWER(b), LENGTH(b), CHAR_LENGTH(b) FROM t")
         ),
         [
-            ["xy!", "XY", "xy", "2", "2"],
             ["Yz!", "YZ", "yz", "2", "2"],
+            ["xy!", "XY", "xy", "2", "2"],
             ["z!", "Z", "z", "1", "1"],
         ]
     );
@@ -644,7 +657,8 @@ fn like_between_case_and_builtins() {
     // branch types Go merges to one string type.
     assert_eq!(
         row_text(session.run("SELECT COALESCE(NULL, b), IFNULL(b,'n'), IFNULL(NULL,'n') FROM t")),
-        [["xy", "xy", "n"], ["Yz", "Yz", "n"], ["z", "z", "n"],]
+        // Index order again: only `b` is read, so `kb(b)` covers.
+        [["Yz", "Yz", "n"], ["xy", "xy", "n"], ["z", "z", "n"],]
     );
 
     // Captured: DATABASE() and its SCHEMA() synonym report the current

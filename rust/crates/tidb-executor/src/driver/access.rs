@@ -134,13 +134,25 @@ pub(crate) fn commit_fast_path_source(
                     .iter()
                     .map(|offset| columns[*offset].0.as_str())
                     .collect();
-                trace.index_range_scan(
-                    source_table_name(scope, &table.name),
-                    &index.name,
-                    &index_columns,
-                    &ranges,
-                    estimate,
-                );
+                // A path the ranger narrowed nothing on reads the whole
+                // index, which Go names `IndexFullScan` and prints without a
+                // `range:`.
+                if ranges.len() == 1 && ranges[0].is_full() {
+                    trace.index_full_scan(
+                        source_table_name(scope, &table.name),
+                        &index.name,
+                        &index_columns,
+                        estimate,
+                    );
+                } else {
+                    trace.index_range_scan(
+                        source_table_name(scope, &table.name),
+                        &index.name,
+                        &index_columns,
+                        &ranges,
+                        estimate,
+                    );
+                }
                 trace.set_scan_act_rows(exec.produced_rows());
             }
             *from_source = Some(Box::new(exec));
@@ -306,7 +318,10 @@ pub(crate) fn choose_index_range_path(
     table: &KvTable,
     columns: &[(String, FieldType)],
 ) -> Option<(i64, Vec<IndexRange>, crate::access_cost::ScanEstimate)> {
-    let where_clause = select.where_clause.as_ref()?;
+    // No `WHERE` at all is not a reason to stop: a covering index is still a
+    // candidate, and reading the whole of a narrow index beats reading the
+    // whole table (Go's `path.IsSingleScan` arm of `keepIndex`).
+    let where_clause = select.where_clause.as_ref();
     // The columns the statement reads, which decides whether an index path
     // covers (Go `isCoveringIndex`) and therefore whether it pays for a
     // double read. A statement outside the pruner's slice reads everything.
@@ -331,7 +346,7 @@ pub(crate) fn choose_index_range_path(
     let paths = crate::access_cost::enumerate_paths(
         table,
         columns,
-        Some(where_clause),
+        where_clause,
         &needed,
         &resolver,
         limit.as_ref(),

@@ -81,6 +81,32 @@ pub struct IndexRange {
     pub high_exclusive: bool,
 }
 
+impl IndexRange {
+    /// Go `ranger.FullRange()`: `[NULL, +inf]` over the index's leading
+    /// column, the range an `IndexFullScan` reads.
+    ///
+    /// The low bound is NULL rather than `MinNotNull` because an index stores
+    /// its NULL entries too, and a full scan reads them.
+    #[must_use]
+    pub fn full() -> Self {
+        IndexRange {
+            low: vec![Datum::Null],
+            high: vec![Datum::MaxValue],
+            low_exclusive: false,
+            high_exclusive: false,
+        }
+    }
+
+    /// Whether this range is [`IndexRange::full`], which is what makes the
+    /// read an `IndexFullScan` rather than an `IndexRangeScan` in `EXPLAIN`
+    /// (Go prints no `range:` for a path whose ranges the ranger never
+    /// narrowed).
+    #[must_use]
+    pub fn is_full(&self) -> bool {
+        *self == IndexRange::full()
+    }
+}
+
 /// One index of a [`KvTable`]: Go `model.IndexInfo`, reduced to what an index
 /// write and a uniqueness check need.
 #[derive(Clone, Debug)]

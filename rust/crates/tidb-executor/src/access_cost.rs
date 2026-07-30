@@ -91,13 +91,40 @@
 //! SUPERSET of it. That is a pruning answer, not a costing one, which is why
 //! it is [`crate::skyline`] and not a tie-break rule here.
 //!
-//! An enumeration gap that pruning makes visible, and that this module still
-//! has: Go keeps a covering index with NO access conditions
-//! (`keepIndex := ... || path.IsSingleScan`), which then dominates the table
-//! path, so `SELECT bucket FROM t` reads `IndexFullScan` on `idx_bucket`
-//! where this tier reads the whole table. That is an enumeration refusal --
-//! [`enumerate_paths`] only builds an index candidate the detacher ranged --
-//! and it costs rows read, not correctness.
+//! # The covering index the ranger narrowed nothing on
+//!
+//! Go keeps an index path with NO access conditions when it COVERS the
+//! statement (`keepIndex := len(path.AccessConds) > 0 || ... ||
+//! path.IsSingleScan`), gives it `ranger.FullRange()`, and prints it as
+//! `IndexFullScan`. [`covering_full_scan_candidate`] builds that candidate
+//! here, including for a statement with no `WHERE` at all. Captured on a v8.5
+//! `gorun` session over
+//! `q(id BIGINT PRIMARY KEY, score BIGINT, note VARCHAR(8), KEY s(score))`:
+//!
+//! ```text
+//! explain SELECT id FROM q
+//!   IndexFullScan_6  cop[tikv]  table:q, index:s(score)  keep order:false, stats:pseudo
+//! explain SELECT id FROM q WHERE note = 'x'
+//!   TableFullScan_9  cop[tikv]  table:q                  keep order:false, stats:pseudo
+//! ```
+//!
+//! -- the second one shows the coverage test is what decides: `note` is
+//! neither in `s` nor the handle, so no index path can answer it alone.
+//!
+//! This changes the ROW ORDER of such a read, from handle order to index-key
+//! order, which is TiDB's own order and was a silent divergence before.
+//! Captured on the same session over
+//! `t(a BIGINT PRIMARY KEY, b VARCHAR(20), c BIGINT, KEY kb(b))` holding
+//! `(1,'xy'),(2,'Yz'),(3,'z')`:
+//!
+//! ```text
+//! SELECT group_concat(b) FROM t WHERE b LIKE '%'  ->  Yz,xy,z
+//! SELECT group_concat(a) FROM t WHERE b LIKE '%'  ->  2,1,3
+//! ```
+//!
+//! What is still deferred is the ORDER a covering index can supply: Go reads
+//! it backwards for an `ORDER BY ... DESC` and stops at the `LIMIT`
+//! (`keep order:true, desc`), where this tier scans forwards and sorts.
 
 use std::collections::BTreeMap;
 
@@ -422,9 +449,6 @@ pub(crate) fn enumerate_paths(
         table_filter_count: 0,
         path: table_scan,
     }];
-    let Some(where_clause) = where_clause else {
-        return candidates;
-    };
     for index in table.plan_indexes() {
         let index_columns: Vec<(String, FieldType)> = index
             .column_offsets
@@ -434,9 +458,26 @@ pub(crate) fn enumerate_paths(
         if index_columns.len() != index.column_offsets.len() {
             continue;
         }
-        let Some(built) =
+        let built = where_clause.and_then(|where_clause| {
             crate::index_range::detach_cond_and_build_range_for_index(&index_columns, where_clause)
-        else {
+        });
+        let Some(built) = built else {
+            // Go's `keepIndex := len(path.AccessConds) > 0 || ... ||
+            // path.IsSingleScan` in `skylinePruning`: an index the ranger
+            // narrowed nothing on is still a candidate when it COVERS the
+            // statement's columns, because reading the whole of a narrow
+            // index is cheaper than reading the whole of the table. Go
+            // builds such a path with `ranger.FullRange()` and prints it as
+            // `IndexFullScan`.
+            //
+            // An index that does not cover is pruned here exactly as Go
+            // prunes it: a full index scan plus a row lookup per entry can
+            // never beat the table scan it would have to do anyway.
+            if let Some(candidate) =
+                covering_full_scan_candidate(table, index, needed_columns, limit, stats, realtime)
+            {
+                candidates.push(candidate);
+            }
             continue;
         };
         let empty_range = built.ranges.is_empty();
@@ -486,6 +527,63 @@ pub(crate) fn enumerate_paths(
         });
     }
     candidates
+}
+
+/// The candidate for reading the WHOLE of a covering index: Go's access path
+/// over `ranger.FullRange()`, kept by `skylinePruning`'s `path.IsSingleScan`
+/// arm even though the ranger produced no access condition for it.
+///
+/// `None` when the index does not cover `needed_columns`, because such a path
+/// reads every index entry AND looks up every row, which the table scan
+/// dominates. Go reaches the same answer through `keepIndex`.
+///
+/// Its skyline coordinates are the table scan's own -- no access columns, no
+/// `=`/`IN` prefix, a single scan over the full range -- so neither dominates
+/// the other and the choice falls to [`AccessPath::cost`], where the index's
+/// narrower row wins exactly when it is narrower.
+fn covering_full_scan_candidate(
+    table: &KvTable,
+    index: &KvIndex,
+    needed_columns: &[usize],
+    limit: Option<&PushedLimit<'_>>,
+    stats: Option<&TableStatistics>,
+    realtime: f64,
+) -> Option<Candidate<AccessPath>> {
+    if !is_covering(index, table, needed_columns) {
+        return None;
+    }
+    let ranges = vec![IndexRange::full()];
+    let path = index_path(
+        table,
+        index,
+        ranges,
+        needed_columns,
+        limit,
+        stats,
+        realtime,
+        // With no access condition there is no index filter either, so the
+        // post-index count is the access count and the source row count is
+        // never consulted.
+        realtime,
+        None,
+    );
+    Some(Candidate {
+        access_columns: ColSet::new(),
+        index_columns: ColSet::new(),
+        single_scan: true,
+        eq_or_in_count: 0,
+        full_range: true,
+        count_after_access: path.estimate.rows,
+        max_count_after_access: path.risk.max,
+        min_count_after_access: path.risk.min,
+        count_after_index: path.risk.after_index,
+        pseudo: stats.is_none_or(|stats| !stats.indexes.contains_key(&index.id)),
+        index_width: index.column_offsets.len(),
+        empty_range: false,
+        index_filter_count: 0,
+        table_filter_count: 0,
+        path,
+    })
 }
 
 /// Go `fillIndexPath`'s `FullIdxCols`: the index's own columns, plus the

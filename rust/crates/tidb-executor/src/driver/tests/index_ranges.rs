@@ -312,7 +312,25 @@ fn index_ranges_are_built_the_way_go_builds_them() {
         ))
     );
 
-    // No usable index: an unindexed column, or no WHERE at all.
+    // No usable index: the `WHERE` names an unindexed column that `s` does
+    // not store either, so no index path can answer the statement alone and
+    // the table scan stands. Captured (v8.5 `gorun`):
+    //
+    // ```text
+    // explain SELECT id FROM q WHERE note = 'x'
+    //   TableFullScan_9  cop[tikv]  table:q  keep order:false, stats:pseudo
+    // ```
     assert_eq!(ranges("SELECT id FROM q WHERE note = 'x'"), None);
-    assert_eq!(ranges("SELECT id FROM q"), None);
+    // No `WHERE` at all is not the same thing: `s(score)` carries the integer
+    // handle, so it COVERS `SELECT id` and Go reads the whole of it rather
+    // than the whole table (`skylinePruning`'s `path.IsSingleScan`). Captured:
+    //
+    // ```text
+    // explain SELECT id FROM q
+    //   IndexFullScan_6  cop[tikv]  table:q, index:s(score)  keep order:false, stats:pseudo
+    // ```
+    assert_eq!(
+        ranges("SELECT id FROM q"),
+        Some((1, vec![IndexRange::full()]))
+    );
 }

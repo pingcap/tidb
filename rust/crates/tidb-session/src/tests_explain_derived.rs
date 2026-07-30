@@ -207,12 +207,14 @@ fn two_derived_tables_join_without_a_base_table() {
 ///     └─IndexFullScan_27  2.00  cop[tikv]  table:t, index:ia(a)  keep order:true, desc, stats:pseudo
 /// ```
 ///
-/// DIVERGENCE, named: Go reads `ia(a)` backwards because the index already
-/// supplies `a desc`, so its scan stops after 2 rows; this tier sorts a full
-/// table scan. That is the covering-index enumeration gap recorded in
-/// `tidb_executor::access_cost`'s module doc (Go keeps an index path with no
-/// access conditions, this tier enumerates only ranged ones) -- NOT anything
-/// about derived tables. The rows, and their order, agree with Go's `3;2`.
+/// The OBJECT now agrees: `ia(a)` covers `select a`, so this tier reads the
+/// whole index too (`skylinePruning`'s `path.IsSingleScan`).
+///
+/// DIVERGENCE, narrowed to the ORDER: Go reads `ia(a)` backwards because the
+/// index already supplies `a desc`, so its scan stops after 2 rows, while
+/// this tier scans the index forwards and sorts. That is a `keep order` /
+/// pushed-limit gap, not an enumeration one, and it is NOT anything about
+/// derived tables. The rows, and their order, agree with Go's `3;2`.
 #[test]
 fn a_derived_table_keeps_its_own_order_by_limit() {
     let mut session = derived_session();
@@ -226,7 +228,7 @@ fn a_derived_table_keeps_its_own_order_by_limit() {
             "└─Limit_4|2.00|root||offset:0, count:2",
             "  └─Projection_3|10000.00|root||test.t.a",
             "    └─Sort_2|10000.00|root||test.t.a:desc",
-            "      └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
+            "      └─IndexFullScan_1|10000.00|root|table:t, index:ia(a)|keep order:false, stats:pseudo",
         ]
     );
     assert_eq!(
