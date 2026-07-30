@@ -795,7 +795,16 @@ func (b *builtinUncompressSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 
 	result.ReserveString(n)
 	tc := typeCtx(ctx)
+<<<<<<< HEAD
 	for i := 0; i < n; i++ {
+=======
+	tracker, err := b.getMemTracker(ctx)
+	if err != nil {
+		return err
+	}
+	var out bytes.Buffer
+	for i := range n {
+>>>>>>> c6e3cf83998 (*: fix uncompress mem dos (#70199))
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -814,9 +823,13 @@ func (b *builtinUncompressSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 			continue
 		}
 		length := binary.LittleEndian.Uint32([]byte(payload[0:4]))
-		bytes, err := inflate([]byte(payload[4:]))
+		bytes, err := inflate([]byte(payload[4:]), length, tracker, &out)
 		if err != nil {
-			tc.AppendWarning(errZlibZData)
+			if errZlibZBuf.Equal(err) {
+				tc.AppendWarning(errZlibZBuf)
+			} else {
+				tc.AppendWarning(errZlibZData)
+			}
 			result.AppendNull()
 			continue
 		}
