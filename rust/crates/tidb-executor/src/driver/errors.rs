@@ -666,6 +666,12 @@ pub enum VarErrorKind {
     /// SYSTEM_VARIABLES_ADMIN")` (1227): `SET GLOBAL` without SUPER or the
     /// dynamic `SYSTEM_VARIABLES_ADMIN` privilege.
     SetGlobalAccessDenied,
+    /// A `SysVar.Validation` closure that refuses the value with a bare
+    /// `errors.Errorf`, which carries no MySQL code of its own and so reports
+    /// as `ER_UNKNOWN_ERROR` (1105) with the closure's own wording --
+    /// `tidb_enable_list_partition` set to anything but ON is the case that
+    /// exists.
+    ValidationRefused(String),
 }
 
 /// Why a transaction statement failed (Go `kv.ErrWriteConflict` and friends).
@@ -1532,6 +1538,10 @@ impl DriverError {
              privilege(s) for this operation"
                 .to_owned(),
         ),
+        // A Validation closure's own `errors.Errorf`: no code, so 1105.
+        DriverError::Var(crate::VarErrorKind::ValidationRefused(message)) => {
+            MysqlError::new(1105, *b"HY000", message.clone())
+        }
         DriverError::SubqueryReturnsMoreThanOneRow => MysqlError::new(
             ER_SUBQUERY_NO_1_ROW,
             *b"21000",

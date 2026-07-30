@@ -101,6 +101,7 @@ impl GlobalSysvars {
                     ValidationError::WrongValueOf(part) => {
                         VarError::WrongValueForVar(name.to_ascii_lowercase(), part)
                     }
+                    ValidationError::Refused(message) => VarError::ValidationRefused(message),
                 })?;
         let key = name.to_ascii_lowercase();
         let mut values = self.values.lock().expect("global sysvar lock poisoned");
@@ -199,6 +200,9 @@ pub enum VarError {
     /// @@global.x` named a SESSION-only variable (there is no GLOBAL copy to
     /// read).
     NoGlobalCopy(String),
+    /// A `SysVar.Validation` closure's own `errors.Errorf`, whose wording is
+    /// the whole error (Go gives it no code, so it reports as 1105).
+    ValidationRefused(&'static str),
 }
 
 /// A session's system-variable state: the variables it has overridden (Go's
@@ -339,6 +343,7 @@ impl SessionVars {
                     ValidationError::WrongValueOf(part) => {
                         VarError::WrongValueForVar(name.to_ascii_lowercase(), part)
                     }
+                    ValidationError::Refused(message) => VarError::ValidationRefused(message),
                 })?;
         let key = name.to_ascii_lowercase();
         // Go `SetSessionFromHook`: the alias takes the SAME stored value, with

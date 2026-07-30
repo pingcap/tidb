@@ -1089,7 +1089,9 @@ fn setting_a_removed_feature_switch_on_warns() {
         .unwrap();
     assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
 
-    session.run("SET GLOBAL tidb_enable_fast_analyze = ON").unwrap();
+    session
+        .run("SET GLOBAL tidb_enable_fast_analyze = ON")
+        .unwrap();
     assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
 }
 

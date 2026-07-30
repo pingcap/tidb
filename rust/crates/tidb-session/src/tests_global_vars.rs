@@ -159,3 +159,127 @@ fn set_global_requires_super_or_system_variables_admin() {
     plain.attach_globals(vars::GlobalSysvars::new());
     plain.run("SET GLOBAL autocommit = OFF").unwrap();
 }
+
+/// `tidb_enable_table_partition` and `tidb_enable_list_partition` name a
+/// feature that is now ALWAYS ON, and their `Validation` closures say so in
+/// two different ways: the first rewrites any assignment to `ON` and warns
+/// when someone tried to turn it off, the second refuses. Captured through
+/// `gorun`, for both scopes:
+///
+/// ```text
+/// set tidb_enable_table_partition=off;        show warnings;
+///   Warning|1105|tidb_enable_table_partition is always turned on. ...
+/// show variables like 'tidb_enable_table_partition';        -> ON
+/// set global tidb_enable_table_partition=off;
+/// show global variables like 'tidb_enable_table_partition'; -> ON
+/// set tidb_enable_list_partition=on;          show warnings;
+///   Warning|1681|tidb_enable_list_partition is deprecated and will be removed in a future release.
+/// set tidb_enable_list_partition=off;
+///   Error 1105 (HY000): tidb_enable_list_partition is now always on, and cannot be turned off
+/// show variables like 'tidb_enable_list_partition';         -> ON
+/// ```
+#[test]
+fn the_partition_switches_are_always_on() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+
+    session
+        .run("SET tidb_enable_table_partition = off")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1105".to_owned(),
+            "tidb_enable_table_partition is always turned on. This variable has been deprecated \
+             and will be removed in the future releases"
+                .to_owned(),
+        ]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW VARIABLES LIKE 'tidb_enable_table_partition'")),
+        vec![vec![
+            "tidb_enable_table_partition".to_owned(),
+            "ON".to_owned()
+        ]]
+    );
+    session
+        .run("SET GLOBAL tidb_enable_table_partition = off")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW GLOBAL VARIABLES LIKE 'tidb_enable_table_partition'")),
+        vec![vec![
+            "tidb_enable_table_partition".to_owned(),
+            "ON".to_owned()
+        ]]
+    );
+
+    session.run("SET tidb_enable_list_partition = on").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        vec![vec![
+            "Warning".to_owned(),
+            "1681".to_owned(),
+            "tidb_enable_list_partition is deprecated and will be removed in a future release."
+                .to_owned(),
+        ]]
+    );
+    let refused = session
+        .run("SET tidb_enable_list_partition = off")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(refused.code, 1105, "{refused:?}");
+    assert_eq!(
+        refused.message,
+        "tidb_enable_list_partition is now always on, and cannot be turned off"
+    );
+    assert_eq!(
+        row_text(session.run("SHOW VARIABLES LIKE 'tidb_enable_list_partition'")),
+        vec![vec![
+            "tidb_enable_list_partition".to_owned(),
+            "ON".to_owned()
+        ]]
+    );
+}
+
+/// `tidb_session_alias` is cut to 64 RUNES and then stripped of trailing
+/// spaces, because it labels log lines as an identifier. Captured through
+/// `gorun`: `set @@tidb_session_alias='abc  '` reads back as `abc`.
+#[test]
+fn a_session_alias_is_cut_to_64_runes_and_trimmed() {
+    let mut session = Session::new();
+
+    let long = "0123456789".repeat(7);
+    session
+        .run(&format!("SET @@tidb_session_alias = '{long}'"))
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@tidb_session_alias")),
+        vec![vec![long[..64].to_owned()]]
+    );
+
+    // Runes, not bytes: 65 three-byte characters lose exactly the last one.
+    let chinese = "中文测试1中文测试2中文测试3中文测试4中文测试5中文测试6中文测试7中文测试8中文测试9中文测试0中文测试a中文测试b中文测试c";
+    session
+        .run(&format!("SET @@tidb_session_alias = '{chinese}'"))
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@tidb_session_alias")),
+        vec![vec![chinese.chars().take(64).collect::<String>()]]
+    );
+
+    session.run("SET @@tidb_session_alias = 'abc  '").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@tidb_session_alias")),
+        vec![vec!["abc".to_owned()]]
+    );
+
+    // The 64-rune cut lands inside a run of spaces, and the identifier trim
+    // then removes all of them.
+    session
+        .run("SET @@tidb_session_alias = 'abc                                                                    1'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@tidb_session_alias")),
+        vec![vec!["abc".to_owned()]]
+    );
+}

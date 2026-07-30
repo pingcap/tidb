@@ -163,6 +163,11 @@ const TOPICS: &[(&str, &str)] = &[
          read, or how, turns it red",
     ),
     (
+        "session/variable",
+        "the sysvar registry's own edge cases: which SET values clamp, which are \
+         refused, and which switches name a feature that is now always on",
+    ),
+    (
         "executor/analyze",
         "ANALYZE's own statement surface: which forms are accepted, which are refused \
          as removed features, and the warnings a `SET` of a removed switch raises",

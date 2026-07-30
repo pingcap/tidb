@@ -90,6 +90,9 @@ fn var_error(error: VarError) -> DriverError {
         }
         VarError::GlobalOnlyVariable(name) => tidb_executor::VarErrorKind::GlobalOnlyVariable(name),
         VarError::NoGlobalCopy(name) => tidb_executor::VarErrorKind::NoGlobalCopy(name),
+        VarError::ValidationRefused(message) => {
+            tidb_executor::VarErrorKind::ValidationRefused(message.to_owned())
+        }
     })
 }
 
@@ -289,22 +292,59 @@ impl Session {
     /// typed text through the registry first: `1`, `on` and `ON` all warn,
     /// while a value the type check would reject falls through to the real
     /// rejection below.
+    /// The `Validation` closures that WARN. The value half of each closure
+    /// lives in [`sysvar::SysVarDef::validate_in_scope`], which has no session
+    /// to append to; this is the half that does. Go runs `Validation` before
+    /// storing and for BOTH scopes, so this runs on the same footing.
     fn warn_removed_feature_var(&mut self, name: &str, value: &str) {
-        if !name.eq_ignore_ascii_case("tidb_enable_fast_analyze") {
-            return;
-        }
+        // Go tests the NORMALIZED value, so the typed text goes through the
+        // registry first: `1`, `on` and `ON` are one case. A value the type
+        // check would reject warns about nothing and falls through to the real
+        // rejection below.
         let normalized = sysvar::get_sys_var(name)
-            .and_then(|def| def.validate(value).ok())
+            .and_then(|def| def.normalize_by_type(value, sysvar::SCOPE_SESSION).ok())
             .map(|validated| validated.value);
-        if normalized.as_deref() != Some("ON") {
+        let Some(normalized) = normalized else {
             return;
-        }
+        };
+        // Each message is built with `errors.NewNoStackError` or a deprecation
+        // error, so the code is the one the error itself carries; captured
+        // through `gorun` with `SHOW WARNINGS` after each `SET`.
+        let warning = if name.eq_ignore_ascii_case("tidb_enable_fast_analyze") {
+            // The removed feature warns only when TURNED ON.
+            (normalized == "ON").then_some((
+                1105,
+                "the fast analyze feature has already been removed in TiDB v7.5.0, so this will \
+                 have no effect",
+            ))
+        } else if name.eq_ignore_ascii_case("tidb_enable_table_partition") {
+            // Always on: warns only when someone tries to turn it OFF, and the
+            // value stored is `ON` regardless (see the validation).
+            (normalized == "OFF").then_some((
+                1105,
+                "tidb_enable_table_partition is always turned on. This variable has been \
+                 deprecated and will be removed in the future releases",
+            ))
+        } else if name.eq_ignore_ascii_case("tidb_enable_list_partition") {
+            // Go `ErrWarnDeprecatedSyntaxSimpleMsg` (1681), appended for EVERY
+            // assignment -- including the one the same closure then refuses,
+            // which is why `SHOW WARNINGS` after `set ... = off` reports the
+            // deprecation warning AND the error.
+            Some((
+                1681,
+                "tidb_enable_list_partition is deprecated and will be removed in a future \
+                 release.",
+            ))
+        } else {
+            None
+        };
+        let Some((code, message)) = warning else {
+            return;
+        };
         self.warnings.push(crate::warnings::SqlWarning {
             level: crate::warnings::WarningLevel::Warning,
-            code: 1105,
-            message: "the fast analyze feature has already been removed in TiDB v7.5.0, so this \
-                      will have no effect"
-                .to_owned(),
+            code,
+            message: message.to_owned(),
         });
     }
 

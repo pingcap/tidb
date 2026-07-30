@@ -255,6 +255,10 @@ pub enum ValidationError {
     /// Go `ErrWrongValueForVar` (1231) where the rejected text is not the
     /// whole assigned value: `SET sql_mode = 'ANSI,BOGUS'` names `BOGUS`.
     WrongValueOf(String),
+    /// A `Validation` closure that refuses the value with a bare
+    /// `errors.Errorf`, whose wording IS the error (Go gives it no code, so it
+    /// reports as 1105).
+    Refused(&'static str),
 }
 
 /// The outcome of validating a value: Go returns the (possibly normalized)
@@ -284,13 +288,23 @@ impl SysVarDef {
     /// Go `SysVar.ValidateFromType` including its `scope` argument, which only
     /// the empty-value escape hatch reads.
     pub fn validate_in_scope(&self, value: &str, scope: u8) -> Result<Validated, ValidationError> {
+        let validated = self.normalize_by_type(value, scope)?;
+        self.run_validation(validated, value)
+    }
+
+    /// Go `ValidateFromType` ALONE, without the per-variable `Validation`
+    /// closure that runs after it. This is the `normalizedValue` Go hands that
+    /// closure, and the value the closure's own warnings are decided on -- for
+    /// `tidb_enable_table_partition` the two differ by construction, since the
+    /// closure stores `ON` for the very assignment (`OFF`) it warns about.
+    pub fn normalize_by_type(&self, value: &str, scope: u8) -> Result<Validated, ValidationError> {
         if value.is_empty() && self.allows_empty_value(scope) {
             return Ok(Validated {
                 value: String::new(),
                 truncated: false,
             });
         }
-        let validated = match self.var_type {
+        match self.var_type {
             VarType::Unsigned => self.check_uint64(value),
             VarType::Int => self.check_int64(value),
             VarType::Bool => self.check_bool(value),
@@ -303,8 +317,7 @@ impl SysVarDef {
                 value: value.to_owned(),
                 truncated: false,
             }),
-        }?;
-        self.run_validation(validated, value)
+        }
     }
 
     /// Go's per-variable `SysVar.Validation` closure, which runs after
@@ -344,6 +357,47 @@ impl SysVarDef {
                 value: "SYSTEM".to_owned(),
                 truncated: validated.truncated,
             });
+        }
+        // Go's `tidb_enable_table_partition` validation: partitioning is
+        // ALWAYS on, so the closure returns `vardef.On` whatever was assigned
+        // and only warns when the assignment was `OFF`. The stored value is
+        // what `SHOW VARIABLES` reports, so `SET ... = off` followed by `SHOW
+        // VARIABLES LIKE 'tidb_enable_table_partition'` reads `ON` (captured
+        // through `gorun`, session and global scope alike).
+        if self.name == "tidb_enable_table_partition" {
+            return Ok(Validated {
+                value: "ON".to_owned(),
+                truncated: validated.truncated,
+            });
+        }
+        // Go's `tidb_enable_list_partition` validation: list partitioning is
+        // also always on, but this one REFUSES anything that is not, with an
+        // `errors.Errorf` whose text is the whole error. Captured:
+        // `set tidb_enable_list_partition=off` -> `Error 1105 (HY000):
+        // tidb_enable_list_partition is now always on, and cannot be turned
+        // off`, and the variable stays `ON`.
+        if self.name == "tidb_enable_list_partition" && validated.value != "ON" {
+            return Err(ValidationError::Refused(
+                "tidb_enable_list_partition is now always on, and cannot be turned off",
+            ));
+        }
+        // Go's `tidb_session_alias` validation: the alias is cut to 64 RUNES
+        // (not bytes -- a 65-character Chinese alias loses exactly its last
+        // character), and then, since it labels log lines as an identifier,
+        // `util.IsInCorrectIdentifierName` strips every TRAILING SPACE off
+        // what is left. Both cuts raise Go's `ErrTruncatedWrongValue`.
+        // Captured: `set @@tidb_session_alias='abc  '` reads back as `abc` on
+        // both `SELECT @@` and `SHOW VARIABLES`.
+        if self.name == "tidb_session_alias" {
+            let cut: String = validated.value.chars().take(64).collect();
+            let trimmed = cut.trim_end_matches(' ');
+            if trimmed.len() != validated.value.len() {
+                return Ok(Validated {
+                    value: trimmed.to_owned(),
+                    truncated: true,
+                });
+            }
+            return Ok(validated);
         }
         if self.name != "sql_mode" {
             return Ok(validated);
