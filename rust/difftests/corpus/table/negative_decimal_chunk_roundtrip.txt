@@ -1,0 +1,22 @@
+## A NEGATIVE decimal that has passed through a chunk cell. The chunk stores
+## a decimal as the raw 40-byte MyDecimal and reads it back as canonical text
+## ("-10.01"), so every statement below re-parses a SIGNED decimal literal --
+## the case that used to build a `Decimal` whose unsigned digit string still
+## carried the '-'. That value PRINTED correctly while comparing, ordering and
+## arithmetic on it were wrong, and CEIL/FLOOR panicked outright.
+create table neg_dec (id int, amt decimal(10,2))
+insert into neg_dec values (1, '-10.01'), (2, '2.50'), (3, '-0.75')
+select id, amt from neg_dec order by id
+## ordering and comparison: the sign must decide, not the digit text
+select amt from neg_dec order by amt
+select amt from neg_dec order by amt desc
+select id from neg_dec where amt < 0 order by id
+select id from neg_dec where amt > -1 order by id
+select id, amt = -10.01 from neg_dec order by id
+## arithmetic and aggregates over the round-tripped value
+select id, amt + 1, amt * 2, -amt, abs(amt) from neg_dec order by id
+select sum(amt), min(amt), max(amt) from neg_dec
+## CEIL/FLOOR of a negative decimal read back out of a chunk
+select id, ceil(amt), ceiling(amt), floor(amt) from neg_dec order by id
+select id, round(amt), truncate(amt, 1) from neg_dec order by id
+select ceil(t.c_decimal), ceiling(t.c_decimal), floor(t.c_decimal) from (select cast('-10.01' as decimal(10,2)) as c_decimal) as t

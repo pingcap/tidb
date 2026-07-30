@@ -102,10 +102,24 @@ impl Decimal {
         }
     }
 
-    /// Parses a decimal literal's original text. The expression AST supplies
-    /// sign-free text; negation is represented separately by its caller.
+    /// Parses a decimal literal's canonical text — an optional `-`/`+` sign
+    /// then digits with at most one `.`, which is exactly what this type's own
+    /// [`Display`](std::fmt::Display) produces.
+    ///
+    /// The sign is part of the accepted syntax rather than the caller's job:
+    /// this is the parser every canonical round trip goes through (a chunk
+    /// cell read back as `MyDecimal` text, a spilled aggregate state, a
+    /// binary-protocol cell), and a leading `-` left in the caller's hands
+    /// silently produced a value whose unsigned digit string still carried
+    /// the `-`. Such a value PRINTED correctly while comparing as positive
+    /// and panicking in digit arithmetic. Accepting the sign here is what
+    /// removes that possibility from every caller at once.
     pub fn from_literal(text: &str) -> Self {
-        let (int_part, frac_part) = text.split_once('.').unwrap_or((text, ""));
+        let (negative, magnitude) = match text.strip_prefix('-') {
+            Some(magnitude) => (true, magnitude),
+            None => (false, text.strip_prefix('+').unwrap_or(text)),
+        };
+        let (int_part, frac_part) = magnitude.split_once('.').unwrap_or((magnitude, ""));
         let int_stripped = int_part.trim_start_matches('0');
         let int_norm = if int_stripped.is_empty() {
             "0"
@@ -113,24 +127,14 @@ impl Decimal {
             int_stripped
         };
         let scale = frac_part.len() as u32;
-        Decimal::new(false, format!("{int_norm}{frac_part}"), scale)
+        // `Decimal::new` normalizes a numerically zero magnitude back to
+        // non-negative, so `-0.00` needs no branch of its own here.
+        Decimal::new(negative, format!("{int_norm}{frac_part}"), scale)
     }
 
     /// Parses the signed decimal strings accepted by datatype conversion.
     pub fn from_signed_literal(text: &str) -> Self {
         Self::parse_mysql(text).0
-    }
-
-    fn from_normalized_signed_literal(text: &str) -> Self {
-        let (negative, magnitude) = text
-            .strip_prefix('-')
-            .map_or((false, text), |magnitude| (true, magnitude));
-        let magnitude = magnitude.strip_prefix('+').unwrap_or(magnitude);
-        let mut value = Self::from_literal(magnitude);
-        if negative && value.digits.bytes().any(|digit| digit != b'0') {
-            value.negative = true;
-        }
-        value
     }
 
     /// Source `MyDecimal.FromString`, including the fixed word buffer,
@@ -216,7 +220,7 @@ impl Decimal {
         } else {
             magnitude
         };
-        let mut value = Self::from_normalized_signed_literal(&signed_magnitude);
+        let mut value = Self::from_literal(&signed_magnitude);
 
         if end < input.len() && matches!(bytes[end], b'e' | b'E') {
             let (exponent, exponent_error) = parse_mysql_exponent(&input[end + 1..]);
