@@ -1221,18 +1221,20 @@ func TestTiFlashProgressAfterAvailableForPartitionTable(t *testing.T) {
 	tb, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	require.NotNil(t, tb)
-	// after available, progress should can be updated.
-	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), false)
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
-	require.True(t, isExist)
-	require.True(t, progress == 0)
+	partitionID := tb.Meta().Partition.Definitions[0].ID
+	waitProgress := func(expected float64) {
+		require.Eventually(t, func() bool {
+			progress, isExist := infosync.GetTiFlashProgressFromCache(partitionID)
+			return isExist && progress == expected
+		}, ddl.PollTiFlashInterval*RoundToBeAvailable*3, ddl.PollTiFlashInterval/2)
+	}
 
-	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), true)
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	progress, isExist = infosync.GetTiFlashProgressFromCache(tb.Meta().Partition.Definitions[0].ID)
-	require.True(t, isExist)
-	require.True(t, progress == 1)
+	// after available, progress should can be updated.
+	s.tiflash.ResetSyncStatus(int(partitionID), false)
+	waitProgress(0)
+
+	s.tiflash.ResetSyncStatus(int(partitionID), true)
+	waitProgress(1)
 }
 
 func TestTiFlashProgressCache(t *testing.T) {
