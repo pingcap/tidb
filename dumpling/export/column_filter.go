@@ -4,7 +4,6 @@ package export
 
 import (
 	"os"
-	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -57,7 +56,7 @@ func (c *ColumnFilterConfig) compile(caseSensitive bool) error {
 		if !caseSensitive {
 			tableFilter = filter.CaseInsensitive(tableFilter)
 		}
-		columnRules, err := filter.ParseColumnFilter(activeColumnRules(rule.Columns))
+		columnRules, err := filter.ParseColumnFilter(rule.Columns)
 		if err != nil {
 			return errors.Annotatef(err, "failed to parse --column-filter-file filter %d columns", i)
 		}
@@ -101,47 +100,4 @@ func (c *ColumnFilterConfig) matchColumnRules(database, table string) filter.Col
 		columnRules = append(columnRules, rule.columnRules...)
 	}
 	return columnRules
-}
-
-func activeColumnRules(columnRules []string) []string {
-	activeRules := make([]string, 0, len(columnRules))
-	for _, rule := range columnRules {
-		rule = strings.Trim(rule, " \t")
-		if rule == "" || rule[0] == '#' {
-			continue
-		}
-		activeRules = append(activeRules, normalizeColumnRule(rule))
-	}
-	return activeRules
-}
-
-func normalizeColumnRule(rule string) string {
-	if rule == "" {
-		return rule
-	}
-	if rule[0] == '!' {
-		if len(rule) == 1 {
-			return rule
-		}
-		return "!" + normalizeColumnPattern(rule[1:])
-	}
-	return normalizeColumnPattern(rule)
-}
-
-func normalizeColumnPattern(pattern string) string {
-	if pattern == "" {
-		return pattern
-	}
-	switch pattern[0] {
-	case '/', '"', '`', '@':
-		return pattern
-	}
-	if strings.ContainsAny(pattern, `*?[\`) {
-		return pattern
-	}
-	return quoteColumnPattern(pattern)
-}
-
-func quoteColumnPattern(column string) string {
-	return `"` + strings.ReplaceAll(column, `"`, `""`) + `"`
 }
