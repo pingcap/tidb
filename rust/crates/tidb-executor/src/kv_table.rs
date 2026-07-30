@@ -351,7 +351,16 @@ impl KvTable {
     ///
     /// Idempotent, so every writer may call it without coordinating with any
     /// other writer -- see [`crate::generated_column`].
-    pub fn materialize_generated(&self, row: &mut [Datum]) -> Result<(), KvTableError> {
+    ///
+    /// A row shorter than the table is WIDENED here rather than rejected: a
+    /// statement builds its row over the VISIBLE columns, and the hidden
+    /// columns an expression index added are exactly the ones whose value
+    /// this call is what produces. Widening in the one place that fills them
+    /// means no caller has to know the table has any.
+    pub fn materialize_generated(&self, row: &mut Vec<Datum>) -> Result<(), KvTableError> {
+        if row.len() < self.columns.len() {
+            row.resize(self.columns.len(), Datum::Null);
+        }
         crate::generated_column::materialize(
             &self.columns,
             |i| self.columns[i].name.clone(),

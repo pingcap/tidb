@@ -758,7 +758,13 @@ impl TableScanExec {
     /// Builds a scan over `table`.
     #[must_use]
     pub fn new(meta: ExecutorMeta, table: KvTable) -> Self {
-        let keep = (0..table.columns.len()).collect();
+        // A scan emits the VISIBLE columns: the schema its rows are appended
+        // into is the visible one, and a hidden expression-index column's
+        // value is only ever needed to write an index entry, never to answer
+        // a read. It is still DECODED and filled -- `keep` is applied after
+        // the virtual columns are materialized -- so an index built from the
+        // scanned row still sees it.
+        let keep = (0..table.visible_column_count()).collect();
         TableScanExec {
             meta,
             table,

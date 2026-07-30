@@ -209,11 +209,18 @@ pub struct SequenceDef {
 
 impl TableEntry {
     /// The table's columns as `(name, type)` in schema order.
+    ///
+    /// HIDDEN columns are not here. This is the schema every user-facing
+    /// enumeration is built from -- `SELECT *`, an `INSERT`'s arity, name
+    /// resolution -- so the hidden column an expression index was rewritten
+    /// into is excluded once, at the source. Its physical offset is unchanged
+    /// by the exclusion because hidden columns are the tail (see
+    /// [`crate::expression_index`]).
     pub(crate) fn column_list(&self) -> Vec<(String, FieldType)> {
         match self {
             TableEntry::Mem(mem) => mem.columns.clone(),
             TableEntry::Kv(kv) => kv
-                .columns
+                .visible_columns()
                 .iter()
                 .map(|c| (c.name.clone(), c.field_type.clone()))
                 .collect(),

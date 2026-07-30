@@ -516,7 +516,36 @@ pub fn run_create_table_in(
             }
         }
     }
-    for index in table_indexes(create, &info.columns, clustered)? {
+    let (indexes, hidden_columns) = table_indexes(create, &info.columns, clustered)?;
+    for hidden in hidden_columns {
+        // Go `checkExpressionIndexAutoIncrement`: an expression index may not
+        // read an AUTO_INCREMENT column. Captured as 3754 naming the index,
+        // which is the index whose part built this column.
+        if let Some(auto) = auto_increment_offset {
+            if hidden.generated.dependencies.contains(&auto) {
+                return Err(DriverError::ExpressionIndexCanNotRefer(
+                    indexes
+                        .iter()
+                        .find(|index| {
+                            index
+                                .column_offsets
+                                .iter()
+                                .any(|offset| *offset >= info.columns.len())
+                        })
+                        .map_or_else(String::new, |index| index.name.clone()),
+                ));
+            }
+        }
+        table.add_hidden_column(KvColumn {
+            name: hidden.name,
+            id: table.next_column_id(),
+            field_type: hidden.field_type,
+            generated: Some(hidden.generated),
+            default_value: None,
+            origin_default: None,
+        });
+    }
+    for index in indexes {
         table.add_index(index);
     }
     for foreign_key in table_foreign_keys(

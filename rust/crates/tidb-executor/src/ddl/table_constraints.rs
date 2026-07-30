@@ -31,6 +31,7 @@ use super::{
     index_part_names, is_visible, Catalog, ColumnInfo, DriverError, FkAction, KvForeignKey,
     KvIndex, SchemaErrorKind,
 };
+use crate::expression_index::HiddenIndexColumn;
 use tidb_datatype::FieldTypeCode;
 
 /// Go `mysql.AutoIncrementFlag`.
@@ -49,14 +50,26 @@ pub(crate) const PRI_KEY_FLAG: u32 = 1 << 1;
 /// `create table x (a bigint unique, b bigint unique, key kb (b))` reports
 /// `KEY kb` before `UNIQUE KEY a` and `UNIQUE KEY b`.
 ///
+/// An EXPRESSION key part becomes a hidden generated column appended after
+/// the table's declared ones, and the index points at that column -- Go's own
+/// structure, see [`crate::expression_index`]. Those columns come back
+/// alongside the indexes because the caller is what owns the column vector.
+///
 /// DEFERRED (documented): FULLTEXT, VECTOR and COLUMNAR indexes, prefix
-/// lengths, expression keys and index options, all rejected rather than
-/// silently created as a plain index.
+/// lengths and index options, all rejected rather than silently created as a
+/// plain index.
 pub(crate) fn table_indexes(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],
     pk_is_handle: bool,
-) -> Result<Vec<KvIndex>, DriverError> {
+) -> Result<(Vec<KvIndex>, Vec<HiddenIndexColumn>), DriverError> {
+    let column_names: Vec<String> = columns
+        .iter()
+        .map(|c| c.name.original().to_owned())
+        .collect();
+    let column_types: Vec<tidb_datatype::FieldType> =
+        columns.iter().map(|c| c.field_type.clone()).collect();
+    let mut hidden: Vec<HiddenIndexColumn> = Vec::new();
     // Go `checkIndexColumn`: a JSON column can never be an index column, in
     // any position of any index kind -- checked here, where every index part
     // resolves its column, so the rule has exactly one home.
@@ -142,35 +155,59 @@ pub(crate) fn table_indexes(
                 | tidb_ast::IndexConstraintKind::UniqueIndex
                 | tidb_ast::IndexConstraintKind::PrimaryKey
         );
-        let mut offsets = Vec::with_capacity(index.parts.len());
-        for part in &index.parts {
-            let tidb_ast::IndexPart::Column {
-                name, prefix_len, ..
-            } = part
-            else {
-                return Err(DriverError::Unsupported(
-                    "an expression index is not supported yet",
-                ));
-            };
-            if prefix_len.is_some() {
-                return Err(DriverError::Unsupported(
-                    "a prefix-length index is not supported yet",
-                ));
-            }
-            offsets.push(offset_of(name)?);
-        }
+        // The name has to be settled BEFORE the expression parts are built,
+        // because a hidden column is named `_V$_<index name>_<part>`.
         let name = match index.kind {
             tidb_ast::IndexConstraintKind::PrimaryKey => "PRIMARY".to_owned(),
             _ => match index.name.clone() {
                 Some(given) => given,
-                None => {
-                    let Some(tidb_ast::IndexPart::Column { name, .. }) = index.parts.first() else {
-                        return Err(DriverError::Unsupported("an index names no column"));
-                    };
-                    anonymous_index_name(&indexes, name)
-                }
+                None => match index.parts.first() {
+                    Some(tidb_ast::IndexPart::Column { name, .. }) => {
+                        anonymous_index_name(&indexes, name)
+                    }
+                    // Go `getAnonymousIndexPrefix`: an expression key part has
+                    // no column name to be named after. Captured: two unnamed
+                    // expression indexes become `expression_index` and
+                    // `expression_index_2`.
+                    Some(tidb_ast::IndexPart::Expr { .. }) => {
+                        anonymous_index_name(&indexes, "expression_index")
+                    }
+                    None => return Err(DriverError::Unsupported("an index names no column")),
+                },
             },
         };
+        let built = crate::expression_index::build_hidden_columns(
+            &name,
+            &index.parts,
+            &column_names,
+            &column_types,
+        )?;
+        let mut offsets = Vec::with_capacity(index.parts.len());
+        for (position, part) in index.parts.iter().enumerate() {
+            match part {
+                tidb_ast::IndexPart::Column {
+                    name, prefix_len, ..
+                } => {
+                    if prefix_len.is_some() {
+                        return Err(DriverError::Unsupported(
+                            "a prefix-length index is not supported yet",
+                        ));
+                    }
+                    offsets.push(offset_of(name)?);
+                }
+                // The hidden columns are appended after the declared ones, in
+                // the order they were built, so this part's offset is where
+                // it will land in the final column vector.
+                tidb_ast::IndexPart::Expr { .. } => {
+                    let index_in_built = built
+                        .iter()
+                        .position(|(at, _)| *at == position)
+                        .expect("every expression part builds a hidden column");
+                    offsets.push(columns.len() + hidden.len() + index_in_built);
+                }
+            }
+        }
+        hidden.extend(built.into_iter().map(|(_, column)| column));
         push(
             &mut indexes,
             name,
@@ -199,7 +236,7 @@ pub(crate) fn table_indexes(
         }
     }
 
-    Ok(indexes)
+    Ok((indexes, hidden))
 }
 
 /// Go `ddl.buildFKInfo`: the `FOREIGN KEY` table constraints, resolved

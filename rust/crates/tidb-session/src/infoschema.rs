@@ -755,7 +755,13 @@ fn columns_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
         for table_name in tables {
             match catalog.table_in(&schema, &table_name) {
                 Some(TableEntry::Kv(table)) => {
-                    for (offset, column) in table.columns.iter().enumerate() {
+                    // Hidden columns are absent here, and ORDINAL_POSITION
+                    // counts only the visible ones -- which needs no separate
+                    // counter, because a visible column's offset IS its
+                    // physical offset (see `tidb_executor::expression_index`).
+                    // Captured: a table with an expression index and columns
+                    // `a`, `z` reports exactly a|1, z|2.
+                    for (offset, column) in table.visible_columns().iter().enumerate() {
                         rows.push(column_row(&schema, &table_name, table, offset, column));
                     }
                 }

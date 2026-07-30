@@ -192,8 +192,17 @@ pub(crate) fn run_insert_traced(
     // which means exactly "leave it to the expression"; an `INSERT ...
     // SELECT` has no `DEFAULT` spelling at all, so any generated target is
     // refused there.
+    // Over the VISIBLE columns, so this indexes the same row `column_list`
+    // does. A hidden expression-index column is generated too, but no
+    // statement can name it, so it is never a target -- and the row this
+    // builds is widened to the physical width when it is written, which is
+    // where its value gets computed.
     let generated_targets: Vec<bool> = match table {
-        TableEntry::Kv(kv) => kv.columns.iter().map(|c| c.generated.is_some()).collect(),
+        TableEntry::Kv(kv) => kv
+            .visible_columns()
+            .iter()
+            .map(|c| c.generated.is_some())
+            .collect(),
         _ => vec![false; column_list.len()],
     };
     if generated_targets.iter().any(|generated| *generated) {
@@ -1599,13 +1608,26 @@ pub(crate) fn row_is_selected(
 }
 
 /// A one-row chunk holding `row`, so an expression can be evaluated over it.
+///
+/// `field_types` is the SCHEMA the expression was built against, and it is
+/// what decides the chunk's width. A row read straight from storage is wider
+/// than that when the table has hidden expression-index columns; those are
+/// the TAIL (see `crate::expression_index`), and no expression a statement
+/// can write is able to name one, so the visible prefix is exactly the row
+/// the expression means.
 pub(crate) fn row_chunk(
     row: &[Datum],
     field_types: &[FieldType],
 ) -> Result<tidb_chunk::chunk::Chunk, DriverError> {
     let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(field_types, 1);
-    for (i, value) in row.iter().enumerate() {
+    for (i, value) in row.iter().take(field_types.len()).enumerate() {
         chunk.append_datum(i, value);
+    }
+    // A row SHORTER than the schema (a partially built one) still has to
+    // present every column, or a reference to a trailing one reads off the
+    // end.
+    for i in row.len()..field_types.len() {
+        chunk.append_datum(i, &Datum::Null);
     }
     Ok(chunk)
 }

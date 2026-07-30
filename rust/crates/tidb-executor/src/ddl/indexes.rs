@@ -28,7 +28,7 @@
 //! leaves the table WITHOUT the index, which is the behaviour the doc
 //! comments record as captured from TiDB.
 
-use super::{Catalog, DdlStmt, DriverError, KvIndex, Stmt};
+use super::{Catalog, DdlStmt, DriverError, KvColumn, KvIndex, Stmt};
 
 /// Runs a `CREATE INDEX`, backfilling the existing rows.
 ///
@@ -63,14 +63,13 @@ pub fn run_create_index_in(
         }
     };
     reject_partial_index(&create.options)?;
-    let columns: Vec<String> = index_part_names(&create.parts)?;
     add_index_to_table(
         catalog,
         &database,
         &table_name,
         &create.name,
         unique,
-        &columns,
+        &create.parts,
         is_visible(&create.options),
     )
 }
@@ -132,13 +131,19 @@ pub(crate) fn index_part_names(parts: &[tidb_ast::IndexPart]) -> Result<Vec<Stri
 
 /// Adds one index to a table, shared by `CREATE INDEX` and
 /// `ALTER TABLE ... ADD INDEX`.
+///
+/// An EXPRESSION key part is rewritten into a hidden generated column
+/// appended to the table, exactly as `CREATE TABLE` does it -- see
+/// [`crate::expression_index`]. Nothing about index maintenance changes:
+/// entries are written from the materialized row, so the hidden column's
+/// value is indexed by the generated-column path that already exists.
 pub(crate) fn add_index_to_table(
     catalog: &mut Catalog,
     database: &str,
     table_name: &str,
     index_name: &str,
     unique: bool,
-    columns: &[String],
+    parts: &[tidb_ast::IndexPart],
     visible: bool,
 ) -> Result<(), DriverError> {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
@@ -146,18 +151,71 @@ pub(crate) fn add_index_to_table(
             format!("{database}.{table_name}"),
         )));
     };
-    let mut offsets = Vec::with_capacity(columns.len());
-    for column in columns {
-        offsets.push(
-            table
-                .columns
-                .iter()
-                .position(|candidate| candidate.name.eq_ignore_ascii_case(column))
-                .ok_or_else(|| DriverError::UnknownColumnInAlter(column.clone()))?,
-        );
+    // A hidden column is built against the VISIBLE columns, so an expression
+    // can never name an earlier index's hidden column.
+    let names: Vec<String> = table
+        .visible_columns()
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
+    let types: Vec<tidb_datatype::FieldType> = table
+        .visible_columns()
+        .iter()
+        .map(|c| c.field_type.clone())
+        .collect();
+    let hidden = crate::expression_index::build_hidden_columns(index_name, parts, &names, &types)?;
+    // Go `checkExpressionIndexAutoIncrement` (3754).
+    if let Some(auto) = table.auto_increment_offset() {
+        if hidden
+            .iter()
+            .any(|(_, column)| column.generated.dependencies.contains(&auto))
+        {
+            return Err(DriverError::ExpressionIndexCanNotRefer(
+                index_name.to_owned(),
+            ));
+        }
+    }
+    let mut offsets = Vec::with_capacity(parts.len());
+    let mut built = hidden.into_iter();
+    let mut pending = Vec::new();
+    for part in parts {
+        match part {
+            tidb_ast::IndexPart::Column {
+                name, prefix_len, ..
+            } => {
+                if prefix_len.is_some() {
+                    return Err(DriverError::Unsupported(
+                        "a prefix-length index is not supported yet",
+                    ));
+                }
+                offsets.push(
+                    table
+                        .columns
+                        .iter()
+                        .position(|candidate| candidate.name.eq_ignore_ascii_case(name))
+                        .ok_or_else(|| DriverError::UnknownColumnInAlter(name.clone()))?,
+                );
+            }
+            tidb_ast::IndexPart::Expr { .. } => {
+                let (_, column) = built.next().expect("one hidden column per expression part");
+                offsets.push(table.columns.len() + pending.len());
+                pending.push(column);
+            }
+        }
+    }
+    let added = pending.len();
+    for column in pending {
+        table.add_hidden_column(KvColumn {
+            name: column.name,
+            id: table.next_column_id(),
+            field_type: column.field_type,
+            generated: Some(column.generated),
+            default_value: None,
+            origin_default: None,
+        });
     }
     let id = table.next_index_id();
-    table
+    let result = table
         .create_index(KvIndex {
             id,
             name: index_name.to_owned(),
@@ -173,7 +231,17 @@ pub(crate) fn add_index_to_table(
                 DriverError::DuplicateEntry { value, key }
             }
             other => DriverError::Parse(format!("index creation failed: {other:?}")),
-        })
+        });
+    // A failed `CREATE INDEX` must leave no trace. The hidden columns have to
+    // be in place BEFORE the index is built (its entries are computed from
+    // the materialized row), so a failure takes them back off rather than
+    // leaving a column no statement can name and no index uses.
+    if result.is_err() {
+        for _ in 0..added {
+            table.drop_column(table.columns.len() - 1);
+        }
+    }
+    result
 }
 
 /// Runs a `DROP INDEX`.
@@ -214,11 +282,34 @@ pub(crate) fn drop_index_from_table(
             format!("{database}.{table_name}"),
         )));
     };
+    // The hidden columns this index owns go with it. Captured from Go:
+    // `alter table te drop index idxe` leaves `SHOW CREATE TABLE` printing
+    // only the declared columns, and an `INSERT` then takes their arity.
+    // Collected before the drop, while the index still names its offsets.
+    let hidden: Vec<usize> = table
+        .indexes()
+        .iter()
+        .find(|index| index.name.eq_ignore_ascii_case(index_name))
+        .map(|index| {
+            let mut offsets: Vec<usize> = index
+                .column_offsets
+                .iter()
+                .copied()
+                .filter(|offset| table.is_hidden(*offset))
+                .collect();
+            // Highest first, so each removal leaves the rest addressable.
+            offsets.sort_unstable_by(|a, b| b.cmp(a));
+            offsets
+        })
+        .unwrap_or_default();
     let dropped = table
         .drop_index(index_name)
         .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;
     if !dropped && !if_exists {
         return Err(DriverError::UnknownIndex(index_name.to_owned()));
+    }
+    for offset in hidden {
+        table.drop_column(offset);
     }
     Ok(())
 }

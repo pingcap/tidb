@@ -32,7 +32,7 @@
 //! the type/charset resolution both share lives in the parent.
 
 use super::column_types::{field_type_of, NOT_NULL_FLAG};
-use super::indexes::{add_index_to_table, drop_index_from_table, index_part_names, is_visible};
+use super::indexes::{add_index_to_table, drop_index_from_table, is_visible};
 use super::{
     auto_increment_option, Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset,
 };
@@ -174,18 +174,24 @@ pub fn run_alter_table_in(
                     }
                 }
                 crate::ddl::indexes::reject_partial_index(&index.options)?;
-                let columns = index_part_names(&index.parts)?;
+                // Go `GetName4AnonymousIndex`: an unnamed index takes its
+                // first key part's column name, or `expression_index` when
+                // that part is an expression and so has no column name.
                 let index_name = index
                     .name
                     .clone()
-                    .unwrap_or_else(|| columns.first().cloned().unwrap_or_default());
+                    .unwrap_or_else(|| match index.parts.first() {
+                        Some(tidb_ast::IndexPart::Column { name, .. }) => name.clone(),
+                        Some(tidb_ast::IndexPart::Expr { .. }) => "expression_index".to_owned(),
+                        None => String::new(),
+                    });
                 add_index_to_table(
                     catalog,
                     &database,
                     &name,
                     &index_name,
                     unique,
-                    &columns,
+                    &index.parts,
                     is_visible(&index.options),
                 )?;
             }

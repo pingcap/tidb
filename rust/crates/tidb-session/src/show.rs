@@ -70,6 +70,25 @@ fn show_create_view_text(view: &tidb_executor::ViewDef) -> String {
     out
 }
 
+/// How one index key part prints: a visible column by name, and a hidden
+/// column as the parenthesized expression it was built from.
+///
+/// Captured from Go: `create index idx on t((a+1))` prints
+/// ``KEY `idx` ((`a` + 1))``, and a mixed index `index idxe ((a+1), a)`
+/// prints ``KEY `idxe` ((`a` + 1),`a`)`` -- the hidden column's own name is
+/// never printed anywhere.
+fn index_part_text(table: &tidb_executor::KvTable, offset: usize) -> String {
+    let column = &table.columns[offset];
+    match column
+        .generated
+        .as_ref()
+        .filter(|_| table.is_hidden(offset))
+    {
+        Some(generated) => format!("({})", generated.expr_text),
+        None => escape_name(&column.name),
+    }
+}
+
 /// Go `constructResultOfShowCreateTable`, over the metadata this seed keeps.
 ///
 /// The shape is Go's line for line: the header, two-space-indented column
@@ -90,7 +109,10 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
     let mut clauses: Vec<String> = Vec::with_capacity(table.columns.len() + 1);
 
     let table_charset = table.charset();
-    for (offset, column) in table.columns.iter().enumerate() {
+    // Only the VISIBLE columns get a definition line: the hidden column an
+    // expression index was rewritten into is printed as the index's
+    // expression instead, below.
+    for (offset, column) in table.visible_columns().iter().enumerate() {
         let mut clause = format!(
             "  {} {}",
             escape_name(&column.name),
@@ -177,7 +199,7 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
         let columns = index
             .column_offsets
             .iter()
-            .map(|offset| escape_name(&table.columns[*offset].name))
+            .map(|offset| index_part_text(table, *offset))
             .collect::<Vec<_>>()
             .join(",");
         if index.name.eq_ignore_ascii_case("PRIMARY") {
@@ -630,14 +652,15 @@ fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) -> Vec<Vec<
                     unique: bool,
                     clustered: bool,
                     sequence: usize,
-                    column: &str,
+                    column: Option<&str>,
+                    expression: Option<&str>,
                     nullable: bool| {
         rows.push(vec![
             text(table_name),
             Datum::Int(i64::from(!unique)),
             text(key_name),
             Datum::Int(sequence as i64),
-            text(column),
+            column.map_or(Datum::Null, text),
             text("A"),
             // No statistics tier, so Go's estimate is simply absent.
             Datum::Int(0),
@@ -648,7 +671,9 @@ fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) -> Vec<Vec<
             text(""),
             text(""),
             text("YES"),
-            Datum::Null,
+            // Go reports an expression key part here and leaves `Column_name`
+            // NULL, so the hidden column's own name is never printed.
+            expression.map_or(Datum::Null, text),
             text(if clustered { "YES" } else { "NO" }),
             text("NO"),
         ]);
@@ -656,7 +681,15 @@ fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) -> Vec<Vec<
     // The clustered primary key is not in the index list, the same way
     // SHOW CREATE TABLE prints it separately.
     if let Some(offset) = table.pk_handle_offset() {
-        push("PRIMARY", true, true, 1, &table.columns[offset].name, false);
+        push(
+            "PRIMARY",
+            true,
+            true,
+            1,
+            Some(&table.columns[offset].name),
+            None,
+            false,
+        );
     }
     for index in table.indexes() {
         let clustered =
@@ -664,12 +697,18 @@ fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) -> Vec<Vec<
         for (position, offset) in index.column_offsets.iter().enumerate() {
             let column = &table.columns[*offset];
             let nullable = column.field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL == 0;
+            let expression = column
+                .generated
+                .as_ref()
+                .filter(|_| table.is_hidden(*offset))
+                .map(|generated| generated.expr_text.as_str());
             push(
                 &index.name,
                 index.unique,
                 clustered,
                 position + 1,
-                &column.name,
+                expression.is_none().then_some(column.name.as_str()),
+                expression,
                 nullable,
             );
         }
@@ -784,7 +823,7 @@ impl Session {
                 ));
             };
             Ok(table
-                .columns
+                .visible_columns()
                 .iter()
                 .enumerate()
                 .filter(|(_, candidate)| {
