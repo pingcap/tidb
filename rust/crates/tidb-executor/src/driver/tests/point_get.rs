@@ -1,0 +1,413 @@
+//! The single-row and batched point-get plans: when they are chosen, and
+//! what they read.
+//!
+//! Half of each pair is a NEGATIVE test -- the query shapes Go refuses to
+//! serve with a point get -- because choosing the plan too eagerly is the
+//! failure mode. Mirrors Go `pkg/executor`'s `PointGetExec` /
+//! `BatchPointGetExec` and the planner conditions that pick them.
+
+use super::*;
+
+/// Go's TryFastPlan: a single-table SELECT whose WHERE pins the handle or
+/// a whole unique index reads one row instead of scanning. The results
+/// must be identical to the scan in every case, including the cases that
+/// do NOT qualify and fall back.
+#[test]
+fn point_get_plans() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE g (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO g VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    // Handle point get.
+    assert_eq!(
+        run_select_on(
+            "SELECT v FROM g WHERE id = 2",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(20)]]
+    );
+    // A handle that does not exist reads nothing.
+    assert_eq!(
+        run_select_on(
+            "SELECT v FROM g WHERE id = 99",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        Vec::<Vec<Datum>>::new()
+    );
+    // Unique-index point get, through the entry's stored handle.
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM g WHERE code = 'c'",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(3)]]
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM g WHERE code = 'zz'",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        Vec::<Vec<Datum>>::new()
+    );
+
+    // The WHERE stays in the pipeline, so an extra condition still
+    // filters: the point get narrows the source, it does not replace the
+    // filter.
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM g WHERE id = 2 AND v = 20",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(2)]]
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM g WHERE id = 2 AND v = 999",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        Vec::<Vec<Datum>>::new()
+    );
+
+    // Shapes that do not qualify fall back to the scan and stay correct.
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM g WHERE v = 30",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(3)]],
+        "a non-key column is not a point get"
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM g WHERE id > 1 ORDER BY id",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(2)], vec![Datum::Int(3)]],
+        "a range is not a point get"
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM g WHERE id = 1 OR id = 3",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(1)], vec![Datum::Int(3)]],
+        "Go recurses only through AND, so OR is not a point get"
+    );
+    // Go rejects the fast plan when ORDER BY or HAVING is present, or when
+    // LIMIT could remove the row; the answers stay right either way.
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM g WHERE id = 2 LIMIT 1 OFFSET 1",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        Vec::<Vec<Datum>>::new()
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM g WHERE id = 2 ORDER BY id",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(2)]]
+    );
+
+    // A non-integer constant cannot name an integer handle: no row, not a
+    // wrong row.
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM g WHERE id = 'x'",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        Vec::<Vec<Datum>>::new()
+    );
+
+    // A point get sees writes, including the row a DELETE removed.
+    run_update_on(
+        "UPDATE g SET v = 99 WHERE id = 2",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT v FROM g WHERE id = 2",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(99)]]
+    );
+    run_delete_on(
+        "DELETE FROM g WHERE id = 2",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT v FROM g WHERE id = 2",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        Vec::<Vec<Datum>>::new()
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM g WHERE code = 'b'",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        Vec::<Vec<Datum>>::new(),
+        "the deleted row's index entry is gone too"
+    );
+}
+
+/// The results above would be right even if the fast plan never fired, so
+/// this asserts the DECISION: which shapes Go's tryPointGetPlan accepts
+/// and which it rejects.
+#[test]
+fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE d (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO d VALUES (1, 'a', 10)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("d") else {
+        panic!("expected a kv table");
+    };
+    let columns = table
+        .columns
+        .iter()
+        .map(|c| (c.name.clone(), c.field_type.clone()))
+        .collect::<Vec<_>>();
+
+    let decides = |sql: &str| {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("not a query")
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a select")
+        };
+        try_point_get(select, table, &columns).unwrap()
+    };
+
+    // Accepted: the handle, and a whole unique index.
+    assert_eq!(
+        decides("SELECT v FROM d WHERE id = 1"),
+        Some(Some(TableHandle::Int(1)))
+    );
+    assert_eq!(
+        decides("SELECT v FROM d WHERE 1 = id"),
+        Some(Some(TableHandle::Int(1)))
+    );
+    assert_eq!(
+        decides("SELECT v FROM d WHERE code = 'a'"),
+        Some(Some(TableHandle::Int(1)))
+    );
+    // The handle path does not probe: it hands the plan the handle the
+    // constant names, and the row read finds nothing. The index path does
+    // probe, because the handle only exists in an index entry.
+    assert_eq!(
+        decides("SELECT v FROM d WHERE id = 7"),
+        Some(Some(TableHandle::Int(7)))
+    );
+    assert_eq!(decides("SELECT v FROM d WHERE code = 'z'"), Some(None));
+    // The index path allows extra pairs beyond the key.
+    assert_eq!(
+        decides("SELECT v FROM d WHERE code = 'a' AND v = 10"),
+        Some(Some(TableHandle::Int(1)))
+    );
+
+    // Rejected, so the scan runs: Go requires the handle pair to be the
+    // ONLY pair, a conjunction of equalities, no ORDER BY or HAVING, and
+    // a LIMIT that cannot drop the row.
+    assert_eq!(decides("SELECT v FROM d WHERE id = 1 AND v = 10"), None);
+    assert_eq!(decides("SELECT v FROM d WHERE v = 10"), None);
+    assert_eq!(decides("SELECT v FROM d WHERE id > 1"), None);
+    assert_eq!(decides("SELECT v FROM d WHERE id = 1 OR id = 2"), None);
+    assert_eq!(decides("SELECT v FROM d WHERE id = 1 ORDER BY v"), None);
+    assert_eq!(decides("SELECT v FROM d WHERE id = 1 LIMIT 0"), None);
+    assert_eq!(
+        decides("SELECT v FROM d WHERE id = 1 LIMIT 1 OFFSET 1"),
+        None
+    );
+    assert_eq!(decides("SELECT v FROM d"), None);
+}
+
+/// Go's tryWhereIn2BatchPointGet: `col IN (constants)` over the handle or
+/// a single-column unique index reads those rows directly. Results must
+/// match the scan in every case, including the shapes Go rejects.
+#[test]
+fn batch_point_get() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE b (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO b VALUES (1, 'a', 10), (2, 'b', 20), (3, 'c', 30)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    let ids = |sql: &str, catalog: &Catalog| {
+        let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query())
+            .unwrap()
+            .into_iter()
+            .map(|row| match row[0] {
+                Datum::Int(value) => value,
+                ref other => panic!("expected an int, got {other:?}"),
+            })
+            .collect();
+        got.sort_unstable();
+        got
+    };
+
+    // Handle path, including a value that matches nothing.
+    assert_eq!(
+        ids("SELECT id FROM b WHERE id IN (1, 3)", &catalog),
+        vec![1, 3]
+    );
+    assert_eq!(
+        ids("SELECT id FROM b WHERE id IN (3, 99)", &catalog),
+        vec![3]
+    );
+    assert_eq!(
+        ids("SELECT id FROM b WHERE id IN (99)", &catalog),
+        Vec::<i64>::new()
+    );
+    // Unique-index path.
+    assert_eq!(
+        ids("SELECT id FROM b WHERE code IN ('a', 'c')", &catalog),
+        vec![1, 3]
+    );
+
+    // Shapes Go rejects fall back to the scan and stay correct: NOT IN,
+    // a non-key column, and an IN with anything else in the WHERE.
+    assert_eq!(
+        ids("SELECT id FROM b WHERE id NOT IN (1, 3)", &catalog),
+        vec![2]
+    );
+    assert_eq!(
+        ids("SELECT id FROM b WHERE v IN (20, 30)", &catalog),
+        vec![2, 3]
+    );
+    assert_eq!(
+        ids("SELECT id FROM b WHERE id IN (1, 3) AND v = 30", &catalog),
+        vec![3]
+    );
+    // Go also rejects it with ORDER BY, LIMIT or DISTINCT present.
+    assert_eq!(
+        ids("SELECT id FROM b WHERE id IN (3, 1) ORDER BY id", &catalog),
+        vec![1, 3]
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM b WHERE id IN (1, 2, 3) LIMIT 2",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap()
+        .len(),
+        2
+    );
+}
+
+/// The answers above would be right from a scan too, so this asserts the
+/// DECISION: which shapes Go's batch point get claims.
+#[test]
+fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE bd (id BIGINT PRIMARY KEY, code VARCHAR(8) UNIQUE, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO bd VALUES (1, 'a', 10)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("bd") else {
+        panic!("expected a kv table");
+    };
+    let columns = table
+        .columns
+        .iter()
+        .map(|c| (c.name.clone(), c.field_type.clone()))
+        .collect::<Vec<_>>();
+    let decides = |sql: &str| {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("not a query")
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a select")
+        };
+        try_batch_point_get(select, table, &columns).unwrap()
+    };
+
+    assert_eq!(
+        decides("SELECT v FROM bd WHERE id IN (1, 2)"),
+        Some(vec![TableHandle::Int(1), TableHandle::Int(2)]),
+        "the handle path does not probe, as the single point get does not"
+    );
+    assert_eq!(
+        decides("SELECT v FROM bd WHERE code IN ('a', 'zz')"),
+        Some(vec![TableHandle::Int(1)]),
+        "the index path probes, so a missing key yields no handle"
+    );
+    // Rejected shapes.
+    assert_eq!(decides("SELECT v FROM bd WHERE id NOT IN (1)"), None);
+    assert_eq!(decides("SELECT v FROM bd WHERE v IN (1)"), None);
+    assert_eq!(decides("SELECT v FROM bd WHERE id IN (1) AND v = 1"), None);
+    assert_eq!(decides("SELECT v FROM bd WHERE id IN (1) ORDER BY v"), None);
+    assert_eq!(decides("SELECT v FROM bd WHERE id IN (1) LIMIT 1"), None);
+    assert_eq!(decides("SELECT DISTINCT v FROM bd WHERE id IN (1)"), None);
+    assert_eq!(decides("SELECT v FROM bd WHERE id = 1"), None);
+}
