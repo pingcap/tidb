@@ -4477,6 +4477,18 @@ func TestIssue55886(t *testing.T) {
 	tk.MustQuery("with cte_0 AS (select 1 as c1, case when ref_0.c_jbb then inet6_aton(ref_0.c_foveoe) else ref_4.c_cz end as c5 from t1 as ref_0 join " +
 		" (t1 as ref_4 right outer join t2 as ref_5 on ref_5.c_g7eofzlxn != 1)), cte_4 as (select 1 as c1 from t2) select ref_34.c1 as c5 from" +
 		" cte_0 as ref_34 where exists (select 1 from cte_4 as ref_35 where ref_34.c1 <= case when ref_34.c5 then cast(1 as char) else ref_34.c5 end);")
+
+	// issue #65324: row-based evaluation must match vectorized/direct INET_ATON semantics.
+	tk.MustExec("create table t65324(c0 double)")
+	tk.MustExec("replace into t65324(c0) values (-1.930236983e9)")
+	tk.MustExec("create view v65324(c4) as select t65324.c0 < bit_count(inet_aton(0.8949238218722565)) from t65324")
+	tk.MustExec("prepare stmt65324 from 'select v65324.c4 and ? from v65324'")
+	defer tk.MustExec("deallocate prepare stmt65324")
+
+	tk.MustExec("set @a = 'a'")
+	tk.MustQuery("execute stmt65324 using @a").Check(testkit.Rows("0"))
+	tk.MustExec("set @a = true")
+	tk.MustQuery("execute stmt65324 using @a").Check(testkit.Rows("<nil>"))
 }
 
 func TestIssue57608(t *testing.T) {
