@@ -157,6 +157,11 @@ func (d *Dumper) Dump() (dumpErr error) {
 	)
 	tctx, conf, pool := d.tctx, d.conf, d.dbHandle
 	tctx.L().Info("begin to run Dump", zap.Stringer("conf", conf))
+	if len(conf.columnFilter.Filters) > 0 {
+		if err = validateColumnFilterOptions(conf); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	m := newGlobalMetadata(tctx, d.extStore, conf.Snapshot)
 	repeatableRead := needRepeatableRead(conf.ServerInfo.ServerType, conf.Consistency)
 	defer func() {
@@ -264,18 +269,6 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
-	if conf.SQL == "" {
-		tableCount := 0
-		for _, tables := range conf.Tables {
-			tableCount += len(tables)
-		}
-		conf.columnCache = make(map[restore.UniqueTableName]columnInfo, tableCount)
-		if err = prepareColumnCache(tctx, conf, baseConn); err != nil {
-			_ = baseConn.DBConn.Close()
-			return errors.Trace(err)
-		}
-	}
-
 	chanSize := defaultTaskChannelCapacity
 	failpoint.Inject("SmallDumpChanSize", func() {
 		chanSize = 1
@@ -307,6 +300,13 @@ func (d *Dumper) Dump() (dumpErr error) {
 		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo, true)
 		if err != nil {
 			tctx.L().Info("get global metadata (after connection pool established) failed", log.ShortError(err))
+		}
+	}
+
+	if conf.SQL == "" {
+		if err = prepareColumnProjection(tctx, conf, baseConn); err != nil {
+			_ = baseConn.DBConn.Close()
+			return errors.Trace(err)
 		}
 	}
 
@@ -509,28 +509,67 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 	return nil
 }
 
-func prepareColumnCache(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
+func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
+	tableCount := 0
+	for _, tables := range conf.Tables {
+		tableCount += len(tables)
+	}
+	conf.columnProjection = make(map[restore.UniqueTableName]columnProjection, tableCount)
 	for dbName, tables := range conf.Tables {
 		for _, table := range tables {
-			sourceColumns, hasGenerateColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
+			projection, err := buildColumnProjection(tctx, conf, conn, dbName, table)
 			if err != nil {
 				return err
 			}
-			selectedColumns := sourceColumns
-			if table.Type == TableTypeBase {
-				selectedColumns, err = conf.columnFilter.applyToColumns(dbName, table.Name, sourceColumns)
-				if err != nil {
-					return err
-				}
-			}
-			conf.columnCache[restore.UniqueTableName{DB: dbName, Table: table.Name}] = columnInfo{
-				sourceFields:      columnNamesToSelectFields(sourceColumns),
-				selectedFields:    columnNamesToSelectFields(selectedColumns),
-				hasGenerateColumn: hasGenerateColumn,
-			}
+			conf.columnProjection[restore.UniqueTableName{DB: dbName, Table: table.Name}] = projection
 		}
 	}
 	return nil
+}
+
+func buildColumnProjection(
+	tctx *tcontext.Context,
+	conf *Config,
+	conn *BaseConn,
+	dbName string,
+	table *TableInfo,
+) (columnProjection, error) {
+	if table.Type != TableTypeBase {
+		return columnProjection{}, nil
+	}
+
+	sourceColumns, hasGenerateColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
+	if err != nil {
+		return columnProjection{}, err
+	}
+	if len(sourceColumns) == 0 {
+		return columnProjection{}, nil
+	}
+
+	selectedColumns, selectedIndexes, err := conf.columnFilter.applyToColumns(dbName, table.Name, sourceColumns)
+	if err != nil {
+		return columnProjection{}, err
+	}
+
+	sourceFields := columnNamesToSelectFields(sourceColumns)
+	selectedFields := columnNamesToSelectFields(selectedColumns)
+	projection := columnProjection{
+		selectField: strings.Join(selectedFields, ","),
+	}
+	if !hasGenerateColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
+		projection.selectField = "*"
+	}
+
+	projection.sourceTypes, err = GetColumnTypes(tctx, conn, strings.Join(sourceFields, ","), dbName, table.Name)
+	if err != nil {
+		return columnProjection{}, err
+	}
+
+	projection.selectedTypes = make([]*sql.ColumnType, len(selectedColumns))
+	for i, idx := range selectedIndexes {
+		projection.selectedTypes[i] = projection.sourceTypes[idx]
+	}
+	return projection, nil
 }
 
 func columnNamesToSelectFields(columns []string) []string {
@@ -1381,19 +1420,16 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 
 func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
-	info, ok := conf.columnCache[restore.UniqueTableName{DB: db, Table: tbl}]
+	projection, ok := conf.columnProjection[restore.UniqueTableName{DB: db, Table: tbl}]
 	if !ok {
 		return nil, errors.Errorf(
-			"missing column cache for table `%s`.`%s`",
+			"missing column projection for table `%s`.`%s`",
 			escapeString(db),
 			escapeString(tbl),
 		)
 	}
-	selectField, selectLen, sourceFields := buildSelectField(info, conf.CompleteInsert)
 	var (
 		err              error
-		colTypes         []*sql.ColumnType
-		sourceColTypes   []*sql.ColumnType
 		hasImplicitRowID bool
 	)
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
@@ -1403,33 +1439,13 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		}
 	}
 
-	// If all columns are generated
-	if table.Type == TableTypeBase {
-		if selectField == "" {
-			colTypes, err = GetColumnTypes(tctx, conn, "*", db, tbl)
-		} else {
-			colTypes, err = GetColumnTypes(tctx, conn, selectField, db, tbl)
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	sourceColTypes = colTypes
-	if table.Type == TableTypeBase && sourceFields != "" {
-		sourceColTypes, err = GetColumnTypes(tctx, conn, sourceFields, db, tbl)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	meta := &tableMeta{
 		avgRowLength:     table.AvgRowLength,
 		database:         db,
 		table:            tbl,
-		colTypes:         colTypes,
-		sourceColTypes:   sourceColTypes,
-		selectedField:    selectField,
-		selectedLen:      selectLen,
+		colTypes:         projection.selectedTypes,
+		sourceColTypes:   projection.sourceTypes,
+		selectedField:    projection.selectField,
 		hasImplicitRowID: hasImplicitRowID,
 		specCmts:         getSpecialComments(conf.ServerInfo.ServerType),
 	}

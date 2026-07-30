@@ -260,7 +260,6 @@ type tableMeta struct {
 	colTypes         []*sql.ColumnType
 	sourceColTypes   []*sql.ColumnType
 	selectedField    string
-	selectedLen      int
 	specCmts         []string
 	showCreateTable  string
 	showCreateView   string
@@ -336,7 +335,7 @@ func (tm *tableMeta) SelectedField() string {
 }
 
 func (tm *tableMeta) SelectedLen() int {
-	return tm.selectedLen
+	return len(tm.colTypes)
 }
 
 func (tm *tableMeta) SpecialComments() StringIter {

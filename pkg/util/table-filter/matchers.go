@@ -29,9 +29,9 @@ type tableRule struct {
 	positive bool
 }
 
-// ColumnRule of a ColumnFilterRules, consisting of a column pattern, and may be an
+// columnRule of a ColumnFilterRules, consisting of a column pattern, and may be an
 // accept-list (positive) or deny-list (negative).
-type ColumnRule struct {
+type columnRule struct {
 	column   matcher
 	positive bool
 }

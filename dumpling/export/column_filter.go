@@ -41,6 +41,7 @@ func (c *columnFilterConfig) compile(caseSensitive bool) error {
 	if len(c.Filters) == 0 {
 		return errors.New("--column-filter-file requires at least one column filter")
 	}
+
 	for i := range c.Filters {
 		rule := &c.Filters[i]
 		if len(rule.Matcher) == 0 {
@@ -63,38 +64,43 @@ func (c *columnFilterConfig) compile(caseSensitive bool) error {
 	return nil
 }
 
-func (c *columnFilterConfig) applyToColumns(database, table string, sourceColumns []string) ([]string, error) {
+func (c *columnFilterConfig) applyToColumns(database, table string, sourceColumns []string) ([]string, []int, error) {
 	columnRules := c.matchColumnRules(database, table)
+
+	selectedIndexes := make([]int, 0, len(sourceColumns))
 	if len(columnRules) == 0 {
-		return sourceColumns, nil
+		for i := range sourceColumns {
+			selectedIndexes = append(selectedIndexes, i)
+		}
+		return sourceColumns, selectedIndexes, nil
 	}
 
-	filteredColumns := make([]string, 0, len(sourceColumns))
-	for _, column := range sourceColumns {
-		if !columnRules.MatchColumn(column) {
-			continue
+	selectedColumns := make([]string, 0, len(sourceColumns))
+	for i, column := range sourceColumns {
+		if columnRules.MatchColumn(column) {
+			selectedColumns = append(selectedColumns, column)
+			selectedIndexes = append(selectedIndexes, i)
 		}
-		filteredColumns = append(filteredColumns, column)
 	}
-	if len(filteredColumns) == 0 {
-		return nil, errors.Errorf(
+	if len(selectedColumns) == 0 {
+		return nil, nil, errors.Errorf(
 			"--column-filter-file selects no writable columns from table `%s`.`%s`",
 			escapeString(database),
 			escapeString(table),
 		)
 	}
 
-	return filteredColumns, nil
+	return selectedColumns, selectedIndexes, nil
 }
 
 func (c *columnFilterConfig) matchColumnRules(database, table string) filter.ColumnFilterRules {
 	var columnRules filter.ColumnFilterRules
+	// Later TOML [[filters]] entries take precedence over earlier ones.
 	for i := len(c.Filters) - 1; i >= 0; i-- {
 		rule := c.Filters[i]
-		if !rule.tableFilter.MatchTable(database, table) {
-			continue
+		if rule.tableFilter.MatchTable(database, table) {
+			columnRules = append(columnRules, rule.columnRules...)
 		}
-		columnRules = append(columnRules, rule.columnRules...)
 	}
 	return columnRules
 }

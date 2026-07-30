@@ -68,24 +68,28 @@ func TestColumnFilters(t *testing.T) {
 	}
 	require.NoError(t, columnFilter.compile(false))
 
-	selectedFields, err := columnFilter.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3", "d"})
+	selectedFields, selectedIndexes, err := columnFilter.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3", "d"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"C2", "d"}, selectedFields)
+	require.Equal(t, []int{1, 3}, selectedIndexes)
 
-	selectedFields, err = columnFilter.applyToColumns("db2", "t1", []string{"c1"})
+	selectedFields, selectedIndexes, err = columnFilter.applyToColumns("db2", "t1", []string{"c1"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1"}, selectedFields)
+	require.Equal(t, []int{0}, selectedIndexes)
 
-	selectedFields, err = columnFilter.applyToColumns("db1", "t2", []string{"c1", "c3"})
+	selectedFields, selectedIndexes, err = columnFilter.applyToColumns("db1", "t2", []string{"c1", "c3"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1"}, selectedFields)
+	require.Equal(t, []int{0}, selectedIndexes)
 
 	columnFilter = newColumnFilterConfigForTest(t,
 		columnFilterRule{Matcher: []string{"db1.t1"}},
 	)
-	selectedFields, err = columnFilter.applyToColumns("db1", "t1", []string{"c1"})
+	selectedFields, selectedIndexes, err = columnFilter.applyToColumns("db1", "t1", []string{"c1"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1"}, selectedFields)
+	require.Equal(t, []int{0}, selectedIndexes)
 }
 
 func TestParseColumnFilterFile(t *testing.T) {
@@ -96,15 +100,17 @@ columns = ["c1", "C2"]
 `)
 	columnFilter, err := parseColumnFilterConfig(path, false)
 	require.NoError(t, err)
-	selectedFields, err := columnFilter.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3"})
+	selectedFields, selectedIndexes, err := columnFilter.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1", "C2"}, selectedFields)
+	require.Equal(t, []int{0, 1}, selectedIndexes)
 
 	columnFilter, err = parseColumnFilterConfig(path, true)
 	require.NoError(t, err)
-	selectedFields, err = columnFilter.applyToColumns("DB1", "T1", []string{"c1"})
+	selectedFields, selectedIndexes, err = columnFilter.applyToColumns("DB1", "T1", []string{"c1", "c3"})
 	require.NoError(t, err)
-	require.Equal(t, []string{"c1"}, selectedFields)
+	require.Equal(t, []string{"c1", "c3"}, selectedFields)
+	require.Equal(t, []int{0, 1}, selectedIndexes)
 
 	path = writeColumnFilterFileForTest(t, `
 [[filters]]
@@ -132,9 +138,10 @@ columns = ["*", "!c3"]
 		"--no-schemas",
 		"--column-filter-file", path,
 	)
-	selectedFields, err := conf.columnFilter.applyToColumns("db1", "t1", []string{"c1", "c2", "c3"})
+	selectedFields, selectedIndexes, err := conf.columnFilter.applyToColumns("db1", "t1", []string{"c1", "c2", "c3"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c3"}, selectedFields)
+	require.Equal(t, []int{2}, selectedIndexes)
 
 	_, err = parseConfigFromArgsForTestWithErr(t, "--column-filter-file", path)
 	require.ErrorContains(t, err, "--column-filter-file requires --no-schemas/-m")
@@ -145,6 +152,20 @@ columns = ["*", "!c3"]
 		"--sql", "select * from t",
 	)
 	require.ErrorContains(t, err, "can't specify both --sql and --column-filter-file at the same time")
+}
+
+func TestValidateColumnFilterOptions(t *testing.T) {
+	conf := DefaultConfig()
+	conf.NoSchemas = true
+	require.NoError(t, validateColumnFilterOptions(conf))
+
+	conf = DefaultConfig()
+	conf.NoSchemas = true
+	conf.SQL = "select * from t"
+	require.ErrorContains(t, validateColumnFilterOptions(conf), "can't specify both --sql and --column-filter-file at the same time")
+
+	conf = DefaultConfig()
+	require.ErrorContains(t, validateColumnFilterOptions(conf), "--column-filter-file requires --no-schemas/-m")
 }
 
 func writeColumnFilterFileForTest(t *testing.T, content string) string {

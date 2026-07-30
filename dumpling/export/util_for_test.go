@@ -152,7 +152,6 @@ type mockTableIR struct {
 	chunIndex        int
 	data             [][]driver.Value
 	selectedField    string
-	selectedLen      int
 	specCmt          []string
 	colTypes         []string
 	colNames         []string
@@ -225,7 +224,7 @@ func (m *mockTableIR) SelectedField() string {
 }
 
 func (m *mockTableIR) SelectedLen() int {
-	return m.selectedLen
+	return len(m.colTypes)
 }
 
 func (m *mockTableIR) SpecialComments() StringIter {
@@ -276,7 +275,6 @@ func newMockTableIR(databaseName, tableName string, data [][]driver.Value, speci
 		data:          data,
 		specCmt:       specialComments,
 		selectedField: "*",
-		selectedLen:   len(colTypes),
 		colTypes:      colTypes,
 		SQLRowIter:    nil,
 	}
@@ -293,7 +291,6 @@ func newMockTableIRWithColumnInfo(databaseName, tableName string, data [][]drive
 		data:          data,
 		specCmt:       specialComments,
 		selectedField: "*",
-		selectedLen:   len(infos),
 		colTypes:      colTypes,
 		SQLRowIter:    nil,
 		columnInfos:   infos,

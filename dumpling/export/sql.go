@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -602,16 +601,13 @@ func GetSuitableRows(avgRowLength uint64) uint64 {
 func GetColumnTypes(tctx *tcontext.Context, db *BaseConn, fields, database, table string) ([]*sql.ColumnType, error) {
 	query := fmt.Sprintf("SELECT %s FROM `%s`.`%s` LIMIT 1", fields, escapeString(database), escapeString(table))
 	var colTypes []*sql.ColumnType
-	err := db.QuerySQL(tctx, func(rows *sql.Rows) error {
+	err := db.queryRows(tctx, func(rows *sql.Rows) error {
 		var err error
 		colTypes, err = rows.ColumnTypes()
-		if err == nil {
-			err = rows.Close()
-		}
 		failpoint.Inject("ChaosBrokenMetaConn", func(_ failpoint.Value) {
 			failpoint.Return(errors.New("connection is closed"))
 		})
-		return errors.Annotatef(err, "sql: %s", query)
+		return err
 	}, func() {
 		colTypes = nil
 	}, query)
@@ -1059,21 +1055,10 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 	return conn, nil
 }
 
-type columnInfo struct {
-	sourceFields      []string
-	selectedFields    []string
-	hasGenerateColumn bool
-}
-
-func buildSelectField(info columnInfo, completeInsert bool) (string, int, string) { // revive:disable-line:flag-parameter
-	selectLen := len(info.selectedFields)
-	if !slices.Equal(info.sourceFields, info.selectedFields) {
-		return strings.Join(info.selectedFields, ","), selectLen, strings.Join(info.sourceFields, ",")
-	}
-	if completeInsert || info.hasGenerateColumn {
-		return strings.Join(info.selectedFields, ","), selectLen, ""
-	}
-	return "*", selectLen, ""
+type columnProjection struct {
+	sourceTypes   []*sql.ColumnType
+	selectedTypes []*sql.ColumnType
+	selectField   string
 }
 
 func getWritableColumnNames(tctx *tcontext.Context, db *BaseConn, dbName, tableName string) ([]string, bool, error) {

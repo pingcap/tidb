@@ -27,6 +27,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/dumpling/export",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/restore",
         "//br/pkg/summary",
         "//br/pkg/utils",
         "//br/pkg/version",
@@ -102,6 +103,7 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//br/pkg/restore",
         "//br/pkg/version",
         "//dumpling/context",
         "//dumpling/log",

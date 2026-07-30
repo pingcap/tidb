@@ -21,19 +21,19 @@ import (
 
 // ColumnFilter is a structure to check if a column should be included for processing.
 type ColumnFilter interface {
-	// MatchColumn checks if a column can be processed after applying the columnFilter.
+	// MatchColumn checks if a column can be processed after applying ColumnFilterRules.
 	MatchColumn(column string) bool
 }
 
 // ColumnFilterRules is a parsed column filter rule list.
-type ColumnFilterRules []ColumnRule
+type ColumnFilterRules []columnRule
 
 // ParseColumnFilter parses a column filter rule list.
 // Column is not case-sensitive on any platform, nor are column aliases.
-// So the parsed columnFilter is case-insensitive.
+// So the parsed ColumnFilterRules is case-insensitive.
 func ParseColumnFilter(args []string) (ColumnFilterRules, error) {
 	p := columnRulesParser{
-		make([]ColumnRule, 0, len(args)),
+		make([]columnRule, 0, len(args)),
 		matcherParser{
 			fileName: "<cmdline>",
 			lineNum:  1,

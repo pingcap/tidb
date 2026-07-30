@@ -181,7 +181,7 @@ type Config struct {
 
 	TableFilter         filter.Filter `json:"-"`
 	columnFilter        columnFilterConfig
-	columnCache         map[restore.UniqueTableName]columnInfo
+	columnProjection    map[restore.UniqueTableName]columnProjection
 	Where               string
 	FileType            string
 	ServerInfo          version.ServerInfo
@@ -382,7 +382,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagSQL, "S", "", "Dump data with given sql. This argument doesn't support concurrent dump")
 	_ = flags.MarkHidden(flagSQL)
 	flags.StringSliceP(flagFilter, "f", []string{"*.*", DefaultTableFilter}, "filter to select which tables to dump")
-	flags.String(flagColumnFilterFile, "", "Path to the column filter TOML file for data output projection")
+	flags.String(flagColumnFilterFile, "", "Path to the column filter TOML file for data output projection. Requires --no-schemas/-m and cannot be used with --sql")
 	flags.Bool(flagCaseSensitive, false, "whether the filter should be case-sensitive")
 	flags.Bool(flagDumpEmptyDatabase, true, "whether to dump empty database")
 	flags.Uint64(flagTidbMemQuotaQuery, UnspecifiedSize, "The maximum memory limit for a single SQL statement, in bytes.")
@@ -611,11 +611,8 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if strings.TrimSpace(columnFilterFile) != "" {
-		if conf.SQL != "" {
-			return errors.New("can't specify both --sql and --column-filter-file at the same time")
-		}
-		if !conf.NoSchemas {
-			return errors.New("--column-filter-file requires --no-schemas/-m")
+		if err = validateColumnFilterOptions(conf); err != nil {
+			return errors.Trace(err)
 		}
 		conf.columnFilter, err = parseColumnFilterConfig(columnFilterFile, caseSensitive)
 		if err != nil {
@@ -728,6 +725,16 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	return nil
+}
+
+func validateColumnFilterOptions(conf *Config) error {
+	if conf.SQL != "" {
+		return errors.New("can't specify both --sql and --column-filter-file at the same time")
+	}
+	if !conf.NoSchemas {
+		return errors.New("--column-filter-file requires --no-schemas/-m")
+	}
 	return nil
 }
 

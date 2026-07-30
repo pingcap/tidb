@@ -46,25 +46,17 @@ const (
 	table    = "bar"
 )
 
-func buildSelectFieldForTest(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
+func selectedFieldForTest(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
 	sourceNames, hasGenerateColumn, err := getWritableColumnNames(tctx, db, dbName, tableName)
 	if err != nil {
 		return "", 0, err
 	}
-	selectField, selectLen, _ := buildSelectField(columnInfo{
-		sourceFields:      columnNamesToSelectFields(sourceNames),
-		selectedFields:    columnNamesToSelectFields(sourceNames),
-		hasGenerateColumn: hasGenerateColumn,
-	}, completeInsert)
-	return selectField, selectLen, nil
-}
-
-func newColumnInfoForTest(sourceNames []string, hasGenerateColumn bool, selectedNames []string) columnInfo {
-	return columnInfo{
-		sourceFields:      columnNamesToSelectFields(sourceNames),
-		selectedFields:    columnNamesToSelectFields(selectedNames),
-		hasGenerateColumn: hasGenerateColumn,
+	sourceFields := columnNamesToSelectFields(sourceNames)
+	selectField := strings.Join(sourceFields, ",")
+	if !hasGenerateColumn && !completeInsert {
+		selectField = "*"
 	}
+	return selectField, len(sourceFields), nil
 }
 
 func TestBuildSelectAllQuery(t *testing.T) {
@@ -92,7 +84,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-	selectedField, _, err := buildSelectFieldForTest(tctx, baseConn, database, table, false)
+	selectedField, _, err := selectedFieldForTest(tctx, baseConn, database, table, false)
 	require.NoError(t, err)
 
 	q := buildSelectQuery(database, table, selectedField, "", "", orderByClause)
@@ -109,7 +101,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-	selectedField, _, err = buildSelectFieldForTest(tctx, baseConn, database, table, false)
+	selectedField, _, err = selectedFieldForTest(tctx, baseConn, database, table, false)
 	require.NoError(t, err)
 
 	q = buildSelectQuery(database, table, selectedField, "", "", orderByClause)
@@ -134,7 +126,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-		selectedField, _, err = buildSelectFieldForTest(tctx, baseConn, database, table, false)
+		selectedField, _, err = selectedFieldForTest(tctx, baseConn, database, table, false)
 		require.NoError(t, err, comment)
 
 		q = buildSelectQuery(database, table, selectedField, "", "", orderByClause)
@@ -160,7 +152,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-		selectedField, _, err = buildSelectFieldForTest(tctx, baseConn, "test", "t", false)
+		selectedField, _, err = selectedFieldForTest(tctx, baseConn, "test", "t", false)
 		require.NoError(t, err, comment)
 
 		q := buildSelectQuery(database, table, selectedField, "", "", orderByClause)
@@ -181,7 +173,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-		selectedField, _, err := buildSelectFieldForTest(tctx, baseConn, "test", "t", false)
+		selectedField, _, err := selectedFieldForTest(tctx, baseConn, "test", "t", false)
 		require.NoError(t, err, comment)
 
 		q := buildSelectQuery(database, table, selectedField, "", "", "")
@@ -285,7 +277,7 @@ func TestBuildSelectField(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-	selectedField, _, err := buildSelectFieldForTest(tctx, baseConn, "test", "t", false)
+	selectedField, _, err := selectedFieldForTest(tctx, baseConn, "test", "t", false)
 	require.Equal(t, "*", selectedField)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -297,7 +289,7 @@ func TestBuildSelectField(t *testing.T) {
 			AddRow("name", "varchar(12)", "NO", "", nil, "").
 			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, ""))
 
-	selectedField, _, err = buildSelectFieldForTest(tctx, baseConn, "test", "t", true)
+	selectedField, _, err = selectedFieldForTest(tctx, baseConn, "test", "t", true)
 	require.Equal(t, "`id`,`name`,`quo``te`", selectedField)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -310,57 +302,9 @@ func TestBuildSelectField(t *testing.T) {
 			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, "").
 			AddRow("generated", "varchar(12)", "NO", "", nil, "VIRTUAL GENERATED"))
 
-	selectedField, _, err = buildSelectFieldForTest(tctx, baseConn, "test", "t", false)
+	selectedField, _, err = selectedFieldForTest(tctx, baseConn, "test", "t", false)
 	require.Equal(t, "`id`,`name`,`quo``te`", selectedField)
 	require.NoError(t, err)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	// Cached selected columns use source order and leave source fields unfiltered.
-	info := newColumnInfoForTest(
-		[]string{"id", "name", "quo`te"},
-		false,
-		[]string{"name", "quo`te"},
-	)
-	selectField, selectLen, sourceFields := buildSelectField(info, false)
-	require.Equal(t, "`name`,`quo``te`", selectField)
-	require.Equal(t, 2, selectLen)
-	require.Equal(t, "`id`,`name`,`quo``te`", sourceFields)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	info = newColumnInfoForTest(
-		[]string{"id", "name", "quo`te"},
-		false,
-		[]string{"id", "quo`te"},
-	)
-	selectField, selectLen, sourceFields = buildSelectField(info, false)
-	require.Equal(t, "`id`,`quo``te`", selectField)
-	require.Equal(t, 2, selectLen)
-	require.Equal(t, "`id`,`name`,`quo``te`", sourceFields)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	info = newColumnInfoForTest(
-		[]string{"id", "name"},
-		false,
-		[]string{"id"},
-	)
-	selectField, selectLen, sourceFields = buildSelectField(info, false)
-	require.Equal(t, "`id`", selectField)
-	require.Equal(t, 1, selectLen)
-	require.Equal(t, "`id`,`name`", sourceFields)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	info = newColumnInfoForTest([]string{}, true, []string{})
-	selectField, selectLen, sourceFields = buildSelectField(info, false)
-	require.Empty(t, selectField)
-	require.Equal(t, 0, selectLen)
-	require.Empty(t, sourceFields)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	info = newColumnInfoForTest([]string{"id", "name"}, false, []string{"id", "name"})
-	selectField, selectLen, sourceFields = buildSelectField(info, false)
-	require.Equal(t, "*", selectField)
-	require.Equal(t, 2, selectLen)
-	require.Empty(t, sourceFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	// Test build SelectField with retry
@@ -373,7 +317,7 @@ func TestBuildSelectField(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
-	selectedField, _, err = buildSelectFieldForTest(tctx, baseConn, "test", "t", false)
+	selectedField, _, err = selectedFieldForTest(tctx, baseConn, "test", "t", false)
 	require.Equal(t, "*", selectedField)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -1122,7 +1066,6 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 			dbName:           database,
 			tblName:          table,
 			selectedField:    "*",
-			selectedLen:      len(handleColNames),
 			hasImplicitRowID: testCase.hasTiDBRowID,
 			colTypes:         handleColTypes,
 			colNames:         handleColNames,
@@ -1325,7 +1268,6 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 			dbName:           database,
 			tblName:          table,
 			selectedField:    "*",
-			selectedLen:      len(handleColNames),
 			hasImplicitRowID: testCase.hasTiDBRowID,
 			colTypes:         handleColTypes,
 			colNames:         handleColNames,
