@@ -780,7 +780,7 @@ func TestValidateColumnFilter(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestValidateColumnFilterFailsOnMissingIncludedColumns(t *testing.T) {
+func TestValidateColumnFilterFailsOnEmptyResult(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -803,7 +803,7 @@ func TestValidateColumnFilterFailsOnMissingIncludedColumns(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 	err = validateColumnFilter(tctx, conf, baseConn)
-	require.ErrorContains(t, err, `included column rules "missing" do not match writable columns`)
+	require.ErrorContains(t, err, "--column-filter-file selects no writable columns")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -4,7 +4,6 @@ package export
 
 import (
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -83,10 +82,6 @@ func (c *ColumnFilterConfig) applyToColumns(database, table string, sourceColumn
 			escapeString(table),
 		)
 	}
-	if err = validatePositiveColumnRules(database, table, columnRules, sourceColumns); err != nil {
-		return nil, err
-	}
-
 	filteredColumns := make([]string, 0, len(sourceColumns))
 	for _, column := range sourceColumns {
 		if !columnFilter.MatchColumn(column) {
@@ -157,59 +152,4 @@ func normalizeColumnPattern(pattern string) string {
 
 func quoteColumnPattern(column string) string {
 	return `"` + strings.ReplaceAll(column, `"`, `""`) + `"`
-}
-
-func validatePositiveColumnRules(database, table string, columnRules, sourceColumns []string) error {
-	if len(sourceColumns) == 0 {
-		return nil
-	}
-
-	unmatched := make([]string, 0)
-	for _, rule := range columnRules {
-		if !isPositiveColumnRule(rule) {
-			continue
-		}
-		matched, err := columnRuleMatches(rule, sourceColumns)
-		if err != nil {
-			return err
-		}
-		if !matched {
-			unmatched = append(unmatched, rule)
-		}
-	}
-	sort.Strings(unmatched)
-	if len(unmatched) == 0 {
-		return nil
-	}
-	return errors.Errorf(
-		"included column rules %s do not match writable columns of table `%s`.`%s`",
-		strings.Join(unmatched, ","),
-		escapeString(database),
-		escapeString(table),
-	)
-}
-
-func isPositiveColumnRule(rule string) bool {
-	if rule == "" {
-		return false
-	}
-	switch rule[0] {
-	case '!', '@':
-		return false
-	default:
-		return true
-	}
-}
-
-func columnRuleMatches(rule string, sourceColumns []string) (bool, error) {
-	columnFilter, err := filter.ParseColumnFilter([]string{rule})
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	for _, column := range sourceColumns {
-		if columnFilter.MatchColumn(column) {
-			return true, nil
-		}
-	}
-	return false, nil
 }

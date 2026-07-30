@@ -353,8 +353,22 @@ func TestBuildSelectField(t *testing.T) {
 		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"missing"}},
 	)
 	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
-	require.ErrorContains(t, err, `included column rules "missing" do not match writable columns`)
+	require.ErrorContains(t, err, "--column-filter-file selects no writable columns")
 	require.Empty(t, selectInfo)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("name", "varchar(12)", "NO", "", nil, ""))
+	columnFilter = newColumnFilterConfigForTest(t,
+		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"id", "missing"}},
+	)
+	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
+	require.NoError(t, err)
+	require.Equal(t, "`id`", selectInfo.outputFieldSQL)
+	require.Equal(t, 1, selectInfo.outputColumnCount)
+	require.Equal(t, "`id`,`name`", selectInfo.sourceFieldSQL)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
