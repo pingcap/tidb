@@ -52,3 +52,29 @@ func ApplyExponentialBackoff(sortedValues []float64, lowerBound, upperBound floa
 	// Apply bounds
 	return math.Max(lowerBound, math.Min(result, upperBound))
 }
+
+// OrderingRatioForProbeLevel mutes the find-first-row optimism ratio (the session
+// variable tidb_opt_ordering_index_selectivity_ratio) for a correlated scan that
+// sits at the given probe level in a nested-loop hierarchy.
+//
+// The base ratio r expresses how much of the surplus scan range we assume to read
+// before the first qualifying row is found (small r = optimistic, "found early").
+// In a nest of correlated probes that optimism compounds multiplicatively across
+// levels, so a constant r collapses to r^depth and becomes wildly over-optimistic
+// the deeper we go. To counter that, the per-level effective ratio backs off toward
+// 1 (full scan, no optimism) using the same exponential-backoff weighting that
+// ApplyExponentialBackoff uses for stacked uncertain factors:
+//
+//	r_eff(level) = r ^ (1 / 2^(level-1))
+//	level 1 -> r        (original optimism, single-table behavior preserved)
+//	level 2 -> sqrt(r)
+//	level 3 -> r^(1/4)
+//	... -> 1 (full scan)
+//
+// level <= 1 returns r unchanged. r must be in (0, 1]; callers gate on r > 0.
+func OrderingRatioForProbeLevel(r float64, level int) float64 {
+	if level <= 1 || r <= 0 {
+		return r
+	}
+	return math.Pow(r, 1/math.Exp2(float64(level-1)))
+}

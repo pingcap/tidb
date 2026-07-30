@@ -299,15 +299,19 @@ func constructIndexJoinStatic(
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType,
-		ExpectedCnt:       physicalop.CalcChildExpectedCnt(p.SCtx(), prop, outerStats.RowCount, p.StatsInfo().RowCount),
-		SortItems:         prop.SortItems,
-		CTEProducerStatus: prop.CTEProducerStatus,
-		NoCopPushDown:     prop.NoCopPushDown,
+		ExpectedCnt:          physicalop.CalcChildExpectedCnt(p.SCtx(), prop, outerStats.RowCount, p.StatsInfo().RowCount),
+		SortItems:            prop.SortItems,
+		CTEProducerStatus:    prop.CTEProducerStatus,
+		NoCopPushDown:        prop.NoCopPushDown,
+		CorrelatedProbeLevel: prop.CorrelatedProbeLevel,
 	}
 
 	// inner side should pass down the indexJoinProp, which contains the runtime constant inner key, which is used to build the underlying index/pk range.
+	// The inner side is a correlated nested-loop probe, so bump the probe level: a leaf
+	// scan under it mutes its find-first-row optimism according to this depth.
 	chReqProps[1-outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64,
-		CTEProducerStatus: prop.CTEProducerStatus, IndexJoinProp: indexJoinProp, NoCopPushDown: prop.NoCopPushDown}
+		CTEProducerStatus: prop.CTEProducerStatus, IndexJoinProp: indexJoinProp, NoCopPushDown: prop.NoCopPushDown,
+		CorrelatedProbeLevel: prop.CorrelatedProbeLevel + 1}
 
 	// Some runtime details depend on the indexJoinInfo produced by the inner side,
 	// so we defer them to completePhysicalIndexJoin after the inner task is built.
@@ -701,9 +705,9 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 	var innerTask base.Task
 	if !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow, prop.CorrelatedProbeLevel)
 	} else {
-		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow, prop.CorrelatedProbeLevel)
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
 	if innerTask == nil {
@@ -751,9 +755,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
 		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow, prop.CorrelatedProbeLevel)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow, prop.CorrelatedProbeLevel)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
@@ -772,9 +776,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		maxOneRow := true
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
 		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow, prop.CorrelatedProbeLevel)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow, prop.CorrelatedProbeLevel)
 		}
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
@@ -820,6 +824,26 @@ func completeIndexJoinFeedBackInfo(innerTask *physicalop.CopTask, indexJoinResul
 	innerTask.IndexJoinInfo = info
 }
 
+// adjustInnerRowCountByProbeLevel inflates an index-join inner scan estimate to mute
+// find-first-row optimism according to how deep the scan sits in a correlated probe
+// hierarchy. The surplus (countAfterAccess - rowCount) is the range we may scan before
+// the first qualifying row; we add back a fraction of it given by the per-level
+// exponential-backoff ratio, so the optimism does not compound multiplicatively across
+// nested probes. A no-op when not under a correlated probe (probeLevel <= 0), when the
+// ratio is disabled, when there is no filtering surplus, or when there are no residual
+// filters outside the access range.
+func adjustInnerRowCountByProbeLevel(sctx base.PlanContext, rowCount, countAfterAccess float64, probeLevel int, hasFilters bool) float64 {
+	if probeLevel <= 0 || !hasFilters || countAfterAccess <= rowCount {
+		return rowCount
+	}
+	r := sctx.GetSessionVars().OptOrderingIdxSelRatio
+	if r <= 0 {
+		return rowCount
+	}
+	rEff := cardinality.OrderingRatioForProbeLevel(r, probeLevel)
+	return rowCount + (countAfterAccess-rowCount)*rEff
+}
+
 // constructDS2TableScanTask constructs the inner table scan task for index join.
 func constructDS2TableScanTask(
 	ds *logicalop.DataSource,
@@ -831,6 +855,7 @@ func constructDS2TableScanTask(
 	desc bool,
 	rowCount float64,
 	maxOneRow bool,
+	probeLevel int,
 ) base.Task {
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
 	// it means the data source is a partition table reader.
@@ -877,6 +902,10 @@ func constructDS2TableScanTask(
 	if maxOneRow {
 		finalRowCount = math.Min(1.0, countAfterAccess)
 	}
+	// PROTOTYPE: mute find-first-row optimism by correlated probe depth. The surplus
+	// between the access count and the (limit/unique) reduced estimate models rows we
+	// may scan before the first qualifying row; deeper probes trust that optimism less.
+	finalRowCount = adjustInnerRowCountByProbeLevel(ds.SCtx(), finalRowCount, countAfterAccess, probeLevel, len(ts.FilterCondition) > 0)
 	ts.SetStats(&property.StatsInfo{
 		RowCount:     finalRowCount,
 		StatsVersion: ds.StatsInfo().StatsVersion,
@@ -1028,6 +1057,7 @@ func constructDS2IndexScanTask(
 	desc bool,
 	rowCount float64,
 	maxOneRow bool,
+	probeLevel int,
 ) base.Task {
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
 	// it means the data source is a partition table reader.
@@ -1197,6 +1227,10 @@ func constructDS2IndexScanTask(
 	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {
 		is.UsedStatsInfo = usedStats.GetUsedInfo(is.PhysicalTableID)
 	}
+	// PROTOTYPE: mute find-first-row optimism by correlated probe depth. The surplus
+	// between the access count and the matching estimate models rows scanned before the
+	// first qualifying row; deeper probes trust that optimism less.
+	rowCount = adjustInnerRowCountByProbeLevel(ds.SCtx(), rowCount, tmpPath.CountAfterAccess, probeLevel, true)
 	finalStats := ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount)
 	cop.RootTaskConds = append(cop.RootTaskConds, rootTaskIndexConds...)
 	cop.RootTaskConds = append(cop.RootTaskConds, rootTaskTblConds...)
@@ -2307,8 +2341,10 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 	}.Init(la.SCtx(),
 		la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt),
 		la.QueryBlockOffset(),
-		&property.PhysicalProperty{ExpectedCnt: outerExpectedCnt, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: true},
-		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown})
+		// Outer/build side keeps the ambient probe level; the inner/probe side is a
+		// correlated nested-loop probe, so bump the level for scans underneath it.
+		&property.PhysicalProperty{ExpectedCnt: outerExpectedCnt, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: true, CorrelatedProbeLevel: prop.CorrelatedProbeLevel},
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown, CorrelatedProbeLevel: prop.CorrelatedProbeLevel + 1})
 	apply.SetSchema(la.Schema())
 	return []base.PhysicalPlan{apply}, true, nil
 }
