@@ -26,9 +26,6 @@ type ColumnFilterRule struct {
 
 // ParseColumnFilterFile parses a TOML column filter file.
 func ParseColumnFilterFile(path string, caseSensitive bool) (*ColumnFilterConfig, error) {
-	if strings.TrimSpace(path) == "" {
-		return nil, nil
-	}
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to read --column-filter-file %s", path)

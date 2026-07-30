@@ -263,7 +263,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
-	if conf.SQL == "" && conf.ColumnFilter != nil {
+	if conf.ColumnFilter != nil {
 		conf.writableColumnCache = newWritableColumnCache()
 	} else {
 		conf.writableColumnCache = nil
@@ -295,7 +295,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	// Inject consistency failpoint test after we release the table lock
 	failpoint.Inject("ConsistencyCheck", nil)
 
-	if conf.SQL == "" && conf.ColumnFilter != nil {
+	if conf.ColumnFilter != nil {
 		if err = validateColumnFilter(tctx, conf, baseConn); err != nil {
 			close(taskIn)
 			_ = wg.Wait()

@@ -106,9 +106,6 @@ columns = ["c1", "C2"]
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1"}, selectedFields)
 
-	_, err = ParseColumnFilterFile("", false)
-	require.NoError(t, err)
-
 	path = writeColumnFilterFileForTest(t, `
 [[filters]]
 matcher = ["db.t"]
@@ -119,6 +116,9 @@ columns = ["/unterminated"]
 }
 
 func TestParseColumnFilterFileFlag(t *testing.T) {
+	conf := parseConfigFromArgsForTest(t, "--no-schemas")
+	require.Nil(t, conf.ColumnFilter)
+
 	path := writeColumnFilterFileForTest(t, `
 [[filters]]
 matcher = ["db1.t1"]
@@ -128,7 +128,7 @@ columns = ["*", "!c1", "!c2"]
 matcher = ["db2.t2"]
 columns = ["*", "!c3"]
 `)
-	conf := parseConfigFromArgsForTest(t,
+	conf = parseConfigFromArgsForTest(t,
 		"--no-schemas",
 		"--column-filter-file", path,
 	)
@@ -139,13 +139,12 @@ columns = ["*", "!c3"]
 	_, err = parseConfigFromArgsForTestWithErr(t, "--column-filter-file", path)
 	require.ErrorContains(t, err, "--column-filter-file requires --no-schemas/-m")
 
-	conf = parseConfigFromArgsForTest(t,
+	_, err = parseConfigFromArgsForTestWithErr(t,
 		"--no-schemas",
 		"--column-filter-file", path,
 		"--sql", "select * from t",
 	)
-	require.Equal(t, "select * from t", conf.SQL)
-	require.NotNil(t, conf.ColumnFilter)
+	require.ErrorContains(t, err, "can't specify both --sql and --column-filter-file at the same time")
 }
 
 func writeColumnFilterFileForTest(t *testing.T, content string) string {
