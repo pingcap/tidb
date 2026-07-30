@@ -273,6 +273,20 @@ pub enum DriverError {
     WrongAutoKey,
     /// Go `ErrWrongFieldSpec` (1063): AUTO_INCREMENT on a non-integer column.
     WrongColumnSpecifier(String),
+    /// Go `ErrWrongColumnName` (1166): a column name the server reserves, of
+    /// which `_tidb_rowid` is the one an `ALTER TABLE ... RENAME COLUMN` can
+    /// reach.
+    WrongColumnName(String),
+    /// Go `infoschema.ErrKeyNotExists` (1176): the statement named an index
+    /// the table does not have. This is 1091's sibling and NOT the same
+    /// error: `DROP INDEX` on a missing key is 1091, while `RENAME INDEX`,
+    /// `ALTER INDEX` and `USE INDEX` on one are 1176.
+    KeyNotExists {
+        /// The index the statement named, in its written spelling.
+        key: String,
+        /// The table it looked in.
+        table: String,
+    },
     /// Go `ErrColumnCantNull` (1048).
     ColumnCannotBeNull(String),
     /// Go `ErrNoDefaultForField` (1364).
@@ -783,6 +797,18 @@ impl DriverError {
             1063,
             *b"42000",
             format!("Incorrect column specifier for column '{name}'"),
+        ),
+        // Go: "Incorrect column name '%-.100s'".
+        DriverError::WrongColumnName(name) => MysqlError::new(
+            1166,
+            *b"42000",
+            format!("Incorrect column name '{name}'"),
+        ),
+        // Go: "Key '%-.192s' doesn't exist in table '%-.192s'".
+        DriverError::KeyNotExists { key, table } => MysqlError::new(
+            1176,
+            *b"42000",
+            format!("Key '{key}' doesn't exist in table '{table}'"),
         ),
         // Go: "Column '%-.192s' cannot be null".
         DriverError::ColumnCannotBeNull(name) => {

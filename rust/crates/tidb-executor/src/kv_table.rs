@@ -760,6 +760,17 @@ impl KvTable {
         &self.indexes
     }
 
+    /// One index by name, for the metadata-only edits that change what an
+    /// index is CALLED or whether the planner may see it, without touching a
+    /// single entry it holds (`ALTER TABLE ... RENAME INDEX` / `ALTER INDEX
+    /// ... {VISIBLE|INVISIBLE}`). Names match case-insensitively, as every
+    /// other index lookup here and in Go does.
+    pub fn index_mut_by_name(&mut self, name: &str) -> Option<&mut KvIndex> {
+        self.indexes
+            .iter_mut()
+            .find(|index| index.name.eq_ignore_ascii_case(name))
+    }
+
     /// The indexes a plan may read through, which is [`Self::indexes`] minus
     /// the invisible ones (Go's `IndexInfo.Invisible`). Every site that
     /// *chooses* an access path -- the cost-based index candidates and the

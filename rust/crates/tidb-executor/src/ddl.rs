@@ -80,6 +80,7 @@
 //!   no collation (matching Go), so no collation-mismatch error can arise
 //!   there even when TiDB's own planner would have rewritten the expression.
 
+mod alter_metadata;
 mod alter_table;
 mod column_types;
 mod indexes;

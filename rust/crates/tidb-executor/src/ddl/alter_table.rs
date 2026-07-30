@@ -46,8 +46,8 @@ use tidb_datatype::{Datum, FieldType};
 /// unknown column is 1091, dropping the last column is 1090, and dropping an
 /// integer primary key is TiDB's own 8200.
 ///
-/// DEFERRED (documented): every other ALTER action -- MODIFY, CHANGE, RENAME,
-/// index and constraint changes -- is rejected rather than silently accepted,
+/// DEFERRED (documented): every ALTER action this match does not name --
+/// partition changes above all -- is rejected rather than silently accepted,
 /// and dropping a column an index uses is rejected rather than leaving the
 /// index addressing a column that is gone.
 pub fn run_alter_table_in(
@@ -93,6 +93,9 @@ pub fn run_alter_table_in(
                     | tidb_ast::AlterTableAction::ChangeColumn { .. }
                     | tidb_ast::AlterTableAction::DropColumn { .. }
                     | tidb_ast::AlterTableAction::RenameTable { .. }
+                    // A foreign key names its REFERENCED columns by name, so
+                    // renaming one would silently repoint the constraint.
+                    | tidb_ast::AlterTableAction::RenameColumn(_)
             )
         {
             return Err(DriverError::Unsupported(
@@ -205,6 +208,49 @@ pub fn run_alter_table_in(
             }
             tidb_ast::AlterTableAction::SetTableOptions { options } => {
                 set_table_options_action(catalog, &database, &name, options)?;
+            }
+            // The four metadata-only actions: a name or a flag changes while
+            // every column id, column offset and index entry stays put. See
+            // the `alter_metadata` module doc for why they belong together.
+            tidb_ast::AlterTableAction::RenameColumn(rename) => {
+                super::alter_metadata::rename_column_action(
+                    catalog,
+                    &database,
+                    &name,
+                    &rename.from,
+                    &rename.to,
+                )?;
+            }
+            tidb_ast::AlterTableAction::RenameIndex(rename) => {
+                super::alter_metadata::rename_index_action(
+                    catalog,
+                    &database,
+                    &name,
+                    &rename.from,
+                    &rename.to,
+                )?;
+            }
+            tidb_ast::AlterTableAction::AlterIndexVisibility(alter) => {
+                super::alter_metadata::alter_index_visibility_action(
+                    catalog,
+                    &database,
+                    &name,
+                    &alter.name,
+                    alter.visibility != tidb_ast::IndexVisibility::Invisible,
+                )?;
+            }
+            tidb_ast::AlterTableAction::AlterColumnDefault(alter) => {
+                let column = alter
+                    .name
+                    .last()
+                    .ok_or(DriverError::Unsupported("empty ALTER COLUMN name"))?;
+                super::alter_metadata::alter_column_default_action(
+                    catalog,
+                    &database,
+                    &name,
+                    column,
+                    alter.default_value.as_ref(),
+                )?;
             }
             _ => {
                 return Err(DriverError::Unsupported(

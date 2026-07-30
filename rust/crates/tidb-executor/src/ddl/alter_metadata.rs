@@ -1,0 +1,233 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! The `ALTER TABLE` actions Go runs as a pure `TableInfo` edit: no row is
+//! read, no index entry is rewritten, and no backfill runs.
+//!
+//! Inside: [`rename_column_action`] (Go `executor.RenameColumn`),
+//! [`rename_index_action`] (Go `executor.RenameIndex` and its
+//! `ValidateRenameIndex`), [`alter_index_visibility_action`] (Go
+//! `executor.AlterIndexVisibility` and its `validateAlterIndexVisibility`),
+//! and [`alter_column_default_action`] (Go `executor.AlterColumn`).
+//!
+//! They belong together because they share one invariant that makes them
+//! cheap and safe: a name or a flag changes, while every column ID, column
+//! OFFSET and index entry stays exactly where it was. An index addresses its
+//! columns by offset here (`KvIndex::column_offsets`), so renaming a column
+//! cannot invalidate a key, and renaming an index does not touch the entries
+//! filed under its id.
+//!
+//! Mirrors Go `pkg/ddl/executor.go`'s `AlterTable` arms
+//! `ast.AlterTableRenameColumn`, `ast.AlterTableRenameIndex`,
+//! `ast.AlterTableIndexInvisible` and `ast.AlterTableAlterColumn`, plus the
+//! two validators in `pkg/ddl/index.go`. Each error code below is TiDB's own,
+//! read off `tests/integrationtest/r/ddl/db_rename.result` and
+//! `.../ddl/column_modify.result` -- the suite's recording of real TiDB.
+
+use super::{Catalog, DriverError, KvColumn};
+
+/// Resolves the storage-backed table an action names, or reports 1146.
+fn table_of<'a>(
+    catalog: &'a mut Catalog,
+    database: &str,
+    name: &str,
+) -> Result<&'a mut crate::kv_table::KvTable, DriverError> {
+    match catalog.table_mut_in(database, name) {
+        Some(crate::TableEntry::Kv(table)) => Ok(table),
+        Some(_) => Err(DriverError::Unsupported(
+            "ALTER TABLE needs a storage-backed table",
+        )),
+        None => Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+            format!("{database}.{name}"),
+        ))),
+    }
+}
+
+/// `ALTER TABLE ... RENAME COLUMN old TO new`.
+///
+/// Go `RenameColumn` in this exact order, which the error a statement gets
+/// depends on: the OLD column must exist (1054, even when old and new are the
+/// same name), renaming a column to the name it already has is a no-op, the
+/// new name may not be `_tidb_rowid` (1166), and the new name may not already
+/// be taken (1060).
+///
+/// The rename is a name assignment and nothing else: the column keeps its id
+/// and its offset, so every index over it, every stored row and the handle
+/// stay valid without being rewritten -- which is why Go needs no reorg here.
+pub(crate) fn rename_column_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    from: &str,
+    to: &str,
+) -> Result<(), DriverError> {
+    let table = table_of(catalog, database, table_name)?;
+    let Some(offset) = table
+        .columns
+        .iter()
+        .position(|column| column.name.eq_ignore_ascii_case(from))
+    else {
+        return Err(DriverError::UnknownColumnInTable {
+            column: from.to_owned(),
+            table: table_name.to_owned(),
+        });
+    };
+    // Go returns nil BEFORE the duplicate check when the two names are the
+    // same column, so `rename column c1 to c1` succeeds while
+    // `rename column c2 to id` is 1060.
+    if from.eq_ignore_ascii_case(to) {
+        return Ok(());
+    }
+    if to.eq_ignore_ascii_case("_tidb_rowid") {
+        return Err(DriverError::WrongColumnName(to.to_owned()));
+    }
+    if table
+        .columns
+        .iter()
+        .any(|column| column.name.eq_ignore_ascii_case(to))
+    {
+        return Err(DriverError::DuplicateColumnName(to.to_owned()));
+    }
+    table.columns[offset].name = to.to_owned();
+    Ok(())
+}
+
+/// `ALTER TABLE ... RENAME {INDEX|KEY} old TO new`.
+///
+/// Go `ValidateRenameIndex` decides all three outcomes, and its ordering is
+/// what makes the recorded results in `ddl/db_rename.result` what they are:
+/// a missing source is 1176; a source and target that are the SAME SPELLING
+/// are ignored outright; and a target that already names a DIFFERENT index
+/// (compared case-INsensitively) is 1061 reporting the EXISTING index's
+/// spelling, not the one the statement wrote. The gap between those last two
+/// is why `rename index k2 to K2` succeeds -- it re-cases one index -- while
+/// `rename key k3 to K2` afterwards is `Duplicate key name 'K2'`.
+pub(crate) fn rename_index_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    from: &str,
+    to: &str,
+) -> Result<(), DriverError> {
+    let table = table_of(catalog, database, table_name)?;
+    if !table
+        .indexes()
+        .iter()
+        .any(|index| index.name.eq_ignore_ascii_case(from))
+    {
+        return Err(DriverError::KeyNotExists {
+            key: from.to_owned(),
+            table: table_name.to_owned(),
+        });
+    }
+    if from == to {
+        return Ok(());
+    }
+    if !from.eq_ignore_ascii_case(to) {
+        if let Some(existing) = table
+            .indexes()
+            .iter()
+            .find(|index| index.name.eq_ignore_ascii_case(to))
+        {
+            return Err(DriverError::DuplicateKeyName(existing.name.clone()));
+        }
+    }
+    if let Some(index) = table.index_mut_by_name(from) {
+        index.name = to.to_owned();
+    }
+    Ok(())
+}
+
+/// `ALTER TABLE ... ALTER INDEX name {VISIBLE|INVISIBLE}`.
+///
+/// Go `validateAlterIndexVisibility`: an index that is not there is 1176 (the
+/// same error `USE INDEX` on it would give), and setting the visibility it
+/// already has is a no-op rather than a job.
+pub(crate) fn alter_index_visibility_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    index_name: &str,
+    visible: bool,
+) -> Result<(), DriverError> {
+    let table = table_of(catalog, database, table_name)?;
+    let Some(index) = table.index_mut_by_name(index_name) else {
+        return Err(DriverError::KeyNotExists {
+            key: index_name.to_owned(),
+            table: table_name.to_owned(),
+        });
+    };
+    index.visible = visible;
+    Ok(())
+}
+
+/// `ALTER TABLE ... ALTER [COLUMN] name SET DEFAULT value`.
+///
+/// Go `AlterColumn` replaces only `ColumnInfo.DefaultValue`; the column's
+/// type, id, offset and every stored row are untouched, and rows already
+/// written keep whatever they hold. A column the table does not have is 1054.
+///
+/// DEFERRED, and refused rather than approximated: `DROP DEFAULT`, and a
+/// DEFAULT that is an expression. Go's `DROP DEFAULT` does not merely clear
+/// the default -- it sets `mysql.NoDefaultValueFlag`, which turns a later
+/// `INSERT` that omits the column into 1364 "Field 'c1' doesn't have a
+/// default value" even for a NULLABLE column that would otherwise take NULL
+/// (recorded in `ddl/default_as_expression.result`). This tier models a
+/// column's default as "written or not written" with no such flag, so
+/// clearing it here would silently answer NULL where TiDB raises 1364.
+pub(crate) fn alter_column_default_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    column_name: &str,
+    default_value: Option<&tidb_ast::Expr>,
+) -> Result<(), DriverError> {
+    let Some(expr) = default_value else {
+        return Err(DriverError::Unsupported(
+            "ALTER COLUMN ... DROP DEFAULT is not supported yet: it sets Go's \
+             NoDefaultValueFlag, which this tier does not model",
+        ));
+    };
+    let rewritten =
+        tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
+            .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
+    let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
+        return Err(DriverError::Unsupported(
+            "an expression DEFAULT is not supported yet",
+        ));
+    };
+    let value = constant
+        .eval()
+        .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
+
+    let table = table_of(catalog, database, table_name)?;
+    let Some(offset) = table
+        .columns
+        .iter()
+        .position(|column| column.name.eq_ignore_ascii_case(column_name))
+    else {
+        return Err(DriverError::UnknownColumnInTable {
+            column: column_name.to_owned(),
+            table: table_name.to_owned(),
+        });
+    };
+    let field_type = table.columns[offset].field_type.clone();
+    let normalized = super::alter_table::normalize_column_default(value, &field_type, column_name)?;
+    let KvColumn {
+        default_value: stored,
+        ..
+    } = &mut table.columns[offset];
+    *stored = Some(normalized);
+    Ok(())
+}

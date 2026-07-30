@@ -1,0 +1,31 @@
+## The ALTER TABLE actions Go runs as a pure TableInfo edit: RENAME COLUMN,
+## RENAME INDEX, ALTER INDEX {VISIBLE|INVISIBLE} and ALTER COLUMN SET DEFAULT.
+## Every column id, column offset and index entry must survive each one, which
+## is what the reads between them check.
+create table amd (id int primary key, c int default 1, c1 int default 1, unique key k1(c), key k2(c1))
+insert into amd values (1, 10, 100)
+alter table amd rename column c to cc
+select id, cc, c1 from amd
+alter table amd rename column cc to cc
+alter table amd rename column nosuch to zz
+alter table amd rename column cc to id
+select cc from amd where cc = 10
+alter table amd rename index k1 to k3
+select cc from amd where cc = 10
+alter table amd rename index k3 to k3
+alter table amd rename index x to x
+alter table amd rename index k3 to k2
+alter table amd rename index k2 to K2
+alter table amd rename key k3 to K2
+alter table amd alter index k3 invisible
+select cc from amd where cc = 10
+alter table amd alter index k3 visible
+alter table amd alter index nosuch invisible
+alter table amd alter column c1 set default 7
+insert into amd (id, cc) values (2, 20)
+select id, cc, c1 from amd
+alter table amd alter column nosuch set default 7
+## `ALTER COLUMN ... DROP DEFAULT` is deliberately absent: Go accepts it and
+## sets NoDefaultValueFlag, which turns a later omitting INSERT into 1364 even
+## on a NULLABLE column. This tier has no such flag, so the action is refused
+## by name rather than approximated -- see `ddl::alter_metadata`.
