@@ -5,7 +5,6 @@ crates/tidb-distsql/tests/direct_unary_client_runtime_source.rs 3135
 crates/tidb-session/src/sysvar.rs 12028
 crates/tidb-session/src/tests_core.rs 4512
 crates/tidb-executor/src/driver/tests.rs 3486
-crates/tidb-session/src/privilege.rs 3216
 crates/tidb-server/src/cluster_session_node/mod.rs 3111
 crates/tidb-executor/src/kv_table.rs 2705
 crates/tidb-txnkv/src/transaction/coordinator.rs 2629
