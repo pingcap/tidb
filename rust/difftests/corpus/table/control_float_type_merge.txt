@@ -1,0 +1,51 @@
+## The result type a control function merges out of a FLOAT branch and a
+## numeric branch, and the two places that merge does NOT apply.
+##
+## Go `InferType4ControlFuncs` (`pkg/expression/builtin_control.go`) merges the
+## branches' FIELD types with `types.AggFieldType`, whose `fieldTypeMergeRules`
+## table sends FLOAT beside a BIGINT literal to FLOAT -- not DOUBLE. That is a
+## printed VALUE, not just a plan: a FLOAT 12.191 reads back `12.191`, while
+## the same number widened to DOUBLE reads `12.190999984741211`.
+##
+## Every condition here is COLUMN-driven on purpose. A constant condition lets
+## the folder replace the whole call with one branch, so it would prove the
+## folder rather than the merge.
+##
+## The CONTROLS are the rows that must stay DOUBLE. `GREATEST`/`LEAST` look
+## like the same "combine the argument types" job but are not: Go
+## `greatestFunctionClass.getFunction` (`pkg/expression/builtin_compare.go`)
+## reduces the arguments to an EVAL type and dispatches
+## `builtinGreatestRealSig`, whose `evalReal` is an `f64`. Arithmetic and a
+## `COALESCE` carrying a NULL argument widen too. They are here so a merge
+## applied too broadly is caught instead of quietly narrowing -- or widening --
+## every real-valued expression.
+##
+## NOT in this file, because it is a DIFFERENT gap and a corpus topic may not
+## carry another's debt -- captured from Go anyway, so the next worker starts
+## from the answer:
+##   select coalesce(null, c, 0) from ctlf
+##       Go: 12.190999984741211   (this tier: 12.191)
+##       A leading NULL argument makes COALESCE widen, while `coalesce(c, 0)`
+##       stays FLOAT. Go's `coalesceFunctionClass.getFunction`
+##       (`pkg/expression/builtin_compare.go`) calls the same
+##       `InferType4ControlFuncs`, which drops NULL-typed arguments before
+##       merging, so the merge alone does NOT explain the difference; the
+##       widening comes from somewhere further down that path and is
+##       unidentified. Do not "fix" it by widening the no-NULL form too --
+##       that is captured as FLOAT above.
+create table ctlf (b varchar(20), c float, d double, e decimal(10,3))
+insert into ctlf values ('val_b', 12.191, 12.191, 12.191)
+select case b when 'val_b' then c else 0 end from ctlf
+select case when b = 'val_b' then c else 0 end from ctlf
+select case when b = 'nope' then 0 else c end from ctlf
+select if(b = 'val_b', c, 0) from ctlf
+select if(b = 'nope', 0, c) from ctlf
+select ifnull(c, 0) from ctlf
+select coalesce(c, 0) from ctlf
+select if(b = 'val_b', c, e) from ctlf
+select if(b = 'val_b', c, d) from ctlf
+select ifnull(c, 1.5) from ctlf
+select greatest(c, 0) from ctlf
+select least(c, 0) from ctlf
+select c + 0 from ctlf
+select d, c from ctlf

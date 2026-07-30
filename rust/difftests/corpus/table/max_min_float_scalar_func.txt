@@ -9,17 +9,15 @@
 ## type. Without that, `append_float32` wrote 4 bytes into an 8-byte cell and
 ## this topic aborted the process.
 ##
-## NOT in this file, because each is a DIFFERENT gap and a corpus topic may not
+## The control-function merge this topic used to carry as debt is FIXED: the
+## branch types now go through `types.AggFieldType`, so a CASE over (FLOAT,
+## int) stays FLOAT, and the `typeInfer4MaxMin` cast that widens a FLOAT
+## SCALAR-FUNCTION argument back to DOUBLE is applied. `control_float_type_merge`
+## is the topic that owns those rows.
+##
+## NOT in this file, because it is a DIFFERENT gap and a corpus topic may not
 ## carry another's debt -- captured from Go with `difftests/gorun` anyway, so
 ## the next worker starts from the answer:
-##   select case b when 'val_b' then c else 0 end from maxmin_float
-##       Go: 12.191   this tier: 12.190999984741211
-##       Go's `types.AggFieldType` over (FLOAT, int) is FLOAT; this tier's
-##       control-function type merge reports DOUBLE, so the value widens where
-##       Go keeps it narrow. Same root cause:
-##   select max(if(1, c, 0)), min(coalesce(c, 0)) from maxmin_float
-##       Go: 12.191|12.190999984741211   this tier: both widened
-##       (IF merges to FLOAT here, COALESCE to DOUBLE -- Go distinguishes them.)
 ##   select sum(c), avg(c), count(c) from maxmin_float
 ##       Go: 12.190999984741211|12.190999984741211|1
 ##       this tier: "SUM over this datum kind is not yet supported" -- the SUM

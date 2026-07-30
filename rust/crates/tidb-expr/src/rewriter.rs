@@ -231,9 +231,16 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         | "json_merge_preserve" | "json_merge_patch" => text(),
         "json_valid" | "json_contains" | "json_length" | "json_depth" => int(),
         "conv" | "bin" | "oct" | "format" => text(),
-        // Go merges the argument types of these the same way it merges the
-        // branches of a CASE.
-        "greatest" | "least" => builtin_return_type("case_when", args)?,
+        // NOT the same merge a CASE uses, even though both are "combine the
+        // argument types". Go `greatestFunctionClass.getFunction` takes only
+        // the EVAL TYPE from `resolveType4Extremum` and then picks one
+        // signature per eval type -- `builtinGreatestRealSig` returns an
+        // `f64`, so a FLOAT argument comes back as DOUBLE. A CASE instead
+        // keeps the merged FIELD type (`types.AggFieldType`), where FLOAT
+        // beside an integer stays FLOAT. Captured from Go over a FLOAT column
+        // holding 12.191: `greatest(c,0)` prints 12.190999984741211 while
+        // `case ... then c else 0 end` prints 12.191.
+        "greatest" | "least" => extremum_return_type(args)?,
         // `NULLIF` keeps its first argument's type; the second only decides
         // whether the result is NULL.
         "nullif" => args.first()?.static_type()?.clone(),
@@ -464,15 +471,18 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
                         | tidb_datatype::EvalType::Real
                 )
             }) {
-                // Go `AggregateEvalType` over a numeric set takes the widest
-                // domain, so an int branch beside a decimal one is decimal;
-                // `setDecimalFromArgs`/`setFlenFromArgs` then merge the
-                // widths, which is what makes `IFNULL(0, 1.5)` read `0.0`.
-                let owned: Vec<Expression> = typed
-                    .iter()
-                    .map(|ft| Expression::Constant(Constant::new(Datum::Null, (*ft).clone())))
-                    .collect();
-                let mut merged = arg_numeric_type(&owned)?;
+                // Go `InferType4ControlFuncs` merges the branches' FIELD types
+                // with `types.AggFieldType` -- the `fieldTypeMergeRules`
+                // table -- and only then reads an eval type off the result for
+                // the width rules. The table is not an eval-type widening:
+                // FLOAT beside a BIGINT literal merges to FLOAT, not DOUBLE,
+                // and that difference is a printed VALUE (Go prints a FLOAT
+                // 12.191 where a DOUBLE reads 12.190999984741211).
+                let owned: Vec<FieldType> = typed.iter().map(|ft| (*ft).clone()).collect();
+                let mut merged = tidb_datatype::agg_field_type(&owned);
+                let mut flags = merged.flags();
+                tidb_datatype::aggregate_eval_type(&owned, &mut flags);
+                merged = merged.with_flags(flags);
                 set_numeric_len_from_args(&mut merged, &typed);
                 merged
             } else {
@@ -596,6 +606,55 @@ fn maxlen(lhs: i64, rhs: i64) -> i64 {
 /// back as `0.0`, not `0`. Dropping it does not merely lose display width --
 /// the merged scale is what the evaluated branch is converted onto, so an
 /// unspecified scale here is a WRONG VALUE, not a cosmetic difference.
+/// The result type of `GREATEST`/`LEAST`.
+///
+/// Go `greatestFunctionClass.getFunction` (`pkg/expression/builtin_compare.go`)
+/// reduces `resolveType4Extremum` to an EVAL type and dispatches one signature
+/// per eval type, so the result carries the eval type's canonical field type
+/// rather than any argument's own: the `ETReal` arm is
+/// `builtinGreatestRealSig`, whose `evalReal` is an `f64`, so a FLOAT argument
+/// widens to DOUBLE here even though the same pair of branches inside a CASE
+/// stays FLOAT.
+fn extremum_return_type(args: &[Expression]) -> Option<FieldType> {
+    let typed: Vec<&FieldType> = args
+        .iter()
+        .filter_map(Expression::static_type)
+        .filter(|ft| ft.code() != FieldTypeCode::Null)
+        .collect();
+    let first = (*typed.first()?).clone();
+    if typed
+        .iter()
+        .all(|ft| ft.eval_type() == tidb_datatype::EvalType::String)
+    {
+        if typed.iter().any(|ft| ft.code() != first.code()) {
+            let mut merged = FieldType::new(FieldTypeCode::VarString);
+            merged.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            return Some(merged);
+        }
+        return Some(first);
+    }
+    if typed.iter().all(|ft| {
+        matches!(
+            ft.eval_type(),
+            tidb_datatype::EvalType::Int
+                | tidb_datatype::EvalType::Decimal
+                | tidb_datatype::EvalType::Real
+        )
+    }) {
+        let owned: Vec<Expression> = typed
+            .iter()
+            .map(|ft| Expression::Constant(Constant::new(Datum::Null, (*ft).clone())))
+            .collect();
+        let mut merged = arg_numeric_type(&owned)?;
+        set_numeric_len_from_args(&mut merged, &typed);
+        return Some(merged);
+    }
+    if typed.iter().any(|ft| ft.code() != first.code()) {
+        return None;
+    }
+    Some(first)
+}
+
 fn set_numeric_len_from_args(result: &mut FieldType, args: &[&FieldType]) {
     use tidb_datatype::EvalType;
     let eval_type = result.eval_type();

@@ -70,6 +70,11 @@ pub(crate) fn agg_kind_and_type(
         // Go `typeInfer4MaxMin`: the result carries the argument's
         // own type (with NOT NULL dropped, which this seed does not
         // track on result columns).
+        //
+        // The head of that function rewrites the ARGUMENT rather than the
+        // result, so it is applied where the argument is built
+        // ([`cast_float_scalar_arg_to_double`]) and this arm stays a plain
+        // "carry the argument's type".
         "MIN" | "MAX" => {
             let t = arg
                 .static_type()
@@ -583,6 +588,38 @@ pub(crate) fn expr_has_hoisted_window(expr: &tidb_ast::Expr) -> bool {
 
 /// Builds one aggregate function (and its Go-inferred result type) from an
 /// `Expr::Aggregate` node.
+/// The head of Go `typeInfer4MaxMin` (`pkg/expression/aggregation/base_func.go`):
+/// a `MAX`/`MIN` argument that is a SCALAR FUNCTION of type FLOAT is wrapped in
+/// a cast to DOUBLE before its type is read.
+///
+/// Go's reason is representational: a `float32` result is carried in the
+/// `float64` field of a `Datum`, so an argument extracted into a projection
+/// would otherwise disagree with its own 4-byte cell. The wrap is on the
+/// ARGUMENT, which is why the result widens as a VALUE and not merely as a
+/// label -- relabelling the result DOUBLE while the argument still produced a
+/// `Float32` wrote 4 bytes into an 8-byte cell and aborted the process.
+///
+/// A FLOAT COLUMN is deliberately left alone: it is not a scalar function, so
+/// `max(c)` stays narrow while `max(ifnull(c, 0))` over the same column
+/// widens. Captured from Go as `12.191` against `12.190999984741211`.
+fn cast_float_scalar_arg_to_double(arg: Expression) -> Expression {
+    if !matches!(arg, Expression::ScalarFunction(_))
+        || arg.static_type().map(FieldType::code) != Some(FieldTypeCode::Float)
+    {
+        return arg;
+    }
+    /// Go `mysql.MaxRealWidth`.
+    const MAX_REAL_WIDTH: i64 = 23;
+    let mut ret_type = FieldType::new(FieldTypeCode::Double);
+    ret_type.set_flen(MAX_REAL_WIDTH);
+    ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+    Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
+        tidb_ast::CiString::new("cast_double"),
+        ret_type,
+        vec![arg],
+    ))
+}
+
 pub(crate) fn build_agg_func(
     expr: &tidb_ast::Expr,
     resolver: &ScopeResolver<'_>,
@@ -675,8 +712,11 @@ pub(crate) fn build_agg_func(
             "a subquery inside an aggregate function's argument is not supported yet",
         ));
     }
-    let arg = rewrite_expr_resolved(first, resolver)
+    let mut arg = rewrite_expr_resolved(first, resolver)
         .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+    if matches!(name.as_str(), "MIN" | "MAX") {
+        arg = cast_float_scalar_arg_to_double(arg);
+    }
     let mut extra_args = Vec::with_capacity(rest.len());
     for extra in rest {
         extra_args.push(
