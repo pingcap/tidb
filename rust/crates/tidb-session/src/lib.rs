@@ -440,8 +440,6 @@ impl Session {
     }
 }
 
-impl Session {}
-
 #[cfg(test)]
 mod tests_auto_increment;
 #[cfg(test)]

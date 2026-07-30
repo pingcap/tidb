@@ -201,13 +201,19 @@ impl SequenceSnapshot {
 }
 
 impl StmtContext {
-    /// A context for a query, where Go always warns on a zero divisor.
-    #[must_use]
-    pub fn for_query() -> Self {
+    /// Builds a context whose division-by-zero handling and strict flag are
+    /// already resolved: the ONE place a [`StmtContext`] is built.
+    ///
+    /// The query and DML constructors differ in exactly these two fields and
+    /// agreed on the other twenty-three by having been written out twice. A
+    /// field added to the struct now has one place it must be named, so the two
+    /// statement classes cannot silently drift apart -- which they would, in the
+    /// direction of whichever literal was edited.
+    fn new(division_by_zero: ErrorLevel, strict: bool) -> Self {
         Self {
             warnings: Rc::default(),
-            division_by_zero: ErrorLevel::Warn,
-            strict: true,
+            division_by_zero,
+            strict,
             current_db: None,
             version: None,
             current_user: None,
@@ -232,6 +238,12 @@ impl StmtContext {
             cte_max_recursion_depth: 1000,
             sequences: Rc::default(),
         }
+    }
+
+    /// A context for a query, where Go always warns on a zero divisor.
+    #[must_use]
+    pub fn for_query() -> Self {
+        Self::new(ErrorLevel::Warn, true)
     }
 
     /// Sets the session's `default_week_format` and `div_precision_increment`.
@@ -381,34 +393,7 @@ impl StmtContext {
         } else {
             ErrorLevel::Warn
         };
-        Self {
-            warnings: Rc::default(),
-            division_by_zero: level,
-            strict,
-            current_db: None,
-            version: None,
-            current_user: None,
-            current_role: None,
-            login_user: None,
-            connection_id: None,
-            now: None,
-            time_zone: None,
-            rand_session: None,
-            user_vars: None,
-            rand_seeded: Rc::default(),
-            last_insert_id: Rc::default(),
-            prev_last_insert_id: 0,
-            prev_row_count: 0,
-            given_insert_id: Rc::default(),
-            auto_increment_step_is_default: true,
-            auto_increment_zero_is_explicit: false,
-            only_full_group_by: false,
-            default_week_format: 0,
-            foreign_key_checks: true,
-            div_precision_increment: 4,
-            cte_max_recursion_depth: 1000,
-            sequences: Rc::default(),
-        }
+        Self::new(level, strict)
     }
 
     /// Whether the statement runs under a strict SQL mode, which decides
