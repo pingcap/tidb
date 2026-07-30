@@ -11,6 +11,30 @@ pub(crate) fn scalar_text(session: &mut Session, sql: &str) -> Option<String> {
     }
 }
 
+/// One result cell as the text a client reads off the wire.
+///
+/// This is deliberately NOT [`crate::variables::datum_text`], which is the
+/// *system variable* text function: its `_ => None` arm answers `None` for
+/// every temporal datum, and a `None` here is indistinguishable from SQL
+/// NULL. A `DATE`/`DATETIME`/`TIMESTAMP`/`TIME` column read through that
+/// helper therefore printed `"NULL"` for a value that is stored, non-NULL,
+/// and matched by `WHERE i_date = '2020-01-01'` -- so an assertion written
+/// against it would have pinned the wrong answer. The wire path
+/// (`tidb_server::resultset_writer::format_datum`) renders a row cell with
+/// `Datum::to_bytes`, and that is what this uses, so NULL is the only value
+/// that can produce `"NULL"`.
+pub(crate) fn cell_text(value: &Datum) -> String {
+    if value.is_null() {
+        return "NULL".to_owned();
+    }
+    match value.to_bytes() {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        // A datum the wire cannot render either (MinNotNull / MaxValue) is a
+        // bug at the producing site, not something to paper over as NULL.
+        Err(error) => panic!("cannot render {value:?} as a result cell: {error}"),
+    }
+}
+
 /// RENAME TABLE, checked against captured TiDB behavior.
 /// A result's rows as text, so an assertion does not depend on which
 /// datum kind the codec hands back for a given column type.
@@ -18,11 +42,7 @@ pub(crate) fn row_text(result: Result<StmtResult, DriverError>) -> Vec<Vec<Strin
     match result.unwrap() {
         StmtResult::Rows(rows) => rows
             .into_iter()
-            .map(|row| {
-                row.iter()
-                    .map(|v| datum_text(v).unwrap_or_else(|| "NULL".to_owned()))
-                    .collect()
-            })
+            .map(|row| row.iter().map(cell_text).collect())
             .collect(),
         other => panic!("expected rows, got {other:?}"),
     }
@@ -187,4 +207,56 @@ pub(crate) fn session_as(
     session.set_user(format!("{user}@{host}"), format!("{user}@{host}"));
     session.attach_privileges(registry.clone());
     session
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stored temporal value must never read back as the text `NULL`.
+    ///
+    /// This guards the helper itself: [`cell_text`]'s predecessor delegated to
+    /// `variables::datum_text`, whose `_ => None` arm covers `Datum::Time` and
+    /// `Datum::Duration`, so every `DATE`, `DATETIME`, `TIMESTAMP` and `TIME`
+    /// column in every session test rendered as `"NULL"`. `COUNT(d) = 1` and
+    /// the matching `WHERE` below are the proof the value was there all
+    /// along -- the reader was lying, not the storage.
+    #[test]
+    fn a_temporal_column_renders_its_value_not_null() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (d DATE, dt DATETIME, ts TIMESTAMP, tm TIME)")
+            .unwrap();
+        session
+            .run(
+                "INSERT INTO t VALUES \
+                 ('2020-01-01','2020-01-01 10:20:30','2020-01-01 10:20:30','10:20:30')",
+            )
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT * FROM t")),
+            vec![vec![
+                "2020-01-01".to_owned(),
+                "2020-01-01 10:20:30".to_owned(),
+                "2020-01-01 10:20:30".to_owned(),
+                "10:20:30".to_owned(),
+            ]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT COUNT(d) FROM t")),
+            vec![vec!["1"]]
+        );
+        assert_eq!(
+            row_text(session.run("SELECT d FROM t WHERE d = '2020-01-01'")),
+            vec![vec!["2020-01-01"]]
+        );
+        // A real NULL still reads as NULL, which is the only value that may.
+        session
+            .run("INSERT INTO t VALUES (NULL,NULL,NULL,NULL)")
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT d FROM t WHERE d IS NULL")),
+            vec![vec!["NULL"]]
+        );
+    }
 }
