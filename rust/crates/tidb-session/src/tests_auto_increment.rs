@@ -442,3 +442,72 @@ fn alter_auto_increment_inside_a_transaction_implicitly_commits_it() {
         "the ALTER committed the row staged before it"
     );
 }
+
+/// CREATE reads the `AUTO_INCREMENT=` option in the SIGNED domain and ALTER
+/// reads it in the auto column's OWN domain -- Go's two paths genuinely
+/// disagree, and the split is not a wart to be smoothed over.
+///
+/// `handleAutoIncID` seeds only when `tbInfo.AutoIncID > 1`, and that field is
+/// `int64(opt.UintValue)`, so every value above `i64::MAX` is negative there
+/// and seeds NOTHING. `RebaseAutoID` instead sends the same pattern through
+/// `adjustNewBaseToNextGlobalID`, which compares in the column's domain, so a
+/// `BIGINT UNSIGNED` counter really does move to the top of its range.
+///
+/// Captured from real TiDB via `rust/difftests/gorun`:
+///
+/// | statement | Go |
+/// | --- | --- |
+/// | `CREATE ... UNSIGNED ... AUTO_INCREMENT=18446744073709551615`; insert; select | `1` |
+/// | `CREATE ... UNSIGNED ... AUTO_INCREMENT=9223372036854775808`; insert; select | `1` |
+/// | `CREATE ... UNSIGNED`; `ALTER ... AUTO_INCREMENT=18446744073709551615`; insert; select | `18446744073709551615` |
+/// | `CREATE ... UNSIGNED`; `ALTER ... AUTO_INCREMENT=9223372036854775808`; insert; select | `9223372036854775808` |
+/// | `CREATE ... BIGINT` signed; `ALTER ... AUTO_INCREMENT=18446744073709551615`; insert; select | `1` |
+///
+/// The ALTER-to-`18446744073709551615` row is deliberately NOT asserted: it
+/// lands on the top-of-domain id that `AutoIdAllocator::alloc` documents
+/// itself as refusing one step early, a divergence that predates this test and
+/// belongs to Go's batch cache rather than to the option's domain.
+#[test]
+fn an_auto_increment_option_above_i64_max_seeds_create_but_rebases_alter() {
+    for option in ["18446744073709551615", "9223372036854775808"] {
+        let mut session = Session::new();
+        session
+            .run(&format!(
+                "CREATE TABLE big (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY) \
+                 AUTO_INCREMENT={option}"
+            ))
+            .unwrap_or_else(|e| panic!("AUTO_INCREMENT={option} must be accepted, got {e:?}"));
+        session.run("INSERT INTO big VALUES ()").unwrap();
+        assert_eq!(
+            one(&mut session, "SELECT id FROM big"),
+            "1",
+            "CREATE compares AUTO_INCREMENT={option} as a signed int64, so it seeds nothing"
+        );
+    }
+
+    // The same pattern through ALTER moves the unsigned counter up instead.
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE big (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("ALTER TABLE big AUTO_INCREMENT=9223372036854775808")
+        .unwrap();
+    session.run("INSERT INTO big VALUES ()").unwrap();
+    assert_eq!(
+        one(&mut session, "SELECT id FROM big"),
+        "9223372036854775808",
+        "ALTER rebases in the column's unsigned domain, where CREATE would not have"
+    );
+
+    // On a SIGNED column the pattern is a negative base, so ALTER moves nothing.
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE sgn (id BIGINT AUTO_INCREMENT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("ALTER TABLE sgn AUTO_INCREMENT=18446744073709551615")
+        .unwrap();
+    session.run("INSERT INTO sgn VALUES ()").unwrap();
+    assert_eq!(one(&mut session, "SELECT id FROM sgn"), "1");
+}

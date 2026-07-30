@@ -186,7 +186,15 @@ fn table_execution_matches_go_engine() {
     // two remaining `foundations` cases are CORRELATED subqueries in an
     // aggregate's argument, which need an Apply BELOW the aggregation --
     // refused by name, not counted as fixed.
-    const KNOWN_DIVERGENCES: usize = 11;
+    //
+    // 11 -> 8: `AUTO_INCREMENT = 18446744073709551615` at CREATE. Go stores the
+    // option as `int64(opt.UintValue)` and `handleAutoIncID` seeds only when
+    // that is `> 1`, so a value above `i64::MAX` seeds NOTHING and the first
+    // row lands on 1 -- while the same number through `ALTER` rebases in the
+    // auto column's OWN domain and really does move an unsigned counter up.
+    // The two Go paths disagree; reading the option in one domain for both is
+    // what produced the parse error and the two `table not found` cascades.
+    const KNOWN_DIVERGENCES: usize = 8;
 
     assert!(
         failures.len() <= KNOWN_DIVERGENCES,

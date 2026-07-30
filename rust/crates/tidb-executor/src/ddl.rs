@@ -1457,9 +1457,13 @@ fn auto_increment_option(options: &[tidb_ast::TableOption]) -> Result<Option<i64
     for option in options {
         match option {
             tidb_ast::TableOption::AutoIncrement(value) => {
-                seed = Some(value.parse::<i64>().map_err(|_| {
+                // Go's parser holds this option in `opt.UintValue` (a `uint64`)
+                // and every reader converts with `int64(opt.UintValue)`, so a
+                // value above `i64::MAX` becomes negative rather than being
+                // rejected -- see `rebase_auto_increment` for what that means.
+                seed = Some(value.parse::<u64>().map_err(|_| {
                     DriverError::Unsupported("AUTO_INCREMENT= needs an integer value")
-                })?);
+                })? as i64);
             }
             tidb_ast::TableOption::ForceAutoIncrement(_) => {
                 return Err(DriverError::Unsupported(
@@ -1881,8 +1885,16 @@ pub fn run_create_table_in(
     let clustered = pk_is_handle || !common_handle_offsets.is_empty();
     if let Some(offset) = auto_increment_offset {
         table.set_auto_increment_offset(offset);
+        // Go `handleAutoIncID`: CREATE seeds the allocator only when the
+        // option is `> 1` -- a SIGNED comparison on `int64(opt.UintValue)`,
+        // so `AUTO_INCREMENT = 18446744073709551615` (and any value above
+        // `i64::MAX`) seeds nothing and the first row lands on 1 even for a
+        // `BIGINT UNSIGNED` column. Only ALTER rebases in the column's own
+        // domain; captured from Go, the two really do disagree here.
         if let Some(seed) = auto_increment_option(&create.table_options)? {
-            table.rebase_auto_increment(seed);
+            if seed > 1 {
+                table.rebase_auto_increment(seed);
+            }
         }
     }
     for index in table_indexes(create, &info.columns, clustered)? {

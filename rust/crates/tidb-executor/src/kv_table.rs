@@ -604,6 +604,15 @@ impl KvTable {
     /// at CREATE makes the first row land on 100. On an existing table
     /// (`ALTER TABLE ... AUTO_INCREMENT=n`) it is a Rebase, which only ever
     /// moves the counter UP -- naming a smaller number leaves it alone.
+    ///
+    /// `next_id` carries the option's 64-bit PATTERN (Go's
+    /// `int64(opt.UintValue)`), and `rebase_to_next` reads it in the auto
+    /// column's own domain -- Go's `adjustNewBaseToNextGlobalID`, which is
+    /// why `ALTER TABLE ... AUTO_INCREMENT = 18446744073709551615` really does
+    /// move a `BIGINT UNSIGNED` counter to the top of its range while the same
+    /// number on a signed column is a negative base and moves nothing.
+    /// CREATE does NOT share that domain-aware read; see
+    /// `auto_increment_option`'s caller.
     pub fn rebase_auto_increment(&mut self, next_id: i64) {
         self.auto_id.rebase_to_next(next_id as u64);
     }
