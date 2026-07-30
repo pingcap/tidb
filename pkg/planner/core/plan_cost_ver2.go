@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -1332,13 +1333,21 @@ func getTaskScanFactorVer2(p base.PhysicalPlan, storeType kv.StoreType, taskType
 		return defaultVer2Factors.TiFlashScan
 	default: // TiKV
 		var desc bool
+		var prop *property.PhysicalProperty
 		if indexScan, ok := p.(*physicalop.PhysicalIndexScan); ok {
-			desc = indexScan.Desc
+			desc, prop = indexScan.Desc, indexScan.Prop
 		}
 		if tableScan, ok := p.(*physicalop.PhysicalTableScan); ok {
-			desc = tableScan.Desc
+			desc, prop = tableScan.Desc, tableScan.Prop
 		}
-		if desc {
+		// The descending factor models reverse iteration being slower per row read. A scan
+		// bounded by a small limit reads few rows, so charging the premium over the whole
+		// estimated range makes an ordered descending scan lose to sorting that same range.
+		// Cost model ver1 has skipped the factor in this case since it was introduced; see
+		// cost.SmallScanThreshold and getPlanCostVer14PhysicalTableScan. Unlike ver1, the
+		// premium is kept when the required property is unknown, since the scan is then not
+		// known to be bounded.
+		if desc && (prop == nil || prop.ExpectedCnt >= cost.SmallScanThreshold) {
 			return defaultVer2Factors.TiKVDescScan
 		}
 		return defaultVer2Factors.TiKVScan
