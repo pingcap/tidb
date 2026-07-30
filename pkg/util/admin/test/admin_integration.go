@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package admin_test
+package test
 
 import (
 	"testing"
@@ -22,7 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAdminCheckTableCorrupted(t *testing.T) {
+// RunAdminCheckTableCorrupted is a test for admin check table corruption.
+func RunAdminCheckTableCorrupted(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -43,8 +44,8 @@ func TestAdminCheckTableCorrupted(t *testing.T) {
 			key := make([]byte, len(it.Key()))
 			copy(key, it.Key())
 			copy(value, it.Value())
-			key[len(key)-1] += 1
-			memBuffer.Set(key, value)
+			key[len(key)-1]++
+			_ = memBuffer.Set(key, value)
 		}
 		err = it.Next()
 		require.NoError(t, err)
