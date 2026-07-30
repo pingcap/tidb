@@ -1210,7 +1210,7 @@ pub(crate) fn run_update_traced(
                 if row_limit.is_some_and(|cap| matched >= cap) {
                     break;
                 }
-                if let Some(new_row) = compute_updated_row(
+                if let Some(mut new_row) = compute_updated_row(
                     &row,
                     &field_types,
                     &column_names,
@@ -1219,6 +1219,20 @@ pub(crate) fn run_update_traced(
                     ctx,
                     &mut matched,
                 )? {
+                    // The SET list assigns only the columns it names, so a
+                    // generated column still holds the value computed from the
+                    // OLD dependency. `update_row` would recompute it on the
+                    // way to the bytes, but the referential checks below run
+                    // FIRST and read this row: a stale generated value makes a
+                    // referenced key look unchanged, and the `ON UPDATE
+                    // CASCADE` that should repoint the children never fires.
+                    // Recomputing here is the same rule the INSERT path
+                    // follows -- the checks see exactly the row the write will
+                    // store -- and it is idempotent, so `update_row`'s own
+                    // recompute stays a no-op.
+                    kv.materialize_generated(&mut new_row).map_err(|e| {
+                        DriverError::Parse(format!("generated column failed: {e:?}"))
+                    })?;
                     rewrites.push((handle, row, new_row));
                 }
             }

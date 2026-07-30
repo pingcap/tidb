@@ -451,3 +451,127 @@ fn a_layout_change_or_rename_is_refused_on_either_side_of_a_constraint() {
     session.run("ALTER TABLE plain ADD COLUMN b INT").unwrap();
     session.run("RENAME TABLE plain TO plainer").unwrap();
 }
+
+/// A parent whose REFERENCED column is a STORED GENERATED column, with a
+/// child that cascades both ways -- the fixture of
+/// `TestForeignKeyAndGeneratedColumn` in
+/// `tests/integrationtest/t/executor/foreign_key.test`.
+fn generated_parent() -> Session {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a INT, b INT AS (a) STORED, INDEX(b))")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE t2 (a INT, b INT, CONSTRAINT fk FOREIGN KEY (b) REFERENCES t1(b) \
+             ON DELETE CASCADE ON UPDATE CASCADE)",
+        )
+        .unwrap();
+    session.run("INSERT INTO t1 (a) VALUES (1),(2)").unwrap();
+    session.run("INSERT INTO t2 (a) VALUES (1),(2)").unwrap();
+    session.run("UPDATE t2 SET b=a").unwrap();
+    session.run("INSERT INTO t2 VALUES (1,1),(2,2)").unwrap();
+    session
+}
+
+/// THE STALE-KEY TRAP. An `UPDATE` assigns only the columns its `SET` list
+/// names, so a STORED generated column still holds the value computed from
+/// the OLD dependency when the referential operators run. If the cascade
+/// reads that row, the referenced key looks UNCHANGED and `ON UPDATE CASCADE`
+/// never fires -- the children keep pointing at a key the parent no longer
+/// has, which is a wrong row set on the very next `SELECT`.
+///
+/// Recorded TiDB (`tests/integrationtest/r/executor/foreign_key.result`,
+/// `TestForeignKeyAndGeneratedColumn`): after `update t1 set a=a+10 where
+/// a=1`, `t1` is `2|2` and `11|11`, and `t2` is `1|11`, `1|11`, `2|2`, `2|2`.
+#[test]
+fn on_update_cascade_fires_when_the_referenced_column_is_generated() {
+    let mut session = generated_parent();
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM t2 ORDER BY a"),
+        vec![
+            vec!["1".to_owned(), "1".to_owned()],
+            vec!["1".to_owned(), "1".to_owned()],
+            vec!["2".to_owned(), "2".to_owned()],
+            vec!["2".to_owned(), "2".to_owned()],
+        ]
+    );
+    session.run("UPDATE t1 SET a=a+10 WHERE a=1").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM t1 ORDER BY a"),
+        vec![
+            vec!["2".to_owned(), "2".to_owned()],
+            vec!["11".to_owned(), "11".to_owned()],
+        ]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM t2 ORDER BY a"),
+        vec![
+            vec!["1".to_owned(), "11".to_owned()],
+            vec!["1".to_owned(), "11".to_owned()],
+            vec!["2".to_owned(), "2".to_owned()],
+            vec!["2".to_owned(), "2".to_owned()],
+        ]
+    );
+    // The indexes agree with the rows the cascade rewrote, on both sides.
+    session.run("ADMIN CHECK TABLE t1").unwrap();
+    session.run("ADMIN CHECK TABLE t2").unwrap();
+}
+
+/// The same fixture's `ON DELETE CASCADE` half, which withdraws a key by
+/// deleting the row rather than by rewriting it. Recorded TiDB: after
+/// `delete from t1 where a=2`, `t1` is `11|11` and `t2` is `1|11`, `1|11`.
+#[test]
+fn on_delete_cascade_follows_a_generated_referenced_column() {
+    let mut session = generated_parent();
+    session.run("UPDATE t1 SET a=a+10 WHERE a=1").unwrap();
+    session.run("DELETE FROM t1 WHERE a=2").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM t1 ORDER BY a"),
+        vec![vec!["11".to_owned(), "11".to_owned()]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM t2 ORDER BY a"),
+        vec![
+            vec!["1".to_owned(), "11".to_owned()],
+            vec!["1".to_owned(), "11".to_owned()],
+        ]
+    );
+    session.run("ADMIN CHECK TABLE t1").unwrap();
+    session.run("ADMIN CHECK TABLE t2").unwrap();
+}
+
+/// THE CONTROL. Recomputing the new row before the referential operators must
+/// not make every `UPDATE` look like a change: an assignment that leaves the
+/// referenced value where it was still withdraws nothing, so a `RESTRICT`
+/// parent stays updatable and a `CASCADE` child stays put.
+#[test]
+fn an_update_that_does_not_move_the_referenced_key_still_cascades_nothing() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a INT, b INT AS (a) STORED, name VARCHAR(10), INDEX(b))")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE t2 (a INT, b INT, CONSTRAINT fk FOREIGN KEY (b) REFERENCES t1(b) \
+             ON UPDATE CASCADE)",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO t1 (a,name) VALUES (1,'x'),(2,'y')")
+        .unwrap();
+    session.run("INSERT INTO t2 VALUES (1,1),(2,2)").unwrap();
+    // Touching a column the constraint does not reference.
+    session.run("UPDATE t1 SET name='z' WHERE a=1").unwrap();
+    // Assigning the dependency its own value, which recomputes `b` to the
+    // value it already held.
+    session.run("UPDATE t1 SET a=1 WHERE a=1").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM t2 ORDER BY a"),
+        vec![
+            vec!["1".to_owned(), "1".to_owned()],
+            vec!["2".to_owned(), "2".to_owned()],
+        ]
+    );
+    session.run("ADMIN CHECK TABLE t2").unwrap();
+}

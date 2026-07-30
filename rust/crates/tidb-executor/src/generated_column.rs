@@ -33,7 +33,13 @@
 //!   path may call it without asking whether someone already did. That is
 //!   what keeps a `STORED` column from going stale after an `UPDATE` to its
 //!   dependency: the update writes a freshly computed row, never a patched
-//!   one.
+//!   one. "Whenever the row is written" is stronger than it sounds -- the
+//!   recomputation has to happen before anything READS the new row, not
+//!   merely before the bytes are encoded, because the referential operators
+//!   run over the staged row. An `UPDATE` that recomputed only inside the
+//!   encoder left the foreign-key layer comparing a generated value against
+//!   its own stale copy, so a referenced key looked unchanged and the
+//!   `ON UPDATE CASCADE` that should have repointed the children never fired.
 //! * `STORED` writes that value into the row bytes; `VIRTUAL` does not
 //!   ([`is_virtual`] drives the encoder's skip list, exactly as the handle
 //!   columns are skipped). On the way back a virtual column is therefore
