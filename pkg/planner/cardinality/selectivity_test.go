@@ -2334,6 +2334,149 @@ func TestOrderingIdxSelectivityRatioForApply(t *testing.T) {
 	require.Less(t, planCost3, planCost4)
 }
 
+// TestIndexJoinProbeEqSkewRisk verifies that tidb_opt_risk_eq_skew_ratio lifts
+// index-join probe estimates from the average join-key fanout toward the
+// hottest-key fanout recorded in the probed index TopN. rel.jk is skewed: 64
+// hot keys hold ~205 rows each while the remaining keys are near-unique, so
+// the average fanout (rows/NDV ~ 4.9) understates hot-key probes by ~40x.
+func TestIndexJoinProbeEqSkewRisk(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@cte_max_recursion_depth = 20000")
+	tk.MustExec("drop table if exists d, rel")
+	tk.MustExec("create table d(id int primary key, fk int, flt int)")
+	tk.MustExec("create table rel(id int primary key, jk int, f int, index ijk(jk))")
+	const nRel = 16384
+	tk.MustExec(fmt.Sprintf(`insert into rel
+		with recursive nums(n) as (select 1 union all select n+1 from nums where n < %d)
+		select n, if(n %% 5 = 0, 10000 + (n %% 8192), n %% 64), n %% 7 from nums`, nRel))
+	tk.MustExec(`insert into d
+		with recursive nums(n) as (select 1 union all select n+1 from nums where n < 512)
+		select n, if(n % 2 = 0, n % 64, 10000 + (n % 8192)), n % 4 from nums`)
+	tk.MustExec("analyze table d, rel")
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	query := "explain format='verbose' select /*+ inl_join(rel) */ count(*) from d join rel on d.fk = rel.jk where d.flt = 0"
+	probeEstRows := func() float64 {
+		for _, row := range tk.MustQuery(query).Rows() {
+			op := fmt.Sprint(row[0])
+			if strings.Contains(op, "IndexReader") || strings.Contains(op, "IndexLookUp") {
+				est, err := strconv.ParseFloat(fmt.Sprint(row[1]), 64)
+				require.NoError(t, err)
+				return est
+			}
+		}
+		require.Fail(t, "no index-join probe reader found in plan")
+		return 0
+	}
+
+	tk.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
+	base := probeEstRows()
+	tk.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
+	mid := probeEstRows()
+	tk.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
+	full := probeEstRows()
+
+	// Monotone lift with the ratio, and at ratio=1 the per-probe estimate
+	// reaches the hottest-key fanout: ~205 rows per probe vs the ~4.9 average,
+	// i.e. roughly a 40x lift of the probe-side estimate.
+	require.Less(t, base, mid)
+	require.Less(t, mid, full)
+	require.Greater(t, full, base*30, "full skew risk should approach the hottest-key fanout")
+	require.Less(t, full, base*50, "skew lift should not exceed the hottest-key fanout")
+}
+
+func TestOrderingRatioForProbeLevel(t *testing.T) {
+	r := 0.01
+	require.InDelta(t, 0.01, cardinality.OrderingRatioForProbeLevel(r, 0), 1e-9)   // not under a probe
+	require.InDelta(t, 0.01, cardinality.OrderingRatioForProbeLevel(r, 1), 1e-9)   // outermost probe
+	require.InDelta(t, 0.10, cardinality.OrderingRatioForProbeLevel(r, 2), 1e-9)   // r^(1/2)
+	require.InDelta(t, 0.3162, cardinality.OrderingRatioForProbeLevel(r, 3), 1e-3) // r^(1/4)
+	require.InDelta(t, 0.5623, cardinality.OrderingRatioForProbeLevel(r, 4), 1e-3) // r^(1/8)
+	// Disabled ratios pass through unchanged regardless of level.
+	require.Equal(t, 0.0, cardinality.OrderingRatioForProbeLevel(0, 3))
+	require.Equal(t, -1.0, cardinality.OrderingRatioForProbeLevel(-1, 3))
+}
+
+// TestOrderingIdxSelectivityRatioForIndexJoinProbe verifies the depth-muted
+// find-first-row penalty on index-join probe scans. The probed table big2 has a
+// residual filter outside its join-key index, so its probe-side estimate carries
+// a surplus (countAfterAccess - matching rows). At probe level 1 (a plain index
+// join) the penalty adds ratio*surplus; when the same probe sits under a
+// correlated Apply (probe level 2) the effective ratio backs off to sqrt(ratio).
+func TestOrderingIdxSelectivityRatioForIndexJoinProbe(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists d, big1, big2")
+	// d: small driver table.
+	tk.MustExec("create table d(id int primary key, fk int)")
+	// big1/big2: join key jk (indexed, non-unique so each probe has fanout) and
+	// filter column f (the residual filter that creates the surplus).
+	tk.MustExec("create table big1(id int primary key, jk int, f int, g int, index ijk(jk))")
+	tk.MustExec("create table big2(id int primary key, jk int, f int, index ijk(jk))")
+
+	tk.MustExec("insert into d values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("insert into big1(id,jk,f,g) values (1,1,1,1),(2,1,2,1),(3,2,1,2),(4,2,2,2),(5,3,1,3),(6,3,2,3),(7,4,1,4),(8,4,2,4),(9,5,1,5),(10,5,2,5)")
+	for range 6 {
+		tk.MustExec("insert into big1(id,jk,f,g) select id+(select max(id) from big1),jk,f,g from big1")
+	}
+	tk.MustExec("insert into big2(id,jk,f) select id,jk,f from big1")
+	tk.MustExec("analyze table d, big1, big2")
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	// big2LookupAndAccess returns big2's probe-side matching estimate (its
+	// IndexLookUp estRows) and access estimate (its IndexRangeScan estRows). The
+	// IndexLookUp appears just above big2's IndexRangeScan in the EXPLAIN tree.
+	big2LookupAndAccess := func(query string) (lookup, access float64) {
+		lookup, access = -1, -1
+		lastLookup := -1.0
+		for _, row := range tk.MustQuery(query).Rows() {
+			op := fmt.Sprint(row[0])
+			estRows, err := strconv.ParseFloat(fmt.Sprint(row[1]), 64)
+			require.NoError(t, err)
+			if strings.Contains(op, "IndexLookUp") {
+				lastLookup = estRows
+			}
+			if strings.Contains(op, "IndexRangeScan") && strings.Contains(fmt.Sprint(row[5]), "big2.jk") {
+				lookup, access = lastLookup, estRows
+			}
+		}
+		require.Positive(t, lookup)
+		require.Positive(t, access)
+		return lookup, access
+	}
+	impliedRatio := func(base, on, access float64) float64 {
+		require.Greater(t, access, base, "expected a filtering surplus on the probe side")
+		return (on - base) / (access - base)
+	}
+
+	// Query A: plain nested index joins. big2 is an index-join probe not under
+	// any Apply, so its probe level is 1 and the effective ratio is the base ratio.
+	qA := "explain format=verbose select /*+ inl_join(big1), inl_join(big2) */ d.id " +
+		"from d join big1 on d.fk = big1.jk join big2 on big1.g = big2.jk " +
+		"where big1.f = 1 and big2.f = 1"
+	// Query B: the EXISTS body stays correlated (NO_DECORRELATE), so it becomes an
+	// Apply whose probe side contains the index join into big2. big2's probe level
+	// is 2 and the effective ratio backs off to sqrt of the base ratio.
+	qB := "explain format=verbose select d.id from d where exists (" +
+		"select /*+ NO_DECORRELATE(), INL_JOIN(big2) */ 1 from big1 join big2 on big1.g = big2.jk " +
+		"where big1.jk = d.fk and big1.f = 1 and big2.f = 1)"
+
+	tk.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0")
+	baseA, accessA := big2LookupAndAccess(qA)
+	baseB, accessB := big2LookupAndAccess(qB)
+	tk.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0.01")
+	onA, _ := big2LookupAndAccess(qA)
+	onB, _ := big2LookupAndAccess(qB)
+
+	require.InDelta(t, 0.01, impliedRatio(baseA, onA, accessA), 1e-4,
+		"probe level 1: effective ratio should equal the base ratio")
+	require.InDelta(t, 0.10, impliedRatio(baseB, onB, accessB), 1e-3,
+		"probe level 2 (under Apply): effective ratio should back off to sqrt(base)")
+}
+
 func TestCrossValidationSelectivity(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

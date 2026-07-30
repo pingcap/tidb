@@ -1113,6 +1113,28 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 	return disabled
 }
 
+// markApplyProbeDepth annotates every DataSource in the final logical plan with
+// the number of enclosing LogicalApply probe (inner-child) subtrees. The walk
+// runs once before findBestTask, so the depth is a static property of each node's
+// position in the logical tree: it cannot leak through operators that synthesize
+// fresh child properties, and it is stable under findBestTask memoization. The
+// depth is read when a DataSource is built as an index-join probe to mute the
+// find-first-row optimism ratio (tidb_opt_ordering_index_selectivity_ratio)
+// according to how deeply the probe is nested.
+func markApplyProbeDepth(lp base.LogicalPlan, depth int) {
+	switch x := lp.(type) {
+	case *logicalop.LogicalApply:
+		markApplyProbeDepth(x.Children()[0], depth)
+		markApplyProbeDepth(x.Children()[1], depth+1)
+	case *logicalop.DataSource:
+		x.ApplyProbeDepth = depth
+	default:
+		for _, child := range lp.Children() {
+			markApplyProbeDepth(child, depth)
+		}
+	}
+}
+
 func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost float64, err error) {
 	begin := time.Now()
 	defer func() {
@@ -1125,6 +1147,8 @@ func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost floa
 	logic.SCtx().GetSessionVars().DurationOptimizer.StatsDerive = time.Since(begin)
 
 	preparePossibleProperties(logic)
+
+	markApplyProbeDepth(logic, 0)
 
 	prop := &property.PhysicalProperty{
 		TaskTp:      property.RootTaskType,
