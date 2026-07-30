@@ -218,6 +218,59 @@ pub(crate) fn eval_binary_full(
         }
         return time_compare(op, &l, &r, ctx);
     }
+    // A `TIME` compared with a string compares in the DURATION domain: Go's
+    // `RefineComparedConstant` turns the string constant into a duration, so
+    // `tm = '1:00:00'` is TRUE for `01:00:00` (verified via `gorun`). Without
+    // this the numeric substitution below would compare `10000` against the
+    // string's NUMERIC PREFIX (1), i.e. silently drop the row.
+    if matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq) {
+        let text_side = |value: &Datum| match value {
+            Datum::String(value) => Some(String::from_utf8_lossy(value.bytes()).into_owned()),
+            Datum::Bytes(value) => Some(String::from_utf8_lossy(value).into_owned()),
+            _ => None,
+        };
+        let pair = match (&l, &r) {
+            (Datum::Duration(a), other) => text_side(other).map(|text| (*a, text, false)),
+            (other, Datum::Duration(b)) => text_side(other).map(|text| (*b, text, true)),
+            _ => None,
+        };
+        if let Some((duration, text, reversed)) = pair {
+            let ordering = match duration.compare_string(&text) {
+                Ok(ordering) if reversed => ordering.reverse(),
+                Ok(ordering) => ordering,
+                Err(_) => {
+                    ctx.append_warning(1292, &format!("Incorrect time value: '{text}'"));
+                    return Ok(if op == NullEq {
+                        Datum::Int(0)
+                    } else {
+                        Datum::Null
+                    });
+                }
+            };
+            return Ok(ordering_to_bool(op, ordering));
+        }
+    }
+    // Every remaining use of a temporal operand -- arithmetic, and comparing
+    // two `TIME`s -- evaluates it in its NUMERIC context, which is what Go's
+    // `numericContextResultType` (`pkg/expression/builtin_arithmetic.go:80`)
+    // gives a temporal type: ETDecimal when it carries fractional seconds,
+    // ETInt otherwise. So `DATETIME '2020-01-02 03:04:05' + 0` is
+    // `20200102030405`, `TIME '01:00:00' * 0` is `0`, and a `DATETIME(6)` keeps
+    // its 6 fractional digits as a decimal (all three verified via `gorun`).
+    // Substituting the numeric value here rather than adding a temporal arm to
+    // each operator is what keeps the promotion hierarchy below single-sourced.
+    if matches!(l, Datum::Time(_) | Datum::Duration(_))
+        || matches!(r, Datum::Time(_) | Datum::Duration(_))
+    {
+        return eval_binary_full(
+            op,
+            numeric_context_value(l),
+            numeric_context_value(r),
+            div_precision_increment,
+            collation,
+            ctx,
+        );
+    }
     // `getBaseCmpType` in `builtin_compare.go` selects ETReal whenever a
     // string is compared with a numeric value.  Thus both operands use the
     // same MySQL numeric-prefix coercion as `EvalReal`; this is comparison
@@ -620,7 +673,6 @@ fn time_compare(
     r: &Datum,
     ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, EvalError> {
-    use BinaryOp::*;
     let ordering = match (l, r) {
         (Datum::Time(a), Datum::Time(b)) => a.compare(*b),
         (Datum::Time(a), other) => match time_compare_ordering(*a, other, ctx)? {
@@ -633,15 +685,38 @@ fn time_compare(
         },
         _ => unreachable!("one side is a Time"),
     };
-    Ok(match op {
+    Ok(ordering_to_bool(op, ordering))
+}
+
+/// A resolved ordering read as the comparison operator's boolean result.
+fn ordering_to_bool(op: BinaryOp, ordering: std::cmp::Ordering) -> Datum {
+    use BinaryOp::*;
+    match op {
         Eq | NullEq => bool_int(ordering.is_eq()),
         Ne => bool_int(!ordering.is_eq()),
         Lt => bool_int(ordering.is_lt()),
         Le => bool_int(ordering.is_le()),
         Gt => bool_int(ordering.is_gt()),
         Ge => bool_int(ordering.is_ge()),
-        _ => unreachable!("only comparisons reach time_compare"),
-    })
+        _ => unreachable!("only comparisons resolve to an ordering"),
+    }
+}
+
+/// A temporal value in the numeric context Go's `numericContextResultType`
+/// (`pkg/expression/builtin_arithmetic.go:80`) gives it: a DECIMAL when it
+/// carries fractional seconds, an INT otherwise. Every other datum is already
+/// in its own numeric domain and passes through.
+fn numeric_context_value(value: Datum) -> Datum {
+    let (number, fsp) = match value {
+        Datum::Time(time) => (time.to_number(), time.fsp()),
+        Datum::Duration(duration) => (duration.to_number(), duration.fsp()),
+        other => return other,
+    };
+    if fsp > 0 {
+        return Datum::Decimal(number);
+    }
+    // `to_number` of an fsp-0 temporal is integral, so truncation is exact.
+    Datum::Int(number.to_i64_trunc().0)
 }
 
 /// `time` compared against a non-time datum, parsed into the time domain.

@@ -19,6 +19,7 @@ use tidb_ast::{QueryStmt, SelectField, Stmt};
 
 mod compare;
 mod control;
+mod evaluator_binop;
 mod math;
 
 /// Parses and evaluates a constant expression to its label.
