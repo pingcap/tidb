@@ -838,8 +838,8 @@ func inflate(compressStr []byte, declaredLength uint32, tracker *memory.Tracker,
 	}
 	limit := int64(declaredLength)
 	if tracker != nil && limit > 0 {
+        tracker.Consume(limit)
 		defer tracker.Consume(-limit)
-		tracker.Consume(limit)
 	}
 	limitedOut := limitedBuffer{
 		buf:   out,
