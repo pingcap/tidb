@@ -32,3 +32,7 @@ path = "tests/query_diff.rs"
 [[test]]
 name = "table_diff"
 path = "tests/table_diff.rs"
+
+[[test]]
+name = "source_size_ratchet"
+path = "tests/source_size_ratchet.rs"
