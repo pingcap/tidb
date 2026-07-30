@@ -288,7 +288,7 @@ func (s *backfillDistExecutor) getRunningLocalSortJobDiskUsage(
 		jobCount++
 		runtimeSlots += taskRuntimeSlots
 		if ingest.LitDiskRoot != nil {
-			usedBytes += ingest.LitDiskRoot.GetUsage(taskMeta.Job.ID)
+			usedBytes += ingest.LitDiskRoot.GetJobDiskUsage(taskMeta.Job.ID)
 		}
 	}
 	return jobCount, runtimeSlots, usedBytes, nil
