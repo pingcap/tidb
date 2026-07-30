@@ -1,0 +1,168 @@
+//! A session from SQL strings alone, and the statement routing that gets
+//! each kind to its executor -- Go `pkg/session`'s `ExecuteStmt`.
+
+use crate::tests_support::*;
+use crate::*;
+
+/// A whole session lifecycle from SQL strings alone: DDL, writes, reads.
+#[test]
+fn session_runs_a_sql_lifecycle() {
+    let mut session = Session::new();
+    assert_eq!(
+        session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap(),
+        StmtResult::Done(true)
+    );
+    assert_eq!(
+        session
+            .run("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)")
+            .unwrap(),
+        StmtResult::Affected(3)
+    );
+    assert_eq!(
+        session
+            .run("SELECT a + b FROM t WHERE a >= 2 ORDER BY a DESC LIMIT 1")
+            .unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(33)]])
+    );
+    // A second table coexists in the same catalog.
+    session.run("CREATE TABLE u (x BIGINT)").unwrap();
+    session.run("INSERT INTO u VALUES (42)").unwrap();
+    assert_eq!(
+        session.run("SELECT x FROM u").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(42)]])
+    );
+}
+
+/// One connection sends everything through one door: the transaction
+/// controls, `SET`, and `SHOW VARIABLES` all answer from `run` now.
+///
+/// Checked against captured TiDB output: the columns are
+/// `Variable_name` and `Value`, the LIKE pattern filters, and a SET is
+/// visible to the next SHOW.
+#[test]
+fn run_routes_session_statements() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a BIGINT)").unwrap();
+
+    // The transaction controls answer through `run`.
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO t VALUES (1)").unwrap();
+    session.run("COMMIT").unwrap();
+    assert_eq!(row_text(session.run("SELECT a FROM t")), [["1"]]);
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO t VALUES (2)").unwrap();
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(row_text(session.run("SELECT a FROM t")), [["1"]]);
+
+    // So does SET.
+    session.run("SET autocommit = 0").unwrap();
+
+    // Captured: SHOW VARIABLES reports Variable_name/Value, filtered.
+    match session
+        .run_with_columns("SHOW VARIABLES LIKE 'autocommit'")
+        .unwrap()
+    {
+        StmtOutput::Rows { columns, rows } => {
+            assert_eq!(
+                columns
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>(),
+                ["Variable_name", "Value"]
+            );
+            assert_eq!(rows.len(), 1);
+            assert_eq!(datum_text(&rows[0][0]).unwrap(), "autocommit");
+        }
+        other => panic!("expected rows, got {other:?}"),
+    }
+    // Captured: sql_mode reports the session's own value.
+    assert_eq!(
+        row_text(session.run("SHOW VARIABLES LIKE 'sql_mode'")),
+        [[
+            "sql_mode".to_owned(),
+            session.vars().get_system("sql_mode").unwrap()
+        ]]
+    );
+    // Captured: a wildcard pattern matches a prefix family.
+    let matched = row_text(session.run("SHOW VARIABLES LIKE 'max_allowed%'"));
+    assert!(
+        matched.iter().any(|row| row[0] == "max_allowed_packet"),
+        "{matched:?}"
+    );
+    // A SET is visible to the next SHOW.
+    session.run("SET autocommit = 1").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW VARIABLES LIKE 'autocommit'"))[0][1],
+        session.vars().get_system("autocommit").unwrap()
+    );
+
+    // Captured: the scoped spellings a JDBC client sends read the same
+    // session value here.
+    assert_eq!(
+        row_text(session.run("SELECT @@session.autocommit, @@global.autocommit")).len(),
+        1
+    );
+
+    // Captured: the WHERE form filters the same virtual rows, including
+    // over the Value column and with a case-insensitive column name.
+    assert_eq!(
+        row_text(session.run("SHOW VARIABLES WHERE variable_name = 'autocommit'"))[0][0],
+        "autocommit"
+    );
+    let pair =
+        row_text(session.run("SHOW VARIABLES WHERE Variable_name IN ('autocommit','sql_mode')"));
+    assert_eq!(pair.len(), 2, "{pair:?}");
+    assert_eq!(pair[0][0], "autocommit");
+    assert_eq!(pair[1][0], "sql_mode");
+    let both =
+        row_text(session.run("SHOW VARIABLES WHERE value = 'ON' AND variable_name LIKE 'auto%'"));
+    assert!(both.iter().any(|row| row[0] == "autocommit"), "{both:?}");
+}
+
+#[test]
+fn unsupported_kinds_error() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT)").unwrap();
+    // Shapes the write paths do not model yet. (ORDER BY and LIMIT used
+    // to be the examples here; both work now -- see
+    // `insert_select_and_ordered_dml`.)
+    assert!(session.run("DELETE QUICK FROM t").is_err());
+    // RETURNING is not one of them: Go parses it and silently ignores it,
+    // so the insert lands with a plain OK.
+    assert_eq!(
+        session
+            .run("INSERT INTO t (a) VALUES (1) RETURNING a")
+            .unwrap(),
+        StmtResult::Affected(1)
+    );
+}
+
+/// UPDATE and DELETE run through the session like any other write, and
+/// report their affected-row counts.
+#[test]
+fn update_and_delete_through_the_session() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a BIGINT)").unwrap();
+    session.run("INSERT INTO t VALUES (1), (2), (3)").unwrap();
+    assert_eq!(
+        session.run("UPDATE t SET a = a * 10 WHERE a > 1").unwrap(),
+        StmtResult::Affected(2)
+    );
+    assert_eq!(
+        session.run("DELETE FROM t WHERE a >= 20").unwrap(),
+        StmtResult::Affected(2)
+    );
+    assert_eq!(
+        session.run("SELECT a FROM t").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(1)]])
+    );
+    // Both are classified as writes, so the wire answers with an OK packet.
+    assert_eq!(
+        session.statement_kind("UPDATE t SET a = 1").unwrap(),
+        StmtKind::Write
+    );
+    assert_eq!(
+        session.statement_kind("DELETE FROM t").unwrap(),
+        StmtKind::Write
+    );
+}
