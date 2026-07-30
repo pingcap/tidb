@@ -29,9 +29,9 @@ bucket: no Rust test carries its name, its words, or a citation of it.
 
 | # | Go test | Unguarded behavior |
 | --- | --- | --- |
-| 1 | `pkg/types/convert_test.go:44` `TestConvertType` | The whole implicit-coercion matrix. Every comparison, insert, and index lookup goes through it; a wrong edge silently changes which rows match. |
-| 2 | `pkg/types/datum_test.go:124` `TestToInt64` | Datum -> int64 rounding and overflow, including the unsigned boundary. Wrong here means wrong stored values, not an error. |
-| 3 | `pkg/types/convert_test.go:843` `TestGetValidInt`, `:921` `TestGetValidFloat` | Prefix-parsing of numeric strings and the truncation warning that MySQL clients observe. Governs `'12abc' + 0` and strict-mode admission. |
+| 1 | ~~`pkg/types/convert_test.go:44` `TestConvertType`~~ | **CLOSED, and this row was stale.** `tidb-datatype/src/datum_convert.rs` `go_tests::go_test_convert_type` carries it (one row `#[ignore]`d: an out-of-range ENUM ordinal returns `Err` without Go's best-effort empty ENUM). |
+| 2 | ~~`pkg/types/datum_test.go:124` `TestToInt64`~~ | **CLOSED, and this row was stale.** `datum_convert.rs` `go_tests::go_test_to_int64`. |
+| 3 | ~~`pkg/types/convert_test.go:843` `TestGetValidInt`, `:921` `TestGetValidFloat`~~ | **CLOSED.** `TestGetValidFloat` was already ported as `convert.rs` `source_valid_float_prefix_rows` + `source_float_string_to_integer_rows` (all 23 + 17 rows) and this row never noticed. `TestGetValidInt` and `TestRoundIntStr` are ported below. |
 | 4 | `pkg/util/ranger/ranger_test.go:314` `TestIndexRangeForUnsignedAndOverflow` | Index range construction across the signed/unsigned boundary. A wrong range does not error -- it returns fewer rows. |
 | 5 | `pkg/util/ranger/ranger_test.go:1037` `TestPrefixIndexRangeScan` | Prefix-index ranges. This exact area already produced a live bug in this tree (prefix index vs SQL mode). |
 | 6 | `pkg/util/chunk/column_test.go:432` `TestReconstructFixedLen`, `:488` `TestReconstructVarLen` | The columnar buffer every executor writes and every expression reads. Silent corruption, not a crash. |
@@ -59,6 +59,41 @@ bucket: no Rust test carries its name, its words, or a citation of it.
 | 14 | `tidb-protocol/tests/binary_params_source.rs` | `parse_binary_params`'s charset decode was an identity stub, so a gbk client's parameter was stored as if its bytes were UTF-8. Fixed. The *live* `COM_STMT_EXECUTE` decoder still has no charset seam -- `#[ignore]`d test with TiDB's answer. |
 | 16 | `tidb-session/src/tests_dml_lock_keys.rs` | ONE live bug: `REPLACE` over a row IDENTICAL to the one being written deleted and re-inserted it and reported 2 affected, where Go's `InsertValues.removeRow` leaves it in place and reports 1 -- the very site `tidb_lock_unchanged_keys` governs. Fixed. The DML key sets themselves were right: a `DELETE` does take every index key. No DML lock path exists at all (`tidb_lock_unchanged_keys` is registered and unread, nothing calls `Transaction::lock_keys`), so the blocking halves are `#[ignore]`d with Go's answer, each paired with a RUNNING guard on today's behavior. |
 | 18 | `tidb-meta/tests/key_prefix_and_element_source.rs` | Already covered under another name, and better: `tidb-meta/tests/go_vectors.rs` pins every meta key byte-for-byte against hex captured from Go. The genuine hole was the `Is*Key`/`Parse*Key` round trip for the auto-ID, auto-increment, auto-random and sequence prefixes (no `parse_*` existed), and `meta.Element` -- the DDL reorg backfill element, an on-disk contract -- which had no port at all. Both landed; nothing was found wrong in what already existed. `TestMeta` (`:241`), which drives a live `Mutator` over a store, is still open. |
+
+### Third measurement audit: three false-gap classes, 87 phantom `NONE`s
+
+The reference scan was wrong twice before (a renamed `pkg/meta` port; `.txt`
+corpus headers unread). A third audit found three more classes. Totals moved
+from **1391 `NONE` (53%) to 1304 (49%)** with one test written.
+
+| Class | Evidence | Effect |
+| --- | --- | --- |
+| **Wrong crate in the mapping.** `pkg/parser/ast` mapped only to `tidb-ast/src`, which holds the node structs. Every ported `ast/*_test.go` restore/visitor test lives in `tidb-parser/src/tests/` beside the grammar that builds the node. | **73 of 73** `NONE`s in that package matched a Rust test *by exact name* elsewhere in the tree. Not one was a coincidence. | `pkg/parser/ast` 126 tests: 73 `NONE` (90% uncovered) -> **0 `NONE` (3%)**. The single largest wrong number in the inventory. |
+| **SQL-level ports of executor/planner tests live in `tidb-session`.** `tests_dml_lock_keys.rs` (<- `pkg/executor/{insert,delete}_test.go`) and `tests_join_predicate_placement.rs` / `tests_column_prune.rs` (<- `pkg/planner/core/logical_plans_test.go`) were outside both packages' search paths. | The gaps table above already credits these ports; the inventory could only see them as `REFERENCED`. | `pkg/executor` 364 -> 358 `NONE`, `pkg/planner/core` 179 -> 175. Small, and it confirms the two packages really are ~92% uncovered. |
+| **Extension filter, again.** The scan read `.rs`/`.md`/`.txt` and skipped `.py`/`.tsv`, so `crates/tidb-datatype/scripts/generate_collation_data.py` and `difftests/corpus/coverage/*.tsv` -- which name the Go tests they carry -- counted for nothing. | ~10 names, all in packages outside the mapping. | No total moved. Fixed anyway: an extension is not a judgement about provenance. |
+
+A fourth class was found, **measured, and deliberately not fixed**: a port
+renamed to drop one Go word. `TestGetValidFloat` sat in `NONE` -- and was
+ranked #3 above as an unguarded behavior -- while
+`convert.rs::source_valid_float_prefix_rows` carried all 23 of its rows. The
+only difference was the Go verb `Get`. Relaxing the token rule to "all Go
+words but one" closes it, and 354 others; reading them showed most are
+coincidences (`TestMakeRefTo` "matching"
+`a_refresh_makes_a_stale_cache_usable_again`). Manufacturing parity is worse
+than overstating the gap, so the rule was left alone and the candidates are
+printed in the inventory's **near-miss review queue**, which is explicitly not
+counted. Read one before porting it. Ranked rows 1 and 2 above were stale for
+the same reason -- ports named `go_test_convert_type` / `go_test_to_int64`.
+
+`rust/docs/` is still deliberately excluded from the reference scan: the script
+writes the uncovered list there, so scanning it would let every `NONE` certify
+itself as `REFERENCED` on the next run.
+
+### Closed from `pkg/types` numeric-prefix parsing
+
+| Go tests | Ported to | What the port found |
+| --- | --- | --- |
+| `convert_test.go:843` `TestGetValidInt` (both tables, 15 + 14 rows), `:828` `TestRoundIntStr` (3 rows) | `tidb-datatype/src/convert.rs` `source_valid_integer_prefix_{warning,strict}_rows`, `source_round_integer_string_rows` | Every value matches Go. **One API-shape bug, latent:** `valid_integer_prefix` fused the truncation into an error that also short-circuited `floatStrToIntStr`, so the warning-mode answers were unreachable -- `"123..34"` can only ever be `"123."`, never Go's `"123"`. The two Go tables differ in exactly that way, which is why the source `Context` truncation policy is now a parameter rather than something the caller applies afterwards. No caller exists yet, so nothing was live-wrong. Recorded not fixed: Go raises `ErrTruncatedWrongVal("INTEGER", str)` where this tier reports `InvalidUnsignedInteger`; with no caller the error identity reaches nothing, so only the values are pinned. |
 
 ### Closed from the `pkg/expression` string and arithmetic pool
 

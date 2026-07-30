@@ -93,7 +93,12 @@ MAPPINGS: list[Mapping] = [
     # ---- ring 2: parser / expression / planner / exec ----------------------
     Mapping("pkg/parser", ["rust/crates/tidb-parser/src", "rust/crates/tidb-lexer/src"],
             "WORKSPACE", 3, "one Go package -> two Rust crates (lexer + grammar)"),
-    Mapping("pkg/parser/ast", ["rust/crates/tidb-ast/src"], "WORKSPACE", 2),
+    # `tidb-ast` holds the node structs; every ported `pkg/parser/ast/*_test.go`
+    # restore/visitor test landed in `tidb-parser/src/tests/` beside the grammar
+    # that produces the node. Mapping only `tidb-ast` reported 73/73 of this
+    # package's tests as `NONE` while 73/73 of them exist there by exact name.
+    Mapping("pkg/parser/ast", ["rust/crates/tidb-ast/src",
+                               "rust/crates/tidb-parser/src/tests"], "LAYOUT", 2),
     Mapping("pkg/meta/model", ["rust/crates/tidb-model/src"], "GITLOG", 2),
     # Most of the evidence for pkg/expression is not a Rust `#[test]` at all:
     # it is the per-topic differential corpus, whose headers cite the Go test
@@ -103,13 +108,20 @@ MAPPINGS: list[Mapping] = [
                                "rust/difftests/corpus/expr",
                                "rust/difftests/result-tests/tests"],
             "WORKSPACE", 3),
-    Mapping("pkg/planner/core", ["rust/crates/tidb-planner/src"], "WORKSPACE", 2),
+    Mapping("pkg/planner/core", ["rust/crates/tidb-planner/src",
+                                 "rust/crates/tidb-session/src"], "WORKSPACE", 2),
     Mapping("pkg/planner/util", ["rust/crates/tidb-planner/src"], "WORKSPACE", 2),
     Mapping("pkg/planner/cardinality", ["rust/crates/tidb-planner/src",
                                         "rust/crates/tidb-stats/src"], "WORKSPACE", 2),
     Mapping("pkg/util/ranger", ["rust/crates/tidb-executor/src/index_range.rs",
                                 "rust/crates/tidb-planner/src"], "GITLOG", 3),
-    Mapping("pkg/executor", ["rust/crates/tidb-exec/src", "rust/crates/tidb-executor/src"],
+    # `tidb-session/src/tests_*.rs` is where this tree ports a Go executor or
+    # planner test that is only expressible as SQL against a live engine
+    # (`tests_dml_lock_keys.rs` <- `pkg/executor/{insert,delete}_test.go`,
+    # `tests_join_predicate_placement.rs` <- `pkg/planner/core/logical_plans_test.go`).
+    # Without it those ports scored `REFERENCED` at best.
+    Mapping("pkg/executor", ["rust/crates/tidb-exec/src", "rust/crates/tidb-executor/src",
+                             "rust/crates/tidb-session/src"],
             "WORKSPACE", 2, "one Go package -> two Rust crates (seed exec + typed executor)"),
     Mapping("pkg/executor/aggfuncs", ["rust/crates/tidb-exec/src/aggregate",
                                       "rust/crates/tidb-exec/src/aggregate.rs"], "LAYOUT", 2),
@@ -199,6 +211,7 @@ class PkgReport:
     missing_rust: bool = False
     missing_go: bool = False
     cited_files: set = field(default_factory=set)
+    near: dict = field(default_factory=dict)  # NONE go name -> nearest rust name
 
 
 GO_TOOL = "./rust/difftests/tools/go_test_declaration_inventory"
@@ -295,8 +308,14 @@ def build_reference_index() -> tuple[str, dict[str, set[str]]]:
     # `corpus/<ns>/<topic>.txt` header names the Go test its rows were
     # transcreated from. Their `.golden.txt` partners are machine-written label
     # dumps with no prose, so reading them could only add noise.
+    # `.py` and `.tsv` are here for the same reason `.txt` is: a generator
+    # script and the `corpus/coverage/*.tsv` inventories both name the Go test
+    # whose obligation they carry, and an extension filter is not a judgement
+    # about provenance. `rust/docs/` is deliberately NOT a reference root --
+    # this script writes the uncovered list there, so scanning it would let
+    # every `NONE` certify itself as `REFERENCED` on the next run.
     for root in REFERENCE_ROOTS:
-        for pat in ("*.rs", "*.md", "*.txt"):
+        for pat in ("*.rs", "*.md", "*.txt", "*.py", "*.tsv"):
             for f in (REPO / root).rglob(pat):
                 if f.name.endswith(".golden.txt"):
                     continue
@@ -334,6 +353,34 @@ def match(go: list[GoTest], rust: list[str], refblob: str) -> dict:
     return res
 
 
+def near_misses(matches: dict, rust: list[str]) -> dict:
+    """For each `NONE`, the nearest Rust test: every Go word but one.
+
+    This is a REVIEW QUEUE, not an evidence tier, and it is not counted
+    anywhere. It exists because `pkg/types/convert_test.go` `TestGetValidFloat`
+    sat in `NONE` -- and was ranked as an unguarded behavior in the companion
+    doc -- while `convert.rs::source_valid_float_prefix_rows` carried all 23 of
+    its rows. The only thing between them was the Go verb `Get`. Loosening the
+    match rule to close that was measured and rejected: it converts 355 rows
+    tree-wide and most of them are coincidences (`TestMakeRefTo` "matching" a
+    cache-refresh test). So the near miss is printed for a human to read and
+    the Go test stays uncovered until one does.
+    """
+    rust_tokens = {r: "_".join(tokens(r)) for r in rust}
+    out = {}
+    for go_name, (evidence, _) in matches.items():
+        if evidence != "NONE":
+            continue
+        want = tokens(go_name.split(".")[-1])
+        if len(want) < 2:
+            continue
+        for r in rust:
+            if sum(1 for t in want if t not in rust_tokens[r]) == 1:
+                out[go_name] = r
+                break
+    return out
+
+
 def run(cache: Path | None = None) -> list[PkgReport]:
     refblob, cited = build_reference_index()
     go_by_pkg = load_go_declarations(cache)
@@ -345,6 +392,7 @@ def run(cache: Path | None = None) -> list[PkgReport]:
         r.rust_tests, r.missing_rust = collect_rust(m)
         r.matches = match(r.go_tests, r.rust_tests, refblob)
         r.cited_files = cited.get(m.go_pkg, set())
+        r.near = near_misses(r.matches, r.rust_tests)
         reports.append(r)
     return reports
 
@@ -459,6 +507,30 @@ def render(reports: list[PkgReport]) -> str:
         A("")
         for g in sorted(none, key=lambda x: (x.file, x.line)):
             A(f"- `{g.name}` -- `{r.m.go_pkg}/{g.file}:{g.line}`")
+        A("")
+
+    A("## Near-miss review queue (NOT coverage)")
+    A("")
+    A("Every entry below is still counted as `NONE` above. These are `NONE` Go")
+    A("tests where some Rust test in the same mapped paths shares all but one of")
+    A("the Go name's words. **Read one before porting it**, because that is how")
+    A("`TestGetValidFloat` -- ranked as an unguarded behavior in the companion")
+    A("doc -- stayed uncovered on paper while `convert.rs`")
+    A("`source_valid_float_prefix_rows` carried all 23 of its rows: the only")
+    A("difference was the Go verb `Get`.")
+    A("")
+    A("Most rows here are coincidences. Accepting them automatically was measured")
+    A("(355 tree-wide) and rejected: a rule that turns `TestMakeRefTo` into")
+    A("`a_refresh_makes_a_stale_cache_usable_again` manufactures parity, which is")
+    A("worse than overstating the gap.")
+    A("")
+    for r in sorted(reports, key=lambda x: (-x.m.risk, x.m.go_pkg)):
+        if not r.near or r.m.risk < 2:
+            continue
+        A(f"### `{r.m.go_pkg}` (risk {r.m.risk}) -- {len(r.near)} to read")
+        A("")
+        for go_name, rust_name in sorted(r.near.items()):
+            A(f"- `{go_name}` ~ `{rust_name}`")
         A("")
     return "\n".join(L) + "\n"
 
