@@ -237,8 +237,12 @@ fn test_binary_operation_expr_with_flags() {
             panic!("expected expression field");
         };
         assert_eq!(
+            // Go's `format.DefaultRestoreFlags`, which is `RestoreFlags::DEFAULT`
+            // -- NOT `RestoreFlags::default()`, whose derived value is the EMPTY
+            // flag set. The two only looked alike while every case-sensitive
+            // piece of this restore was hardcoded.
             expr.restore_with_flags(
-                tidb_ast::RestoreFlags::default()
+                tidb_ast::RestoreFlags::DEFAULT
                     | tidb_ast::RestoreFlags::SPACES_AROUND_BINARY_OPERATION,
             ),
             expected
