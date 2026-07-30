@@ -2,15 +2,11 @@
 # same commit, with the reason as a comment above the entry. A file at or
 # under the 2,200 soft limit must have its entry REMOVED.
 crates/tidb-distsql/tests/direct_unary_client_runtime_source.rs 3135
-crates/tidb-session/src/sysvar.rs 12028
-crates/tidb-session/src/tests_core.rs 4512
 crates/tidb-executor/src/driver/tests.rs 3486
 crates/tidb-server/src/cluster_session_node/mod.rs 3111
 crates/tidb-executor/src/kv_table.rs 2705
 crates/tidb-txnkv/src/transaction/coordinator.rs 2629
 crates/tidb-pd-client/src/client.rs 2539
 crates/tidb-txnkv/src/region/cache.rs 2518
-crates/tidb-session/src/tests_grants.rs 2491
-crates/tidb-session/src/tests_window.rs 2417
 crates/tidb-server/src/real_tikv_node.rs 2310
 crates/tidb-executor/src/ddl.rs 2240

@@ -12,76 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! System-variable catalog entries `identity` .. `internal_tmp_disk_storage_engine`.
+//! The `innodb_*` engine knobs, accepted for MySQL compatibility.
 //!
-//! One alphabetical slice of the registry captured from Go
-//! `pkg/sessionctx/variable/sysvar.go`'s `sysVars`; see the `sysvar` module
-//! doc for how the values were captured and what is not modelled.
+//! `innodb_adaptive_flushing` .. `innodb_write_io_threads` -- 115 entries, name-ordered.
+//!
+//! Captured from Go `pkg/sessionctx/variable/sysvar.go`'s `sysVars`. The
+//! registry is one flat name-ordered slice because lookup binary-searches
+//! it, so each subject file keeps its own entries sorted and `catalog.rs`
+//! MERGES them; see the `sysvar` module doc.
 
-use crate::sysvar::{SysVarDef, VarType};
+use super::super::{SysVarDef, VarType};
 
-/// 123 entries, in the registry's name order.
-pub(super) static ENTRIES: [SysVarDef; 123] = [
-    SysVarDef {
-        name: "identity",
-        scope: 2,
-        value: "0",
-        var_type: VarType::Unsigned,
-        read_only: false,
-        allow_auto_value: false,
-        min_value: 0,
-        max_value: 18446744073709551615,
-        possible_values: &[],
-        auto_convert_negative_bool: false,
-    },
-    SysVarDef {
-        name: "ignore_builtin_innodb",
-        scope: 0,
-        value: "0",
-        var_type: VarType::Str,
-        read_only: false,
-        allow_auto_value: false,
-        min_value: 0,
-        max_value: 0,
-        possible_values: &[],
-        auto_convert_negative_bool: false,
-    },
-    SysVarDef {
-        name: "information_schema_stats_expiry",
-        scope: 3,
-        value: "86400",
-        var_type: VarType::Str,
-        read_only: false,
-        allow_auto_value: false,
-        min_value: 0,
-        max_value: 0,
-        possible_values: &[],
-        auto_convert_negative_bool: false,
-    },
-    SysVarDef {
-        name: "init_connect",
-        scope: 1,
-        value: "",
-        var_type: VarType::Str,
-        read_only: false,
-        allow_auto_value: false,
-        min_value: 0,
-        max_value: 0,
-        possible_values: &[],
-        auto_convert_negative_bool: false,
-    },
-    SysVarDef {
-        name: "init_slave",
-        scope: 1,
-        value: "",
-        var_type: VarType::Str,
-        read_only: false,
-        allow_auto_value: false,
-        min_value: 0,
-        max_value: 0,
-        possible_values: &[],
-        auto_convert_negative_bool: false,
-    },
+pub(super) static ENTRIES: [SysVarDef; 115] = [
     SysVarDef {
         name: "innodb_adaptive_flushing",
         scope: 1,
@@ -1454,42 +1396,6 @@ pub(super) static ENTRIES: [SysVarDef; 123] = [
         name: "innodb_write_io_threads",
         scope: 0,
         value: "4",
-        var_type: VarType::Str,
-        read_only: false,
-        allow_auto_value: false,
-        min_value: 0,
-        max_value: 0,
-        possible_values: &[],
-        auto_convert_negative_bool: false,
-    },
-    SysVarDef {
-        name: "insert_id",
-        scope: 2,
-        value: "",
-        var_type: VarType::Str,
-        read_only: false,
-        allow_auto_value: false,
-        min_value: 0,
-        max_value: 0,
-        possible_values: &[],
-        auto_convert_negative_bool: false,
-    },
-    SysVarDef {
-        name: "interactive_timeout",
-        scope: 3,
-        value: "28800",
-        var_type: VarType::Unsigned,
-        read_only: false,
-        allow_auto_value: false,
-        min_value: 1,
-        max_value: 31536000,
-        possible_values: &[],
-        auto_convert_negative_bool: false,
-    },
-    SysVarDef {
-        name: "internal_tmp_disk_storage_engine",
-        scope: 1,
-        value: "",
         var_type: VarType::Str,
         read_only: false,
         allow_auto_value: false,

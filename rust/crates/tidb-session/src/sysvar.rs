@@ -92,6 +92,21 @@ pub struct SysVarDef {
 }
 
 impl SysVarDef {
+    /// A fill value for the catalog merge's output array before every slot is
+    /// written. It is never observed: the merge writes exactly `TOTAL` slots.
+    pub(crate) const PLACEHOLDER: Self = Self {
+        name: "",
+        scope: 0,
+        value: "",
+        var_type: VarType::Str,
+        read_only: false,
+        allow_auto_value: false,
+        min_value: 0,
+        max_value: 0,
+        possible_values: &[],
+        auto_convert_negative_bool: false,
+    };
+
     /// Go `HasSessionScope`.
     #[must_use]
     pub fn has_session_scope(&self) -> bool {
