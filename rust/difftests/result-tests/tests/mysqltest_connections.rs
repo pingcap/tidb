@@ -226,6 +226,23 @@ impl Connections {
         self.next_connection_id += 1;
         session.attach_privileges(self.privileges.clone());
         session.attach_globals(self.globals.clone());
+        // mysql-tester issues these two on EVERY connection it opens, before
+        // the script's first statement, to make the executor cross a chunk
+        // boundary on small tables. They are in the recorded output's
+        // provenance, not the engine's defaults: `r/sessionctx/setvar.result`
+        // records `select @@tidb_max_chunk_size` as 32 and
+        // `@@tidb_init_chunk_size` as 1, while the registry defaults (and a
+        // `gorun` session, which is not driven by mysql-tester) answer 1024
+        // and 32. The strings are the tester binary's own, verbatim:
+        // `SET @@tidb_init_chunk_size=1` and `SET @@tidb_max_chunk_size=32`.
+        for setup in [
+            "SET @@tidb_init_chunk_size=1",
+            "SET @@tidb_max_chunk_size=32",
+        ] {
+            session
+                .run(setup)
+                .expect("mysql-tester's per-connection setup is accepted");
+        }
         session
     }
 }
