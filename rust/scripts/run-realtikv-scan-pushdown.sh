@@ -21,7 +21,14 @@
 #     TINYINT -- in either operand order;
 #   * `IS NULL` and `IS NOT NULL`;
 #   * `IN` and `NOT IN` over integer constants;
-#   * `OR` and `NOT` composed over any of those.
+#   * `OR` and `NOT` composed over any of those;
+#   * a BUILTIN CALL of the math family -- `MOD`, `ROUND`, `SIN`, `ASIN`,
+#     `COS`, `ACOS`, `ATAN`, `ATAN2`, `COT`, `POW`, `POWER`, `PI` -- resolved
+#     to Go's own `tipb.ScalarFuncSig` by `tidb_expr::pushdown_catalog`, with
+#     the implicit `CastIntAsReal` wrappers Go's `newBaseBuiltinFuncWithTp`
+#     inserts. This is the family whose signature depends on the ARGUMENT
+#     TYPES, so a signature resolved from the wrong type is the failure mode
+#     the wire-count equality below exists to catch.
 #
 # and it refuses, on purpose, two shapes Go itself does not send as written: a
 # non-positive constant against an UNSIGNED column (Go's
@@ -328,6 +335,50 @@ compare() {
   esac
 }
 
+# `error_case <label> <query> <known_rust_code>`: a statement that FAILS.
+#
+# A pushed builtin that errors locally but not remotely, or the reverse, is a
+# divergence a rows comparison cannot see, because a statement that errors
+# returns no rows on either side. `COT(0)` is the case in the math family: MySQL
+# and TiDB raise ER_DATA_OUT_OF_RANGE (1690) rather than returning NULL.
+#
+# TWO checks, deliberately separate, because they are different facts:
+#
+#   1. BOTH nodes fail. This is the safety property: whichever side evaluates
+#      the expression, the statement does not quietly succeed with a different
+#      row set. A pushed predicate is evaluated by TiKV, so this is also the
+#      only place TiKV's own error is observed.
+#   2. This node's error NUMBER is the one currently known. TiDB says 1690;
+#      this node does not, and the `known_rust_code` argument records what it
+#      does say so the gap is pinned rather than asserted away. The gap is NOT
+#      introduced by push-down -- the projection control below shows the same
+#      number with no scan involved -- and its two halves are separately owned:
+#      the builtin's own error mapping (`Eval(FloatOverflow)` where TiDB raises
+#      ER_DATA_OUT_OF_RANGE), and `cop_scan`'s handling of a coprocessor error
+#      response (`Unsupported("table bytes failed to decode")` where TiKV did
+#      report the error). Both are outside the push-down catalog.
+error_case() {
+  local label=$1 query=$2 known_rust_code=$3
+  local go_out rust_out go_code rust_code
+  go_out=$(go_sql -N -B -e "USE pushdiff; ${query}" 2>&1) || true
+  rust_out=$(rust_sql -N -B -e "USE pushdiff; ${query}" 2>&1) || true
+  go_code=$(printf '%s\n' "${go_out}" | sed -n 's/^ERROR \([0-9]*\).*/\1/p' | head -1)
+  rust_code=$(printf '%s\n' "${rust_out}" | sed -n 's/^ERROR \([0-9]*\).*/\1/p' | head -1)
+  echo
+  echo "--- ${label}"
+  echo "    ${query}"
+  printf '      GO   error %s: %s\n' "${go_code:-<none>}" \
+    "$(printf '%s' "${go_out}" | head -1)"
+  printf '      RUST error %s: %s\n' "${rust_code:-<none>}" \
+    "$(printf '%s' "${rust_out}" | head -1)"
+  check "${label}: the Go node raises an error" test -n "${go_code}"
+  check "${label}: and so does this node, rather than answering rows" \
+    test -n "${rust_code}"
+  check "${label}: this node's error number is the known ${known_rust_code}, \
+not yet TiDB's ${go_code}" \
+    test "${rust_code}" = "${known_rust_code}"
+}
+
 echo
 echo "=== the comparison operators, over every integer width the lowering claims"
 compare "signed BIGINT, column on the left" \
@@ -384,6 +435,129 @@ compare "a pushed disjunction beside a pushed comparison" \
   "SELECT id FROM t WHERE (sbig = 500 OR sbig = 900) AND ubig > 100 ORDER BY id" pushed
 
 echo
+echo "=== the math builtin family, newly pushed through the push-down catalog"
+# Each of these is a BUILTIN CALL evaluated by TiKV as a Selection condition,
+# resolved to Go's own tipb.ScalarFuncSig by `tidb_expr::pushdown_catalog`. The
+# `pushed` expectation asserts `wire == qualifying rows`, so a remote filter
+# that is weaker OR stronger than the local one fails here -- which is the only
+# way a wrongly-resolved signature can be caught, because rows returned alone
+# cannot distinguish "TiKV filtered correctly" from "TiKV filtered wrongly and
+# the local pass repaired it".
+#
+# MOD over signed and unsigned columns, which is four different signatures on
+# Go's side (ModIntSignedSigned / ModIntUnsignedSigned) selected by the
+# UNSIGNED flag alone -- the same argument value, a different function.
+compare "MOD over a signed BIGINT column" \
+  "SELECT id FROM t WHERE mod(sbig, 100) ORDER BY id" pushed
+compare "MOD over an UNSIGNED BIGINT column picks the other signature" \
+  "SELECT id FROM t WHERE mod(ubig, 100) ORDER BY id" pushed
+compare "MOD between two columns" \
+  "SELECT id FROM t WHERE mod(sbig, sint) ORDER BY id" pushed
+# ROUND over an integer column keeps the integer domain (RoundInt), and over a
+# narrow one too.
+compare "ROUND over a signed BIGINT column" \
+  "SELECT id FROM t WHERE round(sbig) ORDER BY id" pushed
+compare "ROUND over a SMALLINT column" \
+  "SELECT id FROM t WHERE round(small) ORDER BY id" pushed
+# The trigonometric family, whose arguments Go wraps in CastIntAsReal. ACOS is
+# the NULL-domain case: it is NULL for every argument outside [-1, 1] and
+# exactly 0 (false) at 1, so only `tiny IN (-1, 0)` qualifies -- if TiKV and
+# this engine disagreed about the out-of-domain result being NULL rather than an
+# error or a number, the wire count would not equal the row count.
+compare "ACOS over a TINYINT column, NULL outside its domain" \
+  "SELECT id, tiny FROM t WHERE acos(tiny) ORDER BY id" pushed
+compare "ASIN over a TINYINT column" \
+  "SELECT id, tiny FROM t WHERE asin(tiny) ORDER BY id" pushed
+compare "SIN over a TINYINT column, zero only at zero" \
+  "SELECT id, tiny FROM t WHERE sin(tiny) ORDER BY id" pushed
+compare "COS over a TINYINT column, never exactly zero" \
+  "SELECT id, tiny FROM t WHERE cos(tiny) ORDER BY id" pushed
+compare "ATAN with one argument" \
+  "SELECT id, tiny FROM t WHERE atan(tiny) ORDER BY id" pushed
+# `PI()` takes no argument, so it is truthy for every row: a Selection travels
+# and rejects nothing, and there is no row saving to assert. The `pushed` case
+# above would fail its wire-saving check for a reason that is not a defect, so
+# this one is spelled out: the same rows, and a Selection in the DAG.
+PI_QUERY="SELECT id FROM t WHERE pi() ORDER BY id"
+wire "${PI_QUERY}"
+echo
+echo "--- PI(), a constant predicate that travels and rejects nothing"
+echo "    ${PI_QUERY}"
+printf '      wire: %s rows of %s   dag: %s\n' \
+  "${WIRE_ROWS}" "${TABLE_ROWS}" "${WIRE_SHAPE}"
+check "PI(): both nodes returned the same rows, value for value" \
+  test "$(go_rows "${PI_QUERY}")" = "$(rust_rows "${PI_QUERY}")"
+check "PI(): the DAG carried a Selection" has_selection
+check "PI(): which rejects nothing, so the whole relation crosses the wire" \
+  test "${WIRE_ROWS}" -eq "${TABLE_ROWS}"
+compare "ATAN2 over two columns" \
+  "SELECT id FROM t WHERE atan2(tiny, small) ORDER BY id" pushed
+# The base is the UNSIGNED column, which is never zero here, and the exponent
+# the TINYINT one: `POW(0, <negative>)` and a large exponent are both out of
+# DOUBLE range, which TiDB raises as an error rather than returning -- that is
+# the `COT(0)` case again and it has its own section below.
+compare "POW over two integer columns, one of them UNSIGNED" \
+  "SELECT id, tiny FROM t WHERE pow(ubig, tiny) ORDER BY id" pushed
+# ... but POW with an integer CONSTANT exponent refuses, on purpose: the Real
+# slot needs a cast, and Go folds `CAST(2 AS REAL)` at plan time and sends a
+# Float64 literal, which this tier does not encode. Sending
+# `CastIntAsReal(Int64(2))` instead would be a different expression tree from
+# the one Go sends, so the catalog refuses and the conjunct is applied locally.
+compare "POW with an integer constant exponent, refused by the constant rule" \
+  "SELECT id, tiny FROM t WHERE pow(tiny, 2) ORDER BY id" refused
+# The composition rules apply to a pushed builtin exactly as to a comparison.
+compare "NOT over a pushed builtin" \
+  "SELECT id FROM t WHERE NOT mod(sbig, 100) ORDER BY id" pushed
+compare "OR mixing a pushed builtin with a comparison" \
+  "SELECT id FROM t WHERE mod(sbig, 1000) = 0 OR sbig = 500 ORDER BY id" refused
+compare "a pushed builtin beside a pushed comparison" \
+  "SELECT id FROM t WHERE acos(tiny) AND sbig > -900 ORDER BY id" pushed
+# And the cap-and-predicate invariant with a builtin in the pushed half. The
+# smoke driver does not offer the source a LIMIT, so the wire count is the
+# UNLIMITED qualifying count; it is read off the Go node rather than guessed,
+# and the rows the two nodes return -- not this counter -- are what prove the
+# cap invariant.
+ACOS_ROWS=$(go_sql -Nse "USE pushdiff; SELECT COUNT(*) FROM t WHERE acos(tiny)")
+echo "  (acos(tiny) qualifies ${ACOS_ROWS} of ${TABLE_ROWS} rows)"
+compare "LIMIT over a fully pushed builtin predicate" \
+  "SELECT id FROM t WHERE acos(tiny) ORDER BY id LIMIT 3" pushed "${ACOS_ROWS}"
+compare "LIMIT over a builtin whose sibling conjunct did not lower" \
+  "SELECT id FROM t WHERE acos(tiny) AND sbig = '-950' ORDER BY id LIMIT 3" pushed "${ACOS_ROWS}"
+
+echo
+echo "=== the error case of the math family, on both nodes"
+# `COT(0)` is out of DOUBLE range, which TiDB reports as an ERROR and not as
+# NULL. The predicate is pushed, so the expression is evaluated by TiKV -- and
+# the error must still reach the client with the same number.
+error_case "COT(0) is an error, not NULL, and the pushed form still says so" \
+  "SELECT id FROM t WHERE cot(tiny) ORDER BY id" 1105
+# The same expression outside any pushed predicate, as the control: the error
+# number gap is the builtin's own and not something push-down introduced.
+error_case "COT(0) written as a projection, the control" \
+  "SELECT cot(0)" 1105
+
+echo
+echo "=== builtins the catalog deliberately does not hold: right rows, no Selection"
+# TAN is absent from Go's own TiKV whitelist (the source comment cites Rust's
+# LLVM math precision differing from cmath), so pushing it would be a bug and
+# not merely a widening -- this case is live coverage for that.
+compare "TAN, which Go itself refuses to push to TiKV" \
+  "SELECT id FROM t WHERE tan(sbig) ORDER BY id" refused
+# ABS is on Go's whitelist but has no catalog row yet, so it refuses: a gap,
+# named, that still answers correctly.
+compare "ABS, on Go's whitelist but not yet in the catalog" \
+  "SELECT id FROM t WHERE abs(sbig) ORDER BY id" refused
+# ROUND with a frac argument is one of the signatures the TiKV switch excludes.
+compare "ROUND with a frac argument, which the TiKV switch excludes" \
+  "SELECT id FROM t WHERE round(sbig, 1) ORDER BY id" refused
+# An argument that is not a column, an integer constant, or a nested catalog
+# call is not describable, so the whole conjunct stays above the scan.
+compare "a builtin over an arithmetic argument" \
+  "SELECT id FROM t WHERE sin(sbig + 1) ORDER BY id" refused
+compare "a builtin over a non-integer constant argument" \
+  "SELECT id FROM t WHERE mod(sbig, 2.5) ORDER BY id" refused
+
+echo
 echo "=== the deliberate refusals: right rows, no Selection"
 # Go's `refineArgsByUnsignedFlag` rewrites a non-positive constant against an
 # UNSIGNED column into a comparison whose truth value it already knows. This
@@ -424,16 +598,38 @@ compare "LIMIT over a predicate only half of which lowers" \
 echo
 echo "=== what is NOT pushed, and why (not a failure, a scope statement)"
 cat <<'NOTE'
-  Every one of the 55 expressions in Go's `TestExprPushDownToTiKV` pushed
-  table is still refused, and none of them is reachable by widening the
-  predicate set: every row of that table is a BUILTIN FUNCTION CALL
-  (sin(i), date_format(d, s), conv(s, i, i), ...), not a comparison, a
-  logical connective, IS NULL or IN. Reaching them needs a
-  name-to-ScalarFuncSig resolution catalog and the cast-inserting type
-  inference Go's `getFunction` performs; `ScalarFunction` in this tree
-  carries no resolved signature at all. That gap is tracked by the
-  `#[ignore]`d `tikv_pushes_what_go_pushes` and pinned by the running
-  `every_go_pushable_expression_is_still_refused_here`, both in
+  Twelve of the 50 expressions in Go's `TestExprPushDownToTiKV` pushed table
+  now push here -- the math family: sin, asin, cos, acos, atan, cot, atan2,
+  pi, round, mod, pow, power. The signature each resolves to is Go's own,
+  chosen by `tidb_expr::pushdown_catalog` from the argument types exactly as
+  Go's per-family `getFunction` does, and the rows-versus-wire cases above are
+  the live proof that TiKV's evaluation of them agrees with this engine's.
+
+  The other 38 are still refused, each for a reason and not an omission:
+
+    * the string family (conv, substr/substring/mid, char_length, upper,
+      lower) resolves its result COLLATION through Go's `deriveCollation` as
+      well as its signature, and its TiPB leaves carry a real collation id --
+      the very thing TiKV compares strings with, so guessing one would change
+      an answer. Note also that a scan projecting a VARCHAR column is refused
+      remotely outright by `cop_scan`'s own PROJECTION gate, which is a
+      separate gap from this one.
+    * the date family (date_format, hour, minute, second, month, microsecond,
+      date, week, datediff) needs the temporal cast wrappers
+      `WrapWithCastAsTime` inserts, which carry a target FieldType of their
+      own rather than the fixed one an ETReal slot has.
+    * the date_add/date_sub/adddate/subdate family additionally sends the
+      INTERVAL unit as a third string argument and picks among more than
+      twenty signatures by unit and argument type.
+    * the JSON family needs the ETJson TiPB field type and the implicit
+      CAST(... AS JSON) wrappers.
+    * from_unixtime, unix_timestamp and timestampdiff need the session time
+      zone in the DAG request, which this scan path does not yet send.
+
+  That split is tracked by `GO_PUSHES_HERE_TOO` (asserted running) and
+  `GO_PUSHES_NOT_HERE_YET` (the `#[ignore]`d `tikv_pushes_what_go_pushes`,
+  pinned as refused by
+  `every_not_yet_pushable_expression_is_still_refused_here`), both in
   `tidb_executor::scan_pushdown`.
 
   Also still refused, each for a stated reason rather than an omission:
