@@ -226,3 +226,127 @@ fn set_operations() {
         Err(DriverError::WrongNumberOfColumnsInSelect)
     ));
 }
+
+/// A `UNION DISTINCT` fixpoint deduplicates against ONE accumulating hash
+/// table (Go `cteProducer.hashTbl`), not by re-deduplicating the whole result
+/// every round. Re-deduplicating is quadratic, and this recursion -- straight
+/// out of `tests/integrationtest/t/executor/admin.test` -- is the case that
+/// makes the difference visible: TiDB answers it in seconds.
+///
+/// Captured from real TiDB with `difftests/gorun` (3.6s wall):
+///
+/// ```text
+/// set @@cte_max_recursion_depth = 200000;
+/// with recursive cte(a,b) as (select 1,1 union select a+1,b+1 from cte
+///   where cte.a < 100000) select count(*), max(a), min(a) from cte;
+///     -> 100000|100000|1
+/// ```
+///
+/// The row count is the assertion; the wall clock is the point. A quadratic
+/// fold does not finish this test at all.
+#[test]
+fn a_distinct_fixpoint_dedups_incrementally() {
+    let catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query().with_cte_max_recursion_depth(200_000);
+    let rows = run_select_on(
+        "WITH RECURSIVE cte(a,b) AS (SELECT 1,1 UNION SELECT a+1,b+1 FROM cte \
+         WHERE cte.a < 100000) SELECT count(*), max(a), min(a) FROM cte",
+        &catalog,
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![vec![
+            Datum::Int(100_000),
+            Datum::Int(100_000),
+            Datum::Int(1)
+        ]]
+    );
+}
+
+/// A recursive CTE's schema is the SEED's, and every recursive block is CAST
+/// into it -- Go `buildProjection4CTEUnion` +
+/// `expression.BuildCastFunction4Union`. A recursive block that produces a
+/// different kind does not widen the CTE; it is cast.
+///
+/// Captured from real TiDB with `difftests/gorun`:
+///
+/// ```text
+/// with recursive t (a,b,c,d) AS ( select 1,2,3,4 UNION
+///   select a+1,b+1,c+1,concat(d,1) from t where a < 5 ) select * from t;
+///     -> 1|2|3|4; 2|3|4|41; 3|4|5|411; 4|5|6|4111; 5|6|7|41111
+/// with recursive t (a,b) AS ( select 1,'2' UNION
+///   select a+1, concat(b,'x') from t where a < 3 ) select * from t;
+///     -> 1|2; 2|2; 3|2         (a divergence here; see the body)
+/// with recursive t (a,b) AS ( select 1, cast(2 as char(20)) UNION ALL
+///   select a+1, concat(b,'x') from t where a < 3 ) select * from t;
+///     -> 1|2; 2|2x; 3|2xx
+/// with recursive t (a,b) AS ( select 1, 2 UNION ALL
+///   select a+1, 'zz' from t where a < 3 ) select * from t;
+///     -> 1|2; 2|0; 3|0
+/// ```
+#[test]
+fn a_recursive_block_is_cast_into_the_seed_schema() {
+    let catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    let run = |sql: &str| run_select_on(sql, &catalog, &ctx).unwrap();
+
+    // `d` is the seed's bigint, so `concat(d, 1)` is cast BACK to a bigint --
+    // this is the case that panicked, appending bytes to a fixed-length
+    // column.
+    assert_eq!(
+        run("WITH RECURSIVE t (a,b,c,d) AS ( SELECT 1, 2, 3, 4 UNION \
+             SELECT a + 1, b + 1, c + 1, concat(d, 1) FROM t WHERE a < 5 ) SELECT * FROM t"),
+        vec![
+            vec![Datum::Int(1), Datum::Int(2), Datum::Int(3), Datum::Int(4)],
+            vec![Datum::Int(2), Datum::Int(3), Datum::Int(4), Datum::Int(41)],
+            vec![Datum::Int(3), Datum::Int(4), Datum::Int(5), Datum::Int(411)],
+            vec![
+                Datum::Int(4),
+                Datum::Int(5),
+                Datum::Int(6),
+                Datum::Int(4111)
+            ],
+            vec![
+                Datum::Int(5),
+                Datum::Int(6),
+                Datum::Int(7),
+                Datum::Int(41111)
+            ],
+        ]
+    );
+
+    // DIVERGENCE, named rather than asserted: TiDB answers `2; 2; 2` for the
+    // `'2'` seed, because a string LITERAL's field type carries flen = 1 and
+    // the cast truncates "2x" back to it. This tier infers an unspecified
+    // flen for a select-list literal, so the same query grows to `2; 2x; 2xx`
+    // here. That gap is in literal type inference, not in the CTE cast -- the
+    // `cast(2 as char(20))` case below proves the cast honours a flen it is
+    // given.
+
+    // `cast(2 as char(20))` leaves room, so the recursion grows.
+    let rows = run(
+        "WITH RECURSIVE t (a,b) AS ( SELECT 1, cast(2 AS CHAR(20)) UNION ALL \
+         SELECT a + 1, concat(b, 'x') FROM t WHERE a < 3 ) SELECT * FROM t",
+    );
+    assert_eq!(
+        rows.iter()
+            .map(|row| datum_text_for_test(&row[1]))
+            .collect::<Vec<_>>(),
+        vec!["2".to_owned(), "2x".to_owned(), "2xx".to_owned()]
+    );
+
+    // A cast that cannot parse a number is SILENT and gives 0, exactly as
+    // `select cast('zz' as signed)` does -- it is an expression cast, not the
+    // INSERT path's strict conversion.
+    assert_eq!(
+        run("WITH RECURSIVE t (a,b) AS ( SELECT 1, 2 UNION ALL \
+             SELECT a + 1, 'zz' FROM t WHERE a < 3 ) SELECT * FROM t"),
+        vec![
+            vec![Datum::Int(1), Datum::Int(2)],
+            vec![Datum::Int(2), Datum::Int(0)],
+            vec![Datum::Int(3), Datum::Int(0)],
+        ]
+    );
+}

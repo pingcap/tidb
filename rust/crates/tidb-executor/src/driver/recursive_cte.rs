@@ -38,10 +38,16 @@
 //!   whole accumulated table. This is required, not an optimization: the
 //!   classic counter yields `1,2,3,4,5`, which a whole-table rescan would
 //!   double-count.
-//! - `UNION` deduplicates against the WHOLE accumulated result every round
-//!   (Go's hash table over `resTbl`), which is what makes a cyclic graph
-//!   terminate; `UNION ALL` does not, and the same cycle then runs until the
-//!   depth bound refuses it.
+//! - `UNION` deduplicates against everything accumulated so far, which is what
+//!   makes a cyclic graph terminate; `UNION ALL` does not, and the same cycle
+//!   then runs until the depth bound refuses it. The dedup set is Go's
+//!   `cteProducer.hashTbl`: ONE table, added to as rows arrive, never rebuilt.
+//!   Rebuilding it per round is quadratic in the result size, which turns a
+//!   100,000-row recursion TiDB answers in seconds into one that never
+//!   finishes.
+//! - Every recursive block's output is CAST into the SEED's schema (Go
+//!   `buildProjection4CTEUnion`), so the CTE's column types are the seed's and
+//!   a recursive block that produces a different kind does not widen them.
 //! - The bound is `@@cte_max_recursion_depth` rounds (default `1000`), and the
 //!   round it REFUSES is the one it reports: a limit of `3` aborts "after 4
 //!   iterations", the default aborts "after 1001".
@@ -65,8 +71,7 @@
 use tidb_ast::{Expr, Join, JoinNode, QueryStmt, SelectStmt, SetOp, SetOprStmt, SetOprTermBody};
 
 use super::{
-    combine_set_opr, eval_limit_bound, run_select_stmt, run_set_opr_stmt, Catalog, DriverError,
-    MemTable, SelectMeta,
+    eval_limit_bound, run_select_stmt, run_set_opr_stmt, Catalog, DriverError, MemTable, SelectMeta,
 };
 use crate::StmtContext;
 
@@ -165,6 +170,20 @@ fn run_fixpoint(
     let mut round: u64 = 0;
     let depth = ctx.cte_max_recursion_depth();
     let mut scratch = catalog.clone();
+    // Go's `cteProducer.hashTbl`: ONE hash table over everything accumulated
+    // so far, added to as rows arrive. Rebuilding it per round -- which is
+    // what folding through `combine_set_opr` did -- makes the whole fixpoint
+    // quadratic in the result size, and TiDB answers a 100,000-row recursion
+    // in seconds.
+    let distinct = matches!(split.op, SetOp::Union { all: false });
+    let mut seen: std::collections::HashSet<Vec<u8>> = if distinct {
+        accumulated
+            .iter()
+            .map(|row| super::row_key(row))
+            .collect::<Result<_, _>>()?
+    } else {
+        std::collections::HashSet::new()
+    };
     while !delta.is_empty() {
         round += 1;
         if round > depth {
@@ -185,13 +204,18 @@ fn run_fixpoint(
                 unreachable!("split_blocks rejects a nested recursive block")
             };
             let (_, rows) = run_select_stmt(select, &scratch, current_db, ctx)?;
-            produced.extend(rows);
+            produced.extend(cast_to_seed_schema(rows, &columns, ctx));
         }
-        let grown = combine_set_opr(split.op, accumulated.clone(), produced)?;
-        // `combine_set_opr` keeps the accumulated rows as an unchanged prefix
-        // under both UNION kinds, so the new suffix is the next delta.
-        delta = grown[accumulated.len().min(grown.len())..].to_vec();
-        accumulated = grown;
+        // The accumulated rows are an unchanged prefix under both UNION kinds,
+        // so the rows admitted this round ARE the next delta.
+        let start = accumulated.len();
+        for row in produced {
+            if distinct && !seen.insert(super::row_key(&row)?) {
+                continue;
+            }
+            accumulated.push(row);
+        }
+        delta = accumulated[start..].to_vec();
         if let Some(t) = target {
             if accumulated.len() >= t {
                 accumulated.truncate(t);
@@ -200,6 +224,62 @@ fn run_fixpoint(
         }
     }
     Ok((columns, apply_definition_limit(accumulated, set_opr)?))
+}
+
+/// Go `buildProjection4CTEUnion`: the CTE's schema is the SEED's, and every
+/// recursive block's output is cast into it with `BuildCastFunction4Union`.
+///
+/// This is not cosmetic. The seed's types are the ones the CTE's rows are
+/// stored and read under, so a recursive block that produces a different kind
+/// puts a datum in a cell whose column has the wrong shape -- which is exactly
+/// the `append_bytes on a fixed-length column` panic the `cte` topic hit
+/// (`select 1,2,3,4 UNION select a+1,b+1,c+1,concat(d,1) ...`: `d` is a
+/// bigint, `concat` is bytes).
+///
+/// The cast is the EXPRESSION cast, not the INSERT one: it is silent and
+/// never fails the statement. Captured with `gorun`:
+///
+/// ```text
+/// with recursive t (a,b,c,d) AS ( select 1,2,3,4 UNION
+///   select a+1,b+1,c+1,concat(d,1) from t where a < 5 ) select * from t;
+///     -> 1|2|3|4; 2|3|4|41; 3|4|5|411; 4|5|6|4111; 5|6|7|41111
+/// with recursive t (a,b) AS ( select 1,'2' UNION
+///   select a+1, concat(b,'x') from t where a < 3 ) select * from t;
+///     -> 1|2; 2|2; 3|2         (the seed's char(1) TRUNCATES "2x")
+/// with recursive t (a,b) AS ( select 1, cast(2 as char(20)) UNION ALL
+///   select a+1, concat(b,'x') from t where a < 3 ) select * from t;
+///     -> 1|2; 2|2x; 3|2xx      (char(20) leaves room, so it grows)
+/// with recursive t (a,b) AS ( select 1, 2 UNION ALL
+///   select a+1, 'zz' from t where a < 3 ) select * from t;
+///     -> 1|2; 2|0; 3|0         (a cast that cannot parse gives 0, silently:
+///                               `select cast('zz' as signed)` is 0 too)
+/// ```
+///
+/// A conversion this port refuses outright leaves the datum alone rather than
+/// inventing a value: that is the pre-existing behaviour, and it is a visible
+/// wrong kind rather than a silently substituted number.
+fn cast_to_seed_schema(
+    rows: Vec<Vec<tidb_datatype::Datum>>,
+    columns: &[(String, tidb_datatype::FieldType)],
+    ctx: &StmtContext,
+) -> Vec<Vec<tidb_datatype::Datum>> {
+    let flags = ctx.conversion_flags();
+    rows.into_iter()
+        .map(|row| {
+            row.into_iter()
+                .zip(columns)
+                .map(|(value, (_, field_type))| {
+                    if value.is_null() {
+                        return value;
+                    }
+                    match value.convert_to(field_type, flags) {
+                        Ok(converted) => converted.value,
+                        Err(_) => value,
+                    }
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// Where the recursive blocks begin, and the operator that folds them.
