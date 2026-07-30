@@ -47,7 +47,6 @@ const SOFT_LIMIT: usize = 2_200;
 /// with its size THEN as its bound. Growth past the bound fails; shrinking
 /// to the soft limit or below retires the entry.
 const GRANDFATHERED: &[(&str, usize)] = &[
-    ("crates/tidb-parser/tests/parser_run_test_source.rs", 4_668),
     (
         "crates/tidb-distsql/tests/direct_unary_client_runtime_source.rs",
         3_135,
