@@ -50,7 +50,26 @@
 //! happens; only WHICH statement reports it differs.
 //!
 //! The plan cache is not modelled at all -- there is no cache to hit, so
-//! nothing here can report a hit.
+//! nothing here can report a hit. Every `.test` case whose recorded output
+//! includes `select @@last_plan_from_cache` is therefore out of reach by
+//! construction, not by omission.
+//!
+//! # Two divergences this exposed that are NOT the binding's
+//!
+//! Making these statements run reveals gaps that a written statement has
+//! equally, and both were checked in that written form before being attributed
+//! elsewhere:
+//!
+//! * `SELECT * FROM t WHERE pk = 1.0` over `t(pk int primary key)` holding
+//!   `pk = 1` returns NO ROW here while TiDB returns the row. The written
+//!   literal behaves identically to the bound parameter, so the gap is in
+//!   comparing an integer column against a decimal or a numeric string, not in
+//!   binding (`planner/core/tests/prepare/prepare`'s `execute stmt using @a3`
+//!   and `@a4`).
+//! * An unaliased `row_number() over ()` reports the column name `__window_0`
+//!   rather than its source text. That is the window projection's own naming,
+//!   which [`pin_field_names`] cannot reach: the statement carries no marker,
+//!   so it is never restored.
 
 use std::collections::HashMap;
 
