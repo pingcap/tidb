@@ -173,6 +173,7 @@ fn sql_round_trips_through_real_tikv_bytes() {
                     default_value: None,
                     // A column present at CREATE TABLE has no pre-existing rows.
                     origin_default: None,
+                    generated: None,
                 },
                 KvColumn {
                     name: "b".to_owned(),
@@ -181,6 +182,7 @@ fn sql_round_trips_through_real_tikv_bytes() {
                     default_value: None,
                     // A column present at CREATE TABLE has no pre-existing rows.
                     origin_default: None,
+                    generated: None,
                 },
             ],
         ),

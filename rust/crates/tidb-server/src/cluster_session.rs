@@ -221,6 +221,10 @@ fn cluster_table(table: &TableInfo, storage: &ClusterTableStorage) -> Result<KvT
             name,
             id: column.id,
             field_type: column.field_type.clone(),
+            // The cluster catalog loader refuses a generated column outright
+            // (`tidb_exec::cluster_catalog`), so a table that reaches here
+            // never has one.
+            generated: None,
             default_value,
             origin_default,
         });

@@ -1005,6 +1005,7 @@ mod tests {
             field_type: FieldType::new(FieldTypeCode::LongLong),
             default_value: None,
             origin_default: None,
+            generated: None,
         }
     }
 

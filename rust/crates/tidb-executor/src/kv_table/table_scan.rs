@@ -61,8 +61,25 @@ impl KvTable {
     /// asked for only those columns' ids, so an unreferenced column is never
     /// decoded. `None` keeps the whole schema.
     fn row_decoder_projected(&self, keep: Option<&[usize]>) -> RowDecoder {
-        let kept: Option<std::collections::BTreeSet<usize>> =
-            keep.map(|keep| keep.iter().copied().collect());
+        let kept: Option<std::collections::BTreeSet<usize>> = keep.map(|keep| {
+            let mut kept: std::collections::BTreeSet<usize> = keep.iter().copied().collect();
+            // A kept generated column is computed, not decoded, so the
+            // columns its expression READS have to survive the pruning even
+            // when the query never named them. Repeating to a fixed point
+            // covers a chain of generated columns.
+            loop {
+                let before = kept.len();
+                for offset in kept.clone() {
+                    if let Some(generated) = &self.columns[offset].generated {
+                        kept.extend(generated.dependencies.iter().copied());
+                    }
+                }
+                if kept.len() == before {
+                    break;
+                }
+            }
+            kept
+        });
         let column_types: BTreeMap<i64, FieldType> = self
             .columns
             .iter()
@@ -491,6 +508,20 @@ impl RowDecoder {
             &mut row,
             &handle,
         )?;
+        // A VIRTUAL generated column was never written, so it is restored the
+        // same way it was skipped: by evaluating its expression over the row.
+        // This runs BEFORE the projection because the expression may read a
+        // column the projection drops.
+        crate::generated_column::materialize(
+            &self.columns,
+            |i| self.columns[i].name.clone(),
+            &mut row,
+            true,
+        )
+        .map_err(|error| KvTableError::Generation {
+            column: error.column,
+            detail: error.detail,
+        })?;
         if let Some(keep) = &self.keep {
             let projected: Vec<Datum> = keep
                 .iter()

@@ -456,6 +456,7 @@ mod tests {
             field_type: long(),
             default_value: None,
             origin_default: None,
+            generated: None,
         }
     }
 

@@ -194,6 +194,20 @@ pub enum DriverError {
         /// The clause Go names, for example `order clause`.
         clause: String,
     },
+    /// Go `plannererrors.ErrBadGeneratedColumn` (3105): an `INSERT`/`UPDATE`
+    /// assigned a value to a generated column. Only `DEFAULT` is permitted
+    /// there, and it means "leave it to the expression".
+    BadGeneratedColumn {
+        /// The generated column that was written to.
+        column: String,
+        /// The table it belongs to.
+        table: String,
+    },
+    /// Go `dbterror.ErrGeneratedColumnNonPrior` (3107).
+    GeneratedColumnNonPrior,
+    /// Go `dbterror.ErrUnsupportedOnGeneratedColumn` (3106), whose argument
+    /// names what was attempted.
+    UnsupportedOnGeneratedColumn(String),
     /// Go `plannererrors.ErrUnknownTable` (1109): a multi-table `DELETE`
     /// names a target the `FROM`/`USING` clause does not provide -- which
     /// includes naming an aliased source by its stored table name.
@@ -1564,6 +1578,28 @@ impl DriverError {
             1054,
             *b"42S22",
             format!("Unknown column '{column}' in '{clause}'"),
+        ),
+        // Go: "The value specified for generated column '%s' in table '%s' is
+        // not allowed."
+        DriverError::BadGeneratedColumn { column, table } => MysqlError::new(
+            3105,
+            *b"HY000",
+            format!(
+                "The value specified for generated column '{column}' in table '{table}' is not allowed."
+            ),
+        ),
+        // Go: "Generated column can refer only to generated columns defined
+        // prior to it."
+        DriverError::GeneratedColumnNonPrior => MysqlError::new(
+            3107,
+            *b"HY000",
+            "Generated column can refer only to generated columns defined prior to it.".to_owned(),
+        ),
+        // Go: "'%s' is not supported for generated columns."
+        DriverError::UnsupportedOnGeneratedColumn(reason) => MysqlError::new(
+            3106,
+            *b"HY000",
+            format!("'{reason}' is not supported for generated columns."),
         ),
         // Go: "Unknown table '%-.192s' in %-.32s".
         DriverError::UnknownTableInMultiDelete(table) => MysqlError::new(

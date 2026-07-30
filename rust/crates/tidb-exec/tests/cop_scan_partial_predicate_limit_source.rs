@@ -234,6 +234,7 @@ fn column(name: &str, id: i64, unsigned: bool) -> KvColumn {
         field_type,
         default_value: None,
         origin_default: None,
+        generated: None,
     }
 }
 

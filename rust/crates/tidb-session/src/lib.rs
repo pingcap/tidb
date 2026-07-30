@@ -482,6 +482,8 @@ mod tests_explain_derived;
 #[cfg(test)]
 mod tests_foreign_key;
 #[cfg(test)]
+mod tests_generated_columns;
+#[cfg(test)]
 mod tests_global_vars;
 #[cfg(test)]
 mod tests_grants;

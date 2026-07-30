@@ -77,7 +77,7 @@ fn show_create_view_text(view: &tidb_executor::ViewDef) -> String {
 /// one, then the indexes, then the closing paren with the engine and charset.
 ///
 /// NOT MODELLED (documented, and each one rejected at DDL time so no table can
-/// carry it): generated columns, AUTO_INCREMENT, AUTO_RANDOM, ON UPDATE
+/// carry it): AUTO_RANDOM, ON UPDATE
 /// CURRENT_TIMESTAMP, column and index comments, foreign keys, check
 /// constraints, partitioning, temporary tables, views and sequences.
 /// A column prints its own charset/collation only where it differs from the
@@ -102,6 +102,26 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
             // Go writes the pair together for an auto column and prints no
             // default for it.
             clause.push_str(" NOT NULL AUTO_INCREMENT");
+            clauses.push(clause);
+            continue;
+        }
+        // A generated column prints its expression where an ordinary column
+        // prints its DEFAULT, and never prints a DEFAULT of its own -- its
+        // value has one source. Captured from Go: `` `b` int(11) GENERATED
+        // ALWAYS AS (`a` + 1) VIRTUAL`` , with `NOT NULL` still trailing it.
+        if let Some(generated) = &column.generated {
+            clause.push_str(&format!(
+                " GENERATED ALWAYS AS ({}) {}",
+                generated.expr_text,
+                if generated.stored {
+                    "STORED"
+                } else {
+                    "VIRTUAL"
+                }
+            ));
+            if not_null {
+                clause.push_str(" NOT NULL");
+            }
             clauses.push(clause);
             continue;
         }

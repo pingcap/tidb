@@ -376,11 +376,9 @@ pub fn run_create_table_in(
                 }
                 // AUTO_INCREMENT is its own value source, handled below.
                 tidb_ast::ColumnOption::AutoIncrement => {}
-                tidb_ast::ColumnOption::Generated { .. } => {
-                    return Err(DriverError::Unsupported(
-                        "generated columns are not supported yet",
-                    ))
-                }
+                // A generated column's value source is its expression, built
+                // below once every column's name and type is known.
+                tidb_ast::ColumnOption::Generated { .. } => {}
                 _ => {}
             }
         }
@@ -395,6 +393,36 @@ pub fn run_create_table_in(
         ..TableInfo::default()
     };
 
+    // The generated columns, built against the table's own final column list
+    // so their expressions index the stored row directly.
+    let column_names: Vec<String> = info
+        .columns
+        .iter()
+        .map(|c| c.name.original().to_owned())
+        .collect();
+    let column_types: Vec<tidb_datatype::FieldType> =
+        info.columns.iter().map(|c| c.field_type.clone()).collect();
+    let generated = crate::generated_column::build_generated_columns(
+        &create.columns,
+        &column_names,
+        &column_types,
+    )
+    .map_err(generated_column_error)?;
+    // Go `ErrUnsupportedOnGeneratedColumn`: a VIRTUAL generated column cannot
+    // be the primary key, because the key would have no stored value to be.
+    // A STORED one can. Captured: `create table t (a int, b int as (a+1),
+    // primary key(b))` is 3106.
+    for offset in &pk_offsets {
+        if generated[*offset]
+            .as_ref()
+            .is_some_and(|generated| !generated.stored)
+        {
+            return Err(DriverError::UnsupportedOnGeneratedColumn(
+                "Defining a virtual generated column as primary key".to_owned(),
+            ));
+        }
+    }
+
     let kv_columns: Vec<KvColumn> = info
         .columns
         .iter()
@@ -402,6 +430,7 @@ pub fn run_create_table_in(
             name: c.name.original().to_owned(),
             id: c.id,
             field_type: c.field_type.clone(),
+            generated: generated[c.offset as usize].clone(),
             default_value: defaults[c.offset as usize].clone(),
             // A column present at CREATE TABLE has no pre-existing rows.
             origin_default: None,
@@ -474,6 +503,22 @@ pub fn run_create_table_in(
     }
     catalog.register_kv_in(&database, name, table);
     Ok(true)
+}
+
+/// Names a generated-column DDL refusal the way Go's own error does.
+fn generated_column_error(error: crate::generated_column::GeneratedDdlError) -> DriverError {
+    use crate::generated_column::GeneratedDdlError;
+    match error {
+        GeneratedDdlError::UnknownDependency(name) => DriverError::UnknownColumnInClause {
+            column: name,
+            clause: "generated column function".to_owned(),
+        },
+        GeneratedDdlError::NonPrior => DriverError::GeneratedColumnNonPrior,
+        GeneratedDdlError::Unsupported(reason) => {
+            DriverError::UnsupportedOnGeneratedColumn(reason.to_owned())
+        }
+        GeneratedDdlError::Unbuildable(reason) => DriverError::Unsupported(reason),
+    }
 }
 
 #[cfg(test)]

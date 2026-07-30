@@ -509,6 +509,9 @@ fn modify_column_action(
         name: def.name.clone(),
         id: table.columns[offset].id,
         field_type,
+        // A generated column option is refused above, so a MODIFY never
+        // produces one.
+        generated: None,
         default_value: default_value.clone(),
         origin_default: default_value,
     };
@@ -610,6 +613,9 @@ fn add_column_action(
             name: def.name.clone(),
             id,
             field_type,
+            // As in MODIFY: `ALTER TABLE ... ADD COLUMN ... AS (...)` is
+            // refused above rather than silently added as a plain column.
+            generated: None,
             default_value: default_value.clone(),
             // Rows written before this column existed read back the default.
             origin_default: default_value,

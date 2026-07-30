@@ -162,6 +162,20 @@ pub struct KvColumn {
     /// existing rows 7, not NULL, and the row bytes are never rewritten --
     /// the value is filled in on read.
     pub origin_default: Option<Datum>,
+    /// Go `ColumnInfo.GeneratedExprString`/`GeneratedStored`: the column's
+    /// value comes from an expression rather than from the row bytes. `None`
+    /// is an ordinary column. See [`crate::generated_column`].
+    pub generated: Option<crate::generated_column::GeneratedColumn>,
+}
+
+impl crate::generated_column::GeneratedColumnSlot for KvColumn {
+    fn generation(&self) -> Option<&crate::generated_column::GeneratedColumn> {
+        self.generated.as_ref()
+    }
+
+    fn column_type(&self) -> &FieldType {
+        &self.field_type
+    }
 }
 
 /// A table's effective character set and collation: what an unqualified

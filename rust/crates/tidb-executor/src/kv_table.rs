@@ -108,6 +108,15 @@ pub enum KvTableError {
     Encode(String),
     /// Go `ErrDupKeyName` (1061).
     DuplicateKeyName(String),
+    /// A generated column's expression could not be evaluated for a row.
+    /// DDL admits only expressions this tier can build, so this is a
+    /// value-domain failure (an overflow, say), not an unported form.
+    Generation {
+        /// The generated column.
+        column: String,
+        /// The evaluation failure.
+        detail: String,
+    },
     /// Go `ErrDupEntry` (1062): a row with this primary key already exists.
     DuplicateEntry {
         /// The rejected key value, as MySQL prints it.
@@ -327,6 +336,39 @@ impl KvTable {
         }
     }
 
+    /// Recomputes every generated column of `row` from the row itself
+    /// (Go's `addRecord`/`updateRecord` calling `GenerateColumnValue`).
+    ///
+    /// Idempotent, so every writer may call it without coordinating with any
+    /// other writer -- see [`crate::generated_column`].
+    pub fn materialize_generated(&self, row: &mut [Datum]) -> Result<(), KvTableError> {
+        crate::generated_column::materialize(
+            &self.columns,
+            |i| self.columns[i].name.clone(),
+            row,
+            false,
+        )
+        .map_err(|error| KvTableError::Generation {
+            column: error.column,
+            detail: error.detail,
+        })
+    }
+
+    /// Restores the generated columns a decoded row does not carry: the
+    /// VIRTUAL ones, whose value was never written.
+    fn fill_virtual_columns(&self, row: &mut [Datum]) -> Result<(), KvTableError> {
+        crate::generated_column::materialize(
+            &self.columns,
+            |i| self.columns[i].name.clone(),
+            row,
+            true,
+        )
+        .map_err(|error| KvTableError::Generation {
+            column: error.column,
+            detail: error.detail,
+        })
+    }
+
     /// The handle a row's values produce.
     fn handle_of_row(&mut self, row: &[Datum]) -> Result<TableHandle, KvTableError> {
         if !self.common_handle_offsets.is_empty() {
@@ -364,7 +406,11 @@ impl KvTable {
         let mut ids = Vec::with_capacity(self.columns.len());
         let mut values = Vec::with_capacity(self.columns.len());
         for (offset, column) in self.columns.iter().enumerate() {
-            if skip.contains(&offset) {
+            // A clustered handle column and a VIRTUAL generated column are
+            // both columns whose value is not in the row bytes: one is
+            // rebuilt from the key, the other from its expression. Same skip
+            // list, because it is the same fact.
+            if skip.contains(&offset) || crate::generated_column::is_virtual(column) {
                 continue;
             }
             ids.push(column.id);
@@ -834,6 +880,19 @@ impl KvTable {
     /// record key from the next handle and the value through the v2 row format,
     /// exactly the bytes a TiKV-backed table would store.
     pub fn insert_row(&mut self, row: &[Datum]) -> Result<TableHandle, KvTableError> {
+        // The generated columns are recomputed HERE, at the one place every
+        // row reaches, so the stored bytes, the row handle and the index
+        // entries all see the same computed values and no caller can write a
+        // row whose generated columns were never filled in.
+        let mut owned;
+        let row = if self.columns.iter().any(|c| c.generated.is_some()) {
+            owned = row.to_vec();
+            owned.resize(self.columns.len(), Datum::Null);
+            self.materialize_generated(&mut owned)?;
+            owned.as_slice()
+        } else {
+            row
+        };
         let value = self.encode_row_value(row)?;
         // Go `addRecord`: a clustered key IS the handle, so a repeat collides.
         let handle = self.handle_of_row(row)?;
@@ -1027,6 +1086,8 @@ impl KvTable {
         // The handle columns are not in the value; Go reads them from the
         // handle itself.
         self.fill_handle_columns(&mut row, handle)?;
+        // Nor is a VIRTUAL generated column, whose value is its expression.
+        self.fill_virtual_columns(&mut row)?;
         Ok(Some(row))
     }
 
@@ -1047,6 +1108,18 @@ impl KvTable {
     /// row back under the same record key when the handle column did not
     /// change).
     pub fn update_row(&mut self, handle: &TableHandle, row: &[Datum]) -> Result<(), KvTableError> {
+        // Recomputed, never carried over: an UPDATE that changes a dependency
+        // must not leave a STORED generated column holding the value computed
+        // from the old dependency.
+        let mut owned;
+        let row = if self.columns.iter().any(|c| c.generated.is_some()) {
+            owned = row.to_vec();
+            owned.resize(self.columns.len(), Datum::Null);
+            self.materialize_generated(&mut owned)?;
+            owned.as_slice()
+        } else {
+            row
+        };
         // Go `updateRecord`: assigning to the AUTO_INCREMENT column REBASES the
         // allocator, exactly as an explicit value on INSERT does, so later rows
         // land past the value the UPDATE named. Without this an `UPDATE t SET
@@ -1302,6 +1375,7 @@ mod tests {
                     default_value: None,
                     // A column present at CREATE TABLE has no pre-existing rows.
                     origin_default: None,
+                    generated: None,
                 },
                 KvColumn {
                     name: "s".to_owned(),
@@ -1310,6 +1384,7 @@ mod tests {
                     default_value: None,
                     // A column present at CREATE TABLE has no pre-existing rows.
                     origin_default: None,
+                    generated: None,
                 },
             ],
         )
@@ -1451,6 +1526,7 @@ mod tests {
                 field_type: long().with_unsigned(unsigned),
                 default_value: None,
                 origin_default: None,
+                generated: None,
             }],
         );
         table.set_auto_increment_offset(0);

@@ -186,6 +186,38 @@ pub(crate) fn run_insert_traced(
         (0..column_list.len()).collect()
     };
 
+    // Go `planbuilder.getInsertColExpr` / `buildSelectPlanOfInsert`: a
+    // generated column's value comes from its expression, so writing to it is
+    // ErrBadGeneratedColumn (3105). The one permitted spelling is `DEFAULT`,
+    // which means exactly "leave it to the expression"; an `INSERT ...
+    // SELECT` has no `DEFAULT` spelling at all, so any generated target is
+    // refused there.
+    let generated_targets: Vec<bool> = match table {
+        TableEntry::Kv(kv) => kv.columns.iter().map(|c| c.generated.is_some()).collect(),
+        _ => vec![false; column_list.len()],
+    };
+    if generated_targets.iter().any(|generated| *generated) {
+        for (position, &offset) in target_offsets.iter().enumerate() {
+            if !generated_targets[offset] {
+                continue;
+            }
+            let written = match &source_rows {
+                // A source query supplies a value for every target.
+                Some(_) => true,
+                None => insert.rows.iter().any(|row| {
+                    row.get(position)
+                        .is_some_and(|value| !matches!(value, tidb_ast::Expr::Default(_)))
+                }),
+            };
+            if written {
+                return Err(DriverError::BadGeneratedColumn {
+                    column: column_list[offset].0.clone(),
+                    table: table_name.clone(),
+                });
+            }
+        }
+    }
+
     // Evaluate each VALUES row (constant expressions over the dual row).
     let eval_chunk = {
         let mut c = tidb_chunk::chunk::Chunk::new_empty(&[]);
@@ -283,6 +315,12 @@ pub(crate) fn run_insert_traced(
         let mut row = vec![Datum::Null; column_list.len()];
         let mut assigned = vec![false; column_list.len()];
         for (position, &offset) in target_offsets.iter().enumerate().take(width) {
+            // A generated target survived the 3105 check only by being
+            // written `DEFAULT`, which stands for the expression: there is no
+            // value to evaluate, and the expression fills the slot below.
+            if generated_targets[offset] {
+                continue;
+            }
             let value = match source_rows.as_ref() {
                 Some(_) => value_rows[index][position].clone(),
                 None => {
@@ -310,6 +348,16 @@ pub(crate) fn run_insert_traced(
             assigned[offset] = true;
             auto_rows.push(new_rows.len());
         }
+        // A generated column has a value source of its own, so it is neither
+        // defaulted nor NULL-checked here: it counts as supplied, and the
+        // expression fills it below. Without this a `NOT NULL` generated
+        // column would raise ErrNoDefaultForField for a row Go accepts.
+        for (offset, generated) in generated_targets.iter().enumerate() {
+            if *generated {
+                assigned[offset] = true;
+                row[offset] = Datum::Null;
+            }
+        }
         // Only a column the statement omits takes its default, and only such
         // a column can raise ErrNoDefaultForField (Go `fillColValue`).
         for offset in 0..column_list.len() {
@@ -321,7 +369,12 @@ pub(crate) fn run_insert_traced(
         // ErrColumnCantNull, which is a different error from omitting a
         // column that has no default.
         for (offset, value) in row.iter().enumerate() {
-            if *value == Datum::Null && column_is_not_null(&column_meta, offset) && assigned[offset]
+            // A generated column's value is not built yet at this point, so
+            // the NULL standing in for it is not the user's NULL.
+            if *value == Datum::Null
+                && column_is_not_null(&column_meta, offset)
+                && assigned[offset]
+                && !generated_targets[offset]
             {
                 return Err(DriverError::ColumnCannotBeNull(
                     column_list[offset].0.clone(),
@@ -342,6 +395,11 @@ pub(crate) fn run_insert_traced(
                     ctx,
                 )?;
             }
+            // The generated columns are computed from the finished row, so
+            // the conflict lookup and the foreign-key check below see the
+            // same values the write will store.
+            kv.materialize_generated(&mut row)
+                .map_err(|e| DriverError::Parse(format!("generated column failed: {e:?}")))?;
         }
         new_rows.push(row);
         inserted += 1;
@@ -994,6 +1052,24 @@ pub(crate) fn run_update_traced(
         let (offset, _, _) = resolver
             .resolve(&assignment.col)
             .ok_or(DriverError::Unsupported("unknown column in SET"))?;
+        // Go `buildUpdateLists`: assigning to a generated column is 3105
+        // unless the assigned value is `DEFAULT`, which means "leave it to
+        // the expression" -- the same rule INSERT follows.
+        if let Some(TableEntry::Kv(kv)) = catalog.get_in(&database, &name) {
+            if kv.columns[offset].generated.is_some()
+                && !matches!(assignment.value, tidb_ast::Expr::Default(_))
+            {
+                return Err(DriverError::BadGeneratedColumn {
+                    column: kv.columns[offset].name.clone(),
+                    table: name.clone(),
+                });
+            }
+            if kv.columns[offset].generated.is_some() {
+                // `SET g = DEFAULT` asks for the expression, which the write
+                // recomputes anyway, so it assigns nothing.
+                continue;
+            }
+        }
         assignments.push((offset, assignment.value.clone()));
     }
     let predicate = match &update.where_clause {
