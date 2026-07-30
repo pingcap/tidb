@@ -1653,6 +1653,7 @@ func (local *Backend) doImport(
 		clusterID,
 	)
 	wctx := workerpool.NewContext(workerCtx)
+	// The normal and error paths release the pool at different points below.
 	releasePool := sync.OnceFunc(pool.Release)
 
 	if e, ok := engine.(*external.Engine); ok {
@@ -1702,6 +1703,9 @@ func (local *Backend) doImport(
 		}
 
 		wctx.Cancel()
+		// jobWg can reach zero before HandleTask returns and reports its error.
+		// Wait for all workers so OperatorErr is stable before closing the result
+		// channel, which the dispatcher treats as normal completion.
 		pool.Wait()
 		if err := wctx.OperatorErr(); err != nil {
 			return err
@@ -1716,6 +1720,8 @@ func (local *Backend) doImport(
 	})
 
 	err := workGroup.Wait()
+	// Error paths do not release the pool above. At this point, the dispatcher has
+	// exited through context cancellation, so it is safe to close the result channel.
 	releasePool()
 	if err != nil && !common.IsContextCanceledError(err) {
 		tidblogutil.Logger(ctx).Error("do import meets error", zap.Error(err))
