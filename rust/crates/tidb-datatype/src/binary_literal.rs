@@ -57,6 +57,23 @@ impl BinaryLiteral {
         self.0
     }
 
+    /// Source `Datum.GetBinaryLiteral4Cmp`: the bytes a comparison sees.
+    ///
+    /// A `BIT(n)` payload is stored zero-padded to its declared width, so the
+    /// stored bytes of `b'1'` differ by width while the value does not.
+    /// Comparison therefore drops redundant leading zero bytes -- all-zero
+    /// keeps one, so a zero literal stays a byte string rather than becoming
+    /// the empty one.
+    pub fn compare_bytes(&self) -> &[u8] {
+        trim_leading_zero_bytes(&self.0)
+    }
+
+    /// As [`Self::compare_bytes`], for a payload Go reaches through a
+    /// `KindString`/`KindBytes` datum's own buffer rather than a literal.
+    pub fn compare_bytes_of(bytes: &[u8]) -> &[u8] {
+        trim_leading_zero_bytes(bytes)
+    }
+
     /// Go `ToString` returns an arbitrary-byte string. Rust strings require
     /// UTF-8, so this is the lossless equivalent at the same representation
     /// boundary.

@@ -151,7 +151,7 @@ impl Datum {
             Self::Set(left, _) => Ok(comparer.compare(left.name().as_bytes(), value)),
             Self::Enum(left, _) => Ok(comparer.compare(left.name().as_bytes(), value)),
             Self::BinaryLiteral(left) | Self::Bit(left) => {
-                Ok(comparer.compare(left.as_bytes(), value))
+                Ok(comparer.compare(left.compare_bytes(), value))
             }
             _ => self.compare_f64(numeric_bytes_to_float(value)?),
         }
@@ -199,14 +199,15 @@ impl Datum {
         value: &BinaryLiteral,
         comparer: Collation,
     ) -> Result<Ordering, DatumValueError> {
-        match self {
-            Self::String(left) => Ok(comparer.compare(left.bytes(), value.as_bytes())),
-            Self::Bytes(left) => Ok(comparer.compare(left, value.as_bytes())),
-            Self::BinaryLiteral(left) | Self::Bit(left) => {
-                Ok(comparer.compare(left.as_bytes(), value.as_bytes()))
-            }
-            _ => self.compare_f64(value.to_int().value() as f64),
-        }
+        // Go's `KindString`/`KindBytes` case falls through into the literal
+        // case, so both operands are read through `GetBinaryLiteral4Cmp`.
+        let left = match self {
+            Self::String(left) => left.bytes(),
+            Self::Bytes(left) => left,
+            Self::BinaryLiteral(left) | Self::Bit(left) => left.as_bytes(),
+            _ => return self.compare_f64(value.to_int().value() as f64),
+        };
+        Ok(comparer.compare(BinaryLiteral::compare_bytes_of(left), value.compare_bytes()))
     }
 
     fn compare_set(
@@ -398,6 +399,24 @@ mod tests {
                 Datum::new_json(BinaryJSON::parse("1").unwrap()),
                 Datum::Null,
                 Less,
+            ),
+            // Source `Datum.GetBinaryLiteral4Cmp`. A `BIT(16)` payload is
+            // stored zero-padded, so comparison must not let the declared
+            // width decide the order: `b'1'` is `b'1'` at every width.
+            (
+                Datum::new_mysql_bit(BinaryLiteral::from(vec![0x00, 0x01])),
+                literal(1),
+                Equal,
+            ),
+            (
+                Datum::new_mysql_bit(BinaryLiteral::from(vec![0x00, 0x01])),
+                Datum::new_string(vec![0x01]),
+                Equal,
+            ),
+            (
+                Datum::new_mysql_bit(BinaryLiteral::from(vec![0x00, 0x00])),
+                literal(0),
+                Equal,
             ),
         ];
 
