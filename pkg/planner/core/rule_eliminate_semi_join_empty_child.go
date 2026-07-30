@@ -80,6 +80,17 @@ func emptyJoinResultDual(join *logicalop.LogicalJoin) base.LogicalPlan {
 }
 
 func eliminateSemiJoinEmptyChild(p base.LogicalPlan) (base.LogicalPlan, bool) {
+	// Recurse first so a chained set operator such as
+	// `(A INTERSECT empty) INTERSECT B` folds its inner join into an empty
+	// TableDual before the outer join is checked against it; checking the
+	// outer join first would miss the now-empty child and leave B scanned.
+	planChanged := false
+	for i, child := range p.Children() {
+		newChild, changed := eliminateSemiJoinEmptyChild(child)
+		p.Children()[i] = newChild
+		planChanged = planChanged || changed
+	}
+
 	if join, ok := p.(*logicalop.LogicalJoin); ok {
 		left, right := join.Children()[0], join.Children()[1]
 		switch join.JoinType {
@@ -97,12 +108,6 @@ func eliminateSemiJoinEmptyChild(p base.LogicalPlan) (base.LogicalPlan, bool) {
 				return emptyJoinResultDual(join), true
 			}
 		}
-	}
-	planChanged := false
-	for i, child := range p.Children() {
-		newChild, changed := eliminateSemiJoinEmptyChild(child)
-		p.Children()[i] = newChild
-		planChanged = planChanged || changed
 	}
 	return p, planChanged
 }
