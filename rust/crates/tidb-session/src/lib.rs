@@ -484,6 +484,7 @@ mod tests_eval_bool;
 mod tests_explain;
 #[cfg(test)]
 mod tests_explain_derived;
+mod tests_expression_indexes;
 #[cfg(test)]
 mod tests_foreign_key;
 mod tests_generated_columns;
