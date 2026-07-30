@@ -604,6 +604,7 @@ func TestMarshalDatum(t *testing.T) {
 
 func BenchmarkCompareDatum(b *testing.B) {
 	vals, vals1 := prepareCompareDatums()
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j, v := range vals {
@@ -615,11 +616,57 @@ func BenchmarkCompareDatum(b *testing.B) {
 	}
 }
 
+// BenchmarkCompareDatumCollation compares collated string datums. Unlike
+// BenchmarkCompareDatum, the datums carry a non-empty collation and the
+// compare path dispatches through the named collator instead of the binary
+// shortcut, so it exercises Datum.Collation() on the hot path.
+func BenchmarkCompareDatumCollation(b *testing.B) {
+	d1 := NewCollationStringDatum("abcdefghij", charset.CollationUTF8MB4)
+	d2 := NewCollationStringDatum("abcdefghik", charset.CollationUTF8MB4)
+	coll := collate.GetCollator(charset.CollationUTF8MB4)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := d1.Compare(DefaultStmtNoWarningContext, &d2, coll); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkCompareDatumByReflect(b *testing.B) {
 	vals, vals1 := prepareCompareDatums()
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		reflect.DeepEqual(vals, vals1)
+	}
+}
+
+// BenchmarkDatumCopy exercises Datum.Copy on a heterogeneous slice. This
+// is the most direct measurement of Datum struct size: every byte saved
+// from the struct shows up in B/op here.
+func BenchmarkDatumCopy(b *testing.B) {
+	src, _ := prepareCompareDatums()
+	dst := make([]Datum, len(src))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := range src {
+			src[j].Copy(&dst[j])
+		}
+	}
+}
+
+// BenchmarkDatumSetMysqlTime locks in the allocation cost of SetMysqlTime.
+// Today Time is boxed via d.x (any), which heap-allocates the uint64-sized
+// value. After packing Time into d.i this should drop to 0 allocs/op.
+func BenchmarkDatumSetMysqlTime(b *testing.B) {
+	t := NewTime(FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6)
+	var d Datum
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		d.SetMysqlTime(t)
 	}
 }
 
@@ -746,6 +793,7 @@ func BenchmarkDatumsToString(b *testing.B) {
 		MinNotNullDatum(),
 		MaxValueDatum(),
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := DatumsToString(datums, true)
@@ -759,6 +807,7 @@ func BenchmarkDatumsToStringStr(b *testing.B) {
 	datums := []Datum{
 		NewStringDatum(strings.Repeat("1", 512)),
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := DatumsToString(datums, true)
@@ -772,6 +821,7 @@ func BenchmarkDatumsToStringLongStr(b *testing.B) {
 	datums := []Datum{
 		NewStringDatum(strings.Repeat("1", 1024*10)), // 10KB
 	}
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := DatumsToString(datums, true)
@@ -784,6 +834,7 @@ func BenchmarkDatumsToStringLongStr(b *testing.B) {
 func BenchmarkDatumTruncatedStringify(b *testing.B) {
 	d1 := NewStringDatum(strings.Repeat("1", 128))
 	d2 := NewIntDatum(2)
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = d1.TruncatedStringify()
