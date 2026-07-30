@@ -1933,6 +1933,50 @@ mod to_base64_tests {
     fn to_base64_null_is_null() {
         assert_eq!(to_base64(&[Datum::Null]).unwrap(), Datum::Null);
     }
+
+    /// The `maxAllowPacket` rows of `TestToBase64Sig`
+    /// (`pkg/expression/builtin_string_test.go:2649`) -- the only half of that
+    /// test not already covered: its four value rows are asserted byte for byte
+    /// by `builtin_ext::string2::tests::to_base64_matches_go_source_vectors`,
+    /// including the 76-column wrap of the 64-char alphabet and its triple.
+    ///
+    /// Here: when the encoded result
+    /// would exceed `max_allowed_packet`, Go returns NULL and warns
+    /// `errWarnAllowedPacketOverflowed` (`'abc'` with a 3-byte limit; the
+    /// 64-char alphabet with an 88-byte limit; its triple with 258). This layer
+    /// has no `max_allowed_packet` seam at all -- documented on `to_base64` as
+    /// "session state and therefore intentionally outside this value-only
+    /// layer" -- so Go's answer is asserted here and ignored.
+    ///
+    /// Paired with `to_base64_ignores_packet_size_today`, which RUNS.
+    #[test]
+    #[ignore = "max_allowed_packet is session state this value-only layer does not carry"]
+    fn to_base64_source_max_allowed_packet_rows() {
+        const ALPHABET: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        // (input, max_allowed_packet) pairs whose result Go makes NULL.
+        for (input, _max_allowed_packet) in [
+            ("abc".to_owned(), 3u64),
+            (ALPHABET.to_owned(), 88),
+            (ALPHABET.repeat(3), 258),
+        ] {
+            assert_eq!(
+                to_base64(&[Datum::new_string(input.clone())]).unwrap(),
+                Datum::Null,
+                "{input:?} over its max_allowed_packet must be NULL"
+            );
+        }
+    }
+
+    /// Today's answer for the rows above: the encoding happens whatever the
+    /// packet size would have been. Keeps the `#[ignore]`d row honest -- if a
+    /// `max_allowed_packet` seam ever lands, this fails and points at it.
+    #[test]
+    fn to_base64_ignores_packet_size_today() {
+        assert!(matches!(
+            to_base64(&[Datum::new_string("abc".to_owned())]).unwrap(),
+            Datum::String(_)
+        ));
+    }
 }
 
 #[cfg(test)]
