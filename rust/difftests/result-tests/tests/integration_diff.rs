@@ -572,6 +572,54 @@ fn replay_one_topic_from_env() {
 /// `driver::set_opr` already names as its own DEFERRED item (a set operation's
 /// column metadata comes from the first term, with no type unification). It is
 /// one root cause, not six, and it is why those topics are not onboarded.
+///
+/// # Out-of-domain refusal causes, ranked
+///
+/// `INTEGRATION_SHOW_OUT_OF_DOMAIN=1` prints every refused statement with the
+/// error that refused it (see `compare`'s `SkipClass::OutOfDomain` arm); this
+/// is the ranking of that output's causes, over 5,821 out-of-domain
+/// statements, as a work list for the next capability increment:
+///
+/// 1,526 `table not found in catalog` -- a CASCADE from an earlier refusal in
+///       the same script leaving a table unregistered, not an independent gap.
+///   325 `this statement kind (Execute) is not supported yet` -- `EXECUTE`.
+///   273 `this ALTER TABLE action is not supported yet`.
+///   187 `this statement kind (ADMIN AnalyzeTable) is not supported yet` --
+///       `ANALYZE TABLE`.
+///   137 `this statement kind (Prepare) is not supported yet` -- `PREPARE`.
+///   119 `this statement kind (ADMIN AdminCheck) is not supported yet` --
+///       `ADMIN CHECK TABLE`/`ADMIN CHECK INDEX`.
+///    85 `EXPLAIN of a WITH clause is not supported yet`.
+///    84 `derived tables are not supported yet`.
+///    83 `an expression index is not supported yet`.
+///    67 `generated columns are not supported yet`.
+///    57 `this statement kind (ADMIN LoadStats) is not supported yet` --
+///       `LOAD STATS`.
+///    43 `this statement kind (ADMIN SetBdrRole) is not supported yet`.
+///    43 `this statement kind (ADMIN UnsetBdrRole) is not supported yet`.
+///
+/// Every `this statement kind (...) is not supported yet` and
+/// `this DDL/DML statement kind (...) is not supported yet` message above
+/// names the AST variant it refused -- the generic, unnamed
+/// `"this statement kind is not supported yet"` message (1,008 statements
+/// under the old wording, the single largest opaque group in the whole
+/// list) no longer exists as of the diagnostic naming pass in
+/// `tidb_session::dispatch`/`explain_arm`. Naming the kind did not change
+/// which statements are accepted or refused: the total out-of-domain count
+/// above is unchanged at 5,821.
+///
+/// A statement whose `EXPLAIN` is refused is named after its INNER
+/// statement kind, not just "EXPLAIN": `explain_stmt` produces
+/// `"EXPLAIN [ANALYZE] of <kind> is not supported yet"` for every wrapped
+/// kind it does not run, following the shape its own `EXPLAIN of a WITH
+/// clause` / `EXPLAIN of a set operation` messages already used. Of the
+/// 1,000 EXPLAIN-leading out-of-domain statements in this corpus, none
+/// actually land on that message or on the old generic one: `EXPLAIN`'s own
+/// dispatch already named every refusal specifically, so the EXPLAIN-leading
+/// statements are refused for the SAME reasons their inner statement would
+/// be run alone -- mostly the `table not found in catalog` cascade (481),
+/// `EXPLAIN of a WITH clause` (85), and `derived tables are not supported
+/// yet` (84).
 #[test]
 #[ignore = "onboarding tool: replays all 257 topics to rank the next candidates"]
 fn survey_unonboarded_topics() {
