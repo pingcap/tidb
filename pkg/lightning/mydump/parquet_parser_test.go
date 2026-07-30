@@ -33,6 +33,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func newParquetParserForTest(
+	ctx context.Context,
+	t *testing.T,
+	dir string,
+	fileName string,
+	meta ParquetFileMeta,
+) *ParquetParser {
+	t.Helper()
+
+	store, err := objstore.NewLocalStorage(dir)
+	require.NoError(t, err)
+
+	r, err := store.Open(ctx, fileName, nil)
+	require.NoError(t, err)
+
+	parser, err := NewParquetParser(ctx, store, r, fileName, meta)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		require.NoError(t, parser.Close())
+	})
+	return parser
+}
+
 func TestParquetParser(t *testing.T) {
 	pc := []ParquetColumn{
 		{
@@ -70,6 +94,7 @@ func TestParquetParser(t *testing.T) {
 	name := "test123.parquet"
 	WriteParquetFile(dir, name, pc, 100)
 
+<<<<<<< HEAD
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
 	r, err := store.Open(context.Background(), name, nil)
@@ -77,6 +102,9 @@ func TestParquetParser(t *testing.T) {
 	reader, err := NewParquetParser(context.Background(), store, r, name, ParquetFileMeta{})
 	require.NoError(t, err)
 	defer reader.Close()
+=======
+	reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{})
+>>>>>>> 1d9393d0cd7 (mydump: read row group data at once for small parquet files (#66071))
 
 	require.Equal(t, []string{"ss", "a_a"}, reader.Columns())
 
@@ -106,115 +134,46 @@ func TestParquetParser(t *testing.T) {
 	require.ErrorIs(t, reader.ReadRow(), io.EOF)
 }
 
-func TestParquetVariousTypes(t *testing.T) {
+func TestParquetParserMultipleRowGroup(t *testing.T) {
 	pc := []ParquetColumn{
 		{
-			Name:      "date",
-			Type:      parquet.Types.Int32,
-			Converted: schema.ConvertedTypes.Date,
-			Gen: func(_ int) (any, []int16) {
-				return []int32{18564}, []int16{1} // 2020-10-29
-			},
-		},
-		{
-			Name:      "timemillis",
-			Type:      parquet.Types.Int32,
-			Converted: schema.ConvertedTypes.TimeMillis,
-			Gen: func(_ int) (any, []int16) {
-				return []int32{62775123}, []int16{1} // 1970-01-01 17:26:15.123Z
-			},
-		},
-		{
-			Name:      "timemicros",
+			Name:      "v",
 			Type:      parquet.Types.Int64,
-			Converted: schema.ConvertedTypes.TimeMicros,
-			Gen: func(_ int) (any, []int16) {
-				return []int64{62775123456}, []int16{1} // 1970-01-01 17:26:15.123456Z
-			},
-		},
-		{
-			Name:      "timestampmillis",
-			Type:      parquet.Types.Int64,
-			Converted: schema.ConvertedTypes.TimestampMillis,
-			Gen: func(_ int) (any, []int16) {
-				return []int64{1603963672356}, []int16{1} // 2020-10-29T09:27:52.356Z
-			},
-		},
-		{
-			Name:      "timestampmicros",
-			Type:      parquet.Types.Int64,
-			Converted: schema.ConvertedTypes.TimestampMicros,
-			Gen: func(_ int) (any, []int16) {
-				return []int64{1603963672356956}, []int16{1} // 2020-10-29T09:27:52.356956Z
-			},
-		},
-		{
-			Name:      "timestampmicros2",
-			Type:      parquet.Types.Int96,
-			Converted: schema.ConvertedTypes.None,
-			Gen: func(_ int) (any, []int16) {
-				// also 2020-10-29T09:27:52.356956Z, but stored in Int96
-				return []parquet.Int96{newInt96(1603963672356956)}, []int16{1}
-			},
-		},
-		{
-			Name:      "decimal1",
-			Type:      parquet.Types.Int32,
-			Converted: schema.ConvertedTypes.Decimal,
-			Precision: 9,
-			Scale:     2,
-			Gen: func(_ int) (any, []int16) {
-				return []int32{-12345678}, []int16{1} // -123456.78,
-			},
-		},
-		{
-			Name:      "decimal2",
-			Type:      parquet.Types.Int32,
-			Converted: schema.ConvertedTypes.Decimal,
-			Precision: 4,
-			Scale:     4,
-			Gen: func(_ int) (any, []int16) {
-				return []int32{456}, []int16{1} // 0.0456
-			},
-		},
-		{
-			Name:      "decimal3",
-			Type:      parquet.Types.Int64,
-			Converted: schema.ConvertedTypes.Decimal,
-			Precision: 18,
-			Scale:     2,
-			Gen: func(_ int) (any, []int16) {
-				return []int64{123456789012345678}, []int16{1} // 1234567890123456.78,
-			},
-		},
-		{
-			Name:      "decimal6",
-			Type:      parquet.Types.Int32,
-			Converted: schema.ConvertedTypes.Decimal,
-			Precision: 4,
-			Scale:     4,
-			Gen: func(_ int) (any, []int16) {
-				return []int32{-1}, []int16{1} // -0.0001
+			Converted: schema.ConvertedTypes.Int64,
+			Gen: func(numRows int) (any, []int16) {
+				defLevel := make([]int16, numRows)
+				data := make([]int64, numRows)
+				for i := range numRows {
+					defLevel[i] = 1
+					data[i] = int64(i)
+				}
+				return data, defLevel
 			},
 		},
 	}
 
 	dir := t.TempDir()
+<<<<<<< HEAD
 	// prepare data
 	name := "test123.parquet"
 	WriteParquetFile(dir, name, pc, 1)
 
 	store, err := storage.NewLocalStorage(dir)
+=======
+	fileName := "multi-row-group.parquet"
+	err := WriteParquetFile(
+		dir,
+		fileName,
+		pc,
+		50,
+		parquet.WithMaxRowGroupLength(9),
+	)
+>>>>>>> 1d9393d0cd7 (mydump: read row group data at once for small parquet files (#66071))
 	require.NoError(t, err)
-	r, err := store.Open(context.TODO(), name, nil)
-	require.NoError(t, err)
-	reader, err := NewParquetParser(context.TODO(), store, r, name, ParquetFileMeta{Loc: time.UTC})
-	require.NoError(t, err)
-	defer reader.Close()
 
-	require.Len(t, reader.colNames, 10)
-	require.NoError(t, reader.ReadRow())
+	parser := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
 
+<<<<<<< HEAD
 	// TODO(joechenrh): for now we don't find a simple way to convert int directly
 	// to decimal datum, so here we just check the string values.
 	// Remember to also update the expected values below if the implementation changes.
@@ -231,8 +190,18 @@ func TestParquetVariousTypes(t *testing.T) {
 		mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeTimestamp,
 		mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
 		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+=======
+	for i := range 50 {
+		require.NoError(t, parser.ReadRow())
+		require.Equal(t, int64(i), parser.LastRow().Row[0].GetInt64())
+		last := parser.LastRow()
+		parser.RecycleRow(last)
+>>>>>>> 1d9393d0cd7 (mydump: read row group data at once for small parquet files (#66071))
 	}
+	require.ErrorIs(t, parser.ReadRow(), io.EOF)
+}
 
+<<<<<<< HEAD
 	row := reader.lastRow.Row
 	require.Len(t, expectedStringValues, len(row))
 
@@ -257,20 +226,103 @@ func TestParquetVariousTypes(t *testing.T) {
 			Scale:     3,
 			Gen: func(_ int) (any, []int16) {
 				return []int32{0, 1000, int32(-1000), 999, int32(-999), 1, int32(-1)}, []int16{1, 1, 1, 1, 1, 1, 1}
+=======
+func TestParquetVariousTypes(t *testing.T) {
+	t.Run("timestamp_and_decimal", func(t *testing.T) {
+		pc := []ParquetColumn{
+			{
+				Name:      "date",
+				Type:      parquet.Types.Int32,
+				Converted: schema.ConvertedTypes.Date,
+				Gen: func(_ int) (any, []int16) {
+					return []int32{18564}, []int16{1} // 2020-10-29
+				},
+>>>>>>> 1d9393d0cd7 (mydump: read row group data at once for small parquet files (#66071))
 			},
-		},
-		{
-			Name:      "decimal2",
-			Type:      parquet.Types.Int32,
-			Converted: schema.ConvertedTypes.Decimal,
-			Precision: 5,
-			Scale:     3,
-			Gen: func(_ int) (any, []int16) {
-				return []int32{0, int32(-1000), int32(-999), int32(-1), 0, 0, 0}, []int16{1, 0, 1, 0, 1, 0, 1}
+			{
+				Name:      "timemillis",
+				Type:      parquet.Types.Int32,
+				Converted: schema.ConvertedTypes.TimeMillis,
+				Gen: func(_ int) (any, []int16) {
+					return []int32{62775123}, []int16{1} // 1970-01-01 17:26:15.123Z
+				},
 			},
-		},
-	}
+			{
+				Name:      "timemicros",
+				Type:      parquet.Types.Int64,
+				Converted: schema.ConvertedTypes.TimeMicros,
+				Gen: func(_ int) (any, []int16) {
+					return []int64{62775123456}, []int16{1} // 1970-01-01 17:26:15.123456Z
+				},
+			},
+			{
+				Name:      "timestampmillis",
+				Type:      parquet.Types.Int64,
+				Converted: schema.ConvertedTypes.TimestampMillis,
+				Gen: func(_ int) (any, []int16) {
+					return []int64{1603963672356}, []int16{1} // 2020-10-29T09:27:52.356Z
+				},
+			},
+			{
+				Name:      "timestampmicros",
+				Type:      parquet.Types.Int64,
+				Converted: schema.ConvertedTypes.TimestampMicros,
+				Gen: func(_ int) (any, []int16) {
+					return []int64{1603963672356956}, []int16{1} // 2020-10-29T09:27:52.356956Z
+				},
+			},
+			{
+				Name:      "timestampmicros2",
+				Type:      parquet.Types.Int96,
+				Converted: schema.ConvertedTypes.None,
+				Gen: func(_ int) (any, []int16) {
+					// also 2020-10-29T09:27:52.356956Z, but stored in Int96
+					return []parquet.Int96{newInt96(1603963672356956)}, []int16{1}
+				},
+			},
+			{
+				Name:      "decimal1",
+				Type:      parquet.Types.Int32,
+				Converted: schema.ConvertedTypes.Decimal,
+				Precision: 9,
+				Scale:     2,
+				Gen: func(_ int) (any, []int16) {
+					return []int32{-12345678}, []int16{1} // -123456.78,
+				},
+			},
+			{
+				Name:      "decimal2",
+				Type:      parquet.Types.Int32,
+				Converted: schema.ConvertedTypes.Decimal,
+				Precision: 4,
+				Scale:     4,
+				Gen: func(_ int) (any, []int16) {
+					return []int32{456}, []int16{1} // 0.0456
+				},
+			},
+			{
+				Name:      "decimal3",
+				Type:      parquet.Types.Int64,
+				Converted: schema.ConvertedTypes.Decimal,
+				Precision: 18,
+				Scale:     2,
+				Gen: func(_ int) (any, []int16) {
+					return []int64{123456789012345678}, []int16{1} // 1234567890123456.78,
+				},
+			},
+			{
+				Name:      "decimal6",
+				Type:      parquet.Types.Int32,
+				Converted: schema.ConvertedTypes.Decimal,
+				Precision: 4,
+				Scale:     4,
+				Gen: func(_ int) (any, []int16) {
+					return []int32{-1}, []int16{1} // -0.0001
+				},
+			},
+		}
 
+<<<<<<< HEAD
 	cases := [][]any{
 		{int32(0), "0.000"},
 		{int32(1000), "1.000"},
@@ -280,16 +332,18 @@ func TestParquetVariousTypes(t *testing.T) {
 		{int32(1), "0.001"},
 		{int32(-1), "-0.001"},
 	}
+=======
+		dir := t.TempDir()
+		name := "test123.parquet"
+		WriteParquetFile(dir, name, pc, 1)
+>>>>>>> 1d9393d0cd7 (mydump: read row group data at once for small parquet files (#66071))
 
-	fileName := "test.02.parquet"
-	WriteParquetFile(dir, fileName, pc, 7)
+		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
 
-	r, err = store.Open(context.TODO(), fileName, nil)
-	require.NoError(t, err)
-	reader, err = NewParquetParser(context.TODO(), store, r, fileName, ParquetFileMeta{})
-	require.NoError(t, err)
-	defer reader.Close()
+		require.Len(t, reader.colNames, 10)
+		require.NoError(t, reader.ReadRow())
 
+<<<<<<< HEAD
 	for i, testCase := range cases {
 		assert.NoError(t, reader.ReadRow())
 		strDatum, ok := testCase[1].(string)
@@ -306,48 +360,134 @@ func TestParquetVariousTypes(t *testing.T) {
 		for i, val := range vals {
 			assert.Equal(t, val.Kind(), reader.lastRow.Row[i].Kind())
 			assert.Equal(t, val.GetValue(), reader.lastRow.Row[i].GetValue())
+=======
+		// TODO(joechenrh): for now we don't find a simple way to convert int directly
+		// to decimal datum, so here we just check the string values.
+		// Remember to also update the expected values below if the implementation changes.
+		expectedStringValues := []string{
+			"2020-10-29",
+			"1970-01-01 17:26:15.123Z",
+			"1970-01-01 17:26:15.123456Z",
+			"2020-10-29 09:27:52.356Z",
+			"2020-10-29 09:27:52.356956Z",
+			"2020-10-29 09:27:52.356956Z",
+			"-123456.78", "0.0456", "1234567890123456.78", "-0.0001",
 		}
-	}
+		expectedTypes := []byte{
+			mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeTimestamp,
+			mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp,
+			mysql.TypeNewDecimal, mysql.TypeNewDecimal, mysql.TypeNewDecimal, mysql.TypeNewDecimal,
+		}
 
-	pc = []ParquetColumn{
-		{
-			Name:      "bool_val",
-			Type:      parquet.Types.Boolean,
-			Converted: schema.ConvertedTypes.None,
-			Gen: func(_ int) (any, []int16) {
-				return []bool{false, true}, []int16{1, 1}
+		row := reader.lastRow.Row
+		require.Len(t, expectedStringValues, len(row))
+
+		for i, s := range expectedStringValues {
+			if expectedTypes[i] == mysql.TypeNewDecimal {
+				require.Equal(t, s, row[i].GetMysqlDecimal().String())
+				continue
+			}
+			tp := types.NewFieldType(expectedTypes[i])
+			if expectedTypes[i] == mysql.TypeTimestamp {
+				tp.SetDecimal(6)
+			}
+			expectedDatum, err := table.CastColumnValueWithStrictMode(types.NewStringDatum(s), tp)
+			require.NoError(t, err)
+			require.Equal(t, expectedDatum, row[i])
+		}
+	})
+
+	t.Run("decimal_with_nulls", func(t *testing.T) {
+		pc := []ParquetColumn{
+			{
+				Name:      "decimal1",
+				Type:      parquet.Types.Int32,
+				Converted: schema.ConvertedTypes.Decimal,
+				Precision: 5,
+				Scale:     3,
+				Gen: func(_ int) (any, []int16) {
+					return []int32{0, 1000, int32(-1000), 999, int32(-999), 1, int32(-1)}, []int16{1, 1, 1, 1, 1, 1, 1}
+				},
 			},
-		},
-	}
+			{
+				Name:      "decimal2",
+				Type:      parquet.Types.Int32,
+				Converted: schema.ConvertedTypes.Decimal,
+				Precision: 5,
+				Scale:     3,
+				Gen: func(_ int) (any, []int16) {
+					return []int32{0, int32(-1000), int32(-999), int32(-1), 0, 0, 0}, []int16{1, 0, 1, 0, 1, 0, 1}
+				},
+			},
+		}
 
-	fileName = "test.bool.parquet"
-	WriteParquetFile(dir, fileName, pc, 2)
+		expectedValues := []string{
+			"0.000", "1.000", "-1.000", "0.999",
+			"-0.999", "0.001", "-0.001",
+		}
 
-	r, err = store.Open(context.TODO(), fileName, nil)
-	require.NoError(t, err)
-	reader, err = NewParquetParser(context.TODO(), store, r, fileName, ParquetFileMeta{})
-	require.NoError(t, err)
-	defer reader.Close()
+		dir := t.TempDir()
+		fileName := "test.02.parquet"
+		WriteParquetFile(dir, fileName, pc, 7)
 
-	// because we always reuse the datums in reader.lastRow.Row, so we can't directly
-	// compare will `DeepEqual` here
-	assert.NoError(t, reader.ReadRow())
-	assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
-	assert.Equal(t, uint64(0), reader.lastRow.Row[0].GetValue())
-	assert.NoError(t, reader.ReadRow())
-	assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
-	assert.Equal(t, uint64(1), reader.lastRow.Row[0].GetValue())
+		reader := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
+
+		for i, expectValue := range expectedValues {
+			assert.NoError(t, reader.ReadRow())
+			require.Len(t, reader.lastRow.Row, 2)
+
+			s, err := reader.lastRow.Row[0].ToString()
+			require.NoError(t, err)
+			assert.Equal(t, expectValue, s)
+			if i%2 == 1 {
+				require.True(t, reader.lastRow.Row[1].IsNull())
+			} else {
+				s, err = reader.lastRow.Row[1].ToString()
+				require.NoError(t, err)
+				assert.Equal(t, expectValue, s)
+			}
+>>>>>>> 1d9393d0cd7 (mydump: read row group data at once for small parquet files (#66071))
+		}
+	})
+
+	t.Run("boolean", func(t *testing.T) {
+		pc := []ParquetColumn{
+			{
+				Name:      "bool_val",
+				Type:      parquet.Types.Boolean,
+				Converted: schema.ConvertedTypes.None,
+				Gen: func(_ int) (any, []int16) {
+					return []bool{false, true}, []int16{1, 1}
+				},
+			},
+		}
+
+		dir := t.TempDir()
+		fileName := "test.bool.parquet"
+		WriteParquetFile(dir, fileName, pc, 2)
+
+		reader := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
+
+		// because we always reuse the datums in reader.lastRow.Row, so we can't directly
+		// compare will `DeepEqual` here
+		assert.NoError(t, reader.ReadRow())
+		assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
+		assert.Equal(t, uint64(0), reader.lastRow.Row[0].GetValue())
+		assert.NoError(t, reader.ReadRow())
+		assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
+		assert.Equal(t, uint64(1), reader.lastRow.Row[0].GetValue())
+	})
 }
 
 func TestParquetAurora(t *testing.T) {
+<<<<<<< HEAD
 	store, err := storage.NewLocalStorage("examples")
 	require.NoError(t, err)
 
+=======
+>>>>>>> 1d9393d0cd7 (mydump: read row group data at once for small parquet files (#66071))
 	fileName := "test.parquet"
-	r, err := store.Open(context.TODO(), fileName, nil)
-	require.NoError(t, err)
-	parser, err := NewParquetParser(context.TODO(), store, r, fileName, ParquetFileMeta{})
-	require.NoError(t, err)
+	parser := newParquetParserForTest(context.TODO(), t, "examples", fileName, ParquetFileMeta{})
 
 	require.Equal(t, []string{"id", "val1", "val2", "d1", "d2", "d3", "d4", "d5", "d6"}, parser.Columns())
 
@@ -375,8 +515,13 @@ func TestParquetAurora(t *testing.T) {
 		},
 	}
 
+<<<<<<< HEAD
 	for i := 0; i < len(expectedRes); i++ {
 		err = parser.ReadRow()
+=======
+	for i := range expectedRes {
+		err := parser.ReadRow()
+>>>>>>> 1d9393d0cd7 (mydump: read row group data at once for small parquet files (#66071))
 		assert.NoError(t, err)
 		expectedValues := expectedRes[i]
 		row := parser.LastRow().Row
@@ -399,6 +544,7 @@ func TestParquetAurora(t *testing.T) {
 func TestHiveParquetParser(t *testing.T) {
 	name := "000000_0.parquet"
 	dir := "./parquet/"
+<<<<<<< HEAD
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
 	r, err := store.Open(context.TODO(), name, nil)
@@ -406,6 +552,9 @@ func TestHiveParquetParser(t *testing.T) {
 	reader, err := NewParquetParser(context.TODO(), store, r, name, ParquetFileMeta{Loc: time.UTC})
 	require.NoError(t, err)
 	defer reader.Close()
+=======
+	reader := newParquetParserForTest(context.TODO(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+>>>>>>> 1d9393d0cd7 (mydump: read row group data at once for small parquet files (#66071))
 	// UTC+0:00
 	results := []time.Time{
 		time.Date(2022, 9, 10, 9, 9, 0, 0, time.UTC),
@@ -415,8 +564,13 @@ func TestHiveParquetParser(t *testing.T) {
 		time.Date(2038, 1, 19, 0, 0, 0, 0, time.UTC),
 	}
 
+<<<<<<< HEAD
 	for i := 0; i < 5; i++ {
 		err = reader.ReadRow()
+=======
+	for i := range 5 {
+		err := reader.ReadRow()
+>>>>>>> 1d9393d0cd7 (mydump: read row group data at once for small parquet files (#66071))
 		require.NoError(t, err)
 		lastRow := reader.LastRow()
 		require.Equal(t, 2, len(lastRow.Row))
@@ -485,6 +639,7 @@ func TestBasicReadFile(t *testing.T) {
 		readBatchSize = origBatchSize
 	}()
 
+<<<<<<< HEAD
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
 	r, err := store.Open(context.TODO(), fileName, nil)
@@ -493,8 +648,97 @@ func TestBasicReadFile(t *testing.T) {
 	require.NoError(t, err)
 	defer reader.Close()
 
+=======
+	reader := newParquetParserForTest(context.TODO(), t, dir, fileName, ParquetFileMeta{})
+>>>>>>> 1d9393d0cd7 (mydump: read row group data at once for small parquet files (#66071))
 	for i := range rowCnt {
 		require.NoError(t, reader.ReadRow())
 		require.Equal(t, string(generated[i]), reader.lastRow.Row[0].GetString())
+		require.NotNil(t, reader.rowGroup)
+		require.Len(t, reader.rowGroup.readers, len(reader.lastRow.Row))
+	}
+}
+
+func TestParquetParserWrapper(t *testing.T) {
+	const (
+		rowCnt   = 256
+		groupCnt = 2
+	)
+
+	dir := t.TempDir()
+	fileName := "fixed-len-byte-array.parquet"
+
+	pc := []ParquetColumn{
+		{
+			Name:      "fixed",
+			Type:      parquet.Types.FixedLenByteArray,
+			Converted: schema.ConvertedTypes.None,
+			TypeLen:   8,
+			Gen: func(numRows int) (any, []int16) {
+				vals := make([]parquet.FixedLenByteArray, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					defLevels[i] = 1
+					vals[i] = parquet.FixedLenByteArray(fmt.Sprintf("k%07d", i))
+				}
+				return vals, defLevels
+			},
+		},
+		{
+			Name:      "val",
+			Type:      parquet.Types.Int64,
+			Converted: schema.ConvertedTypes.Int64,
+			Gen: func(numRows int) (any, []int16) {
+				vals := make([]int64, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					defLevels[i] = 1
+					vals[i] = int64(i)
+				}
+				return vals, defLevels
+			},
+		},
+	}
+	err := WriteParquetFile(
+		dir,
+		fileName,
+		pc,
+		rowCnt,
+		parquet.WithDataPageSize(256),
+		parquet.WithBatchSize(32),
+		parquet.WithMaxRowGroupLength(int64(rowCnt/groupCnt)),
+	)
+	require.NoError(t, err)
+
+	readRows := func(threshold int) ([]string, []int64) {
+		origThreshold := rowGroupInMemoryThreshold
+		rowGroupInMemoryThreshold = threshold
+		defer func() {
+			rowGroupInMemoryThreshold = origThreshold
+		}()
+
+		parser := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
+
+		gotFixed := make([]string, 0, rowCnt)
+		gotInt := make([]int64, 0, rowCnt)
+		for range rowCnt {
+			require.NoError(t, parser.ReadRow())
+			last := parser.LastRow()
+			gotFixed = append(gotFixed, last.Row[0].GetString())
+			gotInt = append(gotInt, last.Row[1].GetInt64())
+			parser.RecycleRow(last)
+		}
+		require.ErrorIs(t, parser.ReadRow(), io.EOF)
+		return gotFixed, gotInt
+	}
+
+	gotFixedInMemory, gotIntInMemory := readRows(1 << 30)
+	gotFixedOnDemand, gotIntOnDemand := readRows(1)
+	require.Equal(t, gotFixedOnDemand, gotFixedInMemory)
+	require.Equal(t, gotIntOnDemand, gotIntInMemory)
+
+	for i := range rowCnt {
+		require.Equal(t, fmt.Sprintf("k%07d", i), gotFixedInMemory[i])
+		require.Equal(t, int64(i), gotIntInMemory[i])
 	}
 }
