@@ -69,8 +69,6 @@ const GRANDFATHERED: &[(&str, usize)] = &[
     ("crates/tidb-ast/src/select.rs", 3_153),
     ("crates/tidb-ast/src/expr.rs", 3_124),
     ("crates/tidb-server/src/cluster_session_node/mod.rs", 3_111),
-    // Being split by a live refactor unit; its entry retires with the split.
-    ("crates/tidb-session/src/lib.rs", 3_051),
     ("crates/tidb-parser/src/select.rs", 2_917),
     ("crates/tidb-parser/src/tests/ddl.rs", 2_852),
     ("crates/tidb-expr/src/tests/mod.rs", 2_719),
