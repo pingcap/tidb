@@ -689,8 +689,8 @@ func TestDumpTableMetaWithColumnFilterKeepsSourceColumnsForSplit(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, ""))
-	require.NoError(t, validateColumnFilter(tctx, conf, baseConn))
-	// Make a second filter application fail if it happens, so this covers using the validated filter result.
+	require.NoError(t, prepareColumnProjectionCache(tctx, conf, baseConn))
+	// Make a second filter application fail if it happens, so this covers using the prepared projection result.
 	conf.ColumnFilter = newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"missing"}},
 	)
@@ -753,7 +753,7 @@ func TestDumpTableMetaSkipsColumnFilterForView(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestValidateColumnFilter(t *testing.T) {
+func TestPrepareColumnProjectionCache(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -771,16 +771,48 @@ func TestValidateColumnFilter(t *testing.T) {
 	conf.ColumnFilter = newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"*", "!missing"}},
 	)
+	conf.writableColumnCache = newWritableColumnCache()
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, ""))
-	require.NoError(t, validateColumnFilter(tctx, conf, baseConn))
+	require.NoError(t, prepareColumnProjectionCache(tctx, conf, baseConn))
+	selectedColumns, ok := conf.writableColumnCache.getSelectedNames(database, table)
+	require.True(t, ok)
+	require.Equal(t, []string{"id", "name"}, selectedColumns)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestValidateColumnFilterFailsOnEmptyResult(t *testing.T) {
+func TestPrepareColumnProjectionCacheWithoutColumnFilter(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	defer cancel()
+	conn, err := db.Conn(tctx)
+	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
+
+	conf := DefaultConfig()
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+	conf.writableColumnCache = newWritableColumnCache()
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("name", "varchar(12)", "NO", "", nil, ""))
+	require.NoError(t, prepareColumnProjectionCache(tctx, conf, baseConn))
+	selectedColumns, ok := conf.writableColumnCache.getSelectedNames(database, table)
+	require.True(t, ok)
+	require.Equal(t, []string{"id", "name"}, selectedColumns)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPrepareColumnProjectionCacheFailsOnEmptyResult(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -798,11 +830,12 @@ func TestValidateColumnFilterFailsOnEmptyResult(t *testing.T) {
 	conf.ColumnFilter = newColumnFilterConfigForTest(t,
 		ColumnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"missing"}},
 	)
+	conf.writableColumnCache = newWritableColumnCache()
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
-	err = validateColumnFilter(tctx, conf, baseConn)
+	err = prepareColumnProjectionCache(tctx, conf, baseConn)
 	require.ErrorContains(t, err, "--column-filter-file selects no writable columns")
 	require.NoError(t, mock.ExpectationsWereMet())
 }

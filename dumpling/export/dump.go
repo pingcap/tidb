@@ -263,7 +263,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
-	if conf.ColumnFilter != nil {
+	if conf.SQL == "" {
 		conf.writableColumnCache = newWritableColumnCache()
 	} else {
 		conf.writableColumnCache = nil
@@ -295,8 +295,8 @@ func (d *Dumper) Dump() (dumpErr error) {
 	// Inject consistency failpoint test after we release the table lock
 	failpoint.Inject("ConsistencyCheck", nil)
 
-	if conf.ColumnFilter != nil {
-		if err = validateColumnFilter(tctx, conf, baseConn); err != nil {
+	if conf.writableColumnCache != nil {
+		if err = prepareColumnProjectionCache(tctx, conf, baseConn); err != nil {
 			close(taskIn)
 			_ = wg.Wait()
 			_ = baseConn.DBConn.Close()
@@ -511,7 +511,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 	return nil
 }
 
-func validateColumnFilter(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
+func prepareColumnProjectionCache(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
 	for dbName, tables := range conf.Tables {
 		for _, table := range tables {
 			if table.Type != TableTypeBase {
@@ -521,9 +521,12 @@ func validateColumnFilter(tctx *tcontext.Context, conf *Config, conn *BaseConn) 
 			if err != nil {
 				return err
 			}
-			selectedColumns, err := conf.ColumnFilter.applyToColumns(dbName, table.Name, sourceColumns)
-			if err != nil {
-				return err
+			selectedColumns := sourceColumns
+			if conf.ColumnFilter != nil {
+				selectedColumns, err = conf.ColumnFilter.applyToColumns(dbName, table.Name, sourceColumns)
+				if err != nil {
+					return err
+				}
 			}
 			conf.writableColumnCache.setSelectedNames(dbName, table.Name, selectedColumns)
 		}
@@ -1377,9 +1380,7 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 	)
 	if table.Type == TableTypeBase {
 		columnFilter = conf.ColumnFilter
-		if columnFilter != nil {
-			columnCache = conf.writableColumnCache
-		}
+		columnCache = conf.writableColumnCache
 	}
 	selectFieldInfo, err := buildSelectFieldInfo(tctx, conn, db, tbl, conf.CompleteInsert, columnFilter, columnCache)
 	if err != nil {

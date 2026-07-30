@@ -1131,16 +1131,14 @@ func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableNam
 		return selectFieldInfo{}, err
 	}
 	selectedColumns := sourceColumns
-	if columnFilter != nil {
-		var ok bool
-		selectedColumns, ok = columnCache.getSelectedNames(dbName, tableName)
-		if !ok {
-			selectedColumns, err = columnFilter.applyToColumns(dbName, tableName, sourceColumns)
-			if err != nil {
-				return selectFieldInfo{}, err
-			}
-			columnCache.setSelectedNames(dbName, tableName, selectedColumns)
+	if cachedSelectedColumns, ok := columnCache.getSelectedNames(dbName, tableName); ok {
+		selectedColumns = cachedSelectedColumns
+	} else if columnFilter != nil {
+		selectedColumns, err = columnFilter.applyToColumns(dbName, tableName, sourceColumns)
+		if err != nil {
+			return selectFieldInfo{}, err
 		}
+		columnCache.setSelectedNames(dbName, tableName, selectedColumns)
 	}
 	selectedFields := columnNamesToSelectFields(selectedColumns)
 	info := selectFieldInfo{
