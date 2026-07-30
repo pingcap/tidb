@@ -1709,7 +1709,11 @@ pub fn run_create_table_in(
         if create.if_not_exists {
             return Ok(false);
         }
-        return Err(DriverError::Unsupported("table already exists"));
+        // Go `infoschema.ErrTableExists` (1050) prints the db-qualified name:
+        // "Table 'test.t1' already exists".
+        return Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(
+            format!("{database}.{name}"),
+        )));
     }
 
     // Build the ColumnInfos (ids 1..n, offsets in definition order).

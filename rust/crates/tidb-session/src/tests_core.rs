@@ -316,6 +316,25 @@ fn create_drop_database() {
         Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected))
     ));
 
+    // Re-select a database: the block above deliberately left none.
+    session.run("USE test").unwrap();
+
+    // Creating a table that exists is Go's ErrTableExists (1050) with the
+    // db-qualified name -- "Table 'test.t' already exists" -- not a generic
+    // 1105 (a worker flagged this while porting sequences; the mapping
+    // existed and the CREATE site just did not use it).
+    session.run("CREATE TABLE exists_t (a INT)").unwrap();
+    let error = session
+        .run("CREATE TABLE exists_t (a INT)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1050);
+    assert_eq!(error.message, "Table 'test.exists_t' already exists");
+    session
+        .run("CREATE TABLE IF NOT EXISTS exists_t (a INT)")
+        .unwrap();
+    session.run("DROP TABLE exists_t").unwrap();
+
     // Creating a database that exists is Go's ErrDBCreateExists unless
     // IF NOT EXISTS was written.
     session.run("CREATE DATABASE drop_test").unwrap();
