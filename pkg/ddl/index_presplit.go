@@ -50,7 +50,6 @@ func preSplitIndexRegions(
 	args *model.ModifyIndexArgs,
 	statsProvider autoPresplitStatsProvider,
 	autoPresplitInterval string,
-	enableHistogram bool,
 ) error {
 	warnHandler := contextutil.NewStaticWarnHandler(0)
 	exprCtx, err := newReorgExprCtxWithReorgMeta(reorgMeta, warnHandler)
@@ -68,7 +67,7 @@ func preSplitIndexRegions(
 		if idxArg.AutoPresplit {
 			if err := autoPresplitIndexRegion(
 				ctx, sctx, store, tblInfo, idxInfo, statsProvider,
-				splitOnTempIdx, autoPresplitInterval, enableHistogram); err != nil {
+				splitOnTempIdx, autoPresplitInterval); err != nil {
 				return err
 			}
 			continue
@@ -107,11 +106,9 @@ func autoPresplitIndexRegion(
 	statsProvider autoPresplitStatsProvider,
 	splitOnTempIdx bool,
 	autoPresplitInterval string,
-	enableHistogram bool,
 ) error {
 	splitKeys, reason, err := planAutoPresplitIndexRegions(
-		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoPresplitConfig(),
-		autoPresplitInterval, enableHistogram)
+		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoPresplitConfig(), autoPresplitInterval)
 	if ctxErr := context.Cause(ctx); ctxErr != nil {
 		return ctxErr
 	}

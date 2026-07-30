@@ -129,11 +129,7 @@ func TestIndexChange(t *testing.T) {
 func TestAddIndexAutoPresplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	// Use a second session to change the GLOBAL setting while the first session
-	// waits for its already-submitted DDL job.
-	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk2.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("create table t_auto_presplit(a int primary key, b int)")
 	tk.MustExec("insert into t_auto_presplit values " +
@@ -153,8 +149,6 @@ func TestAddIndexAutoPresplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 		priority int
 	}
 	var loadedTopNFromStorage atomic.Pointer[topNFromStorageArgs]
-	var loadedHistogramFromStorage atomic.Bool
-	var switchedGlobalSetting atomic.Bool
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoPresplitConfig", "return(5)")
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithPriority",
 		func(_ int64, isIndex int, histID int64, priority int) {
@@ -164,34 +158,12 @@ func TestAddIndexAutoPresplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 				priority: priority,
 			})
 		})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeHistogramFromStorageWithPriority",
-		func(_ int64, _ int, _ int64, _ int) {
-			loadedHistogramFromStorage.Store(true)
-		})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep",
-		func(job *model.Job) {
-			if job.Type != model.ActionAddIndex || job.TableName != "t_auto_presplit" {
-				return
-			}
-			value, ok := job.GetSystemVars(vardef.TiDBEnableHistogramForPresplitIndexRegion)
-			require.True(t, ok)
-			require.Equal(t, vardef.Off, value)
-			if switchedGlobalSetting.CompareAndSwap(false, true) {
-				tk2.MustExec("set @@global.tidb_enable_histogram_for_presplit_index_region=on")
-			}
-		})
-	tk.MustQuery("select @@global.tidb_enable_histogram_for_presplit_index_region").
-		Check(testkit.Rows("1"))
-	tk.MustExec("set @@global.tidb_enable_histogram_for_presplit_index_region=off")
-	defer tk2.MustExec("set @@global.tidb_enable_histogram_for_presplit_index_region=on")
 	tk.MustExec("alter table t_auto_presplit add index idx_b(b) pre_split_regions auto")
-	require.True(t, switchedGlobalSetting.Load())
 	loadedArgs := loadedTopNFromStorage.Load()
 	require.NotNil(t, loadedArgs)
 	require.Equal(t, 0, loadedArgs.isIndex)
 	require.Equal(t, int64(2), loadedArgs.histID)
 	require.Equal(t, kv.PriorityNormal, loadedArgs.priority)
-	require.False(t, loadedHistogramFromStorage.Load())
 }
 
 func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue any, handle int64, exists bool) error {

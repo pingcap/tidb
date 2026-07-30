@@ -98,15 +98,14 @@ type AutoPresplitColumnStats struct {
 	NullCountError error
 }
 
-// LoadColumnStatsForAutoPresplit loads one column's metadata and TopN, and
-// optionally its Histogram, from one MVCC snapshot.
+// LoadColumnStatsForAutoPresplit loads one column's metadata, TopN, and Histogram
+// from one MVCC snapshot.
 func LoadColumnStatsForAutoPresplit(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalTableID, columnID int64,
 	colInfo *model.ColumnInfo,
 	limit int,
-	loadHistogram bool,
 ) (*AutoPresplitColumnStats, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	if cause := context.Cause(ctx); cause != nil {
@@ -155,18 +154,16 @@ func LoadColumnStatsForAutoPresplit(
 		}
 	}
 
-	if loadHistogram {
-		histogram, histogramErr := histogramFromStorageWithPriority(
-			ctx, sctx, physicalTableID, columnID, &colInfo.FieldType,
-			histMeta.NDV, 0, histMeta.LastUpdateVersion, result.Column.NullCount,
-			histMeta.TotColSize, histMeta.Correlation, kv.PriorityNormal, version.Ver)
-		if cause := context.Cause(ctx); cause != nil {
-			return nil, cause
-		}
-		result.HistogramError = histogramErr
-		if histogramErr == nil && histogram != nil {
-			result.Column.Histogram = *histogram
-		}
+	histogram, histogramErr := histogramFromStorageWithPriority(
+		ctx, sctx, physicalTableID, columnID, &colInfo.FieldType,
+		histMeta.NDV, 0, histMeta.LastUpdateVersion, result.Column.NullCount,
+		histMeta.TotColSize, histMeta.Correlation, kv.PriorityNormal, version.Ver)
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
+	result.HistogramError = histogramErr
+	if histogramErr == nil && histogram != nil {
+		result.Column.Histogram = *histogram
 	}
 	return result, nil
 }
@@ -235,8 +232,6 @@ func histogramFromStorageWithPriority(
 	priority int,
 	snapshot uint64,
 ) (*statistics.Histogram, error) {
-	failpoint.InjectCall(
-		"beforeHistogramFromStorageWithPriority", tableID, isIndex, colID, priority)
 	selectPrefix := "select "
 	switch priority {
 	case kv.PriorityHigh:

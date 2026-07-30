@@ -2089,11 +2089,6 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	}
 	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
 	job.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
-	if hasAutoPresplitSubJob(info) {
-		if err = persistAutoPresplitSettings(ctx, job); err != nil {
-			return errors.Trace(err)
-		}
-	}
 	err = checkMultiSchemaInfo(info, t)
 	if err != nil {
 		return errors.Trace(err)
@@ -4862,9 +4857,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	if autoPresplit {
-		if err = persistAutoPresplitSettings(ctx, job); err != nil {
-			return errors.Trace(err)
-		}
+		persistAutoPresplitInterval(job)
 	}
 
 	args := &model.ModifyIndexArgs{
@@ -5181,9 +5174,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
 	job.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
 	if autoPresplit {
-		if err = persistAutoPresplitSettings(ctx, job); err != nil {
-			return errors.Trace(err)
-		}
+		persistAutoPresplitInterval(job)
 	}
 
 	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
