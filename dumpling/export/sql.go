@@ -17,6 +17,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
@@ -1065,40 +1066,13 @@ type writableColumnInfo struct {
 	hasGenerateColumn bool
 }
 
-type writableColumnCacheKey struct {
-	dbName    string
-	tableName string
+type writableColumnCache map[restore.UniqueTableName]writableColumnInfo
+
+func newWritableColumnCache() writableColumnCache {
+	return make(writableColumnCache)
 }
 
-type writableColumnCache struct {
-	columns map[writableColumnCacheKey]writableColumnInfo
-}
-
-func newWritableColumnCache() *writableColumnCache {
-	return &writableColumnCache{
-		columns: make(map[writableColumnCacheKey]writableColumnInfo),
-	}
-}
-
-func (c *writableColumnCache) get(dbName, tableName string) (writableColumnInfo, bool) {
-	key := writableColumnCacheKey{dbName: dbName, tableName: tableName}
-	info, ok := c.columns[key]
-	return info, ok
-}
-
-func (c *writableColumnCache) getSelectedNames(dbName, tableName string) ([]string, bool) {
-	info, ok := c.get(dbName, tableName)
-	if !ok || info.selectedNames == nil {
-		return nil, false
-	}
-	return info.selectedNames, true
-}
-
-func (c *writableColumnCache) set(dbName, tableName string, info writableColumnInfo) {
-	c.columns[writableColumnCacheKey{dbName: dbName, tableName: tableName}] = info
-}
-
-func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnCache *writableColumnCache) (string, int, string, error) { // revive:disable-line:flag-parameter
+func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnCache writableColumnCache) (string, int, string, error) { // revive:disable-line:flag-parameter
 	var (
 		sourceColumns     []string
 		selectedColumns   []string
@@ -1112,7 +1086,7 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 		}
 		selectedColumns = sourceColumns
 	} else {
-		info, ok := columnCache.get(dbName, tableName)
+		info, ok := columnCache[restore.UniqueTableName{DB: dbName, Table: tableName}]
 		if !ok {
 			return "", 0, "", errors.Errorf(
 				"missing writable column cache for table `%s`.`%s`",

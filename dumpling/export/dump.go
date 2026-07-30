@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/dumpling/cli"
@@ -521,11 +522,11 @@ func prepareColumnProjectionCache(tctx *tcontext.Context, conf *Config, conn *Ba
 					return err
 				}
 			}
-			conf.writableColumnCache.set(dbName, table.Name, writableColumnInfo{
+			conf.writableColumnCache[restore.UniqueTableName{DB: dbName, Table: table.Name}] = writableColumnInfo{
 				sourceNames:       sourceColumns,
 				selectedNames:     selectedColumns,
 				hasGenerateColumn: hasGenerateColumn,
-			})
+			}
 		}
 	}
 	return nil
@@ -1371,7 +1372,7 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 
 func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
-	var columnCache *writableColumnCache
+	var columnCache writableColumnCache
 	if table.Type == TableTypeBase {
 		columnCache = conf.writableColumnCache
 	}

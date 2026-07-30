@@ -14,6 +14,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -778,9 +779,9 @@ func TestPrepareColumnProjectionCache(t *testing.T) {
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, ""))
 	require.NoError(t, prepareColumnProjectionCache(tctx, conf, baseConn))
-	selectedColumns, ok := conf.writableColumnCache.getSelectedNames(database, table)
+	columnInfo, ok := conf.writableColumnCache[restore.UniqueTableName{DB: database, Table: table}]
 	require.True(t, ok)
-	require.Equal(t, []string{"id", "name"}, selectedColumns)
+	require.Equal(t, []string{"id", "name"}, columnInfo.selectedNames)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -806,9 +807,9 @@ func TestPrepareColumnProjectionCacheWithoutColumnFilter(t *testing.T) {
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, ""))
 	require.NoError(t, prepareColumnProjectionCache(tctx, conf, baseConn))
-	selectedColumns, ok := conf.writableColumnCache.getSelectedNames(database, table)
+	columnInfo, ok := conf.writableColumnCache[restore.UniqueTableName{DB: database, Table: table}]
 	require.True(t, ok)
-	require.Equal(t, []string{"id", "name"}, selectedColumns)
+	require.Equal(t, []string{"id", "name"}, columnInfo.selectedNames)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

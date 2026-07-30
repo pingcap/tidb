@@ -18,6 +18,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	dbconfig "github.com/pingcap/tidb/pkg/config"
@@ -54,7 +55,7 @@ func buildSelectFieldForTest(tctx *tcontext.Context, db *BaseConn, dbName, table
 	return selectField, selectLen, nil
 }
 
-func newColumnCacheForTest(dbName, tableName string, sourceNames []string, hasGenerateColumn bool, selectedNames []string) *writableColumnCache {
+func newColumnCacheForTest(dbName, tableName string, sourceNames []string, hasGenerateColumn bool, selectedNames []string) writableColumnCache {
 	cache := newWritableColumnCache()
 	info := writableColumnInfo{
 		sourceNames:       sourceNames,
@@ -63,7 +64,7 @@ func newColumnCacheForTest(dbName, tableName string, sourceNames []string, hasGe
 	if selectedNames != nil {
 		info.selectedNames = selectedNames
 	}
-	cache.columns[writableColumnCacheKey{dbName: dbName, tableName: tableName}] = info
+	cache[restore.UniqueTableName{DB: dbName, Table: tableName}] = info
 	return cache
 }
 
