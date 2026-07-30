@@ -25,9 +25,9 @@ pub struct Keyword {
     pub section: &'static str,
 }
 
-mod part_reserved;
-mod part_tidb;
-mod part_unreserved;
+mod reserved;
+mod tidb_specific;
+mod unreserved;
 
 const KEYWORD_COUNT: usize = 684;
 
@@ -41,7 +41,7 @@ const fn build_keywords() -> [Keyword; KEYWORD_COUNT] {
     }; KEYWORD_COUNT];
     let mut pos = 0;
     {
-        let src = part_reserved::KEYWORDS_RESERVED;
+        let src = reserved::KEYWORDS_RESERVED;
         let mut i = 0;
         while i < src.len() {
             out[pos] = src[i];
@@ -50,7 +50,7 @@ const fn build_keywords() -> [Keyword; KEYWORD_COUNT] {
         }
     }
     {
-        let src = part_unreserved::KEYWORDS_UNRESERVED;
+        let src = unreserved::KEYWORDS_UNRESERVED;
         let mut i = 0;
         while i < src.len() {
             out[pos] = src[i];
@@ -59,7 +59,7 @@ const fn build_keywords() -> [Keyword; KEYWORD_COUNT] {
         }
     }
     {
-        let src = part_tidb::KEYWORDS_TIDB;
+        let src = tidb_specific::KEYWORDS_TIDB;
         let mut i = 0;
         while i < src.len() {
             out[pos] = src[i];
