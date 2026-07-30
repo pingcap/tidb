@@ -102,6 +102,7 @@ mod column_types;
 mod indexes;
 mod table_constraints;
 mod table_lifecycle;
+mod table_partition;
 
 pub use alter_table::run_alter_table_in;
 
@@ -259,6 +260,10 @@ pub fn run_create_table_in(
             "temporary tables are not supported yet",
         ));
     }
+    // Before any metadata is built: this tier stores no `PartitionInfo`, so a
+    // partitioned table would silently become an ordinary one. See
+    // [`table_partition`]'s module doc for the captured Go answer.
+    table_partition::refuse_table_partitioning(create)?;
     if create.columns.is_empty() {
         return Err(DriverError::Unsupported("a table needs columns"));
     }
