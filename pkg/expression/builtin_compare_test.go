@@ -311,6 +311,10 @@ func TestGreatestLeastFunc(t *testing.T) {
 			uint64(9223372036854775809), uint64(9223372036854775808), false, false,
 		},
 		{
+			[]any{uint64(9223372036854775807), uint64(9223372036854775808)},
+			uint64(9223372036854775808), uint64(9223372036854775807), false, false,
+		},
+		{
 			[]any{1, 2, 3, 4},
 			int64(4), int64(1), false, false,
 		},
