@@ -354,7 +354,7 @@ mod grouping;
 mod like;
 mod math_fn;
 mod ops;
-pub mod pb_comparison;
+pub mod pb_predicate;
 mod regexp;
 pub mod rewriter;
 mod rng;

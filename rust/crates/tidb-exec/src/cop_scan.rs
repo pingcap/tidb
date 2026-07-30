@@ -71,17 +71,18 @@ use tidb_executor::pushdown_scan::{
     PushdownRowStream, PushdownScanColumn, PushdownScanRequest, PushdownScanner,
     PushdownScannerError, EXTRA_HANDLE_COLUMN_ID,
 };
-use tidb_executor::scan_pushdown::ScanComparison;
+use tidb_executor::scan_pushdown::ScanPredicate;
 use tidb_executor::storage::StorageError;
-use tidb_planner::physical_selection::PhysicalSelectionPlan;
 use tidb_planner::physical_table_scan::PhysicalTableScanPlan;
 use tidb_planner::scan_pushdown::{ScanColumnInfo, TiKvTableScanSpec};
-use tidb_proto::tipb::ExecType;
+use tidb_proto::tipb::{ExecType, Expr};
 use tidb_txnkv::KeyRange;
 
-use crate::dag_request::{construct_capped_read_only_dag_req, DagRequestContext, TiKvScanPlan};
+use crate::dag_request::{
+    construct_capped_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
+};
 use crate::real_tikv_read::RealTiKvSessionTransportFactory;
-use crate::wide_scan_selection::wide_scan_selection_plan;
+use crate::wide_scan_selection::{accepts, wide_scan_selection_conditions};
 
 /// Go `mysql.NotNullFlag`.
 const NOT_NULL_FLAG: i32 = 1;
@@ -212,18 +213,18 @@ where
 
         // Every conjunct this lowering accepts travels; the rest simply stay
         // behind, because the scan source tests all of them locally anyway.
-        let lowered: Vec<ScanComparison> = request
-            .comparisons
+        let lowered: Vec<ScanPredicate> = request
+            .predicates
             .iter()
-            .filter(|comparison| wide_scan_selection_plan(std::slice::from_ref(comparison)).is_ok())
+            .filter(|predicate| accepts(predicate, &columns))
             .cloned()
             .collect();
-        let selection: Option<PhysicalSelectionPlan> = if lowered.is_empty() {
-            None
+        let conditions: Vec<Expr> = if lowered.is_empty() {
+            Vec::new()
         } else {
-            Some(wide_scan_selection_plan(&lowered).map_err(|error| {
+            wide_scan_selection_conditions(&lowered, &columns).map_err(|error| {
                 PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
-            })?)
+            })?
         };
 
         // The cap may only travel with a predicate that travelled WHOLE. A
@@ -232,18 +233,18 @@ where
         // those -- fewer rows than the query asked for, with nothing to say so.
         // This is the same hazard the staged buffer already guards against by
         // dropping the cap whenever rows are merged in locally.
-        let remote_limit = if lowered.len() == request.comparisons.len() {
+        let remote_limit = if lowered.len() == request.predicates.len() {
             request.limit
         } else {
             None
         };
 
-        let mut spec = TiKvTableScanSpec::new(request.table_id, columns);
+        let mut spec = TiKvTableScanSpec::new(request.table_id, columns.clone());
         // The merge above reads the remote rows in record-key order, which is
         // the order it merges the staged buffer against.
         spec.keep_order = true;
         let scan = PhysicalTableScanPlan::init(0, 0, spec);
-        let dag = construct_capped_read_only_dag_req(
+        let dag = construct_capped_read_only_dag_req_with_conditions(
             &DagRequestContext::new(
                 self.time_zone_name.clone(),
                 self.time_zone_offset_secs,
@@ -251,7 +252,7 @@ where
                 EncodeType::Default,
             ),
             TiKvScanPlan::Table(&scan),
-            selection.as_ref(),
+            &conditions,
             remote_limit,
             &output_offsets,
         )
@@ -260,7 +261,7 @@ where
         let summary = dag_summary(&dag);
         let key_range = KeyRange::new(request.start.clone(), request.end.clone());
         let mut shapes = vec![ExecutorShape::new(ExecutorKind::TableScan)];
-        if selection.is_some() {
+        if !conditions.is_empty() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
         if remote_limit.is_some() {

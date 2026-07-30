@@ -40,7 +40,7 @@ use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::pushdown_scan::{
     PushdownRowStream, PushdownScanColumn, PushdownScanRequest, EXTRA_HANDLE_COLUMN_ID,
 };
-use crate::scan_pushdown::ScanComparison;
+use crate::scan_pushdown::ScanPredicate;
 use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1295,7 +1295,7 @@ impl KvTable {
     /// region -- with the session's staged writes merged back in, or `None`
     /// when the backend has none or this table's shape is outside it.
     ///
-    /// `keep` is the projected column set, in output order; `comparisons`
+    /// `keep` is the projected column set, in output order; `predicates`
     /// describe the conjuncts the caller applies to every emitted row anyway,
     /// so the remote filter is a pre-filter and cannot change the answer.
     ///
@@ -1305,7 +1305,7 @@ impl KvTable {
     pub fn pushdown_row_cursor(
         &mut self,
         keep: &[usize],
-        comparisons: &[ScanComparison],
+        predicates: &[ScanPredicate],
         limit: Option<u64>,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         if !self.common_handle_offsets.is_empty() {
@@ -1352,7 +1352,7 @@ impl KvTable {
             table_id: self.table_id,
             columns,
             handle_index,
-            comparisons: comparisons.to_vec(),
+            predicates: predicates.to_vec(),
             limit,
             // The storage that owns the snapshot fills this in; the table has
             // no timestamp of its own.
@@ -2223,7 +2223,7 @@ pub struct TableScanExec {
     filter: Option<crate::scan_pushdown::ScanFilterProbe>,
     /// The same conjuncts as a description, for a backend that can evaluate
     /// them at the region. They are applied locally regardless.
-    pushed: Vec<ScanComparison>,
+    pushed: Vec<ScanPredicate>,
     /// The table-column offsets this scan emits, in output order. Every
     /// column of the table until the driver prunes it.
     keep: Vec<usize>,
@@ -2404,7 +2404,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         if filter.is_empty() {
             return false;
         }
-        self.pushed = filter.comparisons().to_vec();
+        self.pushed = filter.predicates().to_vec();
         self.filter = Some(crate::scan_pushdown::ScanFilterProbe::new(
             filter.clone(),
             ctx.clone(),

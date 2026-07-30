@@ -94,6 +94,13 @@ enum ScalarFuncSig {
   GEInt = 130;
   EQInt = 140;
   NEInt = 150;
+  // The op group: the logical composition and negation of a boolean-integer
+  // predicate, and `IS NULL` over an integer argument.
+  LogicalOr = 3102;
+  UnaryNotInt = 3104;
+  IntIsNull = 3116;
+  // The set-membership group.
+  InInt = 4001;
 }
 
 // Dependency-closed projection of expression.proto Expr. RPN, aggregate, and

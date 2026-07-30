@@ -48,7 +48,7 @@
 //!
 //! # Why the pushed predicate is best-effort and the answer is still exact
 //!
-//! The conjuncts in [`PushdownScanRequest::comparisons`] are a *request*. A
+//! The conjuncts in [`PushdownScanRequest::predicates`] are a *request*. A
 //! backend may lower all of them, some of them, or none -- whatever its
 //! coprocessor lowering accepts -- because the caller keeps evaluating every
 //! pushed conjunct itself on every row it emits, remote or staged. The remote
@@ -61,7 +61,7 @@ use std::fmt;
 use tidb_datatype::{Datum, FieldType};
 use tidb_txnkv::Key;
 
-use crate::scan_pushdown::ScanComparison;
+use crate::scan_pushdown::ScanPredicate;
 use crate::storage::StorageError;
 
 /// One column a remote scan must return, in the order the caller wants it.
@@ -98,7 +98,7 @@ pub struct PushdownScanRequest {
     pub handle_index: usize,
     /// The conjuncts the caller would like evaluated remotely. Best-effort:
     /// see the module doc.
-    pub comparisons: Vec<ScanComparison>,
+    pub predicates: Vec<ScanPredicate>,
     /// A row cap the backend may stop at. Best-effort: see the module doc.
     pub limit: Option<u64>,
     /// The timestamp the remote scan must read at: the statement's own
@@ -198,7 +198,7 @@ mod tests {
     };
     use crate::driver::{run_select_on, Catalog};
     use crate::kv_table::{KvColumn, KvTable, TableHandle};
-    use crate::scan_pushdown::ScanComparisonOp;
+    use crate::scan_pushdown::{ScanComparisonOp, ScanPredicate};
     use crate::storage::{MemTableStorage, TableStorage};
 
     /// The committed half of a cluster read, shared by the snapshot the
@@ -282,9 +282,9 @@ mod tests {
             while let Some((handle, mut row)) = cursor.next_row().unwrap() {
                 self.scanned.fetch_add(1, Ordering::Relaxed);
                 if !request
-                    .comparisons
+                    .predicates
                     .iter()
-                    .all(|comparison| admits(comparison, &row))
+                    .all(|predicate| admits(predicate, &row) == Some(true))
                 {
                     continue;
                 }
@@ -305,27 +305,74 @@ mod tests {
         }
     }
 
-    /// Evaluates one comparison the way the coprocessor would, over the
-    /// integer domain the lowering accepts.
-    fn admits(comparison: &ScanComparison, row: &[Datum]) -> bool {
-        let (Some(Datum::Int(value)), Datum::Int(literal)) = (
-            row.get(comparison.column_offset as usize),
-            comparison.literal.clone(),
-        ) else {
-            return true;
-        };
-        let (left, right) = if comparison.column_on_left {
-            (*value, literal)
-        } else {
-            (literal, *value)
-        };
-        match comparison.op {
-            ScanComparisonOp::Eq => left == right,
-            ScanComparisonOp::Ne => left != right,
-            ScanComparisonOp::Lt => left < right,
-            ScanComparisonOp::Le => left <= right,
-            ScanComparisonOp::Gt => left > right,
-            ScanComparisonOp::Ge => left >= right,
+    /// Evaluates one description the way the coprocessor would, over the
+    /// integer domain the lowering accepts, in MySQL's three-valued logic.
+    /// `None` is SQL `UNKNOWN`; a shape outside the integer domain answers
+    /// `Some(true)`, the "did not filter" answer a backend is allowed to give.
+    fn admits(predicate: &ScanPredicate, row: &[Datum]) -> Option<bool> {
+        match predicate {
+            ScanPredicate::Compare(comparison) => {
+                let (Some(value), Datum::Int(literal)) = (
+                    row.get(comparison.column_offset as usize),
+                    comparison.literal.clone(),
+                ) else {
+                    return Some(true);
+                };
+                let value = match value {
+                    Datum::Int(value) => *value,
+                    Datum::Null => return None,
+                    _ => return Some(true),
+                };
+                let (left, right) = if comparison.column_on_left {
+                    (value, literal)
+                } else {
+                    (literal, value)
+                };
+                Some(match comparison.op {
+                    ScanComparisonOp::Eq => left == right,
+                    ScanComparisonOp::Ne => left != right,
+                    ScanComparisonOp::Lt => left < right,
+                    ScanComparisonOp::Le => left <= right,
+                    ScanComparisonOp::Gt => left > right,
+                    ScanComparisonOp::Ge => left >= right,
+                })
+            }
+            ScanPredicate::IsNull {
+                column_offset,
+                negated,
+                ..
+            } => {
+                let is_null = row.get(*column_offset as usize) == Some(&Datum::Null);
+                Some(is_null != *negated)
+            }
+            ScanPredicate::In {
+                column_offset,
+                literals,
+                negated,
+                ..
+            } => {
+                let Some(value) = row.get(*column_offset as usize) else {
+                    return Some(true);
+                };
+                if *value == Datum::Null {
+                    return None;
+                }
+                let found = literals.iter().any(|literal| literal == value);
+                Some(found != *negated)
+            }
+            // MySQL's `OR`: TRUE dominates UNKNOWN, which dominates FALSE.
+            ScanPredicate::Or(branches) => {
+                let mut unknown = false;
+                for branch in branches {
+                    match admits(branch, row) {
+                        Some(true) => return Some(true),
+                        Some(false) => {}
+                        None => unknown = true,
+                    }
+                }
+                (!unknown).then_some(false)
+            }
+            ScanPredicate::Not(inner) => admits(inner, row).map(|value| !value),
         }
     }
 

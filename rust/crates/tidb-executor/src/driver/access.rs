@@ -477,15 +477,15 @@ pub(crate) fn split_scan_predicates(
 ) -> (PushedScanFilter, Option<tidb_ast::Expr>) {
     let mut conjuncts = Vec::new();
     collect_conjuncts(where_clause, &mut conjuncts);
-    let mut comparisons = Vec::new();
+    let mut predicates = Vec::new();
     let mut filters = Vec::new();
     let mut residual: Vec<&tidb_ast::Expr> = Vec::new();
     for conjunct in conjuncts {
-        match scan_comparison(conjunct, resolver).and_then(|comparison| {
-            Some((comparison, rewrite_expr_resolved(conjunct, resolver).ok()?))
+        match scan_predicate(conjunct, resolver).and_then(|predicate| {
+            Some((predicate, rewrite_expr_resolved(conjunct, resolver).ok()?))
         }) {
-            Some((comparison, filter)) => {
-                comparisons.push(comparison);
+            Some((predicate, filter)) => {
+                predicates.push(predicate);
                 filters.push(filter);
             }
             None => residual.push(conjunct),
@@ -498,7 +498,18 @@ pub(crate) fn split_scan_predicates(
             Box::new(right),
         )
     });
-    (PushedScanFilter::new(comparisons, filters), residual)
+    (PushedScanFilter::new(predicates, filters), residual)
+}
+
+/// One conjunct as a coprocessor-describable predicate, when it is one.
+fn scan_predicate(
+    conjunct: &tidb_ast::Expr,
+    resolver: &impl ColumnResolver,
+) -> Option<ScanPredicate> {
+    match conjunct {
+        tidb_ast::Expr::Paren(inner) => scan_predicate(inner, resolver),
+        _ => scan_comparison(conjunct, resolver).map(ScanPredicate::Compare),
+    }
 }
 
 /// One conjunct as a column-versus-constant comparison, when it is one.

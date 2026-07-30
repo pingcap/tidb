@@ -97,10 +97,51 @@ impl ScanComparisonOp {
 
 /// One pushed conjunct, described independently of how it is evaluated.
 ///
-/// This is the hand-off shape for a coprocessor lowering: it names the scan
-/// input offset, the operator, the constant, and which side the column was
-/// written on, which is everything `PhysicalSelection.ToPB` needs and nothing
-/// that ties the description to in-process evaluation.
+/// A description is what a coprocessor lowering reads; the paired
+/// [`Expression`] is what an in-process source evaluates. Both halves describe
+/// the same conjunct, so a lowering may refuse any subset of them without
+/// changing an answer -- see [`PushedScanFilter`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum ScanPredicate {
+    /// A column compared with a constant, in either operand order.
+    Compare(ScanComparison),
+    /// `column IS NULL`, or `column IS NOT NULL` when `negated`.
+    IsNull {
+        /// Zero-based offset of the column in the scan's output row.
+        column_offset: u32,
+        /// The column's declared type.
+        column_type: FieldType,
+        /// `true` for the `IS NOT NULL` spelling.
+        negated: bool,
+    },
+    /// `column IN (constants)`, or `NOT IN` when `negated`. The list is never
+    /// empty and never holds [`Datum::Null`]: a NULL member makes the whole
+    /// predicate's three-valued result depend on the non-matching case, which
+    /// is not a shape this description promises, so such a conjunct stays
+    /// residual.
+    In {
+        /// Zero-based offset of the column in the scan's output row.
+        column_offset: u32,
+        /// The column's declared type.
+        column_type: FieldType,
+        /// The constant list, in source order.
+        literals: Vec<Datum>,
+        /// `true` for the `NOT IN` spelling.
+        negated: bool,
+    },
+    /// A disjunction of two or more descriptions, flattened out of the source
+    /// `OR` chain in source order.
+    Or(Vec<ScanPredicate>),
+    /// `NOT description`.
+    Not(Box<ScanPredicate>),
+}
+
+/// A column-versus-constant comparison.
+///
+/// This names the scan input offset, the operator, the constant, and which
+/// side the column was written on, which is everything
+/// `PhysicalSelection.ToPB` needs and nothing that ties the description to
+/// in-process evaluation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScanComparison {
     /// Zero-based offset of the column in the scan's output row.
@@ -124,7 +165,7 @@ pub struct ScanComparison {
 /// lowering reads and the expressions an in-process source evaluates.
 #[derive(Clone, Debug)]
 pub struct PushedScanFilter {
-    comparisons: Vec<ScanComparison>,
+    predicates: Vec<ScanPredicate>,
     filters: Vec<Expression>,
 }
 
@@ -135,22 +176,22 @@ impl PushedScanFilter {
     /// If the two halves differ in length -- they describe the same conjuncts,
     /// so a mismatch is a construction bug rather than a runtime condition.
     #[must_use]
-    pub fn new(comparisons: Vec<ScanComparison>, filters: Vec<Expression>) -> Self {
+    pub fn new(predicates: Vec<ScanPredicate>, filters: Vec<Expression>) -> Self {
         assert_eq!(
-            comparisons.len(),
+            predicates.len(),
             filters.len(),
             "every pushed conjunct has one description and one expression"
         );
         Self {
-            comparisons,
+            predicates,
             filters,
         }
     }
 
     /// The pushed conjuncts in `WHERE` order, for a coprocessor lowering.
     #[must_use]
-    pub fn comparisons(&self) -> &[ScanComparison] {
-        &self.comparisons
+    pub fn predicates(&self) -> &[ScanPredicate] {
+        &self.predicates
     }
 
     /// Whether anything was pushed at all.

@@ -24,8 +24,8 @@ use std::{error::Error, fmt};
 
 use tidb_ast::BinaryOp;
 use tidb_distsql::{system_endian, EncodeType as DistSqlEncodeType, SystemEndian};
-use tidb_expr::pb_comparison::{
-    signed_bigint_comparison_to_pb, PbComparisonError, SignedBigIntPbOperand,
+use tidb_expr::pb_predicate::{
+    bigint_column_field_type, int_comparison_to_pb, IntPbOperand, PbPredicateError,
 };
 use tidb_planner::{
     physical_index_scan::PhysicalIndexScanPlan,
@@ -38,7 +38,7 @@ use tidb_planner::{
 };
 use tidb_proto::tipb::{
     ChunkMemoryLayout, ColumnInfo, DagRequest, EncodeType, Endian, EngineType, ExecType, Executor,
-    IndexScan, Limit, Selection, TableScan,
+    Expr, IndexScan, Limit, Selection, TableScan,
 };
 
 /// Go's default `div_precision_increment`; the field is omitted at this value.
@@ -126,7 +126,7 @@ pub enum DagRequestBuildError {
     /// A metadata-only Selection cannot enter the executable TiKV DAG.
     EmptySelection,
     /// The bounded expression owner rejected a condition.
-    Expression(PbComparisonError),
+    Expression(PbPredicateError),
 }
 
 impl fmt::Display for DagRequestBuildError {
@@ -165,8 +165,8 @@ impl fmt::Display for DagRequestBuildError {
 
 impl Error for DagRequestBuildError {}
 
-impl From<PbComparisonError> for DagRequestBuildError {
-    fn from(error: PbComparisonError) -> Self {
+impl From<PbPredicateError> for DagRequestBuildError {
+    fn from(error: PbPredicateError) -> Self {
         Self::Expression(error)
     }
 }
@@ -176,7 +176,7 @@ pub fn construct_dag_req(
     context: &DagRequestContext,
     plans: &[TiKvScanPlan<'_>],
 ) -> Result<DagRequest, DagRequestBuildError> {
-    construct_dag_req_inner(context, plans, None, None, None)
+    construct_dag_req_inner(context, plans, SelectionSource::None, None, None)
 }
 
 /// Go's `PhysicalLimit.ToPB` in the TiKV list form: the coprocessor stops
@@ -210,7 +210,51 @@ pub fn construct_read_only_dag_req(
     selection: Option<&PhysicalSelectionPlan>,
     output_offsets: &[u32],
 ) -> Result<DagRequest, DagRequestBuildError> {
-    construct_dag_req_inner(context, &[scan], selection, Some(output_offsets), None)
+    construct_dag_req_inner(
+        context,
+        &[scan],
+        selection.map_or(SelectionSource::None, SelectionSource::Bounded),
+        Some(output_offsets),
+        None,
+    )
+}
+
+/// Where a DAG's Selection conditions come from.
+///
+/// The bounded [`PhysicalSelectionPlan`] describes signed-`BIGINT`
+/// comparisons and is lowered here; a caller that already lowered a wider
+/// predicate (the wide SQL path, over the whole integer family plus `OR`,
+/// `NOT`, `IS NULL` and `IN`) hands the TiPB conditions in directly.
+#[derive(Clone, Copy, Debug)]
+enum SelectionSource<'a> {
+    /// No Selection executor at all.
+    None,
+    /// The bounded resolved-comparison plan.
+    Bounded(&'a PhysicalSelectionPlan),
+    /// Already-lowered conditions, in `WHERE` order.
+    Conditions(&'a [Expr]),
+}
+
+/// [`construct_capped_read_only_dag_req`] over conditions the caller already
+/// lowered to TiPB. An empty `conditions` builds no Selection executor.
+pub fn construct_capped_read_only_dag_req_with_conditions(
+    context: &DagRequestContext,
+    scan: TiKvScanPlan<'_>,
+    conditions: &[Expr],
+    limit: Option<u64>,
+    output_offsets: &[u32],
+) -> Result<DagRequest, DagRequestBuildError> {
+    construct_dag_req_inner(
+        context,
+        &[scan],
+        if conditions.is_empty() {
+            SelectionSource::None
+        } else {
+            SelectionSource::Conditions(conditions)
+        },
+        Some(output_offsets),
+        limit,
+    )
 }
 
 /// [`construct_read_only_dag_req`] with a coprocessor-side row cap appended
@@ -223,13 +267,19 @@ pub fn construct_capped_read_only_dag_req(
     limit: Option<u64>,
     output_offsets: &[u32],
 ) -> Result<DagRequest, DagRequestBuildError> {
-    construct_dag_req_inner(context, &[scan], selection, Some(output_offsets), limit)
+    construct_dag_req_inner(
+        context,
+        &[scan],
+        selection.map_or(SelectionSource::None, SelectionSource::Bounded),
+        Some(output_offsets),
+        limit,
+    )
 }
 
 fn construct_dag_req_inner(
     context: &DagRequestContext,
     plans: &[TiKvScanPlan<'_>],
-    selection: Option<&PhysicalSelectionPlan>,
+    selection: SelectionSource<'_>,
     requested_output_offsets: Option<&[u32]>,
     limit: Option<u64>,
 ) -> Result<DagRequest, DagRequestBuildError> {
@@ -264,8 +314,14 @@ fn construct_dag_req_inner(
             .collect(),
     };
     let mut executors = vec![scan_executor];
-    if let Some(selection) = selection {
-        executors.push(selection_to_pb(selection, scan_columns)?);
+    match selection {
+        SelectionSource::None => {}
+        SelectionSource::Bounded(plan) => {
+            executors.push(selection_to_pb(plan, scan_columns)?);
+        }
+        SelectionSource::Conditions(conditions) => {
+            executors.push(selection_executor(conditions.to_vec())?);
+        }
     }
     if let Some(limit) = limit {
         executors.push(limit_to_pb(limit));
@@ -323,10 +379,17 @@ fn selection_to_pb(
         .map(|condition| {
             let left = comparison_operand_to_pb(condition.lhs(), scan_columns)?;
             let right = comparison_operand_to_pb(condition.rhs(), scan_columns)?;
-            signed_bigint_comparison_to_pb(comparison_op(condition.op()), left, right)
+            int_comparison_to_pb(comparison_op(condition.op()), left, right)
                 .map_err(DagRequestBuildError::from)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    selection_executor(conditions)
+}
+
+fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuildError> {
+    if conditions.is_empty() {
+        return Err(DagRequestBuildError::EmptySelection);
+    }
     Ok(Executor {
         tp: Some(ExecType::TypeSelection as i32),
         tbl_scan: None,
@@ -354,9 +417,9 @@ const fn comparison_op(operator: ComparisonOp) -> BinaryOp {
 fn comparison_operand_to_pb(
     operand: ComparisonOperand,
     scan_columns: &[ScanColumnInfo],
-) -> Result<SignedBigIntPbOperand, DagRequestBuildError> {
+) -> Result<IntPbOperand, DagRequestBuildError> {
     match operand {
-        ComparisonOperand::Int(value) => Ok(SignedBigIntPbOperand::Literal(value)),
+        ComparisonOperand::Int(value) => Ok(IntPbOperand::Literal(value)),
         ComparisonOperand::InputOffset(offset) => {
             let column = scan_columns.get(offset as usize).ok_or(
                 DagRequestBuildError::ConditionInputOffsetOutOfRange {
@@ -370,9 +433,12 @@ fn comparison_operand_to_pb(
                     flags: column.flag,
                 }
             })?;
-            Ok(SignedBigIntPbOperand::Column {
+            Ok(IntPbOperand::Column {
                 offset: offset as usize,
-                flags,
+                // The bounded plan admits signed `BIGINT` columns only, so the
+                // scan descriptor's own width and scale carry no information
+                // this leaf does not already know.
+                field_type: bigint_column_field_type(flags),
             })
         }
     }

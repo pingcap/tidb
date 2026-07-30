@@ -106,7 +106,7 @@ pub use kv_table::{
 pub use limit::LimitExec;
 pub use mem_table::MemTableSourceExec;
 pub use projection::ProjectionExec;
-pub use scan_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp};
+pub use scan_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp, ScanPredicate};
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{SequenceSnapshot, StmtContext};

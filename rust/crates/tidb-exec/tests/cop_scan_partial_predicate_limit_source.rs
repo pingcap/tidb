@@ -239,11 +239,13 @@ fn column(name: &str, id: i64, unsigned: bool) -> KvColumn {
 
 /// `t(id BIGINT, tag BIGINT UNSIGNED)` read through a real [`CopScanSource`].
 ///
-/// `tag`'s unsignedness is the point: the coprocessor can *describe* the
-/// column, so the scan is served remotely, but the Selection lowering refuses
-/// the comparison (different overflow and sign semantics), so `tag = 7` stays
-/// behind while `id > 0` travels. That is the partial lowering the cap must
-/// not accompany.
+/// The query below compares `tag` with the *string* `'7'`. That is the point:
+/// the coprocessor can describe the column, so the scan is served remotely,
+/// and the driver pushes the conjunct -- but the Selection lowering refuses a
+/// non-integer constant, because Go rewrites one through
+/// `RefineComparedConstant` rather than sending it as written. So `tag = '7'`
+/// stays behind while `id > 0` travels. That is the partial lowering the cap
+/// must not accompany.
 fn fixture() -> (Catalog, Arc<FakeRegion>) {
     let region = Arc::new(FakeRegion::default());
     let factory = Arc::new(FakeFactory {
@@ -270,7 +272,7 @@ fn fixture() -> (Catalog, Arc<FakeRegion>) {
 fn a_limit_over_a_partly_lowered_predicate_returns_every_qualifying_row() {
     let (catalog, region) = fixture();
     let rows = run_select_on(
-        "SELECT id FROM t WHERE id > 0 AND tag = 7 LIMIT 5",
+        "SELECT id FROM t WHERE id > 0 AND tag = '7' LIMIT 5",
         &catalog,
         &StmtContext::for_query(),
     )
@@ -294,7 +296,7 @@ fn a_limit_over_a_partly_lowered_predicate_returns_every_qualifying_row() {
     };
     assert_eq!(
         observation.conditions, 1,
-        "only `id > 0` lowered; `tag = 7` stayed behind"
+        "only `id > 0` lowered; `tag = '7'` stayed behind"
     );
     assert_eq!(
         observation.remote_limit, None,

@@ -91,9 +91,14 @@ fn the_scan_takes_comparisons_against_constants_and_nothing_else() {
             split_scan_predicates(&where_clause, &ScopeResolver { scope: &scope });
         (
             pushed
-                .comparisons()
+                .predicates()
                 .iter()
-                .map(|c| (c.column_offset, c.op, c.literal.clone(), c.column_on_left))
+                .map(|predicate| match predicate {
+                    ScanPredicate::Compare(c) => {
+                        (c.column_offset, c.op, c.literal.clone(), c.column_on_left)
+                    }
+                    other => panic!("only comparisons are described here: {other:?}"),
+                })
                 .collect::<Vec<_>>(),
             residual.map(|expr| expr.restore()),
         )
