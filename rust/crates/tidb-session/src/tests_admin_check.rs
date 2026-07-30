@@ -190,7 +190,9 @@ fn a_generated_column_in_an_index() {
     session
         .run("create table t (a int, b int as (a + 1), index idx_b(b))")
         .unwrap();
-    session.run("insert into t (a) values (1), (2), (3)").unwrap();
+    session
+        .run("insert into t (a) values (1), (2), (3)")
+        .unwrap();
     assert_check_passes(&mut session, "admin check table t");
 }
 
@@ -218,17 +220,20 @@ fn a_generated_column_in_an_index() {
 #[test]
 fn check_index_with_handle_ranges_returns_rows() {
     let mut session = Session::new();
-    session.run("drop table if exists check_index_test").unwrap();
     session
-        .run(
-            "create table check_index_test (a int, b varchar(10), index a_b (a, b), index b (b))",
-        )
+        .run("drop table if exists check_index_test")
+        .unwrap();
+    session
+        .run("create table check_index_test (a int, b varchar(10), index a_b (a, b), index b (b))")
         .unwrap();
     session
         .run("insert check_index_test values (3, 'ab'),(2, 'cd'),(1, 'ef'),(-1, 'hi')")
         .unwrap();
 
-    let (columns, rows) = query_text(&mut session, "admin check index check_index_test a_b (2, 4)");
+    let (columns, rows) = query_text(
+        &mut session,
+        "admin check index check_index_test a_b (2, 4)",
+    );
     assert_eq!(columns, vec!["a", "b", "extra_handle"]);
     assert_eq!(
         rows,
@@ -238,7 +243,10 @@ fn check_index_with_handle_ranges_returns_rows() {
         ]
     );
 
-    let (_, rows) = query_text(&mut session, "admin check index check_index_test a_b (3, 5)");
+    let (_, rows) = query_text(
+        &mut session,
+        "admin check index check_index_test a_b (3, 5)",
+    );
     assert_eq!(
         rows,
         vec![
@@ -360,7 +368,9 @@ fn an_orphaned_index_entry_is_caught() {
 fn an_unknown_index_is_named() {
     let mut session = Session::new();
     session.run("drop table if exists t").unwrap();
-    session.run("create table t (a int, index idx_a(a))").unwrap();
+    session
+        .run("create table t (a int, index idx_a(a))")
+        .unwrap();
     let (code, message) = error_of(&mut session, "admin check index t nosuch");
     assert_eq!(code, 1091, "{message}");
     assert!(message.contains("nosuch"), "{message}");
@@ -372,7 +382,9 @@ fn an_unknown_index_is_named() {
 fn a_view_is_refused_not_passed() {
     let mut session = Session::new();
     session.run("drop table if exists t").unwrap();
-    session.run("create table t (a int, index idx_a(a))").unwrap();
+    session
+        .run("create table t (a int, index idx_a(a))")
+        .unwrap();
     session.run("create view v as select * from t").unwrap();
     let (_, message) = error_of(&mut session, "admin check table v");
     assert!(

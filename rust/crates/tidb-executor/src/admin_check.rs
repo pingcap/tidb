@@ -326,7 +326,7 @@ pub fn check_index_ranges(
     // order, which IS index order -- the same order the stored entries have,
     // because they are those keys.
     let mut out = Vec::new();
-    for (_, (handle, row)) in &by_handle {
+    for (handle, row) in by_handle.values() {
         let TableHandle::Int(value) = handle else {
             // A clustered table has no `extra_handle` column, and Go's
             // `CheckIndexRangeExec` takes its bounds as integer handles.
