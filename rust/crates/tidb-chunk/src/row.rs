@@ -155,9 +155,9 @@ impl<'a> Row<'a> {
     /// Ported for the column kinds whose storage exists: NULL, the signed/
     /// unsigned integer family and `Year`, `Float`/`Double`, and the string/blob
     /// family (as a collation-tagged string), `Date`/`Datetime`/`Timestamp`
-    /// (as a Time datum), and `Duration` (fsp filled from the field type's
-    /// decimal, matching Go). The remaining types
-    /// (Decimal/Bit/VectorFloat32) land with their
+    /// (as a Time datum), `Duration` (fsp filled from the field type's
+    /// decimal, matching Go), and `Bit` (the cell's own bytes, Go
+    /// `SetMysqlBit`). The remaining types (VectorFloat32) land with their
     /// column getters; reaching one here panics rather than returning a wrong or
     /// silently-null datum.
     #[must_use]
@@ -194,6 +194,12 @@ impl<'a> Row<'a> {
                 let mut d = Datum::Null;
                 d.set_string(self.get_bytes(col_idx).to_vec(), collation);
                 d
+            }
+            // Go `d.SetMysqlBit(r.GetBytes(colIdx))`: a BIT column is a
+            // VARIABLE-length chunk column (`getFixedLen` has no BIT arm), and
+            // its cell is the binary literal's own bytes.
+            FieldTypeCode::Bit => {
+                Datum::Bit(tidb_datatype::BinaryLiteral::from(self.get_bytes(col_idx).to_vec()))
             }
             // Go `GetJSON`: the cell's first byte is the type code and the
             // rest is the value, which is what `BinaryJSON` stores.

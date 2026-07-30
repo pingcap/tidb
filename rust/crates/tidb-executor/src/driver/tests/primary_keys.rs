@@ -332,3 +332,88 @@ fn clustered_common_handle() {
         vec!["q".to_owned()]
     );
 }
+
+/// A handle stores its columns FLAT -- a `bit` as an integer, a `datetime` as
+/// its packed `uint64` -- so reading one back without Go's `Unflatten` hands
+/// the engine a datum whose kind disagrees with the column's declared type. Go
+/// `tablecodec.DecodeHandleToDatumMap` unflattens every handle column, and
+/// `decodeHandleToDatum` reads an int handle as UNSIGNED when the column says
+/// so; this is the assertion that both happen here.
+///
+/// Captured from real TiDB with `difftests/gorun`:
+///
+/// ```text
+/// CREATE TABLE `tb` (`a` bit(1) NOT NULL, PRIMARY KEY (`a`));
+/// insert into tb value(1), (0);
+/// select a+0 from tb;                     -> 0; 1
+/// create table tdt (a datetime not null, b int, primary key(a));
+/// insert into tdt values ('2020-01-02 03:04:05', 9);
+/// select a, b from tdt;                   -> 2020-01-02 03:04:05|9
+/// create table tu (a bigint unsigned not null, b int, primary key(a));
+/// insert into tu values (18446744073709551615, 5);
+/// select a, b from tu;                    -> 18446744073709551615|5
+/// ```
+#[test]
+fn a_handle_column_reads_back_in_its_own_type() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+
+    // A `bit` primary key: the handle holds the integer, the column is BIT,
+    // and the datum must be a bit value -- appending an integer datum to the
+    // (variable-length) BIT chunk column used to panic outright.
+    crate::run_create_table_on(
+        "CREATE TABLE tb (a BIT(1) NOT NULL, PRIMARY KEY (a))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on("INSERT INTO tb VALUES (1), (0)", &mut catalog, &ctx).unwrap();
+    let rows = run_select_on("SELECT a FROM tb", &catalog, &ctx).unwrap();
+    assert!(
+        rows.iter().all(|row| matches!(row[0], Datum::Bit(_))),
+        "a BIT primary key reads back as a bit value, got {rows:?}"
+    );
+    assert_eq!(
+        run_select_on("SELECT a + 0 FROM tb", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(0)], vec![Datum::Int(1)]]
+    );
+
+    // A `datetime` primary key: the handle holds the PACKED uint64, which is
+    // not the value. Without unflattening this answered a bare integer.
+    crate::run_create_table_on(
+        "CREATE TABLE tdt (a DATETIME NOT NULL, b INT, PRIMARY KEY (a))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO tdt VALUES ('2020-01-02 03:04:05', 9)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let rows = run_select_on("SELECT a, b FROM tdt", &catalog, &ctx).unwrap();
+    assert_eq!(rows.len(), 1);
+    let Datum::Time(time) = &rows[0][0] else {
+        panic!("a DATETIME primary key reads back as a time, got {rows:?}");
+    };
+    assert_eq!(time.to_string(), "2020-01-02 03:04:05");
+
+    // An `unsigned bigint` primary key past i64::MAX: Go's
+    // `decodeHandleToDatum` reads an int handle as an UNSIGNED datum when the
+    // column says so, which is the difference between the recorded value and
+    // -1.
+    crate::run_create_table_on(
+        "CREATE TABLE tu (a BIGINT UNSIGNED NOT NULL, b INT, PRIMARY KEY (a))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO tu VALUES (18446744073709551615, 5)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on("SELECT a, b FROM tu", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::UInt(u64::MAX), Datum::Int(5)]]
+    );
+}

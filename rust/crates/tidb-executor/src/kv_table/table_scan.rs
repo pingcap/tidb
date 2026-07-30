@@ -399,16 +399,43 @@ pub(crate) struct RowDecoder {
 
 /// Restores the handle columns into a decoded row, which Go does by reading
 /// `h.IntValue()` or `h.EncodedCol(i)` rather than the value.
+///
+/// Go `tablecodec.DecodeHandleToDatumMap`: each handle column goes through
+/// `decodeHandleToDatum` and then `Unflatten`. Both halves matter and neither
+/// is optional.
+///
+/// * `decodeHandleToDatum` reads an INT handle as an unsigned datum when the
+///   column carries the unsigned flag, so an `unsigned bigint` primary key
+///   past `i64::MAX` is not a negative number (captured: a row keyed
+///   `18446744073709551615` selects back as `18446744073709551615`).
+/// * `Unflatten` turns the FLAT stored form into the column's own type. A
+///   common handle is written flat -- a `bit` column as an integer, a
+///   `datetime` as its packed `uint64` -- and reading it back without
+///   unflattening hands the rest of the engine a datum whose kind disagrees
+///   with the column's declared type. That is not merely untidy: it panicked a
+///   `bit(1)` primary key in a var-length chunk column, and a `datetime`
+///   primary key would have read back as a bare integer (captured: a row keyed
+///   `'2020-01-02 03:04:05'` selects back as `2020-01-02 03:04:05`).
 pub(crate) fn fill_handle_columns(
+    columns: &[KvColumn],
     pk_handle_offset: Option<usize>,
     common_handle_offsets: &[usize],
     row: &mut [Datum],
     handle: &TableHandle,
 ) -> Result<(), KvTableError> {
+    let unflatten = |offset: usize, value: Datum| -> Result<Datum, KvTableError> {
+        tidb_tablecodec::unflatten_datum(value, &columns[offset].field_type, None)
+            .map_err(|e| KvTableError::Decode(format!("{e:?}")))
+    };
     match handle {
         TableHandle::Int(value) => {
             if let Some(offset) = pk_handle_offset {
-                row[offset] = Datum::Int(*value);
+                let decoded = if columns[offset].field_type.is_unsigned() {
+                    Datum::UInt(*value as u64)
+                } else {
+                    Datum::Int(*value)
+                };
+                row[offset] = unflatten(offset, decoded)?;
             }
         }
         TableHandle::Common(bytes) => {
@@ -416,7 +443,7 @@ pub(crate) fn fill_handle_columns(
             for offset in common_handle_offsets {
                 let (remaining, value) = tidb_codec::decode_one(rest)
                     .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-                row[*offset] = value;
+                row[*offset] = unflatten(*offset, value)?;
                 rest = remaining;
             }
         }
@@ -458,6 +485,7 @@ impl RowDecoder {
             })
             .collect();
         fill_handle_columns(
+            &self.columns,
             self.pk_handle_offset,
             &self.common_handle_offsets,
             &mut row,

@@ -570,6 +570,148 @@ mod tests {
         assert_eq!(r1.get_datum(1, &fields[1]), Datum::Null);
     }
 
+    /// Go `pkg/util/chunk/chunk_test.go`'s `newAllTypes`, ported WHOLE: every
+    /// field type the chunk tests build a column for, in Go's own order.
+    ///
+    /// The point of the whole table is that a column's SHAPE (fixed vs
+    /// variable length) and the datum kind its cell reads back as must agree
+    /// for EVERY type, not for the ones someone remembered. A single wrong
+    /// pairing is either a panic (an 8-byte append into a var-length column,
+    /// or `append_bytes` into a fixed one) or a silently wrong value.
+    fn go_all_types() -> Vec<FieldType> {
+        use tidb_datatype::FieldTypeCode as C;
+        vec![
+            FieldType::new(C::Tiny),
+            FieldType::new(C::Short),
+            FieldType::new(C::Int24),
+            FieldType::new(C::Long),
+            FieldType::new(C::LongLong),
+            FieldType::new(C::LongLong).with_unsigned(true),
+            FieldType::new(C::Year),
+            FieldType::new(C::Float),
+            FieldType::new(C::Double),
+            FieldType::new(C::String),
+            FieldType::new(C::VarString),
+            FieldType::new(C::Varchar),
+            FieldType::new(C::Blob),
+            FieldType::new(C::TinyBlob),
+            FieldType::new(C::MediumBlob),
+            FieldType::new(C::LongBlob),
+            FieldType::new(C::Date),
+            FieldType::new(C::Datetime),
+            FieldType::new(C::Timestamp),
+            FieldType::new(C::Duration),
+            FieldType::new(C::NewDecimal),
+            FieldType::new(C::Set)
+                .with_unsigned(true)
+                .with_elems(["a", "b"]),
+            FieldType::new(C::Enum)
+                .with_unsigned(true)
+                .with_elems(["a", "b"]),
+            FieldType::new(C::Bit),
+            FieldType::new(C::Json),
+        ]
+    }
+
+    /// The value Go's `TestCompare`/`TestCopyTo` append for each type, as the
+    /// datum this port's `append_datum` takes.
+    fn go_all_types_value(field_type: &FieldType, k: u64) -> Datum {
+        use tidb_datatype::Collation;
+        // The same collation `Row::get_datum` stamps on an enum/set datum.
+        fn collation_of(field_type: &FieldType) -> Collation {
+            Collation::from_name(field_type.collation_name()).unwrap_or(Collation::Binary)
+        }
+        use tidb_datatype::{
+            BinaryJSON, BinaryLiteral, CoreTime, Decimal, FieldTypeCode as C, MysqlEnum, MysqlSet,
+            TimeType,
+        };
+        match field_type.code() {
+            C::Tiny | C::Short | C::Int24 | C::Long | C::LongLong | C::Year => {
+                if field_type.is_unsigned() {
+                    Datum::UInt(k)
+                } else {
+                    Datum::Int(k as i64)
+                }
+            }
+            C::Float => Datum::Float32(k as f64),
+            C::Double => Datum::Real(k as f64),
+            C::String
+            | C::VarString
+            | C::Varchar
+            | C::Blob
+            | C::TinyBlob
+            | C::MediumBlob
+            // Go appends the text and reads it back with `d.SetString(...,
+            // tp.GetCollate())`, so the round-tripped datum is a
+            // collation-tagged string.
+            | C::LongBlob => {
+                let mut d = Datum::Null;
+                d.set_string(k.to_string().into_bytes(), collation_of(field_type));
+                d
+            }
+            C::Date | C::Datetime | C::Timestamp => Datum::Time(
+                Time::new(
+                    CoreTime::from_date(2000, 1, 1, 0, 0, u8::try_from(k).unwrap(), 0),
+                    match field_type.code() {
+                        C::Date => TimeType::Date,
+                        C::Timestamp => TimeType::Timestamp,
+                        _ => TimeType::DateTime,
+                    },
+                    0,
+                )
+                .unwrap(),
+            ),
+            C::Duration => {
+                Datum::Duration(MySqlDuration::new(0, 0, i64::try_from(k).unwrap(), 0, 0).unwrap())
+            }
+            C::NewDecimal => Datum::Decimal(Decimal::from_literal(&k.to_string())),
+            // Go appends `types.Set{Name: "a", Value: k}` verbatim, without
+            // asking the field type's elems to agree.
+            C::Set => Datum::Set(
+                MysqlSet::new("a".to_owned(), k),
+                collation_of(field_type),
+            ),
+            C::Enum => Datum::Enum(
+                MysqlEnum::new("a".to_owned(), k),
+                collation_of(field_type),
+            ),
+            // Go: `chunk.AppendBytes(i, []byte{byte(k)})` -- a BIT cell is the
+            // literal's own bytes in a VARIABLE-length column.
+            C::Bit => Datum::Bit(BinaryLiteral::from(vec![u8::try_from(k & 0xff).unwrap()])),
+            C::Json => Datum::Json(BinaryJSON::parse(&k.to_string()).unwrap()),
+            other => panic!("type not handled: {other:?}"),
+        }
+    }
+
+    /// Every type in Go's `newAllTypes` table survives
+    /// `append_datum` -> `get_datum` with its kind and value intact, and a
+    /// NULL cell in each reads back NULL.
+    #[test]
+    fn every_go_all_types_column_round_trips_a_datum() {
+        let fields = go_all_types();
+        let mut chunk = Chunk::new(&fields, 8, 128);
+        for (i, field_type) in fields.iter().enumerate() {
+            chunk.append_null(i);
+            for k in 0..3u64 {
+                chunk.append_datum(i, &go_all_types_value(field_type, k));
+            }
+        }
+        for (i, field_type) in fields.iter().enumerate() {
+            assert_eq!(
+                chunk.get_row(0).get_datum(i, field_type),
+                Datum::Null,
+                "{field_type:?}"
+            );
+            for k in 0..3u64 {
+                let expected = go_all_types_value(field_type, k);
+                let actual = chunk
+                    .get_row(usize::try_from(k).unwrap() + 1)
+                    .get_datum(i, field_type);
+                assert_eq!(actual, expected, "{field_type:?} at k={k}");
+            }
+        }
+    }
+
     #[test]
     fn empty_chunk_virtual_rows() {
         let mut chk = Chunk::new_empty(&[]);

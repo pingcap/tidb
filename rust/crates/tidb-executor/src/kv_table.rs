@@ -382,6 +382,7 @@ impl KvTable {
         handle: &TableHandle,
     ) -> Result<(), KvTableError> {
         fill_handle_columns(
+            &self.columns,
             self.pk_handle_offset,
             &self.common_handle_offsets,
             row,
