@@ -81,7 +81,7 @@ func (p *tableRulesParser) parse(line string, canImport bool) error {
 }
 
 type columnRulesParser struct {
-	rules []columnRule
+	rules []ColumnRule
 	matcherParser
 }
 
@@ -116,7 +116,7 @@ func (p *columnRulesParser) parse(line string, canImport bool) error {
 		return p.errorf("syntax error: stray characters after column pattern")
 	}
 
-	p.rules = append(p.rules, columnRule{
+	p.rules = append(p.rules, ColumnRule{
 		// Column is not case-sensitive on any platform, nor are column aliases.
 		// So we always match in lowercase.
 		column:   cm.toLower(),

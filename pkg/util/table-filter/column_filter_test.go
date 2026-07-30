@@ -194,6 +194,14 @@ func TestMatchColumns(t *testing.T) {
 	}
 }
 
+func TestParseColumnFilterRules(t *testing.T) {
+	columnRules, err := filter.ParseColumnFilterRules([]string{"*", "!secret", "id"})
+	require.NoError(t, err)
+	require.True(t, columnRules.MatchColumn("id"))
+	require.False(t, columnRules.MatchColumn("secret"))
+	require.True(t, columnRules.MatchColumn("name"))
+}
+
 func TestParseFailures(t *testing.T) {
 	cases := []struct {
 		arg string

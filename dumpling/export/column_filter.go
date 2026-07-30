@@ -22,6 +22,7 @@ type ColumnFilterRule struct {
 	Columns []string `toml:"columns"`
 
 	tableFilter filter.Filter
+	columnRules filter.ColumnFilterRules
 }
 
 // ParseColumnFilterFile parses a TOML column filter file.
@@ -56,10 +57,12 @@ func (c *ColumnFilterConfig) compile(caseSensitive bool) error {
 		if !caseSensitive {
 			tableFilter = filter.CaseInsensitive(tableFilter)
 		}
-		rule.tableFilter = tableFilter
-		if _, err = filter.ParseColumnFilter(activeColumnRules(rule.Columns)); err != nil {
+		columnRules, err := filter.ParseColumnFilterRules(activeColumnRules(rule.Columns))
+		if err != nil {
 			return errors.Annotatef(err, "failed to parse --column-filter-file filter %d columns", i)
 		}
+		rule.tableFilter = tableFilter
+		rule.columnRules = columnRules
 	}
 	return nil
 }
@@ -70,18 +73,9 @@ func (c *ColumnFilterConfig) applyToColumns(database, table string, sourceColumn
 		return sourceColumns, nil
 	}
 
-	columnFilter, err := filter.ParseColumnFilter(columnRules)
-	if err != nil {
-		return nil, errors.Annotatef(
-			err,
-			"failed to parse --column-filter-file columns for table `%s`.`%s`",
-			escapeString(database),
-			escapeString(table),
-		)
-	}
 	filteredColumns := make([]string, 0, len(sourceColumns))
 	for _, column := range sourceColumns {
-		if !columnFilter.MatchColumn(column) {
+		if !columnRules.MatchColumn(column) {
 			continue
 		}
 		filteredColumns = append(filteredColumns, column)
@@ -97,15 +91,16 @@ func (c *ColumnFilterConfig) applyToColumns(database, table string, sourceColumn
 	return filteredColumns, nil
 }
 
-func (c *ColumnFilterConfig) matchColumnRules(database, table string) []string {
-	var columnRules []string
-	for _, rule := range c.Filters {
+func (c *ColumnFilterConfig) matchColumnRules(database, table string) filter.ColumnFilterRules {
+	var columnRules filter.ColumnFilterRules
+	for i := len(c.Filters) - 1; i >= 0; i-- {
+		rule := c.Filters[i]
 		if !rule.tableFilter.MatchTable(database, table) {
 			continue
 		}
-		columnRules = append(columnRules, rule.Columns...)
+		columnRules = append(columnRules, rule.columnRules...)
 	}
-	return activeColumnRules(columnRules)
+	return columnRules
 }
 
 func activeColumnRules(columnRules []string) []string {
