@@ -21,12 +21,29 @@
 //! plan node whose schema covers its columns; `expression.PushDownExprs` then
 //! decides which of those the coprocessor can actually evaluate, and the rest
 //! stay in a root `Selection`. [`split_scan_predicates`] performs the same two
-//! steps at once, with the narrow accepted shape the bounded TiKV lowering
-//! already speaks: **a comparison between one column of the scanned table and
-//! one constant**, in either operand order. Every other conjunct -- an
-//! expression over a column (`b + 1 < 10`), a disjunction, `IS NULL`, a
-//! subquery, anything referring to a second table -- is residual and is left
-//! for the `Selection` above the scan.
+//! steps at once, over the *predicate* shapes TiKV's own whitelist admits
+//! unconditionally (`infer_pushdown.go`'s `scalarExprSupportedByTiKV`):
+//!
+//! * a comparison between one column of the scanned table and one constant, in
+//!   either operand order;
+//! * `column IS [NOT] NULL`;
+//! * `column [NOT] IN (constants)`;
+//! * `OR` and `NOT` over any of the above, to any depth.
+//!
+//! Every other conjunct -- an expression over a column (`b + 1 < 10`), a
+//! column-to-column comparison, `IS TRUE`, NULL-safe equality, a subquery, a
+//! builtin function call, anything referring to a second table -- is residual
+//! and is left for the `Selection` above the scan. A nested `AND` inside an
+//! `OR` branch is residual too: the top-level `AND` is what this split
+//! flattens, and describing an inner one would need a connective the
+//! description does not carry.
+//!
+//! Note that the split is deliberately **type-agnostic**: it describes the
+//! conjunct, and the coprocessor lowering
+//! (`tidb_exec::wide_scan_selection`) applies the type gate that decides
+//! whether the description can actually travel. Keeping those two decisions
+//! apart is what lets an in-process source take a conjunct the wire cannot
+//! carry.
 //!
 //! Being a strict subset of what Go pushes is safe in the only direction that
 //! matters: a conjunct that stays above the scan is still applied, so the
@@ -387,6 +404,34 @@ mod tests {
             vec![vec![Datum::Int(3)]],
             "and it is still there when the predicate selects it"
         );
+        // The composed descriptions carry the same obligation, because they are
+        // removed from the `Selection` in exactly the same way: a staged row
+        // must be tested by the pushed `IN` and the pushed `OR` too.
+        assert_eq!(
+            run_select_on(
+                "SELECT a FROM t WHERE a IN (3, 7, 8) ORDER BY a",
+                &catalog,
+                &ctx
+            )
+            .unwrap(),
+            vec![
+                vec![Datum::Int(3)],
+                vec![Datum::Int(7)],
+                vec![Datum::Int(8)],
+            ],
+            "the staged insert, the staged update's new value, and nothing else"
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT a FROM t WHERE a = 1 OR a = 8 ORDER BY a",
+                &catalog,
+                &ctx
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(8)]],
+            "the staged DELETE removed the row `a = 1` matched, and the staged \
+             UPDATE created the row `a = 8` matches"
+        );
     }
 
     /// The whole predicate must survive when nothing is pushed, and the split
@@ -413,7 +458,8 @@ mod tests {
                 "SELECT a FROM t WHERE a > 5 AND b < 80",
                 vec![vec![Datum::Int(7)]],
             ),
-            // Fully residual: a disjunction pushes nothing.
+            // A disjunction now pushes as one conjunct, and must answer the
+            // same rows it did as a residual `Selection`.
             (
                 "SELECT a FROM t WHERE a = 1 OR a = 9",
                 vec![vec![Datum::Int(1)], vec![Datum::Int(9)]],
@@ -422,6 +468,71 @@ mod tests {
             (
                 "SELECT a FROM t WHERE a > 1 AND b + 1 > 60",
                 vec![vec![Datum::Int(7)], vec![Datum::Int(9)]],
+            ),
+        ];
+        for (sql, expected) in cases {
+            assert_eq!(
+                run_select_on(sql, &catalog, &ctx).unwrap(),
+                expected,
+                "{sql}"
+            );
+        }
+    }
+
+    /// The composed predicates, over a table with NULLs, against the answer
+    /// MySQL's three-valued logic gives.
+    ///
+    /// This is the pushed form and the local form agreeing: each `WHERE` below
+    /// moves into the scan as one described conjunct, so the scan is the only
+    /// place it is applied, and the expected rows are the ones the same
+    /// predicate produces as a `Selection` -- including the cases where
+    /// UNKNOWN, not FALSE, is the reason a row is absent.
+    #[test]
+    fn the_composed_predicates_keep_mysqls_three_valued_answers() {
+        let mut table = KvTable::new(93, vec![column("a", 1), column("b", 2)]);
+        for (a, b) in [
+            (Datum::Int(1), Datum::Int(10)),
+            (Datum::Int(2), Datum::Null),
+            (Datum::Null, Datum::Int(30)),
+            (Datum::Int(4), Datum::Int(40)),
+        ] {
+            table.insert_row(&[a, b]).unwrap();
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("t", table);
+        let ctx = crate::StmtContext::for_query();
+        let int = |value: i64| vec![Datum::Int(value)];
+        let cases: [(&str, Vec<Vec<Datum>>); 10] = [
+            ("SELECT a FROM t WHERE a IS NULL", vec![vec![Datum::Null]]),
+            (
+                "SELECT a FROM t WHERE a IS NOT NULL",
+                vec![int(1), int(2), int(4)],
+            ),
+            (
+                "SELECT a FROM t WHERE b IS NULL",
+                // The row whose `b` is NULL, whatever its `a` is.
+                vec![int(2)],
+            ),
+            ("SELECT a FROM t WHERE a IN (1, 4)", vec![int(1), int(4)]),
+            // `NOT IN` is UNKNOWN for the NULL row, so it is absent -- and it
+            // would be present if `NOT IN` were pushed as a plain negation of
+            // membership over a NULL-blind test.
+            ("SELECT a FROM t WHERE a NOT IN (1, 4)", vec![int(2)]),
+            ("SELECT a FROM t WHERE a = 1 OR a = 4", vec![int(1), int(4)]),
+            // `OR` over a branch that is UNKNOWN for the NULL row: TRUE wins.
+            (
+                "SELECT a FROM t WHERE a = 1 OR a IS NULL",
+                vec![int(1), vec![Datum::Null]],
+            ),
+            ("SELECT a FROM t WHERE NOT a = 1", vec![int(2), int(4)]),
+            (
+                "SELECT a FROM t WHERE a > -1 AND a < 3",
+                vec![int(1), int(2)],
+            ),
+            // A pushed disjunction beside a residual conjunct: both apply.
+            (
+                "SELECT a FROM t WHERE (a = 1 OR a = 4) AND b + 1 > 20",
+                vec![int(4)],
             ),
         ];
         for (sql, expected) in cases {
@@ -453,11 +564,26 @@ mod tests {
 /// # What the port can and cannot assert
 ///
 /// Go's table is a list of scalar functions built over typed columns, each
-/// checked with `PushDownExprs(..., kv.TiKV)`. This engine has no
-/// expression-level push-down catalog at all: `split_scan_predicates` pushes
-/// exactly one shape -- a column compared with a constant -- so **every** row
-/// of Go's table is refused here, whichever way Go answers. The two directions
-/// of that disagreement are not equally serious, so they are separate tests:
+/// checked with `PushDownExprs(..., kv.TiKV)`. **Every row of it is a builtin
+/// function call** -- there is not one comparison, `AND`, `OR`, `IS NULL` or
+/// `IN` row in the table, which was confirmed against the Go source rather
+/// than assumed.
+///
+/// That matters for reading the two tests below. What this engine pushes is a
+/// *predicate* set, not a function set: a column-versus-constant comparison
+/// over the whole integer family, `IS [NOT] NULL`, `[NOT] IN`, and the
+/// `OR`/`NOT` composition of those (see [`ScanPredicate`], and
+/// `tidb_exec::wide_scan_selection` for the lowering). Widening that set --
+/// including the widening that made unsigned and narrow integer columns lower
+/// -- provably moves **no** row of this table, because none of these rows is a
+/// predicate shape. Reaching them needs a name-to-`ScalarFuncSig` resolution
+/// catalog and the cast-inserting type inference Go's `getFunction` performs,
+/// neither of which exists here; `ScalarFunction` in this tree carries no
+/// resolved signature at all.
+///
+/// So every row of Go's table is still refused here, whichever way Go answers.
+/// The two directions of that disagreement are not equally serious, so they
+/// are separate tests:
 ///
 /// * **Correctness.** For the rows Go *refuses*, a push here would be a bug:
 ///   the coprocessor would evaluate an expression TiDB deliberately keeps in
@@ -612,13 +738,53 @@ mod tests_push_down_verdict {
         }
     }
 
-    /// PERFORMANCE: this engine pushes none of what Go pushes, because its
-    /// accepted shape is a column-versus-constant comparison and nothing else.
-    /// The assertion is written the way it must eventually read (Go's verdict),
-    /// so widening the lowering turns this test green rather than leaving the
-    /// gap invisible.
+    /// The predicate shapes this engine *does* push, over Go's own column set,
+    /// so the blanket refusal below cannot be mistaken for pushdown being off.
+    ///
+    /// These are the rows Go's table does not contain; they are on the same
+    /// TiKV whitelist (`infer_pushdown.go`'s `scalarExprSupportedByTiKV` lists
+    /// every comparison operator, `LogicAnd`/`LogicOr`/`UnaryNot`, `In` and
+    /// `IsNull` unconditionally), which is why widening to them was possible
+    /// without a function catalog and why it moves none of `GO_PUSHES`.
     #[test]
-    #[ignore = "no expression-level push-down catalog yet: only column-vs-constant comparisons are lowered"]
+    fn the_integer_predicate_shapes_push_over_gos_own_columns() {
+        for expr in [
+            "i > 5",
+            "5 < i",
+            "i = 1",
+            "i <> 1",
+            "i >= -7",
+            "i IS NULL",
+            "i IS NOT NULL",
+            "i IN (1, 2, 3)",
+            "i NOT IN (4)",
+            "i = 1 OR i = 2",
+            "i = 1 OR i IS NULL",
+            "NOT i = 1",
+            "NOT (i IN (1, 2))",
+        ] {
+            assert_eq!(pushes(expr), Some(true), "{expr} is a pushed predicate");
+        }
+        // And the shapes the *split* keeps above the scan: a second column
+        // reference, and functions with their own NULL semantics and their own
+        // signatures. Note what is deliberately not in this list -- `s = 'x'`
+        // and `dec > 1` DO pass the split, because the split is type-agnostic
+        // by design: it hands the source a description, and the coprocessor
+        // lowering applies the type gate (`tidb_exec::wide_scan_selection`).
+        // Refusing there costs wire volume only, because the source evaluates
+        // every pushed conjunct itself regardless.
+        for expr in ["i = r", "i IS TRUE", "i <=> 1", "i + 1 = 2"] {
+            assert_eq!(pushes(expr), Some(false), "{expr} stays above the scan");
+        }
+    }
+
+    /// PERFORMANCE: this engine pushes none of the *function* rows Go pushes,
+    /// because reaching them needs the signature-resolution catalog the module
+    /// doc describes -- not a wider predicate set. The assertion is written the
+    /// way it must eventually read (Go's verdict), so building that catalog
+    /// turns this test green rather than leaving the gap invisible.
+    #[test]
+    #[ignore = "no expression-level push-down catalog yet: only predicate shapes are lowered, and no row of Go's table is one"]
     fn tikv_pushes_what_go_pushes() {
         for expr in GO_PUSHES {
             assert_eq!(pushes(expr), Some(true), "{expr}: TiDB pushes this to TiKV");

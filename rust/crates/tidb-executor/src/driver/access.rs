@@ -502,13 +502,130 @@ pub(crate) fn split_scan_predicates(
 }
 
 /// One conjunct as a coprocessor-describable predicate, when it is one.
+///
+/// The describable shapes are a column-versus-constant comparison,
+/// `IS [NOT] NULL`, `[NOT] IN` over constants, and the `OR`/`NOT` composition
+/// of those -- exactly the set TiKV's whitelist admits unconditionally
+/// (`infer_pushdown.go`'s `scalarExprSupportedByTiKV`). `AND` is absent
+/// because the caller already flattened the top-level `AND` into separate
+/// conjuncts, and a nested one inside an `OR` is described by recursing into
+/// the branch as its own conjunct list would not be.
 fn scan_predicate(
     conjunct: &tidb_ast::Expr,
     resolver: &impl ColumnResolver,
 ) -> Option<ScanPredicate> {
     match conjunct {
         tidb_ast::Expr::Paren(inner) => scan_predicate(inner, resolver),
+        // `NOT x` and `!x`; the arithmetic unary operators are not predicates.
+        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner) => {
+            Some(ScanPredicate::Not(Box::new(scan_predicate(
+                inner, resolver,
+            )?)))
+        }
+        // `x OR y`, flattened: the chain is left-associative, so flattening
+        // and re-folding preserves the same disjunction.
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, ..) => {
+            let mut branches = Vec::new();
+            collect_disjuncts(conjunct, &mut branches);
+            Some(ScanPredicate::Or(
+                branches
+                    .into_iter()
+                    .map(|branch| scan_predicate(branch, resolver))
+                    .collect::<Option<Vec<_>>>()?,
+            ))
+        }
+        // Only `IS [NOT] NULL`. `IS TRUE`/`IS FALSE`/`IS UNKNOWN` are separate
+        // Go functions with their own signatures and their own NULL handling.
+        tidb_ast::Expr::Is {
+            expr,
+            target: tidb_ast::IsTarget::Null,
+            not,
+        } => {
+            let (offset, column_type) = resolve_column(expr, resolver)?;
+            Some(ScanPredicate::IsNull {
+                column_offset: offset,
+                column_type,
+                negated: *not,
+            })
+        }
+        tidb_ast::Expr::In { expr, list, not } => {
+            let (offset, column_type) = resolve_column(expr, resolver)?;
+            if list.is_empty() {
+                return None;
+            }
+            let mut literals = Vec::with_capacity(list.len());
+            for element in list {
+                let literal = constant_value(element)?;
+                // A NULL member makes `IN` UNKNOWN rather than false for a
+                // non-matching row, and `NOT IN` UNKNOWN for every row; that
+                // is not the membership test this description promises.
+                if literal == Datum::Null {
+                    return None;
+                }
+                literals.push(literal);
+            }
+            Some(ScanPredicate::In {
+                column_offset: offset,
+                column_type,
+                literals,
+                negated: *not,
+            })
+        }
         _ => scan_comparison(conjunct, resolver).map(ScanPredicate::Compare),
+    }
+}
+
+/// Flattens an `OR` chain into its branches, in source order.
+fn collect_disjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
+    match expr {
+        tidb_ast::Expr::Paren(inner) => collect_disjuncts(inner, out),
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, lhs, rhs) => {
+            collect_disjuncts(lhs, out);
+            collect_disjuncts(rhs, out);
+        }
+        other => out.push(other),
+    }
+}
+
+/// The scan-input offset and declared type of `expr`, when it is a plain
+/// reference to a column of the scanned table.
+fn resolve_column(
+    expr: &tidb_ast::Expr,
+    resolver: &impl ColumnResolver,
+) -> Option<(u32, FieldType)> {
+    match expr {
+        tidb_ast::Expr::Paren(inner) => resolve_column(inner, resolver),
+        tidb_ast::Expr::Column(path) => {
+            let (offset, column_type, _) = resolver.resolve(path)?;
+            Some((u32::try_from(offset).ok()?, column_type))
+        }
+        _ => None,
+    }
+}
+
+/// The already-evaluated value of `expr`, when it is a constant.
+///
+/// A negated integer literal is folded here rather than left as the unary
+/// minus the parser produced, because Go's expression rewriter folds it too
+/// (`foldConstant` over a deterministic function of constants) and the
+/// coprocessor is therefore sent the negative constant, not a `UnaryMinus`
+/// node. Without this, `WHERE a > -1` describes nothing at all.
+fn constant_value(expr: &tidb_ast::Expr) -> Option<Datum> {
+    match expr {
+        tidb_ast::Expr::Paren(inner) => constant_value(inner),
+        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Minus, inner) => match constant_value(inner)? {
+            Datum::Int(value) => value.checked_neg().map(Datum::Int),
+            // Any other negated constant keeps whatever type MySQL's unary
+            // minus gives it, which is not this narrow fold's business.
+            _ => None,
+        },
+        _ => {
+            let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(expr, &NoResolver)
+            else {
+                return None;
+            };
+            constant.eval().ok()
+        }
     }
 }
 
@@ -531,10 +648,7 @@ fn scan_comparison(
     };
     // A second column reference on the "constant" side leaves the shape.
     let (offset, column_type, _) = resolver.resolve(column)?;
-    let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(value, &NoResolver) else {
-        return None;
-    };
-    let literal = constant.eval().ok()?;
+    let literal = constant_value(value)?;
     // A NULL constant makes the comparison unknown for every row; that is a
     // whole-predicate property Go handles in the ranger, not a filter shape.
     if literal == Datum::Null {
