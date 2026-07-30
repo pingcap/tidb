@@ -719,25 +719,35 @@ fn replay_one_topic_from_env() {
 /// Most topics report a status line; the rest are `UNALIGNED` on this driver's
 /// own limits (a `.result` recording that is not valid UTF-8, an echo sequence
 /// that does not line up, or a `connect` whose account the engine cannot
-/// authenticate -- see `mysqltest_connections`). Eight topics CRASH, and every one of
-/// them is the SAME defect, distinct from the four this driver's arrival
-/// already worked off:
+/// authenticate -- see `mysqltest_connections`). THREE topics still CRASH, down
+/// from ten, and what is left is ONE root cause:
 ///
 /// A chunk column's shape comes from a FIELD TYPE while `Chunk::append_datum`
 /// dispatches on the DATUM KIND, so the two must agree -- and an expression's
 /// INFERRED return type does not always match the datum it evaluates to.
 /// `executor/ddl`, `planner/core/casetest/integration` and
 /// `planner/core/issuetest/planner_issue` put an 8-byte value in a
-/// variable-length column; `explain_complex` and `select` cross a decimal's
-/// 40-byte cell with an 8-byte one; `expression/builtin` reaches
-/// `append_datum` with a decimal whose text is not a number at all (`I311`).
-/// `expression/issues` and `expression/json` are a different, expression-side
-/// panic (`tidb-expr/src/ops.rs:349`).
+/// variable-length column; `expression/issues` reaches `append_datum` with a
+/// decimal whose text is not a number at all (`I311`).
 ///
-/// The fix for the first six is expression return-type inference, which
-/// `driver::set_opr` already names as its own DEFERRED item (a set operation's
-/// column metadata comes from the first term, with no type unification). It is
-/// one root cause, not six, and it is why those topics are not onboarded.
+/// `executor/ddl`'s is the clearest statement of the cause, and it is a
+/// WRONG-VALUE bug, not only a crash. Its view
+/// `select 'a', 'bbb...' from t union select 'ccc...', count(distinct ...)`
+/// unions a string column with a `COUNT`. Go's `unionJoinFieldType` merges the
+/// two branches' column types and CASTS each branch to the merged type, so
+/// TiDB records the count as the STRING `1`; this tier takes the set
+/// operation's column metadata from the FIRST term with no unification (which
+/// `driver::set_opr` already names as its own deferred item) and then hands an
+/// `Int` datum to a var-length column. Casting later terms to the first term's
+/// type would silence the panic and be WRONG in the mirror case -- first term
+/// `int`, second `varchar`, where Go merges to `varchar` -- so the fix is the
+/// type unification itself, not a cast at the append.
+///
+/// Two topics no longer abort but do not FINISH the survey's 30s child budget,
+/// and one of those is a finding in its own right: `executor/jointest/join`'s
+/// 21-table join does not finish in 400s either, so its stack overflow was
+/// standing in for an unbounded join-order search. `expression/issues` runs
+/// long and then reaches the `I311` decimal cell above.
 ///
 /// # Out-of-domain refusal causes, ranked
 ///
