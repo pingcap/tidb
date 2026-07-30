@@ -773,7 +773,14 @@ mod tests_push_down_verdict {
                     column("dec", FieldTypeCode::NewDecimal),
                     column("s", FieldTypeCode::String),
                     column("dt", FieldTypeCode::Datetime),
-                    column("bs", FieldTypeCode::String),
+                    // Go's `binaryStringColumn`, whose very next line is
+                    // `RetType.SetCollate(charset.CollationBin)` -- the only
+                    // thing that distinguishes it from `s`, and the whole
+                    // selector of the string family's binary spelling.
+                    (
+                        "bs".to_owned(),
+                        FieldType::new(FieldTypeCode::String).with_collation_name("binary"),
+                    ),
                     column("d", FieldTypeCode::Date),
                     column("bt", FieldTypeCode::Bit),
                     column("tm", FieldTypeCode::Duration),
@@ -860,6 +867,21 @@ mod tests_push_down_verdict {
         "mod(i, i)",
         "pow(r, r)",
         "power(r, r)",
+        // The string family. Each resolves its signature from
+        // `types.IsBinaryStr(args[0])` and its result collation from that same
+        // single argument (`deriveCollation`'s `ast.Upper`/`ast.Substr`
+        // cases), or -- for `CONV` -- from the connection charset the family's
+        // own `getFunction` sets. `s` is Go's non-binary `stringColumn`, so
+        // every row below is the UTF-8 spelling; the binary spellings over Go's
+        // `bs` are pinned by
+        // [`the_binary_spelling_travels_for_a_binary_collation`].
+        "conv(s, i, i)",
+        "substr(s, i, i)",
+        "substring(s, i, i)",
+        "mid(s, i, i)",
+        "char_length(s)",
+        "upper(s)",
+        "lower(s)",
     ];
 
     /// The rows of Go's pushed table this engine does not push yet, in Go's
@@ -869,17 +891,25 @@ mod tests_push_down_verdict {
     /// (`TRUNCATE`, and four `STR_TO_DATE` spellings), so they pin no verdict
     /// and are deliberately absent here too.
     ///
-    /// Each of these needs something the math family did not:
+    /// Each of these needs something neither the math nor the string family
+    /// did. The DATE family is the largest block, and it is a genuinely
+    /// separate seam rather than more of the same work: every one of its rows
+    /// takes a `d`, `dt` or `tm` argument, and Go's `getFunction` for it calls
+    /// `newBaseBuiltinFuncWithTp(..., types.ETDatetime)` or `ETDuration`, whose
+    /// implicit wrapper is `WrapWithCastAsTime`/`WrapWithCastAsDuration`.
+    /// Unlike `WrapWithCastAsReal`, that wrapper's target `FieldType` is not
+    /// fixed -- it carries an FSP the wrapper computes from the SOURCE type
+    /// (`builtin_cast.go`: `tp.SetDecimal(arg.GetType().GetDecimal())` and the
+    /// `MaxDatetimeWidthWithFsp` width that follows from it), and a `MysqlTime`
+    /// constant is encoded with `codec.EncodeMySQLTime` against the SESSION
+    /// TIME ZONE, which this scan path does not put in the DAG request at all.
+    /// Both are their own units; neither is unlocked by the collation seam the
+    /// string family needed.
     ///
-    /// * the string family (`CONV`, the substring family, `CHAR_LENGTH`,
-    ///   `UPPER`, `LOWER`) resolves its signature *and* its result collation
-    ///   through Go's `deriveCollation`, and its TiPB leaves carry a real
-    ///   collation id -- both separate units, and the collation is the one TiKV
-    ///   compares with, so guessing it would change an answer;
-    /// * the date family (`DATE_FORMAT`, `HOUR`, `DATE`, `WEEK`, `DATEDIFF`,
-    ///   ...) needs the temporal cast wrappers `WrapWithCastAsTime` inserts,
-    ///   which carry a target `FieldType` of their own rather than the fixed
-    ///   one an `ETReal` slot has;
+    /// The remainder:
+    ///
+    /// * `DATE_FORMAT` additionally takes a string format argument, so it needs
+    ///   the temporal seam AND the string one;
     /// * the `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE` family additionally
     ///   sends the INTERVAL unit as a third string argument, and picks among
     ///   more than twenty signatures by unit *and* argument type;
@@ -889,13 +919,7 @@ mod tests_push_down_verdict {
     ///   session time zone in the DAG request, which this scan path does not
     ///   yet send.
     const GO_PUSHES_NOT_HERE_YET: &[&str] = &[
-        // `CONV` over a string column, and the substring family.
-        "conv(s, i, i)",
-        "substr(s, i, i)",
-        "substring(s, i, i)",
-        "mid(s, i, i)",
         // The `testcases` table, row for row.
-        "char_length(s)",
         "date_format(d, s)",
         "hour(d)",
         "minute(d)",
@@ -905,8 +929,6 @@ mod tests_push_down_verdict {
         "date(d)",
         "week(d)",
         "datediff(d, d)",
-        "upper(s)",
-        "lower(s)",
         "json_replace(j, s, j, s, j)",
         "json_array_append(j, s, j, s, j)",
         "json_merge_patch(j, j, j)",
@@ -990,7 +1012,7 @@ mod tests_push_down_verdict {
     /// PERFORMANCE, the part already reached: every row of Go's pushed table
     /// whose family the catalog holds pushes here, with Go's own verdict.
     ///
-    /// This runs, unignored: these twelve are a live claim, not a plan.
+    /// This runs, unignored: these nineteen are a live claim, not a plan.
     #[test]
     fn tikv_pushes_the_math_family_go_pushes() {
         for expr in GO_PUSHES_HERE_TOO {
@@ -1008,7 +1030,7 @@ mod tests_push_down_verdict {
     #[test]
     fn the_lowered_signature_is_the_one_gos_get_function_resolves() {
         use tidb_expr::pushdown_catalog::ScalarFuncSig;
-        let cases: [(&str, ScalarFuncSig); 12] = [
+        let cases: [(&str, ScalarFuncSig); 19] = [
             ("sin(i)", ScalarFuncSig::Sin),
             ("asin(i)", ScalarFuncSig::Asin),
             ("cos(i)", ScalarFuncSig::Cos),
@@ -1023,6 +1045,17 @@ mod tests_push_down_verdict {
             ("mod(i, i)", ScalarFuncSig::ModIntSignedSigned),
             ("pow(r, r)", ScalarFuncSig::Pow),
             ("power(r, r)", ScalarFuncSig::Pow),
+            // `s` is Go's non-binary `stringColumn`, so each string family
+            // takes its UTF-8 spelling -- the answer that differs from the
+            // binary one by case-folding rules and by counting characters
+            // rather than bytes.
+            ("conv(s, i, i)", ScalarFuncSig::Conv),
+            ("substr(s, i, i)", ScalarFuncSig::Substring3ArgsUtf8),
+            ("substring(s, i, i)", ScalarFuncSig::Substring3ArgsUtf8),
+            ("mid(s, i, i)", ScalarFuncSig::Substring3ArgsUtf8),
+            ("char_length(s)", ScalarFuncSig::CharLengthUtf8),
+            ("upper(s)", ScalarFuncSig::UpperUtf8),
+            ("lower(s)", ScalarFuncSig::LowerUtf8),
         ];
         for (expr, expected) in cases {
             let described = described_call(expr)
@@ -1034,10 +1067,123 @@ mod tests_push_down_verdict {
         }
     }
 
+    /// CORRECTNESS: the binary spelling travels for a binary-collation column
+    /// and the UTF-8 one for every other collation -- over Go's OWN two string
+    /// columns, which differ in nothing but `SetCollate(charset.CollationBin)`.
+    ///
+    /// This is the trap the string widening creates and the only reason it can
+    /// be trusted: `UpperUTF8` sent against binary bytes case-folds them as
+    /// UTF-8, and `CharLengthUTF8` counts characters where `CharLength` counts
+    /// bytes. Both return a WRONG answer rather than a slow one, and no local
+    /// pass afterwards can detect it, so the choice is pinned by signature.
+    #[test]
+    fn the_binary_spelling_travels_for_a_binary_collation() {
+        use tidb_expr::pushdown_catalog::ScalarFuncSig;
+        let cases: [(&str, &str, ScalarFuncSig, ScalarFuncSig); 6] = [
+            (
+                "char_length({})",
+                "char_length",
+                ScalarFuncSig::CharLengthUtf8,
+                ScalarFuncSig::CharLength,
+            ),
+            (
+                "upper({})",
+                "upper",
+                ScalarFuncSig::UpperUtf8,
+                ScalarFuncSig::Upper,
+            ),
+            (
+                "lower({})",
+                "lower",
+                ScalarFuncSig::LowerUtf8,
+                ScalarFuncSig::Lower,
+            ),
+            (
+                "substr({}, i, i)",
+                "substr/3",
+                ScalarFuncSig::Substring3ArgsUtf8,
+                ScalarFuncSig::Substring3Args,
+            ),
+            (
+                "substring({}, i)",
+                "substring/2",
+                ScalarFuncSig::Substring2ArgsUtf8,
+                ScalarFuncSig::Substring2Args,
+            ),
+            (
+                "mid({}, i, i)",
+                "mid/3",
+                ScalarFuncSig::Substring3ArgsUtf8,
+                ScalarFuncSig::Substring3Args,
+            ),
+        ];
+        let resolved = |expr: &str| {
+            let described =
+                described_call(expr).unwrap_or_else(|| panic!("{expr} describes a call"));
+            let tidb_expr::pushdown_catalog::PbScalar::Call { signature, .. } = described else {
+                panic!("{expr} describes a call");
+            };
+            signature.sig
+        };
+        for (template, label, utf8, binary) in cases {
+            assert_eq!(
+                resolved(&template.replace("{}", "s")),
+                utf8,
+                "{label} over Go's non-binary stringColumn"
+            );
+            assert_eq!(
+                resolved(&template.replace("{}", "bs")),
+                binary,
+                "{label} over Go's binaryStringColumn"
+            );
+        }
+    }
+
+    /// CORRECTNESS: `CONV` alone is collation-blind, so both of Go's string
+    /// columns resolve the single `Conv` signature -- a second spelling here
+    /// would be an invention.
+    #[test]
+    fn conv_resolves_one_signature_for_either_string_column() {
+        use tidb_expr::pushdown_catalog::ScalarFuncSig;
+        for column in ["s", "bs"] {
+            let described = described_call(&format!("conv({column}, i, i)")).unwrap();
+            let tidb_expr::pushdown_catalog::PbScalar::Call { signature, .. } = described else {
+                panic!("conv({column}, i, i) describes a call");
+            };
+            assert_eq!(signature.sig, ScalarFuncSig::Conv);
+        }
+    }
+
+    /// The string slot admits only an argument that is ALREADY `ETString`.
+    /// Go would insert `WrapWithCastAsString`; this tier does not build that
+    /// cast, so the whole conjunct stays above the scan -- a refusal, which
+    /// costs network and never an answer.
+    #[test]
+    fn a_string_family_over_a_non_string_column_stays_above_the_scan() {
+        for expr in [
+            "char_length(i)",
+            "upper(i)",
+            "lower(r)",
+            "substr(dec, i, i)",
+            "conv(i, i, i)",
+            // `j` is JSON and `bt` is BIT: Go casts both into the string slot,
+            // and `bt` is exactly the shape `scalarExprSupportedByTiKV`'s
+            // `ast.Conv` case refuses outright (Go issue 51877).
+            "upper(j)",
+            "char_length(bt)",
+        ] {
+            assert_eq!(
+                pushes(expr),
+                Some(false),
+                "{expr}: the implicit CAST into the string slot is not built here"
+            );
+        }
+    }
+
     /// PERFORMANCE, the part not reached: Go's verdict on the families the
     /// catalog does not hold, kept as the assertion it must eventually become.
     #[test]
-    #[ignore = "the string, date, INTERVAL and JSON families need collation derivation, temporal cast targets, INTERVAL metadata and the ETJson field type -- see GO_PUSHES_NOT_HERE_YET"]
+    #[ignore = "the date, INTERVAL and JSON families need temporal cast targets with a source-derived FSP, the session time zone in the DAG request, INTERVAL metadata and the ETJson field type -- see GO_PUSHES_NOT_HERE_YET"]
     fn tikv_pushes_what_go_pushes() {
         for expr in GO_PUSHES_NOT_HERE_YET {
             assert_eq!(pushes(expr), Some(true), "{expr}: TiDB pushes this to TiKV");
