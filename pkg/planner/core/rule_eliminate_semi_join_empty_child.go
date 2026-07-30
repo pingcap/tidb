@@ -27,6 +27,16 @@ import (
 // TableDual. This is the join shape TiDB builds for INTERSECT/EXCEPT, so it
 // lets `A INTERSECT empty` and `empty EXCEPT B` skip scanning the non-empty
 // side instead of executing the join first.
+//
+// The rule is gated by FlagEliminateSemiJoinEmptyChild, set only when
+// buildSemiJoinForSetOperator builds a join for INTERSECT/EXCEPT (mirroring
+// EliminateUnionAllDualItem's FlagEliminateUnionAllDualItem gating for UNION
+// ALL), rather than being scoped to the specific join node it was built for.
+// Once enabled it walks the whole plan, so it can also fold an unrelated
+// SemiJoin/AntiSemiJoin from an ordinary IN/EXISTS subquery in the same
+// statement -- but only when that join is itself statically empty by the
+// same shape check, so this is never a correctness concern, only a wider
+// application of an already-sound rule.
 type EliminateSemiJoinEmptyChild struct {
 }
 
@@ -37,8 +47,7 @@ func (*EliminateSemiJoinEmptyChild) Name() string {
 
 // Optimize implements LogicalOptRule's Optimize.
 func (*EliminateSemiJoinEmptyChild) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
-	planChanged := false
-	p = eliminateSemiJoinEmptyChild(p)
+	p, planChanged := eliminateSemiJoinEmptyChild(p)
 	return p, planChanged, nil
 }
 
@@ -63,7 +72,14 @@ func isStaticallyEmpty(p base.LogicalPlan) bool {
 	return false
 }
 
-func eliminateSemiJoinEmptyChild(p base.LogicalPlan) base.LogicalPlan {
+func emptyJoinResultDual(join *logicalop.LogicalJoin) base.LogicalPlan {
+	dual := logicalop.LogicalTableDual{}.Init(join.SCtx(), 0)
+	dual.SetSchema(join.Schema())
+	dual.SetOutputNames(join.OutputNames())
+	return dual
+}
+
+func eliminateSemiJoinEmptyChild(p base.LogicalPlan) (base.LogicalPlan, bool) {
 	if join, ok := p.(*logicalop.LogicalJoin); ok {
 		left, right := join.Children()[0], join.Children()[1]
 		switch join.JoinType {
@@ -71,23 +87,22 @@ func eliminateSemiJoinEmptyChild(p base.LogicalPlan) base.LogicalPlan {
 			// A semi join outputs a left row only if it has a match on the
 			// right. An empty side on either input means no output.
 			if isStaticallyEmpty(left) || isStaticallyEmpty(right) {
-				dual := logicalop.LogicalTableDual{}.Init(join.SCtx(), 0)
-				dual.SetSchema(join.Schema())
-				return dual
+				return emptyJoinResultDual(join), true
 			}
 		case base.AntiSemiJoin:
 			// An anti semi join outputs a left row only if it has no match on
 			// the right, so an empty left side alone forces an empty result;
 			// an empty right side instead means every left row qualifies.
 			if isStaticallyEmpty(left) {
-				dual := logicalop.LogicalTableDual{}.Init(join.SCtx(), 0)
-				dual.SetSchema(join.Schema())
-				return dual
+				return emptyJoinResultDual(join), true
 			}
 		}
 	}
+	planChanged := false
 	for i, child := range p.Children() {
-		p.Children()[i] = eliminateSemiJoinEmptyChild(child)
+		newChild, changed := eliminateSemiJoinEmptyChild(child)
+		p.Children()[i] = newChild
+		planChanged = planChanged || changed
 	}
-	return p
+	return p, planChanged
 }
