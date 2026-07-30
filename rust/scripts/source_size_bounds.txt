@@ -3,7 +3,6 @@
 # under the 2,200 soft limit must have its entry REMOVED.
 crates/tidb-distsql/tests/direct_unary_client_runtime_source.rs 3135
 crates/tidb-session/src/sysvar.rs 12028
-crates/tidb-util/src/memory/arbitrator.rs 5295
 crates/tidb-session/src/tests_core.rs 4512
 crates/tidb-executor/src/driver/tests.rs 3486
 crates/tidb-session/src/privilege.rs 3216
