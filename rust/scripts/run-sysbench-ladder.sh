@@ -401,4 +401,94 @@ if [[ "${prepared}" == true ]]; then
     "SELECT COUNT(*), SUM(id), SUM(k) FROM ${SYSBENCH_DB}.sbtest1" 2>&1)"
 fi
 
+step "rung 7: sysbench's own statements, driven by hand through the MySQL client"
+# When the stock sysbench binary cannot even connect (its MariaDB Connector/C
+# 3.4 requires the server to advertise CLIENT_SSL), the workload question is
+# still answerable: run the exact statements oltp_common.lua issues and name
+# the first one the engine refuses. Every statement below is copied from
+# /opt/homebrew/share/sysbench/oltp_common.lua with the format specifiers
+# filled in for table 1.
+hand_pass=0
+hand_fail=0
+hand_stmt() {
+  local label=$1 statement=$2 output
+  output=$(rust_sql -N -B -e "${statement}")
+  if [[ $? -eq 0 ]]; then
+    hand_pass=$((hand_pass + 1))
+    note "OK   ${label}: ${output//$'\n'/ | }"
+  else
+    hand_fail=$((hand_fail + 1))
+    note "FAIL ${label}: ${output//$'\n'/ | }"
+  fi
+}
+
+rust_sql -e "DROP TABLE IF EXISTS ${SYSBENCH_DB}.sbtest1" >/dev/null 2>&1
+hand_stmt "create-table-auto-inc" "CREATE TABLE ${SYSBENCH_DB}.sbtest1(
+  id INTEGER NOT NULL AUTO_INCREMENT,
+  k INTEGER DEFAULT '0' NOT NULL,
+  c CHAR(120) DEFAULT '' NOT NULL,
+  pad CHAR(60) DEFAULT '' NOT NULL,
+  PRIMARY KEY (id))"
+# The catalog loader skips AUTO_INCREMENT tables ("their ids come from the
+# cluster's own autoid allocator, which this node does not consume"), so a
+# CREATE that succeeds does not imply a table this node can serve. Check the
+# insert sysbench would then issue rather than assuming either way.
+hand_stmt "auto-inc-insert-without-id" \
+  "INSERT INTO ${SYSBENCH_DB}.sbtest1 (k, c, pad) VALUES (1, 'c', 'pad')"
+hand_stmt "auto-inc-select" "SELECT COUNT(*) FROM ${SYSBENCH_DB}.sbtest1"
+
+rust_sql -e "DROP TABLE IF EXISTS ${SYSBENCH_DB}.sbtest1" >/dev/null 2>&1
+hand_stmt "create-table-no-auto-inc" "CREATE TABLE ${SYSBENCH_DB}.sbtest1(
+  id INTEGER NOT NULL,
+  k INTEGER DEFAULT '0' NOT NULL,
+  c CHAR(120) DEFAULT '' NOT NULL,
+  pad CHAR(60) DEFAULT '' NOT NULL,
+  PRIMARY KEY (id))"
+hand_stmt "create-index-k_1" "CREATE INDEX k_1 ON ${SYSBENCH_DB}.sbtest1(k)"
+
+# oltp_common.lua's bulk insert: one multi-row VALUES list of (id, k, c, pad).
+BULK_VALUES=$(awk -v rows="${TABLE_SIZE}" 'BEGIN {
+  srand(7)
+  for (i = 1; i <= rows; i++) {
+    printf "%s(%d,%d,%s,%s)", (i > 1 ? "," : ""), i, int(rand() * rows) + 1,
+      "\047c-" i "\047", "\047pad-" i "\047"
+  }
+}')
+hand_stmt "bulk-insert-${TABLE_SIZE}-rows" \
+  "INSERT INTO ${SYSBENCH_DB}.sbtest1 (id, k, c, pad) VALUES ${BULK_VALUES}"
+
+hand_stmt "count-star" "SELECT COUNT(*) FROM ${SYSBENCH_DB}.sbtest1"
+hand_stmt "checksum" \
+  "SELECT COUNT(*), SUM(id), SUM(k), MIN(id), MAX(id) FROM ${SYSBENCH_DB}.sbtest1"
+hand_stmt "go-side-checksum-agreement" "SELECT 1"
+note "go:   $("${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" \
+  -uroot "${MYSQL_PLUGIN_ARGS[@]}" -N -B -e \
+  "SELECT COUNT(*), SUM(id), SUM(k), MIN(id), MAX(id) FROM ${SYSBENCH_DB}.sbtest1" 2>&1)"
+
+hand_stmt "point-select" "SELECT c FROM ${SYSBENCH_DB}.sbtest1 WHERE id=500"
+hand_stmt "simple-range" \
+  "SELECT c FROM ${SYSBENCH_DB}.sbtest1 WHERE id BETWEEN 100 AND 109"
+hand_stmt "sum-range" \
+  "SELECT SUM(k) FROM ${SYSBENCH_DB}.sbtest1 WHERE id BETWEEN 100 AND 199"
+hand_stmt "order-range" \
+  "SELECT c FROM ${SYSBENCH_DB}.sbtest1 WHERE id BETWEEN 100 AND 109 ORDER BY c"
+hand_stmt "distinct-range" \
+  "SELECT DISTINCT c FROM ${SYSBENCH_DB}.sbtest1 WHERE id BETWEEN 100 AND 109 ORDER BY c"
+hand_stmt "index-update" "UPDATE ${SYSBENCH_DB}.sbtest1 SET k=k+1 WHERE id=500"
+hand_stmt "non-index-update" \
+  "UPDATE ${SYSBENCH_DB}.sbtest1 SET c='updated-c' WHERE id=500"
+hand_stmt "delete-insert" "DELETE FROM ${SYSBENCH_DB}.sbtest1 WHERE id=500"
+hand_stmt "reinsert" \
+  "INSERT INTO ${SYSBENCH_DB}.sbtest1 (id, k, c, pad) VALUES (500, 5, 'c-500', 'pad-500')"
+hand_stmt "txn-wrapped-event" "BEGIN;
+  SELECT c FROM ${SYSBENCH_DB}.sbtest1 WHERE id=501;
+  UPDATE ${SYSBENCH_DB}.sbtest1 SET k=k+1 WHERE id=501;
+COMMIT"
+hand_stmt "post-txn-checksum" \
+  "SELECT COUNT(*), SUM(id), SUM(k) FROM ${SYSBENCH_DB}.sbtest1"
+note "go post-txn: $("${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" \
+  -uroot "${MYSQL_PLUGIN_ARGS[@]}" -N -B -e \
+  "SELECT COUNT(*), SUM(id), SUM(k) FROM ${SYSBENCH_DB}.sbtest1" 2>&1)"
+note "rung 7 totals: ${hand_pass} accepted, ${hand_fail} refused"
+
 note "sysbench ladder finished; artifacts under ${OUT_DIR}"
