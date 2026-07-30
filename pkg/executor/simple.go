@@ -1853,6 +1853,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		_, _ = sqlExecutor.ExecuteInternal(ctx, "set tx_isolation = 'REPEATABLE-READ'")
+	}()
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
 	}
@@ -2871,6 +2874,9 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if err != nil {
 		return err
 	}
+	defer func() {
+		_, _ = sqlExecutor.ExecuteInternal(ctx, "set tx_isolation = 'REPEATABLE-READ'")
+	}()
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
 	}
