@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/encrypt"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	pwdValidator "github.com/pingcap/tidb/pkg/util/password-validation"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -809,20 +810,46 @@ func deflate(data []byte) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-// inflate uncompresses a string using the DEFLATE format.
-func inflate(compressStr []byte) ([]byte, error) {
+type limitedBuffer struct {
+	// Keep bytes.Buffer as a named field so io.Copy must go through Write.
+	buf   *bytes.Buffer
+	limit int64
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if int64(len(p)) > b.limit-int64(b.buf.Len()) {
+		return 0, errZlibZBuf
+	}
+	return b.buf.Write(p)
+}
+
+// inflate uncompresses a string using the DEFLATE format with a hard output limit.
+func inflate(compressStr []byte, declaredLength uint32, tracker *memory.Tracker, out *bytes.Buffer) ([]byte, error) {
 	reader := bytes.NewReader(compressStr)
-	var out bytes.Buffer
 	r, err := zlib.NewReader(reader)
 	if err != nil {
 		return nil, err
 	}
+	defer r.Close()
+	if out == nil {
+		out = &bytes.Buffer{}
+	} else {
+		out.Reset()
+	}
+	limit := int64(declaredLength)
+	if tracker != nil && limit > 0 {
+		tracker.Consume(limit)
+		defer tracker.Consume(-limit)
+	}
+	limitedOut := limitedBuffer{
+		buf:   out,
+		limit: limit,
+	}
 	/* #nosec G110 */
-	if _, err = io.Copy(&out, r); err != nil {
+	if _, err = io.Copy(&limitedOut, r); err != nil {
 		return nil, err
 	}
-	err = r.Close()
-	return out.Bytes(), err
+	return out.Bytes(), nil
 }
 
 type compressFunctionClass struct {
@@ -910,13 +937,14 @@ func (c *uncompressFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	}
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinUncompressSig{bf}
+	sig := &builtinUncompressSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Uncompress)
 	return sig, nil
 }
 
 type builtinUncompressSig struct {
 	baseBuiltinFunc
+	expropt.SessionVarsPropReader
 	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
 	// as this expression may be shared across sessions.
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
@@ -926,6 +954,22 @@ func (b *builtinUncompressSig) Clone() builtinFunc {
 	newSig := &builtinUncompressSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinUncompressSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
+func (b *builtinUncompressSig) getMemTracker(ctx EvalContext) (*memory.Tracker, error) {
+	if !ctx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+		return nil, nil
+	}
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil || vars.StmtCtx == nil {
+		return nil, err
+	}
+	return vars.StmtCtx.MemTracker, nil
 }
 
 // evalString evals UNCOMPRESS(compressed_string).
@@ -945,9 +989,17 @@ func (b *builtinUncompressSig) evalString(ctx EvalContext, row chunk.Row) (strin
 		return "", true, nil
 	}
 	length := binary.LittleEndian.Uint32([]byte(payload[0:4]))
-	bytes, err := inflate([]byte(payload[4:]))
+	tracker, err := b.getMemTracker(ctx)
 	if err != nil {
-		tc.AppendWarning(errZlibZData)
+		return "", true, err
+	}
+	bytes, err := inflate([]byte(payload[4:]), length, tracker, nil)
+	if err != nil {
+		if errZlibZBuf.Equal(err) {
+			tc.AppendWarning(errZlibZBuf)
+		} else {
+			tc.AppendWarning(errZlibZData)
+		}
 		return "", true, nil
 	}
 	if length < uint32(len(bytes)) {
