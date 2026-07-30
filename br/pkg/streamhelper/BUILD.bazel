@@ -113,7 +113,7 @@ go_test(
         "@com_github_tikv_pd_client//pkg/caller",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_server_v3//embed",
-        "@io_etcd_go_etcd_server_v3//storage/mvcc",
+        "@io_etcd_go_etcd_server_v3//mvcc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_uber_go_atomic//:atomic",

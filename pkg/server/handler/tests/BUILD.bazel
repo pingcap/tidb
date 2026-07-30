@@ -75,7 +75,7 @@ go_test(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//clients/gc",
-        "@io_etcd_go_etcd_tests_v3//framework/integration",
+        "@io_etcd_go_etcd_tests_v3//integration",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zaptest/observer",

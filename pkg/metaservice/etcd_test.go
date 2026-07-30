@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
-	"go.etcd.io/etcd/tests/v3/framework/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 type mockPDClient struct {
@@ -79,7 +79,7 @@ func TestGetPDAddrsWithRealClient(t *testing.T) {
 	}
 
 	// Initialize etcd client
-	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	etcdCli := cluster.RandClient()
 

@@ -34,16 +34,16 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.etcd.io/etcd/server/v3/embed"
-	"go.etcd.io/etcd/tests/v3/framework/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 type testInfo struct {
-	cluster *integration.Cluster
+	cluster *integration.ClusterV3
 	client  *clientv3.Client
 }
 
 func newTestInfo(t *testing.T) *testInfo {
-	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	return &testInfo{
 		cluster: cluster,
 		client:  cluster.Client(0),
@@ -67,7 +67,7 @@ func (l *listener) OnRetireOwner() {
 
 func TestForceToBeOwner(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 	integration.BeforeTestExternal(t)
 
@@ -106,7 +106,7 @@ func TestForceToBeOwner(t *testing.T) {
 
 func TestSingle(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 	integration.BeforeTestExternal(t)
 
@@ -188,7 +188,7 @@ func TestSingle(t *testing.T) {
 
 func TestSetAndGetOwnerOpValue(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 	integration.BeforeTestExternal(t)
 
@@ -253,7 +253,7 @@ func TestSetAndGetOwnerOpValue(t *testing.T) {
 // TestGetOwnerOpValueBeforeSet tests get owner opValue before set this value when the etcdClient is nil.
 func TestGetOwnerOpValueBeforeSet(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/owner/MockNotSetOwnerOp", `return(true)`))
 
@@ -280,7 +280,7 @@ func TestGetOwnerOpValueBeforeSet(t *testing.T) {
 
 func TestCluster(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 	integration.BeforeTestExternal(t)
 
@@ -332,7 +332,7 @@ func TestCluster(t *testing.T) {
 
 func TestWatchOwner(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 	integration.BeforeTestExternal(t)
 
@@ -396,7 +396,7 @@ func TestWatchOwner(t *testing.T) {
 
 func TestWatchOwnerAfterDeleteOwnerKey(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 	integration.BeforeTestExternal(t)
 
@@ -468,7 +468,7 @@ func deleteLeader(cli *clientv3.Client, prefixKey string) error {
 
 func TestImmediatelyCancel(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 	integration.BeforeTestExternal(t)
 

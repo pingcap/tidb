@@ -28,6 +28,6 @@ go_test(
     deps = [
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
-        "@io_etcd_go_etcd_tests_v3//framework/integration",
+        "@io_etcd_go_etcd_tests_v3//integration",
     ],
 )

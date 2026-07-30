@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/mvccpb"
-	"go.etcd.io/etcd/tests/v3/framework/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 func checkRespKV(t *testing.T, kvCount int, key, val string, kvs ...*mvccpb.KeyValue) {
@@ -45,7 +45,7 @@ func checkRespKV(t *testing.T, kvCount int, key, val string, kvs ...*mvccpb.KeyV
 func TestStateSyncerSimple(t *testing.T) {
 	vardef.SetEnableMDL(false)
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 	integration.BeforeTestExternal(t)
 
@@ -55,7 +55,7 @@ func TestStateSyncerSimple(t *testing.T) {
 		schemaver.CheckVersFirstWaitTime = origin
 	}()
 
-	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	cli := cluster.RandClient()
 	ctx, cancel := context.WithCancel(context.Background())

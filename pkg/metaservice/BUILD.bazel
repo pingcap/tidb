@@ -34,6 +34,6 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/pdpb",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//:client",
-        "@io_etcd_go_etcd_tests_v3//framework/integration",
+        "@io_etcd_go_etcd_tests_v3//integration",
     ],
 )
