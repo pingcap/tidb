@@ -4141,6 +4141,135 @@ fn last_insert_id_argument_form_publishes_for_the_next_statement() {
     assert_eq!(session_scalar(&mut session, "SELECT @@identity"), "9");
 }
 
+/// `LAST_INSERT_ID(const)` is folded while the select list is being REWRITTEN,
+/// so its session side effect outlives a later expression that fails to
+/// resolve at all.
+///
+/// Captured from real TiDB via `rust/difftests/gorun`, each `ERR` statement
+/// followed by `SELECT LAST_INSERT_ID(), @@last_insert_id`:
+///
+/// | statement | outcome | published |
+/// | --- | --- | --- |
+/// | `SELECT LAST_INSERT_ID(17), no_such_fn()` | `ERR` 1305 | `17|17` |
+/// | `SELECT no_such_fn(), LAST_INSERT_ID(18)` | `ERR` 1305 | still `17|17` |
+/// | `SELECT LAST_INSERT_ID(19+1), no_such_fn()` | `ERR` 1305 | `20|20` |
+/// | `SELECT LAST_INSERT_ID(21) FROM no_such_table` | `ERR` 1146 | still `20|20` |
+/// | `SELECT LAST_INSERT_ID(22), 1/0 AS x, no_such_fn()` | `ERR` 1305 | `22|22` |
+///
+/// Three rules fall out of that table, and each one is load-bearing:
+///
+///  * the fold happens DURING rewriting, not during execution -- the
+///    statement never evaluates a row and the id still moves;
+///  * rewriting is LEFT TO RIGHT and stops at the first failure, which is why
+///    putting the unknown function first publishes nothing;
+///  * table resolution runs BEFORE expression rewriting, which is why an
+///    unknown table publishes nothing either.
+///
+/// REFUSED, not deferred quietly: reproducing this needs TWO mechanisms this
+/// engine does not have, and neither is a last-insert-id detail.
+///
+///  1. Go's rewriter-wide CONSTANT FOLDING (`expression.foldConstant`, called
+///     from `newFunction`), which evaluates any all-constant call once during
+///     rewriting. It is what runs `LAST_INSERT_ID(17)`'s side effect without
+///     the statement ever reaching a row, and it also folds the `19+1`
+///     argument. This tier has only a shallow local helper
+///     (`driver::agg_build::fold_constant`, which documents itself as "not a
+///     rewriter-wide folding pass"); a folder that only ever runs for
+///     `LAST_INSERT_ID` would be a workaround, and a real one changes results
+///     across the whole engine.
+///  2. Builtin NAME RESOLUTION raising `ErrSpDoesNotExist` (1305) during
+///     rewriting. Today an unknown function survives planning and dies in the
+///     chunk tier as 1105 "this builtin is not yet built for chunk
+///     evaluation" -- the same error a builtin that MySQL does know but this
+///     engine has not built yet produces. Separating the two needs the
+///     complete builtin-name registry, and getting it wrong turns
+///     nearly-working paths into hard 1305s.
+///
+/// A future unit needs (1) first: with a real folder, ordering and the 1305
+/// boundary follow from where the folder sits relative to name resolution.
+/// The guard below pins what this engine does today so the change is visible.
+#[test]
+fn a_folded_last_insert_id_publication_is_not_modelled_today() {
+    let mut session = Session::new();
+    let mysql = session
+        .run("SELECT LAST_INSERT_ID(17), no_such_fn()")
+        .expect_err("the statement fails either way")
+        .to_mysql_error();
+    assert_eq!(
+        mysql.code, 1105,
+        "guard: an unknown function is still a generic chunk-tier 1105, not Go's 1305 -- {}",
+        mysql.message
+    );
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID()"),
+        "0",
+        "guard: nothing is folded, so nothing is published (Go publishes 17)"
+    );
+}
+
+/// Go's answer for the same five statements, asserted so the refusal above is
+/// a tracked work item rather than a wish. Ignored until a rewriter-wide
+/// constant folder exists.
+#[test]
+#[ignore = "needs Go's rewriter-wide constant folding plus 1305 builtin name resolution"]
+fn a_folded_last_insert_id_publishes_even_when_a_later_expression_fails_to_resolve() {
+    let mut session = Session::new();
+
+    let wire_error = |session: &mut Session, sql: &str| {
+        let mysql = session.run(sql).expect_err(sql).to_mysql_error();
+        (mysql.code, mysql.message)
+    };
+
+    let (code, message) = wire_error(&mut session, "SELECT LAST_INSERT_ID(17), no_such_fn()");
+    assert_eq!(code, 1305, "got {message}");
+    assert!(
+        message.contains("no_such_fn"),
+        "the unresolved name must be named: {message}"
+    );
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID()"),
+        "17",
+        "the fold's side effect outlives the failed statement"
+    );
+
+    // Rewriting stops at the FIRST failure, so an unknown function ahead of
+    // the fold publishes nothing.
+    session
+        .run("SELECT no_such_fn(), LAST_INSERT_ID(18)")
+        .expect_err("an unknown function is 1305");
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID()"),
+        "17"
+    );
+
+    // A folded ARGUMENT is folded too -- the published value is 20, not 19.
+    session
+        .run("SELECT LAST_INSERT_ID(19+1), no_such_fn()")
+        .expect_err("an unknown function is 1305");
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID()"),
+        "20"
+    );
+
+    // Table resolution precedes expression rewriting, so nothing is folded.
+    session
+        .run("SELECT LAST_INSERT_ID(21) FROM no_such_table")
+        .expect_err("an unknown table is 1146");
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID()"),
+        "20"
+    );
+
+    // An expression that merely WARNS between the two does not stop rewriting.
+    session
+        .run("SELECT LAST_INSERT_ID(22), 1/0 AS x, no_such_fn()")
+        .expect_err("an unknown function is 1305");
+    assert_eq!(
+        session_scalar(&mut session, "SELECT LAST_INSERT_ID()"),
+        "22"
+    );
+}
+
 /// The FUNCTION and the WIRE value read ONE publication, so they can differ
 /// only where Go itself makes them differ.
 ///
