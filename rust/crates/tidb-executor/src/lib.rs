@@ -43,6 +43,7 @@
 
 pub mod access_cost;
 pub mod access_path;
+pub mod admin_check;
 pub mod apply;
 mod approx_count_distinct;
 pub mod cluster_storage;

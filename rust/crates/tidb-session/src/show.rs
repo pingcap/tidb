@@ -1320,6 +1320,11 @@ impl Session {
             }
             // Go `SimpleExec.executeKillStmt`.
             tidb_ast::AdminStmt::Kill(kill) => self.kill_stmt(kill),
+            // Go `CheckTableExec` / `CheckIndexRangeExec`. See
+            // [`crate::admin_check_arm`] for the shapes and the refusals.
+            tidb_ast::AdminStmt::AdminCheck(check) => {
+                self.admin_check_stmt(check.as_ref()).map(Some)
+            }
             // Go `fetchShowCreateTable`.
             tidb_ast::AdminStmt::ShowCreate { kind, name, .. } => {
                 // `SHOW CREATE SEQUENCE` and `SHOW CREATE TABLE` take the

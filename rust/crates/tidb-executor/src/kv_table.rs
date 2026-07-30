@@ -916,6 +916,86 @@ impl KvTable {
         Ok(handle)
     }
 
+    /// The table's indexes, for `ADMIN CHECK` (see [`crate::admin_check`]).
+    ///
+    /// The field itself stays private because every other reader reaches an
+    /// index through a scan; the consistency check is the one caller that
+    /// needs the whole list as metadata.
+    #[must_use]
+    pub fn index_list_for_check(&self) -> Vec<KvIndex> {
+        self.indexes.clone()
+    }
+
+    /// [`KvTable::index_key`] for [`crate::admin_check`]: the entry key one
+    /// row's values encode to under `index`.
+    pub fn index_key_for_check(
+        &self,
+        index: &KvIndex,
+        row: &[Datum],
+        handle: &TableHandle,
+    ) -> Result<(Vec<u8>, bool), KvTableError> {
+        self.index_key(index, row, handle)
+    }
+
+    /// Every stored entry of one index, as `(entry key, the handle it names)`.
+    ///
+    /// This is the only sweep of a WHOLE index in the engine: an ordinary
+    /// index read has datum bounds and goes through
+    /// [`KvTable::index_range_cursor`]. `ADMIN CHECK` has none -- its subject
+    /// is exactly the set of entries that exist.
+    pub fn index_entries_for_check(
+        &mut self,
+        index_id: i64,
+    ) -> Result<Vec<(Vec<u8>, TableHandle)>, KvTableError> {
+        let Some(index) = self
+            .indexes
+            .iter()
+            .find(|index| index.id == index_id)
+            .cloned()
+        else {
+            return Err(KvTableError::Decode("no such index".to_owned()));
+        };
+        let common = !self.common_handle_offsets.is_empty();
+        let (low, high) = crate::admin_check::index_key_bounds(self.table_id, index_id);
+        let mut iterator = self
+            .store
+            .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        let mut entries = Vec::new();
+        while iterator.valid() {
+            let key = iterator.key().as_bytes().to_vec();
+            let handle = index_entry_handle(&index, &key, iterator.value(), common)?;
+            entries.push((key, handle));
+            iterator
+                .next()
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        }
+        iterator.close();
+        Ok(entries)
+    }
+
+    /// Removes one stored key without touching anything else -- the only way
+    /// to build the CORRUPT table `ADMIN CHECK` exists to find.
+    ///
+    /// Every ordinary write path keeps rows and index entries in step, so a
+    /// test that only used SQL could never distinguish a real consistency
+    /// check from one that returns OK. This is that distinguishing move, and
+    /// it is deliberately the crudest possible one: a raw `Delete` against
+    /// the storage seam, exactly what a lost region replica or a half-applied
+    /// index backfill leaves behind.
+    pub fn delete_raw_key_for_test(&mut self, key: &[u8]) -> Result<(), KvTableError> {
+        self.store
+            .delete(Key::from_bytes(key.to_vec()))
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))
+    }
+
+    /// Removes one row's record entry, leaving its index entries orphaned.
+    /// See [`KvTable::delete_raw_key_for_test`].
+    pub fn delete_record_for_test(&mut self, handle: &TableHandle) -> Result<(), KvTableError> {
+        let key = encode_row_key_with_handle(self.table_id, &handle.record_handle());
+        self.delete_raw_key_for_test(&key)
+    }
+
     /// Go `GenIndexKey`: the entry key for one index over `row`, plus Go's
     /// `distinct` flag.
     ///
@@ -923,7 +1003,7 @@ impl KvTable {
     /// non-NULL -- MySQL lets a unique index hold any number of NULLs, so a
     /// NULL-bearing entry is stored the non-distinct way (handle appended to
     /// the key) and never collides.
-    fn index_key(
+    pub(crate) fn index_key(
         &self,
         index: &KvIndex,
         row: &[Datum],

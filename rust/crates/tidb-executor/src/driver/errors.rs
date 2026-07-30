@@ -101,6 +101,14 @@ pub enum DriverError {
     /// hold. Carries the name AS WRITTEN -- Go matches savepoint names
     /// case-insensitively but reports back the spelling the statement used.
     SavepointNotExists(String),
+    /// Go `admin.ErrAdminCheckTable` (8003): `ADMIN CHECK` found a table
+    /// whose row count is not one of its indexes' entry counts. Carries Go's
+    /// already-formatted detail.
+    AdminCheckTable(String),
+    /// Go `consistency.ErrAdminCheckInconsistent` (`ErrDataInconsistent`,
+    /// 8223): `ADMIN CHECK` found a row and an index entry that disagree.
+    /// Carries Go's already-formatted detail.
+    DataInconsistent(String),
     /// Go `plannererrors.ErrWrongParamCount` (8112): the number of values an
     /// `EXECUTE` supplies is not the number of `?` markers the prepared
     /// statement carries. Raised by `planCachePreprocess`'s step 1, which both
@@ -947,6 +955,11 @@ impl DriverError {
             *b"42000",
             format!("SAVEPOINT {name} does not exist"),
         ),
+        // Go `ClassAdmin.NewStd(errno.ErrAdminCheckTable)`: 8003, HY000. The
+        // detail is Go's own "table count %d != index(%s) count %d".
+        DriverError::AdminCheckTable(detail) => MysqlError::new(8003, *b"HY000", detail),
+        // Go `ClassAdmin.NewStd(errno.ErrDataInconsistent)`: 8223, HY000.
+        DriverError::DataInconsistent(detail) => MysqlError::new(8223, *b"HY000", detail),
         // Captured from TiDB: both `EXECUTE stmt` with a marker left unbound
         // and `EXECUTE stmt USING @a` with no marker report
         // `[planner:8112]Wrong parameter count`, not 1210 -- the check is
