@@ -372,6 +372,7 @@ func (rc *LogClient) RestoreSSTFileSets(
 	ctx context.Context,
 	backupFileSets restore.BatchBackupFileSet,
 	importModeSwitcher *restore.ImportModeSwitcher,
+	online bool,
 	snapshotRestoreDataSize uint64,
 	checkpointCompactedSSTSize uint64,
 	onProgress func(int64),
@@ -390,16 +391,18 @@ func (rc *LogClient) RestoreSSTFileSets(
 		return errors.Trace(err)
 	}
 
-	err := importModeSwitcher.GoSwitchToImportMode(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
-		if switchErr != nil {
-			log.Warn("[Compacted SST Restore] Failed to switch back to normal mode after restoration.", zap.Error(switchErr))
+	if !online {
+		err := importModeSwitcher.GoSwitchToImportMode(ctx)
+		if err != nil {
+			return errors.Trace(err)
 		}
-	}()
+		defer func() {
+			switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
+			if switchErr != nil {
+				log.Warn("[Compacted SST Restore] Failed to switch back to normal mode after restoration.", zap.Error(switchErr))
+			}
+		}()
+	}
 
 	log.Info("[Compacted SST Restore] Start to restore SST files",
 		zap.Int("sst-file-count", len(backupFileSets)))
@@ -413,11 +416,10 @@ func (rc *LogClient) RestoreSSTFileSets(
 	// where batch processing may lead to increased complexity and potential inefficiencies.
 	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
 	// while maintaining optimal performance and resource utilization.
-	err = rc.sstRestoreManager.restorer.GoRestore(onProgress, backupFileSets)
-	if err != nil {
+	if err := rc.sstRestoreManager.restorer.GoRestore(onProgress, backupFileSets); err != nil {
 		return errors.Trace(err)
 	}
-	err = rc.sstRestoreManager.restorer.WaitUntilFinish()
+	err := rc.sstRestoreManager.restorer.WaitUntilFinish()
 
 	for _, files := range backupFileSets {
 		for _, f := range files.SSTFiles {

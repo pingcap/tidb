@@ -1659,7 +1659,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("start to restore pd scheduler")
 		// run the post-work to avoid being stuck in the import
 		// mode or emptied schedulers.
-		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc)
+		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
 		log.Info("finish restoring pd scheduler")
 	}()
 
