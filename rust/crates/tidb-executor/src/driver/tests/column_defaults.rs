@@ -132,12 +132,29 @@ fn column_defaults_and_not_null() {
         .unwrap(),
         vec![vec![Datum::Int(1)]]
     );
-    // A generated column is still rejected rather than ignored.
-    assert!(crate::run_create_table_on(
+    // A generated column carries no DEFAULT of its own: its value source is
+    // the expression, which is what the row reads back (see
+    // `crate::generated_column`).
+    crate::run_create_table_on(
         "CREATE TABLE g2 (a BIGINT, b BIGINT GENERATED ALWAYS AS (a+1) VIRTUAL)",
-        &mut catalog
+        &mut catalog,
     )
-    .is_err());
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO g2 (a) VALUES (5)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT a, b FROM g2",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(5), Datum::Int(6)]]
+    );
 }
 
 /// AUTO_INCREMENT, checked against behavior captured from real TiDB:
