@@ -137,6 +137,92 @@ fn an_unpartitioned_create_table_is_untouched() {
     assert!(show.is_ok());
 }
 
+/// The partition definitions real TiDB REJECTS, with the errno and message it
+/// rejects each one under. Captured the same way the `GO_*` texts above were.
+///
+/// Go rejects a great deal at `CREATE`, and each of these is a rule a future
+/// implementation owes: none of them can be inferred from the grammar, and all
+/// of them are places where accepting the statement would be a different
+/// silent wrong answer than the one this unit closed.
+const GO_REJECTED: &[(&str, u16, &str)] = &[
+    (
+        "CREATE TABLE e1 (a varchar(10)) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10))",
+        1659,
+        "Field 'a' is of a not allowed type for this type of partitioning",
+    ),
+    (
+        "CREATE TABLE e14 (a double) PARTITION BY HASH(a) PARTITIONS 2",
+        1659,
+        "Field 'a' is of a not allowed type for this type of partitioning",
+    ),
+    (
+        "CREATE TABLE e2 (a int) PARTITION BY RANGE(b) (PARTITION p0 VALUES LESS THAN (10))",
+        1054,
+        "Unknown column 'b' in 'partition function'",
+    ),
+    (
+        "CREATE TABLE e3 (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (5))",
+        1493,
+        "VALUES LESS THAN value must be strictly increasing for each partition",
+    ),
+    (
+        "CREATE TABLE e4 (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p0 VALUES LESS THAN (20))",
+        1517,
+        "Duplicate partition name p0",
+    ),
+    (
+        "CREATE TABLE e5 (a int) PARTITION BY LIST(a) (PARTITION p0 VALUES IN (1), PARTITION p1 VALUES IN (1))",
+        1495,
+        "Multiple definition of same constant in list partitioning",
+    ),
+    (
+        "CREATE TABLE e6 (a int) PARTITION BY HASH(a) PARTITIONS 0",
+        1504,
+        "Number of partitions = 0 is not an allowed value",
+    ),
+    (
+        "CREATE TABLE e7 (a int) PARTITION BY RANGE(a)",
+        1492,
+        "For RANGE partitions each partition must be defined",
+    ),
+    (
+        "CREATE TABLE e8 (a int) PARTITION BY LIST(a) (PARTITION p0 VALUES LESS THAN (1))",
+        1480,
+        "Only RANGE PARTITIONING can use VALUES LESS THAN in partition definition",
+    ),
+    (
+        "CREATE TABLE e10 (a int) PARTITION BY HASH(rand()) PARTITIONS 2",
+        1564,
+        "This partition function is not allowed",
+    ),
+    (
+        "CREATE TABLE e11 (a int UNIQUE KEY, b int) PARTITION BY HASH(b) PARTITIONS 2",
+        8264,
+        "Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption",
+    ),
+];
+
+/// Every definition TiDB rejects, this node rejects too -- agreement on
+/// rejection, which is the strongest thing a node without the feature can
+/// claim about them.
+///
+/// It agrees for the WRONG REASON today (one blanket refusal, not the eleven
+/// rules), and that is exactly what makes this a tripwire: the moment
+/// `PARTITION BY` is accepted, ten of these eleven start SUCCEEDING unless the
+/// validation in Go's `buildTablePartitionInfo` is ported with them, and this
+/// test is where that shows up. The errno and message each row carries are
+/// what the assertion becomes then.
+#[test]
+fn every_definition_tidb_rejects_is_rejected_here_too() {
+    for (sql, errno, message) in GO_REJECTED {
+        let mut session = Session::new();
+        assert!(
+            session.run(sql).is_err(),
+            "TiDB rejects this with {errno} ({message}); this node must not accept it: {sql}"
+        );
+    }
+}
+
 /// `PARTITION BY` written on a `CREATE TABLE IF NOT EXISTS` is refused too:
 /// `IF NOT EXISTS` suppresses the "already exists" error, never the
 /// admission check.
