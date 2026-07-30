@@ -294,6 +294,14 @@ pub(crate) fn run_insert_traced(
         None => Vec::new(),
     };
     let row_count = source_rows.as_ref().map_or(insert.rows.len(), Vec::len);
+    // Go `ResetContextOfStmt`'s `ast.InsertStmt` arm:
+    //   ErrGroupBadNull  = error when (strict || len(stmt.Lists) == 1)
+    //   ErrGroupNoDefault = error when strict
+    // `stmt.Lists` is the VALUES lists, so an `INSERT ... SELECT` is never
+    // "single" no matter how many rows the query returns -- which is why the
+    // count below reads the AST and not `row_count`.
+    let bad_null_level =
+        crate::bad_null::NullLevel::from_is_error(ctx.strict() || insert.rows.len() == 1);
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
     // Go `buildValuesListOfInsert` checks arity in two steps: the FIRST row
     // against the target columns, and every later row against the one before
@@ -375,20 +383,21 @@ pub(crate) fn run_insert_traced(
                 row[offset] = column_default(&column_meta, offset, ctx, eval_chunk.get_row(0))?;
             }
         }
-        // Go `Column.CheckNotNull`: an explicit NULL in a NOT NULL column is
+        // Go `Column.HandleBadNull`: an explicit NULL in a NOT NULL column is
         // ErrColumnCantNull, which is a different error from omitting a
-        // column that has no default.
-        for (offset, value) in row.iter().enumerate() {
+        // column that has no default. Whether it FAILS the statement is
+        // `bad_null_level` above, not the SQL mode alone.
+        for (offset, value) in row.iter_mut().enumerate() {
             // A generated column's value is not built yet at this point, so
             // the NULL standing in for it is not the user's NULL.
-            if *value == Datum::Null
-                && column_is_not_null(&column_meta, offset)
-                && assigned[offset]
-                && !generated_targets[offset]
-            {
-                return Err(DriverError::ColumnCannotBeNull(
-                    column_list[offset].0.clone(),
-                ));
+            if assigned[offset] && !generated_targets[offset] {
+                crate::bad_null::handle_bad_null(
+                    value,
+                    &column_meta[offset].3,
+                    &column_list[offset].0,
+                    bad_null_level,
+                    ctx,
+                )?;
             }
         }
         // Go casts each value to its column's type before the row is
@@ -945,11 +954,12 @@ type ColumnMeta = (
 /// The value an omitted column takes, following Go `GetColDefaultValue` and
 /// `getColDefaultValueFromNil`: the stored `DEFAULT` when one was written, or
 /// NULL for a nullable column; a NOT NULL column with no default is Go's
-/// `ErrNoDefaultForField` under strict mode.
-///
-/// DEFERRED (documented): non-strict mode, where Go warns and writes the
-/// type's zero value instead of failing. This seed always behaves as strict
-/// mode, which is TiDB's default sql_mode.
+/// `ErrNoDefaultForField` under strict mode, and under a non-strict mode the
+/// same message as a WARNING plus that type's zero value
+/// (`getColDefaultValueFromNil`'s `if !strictSQLMode` arm). Captured from
+/// TiDB under `sql_mode = ''`: `INSERT INTO t (b) VALUES (9)` into
+/// `t(a INT NOT NULL, b INT NOT NULL DEFAULT 3)` is accepted, warns 1364 and
+/// stores `0`.
 pub(crate) fn column_default(
     meta: &[ColumnMeta],
     offset: usize,
@@ -964,14 +974,16 @@ pub(crate) fn column_default(
         // `GetColDefaultValue` over the same fixed `EvalContext`.
         Some(default) => crate::column_default::evaluate(default, field_type, ctx, row)
             .map_err(|e| DriverError::Exec(ExecError::Eval(e))),
+        None if *not_null && !ctx.strict() => {
+            ctx.append_warning_parts(
+                1364,
+                &format!("Field '{name}' doesn't have a default value"),
+            );
+            Ok(crate::bad_null::zero_value(field_type))
+        }
         None if *not_null => Err(DriverError::NoDefaultForField(name.clone())),
         None => Ok(Datum::Null),
     }
-}
-
-/// Whether the column at `offset` carries Go's `NotNullFlag`.
-pub(crate) fn column_is_not_null(meta: &[ColumnMeta], offset: usize) -> bool {
-    meta[offset].1
 }
 
 /// Runs a single-table `UPDATE`, returning MySQL's affected-row count.
@@ -1323,6 +1335,21 @@ pub(crate) fn compute_updated_row(
         // what stores `SET d = 9.87654` in a DECIMAL(10,3) column as 9.877.
         new_row[*offset] =
             cast_value_for_column(value, &field_types[*offset], &column_names[*offset], 0, ctx)?;
+    }
+    // Go `updateRecord`'s step 5 runs `HandleBadNull` over EVERY column of
+    // the new row, before the row is compared with the old one -- which is
+    // why a row whose NULL is replaced by the same zero it already held is
+    // still counted as unchanged AND still warns. `ErrGroupBadNull` for an
+    // UPDATE is an error exactly under strict mode (`ResetUpdateStmtCtx`).
+    let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
+    for (offset, value) in new_row.iter_mut().enumerate() {
+        crate::bad_null::handle_bad_null(
+            value,
+            &field_types[offset],
+            &column_names[offset],
+            level,
+            ctx,
+        )?;
     }
     if new_row == row {
         // Go counts this row as touched, not affected.

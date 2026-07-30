@@ -438,6 +438,19 @@ pub(crate) fn run_multi_update(
                     ctx,
                 )?;
             }
+            // Go `updateRecord` step 5, the same rule the single-table path
+            // follows: every column of the new row is NULL-checked before the
+            // changed comparison.
+            let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
+            for (offset, value) in new_row.iter_mut().enumerate() {
+                crate::bad_null::handle_bad_null(
+                    value,
+                    &table.columns[offset].1,
+                    &table.columns[offset].0,
+                    level,
+                    ctx,
+                )?;
+            }
             let changed = new_row != old;
             if changed {
                 write_row(catalog, table, id, &new_row, ctx)?;
