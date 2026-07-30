@@ -662,7 +662,7 @@ func TestDumpTableMeta(t *testing.T) {
 	}
 }
 
-func TestDumpTableMetaWithColumnSelectorsKeepsSourceColumnsForSplit(t *testing.T) {
+func TestDumpTableMetaWithColumnFilterKeepsSourceColumnsForSplit(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -675,13 +675,13 @@ func TestDumpTableMetaWithColumnSelectorsKeepsSourceColumnsForSplit(t *testing.T
 	require.NoError(t, err)
 	baseConn := newBaseConn(conn, true, nil)
 
-	columnSelectors := newColumnSelectorsForTest(t,
-		ColumnSelector{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"name"}},
+	columnFilter := newColumnFilterConfigForTest(t,
+		ColumnFilterRule{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"name"}},
 	)
 	conf := DefaultConfig()
 	conf.NoSchemas = true
 	conf.ServerInfo.ServerType = version.ServerTypeMySQL
-	conf.ColumnSelectors = columnSelectors
+	conf.ColumnFilter = columnFilter
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
@@ -715,7 +715,7 @@ func TestDumpTableMetaWithColumnSelectorsKeepsSourceColumnsForSplit(t *testing.T
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestValidateColumnSelectors(t *testing.T) {
+func TestValidateColumnFilter(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -730,19 +730,19 @@ func TestValidateColumnSelectors(t *testing.T) {
 
 	conf := DefaultConfig()
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
-	conf.ColumnSelectors = newColumnSelectorsForTest(t,
-		ColumnSelector{Matcher: []string{database + "." + table}, Columns: []string{"*", "!missing"}},
+	conf.ColumnFilter = newColumnFilterConfigForTest(t,
+		ColumnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"*", "!missing"}},
 	)
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, ""))
-	require.NoError(t, validateColumnSelectors(tctx, conf, baseConn))
+	require.NoError(t, validateColumnFilter(tctx, conf, baseConn))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestValidateColumnSelectorsFailsOnMissingIncludedColumns(t *testing.T) {
+func TestValidateColumnFilterFailsOnMissingIncludedColumns(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -757,14 +757,14 @@ func TestValidateColumnSelectorsFailsOnMissingIncludedColumns(t *testing.T) {
 
 	conf := DefaultConfig()
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
-	conf.ColumnSelectors = newColumnSelectorsForTest(t,
-		ColumnSelector{Matcher: []string{database + "." + table}, Columns: []string{"missing"}},
+	conf.ColumnFilter = newColumnFilterConfigForTest(t,
+		ColumnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"missing"}},
 	)
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
-	err = validateColumnSelectors(tctx, conf, baseConn)
+	err = validateColumnFilter(tctx, conf, baseConn)
 	require.ErrorContains(t, err, `included column rules "missing" do not match writable columns`)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

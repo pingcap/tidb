@@ -58,103 +58,103 @@ func TestGetConfTables(t *testing.T) {
 	require.Equal(t, expectedDBTables, actualDBTables)
 }
 
-func TestColumnSelectors(t *testing.T) {
-	selectors := &ColumnSelectors{
-		Selectors: []ColumnSelector{
+func TestColumnFilters(t *testing.T) {
+	columnFilter := &ColumnFilterConfig{
+		Filters: []ColumnFilterRule{
 			{Matcher: []string{"db1.*"}, Columns: []string{"*", "!c*"}},
 			{Matcher: []string{"db1.t1"}, Columns: []string{"c2"}},
 			{Matcher: []string{"db1.t2"}, Columns: []string{"*", "!c3"}},
 		},
 	}
-	require.NoError(t, selectors.compile(false))
+	require.NoError(t, columnFilter.compile(false))
 
-	selectedFields, err := selectors.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3", "d"})
+	selectedFields, err := columnFilter.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3", "d"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"C2", "d"}, selectedFields)
 
-	selectedFields, err = selectors.applyToColumns("db2", "t1", []string{"c1"})
+	selectedFields, err = columnFilter.applyToColumns("db2", "t1", []string{"c1"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1"}, selectedFields)
 
-	selectedFields, err = selectors.applyToColumns("db1", "t2", []string{"c1", "c3"})
+	selectedFields, err = columnFilter.applyToColumns("db1", "t2", []string{"c1", "c3"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1"}, selectedFields)
 
-	selectors = newColumnSelectorsForTest(t,
-		ColumnSelector{Matcher: []string{"db1.t1"}},
+	columnFilter = newColumnFilterConfigForTest(t,
+		ColumnFilterRule{Matcher: []string{"db1.t1"}},
 	)
-	selectedFields, err = selectors.applyToColumns("db1", "t1", []string{"c1"})
+	selectedFields, err = columnFilter.applyToColumns("db1", "t1", []string{"c1"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1"}, selectedFields)
 }
 
-func TestParseColumnSelectorsFile(t *testing.T) {
-	path := writeColumnSelectorsFileForTest(t, `{
-			"columnSelectors": [
+func TestParseColumnFilterFile(t *testing.T) {
+	path := writeColumnFilterFileForTest(t, `{
+			"columnFilters": [
 				{"matcher": ["db1.t1", "db2.t2"], "columns": ["c1", "C2"]}
 			]
-	}`)
-	selectors, err := ParseColumnSelectorsFile(path, false)
+		}`)
+	columnFilter, err := ParseColumnFilterFile(path, false)
 	require.NoError(t, err)
-	selectedFields, err := selectors.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3"})
+	selectedFields, err := columnFilter.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1", "C2"}, selectedFields)
 
-	selectors, err = ParseColumnSelectorsFile(path, true)
+	columnFilter, err = ParseColumnFilterFile(path, true)
 	require.NoError(t, err)
-	selectedFields, err = selectors.applyToColumns("DB1", "T1", []string{"c1"})
+	selectedFields, err = columnFilter.applyToColumns("DB1", "T1", []string{"c1"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1"}, selectedFields)
 
-	_, err = ParseColumnSelectorsFile("", false)
+	_, err = ParseColumnFilterFile("", false)
 	require.NoError(t, err)
 
-	path = writeColumnSelectorsFileForTest(t, `{"columnSelectors": [{"matcher": ["db.t"], "columns": ["/unterminated"]}]}`)
-	_, err = ParseColumnSelectorsFile(path, false)
-	require.ErrorContains(t, err, "failed to parse --column-selectors-file selector 0 columns")
+	path = writeColumnFilterFileForTest(t, `{"columnFilters": [{"matcher": ["db.t"], "columns": ["/unterminated"]}]}`)
+	_, err = ParseColumnFilterFile(path, false)
+	require.ErrorContains(t, err, "failed to parse --column-filter-file filter 0 columns")
 }
 
-func TestParseColumnSelectorsFileFlag(t *testing.T) {
-	path := writeColumnSelectorsFileForTest(t, `{
-			"columnSelectors": [
+func TestParseColumnFilterFileFlag(t *testing.T) {
+	path := writeColumnFilterFileForTest(t, `{
+			"columnFilters": [
 				{"matcher": ["db1.t1"], "columns": ["*", "!c1", "!c2"]},
 				{"matcher": ["db2.t2"], "columns": ["*", "!c3"]}
 			]
 		}`)
 	conf := parseConfigFromArgsForTest(t,
 		"--no-schemas",
-		"--column-selectors-file", path,
+		"--column-filter-file", path,
 	)
-	selectedFields, err := conf.ColumnSelectors.applyToColumns("db1", "t1", []string{"c1", "c2", "c3"})
+	selectedFields, err := conf.ColumnFilter.applyToColumns("db1", "t1", []string{"c1", "c2", "c3"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c3"}, selectedFields)
 
-	_, err = parseConfigFromArgsForTestWithErr(t, "--column-selectors-file", path)
-	require.ErrorContains(t, err, "--column-selectors-file requires --no-schemas/-m")
+	_, err = parseConfigFromArgsForTestWithErr(t, "--column-filter-file", path)
+	require.ErrorContains(t, err, "--column-filter-file requires --no-schemas/-m")
 
 	conf = parseConfigFromArgsForTest(t,
 		"--no-schemas",
-		"--column-selectors-file", path,
+		"--column-filter-file", path,
 		"--sql", "select * from t",
 	)
 	require.Equal(t, "select * from t", conf.SQL)
-	require.NotNil(t, conf.ColumnSelectors)
+	require.NotNil(t, conf.ColumnFilter)
 }
 
-func writeColumnSelectorsFileForTest(t *testing.T, content string) string {
+func writeColumnFilterFileForTest(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "column-selectors.json")
+	path := filepath.Join(t.TempDir(), "column-filter.json")
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	return path
 }
 
-func newColumnSelectorsForTest(t *testing.T, selectors ...ColumnSelector) *ColumnSelectors {
+func newColumnFilterConfigForTest(t *testing.T, filters ...ColumnFilterRule) *ColumnFilterConfig {
 	t.Helper()
-	columnSelectors := &ColumnSelectors{
-		Selectors: selectors,
+	columnFilter := &ColumnFilterConfig{
+		Filters: filters,
 	}
-	require.NoError(t, columnSelectors.compile(false))
-	return columnSelectors
+	require.NoError(t, columnFilter.compile(false))
+	return columnFilter
 }
 
 func TestParseParquetDefaultFlags(t *testing.T) {

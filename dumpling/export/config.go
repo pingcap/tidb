@@ -65,7 +65,7 @@ const (
 	flagCsvNullValue             = "csv-null-value"
 	flagSQL                      = "sql"
 	flagFilter                   = "filter"
-	flagColumnSelectorsFile      = "column-selectors-file"
+	flagColumnFilterFile         = "column-filter-file"
 	flagCaseSensitive            = "case-sensitive"
 	flagDumpEmptyDatabase        = "dump-empty-database"
 	flagTidbMemQuotaQuery        = "tidb-mem-quota-query"
@@ -178,8 +178,8 @@ type Config struct {
 	CsvLineTerminator string
 	Databases         []string
 
-	TableFilter         filter.Filter    `json:"-"`
-	ColumnSelectors     *ColumnSelectors `json:"-"`
+	TableFilter         filter.Filter       `json:"-"`
+	ColumnFilter        *ColumnFilterConfig `json:"-"`
 	Where               string
 	FileType            string
 	ServerInfo          version.ServerInfo
@@ -380,7 +380,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagSQL, "S", "", "Dump data with given sql. This argument doesn't support concurrent dump")
 	_ = flags.MarkHidden(flagSQL)
 	flags.StringSliceP(flagFilter, "f", []string{"*.*", DefaultTableFilter}, "filter to select which tables to dump")
-	flags.String(flagColumnSelectorsFile, "", "Path to the column selectors JSON file for data output projection")
+	flags.String(flagColumnFilterFile, "", "Path to the column filter JSON file for data output projection")
 	flags.Bool(flagCaseSensitive, false, "whether the filter should be case-sensitive")
 	flags.Bool(flagDumpEmptyDatabase, true, "whether to dump empty database")
 	flags.Uint64(flagTidbMemQuotaQuery, UnspecifiedSize, "The maximum memory limit for a single SQL statement, in bytes.")
@@ -600,7 +600,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	columnSelectorsFile, err := flags.GetString(flagColumnSelectorsFile)
+	columnFilterFile, err := flags.GetString(flagColumnFilterFile)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -632,12 +632,12 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		conf.TableFilter = filter.CaseInsensitive(conf.TableFilter)
 	}
 
-	conf.ColumnSelectors, err = ParseColumnSelectorsFile(columnSelectorsFile, caseSensitive)
+	conf.ColumnFilter, err = ParseColumnFilterFile(columnFilterFile, caseSensitive)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if conf.ColumnSelectors != nil && !conf.NoSchemas {
-		return errors.New("--column-selectors-file requires --no-schemas/-m")
+	if conf.ColumnFilter != nil && !conf.NoSchemas {
+		return errors.New("--column-filter-file requires --no-schemas/-m")
 	}
 
 	conf.FileSize, err = ParseFileSize(fileSizeStr)

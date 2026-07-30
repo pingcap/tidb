@@ -1075,14 +1075,14 @@ func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName st
 	return info.outputFieldSQL, info.outputColumnCount, nil
 }
 
-func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnSelectors *ColumnSelectors) (selectFieldInfo, error) { // revive:disable-line:flag-parameter
+func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnFilter *ColumnFilterConfig) (selectFieldInfo, error) { // revive:disable-line:flag-parameter
 	sourceColumns, hasGenerateColumn, err := getWritableColumnNames(tctx, db, dbName, tableName)
 	if err != nil {
 		return selectFieldInfo{}, err
 	}
 	selectedColumns := sourceColumns
-	if columnSelectors != nil {
-		selectedColumns, err = columnSelectors.applyToColumns(dbName, tableName, sourceColumns)
+	if columnFilter != nil {
+		selectedColumns, err = columnFilter.applyToColumns(dbName, tableName, sourceColumns)
 		if err != nil {
 			return selectFieldInfo{}, err
 		}

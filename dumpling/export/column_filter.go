@@ -12,64 +12,64 @@ import (
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 )
 
-// ColumnSelectors stores table matchers and columns used to project data output.
-type ColumnSelectors struct {
-	Selectors []ColumnSelector `json:"columnSelectors"`
+// ColumnFilterConfig stores table matchers and column filter rules used to project data output.
+type ColumnFilterConfig struct {
+	Filters []ColumnFilterRule `json:"columnFilters"`
 }
 
-// ColumnSelector maps a set of table matchers to a set of column filter rules.
-type ColumnSelector struct {
+// ColumnFilterRule maps a set of table matchers to a set of column filter rules.
+type ColumnFilterRule struct {
 	Matcher []string `json:"matcher"`
 	Columns []string `json:"columns"`
 
 	tableFilter filter.Filter
 }
 
-// ParseColumnSelectorsFile parses a JSON column selectors file.
-func ParseColumnSelectorsFile(path string, caseSensitive bool) (*ColumnSelectors, error) {
+// ParseColumnFilterFile parses a JSON column filter file.
+func ParseColumnFilterFile(path string, caseSensitive bool) (*ColumnFilterConfig, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to read --column-selectors-file %s", path)
+		return nil, errors.Annotatef(err, "failed to read --column-filter-file %s", path)
 	}
-	var selectors ColumnSelectors
-	if err := json.Unmarshal(content, &selectors); err != nil {
-		return nil, errors.Annotatef(err, "failed to parse --column-selectors-file %s", path)
+	var columnFilter ColumnFilterConfig
+	if err := json.Unmarshal(content, &columnFilter); err != nil {
+		return nil, errors.Annotatef(err, "failed to parse --column-filter-file %s", path)
 	}
-	if err := selectors.compile(caseSensitive); err != nil {
+	if err := columnFilter.compile(caseSensitive); err != nil {
 		return nil, err
 	}
-	return &selectors, nil
+	return &columnFilter, nil
 }
 
-func (s *ColumnSelectors) compile(caseSensitive bool) error {
-	if len(s.Selectors) == 0 {
-		return errors.New("--column-selectors-file requires at least one column selector")
+func (c *ColumnFilterConfig) compile(caseSensitive bool) error {
+	if len(c.Filters) == 0 {
+		return errors.New("--column-filter-file requires at least one column filter")
 	}
-	for i := range s.Selectors {
-		selector := &s.Selectors[i]
-		if len(selector.Matcher) == 0 {
-			return errors.Errorf("--column-selectors-file selector %d requires at least one matcher", i)
+	for i := range c.Filters {
+		rule := &c.Filters[i]
+		if len(rule.Matcher) == 0 {
+			return errors.Errorf("--column-filter-file filter %d requires at least one matcher", i)
 		}
-		tableFilter, err := filter.Parse(selector.Matcher)
+		tableFilter, err := filter.Parse(rule.Matcher)
 		if err != nil {
-			return errors.Annotatef(err, "failed to parse --column-selectors-file selector %d matcher", i)
+			return errors.Annotatef(err, "failed to parse --column-filter-file filter %d matcher", i)
 		}
 		if !caseSensitive {
 			tableFilter = filter.CaseInsensitive(tableFilter)
 		}
-		selector.tableFilter = tableFilter
-		if _, err = filter.ParseColumnFilter(activeColumnRules(selector.Columns)); err != nil {
-			return errors.Annotatef(err, "failed to parse --column-selectors-file selector %d columns", i)
+		rule.tableFilter = tableFilter
+		if _, err = filter.ParseColumnFilter(activeColumnRules(rule.Columns)); err != nil {
+			return errors.Annotatef(err, "failed to parse --column-filter-file filter %d columns", i)
 		}
 	}
 	return nil
 }
 
-func (s *ColumnSelectors) applyToColumns(database, table string, sourceColumns []string) ([]string, error) {
-	columnRules := s.matchColumnRules(database, table)
+func (c *ColumnFilterConfig) applyToColumns(database, table string, sourceColumns []string) ([]string, error) {
+	columnRules := c.matchColumnRules(database, table)
 	if len(columnRules) == 0 {
 		return sourceColumns, nil
 	}
@@ -78,7 +78,7 @@ func (s *ColumnSelectors) applyToColumns(database, table string, sourceColumns [
 	if err != nil {
 		return nil, errors.Annotatef(
 			err,
-			"failed to parse --column-selectors-file columns for table `%s`.`%s`",
+			"failed to parse --column-filter-file columns for table `%s`.`%s`",
 			escapeString(database),
 			escapeString(table),
 		)
@@ -96,7 +96,7 @@ func (s *ColumnSelectors) applyToColumns(database, table string, sourceColumns [
 	}
 	if len(sourceColumns) > 0 && len(filteredColumns) == 0 {
 		return nil, errors.Errorf(
-			"--column-selectors-file selects no writable columns from table `%s`.`%s`",
+			"--column-filter-file selects no writable columns from table `%s`.`%s`",
 			escapeString(database),
 			escapeString(table),
 		)
@@ -105,13 +105,13 @@ func (s *ColumnSelectors) applyToColumns(database, table string, sourceColumns [
 	return filteredColumns, nil
 }
 
-func (s *ColumnSelectors) matchColumnRules(database, table string) []string {
+func (c *ColumnFilterConfig) matchColumnRules(database, table string) []string {
 	var columnRules []string
-	for _, selector := range s.Selectors {
-		if !selector.tableFilter.MatchTable(database, table) {
+	for _, rule := range c.Filters {
+		if !rule.tableFilter.MatchTable(database, table) {
 			continue
 		}
-		columnRules = append(columnRules, selector.Columns...)
+		columnRules = append(columnRules, rule.Columns...)
 	}
 	return activeColumnRules(columnRules)
 }
