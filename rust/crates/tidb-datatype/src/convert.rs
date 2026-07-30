@@ -540,32 +540,31 @@ pub fn float_string_to_integer_string(
 }
 
 /// `getValidIntPrefix`.
+///
+/// `truncate_as_warning` mirrors the source `Context` truncation flag, and it
+/// is a parameter rather than a caller-side policy because the two policies
+/// return DIFFERENT VALUES. Go returns early with the *float* prefix when
+/// `HandleTruncate` turns the truncation into a statement error, and otherwise
+/// falls through to `floatStrToIntStr` and returns the *integer* prefix beside
+/// a warning: `"123..34"` is `"123."` in strict mode and `"123"` in warning
+/// mode. Handing the caller one prefix plus an error would make one of those
+/// two answers unreachable.
 pub fn valid_integer_prefix(
     input: &str,
     is_function_cast: bool,
-) -> Result<NumericPrefix, (NumericPrefix, ScalarConversionError)> {
+    truncate_as_warning: bool,
+) -> Result<Converted<String>, (String, ScalarConversionError)> {
     if !is_function_cast {
         let float = valid_float_prefix(input, false);
-        if float.truncated {
+        if float.truncated && !truncate_as_warning {
             return Err((
-                float,
+                float.value,
                 ScalarConversionError::InvalidUnsignedInteger(input.to_owned()),
             ));
         }
+        let event = float.truncated.then_some(ScalarConversionEvent::Truncated);
         return float_string_to_integer_string(float.value(), input)
-            .map(|value| NumericPrefix {
-                value,
-                truncated: false,
-            })
-            .map_err(|(value, error)| {
-                (
-                    NumericPrefix {
-                        value,
-                        truncated: false,
-                    },
-                    error,
-                )
-            });
+            .map(|value| Converted { value, event });
     }
 
     let mut valid_len = 0;
@@ -579,22 +578,21 @@ pub fn valid_integer_prefix(
         }
         break;
     }
-    let prefix = NumericPrefix {
-        value: if valid_len == 0 {
-            "0".to_owned()
-        } else {
-            input[..valid_len].to_owned()
-        },
-        truncated: valid_len == 0 || valid_len != input.len(),
-    };
-    if prefix.truncated {
-        Err((
-            prefix,
-            ScalarConversionError::InvalidUnsignedInteger(input.to_owned()),
-        ))
+    let value = if valid_len == 0 {
+        "0".to_owned()
     } else {
-        Ok(prefix)
+        input[..valid_len].to_owned()
+    };
+    if valid_len == 0 || valid_len != input.len() {
+        if truncate_as_warning {
+            return Ok(Converted::truncated(value));
+        }
+        return Err((
+            value,
+            ScalarConversionError::InvalidUnsignedInteger(input.to_owned()),
+        ));
     }
+    Ok(Converted::exact(value))
 }
 
 /// `StrToInt`, preserving the best-effort value and truncation/overflow event.
@@ -1244,6 +1242,7 @@ mod tests {
         }
     }
 
+    /// `pkg/types/convert_test.go:921` `TestGetValidFloat`, first table.
     #[test]
     fn source_valid_float_prefix_rows() {
         for (input, expected, cast, truncated) in [
@@ -1277,6 +1276,108 @@ mod tests {
         }
     }
 
+    /// `pkg/types/convert_test.go:843` `TestGetValidInt`, first table: the
+    /// `Context` turns a truncation into a WARNING, so Go falls through to
+    /// `floatStrToIntStr` and the answer is an integer prefix. `signed` in the
+    /// Go row only selects which `strconv.Parse*` re-parses the prefix; both
+    /// succeed for every row, so the obligation it carries is that the prefix
+    /// is a parseable integer literal, asserted here directly.
+    #[test]
+    fn source_valid_integer_prefix_warning_rows() {
+        for (input, expected, signed, warned) in [
+            ("100", "100", true, false),
+            ("-100", "-100", true, false),
+            ("9223372036854775808", "9223372036854775808", false, false),
+            ("1abc", "1", true, true),
+            ("-1-1", "-1", true, true),
+            ("+1+1", "+1", true, true),
+            ("123..34", "123", true, true),
+            ("123.23E-10", "0", true, false),
+            ("1.1e1.3", "11", true, true),
+            ("11e1.3", "110", true, true),
+            ("1.", "1", true, false),
+            (".1", "0", true, false),
+            ("", "0", true, true),
+            ("123e+", "123", true, true),
+            ("123de", "123", true, true),
+        ] {
+            let actual = valid_integer_prefix(input, false, true)
+                .unwrap_or_else(|error| panic!("{input:?} must not error: {error:?}"));
+            assert_eq!(actual.value, expected, "{input:?}");
+            assert_eq!(
+                actual.event == Some(ScalarConversionEvent::Truncated),
+                warned,
+                "{input:?}"
+            );
+            if signed {
+                assert!(actual.value.parse::<i64>().is_ok(), "{input:?}");
+            } else {
+                assert!(actual.value.parse::<u64>().is_ok(), "{input:?}");
+            }
+        }
+    }
+
+    /// `pkg/types/convert_test.go:889` `TestGetValidInt`, second table: the
+    /// same inputs under `DefaultStmtFlags`, where a truncation IS the
+    /// statement error. Go stops at the float prefix, so `"123..34"` answers
+    /// `"123."` here and `"123"` above -- the reason the policy is a parameter
+    /// of `valid_integer_prefix` rather than something its caller applies.
+    /// DIVERGENCE, recorded not fixed: Go's error is
+    /// `ErrTruncatedWrongVal("INTEGER", str)`; this tier reports
+    /// `InvalidUnsignedInteger`. Nothing reaches SQL from here yet (the
+    /// function has no caller), so only the value is pinned.
+    #[test]
+    fn source_valid_integer_prefix_strict_rows() {
+        for (input, expected, errored) in [
+            ("100", "100", false),
+            ("-100", "-100", false),
+            ("1abc", "1", true),
+            ("-1-1", "-1", true),
+            ("+1+1", "+1", true),
+            ("123..34", "123.", true),
+            ("123.23E-10", "0", false),
+            ("1.1e1.3", "1.1e1", true),
+            ("11e1.3", "11e1", true),
+            ("1.", "1", false),
+            (".1", "0", false),
+            ("", "0", true),
+            ("123e+", "123", true),
+            ("123de", "123", true),
+        ] {
+            match valid_integer_prefix(input, false, false) {
+                Ok(prefix) => {
+                    assert!(!errored, "{input:?} must error");
+                    assert_eq!(prefix.value, expected, "{input:?}");
+                    assert_eq!(prefix.event, None, "{input:?}");
+                }
+                Err((value, _)) => {
+                    assert!(errored, "{input:?} must not error");
+                    assert_eq!(value, expected, "{input:?}");
+                }
+            }
+        }
+    }
+
+    /// `pkg/types/convert_test.go:828` `TestRoundIntStr`. Three rows, and all
+    /// three take the all-nines carry that grows the string, including the
+    /// signed forms where the carry must land after the sign byte.
+    #[test]
+    fn source_round_integer_string_rows() {
+        for (integer, next_fraction_digit, expected) in [
+            ("+999", b'5', "+1000"),
+            ("999", b'5', "1000"),
+            ("-999", b'5', "-1000"),
+        ] {
+            assert_eq!(
+                round_integer_string(next_fraction_digit, integer),
+                expected,
+                "{integer}"
+            );
+        }
+    }
+
+    /// `pkg/types/convert_test.go:965` `TestGetValidFloat`, second table
+    /// (`floatStrToIntStr`), including every saturating-exponent row.
     #[test]
     fn source_float_string_to_integer_rows() {
         for (input, expected) in [
