@@ -27,21 +27,25 @@
 //! options are no longer deferred; see [`crate::column_default`] for what a
 //! `DEFAULT` may be.
 //!
-//! # DIVERGENCE: `PARTITION BY` is SILENTLY IGNORED here
+//! # `PARTITION BY` is REFUSED here, not ignored
 //!
-//! This builder never reads `CreateTableStmt::partitioning`, so a partitioned
-//! `CREATE TABLE` succeeds and produces an UNPARTITIONED table. That is a
-//! wrong table rather than a missing feature: `SHOW CREATE TABLE` prints no
-//! `PARTITION BY` clause, partition pruning has nothing to prune, and
-//! `SELECT ... PARTITION (p0)` cannot mean what it says. The sibling metadata
-//! builder `tidb_exec::table_info_build` REFUSES the clause instead, so the
-//! two disagree about the same statement.
+//! This builder used to skip `CreateTableStmt::partitioning` entirely, so a
+//! partitioned `CREATE TABLE` SUCCEEDED and produced an UNPARTITIONED table --
+//! a wrong table rather than a missing feature, since `SHOW CREATE TABLE`
+//! printed no `PARTITION BY` clause, pruning had nothing to prune, and
+//! `SELECT ... PARTITION (p0)` could not mean what it said. It now refuses
+//! through [`table_partition::refuse_table_partitioning`], which is what the
+//! sibling metadata builder `tidb_exec::table_info_build` already did; the two
+//! no longer disagree about the same statement.
 //!
-//! It is recorded here rather than fixed because refusing it is a cascade
-//! decision of its own: `tests/integrationtest`'s `table/partition` and
-//! `planner/core/partition_pruner` already carry 43 and 115 divergences
-//! against TiDB's own recording, and every one of them is downstream of a
-//! table this builder accepted and should not have.
+//! Refusing was itself a cascade decision, taken deliberately: it moved
+//! `table not found in catalog` up sharply, because those tables now honestly
+//! do not exist. What it bought is that 1,171 statements stopped being
+//! compared against a table that was never partitioned -- `table/partition`
+//! and `planner/core/partition_pruner` went to ZERO divergences and onboarded.
+//! See [`table_partition`]'s module doc for Go's captured `SHOW CREATE TABLE`
+//! text and the eleven definitions TiDB rejects at CREATE, which are pinned so
+//! that real partitioning cannot land without its validation.
 //!
 //! # Where a resolved collation is, and is NOT, consulted
 //!
