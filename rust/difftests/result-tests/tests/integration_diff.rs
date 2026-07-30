@@ -119,7 +119,13 @@ const TOPICS: &[(&str, &str)] = &[
     ),
     (
         "globalindex/insert",
-        "INSERT against a global index on a partitioned table -- also nothing skipped",
+        "INSERT against a global index on a partitioned table. It was onboarded \
+         with nothing skipped, which was an ILLUSION: its `CREATE TABLE ... \
+         PARTITION BY` silently built an ordinary table, so 12 of its 14 \
+         statements were compared against the wrong object. Now that the \
+         create is refused those 12 are named OutOfDomain skips and 2 \
+         statements are proved -- a smaller claim that is a true one, and the \
+         topic's skip count is the size of the partitioning gap here",
     ),
     (
         "session/txn",
@@ -171,6 +177,37 @@ const TOPICS: &[(&str, &str)] = &[
         "executor/analyze",
         "ANALYZE's own statement surface: which forms are accepted, which are refused \
          as removed features, and the warnings a `SET` of a removed switch raises",
+    ),
+    // The four partition topics below reached zero divergences the moment
+    // `CREATE TABLE ... PARTITION BY` stopped silently building an ordinary
+    // table (they carried 32, 107, 90 and 10 divergences against the flat
+    // object). They are onboarded for exactly that reason: their value is not
+    // in what they prove about partitioning -- most of each is an honest
+    // OutOfDomain skip -- but in being the tripwire that turns red the day a
+    // partial partitioning implementation starts answering these statements
+    // WRONGLY again rather than refusing them.
+    (
+        "table/partition",
+        "the partition-refusal gate: 41 side effects proved and 35 statements \
+         refused exactly where TiDB refuses them, with every partitioned \
+         object's own query named as a skip rather than compared against a \
+         flat table",
+    ),
+    (
+        "planner/core/partition_pruner",
+        "the largest partition topic at zero divergences (156 matched): every \
+         query whose answer DEPENDS on pruning is a named skip, so a pruning \
+         implementation that prunes wrongly cannot pass this quietly",
+    ),
+    (
+        "executor/partition/partition_with_expression",
+        "83 matched over expression-partitioned tables, the topic that carried \
+         90 divergences while the partition expression was being discarded",
+    ),
+    (
+        "executor/index_lookup_pushdown_partition",
+        "index-lookup pushdown against a partitioned table -- the smallest of \
+         the four and the only one that reaches a partitioned read path at all",
     ),
 ];
 
