@@ -465,12 +465,16 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
                 )
             }) {
                 // Go `AggregateEvalType` over a numeric set takes the widest
-                // domain, so an int branch beside a decimal one is decimal.
+                // domain, so an int branch beside a decimal one is decimal;
+                // `setDecimalFromArgs`/`setFlenFromArgs` then merge the
+                // widths, which is what makes `IFNULL(0, 1.5)` read `0.0`.
                 let owned: Vec<Expression> = typed
                     .iter()
                     .map(|ft| Expression::Constant(Constant::new(Datum::Null, (*ft).clone())))
                     .collect();
-                arg_numeric_type(&owned)?
+                let mut merged = arg_numeric_type(&owned)?;
+                set_numeric_len_from_args(&mut merged, &typed);
+                merged
             } else {
                 if typed.iter().any(|ft| ft.code() != first.code()) {
                     return None;
@@ -568,6 +572,75 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
         CastType::Time { .. } => return None,
     };
     Some((name, ft))
+}
+
+/// Go `maxlen` (`pkg/expression/builtin_control.go`): an UNKNOWN length in
+/// either operand widens the result to `mysql.MaxRealWidth` rather than
+/// staying unknown.
+fn maxlen(lhs: i64, rhs: i64) -> i64 {
+    /// Go `mysql.MaxRealWidth`.
+    const MAX_REAL_WIDTH: i64 = 23;
+    if lhs < 0 || rhs < 0 {
+        MAX_REAL_WIDTH
+    } else {
+        lhs.max(rhs)
+    }
+}
+
+/// Go `setDecimalFromArgs` then `setFlenFromArgs`
+/// (`pkg/expression/builtin_control.go`), for a control function whose merged
+/// result is NUMERIC.
+///
+/// This is the half of `InferType4ControlFuncs` that decides how the value
+/// PRINTS: `IFNULL(0, 1.5)` is `decimal(3,1)`, so its integer branch reads
+/// back as `0.0`, not `0`. Dropping it does not merely lose display width --
+/// the merged scale is what the evaluated branch is converted onto, so an
+/// unspecified scale here is a WRONG VALUE, not a cosmetic difference.
+fn set_numeric_len_from_args(result: &mut FieldType, args: &[&FieldType]) {
+    use tidb_datatype::EvalType;
+    let eval_type = result.eval_type();
+    // setDecimalFromArgs: ETInt has no scale; otherwise the widest argument
+    // scale, or unspecified as soon as one argument's is unspecified.
+    if eval_type == EvalType::Int {
+        result.set_decimal(0);
+    } else {
+        let mut max_decimal = 0;
+        let mut unspecified = false;
+        for arg in args {
+            if arg.decimal() == tidb_datatype::UNSPECIFIED_LENGTH {
+                unspecified = true;
+                break;
+            }
+            max_decimal = max_decimal.max(arg.decimal());
+        }
+        if unspecified {
+            result.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+        } else {
+            result.set_decimal_under_limit(max_decimal);
+        }
+    }
+    // setFlenFromArgs, the ETDecimal/ETInt arm: the widest INTEGRAL part
+    // (each argument's flen less its sign digit and its own scale), with the
+    // merged scale and one sign digit added back.
+    if matches!(eval_type, EvalType::Decimal | EvalType::Int) {
+        let mut max_arg_flen = 0;
+        for arg in args {
+            let sign_len = i64::from(arg.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED == 0);
+            let mut flen = arg.flen() - sign_len;
+            if arg.decimal() != tidb_datatype::UNSPECIFIED_LENGTH {
+                flen -= arg.decimal();
+            }
+            max_arg_flen = maxlen(max_arg_flen, flen);
+        }
+        result.set_flen_under_limit(max_arg_flen + result.decimal() + 1);
+    } else {
+        // The trailing `else` arm: the widest argument flen as-is.
+        let mut max_len = 0;
+        for arg in args {
+            max_len = max_len.max(arg.flen());
+        }
+        result.set_flen(max_len);
+    }
 }
 
 /// The numeric type a type-preserving math builtin reports, which Go takes
@@ -925,10 +998,17 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         }
         Expr::Unary(op, inner) => {
             let arg = rewrite_expr_resolved(inner, resolver)?;
+            // Go `unaryOpToExpression`: `case opcode.Plus: return` -- the
+            // expression `(+ a)` IS `a`, so no function is built at all. That
+            // is also the only reason `+ a` needs no return-type rule: there
+            // is nothing whose type could disagree with `a`'s.
+            if matches!(op, UnaryOp::Plus) {
+                return Ok(arg);
+            }
             let name = unary_op_name(*op);
             // not/bitneg/unaryminus result types come from the transcreated
-            // builtin_op function classes; anything uncovered (unaryplus, the
-            // deferred unaryminus arms) keeps the LongLong placeholder.
+            // builtin_op function classes; anything uncovered (the deferred
+            // unaryminus arms) keeps the LongLong placeholder.
             if let Some(ret_type) = crate::builtin_op::infer_unary_op_type(name, &arg) {
                 return Ok(Expression::ScalarFunction(ScalarFunction::new(
                     CiString::new(name),

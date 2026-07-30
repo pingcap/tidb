@@ -109,6 +109,12 @@ fn run_pair(
 
 #[test]
 fn query_result_matches_go_engine() {
+    // The corpus replays user-written SQL, including TiDB's own
+    // twenty-deep unary-operator cases -- see `difftest::on_deep_stack`.
+    difftest::on_deep_stack(check_query_results);
+}
+
+fn check_query_results() {
     let dir = corpus_dir();
     let mut failures = Vec::new();
     let mut matched = 0;

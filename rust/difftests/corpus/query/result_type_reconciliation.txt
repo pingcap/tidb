@@ -1,0 +1,72 @@
+## Every expression evaluates to a value in the EVAL-TYPE FAMILY of its own
+## inferred result type -- Go's `ScalarFunction.Eval`
+## (`pkg/expression/scalar_function.go`) gets this by switching on
+## `RetType.EvalType()` and calling the matching `EvalXxx`, so the datum kind is
+## DERIVED from the result type. This tier evaluates on Datums and dispatches on
+## operand kinds, so the same reconciliation happens once in
+## `ScalarFunction::eval`.
+##
+## Two ways it used to break, both captured here:
+##   - the inferred type was wrong: `+X` was built as a `unaryplus` function
+##     typed LONGLONG, so `+1e5` REINTERPRETED the double's bits and answered
+##     4681608360884174848. Go builds no function at all (`unaryOpToExpression`,
+##     `case opcode.Plus: return`).
+##   - the evaluated datum was wrong: a control function's merged DECIMAL type
+##     kept the branch's own int/decimal value, which does not fit the merged
+##     cell. The merged SCALE is part of the answer, so `ifnull(0, 1.5)` is
+##     `0.0`.
+##
+## NOT in this corpus, because each is a DIFFERENT gap and this file may not
+## carry another topic's debt -- captured from Go anyway, so the next worker
+## starts from the answer rather than the question:
+##   select +interval 1 day + '2020-01-01'  -> 2020-01-02  (the rewriter has no
+##       `Expr::Interval` outside the DATE_ADD family)
+##   select ifnull(1, "abc")                -> 1           (`types.AggFieldType`
+##   select ifnull("abc", 1)                -> abc          merges an int branch
+##       with a string one to VarString; `builtin_return_type` refuses the
+##       mixture instead, so `setFlenFromArgs`' ETString arm stays unported)
+
+## Unary plus is the identity, in every domain.
+select +1
+select +1.23
+select +1e5
+select +1e23
+select +1E23
+select +true
+select +false
+select +null
+select + "abc"
+select + "123"
+select +(+(1)), (-+1), ((+1)), +1.23, +1e23, +1E23, +null, +true, +false, + ( ( 1 ) )
+select + - 1, --1, +-+-+1, + "123"
+select --------------------1, ++++++++++++++++++++1
+select --+(1 + 1), +-+-(1 * 1)
+select +cast(1.5 as decimal(10,4))
+select +now() is null
+
+## A control function merges its branch types, and the branch VALUE takes the
+## merged type -- scale included.
+select ifnull(0, 1.5)
+select ifnull(1.5, 0)
+select ifnull(null, 1.5)
+select ifnull(0, 1.55555)
+select ifnull(100000, 1.5)
+select ifnull(-100000, 1.5)
+select if(1, 0, 1.5)
+select if(0, 0, 1.5)
+select if(1, 1.5, 0)
+select case when 1 then 0 else 1.5 end
+select case when 0 then 0 else 1.5 end
+select case when 1 then 1.5 else 0 end
+select coalesce(1, 2.55, 3)
+select coalesce(null, 1, 2.55)
+select coalesce(null, null, 2.55)
+select ifnull(0, 1.5) + 0
+select ifnull(0, 1.5) * 2
+select ifnull(1, 1e5)
+select ifnull(1e5, 1)
+select if(1, 1, 1e5)
+select case when 1 then 1 else 1e5 end
+select coalesce(1, 1e5, 1.5)
+select ifnull(cast(1 as decimal(20,6)), 2)
+select if(1, cast(1 as decimal(20,6)), 2)

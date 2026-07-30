@@ -183,6 +183,34 @@ pub fn parse_golden(text: &str) -> Golden {
     out
 }
 
+/// Runs `body` on a thread with a stack large enough for a DEEPLY NESTED
+/// expression, and propagates its panic to the caller.
+///
+/// A differential driver replays SQL that real users wrote, and TiDB's own
+/// suite contains `select --------------------1` -- twenty nested unary
+/// operators. Go evaluates it on a goroutine whose stack GROWS on demand, so
+/// no depth limit is part of the recorded behavior; this tier recurses on a
+/// fixed OS thread stack, and a debug build's per-level expression frame is
+/// large enough that libtest's default runner overflows well before Go would
+/// have complained. Sizing the replay thread is a property of the harness, not
+/// of the engine: nothing here changes what a statement EVALUATES to.
+pub fn on_deep_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> T {
+    /// Twenty nested operators clear this by two orders of magnitude, and a
+    /// test thread's stack is reserved lazily, so the size costs nothing until
+    /// it is used.
+    const STACK: usize = 512 * 1024 * 1024;
+
+    match std::thread::Builder::new()
+        .stack_size(STACK)
+        .spawn(body)
+        .expect("spawn deep-stack replay thread")
+        .join()
+    {
+        Ok(value) => value,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
 /// Splits the corpus file into statements (one per non-empty, non-`##` line).
 pub fn parse_corpus(text: &str) -> Vec<String> {
     text.lines()

@@ -69,6 +69,53 @@ fn binary_op_for_name(name: &str) -> Option<BinaryOp> {
     })
 }
 
+/// The eval-type family a [`Datum`] belongs to -- the inverse of the switch
+/// Go's `ScalarFunction.Eval` performs on `RetType.EvalType()`. `None` is a
+/// kind no eval type names (NULL, the range sentinels, an undecoded `Raw`).
+///
+/// `Datum::Time` is the value domain of BOTH Go's `ETDatetime` and
+/// `ETTimestamp`, so it reports `Datetime` and a timestamp result type is
+/// normalized onto it by [`same_eval_family`].
+fn datum_eval_type(value: &Datum) -> Option<tidb_datatype::EvalType> {
+    use tidb_datatype::EvalType;
+    Some(match value {
+        Datum::Int(_) | Datum::UInt(_) => EvalType::Int,
+        Datum::Real(_) | Datum::Float32(_) => EvalType::Real,
+        Datum::Decimal(_) => EvalType::Decimal,
+        Datum::String(_)
+        | Datum::Bytes(_)
+        | Datum::BinaryLiteral(_)
+        | Datum::Bit(_)
+        | Datum::Enum(..)
+        | Datum::Set(..) => EvalType::String,
+        Datum::Time(_) => EvalType::Datetime,
+        Datum::Duration(_) => EvalType::Duration,
+        Datum::Json(_) => EvalType::Json,
+        Datum::VectorFloat32(_) => EvalType::VectorFloat32,
+        Datum::Null | Datum::MinNotNull | Datum::MaxValue | Datum::Raw(_) => return None,
+    })
+}
+
+/// Whether `value` is already the family `ret_type` declares.
+///
+/// A HYBRID result type (`BIT`/`ENUM`/`SET`, Go `FieldType.Hybrid`) always
+/// answers yes: its eval type is the domain it COMPARES in (`BIT` compares as
+/// an integer), while `getFixedLen`'s default arm gives it a variable-length
+/// cell that only the hybrid datum itself fits. Converting such a value onto
+/// its eval type would put an integer in a var-length column -- the very
+/// disagreement this check exists to prevent.
+fn same_eval_family(value: &Datum, ret_type: &tidb_datatype::FieldType) -> bool {
+    use tidb_datatype::EvalType;
+    if ret_type.is_hybrid() {
+        return true;
+    }
+    let normalize = |t| match t {
+        EvalType::Timestamp => EvalType::Datetime,
+        other => other,
+    };
+    datum_eval_type(value).is_some_and(|got| normalize(got) == normalize(ret_type.eval_type()))
+}
+
 /// Maps a Go unary-operator scalar-function name (`pkg/parser/ast`) to a
 /// [`UnaryOp`]. Returns `None` for any function that is not a unary operator.
 fn unary_op_for_name(name: &str) -> Option<UnaryOp> {
@@ -217,17 +264,27 @@ impl ScalarFunction {
         ConstLevel::NONE
     }
 
-    /// Go `ScalarFunction.Eval`: evaluate the function against one row.
+    /// THE guarantee Go's `ScalarFunction.Eval` provides and this tier must
+    /// reproduce: a function's evaluated value is in the EVAL-TYPE FAMILY of
+    /// its own declared result type.
     ///
-    /// The binary-operator functions (`plus`/`minus`/.../comparisons/logic) are
-    /// supported by evaluating both arguments and reusing the shared Datum-level
-    /// operator semantics ([`crate::apply_binary`]), which dispatch on the
-    /// operand kinds exactly as Go's per-signature builtins do. Every other
-    /// function is reported as unsupported until its builtin is ported.
-    /// Go's conditional signatures evaluate every branch AS the merged
-    /// result type (`builtinIfDecimalSig` and friends), so the selected
-    /// branch's value takes that type here too -- a chunk cell is sized from
-    /// it, and an int value in a decimal cell would not fit.
+    /// Go gets this by construction. `ScalarFunction.Eval`
+    /// (`pkg/expression/scalar_function.go`) does not ask the signature for
+    /// "a value" -- it switches on `sf.GetType().EvalType()` and calls
+    /// `EvalInt`/`EvalReal`/`EvalDecimal`/`EvalString`/`EvalTime`/
+    /// `EvalDuration`/`EvalJSON` accordingly, so the returned datum's kind is
+    /// DERIVED from the result type and cannot disagree with it. Downstream,
+    /// `chunk.AppendDatum` dispatches on the datum kind while the column's
+    /// cell width came from the field type, and only that construction keeps
+    /// the two in step.
+    ///
+    /// This tier evaluates on Datums and dispatches on operand kinds, so the
+    /// guarantee is restored here instead, once, for every function -- rather
+    /// than at the handful of call sites whose mismatch had been noticed
+    /// (`IF`/`CASE`), which left the same defect reachable from every other
+    /// one. A value already in the right family is returned untouched, so the
+    /// result type's LENGTH constraints are applied only where Go's own
+    /// argument cast would have applied them.
     fn coerce_to_ret_type(&self, value: Datum) -> Result<Datum, EvalError> {
         if value.is_null() {
             return Ok(value);
@@ -235,6 +292,9 @@ impl ScalarFunction {
         let Some(ret_type) = self.get_static_type() else {
             return Ok(value);
         };
+        if same_eval_family(&value, ret_type) {
+            return Ok(value);
+        }
         match value.convert_to(ret_type, tidb_datatype::DEFAULT_STATEMENT_FLAGS) {
             Ok(converted) => Ok(converted.value),
             Err(_) => Ok(value),
@@ -265,14 +325,25 @@ impl ScalarFunction {
         name.value.sql_string().ok()
     }
 
-    /// Go `ScalarFunction.Eval`: evaluate the function against one row.
+    /// Go `ScalarFunction.Eval`: evaluate the function against one row, and
+    /// return a value in the eval-type family of the function's own result
+    /// type -- see [`Self::coerce_to_ret_type`] for why that is the whole
+    /// point of Go's `Eval` and not an afterthought.
+    pub fn eval(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+        let value = self.eval_by_signature(ctx, row)?;
+        self.coerce_to_ret_type(value)
+    }
+
+    /// The per-signature evaluation itself.
     ///
     /// The binary operators, the lazy control forms (`CASE`/`IF`), `LIKE`,
     /// the collation-aware string builtins, the casts, the session-state
     /// functions and the date/time family are each handled by name below;
     /// everything else evaluates its arguments eagerly and reuses the shared
-    /// Datum-level implementations.
-    pub fn eval(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    /// Datum-level implementations. Each returns whatever its operand kinds
+    /// produced; reconciling that with the declared result type is
+    /// [`Self::eval`]'s job, done once for all of them.
+    fn eval_by_signature(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
         let name = self.func_name.lowercase();
         if let Some(op) = binary_op_for_name(name) {
             if self.args.len() == 2 {
@@ -306,12 +377,12 @@ impl ScalarFunction {
                 let condition = pair[0].eval(ctx, row)?;
                 // A NULL condition is not a match, the same as false.
                 if crate::truthy_of(&condition)? == Some(true) {
-                    return self.coerce_to_ret_type(pair[1].eval(ctx, row)?);
+                    return pair[1].eval(ctx, row);
                 }
             }
             // An odd argument count means a trailing ELSE.
             return match pairs.remainder().first() {
-                Some(else_branch) => self.coerce_to_ret_type(else_branch.eval(ctx, row)?),
+                Some(else_branch) => else_branch.eval(ctx, row),
                 None => Ok(Datum::Null),
             };
         }
@@ -324,7 +395,7 @@ impl ScalarFunction {
             } else {
                 2
             };
-            return self.coerce_to_ret_type(self.args[branch].eval(ctx, row)?);
+            return self.args[branch].eval(ctx, row);
         }
         // Go `builtinLikeSig`: both operands are stringified, NULL in either
         // propagates, and the third argument is the escape byte.
@@ -768,6 +839,20 @@ mod tests {
         FieldType::new(FieldTypeCode::Long)
     }
 
+    /// A hand-built node must be given the result type its function actually
+    /// reports, exactly as the rewriter's `builtin_return_type` would: since
+    /// [`ScalarFunction::eval`] reconciles the evaluated value with the
+    /// declared type (Go's own `Eval` does the same by construction), a node
+    /// declared `Long` for a string- or real-valued builtin is a node Go
+    /// cannot build, and asserting on one would assert nothing.
+    fn text_ft() -> FieldType {
+        FieldType::new(FieldTypeCode::VarString)
+    }
+
+    fn real_ft() -> FieldType {
+        FieldType::new(FieldTypeCode::Double)
+    }
+
     fn plus(args: Vec<Expression>) -> ScalarFunction {
         ScalarFunction::new(CiString::new("plus"), ft(), args)
     }
@@ -845,7 +930,7 @@ mod tests {
         // CONCAT('a', 'b') = 'ab' via the shared string arm.
         let concat = ScalarFunction::new(
             CiString::new("concat"),
-            ft(),
+            text_ft(),
             vec![konst(Datum::new_string("a")), konst(Datum::new_string("b"))],
         );
         assert_eq!(
@@ -915,7 +1000,7 @@ mod tests {
 
         let varbinary_type =
             FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
-        let json_type = ft();
+        let json_type = text_ft();
         let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&varbinary_type), 1);
         chk.append_bytes(0, b"ab");
         let row = chk.get_row(0);
@@ -973,7 +1058,7 @@ mod tests {
         let row = chk.get_row(0);
         let konst = |d: Datum| Expression::Constant(Constant::new(d, ft()));
         let rand_five =
-            ScalarFunction::new(CiString::new("rand"), ft(), vec![konst(Datum::Int(5))]);
+            ScalarFunction::new(CiString::new("rand"), real_ft(), vec![konst(Datum::Int(5))]);
         let columns = RandColumns {
             keys: Cell::new(Vec::new()),
         };
@@ -988,7 +1073,7 @@ mod tests {
         // A DIFFERENT node (a different RAND(5) call site) gets a different
         // key, because each owns its own generator.
         let rand_five_again =
-            ScalarFunction::new(CiString::new("rand"), ft(), vec![konst(Datum::Int(5))]);
+            ScalarFunction::new(CiString::new("rand"), real_ft(), vec![konst(Datum::Int(5))]);
         let columns2 = RandColumns {
             keys: Cell::new(Vec::new()),
         };
@@ -1014,7 +1099,7 @@ mod tests {
 
         let chk = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
         let row = chk.get_row(0);
-        let rand = ScalarFunction::new(CiString::new("rand"), ft(), vec![]);
+        let rand = ScalarFunction::new(CiString::new("rand"), real_ft(), vec![]);
         let columns = SeqColumns {
             next: std::cell::Cell::new(0.75),
         };
