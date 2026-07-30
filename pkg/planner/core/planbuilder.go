@@ -6317,44 +6317,42 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	return nil
 }
 
-<<<<<<< HEAD
-// For nextgen IMPORT INTO with SEM, disallow explicit S3 external ID unless it
-// is the keyspace name. The keyspace name is used as the S3 external ID.
+// For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
+// disallow explicit S3 external ID unless it is the keyspace name. The keyspace
+// name is used as the S3 external ID.
 func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
 	expectedExternalID := config.GetGlobalKeyspaceName()
+	hasAccessKey := false
+	hasEmptyAccessKey := false
+	hasSecretAccessKey := false
+	hasEmptySecretAccessKey := false
+	hasRoleARN := false
+	hasEmptyRoleARN := false
 	for k, vs := range values {
-		normalizedK := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-		if normalizedK == s3like.S3ExternalID {
+		normalizedK := objstore.NormalizeQueryParameterKey(k)
+		switch normalizedK {
+		case s3like.S3ExternalID:
 			for _, v := range vs {
 				if v != expectedExternalID {
 					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
 				}
 			}
-=======
-// For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
-// disallow explicit S3 external ID. The keyspace name is used as the S3 external ID.
-func checkNextGenS3PathWithSem(u *url.URL) error {
-	values := u.Query()
-	hasAccessKey := false
-	hasSecretAccessKey := false
-	hasRoleARN := false
-	for k := range values {
-		normalizedK := objstore.NormalizeQueryParameterKey(k)
-		switch normalizedK {
-		case s3like.S3ExternalID:
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
 		case s3like.S3AccessKey:
 			hasAccessKey = hasAccessKey || values.Get(k) != ""
+			hasEmptyAccessKey = hasEmptyAccessKey || values.Get(k) == ""
 		case s3like.S3SecretAccessKey:
 			hasSecretAccessKey = hasSecretAccessKey || values.Get(k) != ""
+			hasEmptySecretAccessKey = hasEmptySecretAccessKey || values.Get(k) == ""
 		case s3like.S3RoleARN:
 			hasRoleARN = hasRoleARN || values.Get(k) != ""
->>>>>>> 84548dbcc17 (importinto: require S3-like auth for nextgen import (#68231))
+			hasEmptyRoleARN = hasEmptyRoleARN || values.Get(k) == ""
 		}
 	}
 
-	if !hasRoleARN && !(hasAccessKey && hasSecretAccessKey) {
+	hasValidRoleARN := hasRoleARN && !hasEmptyRoleARN
+	hasValidAccessKeyPair := hasAccessKey && !hasEmptyAccessKey && hasSecretAccessKey && !hasEmptySecretAccessKey
+	if !hasValidRoleARN && !hasValidAccessKeyPair {
 		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
 
