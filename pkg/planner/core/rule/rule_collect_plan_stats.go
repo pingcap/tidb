@@ -46,6 +46,12 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	planChanged := false
 	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL ||
 		(plan.SCtx().GetSessionVars().InternalSQLScanUserTable && plan.SCtx().GetSessionVars().InRestrictedSQL), "CollectPredicateColumnsPoint should not be called in restricted SQL mode")
+	if plan.SCtx().GetSessionVars().StmtCtx.SkipStatsLoad {
+		// The plan for this statement is known to be stats-independent (e.g. a point get):
+		// statistics cannot affect it, so don't collect columns or trigger stats loading,
+		// matching the behavior of plans built through the fast path.
+		return plan, planChanged, nil
+	}
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	syncLoadEnabled := syncWait > 0
 	predicateColumns, visitedPhysTblIDs, tid2pids, opNum := CollectColumnStatsUsage(plan)
@@ -321,6 +327,11 @@ func (SyncWaitStatsLoadPoint) Optimize(_ context.Context, plan base.LogicalPlan)
 	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL ||
 		(plan.SCtx().GetSessionVars().InRestrictedSQL && plan.SCtx().GetSessionVars().InternalSQLScanUserTable), "SyncWaitStatsLoadPoint should not be called in restricted SQL mode")
 	if plan.SCtx().GetSessionVars().StmtCtx.IsSyncStatsFailed {
+		return plan, planChanged, nil
+	}
+	if plan.SCtx().GetSessionVars().StmtCtx.SkipStatsLoad {
+		// Stats-independent plan: CollectPredicateColumnsPoint requested nothing, so
+		// there is nothing to wait for.
 		return plan, planChanged, nil
 	}
 	err := SyncWaitStatsLoad(plan)
