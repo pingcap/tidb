@@ -261,8 +261,8 @@ func (s *backfillDistExecutor) checkLocalSortFreeDisk(ctx context.Context) error
 func (s *backfillDistExecutor) getRunningLocalSortJobDiskUsage(
 	ctx context.Context,
 ) (jobCount int, runtimeSlots int, usedBytes uint64, err error) {
-	taskSlots := s.ExecutorTaskSlotsSnapshot()
-	for taskID, taskRuntimeSlots := range taskSlots {
+	taskRuntimeSlotsByID := s.TaskRuntimeSlotsSnapshot()
+	for taskID, taskRuntimeSlots := range taskRuntimeSlotsByID {
 		if taskID == s.task.ID {
 			// Resume does not guarantee cleanup of this task's previous local files. Any
 			// remaining files reduce available space, while its full growth budget is reserved again.
