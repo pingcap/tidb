@@ -89,11 +89,11 @@ func TestColumnFilters(t *testing.T) {
 }
 
 func TestParseColumnFilterFile(t *testing.T) {
-	path := writeColumnFilterFileForTest(t, `{
-			"columnFilters": [
-				{"matcher": ["db1.t1", "db2.t2"], "columns": ["c1", "C2"]}
-			]
-		}`)
+	path := writeColumnFilterFileForTest(t, `
+[[filters]]
+matcher = ["db1.t1", "db2.t2"]
+columns = ["c1", "C2"]
+`)
 	columnFilter, err := ParseColumnFilterFile(path, false)
 	require.NoError(t, err)
 	selectedFields, err := columnFilter.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3"})
@@ -109,18 +109,25 @@ func TestParseColumnFilterFile(t *testing.T) {
 	_, err = ParseColumnFilterFile("", false)
 	require.NoError(t, err)
 
-	path = writeColumnFilterFileForTest(t, `{"columnFilters": [{"matcher": ["db.t"], "columns": ["/unterminated"]}]}`)
+	path = writeColumnFilterFileForTest(t, `
+[[filters]]
+matcher = ["db.t"]
+columns = ["/unterminated"]
+`)
 	_, err = ParseColumnFilterFile(path, false)
 	require.ErrorContains(t, err, "failed to parse --column-filter-file filter 0 columns")
 }
 
 func TestParseColumnFilterFileFlag(t *testing.T) {
-	path := writeColumnFilterFileForTest(t, `{
-			"columnFilters": [
-				{"matcher": ["db1.t1"], "columns": ["*", "!c1", "!c2"]},
-				{"matcher": ["db2.t2"], "columns": ["*", "!c3"]}
-			]
-		}`)
+	path := writeColumnFilterFileForTest(t, `
+[[filters]]
+matcher = ["db1.t1"]
+columns = ["*", "!c1", "!c2"]
+
+[[filters]]
+matcher = ["db2.t2"]
+columns = ["*", "!c3"]
+`)
 	conf := parseConfigFromArgsForTest(t,
 		"--no-schemas",
 		"--column-filter-file", path,
@@ -143,7 +150,7 @@ func TestParseColumnFilterFileFlag(t *testing.T) {
 
 func writeColumnFilterFileForTest(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "column-filter.json")
+	path := filepath.Join(t.TempDir(), "column-filter.toml")
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	return path
 }

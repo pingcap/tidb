@@ -3,29 +3,29 @@
 package export
 
 import (
-	"encoding/json"
 	"os"
 	"sort"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 )
 
 // ColumnFilterConfig stores table matchers and column filter rules used to project data output.
 type ColumnFilterConfig struct {
-	Filters []ColumnFilterRule `json:"columnFilters"`
+	Filters []ColumnFilterRule `toml:"filters"`
 }
 
 // ColumnFilterRule maps a set of table matchers to a set of column filter rules.
 type ColumnFilterRule struct {
-	Matcher []string `json:"matcher"`
-	Columns []string `json:"columns"`
+	Matcher []string `toml:"matcher"`
+	Columns []string `toml:"columns"`
 
 	tableFilter filter.Filter
 }
 
-// ParseColumnFilterFile parses a JSON column filter file.
+// ParseColumnFilterFile parses a TOML column filter file.
 func ParseColumnFilterFile(path string, caseSensitive bool) (*ColumnFilterConfig, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
@@ -35,7 +35,7 @@ func ParseColumnFilterFile(path string, caseSensitive bool) (*ColumnFilterConfig
 		return nil, errors.Annotatef(err, "failed to read --column-filter-file %s", path)
 	}
 	var columnFilter ColumnFilterConfig
-	if err := json.Unmarshal(content, &columnFilter); err != nil {
+	if _, err := toml.Decode(string(content), &columnFilter); err != nil {
 		return nil, errors.Annotatef(err, "failed to parse --column-filter-file %s", path)
 	}
 	if err := columnFilter.compile(caseSensitive); err != nil {
