@@ -30,6 +30,14 @@ use tidb_datatype::{
     Collation, Datum, Decimal, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, Time,
 };
 
+/// Go `chunk.RowSize = unsafe.Sizeof(Row{})`: what one retained row CURSOR
+/// costs, which memory-tracked operators add per row on top of the chunk
+/// bytes (Go `sort_partition.go`'s `chunk.RowSize*rowNum`).
+///
+/// Go's `Row` is `{c *Chunk, idx int}` and this one is `{chunk: &Chunk, idx:
+/// usize}` -- two words either way, so the two constants agree.
+pub const ROW_SIZE: i64 = size_of::<Row<'static>>() as i64;
+
 /// Go `chunk.Row`: a cursor to one row of a [`Chunk`].
 #[derive(Clone, Copy, Debug)]
 pub struct Row<'a> {

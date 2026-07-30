@@ -110,6 +110,23 @@ pub struct Column {
 }
 
 impl Column {
+    /// Go `Chunk.MemoryUsage`'s per-column term:
+    /// `unsafe.Sizeof(*col) + cap(nullBitmap) + cap(offsets)*8 + cap(data) +
+    /// cap(elemBuf)`.
+    ///
+    /// The struct's own size stands in for Go's `unsafe.Sizeof(*col)`; the
+    /// field list is the same one Go sums, in the same order, so the two
+    /// numbers agree whenever the two layouts do.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        let of = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+        of(size_of::<Column>())
+            + of(self.null_bitmap.capacity())
+            + of(self.offsets.capacity() * 8)
+            + of(self.data.capacity())
+            + of(self.elem_buf.capacity())
+    }
+
     /// Go `newFixedLenColumn`: a fixed-length column whose elements are
     /// `elem_len` bytes, with initial data capacity for `capacity` rows.
     #[must_use]

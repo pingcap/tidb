@@ -90,6 +90,17 @@ impl Chunk {
         self.columns.len()
     }
 
+    /// Go `Chunk.MemoryUsage`: the bytes this chunk's columns hold, summed
+    /// over `Column::memory_usage`.
+    ///
+    /// This is the number Go's memory-tracked operators consume per chunk, so
+    /// it is capacity-based rather than length-based: an operator that keeps a
+    /// chunk keeps its whole allocation, not just the rows in use.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        self.columns.iter().map(Column::memory_usage).sum()
+    }
+
     /// Go `NumRows`: the logical row count (selection aware; virtual for a
     /// column-less or incomplete chunk).
     #[must_use]
@@ -345,6 +356,56 @@ mod tests {
             FieldType::new(FieldTypeCode::Long),
             FieldType::new(FieldTypeCode::VarString),
         ]
+    }
+
+    /// Go's own `Chunk.MemoryUsage` for the same chunks, captured from
+    /// `pkg/util/chunk` in-process (`chunk.New(fields, cap, 1024)`):
+    ///
+    /// | chunk              | Go    |
+    /// |--------------------|-------|
+    /// | 1 bigint, cap 0    | 120   |
+    /// | 1 bigint, cap 32   | 380   |
+    /// | 1 bigint, cap 1024 | 8440  |
+    ///
+    /// A fixed-length column agrees exactly, which pins both the per-column
+    /// struct size (112 bytes either way) and the capacity terms.
+    #[test]
+    fn memory_usage_of_a_fixed_length_column_matches_go() {
+        let bigint = vec![FieldType::new(FieldTypeCode::LongLong)];
+        assert_eq!(Chunk::new(&bigint, 0, 1024).memory_usage(), 120);
+        assert_eq!(Chunk::new(&bigint, 32, 1024).memory_usage(), 380);
+        assert_eq!(Chunk::new(&bigint, 1024, 1024).memory_usage(), 8440);
+    }
+
+    /// A VARIABLE-length column does NOT agree with Go, and the gap is in the
+    /// chunk port's allocation strategy rather than in this accounting: Go's
+    /// `newVarLenColumn` pre-reserves `data` for `estimatedElemLen*capacity`
+    /// bytes while [`Column::new_var_len`] starts `data` empty. Go reports 636
+    /// for a fresh single-VARCHAR chunk at capacity 32; the port reports the
+    /// bytes it actually holds, which is less because it actually allocated
+    /// less. Accounting the Go number here would over-count memory this
+    /// process never took.
+    #[test]
+    fn memory_usage_of_a_var_length_column_reports_what_was_actually_allocated() {
+        let varchar = vec![FieldType::new(FieldTypeCode::VarString)];
+        let chk = Chunk::new(&varchar, 32, 1024);
+        // 112 struct + 4 null bitmap + 33*8 offsets + 0 data + 0 elemBuf.
+        assert_eq!(chk.memory_usage(), 112 + 4 + 33 * 8);
+        assert!(chk.memory_usage() < 636, "Go's number for the same chunk");
+    }
+
+    /// The tracked number must GROW as rows land, or an operator that fills a
+    /// chunk would be accounted as if it were still empty.
+    #[test]
+    fn memory_usage_grows_past_the_initial_capacity() {
+        let fields = int_str_fields();
+        let mut chk = Chunk::new(&fields, 8, 1024);
+        let empty = chk.memory_usage();
+        for i in 0..64 {
+            chk.append_int64(0, i);
+            chk.append_string(1, "abcdefgh");
+        }
+        assert!(chk.memory_usage() > empty);
     }
 
     #[test]
