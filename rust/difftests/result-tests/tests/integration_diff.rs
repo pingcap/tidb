@@ -634,26 +634,63 @@ fn replay_one_topic_from_env() {
 ///
 /// `INTEGRATION_SHOW_OUT_OF_DOMAIN=1` prints every refused statement with the
 /// error that refused it (see `compare`'s `SkipClass::OutOfDomain` arm); this
-/// is the ranking of that output's causes, over 5,821 out-of-domain
+/// is the ranking of that output's causes, over 6,755 out-of-domain
 /// statements, as a work list for the next capability increment:
 ///
-/// 1,526 `table not found in catalog` -- a CASCADE from an earlier refusal in
+/// 2,187 `table not found in catalog` -- a CASCADE from an earlier refusal in
 ///       the same script leaving a table unregistered, not an independent gap.
-///   325 `this statement kind (Execute) is not supported yet` -- `EXECUTE`.
-///   273 `this ALTER TABLE action is not supported yet`.
-///   187 `this statement kind (ADMIN AnalyzeTable) is not supported yet` --
-///       `ANALYZE TABLE`.
-///   137 `this statement kind (Prepare) is not supported yet` -- `PREPARE`.
-///   119 `this statement kind (ADMIN AdminCheck) is not supported yet` --
-///       `ADMIN CHECK TABLE`/`ADMIN CHECK INDEX`.
-///    85 `EXPLAIN of a WITH clause is not supported yet`.
-///    84 `derived tables are not supported yet`.
-///    83 `an expression index is not supported yet`.
-///    67 `generated columns are not supported yet`.
-///    57 `this statement kind (ADMIN LoadStats) is not supported yet` --
-///       `LOAD STATS`.
-///    43 `this statement kind (ADMIN SetBdrRole) is not supported yet`.
-///    43 `this statement kind (ADMIN UnsetBdrRole) is not supported yet`.
+///       See the cascade ranking below, which is the number that decides what
+///       is worth building.
+///   307 `this ALTER TABLE action is not supported yet` -- 184 of them
+///       PARTITION actions (reorganize/exchange/add/drop/truncate/coalesce,
+///       `PARTITION BY`, `REMOVE PARTITIONING`), then 35 CACHE/NOCACHE, 14
+///       `ADD CONSTRAINT`, 14 foreign-key add/drop.
+///   230 `this statement kind (ADMIN AnalyzeTable) is not supported yet`.
+///   208 `expression form is not yet supported by the rewriter`.
+///   186 `this builtin is not yet built for chunk evaluation`.
+///   162 `unknown table` -- the cascade's second spelling.
+///   155 `generated columns are not supported yet`.
+///   148 `this statement kind (ADMIN AdminCheck) is not supported yet`.
+///   113 `an expression index is not supported yet`.
+///    88 `EXPLAIN of a WITH clause is not supported yet`.
+///    79 `CHECK constraints are only modelled with
+///       tidb_enable_check_constraint off`.
+///    56 `an expression DEFAULT is not supported yet`.
+///    46 `this ALTER TABLE table option is not supported yet`.
+///    42 `a prefix-length index is not supported yet`.
+///    41 `CREATE TABLE LIKE is deferred`.
+///    28 `a prefix-length primary key is not supported yet`.
+///
+/// # The cascade, blamed on the CREATE that was refused
+///
+/// A flat count of refusals says which gap is COMMON; it does not say which
+/// gap is EXPENSIVE. The 2,187 + 162 cascade statements are the expense, and
+/// they can be attributed: for each of them, find the table it names and the
+/// cause that refused that table's `CREATE` earlier in the same script. 1,891
+/// of 2,351 attribute cleanly (the rest name a table created in another
+/// topic, or a multi-line `CREATE` this attribution does not reassemble).
+/// Ranked by DOWNSTREAM statements unblocked, which is the opposite order
+/// from the flat count above:
+///
+///   714 `generated columns are not supported yet` -- by a factor of four the
+///       most expensive absence in the whole suite. 155 refusals of its own,
+///       and 714 later statements that never run because of them.
+///   159 `an expression DEFAULT is not supported yet`.
+///   155 `a prefix-length primary key is not supported yet`.
+///   143 `an expression index is not supported yet`.
+///    74 `CHECK constraints are only modelled with
+///       tidb_enable_check_constraint off`.
+///    38 `a prefix-length index is not supported yet`.
+///    35 `CREATE TABLE LIKE is deferred`.
+///
+/// Note what is NOT here: `ALTER TABLE`, in any form. A refused `ALTER` leaves
+/// the table registered, so it costs its own statement and nothing more --
+/// which is why the metadata-only ALTER unit that added `ddl/db_rename` to
+/// [`TOPICS`] moved the ALTER refusals from 342 to 307 and the cascade by
+/// EXACTLY ZERO. Partition DDL is the largest ALTER group by far and would be
+/// the same shape of win: many statements, no cascade. The cascade is bought
+/// by CREATE TABLE capability, and generated columns are where it is
+/// concentrated.
 ///
 /// Every `this statement kind (...) is not supported yet` and
 /// `this DDL/DML statement kind (...) is not supported yet` message above
@@ -662,8 +699,7 @@ fn replay_one_topic_from_env() {
 /// under the old wording, the single largest opaque group in the whole
 /// list) no longer exists as of the diagnostic naming pass in
 /// `tidb_session::dispatch`/`explain_arm`. Naming the kind did not change
-/// which statements are accepted or refused: the total out-of-domain count
-/// above is unchanged at 5,821.
+/// which statements are accepted or refused.
 ///
 /// A statement whose `EXPLAIN` is refused is named after its INNER
 /// statement kind, not just "EXPLAIN": `explain_stmt` produces
