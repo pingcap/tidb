@@ -554,7 +554,18 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // work is already measured: `INTEGRATION_SHOW_DIVERGENCES=1` on either
     // topic prints the per-table pairs, and 17 of the 26 in
     // `join_reorder_through_projection` are the covering-index class alone.
-    const KNOWN_DIVERGENCES: usize = 61;
+    //  * DISTINCT WITH AN ORDER BY OUTSIDE THE SELECT LIST (the +3 that took
+    //    this from 61 to 64, all in `planner/funcdep/only_full_group_by`).
+    //    `SELECT DISTINCT t1.a FROM t as t1 ORDER BY t1.d LIMIT 1` is TiDB's
+    //    3065; this tier accepts it. NOT a generated-column divergence: the
+    //    same statement over `CREATE TABLE zt (a INT, c INT, d INT)` -- no
+    //    generated column anywhere -- is accepted here too, so the rule is
+    //    simply absent. It became MEASURABLE only when generated columns
+    //    landed, because the three statements sit under `CREATE TABLE t (a
+    //    INT, c INT GENERATED ALWAYS AS (a+2), d INT GENERATED ALWAYS AS
+    //    (c+2))`, whose refusal used to put them out of domain. Worked off by
+    //    porting Go's `checkOrderByInDistinct`.
+    const KNOWN_DIVERGENCES: usize = 64;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
@@ -668,7 +679,8 @@ fn replay_one_topic_from_env() {
 ///   208 `expression form is not yet supported by the rewriter`.
 ///   186 `this builtin is not yet built for chunk evaluation`.
 ///   162 `unknown table` -- the cascade's second spelling.
-///   155 `generated columns are not supported yet`.
+///     0 `generated columns are not supported yet` -- GRADUATED; was 175 at
+///       its own re-measure. See "The generated-column increment, measured".
 ///   148 `this statement kind (ADMIN AdminCheck) is not supported yet`.
 ///   113 `an expression index is not supported yet`.
 ///    88 `EXPLAIN of a WITH clause is not supported yet`.
@@ -709,7 +721,8 @@ fn replay_one_topic_from_env() {
 /// EXACTLY ZERO. Partition DDL is the largest ALTER group by far and would be
 /// the same shape of win: many statements, no cascade. The cascade is bought
 /// by CREATE TABLE capability, and generated columns are where it is
-/// concentrated.
+/// concentrated -- and that prediction was then paid out in full; see the
+/// measurement below.
 ///
 /// Every `this statement kind (...) is not supported yet` and
 /// `this DDL/DML statement kind (...) is not supported yet` message above
@@ -719,6 +732,27 @@ fn replay_one_topic_from_env() {
 /// list) no longer exists as of the diagnostic naming pass in
 /// `tidb_session::dispatch`/`explain_arm`. Naming the kind did not change
 /// which statements are accepted or refused.
+///
+/// # The generated-column increment, measured
+///
+/// Generated columns were the single most EXPENSIVE absence on this list: not
+/// for their own 175 refusals but for the cascade behind them, since a refused
+/// `CREATE TABLE` puts every later statement touching that table out of
+/// domain. Landing them (`tidb_executor::generated_column`) was measured by
+/// running this survey immediately before and after, counting the refusal
+/// detail lines of a full `INTEGRATION_SHOW_OUT_OF_DOMAIN=1` run:
+///
+///   `generated columns are not supported yet`  175 -> 0
+///   `table not found in catalog`             2,248 -> 1,500  (-748)
+///   `unknown table`                            164 ->    65  (-99)
+///   out-of-domain statements, all causes     6,977 -> 5,933  (-1,044)
+///   statements matching TiDB's recording    21,829 -> 22,600 (+771)
+///
+/// So the cascade was real and the ratio was as predicted: 155-175 own
+/// refusals bought roughly 850 statements. (The absolute counts here come
+/// from that one pair of runs and are directly comparable to each other;
+/// they need not line up with the ranked list above, which was measured
+/// separately.)
 ///
 /// A statement whose `EXPLAIN` is refused is named after its INNER
 /// statement kind, not just "EXPLAIN": `explain_stmt` produces
