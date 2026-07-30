@@ -105,6 +105,8 @@ use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
 use tidb_planner::cardinality::pseudo::{
     pseudo_row_count_by_index_ranges, IndexRange as PseudoIndexRange, PseudoBoundKind, ScalarRange,
 };
+use tidb_planner::cardinality::row_count_column::RowEstimate;
+use tidb_planner::cardinality::row_count_estimator::TOLERANCE_FACTOR;
 use tidb_planner::cardinality::row_count_estimator::{
     get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, ColumnStats,
     EstimatorOptions, IndexRangeDatums, IndexStats,
@@ -266,6 +268,28 @@ pub(crate) struct AccessPath {
     pub(crate) estimate: ScanEstimate,
     /// `plan_cost_ver2.go`'s cost of the reader this path lowers to.
     pub(crate) cost: f64,
+    /// How far the estimator admits [`ScanEstimate::rows`] could be wrong, and
+    /// the rows left after the index's own filters -- Go's `AccessPath`
+    /// `MinCountAfterAccess` / `MaxCountAfterAccess` / `CountAfterIndex`. Only
+    /// skyline pruning's risk dimension reads these; the cost formula does
+    /// not, exactly as in Go.
+    pub(crate) risk: RowRisk,
+}
+
+/// The bounds around one path's access estimate, Go's `AccessPath`
+/// `MinCountAfterAccess` / `MaxCountAfterAccess` / `CountAfterIndex`.
+///
+/// `Default` is Go's own default: bounds of zero mean the estimator
+/// identified no risk for this path, which `compareRiskRatio` reads as the
+/// LOWEST risk rather than as a missing value.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct RowRisk {
+    /// Go `MinCountAfterAccess`.
+    pub(crate) min: f64,
+    /// Go `MaxCountAfterAccess`.
+    pub(crate) max: f64,
+    /// Go `CountAfterIndex`.
+    pub(crate) after_index: f64,
 }
 
 /// The session inputs Go reads off `PlanContext`; this tier touches none of
@@ -376,6 +400,7 @@ pub(crate) fn enumerate_paths(
     stats: Option<&TableStatistics>,
 ) -> Vec<Candidate<AccessPath>> {
     let realtime = realtime_row_count(stats);
+    let source_rows = source_row_count(table, where_clause, resolver, stats, realtime);
     let table_scan = table_scan_path(table, where_clause, resolver, stats, realtime);
     // Go's `getTableCandidate`: a table path is always a single scan, its
     // access-condition map is empty because this tier builds no primary-key
@@ -388,6 +413,9 @@ pub(crate) fn enumerate_paths(
         eq_or_in_count: 0,
         full_range: true,
         count_after_access: table_scan.estimate.rows,
+        max_count_after_access: table_scan.risk.max,
+        min_count_after_access: table_scan.risk.min,
+        count_after_index: table_scan.risk.after_index,
         pseudo: is_pseudo(stats),
         index_width: 0,
         empty_range: false,
@@ -419,8 +447,11 @@ pub(crate) fn enumerate_paths(
             .filter_map(|position| index.column_offsets.get(*position).copied())
             .collect();
         let full_index_columns = full_index_columns(index, table);
-        let (index_columns_map, index_filter_count, table_filter_count) =
+        let (index_columns_map, index_filters, table_filter_count) =
             split_index_filter_conditions(&built.residual, &full_index_columns, resolver);
+        let index_filter_count = index_filters.len();
+        let index_filter_selectivity = (!index_filters.is_empty())
+            .then(|| selectivity_of_conjuncts(&index_filters, table, resolver, stats));
         let path = index_path(
             table,
             index,
@@ -429,6 +460,8 @@ pub(crate) fn enumerate_paths(
             limit,
             stats,
             realtime,
+            source_rows,
+            index_filter_selectivity,
         );
         candidates.push(Candidate {
             // Go `indexCondsColMap` is `ExtractCol2Len(AccessConds ++
@@ -440,6 +473,9 @@ pub(crate) fn enumerate_paths(
             eq_or_in_count: built.eq_or_in_count,
             full_range: false,
             count_after_access: path.estimate.rows,
+            max_count_after_access: path.risk.max,
+            min_count_after_access: path.risk.min,
+            count_after_index: path.risk.after_index,
             // Go `isCandidatesPseudo`: an index with no loaded histogram is
             // pseudo even on a table whose other statistics are real.
             pseudo: stats.is_none_or(|stats| !stats.indexes.contains_key(&index.id)),
@@ -471,17 +507,19 @@ fn full_index_columns(index: &KvIndex, table: &KvTable) -> ColSet {
 /// evaluate on its own -- every column it reads is stored in the index -- is
 /// an index filter; anything else waits for the row lookup.
 ///
-/// Returns the index filters' columns, then how many index and table filters
-/// there are. A condition whose columns [`crate::column_prune`] refuses to
-/// classify counts as a table filter, which is the conservative side: it
-/// cannot make an index look like it filters more than it does.
-fn split_index_filter_conditions(
-    residual: &[&tidb_ast::Expr],
+/// Returns the index filters' columns, the index filters themselves, and how
+/// many table filters there are. A condition whose columns
+/// [`crate::column_prune`] refuses to classify counts as a table filter, which
+/// is the conservative side: it cannot make an index look like it filters more
+/// than it does.
+fn split_index_filter_conditions<'a>(
+    residual: &[&'a tidb_ast::Expr],
     full_index_columns: &ColSet,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-) -> (ColSet, usize, usize) {
+) -> (ColSet, Vec<&'a tidb_ast::Expr>, usize) {
     let mut columns = ColSet::new();
-    let (mut index_filters, mut table_filters) = (0, 0);
+    let mut index_filters = Vec::new();
+    let mut table_filters = 0;
     for condition in residual {
         let read = crate::column_prune::expr_column_offsets(condition, resolver);
         match read {
@@ -491,7 +529,7 @@ fn split_index_filter_conditions(
                     .all(|offset| full_index_columns.contains(offset)) =>
             {
                 columns.extend(read);
-                index_filters += 1;
+                index_filters.push(*condition);
             }
             _ => table_filters += 1,
         }
@@ -525,10 +563,7 @@ fn table_scan_path(
     // the rows that leave the cop task, which is after the pushed Selection.
     let scan_rows = realtime.max(MIN_NUM_ROWS);
     let scanned = scan_cost(scan_rows, row_size.max(MIN_ROW_SIZE));
-    let after_filter = match where_clause {
-        Some(predicate) => realtime * selectivity(predicate, table, resolver, stats),
-        None => realtime,
-    };
+    let after_filter = source_row_count(table, where_clause, resolver, stats, realtime);
     let transferred = net_cost(after_filter, row_size.max(MIN_ROW_SIZE));
     AccessPath {
         index: None,
@@ -537,10 +572,37 @@ fn table_scan_path(
             pseudo: is_pseudo(stats),
         },
         cost: (scanned + transferred) / DIST_SQL_SCAN_CONCURRENCY,
+        // Go leaves all three at zero for a table path: this tier builds no
+        // primary-key range, so `CountAfterAccess` is the whole table and
+        // `adjustCountAfterAccess` -- the only thing that could move the
+        // bounds -- cannot fire against a row count that is already the
+        // maximum. `CountAfterIndex` is documented as meaningless here.
+        risk: RowRisk::default(),
+    }
+}
+
+/// The rows the whole data source is estimated to produce, Go's
+/// `ds.StatsInfo().RowCount`: the table's realtime count narrowed by EVERY
+/// pushed condition, estimated per column.
+///
+/// This is a different estimator from any single path's, which is the entire
+/// point of `adjustCountAfterAccess`: where a path's own access estimate falls
+/// below this, the two disagreed and Go equalizes them.
+fn source_row_count(
+    table: &KvTable,
+    where_clause: Option<&tidb_ast::Expr>,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    realtime: f64,
+) -> f64 {
+    match where_clause {
+        Some(predicate) => realtime * selectivity(predicate, table, resolver, stats),
+        None => realtime,
     }
 }
 
 /// One index candidate, costed as the reader it lowers to.
+#[allow(clippy::too_many_arguments)]
 fn index_path(
     table: &KvTable,
     index: &KvIndex,
@@ -549,8 +611,19 @@ fn index_path(
     limit: Option<&PushedLimit<'_>>,
     stats: Option<&TableStatistics>,
     realtime: f64,
+    source_row_count: f64,
+    index_filter_selectivity: Option<f64>,
 ) -> AccessPath {
-    let estimated = index_row_count(index, table, &ranges, stats, realtime);
+    let mut bounds = index_row_count(index, table, &ranges, stats, realtime);
+    adjust_count_after_access(&mut bounds, source_row_count, realtime);
+    let estimated = bounds.est;
+    // Go `deriveIndexPathStats`: with index filters the post-index count is
+    // the access count narrowed by them, floored at the data source's own row
+    // count; with none it is the access count itself.
+    let after_index = match index_filter_selectivity {
+        Some(selectivity) => (estimated * selectivity).max(source_row_count),
+        None => estimated,
+    };
     // Go costs the index side at `min(rows, PushedLimit.Count)` when the
     // reader stops at the cap; `estimated` is still what EXPLAIN prints for
     // the scan, because the cop-side `Limit` is its own operator there.
@@ -614,6 +687,11 @@ fn index_path(
             pseudo: is_pseudo(stats),
         },
         cost,
+        risk: RowRisk {
+            min: bounds.min_est,
+            max: bounds.max_est,
+            after_index,
+        },
     }
 }
 
@@ -637,14 +715,14 @@ fn index_row_count(
     ranges: &[IndexRange],
     stats: Option<&TableStatistics>,
     realtime: f64,
-) -> f64 {
+) -> RowEstimate {
     let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
-        return pseudo_index_row_count(index, ranges, realtime);
+        return RowEstimate::default_est(pseudo_index_row_count(index, ranges, realtime));
     };
     let Some(index_stats) = stats.indexes.get(&index.id) else {
         // A table WITH statistics whose index was never analyzed: Go falls
         // back to the pseudo rate for that path only, not for the table.
-        return pseudo_index_row_count(index, ranges, realtime);
+        return RowEstimate::default_est(pseudo_index_row_count(index, ranges, realtime));
     };
     let datum_ranges: Vec<IndexRangeDatums> = ranges
         .iter()
@@ -671,7 +749,7 @@ fn index_row_count(
                 .and_then(|column| stats.columns.get(&column.id))
         })
         .collect();
-    let estimate = get_index_row_count_for_stats_v2(
+    let mut estimate = get_index_row_count_for_stats_v2(
         index_stats,
         &column_stats,
         &datum_ranges,
@@ -679,7 +757,32 @@ fn index_row_count(
         stats.modify_count,
         estimator_options(),
     );
-    estimate.est.clamp(0.0, realtime.max(0.0))
+    estimate.clamp(0.0, realtime.max(0.0));
+    estimate
+}
+
+/// Go `adjustCountAfterAccess` (`pkg/planner/core/stats.go`).
+///
+/// A path whose access estimate falls BELOW the whole data source's row count
+/// was estimated under different assumptions than the data source itself --
+/// per-range against per-column selectivity. Go prefers the data source's
+/// number for consistency, and keeps the pre-adjustment value as the path's
+/// `MinCountAfterAccess`, which is the only record left that this path's own
+/// estimator said something smaller.
+///
+/// That is what makes the bounds asymmetric between two paths over the same
+/// table, and so what `compareRiskRatio` reads.
+fn adjust_count_after_access(estimate: &mut RowEstimate, source_row_count: f64, realtime: f64) {
+    if estimate.est + TOLERANCE_FACTOR >= source_row_count {
+        return;
+    }
+    estimate.min_est = if estimate.min_est > 0.0 {
+        estimate.min_est.min(estimate.est)
+    } else {
+        estimate.est
+    };
+    estimate.est = (source_row_count / crate::plan_trace::SELECTIVITY_FACTOR).min(realtime);
+    estimate.max_est = estimate.est.max(estimate.max_est);
 }
 
 /// The stats-less index estimate: Go `getPseudoRowCountByIndexRanges`
@@ -790,15 +893,27 @@ pub(crate) fn selectivity(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
 ) -> f64 {
+    let mut conjuncts = Vec::new();
+    crate::plan_trace::collect_and(predicate, &mut conjuncts);
+    selectivity_of_conjuncts(&conjuncts, table, resolver, stats)
+}
+
+/// [`selectivity`] over conditions already split out of the `AND` tree, which
+/// is the shape Go's `cardinality.Selectivity` takes and the shape the index
+/// filters arrive in.
+pub(crate) fn selectivity_of_conjuncts(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+) -> f64 {
     let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
-        return crate::plan_trace::pseudo_selectivity(predicate);
+        return crate::plan_trace::pseudo_selectivity_of_conjuncts(conjuncts);
     };
     let realtime = realtime_row_count(Some(stats));
     if realtime <= 0.0 {
         return 1.0;
     }
-    let mut conjuncts = Vec::new();
-    crate::plan_trace::collect_and(predicate, &mut conjuncts);
     let mut total = 1.0;
     for conjunct in conjuncts {
         total *= match column_ranges(conjunct, table, resolver) {
@@ -959,6 +1074,11 @@ mod tests {
             None,
             None,
             realtime,
+            // A lone point range IS the whole predicate, so the data source's
+            // own row count is that same one row and `adjustCountAfterAccess`
+            // has nothing to equalize.
+            1.0,
+            None,
         );
         let covering = index_path(
             &table,
@@ -968,6 +1088,11 @@ mod tests {
             None,
             None,
             realtime,
+            // A lone point range IS the whole predicate, so the data source's
+            // own row count is that same one row and `adjustCountAfterAccess`
+            // has nothing to equalize.
+            1.0,
+            None,
         );
         let request_term = |rows: f64| {
             rows * DOUBLE_READ_REQUESTS_PER_ROW * TIDB_REQUEST_FACTOR / INDEX_LOOKUP_CONCURRENCY
@@ -1008,6 +1133,8 @@ mod tests {
             None,
             None,
             realtime,
+            realtime,
+            None,
         );
         assert!(
             whole_table.cost > scan.cost,

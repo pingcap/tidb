@@ -740,9 +740,17 @@ fn datum_go_text(value: &Datum) -> String {
 /// `cardinality.pseudoSelectivity`: the minimum over the conjuncts of the
 /// per-operator rate, starting at `SelectivityFactor`.
 pub(crate) fn pseudo_selectivity(predicate: &tidb_ast::Expr) -> f64 {
-    let mut factor = SELECTIVITY_FACTOR;
     let mut conjuncts = Vec::new();
     collect_and(predicate, &mut conjuncts);
+    pseudo_selectivity_of_conjuncts(&conjuncts)
+}
+
+/// [`pseudo_selectivity`] over conjuncts that have already been split, for a
+/// caller that holds a condition LIST rather than one `AND` tree -- Go's
+/// `cardinality.Selectivity` takes `[]expression.Expression` for the same
+/// reason.
+pub(crate) fn pseudo_selectivity_of_conjuncts(conjuncts: &[&tidb_ast::Expr]) -> f64 {
+    let mut factor = SELECTIVITY_FACTOR;
     for conjunct in conjuncts {
         let rate = match conjunct {
             tidb_ast::Expr::Binary(op, _, _) => match op {

@@ -66,6 +66,8 @@
 //!   [`Candidate::index_columns`].
 //! * `eqOrInResult` -- [`Candidate::eq_or_in_count`], from the detacher's own
 //!   `=`/`IN` prefix walk.
+//! * `riskResult` -- [`compare_risk_ratio`] over the estimator's own
+//!   `MaxCountAfterAccess`/`MinCountAfterAccess` (see that function).
 //! * the pseudo-statistics rules -- `isCandidatesPseudo` / `comparePseudo`,
 //!   driven by whether THIS index has a loaded histogram.
 //! * Fix45132's 1000x `CountAfterAccess` rule.
@@ -84,24 +86,17 @@
 //!   `findBestTask`, so an index that would have satisfied an `ORDER BY`
 //!   without a sort is not considered. That costs a sort, it does not
 //!   mis-prune.
+//! * `getPseudoRowCountWithPartialStats` -- the one estimator branch that can
+//!   report a `MaxEst` above its `Est` while the index itself is UNANALYZED
+//!   (`row_count_index.go`'s `IndexStatsIsInvalid` arm, when the index's
+//!   COLUMNS do have histograms). This tier's [`super::access_cost`] falls
+//!   back to the plain pseudo formula there, whose three estimates are equal,
+//!   so such a path reports no risk. Direction: this port sees LESS risk than
+//!   Go on a table with analyzed columns and an unanalyzed index, so
+//!   `riskResult` reads 0 where Go reads a winner -- it prunes less, not more.
 //! * `globalResult` (`compareGlobalIndex`) is held at 0. Also exact: it
 //!   compares `Index.Global`, and this tier reads no global (partitioned)
 //!   index -- partitioned tables are refused upstream by the session catalog.
-//! * `riskResult` (`compareRiskRatio`) is held at 0, and this one is a REAL
-//!   exclusion. Go derives `MaxCountAfterAccess`/`MinCountAfterAccess` in
-//!   `deriveIndexPathStats`/`adjustCountAfterAccess` (`pkg/planner/core/stats.go`)
-//!   from a risk-aware selectivity this rewrite has not ported. Reading it as
-//!   0 is what Go itself computes only when neither path carries risk.
-//!   Direction of the error: `riskResult` appears in `predicateResult`, and
-//!   in the incomparable branch it is the ONLY thing that can produce a
-//!   winner. Holding it at 0 therefore makes this port prune STRICTLY LESS
-//!   than Go in the incomparable branch (no winner instead of one) -- a
-//!   surviving candidate that Go dropped, which cost then judges. In the
-//!   comparable branch it can go the other way: a high-risk candidate whose
-//!   `riskResult` of -1 would have cancelled its `accessResult` of +1 will
-//!   here have `predicateResult` +1 and can prune the safer path Go keeps.
-//!   That is a wrong plan, not a slow one, and it is the known live risk of
-//!   this unit.
 //! * index-merge, multi-valued-index and TiFlash candidates never reach here
 //!   -- `access_cost::enumerate_paths` excludes them by name -- so
 //!   `isMVIndexPath`, `convergeIndexMergeCandidate` and the
@@ -174,6 +169,19 @@ pub(crate) struct Candidate<T> {
     pub(crate) full_range: bool,
     /// Go `AccessPath.CountAfterAccess`, the rows the access itself yields.
     pub(crate) count_after_access: f64,
+    /// Go `AccessPath.MaxCountAfterAccess`: the WORST case the same estimator
+    /// admits for [`Candidate::count_after_access`] -- not a second estimate
+    /// of the expected count but an upper bound on it, so the two together
+    /// say how much the expected count can be trusted. Zero means the
+    /// estimator identified no risk, which is Go's own default.
+    pub(crate) max_count_after_access: f64,
+    /// Go `AccessPath.MinCountAfterAccess`: the matching LOWER bound, zero
+    /// when no risk was identified.
+    pub(crate) min_count_after_access: f64,
+    /// Go `AccessPath.CountAfterIndex`: the rows left after the index's OWN
+    /// filters and before the row lookup. Equal to
+    /// [`Candidate::count_after_access`] when the index evaluates no filter.
+    pub(crate) count_after_index: f64,
     /// Whether THIS path's statistics are pseudo -- Go `isCandidatesPseudo`,
     /// which for an index path asks `ColAndIdxExistenceMap.HasAnalyzed(index)`
     /// rather than reusing the table's own flag.
@@ -201,6 +209,56 @@ fn compare_index_back<T>(lhs: &Candidate<T>, rhs: &Candidate<T>) -> (i32, bool) 
         return compare_col_sets(&lhs.index_columns, &rhs.index_columns);
     }
     (result, true)
+}
+
+/// Go `compareRiskRatio` (`pkg/planner/core/find_best_task.go`).
+///
+/// The dimension asks which candidate's row estimate can be trusted more, not
+/// which one is smaller. `MaxCountAfterAccess` is a MAXIMUM the same estimator
+/// admits for the same ranges -- from an in-bucket skew bound or an
+/// out-of-range extrapolation -- so `max / est` is how far the estimate can be
+/// wrong in the direction that hurts: a path whose 3-row estimate could really
+/// be 300 rows is riskier than one whose 30-row estimate could only be 33,
+/// even though 3 < 30.
+///
+/// A ratio of 0 means the estimator flagged no risk at all, and 0 is therefore
+/// the LOWEST risk -- which is why Go compares the ratios rather than the
+/// counts, and why a path with no identified risk beats one with any.
+///
+/// The lower-risk side still has to be defensible on rows before it wins:
+/// either its expected count is no larger (the first branch), or its whole
+/// [min, max] interval sits lower AND its own lower bound or post-index count
+/// is no larger (the second). Without that a tiny-but-certain estimate would
+/// prune a large-but-correct one.
+fn compare_risk_ratio<T>(lhs: &Candidate<T>, rhs: &Candidate<T>) -> i32 {
+    let ratio = |candidate: &Candidate<T>| {
+        if candidate.max_count_after_access > candidate.count_after_access
+            && candidate.count_after_access > 0.0
+        {
+            candidate.max_count_after_access / candidate.count_after_access
+        } else {
+            0.0
+        }
+    };
+    let (lhs_ratio, rhs_ratio) = (ratio(lhs), ratio(rhs));
+    let sum =
+        |candidate: &Candidate<T>| candidate.count_after_access + candidate.max_count_after_access;
+    // Go writes the two directions out longhand; they are the same test with
+    // the sides exchanged, so it is written once and applied twice.
+    let wins = |low: &Candidate<T>, high: &Candidate<T>| {
+        low.count_after_access <= high.count_after_access
+            || (sum(low) < sum(high)
+                && low.min_count_after_access > 0.0
+                && (low.min_count_after_access <= high.min_count_after_access
+                    || low.count_after_index <= high.count_after_index))
+    };
+    if lhs_ratio < rhs_ratio && wins(lhs, rhs) {
+        return 1;
+    }
+    if rhs_ratio < lhs_ratio && wins(rhs, lhs) {
+        return -1;
+    }
+    0
 }
 
 /// Go `compareEqOrIn`.
@@ -284,8 +342,8 @@ pub(crate) fn compare_candidates<T>(
     // EXCLUDED, held at Go's own value for this call: see the module doc.
     let match_result = 0;
     let global_result = 0;
-    let risk_result = 0;
 
+    let risk_result = compare_risk_ratio(lhs, rhs);
     let (access_result, access_comparable) =
         compare_col_sets(&lhs.access_columns, &rhs.access_columns);
     let (scan_result, scan_comparable) = compare_index_back(lhs, rhs);
@@ -338,10 +396,16 @@ pub(crate) fn compare_candidates<T>(
     let right_did_not_lose =
         predicate_result <= 0 && scan_result <= 0 && match_result <= 0 && global_result <= 0;
     if !access_comparable || !scan_comparable {
-        // Go's escape hatch here is driven entirely by `riskResult`, which
-        // this tier holds at 0 (module doc). With `riskResult == 0` neither
-        // of Go's two branches can fire, so the honest answer is "no winner"
-        // -- this port prunes strictly less than Go here.
+        // Different combinations of access columns, so no dominance argument
+        // is available -- but a clear risk difference still separates them.
+        // `predicateResult` already carries `riskResult`, so it must beat 1
+        // (not 0) for the access-column win to have survived the risk.
+        if risk_result > 0 && left_did_not_lose && total_sum >= 0 && predicate_result > 1 {
+            return (1, lhs_pseudo);
+        }
+        if risk_result < 0 && right_did_not_lose && total_sum <= 0 && predicate_result < -1 {
+            return (-1, rhs_pseudo);
+        }
         return (0, false);
     }
     if left_did_not_lose && total_sum > 0 {
@@ -427,6 +491,11 @@ mod tests {
             eq_or_in_count,
             full_range: false,
             count_after_access: 1.0,
+            // Go's own no-risk state: the estimator reported one number, so
+            // its min and max equal it and the risk ratio is 0.
+            max_count_after_access: 1.0,
+            min_count_after_access: 1.0,
+            count_after_index: 1.0,
             pseudo: false,
             index_width,
             empty_range: false,
@@ -543,6 +612,88 @@ mod tests {
         let survivors = skyline_pruning(vec![table, rare], &pseudo);
         assert_eq!(survivors.len(), 1);
         assert!(!survivors[0].full_range);
+    }
+
+    /// A path whose estimate could be ten times larger than it says is
+    /// riskier than one whose estimate is bigger but certain, and Go's
+    /// `compareRiskRatio` says so.
+    #[test]
+    fn no_identified_risk_beats_any_identified_risk() {
+        let mut certain = candidate(&[1], &[1], false, 1, 1);
+        certain.count_after_access = 30.0;
+        certain.max_count_after_access = 30.0;
+        certain.min_count_after_access = 30.0;
+        let mut risky = candidate(&[2], &[2], false, 1, 1);
+        risky.count_after_access = 3.0;
+        risky.max_count_after_access = 300.0;
+        risky.min_count_after_access = 3.0;
+        // The risky path's expected count is the SMALLER of the two, and it
+        // still loses the dimension: 3 rows that could be 300 is a worse bet
+        // than 30 rows that are 30. The certain side qualifies through Go's
+        // second branch -- its whole interval sits lower.
+        assert_eq!(compare_risk_ratio(&certain, &risky), 1);
+        assert_eq!(compare_risk_ratio(&risky, &certain), -1);
+    }
+
+    /// The regression this dimension exists to prevent, stated as the shape
+    /// Go and this port must agree on.
+    ///
+    /// Two candidates over the SAME access column, same `=`/`IN` count, where
+    /// the left is covering and the right is not: `accessResult` 0,
+    /// `scanResult` +1, so `totalSum` is +1 and the left dominates -- UNLESS
+    /// the left is the riskier estimate. Then Go's `predicateResult` is -1,
+    /// `leftDidNotLose` is false, and Go keeps BOTH paths for the cost model
+    /// to judge. Held at zero, `riskResult` would have let the covering path
+    /// prune the one Go keeps, which is a wrong plan and not a slow one.
+    #[test]
+    fn a_risky_covering_index_no_longer_prunes_the_certain_lookup_go_keeps() {
+        let mut covering = candidate(&[1], &[1, 2], true, 1, 2);
+        covering.count_after_access = 8.0;
+        covering.max_count_after_access = 400.0;
+        covering.min_count_after_access = 8.0;
+        let mut lookup = candidate(&[1], &[1], false, 1, 1);
+        lookup.count_after_access = 40.0;
+        lookup.max_count_after_access = 40.0;
+        lookup.min_count_after_access = 40.0;
+
+        assert_eq!(compare_risk_ratio(&covering, &lookup), -1);
+        // Neither prunes the other, in either argument order.
+        assert_eq!(
+            compare_candidates(&covering, &lookup, &context()),
+            (0, false)
+        );
+        assert_eq!(
+            compare_candidates(&lookup, &covering, &context()),
+            (0, false)
+        );
+        // And with the risk removed, the covering path dominates again --
+        // which is what makes the assertion above about RISK and not about
+        // some unrelated change to the order.
+        let mut certain = covering.clone();
+        certain.max_count_after_access = 8.0;
+        assert_eq!(compare_candidates(&certain, &lookup, &context()).0, 1);
+    }
+
+    /// Go's incomparable-branch escape hatch, which only `riskResult` can
+    /// open: two candidates constraining different columns are normally left
+    /// alone, but a clear risk difference plus a `predicateResult` big enough
+    /// to have survived it names a winner.
+    #[test]
+    fn a_clear_risk_difference_separates_otherwise_incomparable_candidates() {
+        // `idx_ab(a, b)` vs `idx_c(c)`: neither access-column set contains the
+        // other, so `CompareCol2Len` reports incomparable.
+        let mut safe = candidate(&[0, 1], &[0, 1], false, 2, 2);
+        safe.count_after_access = 10.0;
+        safe.max_count_after_access = 10.0;
+        safe.min_count_after_access = 10.0;
+        let mut risky = candidate(&[2], &[2], false, 1, 1);
+        risky.count_after_access = 20.0;
+        risky.max_count_after_access = 900.0;
+        risky.min_count_after_access = 20.0;
+        // riskResult +1, accessResult +1, eqOrInResult +1: predicateResult 3,
+        // which clears Go's "> 1" bar.
+        assert_eq!(compare_candidates(&safe, &risky, &context()).0, 1);
+        assert_eq!(compare_candidates(&risky, &safe, &context()).0, -1);
     }
 
     #[test]
