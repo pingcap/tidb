@@ -1688,6 +1688,30 @@ impl KvTable {
     /// row back under the same record key when the handle column did not
     /// change).
     pub fn update_row(&mut self, handle: &TableHandle, row: &[Datum]) -> Result<(), KvTableError> {
+        // Go `updateRecord`: assigning to the AUTO_INCREMENT column REBASES the
+        // allocator, exactly as an explicit value on INSERT does, so later rows
+        // land past the value the UPDATE named. Without this an `UPDATE t SET
+        // id = 300` left the counter where it was and the next allocations
+        // walked back over ids the table had moved AHEAD of.
+        //
+        // Go guards this with "the column's value changed"; the guard is
+        // redundant because a rebase only ever moves the counter UP and the
+        // counter is already at or past every id the table stores (each one was
+        // either allocated from it or rebased it on the way in). Rebasing
+        // unconditionally therefore leaves no branch to get wrong -- and it is
+        // why `UPDATE ... SET id = 0` correctly changes nothing.
+        //
+        // The value travels as its 64-bit PATTERN, since Go's
+        // `getAutoRecordID` hands `Rebase` an `int64` that `rebase4Unsigned`
+        // reads back as `uint64` for an unsigned column.
+        if let Some(offset) = self.auto_increment_offset {
+            let assigned = match row.get(offset) {
+                Some(Datum::Int(value)) => *value as u64,
+                Some(Datum::UInt(value)) => *value,
+                _ => 0,
+            };
+            self.auto_id.rebase(assigned);
+        }
         // A clustered primary key IS the row handle, and the record value omits
         // the handle columns entirely, so an UPDATE that assigns to the primary
         // key MOVES the row: it is stored under the handle its new values

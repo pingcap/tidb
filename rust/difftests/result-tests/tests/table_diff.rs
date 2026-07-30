@@ -194,7 +194,12 @@ fn table_execution_matches_go_engine() {
     // auto column's OWN domain and really does move an unsigned counter up.
     // The two Go paths disagree; reading the option in one domain for both is
     // what produced the parse error and the two `table not found` cascades.
-    const KNOWN_DIVERGENCES: usize = 8;
+    //
+    // 8 -> 7: `UPDATE` that assigns to the `AUTO_INCREMENT` column now REBASES
+    // the allocator (Go's `updateRecord` calls the same `Rebase` an explicit
+    // INSERT value does), so an `UPDATE ... SET id = 300` no longer leaves the
+    // counter behind for later rows to walk back over.
+    const KNOWN_DIVERGENCES: usize = 7;
 
     assert!(
         failures.len() <= KNOWN_DIVERGENCES,

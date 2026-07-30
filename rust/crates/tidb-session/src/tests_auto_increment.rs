@@ -443,6 +443,76 @@ fn alter_auto_increment_inside_a_transaction_implicitly_commits_it() {
     );
 }
 
+/// Assigning to the `AUTO_INCREMENT` column through UPDATE rebases the
+/// allocator, so later rows land PAST the value the UPDATE named -- Go's
+/// `updateRecord` calls the same `Rebase` an explicit INSERT value does.
+///
+/// The rebase only moves the counter UP, which is why `SET id = 0` changes
+/// nothing and the run continues from where the 300 left it; and it reads the
+/// value in the auto column's own domain, which is why the same
+/// `18446744073709551615` on a SIGNED column is a negative base that moves
+/// nothing at all.
+///
+/// Captured from real TiDB via `rust/difftests/gorun`, on
+/// `(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, v INT UNIQUE)`:
+///
+/// | after | `SELECT id, v ORDER BY v` |
+/// | --- | --- |
+/// | insert v=1; `SET id = 300`; insert v=2 | `300|1`, `301|2` |
+/// | `SET id = 0` where v=2; insert v=3 | `300|1`, `0|2`, `302|3` |
+/// | `SET id = 5` where v=3; insert v=4 | `300|1`, `0|2`, `5|3`, `303|4` |
+/// | `SET v = 40` where v=4; insert v=5 | ..., `304|5`, `303|40` |
+///
+/// The signed-column half of that capture -- insert v=1; `SET id =
+/// 18446744073709551615`; insert v=2 gives `-1|1`, `2|2` in Go -- is NOT
+/// asserted here, because this tier rejects the assignment with
+/// `DataOutOfRange` before the rebase is ever reached. That is a separate,
+/// unclaimed divergence in UPDATE's range check, not in the rebase; the
+/// signed/unsigned domain split is covered by
+/// `an_auto_increment_option_above_i64_max_seeds_create_but_rebases_alter`.
+#[test]
+fn assigning_the_auto_increment_column_through_update_rebases_the_allocator() {
+    let mut session = table(None);
+    session.run("INSERT INTO ai (v) VALUES (1)").unwrap();
+    session.run("UPDATE ai SET id = 300 WHERE v = 1").unwrap();
+    session.run("INSERT INTO ai (v) VALUES (2)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM ai ORDER BY v"),
+        [["300", "1"], ["301", "2"]],
+        "the UPDATE moved the counter to 300, so the next row is 301"
+    );
+
+    // A rebase never moves DOWN, so zero leaves the counter at 301.
+    session.run("UPDATE ai SET id = 0 WHERE v = 2").unwrap();
+    session.run("INSERT INTO ai (v) VALUES (3)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM ai ORDER BY v"),
+        [["300", "1"], ["0", "2"], ["302", "3"]]
+    );
+
+    // Nor to a value the counter is already past.
+    session.run("UPDATE ai SET id = 5 WHERE v = 3").unwrap();
+    session.run("INSERT INTO ai (v) VALUES (4)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM ai ORDER BY v"),
+        [["300", "1"], ["0", "2"], ["5", "3"], ["303", "4"]]
+    );
+
+    // An UPDATE that leaves the auto column alone burns nothing.
+    session.run("UPDATE ai SET v = 40 WHERE v = 4").unwrap();
+    session.run("INSERT INTO ai (v) VALUES (5)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM ai ORDER BY v"),
+        [
+            ["300", "1"],
+            ["0", "2"],
+            ["5", "3"],
+            ["304", "5"],
+            ["303", "40"],
+        ]
+    );
+}
+
 /// CREATE reads the `AUTO_INCREMENT=` option in the SIGNED domain and ALTER
 /// reads it in the auto column's OWN domain -- Go's two paths genuinely
 /// disagree, and the split is not a wart to be smoothed over.
