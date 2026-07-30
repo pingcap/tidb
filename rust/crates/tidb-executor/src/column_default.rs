@@ -70,19 +70,25 @@ pub enum ColumnDefault {
     /// A value settled at DDL time -- every literal default, and the folded
     /// result of a non-function-call expression such as `DEFAULT (1 + 1)`.
     Value(Datum),
-    /// Go's computed default: `ColumnInfo.DefaultValue` holds `text` and the
-    /// value is produced for every row that omits the column.
-    Computed {
-        /// Go's stored `DefaultValue` string: the marker word
-        /// `CURRENT_TIMESTAMP`, or `restoreFuncCall`'s rendering of the call.
-        text: String,
-        /// Go `ColumnInfo.DefaultIsExpr`, which decides only how the default
-        /// is PRINTED back -- see this module's docs.
-        is_expr: bool,
-        /// The evaluable form. It reads no column, so it evaluates over an
-        /// empty row.
-        expr: Expression,
-    },
+    /// Go's computed default: the stored text names a computation the value
+    /// of every omitted column re-runs. Boxed because it is by far the rarer
+    /// of the two and several times the size of a settled value, and this
+    /// enum sits on every column of every table.
+    Computed(Box<ComputedDefault>),
+}
+
+/// The body of a [`ColumnDefault::Computed`].
+#[derive(Clone, Debug)]
+pub struct ComputedDefault {
+    /// Go's stored `DefaultValue` string: the marker word
+    /// `CURRENT_TIMESTAMP`, or `restoreFuncCall`'s rendering of the call.
+    pub text: String,
+    /// Go `ColumnInfo.DefaultIsExpr`, which decides only how the default is
+    /// PRINTED back -- see this module's docs.
+    pub is_expr: bool,
+    /// The evaluable form. It reads no column, so it evaluates over an empty
+    /// row.
+    pub expr: Expression,
 }
 
 impl ColumnDefault {
@@ -93,7 +99,7 @@ impl ColumnDefault {
     pub fn settled_value(&self) -> Option<&Datum> {
         match self {
             ColumnDefault::Value(value) => Some(value),
-            ColumnDefault::Computed { .. } => None,
+            ColumnDefault::Computed(_) => None,
         }
     }
 
@@ -106,23 +112,15 @@ impl ColumnDefault {
     pub fn show_create_clause(&self, field_type: &FieldType, literal_text: &str) -> String {
         match self {
             ColumnDefault::Value(_) => format!("'{literal_text}'"),
-            ColumnDefault::Computed {
-                text,
-                is_expr: false,
-                ..
-            } => {
+            ColumnDefault::Computed(computed) if !computed.is_expr => {
                 let fsp = field_type.decimal();
                 if fsp > 0 {
-                    format!("{text}({fsp})")
+                    format!("{}({fsp})", computed.text)
                 } else {
-                    text.clone()
+                    computed.text.clone()
                 }
             }
-            ColumnDefault::Computed {
-                text,
-                is_expr: true,
-                ..
-            } => format!("({text})"),
+            ColumnDefault::Computed(computed) => format!("({})", computed.text),
         }
     }
 
@@ -136,34 +134,26 @@ impl ColumnDefault {
     pub fn column_desc_text(&self, field_type: &FieldType) -> Option<String> {
         match self {
             ColumnDefault::Value(_) => None,
-            ColumnDefault::Computed {
-                text,
-                is_expr: false,
-                ..
-            } => {
+            ColumnDefault::Computed(computed) if !computed.is_expr => {
                 let fsp = field_type.decimal();
                 let temporal = matches!(
                     field_type.code(),
                     FieldTypeCode::Timestamp | FieldTypeCode::Datetime
                 );
                 Some(if temporal && fsp > 0 {
-                    format!("{text}({fsp})")
+                    format!("{}({fsp})", computed.text)
                 } else {
-                    text.clone()
+                    computed.text.clone()
                 })
             }
-            ColumnDefault::Computed {
-                text,
-                is_expr: true,
-                ..
-            } => Some(text.clone()),
+            ColumnDefault::Computed(computed) => Some(computed.text.clone()),
         }
     }
 
     /// Go `NewColDesc`'s `Extra` for a column whose default is an expression.
     #[must_use]
     pub fn is_default_generated(&self) -> bool {
-        matches!(self, ColumnDefault::Computed { is_expr: true, .. })
+        matches!(self, ColumnDefault::Computed(computed) if computed.is_expr)
     }
 }
 
@@ -246,22 +236,22 @@ fn func_call_default(
                 "a DEFAULT CURRENT_TIMESTAMP with an explicit fsp argument",
             ));
         }
-        return Ok(Some(ColumnDefault::Computed {
+        return Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
             // Go stores the marker word itself, not the written spelling, so
             // `DEFAULT now()` and `DEFAULT current_timestamp` are one table.
             text: "CURRENT_TIMESTAMP".to_owned(),
             is_expr: false,
             expr: build_expression(expr)?,
-        }));
+        }))));
     }
     match lower.as_str() {
         // Go's no-argument-check arms: `RAND()`, `UUID()`. `VerifyArgsWrapper`
         // is the builder's own arity check here, which the rewriter performs.
-        "rand" | "uuid" => Ok(Some(ColumnDefault::Computed {
+        "rand" | "uuid" => Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
             text: expr.restore_with_flags(default_restore_flags()),
             is_expr: true,
             expr: build_expression(expr)?,
-        })),
+        })))),
         _ => Err(DefaultError::FunctionNotAllowed(lower)),
     }
 }
@@ -316,13 +306,13 @@ pub fn evaluate(
     ctx: &impl Columns,
     row: tidb_chunk::row::Row<'_>,
 ) -> Result<Datum, tidb_expr::EvalError> {
-    let ColumnDefault::Computed { expr, .. } = default else {
+    let ColumnDefault::Computed(computed) = default else {
         let ColumnDefault::Value(value) = default else {
             unreachable!("a default is settled or computed")
         };
         return Ok(value.clone());
     };
-    let value = expr.eval(ctx, row)?;
+    let value = computed.expr.eval(ctx, row)?;
     if value.is_null() {
         return Ok(Datum::Null);
     }
