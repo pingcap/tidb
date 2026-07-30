@@ -512,16 +512,18 @@ func prepareColumnCache(tctx *tcontext.Context, conf *Config, conn *BaseConn) er
 			if err != nil {
 				return err
 			}
-			selectedColumns := sourceColumns
+			sourceFields := columnNamesToSelectFields(sourceColumns)
+			selectedFields := sourceFields
 			if table.Type == TableTypeBase && conf.ColumnFilter != nil {
-				selectedColumns, err = conf.ColumnFilter.applyToColumns(dbName, table.Name, sourceColumns)
+				selectedColumns, err := conf.ColumnFilter.applyToColumns(dbName, table.Name, sourceColumns)
 				if err != nil {
 					return err
 				}
+				selectedFields = columnNamesToSelectFields(selectedColumns)
 			}
 			conf.columnCache[restore.UniqueTableName{DB: dbName, Table: table.Name}] = columnInfo{
-				sourceNames:       sourceColumns,
-				selectedNames:     selectedColumns,
+				sourceFields:      sourceFields,
+				selectedFields:    selectedFields,
 				hasGenerateColumn: hasGenerateColumn,
 			}
 		}

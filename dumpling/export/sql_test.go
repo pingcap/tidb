@@ -52,8 +52,8 @@ func buildSelectFieldForTest(tctx *tcontext.Context, db *BaseConn, dbName, table
 		return "", 0, err
 	}
 	selectField, selectLen, _ := buildSelectField(columnInfo{
-		sourceNames:       sourceNames,
-		selectedNames:     sourceNames,
+		sourceFields:      columnNamesToSelectFields(sourceNames),
+		selectedFields:    columnNamesToSelectFields(sourceNames),
 		hasGenerateColumn: hasGenerateColumn,
 	}, completeInsert)
 	return selectField, selectLen, nil
@@ -61,8 +61,8 @@ func buildSelectFieldForTest(tctx *tcontext.Context, db *BaseConn, dbName, table
 
 func newColumnInfoForTest(sourceNames []string, hasGenerateColumn bool, selectedNames []string) columnInfo {
 	return columnInfo{
-		sourceNames:       sourceNames,
-		selectedNames:     selectedNames,
+		sourceFields:      columnNamesToSelectFields(sourceNames),
+		selectedFields:    columnNamesToSelectFields(selectedNames),
 		hasGenerateColumn: hasGenerateColumn,
 	}
 }

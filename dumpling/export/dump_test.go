@@ -640,8 +640,8 @@ func TestDumpTableMeta(t *testing.T) {
 	conf.NoSchemas = true
 	conf.columnCache = columnCache{
 		restore.UniqueTableName{DB: database, Table: table}: {
-			sourceNames:   []string{"id"},
-			selectedNames: []string{"id"},
+			sourceFields:   []string{"`id`"},
+			selectedFields: []string{"`id`"},
 		},
 	}
 
@@ -787,7 +787,7 @@ func TestPrepareColumnCache(t *testing.T) {
 	require.NoError(t, prepareColumnCache(tctx, conf, baseConn))
 	info, ok := conf.columnCache[restore.UniqueTableName{DB: database, Table: table}]
 	require.True(t, ok)
-	require.Equal(t, []string{"id", "name"}, info.selectedNames)
+	require.Equal(t, []string{"`id`", "`name`"}, info.selectedFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -815,7 +815,7 @@ func TestPrepareColumnCacheWithoutColumnFilter(t *testing.T) {
 	require.NoError(t, prepareColumnCache(tctx, conf, baseConn))
 	info, ok := conf.columnCache[restore.UniqueTableName{DB: database, Table: table}]
 	require.True(t, ok)
-	require.Equal(t, []string{"id", "name"}, info.selectedNames)
+	require.Equal(t, []string{"`id`", "`name`"}, info.selectedFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

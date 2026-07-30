@@ -1061,22 +1061,20 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 }
 
 type columnInfo struct {
-	sourceNames       []string
-	selectedNames     []string
+	sourceFields      []string
+	selectedFields    []string
 	hasGenerateColumn bool
 }
 
 type columnCache map[restore.UniqueTableName]columnInfo
 
 func buildSelectField(info columnInfo, completeInsert bool) (string, int, string) { // revive:disable-line:flag-parameter
-	selectedFields := columnNamesToSelectFields(info.selectedNames)
-	selectLen := len(selectedFields)
-	if !slices.Equal(info.sourceNames, info.selectedNames) {
-		sourceFields := columnNamesToSelectFields(info.sourceNames)
-		return strings.Join(selectedFields, ","), selectLen, strings.Join(sourceFields, ",")
+	selectLen := len(info.selectedFields)
+	if !slices.Equal(info.sourceFields, info.selectedFields) {
+		return strings.Join(info.selectedFields, ","), selectLen, strings.Join(info.sourceFields, ",")
 	}
 	if completeInsert || info.hasGenerateColumn {
-		return strings.Join(selectedFields, ","), selectLen, ""
+		return strings.Join(info.selectedFields, ","), selectLen, ""
 	}
 	return "*", selectLen, ""
 }
