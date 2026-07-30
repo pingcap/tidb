@@ -117,5 +117,28 @@ func TestSetOprEmptyChild(t *testing.T) {
 		// OutputNames on the collapsed dual, not just its Schema.
 		testKit.MustQuery(`select s.id, s.val from
 			((select id, val from t4) intersect (select id, val from t5 where false)) s`).Check(testkit.Rows())
+
+		// The rule is gated by a statement-wide flag set whenever the query
+		// contains INTERSECT/EXCEPT, so it also walks ordinary IN/EXISTS
+		// semi-joins elsewhere in the same statement. That is intentional:
+		// isStaticallyEmpty only folds a join that is itself provably empty
+		// by cardinality (an empty side of a SemiJoin, or an empty left side
+		// of an AntiSemiJoin), a conclusion that holds for any SemiJoin or
+		// AntiSemiJoin regardless of where it came from, independent of the
+		// join predicate or NULL-aware semantics. This is not scoped to
+		// set-operator-built joins because doing so would only narrow an
+		// already-sound optimization, not fix a correctness gap.
+		//
+		// An ordinary, non-correlated EXISTS subquery that is independently
+		// empty (WHERE FALSE, unrelated to t1/t2) must still fold to an
+		// empty result when combined with an unrelated INTERSECT in the same
+		// statement, and an ordinary EXISTS subquery that is NOT empty must
+		// be completely unaffected.
+		testKit.MustQuery(`select * from t3 where exists (select 1 from t1 where false)`).Check(testkit.Rows())
+		testKit.MustQuery(`select * from t3 where exists (select 1 from t1 where false)
+			and t3.id in (select id from t1 intersect select id from t2 where false)`).Check(testkit.Rows())
+		testKit.MustQuery(`select * from t3 where exists (select 1 from t1)
+			and t3.id in (select id from t1 intersect select id from t2 where false)`).Check(testkit.Rows())
+		testKit.MustQuery(`select * from t3 where exists (select 1 from t1)`).Check(testkit.Rows("1"))
 	})
 }
