@@ -95,7 +95,14 @@ MAPPINGS: list[Mapping] = [
             "WORKSPACE", 3, "one Go package -> two Rust crates (lexer + grammar)"),
     Mapping("pkg/parser/ast", ["rust/crates/tidb-ast/src"], "WORKSPACE", 2),
     Mapping("pkg/meta/model", ["rust/crates/tidb-model/src"], "GITLOG", 2),
-    Mapping("pkg/expression", ["rust/crates/tidb-expr/src"], "WORKSPACE", 3),
+    # Most of the evidence for pkg/expression is not a Rust `#[test]` at all:
+    # it is the per-topic differential corpus, whose headers cite the Go test
+    # they transcreate and whose goldens are captured from the Go engine. Search
+    # it too, or this package's row systematically under-reports itself.
+    Mapping("pkg/expression", ["rust/crates/tidb-expr/src",
+                               "rust/difftests/corpus/expr",
+                               "rust/difftests/result-tests/tests"],
+            "WORKSPACE", 3),
     Mapping("pkg/planner/core", ["rust/crates/tidb-planner/src"], "WORKSPACE", 2),
     Mapping("pkg/planner/util", ["rust/crates/tidb-planner/src"], "WORKSPACE", 2),
     Mapping("pkg/planner/cardinality", ["rust/crates/tidb-planner/src",
@@ -284,9 +291,15 @@ def build_reference_index() -> tuple[str, dict[str, set[str]]]:
     chunks: list[str] = []
     cited: dict[str, set[str]] = {}
     pkg_re = re.compile(r"\b(pkg/[a-zA-Z0-9_/.-]+)/([a-zA-Z0-9_]+_test\.go)\b")
+    # `.txt` is here because the differential corpora are provenance too: each
+    # `corpus/<ns>/<topic>.txt` header names the Go test its rows were
+    # transcreated from. Their `.golden.txt` partners are machine-written label
+    # dumps with no prose, so reading them could only add noise.
     for root in REFERENCE_ROOTS:
-        for pat in ("*.rs", "*.md"):
+        for pat in ("*.rs", "*.md", "*.txt"):
             for f in (REPO / root).rglob(pat):
+                if f.name.endswith(".golden.txt"):
+                    continue
                 text = f.read_text(errors="replace")
                 chunks.append(text)
                 for pkg, base in pkg_re.findall(text):

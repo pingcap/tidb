@@ -60,6 +60,27 @@ bucket: no Rust test carries its name, its words, or a citation of it.
 | 16 | `tidb-session/src/tests_dml_lock_keys.rs` | ONE live bug: `REPLACE` over a row IDENTICAL to the one being written deleted and re-inserted it and reported 2 affected, where Go's `InsertValues.removeRow` leaves it in place and reports 1 -- the very site `tidb_lock_unchanged_keys` governs. Fixed. The DML key sets themselves were right: a `DELETE` does take every index key. No DML lock path exists at all (`tidb_lock_unchanged_keys` is registered and unread, nothing calls `Transaction::lock_keys`), so the blocking halves are `#[ignore]`d with Go's answer, each paired with a RUNNING guard on today's behavior. |
 | 18 | `tidb-meta/tests/key_prefix_and_element_source.rs` | Already covered under another name, and better: `tidb-meta/tests/go_vectors.rs` pins every meta key byte-for-byte against hex captured from Go. The genuine hole was the `Is*Key`/`Parse*Key` round trip for the auto-ID, auto-increment, auto-random and sequence prefixes (no `parse_*` existed), and `meta.Element` -- the DDL reorg backfill element, an on-disk contract -- which had no port at all. Both landed; nothing was found wrong in what already existed. `TestMeta` (`:241`), which drives a live `Mutator` over a store, is still open. |
 
+### Closed from the `pkg/expression` string and arithmetic pool
+
+Not ranked above. `pkg/expression` was 68% uncovered with the largest
+evaluable surface left, and its most valuable tables are plain value tables
+that the differential corpus can carry directly.
+
+| Go tests | Ported to | What the port found |
+| --- | --- | --- |
+| `builtin_string_test.go` `TestLeft`, `TestRight`, `TestLower`, `TestUpper`, `TestStrcmp`, `TestReplace`, `TestSubstring`, `TestSubstringIndex`, `TestLocate`, `TestInstr`, `TestFindInSet`, `TestInsert`, `TestOrd`, `TestBin`, `TestExportSet`, `TestToBase64`, `TestFromBase64`, `TestFormat` | `corpus/expr/{left_right,case_conversion,strcmp_replace,substring,locate_instr,find_in_set_insert,ord_bin_export_set,base64,format}_source` | 271 rows, every one in-domain (no `SKIP`, no `ERR`), so nothing was quietly unasserted. **One live bug:** `INSERT(str, pos, len, newstr)` read a NEGATIVE `len` as zero and spliced `newstr` in without removing anything, where `builtinInsertUTF8Sig` clamps a negative `len` to the rest of the string exactly as it clamps an oversized one (`length > runeLength-pos+1 \|\| length < 0`). Fixed. One row does not reproduce its Go unit-test expectation and the corpus records the production answer instead: `TestBin` says `BIN('')` is NULL, but the real expression path answers `'0'` — the unit test builds the signature by hand and skips the implicit cast. |
+| `builtin_arithmetic_test.go` `TestArithmeticPlus`, `TestArithmeticMinus`, `TestArithmeticMultiply`, `TestArithmeticDivide`, `TestArithmeticIntDivide`, `TestArithmeticMod` | `corpus/expr/int_arithmetic_source` | The existing `decimal_*`/`float_*` topics already covered those domains; the integer domain and the four signed/unsigned `MOD`/`DIV` signatures had no executable guard. **One live bug:** an integer `DIV` with a FLOAT operand dropped the unsigned flag, so `1u DIV -2` answered a signed 0 where Go answers an unsigned 0, and `1u DIV -1` answered `-1` where Go raises `BIGINT UNSIGNED value is out of range` (`ConvertDecimalToUint` rejects a negative quotient rather than wrapping it). Fixed. Five rows are held out as unevaluable today — hex/bit-literal arithmetic, string-operand arithmetic, `CAST(... AS TIME)` — each named in the topic header with Go's captured answer and pinned by a running guard in `difftests/result-tests/tests/expr_corpus_holdouts.rs`. |
+
+The same pass fixed a **systematic blind spot in the inventory script**: its
+reference scan read only `*.rs` and `*.md`, so `corpus/<ns>/<topic>.txt` — where
+essentially all of this tree's `pkg/expression` provenance lives, each header
+naming the Go test its rows come from — counted for nothing. `.txt` is now
+scanned (excluding the machine-written `.golden.txt` dumps), and
+`pkg/expression`'s search paths include the corpus and the result-test
+directory. That alone moved 9 `pkg/expression` tests, plus a handful in
+`pkg/types`, `pkg/executor` and `pkg/planner/core`, out of the `NONE` column
+without anyone writing a test. Read older `NONE` counts with that in mind.
+
 ### Closed from the `pkg/planner/core` pool
 
 Not ranked above -- the ranked table predates the decision to work the 97%
