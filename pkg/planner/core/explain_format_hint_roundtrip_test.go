@@ -141,6 +141,13 @@ func TestExplainFormatHintRecoverableForDerivedTableAlias(t *testing.T) {
 				require.Contains(t, reversedPlan, "eq(test.t2.a, test.t1.a)")
 				require.Contains(t, reversedPlan, "eq(test.t3.a, test.t2.a)")
 				require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+
+				tk.MustQuery("explain format='brief' select /*+ leading(t1, d2@sel_2, t3) */ * from t1 join (select * from (select * from t2) d2) dt on t1.a = dt.a join t3 on dt.a = t3.a")
+				require.Contains(
+					t,
+					fmt.Sprint(tk.Session().GetSessionVars().StmtCtx.GetWarnings()),
+					"leading hint is inapplicable",
+				)
 			})
 		}
 		tk.MustExec("set tidb_opt_enable_advanced_join_reorder=default")

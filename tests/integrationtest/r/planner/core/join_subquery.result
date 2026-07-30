@@ -14,7 +14,7 @@ from t2
 group by a
 ) pm on t4.a = pm.a;
 hint
-leading(`planner__core__join_subquery`.`t1`, `planner__core__join_subquery`.`t3`, `planner__core__join_subquery`.`t4`, `planner__core__join_subquery`.`pm`), hash_join_build(`planner__core__join_subquery`.`t4`), hash_join_build(`planner__core__join_subquery`.`t3`), use_index(@`sel_1` `planner__core__join_subquery`.`t1` ), use_index(@`sel_1` `planner__core__join_subquery`.`t3` ), use_index(@`sel_1` `planner__core__join_subquery`.`t4` ), hash_agg(@`sel_2`), use_index(@`sel_2` `planner__core__join_subquery`.`t2` ), agg_to_cop(@`sel_2`)
+hash_join_build(`planner__core__join_subquery`.`pm`), leading(`planner__core__join_subquery`.`t1`, `planner__core__join_subquery`.`t3`, `planner__core__join_subquery`.`t4`, `planner__core__join_subquery`.`pm`), hash_join_build(`planner__core__join_subquery`.`t4`), hash_join_build(`planner__core__join_subquery`.`t3`), use_index(@`sel_1` `planner__core__join_subquery`.`t1` ), use_index(@`sel_1` `planner__core__join_subquery`.`t3` ), use_index(@`sel_1` `planner__core__join_subquery`.`t4` ), hash_agg(@`sel_2`), use_index(@`sel_2` `planner__core__join_subquery`.`t2` ), agg_to_cop(@`sel_2`)
 explain format='hint'
 select /*+ leading(`t1`, `t3`, `t4`, `pm`), hash_join_build(`t4`), hash_join_build(`t3`), use_index(@`sel_1` `t1` ), use_index(@`sel_1` `t3` ), use_index(@`sel_1` `t4` ), hash_agg(@`sel_2`), use_index(@`sel_2` `t2` ), agg_to_cop(@`sel_2`) */ *
 from t1
@@ -26,7 +26,7 @@ from t2
 group by a
 ) pm on t4.a = pm.a;
 hint
-leading(`planner__core__join_subquery`.`t1`, `planner__core__join_subquery`.`t3`, `planner__core__join_subquery`.`t4`, `planner__core__join_subquery`.`pm`), hash_join_build(`planner__core__join_subquery`.`t4`), hash_join_build(`planner__core__join_subquery`.`t3`), use_index(@`sel_1` `planner__core__join_subquery`.`t1` ), use_index(@`sel_1` `planner__core__join_subquery`.`t3` ), use_index(@`sel_1` `planner__core__join_subquery`.`t4` ), hash_agg(@`sel_2`), use_index(@`sel_2` `planner__core__join_subquery`.`t2` ), agg_to_cop(@`sel_2`), leading(`t1`, `t3`, `t4`, `pm`), hash_join_build(`t4`), hash_join_build(`t3`), use_index(@`sel_1` `t1` ), use_index(@`sel_1` `t3` ), use_index(@`sel_1` `t4` ), use_index(@`sel_2` `t2` )
+hash_join_build(`planner__core__join_subquery`.`pm`), leading(`planner__core__join_subquery`.`t1`, `planner__core__join_subquery`.`t3`, `planner__core__join_subquery`.`t4`, `planner__core__join_subquery`.`pm`), hash_join_build(`planner__core__join_subquery`.`t4`), hash_join_build(`planner__core__join_subquery`.`t3`), use_index(@`sel_1` `planner__core__join_subquery`.`t1` ), use_index(@`sel_1` `planner__core__join_subquery`.`t3` ), use_index(@`sel_1` `planner__core__join_subquery`.`t4` ), hash_agg(@`sel_2`), use_index(@`sel_2` `planner__core__join_subquery`.`t2` ), agg_to_cop(@`sel_2`), leading(`t1`, `t3`, `t4`, `pm`), hash_join_build(`t4`), hash_join_build(`t3`), use_index(@`sel_1` `t1` ), use_index(@`sel_1` `t3` ), use_index(@`sel_1` `t4` ), use_index(@`sel_2` `t2` )
 show warnings;
 Level	Code	Message
 drop table if exists t1, t2, t3, t4;

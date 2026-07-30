@@ -15,9 +15,6 @@
 package joinorder
 
 import (
-	"strconv"
-	"strings"
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -371,19 +368,7 @@ func FindAndRemovePlanByAstHint[T any](
 	matchIdx := -1
 	for i, joinGroup := range plans {
 		plan := getPlan(joinGroup)
-		tableAlias, ok := util.ResolveJoinOperandHintIdentity(plan, targetOwnerOffset)
-		if !ok {
-			continue
-		}
-		dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == tableAlias.DBName.L || astTbl.DBName.L == "*"
-		tableMatch := astTbl.TableName.L == tableAlias.TblName.L
-		qbMatch := true
-		if astTbl.QBName.L != "" {
-			if expectedOffset := extractSelectOffset(astTbl.QBName.L); expectedOffset > 0 {
-				qbMatch = tableAlias.SelectOffset == expectedOffset
-			}
-		}
-		if !dbMatch || !tableMatch || !qbMatch {
+		if !util.MatchLeadingHintTableToOperand(plan, astTbl, targetOwnerOffset).Matched {
 			continue
 		}
 		if matchIdx != -1 {
@@ -401,31 +386,21 @@ func FindAndRemovePlanByAstHint[T any](
 	return zero, plans, false
 }
 
-// extract the number x from 'sel_x'
-func extractSelectOffset(qbName string) int {
-	if strings.HasPrefix(qbName, "sel_") {
-		if offset, err := strconv.Atoi(qbName[4:]); err == nil {
-			return offset
-		}
-	}
-	return -1
-}
-
 // IsDerivedTableInLeadingHint checks if a plan node represents a derived table (subquery)
 // that is explicitly referenced in the LEADING hint.
 func IsDerivedTableInLeadingHint(p base.LogicalPlan, leadingHint *hint.PlanHints, targetOwnerOffset int) bool {
 	if leadingHint == nil || leadingHint.LeadingList == nil || targetOwnerOffset < 0 {
 		return false
 	}
-	table, ok := util.ResolveJoinOperandHintIdentity(p, targetOwnerOffset)
-	if !ok || table.SelectOffset != targetOwnerOffset {
-		return false
-	}
-	return containsTableInLeadingList(leadingHint.LeadingList, table.DBName.L, table.TblName.L)
+	return containsTableInLeadingList(leadingHint.LeadingList, p, targetOwnerOffset)
 }
 
 // containsTableInLeadingList recursively searches for a table name in the LEADING hint structure
-func containsTableInLeadingList(leadingList *ast.LeadingList, dbName, tableName string) bool {
+func containsTableInLeadingList(
+	leadingList *ast.LeadingList,
+	plan base.LogicalPlan,
+	targetOwnerOffset int,
+) bool {
 	if leadingList == nil {
 		return false
 	}
@@ -433,15 +408,11 @@ func containsTableInLeadingList(leadingList *ast.LeadingList, dbName, tableName 
 	for _, item := range leadingList.Items {
 		switch element := item.(type) {
 		case *ast.HintTable:
-			// Direct table reference in LEADING hint
-			dbMatch := element.DBName.L == "" || element.DBName.L == dbName || element.DBName.L == "*"
-			tableMatch := element.TableName.L == tableName
-			if dbMatch && tableMatch {
+			if util.MatchLeadingHintTableToOperand(plan, element, targetOwnerOffset).OwnerVisible {
 				return true
 			}
 		case *ast.LeadingList:
-			// Nested structure, recursively check
-			if containsTableInLeadingList(element, dbName, tableName) {
+			if containsTableInLeadingList(element, plan, targetOwnerOffset) {
 				return true
 			}
 		}

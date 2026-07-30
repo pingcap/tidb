@@ -65,6 +65,200 @@ func TestResolveVisibleHintTableStrict(t *testing.T) {
 	require.Equal(t, "dt", resolved.TableName.L)
 }
 
+func TestLegacyRawLeadingHintCompatibility(t *testing.T) {
+	// TestJoinOrderHint4NestedLeading has existing aggregate/semi-join-rewrite
+	// cases where an unqualified hint names one concrete inner base table even
+	// though the transformed operand has no alias chain to the outer owner.
+	rawT3 := &h.HintedTable{
+		DBName:       ast.NewCIStr("test"),
+		TblName:      ast.NewCIStr("t3"),
+		SelectOffset: 3,
+	}
+	rawT4 := &h.HintedTable{
+		DBName:       ast.NewCIStr("test"),
+		TblName:      ast.NewCIStr("t4"),
+		SelectOffset: 3,
+	}
+	uniqueT3 := map[string]*h.HintedTable{"test\x00t3": rawT3}
+	multiple := map[string]*h.HintedTable{
+		"test\x00t3": rawT3,
+		"test\x00t4": rawT4,
+	}
+
+	tests := []struct {
+		name       string
+		table      *ast.HintTable
+		identities map[string]*h.HintedTable
+		matched    bool
+	}{
+		{
+			name:       "unique unqualified concrete base",
+			table:      &ast.HintTable{TableName: ast.NewCIStr("t3")},
+			identities: uniqueT3,
+			matched:    true,
+		},
+		{
+			name: "explicit QB cannot use raw compatibility",
+			table: &ast.HintTable{
+				TableName: ast.NewCIStr("t3"),
+				QBName:    ast.NewCIStr("sel_3"),
+			},
+			identities: uniqueT3,
+		},
+		{
+			name:       "derived alias is not a concrete identity",
+			table:      &ast.HintTable{TableName: ast.NewCIStr("g")},
+			identities: uniqueT3,
+		},
+		{
+			name:       "multiple raw identities are ambiguous",
+			table:      &ast.HintTable{TableName: ast.NewCIStr("t3")},
+			identities: multiple,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			match := matchLegacyRawLeadingHint(test.table, test.identities)
+			require.Equal(t, test.matched, match.Matched)
+			require.False(t, match.OwnerVisible)
+		})
+	}
+}
+
+func TestLegacyQualifiedRawLeadingHintCompatibility(t *testing.T) {
+	rawT1 := &h.HintedTable{
+		DBName:       ast.NewCIStr("test"),
+		TblName:      ast.NewCIStr("t1"),
+		SelectOffset: 2,
+	}
+	rawT2 := &h.HintedTable{
+		DBName:       ast.NewCIStr("test"),
+		TblName:      ast.NewCIStr("t2"),
+		SelectOffset: 2,
+	}
+	t1AtSel2 := &ast.HintTable{
+		TableName: ast.NewCIStr("t1"),
+		QBName:    ast.NewCIStr("sel_2"),
+	}
+	tests := []struct {
+		name       string
+		table      *ast.HintTable
+		identities map[string]*h.HintedTable
+		matched    bool
+	}{
+		{
+			name:       "unique qualified concrete base",
+			table:      t1AtSel2,
+			identities: map[string]*h.HintedTable{"test\x00t1": rawT1},
+			matched:    true,
+		},
+		{
+			name:       "derived alias cannot match concrete base",
+			table:      &ast.HintTable{TableName: ast.NewCIStr("d2"), QBName: ast.NewCIStr("sel_2")},
+			identities: map[string]*h.HintedTable{"test\x00t1": rawT1},
+		},
+		{
+			name:  "same offset multiple identities are ambiguous",
+			table: t1AtSel2,
+			identities: map[string]*h.HintedTable{
+				"test\x00t1": rawT1,
+				"test\x00t2": rawT2,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			match := matchLegacyQualifiedRawLeadingHint(test.table, test.identities)
+			require.Equal(t, test.matched, match.Matched)
+			require.False(t, match.OwnerVisible)
+		})
+	}
+}
+
+func TestLegacyPositionalLeadingHintCompatibility(t *testing.T) {
+	aliases := []h.SelectBlockAlias{
+		{},
+		{},
+		{SelectOffset: 2, VisibleOffset: 1, DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("t1")},
+		{SelectOffset: 3, VisibleOffset: 1, DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("t2")},
+		{SelectOffset: 4, VisibleOffset: 1, DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("t3")},
+	}
+	ownerT2 := &h.HintedTable{
+		DBName:       ast.NewCIStr("test"),
+		TblName:      ast.NewCIStr("t2"),
+		SelectOffset: 1,
+	}
+	t2AtSel2 := &ast.HintTable{
+		DBName:    ast.NewCIStr("test"),
+		TableName: ast.NewCIStr("t2"),
+		QBName:    ast.NewCIStr("sel_2"),
+	}
+
+	tests := []struct {
+		name       string
+		table      *ast.HintTable
+		owner      *h.HintedTable
+		aliases    []h.SelectBlockAlias
+		position   int
+		matched    bool
+		ownerMatch bool
+	}{
+		{
+			name:       "legacy tN at sel N position",
+			table:      t2AtSel2,
+			owner:      ownerT2,
+			aliases:    aliases,
+			position:   2,
+			matched:    true,
+			ownerMatch: true,
+		},
+		{
+			name:     "wrong position",
+			table:    t2AtSel2,
+			owner:    ownerT2,
+			aliases:  aliases,
+			position: 3,
+		},
+		{
+			name:  "unrelated owner-visible alias shifts but cannot mis-match",
+			table: t2AtSel2,
+			owner: ownerT2,
+			aliases: append([]h.SelectBlockAlias{
+				{SelectOffset: 9, VisibleOffset: 1, DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("unrelated")},
+			}, aliases...),
+			position: 2,
+		},
+		{
+			name:  "intermediate d2 cannot match strict owner dt",
+			table: &ast.HintTable{TableName: ast.NewCIStr("d2"), QBName: ast.NewCIStr("sel_2")},
+			owner: &h.HintedTable{
+				DBName:       ast.NewCIStr("test"),
+				TblName:      ast.NewCIStr("dt"),
+				SelectOffset: 1,
+			},
+			aliases: []h.SelectBlockAlias{
+				{},
+				{},
+				{SelectOffset: 2, VisibleOffset: 1, DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("dt")},
+			},
+			position: 2,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			match := matchLegacyPositionalLeadingHint(
+				test.table,
+				test.owner,
+				test.aliases,
+				1,
+				test.position,
+			)
+			require.Equal(t, test.matched, match.Matched)
+			require.Equal(t, test.ownerMatch, match.OwnerVisible)
+		})
+	}
+}
+
 // TestNullRejectBuiltinRegistrySnapshot guards against silent builtin registry
 // drift. When this hash breaks, the builtin set has changed — review whether
 // new functions should be added to nullRejectNullPreservingFunctions or
