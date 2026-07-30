@@ -72,7 +72,6 @@ const GRANDFATHERED: &[(&str, usize)] = &[
     ("crates/tidb-executor/src/kv_table.rs", 2_705),
     ("crates/tidb-txnkv/src/transaction/coordinator.rs", 2_629),
     ("crates/tidb-pd-client/src/client.rs", 2_539),
-    ("crates/tidb-parser/src/expr.rs", 2_530),
     ("crates/tidb-txnkv/src/region/cache.rs", 2_518),
     ("crates/tidb-session/src/tests_grants.rs", 2_491),
     ("crates/tidb-planner/src/read_only_scan.rs", 2_476),
