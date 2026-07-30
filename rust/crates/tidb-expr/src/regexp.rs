@@ -72,7 +72,33 @@ pub(crate) fn regexp_like(text: &str, pattern: &str, match_type: &str) -> Result
 /// malformed patterns are surfaced as `Unsupported`, matching TiDB's source
 /// runtime errors rather than allowing the regex crate's empty-pattern default.
 pub(crate) fn regexp_match(text: &str, pattern: &str) -> Result<bool, EvalError> {
-    regexp_like(text, pattern, "")
+    regexp_match_with_collation(text, pattern, crate::ops::DERIVATION_FREE_COLLATION)
+}
+
+/// [`regexp_match`] under the collation the expression derivation aggregated
+/// over both operands (Go `deriveCollation`'s `ast.Regexp` arm).
+///
+/// Go does NOT compare through a collator here -- `getRegexpMatchType`
+/// (`pkg/expression/builtin_regexp.go`) seeds the match-type flag set with
+/// `flagI` when `collate.IsCICollation(collation)`, so a case-insensitive
+/// collation is expressed to RE2 as the `i` flag. Captured from TiDB:
+/// `'ABC' COLLATE utf8mb4_general_ci REGEXP 'abc'` is 1 where the
+/// `utf8mb4_bin` form is 0.
+///
+/// A user-supplied `match_type` can still override this: an explicit `c` flag
+/// deletes `i` again, which [`build_regexp`]'s left-to-right flag scan already
+/// reproduces because the seeded `i` is passed as the leading flag.
+pub(crate) fn regexp_match_with_collation(
+    text: &str,
+    pattern: &str,
+    collation: tidb_datatype::Collation,
+) -> Result<bool, EvalError> {
+    let match_type = if tidb_datatype::is_ci_collation(collation.name()) {
+        "i"
+    } else {
+        ""
+    };
+    regexp_like(text, pattern, match_type)
 }
 
 #[cfg(test)]

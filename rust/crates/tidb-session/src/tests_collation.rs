@@ -203,6 +203,113 @@ fn collation_aware_string_builtins() {
     );
 }
 
+/// `FIELD`, `FIND_IN_SET` and `REGEXP` also search with the derived collator,
+/// so each has a `_ci` answer that differs from its `_bin` one.
+///
+/// Go reaches this three different ways -- `builtinFieldStringSig` calls
+/// `b.ctor.Compare`, `findInSetByKey` compares
+/// `collator.KeyWithoutTrimRightSpace`, and `getRegexpMatchType` turns a `_ci`
+/// collation into RE2's `i` flag -- and all three were previously ignored
+/// here, so an explicit `COLLATE` on an argument silently changed nothing.
+#[test]
+fn field_find_in_set_and_regexp_use_the_derived_collation() {
+    let mut session = collation_session();
+    for (sql, expected) in [
+        // Both operands bare: the connection collation (utf8mb4_bin) decides.
+        ("SELECT FIELD('ABC', 'x', 'abc')", "0"),
+        (
+            "SELECT FIELD('ABC' COLLATE utf8mb4_general_ci, 'x', 'abc')",
+            "2",
+        ),
+        ("SELECT FIELD('ABC' COLLATE utf8mb4_bin, 'x', 'abc')", "0"),
+        // The COLLATE may sit on either operand: coercibility ranks them and
+        // EXPLICIT beats the other side's COERCIBLE whichever side it is on.
+        ("SELECT FIELD('ABC', 'abc' COLLATE utf8mb4_general_ci)", "1"),
+        // `utf8mb4_bin` is PAD SPACE, so the collator ignores trailing blanks.
+        ("SELECT FIELD('a ' COLLATE utf8mb4_bin, 'a')", "1"),
+        ("SELECT FIND_IN_SET('B', 'a,b,c')", "0"),
+        (
+            "SELECT FIND_IN_SET('B' COLLATE utf8mb4_general_ci, 'a,b,c')",
+            "2",
+        ),
+        ("SELECT FIND_IN_SET('B' COLLATE utf8mb4_bin, 'a,b,c')", "0"),
+        (
+            "SELECT FIND_IN_SET('b', 'a,B,c' COLLATE utf8mb4_general_ci)",
+            "2",
+        ),
+        // `FIND_IN_SET` keys WITHOUT trimming right spaces, so unlike `FIELD`
+        // above a trailing blank still makes the member differ even under a
+        // PAD SPACE collation.
+        (
+            "SELECT FIND_IN_SET('a ' COLLATE utf8mb4_general_ci, 'a,b')",
+            "0",
+        ),
+        ("SELECT 'ABC' REGEXP 'abc'", "0"),
+        ("SELECT 'ABC' COLLATE utf8mb4_general_ci REGEXP 'abc'", "1"),
+        ("SELECT 'ABC' COLLATE utf8mb4_unicode_ci REGEXP 'abc'", "1"),
+        ("SELECT 'ABC' COLLATE utf8mb4_bin REGEXP 'abc'", "0"),
+        ("SELECT 'ABC' REGEXP 'abc' COLLATE utf8mb4_general_ci", "1"),
+        // A non-string argument list keeps Go's REAL signature, which consults
+        // no collation at all: `FIELD(1, '1')` matches numerically.
+        ("SELECT FIELD(1, '1')", "1"),
+        ("SELECT FIELD('1', 1)", "1"),
+    ] {
+        assert_eq!(one(&mut session, sql), expected, "{sql}");
+    }
+    // Derived from a COLUMN rather than a COLLATE clause: the `_ci` column is
+    // IMPLICIT and beats the literal's COERCIBLE, the `_bin` column is the
+    // control. Rows are the fixture's 'a','A','b','B' in insertion order.
+    for (sql, expected) in [
+        ("SELECT FIELD(c, 'A') FROM ci", ["1", "1", "0", "0"]),
+        ("SELECT FIELD(c, 'A') FROM bn", ["0", "1", "0", "0"]),
+        (
+            "SELECT FIND_IN_SET(c, 'x,A,y') FROM ci",
+            ["2", "2", "0", "0"],
+        ),
+        (
+            "SELECT FIND_IN_SET(c, 'x,A,y') FROM bn",
+            ["0", "2", "0", "0"],
+        ),
+        ("SELECT c REGEXP 'a' FROM ci", ["1", "1", "0", "0"]),
+        ("SELECT c REGEXP 'a' FROM bn", ["1", "0", "0", "0"]),
+    ] {
+        assert_eq!(
+            row_text(session.run(sql)),
+            expected.map(|cell| vec![cell.to_owned()]).to_vec(),
+            "{sql}"
+        );
+    }
+}
+
+/// A `binary` collation selects a different `INSTR`/`LOCATE` SIGNATURE, not
+/// just a different comparison: Go's `builtinInstrSig` /
+/// `builtinLocate2ArgsSig` report a BYTE offset where the `...UTF8Sig` pair
+/// report a character offset.
+///
+/// `'aéb'` is the fixture that can tell them apart -- 4 bytes, 3 characters --
+/// so the byte answer (4) and the character answer (3) genuinely differ.
+#[test]
+fn instr_and_locate_report_byte_offsets_under_a_binary_collation() {
+    let mut session = collation_session();
+    for (sql, expected) in [
+        ("SELECT INSTR(CAST('aéb' AS BINARY), 'b')", "4"),
+        ("SELECT INSTR('aéb', 'b')", "3"),
+        ("SELECT LOCATE('b', CAST('aéb' AS BINARY))", "4"),
+        ("SELECT LOCATE('b', 'aéb')", "3"),
+        // A miss is still 0, and an empty needle still matches at 1.
+        ("SELECT INSTR(CAST('aéb' AS BINARY), 'z')", "0"),
+        ("SELECT INSTR(CAST('aéb' AS BINARY), '')", "1"),
+    ] {
+        assert_eq!(one(&mut session, sql), expected, "{sql}");
+    }
+    // A VARBINARY column derives the same `binary` collation, and never folds
+    // case: only the 'B' row matches.
+    assert_eq!(
+        row_text(session.run("SELECT INSTR(c, 'B') FROM vb")),
+        vec![vec!["0"], vec!["0"], vec!["0"], vec!["1"]]
+    );
+}
+
 /// `utf8mb4_general_ci` maps sharp-s to `S` and strips the common accents,
 /// and folds every character above U+FFFF to one weight -- so two different
 /// emoji compare EQUAL under it. `utf8mb4_unicode_ci` instead expands

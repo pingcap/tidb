@@ -249,6 +249,14 @@ pub(crate) fn locate_collation(substr: &Datum, str: &Datum) -> tidb_datatype::Co
 /// The window is compared by the collation rather than by bytes, which is
 /// what makes a folding collation match; a collation whose folding changes
 /// character COUNT (none this tier registers) would need a different scan.
+///
+/// A `binary` collation selects Go's OTHER signature, not just another
+/// comparison rule: `locateFunctionClass.getFunction` branches on
+/// `bf.collation == charset.CollationBin` to `builtinLocate2ArgsSig` /
+/// `builtinInstrSig`, whose `strings.Index(str, subStr) + 1` reports a BYTE
+/// offset where the UTF-8 signatures report a character offset. Captured from
+/// TiDB: `INSTR(CAST('aéb' AS BINARY), 'b')` is 4 (`é` is two bytes) while
+/// `INSTR('aéb', 'b')` is 3.
 pub(crate) fn position_with_collation(
     substr: Option<String>,
     str: Option<String>,
@@ -257,6 +265,12 @@ pub(crate) fn position_with_collation(
     let (Some(substr), Some(str)) = (substr, str) else {
         return Datum::Null;
     };
+    if collation == tidb_datatype::Collation::Binary {
+        if substr.is_empty() {
+            return Datum::Int(1);
+        }
+        return Datum::Int(str.find(&substr).map_or(0, |index| index as i64 + 1));
+    }
     let needle: Vec<char> = substr.chars().collect();
     let haystack: Vec<char> = str.chars().collect();
     if needle.is_empty() {
@@ -816,7 +830,26 @@ fn radix_string_bits_bytes(value: &[u8]) -> u64 {
 /// list uses `EvalReal` for every argument. Selecting that mode once is
 /// important: pairwise equality would compare a string/string pair as text
 /// even when a numeric argument later forces the source's REAL signature.
+///
+/// The collation-free entry point, for the AST evaluator and any caller with
+/// no derived collation to offer; see [`field_with_collation`].
 pub(crate) fn field(vals: &[Datum]) -> Result<Datum, EvalError> {
+    field_with_collation(vals, crate::ops::DERIVATION_FREE_COLLATION)
+}
+
+/// [`field`] under the collation the expression derivation aggregated over
+/// ALL of `FIELD`'s arguments (Go `deriveCollation`'s `ast.Field` arm, taken
+/// when the argument list is all-string).
+///
+/// Go's `builtinFieldStringSig.evalInt` tests `b.ctor.Compare(str, stri) == 0`
+/// -- the function's own collator, not a fixed byte comparison -- so a
+/// case-folding collation matches a differently-cased candidate. Captured from
+/// TiDB: `FIELD('ABC' COLLATE utf8mb4_general_ci, 'abc')` is 1 where the
+/// `utf8mb4_bin` form is 0.
+pub(crate) fn field_with_collation(
+    vals: &[Datum],
+    collation: tidb_datatype::Collation,
+) -> Result<Datum, EvalError> {
     if vals[0] == Datum::Null {
         return Ok(Datum::Int(0));
     }
@@ -838,7 +871,17 @@ pub(crate) fn field(vals: &[Datum]) -> Result<Datum, EvalError> {
             continue;
         }
         let equal = match mode {
-            FieldComparisonMode::String | FieldComparisonMode::Integer => {
+            // Go compares the two evaluated strings through the signature's
+            // own collator, which is where a `_ci` collation folds case and a
+            // PAD SPACE one ignores trailing blanks.
+            FieldComparisonMode::String => {
+                let (Some(needle), Some(candidate)) = (vals[0].as_raw_bytes(), v.as_raw_bytes())
+                else {
+                    return Err(EvalError::Unsupported("non-string FIELD string operand"));
+                };
+                collation.compare(needle, candidate) == std::cmp::Ordering::Equal
+            }
+            FieldComparisonMode::Integer => {
                 crate::eval_binary(tidb_ast::BinaryOp::Eq, vals[0].clone(), v.clone())?
                     == Datum::Int(1)
             }

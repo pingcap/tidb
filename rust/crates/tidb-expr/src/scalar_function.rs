@@ -399,7 +399,11 @@ impl ScalarFunction {
             let pattern = pattern
                 .sql_string()
                 .map_err(|_| EvalError::Unsupported("invalid UTF-8 REGEXP pattern"))?;
-            let matched = crate::regexp_match(&text, &pattern)?;
+            let matched = crate::regexp::regexp_match_with_collation(
+                &text,
+                &pattern,
+                self.derived_collation(),
+            )?;
             return Ok(Datum::Int(i64::from(matched)));
         }
         // The charset boundary: `to_binary`/`from_binary` are the implicit
@@ -629,19 +633,31 @@ impl ScalarFunction {
         // is 2 while the `utf8mb4_bin` form is 0. They are intercepted here,
         // ahead of the values-only dispatch, because that dispatch sees values
         // alone and cannot know which collation was derived.
-        if self.args.len() == 2 {
+        {
             let collation = self.derived_collation();
             match name {
                 // `LOCATE(substr, str)` / `INSTR(str, substr)`: the same
-                // 1-indexed character position with the arguments swapped.
-                "locate" | "instr" => {
+                // 1-indexed position with the arguments swapped.
+                "locate" | "instr" if self.args.len() == 2 => {
                     let (a, b) = (self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?);
                     let (haystack, needle) = if name == "locate" { (&b, &a) } else { (&a, &b) };
                     return crate::string_fn::locate(needle, haystack, collation);
                 }
-                "strcmp" => {
+                "strcmp" if self.args.len() == 2 => {
                     let vals = [self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?];
                     return crate::string_fn::strcmp_with_collation(&vals, collation);
+                }
+                "find_in_set" if self.args.len() == 2 => {
+                    let vals = [self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?];
+                    return crate::builtin_ext::find_in_set_with_collation(&vals, collation);
+                }
+                "field" if self.args.len() >= 2 => {
+                    let vals: Vec<Datum> = self
+                        .args
+                        .iter()
+                        .map(|a| a.eval(ctx, row))
+                        .collect::<Result<_, _>>()?;
+                    return crate::string_fn::field_with_collation(&vals, collation);
                 }
                 _ => {}
             }

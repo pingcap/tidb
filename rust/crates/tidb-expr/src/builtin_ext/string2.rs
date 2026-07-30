@@ -151,20 +151,39 @@ fn format_with_locale(vals: &[Datum]) -> Result<Datum, EvalError> {
 }
 
 /// `FIND_IN_SET(str, strlist)`, ported from `builtinFindInSetSig.evalInt` in
-/// `pkg/expression/builtin_string.go`.  The real signature compares collation
-/// keys; this UTF-8 value domain has no collation/session metadata, so it
-/// preserves the source's exact `KeyWithoutTrimRightSpace` behavior while
-/// leaving session-selected collations outside the scalar boundary.
+/// `pkg/expression/builtin_string.go`.  The collation-free entry point, for
+/// the AST evaluator and any caller with no derived collation to offer; see
+/// [`find_in_set_with_collation`].
 fn find_in_set(vals: &[Datum]) -> Result<Datum, EvalError> {
+    find_in_set_with_collation(vals, crate::ops::DERIVATION_FREE_COLLATION)
+}
+
+/// [`find_in_set`] under the collation the expression derivation aggregated
+/// over BOTH arguments (Go `deriveCollation`'s `ast.FindInSet` arm).
+///
+/// Go's `findInSetByKey` compares `collator.KeyWithoutTrimRightSpace` of the
+/// needle against the same key of each comma-separated entry, so a
+/// case-folding collation finds a differently-cased member. Captured from
+/// TiDB: `FIND_IN_SET('b' COLLATE utf8mb4_general_ci, 'a,B,c')` is 2 where the
+/// `utf8mb4_bin` form is 0.
+///
+/// `KeyWithoutTrimRightSpace` -- rather than the ordinary sort key -- is why a
+/// PAD SPACE collation still distinguishes `'a'` from `'a '` here.
+pub(crate) fn find_in_set_with_collation(
+    vals: &[Datum],
+    collation: tidb_datatype::Collation,
+) -> Result<Datum, EvalError> {
     let (Some(needle), Some(list)) = (coerce_str(&vals[0])?, coerce_str(&vals[1])?) else {
         return Ok(Datum::Null);
     };
     if list.is_empty() {
         return Ok(Datum::Int(0));
     }
+    let collator = tidb_datatype::get_collator(collation.name());
+    let needle_key = collator.key_without_trim_right_space(needle.as_bytes());
     Ok(Datum::Int(
         list.split(',')
-            .position(|entry| entry == needle)
+            .position(|entry| collator.key_without_trim_right_space(entry.as_bytes()) == needle_key)
             .map_or(0, |index| index as i64 + 1),
     ))
 }
