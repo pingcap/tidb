@@ -1,7 +1,6 @@
 # path <space> max-lines. Growing a file = raise its bound HERE in the
 # same commit, with the reason as a comment above the entry. A file at or
 # under the 2,200 soft limit must have its entry REMOVED.
-crates/tidb-distsql/tests/direct_unary_client_runtime_source.rs 3135
 crates/tidb-executor/src/driver/tests.rs 3486
 crates/tidb-executor/src/kv_table.rs 2705
 crates/tidb-txnkv/src/transaction/coordinator.rs 2629
