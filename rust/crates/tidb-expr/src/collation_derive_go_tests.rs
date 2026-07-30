@@ -451,9 +451,9 @@ fn go_table() -> Vec<Row> {
 
 /// The `TestDeriveCollation` rows this crate answers Go's way today.
 ///
-/// `derive_collation` documents `date_format`/`time_format`, `cast`, `case`,
-/// and `field` as deferred; those rows are asserted separately below so the
-/// deferral is a named work item rather than a missing row.
+/// `derive_collation` documents `date_format`/`time_format`, `cast` and `case`
+/// as deferred; those rows are asserted separately below so the deferral is a
+/// named work item rather than a missing row.
 #[test]
 fn go_test_derive_collation() {
     for (index, row) in go_table().into_iter().enumerate() {
@@ -468,7 +468,7 @@ fn go_test_derive_collation() {
 /// asserts Go's answer, so making the function work turns this green rather
 /// than requiring the row to be written from scratch.
 #[test]
-#[ignore = "derive_collation defers date_format/time_format, cast and field to their own arms"]
+#[ignore = "derive_collation defers date_format/time_format and cast to their own arms"]
 fn go_test_derive_collation_deferred_functions() {
     for (index, row) in go_table().into_iter().enumerate() {
         if is_deferred_row(row.functions) {
@@ -480,7 +480,7 @@ fn go_test_derive_collation_deferred_functions() {
 fn is_deferred_row(functions: &[&str]) -> bool {
     functions
         .iter()
-        .any(|name| matches!(*name, "date_format" | "time_format" | "cast" | "field"))
+        .any(|name| matches!(*name, "date_format" | "time_format" | "cast"))
 }
 
 fn assert_row(index: usize, row: &Row) {

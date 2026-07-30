@@ -403,7 +403,7 @@ pub fn check_and_derive_collation_from_exprs(
 /// DEFERRED (documented) relative to Go's full switch: `date_format`/
 /// `time_format`, `cast` (the rewriter knows the target type and sets the
 /// result collation itself), `case` (Go's own comment marks its aggregation
-/// as incorrect), `field`, and the JSON-returning family beyond
+/// as incorrect), and the JSON-returning family beyond
 /// `json_pretty`/`json_quote`. Every unlisted name lands in the same default
 /// arm Go uses.
 #[allow(clippy::too_many_lines)]
@@ -444,6 +444,24 @@ pub fn derive_collation(
         // Int-returning, but the comparison itself needs a collation.
         "find_in_set" | "regexp" => {
             check_and_derive_collation_from_exprs(func_name, EvalType::Int, args)
+        }
+        // `FIELD(needle, a, b, ...)` aggregates over EVERY argument, but only
+        // when the whole list is string-typed. Go tests `argTps[0] ==
+        // types.ETString`, and `fieldFunctionClass.getFunction` fills `argTps`
+        // with ONE eval type chosen for the entire list (`ETString` only when
+        // `isAllString`), so that single test is an all-string test.
+        "field" if !args.is_empty() => {
+            if args
+                .iter()
+                .all(|arg| ret_type_of(arg).eval_type() == EvalType::String)
+            {
+                return check_and_derive_collation_from_exprs(func_name, ret_type, args);
+            }
+            Ok(default_collation(ret_type))
+        }
+        // `REGEXP_REPLACE(expr, pat, repl, ...)`: the first three arguments.
+        "regexp_replace" if args.len() >= 3 => {
+            check_and_derive_collation_from_exprs(func_name, ret_type, &args[..3])
         }
         "locate" | "instr" | "position" | "regexp_like" | "regexp_substr" | "regexp_instr"
             if args.len() >= 2 =>
