@@ -17,6 +17,7 @@
 use super::*;
 use tidb_ast::{QueryStmt, SelectField, Stmt};
 
+mod collation_compare;
 mod compare;
 mod control;
 mod evaluator_binop;
