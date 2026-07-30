@@ -1066,8 +1066,10 @@ type selectFieldInfo struct {
 }
 
 type writableColumnInfo struct {
-	names             []string
-	hasGenerateColumn bool
+	sourceNames        []string
+	selectedNames      []string
+	hasGenerateColumn  bool
+	selectedNamesReady bool
 }
 
 type writableColumnCache struct {
@@ -1087,7 +1089,7 @@ func (c *writableColumnCache) get(tctx *tcontext.Context, db *BaseConn, dbName, 
 
 	key := dbName + "\x00" + tableName
 	if info, ok := c.columns[key]; ok {
-		return info.names, info.hasGenerateColumn, nil
+		return info.sourceNames, info.hasGenerateColumn, nil
 	}
 
 	names, hasGenerateColumn, err := getWritableColumnNames(tctx, db, dbName, tableName)
@@ -1095,10 +1097,32 @@ func (c *writableColumnCache) get(tctx *tcontext.Context, db *BaseConn, dbName, 
 		return nil, false, err
 	}
 	c.columns[key] = writableColumnInfo{
-		names:             names,
+		sourceNames:       names,
 		hasGenerateColumn: hasGenerateColumn,
 	}
 	return names, hasGenerateColumn, nil
+}
+
+func (c *writableColumnCache) getSelectedNames(dbName, tableName string) ([]string, bool) {
+	if c == nil {
+		return nil, false
+	}
+	info, ok := c.columns[dbName+"\x00"+tableName]
+	if !ok || !info.selectedNamesReady {
+		return nil, false
+	}
+	return info.selectedNames, true
+}
+
+func (c *writableColumnCache) setSelectedNames(dbName, tableName string, selectedNames []string) {
+	if c == nil {
+		return
+	}
+	key := dbName + "\x00" + tableName
+	info := c.columns[key]
+	info.selectedNames = selectedNames
+	info.selectedNamesReady = true
+	c.columns[key] = info
 }
 
 func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnFilter *ColumnFilterConfig, columnCache *writableColumnCache) (selectFieldInfo, error) { // revive:disable-line:flag-parameter
@@ -1108,9 +1132,14 @@ func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableNam
 	}
 	selectedColumns := sourceColumns
 	if columnFilter != nil {
-		selectedColumns, err = columnFilter.applyToColumns(dbName, tableName, sourceColumns)
-		if err != nil {
-			return selectFieldInfo{}, err
+		var ok bool
+		selectedColumns, ok = columnCache.getSelectedNames(dbName, tableName)
+		if !ok {
+			selectedColumns, err = columnFilter.applyToColumns(dbName, tableName, sourceColumns)
+			if err != nil {
+				return selectFieldInfo{}, err
+			}
+			columnCache.setSelectedNames(dbName, tableName, selectedColumns)
 		}
 	}
 	selectedFields := columnNamesToSelectFields(selectedColumns)

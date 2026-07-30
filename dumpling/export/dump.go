@@ -521,9 +521,11 @@ func validateColumnFilter(tctx *tcontext.Context, conf *Config, conn *BaseConn) 
 			if err != nil {
 				return err
 			}
-			if _, err = conf.ColumnFilter.applyToColumns(dbName, table.Name, sourceColumns); err != nil {
+			selectedColumns, err := conf.ColumnFilter.applyToColumns(dbName, table.Name, sourceColumns)
+			if err != nil {
 				return err
 			}
+			conf.writableColumnCache.setSelectedNames(dbName, table.Name, selectedColumns)
 		}
 	}
 	return nil

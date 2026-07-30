@@ -690,6 +690,10 @@ func TestDumpTableMetaWithColumnFilterKeepsSourceColumnsForSplit(t *testing.T) {
 			AddRow("id", "int(11)", "NO", "PRI", nil, "").
 			AddRow("name", "varchar(12)", "NO", "", nil, ""))
 	require.NoError(t, validateColumnFilter(tctx, conf, baseConn))
+	// Make a second filter application fail if it happens, so this covers using the validated filter result.
+	conf.ColumnFilter = newColumnFilterConfigForTest(t,
+		ColumnFilterRule{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"missing"}},
+	)
 	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `name` FROM `%s`.`%s` LIMIT 1", database, table))).
 		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
 			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
