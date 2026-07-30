@@ -1060,55 +1060,25 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 	return conn, nil
 }
 
-type writableColumnInfo struct {
+type columnInfo struct {
 	sourceNames       []string
 	selectedNames     []string
 	hasGenerateColumn bool
 }
 
-type writableColumnCache map[restore.UniqueTableName]writableColumnInfo
+type columnCache map[restore.UniqueTableName]columnInfo
 
-func newWritableColumnCache() writableColumnCache {
-	return make(writableColumnCache)
-}
-
-func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnCache writableColumnCache) (string, int, string, error) { // revive:disable-line:flag-parameter
-	var (
-		sourceColumns     []string
-		selectedColumns   []string
-		hasGenerateColumn bool
-	)
-	if columnCache == nil {
-		var err error
-		sourceColumns, hasGenerateColumn, err = getWritableColumnNames(tctx, db, dbName, tableName)
-		if err != nil {
-			return "", 0, "", err
-		}
-		selectedColumns = sourceColumns
-	} else {
-		info, ok := columnCache[restore.UniqueTableName{DB: dbName, Table: tableName}]
-		if !ok {
-			return "", 0, "", errors.Errorf(
-				"missing writable column cache for table `%s`.`%s`",
-				escapeString(dbName),
-				escapeString(tableName),
-			)
-		}
-		sourceColumns = info.sourceNames
-		selectedColumns = info.selectedNames
-		hasGenerateColumn = info.hasGenerateColumn
-	}
-
-	selectedFields := columnNamesToSelectFields(selectedColumns)
+func buildSelectField(info columnInfo, completeInsert bool) (string, int, string) { // revive:disable-line:flag-parameter
+	selectedFields := columnNamesToSelectFields(info.selectedNames)
 	selectLen := len(selectedFields)
-	if !slices.Equal(sourceColumns, selectedColumns) {
-		sourceFields := columnNamesToSelectFields(sourceColumns)
-		return strings.Join(selectedFields, ","), selectLen, strings.Join(sourceFields, ","), nil
+	if !slices.Equal(info.sourceNames, info.selectedNames) {
+		sourceFields := columnNamesToSelectFields(info.sourceNames)
+		return strings.Join(selectedFields, ","), selectLen, strings.Join(sourceFields, ",")
 	}
-	if completeInsert || hasGenerateColumn {
-		return strings.Join(selectedFields, ","), selectLen, "", nil
+	if completeInsert || info.hasGenerateColumn {
+		return strings.Join(selectedFields, ","), selectLen, ""
 	}
-	return "*", selectLen, "", nil
+	return "*", selectLen, ""
 }
 
 func getWritableColumnNames(tctx *tcontext.Context, db *BaseConn, dbName, tableName string) ([]string, bool, error) {

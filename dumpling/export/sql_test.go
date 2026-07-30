@@ -18,7 +18,6 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	dbconfig "github.com/pingcap/tidb/pkg/config"
@@ -48,24 +47,24 @@ const (
 )
 
 func buildSelectFieldForTest(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
-	selectField, selectLen, _, err := buildSelectField(tctx, db, dbName, tableName, completeInsert, nil)
+	sourceNames, hasGenerateColumn, err := getWritableColumnNames(tctx, db, dbName, tableName)
 	if err != nil {
 		return "", 0, err
 	}
+	selectField, selectLen, _ := buildSelectField(columnInfo{
+		sourceNames:       sourceNames,
+		selectedNames:     sourceNames,
+		hasGenerateColumn: hasGenerateColumn,
+	}, completeInsert)
 	return selectField, selectLen, nil
 }
 
-func newColumnCacheForTest(dbName, tableName string, sourceNames []string, hasGenerateColumn bool, selectedNames []string) writableColumnCache {
-	cache := newWritableColumnCache()
-	info := writableColumnInfo{
+func newColumnInfoForTest(sourceNames []string, hasGenerateColumn bool, selectedNames []string) columnInfo {
+	return columnInfo{
 		sourceNames:       sourceNames,
+		selectedNames:     selectedNames,
 		hasGenerateColumn: hasGenerateColumn,
 	}
-	if selectedNames != nil {
-		info.selectedNames = selectedNames
-	}
-	cache[restore.UniqueTableName{DB: dbName, Table: tableName}] = info
-	return cache
 }
 
 func TestBuildSelectAllQuery(t *testing.T) {
@@ -317,59 +316,48 @@ func TestBuildSelectField(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	// Cached selected columns use source order and leave source fields unfiltered.
-	columnCache := newColumnCacheForTest(
-		"test",
-		"t",
+	info := newColumnInfoForTest(
 		[]string{"id", "name", "quo`te"},
 		false,
 		[]string{"name", "quo`te"},
 	)
-	selectField, selectLen, sourceFields, err := buildSelectField(tctx, baseConn, "test", "t", false, columnCache)
-	require.NoError(t, err)
+	selectField, selectLen, sourceFields := buildSelectField(info, false)
 	require.Equal(t, "`name`,`quo``te`", selectField)
 	require.Equal(t, 2, selectLen)
 	require.Equal(t, "`id`,`name`,`quo``te`", sourceFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	columnCache = newColumnCacheForTest(
-		"test",
-		"t",
+	info = newColumnInfoForTest(
 		[]string{"id", "name", "quo`te"},
 		false,
 		[]string{"id", "quo`te"},
 	)
-	selectField, selectLen, sourceFields, err = buildSelectField(tctx, baseConn, "test", "t", false, columnCache)
-	require.NoError(t, err)
+	selectField, selectLen, sourceFields = buildSelectField(info, false)
 	require.Equal(t, "`id`,`quo``te`", selectField)
 	require.Equal(t, 2, selectLen)
 	require.Equal(t, "`id`,`name`,`quo``te`", sourceFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	columnCache = newColumnCacheForTest(
-		"test",
-		"t",
+	info = newColumnInfoForTest(
 		[]string{"id", "name"},
 		false,
 		[]string{"id"},
 	)
-	selectField, selectLen, sourceFields, err = buildSelectField(tctx, baseConn, "test", "t", false, columnCache)
-	require.NoError(t, err)
+	selectField, selectLen, sourceFields = buildSelectField(info, false)
 	require.Equal(t, "`id`", selectField)
 	require.Equal(t, 1, selectLen)
 	require.Equal(t, "`id`,`name`", sourceFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	columnCache = newColumnCacheForTest("test", "t", []string{}, true, []string{})
-	selectField, selectLen, sourceFields, err = buildSelectField(tctx, baseConn, "test", "t", false, columnCache)
-	require.NoError(t, err)
+	info = newColumnInfoForTest([]string{}, true, []string{})
+	selectField, selectLen, sourceFields = buildSelectField(info, false)
 	require.Empty(t, selectField)
 	require.Equal(t, 0, selectLen)
 	require.Empty(t, sourceFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	columnCache = newColumnCacheForTest("test", "t", []string{"id", "name"}, false, []string{"id", "name"})
-	selectField, selectLen, sourceFields, err = buildSelectField(tctx, baseConn, "test", "t", false, columnCache)
-	require.NoError(t, err)
+	info = newColumnInfoForTest([]string{"id", "name"}, false, []string{"id", "name"})
+	selectField, selectLen, sourceFields = buildSelectField(info, false)
 	require.Equal(t, "*", selectField)
 	require.Equal(t, 2, selectLen)
 	require.Empty(t, sourceFields)

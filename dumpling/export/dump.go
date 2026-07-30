@@ -265,8 +265,8 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 	if conf.SQL == "" {
-		conf.writableColumnCache = newWritableColumnCache()
-		if err = prepareColumnProjectionCache(tctx, conf, baseConn); err != nil {
+		conf.columnCache = make(columnCache)
+		if err = prepareColumnCache(tctx, conf, baseConn); err != nil {
 			_ = baseConn.DBConn.Close()
 			return errors.Trace(err)
 		}
@@ -505,24 +505,21 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 	return nil
 }
 
-func prepareColumnProjectionCache(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
+func prepareColumnCache(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
 	for dbName, tables := range conf.Tables {
 		for _, table := range tables {
-			if table.Type != TableTypeBase {
-				continue
-			}
 			sourceColumns, hasGenerateColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
 			if err != nil {
 				return err
 			}
 			selectedColumns := sourceColumns
-			if conf.ColumnFilter != nil {
+			if table.Type == TableTypeBase && conf.ColumnFilter != nil {
 				selectedColumns, err = conf.ColumnFilter.applyToColumns(dbName, table.Name, sourceColumns)
 				if err != nil {
 					return err
 				}
 			}
-			conf.writableColumnCache[restore.UniqueTableName{DB: dbName, Table: table.Name}] = writableColumnInfo{
+			conf.columnCache[restore.UniqueTableName{DB: dbName, Table: table.Name}] = columnInfo{
 				sourceNames:       sourceColumns,
 				selectedNames:     selectedColumns,
 				hasGenerateColumn: hasGenerateColumn,
@@ -1372,22 +1369,17 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 
 func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
-	var columnCache writableColumnCache
-	if table.Type == TableTypeBase {
-		columnCache = conf.writableColumnCache
+	info, ok := conf.columnCache[restore.UniqueTableName{DB: db, Table: tbl}]
+	if !ok {
+		return nil, errors.Errorf(
+			"missing column cache for table `%s`.`%s`",
+			escapeString(db),
+			escapeString(tbl),
+		)
 	}
-	selectField, selectLen, sourceFields, err := buildSelectField(
-		tctx,
-		conn,
-		db,
-		tbl,
-		conf.CompleteInsert,
-		columnCache,
-	)
-	if err != nil {
-		return nil, err
-	}
+	selectField, selectLen, sourceFields := buildSelectField(info, conf.CompleteInsert)
 	var (
+		err              error
 		colTypes         []*sql.ColumnType
 		sourceColTypes   []*sql.ColumnType
 		hasImplicitRowID bool
