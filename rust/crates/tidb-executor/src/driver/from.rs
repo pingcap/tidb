@@ -320,14 +320,8 @@ pub(crate) fn build_from(
             // schema (captured: `SELECT * FROM LATERAL (SELECT 1) x` runs).
             // Its alias column list still renames positionally.
             let _ = lateral;
-            // EXPLAIN has never described a derived table (its plan is a
-            // subtree this recorder does not enter), and this refactor does
-            // not widen that surface.
-            if let Some(trace) = trace {
-                trace.refuse("derived tables are not supported yet");
-            }
             let (exec, mut scope) =
-                build_derived_source(subquery, alias.as_deref(), catalog, current_db, ctx)?;
+                build_derived_source(subquery, alias.as_deref(), catalog, current_db, ctx, trace)?;
             rename_derived_columns(&mut scope.tables[0].columns, column_names)?;
             Ok((exec, scope))
         }
@@ -342,12 +336,25 @@ pub(crate) fn build_from(
 /// own result-field names, and only the alias qualifies them -- `db.alias.col`
 /// and a base table's name are both Go's `ErrUnknownColumn` once the subquery
 /// is behind an alias.
+///
+/// A `trace` descends INTO the subquery rather than stopping at it. That is
+/// what Go's plan text does too: a derived table is not an operator in Go's
+/// output, it is the subquery's own plan subtree standing where the `FROM`
+/// entry was (captured: `explain select * from (select * from t) x` prints
+/// exactly `TableReader_6 -> TableFullScan_5` over `table:t`, with no node
+/// naming `x`). Recording the subtree is therefore the faithful description,
+/// and the derived table stops being a shape the recorder has to know about.
+///
+/// A plan-only trace also means the subquery is PLANNED and not run, so an
+/// `EXPLAIN` over a derived table executes nothing -- the empty row set it
+/// hands back is never drained (see `run_select_traced`'s plan-only return).
 pub(crate) fn build_derived_source(
     subquery: &QueryStmt,
     alias: Option<&str>,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    trace: Option<&mut PlanTrace>,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
     // Captured from Go: an alias-less derived table is ErrDerivedMustHaveAlias
     // in a plain SELECT and in a view body alike.
@@ -356,8 +363,17 @@ pub(crate) fn build_derived_source(
         return Err(DriverError::DerivedMustHaveAlias);
     };
     let (columns, rows) = match subquery {
-        QueryStmt::Select(select) => run_select_stmt(select, catalog, current_db, ctx)?,
-        QueryStmt::SetOpr(set_opr) => run_set_opr_stmt(set_opr, catalog, current_db, ctx)?,
+        QueryStmt::Select(select) => run_select_traced(select, catalog, current_db, ctx, trace)?,
+        QueryStmt::SetOpr(set_opr) => {
+            // A set operation has no traced builder: `run_set_opr_stmt` runs
+            // its arms and concatenates them without recording an operator, so
+            // there is no subtree to stand here. The refusal names the arm
+            // shape rather than the derived table, which IS described now.
+            if let Some(trace) = trace {
+                trace.refuse("a set-operation derived table's plan is not recorded yet");
+            }
+            run_set_opr_stmt(set_opr, catalog, current_db, ctx)?
+        }
     };
     // A derived table is a named relation, so its columns must be uniquely
     // named: Go's ErrDupFieldName, which `(SELECT * FROM t JOIN s ...)` hits

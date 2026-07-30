@@ -472,6 +472,8 @@ mod tests_eval_bool;
 #[cfg(test)]
 mod tests_explain;
 #[cfg(test)]
+mod tests_explain_derived;
+#[cfg(test)]
 mod tests_foreign_key;
 #[cfg(test)]
 mod tests_global_vars;
