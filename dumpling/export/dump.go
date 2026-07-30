@@ -265,6 +265,10 @@ func (d *Dumper) Dump() (dumpErr error) {
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 	if conf.SQL == "" {
 		conf.writableColumnCache = newWritableColumnCache()
+		if err = prepareColumnProjectionCache(tctx, conf, baseConn); err != nil {
+			_ = baseConn.DBConn.Close()
+			return errors.Trace(err)
+		}
 	} else {
 		conf.writableColumnCache = nil
 	}
@@ -294,15 +298,6 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 	// Inject consistency failpoint test after we release the table lock
 	failpoint.Inject("ConsistencyCheck", nil)
-
-	if conf.SQL == "" {
-		if err = prepareColumnProjectionCache(tctx, conf, baseConn); err != nil {
-			close(taskIn)
-			_ = wg.Wait()
-			_ = baseConn.DBConn.Close()
-			return errors.Trace(err)
-		}
-	}
 
 	if conf.PosAfterConnect {
 		// record again, to provide a location to exit safe mode for DM
@@ -1374,15 +1369,11 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 
 func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
-	var (
-		columnFilter *ColumnFilterConfig
-		columnCache  *writableColumnCache
-	)
+	var columnCache *writableColumnCache
 	if table.Type == TableTypeBase {
-		columnFilter = conf.ColumnFilter
 		columnCache = conf.writableColumnCache
 	}
-	selectFieldInfo, err := buildSelectFieldInfo(tctx, conn, db, tbl, conf.CompleteInsert, columnFilter, columnCache)
+	selectFieldInfo, err := buildSelectFieldInfo(tctx, conn, db, tbl, conf.CompleteInsert, columnCache)
 	if err != nil {
 		return nil, err
 	}

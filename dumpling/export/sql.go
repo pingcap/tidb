@@ -1125,7 +1125,7 @@ func (c *writableColumnCache) setSelectedNames(dbName, tableName string, selecte
 	c.columns[key] = info
 }
 
-func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnFilter *ColumnFilterConfig, columnCache *writableColumnCache) (selectFieldInfo, error) { // revive:disable-line:flag-parameter
+func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnCache *writableColumnCache) (selectFieldInfo, error) { // revive:disable-line:flag-parameter
 	sourceColumns, hasGenerateColumn, err := columnCache.get(tctx, db, dbName, tableName)
 	if err != nil {
 		return selectFieldInfo{}, err
@@ -1133,12 +1133,6 @@ func buildSelectFieldInfo(tctx *tcontext.Context, db *BaseConn, dbName, tableNam
 	selectedColumns := sourceColumns
 	if cachedSelectedColumns, ok := columnCache.getSelectedNames(dbName, tableName); ok {
 		selectedColumns = cachedSelectedColumns
-	} else if columnFilter != nil {
-		selectedColumns, err = columnFilter.applyToColumns(dbName, tableName, sourceColumns)
-		if err != nil {
-			return selectFieldInfo{}, err
-		}
-		columnCache.setSelectedNames(dbName, tableName, selectedColumns)
 	}
 	selectedFields := columnNamesToSelectFields(selectedColumns)
 	info := selectFieldInfo{

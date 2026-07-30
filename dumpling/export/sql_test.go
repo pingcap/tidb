@@ -47,11 +47,25 @@ const (
 )
 
 func buildSelectFieldForTest(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
-	info, err := buildSelectFieldInfo(tctx, db, dbName, tableName, completeInsert, nil, nil)
+	info, err := buildSelectFieldInfo(tctx, db, dbName, tableName, completeInsert, nil)
 	if err != nil {
 		return "", 0, err
 	}
 	return info.outputFieldSQL, info.outputColumnCount, nil
+}
+
+func newColumnCacheForTest(dbName, tableName string, sourceNames []string, hasGenerateColumn bool, selectedNames []string) *writableColumnCache {
+	cache := newWritableColumnCache()
+	info := writableColumnInfo{
+		sourceNames:       sourceNames,
+		hasGenerateColumn: hasGenerateColumn,
+	}
+	if selectedNames != nil {
+		info.selectedNames = selectedNames
+		info.selectedNamesReady = true
+	}
+	cache.columns[dbName+"\x00"+tableName] = info
+	return cache
 }
 
 func TestBuildSelectAllQuery(t *testing.T) {
@@ -302,110 +316,59 @@ func TestBuildSelectField(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	// Column filters use source order for selected fields and leave source fields unfiltered.
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, "").
-			AddRow("name", "varchar(12)", "NO", "", nil, "").
-			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, ""))
-	columnFilter := newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"quo`te", "name"}},
+	// Cached selected columns use source order and leave source fields unfiltered.
+	columnCache := newColumnCacheForTest(
+		"test",
+		"t",
+		[]string{"id", "name", "quo`te"},
+		false,
+		[]string{"name", "quo`te"},
 	)
-	selectInfo, err := buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
+	selectInfo, err := buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnCache)
 	require.NoError(t, err)
 	require.Equal(t, "`name`,`quo``te`", selectInfo.outputFieldSQL)
 	require.Equal(t, 2, selectInfo.outputColumnCount)
 	require.Equal(t, "`id`,`name`,`quo``te`", selectInfo.sourceFieldSQL)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, "").
-			AddRow("name", "varchar(12)", "NO", "", nil, "").
-			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, ""))
-	columnFilter = newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"*", "!name"}},
+	columnCache = newColumnCacheForTest(
+		"test",
+		"t",
+		[]string{"id", "name", "quo`te"},
+		false,
+		[]string{"id", "quo`te"},
 	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
+	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnCache)
 	require.NoError(t, err)
 	require.Equal(t, "`id`,`quo``te`", selectInfo.outputFieldSQL)
 	require.Equal(t, 2, selectInfo.outputColumnCount)
 	require.Equal(t, "`id`,`name`,`quo``te`", selectInfo.sourceFieldSQL)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, "").
-			AddRow("name", "varchar(12)", "NO", "", nil, ""))
-	columnFilter = newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"*", "!id", "!name"}},
+	columnCache = newColumnCacheForTest(
+		"test",
+		"t",
+		[]string{"id", "name"},
+		false,
+		[]string{"id"},
 	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
-	require.ErrorContains(t, err, "--column-filter-file selects no writable columns")
-	require.Empty(t, selectInfo)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, "").
-			AddRow("name", "varchar(12)", "NO", "", nil, ""))
-	columnFilter = newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"missing"}},
-	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
-	require.ErrorContains(t, err, "--column-filter-file selects no writable columns")
-	require.Empty(t, selectInfo)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, "").
-			AddRow("name", "varchar(12)", "NO", "", nil, ""))
-	columnFilter = newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"id", "missing"}},
-	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
+	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnCache)
 	require.NoError(t, err)
 	require.Equal(t, "`id`", selectInfo.outputFieldSQL)
 	require.Equal(t, 1, selectInfo.outputColumnCount)
 	require.Equal(t, "`id`,`name`", selectInfo.sourceFieldSQL)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("g", "int(11)", "NO", "", nil, "VIRTUAL GENERATED"))
-	columnFilter = newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{"test.t"}, Columns: []string{"*", "!g"}},
-	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
+	columnCache = newColumnCacheForTest("test", "t", nil, true, nil)
+	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnCache)
 	require.NoError(t, err)
 	require.Empty(t, selectInfo.outputFieldSQL)
 	require.Equal(t, 0, selectInfo.outputColumnCount)
 	require.Empty(t, selectInfo.sourceFieldSQL)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, "").
-			AddRow("name", "varchar(12)", "NO", "", nil, ""))
-	columnFilter = newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{"test.other"}, Columns: []string{"id"}},
-	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
-	require.NoError(t, err)
-	require.Equal(t, "*", selectInfo.outputFieldSQL)
-	require.Equal(t, 2, selectInfo.outputColumnCount)
-	require.Empty(t, selectInfo.sourceFieldSQL)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, "").
-			AddRow("name", "varchar(12)", "NO", "", nil, ""))
-	columnFilter = newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{"test.other"}, Columns: []string{"*", "!id"}},
-	)
-	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnFilter, nil)
+	columnCache = newColumnCacheForTest("test", "t", []string{"id", "name"}, false, nil)
+	selectInfo, err = buildSelectFieldInfo(tctx, baseConn, "test", "t", false, columnCache)
 	require.NoError(t, err)
 	require.Equal(t, "*", selectInfo.outputFieldSQL)
 	require.Equal(t, 2, selectInfo.outputColumnCount)
