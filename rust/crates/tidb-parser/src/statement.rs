@@ -503,7 +503,7 @@ impl Parser {
             self.bump();
             let name = self.parse_name_or_keyword()?;
             self.expect_kw("FROM")?;
-            let source = if self.peek().kind == TokenKind::UserVar {
+            let source = if self.at_user_variable() {
                 PrepareSource::Var(decode_at_name(&self.bump().text))
             } else if self.peek().kind == TokenKind::Str {
                 PrepareSource::Sql(decode_string(&self.bump().text))
@@ -523,7 +523,7 @@ impl Parser {
             if self.is_kw("USING") {
                 self.bump();
                 loop {
-                    if self.peek().kind != TokenKind::UserVar {
+                    if !self.at_user_variable() {
                         return Err(self.err_here("expected an @variable in USING"));
                     }
                     using.push(Expr::UserVar(decode_at_name(&self.bump().text)));
@@ -720,6 +720,23 @@ impl Parser {
     }
 
     /// Direct transcreation of Go `parseCompletionType` for COMMIT/ROLLBACK.
+    /// Whether the next token is a USER variable (`@x`) rather than a SYSTEM
+    /// one (`@@x`).
+    ///
+    /// The scanner reports both as [`TokenKind::UserVar`] and leaves the two
+    /// apart by their text, but Go's own scanner emits distinct tokens and its
+    /// grammar spells `PREPARE ... FROM` and `EXECUTE ... USING` over
+    /// `UserVariable` only. Captured from TiDB:
+    /// `EXECUTE st2 USING @@sql_mode, @@sql_mode` is
+    /// `[parser:1064] ... near "@@sql_mode, @@sql_mode;"`. Without this the
+    /// slot would silently read a system variable as the user variable
+    /// `@sql_mode` -- an unset name, so NULL, which is a wrong answer rather
+    /// than a refusal.
+    fn at_user_variable(&self) -> bool {
+        let token = self.peek();
+        token.kind == TokenKind::UserVar && !token.text.starts_with("@@")
+    }
+
     fn parse_completion_type(&mut self) -> PResult<CompletionType> {
         if self.is_kw("AND") {
             self.bump();

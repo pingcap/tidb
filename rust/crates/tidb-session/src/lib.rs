@@ -182,6 +182,10 @@ pub struct Session {
     /// across every statement of this session (unlike constant `RAND(N)`,
     /// which owns a fresh per-statement generator -- see `StmtContext`).
     rand: Rc<RefCell<MysqlRng>>,
+    /// Go `SessionVars.PreparedStmtNameToID` / `PreparedStmts`: the SQL-level
+    /// prepared statements this session holds. Per-session and not shared: a
+    /// peer over the same catalog holds its own.
+    prepared_statements: prepared_statements::PreparedStore,
 }
 
 impl Default for Session {
@@ -217,6 +221,7 @@ impl Default for Session {
             privileges: None,
             sandbox_mode: false,
             rand: new_time_seeded_rand(),
+            prepared_statements: prepared_statements::PreparedStore::default(),
         }
     }
 }
@@ -241,6 +246,7 @@ mod explain_arm;
 mod identity;
 pub mod infoschema;
 mod noop;
+mod prepared_statements;
 mod stmt_ctx;
 mod txn;
 mod variables;
@@ -488,6 +494,8 @@ mod tests_json;
 #[cfg(test)]
 mod tests_mem_quota;
 mod tests_multi_table_dml;
+#[cfg(test)]
+mod tests_prepared_statements;
 #[cfg(test)]
 mod tests_recursive_cte;
 #[cfg(test)]

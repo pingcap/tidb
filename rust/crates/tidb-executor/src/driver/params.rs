@@ -88,6 +88,16 @@ fn walk_statement_markers(stmt: &mut Stmt, visit: &mut dyn FnMut(&mut tidb_ast::
             }
             _ => {}
         },
+        // `PREPARE ps FROM 'set @z = ?'` is a prepared statement like any
+        // other (captured: `EXECUTE ps USING @one` then `SELECT @z` is 1), so
+        // its assigned values carry markers too.
+        Stmt::Session(session) => {
+            if let tidb_ast::SessionStmt::SetUserVar(set) = &mut **session {
+                for assignment in &mut set.assignments {
+                    walk_expr(&mut assignment.value, visit);
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -196,6 +206,21 @@ fn walk_expr_markers(expr: &mut tidb_ast::Expr, visit: &mut dyn FnMut(&mut tidb_
             }
         }
         Expr::Cast(cast) => walk_expr_markers(&mut cast.expr, visit),
+        // A subquery is a query, so its own clauses carry markers: captured,
+        // `select a from t where a in (select a from t where b = ?)` binds one
+        // parameter. Without these arms such a marker is simply not counted,
+        // and the count check then rejects the statement -- a silent refusal
+        // of a shape TiDB accepts.
+        Expr::Subquery(query) => walk_query_markers(query, visit),
+        Expr::Exists { subquery, .. } => walk_query_markers(subquery, visit),
+        Expr::InSubquery { expr, subquery, .. } => {
+            walk_expr_markers(expr, visit);
+            walk_query_markers(subquery, visit);
+        }
+        Expr::CompareSubquery { left, subquery, .. } => {
+            walk_expr_markers(left, visit);
+            walk_query_markers(subquery, visit);
+        }
         _ => {}
     }
 }

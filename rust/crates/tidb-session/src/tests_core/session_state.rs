@@ -641,16 +641,21 @@ fn prepared_statement_parameters() {
         [["4"]]
     );
 
-    // Too few or too many values is Go's ErrWrongParamCount (1210).
+    // Too few or too many values is Go's `plannererrors.ErrWrongParamCount`
+    // (8112, `[planner:8112]Wrong parameter count`), captured from TiDB in
+    // both directions: `EXECUTE p0 USING @a` for a marker-free statement and
+    // `EXECUTE stmt` for one that carries a marker report the same code. The
+    // check is `planCachePreprocess`'s step 1, which the binary protocol and
+    // the SQL-level `EXECUTE` both reach.
     match session.run_with_params("SELECT a FROM t WHERE a = ?", &[]) {
         Ok(_) => panic!("an unbound marker should fail"),
-        Err(error) => assert_eq!(error.to_mysql_error().code, 1210),
+        Err(error) => assert_eq!(error.to_mysql_error().code, 8112),
     }
     match session.run_with_params(
         "SELECT a FROM t WHERE a = ?",
         &[Datum::Int(1), Datum::Int(2)],
     ) {
         Ok(_) => panic!("an extra value should fail"),
-        Err(error) => assert_eq!(error.to_mysql_error().code, 1210),
+        Err(error) => assert_eq!(error.to_mysql_error().code, 8112),
     }
 }

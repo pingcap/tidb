@@ -275,6 +275,29 @@ impl Session {
             return Ok(StmtOutput::Affected(0));
         }
         let mut stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        // SQL-level prepared statements are answered before variable binding,
+        // because a `USING` entry is a variable whose VALUE this statement
+        // must read itself (Go's `usingParam.Eval`) rather than one to
+        // substitute into the `EXECUTE`'s own text. `EXECUTE` re-enters this
+        // same function with the bound statement, so the inner statement takes
+        // every door -- schema, transaction control, dispatch -- that a
+        // directly written one does.
+        if let Stmt::Session(session_stmt) = &stmt {
+            match &**session_stmt {
+                SessionStmt::Prepare { name, source } => {
+                    self.prepare_statement(name, source)?;
+                    return Ok(StmtOutput::Affected(0));
+                }
+                SessionStmt::Execute { name, using } => {
+                    return self.execute_prepared_statement(name, using);
+                }
+                SessionStmt::Deallocate(name) => {
+                    self.deallocate_prepared_statement(name)?;
+                    return Ok(StmtOutput::Affected(0));
+                }
+                _ => {}
+            }
+        }
         // `@@x` / `@x` read the session's own state, so they are bound before
         // the statement reaches the driver.
         // A `SET_VAR` hint overlays the session BEFORE anything reads a
