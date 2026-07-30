@@ -1064,6 +1064,35 @@ fn show_charset_engines_collation() {
     assert!(session.run("SHOW CHARSET WHERE Charset = 'utf8'").is_err());
 }
 
+/// `tidb_enable_fast_analyze` names a feature TiDB v7.5.0 REMOVED: turning it
+/// on is accepted and warned about, turning it off is silent, and `SET GLOBAL`
+/// warns the same way. Captured through `gorun` (see
+/// `Session::warn_removed_feature_var`).
+#[test]
+fn setting_a_removed_feature_switch_on_warns() {
+    let mut session = Session::new();
+
+    session
+        .run("SET @@session.tidb_enable_fast_analyze = 1")
+        .unwrap();
+    let expected = vec![vec![
+        "Warning".to_owned(),
+        "1105".to_owned(),
+        "the fast analyze feature has already been removed in TiDB v7.5.0, so this will have \
+         no effect"
+            .to_owned(),
+    ]];
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+
+    session
+        .run("SET @@session.tidb_enable_fast_analyze = 0")
+        .unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+
+    session.run("SET GLOBAL tidb_enable_fast_analyze = ON").unwrap();
+    assert_eq!(row_text(session.run("SHOW WARNINGS")), expected);
+}
+
 #[test]
 fn show_warnings() {
     let mut session = Session::new();

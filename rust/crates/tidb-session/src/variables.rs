@@ -237,6 +237,7 @@ impl Session {
         // Go stores every system variable as a string.
         let value = value.unwrap_or_default();
         self.check_read_only_noop(&assignment.name, &value, is_global)?;
+        self.warn_removed_feature_var(&assignment.name, &value);
         if is_global {
             return self
                 .vars
@@ -262,6 +263,49 @@ impl Session {
             self.commit()?;
         }
         Ok(())
+    }
+
+    /// Go's `tidb_enable_fast_analyze` `Validation` closure (`sysvar.go`): the
+    /// feature is gone, so turning the switch ON is ACCEPTED and warned about
+    /// rather than refused, and turning it OFF says nothing.
+    ///
+    /// The switch is `ScopeGlobal|ScopeSession` and `Validation` runs for both,
+    /// so `SET GLOBAL` warns the same way `SET SESSION` does. Captured through
+    /// `gorun`:
+    ///
+    /// ```text
+    /// set @@session.tidb_enable_fast_analyze=1; show warnings;
+    ///   Warning|1105|the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect
+    /// set @@session.tidb_enable_fast_analyze=0; show warnings;  -- empty
+    /// set global tidb_enable_fast_analyze=1;    show warnings;
+    ///   Warning|1105|the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect
+    /// ```
+    ///
+    /// The message is built with `errors.NewNoStackError`, so it carries no
+    /// code of its own and files under `ER_UNKNOWN_ERROR` (1105), the same way
+    /// [`crate::warnings::CHECK_CONSTRAINT_IS_OFF_CODE`] does.
+    ///
+    /// Go tests the NORMALIZED value with `TiDBOptOn`, so this normalizes the
+    /// typed text through the registry first: `1`, `on` and `ON` all warn,
+    /// while a value the type check would reject falls through to the real
+    /// rejection below.
+    fn warn_removed_feature_var(&mut self, name: &str, value: &str) {
+        if !name.eq_ignore_ascii_case("tidb_enable_fast_analyze") {
+            return;
+        }
+        let normalized = sysvar::get_sys_var(name)
+            .and_then(|def| def.validate(value).ok())
+            .map(|validated| validated.value);
+        if normalized.as_deref() != Some("ON") {
+            return;
+        }
+        self.warnings.push(crate::warnings::SqlWarning {
+            level: crate::warnings::WarningLevel::Warning,
+            code: 1105,
+            message: "the fast analyze feature has already been removed in TiDB v7.5.0, so this \
+                      will have no effect"
+                .to_owned(),
+        });
     }
 
     /// Go's `rand_seed1`/`rand_seed2` `SetSession` hooks: the value SET is a

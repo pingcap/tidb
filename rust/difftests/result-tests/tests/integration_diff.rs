@@ -162,6 +162,11 @@ const TOPICS: &[(&str, &str)] = &[
          access properties, so a regression in which side of a `FROM (SELECT ...)` is \
          read, or how, turns it red",
     ),
+    (
+        "executor/analyze",
+        "ANALYZE's own statement surface: which forms are accepted, which are refused \
+         as removed features, and the warnings a `SET` of a removed switch raises",
+    ),
 ];
 
 /// Why one statement did not produce a comparable outcome. Every skip lands in
