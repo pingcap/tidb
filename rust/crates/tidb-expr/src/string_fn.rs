@@ -250,13 +250,8 @@ pub(crate) fn locate_collation(substr: &Datum, str: &Datum) -> tidb_datatype::Co
 /// what makes a folding collation match; a collation whose folding changes
 /// character COUNT (none this tier registers) would need a different scan.
 ///
-/// A `binary` collation selects Go's OTHER signature, not just another
-/// comparison rule: `locateFunctionClass.getFunction` branches on
-/// `bf.collation == charset.CollationBin` to `builtinLocate2ArgsSig` /
-/// `builtinInstrSig`, whose `strings.Index(str, subStr) + 1` reports a BYTE
-/// offset where the UTF-8 signatures report a character offset. Captured from
-/// TiDB: `INSTR(CAST('aéb' AS BINARY), 'b')` is 4 (`é` is two bytes) while
-/// `INSTR('aéb', 'b')` is 3.
+/// A `binary` collation selects Go's OTHER signature -- byte offsets, not
+/// character ones -- and never reaches here: [`locate`] branches to it first.
 pub(crate) fn position_with_collation(
     substr: Option<String>,
     str: Option<String>,
@@ -265,12 +260,6 @@ pub(crate) fn position_with_collation(
     let (Some(substr), Some(str)) = (substr, str) else {
         return Datum::Null;
     };
-    if collation == tidb_datatype::Collation::Binary {
-        if substr.is_empty() {
-            return Datum::Int(1);
-        }
-        return Datum::Int(str.find(&substr).map_or(0, |index| index as i64 + 1));
-    }
     let needle: Vec<char> = substr.chars().collect();
     let haystack: Vec<char> = str.chars().collect();
     if needle.is_empty() {
