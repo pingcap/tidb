@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ucadata
+//go:build !icugen
 
-const (
-	// LongRune8 means the rune has at most 8 collation elements
-	LongRune8 = 0xFFFD
-)
+// This stub keeps the icugen package buildable in normal builds (where the real, cgo + ICU
+// extractor in main.go is excluded by the `icugen` build tag). Run the real tool with:
+//
+//	go run -tags icugen ./pkg/util/collate/icudata/icugen
+package main
 
-//go:generate go run ./generator/ -- unicode_0900_ai_ci_data_generated.go
-//go:generate go run ./generator/ -- unicode_ci_data_generated.go
-//go:generate go run ./generator/ -- unicode_0900_as_cs_data_generated.go
+func main() {}
