@@ -81,6 +81,7 @@ go_library(
         "task.go",
         "telemetry.go",
         "trace.go",
+        "trivial_plan.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core",
