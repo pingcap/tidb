@@ -1123,32 +1123,6 @@ impl Session {
     }
 }
 
-/// Which non-global `GRANT`/`REVOKE` scope a privilege list is being
-/// validated against -- selects between Go's `mysql.AllDBPrivs` and
-/// `mysql.AllTablePrivs`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScopeKind {
-    /// `ON db.*`.
-    Database,
-    /// `ON db.t`.
-    Table,
-}
-
-/// A TABLE-scope `GRANT`/`REVOKE` privilege list split into the two kinds of
-/// row it writes: the `mysql.Tables_priv` privileges (those written without a
-/// column list) and the `mysql.Columns_priv` ones. One statement may carry
-/// both (captured: `GRANT SELECT, INSERT (a), UPDATE ON cg.t` writes a table
-/// row of `SELECT,UPDATE` and a column row of `INSERT` on `a`, and
-/// `SHOW GRANTS` prints them as two lines).
-#[derive(Debug, Default)]
-struct TableScopePrivs {
-    /// The privileges written without a column list.
-    table: Vec<privilege::GlobalPriv>,
-    /// `(column, mask)` in the order the columns were first named, merged so
-    /// that a column named by several privileges appears once.
-    columns: Vec<(String, u64)>,
-}
-
 impl Session {
     /// The query clauses this tier parses but cannot execute.
     ///
