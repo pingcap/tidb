@@ -6324,11 +6324,8 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
 	expectedExternalID := config.GetGlobalKeyspaceName()
 	hasAccessKey := false
-	hasEmptyAccessKey := false
 	hasSecretAccessKey := false
-	hasEmptySecretAccessKey := false
 	hasRoleARN := false
-	hasEmptyRoleARN := false
 	for k, vs := range values {
 		normalizedK := objstore.NormalizeQueryParameterKey(k)
 		switch normalizedK {
@@ -6340,19 +6337,14 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 			}
 		case s3like.S3AccessKey:
 			hasAccessKey = hasAccessKey || values.Get(k) != ""
-			hasEmptyAccessKey = hasEmptyAccessKey || values.Get(k) == ""
 		case s3like.S3SecretAccessKey:
 			hasSecretAccessKey = hasSecretAccessKey || values.Get(k) != ""
-			hasEmptySecretAccessKey = hasEmptySecretAccessKey || values.Get(k) == ""
 		case s3like.S3RoleARN:
 			hasRoleARN = hasRoleARN || values.Get(k) != ""
-			hasEmptyRoleARN = hasEmptyRoleARN || values.Get(k) == ""
 		}
 	}
 
-	hasValidRoleARN := hasRoleARN && !hasEmptyRoleARN
-	hasValidAccessKeyPair := hasAccessKey && !hasEmptyAccessKey && hasSecretAccessKey && !hasEmptySecretAccessKey
-	if !hasValidRoleARN && !hasValidAccessKeyPair {
+	if !hasRoleARN && !(hasAccessKey && hasSecretAccessKey) {
 		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
 

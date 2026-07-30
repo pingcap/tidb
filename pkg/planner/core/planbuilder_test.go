@@ -1157,11 +1157,11 @@ func TestProcessNextGenS3Path(t *testing.T) {
 	}
 
 	for _, str := range []string{
+		"s3://bucket?external-id=aaa&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external_id=aaa&access-key=ak&secret-access-key=sk",
+		"s3://bucket?external-id=aaa&external_id=aaa&access-key=ak&secret-access-key=sk",
 		"s3://bucket?access-key=ak&secret-access-key=sk",
 		"s3://bucket?access_key=ak&secret_access_key=sk",
-		"s3://bucket?external-id=aaa&access-key=ak&secret-access-key=sk",
-		"s3://bucket?external_id=aaa&access_key=ak&secret_access_key=sk",
-		"s3://bucket?external-id=aaa&external_id=aaa&access-key=ak&secret-access-key=sk",
 		"oss://bucket?role-arn=arn",
 		"oss://bucket?role_arn=arn",
 	} {
@@ -1177,11 +1177,8 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		"s3://bucket?access-key=ak",
 		"s3://bucket?secret-access-key=sk",
 		"s3://bucket?profile=dev",
-		"s3://bucket?access-key=ak&ACCESS_KEY=&secret-access-key=sk",
-		"s3://bucket?access-key=ak&secret-access-key=sk&SECRET_ACCESS_KEY=",
 		"oss://bucket",
 		"oss://bucket?role-arn=",
-		"oss://bucket?role-arn=arn&ROLE_ARN=",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
