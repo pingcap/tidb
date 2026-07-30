@@ -60,7 +60,9 @@ const GRANDFATHERED: &[(&str, usize)] = &[
     ("crates/tidb-session/src/tests_core.rs", 4_512),
     ("crates/tidb-error/src/tidb/errcode.rs", 4_202),
     ("crates/tidb-expr/src/builtin_ext/json.rs", 3_810),
-    ("crates/tidb-executor/src/driver/tests.rs", 3_464),
+    // Raised 3,464 -> 3,486: the Apply-below-aggregation stage added its
+    // driver tests (8b7ad5fe55).
+    ("crates/tidb-executor/src/driver/tests.rs", 3_486),
     ("crates/tidb-lexer/src/keyword_catalog.rs", 3_450),
     ("crates/tidb-error/src/mysql/errcode.rs", 3_431),
     ("crates/tidb-session/src/privilege.rs", 3_216),
