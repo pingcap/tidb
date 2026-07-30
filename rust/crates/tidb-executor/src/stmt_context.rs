@@ -444,6 +444,32 @@ impl StmtContext {
         }
     }
 
+    /// Go `util.GetTypeFlagsForInsert` -- the flags a COLUMN WRITE converts
+    /// under, which are NOT the ones an expression converts under.
+    ///
+    /// The one bit that differs from [`Self::conversion_flags`] is
+    /// `FlagAllowNegativeToUnsigned`, which Go clears unconditionally for a
+    /// write. It is set in `types.DefaultStmtFlags` only as a refactoring
+    /// leftover (the source says so), and leaving it set on the write path
+    /// made a negative value REINTERPRET as unsigned instead of overflowing:
+    /// captured, `INSERT INTO t(a INT UNSIGNED) VALUES (-5)` under
+    /// `sql_mode = ''` stores `0` in TiDB and stored `4294967295` here, while
+    /// the strict mode's 1264 was already right -- a silently wrong VALUE
+    /// with a correct-looking error path beside it.
+    ///
+    /// NOT MODELLED, and named rather than guessed: `WithTruncateAsWarning`,
+    /// `WithIgnoreInvalidDateErr` and `WithIgnoreZeroInDate`. The first is
+    /// applied a level up instead -- `cast_value_for_column` reads
+    /// [`Self::strict`] to decide whether a conversion event is an error or a
+    /// warning -- and the last two need the `NO_ZERO_IN_DATE`,
+    /// `NO_ZERO_DATE` and `ALLOW_INVALID_DATES` mode bits, which this context
+    /// does not carry yet.
+    #[must_use]
+    pub fn write_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
+        self.conversion_flags()
+            .with_allow_negative_to_unsigned(false)
+    }
+
     /// Records a warning the driver rendered itself.
     pub fn append_warning_parts(&self, code: u16, message: &str) {
         self.append_warning(code, message);

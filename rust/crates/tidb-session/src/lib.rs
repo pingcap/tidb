@@ -525,3 +525,5 @@ mod tests_user_vars;
 mod tests_views;
 #[cfg(test)]
 mod tests_window;
+#[cfg(test)]
+mod tests_write_conversion;

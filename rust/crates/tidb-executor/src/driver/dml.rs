@@ -595,7 +595,7 @@ pub(crate) fn cast_value_for_column(
         return Ok(value);
     }
     let converted = value
-        .convert_to(field_type, ctx.conversion_flags())
+        .convert_to(field_type, ctx.write_conversion_flags())
         .map_err(|error| {
             json_write_error(&error).unwrap_or(DriverError::IncorrectValue {
                 type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
