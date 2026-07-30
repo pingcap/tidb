@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -618,7 +619,20 @@ func TestOrderByAndLimit(t *testing.T) {
 	originOOMAction := tk.MustQuery("show variables like 'tidb_mem_oom_action'").Rows()[0][1].(string)
 	tk.MustExec("set session tidb_mem_quota_query=128")
 	tk.MustExec("set global tidb_mem_oom_action=CANCEL")
-	err := tk.QueryToErr("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > 1 order by a limit 2000")
+	queryToErrAtAnyStage := func(sql string) error {
+		res, err := tk.Exec(sql)
+		if err != nil {
+			if res != nil {
+				require.NoError(t, res.Close())
+			}
+			return err
+		}
+		require.NotNil(t, res)
+		_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
+		require.NoError(t, res.Close())
+		return err
+	}
+	err := queryToErrAtAnyStage("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > 1 order by a limit 2000")
 	require.Error(t, err)
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 	tk.MustExec(fmt.Sprintf("set session tidb_mem_quota_query=%s", originMemQuota))

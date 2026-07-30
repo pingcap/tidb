@@ -37,8 +37,19 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 )
+
+func consumeTrackedMem(tracker *memory.Tracker, bytes int64) func() {
+	if tracker == nil || bytes <= 0 {
+		return func() {}
+	}
+	tracker.Consume(bytes)
+	return func() {
+		tracker.Consume(-bytes)
+	}
+}
 
 func validInterval(ec errctx.Context, loc *time.Location, low, high *point) (bool, error) {
 	l, err := codec.EncodeKey(loc, nil, low.value)
@@ -171,6 +182,8 @@ func points2Ranges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *t
 		}
 		ranges[i] = &rangeObjs[i]
 	}
+	releaseTrackedMem := consumeTrackedMem(sctx.MemTracker, ranges.MemUsage())
+	defer releaseTrackedMem()
 	return ranges, false, nil
 }
 
@@ -313,6 +326,8 @@ func appendPoints2Ranges(sctx *rangerctx.RangerContext, origin Ranges, rangePoin
 			newIndexRanges = append(newIndexRanges, newRanges...)
 		}
 	}
+	releaseTrackedMem := consumeTrackedMem(sctx.MemTracker, newIndexRanges.MemUsage())
+	defer releaseTrackedMem()
 	return newIndexRanges, false, nil
 }
 
@@ -482,6 +497,8 @@ func points2TableRanges(sctx *rangerctx.RangerContext, rangePoints []*point, new
 		}
 		ranges = append(ranges, ran)
 	}
+	releaseTrackedMem := consumeTrackedMem(sctx.MemTracker, ranges.MemUsage())
+	defer releaseTrackedMem()
 	return ranges, false, nil
 }
 
