@@ -51,8 +51,21 @@ impl LimitExec {
     /// Builds a limit over `child` skipping `offset` rows and emitting at most
     /// `count` rows (Go builds `begin`/`end` from the plan's Offset/Count the
     /// same way).
+    ///
+    /// `count` is SATURATED against the offset first, because Go's `end` is a
+    /// plain `v.Offset + v.Count` on `uint64`
+    /// (`pkg/executor/builder.go` `buildLimit`) that would WRAP -- and it never
+    /// gets the chance to, because the planner already clamped the count:
+    /// `pkg/planner/core/logical_plan_builder.go` `buildLimit` has
+    /// `if count > math.MaxUint64-offset { count = math.MaxUint64 - offset }`.
+    /// The distinction decides real rows, not just whether this panics:
+    /// `select * from t limit 18446744073709551615 offset 1` over three rows
+    /// returns rows 2 and 3 in real TiDB (captured via `gorun`), whereas a
+    /// wrapping `offset + count` makes `end` 0, `cursor >= end` true on the
+    /// first call, and the statement return NOTHING.
     #[must_use]
     pub fn new(meta: ExecutorMeta, offset: u64, count: u64, child: Box<dyn Executor>) -> Self {
+        let count = count.min(u64::MAX - offset);
         let child_result = child.new_chunk();
         LimitExec {
             meta,
@@ -296,6 +309,29 @@ mod tests {
     #[test]
     fn zero_count_is_empty() {
         let mut e = limit_over(3, 0, 0);
+        assert_eq!(collect(&mut e), Vec::<i64>::new());
+    }
+
+    /// `LIMIT 18446744073709551615 OFFSET 1` -- TiDB's own
+    /// `executor/executor` script writes exactly this. The count is
+    /// `u64::MAX`, so `offset + count` neither fits nor may WRAP: Go's planner
+    /// clamps the count to `MaxUint64 - offset` before the executor's
+    /// unchecked add ever sees it, and real TiDB returns EVERY REMAINING ROW
+    /// (captured through `gorun` over a three-row table: rows 2 and 3). A
+    /// wrapping add would make `end` 0 and return NOTHING -- a silently empty
+    /// result set, which is why this asserts the ROWS and not merely that the
+    /// executor did not panic.
+    #[test]
+    fn count_at_u64_max_saturates_against_the_offset_instead_of_wrapping() {
+        let mut e = limit_over(3, 1, u64::MAX);
+        assert_eq!(collect(&mut e), vec![2, 3]);
+    }
+
+    /// The offset side of the same clamp: an offset past every row is empty,
+    /// not a panic, even when the count is `u64::MAX` as well.
+    #[test]
+    fn offset_at_u64_max_is_empty() {
+        let mut e = limit_over(3, u64::MAX, u64::MAX);
         assert_eq!(collect(&mut e), Vec::<i64>::new());
     }
 }
