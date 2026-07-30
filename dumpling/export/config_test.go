@@ -59,7 +59,7 @@ func TestGetConfTables(t *testing.T) {
 }
 
 func TestColumnFilters(t *testing.T) {
-	columnFilter := &columnFilterConfig{
+	columnFilter := columnFilterConfig{
 		Filters: []columnFilterRule{
 			{Matcher: []string{"db1.*"}, Columns: []string{"*", "!c*"}},
 			{Matcher: []string{"db1.t1"}, Columns: []string{"c2"}},
@@ -94,13 +94,13 @@ func TestParseColumnFilterFile(t *testing.T) {
 matcher = ["db1.t1", "db2.t2"]
 columns = ["c1", "C2"]
 `)
-	columnFilter, err := parseColumnFilterFile(path, false)
+	columnFilter, err := parseColumnFilterConfig(path, false)
 	require.NoError(t, err)
 	selectedFields, err := columnFilter.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1", "C2"}, selectedFields)
 
-	columnFilter, err = parseColumnFilterFile(path, true)
+	columnFilter, err = parseColumnFilterConfig(path, true)
 	require.NoError(t, err)
 	selectedFields, err = columnFilter.applyToColumns("DB1", "T1", []string{"c1"})
 	require.NoError(t, err)
@@ -111,13 +111,13 @@ columns = ["c1", "C2"]
 matcher = ["db.t"]
 columns = ["/unterminated"]
 `)
-	_, err = parseColumnFilterFile(path, false)
+	_, err = parseColumnFilterConfig(path, false)
 	require.ErrorContains(t, err, "failed to parse --column-filter-file filter 0 columns")
 }
 
 func TestParseColumnFilterFileFlag(t *testing.T) {
 	conf := parseConfigFromArgsForTest(t, "--no-schemas")
-	require.Nil(t, conf.columnFilter)
+	require.Empty(t, conf.columnFilter.Filters)
 
 	path := writeColumnFilterFileForTest(t, `
 [[filters]]
@@ -154,9 +154,9 @@ func writeColumnFilterFileForTest(t *testing.T, content string) string {
 	return path
 }
 
-func newColumnFilterConfigForTest(t *testing.T, filters ...columnFilterRule) *columnFilterConfig {
+func newColumnFilterConfigForTest(t *testing.T, filters ...columnFilterRule) columnFilterConfig {
 	t.Helper()
-	columnFilter := &columnFilterConfig{
+	columnFilter := columnFilterConfig{
 		Filters: filters,
 	}
 	require.NoError(t, columnFilter.compile(false))

@@ -22,19 +22,19 @@ type columnFilterRule struct {
 	columnRules filter.ColumnFilterRules
 }
 
-func parseColumnFilterFile(path string, caseSensitive bool) (*columnFilterConfig, error) {
+func parseColumnFilterConfig(path string, caseSensitive bool) (columnFilterConfig, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to read --column-filter-file %s", path)
+		return columnFilterConfig{}, errors.Annotatef(err, "failed to read --column-filter-file %s", path)
 	}
 	var columnFilter columnFilterConfig
 	if _, err := toml.Decode(string(content), &columnFilter); err != nil {
-		return nil, errors.Annotatef(err, "failed to parse --column-filter-file %s", path)
+		return columnFilterConfig{}, errors.Annotatef(err, "failed to parse --column-filter-file %s", path)
 	}
 	if err := columnFilter.compile(caseSensitive); err != nil {
-		return nil, err
+		return columnFilterConfig{}, err
 	}
-	return &columnFilter, nil
+	return columnFilter, nil
 }
 
 func (c *columnFilterConfig) compile(caseSensitive bool) error {
