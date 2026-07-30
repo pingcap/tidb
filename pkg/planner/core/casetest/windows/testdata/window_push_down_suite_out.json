@@ -564,13 +564,14 @@
         "Plan": [
           "Projection root  Column",
           "└─Sort root  test.t2.c1, test.t2.c2",
-          "  └─Window root  count(1)->Column over(partition by Column)",
-          "    └─Projection root  0->Column, test.t2.c1, test.t2.c2",
-          "      └─TableReader root  data:TableFullScan",
-          "        └─TableFullScan cop[tikv] table:ref_0 keep order:false, stats:pseudo",
-          "ScalarSubQuery root  Output: ",
+          "  └─Projection root  case(<nil>, Column, 1)->Column, test.t2.c1, test.t2.c2",
+          "    └─Window root  count(1)->Column over(partition by Column)",
+          "      └─Projection root  0->Column, test.t2.c1, test.t2.c2",
+          "        └─TableReader root  data:TableFullScan",
+          "          └─TableFullScan cop[tikv] table:ref_0 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ScalarQueryCol#6",
           "└─TableDual root  rows:1",
-          "ScalarSubQuery root  Output: ",
+          "ScalarSubQuery root  Output: ScalarQueryCol#10",
           "└─TableDual root  rows:1"
         ],
         "Result": [
