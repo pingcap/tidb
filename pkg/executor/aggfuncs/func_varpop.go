@@ -94,8 +94,10 @@ func calculateMerge(srcCount, dstCount int64, srcSum, dstSum, srcVariance, dstVa
 	srcCountFloat64 := float64(srcCount)
 	dstCountFloat64 := float64(dstCount)
 
-	t := (srcCountFloat64/dstCountFloat64)*dstSum - srcSum
-	dstVariance += srcVariance + ((dstCountFloat64/srcCountFloat64)/(dstCountFloat64+srcCountFloat64))*t*t
+	srcMean := srcSum / srcCountFloat64
+	dstMean := dstSum / dstCountFloat64
+	meanDelta := dstMean - srcMean
+	dstVariance += srcVariance + meanDelta*meanDelta*srcCountFloat64*dstCountFloat64/(dstCountFloat64+srcCountFloat64)
 	return dstVariance
 }
 
