@@ -39,6 +39,7 @@
 //! `Next`, as Go returns it from `Next`.
 
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use tidb_chunk::chunk::Chunk;
@@ -46,6 +47,9 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
+use tidb_util::memory::Tracker;
+
+use crate::mem_quota::StatementMemory;
 
 /// Go `planner/util.ByItems`: one `ORDER BY` item -- the key expression and
 /// its direction.
@@ -73,17 +77,30 @@ pub struct SortExec<C: Columns> {
     order: Vec<(usize, usize)>,
     /// Go `Unparallel.Idx` in spirit: how many sorted rows were emitted.
     cursor: usize,
+    /// The statement's memory budget, which this operator's tracker hangs off
+    /// and whose quota it checks after each `Consume`.
+    memory: StatementMemory,
+    /// Go `SortExec.memTracker` = `memory.NewTracker(e.ID(), -1)` attached to
+    /// `StmtCtx.MemTracker`: this operator's own node in the tracker tree, so
+    /// `SHOW`-style tree dumps attribute the bytes to the sort.
+    tracker: Arc<Tracker>,
 }
 
 impl<C: Columns> SortExec<C> {
     /// Builds a sort of `child`'s rows by `by_items`, evaluated with `ctx`.
+    /// `memory` is the statement's budget (Go: the `StmtCtx.MemTracker` the
+    /// operator attaches to). It is a required argument rather than an
+    /// optional one so a new call site cannot produce an UNACCOUNTED sort by
+    /// omitting it.
     #[must_use]
     pub fn new(
         meta: ExecutorMeta,
         by_items: Vec<SortByItem>,
         child: Box<dyn Executor>,
         ctx: C,
+        memory: StatementMemory,
     ) -> Self {
+        let tracker = memory.operator_tracker(meta.id());
         SortExec {
             meta,
             by_items,
@@ -93,6 +110,8 @@ impl<C: Columns> SortExec<C> {
             child_chunks: Vec::new(),
             order: Vec::new(),
             cursor: 0,
+            memory,
+            tracker,
         }
     }
 
@@ -100,13 +119,22 @@ impl<C: Columns> SortExec<C> {
     /// evaluates each by-item key once per row, and stably sorts the row
     /// locations.
     fn fetch_and_sort(&mut self) -> Result<(), ExecError> {
-        // Drain the child into materialized chunks.
+        // Drain the child into materialized chunks, accounting each one as Go
+        // `sortPartition.add` does -- `chunk.RowSize*rowNum + chk.MemoryUsage()`
+        // -- and checking the quota right after, which is where Go's `Consume`
+        // fires the OOM action. Accounting INSIDE the loop is what makes a
+        // query over a large table stop early instead of first materializing
+        // everything and only then noticing.
         loop {
             let mut chunk = self.child.new_chunk();
             self.child.next(&mut chunk)?;
             if chunk.num_rows() == 0 {
                 break;
             }
+            let rows = i64::try_from(chunk.num_rows()).unwrap_or(i64::MAX);
+            self.tracker
+                .consume(chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * rows);
+            self.memory.check()?;
             self.child_chunks.push(chunk);
         }
 
@@ -117,9 +145,21 @@ impl<C: Columns> SortExec<C> {
             for ri in 0..chunk.num_rows() {
                 let row = chunk.get_row(ri);
                 let mut key = Vec::with_capacity(self.by_items.len());
+                let mut key_bytes = i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
                 for item in &self.by_items {
-                    key.push(item.expr.eval(&self.ctx, row)?);
+                    let datum = item.expr.eval(&self.ctx, row)?;
+                    key_bytes += i64::try_from(datum.estimated_mem_usage()).unwrap_or(i64::MAX);
+                    key.push(datum);
                 }
+                // OVER-COUNT vs Go, deliberately: Go's sort keeps no
+                // materialized key at all (`keyCmpFuncs` re-reads the chunk
+                // cell on every comparison), so `keys` is memory THIS port
+                // holds and Go does not. The tracker reports what this process
+                // actually took, because a tracker that matched Go's number
+                // while the process held more would fail to protect. It makes
+                // a sort here cross a given quota sooner than Go's does.
+                self.tracker.consume(key_bytes);
+                self.memory.check()?;
                 keys.push(key);
                 self.order.push((ci, ri));
             }
@@ -170,13 +210,17 @@ impl<C: Columns> SortExec<C> {
 }
 
 impl<C: Columns> Executor for SortExec<C> {
-    /// Go `Open`: resets the fetched state and opens the child (trackers and
-    /// the parallel machinery are deferred).
+    /// Go `Open`: resets the fetched state and opens the child (the parallel
+    /// machinery is deferred).
     fn open(&mut self) -> Result<(), ExecError> {
         self.fetched = false;
         self.child_chunks.clear();
         self.order.clear();
         self.cursor = 0;
+        // Go `SortExec.Open`: `e.memTracker.ReplaceBytesUsed(0)` -- a re-opened
+        // sort (an Apply's inner side re-runs per outer row) must not keep
+        // charging for rows it has just dropped.
+        self.tracker.replace_bytes_used(0);
         self.child.open()
     }
 
@@ -200,11 +244,13 @@ impl<C: Columns> Executor for SortExec<C> {
         Ok(())
     }
 
-    /// Go `Close` (minus the spill/parallel teardown and tracker reset,
-    /// deferred): releases the materialized rows and closes the child.
+    /// Go `Close` (minus the spill/parallel teardown, deferred): releases the
+    /// materialized rows, gives their bytes back to the statement's budget,
+    /// and closes the child.
     fn close(&mut self) -> Result<(), ExecError> {
         self.child_chunks.clear();
         self.order.clear();
+        self.tracker.replace_bytes_used(0);
         self.child.close()
     }
 
@@ -232,6 +278,7 @@ impl<C: Columns> Executor for SortExec<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mem_quota::OomAction;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
     use tidb_expr::NoColumns;
@@ -320,7 +367,111 @@ mod tests {
             by,
             Box::new(source),
             NoColumns,
+            StatementMemory::default(),
         )
+    }
+
+    /// Same as [`sorter`] but with a caller-chosen budget, so a test can pick
+    /// a quota the sort must cross.
+    fn sorter_with_memory(
+        n_cols: usize,
+        rows: &[Vec<Option<i64>>],
+        by: Vec<SortByItem>,
+        memory: StatementMemory,
+    ) -> SortExec<NoColumns> {
+        let fields: Vec<FieldType> = (0..n_cols).map(|_| long()).collect();
+        let mut data = Chunk::new_with_capacity(&fields, rows.len().max(1));
+        for row in rows {
+            for (c, v) in row.iter().enumerate() {
+                match v {
+                    Some(v) => data.append_int64(c, *v),
+                    None => data.append_null(c),
+                }
+            }
+        }
+        let source = OneChunkSource {
+            meta: ExecutorMeta::new(schema_of(n_cols), 0, 4, 1024),
+            data: Some(data),
+        };
+        SortExec::new(
+            ExecutorMeta::new(schema_of(n_cols), 1, 4, 1024),
+            by,
+            Box::new(source),
+            NoColumns,
+            memory,
+        )
+    }
+
+    fn one_col_rows(n: i64) -> Vec<Vec<Option<i64>>> {
+        (0..n).rev().map(|v| vec![Some(v)]).collect()
+    }
+
+    #[test]
+    fn a_sort_accounts_its_materialized_rows_against_the_statement() {
+        let memory = StatementMemory::default();
+        let mut exec = sorter_with_memory(
+            1,
+            &one_col_rows(64),
+            vec![SortByItem {
+                expr: col_expr(0),
+                desc: false,
+            }],
+            memory.clone(),
+        );
+        assert_eq!(memory.bytes_consumed(), 0, "nothing before the fetch");
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        exec.next(&mut req).unwrap();
+        let held = memory.bytes_consumed();
+        // At least the retained chunk bytes plus one row cursor per row; the
+        // exact total also carries the materialized keys.
+        assert!(
+            held > tidb_chunk::row::ROW_SIZE * 64,
+            "accounted only {held} bytes for 64 retained rows"
+        );
+        // Go `Close` releases the partition: the statement's budget must come
+        // back down, or a session would leak its quota statement by statement.
+        exec.close().unwrap();
+        assert_eq!(memory.bytes_consumed(), 0);
+    }
+
+    #[test]
+    fn crossing_the_quota_fails_the_sort_with_8175_under_cancel() {
+        // A quota far below what 4096 retained rows need.
+        let memory = StatementMemory::new(2048, OomAction::Cancel, 42);
+        let mut exec = sorter_with_memory(
+            1,
+            &one_col_rows(4096),
+            vec![SortByItem {
+                expr: col_expr(0),
+                desc: false,
+            }],
+            memory.clone(),
+        );
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        match exec.next(&mut req) {
+            Err(ExecError::MemoryExceedForQuery { conn_id }) => assert_eq!(conn_id, 42),
+            other => panic!("expected the quota to be enforced, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_same_sort_completes_under_log_however_far_it_overruns() {
+        let memory = StatementMemory::new(2048, OomAction::Log, 42);
+        let mut exec = sorter_with_memory(
+            1,
+            &one_col_rows(4096),
+            vec![SortByItem {
+                expr: col_expr(0),
+                desc: false,
+            }],
+            memory.clone(),
+        );
+        let out = collect(&mut exec);
+        assert_eq!(out.len(), 4096);
+        assert_eq!(out[0], vec![Some(0)]);
+        assert_eq!(out[4095], vec![Some(4095)]);
     }
 
     fn collect(exec: &mut SortExec<NoColumns>) -> Vec<Vec<Option<i64>>> {

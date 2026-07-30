@@ -200,10 +200,13 @@ impl Session {
             .ok()
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY);
+        // `tidb_mem_oom_action` has GLOBAL scope only, so its live value is
+        // the shared table's, not any session copy -- `get_system` would only
+        // ever hand back the registry default.
         let oom_action = tidb_executor::OomAction::parse(
             &self
                 .vars
-                .get_system("tidb_mem_oom_action")
+                .get_global("tidb_mem_oom_action")
                 .unwrap_or_default(),
         );
         if !is_dml {

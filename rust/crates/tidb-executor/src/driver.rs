@@ -778,6 +778,7 @@ pub(crate) fn run_select_traced(
             by_items,
             source,
             ctx.clone(),
+            ctx.statement_memory(),
         ));
         if let Some(trace) = trace.as_deref_mut() {
             trace.sort(&traced_select.order_by, &qualify);

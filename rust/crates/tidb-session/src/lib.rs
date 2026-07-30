@@ -471,6 +471,7 @@ mod tests_join_predicate_placement;
 #[cfg(test)]
 mod tests_json;
 #[cfg(test)]
+mod tests_mem_quota;
 mod tests_multi_table_dml;
 #[cfg(test)]
 mod tests_recursive_cte;

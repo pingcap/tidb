@@ -1287,6 +1287,7 @@ fn build_order_and_limit(
             by_items,
             root,
             ctx.clone(),
+            ctx.statement_memory(),
         ));
     }
     if let Some(limit) = &select.limit {

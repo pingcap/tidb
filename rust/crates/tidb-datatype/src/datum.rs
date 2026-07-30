@@ -1119,15 +1119,26 @@ impl Datum {
         BinaryJSON::from_typed_value(&BinaryJSONValue::Opaque(opaque)).map_err(Into::into)
     }
 
-    /// Owned memory estimate for the Rust enum representation.
+    /// Go `Datum.MemUsage`: `EmptyDatumSize + cap(d.b) + len(d.collation)`.
+    ///
+    /// Go keeps every variable-length payload in the single `d.b` byte slice
+    /// and every fixed-width one (int, real, decimal, time, duration) inline,
+    /// so walking this enum's variants reproduces the same division. Two named
+    /// departures, both forced by the representation: the constant term is
+    /// this enum's size rather than Go's struct's, and the payload term is a
+    /// LENGTH where Go reads a capacity -- every payload here is built
+    /// exactly-sized, so a datum whose buffer was over-reserved and then
+    /// shortened is under-reported by the slack.
     pub fn estimated_mem_usage(&self) -> usize {
         std::mem::size_of::<Self>()
             + match self {
-                Self::String(value) => value.bytes().len(),
+                Self::String(value) => value.bytes().len() + value.collation().name().len(),
                 Self::Bytes(value) | Self::Raw(value) => value.len(),
                 Self::BinaryLiteral(value) | Self::Bit(value) => value.as_bytes().len(),
                 Self::Json(value) => value.value().len(),
                 Self::VectorFloat32(value) => value.estimated_mem_usage(),
+                Self::Enum(value, collation) => value.name().len() + collation.name().len(),
+                Self::Set(value, collation) => value.name().len() + collation.name().len(),
                 _ => 0,
             }
     }

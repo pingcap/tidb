@@ -1410,6 +1410,7 @@ dependencies = [
  "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-error",
  "tidb-expr",
  "tidb-model",
  "tidb-parser",
@@ -1417,6 +1418,8 @@ dependencies = [
  "tidb-stats",
  "tidb-tablecodec",
  "tidb-txnkv",
+ "tidb-util",
+ "tracing",
 ]
 
 [[package]]

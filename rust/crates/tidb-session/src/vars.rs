@@ -245,10 +245,22 @@ impl SessionVars {
         self.globals = globals;
     }
 
-    /// Reads a system variable, falling back to the registry default.
+    /// Reads a system variable the way `SELECT @@name` does.
+    ///
+    /// A variable with SESSION scope answers from this session's own copy, and
+    /// one with GLOBAL scope only answers from the shared table -- Go's
+    /// `GetSessionOrGlobalSystemVar` falls through to `GetGlobalSystemVar`
+    /// exactly when `sv.HasSessionScope()` is false. Without that fall-through
+    /// a global-only variable would report the registry default forever, no
+    /// matter what `SET GLOBAL` wrote (captured: after
+    /// `set @@global.tidb_mem_oom_action='LOG'`, `select @@tidb_mem_oom_action`
+    /// reports `LOG`).
     pub fn get_system(&self, name: &str) -> Result<String, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        if !def.has_session_scope() && def.has_global_scope() {
+            return self.globals.get(name);
+        }
         Ok(self
             .systems
             .get(&name.to_ascii_lowercase())
