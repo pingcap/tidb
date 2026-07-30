@@ -21,11 +21,27 @@
 //! `types.StrToType`) with flen/decimal from the type arguments and the
 //! unsigned flag, and charset/collation through [`field_type_of`]'s
 //! transcreation of Go `ResolveCharsetCollation` (see its doc for the exact
-//! precedence). DEFERRED (documented): constraints/indexes (PK, UNIQUE,
-//! FOREIGN KEY), column options (DEFAULT, NOT NULL, AUTO_INCREMENT, comments),
-//! TEMPORARY, `CREATE TABLE ... LIKE`, partitioning, and the
+//! precedence). DEFERRED (documented): `CREATE TABLE ... LIKE`, and the
 //! schema-version/DDL-job machinery (the driver applies metadata directly; the
-//! DDL job queue is a separate tier).
+//! DDL job queue is a separate tier). Constraints/indexes and the column
+//! options are no longer deferred; see [`crate::column_default`] for what a
+//! `DEFAULT` may be.
+//!
+//! # DIVERGENCE: `PARTITION BY` is SILENTLY IGNORED here
+//!
+//! This builder never reads `CreateTableStmt::partitioning`, so a partitioned
+//! `CREATE TABLE` succeeds and produces an UNPARTITIONED table. That is a
+//! wrong table rather than a missing feature: `SHOW CREATE TABLE` prints no
+//! `PARTITION BY` clause, partition pruning has nothing to prune, and
+//! `SELECT ... PARTITION (p0)` cannot mean what it says. The sibling metadata
+//! builder `tidb_exec::table_info_build` REFUSES the clause instead, so the
+//! two disagree about the same statement.
+//!
+//! It is recorded here rather than fixed because refusing it is a cascade
+//! decision of its own: `tests/integrationtest`'s `table/partition` and
+//! `planner/core/partition_pruner` already carry 43 and 115 divergences
+//! against TiDB's own recording, and every one of them is downstream of a
+//! table this builder accepted and should not have.
 //!
 //! # Where a resolved collation is, and is NOT, consulted
 //!
