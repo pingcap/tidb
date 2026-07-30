@@ -722,9 +722,7 @@ func mockGC(tk *testkit.TestKit) (string, string, string, func()) {
 	ddlutil.EmulatorGCDisable()
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(tikvutil.GCTimeFormat)
 	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(tikvutil.GCTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
+	safePointSQL := `REPLACE INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')`
 	// clear GC variables first.
 	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
 	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
@@ -782,6 +780,10 @@ func newFlashbackClusterTestStore(t *testing.T, minSafeTS *atomic.Uint64) kv.Sto
 	dom, err := session.BootstrapSession(wrappedStore)
 	require.NoError(t, err)
 	dom.SetStatsUpdating(true)
+	// This test validates the flashback DDL path with a mock TiKV store. The
+	// asynchronous DDL notifier can observe transient mock event rows after the
+	// flashback and fail unrelated internal checks.
+	dom.DDLNotifier().Stop()
 	t.Cleanup(func() {
 		dom.Close()
 		view.Stop()
@@ -835,6 +837,9 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 	}
 
 	wg.Wait()
+	require.Eventually(t, func() bool {
+		return tk.MustQuery("select count(*) from mysql.tidb_ddl_job").Rows()[0][0] == "0"
+	}, 5*time.Second, 10*time.Millisecond)
 
 	ts, _ := store.CurrentVersion(oracle.GlobalTxnScope)
 	flashbackTs := oracle.GetTimeFromTS(ts.Ver)
