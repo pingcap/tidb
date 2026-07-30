@@ -235,6 +235,41 @@ fn a_derived_table_keeps_its_own_order_by_limit() {
     );
 }
 
+/// `EXPLAIN ANALYZE` meters the operators INSIDE the derived table, so its
+/// `actRows` column reports what each one really produced rather than
+/// attributing the whole subquery to one node.
+///
+/// This is the assertion that the descent is real and not cosmetic: on three
+/// rows, `a > 1` inside the derived table passes 2 and `x.b < 3` outside it
+/// passes 1, and both counts are on their own operator. A recorder that
+/// stopped at the derived table could not tell those two apart.
+#[test]
+fn explain_analyze_meters_inside_the_derived_table() {
+    let mut session = derived_session();
+    // `actRows` is the third column of `EXPLAIN ANALYZE`'s row.
+    let act_rows: Vec<(String, String)> = row_text(
+        session.run("explain analyze select * from (select * from t where a > 1) x where x.b < 3"),
+    )
+    .into_iter()
+    .map(|row| {
+        (
+            row[0].trim_start_matches(['└', '─', '│', ' ']).to_owned(),
+            row[2].clone(),
+        )
+    })
+    .collect();
+    assert_eq!(
+        act_rows,
+        vec![
+            ("Projection_5".to_owned(), "1".to_owned()),
+            ("Selection_4".to_owned(), "1".to_owned()),
+            ("Projection_3".to_owned(), "2".to_owned()),
+            ("Selection_2".to_owned(), "2".to_owned()),
+            ("TableFullScan_1".to_owned(), "3".to_owned()),
+        ]
+    );
+}
+
 /// A derived table whose body is a SET OPERATION is the one shape still not
 /// described: `run_set_opr_stmt` concatenates its arms without recording an
 /// operator, so there is no subtree to stand in the `FROM` position. The
