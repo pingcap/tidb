@@ -19,8 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -73,7 +71,7 @@ type KVHandler interface {
 // EncodedRowHandler handles the re-encoded row from conflict KV.
 // exported for test.
 type EncodedRowHandler interface {
-	HandleEncodedRow(ctx context.Context, handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error
+	HandleEncodedRow(ctx context.Context, rowKey tidbkv.Key, row []types.Datum, kvPairs *kv.Pairs) error
 }
 
 var _ Handler = (*BaseHandler)(nil)
@@ -83,8 +81,14 @@ var _ Handler = (*BaseHandler)(nil)
 type BaseHandler struct {
 	targetTable table.Table
 	kvGroup     string
-	encoder     *importer.TableKVEncoder
-	logger      *zap.Logger
+	// the codec used to decoded encoded keys.
+	// in next-gen, the encoded key is prepended with keyspace prefix before
+	// store to object store to make later ingest step easier to process. but
+	// when resolving conflicts, we need to use transaction to access those keys,
+	// and the keys must not have the keyspace prefix.
+	codec   tikv.Codec
+	encoder *importer.TableKVEncoder
+	logger  *zap.Logger
 	EncodedRowHandler
 
 	KVHandler
@@ -94,6 +98,7 @@ type BaseHandler struct {
 func NewBaseHandler(
 	targetTable table.Table,
 	kvGroup string,
+	codec tikv.Codec,
 	encoder *importer.TableKVEncoder,
 	encodedRowHdl EncodedRowHandler,
 	logger *zap.Logger,
@@ -101,6 +106,7 @@ func NewBaseHandler(
 	return &BaseHandler{
 		targetTable:       targetTable,
 		kvGroup:           kvGroup,
+		codec:             codec,
 		encoder:           encoder,
 		logger:            logger,
 		EncodedRowHandler: encodedRowHdl,
@@ -134,7 +140,7 @@ func (h *BaseHandler) Close(context.Context) (err error) {
 // re-encode the row from the handle and value of data KV into KV pairs and handle
 // them using the EncodedRowHandler.
 func (h *BaseHandler) encodeAndHandleRow(ctx context.Context,
-	handle tidbkv.Handle, val []byte) (err error) {
+	rowKey tidbkv.Key, handle tidbkv.Handle, val []byte) (err error) {
 	tblMeta := h.targetTable.Meta()
 	decodedData, _, err := tables.DecodeRawRowData(h.encoder.SessionCtx.GetExprCtx(),
 		h.targetTable, handle, h.targetTable.Cols(), val)
@@ -150,7 +156,7 @@ func (h *BaseHandler) encodeAndHandleRow(ctx context.Context,
 		return errors.Trace(err)
 	}
 
-	err = h.HandleEncodedRow(ctx, handle, decodedData, kvPairs)
+	err = h.HandleEncodedRow(ctx, rowKey, decodedData, kvPairs)
 	kvPairs.Clear()
 	if err != nil {
 		return errors.Trace(err)
@@ -177,7 +183,7 @@ func NewDataKVHandler(base *BaseHandler) *DataKVHandler {
 
 // Handle implements KVHandler interface.
 func (h *DataKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
-	key, err := stripKeyspacePrefix(kv.Key)
+	key, err := h.codec.DecodeKey(kv.Key)
 	if err != nil {
 		return err
 	}
@@ -185,23 +191,28 @@ func (h *DataKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
 	if err != nil {
 		return err
 	}
-	return h.encodeAndHandleRow(ctx, handle, kv.Value)
+	return h.encodeAndHandleRow(ctx, key, handle, kv.Value)
 }
 
-type handleOfTable struct {
-	tableID int64
-	handle  tidbkv.Handle
+type rowKeyWithHandle struct {
+	rowKey tidbkv.Key
+	handle tidbkv.Handle
+}
+
+func encodeDataRowKey(tableID int64, handle tidbkv.Handle) tidbkv.Key {
+	recordPrefix := tablecodec.GenTableRecordPrefix(tableID)
+	return tablecodec.EncodeRecordKey(recordPrefix, handle)
 }
 
 // IndexKVHandler handles conflicted index KVs.
 // exported for test.
 type IndexKVHandler struct {
 	*BaseHandler
-	snapshot  *LazyRefreshedSnapshot
-	hdlFilter *HandleFilter
+	snapshot     *LazyRefreshedSnapshot
+	rowKeyFilter *KeyFilter
 
-	targetIdx       *model.IndexInfo
-	bufferedHandles []handleOfTable
+	targetIdx    *model.IndexInfo
+	bufferedRows []rowKeyWithHandle
 }
 
 var (
@@ -211,11 +222,11 @@ var (
 
 // NewIndexKVHandler creates a new IndexKVHandler.
 // exported for test.
-func NewIndexKVHandler(base *BaseHandler, snapshot *LazyRefreshedSnapshot, filter *HandleFilter) *IndexKVHandler {
+func NewIndexKVHandler(base *BaseHandler, snapshot *LazyRefreshedSnapshot, filter *KeyFilter) *IndexKVHandler {
 	h := &IndexKVHandler{
-		BaseHandler: base,
-		snapshot:    snapshot,
-		hdlFilter:   filter,
+		BaseHandler:  base,
+		snapshot:     snapshot,
+		rowKeyFilter: filter,
 	}
 	base.KVHandler = h
 	return h
@@ -244,7 +255,7 @@ func (h *IndexKVHandler) PreRun() error {
 
 // Handle implements KVHandler interface.
 func (h *IndexKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
-	key, err := stripKeyspacePrefix(kv.Key)
+	key, err := h.codec.DecodeKey(kv.Key)
 	if err != nil {
 		return err
 	}
@@ -258,28 +269,29 @@ func (h *IndexKVHandler) Handle(ctx context.Context, kv *external.KVPair) error 
 	if err != nil {
 		return err
 	}
-	if h.hdlFilter.needSkip(handle) {
+	// The filter and snapshot lookup need the data row key, not this index key.
+	rowKey := encodeDataRowKey(tableID, handle)
+	if h.rowKeyFilter.isHandledGlobally(rowKey) {
 		return nil
 	}
 
-	h.bufferedHandles = append(h.bufferedHandles, handleOfTable{handle: handle, tableID: tableID})
+	h.bufferedRows = append(h.bufferedRows, rowKeyWithHandle{rowKey: rowKey, handle: handle})
 
-	if len(h.bufferedHandles) >= BufferedHandleLimit {
+	if len(h.bufferedRows) >= BufferedHandleLimit {
 		return h.handleBufferedHandles(ctx)
 	}
 	return nil
 }
 
 func (h *IndexKVHandler) handleBufferedHandles(ctx context.Context) error {
-	if len(h.bufferedHandles) == 0 {
+	if len(h.bufferedRows) == 0 {
 		return nil
 	}
-	rowKeys := make([]tidbkv.Key, 0, len(h.bufferedHandles))
-	rowKeys2Handle := make(map[string]tidbkv.Handle, len(h.bufferedHandles))
-	for _, hdl := range h.bufferedHandles {
-		rowKey := tablecodec.EncodeRowKeyWithHandle(hdl.tableID, hdl.handle)
-		rowKeys = append(rowKeys, rowKey)
-		rowKeys2Handle[string(rowKey)] = hdl.handle
+	rowKeys := make([]tidbkv.Key, 0, len(h.bufferedRows))
+	rowKeys2Handle := make(map[string]tidbkv.Handle, len(h.bufferedRows))
+	for _, row := range h.bufferedRows {
+		rowKeys = append(rowKeys, row.rowKey)
+		rowKeys2Handle[string(row.rowKey)] = row.handle
 	}
 
 	res, err := h.snapshot.BatchGet(ctx, rowKeys)
@@ -287,12 +299,26 @@ func (h *IndexKVHandler) handleBufferedHandles(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	for rowKey, val := range res {
+		// when it's MV index, 2 index keys might point to the same row key.
+		if h.rowKeyFilter.isHandledLocally(rowKey) {
+			continue
+		}
 		handle := rowKeys2Handle[rowKey]
-		if err := h.encodeAndHandleRow(ctx, handle, val.Value); err != nil {
+		if err := h.encodeAndHandleRow(ctx, tidbkv.Key(rowKey), handle, val.Value); err != nil {
 			return errors.Trace(err)
 		}
+
+		// every conflicted row from data KV group must be recorded, but for index KV
+		// group, they might come from the same row, so we only need to record it on
+		// the first time we meet it.
+		// currently, we use memory to do this check, if it's too large, we just skip
+		// the checking and skip later checksum.
+		//
+		// an alternative solution is to upload those row keys to sort storage and
+		// check them in another pass later.
+		h.rowKeyFilter.addLocal(rowKey)
 	}
-	h.bufferedHandles = h.bufferedHandles[:0]
+	h.bufferedRows = h.bufferedRows[:0]
 	return nil
 }
 
@@ -364,19 +390,4 @@ func (s *LazyRefreshedSnapshot) BatchGet(
 		s.trafficRec.IncClusterReadBytes(readBytes)
 	}
 	return res, nil
-}
-
-// the encoded key is prepended with keyspace prefix before store to object
-// store to make later ingest step easier to process. but when resolving
-// conflicts, we need to use transaction to access those keys, and the keys must
-// not have the keyspace prefix.
-func stripKeyspacePrefix(key tidbkv.Key) (tidbkv.Key, error) {
-	if kerneltype.IsClassic() {
-		return key, nil
-	}
-	_, decodedKey, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return decodedKey, nil
 }
