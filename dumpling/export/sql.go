@@ -1080,57 +1080,51 @@ func newWritableColumnCache() *writableColumnCache {
 	}
 }
 
-func (c *writableColumnCache) get(tctx *tcontext.Context, db *BaseConn, dbName, tableName string) ([]string, bool, error) {
-	if c == nil {
-		return getWritableColumnNames(tctx, db, dbName, tableName)
-	}
-
+func (c *writableColumnCache) get(dbName, tableName string) (writableColumnInfo, bool) {
 	key := writableColumnCacheKey{dbName: dbName, tableName: tableName}
-	if info, ok := c.columns[key]; ok {
-		return info.sourceNames, info.hasGenerateColumn, nil
-	}
-
-	names, hasGenerateColumn, err := getWritableColumnNames(tctx, db, dbName, tableName)
-	if err != nil {
-		return nil, false, err
-	}
-	c.columns[key] = writableColumnInfo{
-		sourceNames:       names,
-		hasGenerateColumn: hasGenerateColumn,
-	}
-	return names, hasGenerateColumn, nil
+	info, ok := c.columns[key]
+	return info, ok
 }
 
 func (c *writableColumnCache) getSelectedNames(dbName, tableName string) ([]string, bool) {
-	if c == nil {
-		return nil, false
-	}
-	info, ok := c.columns[writableColumnCacheKey{dbName: dbName, tableName: tableName}]
+	info, ok := c.get(dbName, tableName)
 	if !ok || info.selectedNames == nil {
 		return nil, false
 	}
 	return info.selectedNames, true
 }
 
-func (c *writableColumnCache) setSelectedNames(dbName, tableName string, selectedNames []string) {
-	if c == nil {
-		return
-	}
-	key := writableColumnCacheKey{dbName: dbName, tableName: tableName}
-	info := c.columns[key]
-	info.selectedNames = selectedNames
-	c.columns[key] = info
+func (c *writableColumnCache) set(dbName, tableName string, info writableColumnInfo) {
+	c.columns[writableColumnCacheKey{dbName: dbName, tableName: tableName}] = info
 }
 
 func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool, columnCache *writableColumnCache) (string, int, string, error) { // revive:disable-line:flag-parameter
-	sourceColumns, hasGenerateColumn, err := columnCache.get(tctx, db, dbName, tableName)
-	if err != nil {
-		return "", 0, "", err
+	var (
+		sourceColumns     []string
+		selectedColumns   []string
+		hasGenerateColumn bool
+	)
+	if columnCache == nil {
+		var err error
+		sourceColumns, hasGenerateColumn, err = getWritableColumnNames(tctx, db, dbName, tableName)
+		if err != nil {
+			return "", 0, "", err
+		}
+		selectedColumns = sourceColumns
+	} else {
+		info, ok := columnCache.get(dbName, tableName)
+		if !ok {
+			return "", 0, "", errors.Errorf(
+				"missing writable column cache for table `%s`.`%s`",
+				escapeString(dbName),
+				escapeString(tableName),
+			)
+		}
+		sourceColumns = info.sourceNames
+		selectedColumns = info.selectedNames
+		hasGenerateColumn = info.hasGenerateColumn
 	}
-	selectedColumns := sourceColumns
-	if cachedSelectedColumns, ok := columnCache.getSelectedNames(dbName, tableName); ok {
-		selectedColumns = cachedSelectedColumns
-	}
+
 	selectedFields := columnNamesToSelectFields(selectedColumns)
 	selectLen := len(selectedFields)
 	if !slices.Equal(sourceColumns, selectedColumns) {

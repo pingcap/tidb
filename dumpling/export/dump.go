@@ -510,7 +510,7 @@ func prepareColumnProjectionCache(tctx *tcontext.Context, conf *Config, conn *Ba
 			if table.Type != TableTypeBase {
 				continue
 			}
-			sourceColumns, _, err := conf.writableColumnCache.get(tctx, conn, dbName, table.Name)
+			sourceColumns, hasGenerateColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
 			if err != nil {
 				return err
 			}
@@ -521,7 +521,11 @@ func prepareColumnProjectionCache(tctx *tcontext.Context, conf *Config, conn *Ba
 					return err
 				}
 			}
-			conf.writableColumnCache.setSelectedNames(dbName, table.Name, selectedColumns)
+			conf.writableColumnCache.set(dbName, table.Name, writableColumnInfo{
+				sourceNames:       sourceColumns,
+				selectedNames:     selectedColumns,
+				hasGenerateColumn: hasGenerateColumn,
+			})
 		}
 	}
 	return nil

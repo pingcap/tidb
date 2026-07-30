@@ -358,7 +358,7 @@ func TestBuildSelectField(t *testing.T) {
 	require.Equal(t, "`id`,`name`", sourceFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	columnCache = newColumnCacheForTest("test", "t", nil, true, nil)
+	columnCache = newColumnCacheForTest("test", "t", []string{}, true, []string{})
 	selectField, selectLen, sourceFields, err = buildSelectField(tctx, baseConn, "test", "t", false, columnCache)
 	require.NoError(t, err)
 	require.Empty(t, selectField)
@@ -366,7 +366,7 @@ func TestBuildSelectField(t *testing.T) {
 	require.Empty(t, sourceFields)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	columnCache = newColumnCacheForTest("test", "t", []string{"id", "name"}, false, nil)
+	columnCache = newColumnCacheForTest("test", "t", []string{"id", "name"}, false, []string{"id", "name"})
 	selectField, selectLen, sourceFields, err = buildSelectField(tctx, baseConn, "test", "t", false, columnCache)
 	require.NoError(t, err)
 	require.Equal(t, "*", selectField)
