@@ -31,10 +31,10 @@
 //! actions an ALTER can also carry are in the sibling `indexes` module, and
 //! the type/charset resolution both share lives in the parent.
 
+use super::column_types::{field_type_of, NOT_NULL_FLAG};
 use super::indexes::{add_index_to_table, drop_index_from_table, index_part_names, is_visible};
 use super::{
-    auto_increment_option, field_type_of, Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt,
-    TableCharset, NOT_NULL_FLAG,
+    auto_increment_option, Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset,
 };
 use tidb_datatype::{Datum, FieldType};
 
