@@ -82,18 +82,32 @@ func (si *schemaItem) Name() string {
 	return si.dbInfo.Name.L
 }
 
-// btreeSet updates the btree.
+// btreeSet safely updates the btree by cloning and inserting the new item.
+// It avoids concurrent Clone() calls using atomic.Swap and retries with backoff.
 // Concurrent write is supported, but should be avoided as much as possible.
 func btreeSet[T any](ptr *atomic.Pointer[btree.BTreeG[T]], item T) {
-	succ := false
-	for !succ {
-		var t = ptr.Load()
-		t2 := t.Clone()
-		t2.ReplaceOrInsert(item)
-		succ = ptr.CompareAndSwap(t, t2)
-		if !succ {
+	backoff := time.Microsecond
+
+	for {
+		// Atomically take ownership of the tree for cloning
+		old := ptr.Swap(nil)
+		if old == nil {
+			// Another goroutine is likely cloning; back off and retry
 			logutil.BgLogger().Info("infoschema v2 btree concurrently multiple writes detected, this should be rare")
+			time.Sleep(backoff)
+			if backoff < time.Millisecond {
+				backoff *= 2 // exponential backoff to reduce contention
+			}
+			continue
 		}
+
+		// Clone and modify the tree
+		newTree := old.Clone()
+		newTree.ReplaceOrInsert(item)
+
+		// Publish the updated tree atomically
+		ptr.Store(newTree)
+		return
 	}
 }
 
