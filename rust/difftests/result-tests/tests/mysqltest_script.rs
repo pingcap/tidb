@@ -1,0 +1,292 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Reader for TiDB's own record/replay suite at `tests/integrationtest/`.
+//!
+//! A topic there is a pair: `t/<topic>.test` holds the statements and
+//! `r/<topic>.result` holds the RECORDED output -- each statement echoed
+//! verbatim, then its tab-separated rows. That recording is the authoritative
+//! oracle the TiDB project gates on, so this module only ever READS it.
+//!
+//! The alignment problem this solves: the `.result` file has no statement
+//! delimiter of its own. It is a flat line stream in which a statement's echo
+//! is indistinguishable from a result row that happens to carry the same
+//! text. What makes it parseable is that the `.test` file already knows the
+//! whole echo sequence, so the echoes are located IN ORDER by matching each
+//! next item's complete (multi-line) echo, and everything between two echoes
+//! is the first one's output. A topic whose echoes do not line up is rejected
+//! outright rather than silently mis-attributed to the wrong statement.
+//!
+//! Leading indentation is dropped from the echo by the recorder (a
+//! `create table t (\n  a int,\n)` records its `a int,` unindented), so
+//! matching is per-line trimmed on both sides.
+#![allow(dead_code)]
+
+/// One `.test` item that produces output in the `.result` stream.
+#[derive(Debug)]
+pub enum Item {
+    /// An `--echo <text>` directive, which records `<text>` and nothing else.
+    Echo(String),
+    /// A SQL statement.
+    Stmt(Stmt),
+}
+
+/// One statement of a `.test` script with the directives that govern how its
+/// recorded output must be read.
+#[derive(Debug)]
+pub struct Stmt {
+    /// The statement text as written, newlines preserved, `;` included.
+    pub sql: String,
+    /// `--error <code>` preceded this statement: the recording is an
+    /// `Error ...` line, not rows.
+    pub expect_error: bool,
+    /// `--sorted_result` preceded this statement: the recorder sorted the row
+    /// lines before writing them, so a comparison must sort too.
+    pub sorted: bool,
+    /// Why this statement's recorded output is not directly comparable, if it
+    /// is not: the name of the mysqltest feature that rewrote or extended it.
+    /// Empty means directly comparable.
+    pub blocker: Option<&'static str>,
+}
+
+impl Item {
+    /// The lines this item contributes to the `.result` stream before its
+    /// output, each trimmed the way the recorder writes them.
+    fn echo_lines(&self) -> Vec<&str> {
+        match self {
+            Item::Echo(text) => vec![text.as_str()],
+            Item::Stmt(stmt) => stmt.sql.lines().map(str::trim).collect(),
+        }
+    }
+}
+
+/// Directives that apply to the next statement only, paired with the reason
+/// its recorded output is not directly comparable.
+const ONE_SHOT_BLOCKERS: &[(&str, &str)] = &[
+    ("replace_regex", "recorder rewrote the output by regex"),
+    ("replace_column", "recorder replaced a column of the output"),
+];
+
+/// Directives that stay in effect until their counterpart, each paired with
+/// the reason the output they cover is not directly comparable. Modes are
+/// tracked independently: `--disable_warnings` must not clear `--enable_info`.
+const MODE_BLOCKERS: &[(&str, &str, &str)] = &[
+    (
+        "enable_warnings",
+        "disable_warnings",
+        "recorded SHOW WARNINGS block",
+    ),
+    (
+        "enable_info",
+        "disable_info",
+        "recorded affected-rows info line",
+    ),
+    (
+        "disable_result_log",
+        "enable_result_log",
+        "output suppressed by the recorder",
+    ),
+];
+
+/// Parses a `.test` script into the items that produce recorded output.
+///
+/// Fails on a directive this reader does not model rather than guessing: an
+/// unmodelled directive can silently shift every following statement's
+/// expected output onto the wrong statement.
+pub fn parse_test(text: &str) -> Result<Vec<Item>, String> {
+    let mut items = Vec::new();
+    let mut pending: Option<&'static str> = None;
+    let mut modes = [false; MODE_BLOCKERS.len()];
+    let mut expect_error = false;
+    let mut sorted = false;
+    let mut buffer: Vec<&str> = Vec::new();
+
+    for raw in text.lines() {
+        let line = raw.trim_end();
+        let trimmed = line.trim();
+        // A blank line inside a statement is dropped, not kept: the recorder
+        // echoes `select ...\n\n(a > 1) ...;` with its two SQL lines adjacent,
+        // so keeping the blank would put a line in the echo that the recording
+        // does not have -- and every following statement would then be read
+        // against the wrong block.
+        if trimmed.is_empty() || (buffer.is_empty() && trimmed.starts_with('#')) {
+            continue;
+        }
+        if buffer.is_empty() && trimmed.starts_with("--") {
+            let body = trimmed.trim_start_matches('-').trim();
+            let (name, rest) = body.split_once(' ').unwrap_or((body, ""));
+            // A stray `;` after a bare directive (`--enable_warnings;`) is
+            // part of no statement -- the recorder reads the directive and
+            // drops it. An `--echo` argument keeps its own text intact.
+            let name = name.trim_end_matches(';');
+            match name {
+                "error" => expect_error = true,
+                "sorted_result" => sorted = true,
+                "echo" => items.push(Item::Echo(rest.to_owned())),
+                _ => {
+                    if let Some((_, reason)) = ONE_SHOT_BLOCKERS.iter().find(|(d, _)| *d == name) {
+                        pending = Some(reason);
+                    } else if let Some(slot) = MODE_BLOCKERS.iter().position(|(on, ..)| *on == name)
+                    {
+                        modes[slot] = true;
+                    } else if let Some(slot) =
+                        MODE_BLOCKERS.iter().position(|(_, off, _)| *off == name)
+                    {
+                        modes[slot] = false;
+                    } else {
+                        return Err(format!("unmodelled directive `{name}`"));
+                    }
+                }
+            }
+            continue;
+        }
+        // `connect`/`connection`/`disconnect` are mysqltest commands, not SQL:
+        // the script drives SEVERAL sessions, and replaying it against one
+        // would attribute another connection's statements to this one. Reject
+        // the whole topic rather than any part of it.
+        if buffer.is_empty() {
+            let first = trimmed.split(['(', ' ', ';']).next().unwrap_or("");
+            if matches!(first, "connect" | "connection" | "disconnect") {
+                return Err(format!("multi-connection script (`{trimmed}`)"));
+            }
+        }
+        buffer.push(line);
+        if !trimmed.ends_with(';') {
+            continue;
+        }
+        items.push(Item::Stmt(Stmt {
+            sql: buffer.join("\n"),
+            expect_error,
+            sorted,
+            blocker: pending.take().or_else(|| {
+                modes
+                    .iter()
+                    .position(|on| *on)
+                    .map(|slot| MODE_BLOCKERS[slot].2)
+            }),
+        }));
+        buffer.clear();
+        expect_error = false;
+        sorted = false;
+    }
+    if !buffer.is_empty() {
+        return Err(format!("unterminated statement `{}`", buffer.join(" ")));
+    }
+    Ok(items)
+}
+
+/// Attaches each item's recorded output block from the `.result` stream.
+///
+/// See the module docs for why the echoes are located in order rather than
+/// parsed out of the result file on their own.
+pub fn align<'a>(items: &'a [Item], result: &str) -> Result<Vec<(&'a Item, Vec<String>)>, String> {
+    let lines: Vec<&str> = result.lines().collect();
+    let mut out = Vec::with_capacity(items.len());
+    let mut cursor = 0usize;
+
+    for (index, item) in items.iter().enumerate() {
+        let echo = item.echo_lines();
+        if !matches_at(&lines, cursor, &echo) {
+            return Err(format!(
+                "recorded output does not echo item {index} (`{}`) at result line {}",
+                echo.join(" "),
+                cursor + 1
+            ));
+        }
+        cursor += echo.len();
+
+        // The block runs to wherever the NEXT item's whole echo begins; the
+        // last item owns the rest of the file.
+        let end = match items.get(index + 1) {
+            Some(next) => {
+                let next_echo = next.echo_lines();
+                let mut probe = cursor;
+                loop {
+                    if probe > lines.len() {
+                        return Err(format!(
+                            "item {index} is not closed by the next echo (`{}`)",
+                            next_echo.join(" ")
+                        ));
+                    }
+                    if matches_at(&lines, probe, &next_echo) {
+                        break probe;
+                    }
+                    probe += 1;
+                }
+            }
+            None => lines.len(),
+        };
+        out.push((
+            item,
+            lines[cursor..end].iter().map(|l| (*l).to_owned()).collect(),
+        ));
+        cursor = end;
+    }
+    Ok(out)
+}
+
+fn matches_at(lines: &[&str], at: usize, echo: &[&str]) -> bool {
+    at + echo.len() <= lines.len()
+        && lines[at..at + echo.len()]
+            .iter()
+            .zip(echo)
+            .all(|(have, want)| have.trim() == *want)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aligns_statements_with_their_recorded_blocks() {
+        let script = "# a comment\n--sorted_result\nselect a from t;\ninsert into t values (1);\n\
+                      -- error 1054\nselect nope from t;\n";
+        let recorded = "select a from t;\na\n1\n2\ninsert into t values (1);\n\
+                        select nope from t;\nError 1054 (42S22): unknown column\n";
+        let items = parse_test(script).unwrap();
+        let aligned = align(&items, recorded).unwrap();
+        assert_eq!(aligned.len(), 3);
+        assert_eq!(aligned[0].1, vec!["a", "1", "2"]);
+        assert!(matches!(aligned[0].0, Item::Stmt(s) if s.sorted && !s.expect_error));
+        assert!(aligned[1].1.is_empty());
+        assert!(matches!(aligned[2].0, Item::Stmt(s) if s.expect_error));
+    }
+
+    #[test]
+    fn multi_line_statement_echo_is_matched_unindented() {
+        let items = parse_test("create table t (\n  a int\n);\n").unwrap();
+        let aligned = align(&items, "create table t (\na int\n);\n").unwrap();
+        assert_eq!(aligned.len(), 1);
+        assert!(aligned[0].1.is_empty());
+    }
+
+    #[test]
+    fn sticky_directive_marks_every_statement_it_covers() {
+        let items =
+            parse_test("--enable_warnings\nselect 1;\n--disable_warnings\nselect 2;\n").unwrap();
+        let blockers: Vec<_> = items
+            .iter()
+            .map(|i| match i {
+                Item::Stmt(s) => s.blocker,
+                Item::Echo(_) => None,
+            })
+            .collect();
+        assert_eq!(blockers, vec![Some("recorded SHOW WARNINGS block"), None]);
+    }
+
+    #[test]
+    fn unmodelled_directive_is_refused_rather_than_guessed() {
+        assert!(parse_test("--connect (a,b)\nselect 1;\n").is_err());
+    }
+}
