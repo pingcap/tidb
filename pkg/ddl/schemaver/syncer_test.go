@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/mvccpb"
-	"go.etcd.io/etcd/server/v3/etcdserver"
-	"go.etcd.io/etcd/tests/v3/integration"
+	etcdservererrors "go.etcd.io/etcd/server/v3/etcdserver/errors"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -41,7 +41,7 @@ const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 func TestSyncerSimple(t *testing.T) {
 	variable.EnableMDL.Store(false)
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
 	}
 	integration.BeforeTestExternal(t)
 
@@ -51,7 +51,7 @@ func TestSyncerSimple(t *testing.T) {
 		schemaver.CheckVersFirstWaitTime = origin
 	}()
 
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	cli := cluster.RandClient()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -141,7 +141,7 @@ func TestSyncerSimple(t *testing.T) {
 func isTimeoutError(err error) bool {
 	return terror.ErrorEqual(err, context.DeadlineExceeded) ||
 		status.Code(errors.Cause(err)) == codes.DeadlineExceeded ||
-		terror.ErrorEqual(err, etcdserver.ErrTimeout)
+		terror.ErrorEqual(err, etcdservererrors.ErrTimeout)
 }
 
 func checkRespKV(t *testing.T, kvCount int, key, val string, kvs ...*mvccpb.KeyValue) {
@@ -159,7 +159,7 @@ func checkRespKV(t *testing.T, kvCount int, key, val string, kvs ...*mvccpb.KeyV
 func TestPutKVToEtcdMono(t *testing.T) {
 	integration.BeforeTestExternal(t)
 
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	cli := cluster.RandClient()
 	ctx, cancel := context.WithCancel(context.Background())

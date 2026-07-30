@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/suite"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 )
 
 type precheckImplSuite struct {
@@ -590,7 +590,7 @@ func (s *precheckImplSuite) TestTableEmptyCheckBasic() {
 
 func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 	integration.BeforeTestExternal(s.T())
-	testEtcdCluster := integration.NewClusterV3(s.T(), &integration.ClusterConfig{Size: 1})
+	testEtcdCluster := integration.NewCluster(s.T(), &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(s.T())
 
 	ctx := context.Background()

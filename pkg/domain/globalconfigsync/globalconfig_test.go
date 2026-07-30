@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 
 func TestGlobalConfigSyncer(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
 	}
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestGlobalConfigSyncer(t *testing.T) {
 
 func TestStoreGlobalConfig(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
 	}
 	integration.BeforeTestExternal(t)
 

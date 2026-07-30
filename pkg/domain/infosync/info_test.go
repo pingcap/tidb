@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 	"go.uber.org/goleak"
 )
 
@@ -52,7 +52,7 @@ func TestMain(m *testing.M) {
 
 func TestTopology(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
 	}
 	integration.BeforeTestExternal(t)
 
@@ -60,7 +60,7 @@ func TestTopology(t *testing.T) {
 	defer cancel()
 	currentID := "test"
 
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 
 	client := cluster.RandClient()

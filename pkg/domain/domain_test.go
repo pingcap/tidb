@@ -43,14 +43,14 @@ import (
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 )
 
 func TestInfo(t *testing.T) {
 	t.Skip("TestInfo will hang currently, it should be fixed later")
 
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
 	}
 
 	integration.BeforeTestExternal(t)
@@ -65,12 +65,12 @@ func TestInfo(t *testing.T) {
 	s, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 
 	mockStore := &mockEtcdBackend{
 		Storage: s,
-		pdAddrs: []string{cluster.Members[0].GRPCURL()}}
+		pdAddrs: []string{cluster.Members[0].GRPCURL}}
 	ddlLease := 80 * time.Millisecond
 	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory, nil)
 	defer func() {

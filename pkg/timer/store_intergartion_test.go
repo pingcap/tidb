@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/tests/v3/integration"
+	"go.etcd.io/etcd/tests/v3/framework/integration"
 )
 
 func TestMemTimerStore(t *testing.T) {
@@ -75,7 +75,7 @@ func TestTableTimerStore(t *testing.T) {
 
 	// test notifications
 	integration.BeforeTestExternal(t)
-	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	testEtcdCluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
 
 	cli := testEtcdCluster.RandClient()
@@ -633,7 +633,7 @@ func (n *multiNotifier) Close() {
 
 func TestEtcdNotifier(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	testEtcdCluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
 
 	cli := testEtcdCluster.RandClient()
