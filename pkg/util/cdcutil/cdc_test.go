@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/tests/v3/framework/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 func TestCDCCheckWithEmbedEtcd(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	testEtcdCluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
+	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
 	cli := testEtcdCluster.RandClient()
 

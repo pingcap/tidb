@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/tests/v3/framework/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 func TestOwnerManager(t *testing.T) {
@@ -41,7 +41,7 @@ func TestOwnerManager(t *testing.T) {
 	CloseOwnerManager()
 
 	integration.BeforeTestExternal(t)
-	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	cli := cluster.RandClient()
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/injectEtcdClient", func(cliP **clientv3.Client) {

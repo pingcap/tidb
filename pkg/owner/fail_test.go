@@ -40,7 +40,7 @@ var (
 
 func TestFailNewSession(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewCluster will create file contains a colon which is not allowed on Windows")
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 
 	_ = os.Remove("new_session:0")

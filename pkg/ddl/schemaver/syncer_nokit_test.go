@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/mvccpb"
-	"go.etcd.io/etcd/tests/v3/framework/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 func TestNodeVersions(t *testing.T) {
@@ -88,7 +88,7 @@ func TestDecodeJobVersionEvent(t *testing.T) {
 
 func TestSyncJobSchemaVerLoop(t *testing.T) {
 	integration.BeforeTestExternal(t)
-	mockCluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
+	mockCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer mockCluster.Terminate(t)
 
 	ctx, cancel := context.WithCancel(context.Background())

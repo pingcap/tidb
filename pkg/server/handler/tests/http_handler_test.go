@@ -73,7 +73,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.etcd.io/etcd/tests/v3/framework/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
 )
 
@@ -1228,7 +1228,7 @@ func TestSetLabelsWithEtcd(t *testing.T) {
 
 	time.Sleep(time.Second)
 	integration.BeforeTestExternal(t)
-	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
@@ -1543,7 +1543,7 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 
 	time.Sleep(time.Second)
 	integration.BeforeTestExternal(t)
-	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)

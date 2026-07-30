@@ -36,6 +36,6 @@ go_test(
         "//pkg/util",
         "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_api_v3//mvccpb",
-        "@io_etcd_go_etcd_tests_v3//framework/integration",
+        "@io_etcd_go_etcd_tests_v3//integration",
     ],
 )

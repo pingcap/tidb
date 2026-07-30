@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/tests/v3/framework/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 var (
-	etcdMockCluster *integration.Cluster
+	etcdMockCluster *integration.ClusterV3
 	etcdCli         *Client
 	ctx             context.Context
 )
@@ -388,14 +388,14 @@ func TestDoTxn(t *testing.T) {
 	require.Regexp(t, "unexpected TTL in delete operation", err)
 }
 
-func testSetup(t *testing.T) (context.Context, *Client, *integration.Cluster) {
-	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
+func testSetup(t *testing.T) (context.Context, *Client, *integration.ClusterV3) {
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	etcd := NewClient(cluster.RandClient(), "binlog")
 	return context.Background(), etcd, cluster
 }
 
-func testSetupOriginal(t *testing.T) (context.Context, *clientv3.Client, *integration.Cluster) {
-	cluster := integration.NewCluster(t, &integration.ClusterConfig{Size: 1})
+func testSetupOriginal(t *testing.T) (context.Context, *clientv3.Client, *integration.ClusterV3) {
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	return context.Background(), cluster.RandClient(), cluster
 }
 
