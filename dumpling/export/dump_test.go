@@ -680,12 +680,12 @@ func TestDumpTableMetaWithColumnFilterKeepsSourceColumnsForSplit(t *testing.T) {
 	baseConn := newBaseConn(conn, true, nil)
 
 	columnFilter := newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"name"}},
+		columnFilterRule{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"name"}},
 	)
 	conf := DefaultConfig()
 	conf.NoSchemas = true
 	conf.ServerInfo.ServerType = version.ServerTypeMySQL
-	conf.ColumnFilter = columnFilter
+	conf.columnFilter = columnFilter
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
 	conf.columnCache = make(map[restore.UniqueTableName]columnInfo, 1)
 
@@ -695,8 +695,8 @@ func TestDumpTableMetaWithColumnFilterKeepsSourceColumnsForSplit(t *testing.T) {
 			AddRow("name", "varchar(12)", "NO", "", nil, ""))
 	require.NoError(t, prepareColumnCache(tctx, conf, baseConn))
 	// Make a second filter application fail if it happens, so this covers using the prepared projection result.
-	conf.ColumnFilter = newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"missing"}},
+	conf.columnFilter = newColumnFilterConfigForTest(t,
+		columnFilterRule{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"missing"}},
 	)
 	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `name` FROM `%s`.`%s` LIMIT 1", database, table))).
 		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
@@ -743,8 +743,8 @@ func TestDumpTableMetaSkipsColumnFilterForView(t *testing.T) {
 	conf.NoSchemas = true
 	conf.ServerInfo.ServerType = version.ServerTypeMySQL
 	conf.Tables = NewDatabaseTables().AppendViews(database, table)
-	conf.ColumnFilter = newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{database + ".*"}, Columns: []string{"missing"}},
+	conf.columnFilter = newColumnFilterConfigForTest(t,
+		columnFilterRule{Matcher: []string{database + ".*"}, Columns: []string{"missing"}},
 	)
 	conf.columnCache = make(map[restore.UniqueTableName]columnInfo, 1)
 
@@ -775,8 +775,8 @@ func TestPrepareColumnCache(t *testing.T) {
 
 	conf := DefaultConfig()
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
-	conf.ColumnFilter = newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"*", "!missing"}},
+	conf.columnFilter = newColumnFilterConfigForTest(t,
+		columnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"*", "!missing"}},
 	)
 	conf.columnCache = make(map[restore.UniqueTableName]columnInfo, 1)
 
@@ -834,8 +834,8 @@ func TestPrepareColumnCacheFailsOnEmptyResult(t *testing.T) {
 
 	conf := DefaultConfig()
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
-	conf.ColumnFilter = newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"missing"}},
+	conf.columnFilter = newColumnFilterConfigForTest(t,
+		columnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"missing"}},
 	)
 	conf.columnCache = make(map[restore.UniqueTableName]columnInfo, 1)
 

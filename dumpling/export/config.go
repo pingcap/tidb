@@ -179,8 +179,8 @@ type Config struct {
 	CsvLineTerminator string
 	Databases         []string
 
-	TableFilter         filter.Filter       `json:"-"`
-	ColumnFilter        *ColumnFilterConfig `json:"-"`
+	TableFilter         filter.Filter `json:"-"`
+	columnFilter        *columnFilterConfig
 	columnCache         map[restore.UniqueTableName]columnInfo
 	Where               string
 	FileType            string
@@ -617,7 +617,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		if !conf.NoSchemas {
 			return errors.New("--column-filter-file requires --no-schemas/-m")
 		}
-		conf.ColumnFilter, err = ParseColumnFilterFile(columnFilterFile, caseSensitive)
+		conf.columnFilter, err = parseColumnFilterFile(columnFilterFile, caseSensitive)
 		if err != nil {
 			return errors.Trace(err)
 		}

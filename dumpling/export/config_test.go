@@ -59,8 +59,8 @@ func TestGetConfTables(t *testing.T) {
 }
 
 func TestColumnFilters(t *testing.T) {
-	columnFilter := &ColumnFilterConfig{
-		Filters: []ColumnFilterRule{
+	columnFilter := &columnFilterConfig{
+		Filters: []columnFilterRule{
 			{Matcher: []string{"db1.*"}, Columns: []string{"*", "!c*"}},
 			{Matcher: []string{"db1.t1"}, Columns: []string{"c2"}},
 			{Matcher: []string{"db1.t2"}, Columns: []string{"*", "!c3"}},
@@ -81,7 +81,7 @@ func TestColumnFilters(t *testing.T) {
 	require.Equal(t, []string{"c1"}, selectedFields)
 
 	columnFilter = newColumnFilterConfigForTest(t,
-		ColumnFilterRule{Matcher: []string{"db1.t1"}},
+		columnFilterRule{Matcher: []string{"db1.t1"}},
 	)
 	selectedFields, err = columnFilter.applyToColumns("db1", "t1", []string{"c1"})
 	require.NoError(t, err)
@@ -94,13 +94,13 @@ func TestParseColumnFilterFile(t *testing.T) {
 matcher = ["db1.t1", "db2.t2"]
 columns = ["c1", "C2"]
 `)
-	columnFilter, err := ParseColumnFilterFile(path, false)
+	columnFilter, err := parseColumnFilterFile(path, false)
 	require.NoError(t, err)
 	selectedFields, err := columnFilter.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c1", "C2"}, selectedFields)
 
-	columnFilter, err = ParseColumnFilterFile(path, true)
+	columnFilter, err = parseColumnFilterFile(path, true)
 	require.NoError(t, err)
 	selectedFields, err = columnFilter.applyToColumns("DB1", "T1", []string{"c1"})
 	require.NoError(t, err)
@@ -111,13 +111,13 @@ columns = ["c1", "C2"]
 matcher = ["db.t"]
 columns = ["/unterminated"]
 `)
-	_, err = ParseColumnFilterFile(path, false)
+	_, err = parseColumnFilterFile(path, false)
 	require.ErrorContains(t, err, "failed to parse --column-filter-file filter 0 columns")
 }
 
 func TestParseColumnFilterFileFlag(t *testing.T) {
 	conf := parseConfigFromArgsForTest(t, "--no-schemas")
-	require.Nil(t, conf.ColumnFilter)
+	require.Nil(t, conf.columnFilter)
 
 	path := writeColumnFilterFileForTest(t, `
 [[filters]]
@@ -132,7 +132,7 @@ columns = ["*", "!c3"]
 		"--no-schemas",
 		"--column-filter-file", path,
 	)
-	selectedFields, err := conf.ColumnFilter.applyToColumns("db1", "t1", []string{"c1", "c2", "c3"})
+	selectedFields, err := conf.columnFilter.applyToColumns("db1", "t1", []string{"c1", "c2", "c3"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"c3"}, selectedFields)
 
@@ -154,9 +154,9 @@ func writeColumnFilterFileForTest(t *testing.T, content string) string {
 	return path
 }
 
-func newColumnFilterConfigForTest(t *testing.T, filters ...ColumnFilterRule) *ColumnFilterConfig {
+func newColumnFilterConfigForTest(t *testing.T, filters ...columnFilterRule) *columnFilterConfig {
 	t.Helper()
-	columnFilter := &ColumnFilterConfig{
+	columnFilter := &columnFilterConfig{
 		Filters: filters,
 	}
 	require.NoError(t, columnFilter.compile(false))

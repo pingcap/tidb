@@ -10,13 +10,11 @@ import (
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 )
 
-// ColumnFilterConfig stores table matchers and column filter rules used to project data output.
-type ColumnFilterConfig struct {
-	Filters []ColumnFilterRule `toml:"filters"`
+type columnFilterConfig struct {
+	Filters []columnFilterRule `toml:"filters"`
 }
 
-// ColumnFilterRule maps a set of table matchers to a set of column filter rules.
-type ColumnFilterRule struct {
+type columnFilterRule struct {
 	Matcher []string `toml:"matcher"`
 	Columns []string `toml:"columns"`
 
@@ -24,13 +22,12 @@ type ColumnFilterRule struct {
 	columnRules filter.ColumnFilterRules
 }
 
-// ParseColumnFilterFile parses a TOML column filter file.
-func ParseColumnFilterFile(path string, caseSensitive bool) (*ColumnFilterConfig, error) {
+func parseColumnFilterFile(path string, caseSensitive bool) (*columnFilterConfig, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to read --column-filter-file %s", path)
 	}
-	var columnFilter ColumnFilterConfig
+	var columnFilter columnFilterConfig
 	if _, err := toml.Decode(string(content), &columnFilter); err != nil {
 		return nil, errors.Annotatef(err, "failed to parse --column-filter-file %s", path)
 	}
@@ -40,7 +37,7 @@ func ParseColumnFilterFile(path string, caseSensitive bool) (*ColumnFilterConfig
 	return &columnFilter, nil
 }
 
-func (c *ColumnFilterConfig) compile(caseSensitive bool) error {
+func (c *columnFilterConfig) compile(caseSensitive bool) error {
 	if len(c.Filters) == 0 {
 		return errors.New("--column-filter-file requires at least one column filter")
 	}
@@ -66,7 +63,7 @@ func (c *ColumnFilterConfig) compile(caseSensitive bool) error {
 	return nil
 }
 
-func (c *ColumnFilterConfig) applyToColumns(database, table string, sourceColumns []string) ([]string, error) {
+func (c *columnFilterConfig) applyToColumns(database, table string, sourceColumns []string) ([]string, error) {
 	columnRules := c.matchColumnRules(database, table)
 	if len(columnRules) == 0 {
 		return sourceColumns, nil
@@ -79,7 +76,7 @@ func (c *ColumnFilterConfig) applyToColumns(database, table string, sourceColumn
 		}
 		filteredColumns = append(filteredColumns, column)
 	}
-	if len(sourceColumns) > 0 && len(filteredColumns) == 0 {
+	if len(filteredColumns) == 0 {
 		return nil, errors.Errorf(
 			"--column-filter-file selects no writable columns from table `%s`.`%s`",
 			escapeString(database),
@@ -90,7 +87,7 @@ func (c *ColumnFilterConfig) applyToColumns(database, table string, sourceColumn
 	return filteredColumns, nil
 }
 
-func (c *ColumnFilterConfig) matchColumnRules(database, table string) filter.ColumnFilterRules {
+func (c *columnFilterConfig) matchColumnRules(database, table string) filter.ColumnFilterRules {
 	var columnRules filter.ColumnFilterRules
 	for i := len(c.Filters) - 1; i >= 0; i-- {
 		rule := c.Filters[i]

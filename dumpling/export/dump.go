@@ -517,8 +517,8 @@ func prepareColumnCache(tctx *tcontext.Context, conf *Config, conn *BaseConn) er
 				return err
 			}
 			selectedColumns := sourceColumns
-			if table.Type == TableTypeBase && conf.ColumnFilter != nil {
-				selectedColumns, err = conf.ColumnFilter.applyToColumns(dbName, table.Name, sourceColumns)
+			if table.Type == TableTypeBase && conf.columnFilter != nil {
+				selectedColumns, err = conf.columnFilter.applyToColumns(dbName, table.Name, sourceColumns)
 				if err != nil {
 					return err
 				}
