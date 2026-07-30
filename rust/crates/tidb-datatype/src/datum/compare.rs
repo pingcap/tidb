@@ -26,7 +26,7 @@ use std::cmp::Ordering;
 use super::{decimal_from_bytes, Datum, DatumValueError};
 use crate::{
     compare_binary_json, parse_datetime, parse_duration, str_to_float, BinaryJSON, BinaryLiteral,
-    Collation, Decimal, MySqlDuration, MysqlEnum, MysqlSet, Time, VectorFloat32,
+    Collation, Decimal, MySqlDuration, Time, VectorFloat32,
 };
 
 impl Datum {
@@ -71,11 +71,15 @@ impl Datum {
             Self::Bytes(value) => self.compare_string(value, comparer),
             Self::Decimal(value) => self.compare_decimal(value),
             Self::Duration(value) => self.compare_duration(*value),
-            Self::Enum(value, _) => self.compare_enum(value, comparer),
+            Self::Enum(value, _) => {
+                self.compare_named_number(value.name(), value.to_number(), comparer)
+            }
             Self::BinaryLiteral(value) | Self::Bit(value) => {
                 self.compare_binary_literal(value, comparer)
             }
-            Self::Set(value, _) => self.compare_set(value, comparer),
+            Self::Set(value, _) => {
+                self.compare_named_number(value.name(), value.to_number(), comparer)
+            }
             Self::Json(_) => unreachable!("JSON comparison returned above"),
             Self::Time(value) => self.compare_time(*value),
             Self::VectorFloat32(value) => self.compare_vector(value),
@@ -176,22 +180,24 @@ impl Datum {
         }
     }
 
-    fn compare_enum(
+    /// The shared rule of `compareMysqlEnum` and `compareMysqlSet`, whose Go
+    /// bodies are identical: a right-hand ENUM or SET compares by NAME when
+    /// the left operand also has a string view, and by its ordinal NUMBER
+    /// against every other kind.
+    fn compare_named_number(
         &self,
-        value: &MysqlEnum,
+        name: &str,
+        number: f64,
         comparer: Collation,
     ) -> Result<Ordering, DatumValueError> {
-        match self {
-            Self::String(left) => Ok(comparer.compare(left.bytes(), value.name().as_bytes())),
-            Self::Bytes(left) => Ok(comparer.compare(left, value.name().as_bytes())),
-            Self::Enum(left, _) => {
-                Ok(comparer.compare(left.name().as_bytes(), value.name().as_bytes()))
-            }
-            Self::Set(left, _) => {
-                Ok(comparer.compare(left.name().as_bytes(), value.name().as_bytes()))
-            }
-            _ => self.compare_f64(value.to_number()),
-        }
+        let left = match self {
+            Self::String(left) => left.bytes(),
+            Self::Bytes(left) => left,
+            Self::Enum(left, _) => left.name().as_bytes(),
+            Self::Set(left, _) => left.name().as_bytes(),
+            _ => return self.compare_f64(number),
+        };
+        Ok(comparer.compare(left, name.as_bytes()))
     }
 
     fn compare_binary_literal(
@@ -208,24 +214,6 @@ impl Datum {
             _ => return self.compare_f64(value.to_int().value() as f64),
         };
         Ok(comparer.compare(BinaryLiteral::compare_bytes_of(left), value.compare_bytes()))
-    }
-
-    fn compare_set(
-        &self,
-        value: &MysqlSet,
-        comparer: Collation,
-    ) -> Result<Ordering, DatumValueError> {
-        match self {
-            Self::String(left) => Ok(comparer.compare(left.bytes(), value.name().as_bytes())),
-            Self::Bytes(left) => Ok(comparer.compare(left, value.name().as_bytes())),
-            Self::Enum(left, _) => {
-                Ok(comparer.compare(left.name().as_bytes(), value.name().as_bytes()))
-            }
-            Self::Set(left, _) => {
-                Ok(comparer.compare(left.name().as_bytes(), value.name().as_bytes()))
-            }
-            _ => self.compare_f64(value.to_number()),
-        }
     }
 
     fn compare_json(&self, value: &BinaryJSON) -> Result<Ordering, DatumValueError> {
