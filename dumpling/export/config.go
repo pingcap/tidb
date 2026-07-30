@@ -601,13 +601,25 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	caseSensitive, err := flags.GetBool(flagCaseSensitive)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	columnFilterFile, err := flags.GetString(flagColumnFilterFile)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	caseSensitive, err := flags.GetBool(flagCaseSensitive)
-	if err != nil {
-		return errors.Trace(err)
+	if strings.TrimSpace(columnFilterFile) != "" {
+		if conf.SQL != "" {
+			return errors.New("can't specify both --sql and --column-filter-file at the same time")
+		}
+		if !conf.NoSchemas {
+			return errors.New("--column-filter-file requires --no-schemas/-m")
+		}
+		conf.ColumnFilter, err = ParseColumnFilterFile(columnFilterFile, caseSensitive)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	outputFilenameFormat, err := flags.GetString(flagOutputFilenameTemplate)
 	if err != nil {
@@ -631,19 +643,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 
 	if !caseSensitive {
 		conf.TableFilter = filter.CaseInsensitive(conf.TableFilter)
-	}
-
-	if strings.TrimSpace(columnFilterFile) != "" {
-		if conf.SQL != "" {
-			return errors.New("can't specify both --sql and --column-filter-file at the same time")
-		}
-		if !conf.NoSchemas {
-			return errors.New("--column-filter-file requires --no-schemas/-m")
-		}
-		conf.ColumnFilter, err = ParseColumnFilterFile(columnFilterFile, caseSensitive)
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
 
 	conf.FileSize, err = ParseFileSize(fileSizeStr)
