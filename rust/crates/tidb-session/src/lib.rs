@@ -293,6 +293,19 @@ impl Session {
         Ok(())
     }
 
+    /// Selects NO schema, which is the state a connection that authenticated
+    /// without an initial database is in: Go's `SessionVars.CurrentDB` is
+    /// empty and every unqualified name is `ErrNoDB` (`Error 1046`) until a
+    /// `USE` runs.
+    ///
+    /// [`Session::default`] selects `test` because that is what a `mysql`
+    /// client's own default gives a fresh connection; a front end whose
+    /// handshake carried no schema at all -- or a harness replaying one --
+    /// needs to say so, and this is the one way to.
+    pub fn deselect_database(&mut self) {
+        self.current_db = String::new();
+    }
+
     /// Go `executeUse`: an unknown schema is `ErrDatabaseNotExists`, and the
     /// switch also updates `collation_database`.
     fn use_database(&mut self, name: &str) -> Result<(), DriverError> {

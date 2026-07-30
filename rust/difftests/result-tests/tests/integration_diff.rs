@@ -36,6 +36,14 @@
 //! remaining topics are not silently skipped -- they are simply not on the
 //! list yet, and [`survey_unonboarded_topics`] is the tool that ranks them.
 //!
+//! # A topic may drive several connections
+//!
+//! A topic that drives SEVERAL connections replays through
+//! `mysqltest_connections`, which holds one session per connection over one
+//! shared store -- read its docs for which state is shared and which is not,
+//! and for why an account it cannot authenticate refuses the topic instead of
+//! falling back to root.
+//!
 //! # The two content classes differ in kind
 //!
 //! Row results are directly comparable and are the bulk of the value. Plan
@@ -65,7 +73,7 @@ use tidb_session::{Session, StmtOutput};
 /// divergences are a countable list with named causes, so a regression
 /// anywhere in these areas turns the gate red.
 ///
-/// Nine of the ten had ZERO divergences when they were onboarded. The tenth,
+/// All but one had ZERO divergences when they were onboarded. The exception,
 /// `explain_easy`, is deliberately on the list at a cost: it is the only topic
 /// here dense enough in plan text to prove the access-property comparison
 /// works at all (53 of its plans match), and it contributes the whole of the
@@ -112,6 +120,20 @@ const TOPICS: &[(&str, &str)] = &[
     (
         "globalindex/insert",
         "INSERT against a global index on a partitioned table -- also nothing skipped",
+    ),
+    (
+        "session/txn",
+        "the first MULTI-CONNECTION topic on the gate: a second connection's \
+         `BEGIN`/`COMMIT` against the same store as the first",
+    ),
+    (
+        "executor/rowid",
+        "`_tidb_rowid` written and read back across two connections",
+    ),
+    (
+        "ddl/ddl_tiflash",
+        "TiFlash replica DDL, refused on a peer connection exactly where TiDB \
+         refuses it",
     ),
     (
         "executor/admin",
@@ -528,9 +550,10 @@ fn replay_one_topic_from_env() {
 ///
 /// # The crashes the survey still reports, named
 ///
-/// 200 topics report a status line; the rest are `UNALIGNED` on this driver's
-/// own limits (a multi-connection `connect (...)` script, or a `.result`
-/// recording that is not valid UTF-8). Eight topics CRASH, and every one of
+/// Most topics report a status line; the rest are `UNALIGNED` on this driver's
+/// own limits (a `.result` recording that is not valid UTF-8, an echo sequence
+/// that does not line up, or a `connect` whose account the engine cannot
+/// authenticate -- see `mysqltest_connections`). Eight topics CRASH, and every one of
 /// them is the SAME defect, distinct from the four this driver's arrival
 /// already worked off:
 ///

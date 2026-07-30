@@ -65,10 +65,16 @@ pub enum Item {
 pub enum ConnectionCmd {
     /// `connect (<name>, <host>, <user>, <password>, <db>)`: opens a NEW
     /// connection and makes it current. `db` is empty when the script omits
-    /// it. The host and password are parsed but not carried: every script
-    /// connects to the local server with the account's real password, so
-    /// neither can decide anything (see `mysqltest_connections`).
-    Open { name: String, user: String, db: String },
+    /// it. The password is parsed but not carried -- every script gives the
+    /// account's real password -- while the HOST is: TiDB matches an account
+    /// row by `user` AND `host`, and the suite creates accounts for
+    /// `localhost` as often as for `%` (see `mysqltest_connections`).
+    Open {
+        name: String,
+        host: String,
+        user: String,
+        db: String,
+    },
     /// `connection <name>`: makes an already-open connection current.
     /// `default` names the connection the script started on.
     Switch(String),
@@ -80,7 +86,7 @@ pub enum ConnectionCmd {
 fn parse_connection_cmd(line: &str) -> Result<ConnectionCmd, String> {
     let body = line.trim().trim_end_matches(';').trim();
     let (verb, rest) = body
-        .split_once(|c: char| c == '(' || c == ' ')
+        .split_once(['(', ' '])
         .map_or((body, ""), |(v, r)| (v.trim(), r.trim()));
     match verb {
         "connection" if !rest.is_empty() => Ok(ConnectionCmd::Switch(rest.to_owned())),
@@ -97,11 +103,13 @@ fn parse_connection_cmd(line: &str) -> Result<ConnectionCmd, String> {
             let fields: Vec<&str> = inner.split(',').map(str::trim).collect();
             // name, host, user, password, and an optional db: the shortest
             // form in the suite omits the db and leaves the password empty.
-            if fields.len() < 4 || fields.len() > 5 || fields[0].is_empty() || fields[2].is_empty() {
+            if fields.len() < 4 || fields.len() > 5 || fields[0].is_empty() || fields[2].is_empty()
+            {
                 return Err(format!("unmodelled `connect` form `{line}`"));
             }
             Ok(ConnectionCmd::Open {
                 name: fields[0].to_owned(),
+                host: fields[1].to_owned(),
                 user: fields[2].to_owned(),
                 db: fields.get(4).copied().unwrap_or_default().to_owned(),
             })
@@ -380,6 +388,7 @@ mod tests {
             vec![
                 &ConnectionCmd::Open {
                     name: "conn1".to_owned(),
+                    host: "localhost".to_owned(),
                     user: "u1".to_owned(),
                     db: "db1".to_owned()
                 },
@@ -400,6 +409,7 @@ mod tests {
             parse_connection_cmd("connect (conn1, localhost, root,)").unwrap(),
             ConnectionCmd::Open {
                 name: "conn1".to_owned(),
+                host: "localhost".to_owned(),
                 user: "root".to_owned(),
                 db: String::new()
             }

@@ -61,11 +61,9 @@ use tidb_session::{privilege::PrivilegeRegistry, GlobalSysvars, Session, SharedC
 /// switches back to.
 const DEFAULT_CONNECTION: &str = "default";
 
-/// The host every account in the suite is created for. The scripts write
-/// `localhost` in the connect line and `CREATE USER 'u'@'%'` in the SQL, so
-/// the row a login matches is the `%` one -- the host in the connect line
-/// decides nothing here.
-const ACCOUNT_HOST: &str = "%";
+/// The host of the account row `root`'s connections match, which is the host
+/// [`PrivilegeRegistry::default`] bootstraps `root` for.
+const ANY_HOST: &str = "%";
 
 /// The sessions one topic's replay drives, and the server state behind them.
 pub struct Connections {
@@ -93,7 +91,7 @@ impl Connections {
             next_connection_id: 1,
         };
         let database = topic_database(topic);
-        let mut session = pool.new_session("root");
+        let mut session = pool.new_session("root", ANY_HOST);
         session
             .run(&format!("create database if not exists `{database}`"))
             .map_err(|e| format!("create topic database `{database}`: {e:?}"))?;
@@ -116,19 +114,31 @@ impl Connections {
     pub fn apply(&mut self, cmd: &crate::mysqltest_script::ConnectionCmd) -> Result<(), String> {
         use crate::mysqltest_script::ConnectionCmd;
         match cmd {
-            ConnectionCmd::Open { name, user, db } => {
-                // The login has to find a row, exactly as Go's
-                // `ConnectionVerification` does. An account the replay never
+            ConnectionCmd::Open {
+                name,
+                host,
+                user,
+                db,
+            } => {
+                // The login has to find an account ROW, exactly as Go's
+                // `ConnectionVerification` does, and the row it matches is
+                // what `CURRENT_USER()` reports. An account the replay never
                 // created is an engine gap (a `CREATE USER` that did not
                 // take), and the topic is refused rather than run as root.
-                if !self.privileges.user_exists(user, ACCOUNT_HOST) {
+                let Some(matched_host) = self.match_account(user, host) else {
                     return Err(format!(
-                        "cannot authenticate `{user}`@`{ACCOUNT_HOST}` for `connect ({name}, ...)`: \
-                         no such account in the registry after the replay's own account statements"
+                        "cannot authenticate `{user}`@`{host}` for `connect ({name}, ...)`: no \
+                         such account in the registry after the replay's own account statements"
                     ));
-                }
-                let mut session = self.new_session(user);
-                if !db.is_empty() {
+                };
+                let mut session = self.new_session(user, &matched_host);
+                if db.is_empty() {
+                    // An omitted db means NO schema, not the topic's: the
+                    // statement after `connect (conn1, localhost, root,,)` in
+                    // `executor/show` is a `show tables` whose recording is
+                    // `Error 1046 (3D000): No database selected`.
+                    session.deselect_database();
+                } else {
                     session
                         .select_database(db)
                         .map_err(|e| format!("connect ({name}, ...) database `{db}`: {e:?}"))?;
@@ -165,11 +175,32 @@ impl Connections {
         }
     }
 
+    /// The host of the account row a login by `user` from `host` matches, if
+    /// there is one.
+    ///
+    /// Go's `MatchIdentity` picks the most specific row for the connecting
+    /// host; the suite only ever creates two kinds -- the connecting host
+    /// itself (`CREATE USER myuser@localhost`) and the wildcard
+    /// (`CREATE USER 'u'@'%'`) -- so the exact row wins and the wildcard is
+    /// the fallback. `127.0.0.1` and `localhost` are treated as the same host
+    /// because Go's own loopback normalisation does.
+    fn match_account(&self, user: &str, host: &str) -> Option<String> {
+        let host = if host == "127.0.0.1" {
+            "localhost"
+        } else {
+            host
+        };
+        [host, ANY_HOST]
+            .into_iter()
+            .find(|candidate| self.privileges.user_exists(user, candidate))
+            .map(str::to_owned)
+    }
+
     /// One new connection over the shared state, in the order the server's own
     /// `open_session` installs it.
-    fn new_session(&mut self, user: &str) -> Session {
+    fn new_session(&mut self, user: &str, host: &str) -> Session {
         let mut session = Session::with_catalog(SharedCatalog::clone(&self.catalog));
-        let identity = format!("{user}@{ACCOUNT_HOST}");
+        let identity = format!("{user}@{host}");
         session.set_user(identity.clone(), identity);
         session.set_connection_id(self.next_connection_id);
         self.next_connection_id += 1;
@@ -189,9 +220,80 @@ pub fn topic_database(topic: &str) -> String {
 mod tests {
     use super::*;
 
+    use crate::mysqltest_script::ConnectionCmd;
+
     #[test]
     fn topic_path_becomes_the_database_the_scripts_name() {
         assert_eq!(topic_database("executor/admin"), "executor__admin");
         assert_eq!(topic_database("subquery"), "subquery");
+    }
+
+    fn open_root(name: &str) -> ConnectionCmd {
+        ConnectionCmd::Open {
+            name: name.to_owned(),
+            host: "localhost".to_owned(),
+            user: "root".to_owned(),
+            db: topic_database("driver/isolation"),
+        }
+    }
+
+    fn one_cell(pool: &mut Connections, sql: &str) -> String {
+        match pool.current().run_with_columns(sql).unwrap() {
+            tidb_session::StmtOutput::Rows { rows, .. } => format!("{rows:?}"),
+            other => panic!("{sql} answered {other:?}"),
+        }
+    }
+
+    /// The property that makes these topics worth replaying at all: a peer sees
+    /// a committed write and NOT an uncommitted one, over ONE store.
+    #[test]
+    fn a_peer_sees_committed_writes_and_not_uncommitted_ones() {
+        let mut pool = Connections::open("driver/isolation").unwrap();
+        pool.current().run("create table t (a int)").unwrap();
+        pool.apply(&open_root("conn1")).unwrap();
+        pool.current().run("begin").unwrap();
+        pool.current().run("insert into t values (1)").unwrap();
+        // conn1 reads its own write ...
+        assert_eq!(one_cell(&mut pool, "select a from t"), "[[Int(1)]]");
+        // ... and the default connection sees nothing of it.
+        pool.apply(&ConnectionCmd::Switch("default".to_owned()))
+            .unwrap();
+        assert_eq!(one_cell(&mut pool, "select a from t"), "[]");
+
+        pool.apply(&ConnectionCmd::Switch("conn1".to_owned()))
+            .unwrap();
+        pool.current().run("commit").unwrap();
+        // `disconnect` falls back to the default connection, which now sees it.
+        pool.apply(&ConnectionCmd::Close("conn1".to_owned()))
+            .unwrap();
+        assert_eq!(one_cell(&mut pool, "select a from t"), "[[Int(1)]]");
+    }
+
+    /// An account created on one connection is the account the next connection
+    /// logs in as -- and one that was never created refuses the topic instead
+    /// of quietly becoming root.
+    #[test]
+    fn a_connect_matches_the_account_row_the_replay_created() {
+        let mut pool = Connections::open("driver/accounts").unwrap();
+        assert!(pool
+            .apply(&ConnectionCmd::Open {
+                name: "conn1".to_owned(),
+                host: "localhost".to_owned(),
+                user: "nobody".to_owned(),
+                db: String::new(),
+            })
+            .is_err());
+        pool.current().run("create user u1@localhost").unwrap();
+        pool.apply(&ConnectionCmd::Open {
+            name: "conn1".to_owned(),
+            host: "localhost".to_owned(),
+            user: "u1".to_owned(),
+            db: String::new(),
+        })
+        .unwrap();
+        assert_eq!(
+            pool.current().authenticated_identity(),
+            Some(("u1", "localhost"))
+        );
     }
 }
