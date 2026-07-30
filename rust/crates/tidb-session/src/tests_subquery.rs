@@ -400,3 +400,90 @@ fn a_correlated_subquery_in_an_aggregate_argument_is_refused_by_name() {
         "unexpected error: {error:?}"
     );
 }
+
+/// Go's answers for the refused shape, asserted so it is a tracked work item
+/// rather than a wish. Captured via `rust/difftests/gorun` on
+/// `corpus/table/foundations`' own `dept`/`emp`:
+///
+/// | statement | Go |
+/// | --- | --- |
+/// | `SELECT dept.name, SUM((SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id)) FROM dept GROUP BY dept.name` | `eng|2`, `ops|0`, `sales|1` |
+/// | `SELECT COUNT((SELECT id FROM dept d2 WHERE d2.id = dept.id)) FROM dept` | `3` |
+/// | `SELECT SUM((SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id)) FROM dept` | `3` |
+/// | `SELECT MAX((SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id)) FROM dept` | `2` |
+/// | `SELECT COUNT((SELECT id FROM emp WHERE emp.dept_id = dept.id AND emp.id = 10)) FROM dept` | `1` |
+///
+/// The last row is the discriminator, and the reason a shortcut cannot fake
+/// this: the inner query returns NULL for two of the three `dept` rows, and
+/// `COUNT` skips exactly those, so the answer only comes out right if the
+/// subquery really ran ONCE PER SOURCE ROW and its NULLs reached the
+/// accumulator. Any scheme that evaluates the subquery once, or above the
+/// grouping, gets a different number.
+///
+/// REFUSED as too large for a corpus-tail unit, and named so a future one can
+/// pick it up: `driver::agg_select` is a fixed six-stage builder whose Apply
+/// chain (stage 6) sits ABOVE the aggregation, and `carry_apply_columns` binds
+/// each Apply's correlated columns from the AGGREGATION's output row. This
+/// shape needs a NEW stage between the source and the aggregation: an Apply
+/// over SOURCE rows that appends the scalar, correlated columns bound from the
+/// source schema instead, and the aggregate's argument rewritten onto the
+/// appended column. That is a planner restructuring, not a local fix, and the
+/// uncorrelated sibling (`SELECT SUM((SELECT COUNT(*) FROM emp)) FROM dept`,
+/// Go `12`) already passes through the fold gate, so nothing here is blocked
+/// on the ordinary case.
+#[test]
+#[ignore = "needs an Apply stage BELOW the aggregation, binding correlated columns from the source row"]
+fn a_correlated_subquery_in_an_aggregate_argument_matches_go() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE dept (id INT, name VARCHAR(9))")
+        .unwrap();
+    session
+        .run("INSERT INTO dept VALUES (1,'eng'),(2,'sales'),(3,'ops')")
+        .unwrap();
+    session
+        .run("CREATE TABLE emp (id INT, dept_id INT, name VARCHAR(9))")
+        .unwrap();
+    session
+        .run("INSERT INTO emp VALUES (10,1,'ann'),(11,1,'bob'),(12,2,'cid'),(13,9,'dan')")
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run(
+            "SELECT dept.name, SUM((SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id)) \
+             FROM dept GROUP BY dept.name ORDER BY dept.name"
+        )),
+        [["eng", "2"], ["ops", "0"], ["sales", "1"]]
+    );
+    assert_eq!(
+        row_text(
+            session.run("SELECT COUNT((SELECT id FROM dept d2 WHERE d2.id = dept.id)) FROM dept")
+        ),
+        [["3"]]
+    );
+    assert_eq!(
+        row_text(
+            session.run(
+                "SELECT SUM((SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id)) FROM dept"
+            )
+        ),
+        [["3"]]
+    );
+    assert_eq!(
+        row_text(
+            session.run(
+                "SELECT MAX((SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id)) FROM dept"
+            )
+        ),
+        [["2"]]
+    );
+    // The discriminator: two of three inner runs return NULL, and COUNT skips
+    // exactly those.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT COUNT((SELECT id FROM emp WHERE emp.dept_id = dept.id AND emp.id = 10)) \
+             FROM dept"
+        )),
+        [["1"]]
+    );
+}
