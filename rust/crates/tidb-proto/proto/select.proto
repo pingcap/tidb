@@ -136,6 +136,21 @@ enum ScalarFuncSig {
   Cot = 2147;
   PI = 2150;
   Sin = 2152;
+
+  // The string family TiKV evaluates. Each of these has a binary-string and a
+  // UTF-8 spelling, chosen by `types.IsBinaryStr` on the first argument --
+  // `Conv` alone is single, because it reads its argument as bytes either way.
+  Conv = 2138;
+  CharLengthUTF8 = 7005;
+  Lower = 7034;
+  Substring2ArgsUTF8 = 7053;
+  Substring3ArgsUTF8 = 7054;
+  Substring2Args = 7055;
+  Substring3Args = 7056;
+  UpperUTF8 = 7063;
+  Upper = 7064;
+  CharLength = 7065;
+  LowerUTF8 = 7066;
 }
 
 // Dependency-closed projection of expression.proto Expr. RPN, aggregate, and

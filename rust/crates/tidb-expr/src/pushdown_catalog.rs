@@ -67,7 +67,7 @@
 //! the wire -- which is why every row of the table below cites the Go
 //! `getFunction` it was read from.
 
-use tidb_datatype::{EvalType, FieldType, FieldTypeCode};
+use tidb_datatype::{collation_to_proto, EvalType, FieldType, FieldTypeCode};
 use tidb_proto::tipb::{Expr, ExprType};
 
 /// The TiPB signature enum, re-exported so a caller that reads a resolved
@@ -92,6 +92,11 @@ const UNSPECIFIED_LENGTH: i32 = -1;
 /// The `flen` Go's `newReturnFieldTypeForBaseBuiltinFunc` gives an `ETDecimal`
 /// return type before any per-family adjustment.
 const DECIMAL_RETURN_FLEN: i32 = 11;
+/// The `flen` `convFunctionClass.getFunction` stamps on `CONV`'s result.
+const CONV_RETURN_FLEN: i32 = 64;
+/// Go `charset.CharsetBin` / `charset.CollationBin`.
+const BINARY_CHARSET: &str = "binary";
+const BINARY_COLLATION: &str = "binary";
 
 /// One argument slot of a [`BuiltinSignature`]'s selector.
 ///
@@ -103,6 +108,14 @@ pub struct ArgPattern {
     pub eval: Option<EvalType>,
     /// Whether the argument's declared type carries `UNSIGNED`.
     pub unsigned: Option<bool>,
+    /// Whether the argument is a *binary* string -- Go `types.IsBinaryStr`,
+    /// which is the whole selector of the string family's two spellings:
+    /// `UpperUTF8` versus `Upper`, `CharLengthUTF8` versus `CharLength`,
+    /// `Substring3ArgsUTF8` versus `Substring3Args`. Reading this from the
+    /// argument's *collation* rather than from its MySQL type is the point:
+    /// `VARCHAR(10) COLLATE binary` and `VARBINARY(10)` are the same answer to
+    /// Go and must be the same answer here.
+    pub binary_string: Option<bool>,
 }
 
 impl ArgPattern {
@@ -111,6 +124,7 @@ impl ArgPattern {
     const ANY: Self = Self {
         eval: None,
         unsigned: None,
+        binary_string: None,
     };
 
     /// A slot selected on the argument's evaluation type alone.
@@ -118,6 +132,7 @@ impl ArgPattern {
         Self {
             eval: Some(eval),
             unsigned: None,
+            binary_string: None,
         }
     }
 
@@ -127,6 +142,27 @@ impl ArgPattern {
         Self {
             eval: Some(EvalType::Int),
             unsigned: Some(unsigned),
+            binary_string: None,
+        }
+    }
+
+    /// A string slot selected on `types.IsBinaryStr`, as every two-spelling
+    /// row of the string family is.
+    const fn string(binary: bool) -> Self {
+        Self {
+            eval: Some(EvalType::String),
+            unsigned: None,
+            binary_string: Some(binary),
+        }
+    }
+
+    /// A string slot of either spelling: `CONV` reads its argument as bytes
+    /// whatever its collation, so it has one signature and one row.
+    const fn any_string() -> Self {
+        Self {
+            eval: Some(EvalType::String),
+            unsigned: None,
+            binary_string: None,
         }
     }
 
@@ -135,7 +171,41 @@ impl ArgPattern {
             && self
                 .unsigned
                 .is_none_or(|unsigned| unsigned == argument.is_unsigned())
+            && self
+                .binary_string
+                .is_none_or(|binary| binary == argument.is_binary_string())
     }
+}
+
+/// Where a signature's result charset and collation come from -- Go's
+/// `deriveCollation` (`pkg/expression/collation.go`) reduced to the three
+/// answers the pushable families actually take.
+///
+/// The collation on a result type is not decoration: TiKV compares and folds
+/// case with it, so a wrong one returns wrong rows silently. Every variant
+/// below therefore names the Go branch it is, and a family whose branch is not
+/// one of these three has no row in the catalog at all.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RetCollation {
+    /// `binary`/`binary`: `deriveCollation`'s fallthrough for a non-`ETString`
+    /// return, which is every numeric signature and `CHAR_LENGTH`.
+    Numeric,
+    /// The first argument's own charset and collation, with the first
+    /// argument's `flen` and `SetBinFlagOrBinStr`: `deriveCollation`'s
+    /// `ast.Upper`/`ast.Lower` (through `args...`, a single argument) and
+    /// `ast.Substr`/`ast.Substring`/`ast.Mid` (through `args[0]`), followed by
+    /// the `bf.tp.SetFlen(argType.GetFlen())` each `getFunction` performs.
+    ///
+    /// Both reduce to `inferCollation` over exactly ONE string expression,
+    /// whose answer is that expression's own charset and collation -- which is
+    /// why this family needs none of the coercibility aggregation a
+    /// multi-operand derivation does, and is the reason it could be widened to
+    /// without the `Coercibility`/`Repertoire` seam.
+    FirstArgString,
+    /// `@@character_set_connection`/`@@collation_connection` with `flen` 64:
+    /// `convFunctionClass.getFunction`, which sets them itself rather than
+    /// taking `deriveCollation`'s answer.
+    ConnectionString,
 }
 
 /// One row of the catalog: a name, the argument pattern it is chosen for, the
@@ -158,14 +228,28 @@ pub struct BuiltinSignature {
     /// onto the result type (`MOD` and `ROUND` do; the trigonometric family
     /// does not).
     pub ret_unsigned_from_first_arg: bool,
+    /// Where the result's charset and collation come from.
+    pub ret_collation: RetCollation,
 }
 
 impl BuiltinSignature {
-    /// The TiPB field type of this signature's result, which is Go's
-    /// `newReturnFieldTypeForBaseBuiltinFunc` for `ret`.
-    fn return_field_type(self, unsigned: bool) -> tidb_proto::tipb::FieldType {
+    /// The TiPB field type of this signature's result: Go's
+    /// `newReturnFieldTypeForBaseBuiltinFunc` for `ret`, plus the per-family
+    /// adjustment the family's own `getFunction` makes to it afterwards.
+    ///
+    /// `children` are the arguments already lowered, so a
+    /// [`RetCollation::FirstArgString`] row reads the very field type that
+    /// crosses the wire rather than a second, separately-derived copy of it.
+    fn return_field_type(
+        self,
+        unsigned: bool,
+        children: &[Expr],
+    ) -> Option<tidb_proto::tipb::FieldType> {
+        if self.ret == EvalType::String {
+            return self.string_return_field_type(children);
+        }
         let flag = BINARY_FLAG | if unsigned { UNSIGNED_FLAG } else { 0 };
-        match self.ret {
+        Some(match self.ret {
             EvalType::Int => int_field_type(
                 FieldTypeCode::LongLong.mysql_type().into(),
                 flag,
@@ -184,10 +268,65 @@ impl BuiltinSignature {
                 DECIMAL_RETURN_FLEN,
                 0,
             ),
-            // Every other return family needs the charset and collation
-            // resolution this tier does not build; such a row is not in the
-            // table, so this arm is unreachable through `resolve`.
-            _ => int_field_type(0, flag, UNSPECIFIED_LENGTH, UNSPECIFIED_LENGTH),
+            // Every other return family (`ETDatetime`, `ETDuration`,
+            // `ETJson`) needs a field type this tier does not build; such a
+            // row is not in the table, so this arm is unreachable through
+            // `resolve` and refuses rather than guesses.
+            _ => return None,
+        })
+    }
+
+    /// The result field type of an `ETString` signature: Go's
+    /// `newReturnFieldTypeForBaseBuiltinFunc`'s `types.ETString` arm --
+    /// `VAR_STRING`, `flen`/`decimal` unspecified, charset and collation from
+    /// the derived `ExprCollation` -- with the family's own follow-up.
+    fn string_return_field_type(self, children: &[Expr]) -> Option<tidb_proto::tipb::FieldType> {
+        match self.ret_collation {
+            // Unreachable through `resolve`: a string-returning row always
+            // declares where its collation comes from, and
+            // `every_catalog_row_is_well_formed` pins that.
+            RetCollation::Numeric => None,
+            RetCollation::ConnectionString => {
+                let (charset, collation) = crate::collation_derive::connection_charset_info();
+                Some(pb_field_type(
+                    FieldTypeCode::VarString.mysql_type().into(),
+                    0,
+                    CONV_RETURN_FLEN,
+                    UNSPECIFIED_LENGTH,
+                    charset,
+                    collation,
+                ))
+            }
+            RetCollation::FirstArgString => {
+                let argument = children.first()?.field_type.as_ref()?;
+                let argument_flag = argument.flag.unwrap_or_default();
+                let collation =
+                    tidb_datatype::proto_to_collation(argument.collate.unwrap_or_default());
+                let charset = argument.charset.clone()?;
+                // Go `SetBinFlagOrBinStr(argType, bf.tp)`. Only `ETString`
+                // arguments reach here (a non-string one would need the cast
+                // into `ETString` this tier refuses), so `IsNonBinaryStr` is
+                // the negation of `IsBinaryStr` and the second branch reduces
+                // to the argument's own BINARY flag.
+                let (charset, collation, flag) = if collation == BINARY_COLLATION {
+                    // `types.SetBinChsClnFlag`.
+                    (
+                        BINARY_CHARSET.to_owned(),
+                        BINARY_COLLATION.to_owned(),
+                        BINARY_FLAG,
+                    )
+                } else {
+                    (charset, collation, argument_flag & BINARY_FLAG)
+                };
+                Some(pb_field_type(
+                    FieldTypeCode::VarString.mysql_type().into(),
+                    flag,
+                    argument.flen.unwrap_or(UNSPECIFIED_LENGTH),
+                    UNSPECIFIED_LENGTH,
+                    &charset,
+                    &collation,
+                ))
+            }
         }
     }
 }
@@ -383,9 +522,101 @@ pub const CATALOG: &[BuiltinSignature] = &[
         ScalarFuncSig::Pow,
         false,
     ),
+    // --- The string family. ---
+    //
+    // Every row below takes an argument that is ALREADY `ETString`: a slot
+    // that would need Go's `WrapWithCastAsString` has no row, because that
+    // cast's target `FieldType` takes its `flen` from a per-source-type table
+    // and its charset from the session, and sending a differently-shaped cast
+    // than Go sends would change what TiKV reads. `CHAR_LENGTH(i)` over an
+    // integer column is therefore refused here, which costs network only --
+    // see the module doc on why a refusal is the safe direction.
+    //
+    // `builtin_string.go` `charLengthFunctionClass.getFunction`: the return is
+    // `ETInt`, so `deriveCollation` never runs for it (`char_length` is not in
+    // its switch and the fallthrough is binary/binary for a non-string
+    // return).
+    string_int_signature(
+        "char_length",
+        &[ArgPattern::string(true)],
+        ScalarFuncSig::CharLength,
+    ),
+    string_int_signature(
+        "char_length",
+        &[ArgPattern::string(false)],
+        ScalarFuncSig::CharLengthUtf8,
+    ),
+    // `upperFunctionClass` / `lowerFunctionClass`: one `ETString` argument,
+    // `bf.tp.SetFlen(argTp.GetFlen())`, `SetBinFlagOrBinStr(argTp, bf.tp)`,
+    // and a collation `deriveCollation`'s `ast.Upper`/`ast.Lower` case reads
+    // off that same single argument.
+    string_signature(
+        "upper",
+        &[ArgPattern::string(true)],
+        &[EvalType::String],
+        ScalarFuncSig::Upper,
+        RetCollation::FirstArgString,
+    ),
+    string_signature(
+        "upper",
+        &[ArgPattern::string(false)],
+        &[EvalType::String],
+        ScalarFuncSig::UpperUtf8,
+        RetCollation::FirstArgString,
+    ),
+    string_signature(
+        "lower",
+        &[ArgPattern::string(true)],
+        &[EvalType::String],
+        ScalarFuncSig::Lower,
+        RetCollation::FirstArgString,
+    ),
+    string_signature(
+        "lower",
+        &[ArgPattern::string(false)],
+        &[EvalType::String],
+        ScalarFuncSig::LowerUtf8,
+        RetCollation::FirstArgString,
+    ),
+    // `substringFunctionClass.getFunction`, whose switch is arity crossed with
+    // `types.IsBinaryStr(args[0])`. TiDB registers the one class under three
+    // names (`builtin.go`: `ast.Substr`, `ast.Substring`, `ast.Mid`), each
+    // with arity 2..3, and `scalarExprSupportedByTiKV` lists all three, so all
+    // three are rows -- twelve in total, which is Go's four-way switch times
+    // its three names.
+    substring_signature("substr", 3, true, ScalarFuncSig::Substring3Args),
+    substring_signature("substr", 3, false, ScalarFuncSig::Substring3ArgsUtf8),
+    substring_signature("substr", 2, true, ScalarFuncSig::Substring2Args),
+    substring_signature("substr", 2, false, ScalarFuncSig::Substring2ArgsUtf8),
+    substring_signature("substring", 3, true, ScalarFuncSig::Substring3Args),
+    substring_signature("substring", 3, false, ScalarFuncSig::Substring3ArgsUtf8),
+    substring_signature("substring", 2, true, ScalarFuncSig::Substring2Args),
+    substring_signature("substring", 2, false, ScalarFuncSig::Substring2ArgsUtf8),
+    substring_signature("mid", 3, true, ScalarFuncSig::Substring3Args),
+    substring_signature("mid", 3, false, ScalarFuncSig::Substring3ArgsUtf8),
+    substring_signature("mid", 2, true, ScalarFuncSig::Substring2Args),
+    substring_signature("mid", 2, false, ScalarFuncSig::Substring2ArgsUtf8),
+    // `builtin_math.go` `convFunctionClass.getFunction`: one signature
+    // whatever the argument's collation, with the connection charset and
+    // `flen` 64 set on the result by hand.
+    //
+    // `scalarExprSupportedByTiKV`'s `ast.Conv` case refuses a first argument
+    // that is a `CAST` over a hybrid type or a binary literal (Go issue
+    // 51877). That shape cannot be built here at all -- `CAST` is not in this
+    // catalog -- so the refusal is structural, and
+    // `tikv_refuses_what_go_refuses` pins `conv(cast(bt as binary), i, i)`.
+    string_signature(
+        "conv",
+        &[ArgPattern::any_string(), ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::String, EvalType::Int, EvalType::Int],
+        ScalarFuncSig::Conv,
+        RetCollation::ConnectionString,
+    ),
 ];
 
-/// A `const fn` row constructor, so the table above reads as data.
+/// A `const fn` row constructor for a numeric-returning family, so the table
+/// above reads as data. Its result carries `binary`/`binary`, which is
+/// `deriveCollation`'s answer for every non-`ETString` return.
 const fn signature(
     name: &'static str,
     selector: &'static [ArgPattern],
@@ -401,6 +632,70 @@ const fn signature(
         ret,
         sig,
         ret_unsigned_from_first_arg,
+        ret_collation: RetCollation::Numeric,
+    }
+}
+
+/// A one-string-argument, integer-returning row: the `CHAR_LENGTH` pair.
+const fn string_int_signature(
+    name: &'static str,
+    selector: &'static [ArgPattern],
+    sig: ScalarFuncSig,
+) -> BuiltinSignature {
+    signature(
+        name,
+        selector,
+        &[EvalType::String],
+        EvalType::Int,
+        sig,
+        false,
+    )
+}
+
+/// One row of `substringFunctionClass.getFunction`'s arity-by-binaryness
+/// switch, under one of its three registered names.
+const fn substring_signature(
+    name: &'static str,
+    arity: usize,
+    binary: bool,
+    sig: ScalarFuncSig,
+) -> BuiltinSignature {
+    // `argTps := []ETString, ETInt`, plus a third `ETInt` when the call has
+    // three arguments.
+    const BINARY_3: &[ArgPattern] = &[ArgPattern::string(true), ArgPattern::ANY, ArgPattern::ANY];
+    const UTF8_3: &[ArgPattern] = &[ArgPattern::string(false), ArgPattern::ANY, ArgPattern::ANY];
+    const BINARY_2: &[ArgPattern] = &[ArgPattern::string(true), ArgPattern::ANY];
+    const UTF8_2: &[ArgPattern] = &[ArgPattern::string(false), ArgPattern::ANY];
+    const TYPES_3: &[EvalType] = &[EvalType::String, EvalType::Int, EvalType::Int];
+    const TYPES_2: &[EvalType] = &[EvalType::String, EvalType::Int];
+    let (selector, arg_types): (&'static [ArgPattern], &'static [EvalType]) = match (arity, binary)
+    {
+        (3, true) => (BINARY_3, TYPES_3),
+        (3, false) => (UTF8_3, TYPES_3),
+        (_, true) => (BINARY_2, TYPES_2),
+        (_, false) => (UTF8_2, TYPES_2),
+    };
+    string_signature(name, selector, arg_types, sig, RetCollation::FirstArgString)
+}
+
+/// A `const fn` row constructor for a string-returning family, which must say
+/// where its result collation comes from. No such row ever propagates
+/// `UNSIGNED`: Go's string `getFunction`s do not touch that flag.
+const fn string_signature(
+    name: &'static str,
+    selector: &'static [ArgPattern],
+    arg_types: &'static [EvalType],
+    sig: ScalarFuncSig,
+    ret_collation: RetCollation,
+) -> BuiltinSignature {
+    BuiltinSignature {
+        name,
+        selector,
+        arg_types,
+        ret: EvalType::String,
+        sig,
+        ret_unsigned_from_first_arg: false,
+        ret_collation,
     }
 }
 
@@ -413,7 +708,9 @@ const fn signature(
 const fn cast_signature(from: EvalType, to: EvalType) -> Option<Option<ScalarFuncSig>> {
     if matches!(
         (from, to),
-        (EvalType::Int, EvalType::Int) | (EvalType::Real, EvalType::Real)
+        (EvalType::Int, EvalType::Int)
+            | (EvalType::Real, EvalType::Real)
+            | (EvalType::String, EvalType::String)
     ) {
         // Go returns the argument untouched, so no node is added at all.
         return Some(None);
@@ -479,6 +776,28 @@ impl PbScalar {
             }
         }
     }
+
+    /// Whether the node is a binary string -- Go `types.IsBinaryStr`, the
+    /// selector of the string family's two spellings.
+    ///
+    /// For a call this reads the result collation rule rather than the
+    /// argument: `UPPER` over a `VARBINARY` returns binary (Go
+    /// `SetBinFlagOrBinStr` -> `SetBinChsClnFlag`), so `UPPER(UPPER(b))`
+    /// resolves the binary signature at both levels, while `CONV` always
+    /// returns the connection charset and so is never binary.
+    #[must_use]
+    pub fn is_binary_string(&self) -> bool {
+        match self {
+            Self::Column { field_type, .. } => field_type.is_binary_string(),
+            Self::IntLiteral(_) => false,
+            Self::Call { signature, args } => match signature.ret_collation {
+                RetCollation::Numeric | RetCollation::ConnectionString => false,
+                RetCollation::FirstArgString => {
+                    args.first().is_some_and(PbScalar::is_binary_string)
+                }
+            },
+        }
+    }
 }
 
 /// The catalog row for a call of `name` over `args`, when TiKV evaluates it.
@@ -517,7 +836,7 @@ pub fn build_call(name: &str, args: Vec<PbScalar>) -> Option<PbScalar> {
 /// produces*. [`to_pb`] refuses when the two disagree in a way that would have
 /// changed the resolved signature, because a signature chosen from one type and
 /// sent against another is exactly the shape that returns wrong rows.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ColumnDescriptor {
     /// The MySQL type byte.
     pub tp: i32,
@@ -527,6 +846,15 @@ pub struct ColumnDescriptor {
     pub flen: i32,
     /// Scale.
     pub decimal: i32,
+    /// The column's charset name -- Go `ft.GetCharset()`.
+    pub charset: String,
+    /// The column's collation NAME (`utf8mb4_bin`, `binary`, ...) -- Go
+    /// `ft.GetCollate()`. This is what TiKV compares and case-folds the
+    /// column's values with, and what selects the string family's
+    /// binary-versus-UTF-8 spelling, so it is carried verbatim rather than
+    /// reduced to a flag. A numeric or temporal column carries `binary`,
+    /// exactly as Go's `FieldType` does.
+    pub collation: String,
 }
 
 /// Lowers a described call into the TiPB expression Go's `ExprToPB` builds for
@@ -549,24 +877,38 @@ pub fn to_pb(
         PbScalar::Column { offset, field_type } => {
             let declared = columns(*offset)?;
             let code = FieldTypeCode::from_mysql_type(u8::try_from(declared.tp).ok()?);
-            let declared_type = FieldType::new(code).with_flags(declared.flag);
+            let declared_type = FieldType::new(code)
+                .with_flags(declared.flag)
+                .with_collation_name(declared.collation.clone());
             // The signature was chosen from the description's type; sending it
-            // against a differently-typed column would be a different function.
+            // against a differently-typed column would be a different
+            // function. Binary-string-ness is checked alongside the eval type
+            // and the sign because it is the third thing a signature is chosen
+            // by: `UpperUTF8` sent against a `binary` column is `Upper`'s job.
             if declared_type.eval_type() != field_type.eval_type()
                 || declared_type.is_unsigned() != field_type.is_unsigned()
+                || declared_type.is_binary_string() != field_type.is_binary_string()
             {
                 return None;
             }
-            if declared_type.has_charset() {
-                // A real collation id is what TiKV compares strings with, and
-                // resolving one is a separate unit; guessing would change an
-                // answer.
+            // A column family whose TiPB leaf needs more than the six fields
+            // below: `ENUM`/`SET` carry their `elems` list, `BIT` and `JSON`
+            // are separately gated by Go's `columnToPBExpr`, and
+            // `GEOMETRY`/unspecified are refused there outright.
+            if !leaf_column_family(code) {
                 return None;
             }
             Some(leaf(
                 ExprType::ColumnRef,
                 encode_signed(i64::from(*offset)),
-                int_field_type(declared.tp, declared.flag, declared.flen, declared.decimal),
+                pb_field_type(
+                    declared.tp,
+                    declared.flag,
+                    declared.flen,
+                    declared.decimal,
+                    &declared.charset,
+                    &declared.collation,
+                ),
             ))
         }
         PbScalar::IntLiteral(value) => Some(leaf(
@@ -584,12 +926,13 @@ pub fn to_pb(
             for (argument, required) in args.iter().zip(signature.arg_types) {
                 children.push(coerced_to_pb(argument, *required, columns)?);
             }
+            let return_field_type = signature.return_field_type(scalar.is_unsigned(), &children)?;
             Some(Expr {
                 tp: Some(ExprType::ScalarFunc as i32),
                 val: None,
                 children,
                 sig: Some(signature.sig as i32),
-                field_type: Some(signature.return_field_type(scalar.is_unsigned())),
+                field_type: Some(return_field_type),
                 has_distinct: Some(false),
             })
         }
@@ -679,6 +1022,64 @@ fn encode_signed(value: i64) -> Vec<u8> {
     encoded
 }
 
+/// Go `ToPBFieldType` in full: the seven fields it copies, with the charset
+/// carried verbatim and the collation put through
+/// `collate.CollationToProto` -- the negation `RewriteNewCollationIDIfNeeded`
+/// applies when new collations are enabled, which is how TiKV is told to use
+/// the new collator rather than a byte comparison.
+///
+/// `elems` is always empty here because no `ENUM`/`SET` leaf reaches this
+/// tier; [`leaf_column_family`] is what keeps that true.
+fn pb_field_type(
+    mysql_type: i32,
+    flags: u32,
+    flen: i32,
+    decimal: i32,
+    charset: &str,
+    collation: &str,
+) -> tidb_proto::tipb::FieldType {
+    tidb_proto::tipb::FieldType {
+        tp: Some(mysql_type),
+        flag: Some(flags),
+        flen: Some(flen),
+        decimal: Some(decimal),
+        collate: Some(collation_to_proto(collation)),
+        charset: Some(charset.to_owned()),
+        elems: Vec::new(),
+        // Upstream FieldType.array is gogoproto nullable=false.
+        array: Some(false),
+    }
+}
+
+/// Whether a column of this family may become a TiPB `ColumnRef` leaf here.
+///
+/// Go `columnToPBExpr` refuses `SET`, `GEOMETRY` and unspecified outright, and
+/// admits `BIT` and `ENUM` only behind `IsPushDownEnabled` switches this tier
+/// does not read; an `ENUM`/`SET` leaf would additionally need its `elems`
+/// list on the wire, and a `JSON` leaf the `ETJson` handling. All of them are
+/// refused here instead, which costs network and never an answer.
+const fn leaf_column_family(code: FieldTypeCode) -> bool {
+    matches!(
+        code,
+        FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+            | FieldTypeCode::Year
+            | FieldTypeCode::Float
+            | FieldTypeCode::Double
+            | FieldTypeCode::NewDecimal
+            | FieldTypeCode::Varchar
+            | FieldTypeCode::VarString
+            | FieldTypeCode::String
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::Blob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,7 +1108,7 @@ mod tests {
             declared
                 .iter()
                 .find(|(at, _)| *at == offset)
-                .map(|(_, descriptor)| *descriptor)
+                .map(|(_, descriptor)| descriptor.clone())
         }
     }
 
@@ -720,6 +1121,12 @@ mod tests {
                     flag: field_type.flags(),
                     flen: i32::try_from(field_type.flen()).unwrap_or(UNSPECIFIED_LENGTH),
                     decimal: i32::try_from(field_type.decimal()).unwrap_or(UNSPECIFIED_LENGTH),
+                    // The charset is derived from the collation, exactly as
+                    // the served scan descriptor derives it: `tipb.ColumnInfo`
+                    // states a collation id and no charset at all.
+                    charset: tidb_datatype::get_collation_by_name(field_type.collation_name())
+                        .map_or_else(|_| "binary".to_owned(), |row| row.charset_name),
+                    collation: field_type.collation_name().to_owned(),
                 },
             )),
             PbScalar::IntLiteral(_) => {}
@@ -909,15 +1316,55 @@ mod tests {
         assert!(lower(&call).is_some());
     }
 
-    /// A column whose collation TiKV compares with is refused rather than
-    /// guessed at.
+    /// A string column's leaf carries the column's OWN collation, put through
+    /// `collate.CollationToProto` -- the id TiKV picks its collator from.
+    /// Guessing this is the one mistake that returns wrong rows silently, so
+    /// it is asserted as an exact protocol id and not as "some collation".
     #[test]
-    fn a_column_with_a_real_collation_is_refused_by_the_lowering() {
-        let call = build_call("round", vec![column(FieldTypeCode::VarString)]).unwrap();
-        assert!(
-            lower(&call).is_none(),
-            "a VARCHAR leaf needs the collation id resolution this tier lacks"
-        );
+    fn a_string_leaf_carries_the_columns_own_collation_id() {
+        for name in ["utf8mb4_bin", "utf8mb4_general_ci", "binary", "latin1_bin"] {
+            let scalar = PbScalar::Column {
+                offset: 0,
+                field_type: FieldType::new(FieldTypeCode::VarString).with_collation_name(name),
+            };
+            let call = build_call("char_length", vec![scalar]).unwrap();
+            let pb = lower(&call).unwrap();
+            let leaf = pb.children[0].field_type.as_ref().unwrap();
+            assert_eq!(
+                leaf.collate,
+                Some(tidb_datatype::collation_to_proto(name)),
+                "{name}: the leaf must carry the column's own collation id"
+            );
+            assert_eq!(
+                leaf.charset.as_deref(),
+                Some(
+                    tidb_datatype::get_collation_by_name(name)
+                        .unwrap()
+                        .charset_name
+                        .as_str()
+                ),
+                "{name}: the charset the collation belongs to"
+            );
+        }
+    }
+
+    /// A column family whose TiPB leaf needs more than the fields this tier
+    /// copies is refused: `ENUM`/`SET` carry an `elems` list, and `BIT`,
+    /// `JSON` and `GEOMETRY` are gated or refused by Go's `columnToPBExpr`.
+    #[test]
+    fn a_leaf_family_go_gates_or_refuses_is_refused_here() {
+        for code in [
+            FieldTypeCode::Enum,
+            FieldTypeCode::Set,
+            FieldTypeCode::Bit,
+            FieldTypeCode::Json,
+            FieldTypeCode::Geometry,
+        ] {
+            assert!(
+                !leaf_column_family(code),
+                "{code:?} needs more than the six TiPB field-type fields this tier copies"
+            );
+        }
     }
 
     /// `MOD` and `ROUND` copy the first argument's UNSIGNED flag onto the
@@ -937,6 +1384,238 @@ mod tests {
         assert!(!sin.is_unsigned());
     }
 
+    /// A string column with an explicit collation, which is what the string
+    /// family's signature is chosen by.
+    fn string_column(code: FieldTypeCode, collation: &str) -> PbScalar {
+        PbScalar::Column {
+            offset: 0,
+            field_type: FieldType::new(code).with_collation_name(collation),
+        }
+    }
+
+    /// The whole binary-versus-UTF-8 switch of `builtin_string.go`, as one
+    /// table: every string family resolves its spelling from
+    /// `types.IsBinaryStr(args[0])` and from nothing else -- not from the
+    /// MySQL type, which is why `VARCHAR COLLATE binary` and `VARBINARY`
+    /// resolve the same signature.
+    #[test]
+    fn the_string_family_resolves_its_spelling_from_is_binary_str() {
+        let cases: &[(&str, usize, ScalarFuncSig, ScalarFuncSig)] = &[
+            (
+                "char_length",
+                1,
+                ScalarFuncSig::CharLength,
+                ScalarFuncSig::CharLengthUtf8,
+            ),
+            ("upper", 1, ScalarFuncSig::Upper, ScalarFuncSig::UpperUtf8),
+            ("lower", 1, ScalarFuncSig::Lower, ScalarFuncSig::LowerUtf8),
+            (
+                "substr",
+                2,
+                ScalarFuncSig::Substring2Args,
+                ScalarFuncSig::Substring2ArgsUtf8,
+            ),
+            (
+                "substr",
+                3,
+                ScalarFuncSig::Substring3Args,
+                ScalarFuncSig::Substring3ArgsUtf8,
+            ),
+            (
+                "substring",
+                3,
+                ScalarFuncSig::Substring3Args,
+                ScalarFuncSig::Substring3ArgsUtf8,
+            ),
+            (
+                "mid",
+                3,
+                ScalarFuncSig::Substring3Args,
+                ScalarFuncSig::Substring3ArgsUtf8,
+            ),
+        ];
+        for &(name, arity, binary_sig, utf8_sig) in cases {
+            for (collation, expected) in [
+                ("binary", binary_sig),
+                ("utf8mb4_bin", utf8_sig),
+                ("utf8mb4_general_ci", utf8_sig),
+            ] {
+                for code in [FieldTypeCode::VarString, FieldTypeCode::String] {
+                    let mut args = vec![string_column(code, collation)];
+                    args.extend((1..arity).map(|position| {
+                        PbScalar::IntLiteral(i64::try_from(position).expect("small"))
+                    }));
+                    let resolved = resolve(name, &args).unwrap_or_else(|| {
+                        panic!("{name}/{arity} over {collation} {code:?} resolves")
+                    });
+                    assert_eq!(
+                        resolved.sig, expected,
+                        "{name}/{arity} over {collation} {code:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// `CONV` has ONE signature whatever the argument's collation, and its
+    /// result carries the connection charset with `flen` 64 --
+    /// `convFunctionClass.getFunction` setting them by hand rather than taking
+    /// `deriveCollation`'s answer.
+    #[test]
+    fn conv_is_collation_blind_and_returns_the_connection_charset() {
+        for collation in ["binary", "utf8mb4_bin", "utf8mb4_general_ci"] {
+            let call = build_call(
+                "conv",
+                vec![
+                    string_column(FieldTypeCode::VarString, collation),
+                    PbScalar::IntLiteral(10),
+                    PbScalar::IntLiteral(2),
+                ],
+            )
+            .unwrap_or_else(|| panic!("conv over {collation} resolves"));
+            let pb = lower(&call).unwrap();
+            assert_eq!(pb.sig, Some(ScalarFuncSig::Conv as i32));
+            let ret = pb.field_type.as_ref().unwrap();
+            let (charset, collation_name) = crate::collation_derive::connection_charset_info();
+            assert_eq!(ret.charset.as_deref(), Some(charset));
+            assert_eq!(
+                ret.collate,
+                Some(tidb_datatype::collation_to_proto(collation_name))
+            );
+            assert_eq!(ret.flen, Some(CONV_RETURN_FLEN));
+            assert_eq!(ret.flag, Some(0), "CONV's result carries no BINARY flag");
+        }
+    }
+
+    /// `UPPER`/`LOWER`/`SUBSTR` stamp the FIRST ARGUMENT's charset, collation
+    /// and `flen` on their result -- Go's `deriveCollation` over that one
+    /// argument, then `bf.tp.SetFlen(argType.GetFlen())` and
+    /// `SetBinFlagOrBinStr`.
+    #[test]
+    fn the_first_arg_string_family_stamps_its_arguments_collation_on_the_result() {
+        for name in ["upper", "lower", "substr"] {
+            for collation in ["utf8mb4_bin", "utf8mb4_general_ci", "binary"] {
+                let mut args = vec![PbScalar::Column {
+                    offset: 0,
+                    field_type: FieldType::new(FieldTypeCode::VarString)
+                        .with_collation_name(collation)
+                        .with_flen(40),
+                }];
+                if name == "substr" {
+                    args.push(PbScalar::IntLiteral(2));
+                }
+                let call = build_call(name, args).unwrap();
+                let pb = lower(&call).unwrap();
+                let ret = pb.field_type.as_ref().unwrap();
+                assert_eq!(
+                    ret.tp,
+                    Some(FieldTypeCode::VarString.mysql_type().into()),
+                    "{name}: newReturnFieldTypeForBaseBuiltinFunc's ETString arm is VAR_STRING"
+                );
+                assert_eq!(ret.flen, Some(40), "{name}: SetFlen(argType.GetFlen())");
+                assert_eq!(
+                    ret.collate,
+                    Some(tidb_datatype::collation_to_proto(collation)),
+                    "{name} over {collation}"
+                );
+                // `SetBinFlagOrBinStr`: a binary-string argument sets
+                // BINARY_FLAG and pins charset/collation to `binary`; a
+                // non-binary one leaves the flag clear.
+                if collation == "binary" {
+                    assert_eq!(ret.flag, Some(BINARY_FLAG), "{name}: SetBinChsClnFlag");
+                    assert_eq!(ret.charset.as_deref(), Some("binary"));
+                } else {
+                    assert_eq!(ret.flag, Some(0), "{name} over {collation}");
+                }
+            }
+        }
+    }
+
+    /// A nested string call keeps resolving on the collation the INNER call
+    /// returns, so `UPPER(LOWER(b))` over a binary column is the binary
+    /// spelling twice and never mixes the two.
+    #[test]
+    fn a_nested_string_call_resolves_on_the_inner_calls_collation() {
+        let inner = build_call(
+            "lower",
+            vec![string_column(FieldTypeCode::VarString, "binary")],
+        )
+        .unwrap();
+        let outer = build_call("upper", vec![inner]).unwrap();
+        let PbScalar::Call { signature, .. } = &outer else {
+            panic!("a call");
+        };
+        assert_eq!(signature.sig, ScalarFuncSig::Upper);
+
+        let inner = build_call(
+            "lower",
+            vec![string_column(
+                FieldTypeCode::VarString,
+                "utf8mb4_general_ci",
+            )],
+        )
+        .unwrap();
+        let outer = build_call("upper", vec![inner]).unwrap();
+        let PbScalar::Call { signature, .. } = &outer else {
+            panic!("a call");
+        };
+        assert_eq!(signature.sig, ScalarFuncSig::UpperUtf8);
+    }
+
+    /// A NON-string argument in a string slot is refused, loudly and on
+    /// purpose. Go would insert `WrapWithCastAsString`, whose target
+    /// `FieldType` takes its `flen` from a per-source-type table
+    /// (`builtin_cast.go`'s `WrapWithCastAsString`) and its charset from the
+    /// session; sending a differently-shaped cast than Go sends would change
+    /// what TiKV reads, so this tier does not send one at all.
+    #[test]
+    fn a_non_string_argument_in_a_string_slot_is_refused() {
+        for name in ["char_length", "upper", "lower", "conv"] {
+            let mut args = vec![column(FieldTypeCode::LongLong)];
+            if name == "conv" {
+                args.push(PbScalar::IntLiteral(10));
+                args.push(PbScalar::IntLiteral(2));
+            }
+            assert!(
+                resolve(name, &args).is_none(),
+                "{name} over an integer column needs WrapWithCastAsString, \
+                 which this tier does not build"
+            );
+        }
+        assert!(
+            resolve("upper", &[column(FieldTypeCode::Json)]).is_none(),
+            "a JSON argument needs the ETJson handling this tier does not build"
+        );
+    }
+
+    /// The lowering refuses when the scan descriptor's collation disagrees
+    /// with the collation the signature was chosen from: `UpperUTF8` sent
+    /// against a column the coprocessor reads as `binary` is `Upper`'s job,
+    /// and case-folds differently.
+    #[test]
+    fn a_descriptor_that_disagrees_about_the_collation_refuses_the_push() {
+        let call = build_call(
+            "upper",
+            vec![string_column(FieldTypeCode::VarString, "utf8mb4_bin")],
+        )
+        .unwrap();
+        assert!(lower(&call).is_some(), "agreeing descriptors lower");
+        let binary_descriptor = |_offset| {
+            Some(ColumnDescriptor {
+                tp: FieldTypeCode::VarString.mysql_type().into(),
+                flag: 0,
+                flen: UNSPECIFIED_LENGTH,
+                decimal: UNSPECIFIED_LENGTH,
+                charset: "binary".to_owned(),
+                collation: "binary".to_owned(),
+            })
+        };
+        assert!(
+            to_pb(&call, &binary_descriptor).is_none(),
+            "the UTF-8 signature must not travel against a binary column"
+        );
+    }
+
     /// Every row of the table is well-formed: the selector and the coerced
     /// argument list agree in length, and the return family is one
     /// `return_field_type` builds faithfully.
@@ -950,8 +1629,23 @@ mod tests {
                 row.name
             );
             assert!(
-                matches!(row.ret, EvalType::Int | EvalType::Real | EvalType::Decimal),
+                matches!(
+                    row.ret,
+                    EvalType::Int | EvalType::Real | EvalType::Decimal | EvalType::String
+                ),
                 "{}: the return family needs a TiPB field type this tier builds",
+                row.name
+            );
+            assert_eq!(
+                row.ret == EvalType::String,
+                row.ret_collation != RetCollation::Numeric,
+                "{}: a string-returning row must say where its collation comes \
+                 from, and a numeric one must not claim a derived collation",
+                row.name
+            );
+            assert!(
+                !row.ret_unsigned_from_first_arg || row.ret != EvalType::String,
+                "{}: no string getFunction propagates UNSIGNED",
                 row.name
             );
             assert_ne!(row.sig, ScalarFuncSig::Unspecified, "{}", row.name);

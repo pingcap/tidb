@@ -206,11 +206,22 @@ fn predicate_to_pb(
         // send and never a wrong condition.
         ScanPredicate::Builtin(call) => tidb_expr::pushdown_catalog::to_pb(call, &|offset| {
             columns.get(offset as usize).map(|column| {
+                // The scan descriptor states a column's collation as the
+                // PROTOCOL id -- already negated by
+                // `RewriteNewCollationIDIfNeeded` -- and states no charset at
+                // all. Both are recovered here from that one id, so the leaf
+                // the coprocessor is handed and the column the coprocessor was
+                // told to read cannot disagree about which collator applies.
+                let collation = tidb_datatype::proto_to_collation(column.collation);
+                let charset = tidb_datatype::get_collation_by_name(&collation)
+                    .map_or_else(|_| "binary".to_owned(), |row| row.charset_name);
                 tidb_expr::pushdown_catalog::ColumnDescriptor {
                     tp: column.tp,
                     flag: u32::try_from(column.flag).unwrap_or(0),
                     flen: column.column_len,
                     decimal: column.decimal,
+                    charset,
+                    collation,
                 }
             })
         })
