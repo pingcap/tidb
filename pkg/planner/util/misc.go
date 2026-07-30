@@ -291,29 +291,37 @@ func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 	return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 }
 
-// ResolveVisibleHintTable resolves the hint table name that should be visible
-// for startOffset in targetOffset. It first walks the derived-table visibility
-// chain and falls back to the direct query-block alias if no outer-visible alias
-// exists in the recorded chain.
-func ResolveVisibleHintTable(sctx base.PlanContext, startOffset, targetOffset int) (*ast.HintTable, bool) {
-	if sctx == nil || startOffset <= 0 {
+// ResolveVisibleHintTableStrict resolves the derived-table alias that is visible
+// for startOffset in targetOffset. It succeeds only when the recorded alias
+// chain reaches targetOffset; callers must not substitute a direct inner alias
+// when this proof fails.
+func ResolveVisibleHintTableStrict(sctx base.PlanContext, startOffset, targetOffset int) (*ast.HintTable, bool) {
+	if sctx == nil || startOffset <= 0 || targetOffset < 0 {
 		return nil, false
 	}
-	if targetOffset >= 0 {
-		if aliasInfo := sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
-			if resolved, ok := h.ResolveSelectBlockAlias(*aliasInfo, startOffset, targetOffset); ok {
-				return &ast.HintTable{DBName: resolved.DBName, TableName: resolved.TableName}, true
-			}
+	if aliasInfo := sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
+		if resolved, ok := h.ResolveSelectBlockAlias(*aliasInfo, startOffset, targetOffset); ok {
+			return &ast.HintTable{DBName: resolved.DBName, TableName: resolved.TableName}, true
 		}
+	}
+	return nil, false
+}
+
+// LookupDirectSelectBlockAlias returns the alias recorded directly for offset.
+// Unlike ResolveVisibleHintTableStrict, it does not prove visibility in an
+// outer query block and therefore must not be used by LEADING replay paths.
+func LookupDirectSelectBlockAlias(sctx base.PlanContext, offset int) (*ast.HintTable, bool) {
+	if sctx == nil || offset <= 0 {
+		return nil, false
 	}
 	var queryBlockNames []ast.HintTable
 	if names := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); names != nil {
 		queryBlockNames = *names
 	}
-	if startOffset >= len(queryBlockNames) {
+	if offset >= len(queryBlockNames) {
 		return nil, false
 	}
-	hintTable := queryBlockNames[startOffset]
+	hintTable := queryBlockNames[offset]
 	if hintTable.TableName.L == "" {
 		return nil, false
 	}
@@ -332,71 +340,128 @@ func hintTableToHintedTable(sctx base.PlanContext, hintTable *ast.HintTable, sel
 	return &h.HintedTable{DBName: dbName, TblName: hintTable.TableName, SelectOffset: selectOffset}
 }
 
-// ExtractJoinHintTableAlias returns the alias that a logical join hint should
-// use for this plan node.
-//
-// It first tries to recover a derived-table alias from descendant query-block
-// metadata, then falls back to the plan's output names. The derived-table alias
-// belongs to the surrounding query block, so the returned SelectOffset is
-// always parentOffset in that case.
-func ExtractJoinHintTableAlias(p base.LogicalPlan, parentOffset int) *h.HintedTable {
-	if p == nil {
+func planChildren(p base.Plan) []base.Plan {
+	switch x := p.(type) {
+	case base.LogicalPlan:
+		children := x.Children()
+		result := make([]base.Plan, len(children))
+		for i := range children {
+			result[i] = children[i]
+		}
+		return result
+	case base.PhysicalPlan:
+		children := x.Children()
+		result := make([]base.Plan, len(children))
+		for i := range children {
+			result[i] = children[i]
+		}
+		return result
+	default:
 		return nil
 	}
+}
 
-	var queryBlockNames []ast.HintTable
-	if names := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); names != nil {
-		queryBlockNames = *names
+// ResolveJoinOperandHintIdentity resolves one join operand to the identity
+// visible in targetOffset. Logical matching and physical hint generation share
+// this function so they cannot diverge on flattened nested derived tables.
+func ResolveJoinOperandHintIdentity(p base.Plan, targetOffset int) (*h.HintedTable, bool) {
+	if p == nil || targetOffset < 0 {
+		return nil, false
 	}
-	if len(queryBlockNames) > 0 {
-		if currentOffset := p.QueryBlockOffset(); currentOffset != parentOffset &&
-			currentOffset > 0 && currentOffset < len(queryBlockNames) &&
-			queryBlockNames[currentOffset].TableName.L != "" {
-			if hintTable, ok := ResolveVisibleHintTable(p.SCtx(), currentOffset, parentOffset); ok {
-				return hintTableToHintedTable(p.SCtx(), hintTable, parentOffset)
-			}
-		}
 
-		var (
-			found      *ast.HintTable
-			foundQbOff int
-			ambiguous  bool
-		)
-		var walk func(base.LogicalPlan)
-		walk = func(cur base.LogicalPlan) {
-			if ambiguous {
-				return
-			}
-			offset := cur.QueryBlockOffset()
-			if offset > 0 && offset < len(queryBlockNames) && offset != parentOffset {
-				hintTable := queryBlockNames[offset]
-				if hintTable.TableName.L != "" {
-					if found == nil {
-						copied := hintTable
-						found = &copied
-						foundQbOff = offset
-					} else if found.DBName.L != hintTable.DBName.L ||
-						found.TableName.L != hintTable.TableName.L || foundQbOff != offset {
-						ambiguous = true
-						return
-					}
+	var (
+		hasCandidate   bool
+		resolutionFail bool
+		identities     = make(map[string]ast.HintTable)
+	)
+	addIdentity := func(table *ast.HintTable) {
+		if table == nil || table.TableName.L == "" {
+			return
+		}
+		identities[table.DBName.L+"\x00"+table.TableName.L] = *table
+	}
+	var walk func(base.Plan)
+	walk = func(cur base.Plan) {
+		if resolutionFail {
+			return
+		}
+		offset := cur.QueryBlockOffset()
+		if offset > 0 && offset != targetOffset {
+			if _, ok := LookupDirectSelectBlockAlias(cur.SCtx(), offset); ok {
+				hasCandidate = true
+				hintTable, ok := ResolveVisibleHintTableStrict(cur.SCtx(), offset, targetOffset)
+				if !ok {
+					resolutionFail = true
+					return
 				}
+				addIdentity(hintTable)
 			}
-			for _, child := range cur.Children() {
-				walk(child)
+		} else if offset == targetOffset && len(planChildren(cur)) == 0 {
+			if table := ExtractTableAlias(cur, targetOffset); table != nil {
+				addIdentity(&ast.HintTable{DBName: table.DBName, TableName: table.TblName})
 			}
 		}
-		for _, child := range p.Children() {
+		for _, child := range planChildren(cur) {
 			walk(child)
 		}
-		if !ambiguous && found != nil {
-			if hintTable, ok := ResolveVisibleHintTable(p.SCtx(), foundQbOff, parentOffset); ok {
-				return hintTableToHintedTable(p.SCtx(), hintTable, parentOffset)
-			}
-			return hintTableToHintedTable(p.SCtx(), found, parentOffset)
+	}
+	walk(p)
+	if resolutionFail || len(identities) > 1 {
+		return nil, false
+	}
+	if hasCandidate {
+		if len(identities) != 1 {
+			return nil, false
+		}
+		for _, identity := range identities {
+			return hintTableToHintedTable(p.SCtx(), &identity, targetOffset), true
 		}
 	}
-	return ExtractTableAlias(p, parentOffset)
+
+	// A normal base-table operand may use the legacy output-name extraction,
+	// but only when the operand itself belongs to the target query block.
+	if p.QueryBlockOffset() != targetOffset {
+		return nil, false
+	}
+	table := ExtractTableAlias(p, targetOffset)
+	return table, table != nil
+}
+
+// JoinOperandHasDerivedAliasCandidate reports whether p contains an operand
+// query block with recorded derived-table identity relative to targetOffset.
+// Physical hint generation uses this to distinguish an ordinary base reader
+// (where reader metadata may be needed as a final fallback) from a failed
+// strict derived-alias resolution, which must remain fail-closed.
+func JoinOperandHasDerivedAliasCandidate(p base.Plan, targetOffset int) bool {
+	if p == nil || targetOffset < 0 {
+		return false
+	}
+	if offset := p.QueryBlockOffset(); offset > 0 && offset != targetOffset {
+		if _, ok := LookupDirectSelectBlockAlias(p.SCtx(), offset); ok {
+			return true
+		}
+	}
+	for _, child := range planChildren(p) {
+		if JoinOperandHasDerivedAliasCandidate(child, targetOffset) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExtractJoinHintTableAlias resolves aliases for join-method hints. LEADING
+// generation and replay use ResolveJoinOperandHintIdentity directly and remain
+// strict about target visibility. Join-method hints additionally support an
+// ordinary base table explicitly qualified by its own inner QB name (for
+// example t2@subq in a correlated subquery).
+func ExtractJoinHintTableAlias(p base.LogicalPlan, targetOffset int) *h.HintedTable {
+	if table, ok := ResolveJoinOperandHintIdentity(p, targetOffset); ok {
+		return table
+	}
+	if JoinOperandHasDerivedAliasCandidate(p, targetOffset) {
+		return nil
+	}
+	return ExtractTableAlias(p, p.QueryBlockOffset())
 }
 
 // GetPushDownCtx creates a PushDownContext from PlanContext

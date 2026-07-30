@@ -56,6 +56,9 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 		}
 	}
 	for _, cte := range flat.CTEs {
+		// TODO(#68977): Recover CTE-visible operand identities before emitting
+		// LEADING hints for CTE plans. The derived-table resolver below proves
+		// visibility only through SELECT-block alias chains.
 		for i, fop := range cte {
 			if i == 0 || !fop.IsRoot {
 				continue
@@ -392,25 +395,12 @@ func genHintTblForJoinNodes(
 	// and qbOffsets[x] >=0 if and only if hintTbls[x] is not nil.
 	hintTbls = make([]*ast.HintTable, 0, len(joinedNodes))
 	qbOffsets := make([]int, 0, len(joinedNodes))
-	guessQBOffsets := make(map[int]struct{})
 	for _, plan := range joinedNodes {
-		qbOffset, guessOffset, ht := genHintTblForSingleJoinNode(sctx, plan, parentQBOffset)
+		qbOffset, _, ht := genHintTblForSingleJoinNode(sctx, plan, parentQBOffset)
 		if qbOffset < 0 || ht == nil {
 			qbOffsets = append(qbOffsets, -1)
 			hintTbls = append(hintTbls, nil)
 			continue
-		}
-		// If we guessed the same QB offset for two different nodes, that's likely incorrect, and we stop use that.
-		// This may happen for queries like ... FROM t1 join (select * from t2 join t3) derived ... . We will guess
-		// derived@sel_1 for both t2 and t3, and that's incorrect. Besides, current leading hint also can't handle this
-		// kind of hints.
-		if guessOffset {
-			if _, ok := guessQBOffsets[qbOffset]; ok {
-				qbOffsets = append(qbOffsets, -1)
-				hintTbls = append(hintTbls, nil)
-				continue
-			}
-			guessQBOffsets[qbOffset] = struct{}{}
 		}
 		qbOffsets = append(qbOffsets, qbOffset)
 		hintTbls = append(hintTbls, ht)
@@ -439,21 +429,16 @@ func genHintTblForJoinNodes(
 
 	// 3. Generate QB name for the hint itself based on the QB name of each join node from step 1.
 
-	// Current join reorder will break QB offset of the join operator, e.g. setting them to -1.
-	// So we are unable to get the correct QB offset for the hint from the join operator, now we use the minimum QB
-	// offset among the tables.
-	// Besides, genHintTblForSingleJoinNode() is not powerful enough to handle all cases, it may fail in some cases.
-	// If we failed to get QB offset information from one join node, we don't generate QB name for the hint. Because
-	// that may cause a wrong QB offset, leaving it blank is probably better.
+	// The hint belongs to the frozen join-group owner. Never infer it from
+	// operand origins; mixed origins are expected after derived-table flattening.
 	if slices.Contains(qbOffsets, -1) {
 		return hintTbls, nil
 	}
-	minQBOffset := slices.Min(qbOffsets)
 
-	// ditto. We don't generate unnecessary QB name for the hint itself.
-	if (minQBOffset > 1 && nodeType == h.TypeSelect) ||
-		(minQBOffset > 0 && (nodeType == h.TypeUpdate || nodeType == h.TypeDelete)) {
-		hintQBName, err := h.GenerateQBName(nodeType, minQBOffset)
+	// We don't generate an unnecessary QB name for the outermost block.
+	if (parentQBOffset > 1 && nodeType == h.TypeSelect) ||
+		(parentQBOffset > 0 && (nodeType == h.TypeUpdate || nodeType == h.TypeDelete)) {
+		hintQBName, err := h.GenerateQBName(nodeType, parentQBOffset)
 		if err != nil {
 			return nil, nil
 		}
@@ -462,8 +447,9 @@ func genHintTblForJoinNodes(
 	return hintTbls, hintQBNamePtr
 }
 
-// genHintTblForSingleJoinNode tries to generate ast.HintTable and QB offset for a single join node.
-// See the comments inside about the meaning of guessQBOffset.
+// genHintTblForSingleJoinNode resolves one physical join operand in the frozen
+// join-group owner query block. guessQBOffset is retained in the return shape
+// for callers shared with older hint code, but is always false.
 func genHintTblForSingleJoinNode(
 	sctx base.PlanContext,
 	joinNode base.PhysicalPlan,
@@ -473,139 +459,26 @@ func genHintTblForSingleJoinNode(
 	guessQBOffset bool,
 	ht *ast.HintTable,
 ) {
-	selfOffset := joinNode.QueryBlockOffset()
-	qbOffset = selfOffset
-	guessQBOffset = false
-	var dbName, tableName *ast.CIStr
-	// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-	if qbOffset >= 0 && qbOffset != parentOffset {
-		if hintTable, ok := plannerutil.ResolveVisibleHintTable(sctx, selfOffset, parentOffset); ok {
-			dbName, tableName = &hintTable.DBName, &hintTable.TableName
-			qbOffset = parentOffset
-			// Current join reorder will break QB offset of the join operator by setting them to -1. In this case, we will
-			// get qbOffset == parentOffset == -1 when it comes here.
-			// For this case, we add a temporary fix to guess the QB offset based on the parent offset. The idea is simple,
-			// for the example above, we can easily notice that the QBOffset(t1) = QBOffset(t) - 1. This is not always true,
-			// but it works in simple cases.
-			if selfOffset > 1 && qbOffset == -1 {
-				guessQBOffset = true
-				qbOffset = selfOffset - 1
-			}
-		}
-	}
-	if tableName == nil || tableName.L == "" {
-		guessQBOffset = false
-		qbOffset, dbName, tableName = extractHintTableByBlockOffset(sctx, joinNode, parentOffset)
-		if tableName == nil || tableName.L == "" {
-			qbOffset, dbName, tableName = extractHintTableByOutputNames(joinNode, parentOffset)
-		}
-		if tableName == nil || tableName.L == "" {
-			qbOffset = joinNode.QueryBlockOffset()
-			dbName, tableName = extractTableAsName(joinNode)
-		}
-	}
-	if tableName == nil || tableName.L == "" {
+	if sctx == nil || parentOffset < 0 {
 		return -1, false, nil
 	}
-	return qbOffset, guessQBOffset, &ast.HintTable{DBName: *dbName, TableName: *tableName}
-}
-
-// extractHintTableByBlockOffset walks the physical sub-tree and tries to recover a
-// single derived/CTE alias from descendant query-block metadata.
-//
-// Why this exists:
-//   - genHintTblForSingleJoinNode() first tries joinNode.QueryBlockOffset() directly.
-//   - That works only when the current node itself still carries the query-block
-//     identity we need.
-//   - In practice, the current node may be a wrapping Projection/Selection/Agg node,
-//     while only one descendant still keeps the inner query-block offset that maps to
-//     the derived-table alias registered in PlannerSelectBlockAsName.
-//
-// The function is intentionally conservative:
-//   - if we cannot find any descendant alias, return nil;
-//   - if we find more than one distinct candidate, return nil.
-//
-// When a unique candidate is found, we still return parentOffset (instead of the
-// descendant's own offset) because the recovered alias is used as the outer query's
-// visible join item in generated hints.
-func extractHintTableByBlockOffset(
-	sctx base.PlanContext,
-	p base.PhysicalPlan,
-	parentOffset int,
-) (qbOffset int, db *ast.CIStr, table *ast.CIStr) {
-	var blockAsNames []ast.HintTable
-	if names := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); names != nil {
-		blockAsNames = *names
-	}
-	if len(blockAsNames) == 0 {
-		return -1, nil, nil
-	}
-
-	var (
-		found      *ast.HintTable
-		foundQbOff int
-		ambiguous  bool
-	)
-	var walk func(base.PhysicalPlan)
-	walk = func(cur base.PhysicalPlan) {
-		if ambiguous {
-			return
+	table, ok := plannerutil.ResolveJoinOperandHintIdentity(joinNode, parentOffset)
+	if !ok {
+		if joinNode.QueryBlockOffset() != parentOffset ||
+			plannerutil.JoinOperandHasDerivedAliasCandidate(joinNode, parentOffset) {
+			return -1, false, nil
 		}
-		offset := cur.QueryBlockOffset()
-		if offset >= 0 && offset < len(blockAsNames) && offset != parentOffset {
-			hintTable := blockAsNames[offset]
-			if hintTable.TableName.L != "" {
-				if found == nil {
-					copied := hintTable
-					found = &copied
-					foundQbOff = offset
-				} else if found.DBName.L != hintTable.DBName.L || found.TableName.L != hintTable.TableName.L || foundQbOff != offset {
-					// Multiple different descendant aliases means we cannot safely decide
-					// which outer visible name this join node should use in a hint.
-					ambiguous = true
-					return
-				}
-			}
+		dbName, tableName := extractTableAsName(joinNode)
+		if tableName == nil || tableName.L == "" {
+			return -1, false, nil
 		}
-		for _, child := range cur.Children() {
-			walk(child)
+		if dbName == nil {
+			emptyDB := ast.CIStr{}
+			dbName = &emptyDB
 		}
+		return parentOffset, false, &ast.HintTable{DBName: *dbName, TableName: *tableName}
 	}
-	walk(p)
-	if ambiguous || found == nil {
-		return -1, nil, nil
-	}
-	// Try to resolve the alias visible at parentOffset by walking the visibility chain.
-	// This handles nested derived tables: e.g. if foundQbOff=3 (inner "d2"), but the
-	// hint is for parentOffset=1 (outer), we want "dt" (visible in sel_1) not "d2".
-	if parentOffset >= 0 {
-		if hintTable, ok := plannerutil.ResolveVisibleHintTable(sctx, foundQbOff, parentOffset); ok {
-			return parentOffset, &hintTable.DBName, &hintTable.TableName
-		}
-		// Fallback: use the discovered alias directly (pre-existing behavior).
-		return parentOffset, &found.DBName, &found.TableName
-	}
-	return -1, &found.DBName, &found.TableName
-}
-
-// extractHintTableByOutputNames recovers a hint table from the physical node's final
-// output names.
-//
-// Why this exists:
-//   - sometimes descendant query-block metadata is no longer sufficient or no longer
-//     unique;
-//   - however, the physical node may already expose a stable single alias in all of
-//     its output columns (for example, a wrapped derived-table alias after Projection).
-//
-// This is also conservative because plannerutil.ExtractTableAlias() returns nil unless
-// the output names consistently point to one alias. So this fallback may miss some
-// cases, but it avoids inventing a possibly wrong hint table name.
-func extractHintTableByOutputNames(p base.PhysicalPlan, parentOffset int) (qbOffset int, db *ast.CIStr, table *ast.CIStr) {
-	tbl := plannerutil.ExtractTableAlias(p, parentOffset)
-	if tbl == nil {
-		return -1, nil, nil
-	}
-	return tbl.SelectOffset, &tbl.DBName, &tbl.TblName
+	return table.SelectOffset, false, &ast.HintTable{DBName: table.DBName, TableName: table.TblName}
 }
 
 func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {

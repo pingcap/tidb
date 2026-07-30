@@ -352,94 +352,50 @@ func AlignJoinEdgeArgs(
 }
 
 // FindAndRemovePlanByAstHint find the plan in `plans` that matches `ast.HintTable` and remove that plan, returning the new slice.
-// Matching rules:
-//  1. Match by regular table name (db/table/*)
-//  2. Match by query-block alias (subquery name, e.g., tx)
-//  3. If multiple join groups belong to the same block alias, mark as ambiguous and skip (consistent with old logic)
+// Every candidate is first resolved to the identity visible in
+// targetOwnerOffset. If multiple operands resolve to the same identity, the
+// hint is ambiguous and is rejected.
 //
 // NOTE: T is usually be *Node or base.LogicalPlan, we use generics because we want to reuse this function in both the old and new join order code.
 func FindAndRemovePlanByAstHint[T any](
-	ctx base.PlanContext,
+	_ base.PlanContext,
 	plans []T,
 	astTbl *ast.HintTable,
+	targetOwnerOffset int,
 	getPlan func(T) base.LogicalPlan,
 ) (T, []T, bool) {
 	var zero T
-	var queryBlockNames []ast.HintTable
-	if p := ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
-		queryBlockNames = *p
+	if targetOwnerOffset < 0 {
+		return zero, plans, false
 	}
-
-	// Step 1: Match by query-block alias (subquery name)
-	// Do this before direct table-name matching so hint reading follows the same
-	// derived-table alias precedence used when generating hints.
 	matchIdx := -1
-	targetOff := -1
-	if astTbl.QBName.L != "" {
-		targetOff = extractSelectOffset(astTbl.QBName.L)
-	}
 	for i, joinGroup := range plans {
 		plan := getPlan(joinGroup)
-		blockOffset := plan.QueryBlockOffset()
-		if blockOffset > 1 && blockOffset < len(queryBlockNames) {
-			var blockName *ast.HintTable
-			if targetOff > 0 {
-				if resolved, ok := util.ResolveVisibleHintTable(ctx, blockOffset, targetOff); ok {
-					blockName = resolved
-				}
-			} else if queryBlockNames[blockOffset].TableName.L != "" {
-				copied := queryBlockNames[blockOffset]
-				blockName = &copied
-			}
-			if blockName == nil {
-				continue
-			}
-			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == blockName.DBName.L
-			tableMatch := astTbl.TableName.L == blockName.TableName.L
-			if !dbMatch || !tableMatch {
-				continue
-			}
-			if matchIdx != -1 {
-				intest.Assert(false, "leading subquery alias matches multiple join groups")
-				return zero, plans, false
-			}
-			matchIdx = i
+		tableAlias, ok := util.ResolveJoinOperandHintIdentity(plan, targetOwnerOffset)
+		if !ok {
+			continue
 		}
+		dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == tableAlias.DBName.L || astTbl.DBName.L == "*"
+		tableMatch := astTbl.TableName.L == tableAlias.TblName.L
+		qbMatch := true
+		if astTbl.QBName.L != "" {
+			if expectedOffset := extractSelectOffset(astTbl.QBName.L); expectedOffset > 0 {
+				qbMatch = tableAlias.SelectOffset == expectedOffset
+			}
+		}
+		if !dbMatch || !tableMatch || !qbMatch {
+			continue
+		}
+		if matchIdx != -1 {
+			intest.Assert(false, "leading table identity matches multiple join operands")
+			return zero, plans, false
+		}
+		matchIdx = i
 	}
 	if matchIdx != -1 {
-		// take the matched plan before slice manipulation. `append(plans[:matchIdx], ...)`
-		// may overwrite `plans[matchIdx]` due to shared backing arrays.
 		matched := plans[matchIdx]
 		newPlans := append(plans[:matchIdx], plans[matchIdx+1:]...)
 		return matched, newPlans, true
-	}
-
-	// Step 2: Direct match by table name
-	for i, joinGroup := range plans {
-		plan := getPlan(joinGroup)
-		tableAlias := util.ExtractJoinHintTableAlias(plan, plan.QueryBlockOffset())
-		if tableAlias != nil {
-			// Match db/table (supports astTbl.DBName == "*")
-			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == tableAlias.DBName.L || astTbl.DBName.L == "*"
-			tableMatch := astTbl.TableName.L == tableAlias.TblName.L
-
-			// Match query block names
-			// Use SelectOffset to match query blocks
-			qbMatch := true
-			if astTbl.QBName.L != "" {
-				expectedOffset := extractSelectOffset(astTbl.QBName.L)
-				if expectedOffset > 0 {
-					qbMatch = tableAlias.SelectOffset == expectedOffset
-				} else {
-					// If QBName cannot be parsed, ignore the QB match.
-					qbMatch = true
-				}
-			}
-			if dbMatch && tableMatch && qbMatch {
-				newPlans := append(plans[:i], plans[i+1:]...)
-				return joinGroup, newPlans, true
-			}
-		}
 	}
 
 	return zero, plans, false
@@ -457,38 +413,15 @@ func extractSelectOffset(qbName string) int {
 
 // IsDerivedTableInLeadingHint checks if a plan node represents a derived table (subquery)
 // that is explicitly referenced in the LEADING hint.
-func IsDerivedTableInLeadingHint(p base.LogicalPlan, leadingHint *hint.PlanHints) bool {
-	if leadingHint == nil || leadingHint.LeadingList == nil {
+func IsDerivedTableInLeadingHint(p base.LogicalPlan, leadingHint *hint.PlanHints, targetOwnerOffset int) bool {
+	if leadingHint == nil || leadingHint.LeadingList == nil || targetOwnerOffset < 0 {
 		return false
 	}
-
-	// Get the query block names mapping to find derived table aliases
-	var queryBlockNames []ast.HintTable
-	names := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load()
-	if names == nil {
+	table, ok := util.ResolveJoinOperandHintIdentity(p, targetOwnerOffset)
+	if !ok || table.SelectOffset != targetOwnerOffset {
 		return false
 	}
-	queryBlockNames = *names
-
-	// Get the block offset of this plan node
-	blockOffset := p.QueryBlockOffset()
-
-	// Only blockOffset values in [2, len(queryBlockNames)-1] can represent
-	// subqueries / derived tables. Offsets 0 and 1 are typically main query
-	// or CTE, and offsets beyond the end of queryBlockNames are invalid.
-	if blockOffset <= 1 || blockOffset >= len(queryBlockNames) {
-		return false
-	}
-
-	// Get the alias name of this derived table
-	derivedTableAlias := queryBlockNames[blockOffset].TableName.L
-	if derivedTableAlias == "" {
-		return false
-	}
-	derivedDBName := queryBlockNames[blockOffset].DBName.L
-
-	// Check if this alias appears in the LEADING hint
-	return containsTableInLeadingList(leadingHint.LeadingList, derivedDBName, derivedTableAlias)
+	return containsTableInLeadingList(leadingHint.LeadingList, table.DBName.L, table.TblName.L)
 }
 
 // containsTableInLeadingList recursively searches for a table name in the LEADING hint structure

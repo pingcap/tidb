@@ -39,7 +39,15 @@ join (
 ) dt on t1.a = dt.a
 join t3 on dt.a = t3.a`
 
-const explainFormatHintNestedDerivedLeadingWarningSQL = `select *
+const explainFormatHintFlattenedNestedDerivedTableSQL = `select *
+from t1
+join (
+    select *
+    from (select * from t2) d2
+) dt on t1.a = dt.a
+join t3 on dt.a = t3.a`
+
+const explainFormatHintNestedDerivedLeadingSQL = `select *
 from (select * from (select * from t1) x1) o1
 join (select * from t2) o2 on o1.a = o2.a
 join (select * from t3) o3 on o2.a = o3.a
@@ -114,33 +122,55 @@ func TestExplainFormatHintRecoverableForDerivedTableAlias(t *testing.T) {
 		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 	})
 
-	t.Run("nested derived leading keeps warning semantics on replay", func(t *testing.T) {
+	t.Run("flattened nested derived table keeps outer alias on replay", func(t *testing.T) {
+		for _, advanced := range []string{"ON", "OFF"} {
+			t.Run("advanced_reorder_"+advanced, func(t *testing.T) {
+				tk.MustExec("set tidb_opt_enable_advanced_join_reorder=" + advanced)
+
+				hints := tk.MustQuery("explain format='hint' " + explainFormatHintFlattenedNestedDerivedTableSQL).Rows()[0][0]
+				require.Contains(t, hints, "leading(`test`.`t1`, `test`.`dt`, `test`.`t3`)")
+				require.NotContains(t, hints, "`test`.`d2`")
+
+				replayedHints := tk.MustQuery(fmt.Sprintf("explain format='hint' select /*+ %s */ * from t1 join (select * from (select * from t2) d2) dt on t1.a = dt.a join t3 on dt.a = t3.a", hints)).Rows()[0][0]
+				require.Contains(t, replayedHints, "leading(`test`.`t1`, `test`.`dt`, `test`.`t3`)")
+				require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+
+				baselinePlan := fmt.Sprint(tk.MustQuery("explain format='brief' " + explainFormatHintFlattenedNestedDerivedTableSQL).Rows())
+				reversedPlan := fmt.Sprint(tk.MustQuery("explain format='brief' select /*+ leading(t3, dt, t1) */ * from t1 join (select * from (select * from t2) d2) dt on t1.a = dt.a join t3 on dt.a = t3.a").Rows())
+				require.NotEqual(t, baselinePlan, reversedPlan)
+				require.Contains(t, reversedPlan, "eq(test.t2.a, test.t1.a)")
+				require.Contains(t, reversedPlan, "eq(test.t3.a, test.t2.a)")
+				require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+		}
+		tk.MustExec("set tidb_opt_enable_advanced_join_reorder=default")
+	})
+
+	t.Run("nested derived leading resolves every outer alias on replay", func(t *testing.T) {
 		tk.MustExec("create table t4(a int, b int, key(a))")
 
-		hints := tk.MustQuery("explain format='hint' " + explainFormatHintNestedDerivedLeadingWarningSQL).Rows()[0][0]
-		require.Contains(t, hints, "leading(@`sel_2` `test`.`x1`@`sel_2`, `test`.`o2`@`sel_3`, `test`.`o3`@`sel_4`, `test`.`o4`@`sel_5`)")
+		hints := tk.MustQuery("explain format='hint' " + explainFormatHintNestedDerivedLeadingSQL).Rows()[0][0]
+		require.Contains(t, hints, "leading(`test`.`o1`, `test`.`o2`, `test`.`o3`, `test`.`o4`)")
 		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 
 		replayedHints := tk.MustQuery(fmt.Sprintf("explain format='hint' select /*+ %s */ * from (select * from (select * from t1) x1) o1 join (select * from t2) o2 on o1.a = o2.a join (select * from t3) o3 on o2.a = o3.a join (select * from t4) o4 on o3.a = o4.a", hints)).Rows()[0][0]
-		require.Contains(t, replayedHints, "leading(@`sel_2` `test`.`x1`@`sel_2`, `test`.`o2`@`sel_3`, `test`.`o3`@`sel_4`, `test`.`o4`@`sel_5`)")
-
-		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		require.Len(t, warnings, 1)
-		require.Contains(t, warnings[0].Err.Error(), "There are no matching table names for (x1, o2, o3, o4)")
-		require.NotContains(t, warnings[0].Err.Error(), "leading hint is inapplicable")
+		require.Contains(t, replayedHints, "leading(`test`.`o1`, `test`.`o2`, `test`.`o3`, `test`.`o4`)")
+		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 	})
 }
 
-func TestExplainFormatHintGeneratesMixedQueryBlockLeading(t *testing.T) {
+func TestExplainFormatHintDoesNotExtendLeadingAcrossQueryBlockOwners(t *testing.T) {
 	tk := prepareExplainFormatHintMixedLeadingTestKit(t)
 
 	t.Run("single inner query block", func(t *testing.T) {
 		hints := tk.MustQuery("explain format='hint' " + explainFormatHintMixedQueryBlockLeadingSQL).Rows()[0][0]
-		require.Contains(t, hints, "leading(`test`.`t2`, `test`.`t1`, `test`.`t3`@`sel_2`)")
+		require.Contains(t, hints, "leading(`t2`, `t1`)")
+		require.NotContains(t, hints, "leading(`test`.`t2`, `test`.`t1`, `test`.`t3`@`sel_2`)")
 	})
 
 	t.Run("multiple inner query blocks", func(t *testing.T) {
 		hints := tk.MustQuery("explain format='hint' " + explainFormatHintMultipleMixedQueryBlockLeadingSQL).Rows()[0][0]
-		require.Contains(t, hints, "leading(`test`.`t2`, `test`.`t1`, `test`.`t4`@`sel_2`, `test`.`t3`@`sel_1`)")
+		require.Contains(t, hints, "leading(`t2`, `t1`, `t4`@`sel_2`)")
+		require.NotContains(t, hints, "leading(`test`.`t2`, `test`.`t1`, `test`.`t4`@`sel_2`, `test`.`t3`@`sel_1`)")
 	})
 }

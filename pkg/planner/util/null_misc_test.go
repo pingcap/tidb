@@ -25,9 +25,45 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestResolveVisibleHintTableStrict(t *testing.T) {
+	ctx := mock.NewContext()
+	aliases := []h.SelectBlockAlias{
+		{},
+		{},
+		{SelectOffset: 2, VisibleOffset: 1, DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("dt")},
+		{SelectOffset: 3, VisibleOffset: 2, DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("d2")},
+	}
+	direct := []ast.HintTable{
+		{},
+		{},
+		{DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("dt")},
+		{DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("d2")},
+	}
+	ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&aliases)
+	ctx.GetSessionVars().PlannerSelectBlockAsName.Store(&direct)
+
+	resolved, ok := ResolveVisibleHintTableStrict(ctx, 3, 1)
+	require.True(t, ok)
+	require.Equal(t, "dt", resolved.TableName.L)
+
+	_, ok = ResolveVisibleHintTableStrict(ctx, 3, 4)
+	require.False(t, ok)
+
+	raw, ok := LookupDirectSelectBlockAlias(ctx, 3)
+	require.True(t, ok)
+	require.Equal(t, "d2", raw.TableName.L)
+
+	aliases[2].VisibleOffset = 0
+	ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&aliases)
+	resolved, ok = ResolveVisibleHintTableStrict(ctx, 2, 0)
+	require.True(t, ok)
+	require.Equal(t, "dt", resolved.TableName.L)
+}
 
 // TestNullRejectBuiltinRegistrySnapshot guards against silent builtin registry
 // drift. When this hash breaks, the builtin set has changed — review whether

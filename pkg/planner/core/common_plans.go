@@ -877,6 +877,8 @@ func (e *Explain) RenderResult() error {
 	case types.ExplainFormatHint:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
 		hints := GenHintsFromFlatPlan(flat)
+		// TODO(#70238): Reconcile plan-derived LEADING hints with LEADING hints
+		// already present in the original statement before appending both.
 		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case types.ExplainFormatBinary:
