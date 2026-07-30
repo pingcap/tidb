@@ -16,12 +16,13 @@
 
 use tidb_ast::{BinaryOp, Expr};
 
-use crate::coerce::{bool_int, coerce_str, truthy_of};
+use crate::coerce::{bool_int, truthy_of};
 use crate::row::row_compare;
 use crate::string_fn::{
     ascii, bin, bit_count, bit_length, case_convert, char_func, concat, concat_ws, elt, field,
-    format_num, from_base64, hex, make_set, oct, ord, pad, position, quote, repeat, replace, space,
-    str_insert, str_take, str_unary, strcmp, substring, substring_index, to_base64, unhex,
+    format_num, from_base64, hex, locate, locate_collation, make_set, oct, ord, pad, quote, repeat,
+    replace, reverse, space, str_insert, str_take, strcmp, substring, substring_index, to_base64,
+    unhex,
 };
 use crate::time_fn::calendar::{date_add, date_diff, date_format, date_part, from_days, time_part};
 use crate::{eval_binary, eval_in};
@@ -391,9 +392,7 @@ pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datu
         "LEFT" if vals.len() == 2 => str_take(vals, true),
         "RIGHT" if vals.len() == 2 => str_take(vals, false),
         "SUBSTRING" | "SUBSTR" | "MID" if vals.len() == 3 => substring(vals),
-        "REVERSE" => str_unary(vals, |s| {
-            Datum::new_string(s.chars().rev().collect::<String>())
-        }),
+        "REVERSE" => reverse(vals),
         // `ASCII`: the first BYTE's numeric value (0 for the empty string).
         "ASCII" => ascii(vals),
         "REPEAT" if vals.len() == 2 => repeat(vals),
@@ -407,10 +406,10 @@ pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datu
         // `position`, which already handles the empty-substr and
         // not-found rules).
         "LOCATE" if vals.len() == 2 => {
-            coerce_str(&vals[0]).and_then(|a| Ok(position(a, coerce_str(&vals[1])?)))
+            locate(&vals[0], &vals[1], locate_collation(&vals[0], &vals[1]))
         }
         "INSTR" if vals.len() == 2 => {
-            coerce_str(&vals[1]).and_then(|a| Ok(position(a, coerce_str(&vals[0])?)))
+            locate(&vals[1], &vals[0], locate_collation(&vals[0], &vals[1]))
         }
         "HEX" if vals.len() == 1 => hex(vals),
         "UNHEX" if vals.len() == 1 => unhex(vals),

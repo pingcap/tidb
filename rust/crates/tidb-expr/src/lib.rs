@@ -363,6 +363,7 @@ mod row;
 pub mod scalar_function;
 pub mod schema;
 mod string_fn;
+mod string_signature;
 mod time_fn;
 
 pub use field_name::{find_field_name, find_field_name_index_by_column, NonUniqueFieldName};

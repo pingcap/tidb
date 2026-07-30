@@ -21,6 +21,7 @@
 
 use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::ops::to_f64_with_mysql_string;
+use crate::string_signature::StrUnits;
 use crate::{Datum, EvalError};
 
 /// CONCAT: `NULL` if any argument is `NULL`, else the concatenation.
@@ -38,17 +39,6 @@ pub(crate) fn concat(vals: &[Datum]) -> Result<Datum, EvalError> {
         }
     }
     Ok(Datum::new_string(out))
-}
-
-/// Applies a single-argument string function, propagating `NULL`.
-pub(crate) fn str_unary(vals: &[Datum], f: impl Fn(&str) -> Datum) -> Result<Datum, EvalError> {
-    if vals.len() != 1 {
-        return Err(EvalError::Unsupported("bad function arity"));
-    }
-    match coerce_str(&vals[0])? {
-        Some(s) => Ok(f(&s)),
-        None => Ok(Datum::Null),
-    }
 }
 
 /// `LOWER`/`UPPER`: text signatures apply Unicode case mapping while binary
@@ -75,7 +65,7 @@ pub(crate) fn case_convert(vals: &[Datum], upper: bool) -> Result<Datum, EvalErr
 
 /// `ASCII(s)`: return the first byte of the evaluated string, not the first
 /// Unicode scalar value. Go's `EvalString` preserves binary arguments, so
-/// this uses byte-preserving coercion instead of `str_unary`'s UTF-8 check.
+/// this uses byte-preserving coercion instead of a UTF-8-checked one.
 pub(crate) fn ascii(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
@@ -161,33 +151,35 @@ pub(crate) fn str_take(vals: &[Datum], from_left: bool) -> Result<Datum, EvalErr
     }
 }
 
-/// `SUBSTRING(s, pos[, len])`: 1-indexed and character-based for this
-/// UTF-8-only value domain.  This ports `builtinSubstring2ArgsUTF8Sig` and
-/// `builtinSubstring3ArgsUTF8Sig` in `pkg/expression/builtin_string.go`:
-/// negative positions count back from the end, while position zero and every
-/// out-of-range position produce the empty string.
+/// `SUBSTRING(s, pos[, len])`: 1-indexed, counting in the units of the
+/// signature Go selected for the argument's charset — bytes for
+/// `builtinSubstring2ArgsSig`/`builtinSubstring3ArgsSig`, characters for their
+/// `...UTF8Sig` twins (`pkg/expression/builtin_string.go`). Those four bodies
+/// are the same arithmetic over a different unit, so [`StrUnits`] carries the
+/// difference and this is written once: negative positions count back from the
+/// end, while position zero and every out-of-range position produce the empty
+/// string.
 pub(crate) fn substring(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.contains(&Datum::Null) {
         return Ok(Datum::Null);
     }
-    let (s, pos, length) = match vals {
-        [str, Datum::Int(pos)] => (coerce_str(str)?, *pos, None),
-        [str, Datum::Int(pos), Datum::Int(length)] => (coerce_str(str)?, *pos, Some(*length)),
+    let (str, pos, length) = match vals {
+        [str, Datum::Int(pos)] => (str, *pos, None),
+        [str, Datum::Int(pos), Datum::Int(length)] => (str, *pos, Some(*length)),
         _ => return Err(EvalError::Unsupported("bad SUBSTRING arguments")),
     };
-    let Some(s) = s else {
+    let Some(units) = StrUnits::of(str)? else {
         return Ok(Datum::Null);
     };
-    let chars: Vec<char> = s.chars().collect();
-    let string_len = chars.len() as i64;
+    let string_len = units.len() as i64;
     let pos = if pos < 0 { pos + string_len } else { pos - 1 };
     let start = if !(0..=string_len).contains(&pos) {
-        chars.len()
+        units.len()
     } else {
         pos as usize
     };
     let end = match length {
-        None => chars.len(),
+        None => units.len(),
         Some(length) if length <= 0 => start,
         Some(length) => {
             // Go's source computes `end := pos + length` in int64.  A
@@ -196,14 +188,31 @@ pub(crate) fn substring(vals: &[Datum]) -> Result<Datum, EvalError> {
             // not use saturating_add here: it would silently turn that
             // source-visible overflow into an unexpectedly long tail.
             let Some(end) = (start as i64).checked_add(length) else {
-                return Ok(Datum::new_string(String::new()));
+                return Ok(units.pack(Vec::new()));
             };
-            (end as usize).min(chars.len())
+            (end as usize).min(units.len())
         }
     };
-    Ok(Datum::new_string(
-        chars[start..end].iter().collect::<String>(),
-    ))
+    Ok(units.pack(units.slice(start, end).to_vec()))
+}
+
+/// `REVERSE(s)`: the units of `s` in the opposite order. Go's
+/// `reverseFunctionClass.getFunction` selects `builtinReverseSig`
+/// (`reverseBytes`) for a binary or BIT argument and `builtinReverseUTF8Sig`
+/// (`reverseRunes`) otherwise, so reversing a binary value must NOT permute
+/// the bytes of a multi-byte character back into a valid one.
+pub(crate) fn reverse(vals: &[Datum]) -> Result<Datum, EvalError> {
+    let [value] = vals else {
+        return Err(EvalError::Unsupported("bad REVERSE arity"));
+    };
+    let Some(units) = StrUnits::of(value)? else {
+        return Ok(Datum::Null);
+    };
+    let mut out = Vec::with_capacity(units.bytes().len());
+    for unit in units.units().rev() {
+        out.extend_from_slice(unit);
+    }
+    Ok(units.pack(out))
 }
 
 /// `POSITION(substr IN str)`: the 1-indexed, character-based position of
@@ -212,6 +221,55 @@ pub(crate) fn substring(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `NULL` if either operand is `NULL`.
 pub(crate) fn position(substr: Option<String>, str: Option<String>) -> Datum {
     position_with_collation(substr, str, tidb_datatype::Collation::Utf8Mb4Bin)
+}
+
+/// `LOCATE(substr, str)` / `INSTR(str, substr)` / `POSITION(substr IN str)`
+/// over the raw arguments, which is what selects the signature.
+///
+/// `locateFunctionClass.getFunction` picks `builtinLocate2ArgsSig` over
+/// `builtinLocate2ArgsUTF8Sig` when the function's DERIVED collation is
+/// `binary` (`bf.collation == charset.CollationBin`), and that signature is a
+/// plain `strings.Index`: a 1-based BYTE offset, with no collation folding.
+/// The UTF-8 signature reports a 1-based CHARACTER offset instead, so the two
+/// disagree for any haystack with a multi-byte prefix.
+///
+/// `collation` is the derived collation where the caller has one; the AST
+/// evaluator has no derivation pass and passes `binary` exactly when
+/// [`crate::string_signature::is_binary_str`] holds for an argument, which is
+/// the same condition that makes Go's aggregate `binary`.
+pub(crate) fn locate(
+    substr: &Datum,
+    str: &Datum,
+    collation: tidb_datatype::Collation,
+) -> Result<Datum, EvalError> {
+    if collation != tidb_datatype::Collation::Binary {
+        return Ok(position_with_collation(
+            coerce_str(substr)?,
+            coerce_str(str)?,
+            collation,
+        ));
+    }
+    let (Some(needle), Some(haystack)) = (coerce_str_bytes(substr)?, coerce_str_bytes(str)?) else {
+        return Ok(Datum::Null);
+    };
+    if needle.is_empty() {
+        return Ok(Datum::Int(1));
+    }
+    let found = haystack
+        .windows(needle.len())
+        .position(|window| window == needle.as_slice());
+    Ok(Datum::Int(found.map_or(0, |index| index as i64 + 1)))
+}
+
+/// The collation `LOCATE`/`INSTR` derive when no derivation pass ran: Go's
+/// aggregate is `binary` as soon as one string argument is binary.
+pub(crate) fn locate_collation(substr: &Datum, str: &Datum) -> tidb_datatype::Collation {
+    if crate::string_signature::is_binary_str(substr) || crate::string_signature::is_binary_str(str)
+    {
+        tidb_datatype::Collation::Binary
+    } else {
+        tidb_datatype::Collation::Utf8Mb4Bin
+    }
 }
 
 /// `LOCATE`/`INSTR`/`POSITION` under an explicit collation.
@@ -975,18 +1033,23 @@ fn split_bytes<'a>(value: &'a [u8], delim: &[u8]) -> Vec<&'a [u8]> {
 /// single condition `length > runeLength-pos+1 || length < 0`. Reading it as
 /// zero instead would splice `newstr` in without removing anything.
 pub(crate) fn str_insert(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let (Some(s), Datum::Int(pos), Datum::Int(len), Some(new)) = (
-        coerce_str(&vals[0])?,
+    // `insertFunctionClass.getFunction` selects `builtinInsertSig` (bytes) or
+    // `builtinInsertUTF8Sig` (characters) from the RESULT type's charset,
+    // which `addBinFlag` makes binary when either string argument is, so
+    // `pos` and `len` count bytes as soon as the replacement is binary.
+    let binary = crate::string_signature::is_binary_str(&vals[0])
+        || crate::string_signature::is_binary_str(&vals[3]);
+    let (Some(units), Datum::Int(pos), Datum::Int(len), Some(new)) = (
+        StrUnits::of_with_signature(&vals[0], binary)?,
         &vals[1],
         &vals[2],
-        coerce_str(&vals[3])?,
+        coerce_str_bytes(&vals[3])?,
     ) else {
         return Ok(Datum::Null);
     };
-    let chars: Vec<char> = s.chars().collect();
-    let n = chars.len();
+    let n = units.len();
     if *pos < 1 || *pos as usize > n {
-        return Ok(Datum::new_string(s));
+        return Ok(units.pack(units.bytes().to_vec()));
     }
     let start = (*pos - 1) as usize;
     let remaining = n - start;
@@ -996,10 +1059,10 @@ pub(crate) fn str_insert(vals: &[Datum]) -> Result<Datum, EvalError> {
         *len as usize
     };
     let end = start + take;
-    let mut out: String = chars[..start].iter().collect();
-    out.push_str(&new);
-    out.extend(chars[end..].iter());
-    Ok(Datum::new_string(out))
+    let mut out = units.slice(0, start).to_vec();
+    out.extend_from_slice(&new);
+    out.extend_from_slice(units.slice(end, n));
+    Ok(units.pack(out))
 }
 
 /// `MAKE_SET(bits, a, b, c, ...)`: a comma-joined set of the arguments whose

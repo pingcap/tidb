@@ -17,6 +17,7 @@
 use super::*;
 use tidb_ast::{QueryStmt, SelectField, Stmt};
 
+mod binary_string_signature;
 mod collation_compare;
 mod compare;
 mod control;

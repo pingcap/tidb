@@ -637,11 +637,7 @@ impl ScalarFunction {
                 "locate" | "instr" => {
                     let (a, b) = (self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?);
                     let (haystack, needle) = if name == "locate" { (&b, &a) } else { (&a, &b) };
-                    return Ok(crate::string_fn::position_with_collation(
-                        crate::coerce::coerce_str(needle)?,
-                        crate::coerce::coerce_str(haystack)?,
-                        collation,
-                    ));
+                    return crate::string_fn::locate(needle, haystack, collation);
                 }
                 "strcmp" => {
                     let vals = [self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?];
