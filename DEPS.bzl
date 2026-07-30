@@ -396,16 +396,6 @@ def go_deps():
         importpath = "github.com/aws/smithy-go",
         sum = "h1:FzA3bu/nt/vDvmnkg+R8Xl46gmzEDam6mZ1hzmwXFng=",
         version = "v1.24.2",
-<<<<<<< HEAD
-=======
-    )
-    go_repository(
-        name = "com_github_aymanbagabas_go_osc52_v2",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/aymanbagabas/go-osc52/v2",
-        sum = "h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiErDT4WkJ2k=",
-        version = "v2.0.1",
->>>>>>> cf5c039246b (build: upgrade Go to 1.25.12 and bump vulnerable dependencies (#69958))
     )
     go_repository(
         name = "com_github_aymerick_douceur",
@@ -461,16 +451,6 @@ def go_deps():
         build_file_proto_mode = "disable_global",
         importpath = "github.com/Azure/go-ntlmssp",
         sum = "h1:l+FM/EEMb0U9QZE7mKNEDw5Mu3mFiaa2GKOoTSsNDPw=",
-<<<<<<< HEAD
-=======
-        version = "v0.1.1",
-    )
-    go_repository(
-        name = "com_github_azuread_microsoft_authentication_extensions_for_go_cache",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/AzureAD/microsoft-authentication-extensions-for-go/cache",
-        sum = "h1:WJTmL004Abzc5wDB5VtZG2PJk5ndYDgVacGqfirKxjM=",
->>>>>>> cf5c039246b (build: upgrade Go to 1.25.12 and bump vulnerable dependencies (#69958))
         version = "v0.1.1",
     )
     go_repository(
