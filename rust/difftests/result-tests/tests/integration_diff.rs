@@ -141,6 +141,19 @@ const TOPICS: &[(&str, &str)] = &[
          fixpoint is not quadratic: its 100,000-row `WITH RECURSIVE` never terminated \
          while the fold re-deduplicated the whole accumulated result each round",
     ),
+    (
+        "executor/merge_join",
+        "the largest zero-divergence topic left in the suite (246 of 259), and the one \
+         that gates DERIVED TABLES: it compares row results and access properties for \
+         merge joins whose sides are subqueries in `FROM`, which only became \
+         describable once the plan recorder learned to descend into a derived table",
+    ),
+    (
+        "planner/core/join_reorder2",
+        "join reorder over derived tables specifically -- 12 of its 30 matches are \
+         access properties, so a regression in which side of a `FROM (SELECT ...)` is \
+         read, or how, turns it red",
+    ),
 ];
 
 /// Why one statement did not produce a comparable outcome. Every skip lands in
@@ -478,7 +491,43 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // matches TiDB's recording exactly. The `update` form of the same WHERE
     // remains, under WRITES DO NOT CHOOSE AN ACCESS PATH above. The row-level
     // contract is pinned by `corpus/table/hex_literal_comparison`.
-    const KNOWN_DIVERGENCES: usize = 35;
+    //
+    // MOVED 35 -> 61 when the plan recorder learned to DESCEND INTO A DERIVED
+    // TABLE. Not one new wrong answer: an `EXPLAIN` over a subquery in `FROM`
+    // used to be refused outright, so 168 statements -- 26 of them in the two
+    // topics already onboarded here -- were counted as OUT OF DOMAIN and their
+    // access property was never compared to TiDB's at all. Describing the plan
+    // did not change which rows any statement returns (no topic's matched
+    // count fell, and `Rows` matches only rose); it removed a blindfold, and
+    // what was behind it was debt that already existed everywhere else in this
+    // list. `planner/core/join_reorder_through_projection` carries 26 where it
+    // carried 2, and `explain_easy` 34 where it carried 32. Every one of the
+    // newly compared divergences falls in a class named above or here:
+    //
+    //  * COVERING-INDEX ENUMERATION (the large majority, and the whole of the
+    //    +2 in `explain_easy`). TiDB reads `IndexFullScan` on a narrow index
+    //    that covers the columns the query needs; this tier reads the whole
+    //    table. `tidb_executor::access_cost`'s module doc already names this
+    //    as its own deferred item -- Go keeps an index path with NO access
+    //    conditions (`keepIndex := ... || path.IsSingleScan`) and this tier's
+    //    `enumerate_paths` only builds a candidate the detacher ranged. It
+    //    costs rows read, not correctness, and it is the same absence whether
+    //    the scan sits under a derived table or not: `explain select * from t
+    //    where a > 1` and the same select wrapped in `(SELECT ...) x` pick the
+    //    identical path here, which is the proof it is not derived-table
+    //    specific.
+    //  * NO STATISTICS. `join_reorder_through_projection` runs five `ANALYZE
+    //    TABLE` statements, so TiDB prints no `stats:pseudo` suffix while this
+    //    tier -- which refuses `ANALYZE` and has no histogram to load --
+    //    truthfully prints one. The access OBJECT and range agree; only the
+    //    statistics source differs. Worked off by the statistics tier, not
+    //    here.
+    //
+    // Lowering this number again is the job of those two, and the shape of the
+    // work is already measured: `INTEGRATION_SHOW_DIVERGENCES=1` on either
+    // topic prints the per-table pairs, and 17 of the 26 in
+    // `join_reorder_through_projection` are the covering-index class alone.
+    const KNOWN_DIVERGENCES: usize = 61;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
