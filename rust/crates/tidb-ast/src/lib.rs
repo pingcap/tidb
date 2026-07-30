@@ -195,7 +195,7 @@ pub use user::{
     CreateUserCredential, CreateUserPasswordOption, CreateUserSpec, UserSpec,
 };
 pub use user_variable::{SetUserVarStmt, UserVariableAssignment};
-pub use util::{redact_url, restore_string_literal};
+pub use util::redact_url;
 pub use visitor::{Visitable, Visitor};
 
 /// Parser payload for an optional `BINARY` modifier.

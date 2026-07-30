@@ -226,3 +226,40 @@ fn go_ast_test_if_exists_index_special_comments() {
         assert_eq!(restore_special(sql), expected, "source SQL: {sql}");
     }
 }
+
+/// The charset INTRODUCER a bare string literal restores with follows the
+/// KEYWORD case flag, because Go writes it through `ctx.WriteKeyWord`
+/// (`pkg/types/parser_driver/value_expr.go`'s `KindString` arm) rather than as
+/// fixed text.
+///
+/// The lowercase spelling is not cosmetic: `pkg/ddl/add_column.go` restores a
+/// generated column's expression with `RestoreKeyWordLowercase`, and the string
+/// it produces is what `SHOW CREATE TABLE` prints back. Captured from Go
+/// through `difftests/gorun`:
+///
+/// ```text
+/// create table gcs(s varchar(10), g varchar(20) as (concat(s, 'x\\y')));
+/// show create table gcs;
+///   `g` varchar(20) GENERATED ALWAYS AS (concat(`s`, _utf8mb4'x\\y')) VIRTUAL
+/// ```
+#[test]
+fn string_literal_charset_introducer_follows_the_keyword_case_flag() {
+    let base = RestoreFlags::STRING_SINGLE_QUOTES | RestoreFlags::NAME_BACK_QUOTES;
+    for (flags, expected) in [
+        (
+            base | RestoreFlags::KEYWORD_UPPERCASE,
+            r"SELECT CONCAT(`s`, _UTF8MB4'x\\y')",
+        ),
+        (
+            base | RestoreFlags::KEYWORD_LOWERCASE,
+            r"select concat(`s`, _utf8mb4'x\\y')",
+        ),
+    ] {
+        assert_eq!(
+            parse(r"select concat(s, 'x\\y')")
+                .unwrap()
+                .restore_with_flags(flags),
+            expected
+        );
+    }
+}

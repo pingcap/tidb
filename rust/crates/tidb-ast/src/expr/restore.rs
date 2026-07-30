@@ -322,7 +322,18 @@ impl Expr {
                     out.push_str(&escape_string_literal(v));
                     out.push('\'');
                 } else {
-                    out.push_str(&restore_string_literal(v));
+                    // Go writes the introducer's charset name through
+                    // `ctx.WriteKeyWord` (`pkg/types/parser_driver/value_expr.go`),
+                    // so its case follows the keyword flag: `_UTF8MB4` under the
+                    // default uppercase flags, and `_utf8mb4` under the lowercase
+                    // flags `pkg/ddl/add_column.go` restores a generated column's
+                    // expression with -- which is the spelling `SHOW CREATE TABLE`
+                    // prints.
+                    out.push('_');
+                    restore_charset_name(out, "utf8mb4", context);
+                    out.push('\'');
+                    out.push_str(&escape_string_literal(v));
+                    out.push('\'');
                 }
             }
             Expr::RawString(v) => {

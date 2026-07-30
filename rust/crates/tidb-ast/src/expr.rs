@@ -26,7 +26,6 @@ pub use op::*;
 use crate::select::restore_window_def;
 use crate::util::{
     back_quote, escape_string_literal, format_go_float, normalize_decimal, normalize_int,
-    restore_string_literal,
 };
 use crate::{Op, OrderItem, QueryStmt, RestoreContext, RestoreFlags, WindowOver};
 

@@ -122,13 +122,6 @@ pub(crate) fn back_quote(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
 }
 
-/// Restores a string literal value as `_UTF8MB4'…'` under the default utf8mb4
-/// charset (`RestoreStringSingleQuotes`): backslashes are escaped and single
-/// quotes are doubled, so the text re-parses to the same value.
-pub fn restore_string_literal(value: &str) -> String {
-    format!("_UTF8MB4'{}'", escape_string_literal(value))
-}
-
 /// Redacts credentials carried in an external-storage URL.
 ///
 /// This is the Rust transcreation of `ast.RedactURL`. Query keys are sorted
@@ -183,7 +176,7 @@ pub fn redact_url(value: &str) -> String {
 }
 
 /// Escapes a string literal's body (backslash and quote doubling) without
-/// the `_UTF8MB4` charset-introducer prefix `restore_string_literal` adds —
+/// the `_utf8mb4` charset-introducer prefix the value-expression restore adds —
 /// used where the Go AST restores a plain quoted string, such as `COMMENT`.
 pub(crate) fn escape_string_literal(value: &str) -> String {
     value.replace('\\', "\\\\").replace('\'', "''")
