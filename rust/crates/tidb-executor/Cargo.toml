@@ -14,6 +14,7 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-model = { path = "../tidb-model" }
 tidb-parser = { path = "../tidb-parser" }
@@ -21,6 +22,8 @@ tidb-planner = { path = "../tidb-planner" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-util = { path = "../tidb-util" }
+tracing = "0.1"
 
 [lints]
 workspace = true

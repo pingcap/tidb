@@ -189,6 +189,23 @@ impl Session {
             .ok()
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(1000);
+        // Go `ResetContextOfStmt`: the statement's memory budget is
+        // `@@tidb_mem_quota_query` under the action `@@tidb_mem_oom_action`
+        // selects. An unreadable quota falls back to the shipped 1GiB rather
+        // than to "unlimited", so a registry hiccup cannot silently remove
+        // the protection.
+        let mem_quota = self
+            .vars
+            .get_system("tidb_mem_quota_query")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY);
+        let oom_action = tidb_executor::OomAction::parse(
+            &self
+                .vars
+                .get_system("tidb_mem_oom_action")
+                .unwrap_or_default(),
+        );
         if !is_dml {
             return tidb_executor::StmtContext::for_query()
                 .with_cte_max_recursion_depth(cte_depth)
@@ -197,6 +214,7 @@ impl Session {
                 .with_user(self.current_user.clone(), self.login_user.clone())
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
                 .with_connection_id(self.connection_id)
+                .with_mem_quota(mem_quota, oom_action)
                 .with_rand_session(Rc::clone(&self.rand))
                 .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
                 .with_user_vars(Rc::clone(&self.user_vars))
@@ -214,6 +232,7 @@ impl Session {
         .with_user(self.current_user.clone(), self.login_user.clone())
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
         .with_connection_id(self.connection_id)
+        .with_mem_quota(mem_quota, oom_action)
         .with_rand_session(Rc::clone(&self.rand))
         .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
         .with_user_vars(Rc::clone(&self.user_vars))

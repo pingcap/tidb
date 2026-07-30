@@ -49,8 +49,9 @@ mod pool;
 mod tracker;
 
 pub use action::{
-    ActionOnExceed, BaseOomAction, LogOnExceed, PanicOnExceed, DEF_CURSOR_FETCH_SPILL_PRIORITY,
-    DEF_LOG_PRIORITY, DEF_PANIC_PRIORITY, DEF_RATE_LIMIT_PRIORITY, DEF_SPILL_PRIORITY,
+    ActionOnExceed, ArcAction, BaseOomAction, LogOnExceed, PanicOnExceed,
+    DEF_CURSOR_FETCH_SPILL_PRIORITY, DEF_LOG_PRIORITY, DEF_PANIC_PRIORITY, DEF_RATE_LIMIT_PRIORITY,
+    DEF_SPILL_PRIORITY,
 };
 pub use arbitrator::{
     cancel_channel, ArbitrateHelper, ArbitrateResult, ArbitrationContext, ArbitrationPriority,
@@ -73,7 +74,7 @@ pub use pool::{
 };
 pub use tracker::{
     bytes_to_string, format_bytes, Tracker, DEF_MEM_QUOTA_QUERY, LABEL_FOR_GLOBAL_ANALYZE_MEMORY,
-    LABEL_FOR_MEM_DB, LABEL_FOR_SQL_TEXT, TRACK_MEM_WHEN_EXCEEDS,
+    LABEL_FOR_MEM_DB, LABEL_FOR_SESSION, LABEL_FOR_SQL_TEXT, TRACK_MEM_WHEN_EXCEEDS,
 };
 
 #[cfg(test)]

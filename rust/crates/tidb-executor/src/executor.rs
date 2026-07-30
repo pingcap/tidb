@@ -32,6 +32,14 @@ pub enum ExecError {
     /// scalar subquery's plan carries. It is an executor error because it is
     /// only known per outer row, once the inner query has run.
     SubqueryReturnsMoreThanOneRow,
+    /// Go `exeerrors.ErrMemoryExceedForQuery` (8175): the statement's memory
+    /// consumption crossed `tidb_mem_quota_query` while
+    /// `tidb_mem_oom_action` was `CANCEL`. See [`crate::StatementMemory`].
+    MemoryExceedForQuery {
+        /// The connection the message names; Go's message is parameterized on
+        /// it (`...try again.[conn=%d]`).
+        conn_id: u64,
+    },
     /// Go `types.ErrJSONDocumentNULLKey` (3158): `JSON_OBJECTAGG` evaluated a
     /// NULL member name. It is an executor error because Go raises it while
     /// folding the group, after the result columns are already on the wire.

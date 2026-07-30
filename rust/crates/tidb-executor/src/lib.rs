@@ -60,6 +60,7 @@ mod index_range;
 pub mod join;
 pub mod kv_table;
 pub mod limit;
+pub mod mem_quota;
 pub mod mem_table;
 mod plan_trace;
 pub mod projection;
@@ -104,6 +105,7 @@ pub use kv_table::{
     FkAction, IndexRange, KvColumn, KvForeignKey, KvIndex, KvTable, TableCharset, TableScanExec,
 };
 pub use limit::LimitExec;
+pub use mem_quota::{OomAction, StatementMemory};
 pub use mem_table::MemTableSourceExec;
 pub use projection::ProjectionExec;
 pub use scan_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp, ScanPredicate};

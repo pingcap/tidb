@@ -33,6 +33,9 @@ pub const DEF_MEM_QUOTA_QUERY: i64 = 1_073_741_824;
 
 /// `LabelForSQLText`.
 pub const LABEL_FOR_SQL_TEXT: i64 = -1;
+/// `LabelForSession`: the root tracker of one session, which is the tracker
+/// `tidb_mem_quota_query` is the limit OF.
+pub const LABEL_FOR_SESSION: i64 = -27;
 /// `LabelForMemDB`.
 pub const LABEL_FOR_MEM_DB: i64 = -28;
 /// `LabelForGlobalAnalyzeMemory`.

@@ -21,6 +21,8 @@ use std::rc::Rc;
 use tidb_datatype::Datum;
 use tidb_expr::{Columns, ErrorLevel, MysqlRng};
 
+use crate::mem_quota::{OomAction, StatementMemory};
+
 /// Go `stmtctx.StatementContext`, in the part evaluation actually reads: the
 /// warning buffer and the error levels that decide whether a tolerable
 /// condition warns or fails the statement.
@@ -132,6 +134,15 @@ pub struct StmtContext {
     /// catalog holds. That is what keeps a `NEXTVAL` from being undone by a
     /// rollback or by a staged catalog swap.
     sequences: Rc<SequenceSnapshot>,
+    /// Go `SessionVars.MemTracker` + `StmtCtx.MemTracker`: this statement's
+    /// memory budget, which `tidb_mem_quota_query` is the limit of.
+    ///
+    /// Every statement has one BY CONSTRUCTION -- [`StmtContext::new`] builds
+    /// it, so an operator can always account and the quota can never be
+    /// missing because a call site forgot it. A context with no session behind
+    /// it gets the shipped defaults (1GiB, `CANCEL`); see
+    /// [`StatementMemory::default`].
+    memory: StatementMemory,
 }
 
 /// The sequence state one statement can see: the allocators it may read and
@@ -237,7 +248,26 @@ impl StmtContext {
             div_precision_increment: 4,
             cte_max_recursion_depth: 1000,
             sequences: Rc::default(),
+            memory: StatementMemory::default(),
         }
+    }
+
+    /// Attaches the statement's memory budget, which the session builds from
+    /// `@@tidb_mem_quota_query` and `@@tidb_mem_oom_action`.
+    ///
+    /// Go's `ResetContextOfStmt` does this per statement:
+    /// `vars.MemTracker.SetBytesLimit(vars.MemQuotaQuery)` plus the action
+    /// `vardef.OOMAction` selects.
+    #[must_use]
+    pub fn with_mem_quota(mut self, quota: i64, oom_action: OomAction) -> Self {
+        self.memory = StatementMemory::new(quota, oom_action, self.connection_id.unwrap_or(0));
+        self
+    }
+
+    /// This statement's memory budget; see [`StatementMemory`].
+    #[must_use]
+    pub fn statement_memory(&self) -> StatementMemory {
+        self.memory.clone()
     }
 
     /// A context for a query, where Go always warns on a zero divisor.

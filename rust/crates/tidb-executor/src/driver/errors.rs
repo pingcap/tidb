@@ -292,6 +292,12 @@ pub enum DriverError {
     /// Go `ER_SUBQUERY_NO_1_ROW` (1242): a scalar subquery produced more than
     /// one row.
     SubqueryReturnsMoreThanOneRow,
+    /// Go `exeerrors.ErrMemoryExceedForQuery` (8175): the statement exceeded
+    /// `tidb_mem_quota_query` under `tidb_mem_oom_action = CANCEL`.
+    MemoryExceedForQuery {
+        /// The connection the message names.
+        conn_id: u64,
+    },
     /// Go `types.ErrJSONDocumentNULLKey` (3158): `JSON_OBJECTAGG` evaluated a
     /// NULL member name.
     JsonDocumentNullKey,
@@ -636,6 +642,9 @@ impl From<ExecError> for DriverError {
             // The same statement-level error whichever layer raised it, so
             // callers match one variant.
             ExecError::SubqueryReturnsMoreThanOneRow => DriverError::SubqueryReturnsMoreThanOneRow,
+            ExecError::MemoryExceedForQuery { conn_id } => {
+                DriverError::MemoryExceedForQuery { conn_id }
+            }
             ExecError::JsonDocumentNullKey => DriverError::JsonDocumentNullKey,
             ExecError::InvalidJsonCharset { charset } => {
                 DriverError::InvalidJsonCharset { charset }
@@ -1057,6 +1066,20 @@ impl DriverError {
                  definer/invoker of view lack rights to use them"
             ),
         ),
+        // Go `exeerrors.ErrMemoryExceedForQuery`. The text is NOT retyped
+        // here: it is rendered from the ported error catalog, the same way
+        // Go's `SQLKiller.getKillError` renders it, so the wire message can
+        // only drift if the catalog does. Captured from Go:
+        //   [executor:8175]Your query has been cancelled due to exceeding the
+        //   allowed memory limit for a single SQL query. Please try narrowing
+        //   your query scope or increase the tidb_mem_quota_query limit and
+        //   try again.[conn=1]
+        DriverError::MemoryExceedForQuery { conn_id } => {
+            let sql_error = crate::mem_quota::memory_exceed_for_query(conn_id);
+            let mut state = *b"HY000";
+            state.copy_from_slice(sql_error.state.as_bytes());
+            MysqlError::new(sql_error.code, state, sql_error.message)
+        }
         // Go raises this one as a plain error, so it carries 1105.
         // Go: "JSON documents may not contain NULL member names."
         DriverError::JsonDocumentNullKey => MysqlError::new(
