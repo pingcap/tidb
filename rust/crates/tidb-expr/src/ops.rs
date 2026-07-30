@@ -191,6 +191,33 @@ pub(crate) fn eval_binary_full(
         LogicXor => return logic_xor(l, r),
         _ => {}
     }
+    // A JSON operand compares in the JSON domain, and it has to be intercepted
+    // HERE -- above the string branch -- because Go's `GetCmpFunction` picks
+    // the JSON comparer as soon as EITHER side is ETJson, coercing the other
+    // side to JSON rather than the reverse. The ordering itself is Go's
+    // `CompareBinaryJSON` (`pkg/types/json_binary_functions.go`), reached
+    // through `Datum.compareMysqlJSON`, which is what `Datum::compare` already
+    // ports: values of different JSON types order by TYPE PRECEDENCE first, so
+    // over `'"a"','"B"','1','{"a":1}','[1,2]'` the minimum is the number `1`
+    // and the maximum is an array -- exactly what TiDB records for issue
+    // 31640's `select min(a)/max(a) from t` (`tests/integrationtest`).
+    //
+    // Until this arm existed the pair fell through every guard below to the
+    // integer-only path, whose `unreachable!` then aborted the process. The
+    // comment on that `unreachable!` claimed the upstream guards excluded
+    // everything; they covered Str/Float/Decimal and NOT Json.
+    if matches!(l, Datum::Json(_)) || matches!(r, Datum::Json(_)) {
+        if !matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq) {
+            return Err(EvalError::Unsupported("JSON operand"));
+        }
+        if l == Datum::Null || r == Datum::Null {
+            return Ok(Datum::Null);
+        }
+        let ordering = l
+            .compare(&r, collation)
+            .map_err(|_| EvalError::Unsupported("JSON comparison"))?;
+        return Ok(ordering_to_bool(op, ordering));
+    }
     // Two strings compare under the collation the expression derivation
     // aggregated for THIS comparison (byte order and PAD SPACE for
     // `utf8mb4_bin`, case folding for a `_ci` collation, NO PAD for `binary`).
@@ -1166,6 +1193,62 @@ mod tests {
     use super::{eval_binary, mysql_real_prefix};
     use crate::{Datum, Decimal, EvalError};
     use tidb_ast::BinaryOp;
+
+    /// `MIN`/`MAX` over a `json` column -- TiDB's own issue-31640 case, whose
+    /// recorded answers are `min(a)` = `1` and `max(a)` = `[3, 4]` over
+    /// `'"a"','"B"','"c"','"D"','{"a":1}','1','{"b":2}','[1,2]','[3,4]'`
+    /// (`tests/integrationtest/r/expression/issues.result`). Aggregation
+    /// compares through `compare_datums` -> `eval_binary`, so before the JSON
+    /// arm existed both operands fell past every guard into the integer-only
+    /// path and its `unreachable!` ABORTED the process -- which is what made
+    /// `expression/issues` and `expression/json` crashing topics.
+    ///
+    /// The ordering asserted here is Go `CompareBinaryJSON`'s type precedence
+    /// (number < string < object < array), not merely "does not panic": a JSON
+    /// comparison silently answering by some other rule would change which row
+    /// `MIN` returns.
+    #[test]
+    fn json_operands_compare_by_gos_json_type_precedence_instead_of_aborting() {
+        use tidb_datatype::BinaryJSON;
+        let json = |text: &str| Datum::Json(BinaryJSON::parse(text).unwrap());
+        // Number is the lowest precedence, array the highest.
+        for (lower, higher) in [
+            ("1", r#""a""#),
+            (r#""a""#, r#"{"a": 1}"#),
+            (r#"{"a": 1}"#, "[1, 2]"),
+            ("1", "[3, 4]"),
+        ] {
+            assert_eq!(
+                eval_binary(BinaryOp::Lt, json(lower), json(higher)),
+                Ok(Datum::Int(1)),
+                "{lower} < {higher}"
+            );
+            assert_eq!(
+                eval_binary(BinaryOp::Gt, json(lower), json(higher)),
+                Ok(Datum::Int(0)),
+                "{lower} > {higher}"
+            );
+        }
+        // Within one type the values themselves order: `"B"` before `"a"` by
+        // byte order, and `[1, 2]` before `[3, 4]` element-wise.
+        assert_eq!(
+            eval_binary(BinaryOp::Lt, json(r#""B""#), json(r#""a""#)),
+            Ok(Datum::Int(1))
+        );
+        assert_eq!(
+            eval_binary(BinaryOp::Lt, json("[1, 2]"), json("[3, 4]")),
+            Ok(Datum::Int(1))
+        );
+        assert_eq!(
+            eval_binary(BinaryOp::Eq, json(r#"{"a": 1}"#), json(r#"{"a": 1}"#)),
+            Ok(Datum::Int(1))
+        );
+        // A JSON operand under an ARITHMETIC operator is refused, not guessed.
+        assert!(matches!(
+            eval_binary(BinaryOp::Plus, json("1"), Datum::Int(1)),
+            Err(EvalError::Unsupported(_))
+        ));
+    }
 
     #[test]
     fn mixed_string_number_comparisons_use_mysql_real_prefix() {
