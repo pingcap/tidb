@@ -109,6 +109,20 @@ fn same_eval_family(value: &Datum, ret_type: &tidb_datatype::FieldType) -> bool 
     if ret_type.is_hybrid() {
         return true;
     }
+    // The REAL family is the one place where sharing an eval type is not
+    // enough. Go's `EvalReal` is float64-valued for both `FLOAT` and `DOUBLE`,
+    // so a 4-byte `KindFloat32` datum is only ever a `FLOAT` COLUMN's own
+    // cell, never an expression's result -- while `getFixedLen` gives
+    // `TypeFloat` a 4-byte cell and `TypeDouble` an 8-byte one. A `Float32`
+    // value under a `DOUBLE` result type therefore has to widen, or
+    // `append_float32` writes 4 bytes into an 8-byte cell.
+    if ret_type.eval_type() == EvalType::Real {
+        return match value {
+            Datum::Float32(_) => ret_type.code() == tidb_datatype::FieldTypeCode::Float,
+            Datum::Real(_) => ret_type.code() != tidb_datatype::FieldTypeCode::Float,
+            _ => false,
+        };
+    }
     let normalize = |t| match t {
         EvalType::Timestamp => EvalType::Datetime,
         other => other,

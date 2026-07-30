@@ -1,0 +1,34 @@
+## MAX/MIN over a scalar function whose value came from a FLOAT column --
+## TiDB's own TestMaxMinFloatScalaFunc
+## (tests/integrationtest/t/executor/aggregate.test).
+##
+## A FLOAT column's cell is 4 bytes and holds a `float32`; a DOUBLE one is 8.
+## Go's `EvalReal` is float64-valued for both, so a `float32` value is only
+## ever a FLOAT COLUMN's own cell and never an expression's result -- which is
+## why `ScalarFunction::eval` must WIDEN a `Float32` under a DOUBLE result
+## type. Without that, `append_float32` wrote 4 bytes into an 8-byte cell and
+## this topic aborted the process.
+##
+## NOT in this file, because each is a DIFFERENT gap and a corpus topic may not
+## carry another's debt -- captured from Go with `difftests/gorun` anyway, so
+## the next worker starts from the answer:
+##   select case b when 'val_b' then c else 0 end from maxmin_float
+##       Go: 12.191   this tier: 12.190999984741211
+##       Go's `types.AggFieldType` over (FLOAT, int) is FLOAT; this tier's
+##       control-function type merge reports DOUBLE, so the value widens where
+##       Go keeps it narrow. Same root cause:
+##   select max(if(1, c, 0)), min(coalesce(c, 0)) from maxmin_float
+##       Go: 12.191|12.190999984741211   this tier: both widened
+##       (IF merges to FLOAT here, COALESCE to DOUBLE -- Go distinguishes them.)
+##   select sum(c), avg(c), count(c) from maxmin_float
+##       Go: 12.190999984741211|12.190999984741211|1
+##       this tier: "SUM over this datum kind is not yet supported" -- the SUM
+##       accumulator has no `Float32` arm.
+create table maxmin_float(a varchar(10), b varchar(10), c float)
+insert into maxmin_float values('0', 'val_b', 12.191)
+select case b when 'nope' then c else 0 end from maxmin_float
+select max(case b when 'val_b' then c else 0 end) val_b from maxmin_float where cast(a as signed) = 0 group by a
+select min(case b when 'val_b' then c else 0 end) val_b from maxmin_float where cast(a as signed) = 0 group by a
+select max(ifnull(c, 0)), min(ifnull(c, 0)) from maxmin_float
+## the FLOAT column itself stays narrow, in the column and through MAX/MIN
+select c, max(c), min(c) from maxmin_float group by c
