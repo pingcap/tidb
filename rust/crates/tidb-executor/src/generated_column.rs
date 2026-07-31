@@ -382,7 +382,11 @@ pub fn build_generated_columns(
 /// (`pkg/ddl/add_column.go`): single-quoted strings, lowercase keywords,
 /// back-quoted names, spaces around binary operations, and no schema or table
 /// qualifier -- which is why `SHOW CREATE TABLE` prints `` (`a` + 1) ``.
-fn generated_restore_flags() -> tidb_ast::RestoreFlags {
+///
+/// This is also the canonical form the substitution rule compares under, on
+/// BOTH sides -- see [`crate::generated_column_substitute`] for why that is
+/// the whole of its namespace problem.
+pub(crate) fn generated_restore_flags() -> tidb_ast::RestoreFlags {
     tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
         | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE
         | tidb_ast::RestoreFlags::NAME_BACK_QUOTES

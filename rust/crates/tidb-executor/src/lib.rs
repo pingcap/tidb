@@ -60,6 +60,7 @@ pub mod expression_index;
 mod farmhash;
 pub(crate) mod foreign_key;
 pub mod generated_column;
+pub mod generated_column_substitute;
 mod go_quote;
 pub mod hash_agg;
 mod hash_join;
