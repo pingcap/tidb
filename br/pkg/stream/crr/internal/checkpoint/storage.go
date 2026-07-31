@@ -25,9 +25,11 @@ import (
 
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
+	"go.uber.org/zap"
 )
 
 const (
@@ -41,12 +43,14 @@ type parsedMetaFile struct {
 	path    string
 	flushTS uint64
 	storeID uint64
+	empty   bool
 }
 
 type loadedMetaFile struct {
 	path          string
 	flushTS       uint64
 	storeID       uint64
+	empty         bool
 	dataFilePaths []string
 }
 
@@ -106,6 +110,7 @@ func (c *Calculator) newMetaFileSeq(ctx context.Context) iter.Seq2[parsedMetaFil
 				path:    entry.path,
 				flushTS: parsed.FlushTS,
 				storeID: parsed.StoreID,
+				empty:   parsed.IsEmpty(),
 			}, nil) {
 				return
 			}
@@ -117,20 +122,39 @@ func loadMetaFile(
 	ctx context.Context,
 	storage UpstreamStorageReader,
 	metaFile parsedMetaFile,
-) (loadedMetaFile, error) {
+) (loadedMetaFile, bool, error) {
+	if metaFile.empty {
+		if metaFile.storeID == 0 {
+			log.Warn("ignore empty backupmeta with no store id in file name",
+				zap.String("path", metaFile.path),
+				zap.Uint64("flush-ts", metaFile.flushTS))
+			return loadedMetaFile{
+				path:    metaFile.path,
+				flushTS: metaFile.flushTS,
+				empty:   true,
+			}, true, nil
+		}
+		return loadedMetaFile{
+			path:    metaFile.path,
+			flushTS: metaFile.flushTS,
+			storeID: metaFile.storeID,
+			empty:   true,
+		}, false, nil
+	}
+
 	metaBytes, err := storage.ReadFile(ctx, metaFile.path)
 	if err != nil {
-		return loadedMetaFile{}, fmt.Errorf("read upstream backupmeta %s: %w", metaFile.path, err)
+		return loadedMetaFile{}, false, fmt.Errorf("read upstream backupmeta %s: %w", metaFile.path, err)
 	}
 
 	meta, err := parseBackupMetadata(metaBytes)
 	if err != nil {
-		return loadedMetaFile{}, fmt.Errorf("parse backupmeta %s: %w", metaFile.path, err)
+		return loadedMetaFile{}, false, fmt.Errorf("parse backupmeta %s: %w", metaFile.path, err)
 	}
 
 	storeID, err := resolveStoreID(metaFile.storeID, meta.GetStoreId(), metaFile.path)
 	if err != nil {
-		return loadedMetaFile{}, err
+		return loadedMetaFile{}, false, err
 	}
 
 	return loadedMetaFile{
@@ -138,7 +162,7 @@ func loadMetaFile(
 		flushTS:       metaFile.flushTS,
 		storeID:       storeID,
 		dataFilePaths: extractDataFilePaths(meta),
-	}, nil
+	}, false, nil
 }
 
 func parseBackupMetadata(rawMeta []byte) (*backuppb.Metadata, error) {
