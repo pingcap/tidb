@@ -1422,7 +1422,25 @@ impl WindowKind {
                 match arg_types.get(1).cloned().flatten() {
                     None => argument,
                     Some(written) if matches!(written.code(), FieldTypeCode::Null) => argument,
-                    Some(_) => agg_field_type(&[argument, default]),
+                    // Go's `InferType4ControlFuncs` does NOT stop at
+                    // `AggFieldType`: that merge carries the FIRST argument's
+                    // flen/decimal, so `setDecimalFromArgs`/`setFlenFromArgs`
+                    // re-derive both from ALL the arguments. Captured,
+                    // `LAG(bigint_col, 1, 1.5)` prints `1.5` -- without the
+                    // re-derivation the result keeps the BIGINT's scale of 0
+                    // and the default ROUNDS to `2`.
+                    Some(_) => {
+                        let operands = [argument, default];
+                        let mut merged = agg_field_type(&operands);
+                        let mut flags = merged.flags();
+                        tidb_datatype::aggregate_eval_type(&operands, &mut flags);
+                        merged = merged.with_flags(flags);
+                        tidb_expr::rewriter::set_numeric_len_from_args(
+                            &mut merged,
+                            &[&operands[0], &operands[1]],
+                        );
+                        merged
+                    }
                 }
             }
         })

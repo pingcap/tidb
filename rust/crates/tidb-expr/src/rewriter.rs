@@ -655,7 +655,12 @@ fn extremum_return_type(args: &[Expression]) -> Option<FieldType> {
     Some(first)
 }
 
-fn set_numeric_len_from_args(result: &mut FieldType, args: &[&FieldType]) {
+/// Go `setDecimalFromArgs` then `setFlenFromArgs`, which `AggFieldType` does
+/// NOT do: the merge carries the FIRST argument's flen/decimal, so every
+/// caller of `InferType4ControlFuncs`'s merge has to re-derive both from all
+/// the arguments. `tidb_executor::window`'s `LAG`/`LEAD` inference is the
+/// other caller.
+pub fn set_numeric_len_from_args(result: &mut FieldType, args: &[&FieldType]) {
     use tidb_datatype::EvalType;
     let eval_type = result.eval_type();
     // setDecimalFromArgs: ETInt has no scale; otherwise the widest argument
