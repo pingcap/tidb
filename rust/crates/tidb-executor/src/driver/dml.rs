@@ -19,6 +19,7 @@
 //! the `executor` package's `InsertExec` / `UpdateExec` / `DeleteExec`.
 
 use super::*;
+use crate::kv_table::AutoIdError;
 
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
 /// `catalog`, returning the number of inserted rows.
@@ -446,9 +447,16 @@ pub(crate) fn run_insert_traced(
             // The allocator lives on the table, so the ids are handed out here
             // rather than while the rows were being built.
             for index in &auto_rows {
-                let allocated = kv
-                    .apply_auto_increment(&mut new_rows[*index])
-                    .map_err(|_| DriverError::AutoincReadFailed)?;
+                // A full domain is Go's 1467; a counter whose home could not
+                // be reached is NOT that, and saying 1467 for it would report
+                // a table that has run out of ids when the ids are all still
+                // there.
+                let allocated = kv.apply_auto_increment(&mut new_rows[*index]).map_err(
+                    |error| match error {
+                        AutoIdError::Exhausted => DriverError::AutoincReadFailed,
+                        AutoIdError::Store(detail) => DriverError::AutoIdUnavailable(detail.0),
+                    },
+                )?;
                 if let Some(allocated) = allocated {
                     // Go keeps the FIRST allocated id of the statement.
                     if first_allocated.is_none() {

@@ -16,35 +16,203 @@
 //! `Allocator` reduced to the one thing a table needs from it, an id source
 //! that lives OUTSIDE transaction semantics.
 //!
-//! Inside: [`AutoIdAllocator`], holding Go's `allocator.base` (the id LAST
-//! handed out) as a raw 64-bit pattern plus the column's signedness, and
-//! [`AutoIncrementExhausted`], Go `autoid.ErrAutoincReadFailed`. The type
-//! doc records why both representation choices are Go's and what each one
-//! removes.
+//! Inside: [`AutoIdStore`], WHERE the counter lives; [`AutoIdAllocator`],
+//! Go's `allocator.base`/`allocator.end` cache over one of those; and
+//! [`AutoIdError`], carrying Go `autoid.ErrAutoincReadFailed` alongside the
+//! store failures a shared counter can have and a process-local one cannot.
 //!
-//! Mirrors Go `pkg/meta/autoid/autoid.go` (`Alloc`, `Rebase`,
-//! `rebase4Signed`/`rebase4Unsigned`, `alloc4Unsigned`). The callers that
-//! drive it -- `KvTable::apply_auto_increment`, `rebase_auto_increment`,
-//! `truncate` -- stay with the table in the parent module.
+//! # Why the counter has a HOME rather than being a field
+//!
+//! Go does not keep this counter in `TableInfo`. It lives in a meta key of
+//! its own -- `pkg/meta/meta.go`'s `autoTableIDKey` (`TID:<id>`), bumped with
+//! `HInc` -- and `pkg/meta/autoid/autoid.go`'s `Allocator` hands ids out of a
+//! range it RESERVED there in a transaction of its OWN, so an id is burned
+//! the moment it is issued and is never returned by a rollback.
+//!
+//! That is one mechanism serving two tiers, and it is why this module has a
+//! trait where it used to have an `AtomicU64`. A table that owns every row it
+//! will ever serve can keep its counter in memory; a table on shared cluster
+//! storage cannot, because a counter that starts at zero on each node
+//! re-issues ids that already exist, and a peer `tidb-server` allocates from
+//! the same range at the same time. Making the home pluggable rather than
+//! special-casing the cluster tier is what lets the allocation RULES below --
+//! which ids are issued, which explicit value rebases, when the domain is
+//! exhausted -- exist once and be the same rules on both.
+//!
+//! The in-process home ([`LocalAutoIdStore`]) reserves one id at a time, so it
+//! caches nothing and every id comes straight off its cell: exactly the
+//! semantics that tier had before the counter had a home at all.
+//!
+//! The callers that drive the allocator -- `KvTable::apply_auto_increment`,
+//! `rebase_auto_increment`, `truncate` -- stay with the table in the parent
+//! module.
 
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-/// Go `autoid.Allocator`: the AUTO_INCREMENT counter, which lives OUTSIDE
-/// transaction semantics.
+/// Go `autoid.GetStep()`'s `defaultStep`: how many ids an allocator reserves
+/// from a shared store at once.
 ///
-/// Go allocates auto ids against the meta store in a transaction of their
-/// own, so an id is consumed the moment a row asks for one and is never
-/// handed back -- not by a statement that fails afterwards, and not by a
-/// transaction that rolls back. Holding the counter in a SHARED cell rather
-/// than as a plain field is what reproduces that here: a transaction stages a
-/// COPY of the catalog, and the copied tables allocate from the very counter
-/// the committed ones do, so dropping the staged copy on ROLLBACK discards
-/// the rows while keeping the burn. As a plain field, "returned on rollback"
-/// would be the normal path and every failure site would need its own burn
-/// fixup.
+/// DIVERGENCE (documented, and only about how OFTEN the store is read): Go
+/// grows this between reservations from how fast the last one was consumed
+/// (`NextStep`, `minStep` 30000 up to `maxStep` 2000000). A fixed step issues
+/// the same ids in the same order and differs only in the number of meta-key
+/// transactions a long insert run costs.
+pub const DEFAULT_AUTO_ID_STEP: u64 = 30000;
+
+/// Where an allocator's counter really lives.
 ///
-/// The counter holds Go's `allocator.base` -- the id LAST handed out, not the
+/// One implementation per storage tier, both holding Go's stored value: the
+/// id last reserved by ANYONE, as a raw 64-bit pattern. Ids are handed out
+/// above it, so that value is also the high-water mark a rebase raises.
+pub trait AutoIdStore: fmt::Debug + Send + Sync {
+    /// Go `alloc4Signed`'s inner transaction: `idAcc.Get()` then
+    /// `idAcc.Inc(step)`, run in a transaction that is NOT the row's.
+    ///
+    /// Returns `(base, end)`: `base` is the stored value before the bump, and
+    /// the ids in `(base, end]` now belong to this allocator alone. `end` is
+    /// clamped to the end of the domain, so it equals `base` when there was
+    /// no room left; the caller reads that as exhaustion rather than the
+    /// store having to know what the column's limit means.
+    ///
+    /// `unsigned` is the column's domain, which decides how the stored
+    /// pattern is compared and how much room is left above it.
+    fn reserve(&self, step: u64, unsigned: bool) -> Result<(u64, u64), AutoIdStoreError>;
+
+    /// Go `rebase4Signed`/`rebase4Unsigned` with `allocIDs == false`: raise
+    /// the stored value to `required` if it is not already past it, so the
+    /// next id ANY node allocates exceeds `required`.
+    ///
+    /// Never lowers, which is what makes an explicit id below the counter a
+    /// no-op on every tier.
+    fn rebase(&self, required: u64, unsigned: bool) -> Result<(), AutoIdStoreError>;
+
+    /// Starts the counter over, so the next id is 1 again.
+    ///
+    /// Go reaches this by REPLACING the table -- TRUNCATE builds a new table
+    /// id, whose counter has simply never been written -- so unlike
+    /// [`rebase`](AutoIdStore::rebase) it also moves down.
+    fn reset(&self) -> Result<(), AutoIdStoreError>;
+}
+
+/// A counter home that could not be read or written.
+///
+/// Distinct from exhaustion on purpose: a store that is unreachable has not
+/// said the column is full, and answering `1467` to a failed meta-key
+/// transaction would report a schema fact where there is an availability one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutoIdStoreError(pub String);
+
+impl fmt::Display for AutoIdStoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// Why a row got no auto id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AutoIdError {
+    /// Go `autoid.ErrAutoincReadFailed` (1467): the column's domain is full.
+    Exhausted,
+    /// The counter's home could not be reached.
+    Store(AutoIdStoreError),
+}
+
+/// The in-process counter home: an atomic cell, reserved one id at a time.
+///
+/// Holding the cell behind an `Arc` is what reproduces Go's burn-on-rollback
+/// here: a transaction stages a COPY of the catalog, and the copied tables
+/// allocate from the very cell the committed ones do, so dropping the staged
+/// copy on ROLLBACK discards the rows while keeping the burn. As a plain
+/// field, "returned on rollback" would be the normal path and every failure
+/// site would need its own fixup.
+#[derive(Clone, Debug, Default)]
+pub struct LocalAutoIdStore {
+    /// The id last handed out, as its 64-bit pattern.
+    last: Arc<AtomicU64>,
+}
+
+impl LocalAutoIdStore {
+    /// A counter that has never been written, so the first id is 1.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl AutoIdStore for LocalAutoIdStore {
+    fn reserve(&self, step: u64, unsigned: bool) -> Result<(u64, u64), AutoIdStoreError> {
+        let mut base = self.last.load(Ordering::SeqCst);
+        loop {
+            let end = advance(base, step, unsigned);
+            match self
+                .last
+                .compare_exchange_weak(base, end, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => return Ok((base, end)),
+                Err(observed) => base = observed,
+            }
+        }
+    }
+
+    fn rebase(&self, required: u64, unsigned: bool) -> Result<(), AutoIdStoreError> {
+        let mut last = self.last.load(Ordering::SeqCst);
+        while exceeds(required, last, unsigned) {
+            match self.last.compare_exchange_weak(
+                last,
+                required,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(observed) => last = observed,
+            }
+        }
+        Ok(())
+    }
+
+    fn reset(&self) -> Result<(), AutoIdStoreError> {
+        self.last.store(0, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// How many ids remain above `last` in the column's domain.
+#[must_use]
+pub const fn headroom(last: u64, unsigned: bool) -> u128 {
+    if unsigned {
+        (u64::MAX as u128) - (last as u128)
+    } else {
+        // Read in the signed domain, where `last` is at most `i64::MAX` and
+        // may in principle be negative.
+        ((i64::MAX as i128) - (last as i64 as i128)) as u128
+    }
+}
+
+/// True when `value` ranks after `other` in the column's domain.
+#[must_use]
+pub const fn exceeds(value: u64, other: u64, unsigned: bool) -> bool {
+    if unsigned {
+        value > other
+    } else {
+        (value as i64) > (other as i64)
+    }
+}
+
+/// Go's `tmpStep := min(math.MaxInt64-newBase, nextStep)`: `base` moved up by
+/// `step`, never past the end of the domain.
+#[must_use]
+pub fn advance(base: u64, step: u64, unsigned: bool) -> u64 {
+    let taken = u128::from(step).min(headroom(base, unsigned));
+    // `taken` is bounded by the room left, so this cannot leave the domain.
+    base.wrapping_add(taken as u64)
+}
+
+/// Go `autoid.Allocator`: the cached range `(base, end]` over a counter that
+/// lives in an [`AutoIdStore`].
+///
+/// The cache holds Go's `allocator.base` -- the id LAST handed out, not the
 /// next one -- as a raw 64-bit PATTERN, with the column's signedness deciding
 /// how that pattern is read. Both choices come straight from Go and each one
 /// removes a whole class of edge case:
@@ -57,50 +225,57 @@ use std::sync::Arc;
 ///   (`rebase4Unsigned`/`alloc4Unsigned` read the same field as `uint64`), so
 ///   a `BIGINT UNSIGNED` id above `i64::MAX` keeps its own domain end to end
 ///   instead of turning negative and being ignored by the rebase.
+///
+/// Cloning shares the cache AND the store, so the staged catalog copy a
+/// transaction allocates from is the same allocator the committed table has.
 #[derive(Clone, Debug)]
 pub(crate) struct AutoIdAllocator {
-    /// Go `allocator.base`: the id last handed out, as its 64-bit pattern.
-    last: Arc<AtomicU64>,
-    /// Go `allocator.isUnsigned`: which domain the pattern is read in.
+    /// Go `allocator.base`/`allocator.end`: the ids `(base, end]` reserved
+    /// for this allocator and not yet handed out.
+    cache: Arc<Mutex<AutoIdRange>>,
+    /// Where the counter really lives.
+    store: Arc<dyn AutoIdStore>,
+    /// Go `allocator.step`: how much to reserve when the cache runs dry.
+    step: u64,
+    /// Go `allocator.isUnsigned`: which domain the patterns are read in.
     pub(crate) unsigned: bool,
 }
 
-/// Go `autoid.ErrAutoincReadFailed` (1467): the allocator has no id left.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AutoIncrementExhausted;
+/// Go `allocator.base` and `allocator.end`.
+#[derive(Clone, Copy, Debug)]
+struct AutoIdRange {
+    /// The id last handed out from this cache.
+    base: u64,
+    /// The highest id this cache may hand out.
+    end: u64,
+}
 
 impl AutoIdAllocator {
-    /// A fresh signed allocator, whose first id is 1.
+    /// A fresh in-process allocator, whose first id is 1.
     pub(crate) fn new() -> Self {
+        Self::over(Arc::new(LocalAutoIdStore::new()), 1)
+    }
+
+    /// An allocator over `store`, reserving `step` ids at a time.
+    pub(crate) fn over(store: Arc<dyn AutoIdStore>, step: u64) -> Self {
         AutoIdAllocator {
-            last: Arc::new(AtomicU64::new(0)),
+            // An empty range, so the first allocation reserves.
+            cache: Arc::new(Mutex::new(AutoIdRange { base: 0, end: 0 })),
+            store,
+            step: step.max(1),
             unsigned: false,
         }
+    }
+
+    /// Whether `other` is a clone of this allocator rather than a second one
+    /// over the same store: same cache, so the same reserved range.
+    pub(crate) fn shares_cache_with(&self, other: &AutoIdAllocator) -> bool {
+        Arc::ptr_eq(&self.cache, &other.cache)
     }
 
     /// Go `allocator.isUnsigned`, set from the AUTO_INCREMENT column's type.
     pub(crate) fn set_unsigned(&mut self, unsigned: bool) {
         self.unsigned = unsigned;
-    }
-
-    /// How many ids remain above `last` in the column's domain.
-    const fn headroom(&self, last: u64) -> u128 {
-        if self.unsigned {
-            (u64::MAX as u128) - (last as u128)
-        } else {
-            // Read in the signed domain, where `last` is at most `i64::MAX`
-            // and may in principle be negative.
-            ((i64::MAX as i128) - (last as i64 as i128)) as u128
-        }
-    }
-
-    /// True when `value` ranks after `other` in the column's domain.
-    const fn exceeds(&self, value: u64, other: u64) -> bool {
-        if self.unsigned {
-            value > other
-        } else {
-            (value as i64) > (other as i64)
-        }
     }
 
     /// Consumes and returns the next id, as its 64-bit pattern.
@@ -114,6 +289,12 @@ impl AutoIdAllocator {
     /// `[autoid:1467]`. Saturating instead would silently re-issue an id that
     /// already exists.
     ///
+    /// The domain is checked BEFORE the store is asked for a range and again
+    /// after, which is Go's pair of guards (the local
+    /// `math.MaxInt64-alloc.base <= n1` and the in-transaction `tmpStep < n1`)
+    /// and is what keeps a refused allocation from burning the last id: Go
+    /// returns from inside the reservation without ever calling `Inc`.
+    ///
     /// DIVERGENCE (documented): the capture shows one exception -- an `ALTER
     /// TABLE ... AUTO_INCREMENT = 9223372036854775807` followed by an insert
     /// DOES hand out `9223372036854775807` in Go, from the same counter value
@@ -121,57 +302,72 @@ impl AutoIdAllocator {
     /// own guard on the ALTER path, not a rule; refusing one id earlier is the
     /// safe side of it, since the id at the very end of the domain is one this
     /// allocator then never issues twice.
-    pub(crate) fn alloc(&self) -> Result<u64, AutoIncrementExhausted> {
-        let mut last = self.last.load(Ordering::SeqCst);
-        loop {
-            if self.headroom(last) <= 1 {
-                return Err(AutoIncrementExhausted);
+    pub(crate) fn alloc(&self) -> Result<u64, AutoIdError> {
+        let mut cache = self.cache.lock().expect("auto id cache poisoned");
+        if !exceeds(cache.end, cache.base, self.unsigned) {
+            if headroom(cache.base, self.unsigned) <= 1 {
+                return Err(AutoIdError::Exhausted);
             }
-            let next = last.wrapping_add(1);
-            match self
-                .last
-                .compare_exchange_weak(last, next, Ordering::SeqCst, Ordering::SeqCst)
-            {
-                Ok(_) => return Ok(next),
-                Err(observed) => last = observed,
-            }
+            // The cached range is spent: reserve the next one from the store,
+            // which is also where a peer node's allocations become visible.
+            let (base, end) = self
+                .store
+                .reserve(self.step, self.unsigned)
+                .map_err(AutoIdError::Store)?;
+            *cache = AutoIdRange { base, end };
         }
+        if headroom(cache.base, self.unsigned) <= 1 {
+            return Err(AutoIdError::Exhausted);
+        }
+        cache.base = cache.base.wrapping_add(1);
+        Ok(cache.base)
     }
 
     /// The id the next allocation will return, as a pattern. Meaningful only
     /// while ids remain, which is what `SHOW TABLE STATUS` reports.
     pub(crate) fn next(&self) -> u64 {
-        self.last.load(Ordering::SeqCst).wrapping_add(1)
+        self.cache
+            .lock()
+            .expect("auto id cache poisoned")
+            .base
+            .wrapping_add(1)
     }
 
     /// Go `Allocator.Rebase`: moves the counter so the next id exceeds
     /// `value`. A value the counter is already past is ignored, which is why
     /// an explicit id SMALLER than the counter -- and an `ALTER TABLE ...
     /// AUTO_INCREMENT=` that names a smaller number -- changes nothing.
-    pub(crate) fn rebase(&self, value: u64) {
-        let mut last = self.last.load(Ordering::SeqCst);
-        while self.exceeds(value, last) {
-            match self
-                .last
-                .compare_exchange_weak(last, value, Ordering::SeqCst, Ordering::SeqCst)
-            {
-                Ok(_) => return,
-                Err(observed) => last = observed,
-            }
+    ///
+    /// A value inside the range this allocator already reserved is settled in
+    /// the cache alone: those ids are nobody else's to issue, so raising the
+    /// shared counter would say nothing new and would cost a transaction. Go
+    /// makes the same cut (`rebase4Signed`: "satisfied by alloc.end, need to
+    /// update alloc.base" and nothing more).
+    pub(crate) fn rebase(&self, value: u64) -> Result<(), AutoIdStoreError> {
+        let mut cache = self.cache.lock().expect("auto id cache poisoned");
+        if !exceeds(value, cache.base, self.unsigned) {
+            return Ok(());
         }
+        if exceeds(value, cache.end, self.unsigned) {
+            self.store.rebase(value, self.unsigned)?;
+            cache.end = value;
+        }
+        cache.base = value;
+        Ok(())
     }
 
     /// Go's `AUTO_INCREMENT = n` table option: the counter moves so the NEXT
     /// id is `n`, which is a rebase to its predecessor. `n` at the bottom of
     /// the domain has no predecessor and leaves the counter alone.
-    pub(crate) fn rebase_to_next(&self, next: u64) {
+    pub(crate) fn rebase_to_next(&self, next: u64) -> Result<(), AutoIdStoreError> {
         let last = if self.unsigned {
             next.checked_sub(1)
         } else {
             (next as i64).checked_sub(1).map(|value| value as u64)
         };
-        if let Some(last) = last {
-            self.rebase(last);
+        match last {
+            Some(last) => self.rebase(last),
+            None => Ok(()),
         }
     }
 
@@ -179,7 +375,10 @@ impl AutoIdAllocator {
     ///
     /// Go reaches this by replacing the table (TRUNCATE builds a new table id
     /// with a fresh allocator), so unlike `rebase` it also moves DOWN.
-    pub(crate) fn reset(&self) {
-        self.last.store(0, Ordering::SeqCst);
+    pub(crate) fn reset(&self) -> Result<(), AutoIdStoreError> {
+        let mut cache = self.cache.lock().expect("auto id cache poisoned");
+        self.store.reset()?;
+        *cache = AutoIdRange { base: 0, end: 0 };
+        Ok(())
     }
 }

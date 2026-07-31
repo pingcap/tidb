@@ -40,7 +40,40 @@ mod auto_id;
 mod table_meta;
 mod table_scan;
 
-pub use auto_id::AutoIncrementExhausted;
+pub use auto_id::{
+    advance, exceeds, AutoIdError, AutoIdStore, AutoIdStoreError, LocalAutoIdStore,
+    DEFAULT_AUTO_ID_STEP,
+};
+
+/// One table's live auto-increment allocator, held by whoever owns the
+/// table's lifetime rather than by the table itself.
+///
+/// Cloning shares the reserved range and the counter's home, which is what
+/// lets a node keep one allocator per table across catalog rebuilds and hand
+/// each rebuilt [`KvTable`] a clone of it -- Go's arrangement, where the
+/// allocator sits on the domain's table cache and the `TableInfo` carries no
+/// counter at all.
+#[derive(Clone, Debug)]
+pub struct TableAutoId(auto_id::AutoIdAllocator);
+
+impl TableAutoId {
+    /// An allocator over `store`, reserving `step` ids at a time.
+    #[must_use]
+    pub fn over(store: Arc<dyn AutoIdStore>, step: u64) -> Self {
+        TableAutoId(auto_id::AutoIdAllocator::over(store, step))
+    }
+
+    /// Whether both handles drive the same allocator, and so the same
+    /// reserved range.
+    ///
+    /// The registry that hands these out must answer the same table with
+    /// clones of one allocator; this is how that invariant is asserted rather
+    /// than assumed.
+    #[must_use]
+    pub fn same_allocator_as(&self, other: &TableAutoId) -> bool {
+        self.0.shares_cache_with(&other.0)
+    }
+}
 pub use table_meta::{
     FkAction, IndexRange, KvColumn, KvForeignKey, KvIndex, TableCharset, TableHandle,
 };
@@ -51,6 +84,7 @@ pub use table_scan::{
 use crate::storage::{MemTableStorage, StorageError, TableStorage};
 use auto_id::AutoIdAllocator;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use table_meta::NOT_NULL_FLAG;
 use table_scan::fill_handle_columns;
 use tidb_codec::table_key::{
@@ -418,6 +452,30 @@ impl KvTable {
         self.auto_id.set_unsigned(unsigned);
     }
 
+    /// Gives the table an allocator built elsewhere and kept alive across
+    /// catalog rebuilds.
+    ///
+    /// This is the seam the cluster tier uses to give the counter the meta-key
+    /// home Go gives it, and the sharing is as load-bearing as the home. Go's
+    /// allocator lives on the domain's table cache, not on the `TableInfo`, so
+    /// it outlives every schema reload; this tier rebuilds its `KvTable`s
+    /// whenever the schema version or the stats snapshot moves, and an
+    /// allocator rebuilt with them would throw away its reserved range and
+    /// reserve a fresh one -- leaving a visible hole in the ids on a table
+    /// nothing was wrong with. Handing in a [`TableAutoId`] the node already
+    /// holds is what keeps the range across the rebuild.
+    ///
+    /// The column's signedness is re-derived rather than carried, since it is
+    /// a fact about this table's column and
+    /// [`set_auto_increment_offset`](Self::set_auto_increment_offset) may run
+    /// on either side of this call.
+    pub fn set_auto_id(&mut self, shared: TableAutoId) {
+        self.auto_id = shared.0;
+        if let Some(offset) = self.auto_increment_offset {
+            self.set_auto_increment_offset(offset);
+        }
+    }
+
     /// The AUTO_INCREMENT column's offset, if any.
     #[must_use]
     pub fn auto_increment_offset(&self) -> Option<usize> {
@@ -439,8 +497,8 @@ impl KvTable {
     /// number on a signed column is a negative base and moves nothing.
     /// CREATE does NOT share that domain-aware read; see
     /// `auto_increment_option`'s caller.
-    pub fn rebase_auto_increment(&mut self, next_id: i64) {
-        self.auto_id.rebase_to_next(next_id as u64);
+    pub fn rebase_auto_increment(&mut self, next_id: i64) -> Result<(), AutoIdStoreError> {
+        self.auto_id.rebase_to_next(next_id as u64)
     }
 
     /// Go `adjustAutoIncrementDatum`: fills the auto-increment column.
@@ -462,10 +520,7 @@ impl KvTable {
     /// An explicit `0` always allocates here. `NO_AUTO_VALUE_ON_ZERO`, under
     /// which Go keeps the zero, is REFUSED by the INSERT path rather than
     /// silently ignored (`StmtContext::auto_increment_zero_is_explicit`).
-    pub fn apply_auto_increment(
-        &mut self,
-        row: &mut [Datum],
-    ) -> Result<Option<i64>, AutoIncrementExhausted> {
+    pub fn apply_auto_increment(&mut self, row: &mut [Datum]) -> Result<Option<i64>, AutoIdError> {
         let Some(offset) = self.auto_increment_offset else {
             return Ok(None);
         };
@@ -477,7 +532,7 @@ impl KvTable {
         if current != 0 {
             // Go rebases so the next allocation is past the explicit value,
             // and a value the counter is already past changes nothing.
-            self.auto_id.rebase(current);
+            self.auto_id.rebase(current).map_err(AutoIdError::Store)?;
             return Ok(None);
         }
         let allocated = self.auto_id.alloc()?;
@@ -674,10 +729,10 @@ impl KvTable {
     /// the same definition and a new id, which is why the rows, the index
     /// entries and the auto-increment counter all start over. Captured from
     /// TiDB: after truncating, the next auto-increment insert gets 1 again.
-    pub fn truncate(&mut self) {
+    pub fn truncate(&mut self) -> Result<(), AutoIdStoreError> {
         self.store.clear();
         self.next_handle = 1;
-        self.auto_id.reset();
+        self.auto_id.reset()
     }
 
     /// Sets the table's name, used to qualify a duplicate-key error.
@@ -1523,7 +1578,9 @@ impl KvTable {
                 Some(Datum::UInt(value)) => *value,
                 _ => 0,
             };
-            self.auto_id.rebase(assigned);
+            self.auto_id
+                .rebase(assigned)
+                .map_err(|error| KvTableError::Storage(error.0))?;
         }
         // A clustered primary key IS the row handle, and the record value omits
         // the handle columns entirely, so an UPDATE that assigns to the primary
@@ -1952,7 +2009,7 @@ mod tests {
             let mut row = [Datum::Null];
             assert_eq!(
                 table.apply_auto_increment(&mut row),
-                Err(AutoIncrementExhausted),
+                Err(AutoIdError::Exhausted),
                 "unsigned={unsigned}"
             );
         }

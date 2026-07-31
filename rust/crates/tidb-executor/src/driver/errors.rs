@@ -47,6 +47,14 @@ pub enum DriverError {
     /// Go `autoid.ErrAutoincReadFailed` (1467): the AUTO_INCREMENT column has
     /// no id left in its domain, which Go raises rather than reusing one.
     AutoincReadFailed,
+    /// The AUTO_INCREMENT counter's home could not be read or written.
+    ///
+    /// Deliberately NOT `AutoincReadFailed`: Go raises 1467 only for a full
+    /// domain, and answering it here would tell a user their ids had run out
+    /// when every id is still available and the meta transaction simply did
+    /// not land. Go surfaces the underlying storage failure instead, which is
+    /// what the carried text is.
+    AutoIdUnavailable(String),
     /// Go `ErrDupFieldName` (1060).
     DuplicateColumnName(String),
     /// Go `ErrDupKeyName` (1061).
@@ -1974,6 +1982,7 @@ impl DriverError {
             *b"HY000",
             "Failed to read auto-increment value from storage engine".to_owned(),
         ),
+        DriverError::AutoIdUnavailable(detail) => MysqlError::unknown(detail),
         DriverError::CatalogPoisoned => {
             MysqlError::unknown("the shared catalog is unusable after a failed statement")
         }
