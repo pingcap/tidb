@@ -11,11 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Tests for the JSON builtin family (`super::dispatch`), split out of
-//! `json.rs` purely for file size; every assertion, Go citation, and doc
-//! comment is unchanged from its prior home inside `mod tests` there.
+//! Tests for the JSON builtin family (`super::dispatch`), split out of the
+//! family's `mod.rs` purely for file size; every assertion, Go citation, and
+//! doc comment is unchanged from its prior home inside `mod tests` there.
 
-use super::{dispatch, format_json, parse_path};
+use super::dispatch;
+use super::path::parse_path;
+use super::text::format_json;
 use crate::Datum;
 use serde_json::json;
 
