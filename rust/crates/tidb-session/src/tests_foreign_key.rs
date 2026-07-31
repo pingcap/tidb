@@ -649,10 +649,11 @@ fn an_index_no_foreign_key_needs_still_drops() {
     // constraint keeps an index, just not this one.
     session.run("ALTER TABLE t1 ADD INDEX idx2(b)").unwrap();
     assert_eq!(code(&mut session, "ALTER TABLE t1 DROP INDEX idx1"), None);
-    // And once the constraint itself is gone, both indexes go freely. (Go
-    // reaches the same state through `ALTER TABLE t2 DROP FOREIGN KEY fk`,
-    // which this tier does not implement yet; dropping the child table
-    // withdraws the same constraint.)
+    // And once the constraint itself is gone, both indexes go freely.
+    // Dropping the child table withdraws the constraint the same way
+    // `ALTER TABLE t2 DROP FOREIGN KEY fk` does -- that one is covered by
+    // `dropping_a_foreign_key_keeps_the_index_it_relied_on`, which asserts
+    // the index it leaves behind.
     session.run("DROP TABLE t2").unwrap();
     assert_eq!(code(&mut session, "ALTER TABLE t1 DROP INDEX idx2"), None);
 }
@@ -901,5 +902,252 @@ fn a_replace_on_the_parent_side_cascades_and_sets_null() {
     assert_eq!(
         rows(&mut session, "SELECT id, a FROM t2"),
         vec![vec!["1", "NULL"]]
+    );
+}
+
+/// The `SHOW CREATE TABLE` text, which is how these tests assert what an
+/// ALTER left behind: the constraint and the index it relies on are separate
+/// lines and outlive each other independently.
+fn show_create(session: &mut Session, table: &str) -> String {
+    rows(session, &format!("SHOW CREATE TABLE {table}"))
+        .pop()
+        .and_then(|mut row| row.pop())
+        .unwrap_or_default()
+}
+
+/// A parent holding `(1)` and `(2)`, and a restricting child that references
+/// `(1)`, both already written.
+fn swappable() -> Session {
+    let mut session = Session::new();
+    session.run("CREATE TABLE p (id INT PRIMARY KEY)").unwrap();
+    session
+        .run("CREATE TABLE c (id INT, pid INT, FOREIGN KEY (pid) REFERENCES p(id))")
+        .unwrap();
+    session.run("INSERT INTO p VALUES (1), (2)").unwrap();
+    session.run("INSERT INTO c VALUES (10, 1)").unwrap();
+    session
+}
+
+/// The statement this whole path exists for: a script that swaps a
+/// constraint's referential action mid-run.
+///
+/// Before the swap the parent delete is 1451; after it the same delete
+/// cascades. Nothing about the CHECKING changed -- the table simply holds a
+/// different constraint, which is the thing that used to be impossible.
+#[test]
+fn dropping_a_constraint_and_adding_another_swaps_the_referential_action() {
+    // With the constraint merely DROPPED the delete is allowed and the child
+    // row is left dangling: the control that separates "the DROP worked" from
+    // "the ADD replaced it".
+    let mut without = swappable();
+    without.run("ALTER TABLE c DROP FOREIGN KEY fk_1").unwrap();
+    assert_eq!(code(&mut without, "DELETE FROM p WHERE id = 1"), None);
+    assert_eq!(rows(&mut without, "SELECT * FROM c"), vec![vec!["10", "1"]]);
+
+    let mut session = swappable();
+    assert_eq!(code(&mut session, "DELETE FROM p WHERE id = 1"), Some(1451));
+    session.run("ALTER TABLE c DROP FOREIGN KEY fk_1").unwrap();
+    session
+        .run(
+            "ALTER TABLE c ADD CONSTRAINT fk_1 FOREIGN KEY (pid) \
+             REFERENCES p(id) ON DELETE CASCADE",
+        )
+        .unwrap();
+    assert_eq!(code(&mut session, "DELETE FROM p WHERE id = 1"), None);
+    assert!(rows(&mut session, "SELECT * FROM c").is_empty());
+}
+
+/// Go `checkForeignKeyConstrain`: an `ADD FOREIGN KEY` reads the rows the
+/// table already holds and refuses a constraint they do not satisfy.
+///
+/// The accepting controls are the point: the SAME statement over rows that DO
+/// satisfy it succeeds, and a row whose referencing column is NULL is not
+/// checked at all (MATCH SIMPLE). An implementation that skipped the check
+/// entirely would still pass every other test in this file.
+#[test]
+fn adding_a_foreign_key_checks_the_rows_the_table_already_holds() {
+    let orphaned = |pid: &str| {
+        let mut session = Session::new();
+        session.run("CREATE TABLE p (id INT PRIMARY KEY)").unwrap();
+        session.run("INSERT INTO p VALUES (1)").unwrap();
+        session.run("CREATE TABLE c (id INT, pid INT)").unwrap();
+        session
+            .run(&format!("INSERT INTO c VALUES (10, {pid})"))
+            .unwrap();
+        session
+    };
+    let mut session = orphaned("99");
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE c ADD FOREIGN KEY (pid) REFERENCES p(id)"
+        ),
+        Some(1452)
+    );
+    for present in ["1", "NULL"] {
+        let mut session = orphaned(present);
+        assert_eq!(
+            code(
+                &mut session,
+                "ALTER TABLE c ADD FOREIGN KEY (pid) REFERENCES p(id)"
+            ),
+            None,
+            "{present}"
+        );
+    }
+}
+
+/// `foreign_key_checks = 0` reaches the ROW check and nothing else.
+///
+/// Captured: the ADD that is 1452 with the switch on succeeds with it off and
+/// leaves the orphan in place, and the constraint it declared is live
+/// immediately -- the NEXT row is checked against it. The switch is not
+/// retroactive, and it does not weaken the constraint it admitted.
+#[test]
+fn adding_a_foreign_key_with_the_checks_off_blesses_the_rows_it_did_not_check() {
+    let mut session = Session::new();
+    session.run("SET @@foreign_key_checks = 0").unwrap();
+    session.run("CREATE TABLE p (id INT PRIMARY KEY)").unwrap();
+    session.run("CREATE TABLE c (id INT, pid INT)").unwrap();
+    session.run("INSERT INTO c VALUES (10, 77)").unwrap();
+    session
+        .run("ALTER TABLE c ADD FOREIGN KEY (pid) REFERENCES p(id)")
+        .unwrap();
+    session.run("SET @@foreign_key_checks = 1").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM c"),
+        vec![vec!["10", "77"]]
+    );
+    assert_eq!(
+        code(&mut session, "INSERT INTO c VALUES (11, 88)"),
+        Some(1452)
+    );
+}
+
+/// Go `checkFKDupName` (1826), and Go `ErrForeignKeyNotExists`, which is
+/// `ErrCantDropFieldOrKey` (1091) with the "check that column/key exists"
+/// message rather than a foreign-key-specific code.
+#[test]
+fn a_constraint_name_is_unique_and_droppable_only_once() {
+    let mut session = swappable();
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE c ADD CONSTRAINT fk_1 FOREIGN KEY (pid) REFERENCES p(id)"
+        ),
+        Some(1826)
+    );
+    assert_eq!(
+        code(&mut session, "ALTER TABLE c DROP FOREIGN KEY nope"),
+        Some(1091)
+    );
+    session.run("ALTER TABLE c DROP FOREIGN KEY fk_1").unwrap();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE c DROP FOREIGN KEY fk_1"),
+        Some(1091)
+    );
+}
+
+/// The index and the constraint are separate objects with separate lifetimes.
+///
+/// A DROP takes the constraint and leaves the index, so re-adding a
+/// constraint over the same columns finds one already covering them and adds
+/// no second key. Captured, including the name the unnamed constraint takes:
+/// the id the first one consumed is not given back.
+#[test]
+fn dropping_a_foreign_key_keeps_the_index_it_relied_on() {
+    let mut session = swappable();
+    session.run("ALTER TABLE c DROP FOREIGN KEY fk_1").unwrap();
+    let dropped = show_create(&mut session, "c");
+    assert!(dropped.contains("KEY `fk_1` (`pid`)"), "{dropped}");
+    assert!(!dropped.contains("CONSTRAINT"), "{dropped}");
+
+    session
+        .run("ALTER TABLE c ADD FOREIGN KEY (pid) REFERENCES p(id)")
+        .unwrap();
+    let readded = show_create(&mut session, "c");
+    assert!(
+        readded.contains("CONSTRAINT `fk_2` FOREIGN KEY (`pid`) REFERENCES `p` (`id`)"),
+        "{readded}"
+    );
+    // One key, not two: the index the dropped constraint left behind covers
+    // the new one.
+    assert_eq!(readded.matches("KEY `fk").count(), 1, "{readded}");
+}
+
+/// A rejected `ADD FOREIGN KEY` leaves no constraint and no index -- Go rolls
+/// the staged pair back -- but it does CONSUME the constraint id, so the next
+/// unnamed constraint is `fk_2`.
+#[test]
+fn a_rejected_add_leaves_nothing_behind_but_still_consumes_its_name() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE p (id INT PRIMARY KEY)").unwrap();
+    session.run("CREATE TABLE c (id INT, pid INT)").unwrap();
+    session.run("INSERT INTO c VALUES (10, 99)").unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE c ADD FOREIGN KEY (pid) REFERENCES p(id)"
+        ),
+        Some(1452)
+    );
+    let rejected = show_create(&mut session, "c");
+    assert!(!rejected.contains("CONSTRAINT"), "{rejected}");
+    assert!(!rejected.contains("KEY `fk_1`"), "{rejected}");
+
+    session.run("DELETE FROM c").unwrap();
+    session
+        .run("ALTER TABLE c ADD FOREIGN KEY (pid) REFERENCES p(id)")
+        .unwrap();
+    let accepted = show_create(&mut session, "c");
+    assert!(accepted.contains("CONSTRAINT `fk_2`"), "{accepted}");
+    assert!(accepted.contains("KEY `fk_2` (`pid`)"), "{accepted}");
+}
+
+/// The generated-column rules are the CREATE path's, reached from ALTER: one
+/// `build_foreign_key` serves both, so 3733 and 3104 fire identically here.
+///
+/// The accepting control is `ON DELETE CASCADE` on a STORED column, which
+/// removes the row rather than writing the computed value.
+#[test]
+fn the_generated_column_rules_fire_from_the_alter_path_too() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a INT, b INT, INDEX idx1 (b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE virt (a INT, c INT AS (a+1) VIRTUAL, INDEX idx3 (c))")
+        .unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE virt ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES t1(b)"
+        ),
+        Some(3733)
+    );
+
+    session
+        .run("CREATE TABLE store (a INT, b INT AS (a) STORED, INDEX idx2 (b))")
+        .unwrap();
+    for action in ["ON UPDATE CASCADE", "ON DELETE SET NULL"] {
+        assert_eq!(
+            code(
+                &mut session,
+                &format!(
+                    "ALTER TABLE store ADD CONSTRAINT fk FOREIGN KEY (b) \
+                     REFERENCES t1(b) {action}"
+                )
+            ),
+            Some(3104),
+            "{action}"
+        );
+    }
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE store ADD CONSTRAINT fk FOREIGN KEY (b) \
+             REFERENCES t1(b) ON DELETE CASCADE"
+        ),
+        None
     );
 }

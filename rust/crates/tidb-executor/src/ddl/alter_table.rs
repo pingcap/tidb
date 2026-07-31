@@ -20,7 +20,9 @@
 //! [`add_column_action`], [`modify_column_action`] and
 //! [`drop_column_action`], the three column changes, including the read-time
 //! `OriginDefaultValue` fill that gives already-written rows a new column's
-//! DEFAULT without rewriting their bytes; [`set_table_options_action`] for
+//! DEFAULT without rewriting their bytes; [`add_foreign_key_action`] and
+//! [`drop_foreign_key_action`], which let a constraint be declared and
+//! withdrawn after the table exists; [`set_table_options_action`] for
 //! the table-level options an ALTER may set; and the two helpers
 //! [`normalize_column_default`] and [`existing_table_charset`] that the
 //! column actions share. Each doc comment records the captured TiDB error

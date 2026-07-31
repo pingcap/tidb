@@ -17,7 +17,10 @@
 //!
 //! Inside: [`table_indexes`], which gives every declared key its own
 //! `IndexInfo` in TiDB's observed order (table-level constraints first, then
-//! inline column constraints); [`table_foreign_keys`] with [`fk_action`],
+//! inline column constraints); [`build_foreign_key`], the one copy of Go's
+//! `buildFKInfo` -- `CREATE TABLE` reaches it through
+//! [`table_foreign_keys`] and `ALTER TABLE ... ADD FOREIGN KEY` through
+//! [`crate::ddl::alter_table`]; [`table_foreign_keys`] with [`fk_action`],
 //! which collapse `NO ACTION`/`SET DEFAULT`/no clause onto `RESTRICT` for the
 //! reason [`FkAction`] documents; [`primary_key_column`] and
 //! [`is_int_column`], which decide whether a primary key is clustered ONTO

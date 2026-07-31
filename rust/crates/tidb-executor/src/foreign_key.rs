@@ -57,14 +57,21 @@
 //!   that would WRITE it -- `ON UPDATE CASCADE`/`SET NULL`, `ON DELETE SET
 //!   NULL` (3104). `ON DELETE CASCADE` removes the row rather than writing
 //!   the column, and is accepted. See [`crate::ddl::table_constraints`].
+//! * A constraint can be **added and dropped after the fact**
+//!   (`ALTER TABLE ... ADD/DROP FOREIGN KEY`, see
+//!   [`crate::ddl::alter_table`]), on the same rules a `CREATE TABLE` clause
+//!   is admitted by, plus two of its own: a duplicate constraint name is
+//!   1826, and the rows the table ALREADY holds are checked, so an ADD over
+//!   an orphan is 1452 rather than a silent blessing.
 //! * The **index a constraint relies on may not be dropped** (1553), on
 //!   either side, unless another index still covers the same columns or the
 //!   referenced column is the clustered handle. See [`check_index_needed`].
 //!
 //! * **`foreign_key_checks = 0`** disables every ROW-level rule above, plus
 //!   the DDL-time checks that RESOLVE a reference (`DROP TABLE` of a
-//!   referenced parent, the `REFERENCES` clause at `CREATE TABLE`, and the
-//!   parent-side half of 3733). It is NOT retroactive: rows written while it
+//!   referenced parent, the `REFERENCES` clause at `CREATE TABLE`, the
+//!   parent-side half of 3733, and the existing-row check an
+//!   `ALTER TABLE ... ADD FOREIGN KEY` runs). It is NOT retroactive: rows written while it
 //!   was off stay, unchecked, when it is turned back on.
 //!
 //!   It does NOT reach the two rules that never look at the other table:
