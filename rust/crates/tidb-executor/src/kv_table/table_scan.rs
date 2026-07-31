@@ -31,10 +31,10 @@ use super::{
     index_entry_handle, IndexRange, KvColumn, KvIndex, KvTable, KvTableError, TableHandle,
 };
 use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::predicate_pushdown::ScanPredicate;
 use crate::remote_scan::{
     PushdownRowStream, PushdownScanColumn, PushdownScanRequest, EXTRA_HANDLE_COLUMN_ID,
 };
-use crate::predicate_pushdown::ScanPredicate;
 use crate::storage::StorageIterator;
 use std::collections::BTreeMap;
 use tidb_chunk::chunk::Chunk;

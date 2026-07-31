@@ -72,11 +72,11 @@ use tidb_distsql::{
     QueryResultContext, QueryTransport, RequestBuilder, RequestEnvelope, SelectInput,
     WarningCollector,
 };
+use tidb_executor::predicate_pushdown::ScanPredicate;
 use tidb_executor::remote_scan::{
     PushdownRowStream, PushdownScanColumn, PushdownScanRequest, PushdownScanner,
     PushdownScannerError, EXTRA_HANDLE_COLUMN_ID,
 };
-use tidb_executor::predicate_pushdown::ScanPredicate;
 use tidb_executor::storage::StorageError;
 use tidb_planner::physical_table_scan::PhysicalTableScanPlan;
 use tidb_planner::tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec};

@@ -37,8 +37,10 @@ use crate::kv_table::{IndexRange, KvTable, TableHandle, TableScanExec};
 use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
 use crate::plan_trace::{PlanTrace, Qualifier};
+use crate::predicate_pushdown::{
+    PushedScanFilter, ScanComparison, ScanComparisonOp, ScanPredicate,
+};
 use crate::projection::ProjectionExec;
-use crate::predicate_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp, ScanPredicate};
 use crate::selection::SelectionExec;
 use crate::sort::{SortByItem, SortExec};
 use crate::table_dual::TableDualExec;

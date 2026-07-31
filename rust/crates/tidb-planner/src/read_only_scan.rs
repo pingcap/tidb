@@ -60,9 +60,9 @@ use crate::{
         PhysicalSelectionPlan,
     },
     physical_table_scan::PhysicalTableScanPlan,
-    tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec},
     signed_bigint_ranger::{detach_clustered_signed_bigint_ranges, SignedBigIntRange},
     task_type::TaskType,
+    tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec},
 };
 
 const MYSQL_TYPE_LONG: i32 = 3;
