@@ -103,6 +103,7 @@
 
 mod alter_metadata;
 mod alter_table;
+pub mod column_field_type;
 mod column_types;
 mod indexes;
 mod table_constraints;
