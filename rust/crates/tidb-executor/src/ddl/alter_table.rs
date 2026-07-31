@@ -217,6 +217,12 @@ pub fn run_alter_table_in(
             } => {
                 drop_index_from_table(catalog, &database, &name, index_name, *if_exists)?;
             }
+            tidb_ast::AlterTableAction::AddForeignKey(definition) => {
+                add_foreign_key_action(catalog, &database, &name, definition, ctx)?;
+            }
+            tidb_ast::AlterTableAction::DropForeignKey(drop) => {
+                drop_foreign_key_action(catalog, &database, &name, &drop.name)?;
+            }
             tidb_ast::AlterTableAction::SetTableOptions { options } => {
                 set_table_options_action(catalog, &database, &name, options)?;
             }
@@ -269,6 +275,145 @@ pub fn run_alter_table_in(
                 ))
             }
         }
+    }
+    Ok(())
+}
+
+/// One `ALTER TABLE ... ADD [CONSTRAINT name] FOREIGN KEY ...`.
+///
+/// Go `executor.CreateForeignKey` (`pkg/ddl/executor.go`) plus the job it
+/// submits (`onCreateForeignKey`, `pkg/ddl/foreign_key.go`), in the order Go
+/// performs them:
+///
+/// 1. An unnamed constraint is `fk_{MaxForeignKeyID+1}`, and a name the table
+///    already declares is 1826 (`checkFKDupName`). That check runs before any
+///    reference is resolved, so it fires with `foreign_key_checks` at 0 too.
+/// 2. The constraint is built by the SAME [`build_foreign_key`] a
+///    `CREATE TABLE` uses, so the DDL-time rules -- 3733 for a virtual
+///    generated column on either side, 3104 for an action that would write a
+///    stored one, the parent lookup behind `foreign_key_checks` -- hold
+///    identically whichever statement declared it.
+/// 3. A constraint whose referencing columns no index covers gets one, named
+///    after the constraint, exactly as `CREATE TABLE` does. Go creates it
+///    here as a real `createIndex` before the job is submitted, which is why
+///    the missing-index error inside `checkAddForeignKeyValidInOwner` is not
+///    reachable from this path.
+/// 4. The rows the table ALREADY holds are checked against the new
+///    constraint, and an orphan is 1452 -- see
+///    [`crate::foreign_key::require_existing_rows`]. `foreign_key_checks = 0`
+///    skips this and only this step, which is how a constraint can be
+///    declared over data that does not satisfy it.
+fn add_foreign_key_action(
+    catalog: &mut Catalog,
+    database: &str,
+    name: &str,
+    definition: &tidb_ast::ForeignKeyConstraintDefinition,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, name) else {
+        return Err(DriverError::Unsupported(
+            "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
+        ));
+    };
+    let fk_name = definition
+        .name
+        .clone()
+        .unwrap_or_else(|| table.next_foreign_key_name());
+    if table
+        .foreign_keys()
+        .iter()
+        .any(|key| key.name.eq_ignore_ascii_case(&fk_name))
+    {
+        return Err(DriverError::FkDupName(fk_name));
+    }
+    let columns: Vec<super::table_constraints::FkColumn> = table
+        .columns
+        .iter()
+        .map(|column| super::table_constraints::FkColumn {
+            name: column.name.clone(),
+            generated_stored: column.generated.as_ref().map(|generated| generated.stored),
+        })
+        .collect();
+    let clustered: Vec<usize> = match table.pk_handle_offset() {
+        Some(offset) => vec![offset],
+        None => table.common_handle_offsets().to_vec(),
+    };
+    let foreign_key = super::table_constraints::build_foreign_key(
+        definition,
+        fk_name,
+        &columns,
+        catalog,
+        database,
+        ctx.foreign_key_checks(),
+    )?;
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
+        return Err(DriverError::Unsupported(
+            "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
+        ));
+    };
+    // Consumed before the rows are read, and NOT given back when they reject
+    // the constraint -- see [`crate::kv_table::KvTable::allocate_foreign_key_id`].
+    table.allocate_foreign_key_id();
+    if ctx.foreign_key_checks() {
+        // Go runs this check inside the job, after the constraint and its
+        // index are staged, and ROLLS BOTH BACK when it fails: captured, a
+        // rejected `ADD FOREIGN KEY` leaves neither the constraint nor the
+        // index it would have created. Checking first reaches that state
+        // without staging anything to undo.
+        crate::foreign_key::require_existing_rows(catalog, database, name, &foreign_key)?;
+    }
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
+        return Err(DriverError::Unsupported(
+            "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
+        ));
+    };
+    // Go `CreateForeignKey`'s `createIndex` arm: an existing key whose columns
+    // START with the referencing ones already serves the constraint, the
+    // clustered handle included; otherwise TiDB adds one named after the
+    // constraint. The index a DROPPED constraint left behind counts, which is
+    // why re-adding a constraint over the same columns adds no second key.
+    let covered = |offsets: &[usize]| offsets.starts_with(&foreign_key.cols);
+    if !covered(&clustered)
+        && !table
+            .indexes()
+            .iter()
+            .any(|index| covered(&index.column_offsets))
+    {
+        let id = table.next_index_id();
+        table.add_index(super::KvIndex {
+            id,
+            name: foreign_key.name.clone(),
+            unique: false,
+            column_offsets: foreign_key.cols.clone(),
+            visible: true,
+        });
+    }
+    table.add_foreign_key(foreign_key);
+    Ok(())
+}
+
+/// One `ALTER TABLE ... DROP FOREIGN KEY name`.
+///
+/// Go `executor.DropForeignKey` looks the name up and raises
+/// `infoschema.ErrForeignKeyNotExists` -- which is `ErrCantDropFieldOrKey`,
+/// 1091 with the "check that column/key exists" message -- when the table
+/// declares no such constraint. The index the constraint relied on is NOT
+/// dropped with it (Go `dropForeignKey` touches only `TableInfo.ForeignKeys`),
+/// so `SHOW CREATE TABLE` keeps printing the auto-created key afterwards and
+/// a later `ADD FOREIGN KEY` over the same columns reuses it.
+fn drop_foreign_key_action(
+    catalog: &mut Catalog,
+    database: &str,
+    name: &str,
+    fk_name: &str,
+) -> Result<(), DriverError> {
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
+        return Err(DriverError::Unsupported(
+            "ALTER TABLE ... DROP FOREIGN KEY needs a storage-backed table",
+        ));
+    };
+    if !table.drop_foreign_key(fk_name) {
+        return Err(DriverError::UnknownColumnInAlter(fk_name.to_owned()));
     }
     Ok(())
 }

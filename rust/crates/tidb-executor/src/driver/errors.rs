@@ -425,6 +425,10 @@ pub enum DriverError {
     },
     /// Go `dbterror.ErrDropIndexNeededInForeignKey` (1553).
     DropIndexNeededInForeignKey(String),
+    /// Go `dbterror.ErrFkDupName` (1826): `ALTER TABLE ... ADD FOREIGN KEY`
+    /// named a constraint the table already declares. Checked before the
+    /// reference resolves, so it fires with `foreign_key_checks` at 0 too.
+    FkDupName(String),
     /// Go `ErrDupEntry` (1062).
     DuplicateEntry {
         /// The rejected key value.
@@ -986,6 +990,12 @@ impl DriverError {
             1553,
             *b"HY000",
             format!("Cannot drop index '{index}': needed in a foreign key constraint"),
+        ),
+        // Go: "Duplicate foreign key constraint name '%s'".
+        DriverError::FkDupName(name) => MysqlError::new(
+            1826,
+            *b"HY000",
+            format!("Duplicate foreign key constraint name '{name}'"),
         ),
         // Go: "Foreign key cascade delete/update exceeds max depth of %v.".
         DriverError::ForeignKeyCascadeTooDeep => MysqlError::new(

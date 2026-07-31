@@ -258,11 +258,72 @@ pub(crate) fn table_foreign_keys(
     database: &str,
     foreign_key_checks: bool,
 ) -> Result<Vec<KvForeignKey>, DriverError> {
+    // The generated-ness of each column, read off the written definitions;
+    // the `ColumnInfo` vector carries the resolved names and is in the same
+    // order, so the two zip.
+    let fk_columns: Vec<FkColumn> = columns
+        .iter()
+        .zip(&create.columns)
+        .map(|(info, def)| FkColumn {
+            name: info.name.original().to_owned(),
+            generated_stored: def.options.iter().find_map(|option| match option {
+                tidb_ast::ColumnOption::Generated { stored, .. } => Some(*stored),
+                _ => None,
+            }),
+        })
+        .collect();
     let mut keys = Vec::new();
     for constraint in &create.table_constraints {
         let tidb_ast::TableConstraint::ForeignKey(definition) = constraint else {
             continue;
         };
+        let fk_name = definition
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("fk_{}", keys.len() + 1));
+        keys.push(build_foreign_key(
+            definition,
+            fk_name,
+            &fk_columns,
+            catalog,
+            database,
+            foreign_key_checks,
+        )?);
+    }
+    Ok(keys)
+}
+
+/// One column as the foreign-key builder needs to see it.
+///
+/// The two callers hold different column shapes -- a `CREATE TABLE`'s written
+/// definitions, an existing table's [`crate::kv_table::KvColumn`]s -- and the
+/// RULES over them are the same, so they meet in this one shape rather than
+/// each growing its own copy of `buildFKInfo`.
+pub(crate) struct FkColumn {
+    /// The column's name.
+    pub(crate) name: String,
+    /// `Some(stored)` when the table computes the column's value, `None` when
+    /// the column is written.
+    pub(crate) generated_stored: Option<bool>,
+}
+
+/// Go `ddl.buildFKInfo` for ONE `FOREIGN KEY` clause, resolved against the
+/// table that declares it and against the referenced table.
+///
+/// This is the whole of the DDL-time rule set, and it is deliberately the
+/// only copy: `CREATE TABLE` reaches it through [`table_foreign_keys`] and
+/// `ALTER TABLE ... ADD FOREIGN KEY` reaches it through
+/// [`crate::ddl::alter_table`], so a constraint added later is admitted on
+/// exactly the terms one written up front is.
+pub(crate) fn build_foreign_key(
+    definition: &tidb_ast::ForeignKeyConstraintDefinition,
+    fk_name: String,
+    columns: &[FkColumn],
+    catalog: &Catalog,
+    database: &str,
+    foreign_key_checks: bool,
+) -> Result<KvForeignKey, DriverError> {
+    {
         if definition.reference.match_type == tidb_ast::ForeignKeyMatch::Partial {
             return Err(DriverError::Unsupported(
                 "MATCH PARTIAL is not supported yet",
@@ -272,7 +333,7 @@ pub(crate) fn table_foreign_keys(
         for name in index_part_names(&definition.parts)? {
             let offset = columns
                 .iter()
-                .position(|column| column.name.original().eq_ignore_ascii_case(&name))
+                .position(|column| column.name.eq_ignore_ascii_case(&name))
                 .ok_or(DriverError::Unsupported(
                     "a foreign key names a column the table does not define",
                 ))?;
@@ -298,11 +359,7 @@ pub(crate) fn table_foreign_keys(
                 reason: "Key reference and table reference don't match".to_owned(),
             });
         }
-        let fk_name = definition
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("fk_{}", keys.len() + 1));
-        child_generated_column_rules(create, &cols, definition, &fk_name)?;
+        child_generated_column_rules(columns, &cols, definition, &fk_name)?;
         if foreign_key_checks {
             // Go `checkTableInfoValid`: an unresolvable reference is
             // `ErrNoReferencedRow`-adjacent at DDL time, not at write time.
@@ -347,7 +404,7 @@ pub(crate) fn table_foreign_keys(
                 }
             }
         }
-        keys.push(KvForeignKey {
+        Ok(KvForeignKey {
             name: fk_name,
             cols,
             ref_schema,
@@ -355,9 +412,8 @@ pub(crate) fn table_foreign_keys(
             ref_cols,
             on_delete: fk_action(definition.reference.on_delete),
             on_update: fk_action(definition.reference.on_update),
-        });
+        })
     }
-    Ok(keys)
 }
 
 /// Go `buildFKInfo`'s generated-column arm: what a constraint may name on the
@@ -377,23 +433,16 @@ pub(crate) fn table_foreign_keys(
 /// which runs unconditionally, rather than from the reference resolution the
 /// switch guards.
 fn child_generated_column_rules(
-    create: &tidb_ast::CreateTableStmt,
+    columns: &[FkColumn],
     cols: &[usize],
     definition: &tidb_ast::ForeignKeyConstraintDefinition,
     fk_name: &str,
 ) -> Result<(), DriverError> {
     for offset in cols {
-        let Some(column) = create.columns.get(*offset) else {
+        let Some(column) = columns.get(*offset) else {
             continue;
         };
-        let Some((_, stored)) = column.options.iter().find_map(|option| match option {
-            tidb_ast::ColumnOption::Generated {
-                expression_text,
-                stored,
-                ..
-            } => Some((expression_text, *stored)),
-            _ => None,
-        }) else {
+        let Some(stored) = column.generated_stored else {
             continue;
         };
         if !stored {

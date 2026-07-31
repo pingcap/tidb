@@ -273,6 +273,57 @@ pub(crate) fn check_child_rows(
     Ok(verdicts)
 }
 
+/// Go `checkForeignKeyConstrain`: the rows a table ALREADY holds, checked
+/// against a constraint that is being ADDED to it.
+///
+/// Go runs this as one statement -- `select 1 from child where <cols> is not
+/// null and (<cols>) not in (select <refcols> from parent) limit 1` -- and
+/// raises `ErrNoReferencedRow2` (1452) when it returns a row, which is why an
+/// `ALTER TABLE ... ADD FOREIGN KEY` over orphaned rows fails instead of
+/// blessing them. Only the NEW constraint is checked: rows that already
+/// violate an OLDER constraint (written while `foreign_key_checks` was off)
+/// are not this statement's business, and Go's query names one `fkInfo`.
+///
+/// `foreign_key_checks = 0` skips it entirely -- Go returns before running
+/// the query at all -- so the caller decides whether to call this.
+pub(crate) fn require_existing_rows(
+    catalog: &mut Catalog,
+    database: &str,
+    table: &str,
+    foreign_key: &KvForeignKey,
+) -> Result<(), DriverError> {
+    let (_, columns) = declared(catalog, database, table);
+    let Some((offsets, _)) = parent_offsets(catalog, foreign_key) else {
+        return Ok(());
+    };
+    let Some(parent_rows) = scan(catalog, &foreign_key.ref_schema, &foreign_key.ref_table) else {
+        return Ok(());
+    };
+    let Some(rows) = scan(catalog, database, table) else {
+        return Ok(());
+    };
+    for row in &rows {
+        // MATCH SIMPLE, and Go's `%n is not null` conjunction: a row with any
+        // NULL in the referencing columns is not checked.
+        let Some(key) = key_at(row, &foreign_key.cols) else {
+            continue;
+        };
+        if !parent_rows
+            .iter()
+            .any(|parent| key_at(parent, &offsets).is_some_and(|found| found == key))
+        {
+            return Err(violation(
+                Side::Child,
+                database,
+                table,
+                foreign_key,
+                &columns,
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Go `FKCheckExec` on the child side, as a statement-level gate: the first
 /// violating row fails the whole statement.
 pub(crate) fn require_child_rows(

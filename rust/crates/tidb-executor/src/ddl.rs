@@ -586,6 +586,7 @@ pub fn run_create_table_in(
                 visible: true,
             });
         }
+        table.allocate_foreign_key_id();
         table.add_foreign_key(foreign_key);
     }
     catalog.register_kv_in(&database, name, table);

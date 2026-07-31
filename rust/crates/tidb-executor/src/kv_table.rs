@@ -108,6 +108,11 @@ pub struct KvTable {
     /// the tables whose foreign keys name this one, as Go's
     /// `ReferredFKInfo` index does.
     foreign_keys: Vec<KvForeignKey>,
+    /// Go `TableInfo.MaxForeignKeyID`: the counter an UNNAMED constraint is
+    /// named after (`fk_1`, `fk_2`, ...). It only ever rises, so dropping
+    /// `fk_1` and adding another unnamed constraint yields `fk_2` rather than
+    /// reusing the freed name.
+    max_foreign_key_id: i64,
 }
 
 /// A failure while encoding or decoding table bytes.
@@ -210,12 +215,44 @@ impl KvTable {
             auto_id: AutoIdAllocator::new(),
             charset: TableCharset::default(),
             foreign_keys: Vec::new(),
+            max_foreign_key_id: 0,
         }
     }
 
     /// Records a foreign key this table declares.
     pub fn add_foreign_key(&mut self, foreign_key: KvForeignKey) {
         self.foreign_keys.push(foreign_key);
+    }
+
+    /// Go `allocateFKIndexID`: consumes the next constraint id.
+    ///
+    /// Kept separate from [`KvTable::add_foreign_key`] because Go consumes it
+    /// BEFORE the constraint is validated against the table's rows, and the
+    /// rollback that removes a rejected constraint does not give it back --
+    /// captured, an `ADD FOREIGN KEY` that fails 1452 makes the NEXT unnamed
+    /// constraint `fk_2` rather than `fk_1`.
+    pub fn allocate_foreign_key_id(&mut self) -> i64 {
+        self.max_foreign_key_id += 1;
+        self.max_foreign_key_id
+    }
+
+    /// The name Go gives the NEXT unnamed constraint on this table:
+    /// `fk_{MaxForeignKeyID+1}`.
+    #[must_use]
+    pub fn next_foreign_key_name(&self) -> String {
+        format!("fk_{}", self.max_foreign_key_id + 1)
+    }
+
+    /// Removes the constraint with this name, reporting whether one went.
+    ///
+    /// Go `dropForeignKey` rebuilds `TableInfo.ForeignKeys` without it and
+    /// leaves `MaxForeignKeyID` and the index the constraint relied on alone
+    /// -- the index outlives the constraint and has to be dropped by name.
+    pub fn drop_foreign_key(&mut self, name: &str) -> bool {
+        let before = self.foreign_keys.len();
+        self.foreign_keys
+            .retain(|key| !key.name.eq_ignore_ascii_case(name));
+        self.foreign_keys.len() != before
     }
 
     /// The foreign keys this table declares (the child side).
