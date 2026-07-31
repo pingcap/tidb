@@ -618,12 +618,7 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //    where a > 1` and the same select wrapped in `(SELECT ...) x` pick the
     //    identical path here, which is the proof it is not derived-table
     //    specific.
-    //  * NO STATISTICS. `join_reorder_through_projection` runs five `ANALYZE
-    //    TABLE` statements, so TiDB prints no `stats:pseudo` suffix while this
-    //    tier -- which refuses `ANALYZE` and has no histogram to load --
-    //    truthfully prints one. The access OBJECT and range agree; only the
-    //    statistics source differs. Worked off by the statistics tier, not
-    //    here.
+    //  * NO STATISTICS. FIXED -- see the 55 -> 41 note below.
     //
     // Lowering this number again is the job of those two, and the shape of the
     // work is already measured: `INTEGRATION_SHOW_DIVERGENCES=1` on either
@@ -658,10 +653,27 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // message text are pinned by `tidb_session`'s
     // `select_distinct_may_only_order_by_a_field_it_reports`.
     //
-    // The remaining 55 are the access-path classes above, in two topics:
-    // `explain_easy` 28 and `planner/core/join_reorder_through_projection` 26,
+    // 55 -> 41, and the NO STATISTICS class is at ZERO: the in-process session
+    // runs `ANALYZE TABLE` (`tidb_executor::analyze`, driven from
+    // `tidb_session::analyze_arm`), so a table these scripts analyze now has a
+    // real row count and real histograms instead of `statistics.PseudoTable`.
+    // Of the 91 table-level pairs carried at 55, exactly 38 were the pure
+    // stats-token difference -- the access OBJECT and range already agreed and
+    // only the `stats:pseudo` suffix did not -- and all 38 are gone; the 53
+    // that remain are the access-path classes above, unchanged.
+    //
+    // Nothing this measured moved a ROW. Every topic's `Rows` count is
+    // identical either side of the change (59, 30, 24, 4, 2, 13, 5, 44, 1, 43,
+    // 2, 82, 50, 4, 56), which is the check that separates an estimate change
+    // from a semantics break; `PlanProperty` rose 64 -> 70 in `explain_easy`
+    // and 56 -> 64 in `join_reorder_through_projection`, and the compared total
+    // rose 1894 -> 1914 because `ANALYZE` itself, and the statements a refused
+    // `ANALYZE` used to skip past, are now compared too.
+    //
+    // The remaining 41 are the access-path classes above, in two topics:
+    // `explain_easy` 22 and `planner/core/join_reorder_through_projection` 18,
     // plus 1 in `subquery`. Every other onboarded topic is at zero.
-    const KNOWN_DIVERGENCES: usize = 55;
+    const KNOWN_DIVERGENCES: usize = 41;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
