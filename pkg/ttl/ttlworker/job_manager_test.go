@@ -453,21 +453,21 @@ func TestCheckFinishedJobRecyclesExternalTTLTask(t *testing.T) {
 				return nil, nil
 			}
 			switch args[0] {
-				case "job-running":
-					return runningTasks, nil
-				case "job-finished":
-					return finishedTasks, nil
-				default:
-					return nil, nil
-				}
+			case "job-running":
+				return runningTasks, nil
+			case "job-finished":
+				return finishedTasks, nil
+			default:
+				return nil, nil
 			}
+		}
 
-			m.CheckFinishedJob(se)
-			require.Len(t, m.runningJobs, 1)
-			require.Equal(t, "job-running", m.runningJobs[0].id)
-			require.Equal(t, uint64(0), externalMgr.recycledCreateTS)
-		})
-	}
+		m.CheckFinishedJob(se)
+		require.Len(t, m.runningJobs, 1)
+		require.Equal(t, "job-running", m.runningJobs[0].id)
+		require.Equal(t, uint64(0), externalMgr.recycledCreateTS)
+	})
+}
 
 func TestCheckFinishedJobDoesNotRecycleExternalTTLTaskFromMaster(t *testing.T) {
 	externalMgr := &fakeExternalWorkloadManager{role: config.RoleMaster}
