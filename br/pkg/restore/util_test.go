@@ -3,6 +3,7 @@
 package restore
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -11,10 +12,19 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	recover_data "github.com/pingcap/kvproto/pkg/recoverdatapb"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
+
+func (rc *Client) CheckPrivilegeTableRowsCollateCompatibility(
+	ctx context.Context,
+	dbNameL, tableNameL string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) error {
+	return rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbNameL, tableNameL, upstreamTable, downstreamTable)
+}
 
 func TestGetKeyRangeByMode(t *testing.T) {
 	file := &backuppb.File{

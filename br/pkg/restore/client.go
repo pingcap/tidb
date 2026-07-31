@@ -206,6 +206,8 @@ type Client struct {
 
 	// checkpoint information for log restore
 	useCheckpoint bool
+
+	privilegeTableRowsCollateCompatibility bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -1253,7 +1255,13 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 					table.Info.Name.O,
 					col.Name, col.FieldType.String())
 			}
-			if !utils.IsTypeCompatible(backupCol.FieldType, col.FieldType) {
+			typeEq, collateEq := utils.IsTypeCompatible(backupCol.FieldType, col.FieldType)
+			collateCompatible := collateEq
+			if typeEq && !collateEq {
+				rc.privilegeTableRowsCollateCompatibility = true
+				collateCompatible = checkSysTableColumnCollateCompatibility(mysql.SystemDB, table.Info.Name.L, col.Name.L, backupCol.GetCollate(), col.GetCollate())
+			}
+			if !(typeEq && collateCompatible) {
 				log.Error("incompatible column",
 					zap.Stringer("table", table.Info.Name),
 					zap.String("col in cluster", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())),

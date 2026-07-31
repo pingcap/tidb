@@ -854,7 +854,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
-	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
+	if cfg.WithSysTable && client.HasBackedUpSysDB() {
 		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
 			return errors.Trace(err)
 		}
