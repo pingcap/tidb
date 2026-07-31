@@ -388,6 +388,25 @@ pub enum DriverError {
     /// Go `ErrFkExceedMaxDepth` (3008): a cascade recursed deeper than
     /// MySQL's 15 levels.
     ForeignKeyCascadeTooDeep,
+    /// Go `infoschema.ErrForeignKeyCannotUseVirtualColumn` (3733): a
+    /// constraint names a VIRTUAL generated column on either side. A virtual
+    /// column has no stored value to index or to compare a key against, so
+    /// InnoDB refuses it outright.
+    ForeignKeyUsesVirtualColumn {
+        /// The constraint name, as written.
+        foreign_key: String,
+        /// The offending column.
+        column: String,
+    },
+    /// Go `dbterror.ErrWrongFKOptionForGeneratedColumn` (3104): a referential
+    /// action would WRITE a child column whose value the table computes.
+    WrongFkOptionForGeneratedColumn {
+        /// The clause as Go spells it back: `ON UPDATE CASCADE`,
+        /// `ON DELETE SET NULL`, ...
+        clause: String,
+    },
+    /// Go `dbterror.ErrDropIndexNeededInForeignKey` (1553).
+    DropIndexNeededInForeignKey(String),
     /// Go `ErrDupEntry` (1062).
     DuplicateEntry {
         /// The rejected key value.
@@ -925,6 +944,30 @@ impl DriverError {
             format!(
                 "Cannot delete or update a parent row: a foreign key constraint fails ({table}, {constraint})"
             ),
+        ),
+        // Go: "Foreign key '%s' uses virtual column '%s' which is not
+        // supported.". Captured via `gorun`: `[schema:3733]`.
+        DriverError::ForeignKeyUsesVirtualColumn {
+            foreign_key,
+            column,
+        } => MysqlError::new(
+            3733,
+            *b"HY000",
+            format!("Foreign key '{foreign_key}' uses virtual column '{column}' which is not supported."),
+        ),
+        // Go: "Cannot define foreign key with %s clause on a generated
+        // column.". Captured via `gorun`: `[ddl:3104]`.
+        DriverError::WrongFkOptionForGeneratedColumn { clause } => MysqlError::new(
+            3104,
+            *b"HY000",
+            format!("Cannot define foreign key with {clause} clause on a generated column."),
+        ),
+        // Go: "Cannot drop index '%-.192s': needed in a foreign key
+        // constraint". Captured via `gorun`: `[ddl:1553]`.
+        DriverError::DropIndexNeededInForeignKey(index) => MysqlError::new(
+            1553,
+            *b"HY000",
+            format!("Cannot drop index '{index}': needed in a foreign key constraint"),
         ),
         // Go: "Foreign key cascade delete/update exceeds max depth of %v.".
         DriverError::ForeignKeyCascadeTooDeep => MysqlError::new(

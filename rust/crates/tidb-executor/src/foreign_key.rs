@@ -501,6 +501,85 @@ pub(crate) fn participates(catalog: &Catalog, database: &str, table: &str) -> bo
     !declared_keys.is_empty() || !referring(catalog, database, table).is_empty()
 }
 
+/// Go `ddl.checkIndexNeededInForeignKey`: an index a foreign key relies on
+/// may not be dropped while the constraint stands (1553).
+///
+/// Both sides are covered, and each is its own captured case: the PARENT's
+/// index over the referenced columns is what makes the reference resolvable,
+/// and the CHILD's index over the referencing columns is what makes the
+/// child-side check affordable.
+///
+/// Two exemptions, both from Go and both captured:
+///
+/// * A REMAINING index that also covers the columns makes the drop legal --
+///   `alter table t1 add index idx2(b)` lets `drop index idx1(b)` through.
+/// * A referenced column that IS the clustered primary key needs no index of
+///   its own (`tbInfo.PKIsHandle && len(cols) == 1`). This is PARENT-side
+///   only: captured, a child's own `index fk(b)` referencing a clustered
+///   `t1(id)` is still 1553.
+///
+/// NOT gated by `foreign_key_checks`. Captured: with the session variable set
+/// to 0, `alter table t1 drop index idx1` is STILL 1553, because Go gates
+/// this check on the global `vardef.EnableForeignKey` rather than on the
+/// session switch that governs row-level checking.
+pub(crate) fn check_index_needed(
+    catalog: &Catalog,
+    database: &str,
+    table: &str,
+    index_name: &str,
+) -> Result<(), DriverError> {
+    let Some(TableEntry::Kv(kv)) = catalog.get_in(database, table) else {
+        return Ok(());
+    };
+    let Some(dropping) = kv
+        .indexes()
+        .iter()
+        .find(|index| index.name.eq_ignore_ascii_case(index_name))
+    else {
+        return Ok(());
+    };
+    // Go's `IsIndexPrefixCoveredForForeignKey`: the index serves the
+    // constraint when its LEADING key parts are exactly the constrained
+    // columns, in order.
+    let covers = |offsets: &[usize]| -> bool {
+        dropping.column_offsets.len() >= offsets.len()
+            && dropping.column_offsets[..offsets.len()] == *offsets
+    };
+    let remaining_covers = |offsets: &[usize]| -> bool {
+        kv.indexes().iter().any(|index| {
+            !index.name.eq_ignore_ascii_case(index_name)
+                && index.column_offsets.len() >= offsets.len()
+                && index.column_offsets[..offsets.len()] == *offsets
+        })
+    };
+    let refused = || DriverError::DropIndexNeededInForeignKey(dropping.name.clone());
+
+    // The constraints this table DECLARES: the referencing columns are its
+    // own offsets.
+    for foreign_key in kv.foreign_keys() {
+        if covers(&foreign_key.cols) && !remaining_covers(&foreign_key.cols) {
+            return Err(refused());
+        }
+    }
+    // The constraints that REFER here: the referenced columns, resolved into
+    // this table's offsets.
+    for (_, _, foreign_key) in referring(catalog, database, table) {
+        let Some((offsets, _)) = parent_offsets(catalog, &foreign_key) else {
+            continue;
+        };
+        if !covers(&offsets) {
+            continue;
+        }
+        if offsets.len() == 1 && kv.is_clustered_handle_column(offsets[0]) {
+            continue;
+        }
+        if !remaining_covers(&offsets) {
+            return Err(refused());
+        }
+    }
+    Ok(())
+}
+
 /// Go `checkDropTableHasForeignKeyReferredInOwner`: a table may not be
 /// dropped while a table OUTSIDE this statement still references it.
 pub(crate) fn check_drop_tables(

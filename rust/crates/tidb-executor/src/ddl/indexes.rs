@@ -309,6 +309,9 @@ pub(crate) fn drop_index_from_table(
     index_name: &str,
     if_exists: bool,
 ) -> Result<(), DriverError> {
+    // Go `ddl.checkIndexNeededInForeignKey`, before anything is removed: an
+    // index a live constraint relies on is 1553, on either side.
+    crate::foreign_key::check_index_needed(catalog, database, table_name, index_name)?;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{table_name}"),

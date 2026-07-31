@@ -350,6 +350,14 @@ impl KvTable {
         &self.common_handle_offsets
     }
 
+    /// Go `TableInfo.PKIsHandle` for one column: whether this offset IS the
+    /// integer primary key that serves as the row handle, and so is
+    /// addressable without an index of its own.
+    #[must_use]
+    pub fn is_clustered_handle_column(&self, offset: usize) -> bool {
+        self.pk_handle_offset == Some(offset)
+    }
+
     /// The column offsets the handle carries, which the row value omits
     /// (Go `CanSkip`: a PK handle column and a full-length common-handle
     /// column are both skipped from the encoded row).

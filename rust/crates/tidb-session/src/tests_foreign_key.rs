@@ -575,3 +575,106 @@ fn an_update_that_does_not_move_the_referenced_key_still_cascades_nothing() {
     );
     session.run("ADMIN CHECK TABLE t2").unwrap();
 }
+
+/// Go `ddl.checkIndexNeededInForeignKey` (1553): the index a constraint
+/// relies on may not be dropped out from under it, on either side.
+///
+/// A TRIPWIRE, not a dead end. Each `Some(1553)` below is a statement TiDB
+/// refuses and this tier used to ACCEPT, so if the guard is ever removed --
+/// or narrowed to one side -- these flip to `None` and say so by name.
+#[test]
+fn an_index_a_foreign_key_needs_cannot_be_dropped() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (id INT KEY, b INT, INDEX idx1(b))")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE t2 (id INT KEY, b INT, INDEX fk(b), \
+             CONSTRAINT fk FOREIGN KEY (b) REFERENCES t1(b))",
+        )
+        .unwrap();
+    // The PARENT's index over the referenced columns.
+    assert_eq!(
+        code(&mut session, "ALTER TABLE t1 DROP INDEX idx1"),
+        Some(1553)
+    );
+    // The CHILD's index over the referencing columns.
+    assert_eq!(
+        code(&mut session, "ALTER TABLE t2 DROP INDEX fk"),
+        Some(1553)
+    );
+    // Captured: `foreign_key_checks = 0` does NOT lift this. Go gates the
+    // check on the GLOBAL `vardef.EnableForeignKey`, not on the session
+    // switch that governs row-level checking, so the refusal stands.
+    session.run("SET @@foreign_key_checks=0").unwrap();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE t1 DROP INDEX idx1"),
+        Some(1553)
+    );
+    session.run("SET @@foreign_key_checks=1").unwrap();
+}
+
+/// THE CONTROLS for [`an_index_a_foreign_key_needs_cannot_be_dropped`]: a
+/// refusal this broad would break every ordinary `DROP INDEX`, so each of
+/// these is a statement TiDB ACCEPTS and this tier must keep accepting.
+#[test]
+fn an_index_no_foreign_key_needs_still_drops() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (id INT KEY, b INT, INDEX idx1(b))")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE t2 (id INT KEY, b INT, INDEX fk(b), \
+             CONSTRAINT fk FOREIGN KEY (b) REFERENCES t1(b))",
+        )
+        .unwrap();
+    // An index over other columns entirely, on a participating table.
+    session
+        .run("ALTER TABLE t1 ADD INDEX idx_spare(id, b)")
+        .unwrap();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE t1 DROP INDEX idx_spare"),
+        None
+    );
+    session
+        .run("ALTER TABLE t2 ADD INDEX idx_spare2(id)")
+        .unwrap();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE t2 DROP INDEX idx_spare2"),
+        None
+    );
+    // A REDUNDANT index covering the same columns makes the drop legal: the
+    // constraint keeps an index, just not this one.
+    session.run("ALTER TABLE t1 ADD INDEX idx2(b)").unwrap();
+    assert_eq!(code(&mut session, "ALTER TABLE t1 DROP INDEX idx1"), None);
+    // And once the constraint itself is gone, both indexes go freely. (Go
+    // reaches the same state through `ALTER TABLE t2 DROP FOREIGN KEY fk`,
+    // which this tier does not implement yet; dropping the child table
+    // withdraws the same constraint.)
+    session.run("DROP TABLE t2").unwrap();
+    assert_eq!(code(&mut session, "ALTER TABLE t1 DROP INDEX idx2"), None);
+}
+
+/// The clustered-primary-key exemption is PARENT-side only.
+///
+/// Go returns early when the referenced column IS the row handle
+/// (`tbInfo.PKIsHandle && len(cols) == 1`) -- there is no index to keep. The
+/// CHILD's own index is a separate object and is still 1553, which is the
+/// case a symmetric implementation would get wrong.
+#[test]
+fn the_clustered_handle_exemption_does_not_reach_the_child_index() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t1 (id INT PRIMARY KEY)").unwrap();
+    session
+        .run(
+            "CREATE TABLE t2 (id INT KEY, b INT, INDEX fk(b), \
+             CONSTRAINT fk FOREIGN KEY (b) REFERENCES t1(id))",
+        )
+        .unwrap();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE t2 DROP INDEX fk"),
+        Some(1553)
+    );
+}
