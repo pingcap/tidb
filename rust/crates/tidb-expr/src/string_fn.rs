@@ -856,6 +856,15 @@ pub(crate) fn field_with_collation(
     } else {
         FieldComparisonMode::Real
     };
+    // The real signature coerces the needle ONCE, before the scan: Go's
+    // `builtinFieldRealSig.evalInt` evaluates `args[0]` a single time, so
+    // `FIELD('12abc', 1, 2)` records exactly ONE 1292 (captured) no matter how
+    // many candidates follow. Coercing it inside the loop repeated the
+    // warning per candidate.
+    let needle = match mode {
+        FieldComparisonMode::Real => Some(Datum::Real(to_f64_with_mysql_string(&vals[0], ctx)?)),
+        FieldComparisonMode::String | FieldComparisonMode::Integer => None,
+    };
     for (i, v) in vals[1..].iter().enumerate() {
         if *v == Datum::Null {
             continue;
@@ -876,7 +885,7 @@ pub(crate) fn field_with_collation(
                     == Datum::Int(1)
             }
             FieldComparisonMode::Real => {
-                let needle = Datum::Real(to_f64_with_mysql_string(&vals[0], ctx)?);
+                let needle = needle.clone().expect("coerced above for this mode");
                 let candidate = Datum::Real(to_f64_with_mysql_string(v, ctx)?);
                 crate::eval_binary(tidb_ast::BinaryOp::Eq, needle, candidate)? == Datum::Int(1)
             }
