@@ -308,14 +308,37 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 		join adaptive_inner i use index(idx_join_key) on o.join_key = i.join_key
 		where o.order_key between 1 and 128 and o.filter_col >= 0
 		order by o.order_key limit 4`
+	recordKeepOrderConcurrency := func(maxConcurrency *atomic.Int64, req *kv.Request) {
+		if !req.KeepOrder {
+			return
+		}
+		concurrency := int64(req.Concurrency)
+		for current := maxConcurrency.Load(); concurrency > current; current = maxConcurrency.Load() {
+			if maxConcurrency.CompareAndSwap(current, concurrency) {
+				return
+			}
+		}
+	}
 	var adaptiveRequestRateLimitSeen atomic.Bool
+	var adaptiveRequestConcurrency atomic.Int64
 	budgetCtx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		recordKeepOrderConcurrency(&adaptiveRequestConcurrency, req)
 		if req.CoprRequestRateLimit != nil {
 			adaptiveRequestRateLimitSeen.Store(true)
 		}
 	})
 	budgetAnalyze := fmt.Sprint(tk.MustQueryWithContext(budgetCtx, "explain analyze "+budgetSQL).Rows())
 	require.False(t, adaptiveRequestRateLimitSeen.Load())
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = off")
+	var baselineRequestConcurrency atomic.Int64
+	baselineCtx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		recordKeepOrderConcurrency(&baselineRequestConcurrency, req)
+	})
+	baselineAnalyze := fmt.Sprint(tk.MustQueryWithContext(baselineCtx, "explain analyze "+budgetSQL).Rows())
+	require.NotContains(t, baselineAnalyze, "adaptive:{")
+	require.Positive(t, baselineRequestConcurrency.Load())
+	require.Equal(t, baselineRequestConcurrency.Load(), adaptiveRequestConcurrency.Load())
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
 	statsStart := strings.Index(budgetAnalyze, "adaptive:{outer:")
 	require.NotEqual(t, -1, statsStart)
 	var outerFetched, outerConsumed, lookupHandles, lookupRows, outerOutstanding, lookupOutstanding uint64
@@ -341,6 +364,19 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 	lowSelectivityOnRows := tk.MustQuery(lowSelectivitySQL).Rows()
 	require.Equal(t, testkit.Rows("16 16", "32 32", "48 48", "64 64"), lowSelectivityOnRows)
 	lowSelectivityAnalyze := fmt.Sprint(tk.MustQuery("explain analyze " + lowSelectivitySQL).Rows())
+	smallLimitSQL := strings.Replace(lowSelectivitySQL, "limit 4", "limit 1", 1)
+	smallLimitOnRows := tk.MustQuery(smallLimitSQL).Rows()
+	require.Equal(t, testkit.Rows("16 16"), smallLimitOnRows)
+	smallLimitAnalyze := fmt.Sprint(tk.MustQuery("explain analyze " + smallLimitSQL).Rows())
+	tableTaskMatches := regexp.MustCompile(`table_task: \{[^}]*num: ([0-9]+)`).FindAllStringSubmatch(smallLimitAnalyze, -1)
+	require.NotEmpty(t, tableTaskMatches)
+	maxTableTasks := 0
+	for _, match := range tableTaskMatches {
+		taskCount, err := strconv.Atoi(match[1])
+		require.NoError(t, err)
+		maxTableTasks = max(maxTableTasks, taskCount)
+	}
+	require.Equal(t, 1, maxTableTasks)
 	statsStart = strings.Index(lowSelectivityAnalyze, "adaptive:{outer:")
 	require.NotEqual(t, -1, statsStart)
 	_, err = fmt.Sscanf(
@@ -365,6 +401,7 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 	offRows := tk.MustQuery(sql).Sort().Rows()
 	require.Equal(t, onRows, offRows)
 	require.Equal(t, lowSelectivityOnRows, tk.MustQuery(lowSelectivitySQL).Rows())
+	require.Equal(t, smallLimitOnRows, tk.MustQuery(smallLimitSQL).Rows())
 	require.Equal(t, orderedOnRows, tk.MustQuery(orderedSQL).Rows())
 	require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+sql).Rows()), "adaptive:{")
 }

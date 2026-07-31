@@ -865,11 +865,19 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 			maxOuterWindow := uint64(b.sctx.GetSessionVars().IndexJoinBatchSize) * uint64(b.sctx.GetSessionVars().IndexLookupJoinConcurrency())
 			initialLookupWindow := adaptiveLimitInitialWindow(demandRows, b.sctx.GetSessionVars().IndexLookupSize)
 			maxLookupWindow := uint64(b.sctx.GetSessionVars().IndexLookupSize) * uint64(b.sctx.GetSessionVars().IndexLookupConcurrency())
-			controller := exec.NewAdaptiveLimitController(
-				demandRows,
-				initialWindow, maxOuterWindow,
-				initialLookupWindow, maxLookupWindow,
+			initialLookupBatchSize := min(
+				max(initialLookupWindow, uint64(b.sctx.GetSessionVars().MaxChunkSize)),
+				uint64(b.sctx.GetSessionVars().IndexLookupSize),
 			)
+			controller := exec.NewAdaptiveLimitController(exec.AdaptiveLimitConfig{
+				DemandRows:             demandRows,
+				InitialOuterWindow:     initialWindow,
+				MaxOuterWindow:         maxOuterWindow,
+				InitialLookupWindow:    initialLookupWindow,
+				MaxLookupWindow:        maxLookupWindow,
+				InitialLookupBatchSize: initialLookupBatchSize,
+				MaxLookupBatchSize:     uint64(b.sctx.GetSessionVars().IndexLookupSize),
+			})
 			if attachAdaptiveLimitIndexLookup(indexJoin.Children(0), controller) {
 				e.adaptiveLimitController = controller
 				indexJoin.AdaptiveLimitController = controller

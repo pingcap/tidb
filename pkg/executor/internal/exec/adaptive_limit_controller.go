@@ -54,8 +54,22 @@ type AdaptiveLimitSnapshot struct {
 	LookupHandles           uint64
 	LookupRows              uint64
 	LookupWindow            uint64
+	LookupBatchSize         uint64
+	LookupPhysicalWindow    uint64
 	LookupOutstandingAtStop uint64
 	Stopped                 bool
+}
+
+// AdaptiveLimitConfig defines the immutable bounds of one statement-local
+// adaptive LIMIT controller.
+type AdaptiveLimitConfig struct {
+	DemandRows             uint64
+	InitialOuterWindow     uint64
+	MaxOuterWindow         uint64
+	InitialLookupWindow    uint64
+	MaxLookupWindow        uint64
+	InitialLookupBatchSize uint64
+	MaxLookupBatchSize     uint64
 }
 
 // AdaptiveLimitController bounds speculative work for an early-stop LIMIT.
@@ -84,12 +98,15 @@ type AdaptiveLimitController struct {
 	outerGrowthBarrier uint64
 	outerNoOutputRows  uint64
 
-	initialLookupWindow   uint64
-	maxLookupWindow       uint64
-	lookupWindow          uint64
-	lookupGrowthProgress  uint64
-	lookupNoOutputRows    uint64
-	lookupInNoOutputPhase bool
+	initialLookupWindow    uint64
+	maxLookupWindow        uint64
+	lookupWindow           uint64
+	initialLookupBatchSize uint64
+	maxLookupBatchSize     uint64
+	lookupBatchSize        uint64
+	lookupGrowthProgress   uint64
+	lookupNoOutputRows     uint64
+	lookupInNoOutputPhase  bool
 
 	stopped       bool
 	outerChanged  chan struct{}
@@ -98,11 +115,17 @@ type AdaptiveLimitController struct {
 }
 
 // NewAdaptiveLimitController creates a statement-local admission controller.
-func NewAdaptiveLimitController(
-	demandRows, initialOuterWindow, maxOuterWindow, initialLookupWindow, maxLookupWindow uint64,
-) *AdaptiveLimitController {
+func NewAdaptiveLimitController(config AdaptiveLimitConfig) *AdaptiveLimitController {
+	demandRows := config.DemandRows
+	initialOuterWindow, maxOuterWindow := config.InitialOuterWindow, config.MaxOuterWindow
+	initialLookupWindow, maxLookupWindow := config.InitialLookupWindow, config.MaxLookupWindow
 	initialOuterWindow, maxOuterWindow = normalizeAdaptiveWindow(initialOuterWindow, maxOuterWindow)
 	initialLookupWindow, maxLookupWindow = normalizeAdaptiveWindow(initialLookupWindow, maxLookupWindow)
+	maxLookupBatchSize := min(max(config.MaxLookupBatchSize, uint64(1)), maxLookupWindow)
+	initialLookupBatchSize := min(
+		max(config.InitialLookupBatchSize, min(initialLookupWindow, maxLookupBatchSize)),
+		maxLookupBatchSize,
+	)
 	if demandRows > 0 && initialOuterWindow > demandRows {
 		initialOuterWindow = demandRows
 	}
@@ -110,16 +133,19 @@ func NewAdaptiveLimitController(
 		initialLookupWindow = demandRows
 	}
 	c := &AdaptiveLimitController{
-		demandRows:          demandRows,
-		initialOuterWindow:  initialOuterWindow,
-		maxOuterWindow:      maxOuterWindow,
-		outerWindow:         initialOuterWindow,
-		initialLookupWindow: initialLookupWindow,
-		maxLookupWindow:     maxLookupWindow,
-		lookupWindow:        initialLookupWindow,
-		outerChanged:        make(chan struct{}, 1),
-		lookupChanged:       make(chan struct{}, 1),
-		stopCh:              make(chan struct{}),
+		demandRows:             demandRows,
+		initialOuterWindow:     initialOuterWindow,
+		maxOuterWindow:         maxOuterWindow,
+		outerWindow:            initialOuterWindow,
+		initialLookupWindow:    initialLookupWindow,
+		maxLookupWindow:        maxLookupWindow,
+		lookupWindow:           initialLookupWindow,
+		initialLookupBatchSize: initialLookupBatchSize,
+		maxLookupBatchSize:     maxLookupBatchSize,
+		lookupBatchSize:        initialLookupBatchSize,
+		outerChanged:           make(chan struct{}, 1),
+		lookupChanged:          make(chan struct{}, 1),
+		stopCh:                 make(chan struct{}),
 	}
 	if demandRows == 0 {
 		c.stopLocked()
@@ -155,6 +181,7 @@ func (c *AdaptiveLimitController) Reset() {
 	c.lookupNoOutputRows = 0
 	c.lookupInNoOutputPhase = false
 	c.lookupWindow = c.initialLookupWindow
+	c.lookupBatchSize = c.initialLookupBatchSize
 	c.lookupGrowthProgress = 0
 	c.lookupOutstandingAtStop = 0
 	c.stopped = false
@@ -198,7 +225,7 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, oute
 			c.mu.Unlock()
 			return 0, false, nil
 		}
-		window := c.lookupWindow
+		window := c.lookupPhysicalWindowLocked()
 		outstanding := c.lookupReserved
 		changed := c.lookupChanged
 		if outer {
@@ -211,6 +238,7 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, oute
 			if outer {
 				c.outerReserved += rows
 			} else {
+				rows = min(rows, c.lookupBatchSize)
 				c.lookupReserved += rows
 			}
 			c.mu.Unlock()
@@ -338,16 +366,16 @@ func (c *AdaptiveLimitController) AbortLookup(handles int) {
 	c.mu.Unlock()
 }
 
-// SuggestedBatchSize returns the lookup-handle window bounded by the caller's
-// configured batch ceiling.
+// SuggestedBatchSize returns the current execution batch bounded by the
+// caller's configured batch ceiling.
 func (c *AdaptiveLimitController) SuggestedBatchSize(ceiling int) int {
 	if ceiling < 1 {
 		return 1
 	}
 	c.mu.Lock()
-	window := c.lookupWindow
+	batchSize := c.lookupBatchSize
 	c.mu.Unlock()
-	return min(max(int(min(window, uint64(ceiling))), 1), ceiling)
+	return min(max(int(min(batchSize, uint64(ceiling))), 1), ceiling)
 }
 
 // Stop prevents future admission and wakes all blocked producers.
@@ -375,6 +403,8 @@ func (c *AdaptiveLimitController) Snapshot() AdaptiveLimitSnapshot {
 		LookupHandles:           c.lookupHandles,
 		LookupRows:              c.lookupRows,
 		LookupWindow:            c.lookupWindow,
+		LookupBatchSize:         c.lookupBatchSize,
+		LookupPhysicalWindow:    c.lookupPhysicalWindowLocked(),
 		LookupOutstandingAtStop: c.lookupOutstandingAtStop,
 		Stopped:                 c.stopped,
 	}
@@ -426,9 +456,9 @@ func (c *AdaptiveLimitController) recomputeLookupWindowLocked() {
 		)
 		target = max(target, recentTarget)
 	}
-	// A lookup task below the statement's initial window turns periodic low
-	// selectivity into row-at-a-time table RPCs. The initial window is derived
-	// from this LIMIT and the configured batch ceiling, not a fixed row threshold.
+	// Productive feedback adjusts the logical budget. Execution granularity is
+	// tracked separately by lookupBatchSize, so shrinking this window does not
+	// turn a small LIMIT into row-at-a-time table RPCs.
 	var grew bool
 	c.lookupWindow, grew = adjustAdaptiveWindow(
 		target, c.lookupWindow, c.initialLookupWindow, c.maxLookupWindow,
@@ -464,7 +494,16 @@ func (c *AdaptiveLimitController) growLookupWindowIfDrainedLocked() {
 		c.lookupGrowthProgress = c.lookupHandles
 	}
 	c.lookupWindow = nextWindow
+	c.lookupBatchSize = growAdaptiveWindow(c.lookupBatchSize, c.maxLookupBatchSize)
 	c.lookupNoOutputRows = 0
+}
+
+func (c *AdaptiveLimitController) lookupPhysicalWindowLocked() uint64 {
+	if c.lookupWindow == 0 || c.lookupBatchSize == 0 {
+		return 0
+	}
+	batchCount := divideAndRoundUp(c.lookupWindow, c.lookupBatchSize)
+	return min(saturatingMultiply(batchCount, c.lookupBatchSize), c.maxLookupWindow)
 }
 
 func (c *AdaptiveLimitController) stopLocked() {
@@ -481,6 +520,7 @@ func (c *AdaptiveLimitController) stopLocked() {
 	c.outerReserved = 0
 	c.outerWindow = 0
 	c.lookupWindow = 0
+	c.lookupBatchSize = 0
 	close(c.stopCh)
 }
 

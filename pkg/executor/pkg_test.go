@@ -156,7 +156,11 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	require.Same(t, indexJoin, findAdaptiveLimitIndexJoin(projection))
 	require.Nil(t, findAdaptiveLimitIndexJoin(selection))
 
-	controller := exec.NewAdaptiveLimitController(100, 32, 128, 32, 128)
+	controller := exec.NewAdaptiveLimitController(exec.AdaptiveLimitConfig{
+		DemandRows: 100, InitialOuterWindow: 32, MaxOuterWindow: 128,
+		InitialLookupWindow: 32, MaxLookupWindow: 128,
+		InitialLookupBatchSize: 32, MaxLookupBatchSize: 128,
+	})
 	indexLookup := &IndexLookUpExecutor{
 		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 4),
 		indexLookUpExecutorContext: indexLookUpExecutorContext{
@@ -247,7 +251,11 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	require.Empty(t, worker.pendingHandles)
 	require.Equal(t, uint64(5), worker.scannedKeys)
 
-	canceledController := exec.NewAdaptiveLimitController(100, 2, 128, 2, 128)
+	canceledController := exec.NewAdaptiveLimitController(exec.AdaptiveLimitConfig{
+		DemandRows: 100, InitialOuterWindow: 2, MaxOuterWindow: 128,
+		InitialLookupWindow: 2, MaxLookupWindow: 128,
+		InitialLookupBatchSize: 2, MaxLookupBatchSize: 128,
+	})
 	worker.adaptiveLimitController = canceledController
 	worker.batchSize = 2
 	canceledCtx, cancel := context.WithCancel(context.Background())

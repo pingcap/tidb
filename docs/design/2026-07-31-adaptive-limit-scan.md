@@ -209,10 +209,14 @@ table lookup tasks.
 The controller therefore maintains:
 
 - an outer row window, which bounds rows prefetched by IndexLookUpJoin;
-- a lookup handle window, which bounds handles admitted into table lookup.
+- a logical lookup handle window, which estimates how many handles are
+  justified by current LIMIT demand and observed yield;
+- a lookup execution batch size, which keeps each table lookup task large enough
+  to avoid inefficient tiny RPCs.
 
-A window is an admission bound, not a prediction that the exact number of rows
-will be needed.
+The physical lookup admission window is derived from the logical window and the
+execution batch size. A window is an admission bound, not a prediction that the
+exact number of rows will be needed.
 
 ### Outer Row Admission
 
@@ -240,11 +244,21 @@ output rows)` as an infinite yield.
 ### Lookup Handle Admission
 
 Before the IndexLookUp index worker creates a table lookup task, it calls
-`ReserveLookup`. Only the admitted handles can enter that task:
+`ReserveLookup`. Let `B` be the logical lookup window and `Q` be the execution
+batch size. The controller derives:
 
 ```text
-lookup reserved handles <= lookup window
+physicalLookupWindow =
+    min(maxLookupWindow, ceil(B / Q) * Q)
+
+lookup reserved handles <= physicalLookupWindow
+handles in one lookup task <= Q
 ```
+
+Rounding allows an efficient task when `B` is smaller than one execution batch.
+Unless the configured maximum truncates the result, the difference between the
+physical and logical windows is less than `Q`. Concurrent tasks share this one
+physical window; the rounding allowance is not multiplied by concurrency.
 
 A DistSQL result chunk can contain more handles than the current reservation.
 The excess handles are stored in `pendingHandles` and are admitted only after a
@@ -322,16 +336,19 @@ The cumulative and recent lookup estimates are computed independently, and the
 larger result is used. The lookup window follows the same at-most-2x growth
 rule.
 
-The lookup window does not shrink below its initial value. Very small table
-lookup tasks can create many small RPCs and reduce throughput. Keeping the
-statement-derived initial window as a floor intentionally permits up to one
-initial batch of tail over-admission.
+The logical lookup window does not shrink below its statement-derived initial
+value. The execution batch is tracked independently, so shrinking the logical
+window does not create row-at-a-time table RPCs. Rounding the logical window to
+the execution batch intentionally permits less than one batch of physical
+over-admission.
 
 If a stage produces no output, a ratio cannot estimate the next target. The
 controller waits until that stage has no outstanding reservation and the
-zero-output input reaches the current window, then doubles the window up to its
-configured maximum. This guarantees progress without jumping directly to the
-maximum after one empty task.
+zero-output input reaches the current logical window. For the lookup stage, it
+then doubles both the logical window and execution batch up to their separate
+configured maxima. This guarantees progress without jumping directly to the
+maximum after one empty task, while avoiding a long sequence of tiny tasks for
+a small LIMIT.
 
 ### Batch Size and DistSQL Behavior
 
@@ -351,10 +368,20 @@ initialLookupWindow =
 maxLookupWindow =
     tidb_index_lookup_size *
     tidb_index_lookup_concurrency
+
+initialLookupBatchSize =
+    min(
+        max(initialLookupWindow, tidb_max_chunk_size),
+        tidb_index_lookup_size
+    )
+
+maxLookupBatchSize = tidb_index_lookup_size
 ```
 
-The current lookup window suggests the next lookup task batch size, bounded by
-`tidb_index_lookup_size`.
+Productive input/output feedback adjusts the logical lookup window but does not
+shrink the execution batch. A fully drained zero-output phase can grow the
+execution batch by at most 2x. Both the per-task batch and the aggregate
+physical window remain bounded by existing session settings.
 
 The initial implementation does not change DistSQL scan concurrency.
 `tidb_distsql_scan_concurrency` and the existing RequestBuilder heuristics keep
@@ -405,6 +432,10 @@ The feature activates only when all of the following are true:
 
 The keep-order requirement narrows the experimental rollout to the high-risk
 case from #66658. It is not a mathematical requirement of admission control.
+IndexLookUp concurrency must be greater than one because its index worker and
+table workers share one worker pool. With only one worker, attaching the
+controller cannot run index production and table lookup concurrently, so this
+path keeps the existing executor behavior.
 
 If the feature is disabled or any condition is not met, the executor uses the
 existing path without a controller.
@@ -430,6 +461,8 @@ The implementation maintains these invariants:
   samples;
 - Stop wakes all workers waiting for capacity;
 - user batch and concurrency settings remain hard upper bounds;
+- physical lookup slack is less than one execution batch unless the configured
+  maximum truncates the rounded window;
 - normal LIMIT completion returns no error, while context cancellation returns
   the context error.
 
@@ -471,8 +504,9 @@ The fields are:
 
 LIMIT demand and final Join output already appear in the Limit and
 IndexLookUpJoin runtime information and are not repeated. Outstanding values
-are logical admission accounting; they do not claim that the same amount of
-physical work was cancelled.
+are admission accounting: outer outstanding is measured in logical rows, while
+lookup outstanding is measured in physically reserved handles. Neither value
+claims that the same amount of already dispatched work was cancelled.
 
 The controller snapshot also retains current window values for deterministic
 unit tests, but they are not included in the compact plan output.
@@ -506,7 +540,8 @@ request.
 Additional limitations are:
 
 - only one keep-order IndexLookUpJoin outer path is supported;
-- the lookup window floor can admit one initial batch near the LIMIT tail;
+- physical lookup rounding can admit less than one execution batch beyond the
+  logical window near the LIMIT tail;
 - DistSQL request concurrency and ordered request dispatch are unchanged;
 - runtime stats do not yet include final windows or a reason why a plan was
   not eligible.
@@ -548,7 +583,9 @@ Controller unit tests cover:
 - cumulative and recent yield estimates;
 - one-to-many Join output paired with completed outer rows;
 - outer and lookup reservation accounting;
-- lookup batch size suggestions;
+- independent lookup budget, execution batch, and rounded physical-window
+  accounting;
+- execution-batch reset, ceiling, and zero-output growth;
 - Stop, context cancellation, blocked-worker wakeup, and Reset;
 - integer saturation and LIMIT edge cases.
 
@@ -570,12 +607,13 @@ state rather than wall-clock timings.
 
 ### Scenario Tests
 
-The SQL test matrix includes:
+The complete SQL scenario matrix should include:
 
 - LIMIT with and without OFFSET;
 - LIMIT 0 and LIMIT larger than the complete result;
 - empty input and consecutive zero-output regions;
 - high, low, and changing selectivity;
+- `LIMIT 1` with a sparse ordered prefix, including table lookup task count;
 - one outer row producing many Join rows over multiple chunks;
 - LIMIT completion in the middle of an outer or lookup task;
 - normal EOF, cancellation, execution error, and repeated Open/Close;
@@ -619,14 +657,45 @@ One observed comparison was:
 
 | Operator | OFF actRows | ON actRows |
 | --- | ---: | ---: |
-| outer IndexRangeScan | 210,752 | 9,184 |
-| Selection | 104,542 | 1,400 |
-| TableRowIDScan | 149,344 | 2,000 |
+| outer IndexRangeScan | 160,608 | 9,184 |
+| Selection | 75,870 | 1,434 |
+| TableRowIDScan | 108,384 | 2,048 |
+
+In the same run, latency decreased from 77.60 ms to 42.95 ms and RU decreased
+from 150.63 to 11.30. The ON plan reported
+`adaptive:{outer:1000/1000, lookup:1024/718, outstanding:0/1024}`. The final
+lookup outstanding value reflects one bounded execution batch admitted near
+LIMIT completion.
 
 Both paths reported a maximum effective DistSQL concurrency of one in this
 single-TiKV setup. This confirms that enabling the feature does not change the
 observed request concurrency for this topology, but it is not evidence for
 multi-Region concurrency behavior.
+
+A second local validation used three TiKV stores. The outer table record
+keyspace, outer ordering index, and inner join index were each split into 48
+Regions. Before measurement, the test required every keyspace to expose all 48
+Regions and leaders on all three stores. Each feature state was warmed up, then
+four measured rounds alternated the ON/OFF order. Every ON/OFF pair returned
+the same ordered result digest.
+
+The median results were:
+
+| Workload | Feature | Latency (ms) | RU | Outer index actRows | Cop tasks | Effective concurrency |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| #66658, `LIMIT 1000` | OFF | 121.76 | 311.05 | 304,166.5 | 36.5 | 2 |
+| #66658, `LIMIT 1000` | ON | 44.77 | 10.07 | 8,333 | 1 | 2 |
+| dense, `LIMIT 100000` | OFF | 576.32 | 1,628.84 | 392,857 | 48 | 2 |
+| dense, `LIMIT 100000` | ON | 499.91 | 610.73 | 125,000 | 15 | 2 |
+| 240,000-row zero-output prefix | OFF | 130.03 | 491.79 | 392,857 | 48 | 2 |
+| 240,000-row zero-output prefix | ON | 119.71 | 399.44 | 258,333 | 31 | 2 |
+
+The #66658 workload retained its early-stop benefit. The dense and zero-output
+prefix workloads crossed multiple Regions, retained an effective DistSQL
+concurrency of two, and did not regress median latency. An executor request-hook
+test separately verifies that ON and OFF produce the same positive keep-order
+`kv.Request.Concurrency`, and that the adaptive path does not install a shared
+coprocessor request limiter.
 
 This is manual E2E evidence, not a CI guarantee and not proof of a hard
 per-request scan bound. Acceptance must prioritize result correctness and
@@ -644,8 +713,8 @@ Expected positive impacts are:
 Intentional trade-offs are:
 
 - workers can wait for admission instead of always prefetching;
-- the initial lookup floor permits bounded tail over-admission to preserve RPC
-  efficiency;
+- physical-window rounding permits less than one execution batch of tail
+  over-admission to preserve RPC efficiency;
 - conservative yield estimates may retain more headroom after an earlier
   low-selectivity phase.
 
@@ -757,8 +826,6 @@ The initial implementation intentionally leaves these questions open:
   oscillation or head-of-line stalls?
 - Should ordered dispatch enforce a strict task frontier rather than only a
   row-admission window?
-- Should the lookup batch efficiency floor be separated from the logical
-  admission window?
 - Which metrics and eligibility skip reasons should be exposed before the
   feature is enabled by default?
 - What performance thresholds should gate expansion beyond the #66658 plan
