@@ -802,3 +802,104 @@ fn a_generated_column_near_a_foreign_key_is_not_itself_an_error() {
         .run("CREATE TABLE t2 (a INT, b INT, CONSTRAINT fk FOREIGN KEY(b) REFERENCES t1(a))")
         .unwrap();
 }
+
+/// A parent `t1(id, a)` holding `(1,1)` and a child referencing `t1(a)`,
+/// with `action` spliced in. Built with REPLACE throughout, the way Go's
+/// `executor/foreign_key` script does.
+fn replace_pair(action: &str) -> Session {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (id INT KEY, a INT, INDEX (a))")
+        .unwrap();
+    session
+        .run(&format!(
+            "CREATE TABLE t2 (id INT KEY, a INT, INDEX (a), \
+             CONSTRAINT fk_1 FOREIGN KEY (a) REFERENCES t1(a) {action})"
+        ))
+        .unwrap();
+    session.run("REPLACE INTO t1 VALUES (1, 1)").unwrap();
+    session.run("REPLACE INTO t2 VALUES (1, 1)").unwrap();
+    session
+}
+
+/// Go `InsertValues.removeRow` -> `onRemoveRowForFK`: the row a REPLACE
+/// displaces is a PARENT-side withdrawal, and a dependent that restricts
+/// fails the statement with 1451.
+///
+/// A TRIPWIRE: this REPLACE was ACCEPTED here, and silently orphaned the
+/// child row.
+#[test]
+fn a_replace_that_displaces_a_referenced_parent_row_is_refused() {
+    let mut session = replace_pair("");
+    assert_eq!(
+        code(&mut session, "REPLACE INTO t1 VALUES (1, 2)"),
+        Some(1451)
+    );
+    // Refused means UNTOUCHED, not half-applied: the parent still holds the
+    // referenced value and the child still points at it.
+    assert_eq!(
+        rows(&mut session, "SELECT id, a FROM t1"),
+        vec![vec!["1", "1"]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT id, a FROM t2"),
+        vec![vec!["1", "1"]]
+    );
+}
+
+/// THE CONTROLS. Only a REPLACE that actually WITHDRAWS a referenced value
+/// may be refused; the check runs on the displaced row, not on the fact that
+/// the statement is a REPLACE against a referenced table.
+#[test]
+fn a_replace_that_withdraws_nothing_is_still_accepted() {
+    let mut session = replace_pair("");
+    // The identical row: nothing is deleted, so nothing is withdrawn.
+    assert_eq!(code(&mut session, "REPLACE INTO t1 VALUES (1, 1)"), None);
+    // A row that collides with nothing at all.
+    assert_eq!(code(&mut session, "REPLACE INTO t1 VALUES (3, 3)"), None);
+    // The CHILD side of a REPLACE is unaffected, and keeps its own 1452.
+    assert_eq!(
+        code(&mut session, "REPLACE INTO t2 VALUES (1, 9)"),
+        Some(1452)
+    );
+    assert_eq!(code(&mut session, "REPLACE INTO t2 VALUES (1, 3)"), None);
+    assert_eq!(
+        rows(&mut session, "SELECT id, a FROM t1 ORDER BY id"),
+        vec![vec!["1", "1"], vec!["3", "3"]]
+    );
+    // And `foreign_key_checks = 0` lifts the refusal, as it does for DELETE.
+    session.run("SET @@foreign_key_checks=0").unwrap();
+    assert_eq!(code(&mut session, "REPLACE INTO t1 VALUES (1, 2)"), None);
+}
+
+/// The same withdrawal under an action that FOLLOWS it: a REPLACE on the
+/// parent cascades and set-nulls exactly as a DELETE does, which is what
+/// proves the new call reached the shared referential operators rather than
+/// a restrict-only shortcut.
+#[test]
+fn a_replace_on_the_parent_side_cascades_and_sets_null() {
+    let mut session = replace_pair("ON DELETE CASCADE");
+    session.run("REPLACE INTO t2 (id) VALUES (2)").unwrap();
+    session.run("REPLACE INTO t1 VALUES (1, 2)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, a FROM t1"),
+        vec![vec!["1", "2"]]
+    );
+    // The row that referenced the withdrawn `1` is gone; the NULL one, which
+    // MATCH SIMPLE never checked, stays.
+    assert_eq!(
+        rows(&mut session, "SELECT id, a FROM t2"),
+        vec![vec!["2", "NULL"]]
+    );
+
+    let mut session = replace_pair("ON DELETE SET NULL");
+    session.run("REPLACE INTO t1 VALUES (1, 2)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, a FROM t1"),
+        vec![vec!["1", "2"]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT id, a FROM t2"),
+        vec![vec!["1", "NULL"]]
+    );
+}

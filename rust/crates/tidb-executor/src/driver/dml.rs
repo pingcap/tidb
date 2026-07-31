@@ -467,100 +467,117 @@ pub(crate) fn run_insert_traced(
             return Err(error.clone());
         }
     }
-    let table = catalog
-        .get_mut_in(&database, &table_name)
-        .ok_or(DriverError::Unsupported("table not found in catalog"))?;
-    let TableEntry::Kv(kv) = table else {
-        unreachable!("INSERT through a view is refused above")
-    };
-    {
-        {
-            // Go resolves a conflict per row, before the row is written:
-            // REPLACE deletes every row it collides with, ON DUPLICATE KEY
-            // UPDATE applies its assignments to the first one, and IGNORE
-            // skips the row with the duplicate reported as a warning.
-            inserted = 0;
-            for (position, row) in new_rows.iter().enumerate() {
-                // Go's `FKCheckExec` runs per row, before the row is added,
-                // and under `INSERT IGNORE` its violation is a warning and a
-                // skip rather than a statement error.
-                if let Some(error) = &fk_verdicts[position] {
-                    let warning = error.clone().to_mysql_error();
-                    ctx.append_warning_parts(warning.code, &warning.message);
-                    continue;
-                }
-                let conflicts = kv
-                    .conflicting_handles(row)
-                    .map_err(|e| DriverError::Parse(format!("conflict lookup failed: {e:?}")))?;
-                if !conflicts.is_empty() {
-                    if insert.replace {
-                        // Go `InsertValues.removeRow` (`insert_common.go`):
-                        // a conflicting row IDENTICAL to the one being
-                        // written is left in place -- not deleted and not
-                        // rewritten -- and counts ONE, not the two a
-                        // delete-plus-insert would. This is also the site
-                        // `tidb_lock_unchanged_keys` governs, which is why
-                        // Go's `TestInsertLockUnchangedKeys` drives it with
-                        // `replace into t values (1)` over the same row.
-                        let mut unchanged = false;
-                        for handle in &conflicts {
-                            let existing = kv.get_row_by_handle(handle).map_err(|e| {
-                                DriverError::Parse(format!("row read failed: {e:?}"))
-                            })?;
-                            if existing.as_deref() == Some(row) {
-                                inserted += 1;
-                                unchanged = true;
-                                break;
-                            }
-                            // Otherwise the conflicting row goes, and the
-                            // affected count is one per deleted row plus one
-                            // for the inserted row.
-                            kv.delete_row(handle).map_err(|e| {
-                                DriverError::Parse(format!("row delete failed: {e:?}"))
-                            })?;
-                            inserted += 1;
-                        }
-                        if unchanged {
-                            continue;
-                        }
-                    } else if !insert.on_duplicate.is_empty() {
-                        inserted += apply_on_duplicate(
-                            kv,
-                            &conflicts[0],
-                            row,
-                            &insert.on_duplicate,
-                            &column_list,
+    // The table is re-borrowed per use rather than held across the loop,
+    // because REPLACE's row removal runs the PARENT-side referential
+    // operators, and those write the DEPENDENT tables the statement never
+    // named -- reachable only from the catalog, not from this table.
+    fn target<'a>(
+        catalog: &'a mut Catalog,
+        database: &str,
+        table_name: &str,
+    ) -> &'a mut crate::kv_table::KvTable {
+        match catalog.get_mut_in(database, table_name) {
+            Some(TableEntry::Kv(kv)) => kv,
+            _ => unreachable!("INSERT through a view is refused above"),
+        }
+    }
+    // Go resolves a conflict per row, before the row is written: REPLACE
+    // deletes every row it collides with, ON DUPLICATE KEY UPDATE applies
+    // its assignments to the first one, and IGNORE skips the row with the
+    // duplicate reported as a warning.
+    inserted = 0;
+    for (position, row) in new_rows.iter().enumerate() {
+        // Go's `FKCheckExec` runs per row, before the row is added, and
+        // under `INSERT IGNORE` its violation is a warning and a skip rather
+        // than a statement error.
+        if let Some(error) = &fk_verdicts[position] {
+            let warning = error.clone().to_mysql_error();
+            ctx.append_warning_parts(warning.code, &warning.message);
+            continue;
+        }
+        let conflicts = target(catalog, &database, &table_name)
+            .conflicting_handles(row)
+            .map_err(|e| DriverError::Parse(format!("conflict lookup failed: {e:?}")))?;
+        if !conflicts.is_empty() {
+            if insert.replace {
+                // Go `InsertValues.removeRow` (`insert_common.go`): a
+                // conflicting row IDENTICAL to the one being written is left
+                // in place -- not deleted and not rewritten -- and counts
+                // ONE, not the two a delete-plus-insert would. This is also
+                // the site `tidb_lock_unchanged_keys` governs, which is why
+                // Go's `TestInsertLockUnchangedKeys` drives it with
+                // `replace into t values (1)` over the same row.
+                let mut unchanged = false;
+                for handle in &conflicts {
+                    let existing = target(catalog, &database, &table_name)
+                        .get_row_by_handle(handle)
+                        .map_err(|e| DriverError::Parse(format!("row read failed: {e:?}")))?;
+                    if existing.as_deref() == Some(row) {
+                        inserted += 1;
+                        unchanged = true;
+                        break;
+                    }
+                    // Go `removeRow` ends in `onRemoveRowForFK`, so the row
+                    // REPLACE withdraws is a PARENT-side change exactly like
+                    // a DELETE's: a dependent that restricts makes the whole
+                    // statement 1451, and one that cascades follows it. Run
+                    // BEFORE the removal, so a restricted REPLACE leaves the
+                    // parent where it was rather than half-applied.
+                    if let (true, Some(existing)) = (ctx.foreign_key_checks(), &existing) {
+                        let changes = [crate::foreign_key::ParentChange::Delete(existing)];
+                        crate::foreign_key::cascade_parent_changes(
+                            catalog,
+                            &database,
+                            &table_name,
+                            &changes,
                             ctx,
                         )?;
-                        continue;
-                    } else if insert.ignore {
-                        let reported = kv.duplicate_entry_error(row).map_err(|e| {
-                            DriverError::Parse(format!("conflict lookup failed: {e:?}"))
-                        })?;
-                        if let crate::kv_table::KvTableError::DuplicateEntry { value, key } =
-                            reported
-                        {
-                            let warning =
-                                DriverError::DuplicateEntry { value, key }.to_mysql_error();
-                            ctx.append_warning_parts(warning.code, &warning.message);
-                        }
-                        continue;
                     }
+                    // Otherwise the conflicting row goes, and the affected
+                    // count is one per deleted row plus one for the inserted
+                    // row.
+                    target(catalog, &database, &table_name)
+                        .delete_row(handle)
+                        .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
+                    inserted += 1;
                 }
-                // Go publishes the statement's first allocated id the moment
-                // a row is ACCEPTED for insertion (`addRecord` ->
-                // `SetLastInsertID`), which is why a hard duplicate publishes
-                // -- its deferred unique-key check fails the statement only
-                // afterwards -- while an IGNORE-skipped row and a row
-                // redirected into ON DUPLICATE KEY UPDATE never reach here
-                // and so publish nothing.
-                if let Some(allocated) = first_allocated {
-                    ctx.publish_last_insert_id(allocated.max(0) as u64);
+                if unchanged {
+                    continue;
                 }
-                kv.insert_row(row, ctx).map_err(kv_write_error)?;
-                inserted += 1;
+            } else if !insert.on_duplicate.is_empty() {
+                inserted += apply_on_duplicate(
+                    target(catalog, &database, &table_name),
+                    &conflicts[0],
+                    row,
+                    &insert.on_duplicate,
+                    &column_list,
+                    ctx,
+                )?;
+                continue;
+            } else if insert.ignore {
+                let reported = target(catalog, &database, &table_name)
+                    .duplicate_entry_error(row)
+                    .map_err(|e| DriverError::Parse(format!("conflict lookup failed: {e:?}")))?;
+                if let crate::kv_table::KvTableError::DuplicateEntry { value, key } = reported {
+                    let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
+                    ctx.append_warning_parts(warning.code, &warning.message);
+                }
+                continue;
             }
         }
+        // Go publishes the statement's first allocated id the moment a row is
+        // ACCEPTED for insertion (`addRecord` -> `SetLastInsertID`), which is
+        // why a hard duplicate publishes -- its deferred unique-key check
+        // fails the statement only afterwards -- while an IGNORE-skipped row
+        // and a row redirected into ON DUPLICATE KEY UPDATE never reach here
+        // and so publish nothing.
+        if let Some(allocated) = first_allocated {
+            ctx.publish_last_insert_id(allocated.max(0) as u64);
+        }
+        target(catalog, &database, &table_name)
+            .insert_row(row, ctx)
+            .map_err(kv_write_error)?;
+        inserted += 1;
     }
     Ok((inserted, first_allocated))
 }
