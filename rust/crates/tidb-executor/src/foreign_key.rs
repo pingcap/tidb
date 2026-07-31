@@ -44,10 +44,34 @@
 //!   never implemented it, so real MySQL and TiDB treat it as `RESTRICT`.
 //! * **`IGNORE`** (`INSERT IGNORE`, `DELETE IGNORE`) downgrades a violation
 //!   from a statement error to a per-row skip, with a warning.
-//! * **`foreign_key_checks = 0`** disables all of the above, and disables the
-//!   DDL-time checks too (`DROP TABLE` of a referenced parent, and resolving a
-//!   `REFERENCES` clause at `CREATE TABLE`). It is NOT retroactive: rows
-//!   written while it was off stay, unchecked, when it is turned back on.
+//! * **`REPLACE` on the parent side triggers**, because the row it displaces
+//!   is withdrawn exactly as a `DELETE`'s is (Go `InsertValues.removeRow` ->
+//!   `onRemoveRowForFK`). A `REPLACE` that displaces NOTHING -- an identical
+//!   row, or a row nothing collides with -- withdraws nothing and triggers
+//!   nothing.
+//!
+//! # The DDL-time rules
+//!
+//! * A constraint may not name a **VIRTUAL generated column** on either side
+//!   (3733), and a **STORED generated CHILD column** may not carry an action
+//!   that would WRITE it -- `ON UPDATE CASCADE`/`SET NULL`, `ON DELETE SET
+//!   NULL` (3104). `ON DELETE CASCADE` removes the row rather than writing
+//!   the column, and is accepted. See [`crate::ddl::table_constraints`].
+//! * The **index a constraint relies on may not be dropped** (1553), on
+//!   either side, unless another index still covers the same columns or the
+//!   referenced column is the clustered handle. See [`check_index_needed`].
+//!
+//! * **`foreign_key_checks = 0`** disables every ROW-level rule above, plus
+//!   the DDL-time checks that RESOLVE a reference (`DROP TABLE` of a
+//!   referenced parent, the `REFERENCES` clause at `CREATE TABLE`, and the
+//!   parent-side half of 3733). It is NOT retroactive: rows written while it
+//!   was off stay, unchecked, when it is turned back on.
+//!
+//!   It does NOT reach the two rules that never look at the other table:
+//!   captured, the CHILD-side 3733 and the 1553 index check both still fire
+//!   with the switch at 0. Go reaches the first from `buildFKInfo` and the
+//!   second from a gate on the GLOBAL `vardef.EnableForeignKey`, neither of
+//!   which the session switch touches.
 //!
 //! # NOT MODELLED (documented)
 //!
