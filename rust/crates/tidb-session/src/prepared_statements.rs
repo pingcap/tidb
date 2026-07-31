@@ -130,7 +130,8 @@ impl Session {
             PrepareSource::Var(name) => self.prepare_source_text(name),
         };
         let mut statements =
-            tidb_parser::parse_multi(&text).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+            tidb_parser::parse_multi_with_sql_mode(&text, self.scanner_sql_mode())
+                .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
         if statements.len() != 1 {
             return Err(DriverError::PrepareMulti);
         }
@@ -139,7 +140,7 @@ impl Session {
         if is_unpreparable(&statement) {
             return Err(DriverError::UnsupportedPreparedStatement);
         }
-        let param_count = tidb_executor::parameter_count(&text)?;
+        let param_count = tidb_executor::parameter_count(&text, self.scanner_sql_mode())?;
         let limit_markers = limit_marker_orders(&statement);
         // Only a statement that CARRIES markers is ever restored (that is what
         // binding does), so only that statement needs its column names pinned
@@ -223,7 +224,7 @@ impl Session {
         let sql = if values.is_empty() {
             prepared.sql.clone()
         } else {
-            tidb_executor::bind_parameters(&prepared.sql, &values)?
+            tidb_executor::bind_parameters(&prepared.sql, &values, self.scanner_sql_mode())?
         };
         // Go builds the prepared statement's own plan and runs it as this
         // statement's body, so the inner statement goes through the same

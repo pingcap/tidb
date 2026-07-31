@@ -58,7 +58,7 @@ pub fn run_alter_table_in(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let stmt = ctx.parse(sql)?;
     let alter = match &stmt {
         Stmt::Ddl(ddl) => match &**ddl {
             DdlStmt::AlterTable(alter) => alter,

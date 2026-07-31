@@ -253,7 +253,7 @@ impl Session {
         if !self.sandbox_mode {
             return Ok(());
         }
-        let Ok(stmt) = tidb_parser::parse(sql) else {
+        let Ok(stmt) = self.parse(sql) else {
             return Ok(());
         };
         match stmt {

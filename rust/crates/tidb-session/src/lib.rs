@@ -378,7 +378,7 @@ impl Session {
     /// The number of `?` markers a statement carries, which
     /// `COM_STMT_PREPARE` reports to the client.
     pub fn parameter_count(&self, sql: &str) -> Result<usize, DriverError> {
-        tidb_executor::parameter_count(sql)
+        tidb_executor::parameter_count(sql, self.scanner_sql_mode())
     }
 
     /// Runs one statement with its prepared-statement parameters bound.
@@ -399,7 +399,7 @@ impl Session {
         if params.is_empty() && self.parameter_count(sql)? == 0 {
             return self.run_with_columns(sql);
         }
-        let bound = tidb_executor::bind_parameters(sql, params)?;
+        let bound = tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode())?;
         self.run_with_columns(&bound)
     }
 
@@ -514,6 +514,8 @@ mod tests_savepoint;
 mod tests_sequence;
 #[cfg(test)]
 mod tests_show;
+#[cfg(test)]
+mod tests_sql_mode_scanner;
 #[cfg(test)]
 mod tests_statement_rollback;
 mod tests_subquery;

@@ -71,7 +71,7 @@ impl Session {
     /// statement passes through here before reaching its own arm --
     /// see the `Stmt::Ddl` arm below.
     pub fn apply_schema_statement(&mut self, sql: &str) -> Result<Option<StmtOutput>, DriverError> {
-        let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        let stmt = self.parse(sql)?;
         if matches!(stmt, Stmt::Ddl(_)) {
             // Go commits the open transaction before running any DDL
             // (`session.ExecuteStmt`, which calls `sessiontxn`'s
@@ -274,7 +274,7 @@ impl Session {
         if self.apply_set(sql)?.is_some() {
             return Ok(StmtOutput::Affected(0));
         }
-        let mut stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        let mut stmt = self.parse(sql)?;
         // SQL-level prepared statements are answered before variable binding,
         // because a `USING` entry is a variable whose VALUE this statement
         // must read itself (Go's `usingParam.Eval`) rather than one to
@@ -307,6 +307,10 @@ impl Session {
         self.apply_set_var_hints(&stmt);
         self.bind_variables(&mut stmt)?;
         self.try_add_extra_limit(&mut stmt);
+        // The mode the DDL arms below re-parse under: the one in force NOW,
+        // taken before execution so a statement is lexed exactly once per
+        // meaning.
+        let sql_mode = self.scanner_sql_mode();
         // Only an allocating INSERT sets it; every other statement reports 0.
         self.statement_insert_id = 0;
         // Go sets the `InSelectStmt`/`In*Stmt` bits here, before execution,
@@ -426,14 +430,14 @@ impl Session {
                 DdlStmt::RenameTable(_) => {
                     let current_db = self.current_db.clone();
                     self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_rename_table_in(sql, catalog, &current_db)?;
+                        tidb_executor::run_rename_table_in(sql, catalog, &current_db, sql_mode)?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
                 DdlStmt::TruncateTable(_) => {
                     let current_db = self.current_db.clone();
                     self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_truncate_table_in(sql, catalog, &current_db)?;
+                        tidb_executor::run_truncate_table_in(sql, catalog, &current_db, sql_mode)?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
@@ -454,7 +458,7 @@ impl Session {
                 DdlStmt::DropIndex(_) => {
                     let current_db = self.current_db.clone();
                     self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_index_in(sql, catalog, &current_db)?;
+                        tidb_executor::run_drop_index_in(sql, catalog, &current_db, sql_mode)?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }
@@ -475,6 +479,7 @@ impl Session {
                             sql,
                             catalog,
                             &current_db,
+                            sql_mode,
                             foreign_key_checks,
                         )?;
                         // MySQL answers DDL with a zero affected-row count.
@@ -499,6 +504,7 @@ impl Session {
                             sql,
                             catalog,
                             &current_db,
+                            sql_mode,
                             foreign_key_checks,
                             enable_check_constraint,
                         )?))

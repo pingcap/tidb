@@ -189,7 +189,7 @@ impl Session {
     /// one before starting the new one, which this reproduces. `COMMIT` and
     /// `ROLLBACK` with no open transaction are no-ops, as in MySQL.
     pub fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, DriverError> {
-        let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        let stmt = self.parse(sql)?;
         let Stmt::Session(session_stmt) = &stmt else {
             return Ok(None);
         };

@@ -165,7 +165,14 @@ fn auto_increment_option(options: &[tidb_ast::TableOption]) -> Result<Option<i64
 pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, DriverError> {
     // A stock session has `tidb_enable_check_constraint` OFF, which is the
     // only mode this tier models; see [`run_create_table_in`].
-    run_create_table_in(sql, catalog, tidb_executor_default_database(), true, false)
+    run_create_table_in(
+        sql,
+        catalog,
+        tidb_executor_default_database(),
+        tidb_parser::SqlMode::default(),
+        true,
+        false,
+    )
 }
 
 /// How many `CHECK` constraints a `CREATE TABLE` writes, counting both the
@@ -222,10 +229,15 @@ pub fn run_create_table_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
+    // The session's scanner `sql_mode`: this entry RE-PARSES text the session
+    // already parsed, so without it a double-quoted name would mean one thing
+    // to the session and another here.
+    sql_mode: tidb_parser::SqlMode,
     foreign_key_checks: bool,
     enable_check_constraint: bool,
 ) -> Result<bool, DriverError> {
-    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
+        .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
 
     let create = match &stmt {
         Stmt::Ddl(ddl) => match &**ddl {

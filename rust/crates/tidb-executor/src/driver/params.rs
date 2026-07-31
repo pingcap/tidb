@@ -34,8 +34,16 @@ use super::*;
 ///
 /// Returns the bound SQL, or `ErrWrongParamCount` when the count does not
 /// match the markers the statement carries.
-pub fn bind_parameters(sql: &str, values: &[Datum]) -> Result<String, DriverError> {
-    let mut stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+pub fn bind_parameters(
+    sql: &str,
+    values: &[Datum],
+    // The scanner `sql_mode` the statement was PREPARED under: binding
+    // re-parses the prepared text, and the restore below then writes it in
+    // the parser's canonical form, exactly as Go's stored AST would.
+    sql_mode: tidb_parser::SqlMode,
+) -> Result<String, DriverError> {
+    let mut stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
+        .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let mut bound = 0usize;
     bind_statement_markers(&mut stmt, values, &mut bound)?;
     if bound != values.len() {
@@ -46,8 +54,9 @@ pub fn bind_parameters(sql: &str, values: &[Datum]) -> Result<String, DriverErro
 
 /// The number of `?` markers a statement carries, which `COM_STMT_PREPARE`
 /// reports to the client.
-pub fn parameter_count(sql: &str) -> Result<usize, DriverError> {
-    let mut stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+pub fn parameter_count(sql: &str, sql_mode: tidb_parser::SqlMode) -> Result<usize, DriverError> {
+    let mut stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
+        .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let mut counted = 0usize;
     // Counting binds nothing: every marker reports itself and stays put.
     count_statement_markers(&mut stmt, &mut counted);

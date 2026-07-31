@@ -127,7 +127,7 @@ impl Session {
     /// `run` answered it in process -- the two callers of one session have to
     /// agree.
     pub fn statement_kind(&self, sql: &str) -> Result<StmtKind, DriverError> {
-        let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        let stmt = self.parse(sql)?;
         Ok(match &stmt {
             // `KILL` is the one admin statement that answers with an OK
             // packet rather than a result set, as it does in Go.
@@ -159,7 +159,7 @@ impl Session {
         &self,
         sql: &str,
     ) -> Result<StoredStateChange, DriverError> {
-        let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        let stmt = self.parse(sql)?;
         Ok(match &stmt {
             // The account statements the parser builds as DDL nodes, because
             // Go's `ast.DDLNode` covers them too: they write `mysql.user` and

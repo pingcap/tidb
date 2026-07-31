@@ -150,6 +150,40 @@ impl Session {
         ))
     }
 
+    /// The scanner-facing half of `@@sql_mode`: the input Go hands
+    /// `Parser.SetSQLMode`, read fresh at every parse so a `SET sql_mode`
+    /// changes the statements AFTER it and no AST built before it.
+    ///
+    /// Go reads the mode once per statement, in `session.ParseSQL`
+    /// (`pkg/session/session.go`), because Go parses once and passes the AST
+    /// down. This tier re-parses the raw text in the executor tiers, so the
+    /// mode has to travel with the statement; it travels on
+    /// [`tidb_executor::StmtContext`], which every executor entry already
+    /// takes, rather than on ~30 separate parameters.
+    pub(crate) fn scanner_sql_mode(&self) -> tidb_parser::SqlMode {
+        // `SET sql_mode = 'ANSI'` is stored already expanded (captured from
+        // TiDB: `@@sql_mode` reads back
+        // `REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI`),
+        // so matching names against the stored text sees every flag a
+        // combination brought in.
+        scanner_sql_mode_of(
+            &self
+                .vars
+                .get_system("sql_mode")
+                .unwrap_or_default()
+                .to_ascii_uppercase(),
+        )
+    }
+
+    /// Parses one statement of THIS session, under the `sql_mode` in force
+    /// right now. Go's `session.ParseSQL` is the same single door; every
+    /// session-tier parse goes through here so no call site decides on its own
+    /// that a scanner flag does not apply to it.
+    pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, DriverError> {
+        tidb_parser::parse_with_sql_mode(sql, self.scanner_sql_mode())
+            .map_err(|e| DriverError::Parse(format!("{e:?}")))
+    }
+
     pub(crate) fn statement_context(&self, is_dml: bool) -> tidb_executor::StmtContext {
         // Go hands the same `SessionVars` to every expression, which is where
         // `DATABASE()` and `VERSION()` read from.
@@ -224,6 +258,7 @@ impl Session {
                 .with_previous_statement(self.last_insert_id, self.prev_row_count)
                 .with_week_and_division_scale(week_format, div_scale)
                 .with_sequences(self.sequence_snapshot())
+                .with_sql_mode(scanner_sql_mode_of(&mode))
                 .with_clock(clock, zone);
         }
         tidb_executor::StmtContext::for_dml(
@@ -248,6 +283,7 @@ impl Session {
         .with_week_and_division_scale(week_format, div_scale)
         .with_sequences(self.sequence_snapshot())
         .with_clock(clock, zone)
+        .with_sql_mode(scanner_sql_mode_of(&mode))
         .with_auto_increment_step_default(self.auto_increment_step_is_default())
         .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
         .with_foreign_key_checks(self.foreign_key_checks())
@@ -318,5 +354,22 @@ impl Session {
             },
             StatementKind::Other => 0,
         };
+    }
+}
+
+/// The scanner flags Go's `Parser.SetSQLMode` consults, read off an
+/// already-uppercased, already-expanded `@@sql_mode` text.
+///
+/// `PIPES_AS_CONCAT` is deliberately absent: the lexer has no field for it
+/// and the parser has no `precConcat` level, so setting it here would be a
+/// claim this tier cannot honor. See `rust/docs/operations/sql-mode-coverage.md`.
+pub(crate) fn scanner_sql_mode_of(mode: &str) -> tidb_parser::SqlMode {
+    let has = |flag: &str| mode.split(',').any(|part| part.trim() == flag);
+    tidb_parser::SqlMode {
+        real_as_float: has("REAL_AS_FLOAT"),
+        no_backslash_escapes: has("NO_BACKSLASH_ESCAPES"),
+        ansi_quotes: has("ANSI_QUOTES"),
+        high_not_precedence: has("HIGH_NOT_PRECEDENCE"),
+        ignore_space: has("IGNORE_SPACE"),
     }
 }

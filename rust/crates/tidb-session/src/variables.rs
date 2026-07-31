@@ -135,7 +135,7 @@ impl Session {
     /// DEFERRED (documented): resource groups and the other non-variable
     /// `SET` forms stay unsupported.
     pub fn apply_set(&mut self, sql: &str) -> Result<Option<()>, DriverError> {
-        let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+        let stmt = self.parse(sql)?;
         let Stmt::Session(session_stmt) = &stmt else {
             return Ok(None);
         };

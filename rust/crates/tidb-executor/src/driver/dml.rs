@@ -63,7 +63,7 @@ pub fn run_insert_reporting(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(u64, Option<i64>), DriverError> {
-    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let stmt = ctx.parse(sql)?;
 
     let insert = match &stmt {
         Stmt::Dml(dml) => match &**dml {
@@ -1090,7 +1090,7 @@ pub fn run_update_in(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
-    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let stmt = ctx.parse(sql)?;
     let update = match &stmt {
         Stmt::Dml(dml) => match &**dml {
             tidb_ast::DmlStmt::Update(update) => update,
@@ -1461,7 +1461,7 @@ pub fn run_delete_in(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
-    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let stmt = ctx.parse(sql)?;
     let delete = match &stmt {
         Stmt::Dml(dml) => match &**dml {
             tidb_ast::DmlStmt::Delete(delete) => delete,

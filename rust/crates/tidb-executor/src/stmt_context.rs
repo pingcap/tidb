@@ -148,6 +148,18 @@ pub struct StmtContext {
     /// it gets the shipped defaults (1GiB, `CANCEL`); see
     /// [`StatementMemory::default`].
     memory: StatementMemory,
+    /// The scanner flags of `@@sql_mode` -- Go's `Parser.SetSQLMode` input.
+    ///
+    /// Go parses a statement once, in `session.ParseSQL`, and hands the AST
+    /// down; this tier hands the raw text down and RE-PARSES it in the DML and
+    /// DDL entry points, so the mode has to arrive with the statement. It
+    /// rides here rather than as a parameter on every entry because every
+    /// entry already takes this context: one channel, no call site that can
+    /// forget.
+    ///
+    /// The all-false default is TiDB's default `sql_mode` for these flags, so
+    /// a context with no session behind it lexes exactly as before.
+    sql_mode: tidb_parser::SqlMode,
 }
 
 /// The sequence state one statement can see: the allocators it may read and
@@ -255,6 +267,7 @@ impl StmtContext {
             cte_max_recursion_depth: 1000,
             sequences: Rc::default(),
             memory: StatementMemory::default(),
+            sql_mode: tidb_parser::SqlMode::default(),
         }
     }
 
@@ -274,6 +287,28 @@ impl StmtContext {
     #[must_use]
     pub fn statement_memory(&self) -> StatementMemory {
         self.memory.clone()
+    }
+
+    /// Attaches the session's scanner `sql_mode` flags, which every re-parse
+    /// this statement performs must lex under.
+    #[must_use]
+    pub fn with_sql_mode(mut self, sql_mode: tidb_parser::SqlMode) -> Self {
+        self.sql_mode = sql_mode;
+        self
+    }
+
+    /// The scanner `sql_mode` flags for this statement's re-parses.
+    #[must_use]
+    pub fn sql_mode(&self) -> tidb_parser::SqlMode {
+        self.sql_mode
+    }
+
+    /// Re-parses this statement's own text under its `sql_mode`. Every entry
+    /// point that takes SQL text as a string goes through here, so a scanner
+    /// flag cannot be honored by one tier and dropped by the next.
+    pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, crate::DriverError> {
+        tidb_parser::parse_with_sql_mode(sql, self.sql_mode)
+            .map_err(|e| crate::DriverError::Parse(format!("{e:?}")))
     }
 
     /// A context for a query, where Go always warns on a zero divisor.

@@ -38,8 +38,13 @@ pub fn run_rename_table_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
+    // The session's scanner `sql_mode`: this entry RE-PARSES text the session
+    // already parsed, so without it a double-quoted name would mean one thing
+    // to the session and another here.
+    sql_mode: tidb_parser::SqlMode,
 ) -> Result<(), DriverError> {
-    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
+        .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let Stmt::Ddl(ddl) = &stmt else {
         return Err(DriverError::Unsupported(
             "only RENAME TABLE is supported here",
@@ -101,8 +106,13 @@ pub fn run_truncate_table_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
+    // The session's scanner `sql_mode`: this entry RE-PARSES text the session
+    // already parsed, so without it a double-quoted name would mean one thing
+    // to the session and another here.
+    sql_mode: tidb_parser::SqlMode,
 ) -> Result<(), DriverError> {
-    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
+        .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let Stmt::Ddl(ddl) = &stmt else {
         return Err(DriverError::Unsupported(
             "only TRUNCATE TABLE is supported here",
@@ -138,9 +148,14 @@ pub fn run_drop_table_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
+    // The session's scanner `sql_mode`: this entry RE-PARSES text the session
+    // already parsed, so without it a double-quoted name would mean one thing
+    // to the session and another here.
+    sql_mode: tidb_parser::SqlMode,
     foreign_key_checks: bool,
 ) -> Result<(), DriverError> {
-    let stmt = tidb_parser::parse(sql).map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
+        .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let drop = match &stmt {
         Stmt::Ddl(ddl) => match &**ddl {
             DdlStmt::DropTable(drop) => drop,
