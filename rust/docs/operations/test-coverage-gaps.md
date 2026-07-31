@@ -233,6 +233,47 @@ smaller world. Between the two runs ~500 new Rust tests landed in mapped paths
 and closed exactly ZERO named Go gaps, which is worth knowing on its own: new
 tests in this tree are overwhelmingly new behaviour, not Go-test transcreation.
 
+### Mined from `pkg/ddl`: the column-`DEFAULT` seam
+
+The first two `pkg/ddl` ports found two bugs; a second pass over the same seam
+found five more, all one mechanism. **Every settled column `DEFAULT` in Go is
+converted into the column's OWN domain at DDL time and stored as the text of
+that value.** This port settled `ENUM`/`SET` (after the first pass) and the
+numeric types, and left everything else as the datum it was handed -- so the
+value was usually right, because the insert path converts it again, while every
+SURFACE that prints a default was wrong. A printed `CREATE TABLE` body that
+re-reads as a different table is the whole bug class, and it is invisible to
+any test that only selects rows.
+
+| Go test / Go function | Ported to | What it found |
+| --- | --- | --- |
+| `db_integration_test.go` `TestBitDefaultValue` (whole, every statement) | `tidb-session/src/tests_column_defaults.rs`, 4 tests | `bit(10) DEFAULT 250` printed `DEFAULT '250'` and `bit(16) DEFAULT b'1100110111001'` printed `DEFAULT ''` -- `datum_text` has no `BinaryLiteral` arm, so `SHOW CREATE TABLE` emitted an EMPTY default and `SHOW COLUMNS`/`information_schema.columns` reported NULL for a column that has one. Fixed at both ends: the value settles to bits at DDL time, and the three printers share Go's one `TypeBit` branch. |
+| `db_integration_test.go` `TestAlterColumn` (the `ALTER COLUMN` half; the index-preservation and `auto_increment` halves are NOT ported -- see below) | same file, 1 test | `checkDefaultValue`'s last two arms were absent: `NOT NULL ... DEFAULT NULL` is 1067 and `PRIMARY KEY ... DEFAULT NULL` is 1171, and BOTH were accepted, on all four paths that write a default. |
+| `add_column.go` `setDefaultValueWithBinaryPadding`, `getDefaultValue`'s `KindBinaryLiteral` branch, `show.go`'s `format.OutputFormat` | same file, 1 test | `binary(4) DEFAULT 0x61` printed `DEFAULT ''` (the string types were outside the decode branch), was not NUL-padded to its width, and the printer did not escape -- so `varchar(10) DEFAULT 'a''b'` printed a body that does not re-parse. |
+| `types/datum.go` `GetBinaryStringDecoded` | `tidb-datatype/src/datum/mod.rs` | The accessor read `as_raw_bytes` and so answered `None` for `BinaryLiteral` and `Bit`, the only two kinds Go calls it on; two call sites had grown inline workarounds. `go_bytes()` is now the faithful `GetBytes`, and both workarounds are deleted. |
+
+Measured negatives from the same pass, so nobody re-derives them:
+
+- **`checkColumnDefaultValue`'s `TypeBit` WIDTH arm already holds.** `bit(1)
+  DEFAULT 250` and `bit(10) DEFAULT 1024` are 1067 here, `bit(10) DEFAULT 1023`
+  and `bit(64) DEFAULT 18446744073709551615` stand. The strict conversion in
+  `normalize_column_default` was already doing it; the test is coverage of
+  behaviour that was right, not a fix.
+- **`ALTER COLUMN ... DROP DEFAULT` is refused, not approximated,** and the
+  refusal is now pinned by a test that FAILS when the gap closes, carrying the
+  captured Go answers it will then have to assert (1364 for an omitted column,
+  and a printed column with no `DEFAULT` clause at all). Go's `DROP DEFAULT`
+  sets `NoDefaultValueFlag`, which this tier does not model.
+- **`TestZeroFillCreateTable` is covered.**
+  `tidb-executor/src/ddl/column_field_type.rs` already carries the ZEROFILL ->
+  UNSIGNED implication and `process_column_flags` the `YEAR` half.
+- **`TestAlterColumn`'s index-preservation and `auto_increment` halves are NOT
+  ported and are the obvious next bite**: `MODIFY COLUMN` must preserve a
+  `PRIMARY KEY`/`UNIQUE` and its `NOT NULL`, must REFUSE to add one, must
+  refuse to drop `AUTO_INCREMENT` unless `tidb_allow_remove_auto_inc` is on,
+  and must always refuse to add it. Every one of those is an accept-then-discard
+  shape and none was checked here.
+
 ## Measured negatives
 
 Recorded so the next worker does not re-derive them. Each is a gap the
