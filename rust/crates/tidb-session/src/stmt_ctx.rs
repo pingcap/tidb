@@ -243,8 +243,19 @@ impl Session {
                 .get_global("tidb_mem_oom_action")
                 .unwrap_or_default(),
         );
+        // The SAME three bits on both branches: a query reads them for
+        // `CAST(... AS DATE/DATETIME)`, a DML statement reads them for the
+        // column write. They used to be attached only below, which left every
+        // read with the all-false default -- and made `NO_ZERO_DATE` silently
+        // inoperative on the read path.
+        let date_modes = tidb_datatype::DateModes {
+            no_zero_date: has("NO_ZERO_DATE"),
+            no_zero_in_date: has("NO_ZERO_IN_DATE"),
+            allow_invalid_dates: has("ALLOW_INVALID_DATES"),
+        };
         if !is_dml {
             return tidb_executor::StmtContext::for_query()
+                .with_date_modes(date_modes)
                 .with_cte_max_recursion_depth(cte_depth)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
                 .with_session_state(current_db, version)
@@ -265,11 +276,7 @@ impl Session {
             has("ERROR_FOR_DIVISION_BY_ZERO"),
             has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
         )
-        .with_date_modes(tidb_executor::zero_date::DateModes {
-            no_zero_date: has("NO_ZERO_DATE"),
-            no_zero_in_date: has("NO_ZERO_IN_DATE"),
-            allow_invalid_dates: has("ALLOW_INVALID_DATES"),
-        })
+        .with_date_modes(date_modes)
         .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
         .with_session_state(current_db, version)
         .with_user(self.current_user.clone(), self.login_user.clone())

@@ -729,6 +729,13 @@ impl Columns for StmtContext {
         self.warnings.borrow_mut().push((code, message.to_owned()));
     }
 
+    /// The same three mode bits the WRITE path reads from
+    /// [`Self::write_conversion_flags`], handed to expression evaluation so a
+    /// `CAST` to a temporal type answers under the session's SQL mode.
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        self.date_modes
+    }
+
     fn row_count(&self) -> Option<i64> {
         Some(self.prev_row_count)
     }

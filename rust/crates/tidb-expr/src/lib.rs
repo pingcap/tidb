@@ -649,10 +649,12 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
         // `Unsupported`, deliberately NOT falling through to
         // `cast::eval_cast` — confirmed via `goeval`/`gorun` that real
         // TiDB's own evaluation for these genuinely diverges from
-        // `CAST(... AS DATE)`'s existing (lenient, `NULL`-on-invalid)
+        // `CAST(... AS DATE)`'s own (never-fails: a warning plus `NULL`,
+        // or the value itself when the statement's flags admit it)
         // behavior: an invalid date string is a hard query ERROR for the
-        // typed-literal form (`SELECT DATE '2007-10-00'` fails outright),
-        // not `NULL` — reusing `cast::eval_cast` here would silently
+        // typed-literal form (`SELECT DATE '2007-10-00'` fails outright)
+        // where the cast of that same text answers `2007-10-00` under
+        // every mode — reusing `cast::eval_cast` here would silently
         // produce the WRONG value for exactly the invalid-date inputs
         // this syntax is most often used to test, not just an incomplete
         // one. See `tidb_ast::CastStyle::DateLiteral`'s own doc.
@@ -672,7 +674,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
         Expr::Cast(cast) if cast.array => Err(EvalError::Unsupported("ARRAY cast type")),
         Expr::Cast(cast) => match eval_in(&cast.expr, cols)? {
             Datum::Null => Ok(Datum::Null),
-            v => cast::eval_cast(&cast.cast_type, v),
+            v => cast::eval_cast(&cast.cast_type, v, cols),
         },
         // `CONVERT(expr USING charset)` is a charset RETAG, not a value-type
         // cast: it stringifies (confirmed via `goeval`: `CONVERT(123 USING

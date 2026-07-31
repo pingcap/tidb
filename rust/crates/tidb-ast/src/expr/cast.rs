@@ -56,9 +56,10 @@ pub enum CastStyle {
     /// `tidb_parser::parse_prefix`'s own `"DATE"` dispatch doc).
     /// Evaluation is deliberately `Unsupported`, unconditionally — see
     /// this variant's own doc in `tidb_parser` for why reusing
-    /// `CAST(... AS DATE)`'s existing (lenient, `NULL`-on-invalid)
-    /// evaluation logic would be a genuine correctness regression, not
-    /// just an incomplete one.
+    /// `CAST(... AS DATE)`'s own (never-fails: a warning plus `NULL`, or
+    /// the value itself when the statement's flags admit it) evaluation
+    /// logic would be a genuine correctness regression, not just an
+    /// incomplete one.
     DateLiteral,
     /// `TIME 'literal'` — see [`CastStyle::DateLiteral`]'s own doc; the
     /// SAME shape, `cast_type` always [`CastType::Time`] with `fsp:

@@ -26,9 +26,7 @@
 //! each function's own doc for the specific probe.
 
 use crate::coerce::coerce_str;
-use crate::time_fn::calendar::{
-    format_ymd_result, format_ymdhms_result, parse_date_ymd, parse_time_hms,
-};
+use crate::time_fn::calendar::{format_ymd_result, format_ymdhms_result, parse_date_ymd};
 use crate::Decimal;
 use crate::{Datum, EvalError};
 use tidb_ast::CastType;
@@ -36,7 +34,11 @@ use tidb_ast::CastType;
 /// Evaluates a [`CastType`] against an already-evaluated, non-`NULL`
 /// operand (`NULL` is handled by the caller — every target type maps
 /// `NULL` to `NULL`, so there's no per-type NULL case to write here).
-pub(crate) fn eval_cast(cast_type: &CastType, v: Datum) -> Result<Datum, EvalError> {
+pub(crate) fn eval_cast(
+    cast_type: &CastType,
+    v: Datum,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
     if v.is_range_sentinel() {
         return Err(EvalError::Unsupported("range sentinel cast operand"));
     }
@@ -65,8 +67,8 @@ pub(crate) fn eval_cast(cast_type: &CastType, v: Datum) -> Result<Datum, EvalErr
         CastType::Decimal { flen, scale } => Ok(Datum::Decimal(
             to_decimal_for_cast(&v).cast_to_precision(*flen, *scale),
         )),
-        CastType::Date => cast_to_date(&v),
-        CastType::DateTime { .. } => cast_to_datetime(&v),
+        CastType::Date => cast_to_time(&v, ctx, tidb_datatype::TimeType::Date),
+        CastType::DateTime { .. } => cast_to_time(&v, ctx, tidb_datatype::TimeType::DateTime),
         CastType::Year => cast_to_year(&v),
         CastType::Double | CastType::Float => Ok(Datum::Real(to_f64_for_cast(&v))),
         CastType::Time { .. } => Err(EvalError::Unsupported("CAST AS TIME")),
@@ -352,43 +354,89 @@ fn to_f64_for_cast(v: &Datum) -> f64 {
     }
 }
 
-/// `CAST(... AS DATE)`: parses the operand's calendar date, IGNORING any
-/// trailing time-of-day (exactly like every other DATE-truncating
-/// function in `crate::time_fn::calendar` already does — confirmed via `goeval`:
-/// `CAST('2021-01-01 10:30:00' AS DATE)` is `2021-01-01`, the time simply
-/// dropped, not validated). `NULL` if the operand doesn't coerce to a
-/// string or doesn't parse as a date.
-fn cast_to_date(v: &Datum) -> Result<Datum, EvalError> {
-    Ok(match coerce_str(v)?.and_then(|s| parse_date_ymd(&s)) {
-        Some((y, m, d)) => format_ymd_result(y, m, d, None),
-        None => Datum::Null,
-    })
-}
-
-/// `CAST(... AS DATETIME)`: like [`cast_to_date`], but ALSO parses a
-/// trailing time-of-day, defaulting to midnight if the input has none —
-/// mirrors `time_fn::calendar::date_add`'s own date/time-suffix splitting exactly.
-/// A time suffix that's PRESENT but doesn't parse as `HH:MM:SS` makes the
-/// WHOLE cast `NULL` (confirmed via `goeval`), not just the time part.
-fn cast_to_datetime(v: &Datum) -> Result<Datum, EvalError> {
+/// `CAST(... AS DATE)` and `CAST(... AS DATETIME)`: Go
+/// `builtinCastStringAsTimeSig.evalTime`.
+///
+/// The whole body is Go's, in order: `types.ParseTime` under the STATEMENT's
+/// type flags, then `handleInvalidTimeError` on failure, then the separate
+/// `NO_ZERO_DATE` rejection of an all-zero result, then the DATE truncation
+/// of the clock fields.
+///
+/// # Why this does not use this crate's own date parser
+///
+/// It used to, and that was two sources of truth for one table. Go asks
+/// `Time.Check` the zero-in-date and invalid-date questions with the
+/// statement's flags; `time_fn::calendar::parse_date_ymd` asks NEITHER and
+/// rejects a zero month unconditionally, so `CAST('2024-00-01' AS DATE)`
+/// answered NULL where TiDB answers `2024-00-01`, and every failing cast
+/// answered NULL with NO warning where TiDB warns 1292.
+/// `tidb_datatype::parse_time` is the faithful port of Go's `ParseTime`,
+/// flags included, and is the same parser the WRITE path converts through.
+/// `parse_date_ymd` stays strict for its own callers, which Go does NOT
+/// relax (see its doc).
+///
+/// # The flags are the READ path's, not the write path's
+///
+/// Go `ResetContextOfStmt`'s `*ast.SelectStmt` arm sets `IgnoreZeroInDate`
+/// UNCONDITIONALLY -- a zero-in-date reads back intact even under the default
+/// mode that refuses to STORE one -- and takes `IgnoreInvalidDateErr` from
+/// `ALLOW_INVALID_DATES` alone. With `TruncateAsWarning` also set, a bad
+/// value is a warning plus NULL, never a statement failure: READS NEVER FAIL,
+/// in any sql_mode.
+fn cast_to_time(
+    v: &Datum,
+    ctx: &dyn crate::Columns,
+    kind: tidb_datatype::TimeType,
+) -> Result<Datum, EvalError> {
     let Some(s) = coerce_str(v)? else {
         return Ok(Datum::Null);
     };
-    let trimmed = s.trim();
-    let (date_str, time_suffix) = trimmed
-        .split_once(char::is_whitespace)
-        .map_or((trimmed, None), |(d, t)| (d, Some(t)));
-    let Some((y, m, d)) = parse_date_ymd(date_str) else {
-        return Ok(Datum::Null);
+    let modes = ctx.date_modes();
+    // The timezone only reaches TIMESTAMP's range check, which neither of
+    // these two target types performs; UTC keeps it out of the answer.
+    let parsed = tidb_datatype::parse_time(
+        &s,
+        kind,
+        i64::from(tidb_datatype::get_fsp(&s)),
+        false,
+        true,
+        modes.allow_invalid_dates,
+        &chrono::Utc,
+    );
+    let Ok(parsed) = parsed else {
+        return Ok(invalid_time_warning(ctx, &s));
     };
-    let (h, mi, sec) = match time_suffix {
-        Some(t) => match parse_time_hms(t.trim_start()) {
-            Some(hms) => hms,
-            None => return Ok(Datum::Null),
-        },
-        None => (0, 0, 0),
-    };
-    Ok(format_ymdhms_result(y, m, d, h, mi, sec))
+    // Go's SECOND check, deliberately after the parse and independent of the
+    // flags: an all-zero result is rejected by NO_ZERO_DATE alone.
+    if parsed.time.is_zero() && modes.no_zero_date {
+        return Ok(invalid_time_warning(ctx, &s));
+    }
+    let core = parsed.time.core_time();
+    let (y, m, d) = (
+        i64::from(core.year()),
+        u32::from(core.month()),
+        u32::from(core.day()),
+    );
+    Ok(if kind == tidb_datatype::TimeType::Date {
+        // Go: "Truncate hh:mm:ss part if the type is Date."
+        format_ymd_result(y, m, d, None)
+    } else {
+        format_ymdhms_result(
+            y,
+            m,
+            d,
+            u32::from(core.hour()),
+            u32::from(core.minute()),
+            u32::from(core.second()),
+        )
+    })
+}
+
+/// Go `handleInvalidTimeError` on the read path: `ErrWrongValue` (1292)
+/// becomes a warning and the cast yields NULL.
+fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str) -> Datum {
+    ctx.append_warning(1292, &format!("Incorrect datetime value: '{input}'"));
+    Datum::Null
 }
 
 /// `CAST(... AS YEAR)`: the operand's calendar year if it parses as a

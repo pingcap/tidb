@@ -424,23 +424,12 @@ fn cast_in_a_select_only_warns() {
             [["NULL"]],
             "sql_mode={sql_mode}"
         );
-        // NOT ASSERTED, and named rather than quietly dropped: TiDB also
-        // leaves warning 1292 `Incorrect datetime value: 'not-a-date'` here,
-        // which this tier does not yet produce. It is a READ-path gap in the
-        // expression cast (`tidb_expr::cast`, which has its own parser and
-        // never consults `Datum::convert_to`), so the write seam above cannot
-        // reach it and fixing it belongs to a unit that owns that parser.
-        // The assertions that DO run are the ones the write fix could have
-        // broken: the value, and the absence of an error.
-
-        // ALSO A READ-PATH GAP, and measured rather than assumed: TiDB yields
-        // `2024-00-01` here under every mode -- a `SELECT` gets
-        // `IgnoreZeroInDate` unconditionally -- while this tier yields NULL,
-        // because `tidb_expr`'s date parser rejects a zero month outright
-        // (`parse_date_ymd`) with no flag to consult. Same owner as the
-        // missing warning above. What is asserted is that the statement
-        // SUCCEEDS: the read path never fails, in any mode, which is the
-        // property the write fix had to preserve.
+        // The two read-path gaps this control once only NAMED -- a missing
+        // warning 1292, and a zero-in-date reading as NULL instead of itself
+        // -- are closed, and the full read matrix now lives in
+        // `crate::tests_read_cast`. What stays here is the property the WRITE
+        // fix had to preserve and must keep preserving: the read path never
+        // fails the statement, in any mode.
         session
             .run("SELECT CAST('2024-00-01' AS DATE)")
             .unwrap_or_else(|error| panic!("read path failed under {sql_mode}: {error:?}"));

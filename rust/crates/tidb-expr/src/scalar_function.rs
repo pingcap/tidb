@@ -553,7 +553,7 @@ impl ScalarFunction {
                 let ret_type = self
                     .get_static_type()
                     .ok_or(EvalError::Unsupported("a cast with no result type"))?;
-                return crate::cast::eval_cast(&cast_type_of(target, ret_type)?, value);
+                return crate::cast::eval_cast(&cast_type_of(target, ret_type)?, value, ctx);
             }
         }
         // The `DATE_ADD`/`DATE_SUB` family: the rewriter recorded the INTERVAL
@@ -815,7 +815,9 @@ fn uservar_as_kind(kind: &str, value: Datum) -> Result<Datum, EvalError> {
         },
         _ => return Err(EvalError::Unsupported("unknown user-variable kind")),
     };
-    crate::cast::eval_cast(&target, value)
+    // No session resolver is threaded here on purpose: every target above is
+    // numeric or string, so no arm reads the date modes or raises a warning.
+    crate::cast::eval_cast(&target, value, &crate::NoColumns)
 }
 
 fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType, EvalError> {

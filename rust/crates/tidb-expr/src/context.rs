@@ -344,6 +344,16 @@ pub trait Columns {
         let _ = (code, message);
     }
 
+    /// Go `SessionVars.SQLMode`'s three temporal bits, shared with the write
+    /// path (`tidb_executor::zero_date`) so one table decides what a zero,
+    /// zero-in, or invalid date means on BOTH sides of a value.
+    ///
+    /// A resolver with no session answers TiDB's shipped `DefaultSQLMode`,
+    /// which is the mode a folded constant would meet on a default server.
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE
+    }
+
     /// Go `handleDivisionByZeroError`: applies this statement's level to a
     /// zero divisor. The value the caller returns is `NULL` either way; only
     /// whether the statement survives differs.
