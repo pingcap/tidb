@@ -66,12 +66,34 @@ struct Offender {
 /// TiDB's default `sql_mode` carries; clearing the mode restores the
 /// permissive `FIRST_ROW` behavior for every case below.
 ///
-/// DEFERRED (documented, matching what has been captured): Go additionally
-/// derives functional dependencies ACROSS a join, from an equality in `WHERE`
-/// or in an `ON` (`buildWhereFuncDepend` / `buildJoinFuncDepend`), so grouping
-/// by one side's key can justify the other side's columns. This checks each
-/// table's own candidate keys only, which is strictly the narrower rule --
-/// it never permits what Go rejects.
+/// DEFERRED, and it is a REFUSAL of queries TiDB answers, not a permission.
+/// Being narrower than Go here never permits what Go rejects, so it costs no
+/// wrong answers -- but it costs 44 statements in `tests/integrationtest`'s
+/// `planner/funcdep/only_full_group_by`, which TiDB's own recording shows
+/// accepted and which this tier refuses with 1055. They are the whole of that
+/// topic's remaining out-of-domain set (the integration ratchet counts them as
+/// SKIPPED, not as divergences, so the number does not show them), and they
+/// fall in three classes, each needing part of Go's `pkg/planner/funcdep`:
+///
+///  * ACROSS A JOIN (24). Go derives a dependency from an equality in a
+///    `WHERE` or an `ON` (`buildWhereFuncDepend` / `buildJoinFuncDepend`), so
+///    grouping by one side's key justifies the other side's columns:
+///    `select t1.pk, t2.b from t1 join t2 on t1.pk=t2.pk group by t1.pk`.
+///    This checks each table's own candidate keys only.
+///  * A GENERATED COLUMN IS DETERMINED BY ITS SOURCE (7). Over `t(a INT, c
+///    INT GENERATED ALWAYS AS (a+2), d INT GENERATED ALWAYS AS (c+2))`,
+///    `SELECT c FROM t GROUP BY a` is legal, and transitively so is `SELECT d
+///    FROM t GROUP BY a`. A generated column's expression is a dependency
+///    this rule does not read at all.
+///  * A NULLABLE UNIQUE KEY BECOMES A CANDIDATE KEY (13). Over `t(a INT NULL,
+///    b INT NOT NULL, c INT, UNIQUE(a,b))`, `UNIQUE(a,b)` is not a candidate
+///    key while `a` may be NULL -- but `SELECT a,b,c FROM t WHERE a IS NOT
+///    NULL GROUP BY a,b` is legal, because the `WHERE` proves it. Go reaches
+///    the same conclusion from `a > 3`, `a = 3`, `a BETWEEN 3 AND 6`, `a IN
+///    (...)`, `a IS TRUE` and `a LIKE ...`, and NOT from `a <=> NULL` or `a
+///    IS NOT TRUE`, which the recording refuses with 1055. `determinants`
+///    below is the seam: it holds keys, with no notion of which are nullable
+///    or of what the `WHERE` has proved about them.
 pub(crate) fn check_only_full_group_by(
     select: &tidb_ast::SelectStmt,
     scope: &FromScope,
