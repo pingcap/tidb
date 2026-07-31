@@ -1341,15 +1341,18 @@ pub(crate) fn compute_updated_row(
     // why a row whose NULL is replaced by the same zero it already held is
     // still counted as unchanged AND still warns. `ErrGroupBadNull` for an
     // UPDATE is an error exactly under strict mode (`ResetUpdateStmtCtx`).
+    // Zipped rather than indexed because the row can be WIDER than the column
+    // list: an expression index appends a hidden generated column to the
+    // stored row that `column_list` does not name. Go loops `t.Cols()`, which
+    // is the visible columns, so stopping where the names stop IS the rule
+    // and not a bounds guard.
     let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
-    for (offset, value) in new_row.iter_mut().enumerate() {
-        crate::bad_null::handle_bad_null(
-            value,
-            &field_types[offset],
-            &column_names[offset],
-            level,
-            ctx,
-        )?;
+    for ((value, field_type), name) in new_row
+        .iter_mut()
+        .zip(field_types.iter())
+        .zip(column_names.iter())
+    {
+        crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
     }
     if new_row == row {
         // Go counts this row as touched, not affected.

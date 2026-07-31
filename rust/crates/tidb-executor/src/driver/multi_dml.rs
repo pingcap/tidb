@@ -442,14 +442,8 @@ pub(crate) fn run_multi_update(
             // follows: every column of the new row is NULL-checked before the
             // changed comparison.
             let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
-            for (offset, value) in new_row.iter_mut().enumerate() {
-                crate::bad_null::handle_bad_null(
-                    value,
-                    &table.columns[offset].1,
-                    &table.columns[offset].0,
-                    level,
-                    ctx,
-                )?;
+            for (value, (name, field_type)) in new_row.iter_mut().zip(table.columns.iter()) {
+                crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
             }
             let changed = new_row != old;
             if changed {
