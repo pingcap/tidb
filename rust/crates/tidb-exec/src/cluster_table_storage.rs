@@ -51,7 +51,6 @@
 use std::fmt;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use tidb_executor::cluster_storage::{
@@ -67,6 +66,7 @@ use tidb_txnkv::transaction::{
 use tidb_txnkv::Key;
 
 use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
+use crate::pinned_thread_pool::PinnedThreadPool;
 
 /// One request the transaction's own thread serves, with the channel its answer
 /// goes back on.
@@ -94,23 +94,29 @@ enum TransactionRequest {
     },
 }
 
-/// One real transaction pinned to the thread that opened it.
+/// One real transaction pinned to the thread it was opened on.
 ///
 /// The production transport is deliberately worker-local (`Rc<RefCell<..>>`),
 /// while `TableStorage` is `Send` because a `KvTable` lives in a catalog the
 /// server shares between workers. Both constraints hold at once here: the
-/// transaction is created, used and ended on one dedicated thread, and what
-/// crosses threads is this handle -- a channel and a timestamp. No borrow of
-/// the transport ever leaves its thread.
+/// transaction is created, used and ended on one thread it has to itself, and
+/// what crosses threads is this handle -- a channel and a timestamp. No borrow
+/// of the transport ever leaves its thread.
+///
+/// The thread is borrowed from [`PinnedThreadPool`] rather than spawned, which
+/// is why the transaction still owns a thread for its whole life without every
+/// statement paying to create one. A statement that opens a snapshot and
+/// finishes it costs one channel handshake instead of a `pthread_create` plus a
+/// `join`; on the cluster path, where every statement -- `SELECT 1` included --
+/// opens one, that is roughly 17 microseconds each.
 struct TransactionThread {
     requests: Option<Sender<TransactionRequest>>,
-    worker: Option<JoinHandle<()>>,
     start_ts: u64,
 }
 
 impl TransactionThread {
-    /// Opens one transaction on its own thread, spending exactly one PD
-    /// timestamp.
+    /// Opens one transaction on a thread it owns until it ends, spending
+    /// exactly one PD timestamp.
     ///
     /// `writable` decides the publication budget the coordinator opens with: a
     /// read-only transaction is opened with the tightest possible one (zero),
@@ -128,33 +134,35 @@ impl TransactionThread {
         let (requests, incoming) = mpsc::channel::<TransactionRequest>();
         let (opened, opened_reply) = mpsc::channel::<Result<u64, OptimisticCoordinatorError>>();
         let opener = Arc::clone(opener);
-        let worker = thread::Builder::new()
-            .name(name.to_owned())
-            .spawn(move || {
-                let begun = if writable {
-                    opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
-                } else {
-                    opener.begin_read_only()
-                };
-                let transaction = match begun {
-                    Ok(transaction) => {
-                        // A caller that stopped waiting leaves no lock behind:
-                        // the transaction ends here instead.
-                        if opened.send(Ok(transaction.start_ts())).is_err() {
-                            let _ = transaction.finish_without_writes();
+        PinnedThreadPool::shared()
+            .run(
+                name,
+                Box::new(move || {
+                    let begun = if writable {
+                        opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+                    } else {
+                        opener.begin_read_only()
+                    };
+                    let transaction = match begun {
+                        Ok(transaction) => {
+                            // A caller that stopped waiting leaves no lock
+                            // behind: the transaction ends here instead.
+                            if opened.send(Ok(transaction.start_ts())).is_err() {
+                                let _ = transaction.finish_without_writes();
+                                return;
+                            }
+                            transaction
+                        }
+                        Err(error) => {
+                            let _ = opened.send(Err(error));
                             return;
                         }
-                        transaction
-                    }
-                    Err(error) => {
-                        let _ = opened.send(Err(error));
-                        return;
-                    }
-                };
-                let call = UnaryCallContext::with_timeout(timeout);
-                serve_transaction(transaction, &incoming, &call);
-            })
-            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+                    };
+                    let call = UnaryCallContext::with_timeout(timeout);
+                    serve_transaction(transaction, &incoming, &call);
+                }),
+            )
+            .map_err(OptimisticCoordinatorError::SnapshotGet)?;
         let start_ts = opened_reply
             .recv()
             .map_err(|_| {
@@ -165,27 +173,28 @@ impl TransactionThread {
             .and_then(|result| result)?;
         Ok(Self {
             requests: Some(requests),
-            worker: Some(worker),
             start_ts,
         })
     }
 
     /// Ends the transaction without publishing anything, leaving no locks
     /// behind. Calling it twice is a no-op.
+    ///
+    /// The reply is what orders the cleanup: the worker sends it only after
+    /// `finish_without_writes` returned, so a caller that has this answer knows
+    /// the transaction is over. That is the same guarantee joining the thread
+    /// used to give, without ending a thread to get it.
     fn finish(&mut self) -> Result<(), StorageError> {
         let Some(requests) = self.requests.take() else {
             return Ok(());
         };
         let (reply, answer) = mpsc::channel();
-        let outcome = match requests.send(TransactionRequest::Finish { reply }) {
+        match requests.send(TransactionRequest::Finish { reply }) {
             Ok(()) => answer.recv().unwrap_or(Ok(())),
-            // The thread is already gone, which means it already finished the
+            // The worker is already gone, which means it already finished the
             // transaction on its way out.
             Err(_) => Ok(()),
-        };
-        drop(requests);
-        self.join();
-        outcome
+        }
     }
 
     /// Publishes `mutations` on this very transaction, so the prewrite carries
@@ -199,20 +208,11 @@ impl TransactionThread {
             .take()
             .ok_or_else(|| "the transaction is already finished".to_owned())?;
         let (reply, answer) = mpsc::channel();
-        let outcome = match requests.send(TransactionRequest::Commit { mutations, reply }) {
+        match requests.send(TransactionRequest::Commit { mutations, reply }) {
             Ok(()) => answer
                 .recv()
                 .unwrap_or_else(|_| Err("the transaction thread stopped mid-commit".to_owned())),
             Err(_) => Err("the transaction thread is gone".to_owned()),
-        };
-        drop(requests);
-        self.join();
-        outcome
-    }
-
-    fn join(&mut self) {
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
         }
     }
 
@@ -226,11 +226,10 @@ impl TransactionThread {
 
 impl Drop for TransactionThread {
     fn drop(&mut self) {
-        // Dropping the request channel is what tells the thread to finish the
-        // transaction; joining orders that cleanup before the handle's owner
-        // moves on.
-        self.requests = None;
-        self.join();
+        // An owner that dropped the handle without finishing still must not
+        // leave a transaction open, and must not race ahead of its cleanup:
+        // `finish` waits for the worker's answer.
+        let _ = self.finish();
     }
 }
 
@@ -651,6 +650,11 @@ mod tests {
 
     /// The handle crosses threads even though the transaction it drives never
     /// does; that is the whole reason for the thread-owned shape.
+    ///
+    /// It is what says the split is between the transaction and its handle --
+    /// not between "a fresh thread" and "a reused one". Borrowing the thread
+    /// from the pinned pool keeps the transaction on one thread for its whole
+    /// life, so this assertion holds for exactly the reason it always did.
     fn assert_send<T: Send>() {}
 
     #[test]

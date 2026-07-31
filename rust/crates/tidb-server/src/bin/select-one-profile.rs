@@ -30,6 +30,7 @@ use sha1::{Digest, Sha1};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::Instant;
+use tidb_exec::pinned_thread_pool::PinnedThreadPool;
 use tidb_protocol::{PacketReader, PacketWriter, COM_QUERY, COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET};
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker,
@@ -273,6 +274,47 @@ fn statement_thread_scaffolding(iterations: usize) {
     report("per-statement snapshot thread (no PD)", samples);
 }
 
+/// The same open/serve/finish handshake on the real pool the cluster path now
+/// uses.
+///
+/// This runs `PinnedThreadPool::run` itself, with a job that stands in for the
+/// transaction: it reports a start timestamp, serves requests until its channel
+/// closes, and returns -- which is exactly the job
+/// `StatementSnapshot::open` submits, minus PD and TiKV. What it measures is
+/// therefore the scaffolding the production path actually pays, not a model of
+/// it.
+fn pooled_thread_scaffolding(iterations: usize) {
+    use std::sync::mpsc;
+    let pool = PinnedThreadPool::shared();
+    let mut samples = Vec::with_capacity(iterations);
+    for index in 0..iterations + iterations / 10 {
+        let start = Instant::now();
+        let (requests, incoming) = mpsc::channel::<mpsc::Sender<u64>>();
+        let (opened, opened_reply) = mpsc::channel::<u64>();
+        pool.run(
+            "cluster-statement-snapshot",
+            Box::new(move || {
+                if opened.send(7).is_err() {
+                    return;
+                }
+                while let Ok(reply) = incoming.recv() {
+                    let _ = reply.send(0);
+                }
+            }),
+        )
+        .unwrap();
+        let _start_ts = opened_reply.recv().unwrap();
+        let (reply, answer) = mpsc::channel();
+        requests.send(reply).unwrap();
+        answer.recv().unwrap();
+        drop(requests);
+        if index >= iterations / 10 {
+            samples.push(start.elapsed().as_nanos());
+        }
+    }
+    report("the same work on the pinned pool", samples);
+}
+
 /// What the same scaffolding costs on a thread that outlives the statement.
 ///
 /// The difference against [`statement_thread_scaffolding`] is what a
@@ -313,6 +355,7 @@ fn main() {
     session_stages(iterations);
     println!();
     statement_thread_scaffolding(iterations);
+    pooled_thread_scaffolding(iterations);
     persistent_thread_scaffolding(iterations);
     println!();
     wire_floor(iterations);
