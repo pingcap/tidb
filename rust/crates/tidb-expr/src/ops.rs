@@ -996,6 +996,34 @@ pub(crate) fn to_f64(v: Datum) -> f64 {
 /// is zero.  TiDB records truncation/overflow warnings in statement context;
 /// this value-only layer has no warning domain, but preserves the resulting
 /// numeric comparison/function value.
+///
+/// AUDIT of the `0.0` fallbacks below, against `Datum.ToFloat64` in
+/// `pkg/types/datum.go`.  Callers reached today: `float_binary` (via
+/// `eval_binary`), `math_fn::{sign, numeric_arg, ceil_floor}`,
+/// `string_fn::{field, format_number_text}`, `builtin_ext::info::real_arg`
+/// and `builtin_ext::compare2::interval_real` (which carries its own copy of
+/// the same prefix rule, with the same fallbacks).  Every verdict below is a
+/// captured TiDB answer, not a reading of the Go source alone.
+///
+/// | operand kind | Go | here | verdict |
+/// | --- | --- | --- | --- |
+/// | `Int`/`UInt`/`Real`/`Float32`/`Decimal` | value | value | MATCHES |
+/// | `String`/`Bytes`, valid UTF-8 | numeric prefix, warn 1292 | prefix | MATCHES (warning missing, see below) |
+/// | `String`/`Bytes`, INVALID UTF-8 | numeric prefix of the BYTES: `ABS(0x3132FF)` is 12 | `0.0` | DIVERGES |
+/// | `Enum` | ORDINAL: `ABS(e)` is 2 for `e='8'` of `enum('9','8','7')` | ordinal | MATCHES |
+/// | `Set` | bitmask: `ABS(s)` is 3 for `'8,9'` of `set('9','8')` | bitmask | MATCHES |
+/// | `Bit`/`BinaryLiteral` | unsigned integer value (`b'11'` is 3) | same | MATCHES |
+/// | `Time`/`Duration` | numeric form (`FORMAT_BYTES(DATE'2021-01-01')` reads 20210101) | same | MATCHES |
+/// | `Json` | `ConvertJSONToFloat` (a JSON string takes the prefix rule) | same | MATCHES |
+/// | `Raw`/`VectorFloat32` | ERROR (`SQRT(vec)`, `FIELD(1,vec)`, `INTERVAL(1,vec)` all fail) | `0.0` | DIVERGES |
+/// | `Null`/`MinNotNull`/`MaxValue` | ERROR | `unreachable!` panic | DIVERGES |
+///
+/// The one gap left unfixed: TiDB raises `1292 Truncated incorrect DOUBLE
+/// value: '<text>'` whenever the prefix is shorter than the operand, and this
+/// layer still has no warning channel to raise it on -- `dispatch_values` is
+/// deliberately a pure function of already-evaluated arguments, shared with
+/// the chunk-row bridge, so a warning sink is a separate structural change.
+/// The VALUE is TiDB's in every MATCHES row above.
 pub(crate) fn to_f64_with_mysql_string(v: &Datum) -> f64 {
     match v {
         Datum::String(s) => s.as_utf8().map(mysql_real_prefix).unwrap_or(0.0),
