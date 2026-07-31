@@ -360,6 +360,9 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 			break
 		}
 		h.initStatsHistograms4Chunk(is, cache, iter, false)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -492,6 +495,9 @@ func (h *Handle) initStatsTopN(cache statstypes.StatsCache, totalMemory uint64) 
 			break
 		}
 		h.initStatsTopN4Chunk(cache, iter, totalMemory)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -608,6 +614,9 @@ func (h *Handle) initStatsFMSketch(cache statstypes.StatsCache) error {
 			break
 		}
 		h.initStatsFMSketch4Chunk(cache, iter)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -693,6 +702,9 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint6
 				break
 			}
 			h.initStatsBuckets4Chunk(cache, iter)
+			// The same table may continue in the next chunk. Drain LFU async admission/rejection
+			// before the next chunk reads or mutates it again.
+			cache.WaitForAsyncUpdates()
 		}
 	}
 	tables := cache.Values()
