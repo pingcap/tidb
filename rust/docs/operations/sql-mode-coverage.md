@@ -115,6 +115,27 @@ Parity here means accepting and echoing the value, which this tier does via
    no parser blast radius. Cheapest honest win on this list.
 4. **`ORACLE`'s unaliased derived table** — narrow, low value.
 
+## Why the cheap version of the scanner fix is worse than the gap
+
+`Session::execute_statement` (`crates/tidb-session/src/dispatch.rs:277`) does
+produce an AST, and a SELECT is executed from *that* AST. So switching that one
+call to `parse_with_sql_mode` would make all four scanner probes above pass.
+
+It would also be the wrong change. DML and DDL do not use that AST: the raw
+`sql` string is handed down and re-parsed
+(`tidb_executor::run_insert_reporting(sql, ...)` at `dispatch.rs:366`,
+`run_update_in(sql, ...)` at `:395`, `tidb-executor/src/ddl.rs:228`, and the six
+`ddl/*.rs` sites). The two recorded `NO_BACKSLASH_ESCAPES` divergences in
+`tests/integrationtest/t/generated_columns.test:189-214` are precisely a
+`CREATE TABLE ... AS (concat(s, '\\c'))` and an `INSERT ... VALUES ('a\\b')` —
+both on the re-parsing side. The one-site change would leave
+`SELECT 'a\nb'` correct and `INSERT ... VALUES ('a\nb')` wrong in the same
+session, under the same flag.
+
+A flag that is uniformly absent is a gap someone can find. A flag that is
+honored in SELECT and ignored in INSERT is a data-corruption shape. This
+inventory therefore names the seam rather than half-wiring it.
+
 ## What would fix this
 
 The re-parse-per-tier shape is the reason a scanner flag cannot be wired
