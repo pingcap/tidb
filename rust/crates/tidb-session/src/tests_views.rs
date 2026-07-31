@@ -436,7 +436,8 @@ fn show_create_view_prints_the_stored_definition() {
     // Captured: [executor:1347]'test.t' is not VIEW.
     assert!(matches!(
         session.run("SHOW CREATE VIEW t"),
-        Err(DriverError::Schema(SchemaErrorKind::NotView(ref name))) if name == "test.t"
+        Err(DriverError::Schema(SchemaErrorKind::WrongObject { ref name, expected: "VIEW" }))
+            if name == "test.t"
     ));
 
     // An aliased body keeps the alias, both in the FROM and in the
@@ -472,7 +473,8 @@ fn view_and_table_statements_do_not_cross() {
     // Captured: [ddl:1347]'test.t' is not VIEW.
     assert!(matches!(
         session.run("DROP VIEW t"),
-        Err(DriverError::Schema(SchemaErrorKind::NotView(ref name))) if name == "test.t"
+        Err(DriverError::Schema(SchemaErrorKind::WrongObject { ref name, expected: "VIEW" }))
+            if name == "test.t"
     ));
     // The refusal really did not drop the table.
     assert_eq!(

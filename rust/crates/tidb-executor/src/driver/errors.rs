@@ -768,11 +768,19 @@ pub enum SchemaErrorKind {
     /// Go `plannererrors.ErrNoDB` (1046).
     NoDatabaseSelected,
     /// Go `ErrWrongObject` (1347): the name exists but is the other object
-    /// kind -- `DROP VIEW t` / `SHOW CREATE VIEW t` on a base table. The
-    /// string is the qualified name; the expected kind is always `VIEW`,
-    /// since the reverse direction (a table statement naming a view) reports
-    /// the name as simply unknown, as Go does.
-    NotView(String),
+    /// kind -- `DROP VIEW t` / `SHOW CREATE VIEW t` on a base table, or
+    /// `CREATE TABLE ... LIKE v` on a view or sequence.
+    ///
+    /// `expected` is the object kind Go passes as the message's third
+    /// argument, which is `VIEW` for the view statements and `BASE TABLE`
+    /// for `CREATE TABLE ... LIKE`. Most table statements that name a view
+    /// report the name as simply unknown instead, as Go does.
+    WrongObject {
+        /// The db-qualified name as written.
+        name: String,
+        /// The object kind the statement required.
+        expected: &'static str,
+    },
     /// Go `plannererrors.ErrViewInvalid` (1356): the view's own query no
     /// longer runs, typically because a base table was dropped.
     ViewInvalid(String),
@@ -1317,8 +1325,8 @@ impl DriverError {
             format!("Sequence '{name}' has run out"),
         ),
         // Go: "'%-.192s.%-.192s' is not %s".
-        DriverError::Schema(crate::SchemaErrorKind::NotView(name)) => {
-            MysqlError::new(1347, *b"HY000", format!("'{name}' is not VIEW"))
+        DriverError::Schema(crate::SchemaErrorKind::WrongObject { name, expected }) => {
+            MysqlError::new(1347, *b"HY000", format!("'{name}' is not {expected}"))
         }
         // Go: "View '%-.192s.%-.192s' references invalid table(s) ...".
         DriverError::Schema(crate::SchemaErrorKind::ViewInvalid(name)) => MysqlError::new(

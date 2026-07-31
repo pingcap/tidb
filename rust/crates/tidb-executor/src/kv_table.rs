@@ -270,6 +270,53 @@ impl KvTable {
         }
     }
 
+    /// Builds the table `CREATE TABLE ... LIKE self` creates: Go
+    /// `ddl.BuildTableInfoWithLike`.
+    ///
+    /// Go shallow-copies the whole `TableInfo` and then resets the few fields
+    /// that identify the table rather than describe it. This builds the copy
+    /// the other way round -- from an EMPTY table of the new id, copying only
+    /// the structural fields across -- because the reset list is where the
+    /// bugs live: a shallow copy that forgets one of them yields a table that
+    /// silently shares its source's rows, row handles, or auto-increment
+    /// counter. Starting empty means a field is inherited only if it is named
+    /// here.
+    ///
+    /// Deliberately NOT inherited, each matching a line of Go's reset list:
+    ///
+    /// * the rows and their storage, which are not in `TableInfo` at all;
+    /// * `next_handle` and `auto_id` (Go `tblInfo.AutoIncID = 0`), so the
+    ///   copy's first row is handle 1 however far the source has run;
+    /// * `foreign_keys` (Go `tblInfo.ForeignKeys = nil`), and with them
+    ///   `max_foreign_key_id`;
+    /// * `name` and `table_id`, which the caller supplies.
+    ///
+    /// The partitioning IS inherited, but `allocate_partition_id` must hand
+    /// out ids of its own: a partition is a distinct PHYSICAL table, and two
+    /// tables writing records under one physical id would interleave rows.
+    #[must_use]
+    pub fn create_like(
+        &self,
+        table_id: i64,
+        allocate_partition_id: &mut dyn FnMut() -> i64,
+    ) -> Self {
+        let mut copy = KvTable::new(table_id, self.columns.clone());
+        copy.hidden_columns = self.hidden_columns;
+        copy.pk_handle_offset = self.pk_handle_offset;
+        copy.indexes = self.indexes.clone();
+        copy.common_handle_offsets = self.common_handle_offsets.clone();
+        copy.auto_increment_offset = self.auto_increment_offset;
+        copy.charset = self.charset;
+        if let Some(partition) = self.partition() {
+            let mut partition = partition.clone();
+            for definition in &mut partition.definitions {
+                definition.id = allocate_partition_id();
+            }
+            copy.set_partition(partition);
+        }
+        copy
+    }
+
     /// Records how this table is partitioned (Go's `TableInfo.Partition`),
     /// which is what makes its record keys carry a partition id.
     pub fn set_partition(&mut self, partition: crate::partition_routing::PartitionSpec) {

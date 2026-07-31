@@ -1472,9 +1472,10 @@ impl Session {
                         tidb_executor::TableEntry::View(view) => {
                             Ok((show_create_view_text(view), table_name.clone(), true, false))
                         }
-                        _ if want_view => Err(DriverError::Schema(SchemaErrorKind::NotView(
-                            format!("{database}.{table_name}"),
-                        ))),
+                        _ if want_view => Err(DriverError::Schema(SchemaErrorKind::WrongObject {
+                            name: format!("{database}.{table_name}"),
+                            expected: "VIEW",
+                        })),
                         tidb_executor::TableEntry::Sequence(sequence) => Ok((
                             tidb_executor::show_create_sequence(sequence),
                             sequence.name.clone(),

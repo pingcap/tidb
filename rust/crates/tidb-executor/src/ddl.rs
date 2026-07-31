@@ -21,12 +21,26 @@
 //! [`column_field_type::build_field_type`], and charset/collation through
 //! [`column_types::field_type_of`]'s transcreation of Go
 //! `ResolveCharsetCollation` and `OverwriteCollationWithBinaryFlag` (see its
-//! doc for the exact precedence). DEFERRED (documented): `CREATE TABLE ...
-//! LIKE`, and the
+//! doc for the exact precedence). DEFERRED (documented): the
 //! schema-version/DDL-job machinery (the driver applies metadata directly; the
 //! DDL job queue is a separate tier). Constraints/indexes and the column
 //! options are no longer deferred; see [`crate::column_default`] for what a
 //! `DEFAULT` may be.
+//!
+//! # `CREATE TABLE ... LIKE` copies a built table, not a statement
+//!
+//! Go `BuildTableInfoWithLike` copies the source's whole `TableInfo` and
+//! resets the fields that identify rather than describe it, so this path
+//! leaves before any column-definition work and calls
+//! [`crate::KvTable::create_like`] instead. That method builds the copy from
+//! an EMPTY table rather than resetting a clone, so the source's rows, row
+//! handles, auto-increment counter and foreign keys cannot be inherited by
+//! omission -- see its doc for the full "not inherited" list and why each
+//! entry is a correctness bug rather than a missing feature.
+//!
+//! `tidb_exec::table_info_build` still REFUSES the form. That is a narrower
+//! surface, not a disagreement: it declines to build a table rather than
+//! building a different one from the same statement.
 //!
 //! # The type rule set is shared with the `TableInfo` builder
 //!
@@ -279,9 +293,6 @@ pub fn run_create_table_in(
         ));
     }
 
-    if create.like_table.is_some() {
-        return Err(DriverError::Unsupported("CREATE TABLE LIKE is deferred"));
-    }
     // `DROP TEMPORARY TABLE` is already refused here; creating one and
     // storing it as an ORDINARY table is the same gap on the other side, and
     // the more dangerous half: the table then outlives its session, is
@@ -294,7 +305,7 @@ pub fn run_create_table_in(
             "temporary tables are not supported yet",
         ));
     }
-    if create.columns.is_empty() {
+    if create.like_table.is_none() && create.columns.is_empty() {
         return Err(DriverError::Unsupported("a table needs columns"));
     }
 
@@ -309,6 +320,31 @@ pub fn run_create_table_in(
         return Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(
             format!("{database}.{name}"),
         )));
+    }
+
+    // `CREATE TABLE ... LIKE` copies a built table rather than building one
+    // from column definitions, so it leaves before any of that work. The
+    // target's own existence was settled just above, which is the order Go
+    // reports the two in: an existing target is 1050 even when the source is
+    // a view.
+    if let Some(source) = &create.like_table {
+        let (source_db, source_name) = crate::driver::split_table_path_pub(source, current_db)?;
+        let (source_db, source_name) = (source_db.to_owned(), source_name.to_owned());
+        // The ids are allocated between the two borrows of the source table,
+        // because allocating needs the catalog mutably.
+        let partitions = create_like_source(&source_db, &source_name, catalog)?
+            .partition()
+            .map_or(0, |partition| partition.definitions.len());
+        let id = catalog.allocate_table_id();
+        let mut ids = (0..partitions)
+            .map(|_| catalog.allocate_table_id())
+            .collect::<Vec<_>>()
+            .into_iter();
+        let mut copy = create_like_source(&source_db, &source_name, catalog)?
+            .create_like(id, &mut || ids.next().expect("one id per copied partition"));
+        copy.name = name.to_owned();
+        catalog.register_kv_in(&database, name, copy);
+        return Ok(true);
     }
 
     // Build the ColumnInfos (ids 1..n, offsets in definition order).
@@ -639,6 +675,37 @@ pub fn run_create_table_in(
     }
     catalog.register_kv_in(&database, name, table);
     Ok(true)
+}
+
+/// Resolves the table `CREATE TABLE ... LIKE` copies.
+///
+/// Go `ddl.BuildTableInfoWithLike` raises `ErrWrongObject` (1347) with the
+/// third argument `BASE TABLE` for a view or a sequence, which is a different
+/// error from naming something that does not exist at all (1146).
+fn create_like_source<'a>(
+    database: &str,
+    name: &str,
+    catalog: &'a Catalog,
+) -> Result<&'a crate::KvTable, DriverError> {
+    let wrong_object = || {
+        Err(DriverError::Schema(crate::SchemaErrorKind::WrongObject {
+            name: format!("{database}.{name}"),
+            expected: "BASE TABLE",
+        }))
+    };
+    match catalog.table_in(database, name) {
+        Some(crate::TableEntry::Kv(table)) => Ok(table),
+        Some(crate::TableEntry::View(_) | crate::TableEntry::Sequence(_)) => wrong_object(),
+        // A matrix-backed fixture table has no stored structure to copy. It
+        // only exists in this crate's own tests, so this is unreachable from
+        // SQL, but it must not be mistaken for "does not exist".
+        Some(crate::TableEntry::Mem(_)) => Err(DriverError::Unsupported(
+            "CREATE TABLE LIKE needs a stored table",
+        )),
+        None => Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
+            format!("{database}.{name}"),
+        ))),
+    }
 }
 
 /// Names a column-default DDL refusal the way Go's own error does. Go's 3770

@@ -125,9 +125,10 @@ pub fn run_drop_view_in(
             // Go raises ErrWrongObject immediately, even under IF EXISTS: the
             // name exists, it is simply the other kind of object.
             Some(entry) if !entry.is_view() => {
-                return Err(DriverError::Schema(SchemaErrorKind::NotView(format!(
-                    "{database}.{name}"
-                ))))
+                return Err(DriverError::Schema(SchemaErrorKind::WrongObject {
+                    name: format!("{database}.{name}"),
+                    expected: "VIEW",
+                }))
             }
             Some(_) => {
                 catalog.drop_table_in(&database, &name);

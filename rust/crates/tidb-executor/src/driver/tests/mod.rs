@@ -14,6 +14,7 @@
 
 mod aggregates;
 mod column_defaults;
+mod create_table_like;
 mod dml;
 mod index_ranges;
 mod indexes;
