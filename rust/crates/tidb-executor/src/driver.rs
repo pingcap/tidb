@@ -476,7 +476,6 @@ pub(crate) fn run_select_traced(
                 database: None,
                 columns: vec![(format!("__apply_{appended}"), value_type)],
                 offset: appended,
-                determinants: Vec::new(),
                 func_deps: Default::default(),
             });
             let columns: Vec<Column> = applied
@@ -629,7 +628,6 @@ pub(crate) fn run_select_traced(
                 database: None,
                 columns: vec![(format!("__apply_{appended}"), value_type)],
                 offset: appended,
-                determinants: Vec::new(),
                 func_deps: Default::default(),
             });
             let columns: Vec<Column> = current_scope
@@ -934,20 +932,11 @@ pub(crate) struct FromTable {
     pub(crate) database: Option<String>,
     pub(crate) columns: Vec<(String, FieldType)>,
     pub(crate) offset: usize,
-    /// Go `checkColFuncDepend`'s candidate keys: each entry is a set of this
-    /// source's column names that together determine the whole row, so once
-    /// `GROUP BY` pins all of them every other column of the source is a
-    /// single value per group and `ONLY_FULL_GROUP_BY` permits it. Only a
-    /// base table has any: the primary key, plus every UNIQUE index whose
-    /// columns are all `NOT NULL` (a nullable unique key permits repeated
-    /// NULLs and so determines nothing). A derived table, a view or a
-    /// synthetic scope carries none.
-    pub(crate) determinants: Vec<Vec<String>>,
     /// Go `DataSource.ExtractFD`'s contribution for this source: the keys in
     /// both strengths and the generated columns' dependencies, as offsets
-    /// local to the source. [`determinants`](Self::determinants) is the
-    /// strict-key half of the same facts by name; this is what the
-    /// functional-dependency graph is built from.
+    /// local to the source: the primary key and each UNIQUE index, split by
+    /// whether every member is `NOT NULL`, plus the generated columns'
+    /// dependencies. A derived table, a view or a synthetic scope has none.
     pub(crate) func_deps: funcdep::TableFuncDeps,
 }
 

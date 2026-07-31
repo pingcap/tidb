@@ -334,7 +334,6 @@ fn hoist_pre_agg_subqueries(
             database: None,
             columns: vec![(format!("__apply_{offset}"), value_type.clone())],
             offset,
-            determinants: Vec::new(),
             func_deps: Default::default(),
         });
     }
@@ -463,7 +462,6 @@ fn build_pre_agg_applies(
             database: None,
             columns: vec![(format!("__apply_{offset}"), value_type)],
             offset,
-            determinants: Vec::new(),
             func_deps: Default::default(),
         });
         let columns: Vec<Column> = scope
@@ -1122,7 +1120,6 @@ fn build_apply_chain(
                     .zip(state.types.iter().cloned())
                     .collect(),
                 offset: 0,
-                determinants: Vec::new(),
                 func_deps: Default::default(),
             }],
             ..FromScope::default()
@@ -1225,7 +1222,6 @@ fn build_window_stage(
                     .zip(state.types.iter().cloned())
                     .collect(),
                 offset: 0,
-                determinants: Vec::new(),
                 func_deps: Default::default(),
             }],
             ..FromScope::default()

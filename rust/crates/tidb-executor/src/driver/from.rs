@@ -157,56 +157,14 @@ impl ColumnResolver for ScopeResolver<'_> {
     }
 }
 
-/// The column-name sets that functionally determine a base table's row, for
-/// [`FromTable::determinants`].
-///
-/// Go's `checkColFuncDepend` walks `TableInfo.Indices` for a UNIQUE index
-/// whose every column is `NOT NULL`, and then the `PriKeyFlag` columns. The
-/// clustered forms are the same key by another storage shape: a `PKIsHandle`
-/// table keeps its single integer primary key as the row handle, and a common
-/// handle keeps the composite one there, so both are read off the handle
-/// rather than off an index entry. A `NOT NULL` requirement is redundant for
-/// them (a primary key is always `NOT NULL`) and applies to the rest.
-fn table_determinants(entry: &TableEntry, columns: &[(String, FieldType)]) -> Vec<Vec<String>> {
-    const NOT_NULL_FLAG: u32 = 1;
-    let TableEntry::Kv(kv) = entry else {
-        return Vec::new();
-    };
-    let names = |offsets: &[usize]| -> Option<Vec<String>> {
-        offsets
-            .iter()
-            .map(|&offset| columns.get(offset).map(|(name, _)| name.clone()))
-            .collect()
-    };
-    let not_null = |offsets: &[usize]| {
-        offsets.iter().all(|&offset| {
-            columns
-                .get(offset)
-                .is_some_and(|(_, ft)| ft.flags() & NOT_NULL_FLAG != 0)
-        })
-    };
-    let handle_key = kv
-        .pk_handle_offset()
-        .map(|offset| vec![offset])
-        .unwrap_or_else(|| kv.common_handle_offsets().to_vec());
-    std::iter::once(handle_key)
-        .chain(
-            kv.indexes()
-                .iter()
-                .filter(|index| index.unique)
-                .map(|index| index.column_offsets.clone()),
-        )
-        .filter(|offsets| !offsets.is_empty() && not_null(offsets))
-        .filter_map(|offsets| names(&offsets))
-        .collect()
-}
-
 /// Go `DataSource.ExtractFD`'s per-table facts, for
 /// [`FromTable::func_deps`].
 ///
-/// The same indexes [`table_determinants`] reads, split by strength instead of
-/// filtered: a UNIQUE index with a nullable column is not dropped but kept as
-/// a LAX key, which a `WHERE` proving its nullable members non-null promotes.
+/// The primary key -- in either clustered shape, since a `PKIsHandle` table
+/// keeps its single integer key as the row handle and a common handle keeps
+/// the composite one there -- and every UNIQUE index, split by strength: one
+/// with a nullable column is a LAX key rather than no key at all, which a
+/// `WHERE` proving its nullable members non-null promotes.
 /// Generated columns are added as Go adds them -- one level each, letting the
 /// graph chain `c AS (a+2)`, `d AS (c+2)` into `{a} --> {d}`.
 fn table_func_deps(
@@ -358,7 +316,6 @@ pub(crate) fn build_from(
                     // An alias replaces the whole path, so `db.t.col` no
                     // longer names the table once it is aliased.
                     database: table_ref.alias.is_none().then(|| database.to_owned()),
-                    determinants: table_determinants(entry, &columns),
                     func_deps: table_func_deps(entry, &columns),
                     columns,
                     offset: 0,
@@ -469,7 +426,6 @@ pub(crate) fn build_derived_source(
             database: None,
             columns,
             offset: 0,
-            determinants: Vec::new(),
             func_deps: Default::default(),
         }],
         ..FromScope::default()
@@ -679,7 +635,6 @@ pub(crate) fn build_lateral_join(
         database: None,
         columns: columns.clone(),
         offset: left_width,
-        determinants: Vec::new(),
         func_deps: Default::default(),
     });
 
@@ -844,7 +799,6 @@ pub(crate) fn build_view_source(
             database: alias_free.then(|| database.to_owned()),
             columns,
             offset: 0,
-            determinants: Vec::new(),
             func_deps: Default::default(),
         }],
         ..FromScope::default()
@@ -1054,7 +1008,6 @@ pub(crate) fn build_join(
             database: table.database,
             columns: table.columns,
             offset: table.offset + left_width,
-            determinants: table.determinants,
             func_deps: table.func_deps,
         });
     }

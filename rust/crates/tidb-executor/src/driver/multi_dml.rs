@@ -138,7 +138,6 @@ impl MultiSource {
                     database: table.qualifiable_db.clone(),
                     columns: table.columns.clone(),
                     offset: table.offset,
-                    determinants: Vec::new(),
                     func_deps: Default::default(),
                 })
                 .collect(),
