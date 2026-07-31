@@ -163,6 +163,24 @@ mod tests {
         Box::leak(Box::new(PinnedThreadPool::with_limit(limit)))
     }
 
+    /// Blocks until at least `count` workers are parked.
+    ///
+    /// A worker parks a moment AFTER its job returned, so a test that submits
+    /// jobs back to back can outrun the park and get a fresh thread. That race
+    /// is harmless in production -- the next statement is far away -- but a test
+    /// about reuse has to wait for the state it is testing.
+    fn wait_for_park(pool: &'static PinnedThreadPool, count: usize) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while pool.parked() < count {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "expected {count} parked worker(s), found {}",
+                pool.parked()
+            );
+            std::thread::yield_now();
+        }
+    }
+
     /// Runs `job` and waits for it, which is what every transaction handle does
     /// on its opening handshake.
     fn run_and_wait<T: Send + 'static>(
@@ -184,6 +202,7 @@ mod tests {
     fn a_finished_job_leaves_its_thread_for_the_next_one() {
         let pool = test_pool(4);
         let first = run_and_wait(pool, std::thread::current);
+        wait_for_park(pool, 1);
         let second = run_and_wait(pool, std::thread::current);
         assert_eq!(
             first.id(),
@@ -236,6 +255,175 @@ mod tests {
             assert!(pool.parked() <= 1);
             std::thread::yield_now();
         }
+    }
+
+    /// The hazard reusing a thread introduces, and the reason it is safe here.
+    ///
+    /// A transaction reaches its worker as a value the job builds, uses and
+    /// drops; nothing about it is cached on the thread. If any of it ever were
+    /// -- a session, a lease, a probe -- the second statement to land on a
+    /// parked worker would silently inherit the first statement's state, which
+    /// is the one way this change could alter what a statement reads.
+    ///
+    /// The pool does NOT clear thread-local state, and this pins that it does
+    /// not, so the rule is stated where it can be read: a value that must not
+    /// outlive one transaction has to be owned by the job, never parked on the
+    /// thread. Today the transaction path holds to that -- the session, the
+    /// region-cache lease and the transport are all built inside the job by
+    /// `open_session` and dropped when it returns.
+    #[test]
+    fn thread_local_state_survives_a_reused_worker() {
+        thread_local! {
+            static LEFTOVER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        }
+        let pool = test_pool(1);
+        let first = run_and_wait(pool, || {
+            let seen = LEFTOVER.with(std::cell::Cell::get);
+            LEFTOVER.with(|slot| slot.set(99));
+            (std::thread::current().id(), seen)
+        });
+        wait_for_park(pool, 1);
+        let second = run_and_wait(pool, || {
+            (
+                std::thread::current().id(),
+                LEFTOVER.with(std::cell::Cell::get),
+            )
+        });
+        assert_eq!(first.0, second.0, "the test needs the worker to be reused");
+        assert_eq!(first.1, 0, "the first job starts blank");
+        assert_eq!(
+            second.1, 99,
+            "thread state DOES survive a reused worker -- which is exactly why \
+             nothing on the transaction path may be kept there"
+        );
+    }
+
+    /// A job's `!Send` values are destroyed before its worker takes another
+    /// job.
+    ///
+    /// This is the region-cache lease and the transport handle: the previous
+    /// shape released them by ending the thread, and a parked worker cannot
+    /// rely on that. What replaces it is that the job owns them and the job has
+    /// returned.
+    #[test]
+    fn a_jobs_values_are_dropped_before_its_worker_is_reused() {
+        struct Tracked(Arc<AtomicUsize>);
+        impl Drop for Tracked {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let pool = test_pool(1);
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let owned = Tracked(Arc::clone(&dropped));
+        let first = run_and_wait(pool, move || {
+            let _owned = owned;
+            std::thread::current().id()
+        });
+        wait_for_park(pool, 1);
+        let second = run_and_wait(pool, {
+            let dropped = Arc::clone(&dropped);
+            move || (std::thread::current().id(), dropped.load(Ordering::SeqCst))
+        });
+        assert_eq!(first, second.0, "the test needs the worker to be reused");
+        assert_eq!(
+            second.1, 1,
+            "the previous job's values must be gone before the next job starts"
+        );
+    }
+
+    /// The whole point, as a number rather than as a claim.
+    ///
+    /// The transaction handshake is: submit a job, wait for it to report a
+    /// timestamp, send one request, close it. Timed against the same handshake
+    /// on a freshly spawned thread, the pool has to be decisively cheaper --
+    /// that difference is the per-statement cost this exists to remove, and a
+    /// pool that quietly stopped reusing threads would land back on the spawn
+    /// number.
+    #[test]
+    fn the_pool_is_decisively_cheaper_than_spawning_per_job() {
+        const ROUNDS: usize = 200;
+        let pool = test_pool(4);
+
+        let mut pooled = Vec::with_capacity(ROUNDS);
+        let mut spawned = Vec::with_capacity(ROUNDS);
+        for round in 0..ROUNDS + 20 {
+            let start = std::time::Instant::now();
+            handshake_on_pool(pool);
+            let pool_elapsed = start.elapsed();
+            let start = std::time::Instant::now();
+            handshake_on_new_thread();
+            let spawn_elapsed = start.elapsed();
+            // The first rounds warm the park; a cold pool spawns like the
+            // baseline does, which is the honest behaviour, not the one under
+            // test.
+            if round >= 20 {
+                pooled.push(pool_elapsed.as_nanos());
+                spawned.push(spawn_elapsed.as_nanos());
+            }
+            // Measure the steady state -- a parked worker waiting for the next
+            // statement -- rather than a round that outran the park.
+            wait_for_park(pool, 1);
+        }
+        pooled.sort_unstable();
+        spawned.sort_unstable();
+        let pooled_median = pooled[pooled.len() / 2];
+        let spawned_median = spawned[spawned.len() / 2];
+        // Measured at roughly 10us against 28us in a release profile. The bar
+        // is set well inside that so an ordinarily loaded machine does not fail
+        // it, while a pool that spawned every time could not pass it.
+        assert!(
+            pooled_median * 3 < spawned_median * 2,
+            "the pooled handshake ({pooled_median}ns) should be far cheaper \
+             than spawning one ({spawned_median}ns)"
+        );
+    }
+
+    /// One transaction-shaped handshake against the pool: open, report, serve
+    /// one request, close.
+    fn handshake_on_pool(pool: &'static PinnedThreadPool) {
+        let (requests, incoming) = mpsc::channel::<mpsc::Sender<u64>>();
+        let (opened, opened_reply) = mpsc::channel::<u64>();
+        pool.run(
+            "pinned-pool-test",
+            Box::new(move || {
+                if opened.send(7).is_err() {
+                    return;
+                }
+                while let Ok(reply) = incoming.recv() {
+                    let _ = reply.send(0);
+                }
+            }),
+        )
+        .unwrap();
+        opened_reply.recv().unwrap();
+        let (reply, answer) = mpsc::channel();
+        requests.send(reply).unwrap();
+        answer.recv().unwrap();
+        drop(requests);
+    }
+
+    /// The same handshake the way the statement path used to get it.
+    fn handshake_on_new_thread() {
+        let (requests, incoming) = mpsc::channel::<mpsc::Sender<u64>>();
+        let (opened, opened_reply) = mpsc::channel::<u64>();
+        let worker = std::thread::Builder::new()
+            .name("pinned-pool-test".to_owned())
+            .spawn(move || {
+                if opened.send(7).is_err() {
+                    return;
+                }
+                while let Ok(reply) = incoming.recv() {
+                    let _ = reply.send(0);
+                }
+            })
+            .unwrap();
+        opened_reply.recv().unwrap();
+        let (reply, answer) = mpsc::channel();
+        requests.send(reply).unwrap();
+        answer.recv().unwrap();
+        drop(requests);
+        worker.join().unwrap();
     }
 
     #[test]
