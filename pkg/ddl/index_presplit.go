@@ -61,11 +61,13 @@ func preSplitIndexRegions(
 	// normal index keyspace here.
 	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeIngest ||
 		reorgMeta.ReorgTp == model.ReorgTypeTxnMerge
+	autoPresplitBoundaryCache := make(map[int64][][]types.Datum)
 	for i, idxInfo := range allIndexInfos {
 		idxArg := args.IndexArgs[i]
 		if idxArg.AutoPresplit {
 			if err := autoPresplitIndexRegion(
-				ctx, sctx, store, tblInfo, idxInfo, statsProvider, splitOnTempIdx); err != nil {
+				ctx, sctx, store, tblInfo, idxInfo, statsProvider,
+				autoPresplitBoundaryCache, splitOnTempIdx); err != nil {
 				return err
 			}
 			continue
@@ -97,10 +99,11 @@ func autoPresplitIndexRegion(
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	statsProvider autoPresplitStatsProvider,
+	boundaryCache map[int64][][]types.Datum,
 	splitOnTempIdx bool,
 ) error {
-	splitKeys, reason, err := planAutoPresplitIndexRegions(
-		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoPresplitConfig())
+	splitKeys, reason, err := planAutoPresplitWithCache(
+		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoPresplitConfig(), boundaryCache)
 	if ctxErr := context.Cause(ctx); ctxErr != nil {
 		return ctxErr
 	}

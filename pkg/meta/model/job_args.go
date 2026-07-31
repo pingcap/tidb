@@ -1410,6 +1410,8 @@ type IndexArg struct {
 	IsGlobal bool  `json:"is_global,omitempty"`
 
 	// Only used for job args v2.
+	// Old DDL owners may ignore AutoPresplit during rolling upgrades;
+	// this best-effort optimization does not affect correctness.
 	// AutoPresplit must be separate from SplitOpt. Otherwise, an old DDL owner
 	// ignores the unknown auto field, treats the non-nil empty SplitOpt as a
 	// manual split, and rejects the add-index job.

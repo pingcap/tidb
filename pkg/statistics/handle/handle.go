@@ -198,8 +198,8 @@ func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.Tab
 // AutoPresplitColumnStats is the storage result used by DDL auto pre-split.
 type AutoPresplitColumnStats = storage.AutoPresplitColumnStats
 
-// LoadColumnStats loads one column's metadata, TopN, and Histogram from one MVCC snapshot.
-func (*Handle) LoadColumnStats(
+// LoadColumnStatsForAutoPresplit loads one column's metadata, TopN, and Histogram from one MVCC snapshot.
+func (*Handle) LoadColumnStatsForAutoPresplit(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalTableID, columnID int64,
