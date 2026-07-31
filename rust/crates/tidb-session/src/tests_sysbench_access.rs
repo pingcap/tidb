@@ -37,14 +37,24 @@
 //! `detach_cond_and_build_range_for_index` over the primary key as a
 //! one-column index is the range builder -- no second ranger is needed.
 //!
-//! What is NOT yet pinned, and what these stay ignored until, is the row
-//! ESTIMATE the resulting range is costed on. It decides whether the range
-//! beats the index full scan, so guessing it would silently pick plans. Go's
-//! captured answers do not reduce to `getPseudoRowCountBySignedIntRanges`
-//! alone -- on this schema `id < 0` estimates 3333.33 while `id < -1`
-//! estimates 10000.00, from ranges of identical shape -- so the dispatch in
-//! `GetRowCountByColumnRanges` between the signed and unsigned pseudo
-//! estimators has to be established from Go before it is ported.
+//! The row ESTIMATE the range is costed on is pinned too, and is what makes
+//! these implementable rather than guesswork: it decides whether the range
+//! beats the index full scan. It is not
+//! `getPseudoRowCountBySignedIntRanges` alone -- Go dispatches on the FIRST
+//! range's low bound and its `else` arm is the UNSIGNED estimator, which is
+//! why `id < 0` estimates 3333.33 while `id < -1` estimates 10000.00 from
+//! ranges of identical shape. Both arms are ported in
+//! `tidb_planner::cardinality::pseudo`, and
+//! `row_count_estimator::pseudo_row_count` now performs Go's dispatch
+//! between them.
+//!
+//! So what remains for these three is the access path itself: build the
+//! handle ranges, give the table candidate in
+//! `tidb_executor::access_cost::enumerate_paths` a range instead of the
+//! hard-coded full one (its own comment says "this tier builds no
+//! primary-key range ... its range is therefore always the full one"), teach
+//! `KvTable`'s `record_key_range` and `pushdown_row_cursor` to read a
+//! narrowed span, and print the node as `TableRangeScan`.
 //!
 //! # The captured Go corpus
 //!
