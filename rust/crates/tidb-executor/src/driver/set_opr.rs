@@ -30,9 +30,14 @@
 //! in hash order -- so only `UNION ALL` and an explicit `ORDER BY` have an
 //! order worth relying on.
 //!
+//! The OUTPUT column types are a property of every term, not of the first:
+//! Go's `buildUnion` folds them pairwise through `unionJoinFieldType` and then
+//! casts each branch to the merged type, so an INT branch united with a
+//! DECIMAL one reads `1.0`. [`union_join_field_type`] is that merge and
+//! [`cast_rows_to_columns`] is that cast.
+//!
 //! DEFERRED (documented): pushing the work into executors instead of
-//! materializing each term, and the type unification Go performs across terms
-//! (the column metadata here comes from the first term).
+//! materializing each term.
 
 use super::*;
 /// Runs a set-operation statement: `UNION`, `EXCEPT` or `INTERSECT`.
@@ -48,8 +53,7 @@ use super::*;
 /// order worth relying on.
 ///
 /// DEFERRED (documented): pushing the work into executors instead of
-/// materializing each term, and the type unification Go performs across terms
-/// (the column metadata here comes from the first term).
+/// materializing each term.
 pub fn run_set_opr_stmt(
     stmt: &tidb_ast::SetOprStmt,
     catalog: &Catalog,
@@ -67,32 +71,52 @@ pub fn run_set_opr_stmt(
         None => catalog,
     };
 
-    let mut columns: Option<Vec<(String, FieldType)>> = None;
-    let mut accumulated: Vec<Vec<Datum>> = Vec::new();
-    for (index, term) in stmt.terms.iter().enumerate() {
-        let (term_columns, term_rows) = run_set_opr_term(term, catalog, current_db, ctx)?;
-        match &mut columns {
-            None => {
-                columns = Some(term_columns);
-                accumulated = term_rows;
-            }
-            Some(existing) => {
-                // Go raises ErrWrongNumberOfColumnsInSelect for a term whose
-                // width differs.
-                if term_columns.len() != existing.len() {
-                    return Err(DriverError::WrongNumberOfColumnsInSelect);
-                }
-                let Some(op) = term.op else {
-                    return Err(DriverError::Unsupported(
-                        "a set-operation term after the first needs an operator",
-                    ));
-                };
-                accumulated = combine_set_opr(op, accumulated, term_rows)?;
+    // Every term is materialized BEFORE any is folded, because the output
+    // column types are a property of ALL the terms: Go's `buildUnion` merges
+    // them pairwise and only then builds the per-branch casts
+    // (`buildProjection4Union`). Folding as each term arrived would have to
+    // commit to a type before the later terms had been seen.
+    let mut terms: Vec<SelectMeta> = Vec::with_capacity(stmt.terms.len());
+    for term in &stmt.terms {
+        let term_meta = run_set_opr_term(term, catalog, current_db, ctx)?;
+        // Go raises ErrWrongNumberOfColumnsInSelect for a term whose width
+        // differs.
+        if let Some((first_columns, _)) = terms.first() {
+            if term_meta.0.len() != first_columns.len() {
+                return Err(DriverError::WrongNumberOfColumnsInSelect);
             }
         }
-        debug_assert!(index == 0 || columns.is_some());
+        terms.push(term_meta);
     }
-    let columns = columns.ok_or(DriverError::Unsupported("an empty set operation"))?;
+    let (first_columns, _) = terms
+        .first()
+        .ok_or(DriverError::Unsupported("an empty set operation"))?;
+
+    // The merged type per output column. Names come from the FIRST term (Go
+    // takes the union's schema names from it); only the TYPES are merged.
+    let mut columns: Vec<(String, FieldType)> = first_columns.clone();
+    for (index, (_, merged)) in columns.iter_mut().enumerate() {
+        for (term_columns, _) in &terms[1..] {
+            *merged = union_join_field_type(merged, &term_columns[index].1);
+        }
+    }
+
+    // Each branch is then cast to the merged type, which is what makes an
+    // INT branch united with a DECIMAL one read `1.0` rather than `1`.
+    for (_, rows) in &mut terms {
+        cast_rows_to_columns(rows, &columns);
+    }
+
+    let mut term_iter = terms.into_iter();
+    let mut accumulated = term_iter.next().map(|(_, rows)| rows).unwrap_or_default();
+    for (term, (_, term_rows)) in stmt.terms.iter().skip(1).zip(term_iter) {
+        let Some(op) = term.op else {
+            return Err(DriverError::Unsupported(
+                "a set-operation term after the first needs an operator",
+            ));
+        };
+        accumulated = combine_set_opr(op, accumulated, term_rows)?;
+    }
 
     // The statement-level ORDER BY and LIMIT apply to the folded result.
     if !stmt.order_by.is_empty() {
@@ -107,6 +131,104 @@ pub fn run_set_opr_stmt(
         accumulated = accumulated.into_iter().skip(offset).take(count).collect();
     }
     Ok((columns, accumulated))
+}
+
+/// The type one output column takes when two terms are united.
+///
+/// Port of Go `unionJoinFieldType`
+/// (`pkg/planner/core/logical_plan_builder.go`). The merge itself is
+/// `types.AggFieldType`, the same `fieldTypeMergeRules` lookup a control
+/// function's branches go through; everything after it is the width, sign and
+/// charset rules that decide how the merged value PRINTS.
+///
+/// A pure NULL branch carries no type and is skipped, so `SELECT NULL UNION
+/// SELECT 1` is an integer column rather than a NULL one.
+fn union_join_field_type(left: &FieldType, right: &FieldType) -> FieldType {
+    if left.code() == FieldTypeCode::Null {
+        return right.clone();
+    }
+    if right.code() == FieldTypeCode::Null {
+        return left.clone();
+    }
+    let mut result = tidb_datatype::agg_field_type(&[left.clone(), right.clone()]);
+    if result.code() == FieldTypeCode::NewDecimal {
+        // A united DECIMAL is unsigned only when every branch is.
+        result.and_flags(right.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED);
+    } else {
+        result.add_flags(left.flags() & right.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED);
+    }
+    result.set_decimal_under_limit(left.decimal().max(right.decimal()));
+    // `flen - decimal` is the fraction before the point, so the widths are
+    // merged on their INTEGRAL parts and the merged scale is added back.
+    if left.flen() == tidb_datatype::UNSPECIFIED_LENGTH
+        || right.flen() == tidb_datatype::UNSPECIFIED_LENGTH
+    {
+        result.set_flen_under_limit(tidb_datatype::UNSPECIFIED_LENGTH);
+    } else {
+        result.set_flen_under_limit(
+            (left.flen() - left.decimal()).max(right.flen() - right.decimal()) + result.decimal(),
+        );
+    }
+    // Go `types.TryToFixFlenOfDatetime`.
+    if result.code() == FieldTypeCode::Datetime {
+        /// Go `mysql.MaxDatetimeWidthNoFsp`.
+        const MAX_DATETIME_WIDTH_NO_FSP: i64 = 19;
+        let decimal = result.decimal();
+        result.set_flen(MAX_DATETIME_WIDTH_NO_FSP + if decimal > 0 { decimal + 1 } else { 0 });
+    }
+    // A non-integer result that united an INTEGER branch is widened to the
+    // full integer width, so the integer branch's digits still fit.
+    if result.eval_type() != tidb_datatype::EvalType::Int
+        && (left.eval_type() == tidb_datatype::EvalType::Int
+            || right.eval_type() == tidb_datatype::EvalType::Int)
+        && result.flen() < MAX_INT_WIDTH
+        && result.flen() != tidb_datatype::UNSPECIFIED_LENGTH
+    {
+        result.set_flen(MAX_INT_WIDTH);
+    }
+    set_bin_flag_or_bin_str(right, &mut result);
+    result
+}
+
+/// Go `mysql.MaxIntWidth`.
+const MAX_INT_WIDTH: i64 = 20;
+
+/// Go `expression.SetBinFlagOrBinStr` (`pkg/expression/builtin_string.go`):
+/// carries an argument's binary-ness onto a result type.
+fn set_bin_flag_or_bin_str(arg: &FieldType, result: &mut FieldType) {
+    let non_enum_or_set = !matches!(arg.code(), FieldTypeCode::Enum | FieldTypeCode::Set);
+    if arg.is_binary_string() {
+        // Go `types.SetBinChsClnFlag`.
+        result.set_charset_name("binary");
+        result.set_collation_name("binary");
+        result.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+    } else if arg.has_flag(tidb_datatype::FieldTypeFlags::BINARY)
+        || (!arg.is_character_string() && non_enum_or_set)
+    {
+        result.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+    }
+}
+
+/// Casts every cell of every row into its output column's merged type, which
+/// is Go's `buildProjection4Union` -- the cast it puts on each branch.
+///
+/// A cell that cannot be converted is LEFT AS IT WAS rather than turned into
+/// an error: the merged type is display metadata for a value the branch
+/// already produced legally, and a set operation is not the place a
+/// conversion diagnostic belongs.
+fn cast_rows_to_columns(rows: &mut [Vec<Datum>], columns: &[(String, FieldType)]) {
+    for row in rows {
+        for (value, (_, field_type)) in row.iter_mut().zip(columns) {
+            if value.is_null() {
+                continue;
+            }
+            if let Ok(converted) =
+                value.convert_to(field_type, tidb_datatype::ConversionFlags::default())
+            {
+                *value = converted.value;
+            }
+        }
+    }
 }
 
 /// One term of a set operation, which is a `SELECT` or a nested set operation.

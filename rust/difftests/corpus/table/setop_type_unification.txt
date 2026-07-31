@@ -1,0 +1,33 @@
+## The types a set operation gives its OUTPUT columns.
+##
+## Go `buildUnion` (`pkg/planner/core/logical_plan_builder.go`) folds the terms
+## pairwise through `unionJoinFieldType`, which is `types.AggFieldType` over
+## the two branches plus width/sign/charset rules, and then
+## `buildProjection4Union` CASTS EVERY BRANCH to that merged type. Taking the
+## first term's types instead is not merely imprecise, it is a different value:
+## an INT branch united with a string one comes back as a STRING.
+##
+## Both ORDERS are here on purpose. Casting the later terms to the FIRST term's
+## type would satisfy every row where the string term comes first and be wrong
+## in the mirror -- the merge is symmetric for these pairs, so `1 UNION 'a'` and
+## `'a' UNION 1` must agree.
+create table sut (id int)
+insert into sut values (1)
+select 'a' as x union select 1
+select 1 as x union select 'a'
+select 1 as x union all select 'a'
+select 'a' as x union all select 1
+select 1 as x union select 1.5
+select 1.5 as x union select 1
+select 1 as x union all select 1.5
+select 'ab' as x union select 'abcdef'
+select 'abcdef' as x union select 'ab'
+select id from sut union select 'a'
+select 'a' as x union select id from sut
+select 'a', 'bbbbb' from sut union select 'ccccc', count(distinct 'bbbbb', 'c')
+select 'a', 'bbbbb' from sut union all select 'ccccc', count(distinct 'bbbbb', 'c')
+select 1 as x union select 2 union select 'a'
+select 'a' as x union select 1 union select 2
+select 1 as x union select 'a' union select 2.5
+select 1 as x except select 'a'
+select 1 as x intersect select 1
