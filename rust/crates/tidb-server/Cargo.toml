@@ -35,6 +35,10 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 prost.workspace = true
+# The TLS tests act as a real client against this node's own material.
+rcgen.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
 tidb-ast = { path = "../tidb-ast" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }

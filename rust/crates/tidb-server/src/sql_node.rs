@@ -1439,6 +1439,11 @@ mod tests {
             auth_file: PathBuf::from("unused"),
             load_privileges: false,
             cluster_session: false,
+            ssl_cert: None,
+            ssl_key: None,
+            // The unit tests here exercise worker lifecycle, not the wire, so
+            // they take the plaintext port rather than pay for key generation.
+            auto_tls: false,
             max_connections: 2,
             connection_timeout: Duration::from_secs(5),
             max_topn_rows: 1_024,
@@ -1521,7 +1526,8 @@ mod tests {
             &users,
             &tracker,
             tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
-            move |index, job| {
+            None,
+            move |index, job: WorkerJob| {
                 if index == 1 {
                     return Err(std::io::Error::other("injected second spawn failure"));
                 }
