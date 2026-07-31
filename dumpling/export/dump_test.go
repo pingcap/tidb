@@ -969,7 +969,7 @@ func TestPrepareColumnProjectionNoSelectedColumns(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 	err = prepareColumnProjection(tctx, conf, baseConn)
-	require.ErrorContains(t, err, "--column-filter-file selects no writable columns")
+	require.ErrorContains(t, err, "column filter selects no writable columns")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

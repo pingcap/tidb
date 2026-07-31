@@ -31,37 +31,60 @@ func parseColumnFilterConfig(path string, caseSensitive bool) (columnFilterConfi
 	if _, err := toml.Decode(string(content), &columnFilter); err != nil {
 		return columnFilterConfig{}, errors.Annotatef(err, "failed to parse --column-filter-file %s", path)
 	}
-	if err := columnFilter.compile(caseSensitive); err != nil {
+	if err := columnFilter.compileForOption(caseSensitive, flagColumnFilterFile); err != nil {
 		return columnFilterConfig{}, err
 	}
 	return columnFilter, nil
 }
 
 func (c *columnFilterConfig) compile(caseSensitive bool) error {
+	return c.compileForOption(caseSensitive, flagColumnFilterFile)
+}
+
+func (c *columnFilterConfig) compileForOption(caseSensitive bool, flagName string) error {
 	if len(c.Filters) == 0 {
-		return errors.New("--column-filter-file requires at least one column filter")
+		return errors.Errorf("--%s requires at least one column filter", flagName)
 	}
 
 	for i := range c.Filters {
 		rule := &c.Filters[i]
 		if len(rule.Matcher) == 0 {
-			return errors.Errorf("--column-filter-file filter %d requires at least one matcher", i)
+			return errors.Errorf("--%s filter %d requires at least one matcher", flagName, i)
 		}
 		tableFilter, err := filter.Parse(rule.Matcher)
 		if err != nil {
-			return errors.Annotatef(err, "failed to parse --column-filter-file filter %d matcher", i)
+			return errors.Annotatef(err, "failed to parse --%s filter %d matcher", flagName, i)
 		}
 		if !caseSensitive {
 			tableFilter = filter.CaseInsensitive(tableFilter)
 		}
 		columnRules, err := filter.ParseColumnFilter(rule.Columns)
 		if err != nil {
-			return errors.Annotatef(err, "failed to parse --column-filter-file filter %d columns", i)
+			return errors.Annotatef(err, "failed to parse --%s filter %d columns", flagName, i)
 		}
 		rule.tableFilter = tableFilter
 		rule.columnRules = columnRules
 	}
 	return nil
+}
+
+func parseColumnFilterArgs(args []string, caseSensitive bool) (columnFilterConfig, error) {
+	columnFilter := columnFilterConfig{
+		Filters: make([]columnFilterRule, 0, len(args)),
+	}
+	for i, arg := range args {
+		var wrapper struct {
+			Filter columnFilterRule `toml:"filter"`
+		}
+		if _, err := toml.Decode("filter = "+arg, &wrapper); err != nil {
+			return columnFilterConfig{}, errors.Annotatef(err, "failed to parse --column-filter %d", i)
+		}
+		columnFilter.Filters = append(columnFilter.Filters, wrapper.Filter)
+	}
+	if err := columnFilter.compileForOption(caseSensitive, flagColumnFilter); err != nil {
+		return columnFilterConfig{}, err
+	}
+	return columnFilter, nil
 }
 
 func (c *columnFilterConfig) applyToColumns(database, table string, sourceColumns []string) ([]string, []int, error) {
@@ -84,7 +107,7 @@ func (c *columnFilterConfig) applyToColumns(database, table string, sourceColumn
 	}
 	if len(selectedColumns) == 0 {
 		return nil, nil, errors.Errorf(
-			"--column-filter-file selects no writable columns from table `%s`.`%s`",
+			"column filter selects no writable columns from table `%s`.`%s`",
 			escapeString(database),
 			escapeString(table),
 		)

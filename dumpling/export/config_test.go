@@ -154,18 +154,71 @@ columns = ["*", "!c3"]
 	require.ErrorContains(t, err, "can't specify both --sql and --column-filter-file at the same time")
 }
 
+func TestParseColumnFilterFlag(t *testing.T) {
+	conf := parseConfigFromArgsForTest(t,
+		"--no-schemas",
+		"--column-filter", `{ matcher = ["db1.t1"], columns = ["*", "!c1", "!c2"] }`,
+		"--column-filter", `{ matcher = ["db2.t2"], columns = ["c3"] }`,
+	)
+	selectedFields, selectedIndexes, err := conf.columnFilter.applyToColumns("db1", "t1", []string{"c1", "c2", "c3"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c3"}, selectedFields)
+	require.Equal(t, []int{2}, selectedIndexes)
+
+	selectedFields, selectedIndexes, err = conf.columnFilter.applyToColumns("db2", "t2", []string{"c1", "c2", "c3"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"c3"}, selectedFields)
+	require.Equal(t, []int{2}, selectedIndexes)
+
+	_, err = parseConfigFromArgsForTestWithErr(t,
+		"--no-schemas",
+		"--column-filter", `{ matcher = ["db.t"], columns = ["/unterminated"] }`,
+	)
+	require.ErrorContains(t, err, "failed to parse --column-filter filter 0 columns")
+
+	_, err = parseConfigFromArgsForTestWithErr(t,
+		"--column-filter", `{ matcher = ["db.t"], columns = ["*"] }`,
+	)
+	require.ErrorContains(t, err, "--column-filter requires --no-schemas/-m")
+
+	_, err = parseConfigFromArgsForTestWithErr(t,
+		"--no-schemas",
+		"--column-filter", `{ matcher = ["db.t"], columns = ["*"] }`,
+		"--sql", "select * from t",
+	)
+	require.ErrorContains(t, err, "can't specify both --sql and --column-filter at the same time")
+}
+
+func TestColumnFilterFlagRejectsFile(t *testing.T) {
+	path := writeColumnFilterFileForTest(t, `
+[[filters]]
+matcher = ["db.t"]
+columns = ["*"]
+`)
+	_, err := parseConfigFromArgsForTestWithErr(t,
+		"--no-schemas",
+		"--column-filter", `{ matcher = ["db.t"], columns = ["*"] }`,
+		"--column-filter-file", path,
+	)
+	require.ErrorContains(t, err, "can't specify both --column-filter and --column-filter-file at the same time")
+}
+
 func TestValidateColumnFilterOptions(t *testing.T) {
 	conf := DefaultConfig()
 	conf.NoSchemas = true
-	require.NoError(t, validateColumnFilterOptions(conf))
+	require.NoError(t, validateColumnFilterOptions(conf, flagColumnFilterFile))
 
 	conf = DefaultConfig()
 	conf.NoSchemas = true
 	conf.SQL = "select * from t"
-	require.ErrorContains(t, validateColumnFilterOptions(conf), "can't specify both --sql and --column-filter-file at the same time")
+	require.ErrorContains(
+		t,
+		validateColumnFilterOptions(conf, flagColumnFilterFile),
+		"can't specify both --sql and --column-filter-file at the same time",
+	)
 
 	conf = DefaultConfig()
-	require.ErrorContains(t, validateColumnFilterOptions(conf), "--column-filter-file requires --no-schemas/-m")
+	require.ErrorContains(t, validateColumnFilterOptions(conf, flagColumnFilterFile), "--column-filter-file requires --no-schemas/-m")
 }
 
 func writeColumnFilterFileForTest(t *testing.T, content string) string {
