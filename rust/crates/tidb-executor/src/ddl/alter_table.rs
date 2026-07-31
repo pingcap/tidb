@@ -498,6 +498,7 @@ pub(crate) fn normalize_column_default(
         tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set => {
             enum_set_column_default(&value, field_type).ok_or_else(invalid)?
         }
+        tidb_datatype::FieldTypeCode::Bit => bit_column_default(&value, field_type, column)?,
         _ => value.clone(),
     };
     // The check phase: strict conversion of what will be stored.
@@ -537,6 +538,53 @@ pub(crate) fn normalize_column_default(
 /// the written literal instead -- the shape this replaced -- leaves a column
 /// whose `DEFAULT` is not a value of its own type, so an omitted column on
 /// `INSERT` reads something the element list does not contain.
+/// A `BIT(n)` column's written `DEFAULT`, settled to the BITS it names.
+///
+/// Go `pkg/ddl/add_column.go` `getDefaultValue` reaches the same bits from two
+/// spellings, and keeps neither of them verbatim:
+///
+///  * a bit or hex literal (`DEFAULT b'1100110111001'`, `DEFAULT 0x19b9`) is
+///    read with `GetBinaryStringDecoded` in the column's charset, which for a
+///    `BIT` column is `binary` and so hands back the literal's own bytes;
+///  * an INTEGER (`DEFAULT 250`) becomes `NewBinaryLiteralFromUint(v, -1)`,
+///    the number's minimal big-endian bytes.
+///
+/// Go then stores those bytes as the column's `DefaultValue` string, and every
+/// surface that prints a default -- `SHOW CREATE TABLE`, `SHOW COLUMNS`,
+/// `information_schema.columns` -- renders them with
+/// `BinaryLiteral.ToBitLiteralString(true)`, so both spellings print back as
+/// `b'11111010'`. Keeping the WRITTEN datum instead prints `DEFAULT '250'`,
+/// which re-reads as the three characters `250` and not as the bits.
+fn bit_column_default(
+    value: &Datum,
+    field_type: &FieldType,
+    column: &str,
+) -> Result<Datum, DriverError> {
+    let invalid = || DriverError::InvalidDefault(column.to_owned());
+    let bits = match value {
+        Datum::BinaryLiteral(_) | Datum::Bit(_) => {
+            let (bytes, error) = value
+                .binary_string_decoded(tidb_datatype::STRICT_FLAGS, field_type.charset_name())
+                .into_parts();
+            if error.is_some() {
+                return Err(invalid());
+            }
+            tidb_datatype::BinaryLiteral::from(bytes)
+        }
+        Datum::Int(_) | Datum::UInt(_) => {
+            let number = value
+                .as_uint()
+                .or_else(|| value.as_int().map(|value| value as u64))
+                .ok_or_else(invalid)?;
+            tidb_datatype::BinaryLiteral::from_uint(number, None)
+        }
+        // Go falls through to `v.ToString()` for every other kind and lets
+        // the check phase decide, so the written value is kept here too.
+        _ => return Ok(value.clone()),
+    };
+    Ok(Datum::BinaryLiteral(bits))
+}
+
 fn enum_set_column_default(value: &Datum, field_type: &FieldType) -> Option<Datum> {
     let elements = field_type.elems();
     let collation = field_type.collation();

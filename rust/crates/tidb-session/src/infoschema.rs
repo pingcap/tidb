@@ -829,7 +829,7 @@ fn column_row(
             // `ColDesc.DefaultValue`, the same string `SHOW COLUMNS` reports,
             // so a computed default reports its stored text unparenthesised.
             Some(tidb_executor::column_default::ColumnDefault::Value(value)) => {
-                text(&crate::datum_text(value).unwrap_or_default())
+                text(&crate::show::column_default_text(value, field_type).unwrap_or_default())
             }
             Some(computed) => match computed.column_desc_text(field_type) {
                 Some(stored) => text(&stored),

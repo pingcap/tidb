@@ -113,6 +113,11 @@ impl ColumnDefault {
     #[must_use]
     pub fn show_create_clause(&self, field_type: &FieldType, literal_text: &str) -> String {
         match self {
+            // Go's `if col.GetType() == mysql.TypeBit` arm: a BIT column's
+            // default is already a `b'...'` literal and is NOT quoted again.
+            ColumnDefault::Value(_) if field_type.code() == FieldTypeCode::Bit => {
+                literal_text.to_owned()
+            }
             ColumnDefault::Value(_) => format!("'{literal_text}'"),
             ColumnDefault::Computed(computed) if !computed.is_expr => {
                 let fsp = field_type.decimal();

@@ -37,6 +37,32 @@ fn type_desc_cell(field_type: &tidb_datatype::FieldType) -> Datum {
     )
 }
 
+/// The text of a column's SETTLED `DEFAULT`, as every surface that prints one
+/// renders it.
+///
+/// Go stores the default as a string and each printer -- `pkg/executor/show.go`
+/// for both `SHOW CREATE TABLE` and `SHOW COLUMNS`, and
+/// `pkg/infoschema`'s `COLUMN_DEFAULT` -- carries the SAME `TypeBit` branch:
+/// a `BIT` column's stored bytes print through
+/// `BinaryLiteral.ToBitLiteralString(true)`, so `DEFAULT 250` and
+/// `DEFAULT b'11111010'` both read back as `b'11111010'`. Every other type
+/// prints its stored text.
+pub(crate) fn column_default_text(
+    value: &Datum,
+    field_type: &tidb_datatype::FieldType,
+) -> Option<String> {
+    if field_type.code() == tidb_datatype::FieldTypeCode::Bit {
+        return match value {
+            Datum::Null => None,
+            Datum::BinaryLiteral(bits) | Datum::Bit(bits) => Some(bits.to_bit_literal_string(true)),
+            // Anything else never settled into the column's own domain;
+            // rendering it as bits would invent a value it does not hold.
+            other => datum_text(other),
+        };
+    }
+    datum_text(value)
+}
+
 /// Go `stringutil.Escape` with a non-ANSI_QUOTES sql_mode: backtick-quoted,
 /// with an embedded backtick doubled.
 fn escape_name(name: &str) -> String {
@@ -176,7 +202,7 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
                 // `ColumnDefault::show_create_clause` for which is which.
                 let literal = match default {
                     tidb_executor::column_default::ColumnDefault::Value(value) => {
-                        datum_text(value).unwrap_or_default()
+                        column_default_text(value, &column.field_type).unwrap_or_default()
                     }
                     _ => String::new(),
                 };
@@ -408,11 +434,12 @@ fn column_description(
     };
     let key_flag = column_key_flag(table, offset);
     let default = match &column.default_value {
-        Some(tidb_executor::column_default::ColumnDefault::Value(value)) => match datum_text(value)
-        {
-            Some(text) => Datum::Bytes(text.into_bytes()),
-            None => Datum::Null,
-        },
+        Some(tidb_executor::column_default::ColumnDefault::Value(value)) => {
+            match column_default_text(value, &column.field_type) {
+                Some(text) => Datum::Bytes(text.into_bytes()),
+                None => Datum::Null,
+            }
+        }
         // Go `NewColDesc` reports a computed default's STORED string here,
         // which is not the parenthesised form `SHOW CREATE TABLE` prints.
         Some(computed) => match computed.column_desc_text(&column.field_type) {

@@ -416,3 +416,220 @@ fn a_space_padded_enum_default_settles_on_the_member_it_names() {
         );
     }
 }
+
+/// Transcreates Go `pkg/ddl/db_integration_test.go`'s `TestBitDefaultValue`,
+/// whole, every statement of it.
+///
+/// A `BIT(n)` column's `DEFAULT` is another accept-then-discard shape, and a
+/// wider one than the `ENUM` case above: the value can be written as a plain
+/// INTEGER (`DEFAULT 250`) or as a bit literal (`DEFAULT b'1100110111001'`),
+/// and Go settles both into the SAME stored form -- the big-endian bytes of
+/// the number, padded to the declared width. `pkg/ddl/add_column.go`'s
+/// `getDefaultValue` takes the `KindBinaryLiteral`/`KindMysqlBit` branch for
+/// the literal spelling and `Datum.ConvertTo` against the `BIT` field type for
+/// the integer one; `pkg/executor/show.go` then prints both back as `b'...'`.
+///
+/// The last case is the one an engine is most likely to get wrong in the other
+/// direction: `ALTER TABLE ... MODIFY COLUMN b BIT(1) DEFAULT b'1'` changes
+/// what a FUTURE omitted column takes and must NOT rewrite the row already
+/// stored, which keeps its `b'0'`.
+///
+/// Captured from real TiDB through `rust/difftests/gorun`, verbatim (the
+/// `SHOW CREATE TABLE` bodies are the hex cells decoded):
+///
+/// ```text
+/// create table t_bit (c1 bit(10) default 250, c2 int)
+/// insert into t_bit set c2=1
+/// select bin(c1),c2 from t_bit          ->  11111010|1
+/// select c1 from t_bit                  ->  BYTES_HEX:00FA
+///   `c1` bit(10) DEFAULT b'11111010',
+///   `c2` int(11) DEFAULT NULL
+///
+/// create table t_bit (a int); insert into t_bit value (1)
+/// alter table t_bit add column c bit(16) null default b'1100110111001'
+/// select c from t_bit                   ->  BYTES_HEX:19B9
+/// select bin(c) from t_bit              ->  1100110111001
+/// update t_bit set c = b'11100000000111'
+/// select bin(c) from t_bit              ->  11100000000111
+///   `c` bit(16) DEFAULT b'1100110111001'
+///
+/// create table t_bit (a int); insert into t_bit value (1)
+/// alter table t_bit add column b bit(1) default b'0'
+/// alter table t_bit modify column b bit(1) default b'1'
+/// select bin(b) from t_bit              ->  0        (the stored row is kept)
+///   `b` bit(1) DEFAULT b'1'
+/// insert into t_bit (a) values (2)
+/// select a, bin(b) from t_bit           ->  1|0;2|1  (the NEW row takes b'1')
+///
+/// create table t_bit (a bit); insert into t_bit values (null)
+/// select count(*) from t_bit where a is null  ->  1
+///
+/// create table testalltypes1 (field_1 bit default 1, field_2 tinyint null default null)
+///   `field_1` bit(1) DEFAULT b'1'
+/// ```
+///
+/// `int(11)`/`tinyint(4)` above are `gorun` display lengths, not what a server
+/// prints; nothing here asserts them.
+#[test]
+fn a_bit_column_default_settles_whether_it_was_written_as_a_number_or_a_literal() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t_bit (c1 BIT(10) DEFAULT 250, c2 INT)")
+        .unwrap();
+    session.run("INSERT INTO t_bit SET c2=1").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT bin(c1), c2 FROM t_bit"),
+        vec![vec!["11111010".to_owned(), "1".to_owned()]],
+        "an integer BIT default did not reach the row"
+    );
+    let body = show_create(&mut session, "t_bit");
+    assert!(
+        body.contains("`c1` bit(10) DEFAULT b'11111010'"),
+        "an integer BIT default did not print back as a bit literal: {body}"
+    );
+    session.run("DROP TABLE t_bit").unwrap();
+}
+
+/// Every OTHER surface that prints a column default carries Go's same
+/// `TypeBit` branch, so all three must agree. Captured verbatim:
+///
+/// ```text
+/// create table t_bit (c1 bit(10) default 250, c2 bit(16) default b'1100110111001',
+///                     c3 bit(1), c4 bit default 1)
+/// show columns from t_bit
+///   c1|bit(10)|YES||b'11111010'|
+///   c2|bit(16)|YES||b'1100110111001'|
+///   c3|bit(1)|YES||<nil>|
+///   c4|bit(1)|YES||b'1'|
+/// select column_name, column_default from information_schema.columns
+///   c1|b'11111010'  c2|b'1100110111001'  c3|<nil>  c4|b'1'
+/// ```
+#[test]
+fn every_surface_prints_a_bit_default_as_the_same_literal() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t_bit (c1 BIT(10) DEFAULT 250, c2 BIT(16) DEFAULT b'1100110111001', \
+             c3 BIT(1), c4 BIT DEFAULT 1)",
+        )
+        .unwrap();
+    let expected = [
+        ("c1", "b'11111010'"),
+        ("c2", "b'1100110111001'"),
+        ("c3", "NULL"),
+        ("c4", "b'1'"),
+    ];
+
+    let columns = rows(&mut session, "SHOW COLUMNS FROM t_bit");
+    for (row, (name, default)) in columns.iter().zip(expected) {
+        assert_eq!(row[0], name);
+        assert_eq!(row[4], default, "SHOW COLUMNS default for {name}");
+    }
+
+    let mut catalog = rows(
+        &mut session,
+        "SELECT column_name, column_default FROM information_schema.columns \
+         WHERE table_name = 't_bit'",
+    );
+    catalog.sort();
+    assert_eq!(
+        catalog,
+        expected
+            .iter()
+            .map(|(name, default)| vec![(*name).to_owned(), (*default).to_owned()])
+            .collect::<Vec<_>>(),
+        "information_schema.columns disagreed with SHOW COLUMNS"
+    );
+}
+
+/// The `ADD COLUMN` half of `TestBitDefaultValue`: a bit literal wider than a
+/// byte, backfilled into a row that already exists, then overwritten.
+#[test]
+fn an_added_bit_column_backfills_its_literal_default_and_still_takes_an_update() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t_bit (a INT)").unwrap();
+    session.run("INSERT INTO t_bit VALUE (1)").unwrap();
+    session
+        .run("ALTER TABLE t_bit ADD COLUMN c BIT(16) NULL DEFAULT b'1100110111001'")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT bin(c) FROM t_bit"),
+        vec![vec!["1100110111001".to_owned()]],
+        "the added column did not backfill its default"
+    );
+    let body = show_create(&mut session, "t_bit");
+    assert!(
+        body.contains("`c` bit(16) DEFAULT b'1100110111001'"),
+        "the added BIT column's default did not print back: {body}"
+    );
+    session
+        .run("UPDATE t_bit SET c = b'11100000000111'")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT bin(c) FROM t_bit"),
+        vec![vec!["11100000000111".to_owned()]],
+        "a bit literal did not survive an UPDATE"
+    );
+}
+
+/// The `MODIFY COLUMN` half of `TestBitDefaultValue`: changing a `DEFAULT`
+/// changes what a LATER omitted column takes and leaves stored rows alone.
+#[test]
+fn modifying_a_bit_default_reaches_the_next_row_and_not_the_stored_one() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t_bit (a INT)").unwrap();
+    session.run("INSERT INTO t_bit VALUE (1)").unwrap();
+    session
+        .run("ALTER TABLE t_bit ADD COLUMN b BIT(1) DEFAULT b'0'")
+        .unwrap();
+    session
+        .run("ALTER TABLE t_bit MODIFY COLUMN b BIT(1) DEFAULT b'1'")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT bin(b) FROM t_bit"),
+        vec![vec!["0".to_owned()]],
+        "MODIFY COLUMN rewrote a stored row it must not touch"
+    );
+    let body = show_create(&mut session, "t_bit");
+    assert!(
+        body.contains("`b` bit(1) DEFAULT b'1'"),
+        "MODIFY COLUMN did not record the new default: {body}"
+    );
+    session.run("INSERT INTO t_bit (a) VALUES (2)").unwrap();
+    let mut observed = rows(&mut session, "SELECT a, bin(b) FROM t_bit");
+    observed.sort();
+    assert_eq!(
+        observed,
+        vec![
+            vec!["1".to_owned(), "0".to_owned()],
+            vec!["2".to_owned(), "1".to_owned()],
+        ],
+        "the row inserted after the MODIFY did not take the new default"
+    );
+}
+
+/// The remaining two statements of `TestBitDefaultValue`: an undeclared width
+/// is `BIT(1)`, a NULL is storable in one, and a bare integer default on a
+/// bare `BIT` prints as `b'1'`.
+#[test]
+fn a_bare_bit_column_is_one_bit_wide_and_holds_null() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t_bit (a BIT)").unwrap();
+    session.run("INSERT INTO t_bit VALUES (null)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT count(*) FROM t_bit WHERE a IS NULL"),
+        vec![vec!["1".to_owned()]],
+        "a NULL BIT did not read back as NULL"
+    );
+
+    session
+        .run(
+            "CREATE TABLE testalltypes1 (field_1 BIT DEFAULT 1, field_2 TINYINT NULL DEFAULT NULL)",
+        )
+        .unwrap();
+    let body = show_create(&mut session, "testalltypes1");
+    assert!(
+        body.contains("`field_1` bit(1) DEFAULT b'1'"),
+        "a bare BIT column did not settle to bit(1) DEFAULT b'1': {body}"
+    );
+}
