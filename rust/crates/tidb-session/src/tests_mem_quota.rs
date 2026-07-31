@@ -131,3 +131,88 @@ fn a_quota_of_minus_one_is_unlimited_as_the_sysvar_range_allows() {
     let rows = crate::tests_support::row_text(session.run("SELECT a FROM t ORDER BY b"));
     assert_eq!(rows.len(), 1024);
 }
+
+/// `tests/integrationtest/t/executor/executor.test`'s `TestOOMPanicAction`,
+/// verbatim: the same `INSERT` is 8175 at `tidb_mem_quota_query = 200` and
+/// succeeds at 10000. This is the sysvar reaching the WRITE path -- before
+/// the write path accounted, both spellings simply inserted.
+#[test]
+fn the_suite_s_oom_insert_is_8175_at_200_and_inserts_at_10000() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t1 (a BIGINT)").unwrap();
+    session.run("SET @@tidb_mem_quota_query = 200").unwrap();
+    let error = session
+        .run("INSERT INTO t1 VALUES (1),(2),(3),(4),(5)")
+        .expect_err("the quota must be enforced on the write path");
+    assert_eq!(error.to_mysql_error().code, 8175);
+    assert!(
+        crate::tests_support::row_text(session.run("SELECT a FROM t1")).is_empty(),
+        "a cancelled INSERT stores nothing"
+    );
+
+    session.run("SET @@tidb_mem_quota_query = 10000").unwrap();
+    session
+        .run("INSERT INTO t1 VALUES (1),(2),(3),(4),(5)")
+        .unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(session.run("SELECT a FROM t1")).len(),
+        5
+    );
+}
+
+/// `executor/foreign_key.test`: `update t1 set id=id+100000 where id=1` under
+/// `tidb_mem_quota_query = 81920` is 8175 in TiDB **with the cascade
+/// unapplied** -- captured against a mock-store session: afterwards `select
+/// id,pid from t1 where id=1` is still `1 NULL`, 255 rows still hold `pid=1`,
+/// none holds `pid=100001`, and `sum(id)` is still 32896. Under the default
+/// quota the same statement repoints all 255 (`sum(id)` 132896).
+///
+/// The suite builds its self-referencing constraint with `ALTER TABLE ... ADD
+/// FOREIGN KEY`, which this tier still refuses, so the parent and child are
+/// two tables here. Everything the quota decides is the same: 256 child rows
+/// of the same width, one parent row updated, the same 81920.
+#[test]
+fn a_cascade_past_the_quota_repoints_nothing_and_finishes_under_the_default() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE p (id INT PRIMARY KEY)").unwrap();
+    session
+        .run(
+            "CREATE TABLE c (id INT PRIMARY KEY, pid INT, name VARCHAR(200), INDEX(pid), \
+             FOREIGN KEY (pid) REFERENCES p (id) ON UPDATE CASCADE)",
+        )
+        .unwrap();
+    session.run("INSERT INTO p VALUES (1)").unwrap();
+    let values: Vec<String> = (1..=256)
+        .map(|i| {
+            format!("({i}, 1, 'abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz')")
+        })
+        .collect();
+    session
+        .run(&format!("INSERT INTO c VALUES {}", values.join(",")))
+        .unwrap();
+
+    session.run("SET @@tidb_mem_quota_query = 81920").unwrap();
+    let error = session
+        .run("UPDATE p SET id = id + 100000")
+        .expect_err("the cascade must be stopped by the quota");
+    assert_eq!(error.to_mysql_error().code, 8175);
+    assert_eq!(
+        crate::tests_support::row_text(session.run("SELECT id FROM p")),
+        vec![vec!["1".to_owned()]],
+        "the parent row is unchanged"
+    );
+    assert_eq!(
+        crate::tests_support::row_text(session.run("SELECT count(*) FROM c WHERE pid = 1")),
+        vec![vec!["256".to_owned()]],
+        "and NOT ONE child row was repointed -- a half-applied cascade would be a \
+         silent wrong answer wearing a correct errno"
+    );
+
+    session.run("SET @@tidb_mem_quota_query = DEFAULT").unwrap();
+    session.run("UPDATE p SET id = id + 100000").unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(session.run("SELECT count(*) FROM c WHERE pid = 100001")),
+        vec![vec!["256".to_owned()]],
+        "accept-control: with room the cascade repoints every child row"
+    );
+}

@@ -431,7 +431,7 @@ pub(crate) fn run_insert_traced(
     ctx.statement_memory()
         .write_accountant(mem_quota::label::INSERT)
         .account_rows(&new_rows)
-        .map_err(DriverError::Exec)?;
+        .map_err(DriverError::from)?;
     // A matrix table has neither an allocator nor constraints, so it is
     // finished here; everything below is the byte-backed write path.
     if let TableEntry::Mem(mem) = table {
@@ -1310,7 +1310,7 @@ pub(crate) fn run_update_traced(
             // check reads the parent tables, and the parent-side cascade
             // writes the dependent ones.
             for (handle, row) in rows {
-                accountant.account_row(&row).map_err(DriverError::Exec)?;
+                accountant.account_row(&row).map_err(DriverError::from)?;
                 // Go's `LIMIT` is a plan operator over the rows the statement
                 // reaches, so it counts MATCHED rows -- not the subset whose
                 // value ended up different. Counting changed rows lets a run of
@@ -1343,7 +1343,7 @@ pub(crate) fn run_update_traced(
                         .map_err(kv_write_error)?;
                     accountant
                         .account_row(&new_row)
-                        .map_err(DriverError::Exec)?;
+                        .map_err(DriverError::from)?;
                     rewrites.push((handle, row, new_row));
                 }
             }
@@ -1627,7 +1627,7 @@ pub(crate) fn run_delete_traced(
             // needs the table released, because it writes the DEPENDENT
             // tables the statement never named.
             for (handle, row) in rows {
-                accountant.account_row(&row).map_err(DriverError::Exec)?;
+                accountant.account_row(&row).map_err(DriverError::from)?;
                 // Go's LIMIT caps the rows DELETED, not the rows examined.
                 if row_limit.is_some_and(|cap| doomed.len() as u64 >= cap) {
                     break;

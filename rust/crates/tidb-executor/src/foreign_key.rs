@@ -444,7 +444,7 @@ fn cascade_at_depth(
         };
         let mut affected: Vec<(usize, Option<Vec<Datum>>)> = Vec::new();
         for (index, row) in child_rows.iter().enumerate() {
-            accountant.account_row(row).map_err(DriverError::Exec)?;
+            accountant.account_row(row).map_err(DriverError::from)?;
             let Some(key) = key_at(row, &foreign_key.cols) else {
                 continue;
             };
@@ -516,7 +516,7 @@ fn cascade_at_depth(
                             _ => Datum::Null,
                         };
                     }
-                    accountant.account_row(&new).map_err(DriverError::Exec)?;
+                    accountant.account_row(&new).map_err(DriverError::from)?;
                     rewritten.push((old, new));
                 }
                 let nested: Vec<ParentChange<'_>> = rewritten

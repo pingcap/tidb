@@ -45,10 +45,10 @@ fn rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
 }
 
 fn is_memory_exceeded(error: &DriverError) -> bool {
-    matches!(
-        error,
-        DriverError::Exec(crate::executor::ExecError::MemoryExceedForQuery { .. })
-    )
+    // The dedicated variant, not `Exec(..)`: only this one renders as 8175 on
+    // the wire (`DriverError`'s `From<ExecError>` lifts it, and a write path
+    // that wrapped it in the generic `Exec` arm reached the client as 1105).
+    matches!(error, DriverError::MemoryExceedForQuery { .. })
 }
 
 #[test]
