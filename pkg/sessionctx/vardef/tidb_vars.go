@@ -671,6 +671,9 @@ const (
 	// TiDBEnableVectorizedExpression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
 
+	// TiDBEnableTiKVShortCircuitExpression controls whether to enable short-circuit expression evaluation in TiKV.
+	TiDBEnableTiKVShortCircuitExpression = "tidb_enable_tikv_short_circuit_expression"
+
 	// TiDBOptJoinReorderThreshold defines the threshold less than which
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
@@ -1589,6 +1592,7 @@ const (
 	DefTiDBEnableStrictNotNullCheck         = true
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
+	DefTiDBEnableTiKVShortCircuitExpression = false
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBOptEnableAdvancedJoinReorder     = true
 	DefTiDBOptJoinReorderThroughProj        = false
