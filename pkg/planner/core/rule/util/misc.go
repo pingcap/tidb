@@ -164,7 +164,9 @@ func CheckMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Sch
 
 // CheckIndexCanBeKey checks whether an Index can be a Key in schema.
 func CheckIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schema *expression.Schema) (uniqueKey, newKey expression.KeyInfo) {
-	if !idx.Unique {
+	// A partial unique index only guarantees uniqueness among the rows that satisfy its condition,
+	// so it cannot be used as an unconditional key of the relation.
+	if !idx.Unique || idx.HasCondition() {
 		return nil, nil
 	}
 	newKeyOK := true
