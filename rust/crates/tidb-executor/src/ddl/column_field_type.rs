@@ -26,15 +26,38 @@
 //! There are two `CREATE TABLE` metadata builders in this workspace --
 //! `tidb_executor::ddl`'s runnable-path one and `tidb_exec::table_info_build`'s
 //! `TableInfo` one -- and four of the accept-then-discard bugs this campaign
-//! found were the two disagreeing about the same statement. Owning the
-//! declared-type rules ONCE is what keeps the next `CREATE`-time feature from
-//! having to be implemented twice, or from diverging again.
+//! found were the two disagreeing about the same statement. Their column-type
+//! halves had drifted apart on five separate rules; captured from real TiDB
+//! with `create table bt (a varchar(10) binary, b blob(100), c datetime(3),
+//! d int unsigned, e int zerofill)`:
 //!
-//! This is a MOVE of `table_info_build`'s implementation, which is the one
-//! checked field-for-field against the `TableInfo`s a real TiDB v8.5 builds
-//! for its own `mysql.*` bootstrap DDL. The resolved charset/collation pair is
-//! the caller's input: each tier expresses that precedence over its own
-//! registry, and this decides only whether the type carries a charset at all.
+//! ```text
+//! `a` varchar(10)                    charset utf8mb4, collation utf8mb4_bin
+//! `b` tinyblob                       CHARACTER_MAXIMUM_LENGTH 255
+//! `c` datetime(3)                    DATETIME_PRECISION 3
+//! `d` int(10) unsigned               flen 10, not 11
+//! `e` int(10) unsigned zerofill      ZEROFILL implies UNSIGNED
+//! ```
+//!
+//! so `BLOB(n)` promotes through the family, a fractional-seconds precision is
+//! the DECIMAL and not the flen, an unsigned non-`BIGINT` integer is one digit
+//! narrower (Go issue #4684), and `ZEROFILL` survives. Each of those was right
+//! in exactly one of the two builders. Owning them once is what keeps the next
+//! `CREATE`-time feature from having to be implemented twice.
+//!
+//! # `BINARY` is a collation modifier, NOT a charset
+//!
+//! Go's `typesNeedCharset` is a pure type-CODE test, so `VARCHAR(10) BINARY`
+//! keeps its inherited charset and only takes that charset's default
+//! collation (`OverwriteCollationWithBinaryFlag`). This workspace's
+//! `field_type_has_charset` instead consults `BinaryFlag`, because Go tells
+//! `BLOB` from `TEXT` by the charset its parser already stamped and these
+//! share one type code. The two facts compose only if the flag tracks the
+//! CHARSET -- an intrinsically binary type NAME, or a resolved charset of
+//! `binary` -- and never the modifier. Captured: `varchar(10) CHARACTER SET
+//! binary` restores as `varbinary(10)` reporting a NULL charset, while
+//! `char(5) BINARY` under a `utf8mb4` table stays `char(5)` in
+//! `utf8mb4`/`utf8mb4_bin`. The resolved pair itself is the caller's input.
 
 use tidb_ast::{ColumnType, ColumnTypeArg};
 use tidb_datatype::{
@@ -110,6 +133,10 @@ pub fn column_type_code(declared: &ColumnType) -> Result<FieldTypeCode, ColumnTy
 
 /// Whether the declared type NAME is intrinsically binary (`BINARY`,
 /// `VARBINARY`, and the BLOB family) rather than character.
+///
+/// This and a resolved charset of `binary` are the only two things that stamp
+/// `BinaryFlag`; see the module doc for why the `BINARY` column MODIFIER
+/// deliberately does not.
 #[must_use]
 pub fn is_intrinsically_binary(name: &str) -> bool {
     matches!(
@@ -160,20 +187,29 @@ pub fn build_field_type(
             );
             field_type.set_elems(elems);
         }
-        FieldTypeCode::NewDecimal => match declared.args.as_slice() {
-            [] => {}
-            [precision] => flen = type_argument(name, &declared.name, precision)?,
-            [precision, scale] => {
-                flen = type_argument(name, &declared.name, precision)?;
-                decimal = type_argument(name, &declared.name, scale)?;
+        // `FLOAT(M,D)` and `DOUBLE(M,D)` carry a precision AND a scale exactly
+        // as DECIMAL does; captured, `float(10,2)` reports NUMERIC_PRECISION 10
+        // / NUMERIC_SCALE 2 and restores as `float(10,2)`. A single-argument
+        // `FLOAT(p)` never reaches here as a length: `ColumnType::
+        // normalize_float_precision` has already turned it into a bare `FLOAT`
+        // or a bare `DOUBLE`, so treating one argument as the flen is only the
+        // conservative fallback.
+        FieldTypeCode::NewDecimal | FieldTypeCode::Float | FieldTypeCode::Double => {
+            match declared.args.as_slice() {
+                [] => {}
+                [precision] => flen = type_argument(name, &declared.name, precision)?,
+                [precision, scale] => {
+                    flen = type_argument(name, &declared.name, precision)?;
+                    decimal = type_argument(name, &declared.name, scale)?;
+                }
+                _ => {
+                    return Err(ColumnTypeError::new(format!(
+                        "column `{name}` declares {} with more than two arguments",
+                        declared.name
+                    )))
+                }
             }
-            _ => {
-                return Err(ColumnTypeError::new(format!(
-                    "column `{name}` declares {} with more than two arguments",
-                    declared.name
-                )))
-            }
-        },
+        }
         // A fractional-seconds precision is the DECIMAL, not the flen; Go's
         // parser then derives the display width from it.
         FieldTypeCode::Timestamp | FieldTypeCode::Datetime | FieldTypeCode::Duration => {
@@ -212,7 +248,12 @@ pub fn build_field_type(
     // Go's parser stamps `BinaryFlag` while building the type, so it is
     // already set by the time `setCharsetCollationFlenDecimal` asks whether
     // this type carries a charset at all -- `BLOB` does not, `TEXT` does.
-    if is_intrinsically_binary(&declared.name) || declared.binary {
+    //
+    // The flag tracks the CHARSET being binary, never the `BINARY` modifier:
+    // captured, `varchar(10) CHARACTER SET binary` restores as `varbinary(10)`
+    // reporting a NULL charset, while `char(5) BINARY` under a `utf8mb4` table
+    // stays `char(5)` in `utf8mb4`/`utf8mb4_bin`.
+    if is_intrinsically_binary(&declared.name) || charset.eq_ignore_ascii_case(BINARY_CHARSET) {
         field_type.add_flags(FieldTypeFlags::BINARY);
     }
 
@@ -301,3 +342,103 @@ fn type_argument(
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::build_field_type;
+    use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+
+    /// The declared type of the one column of `CREATE TABLE probe (<decl>)`.
+    fn parsed_type(declaration: &str) -> (String, tidb_ast::ColumnType) {
+        let sql = format!("CREATE TABLE probe ({declaration})");
+        let stmt = tidb_parser::parse(&sql).expect("the probe parses");
+        let tidb_ast::Stmt::Ddl(ddl) = &stmt else {
+            panic!("expected a DDL statement");
+        };
+        let tidb_ast::DdlStmt::CreateTable(create) = &**ddl else {
+            panic!("expected CREATE TABLE");
+        };
+        let column = &create.columns[0];
+        (column.name.clone(), column.ty.clone())
+    }
+
+    /// That column built under a `utf8mb4`/`utf8mb4_bin` table, which is what
+    /// the captures below ran against.
+    fn built(declaration: &str) -> FieldType {
+        let (name, declared) = parsed_type(declaration);
+        build_field_type(&name, &declared, "utf8mb4", "utf8mb4_bin")
+            .expect("the probe declaration is buildable")
+    }
+
+    /// Captured from real TiDB with `create table bt (a varchar(10) binary,
+    /// b blob(100), c datetime(3), d int unsigned, e int zerofill)`:
+    ///
+    /// ```text
+    /// `a` varchar(10)                 charset utf8mb4, collation utf8mb4_bin
+    /// `b` tinyblob                    CHARACTER_MAXIMUM_LENGTH 255
+    /// `c` datetime(3)                 DATETIME_PRECISION 3
+    /// `d` int(10) unsigned            flen 10
+    /// `e` int(10) unsigned zerofill   ZEROFILL survives
+    /// ```
+    ///
+    /// Each of these was right in exactly ONE of the two `CREATE TABLE`
+    /// metadata builders before they shared this rule set.
+    #[test]
+    fn the_five_rules_the_two_builders_disagreed_about() {
+        // The `BINARY` modifier is a collation modifier and NEVER a charset:
+        // no `BinaryFlag`, so `has_charset` stays true and SHOW reports
+        // `utf8mb4` rather than NULL.
+        let a = built("a varchar(10) binary");
+        assert_eq!(a.code(), FieldTypeCode::Varchar);
+        assert!(a.has_charset());
+        assert_eq!(a.charset_name(), "utf8mb4");
+        assert_eq!(a.flen(), 10);
+
+        // `adjustBlobTypesFlen` promotes through the family by BYTES, and a
+        // BLOB's charset is `binary` (one byte per character), so `blob(100)`
+        // fits a TINYBLOB while the same length of `text` (utf8mb4, four bytes
+        // per character) does not.
+        let b = built("b blob(100)");
+        assert_eq!((b.code(), b.flen()), (FieldTypeCode::TinyBlob, 255));
+        let text = built("b2 text(100)");
+        assert_eq!((text.code(), text.flen()), (FieldTypeCode::Blob, 65535));
+
+        // A fractional-seconds precision is the DECIMAL, not the flen.
+        let c = built("c datetime(3)");
+        assert_eq!((c.flen(), c.decimal()), (23, 3));
+
+        // Go issue #4684: an unsigned non-BIGINT integer is one digit narrower.
+        assert_eq!(built("d int unsigned").flen(), 10);
+        assert_eq!(built("d2 int").flen(), 11);
+        assert_eq!(built("d3 bigint unsigned").flen(), 20);
+
+        assert!(built("e int zerofill").has_flag(FieldTypeFlags::ZEROFILL));
+    }
+
+    /// Captured with `create table b2 (a varchar(10) character set binary,
+    /// c varchar(10) charset gbk binary, d char(5) binary) charset utf8mb4`:
+    /// `a` restores as `varbinary(10)` reporting a NULL charset, `c` keeps
+    /// `gbk` and takes `gbk_chinese_ci` -- the charset's DEFAULT collation,
+    /// not the `_bin` the keyword suggests -- and `d` stays `char(5)` in
+    /// `utf8mb4`. So `BinaryFlag` tracks the CHARSET, never the modifier.
+    #[test]
+    fn binary_flag_tracks_the_charset_and_not_the_modifier() {
+        let (name, declared) = parsed_type("a varchar(10) character set binary");
+        let explicit = build_field_type(&name, &declared, "binary", "binary").expect("buildable");
+        assert!(explicit.has_flag(FieldTypeFlags::BINARY));
+        assert!(!explicit.has_charset());
+
+        let modifier = built("d char(5) binary");
+        assert!(!modifier.has_flag(FieldTypeFlags::BINARY));
+        assert_eq!(modifier.charset_name(), "utf8mb4");
+    }
+
+    /// `FLOAT(M,D)` and `DOUBLE(M,D)` carry a precision AND a scale; captured,
+    /// `float(10,2)` reports NUMERIC_PRECISION 10 / NUMERIC_SCALE 2.
+    #[test]
+    fn float_and_double_take_a_precision_and_a_scale() {
+        let a = built("a float(10,2)");
+        assert_eq!((a.flen(), a.decimal()), (10, 2));
+        let b = built("b double(12,3)");
+        assert_eq!((b.flen(), b.decimal()), (12, 3));
+    }
+}

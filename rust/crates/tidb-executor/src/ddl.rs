@@ -17,15 +17,30 @@
 //! transcreated metadata structs into the runnable path.
 //!
 //! This is the metadata slice of Go's `pkg/ddl` `buildTableInfo` /
-//! `buildColumnAndConstraint`: column types map through `str_to_type` (Go
-//! `types.StrToType`) with flen/decimal from the type arguments and the
-//! unsigned flag, and charset/collation through [`field_type_of`]'s
-//! transcreation of Go `ResolveCharsetCollation` (see its doc for the exact
-//! precedence). DEFERRED (documented): `CREATE TABLE ... LIKE`, and the
+//! `buildColumnAndConstraint`: column types map through
+//! [`column_field_type::build_field_type`], and charset/collation through
+//! [`column_types::field_type_of`]'s transcreation of Go
+//! `ResolveCharsetCollation` and `OverwriteCollationWithBinaryFlag` (see its
+//! doc for the exact precedence). DEFERRED (documented): `CREATE TABLE ...
+//! LIKE`, and the
 //! schema-version/DDL-job machinery (the driver applies metadata directly; the
 //! DDL job queue is a separate tier). Constraints/indexes and the column
 //! options are no longer deferred; see [`crate::column_default`] for what a
 //! `DEFAULT` may be.
+//!
+//! # The type rule set is shared with the `TableInfo` builder
+//!
+//! `tidb_exec::table_info_build` is the OTHER `CREATE TABLE` metadata builder
+//! in this workspace, and the two disagreeing about the same statement is the
+//! measured generator of this campaign's worst bug class. Their declared-type
+//! halves are now ONE implementation, [`column_field_type`], so `BLOB(n)`
+//! promotion, fractional-seconds precision, the unsigned integer display width
+//! and `ZEROFILL` cannot drift apart again. What each builder still owns is
+//! its genuinely different end: this one writes a `KvTable` into the catalog
+//! and reaches the store, the other writes a `TableInfo` a real TiDB would
+//! persist. The constraint/index lowering is still written twice -- named, not
+//! unified, because the two lower onto different shapes (`KvIndex` column
+//! OFFSETS here, `IndexInfo` there).
 //!
 //! # `PARTITION BY HASH` is REAL here; the other three methods are REFUSED
 //!
@@ -128,7 +143,7 @@ use crate::driver::{Catalog, DriverError};
 use crate::kv_table::{FkAction, KvColumn, KvForeignKey, KvIndex, KvTable, TableCharset};
 use crate::SchemaErrorKind;
 use tidb_ast::CiString;
-use tidb_ast::{ColumnDef, ColumnTypeArg, DdlStmt, Stmt};
+use tidb_ast::{ColumnDef, DdlStmt, Stmt};
 use tidb_datatype::FieldTypeCode;
 use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
