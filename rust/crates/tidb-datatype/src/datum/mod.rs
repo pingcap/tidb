@@ -461,6 +461,27 @@ impl Datum {
         }
     }
 
+    /// Source `Datum.GetBytes`, which reads the datum's `b` field whatever the
+    /// kind is and answers an empty slice when nothing was stored there. Every
+    /// setter that writes `b` is covered: `SetString`/`SetBytes`/`SetRaw`,
+    /// `SetBinaryLiteral`/`SetMysqlBit`, and `SetMysqlEnum`/`SetMysqlSet`,
+    /// which both store the member NAME.
+    ///
+    /// `as_raw_bytes` is the narrower accessor for callers that must
+    /// distinguish "no payload" from "empty payload"; anything transcreating a
+    /// Go function whose body says `d.GetBytes()` wants this one, because
+    /// Go has no such distinction to make.
+    pub fn go_bytes(&self) -> &[u8] {
+        match self {
+            Self::String(value) => value.bytes(),
+            Self::Bytes(value) | Self::Raw(value) => value,
+            Self::BinaryLiteral(value) | Self::Bit(value) => value.as_bytes(),
+            Self::Enum(value, _) => value.name().as_bytes(),
+            Self::Set(value, _) => value.name().as_bytes(),
+            _ => &[],
+        }
+    }
+
     /// Consumes a string, bytes, or raw datum and returns its unchanged payload.
     pub fn into_raw_bytes(self) -> Option<Vec<u8>> {
         match self {
@@ -498,17 +519,16 @@ impl Datum {
         )
     }
 
-    /// Source `Datum.GetBinaryStringDecoded`.
-    pub fn binary_string_decoded(
-        &self,
-        flags: ConversionFlags,
-        charset: &str,
-    ) -> Option<EncodingResult> {
-        let bytes = self.as_raw_bytes()?;
+    /// Source `Datum.GetBinaryStringDecoded`, which reads `GetBytes` and so
+    /// applies to every kind that stores a payload -- including the
+    /// `BinaryLiteral` and `Bit` kinds that are the ONLY ones Go's
+    /// `convertToString` and `pkg/ddl`'s `getDefaultValue` call it on.
+    pub fn binary_string_decoded(&self, flags: ConversionFlags, charset: &str) -> EncodingResult {
+        let bytes = self.go_bytes();
         let Some(encoding) = datum_encoding(flags, charset) else {
-            return Some(Encoding::Binary.transform(bytes, TransformOp::DECODE));
+            return Encoding::Binary.transform(bytes, TransformOp::DECODE);
         };
-        Some(encoding.transform(bytes, TransformOp::DECODE))
+        encoding.transform(bytes, TransformOp::DECODE)
     }
 
     /// Source `Datum.GetStringWithCheck`.
@@ -676,9 +696,8 @@ mod tests {
             assert_eq!(datum.binary_string_encoded().unwrap(), expected);
         }
 
-        let decoded = Datum::new_bytes(gbk)
-            .binary_string_decoded(ConversionFlags::default(), "gbk")
-            .unwrap();
+        let decoded =
+            Datum::new_bytes(gbk).binary_string_decoded(ConversionFlags::default(), "gbk");
         assert_eq!(decoded.bytes(), utf8);
         assert!(decoded.error().is_none());
 

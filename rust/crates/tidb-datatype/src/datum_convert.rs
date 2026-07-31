@@ -135,18 +135,20 @@ impl Datum {
                 return Ok(self.binary_string_encoded().unwrap());
             } else {
                 self.string_with_check(flags, target.charset().name())
-            }
-            .unwrap();
+                    .unwrap()
+            };
             let (bytes, error) = transformed.into_parts();
             if let Some(error) = error {
                 return Err(DatumValueError::Comparison(error.to_string()));
             }
             return Ok(bytes);
         }
-        if let Self::BinaryLiteral(value) = self {
-            let transformed = crate::find_encoding(target.charset().name())
-                .transform(value.as_bytes(), crate::TransformOp::DECODE);
-            let (bytes, error) = transformed.into_parts();
+        // Go `convertToString`'s `KindBinaryLiteral` arm, which is the same
+        // accessor the `fromBinary` arm above uses.
+        if matches!(self, Self::BinaryLiteral(_)) {
+            let (bytes, error) = self
+                .binary_string_decoded(flags, target.charset().name())
+                .into_parts();
             if let Some(error) = error {
                 return Err(DatumValueError::Comparison(error.to_string()));
             }

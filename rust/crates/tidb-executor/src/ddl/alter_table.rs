@@ -542,15 +542,13 @@ fn enum_set_column_default(value: &Datum, field_type: &FieldType) -> Option<Datu
     let collation = field_type.collation();
     let is_set = field_type.code() == tidb_datatype::FieldTypeCode::Set;
     let member = match value {
-        // Decoded here rather than through `Datum::binary_string_decoded`,
-        // which is Go `GetBinaryStringDecoded`'s counterpart but reads its
-        // payload with `as_raw_bytes` and so answers `None` for the two kinds
-        // Go only ever calls it on. This mirrors what `datum_convert.rs`
-        // already does for a `BinaryLiteral` reaching a string type.
-        Datum::BinaryLiteral(literal) | Datum::Bit(literal) => {
-            let decoded = tidb_datatype::find_encoding(field_type.charset_name())
-                .transform(literal.as_bytes(), tidb_datatype::TransformOp::DECODE);
-            let (bytes, error) = decoded.into_parts();
+        Datum::BinaryLiteral(_) | Datum::Bit(_) => {
+            let (bytes, error) = value
+                .binary_string_decoded(
+                    tidb_datatype::ConversionFlags::default(),
+                    field_type.charset_name(),
+                )
+                .into_parts();
             if error.is_some() {
                 return None;
             }
