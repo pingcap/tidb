@@ -1602,6 +1602,18 @@ fn prepared_handle_range_frames_its_binary_result_set() {
         execute_statement(&mut client, &mut reader, simple, &[100, 199])[0],
         vec!["c100".to_owned()]
     );
+    // The SECOND execute of the same statement must read the range its OWN
+    // parameters imply. A range accepted by the scan and then kept there would
+    // answer this from the first execute's bounds, silently and without any
+    // framing error to announce it.
+    assert_eq!(
+        execute_statement(&mut client, &mut reader, simple, &[1, 3]),
+        vec![
+            vec!["c1".to_owned()],
+            vec!["c2".to_owned()],
+            vec!["c3".to_owned()]
+        ]
+    );
     run_transaction_control(&mut client, &mut reader, "COMMIT");
 
     // A range that admits nothing is still a one-column result set with no

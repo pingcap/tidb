@@ -11,8 +11,10 @@ The answer is now about speed, not capability. **Update 2026-08-01
 A Go baseline on this machine now exists too: Go does 419.71 tps on the same
 workload, so the remaining read gap is 4.7x, and coprocessor/aggregate pushdown
 is the outstanding cause. One regression came with the run — binary prepared
-statements now fail on the parameterised range select with error 2014. All of
-it is measured under "Throughput" and "The new frontier" below.
+statements failed on the parameterised range select with error 2014; it is
+root-caused and fixed on this branch, and awaits a ladder run to re-measure the
+two cells. All of it is measured under "Throughput" and "The new frontier"
+below.
 
 Every statement `sysbench`'s `oltp_*` workloads issue is accepted and answered
 correctly, with results byte-identical to a real Go `tidb-server` reading the
@@ -154,7 +156,7 @@ absent, so Go runs a cop-side `StreamAgg` for `SUM(k)` while this node drags
 the rows to the root and aggregates there. The write gap (9.8x) is larger and
 is a separate, so-far unanalysed matter — it is not explained by the read path.
 
-### Regression found by this run: error 2014 under binary prepared statements
+### Regression found by this run: error 2014 under binary prepared statements (root-caused, fixed, re-measurement owed)
 
 Two cells that previously held numbers now fail. `oltp_read_only` and
 `oltp_read_write` under the **default** `--db-ps-mode` (binary prepared
@@ -184,10 +186,45 @@ What narrows it:
 * The failing statement is exactly the shape the clustered-handle range fix
   changed, and the fix altered which executor serves it.
 
-Taken together, the range path reached under binary prepared statements is the
-prime suspect. Reproduce with `rust/scripts/run-sysbench-ladder.sh` and read
-`oltp_read_only-ps-auto.log`. **This is a real defect and it is not counted as
-a success anywhere above.**
+**Root-caused and fixed on this branch; the two cells are not yet re-measured.**
+The chain, end to end:
+
+1. A prepared query reports its result columns at PREPARE by planning with
+   every marker bound to NULL. For this statement that is
+   `id BETWEEN NULL AND NULL`, which the new range builder resolves to an
+   EMPTY handle-range list — `EXPLAIN` prints `TableRangeScan ... range:` with
+   nothing in it, estimating 0 rows. That is correct: no handle qualifies.
+2. The byte cursor states "read nothing" exactly, by opening no iterator. The
+   coprocessor request cannot: its `Ranges` list is what the transport turns
+   into region tasks, so an empty one is a malformed request, and
+   `tidb_distsql`'s `metadata_region_ranges` refuses it as `missing_ranges`
+   before any RPC. Only a node WITH a coprocessor — the cluster session, not
+   the in-process one — reaches this, which is why no unit test saw it.
+3. `prepare_general` swallows a failed probe into "no result columns". So the
+   PREPARE answered zero columns.
+4. A MySQL client frames the `COM_STMT_EXECUTE` answer against that count. The
+   execute then sent a real one-column result set, leaving the client a whole
+   result set behind — and its next command reported `2014`.
+
+Text mode never asks the question (no PREPARE metadata), `oltp_point_select`
+takes the point-read path whose columns come from the catalog, and
+`oltp_write_only` prepares no query, which is exactly the three-way split the
+measurements showed.
+
+The fix is in `tidb_executor::kv_table::table_scan`: a scan whose ranges cover
+no record refuses the pushdown and is served by the local cursor, which returns
+no row without a request — what Go does one level higher by planning a
+`TableDual`. The cluster-free reproduction is
+`tidb_executor::remote_scan`'s `an_empty_handle_range_reads_nothing_instead_of_a_rangeless_request`
+(its fake coprocessor refuses a rangeless request the way the transport does),
+and the wire contract the client actually reads is pinned by
+`prepared_handle_range_frames_its_binary_result_set` in
+`tidb-server/tests/pipeline_mysql_client_source.rs`, which asserts the prepare's
+column count, the execute header that repeats it, and the packet run behind it.
+
+**A ladder run is still owed**: until `rust/scripts/run-sysbench-ladder.sh` is
+re-run and `oltp_read_only-ps-auto.log` shows a number, these two cells stay
+marked FAIL above and are not counted as a success anywhere.
 
 ## The new frontier: pushdown (range extraction is FIXED)
 
