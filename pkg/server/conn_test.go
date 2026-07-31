@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -723,6 +724,29 @@ func TestQueryEndWithZero(t *testing.T) {
 	}
 
 	testDispatch(t, inputs, 0)
+}
+
+func TestComInitDBEscapesDatabaseName(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	server := CreateMockServer(t, store)
+	defer server.Close()
+	conn := CreateMockConn(t, server)
+	defer conn.Close()
+
+	dbName := "quo`te/database"
+	escapedDBName := stringutil.Escape(dbName, mysql.ModeNone)
+	// This regression sends COM_INIT_DB with a raw database name containing a
+	// backtick and slash, then checks that the server escapes it before parsing USE.
+	_, err := conn.Context().Session.Execute(context.Background(), "CREATE DATABASE "+escapedDBName)
+	require.NoError(t, err)
+	defer func() {
+		_, err := conn.Context().Session.Execute(context.Background(), "DROP DATABASE "+escapedDBName)
+		require.NoError(t, err)
+	}()
+
+	err = conn.Dispatch(context.Background(), append([]byte{mysql.ComInitDB}, []byte(dbName)...))
+	require.NoError(t, err)
+	require.Equal(t, dbName, conn.Context().Session.GetSessionVars().CurrentDB)
 }
 
 func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {

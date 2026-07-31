@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -2116,15 +2117,25 @@ func (cli *TestServerClient) RunTestAccountLock(t *testing.T) {
 }
 
 func (cli *TestServerClient) RunTestDBNameEscape(t *testing.T) {
-	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("CREATE DATABASE `aa-a`;")
-	})
-	cli.RunTests(t, func(config *mysql.Config) {
-		config.DBName = "aa-a"
-	}, func(dbt *testkit.DBTestKit) {
-		dbt.MustExec(`USE mysql;`)
-		dbt.MustExec("DROP DATABASE `aa-a`")
-	})
+	for _, dbName := range []string{"aa-a", "quo`te"} {
+		t.Run(strings.ReplaceAll(dbName, "/", "_"), func(t *testing.T) {
+			escapedDBName := stringutil.Escape(dbName, tmysql.ModeNone)
+			// This regression covers handshake default DB names that require identifier
+			// escaping: create the database, connect with it as the initial DB, then
+			// verify the session selected it before dropping it.
+			cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+				dbt.MustExec("CREATE DATABASE " + escapedDBName)
+			})
+			cli.RunTests(t, func(config *mysql.Config) {
+				config.DBName = dbName
+			}, func(dbt *testkit.DBTestKit) {
+				rows := dbt.MustQuery("SELECT DATABASE();")
+				cli.CheckRows(t, rows, dbName)
+				dbt.MustExec(`USE mysql;`)
+				dbt.MustExec("DROP DATABASE " + escapedDBName)
+			})
+		})
+	}
 }
 
 func (cli *TestServerClient) RunTestResultFieldTableIsNull(t *testing.T) {

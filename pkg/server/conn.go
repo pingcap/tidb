@@ -108,6 +108,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -1554,9 +1555,9 @@ func (cc *clientConn) writeStats(ctx context.Context) error {
 }
 
 func (cc *clientConn) useDB(ctx context.Context, db string) (node ast.StmtNode, err error) {
-	// if input is "use `SELECT`", mysql client just send "SELECT"
-	// so we add `` around db.
-	stmts, err := cc.ctx.Parse(ctx, "use `"+db+"`")
+	// COM_INIT_DB and handshake default DB carry the raw database name, so build a
+	// parsed USE statement with identifier escaping instead of concatenating backticks.
+	stmts, err := cc.ctx.Parse(ctx, "use "+stringutil.Escape(db, cc.ctx.GetSessionVars().SQLMode))
 	if err != nil {
 		return nil, err
 	}
