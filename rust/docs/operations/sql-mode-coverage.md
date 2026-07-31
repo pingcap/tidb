@@ -102,6 +102,25 @@ Parity here means accepting and echoing the value, which this tier does via
 | --- | --- | --- | --- |
 | `NO_UNSIGNED_SUBTRACTION` | `pkg/expression/builtin_arithmetic.go:378`, `:473`, `builtin_arithmetic_vec.go:387` | **NOT CONSULTED** — `crates/tidb-expr/src/builtin_arithmetic.rs:291` and `ops.rs:538` both document assuming it unset (the default), which is the right default but not the flag | `BIGINT UNSIGNED a=1; SELECT a - 2` → **ERR** (out of range) default, **-1** under the flag. This tier gives the default answer in both modes. |
 
+## The composite that makes this reachable by accident
+
+`SET sql_mode = 'ANSI'` expands to five flags, four of them scanner flags
+(Go `CombinationSQLMode`, mirrored exactly at
+`crates/tidb-mysql/src/consts.rs:545`). Captured from TiDB:
+
+```
+SET sql_mode='ANSI';
+SELECT @@sql_mode;  -- REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI
+SELECT "id" AS a;   -- ERR (identifier, not string)
+SELECT 1 || 2;      -- 12
+```
+
+This tier echoes the same `@@sql_mode` string back — the name table at
+`consts.rs:508` is complete and matches Go's `Str2SQLMode` entry for entry, all
+33 — and then answers `id` and `1`. A client setting one well-known composite
+gets four silently-ignored flags at once, which is why this seam ranks above
+any single flag on the list below.
+
 ## Ranked gaps
 
 1. **`NO_BACKSLASH_ESCAPES` / `ANSI_QUOTES` / `HIGH_NOT_PRECEDENCE` /
