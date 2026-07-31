@@ -154,7 +154,8 @@ pub enum AuthHandshakePhase {
     /// The server has sent its initial handshake and is waiting for a client
     /// response (or an SSLRequest followed by that response).
     AwaitingResponse,
-    /// The client sent an SSLRequest.  The transport owner must complete the
+    /// The client sent an SSLRequest.  The transport owner
+    /// ([`crate::mysql_tls::ClientStream::upgrade_to_tls`]) must complete the
     /// TLS upgrade before another response packet is accepted.
     TlsRequested {
         /// Capability flags after the server/client intersection.

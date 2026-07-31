@@ -1,17 +1,23 @@
 # Can the Rust SQL node run sysbench?
 
-**Verdict: not yet — and the reason is not the SQL.**
+**Verdict: yes, with `--auto-inc=off --create-secondary=off`. Stock sysbench
+connects, loads a table, and runs all four `oltp_*` workloads against this
+node.**
 
-Every statement `sysbench`'s `oltp_*` workloads issue is accepted and answered
-correctly, with results byte-identical to a real Go `tidb-server` reading the
-same TiKV. What blocks a sysbench *number* is three things around the SQL: the
-client cannot complete the connection, `CREATE INDEX` is refused, and
-`AUTO_INCREMENT` is not served (originally: silently, by creating a table the
-node then could not see; now, honestly, by refusing the `CREATE`).
+The connection blocker is gone: the node now serves inbound TLS on the MySQL
+port, so its capabilities read `CLIENT_SSL=yes` and MariaDB Connector/C stops
+refusing it. `prepare` gets past the connect, past `CREATE TABLE`, and through
+all 1,000 inserts; the first statement it still cannot get is `CREATE INDEX`.
 
-Measured on 2026-07-30, `origin/hparser-integration` at `9569d280dd`, release
-build, macOS arm64, against a `tiup playground v8.5.6` cluster (1 PD, 1 TiKV,
-1 Go `tidb-server`) with the Rust node in `--cluster-session` mode.
+What remains is a DDL surface question, not a connectivity one: `CREATE INDEX`
+is refused (blocker 2) and `AUTO_INCREMENT` is refused at `CREATE TABLE`
+(blocker 3). Both are named below and neither prevents a number.
+
+Measured on 2026-08-01, `hparser-integration` + this unit, release build,
+macOS arm64, against a `tiup playground v8.5.6` cluster (1 PD, 1 TiKV, 1 Go
+`tidb-server`) with the Rust node in `--cluster-session` mode. The 2026-07-30
+measurement of the same ladder, before inbound TLS, failed at rung 4 for a
+different reason (the client could not connect at all).
 
 Reproduce with `rust/scripts/run-sysbench-ladder.sh` (starts and tears down
 everything it uses under an EXIT/INT/TERM trap that fails the run if any owned
@@ -24,17 +30,36 @@ port is still reachable).
 | 0. TiUP playground (PD + TiKV + Go TiDB) | OK |
 | 1. Rust node startup, `--cluster-session` | OK, readiness event `cluster_session_node_ready` |
 | 2. Stock MySQL client handshake, auth, `SELECT 1` | OK, `mysql_native_password` |
+| 2b. TLS accept control | OK both ways: `--ssl-mode=DISABLED` and `--ssl-mode=REQUIRED` each return `SELECT 1` |
 | 3. `CREATE DATABASE sbtest` through the Rust node | OK |
-| 4. `sysbench oltp_read_only ... prepare` | **FAIL — cannot connect (blocker 1)** |
-| 5. Dataset correctness | skipped, no dataset |
-| 6. `oltp_point_select` / `read_only` / `write_only` / `read_write`, both `--db-ps-mode=disable` and default | **all FAIL identically at connect** |
-| 7. sysbench's own statements driven by hand | 17 accepted, 3 refused |
+| 3b. Capability probe | `rust: 0x00158a08 CLIENT_SSL=yes`, `go: 0x0015aeaf CLIENT_SSL=yes` |
+| 4. `sysbench oltp_read_only ... prepare` | `--auto-inc=on` FAILs at `CREATE TABLE` (blocker 3); `--auto-inc=off` connects, creates the table, inserts all 1,000 rows, then **FAILs at `CREATE INDEX` (blocker 2)** |
+| 5. Dataset correctness | skipped — the ladder only checks a dataset it saw `prepare` finish |
+| 6. `oltp_point_select` / `read_only` / `write_only` / `read_write`, both `--db-ps-mode=disable` and default | **all eight ran** against the table rung 4 left behind |
+| 7. sysbench's own statements driven by hand | 16 accepted, 4 refused (the 3 `AUTO_INCREMENT` cases and `CREATE INDEX`) |
 
-No throughput figure is reported, because none was produced. A QPS number is
-not available at any `--db-ps-mode`: text and binary prepared-statement paths
-fail at the same place, before either is exercised.
+### Throughput, `--threads=1 --time=10`, no secondary index
 
-## Blocker 1 (architectural): the node never advertises `CLIENT_SSL`
+| Workload | text (`--db-ps-mode=disable`) | binary prepared (default) |
+| --- | --- | --- |
+| `oltp_point_select` | 3,931.92 qps | 3,875.83 qps |
+| `oltp_read_only` | 1,292.04 qps (80.75 tps) | 1,035.92 qps (64.74 tps) |
+| `oltp_write_only` | 292.16 qps (48.69 tps) | 575.10 qps (95.85 tps) |
+| `oltp_read_write` | 927.41 qps (46.37 tps) | 847.49 qps (42.37 tps) |
+
+Read these as "the workloads run", not as a benchmark result. One thread, a
+1,000-row table, a laptop also running the cluster it queries, and — the part
+that matters for comparison — **no secondary index**, because `CREATE INDEX`
+is still refused. `oltp_read_only`'s range and `SUM(k)` queries therefore scan
+where a real sysbench run would seek, so these numbers are not comparable to a
+published figure or to the Go server until blocker 2 lands.
+
+Rung 5's Rust-vs-Go checksum comparison did not run: the ladder gates it on a
+`prepare` that returned success, and this one ended on `CREATE INDEX`. The
+dataset was still correct enough for eight workloads to run against it, but
+the independent Go-side check is the evidence that matters and it is pending.
+
+## Blocker 1 (FIXED): inbound TLS on the MySQL port
 
 Homebrew's `sysbench 1.0.20` links **MariaDB Connector/C 3.4.9**, not
 libmysqlclient:
@@ -51,39 +76,49 @@ offer it — even with `--mysql-ssl=off`, which is already sysbench's default:
 FATAL: error 2026: TLS/SSL error: SSL is required, but the server does not support it
 ```
 
-The initial-handshake capability flags name the difference exactly:
+The capability flags now match on the bit that mattered:
 
 ```
-rust: capabilities=0x00158208 CLIENT_SSL=no
+rust: capabilities=0x00158a08 CLIENT_SSL=yes
 go:   capabilities=0x0015aeaf CLIENT_SSL=yes
 ```
 
-A control run of the same sysbench binary against the Go `tidb-server` on the
-same cluster connects and gets as far as `CREATE INDEX`, so the client is fine;
-bit 11 of our advertised capabilities is the whole difference.
+`0x00158208` -> `0x00158a08` is exactly bit 11.
 
-This is **not** a one-bit fix. `crates/tidb-server/src/handshake.rs` already
-parses a 32-byte `SSLRequest` and exposes `tls_established()`, but the TLS
-handshake itself is explicitly left to "the transport owner", and no listener
-performs one: `secure_transport.rs` owns only the `RequireSecureTransport`
-admission decision and states it "does not perform a TLS handshake, inspect
-certificates, or authenticate". There is no server-certificate option for the
-MySQL port at all — `--cluster-ssl-ca/cert/key` configure the *PD client*
-connection, not inbound MySQL connections.
+Advertising the bit alone would have been strictly worse than the old
+refusal — the client would send `SSLRequest` and block forever on a handshake
+that never arrives — so the upgrade is what landed, in
+`crates/tidb-server/src/mysql_tls.rs`, following `pkg/server`:
 
-Advertising `CLIENT_SSL` without implementing the upgrade would be strictly
-worse than the current refusal: the client would send `SSLRequest` and then
-block forever on a TLS handshake that never arrives. Getting sysbench to
-connect requires real inbound MySQL-port TLS (cert/key config, a rustls
-acceptor wired into the connection loop). Refused as out of scope here.
+- `pkg/server/server.go` sets `s.capability |= mysql.ClientSSL` **only** when
+  `LoadTLSCertificates` returned a config. Here, holding an `MysqlServerTls`
+  is the only way to reach the bit, so "advertised but not served" is not a
+  representable state.
+- `pkg/server/conn.go`'s `handshake` parses the response header first and, on
+  `CLIENT_SSL`, calls `upgradeToTLS` and reads a **second** response packet.
+  The client sends a truncated `SSLRequest` in the clear and then repeats a
+  full `HandshakeResponse41` over the encrypted stream; sequence numbering is
+  continuous across the upgrade, so every later reply sequence shifts by one.
+- Certificate material comes from `--ssl-cert`/`--ssl-key`, or from a
+  self-signed pair generated at startup, which is Go's `auto-tls`. Note
+  `--cluster-ssl-ca/cert/key` remain a different thing entirely: they
+  configure the *PD client* transport, not inbound MySQL connections.
 
-There is no client-side workaround on this machine: sysbench exposes only a
-boolean `--mysql-ssl`, has no `ssl-mode` knob, and Connector/C does not read
-option files unless the application asks it to, which sysbench does not.
+`--auto-tls` defaults to **on** here, unlike `pkg/config`'s own `false`. The
+TiUP playground Go server this node is measured against runs with auto-TLS
+enabled, which is precisely why it advertised `CLIENT_SSL` and this node did
+not. `--no-auto-tls` restores a plaintext-only port.
 
-## Blocker 2: `CREATE INDEX` is refused
+The port is not TLS-only: rung 2b checks both directions, and the stock MySQL
+client connects under `--ssl-mode=DISABLED` and under `--ssl-mode=REQUIRED`.
+Client-certificate authentication (`ssl-ca`, `REQUIRE X509`) is still not
+served.
 
-`oltp_common.lua:238` runs `CREATE INDEX k_1 ON sbtest1(k)` during `prepare`.
+## Blocker 2 (now the first failure): `CREATE INDEX` is refused
+
+This is where `prepare` stops today. `oltp_common.lua:238` runs
+`CREATE INDEX k_1 ON sbtest1(k)` during `prepare`, after the table and all
+1,000 rows are already in.
 The node answers:
 
 ```
@@ -177,24 +212,26 @@ rows (`c-100` … `c-109`, `c-500`), so no rows went silently missing. Known bug
 was not triggered: sysbench binds integers, and every predicate here is
 integer-to-integer.
 
-## Shortest path to a real sysbench number
+## Shortest path to an unqualified sysbench number
 
-1. Inbound MySQL-port TLS, so `CLIENT_SSL` can be advertised honestly. This is
-   the only hard blocker — nothing else can be worked around by sysbench flags.
-   (Alternatively, a sysbench built against libmysqlclient rather than
-   Connector/C 3.4 would connect today; the one on this machine is not.)
-2. `CREATE INDEX` in the DDL surface, so `prepare` runs unmodified.
-3. `--auto-inc=off` is now the documented configuration: the create/serve
-   mismatch is resolved as a refusal, and serving the clause needs the
-   persistent allocator unit described under blocker 3.
+1. ~~Inbound MySQL-port TLS~~ — done; `CLIENT_SSL` is advertised because it is
+   served.
+2. `CREATE INDEX` in the DDL surface, so `prepare` runs to completion. This is
+   what currently makes the rung-6 numbers non-comparable: without the
+   secondary index, `oltp_read_only` scans where it should seek. It is also
+   what gates rung 5's Rust-vs-Go checksum comparison, since the ladder only
+   checks a dataset whose `prepare` succeeded.
+3. `--auto-inc=off` remains the documented configuration; serving the clause
+   needs the persistent allocator unit described under blocker 3.
 
-With those, rungs 4 through 6 should run as written, and rung 5's Rust-vs-Go
-checksum comparison is already in place to keep any resulting number honest.
+With `--create-secondary=off` a number is available today, and the table above
+is it.
 
 ## Unrelated environment note
 
-The Go control rung also failed, but on the Go side and for a local reason:
-`CREATE INDEX` returned `error 8256: Check ingest environment failed: no enough
-space in /tmp/tidb/tmp_ddl-45000`. That is this machine's disk, not a TiDB or
-Rust defect. A full sysbench run against the Go server as a baseline will need
-space freed for the playground's DDL temp directory.
+The Go control rung fails, but on the Go side and for a local reason:
+`CREATE INDEX` returns `error 8256: Check ingest environment failed: no enough
+space in /tmp/tidb/tmp_ddl-<port>`. That is this machine's disk, not a TiDB or
+Rust defect — it reproduced again on 2026-08-01. A Go-side baseline to compare
+the rung-6 numbers against will need space freed for the playground's DDL temp
+directory.

@@ -21,6 +21,13 @@
 //! server or by the starter gateway are allowed. This leaf owns only that
 //! admission decision; it does not perform a TLS handshake, inspect
 //! certificates, parse gateway attributes, or authenticate a password.
+//!
+//! The transport owner that does perform the handshake is
+//! [`crate::mysql_tls`], whose `ClientStream::upgrade_to_tls` is what a
+//! [`TransportKind::DirectTls`] assertion would be reporting. This policy is
+//! not yet consulted by the connection path: `require_secure_transport` has no
+//! wiring into `mysql_connection.rs`, so a plaintext TCP connection is still
+//! admitted regardless of the setting.
 
 use std::fmt;
 

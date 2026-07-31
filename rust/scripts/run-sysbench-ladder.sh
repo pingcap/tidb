@@ -273,6 +273,21 @@ else
   exit 1
 fi
 
+step "rung 2b: TLS accept control - plaintext still works, --ssl-mode=REQUIRED works"
+# A MySQL port that advertises CLIENT_SSL must still admit a plaintext client:
+# a TLS-only server would simply be a new blocker. Both directions are checked.
+if PLAIN_ONE=$(rust_sql --ssl-mode=DISABLED -N -B -e 'SELECT 1'); then
+  note "OK rung 2b (plaintext, --ssl-mode=DISABLED): SELECT 1 -> ${PLAIN_ONE}"
+else
+  note "FAIL rung 2b (plaintext): ${PLAIN_ONE}"
+fi
+if TLS_ONE=$(rust_sql --ssl-mode=REQUIRED -N -B -e "SELECT 1"); then
+  note "OK rung 2b (--ssl-mode=REQUIRED): SELECT 1 -> ${TLS_ONE}"
+  note "cipher: $(rust_sql --ssl-mode=REQUIRED -N -B -e "SHOW STATUS LIKE 'Ssl_cipher'" 2>&1 | head -1)"
+else
+  note "FAIL rung 2b (--ssl-mode=REQUIRED): ${TLS_ONE}"
+fi
+
 step "rung 3: CREATE DATABASE ${SYSBENCH_DB} through the Rust node"
 CREATE_DB_OUT=$(rust_sql -e "CREATE DATABASE IF NOT EXISTS ${SYSBENCH_DB}")
 if [[ $? -eq 0 ]]; then
