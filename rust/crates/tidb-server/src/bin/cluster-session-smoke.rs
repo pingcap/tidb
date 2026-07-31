@@ -49,7 +49,7 @@ use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
 use tidb_executor::remote_scan::PushdownScanner;
-use tidb_server::cluster_session::session_with_cluster_storage;
+use tidb_server::cluster_session::{session_with_cluster_storage, LocalTableAutoIds};
 use tidb_session::StmtResult;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -271,8 +271,12 @@ fn run_in_transaction(
     sql: &str,
     start_ts: u64,
 ) -> Result<(), String> {
-    let (mut session, skipped) =
-        session_with_cluster_storage(catalog, storage, &StatsSnapshot::new());
+    let (mut session, skipped) = session_with_cluster_storage(
+        catalog,
+        storage,
+        &StatsSnapshot::new(),
+        &LocalTableAutoIds::default(),
+    );
     for table in &skipped {
         println!("skipped {}: {}", table.name, table.reason);
     }
@@ -310,8 +314,12 @@ fn run_statement(
         .lock()
         .map_err(|_| "the snapshot handle is poisoned".to_owned())?
         .start_ts();
-    let (mut session, skipped) =
-        session_with_cluster_storage(catalog, &storage, &StatsSnapshot::new());
+    let (mut session, skipped) = session_with_cluster_storage(
+        catalog,
+        &storage,
+        &StatsSnapshot::new(),
+        &LocalTableAutoIds::default(),
+    );
     for table in &skipped {
         println!("skipped {}: {}", table.name, table.reason);
     }

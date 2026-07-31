@@ -66,7 +66,6 @@ use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
 
-use crate::cluster_auto_increment::auto_increment_refusal;
 use crate::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
 };
@@ -251,15 +250,6 @@ fn lower_create_table(
         CATALOG_COLLATION,
         ClusteredIndexDefMode::On,
     )?;
-    // The catalog loader refuses to serve an AUTO_INCREMENT table, so writing
-    // one here would publish a table this very node then answers `table not
-    // found in catalog` for -- a success return that isn't. The refusal reads
-    // the loader's own predicate, which is why the two cannot drift apart.
-    if let Some(refusal) = auto_increment_refusal(&template) {
-        return Err(DdlAdmissionError::unsupported(format!(
-            "CREATE TABLE `{schema}`.`{table}`: {refusal}"
-        )));
-    }
     Ok(DdlStatement::CreateTable {
         schema,
         table,
@@ -645,6 +635,19 @@ pub fn plan_ddl<S: MetaSnapshot>(
                 key::table_kv_key(db_id, table_id),
                 encoded,
             )?);
+            // Go `handleAutoIncID` seeds the allocator when the table option
+            // asks for a first id above 1, and seeds it to `AutoIncID - 1`,
+            // because the counter holds the id last handed out: "if the option
+            // sets auto_increment to 10, the counter will be set to 9, so the
+            // next allocated ID will be 10". At or below 1 it writes nothing,
+            // and an absent key already reads as 0. Which key it is, is Go's
+            // `SepAutoInc` choice, made in one place.
+            if info.auto_inc_id > 1 {
+                writes.push(OptimisticMutation::meta_put(
+                    crate::cluster_auto_id::auto_id_key_for(db_id, &info),
+                    value::encode_int_value(info.auto_inc_id - 1),
+                )?);
+            }
             diff.action_type = ActionType::ACTION_CREATE_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;

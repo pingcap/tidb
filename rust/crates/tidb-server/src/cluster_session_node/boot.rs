@@ -152,6 +152,13 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
             users.accounts(),
             users.global_vars(),
             Arc::clone(&stats),
+            // One registry for the whole node, so every connection inserting
+            // into a table allocates from the one range this node reserved --
+            // Go's per-`tidb-server` allocator, not a per-session one.
+            Arc::new(crate::cluster_auto_id_seam::ClusterTableAutoIds::new(
+                authority.transaction_opener(),
+                CONTROL_PLANE_TIMEOUT,
+            )),
         )
         .with_cop_scans(cop_scans),
     );

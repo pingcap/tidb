@@ -143,7 +143,7 @@ use tidb_session::{GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, Sto
 
 use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_analyze_seam::ClusterAnalyze;
-use crate::cluster_session::{cluster_session_catalog, SkippedTable};
+use crate::cluster_session::{cluster_session_catalog, SkippedTable, TableAutoIds};
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::pipeline_session::MaterializedResultSetSource;
 use crate::sql_node::{
@@ -228,6 +228,10 @@ pub struct ClusterSessionFactory {
     /// stats reload thread [`run_cluster_session_node`] owns. Plumbing only:
     /// the estimator that will read this is a parallel unit.
     stats: Arc<SharedStats>,
+    /// Go's per-`tidb-server` auto-increment allocators. Held HERE, above the
+    /// per-session catalogs, because a reserved id range must outlive the
+    /// `KvTable` that was handing it out; see [`crate::cluster_auto_id_seam`].
+    auto_ids: Arc<dyn TableAutoIds>,
 }
 
 impl ClusterSessionFactory {
@@ -245,9 +249,15 @@ impl ClusterSessionFactory {
         privileges: PrivilegeRegistry,
         global_vars: GlobalSysvars,
         stats: Arc<SharedStats>,
+        auto_ids: Arc<dyn TableAutoIds>,
     ) -> Self {
-        let boot_skipped =
-            cluster_session_catalog(&catalog.load(), &detached_storage(), &stats.load()).skipped;
+        let boot_skipped = cluster_session_catalog(
+            &catalog.load(),
+            &detached_storage(),
+            &stats.load(),
+            auto_ids.as_ref(),
+        )
+        .skipped;
         Self {
             transactions,
             ddl,
@@ -257,6 +267,7 @@ impl ClusterSessionFactory {
             catalog,
             privileges,
             processes: ProcessRegistry::default(),
+            auto_ids,
             cop_scans: None,
             global_vars,
             boot_skipped,
@@ -318,7 +329,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
         }
         let loaded = self.catalog.load();
         let statistics = self.stats.load();
-        let built = cluster_session_catalog(&loaded, &storage, &statistics);
+        let built = cluster_session_catalog(&loaded, &storage, &statistics, self.auto_ids.as_ref());
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
 
         let identity = &context.identity;
@@ -361,6 +372,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             explicit: None,
             savepoints: Vec::new(),
             skipped: built.skipped,
+            auto_ids: Arc::clone(&self.auto_ids),
         })
     }
 }
@@ -424,6 +436,9 @@ pub struct ClusterServerSession {
     /// Tables of the cluster this connection's catalog could not include,
     /// answered by name when a statement names one. Rebuilt with the catalog.
     skipped: Vec<SkippedTable>,
+    /// The node's auto-increment allocators, needed on every catalog rebuild
+    /// so the rebuilt tables keep the ranges the old ones had reserved.
+    auto_ids: Arc<dyn TableAutoIds>,
 }
 
 impl ClusterServerSession {
@@ -621,7 +636,8 @@ impl ClusterServerSession {
         {
             return;
         }
-        let built = cluster_session_catalog(&loaded, &self.storage, &statistics);
+        let built =
+            cluster_session_catalog(&loaded, &self.storage, &statistics, self.auto_ids.as_ref());
         let shared = self.session.shared_catalog();
         let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
         *catalog = built.catalog;

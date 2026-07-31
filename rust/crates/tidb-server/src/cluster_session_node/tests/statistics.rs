@@ -56,6 +56,7 @@ fn open_session_as(node: &MockNode, user: &str) -> ClusterServerSession {
         Arc::new(SharedStats::new(
             tidb_exec::stats_watch::StatsSnapshot::new(),
         )),
+        Arc::new(crate::cluster_session::LocalTableAutoIds::default()),
     );
     let users =
         ConfiguredUserStore::parse(&format!("{user}\t%\tmysql_native_password\t{ABC_HASH}\n"))

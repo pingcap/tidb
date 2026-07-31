@@ -4,18 +4,22 @@
 connects, loads a table, and runs all four `oltp_*` workloads against this
 node.**
 
-The connection blocker is gone: the node now serves inbound TLS on the MySQL
-port, so its capabilities read `CLIENT_SSL=yes` and MariaDB Connector/C stops
-refusing it. `CREATE INDEX` and `DROP INDEX` are catalog changes this node
-performs, backfill included, verified by Go's own `ADMIN CHECK TABLE`.
-`AUTO_INCREMENT` is refused honestly at `CREATE` (blocker 3) instead of
-producing a table the node could not see.
+Every statement `sysbench`'s `oltp_*` workloads issue is accepted and answered
+correctly, with results byte-identical to a real Go `tidb-server` reading the
+same TiKV. All three of the blockers that stood around that SQL are now fixed
+on this branch: the node serves inbound TLS on the MySQL port, so its
+capabilities read `CLIENT_SSL=yes` and MariaDB Connector/C stops refusing it
+(blocker 1); `CREATE INDEX` and `DROP INDEX` are catalog changes this node
+performs, backfill included, verified by Go's own `ADMIN CHECK TABLE`
+(blocker 2); and `AUTO_INCREMENT` allocates from the cluster's own counter
+(blocker 3).
 
-**Every rung result below was measured with exactly one of blockers 1 and 2
-fixed, because the two fixes were built in parallel and each ladder run
-predates the other's landing. The combined tree has NOT been measured. Until a
-run on the merged tip replaces these rows, read each one as evidence about its
-own fix, not as the current end-to-end state.**
+**No ladder run has been taken on a tree carrying all three fixes.** The three
+were built in parallel and each ladder run below predates the others' landing,
+so every rung result was measured with exactly ONE of the three present. Their
+being on one branch is not a combined measurement, and this document does not
+claim one: read each row as evidence about its own fix, not as the current
+end-to-end state, until a run on the merged tip replaces it.
 
 Measured on 2026-08-01, `hparser-integration` + this unit, release build,
 macOS arm64, against a `tiup playground v8.5.6` cluster (1 PD, 1 TiKV, 1 Go
@@ -54,9 +58,10 @@ port is still reachable).
 Read these as "the workloads run", not as a benchmark result. One thread, a
 1,000-row table, a laptop also running the cluster it queries, and — the part
 that matters for comparison — **no secondary index**, because `CREATE INDEX`
-is still refused. `oltp_read_only`'s range and `SUM(k)` queries therefore scan
-where a real sysbench run would seek, so these numbers are not comparable to a
-published figure or to the Go server until blocker 2 lands.
+was still refused on the tree this run measured. `oltp_read_only`'s range and
+`SUM(k)` queries therefore scan where a real sysbench run would seek, so these
+numbers are not comparable to a published figure or to the Go server. Blocker 2
+has since landed; no run with the index present has been taken.
 
 Rung 5's Rust-vs-Go checksum comparison did not run: the ladder gates it on a
 `prepare` that returned success, and this one ended on `CREATE INDEX`. The
@@ -167,33 +172,42 @@ index at all (`error 8256: Check ingest environment failed: no enough space in
 through the ingest/lightning path and needs that temp directory; this node's
 backfill writes entries through the ordinary 2PC and needs no local disk.
 
-## Blocker 3 (FIXED as a refusal): `AUTO_INCREMENT` is now refused at CREATE
+## Blocker 3 (FIXED): `AUTO_INCREMENT` is served
 
-**Update.** The create/serve mismatch below is gone: `CREATE TABLE` and the
-catalog loader now read one predicate
-(`tidb_exec::cluster_auto_increment::auto_increment_refusal`), so the node no
-longer writes a table it cannot serve. `CREATE TABLE ... AUTO_INCREMENT`
-answers Go's own errno instead, before any mutation:
+**Update.** The node now serves `AUTO_INCREMENT`, so sysbench's default
+`sbtest1` schema (`id INTEGER NOT NULL AUTO_INCREMENT ... PRIMARY KEY (id)`)
+loads without `--auto-inc=off`. Both earlier states are gone: the silent
+unusable table, and the honest `CREATE`-time refusal that replaced it.
 
-```
-ERROR 8200 (HY000): Unsupported CREATE TABLE `sbtest`.`sbtest1`: its column id
-is AUTO_INCREMENT, whose ids come from the cluster's own autoid allocator,
-which this node does not consume
-```
+What changed is WHERE the counter lives. It was a process-local `AtomicU64`
+starting at zero, which is right for the in-process tier and wrong against
+shared cluster storage — a second node, or the same node after a restart,
+would re-issue ids that already exist. It now has the home Go gives it:
 
-This converts a silent unusable table into an honest refusal. It does **not**
-make sysbench's default schema work — `--auto-inc=off` is still required, and
-the rung-7 result below is unchanged. Serving `AUTO_INCREMENT` needs the
-allocator to get the separate-key home Go gives it (`pkg/meta/meta.go`'s
-`TID:`/`IID:` keys, `pkg/meta/autoid/autoid.go`'s reserve-in-its-own-txn), a
-unit of its own that must prove the counter survives a node restart.
+* `pkg/meta/meta.go`'s allocator meta key, read and written in a transaction
+  of its OWN (`tidb_exec::cluster_auto_id::ClusterAutoIdStore`), so an id is
+  burned when it is issued and never returned by a rollback — and a node
+  restart resumes from the stored value instead of from zero.
+* Ranges of `autoid.GetStep()` (30000) ids at a time, held by ONE registry per
+  node (`tidb_server::cluster_auto_id_seam::ClusterTableAutoIds`) rather than
+  per session or per catalog rebuild, which is where Go keeps its allocators
+  too (on the domain, not on the `TableInfo`).
 
-The original report follows.
+**Which key** is the part that is easy to get backwards, and getting it wrong
+would be undetectable: Go sends an AUTO_INCREMENT column to the `IID:` key
+only when `TableInfo.SepAutoInc()` — `AUTO_ID_CACHE 1`. Every ordinary table
+allocates from `TID:`, the same key `_tidb_rowid` uses. A node that chose
+`IID:` by name would keep a counter no Go `tidb-server` reads, and the two
+would hand out the same ids from separate counters. The choice is made once,
+in `cluster_auto_id::auto_id_key_for`, from the stored `TableInfo`.
+
+`CREATE TABLE ... AUTO_INCREMENT = n` seeds the key with `n - 1` inside the
+DDL's own transaction, which is Go's `handleAutoIncID`.
 
 ### Original report: an `AUTO_INCREMENT` table is created and then not served
 
-sysbench's default `id INTEGER NOT NULL AUTO_INCREMENT` is accepted by
-`CREATE TABLE` — and the resulting table is then invisible:
+sysbench's default `id INTEGER NOT NULL AUTO_INCREMENT` was accepted by
+`CREATE TABLE` — and the resulting table was then invisible:
 
 ```
 OK   create-table-auto-inc
@@ -201,15 +215,11 @@ FAIL auto-inc-insert-without-id: ERROR 1105 (HY000): table not found in catalog
 FAIL auto-inc-select:            ERROR 1105 (HY000): table not found in catalog
 ```
 
-The catalog loader skips such tables by design, reporting at startup that a
+The catalog loader skipped such tables by design, reporting at startup that a
 column "is AUTO_INCREMENT, whose ids come from the cluster's own autoid
-allocator, which this node does not consume". The wart is that DDL admits a
-shape the catalog then rejects, so the node writes a table it cannot serve.
-Worth fixing independently of sysbench: either refuse the `CREATE`, or consume
-the allocator.
-
-`--auto-inc=off` avoids it — sysbench then declares `id INTEGER NOT NULL` and
-supplies every id explicitly — which is how rung 7 proceeded.
+allocator, which this node does not consume". That skip was the honest half of
+a wart — the node had no allocator to consume — and the fix was to give it
+one, not to remove the skip.
 
 ## What does work: the whole sysbench statement set, and it is correct
 

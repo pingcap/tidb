@@ -64,7 +64,7 @@ pub mod charset_variable_groups;
 pub mod chunk_alloc_status;
 pub mod cluster_account_write;
 pub mod cluster_analyze;
-pub mod cluster_auto_increment;
+pub mod cluster_auto_id;
 pub mod cluster_catalog;
 pub mod cluster_ddl;
 pub mod cluster_index_id;

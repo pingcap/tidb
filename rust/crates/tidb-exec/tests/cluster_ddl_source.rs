@@ -497,14 +497,11 @@ fn the_shapes_a_bootstrap_needs_are_admitted_rather_than_refused() {
         "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL DEFAULT 3)",
         "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
         // Table options.
-        //
-        // AUTO_INCREMENT is deliberately NOT here: it is refused by the user
-        // DDL path (see
-        // `create_table_with_auto_increment_is_refused_rather_than_written_unservable`).
-        // The bootstrap corpus is untouched by that refusal because it builds
-        // its tables through `build_table_info` directly rather than through
-        // `lower_ddl`, and no bootstrap table declares the clause anyway.
         "CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL) ENGINE=InnoDB",
+        // sysbench's own `sbtest1` shape, which this path used to refuse.
+        "CREATE TABLE u6.t (id INTEGER NOT NULL AUTO_INCREMENT, k INTEGER NOT NULL, \
+         PRIMARY KEY (id))",
+        "CREATE TABLE u6.t (id BIGINT AUTO_INCREMENT PRIMARY KEY) AUTO_INCREMENT=100",
     ] {
         let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
         assert!(
@@ -547,54 +544,63 @@ fn an_unqualified_name_resolves_against_the_sessions_default_schema() {
     assert_eq!((schema.as_str(), table.as_str()), ("campaign31", "t"));
 }
 
-/// The live bug this fixes: `CREATE TABLE ... AUTO_INCREMENT` was accepted and
-/// written, and the catalog loader then refused the very table the statement
-/// had just created, so its creator answered `table not found in catalog` to
-/// both `INSERT` and `SELECT` (`rust/docs/operations/sysbench-readiness.md`,
-/// blocker 3, from sysbench's own `sbtest1` shape). DDL and the loader now
-/// read one predicate, so the shape is refused BEFORE anything is written.
+/// The live bug this closes: `CREATE TABLE ... AUTO_INCREMENT` was accepted
+/// and written, and the catalog loader then refused the very table the
+/// statement had just created, so its creator answered `table not found in
+/// catalog` to both `INSERT` and `SELECT` (`sysbench-readiness.md`, blocker 3,
+/// from sysbench's own `sbtest1` shape). That was replaced by an honest
+/// refusal, and the refusal is now gone in turn: the counter has the meta-key
+/// home Go gives it (`tidb_exec::cluster_auto_id`), so the shape is admitted
+/// and served.
 #[test]
-fn create_table_with_auto_increment_is_refused_rather_than_written_unservable() {
+fn create_table_with_auto_increment_is_admitted_now_the_counter_has_a_home() {
     let parsed = tidb_parser::parse(
         "CREATE TABLE sbtest1 (id INTEGER NOT NULL AUTO_INCREMENT, k INTEGER NOT NULL, \
          PRIMARY KEY (id))",
     )
     .expect("the fixture SQL parses");
-    let refused = lower_ddl(&parsed, "sbtest").expect_err("this shape must be refused");
-    // Go's own errno for a DDL shape a server will not perform:
-    // `dbterror.ErrUnsupportedDDLOperation`, `Unsupported %s`.
-    assert_eq!(refused.code, 8200);
+    let DdlStatement::CreateTable { template, .. } = lower_ddl(&parsed, "sbtest")
+        .expect("admitted")
+        .expect("a catalog change")
+    else {
+        panic!("a CREATE TABLE");
+    };
     assert!(
-        refused
-            .reason
-            .starts_with("Unsupported CREATE TABLE `sbtest`.`sbtest1`:"),
-        "the refusal names the statement it refuses: {}",
-        refused.reason
+        template.columns[0]
+            .field_type
+            .has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT),
+        "the admitted template keeps the AUTO_INCREMENT flag the loader reads"
     );
-    assert!(
-        refused.reason.contains("its column id is AUTO_INCREMENT"),
-        "the refusal names the offending column: {}",
-        refused.reason
+    // Go `SepAutoInc`: without `AUTO_ID_CACHE 1` the ids come from the row-id
+    // key, the SAME one `_tidb_rowid` uses, which is what a Go `tidb-server`
+    // on this cluster reads. Picking `IID:` because the name matches would
+    // give the two nodes separate counters for one column, with nothing to
+    // detect it.
+    assert!(!template.sep_auto_inc());
+    assert_eq!(
+        tidb_exec::cluster_auto_id::auto_id_key_for(7, &template),
+        tidb_meta::key::auto_table_id_kv_key(7, template.id),
     );
 }
 
-/// The two halves of the disagreement now read the same predicate: whatever
-/// `CREATE TABLE` admits is a table the loader will serve.
+/// `AUTO_ID_CACHE 1` is Go's `SepAutoInc`, and only then does the counter move
+/// to its own `IID:` key.
 #[test]
-fn every_create_table_this_node_admits_has_no_auto_increment_column() {
-    for sql in [
-        "CREATE TABLE t (id BIGINT PRIMARY KEY)",
-        "CREATE TABLE t (id BIGINT PRIMARY KEY, v VARCHAR(20))",
-    ] {
-        let DdlStatement::CreateTable { template, .. } = statement(sql) else {
-            panic!("a CREATE TABLE");
-        };
-        assert_eq!(
-            tidb_exec::cluster_auto_increment::auto_increment_refusal(&template),
-            None,
-            "`{sql}` is admitted, so the loader must serve it"
-        );
-    }
+fn a_separate_allocator_table_counts_in_the_increment_key() {
+    let parsed =
+        tidb_parser::parse("CREATE TABLE t (id BIGINT AUTO_INCREMENT PRIMARY KEY) AUTO_ID_CACHE 1")
+            .expect("the fixture SQL parses");
+    let DdlStatement::CreateTable { template, .. } = lower_ddl(&parsed, "u6")
+        .expect("admitted")
+        .expect("a catalog change")
+    else {
+        panic!("a CREATE TABLE");
+    };
+    assert!(template.sep_auto_inc(), "AUTO_ID_CACHE 1 is Go's SepAutoInc");
+    assert_eq!(
+        tidb_exec::cluster_auto_id::auto_id_key_for(7, &template),
+        tidb_meta::key::auto_increment_id_kv_key(7, template.id),
+    );
 }
 
 /// The stored table the index tests below are planned against.

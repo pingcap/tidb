@@ -36,13 +36,14 @@
 //! [`configure_loaded_table`]: tidb_exec::cluster_catalog::configure_loaded_table
 
 use std::sync::{Arc, Mutex};
+use tidb_datatype::FieldTypeFlags;
 use tidb_exec::cluster_catalog::ClusterCatalog;
 use tidb_exec::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use tidb_exec::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
 use tidb_executor::cluster_storage::ClusterTableStorage;
 use tidb_executor::driver::Catalog;
-use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable};
+use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable, TableAutoId};
 use tidb_executor::storage::TableStorage;
 use tidb_model::{SchemaState, TableInfo};
 use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
@@ -50,6 +51,134 @@ use tidb_session::{Session, SharedCatalog};
 
 /// Go `mysql.PriKeyFlag`: what marks the column `PKIsHandle` points at.
 const PRI_KEY_FLAG: u32 = 1 << 1;
+
+/// Where a loaded table's auto-increment counter comes from.
+///
+/// The counter is NOT part of the stored `TableInfo` -- Go keeps it in meta
+/// keys of its own -- so the loader cannot build one from what it reads, and
+/// must be told. Whoever implements this also owns the allocator's LIFETIME:
+/// the same table asked for twice must get clones of one allocator, or each
+/// catalog rebuild would reserve a fresh range and leave a hole in the ids.
+///
+/// The cluster node implements it over the meta keys
+/// (`tidb_exec::cluster_auto_id`); tests that only need the old in-process
+/// behaviour use [`LocalTableAutoIds`].
+pub trait TableAutoIds: std::fmt::Debug + Send + Sync {
+    /// The live allocator for `table`, which is stored in database `db_id`.
+    fn allocator_for(&self, db_id: i64, table: &TableInfo) -> TableAutoId;
+}
+
+/// Counters that live in this process and start at zero, one per table id.
+///
+/// This is what the tier did before the counter had a home, and it is correct
+/// ONLY where nothing else writes the same rows -- tests and the smoke
+/// binary. It is deliberately not the production default: against shared
+/// cluster storage a counter that starts at zero re-issues ids that already
+/// exist.
+#[derive(Debug, Default)]
+pub struct LocalTableAutoIds {
+    allocators: Mutex<std::collections::HashMap<i64, TableAutoId>>,
+}
+
+impl TableAutoIds for LocalTableAutoIds {
+    fn allocator_for(&self, _db_id: i64, table: &TableInfo) -> TableAutoId {
+        self.allocators
+            .lock()
+            .expect("local auto id map poisoned")
+            .entry(table.id)
+            .or_insert_with(|| {
+                TableAutoId::over(
+                    Arc::new(tidb_executor::kv_table::LocalAutoIdStore::new()),
+                    1,
+                )
+            })
+            .clone()
+    }
+}
+
+/// What [`cluster_table`] gives the table it builds as an auto-increment
+/// counter.
+///
+/// Two shapes, because the loader has two callers that differ in KIND, not in
+/// degree. A session catalog is built to RUN statements against, so every
+/// table it holds must be able to allocate, and the database the counter's
+/// meta key lives under is known -- that is [`AutoIdSource::In`]. The
+/// `CREATE INDEX`/`DROP INDEX` backfill builds the same table only to WALK its
+/// stored rows and write index entries; it inserts nothing, so it has no id to
+/// allocate, and correspondingly no database id to name.
+///
+/// The absence is a variant rather than a zero `db_id` and a stub allocator
+/// because a stub here would be the worst possible failure: a counter starting
+/// at zero against shared cluster storage re-issues ids the table already
+/// holds, silently, with no error to see. [`AutoIdSource::Unavailable`] cannot
+/// do that -- asked for an id, it reports a counter it has no home for, which
+/// is a loud wrong answer instead of a quiet one.
+#[derive(Debug)]
+pub enum AutoIdSource<'a> {
+    /// A table in database `db_id`, whose counters `ids` owns.
+    In {
+        /// The database the table is stored in, which names its meta key.
+        db_id: i64,
+        /// The live counters, one per table.
+        ids: &'a dyn TableAutoIds,
+    },
+    /// No counter, for a caller that reads and rewrites existing rows only.
+    Unavailable,
+}
+
+impl AutoIdSource<'_> {
+    /// The allocator for `table`, or one that refuses every request.
+    fn allocator_for(&self, table: &TableInfo) -> TableAutoId {
+        match self {
+            AutoIdSource::In { db_id, ids } => ids.allocator_for(*db_id, table),
+            AutoIdSource::Unavailable => {
+                TableAutoId::over(Arc::new(UnavailableAutoIdStore), 1)
+            }
+        }
+    }
+}
+
+/// A counter home for a caller that has none, which answers every request with
+/// the reason rather than a number.
+///
+/// It is an [`AutoIdStoreError`] and not a panic on purpose: the error already
+/// means "this counter could not be reached", which is exactly true here, and
+/// it travels the path a real unreachable meta key travels rather than taking
+/// the process down.
+///
+/// [`AutoIdStoreError`]: tidb_executor::kv_table::AutoIdStoreError
+#[derive(Debug)]
+struct UnavailableAutoIdStore;
+
+impl tidb_executor::kv_table::AutoIdStore for UnavailableAutoIdStore {
+    fn reserve(
+        &self,
+        _step: u64,
+        _unsigned: bool,
+    ) -> Result<(u64, u64), tidb_executor::kv_table::AutoIdStoreError> {
+        Err(unavailable_counter())
+    }
+
+    fn rebase(
+        &self,
+        _required: u64,
+        _unsigned: bool,
+    ) -> Result<(), tidb_executor::kv_table::AutoIdStoreError> {
+        Err(unavailable_counter())
+    }
+
+    fn reset(&self) -> Result<(), tidb_executor::kv_table::AutoIdStoreError> {
+        Err(unavailable_counter())
+    }
+}
+
+fn unavailable_counter() -> tidb_executor::kv_table::AutoIdStoreError {
+    tidb_executor::kv_table::AutoIdStoreError(
+        "this table was built to walk its stored rows, not to insert, so its \
+         auto-increment counter was never given a home"
+            .to_owned(),
+    )
+}
 
 /// Why one loaded table is not part of the session's catalog.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -80,6 +209,7 @@ pub fn cluster_session_catalog(
     loaded: &ClusterCatalog,
     storage: &ClusterTableStorage,
     stats: &StatsSnapshot,
+    auto_ids: &dyn TableAutoIds,
 ) -> ClusterSessionCatalog {
     let mut catalog = Catalog::default();
     let mut skipped = Vec::new();
@@ -87,7 +217,11 @@ pub fn cluster_session_catalog(
         let schema = database.info.name.original().to_owned();
         catalog.create_database(&schema);
         for table in &database.tables {
-            match cluster_table(table, storage) {
+            let auto = AutoIdSource::In {
+                db_id: database.info.id,
+                ids: auto_ids,
+            };
+            match cluster_table(table, storage, &auto) {
                 Ok(kv_table) => {
                     // A table the cluster reports as never analyzed
                     // (`TableStatsState::Pseudo`) or one this node has not
@@ -123,9 +257,10 @@ pub fn session_with_cluster_storage(
     loaded: &ClusterCatalog,
     storage: &ClusterTableStorage,
     stats: &StatsSnapshot,
+    auto_ids: &dyn TableAutoIds,
 ) -> (Session, Vec<SkippedTable>) {
     let ClusterSessionCatalog { catalog, skipped } =
-        cluster_session_catalog(loaded, storage, stats);
+        cluster_session_catalog(loaded, storage, stats, auto_ids);
     let shared: SharedCatalog = Arc::new(Mutex::new(catalog));
     (Session::with_catalog(shared), skipped)
 }
@@ -145,6 +280,7 @@ pub fn session_with_cluster_storage(
 pub(crate) fn cluster_table(
     table: &TableInfo,
     storage: &ClusterTableStorage,
+    auto: &AutoIdSource<'_>,
 ) -> Result<KvTable, String> {
     if table.is_view() {
         return Err("it is a view".to_owned());
@@ -154,14 +290,6 @@ pub(crate) fn cluster_table(
     }
     if table.partition.is_some() {
         return Err("it is partitioned".to_owned());
-    }
-    // AUTO_INCREMENT is acted on through `KvTable::auto_increment_offset`,
-    // which this loader cannot set honestly. The reason, and the fact that
-    // this node's `CREATE TABLE` now refuses the same shape rather than
-    // writing a table the loader drops, live in one place:
-    // `tidb_exec::cluster_auto_increment`.
-    if let Some(refusal) = tidb_exec::cluster_auto_increment::auto_increment_refusal(table) {
-        return Err(refusal);
     }
     if table.state != SchemaState::PUBLIC {
         return Err(format!(
@@ -226,6 +354,18 @@ pub(crate) fn cluster_table(
     }
     let mut kv_table = KvTable::with_storage(table.id, kv_columns, storage.clone_box());
     kv_table.set_name(table.name.original());
+    // The AUTO_INCREMENT column and the counter that feeds it. Both halves
+    // have to be here: marking the column without giving the counter a
+    // cluster-wide home would allocate from a fresh in-process cell and
+    // re-issue ids the table already holds, which is why this loader used to
+    // refuse such a table outright rather than serve it half-wired.
+    if let Some(offset) = columns
+        .iter()
+        .position(|column| column.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT))
+    {
+        kv_table.set_auto_increment_offset(offset);
+        kv_table.set_auto_id(auto.allocator_for(table));
+    }
     if table.pk_is_handle {
         let handle = columns
             .iter()
@@ -505,8 +645,12 @@ mod tests {
     #[test]
     fn wide_sql_runs_on_cluster_storage_without_committing() {
         let (storage, buffer, snapshot) = cluster_storage();
-        let (mut session, skipped) =
-            session_with_cluster_storage(&loaded_catalog(), &storage, &StatsSnapshot::new());
+        let (mut session, skipped) = session_with_cluster_storage(
+            &loaded_catalog(),
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
         // The unserved table is named in the refusal rather than silently
         // vanishing from the session's catalog.
         assert_eq!(skipped.len(), 1);
@@ -595,8 +739,12 @@ mod tests {
     #[test]
     fn a_cluster_columns_declared_default_reaches_the_row_an_insert_writes() {
         let (storage, _, _) = cluster_storage();
-        let (mut session, skipped) =
-            session_with_cluster_storage(&default_catalog(), &storage, &StatsSnapshot::new());
+        let (mut session, skipped) = session_with_cluster_storage(
+            &default_catalog(),
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
         assert!(
             skipped.is_empty(),
             "a table with a literal DEFAULT is served"
@@ -620,7 +768,12 @@ mod tests {
         column.default_value = Some(ColumnDefaultValue::str("CURRENT_TIMESTAMP"));
         column.origin_default_value = None;
         let (storage, _, _) = cluster_storage();
-        let (_, skipped) = session_with_cluster_storage(&catalog, &storage, &StatsSnapshot::new());
+        let (_, skipped) = session_with_cluster_storage(
+            &catalog,
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
         assert_eq!(skipped.len(), 1);
         assert_eq!(skipped[0].name, "app.d");
         assert!(
@@ -684,8 +837,12 @@ mod tests {
     #[test]
     fn a_case_insensitive_cluster_column_orders_groups_and_dedups_by_its_collation() {
         let (storage, _, _) = cluster_storage();
-        let (mut session, skipped) =
-            session_with_cluster_storage(&ci_catalog(), &storage, &StatsSnapshot::new());
+        let (mut session, skipped) = session_with_cluster_storage(
+            &ci_catalog(),
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
         assert!(skipped.is_empty(), "a _ci table is served, not refused");
         session.run("USE app").unwrap();
         session
@@ -743,8 +900,12 @@ mod tests {
     #[test]
     fn a_snapshot_row_is_visible_and_shadowed_by_a_staged_write() {
         let (storage, _, snapshot) = cluster_storage();
-        let (mut session, _) =
-            session_with_cluster_storage(&loaded_catalog(), &storage, &StatsSnapshot::new());
+        let (mut session, _) = session_with_cluster_storage(
+            &loaded_catalog(),
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
         session.run("USE app").unwrap();
         // Write one row through the driver, promote its staged bytes into the
         // snapshot, and start over: that is what a COMMIT leaves behind for the
@@ -808,15 +969,11 @@ mod tests {
         }
     }
 
-    /// AUTO_INCREMENT is stated on the column's own type flags and acted on
-    /// through `KvTable::auto_increment_offset`, which this loader never set:
-    /// the table loaded as if the column were ordinary, and an INSERT that
-    /// omitted it answered 1364 "doesn't have a default value" -- the right
-    /// outcome for the wrong reason, and only because AUTO_INCREMENT implies
-    /// NOT NULL. The ids belong to the cluster's own autoid allocator, which
-    /// this node does not consume, so the table is refused by name instead.
+    /// The table this loader used to refuse by name. It is served now: the
+    /// counter it needs no longer starts at zero in this process, it comes
+    /// from the node's registry over the cluster's own meta key.
     #[test]
-    fn a_cluster_columns_auto_increment_refuses_the_table_by_name() {
+    fn a_cluster_columns_auto_increment_is_served_with_a_counter_from_the_node() {
         let mut v = column(2, 1, "v", false);
         v.field_type
             .add_flags(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT | 1);
@@ -829,20 +986,24 @@ mod tests {
             ..TableInfo::default()
         };
         let (storage, _, _) = cluster_storage();
-        let (_, skipped) = session_with_cluster_storage(
-            &one_table_catalog(table),
+        let homes = LocalTableAutoIds::default();
+        let built = cluster_session_catalog(
+            &one_table_catalog(table.clone()),
             &storage,
             &StatsSnapshot::new(),
+            &homes,
         );
-        assert_eq!(skipped.len(), 1);
-        assert_eq!(skipped[0].name, "app.ai");
         assert!(
-            skipped[0]
-                .reason
-                .starts_with("its column v is AUTO_INCREMENT"),
-            "{}",
-            skipped[0].reason
+            built.skipped.is_empty(),
+            "the table is served now the counter has a home: {:?}",
+            built.skipped
         );
+        // The allocator handed to a rebuilt table is the SAME one, so the ids
+        // it already reserved are not abandoned. This is the property that
+        // makes a per-statement catalog rebuild invisible in the id sequence.
+        let first = homes.allocator_for(1, &table);
+        let second = homes.allocator_for(1, &table);
+        assert!(first.same_allocator_as(&second));
     }
 
     /// A prefix index stores each value CUT to the prefix length. Nothing on
@@ -869,6 +1030,7 @@ mod tests {
             &one_table_catalog(table),
             &storage,
             &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
         );
         assert_eq!(skipped.len(), 1);
         assert_eq!(skipped[0].name, "app.p");
@@ -917,6 +1079,7 @@ mod tests {
                 &one_table_catalog(info),
                 &storage,
                 &StatsSnapshot::new(),
+                &LocalTableAutoIds::default(),
             );
             assert!(skipped.is_empty());
             session.run("USE app").unwrap();

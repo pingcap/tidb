@@ -33,7 +33,7 @@ use tidb_executor::cluster_storage::{ClusterSnapshot, ClusterTableStorage, Mutat
 use tidb_executor::StmtContext;
 use tidb_pd_client::EtcdClient;
 
-use crate::cluster_session::{cluster_table, kv_index};
+use crate::cluster_session::{AutoIdSource, cluster_table, kv_index};
 
 /// This node's one route to the cluster's stored schema.
 ///
@@ -154,7 +154,15 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         // Built from the table as it was BEFORE the change, which is the shape
         // its stored rows have -- and, for a DROP, the state in which the
         // index being removed is still one of the table's own.
-        let mut table = cluster_table(&plan.table, &storage)?;
+        //
+        // With NO auto-increment counter, because a backfill allocates no id:
+        // `create_index`/`drop_index` scan the rows that exist and write or
+        // delete the index entries those rows produce, and neither reads the
+        // allocator. Naming that absence is what keeps it honest -- the plan
+        // carries no database id, so the alternative would be inventing one
+        // and handing over a counter starting at zero, which against shared
+        // cluster storage re-issues ids the table already holds.
+        let mut table = cluster_table(&plan.table, &storage, &AutoIdSource::Unavailable)?;
         let index = kv_index(&plan.index, &plan.table.cols())?;
         let name = index.name.clone();
         if plan.add {
