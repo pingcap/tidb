@@ -520,8 +520,12 @@ fn a_statement_this_module_does_not_own_is_left_to_its_own_path() {
     for sql in [
         "SELECT 1",
         "INSERT INTO u6.t VALUES (1, 2)",
+        // `ALTER TABLE ... ADD INDEX` reaches Go's `ActionAddIndex` too, but
+        // this module admits only the `CREATE INDEX` spelling: an `ALTER` may
+        // carry several actions in one statement, and half-applying them is
+        // not something one meta transaction can take back.
         "ALTER TABLE u6.t ADD COLUMN c BIGINT NOT NULL",
-        "CREATE INDEX i ON u6.t (v)",
+        "ALTER TABLE u6.t ADD INDEX i (v)",
     ] {
         let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
         assert!(
@@ -590,5 +594,179 @@ fn every_create_table_this_node_admits_has_no_auto_increment_column() {
             None,
             "`{sql}` is admitted, so the loader must serve it"
         );
+    }
+}
+
+/// The stored table the index tests below are planned against.
+fn table_with_two_columns(store: &mut MetaStore) -> i64 {
+    let write = plan(
+        store,
+        "CREATE TABLE u6.minimal (id BIGINT PRIMARY KEY CLUSTERED, v BIGINT NOT NULL)",
+        467_996_279_696_261_139,
+    );
+    apply(store, &write);
+    write.created_id.expect("a table id")
+}
+
+/// Reads back the `TableInfo` a write set stored for `table_id`.
+fn stored_table(write: &tidb_exec::cluster_ddl::DdlWrite, table_id: i64) -> serde_json::Value {
+    serde_json::from_slice(stored_value(write, &key::table_kv_key(112, table_id)))
+        .expect("a stored TableInfo")
+}
+
+/// The index lands in `index_info` with the id `max_idx_id` names, and its
+/// column offset is resolved against the STORED table rather than trusted from
+/// the statement -- Go's `IndexColumn.Offset` is a position in `TableInfo.Cols`.
+#[test]
+fn create_index_stores_the_index_and_owes_a_backfill() {
+    let mut store = bootstrapped();
+    let table_id = table_with_two_columns(&mut store);
+    let write = plan(&mut store, "CREATE INDEX vi ON u6.minimal (v)", 470_000_000);
+    let stored = stored_table(&write, table_id);
+
+    assert_eq!(stored["max_idx_id"], 1, "the first index of this table");
+    let index = &stored["index_info"][0];
+    assert_eq!(index["id"], 1);
+    assert_eq!(index["idx_name"]["O"], "vi");
+    assert_eq!(index["is_unique"], false);
+    assert_eq!(index["is_primary"], false);
+    // `state` 5 is Go's `StatePublic`.
+    assert_eq!(index["state"], 5);
+    assert_eq!(index["idx_cols"][0]["name"]["O"], "v");
+    assert_eq!(index["idx_cols"][0]["offset"], 1, "`v` is the second column");
+    assert_eq!(index["idx_cols"][0]["length"], -1, "not a prefix index");
+    assert_eq!(
+        stored["update_timestamp"], 470_000_000_u64,
+        "Go stamps the job transaction's own start timestamp"
+    );
+
+    // `ActionAddIndex`, so a peer's schema reload knows what changed.
+    assert_eq!(write.diff.action_type.0, 7);
+    assert_eq!(write.diff.table_id, table_id);
+
+    // The half that keeps the index from being EMPTY. Losing it is the silent
+    // wrong answer this whole path exists to avoid, which is why the publisher
+    // that cannot perform it refuses outright rather than writing the meta half.
+    let backfill = write.backfill.as_ref().expect("entries are owed");
+    assert!(backfill.add);
+    assert_eq!(backfill.index.id, 1);
+    assert_eq!(
+        backfill.table.indices.len(),
+        0,
+        "the walker gets the table as its stored ROWS have it: before the change"
+    );
+}
+
+/// A second index of the same name is 1061, and `IF NOT EXISTS` makes it a
+/// no-op that spends no schema version.
+#[test]
+fn a_duplicate_index_name_is_refused_and_if_not_exists_is_a_no_op() {
+    let mut store = bootstrapped();
+    table_with_two_columns(&mut store);
+    let write = plan(&mut store, "CREATE INDEX vi ON u6.minimal (v)", 470_000_000);
+    apply(&mut store, &write);
+
+    let refused = plan_ddl(
+        &mut store,
+        &statement("CREATE INDEX vi ON u6.minimal (v)"),
+        470_000_001,
+    )
+    .expect_err("a duplicate index name is an error");
+    assert!(
+        matches!(&refused, DdlPlanError::DuplicateKeyName(name) if name == "vi"),
+        "{refused}"
+    );
+    assert_eq!(refused.to_string(), "Duplicate key name 'vi'");
+
+    match plan_ddl(
+        &mut store,
+        &statement("CREATE INDEX IF NOT EXISTS vi ON u6.minimal (v)"),
+        470_000_002,
+    )
+    .expect("IF NOT EXISTS plans")
+    {
+        DdlPlan::AlreadySatisfied { .. } => {}
+        DdlPlan::Write(_) => panic!("IF NOT EXISTS on an existing index must write nothing"),
+    }
+}
+
+/// Every shape whose entries this node would not go on to maintain is refused
+/// before a timestamp is spent: publishing one writes a `TableInfo` this node's
+/// own catalog loader then drops, so the table would vanish from the very
+/// connection that indexed it.
+#[test]
+fn index_shapes_this_node_cannot_maintain_are_refused_at_admission() {
+    for (sql, expected) in [
+        (
+            "CREATE INDEX ci ON u6.minimal (c(4))",
+            "a prefix-length index",
+        ),
+        (
+            "CREATE INDEX ei ON u6.minimal ((v + 1))",
+            "an expression index",
+        ),
+        (
+            "CREATE FULLTEXT INDEX fi ON u6.minimal (c)",
+            "CREATE FULLTEXT INDEX",
+        ),
+    ] {
+        let reason = refusal(sql);
+        assert!(
+            reason.contains(expected),
+            "`{sql}` must be refused for {expected}, got: {reason}"
+        );
+    }
+}
+
+/// The index leaves the stored table, and its entries are named for removal in
+/// the same transaction -- a stale entry reads as a row that is not there.
+#[test]
+fn drop_index_removes_it_and_owes_the_entry_removal() {
+    let mut store = bootstrapped();
+    let table_id = table_with_two_columns(&mut store);
+    let created = plan(&mut store, "CREATE INDEX vi ON u6.minimal (v)", 470_000_000);
+    apply(&mut store, &created);
+
+    let write = plan(&mut store, "DROP INDEX vi ON u6.minimal", 470_000_003);
+    let stored = stored_table(&write, table_id);
+    assert!(
+        stored["index_info"]
+            .as_array()
+            .is_none_or(|indexes| indexes.is_empty()),
+        "the index is gone from the stored table: {}",
+        stored["index_info"]
+    );
+    assert_eq!(
+        stored["max_idx_id"], 1,
+        "Go never lowers MaxIndexID, so a later index cannot reuse the id"
+    );
+    // `ActionDropIndex`.
+    assert_eq!(write.diff.action_type.0, 8);
+    let backfill = write.backfill.as_ref().expect("entries are owed");
+    assert!(!backfill.add);
+    assert_eq!(backfill.index.name.original(), "vi");
+    assert_eq!(
+        backfill.table.indices.len(),
+        1,
+        "the walker gets the table with the index still on it, so it can key its entries"
+    );
+
+    apply(&mut store, &write);
+    let refused = plan_ddl(
+        &mut store,
+        &statement("DROP INDEX nosuch ON u6.minimal"),
+        470_000_004,
+    )
+    .expect_err("a missing index is an error");
+    assert_eq!(refused.to_string(), "index nosuch doesn't exist");
+    match plan_ddl(
+        &mut store,
+        &statement("DROP INDEX IF EXISTS nosuch ON u6.minimal"),
+        470_000_005,
+    )
+    .expect("IF EXISTS plans")
+    {
+        DdlPlan::AlreadySatisfied { .. } => {}
+        DdlPlan::Write(_) => panic!("IF EXISTS on a missing index must write nothing"),
     }
 }

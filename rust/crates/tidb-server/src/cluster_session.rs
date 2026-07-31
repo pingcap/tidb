@@ -142,7 +142,10 @@ pub fn session_with_cluster_storage(
 /// table this tier serves correctly. (The bounded node needs its gate because
 /// its own comparator hardcodes `utf8mb4_bin`; the two tiers share no
 /// execution code.)
-fn cluster_table(table: &TableInfo, storage: &ClusterTableStorage) -> Result<KvTable, String> {
+pub(crate) fn cluster_table(
+    table: &TableInfo,
+    storage: &ClusterTableStorage,
+) -> Result<KvTable, String> {
     if table.is_view() {
         return Err("it is a view".to_owned());
     }
@@ -239,43 +242,65 @@ fn cluster_table(table: &TableInfo, storage: &ClusterTableStorage) -> Result<KvT
         if index.state != SchemaState::PUBLIC {
             continue;
         }
-        // A prefix index (`KEY idx(s(4))`) stores each column value CUT to the
-        // prefix, and nothing on either side of this seam cuts: the key
-        // builder encodes whole column values, so a read would seek a key that
-        // is not there (missing rows, silently) and a write would store an
-        // entry Go cannot find. The whole table is refused, and reported,
-        // rather than half-supported -- the same answer the ANALYZE path and
-        // the `CREATE TABLE` path already give a prefix index.
-        if index.has_prefix_index() {
-            return Err(format!(
-                "its index {} is a prefix index, whose entries are each column value cut to \
-                 the prefix length, which this node neither reads nor writes that way",
-                index.name.original()
-            ));
-        }
-        let mut offsets = Vec::with_capacity(index.columns.len());
-        for column in &index.columns {
-            let offset = columns
-                .iter()
-                .position(|public| public.name.lowercase() == column.name.lowercase())
-                .ok_or_else(|| {
-                    format!(
-                        "its index {} covers non-public column {}",
-                        index.name.original(),
-                        column.name.original()
-                    )
-                })?;
-            offsets.push(offset);
-        }
-        kv_table.add_index(KvIndex {
-            id: index.id,
-            name: index.name.original().to_owned(),
-            unique: index.unique,
-            column_offsets: offsets,
-            visible: !index.invisible,
-        });
+        kv_table.add_index(kv_index(index, &columns)?);
     }
     Ok(kv_table)
+}
+
+/// Translates one stored `IndexInfo` into the executor's `KvIndex`, against
+/// the table's PUBLIC column list.
+///
+/// The offsets are resolved by NAME here even though `IndexColumn.Offset`
+/// carries one, because the two count different things: Go's offset is a
+/// position in `TableInfo.Columns`, and a `KvIndex`'s is a position in the
+/// public columns this loader built. They coincide only while no column is
+/// non-public, and a silent disagreement between them indexes the wrong
+/// column.
+///
+/// It is one function rather than a loop inside [`cluster_table`] because the
+/// `CREATE INDEX` backfill has to build the very same `KvIndex` for an index
+/// the stored table does not carry yet -- and an index whose entries are
+/// WRITTEN under one mapping and READ under another is the exact silent wrong
+/// answer this tier keeps hunting.
+pub(crate) fn kv_index(
+    index: &tidb_model::index::IndexInfo,
+    columns: &[&tidb_model::column::ColumnInfo],
+) -> Result<KvIndex, String> {
+    // A prefix index (`KEY idx(s(4))`) stores each column value CUT to the
+    // prefix, and nothing on either side of this seam cuts: the key
+    // builder encodes whole column values, so a read would seek a key that
+    // is not there (missing rows, silently) and a write would store an
+    // entry Go cannot find. The whole table is refused, and reported,
+    // rather than half-supported -- the same answer the ANALYZE path and
+    // the `CREATE TABLE` path already give a prefix index.
+    if index.has_prefix_index() {
+        return Err(format!(
+            "its index {} is a prefix index, whose entries are each column value cut to \
+             the prefix length, which this node neither reads nor writes that way",
+            index.name.original()
+        ));
+    }
+    let mut offsets = Vec::with_capacity(index.columns.len());
+    for column in &index.columns {
+        let offset = columns
+            .iter()
+            .position(|public| public.name.lowercase() == column.name.lowercase())
+            .ok_or_else(|| {
+                format!(
+                    "its index {} covers non-public column {}",
+                    index.name.original(),
+                    column.name.original()
+                )
+            })?;
+        offsets.push(offset);
+    }
+    Ok(KvIndex {
+        id: index.id,
+        name: index.name.original().to_owned(),
+        unique: index.unique,
+        column_offsets: offsets,
+        visible: !index.invisible,
+    })
 }
 
 /// Go `mysql.MaxUnsignedFlag` (`UnsignedFlag`), which the out-of-range

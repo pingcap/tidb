@@ -17,12 +17,14 @@
 
 use std::time::Duration;
 
+use tidb_executor::cluster_storage::ClusterSnapshot;
 use tidb_txnkv::lock::{LockRecoveryClient, TimestampSource};
 use tidb_txnkv::region::RegionRecoveryLoader;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     RealOptimisticTransaction, RealOptimisticTransactionOpener, TransactionCommandClient,
 };
+use tidb_txnkv::Key;
 
 use crate::catalog_reload::{reload_cluster_catalog, ReloadedCatalog};
 use crate::cluster_catalog::{
@@ -73,6 +75,51 @@ where
         };
         self.transaction
             .snapshot_scan(prefix, &end, None, &self.call)
+            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+    }
+}
+
+/// One open transaction's read handle seen as a meta-key snapshot.
+///
+/// [`TransactionMetaSnapshot`] borrows the transaction itself, which is right
+/// for a load that owns its transaction outright. An index change cannot do
+/// that: it has to read the catalog AND walk the table's rows through the
+/// executor's own [`ClusterSnapshot`] seam, and both must be served at the one
+/// timestamp whose write set they end up in. This adapter is what makes the
+/// two the same read: a `SessionTransaction` hands out as many
+/// [`ClusterSnapshot`] handles as are needed, all on the one transaction, and
+/// this turns one of them back into the loader's interface.
+pub struct SnapshotMetaSnapshot {
+    snapshot: Box<dyn ClusterSnapshot>,
+}
+
+impl SnapshotMetaSnapshot {
+    /// Binds one read handle.
+    #[must_use]
+    pub fn new(snapshot: Box<dyn ClusterSnapshot>) -> Self {
+        Self { snapshot }
+    }
+}
+
+impl MetaSnapshot for SnapshotMetaSnapshot {
+    fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
+        self.snapshot
+            .get(&Key::from_bytes(key.to_vec()))
+            .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
+    }
+
+    fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+        let Some(end) = prefix_scan_end(prefix) else {
+            return Err(ClusterCatalogError::Snapshot(
+                "catalog prefix has no finite scan end".to_owned(),
+            ));
+        };
+        self.snapshot
+            .scan(
+                &Key::from_bytes(prefix.to_vec()),
+                &Key::from_bytes(end),
+                None,
+            )
             .map_err(|error| ClusterCatalogError::Snapshot(error.to_string()))
     }
 }

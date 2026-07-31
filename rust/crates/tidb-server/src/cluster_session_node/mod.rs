@@ -653,8 +653,8 @@ impl ClusterServerSession {
                     Ok(Some(statement)) => Ok(StatementRoute::Ddl(statement)),
                     Ok(None) => Err(SqlQueryError::unknown(
                         "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, \
-                         CREATE DATABASE and DROP DATABASE only; run this statement on a TiDB \
-                         server",
+                         CREATE DATABASE, DROP DATABASE, CREATE INDEX and DROP INDEX only; run \
+                         this statement on a TiDB server",
                     )),
                     // The refusal carries Go's own errno where it has one
                     // (`Unsupported ...` is 8200), so a client can tell a

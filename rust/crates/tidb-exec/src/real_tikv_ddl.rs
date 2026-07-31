@@ -29,8 +29,10 @@
 //! watch side are documented in [`crate::catalog_watch`]'s module doc.
 
 use std::fmt;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SwappableSnapshot};
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticCoordinatorError, RealOptimisticTransactionOpener,
@@ -38,9 +40,10 @@ use tidb_txnkv::transaction::{
 };
 
 use crate::cluster_ddl::{
-    lower_ddl, plan_ddl, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement,
+    lower_ddl, plan_ddl, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, IndexBackfill,
 };
-use crate::real_tikv_catalog::TransactionMetaSnapshot;
+use crate::cluster_table_storage::SessionTransaction;
+use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 
 /// Parses and admits one text-protocol statement as a catalog change.
 ///
@@ -84,6 +87,16 @@ pub enum ClusterDdlError {
     /// Publication reached a terminal state that is not a commit, so the
     /// catalog change cannot be reported as done.
     NotCommitted(String),
+    /// The index entries for the rows the table already holds could not be
+    /// built, so the change was abandoned before anything was published.
+    Backfill(String),
+    /// The change needs an index backfill and this path has no backfiller.
+    ///
+    /// Publishing the meta half alone would create an index that exists and is
+    /// EMPTY: every query the planner routes through it silently loses the rows
+    /// whose entries were never written. The refusal is what keeps that
+    /// unreachable on a path that cannot walk the table.
+    BackfillUnavailable,
 }
 
 impl fmt::Display for ClusterDdlError {
@@ -103,6 +116,16 @@ impl fmt::Display for ClusterDdlError {
             Self::NotCommitted(state) => {
                 write!(formatter, "catalog change did not commit: {state}")
             }
+            Self::Backfill(detail) => write!(
+                formatter,
+                "the index entries for the rows this table already holds could not be \
+                 built, so nothing was published: {detail}"
+            ),
+            Self::BackfillUnavailable => write!(
+                formatter,
+                "this path cannot perform an index change: it would publish an index \
+                 that exists but holds no entry for any row the table already has"
+            ),
         }
     }
 }
@@ -112,7 +135,10 @@ impl std::error::Error for ClusterDdlError {
         match self {
             Self::Plan(error) => Some(error),
             Self::Transaction(error) => Some(error),
-            Self::ConcurrentSchemaChange { .. } | Self::NotCommitted(_) => None,
+            Self::ConcurrentSchemaChange { .. }
+            | Self::NotCommitted(_)
+            | Self::Backfill(_)
+            | Self::BackfillUnavailable => None,
         }
     }
 }
@@ -201,6 +227,14 @@ pub fn commit_cluster_ddl(
         }
         DdlPlan::Write(write) => write,
     };
+    // This path publishes meta keys only. A change that also owes index
+    // entries has to go through `commit_cluster_ddl_with_backfill`, which
+    // reads the table's rows on the SAME transaction; committing the meta half
+    // here would leave an index that answers queries with nothing.
+    if write.backfill.is_some() {
+        transaction.finish_without_writes()?;
+        return Err(ClusterDdlError::BackfillUnavailable);
+    }
     let planned_version = write.schema_version;
     match transaction.commit(write.mutations, &call)? {
         OptimisticCommitOutcome::Committed(_) => {
@@ -222,6 +256,133 @@ pub fn commit_cluster_ddl(
         ))),
     }
 }
+
+/// Stages the index entries an index change owes for the rows a table already
+/// holds.
+///
+/// It is a trait because the walk itself is NOT this crate's to own: the entry
+/// for a row is exactly what an `INSERT` would have written, and that single
+/// definition lives in the executor's `KvTable` over the same
+/// [`ClusterTableStorage`] seam the session writes through. Implementing the
+/// walk here would be a second index-entry writer, and two of those drift —
+/// which on an index means a query returns rows that are not there, or misses
+/// rows that are, with no error either way.
+///
+/// [`ClusterTableStorage`]: tidb_executor::cluster_storage::ClusterTableStorage
+pub trait IndexBackfiller {
+    /// Reads the table's rows through `snapshot` and stages every entry the
+    /// change adds or removes into `buffer`.
+    ///
+    /// The caller publishes the buffer in the same transaction the snapshot
+    /// reads at, so an implementation must not commit anything itself.
+    fn stage(
+        &self,
+        plan: &IndexBackfill,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<(), String>;
+}
+
+/// Publishes one catalog change together with the index entries it owes.
+///
+/// One `SessionTransaction` serves all three halves at one `start_ts`: the
+/// catalog read that plans the change, the row walk that builds the entries,
+/// and the prewrite that publishes both. That is the whole reason this is not
+/// [`commit_cluster_ddl`] with an extra step — an index built from rows read at
+/// a different timestamp than it is written at can point at a row that does not
+/// exist yet, or miss one that does.
+///
+/// **What this node does NOT do, stated rather than hidden.** Go runs
+/// `ActionAddIndex` through `delete only` -> `write only` -> `reorg` -> `public`
+/// precisely so that a concurrent `INSERT` on another node maintains the
+/// half-built index while the reorg scans. There is no job queue and no schema
+/// state machine here; the index becomes public at the one commit, and a row
+/// committed by another writer between this transaction's `start_ts` and its
+/// commit is indexed by neither half. This is the same single-writer assumption
+/// [`crate::cluster_ddl`]'s module doc already states for `DROP TABLE`, widened
+/// from "no concurrent DDL" to "no concurrent WRITE to the table being
+/// indexed", and it is the one thing to fix before this tier serves a second
+/// writer.
+pub fn commit_cluster_ddl_with_backfill(
+    opener: Arc<RealOptimisticTransactionOpener>,
+    statement: &DdlStatement,
+    timeout: Duration,
+    notifier: Option<&dyn SchemaVersionNotifier>,
+    backfiller: &dyn IndexBackfiller,
+) -> Result<ClusterDdlReport, ClusterDdlError> {
+    let transaction = SessionTransaction::begin(opener, timeout)?;
+    let start_ts = transaction.start_ts();
+    let plan = {
+        let mut snapshot = SnapshotMetaSnapshot::new(
+            transaction
+                .snapshot()
+                .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
+        );
+        plan_ddl(&mut snapshot, statement, start_ts)
+    };
+    let plan = match plan {
+        Ok(plan) => plan,
+        Err(error) => {
+            let _ = transaction.rollback();
+            return Err(error.into());
+        }
+    };
+    let write = match plan {
+        DdlPlan::AlreadySatisfied { detail } => {
+            transaction
+                .rollback()
+                .map_err(ClusterDdlError::NotCommitted)?;
+            return Ok(ClusterDdlReport::AlreadySatisfied { detail });
+        }
+        DdlPlan::Write(write) => write,
+    };
+    let buffer = MutationBuffer::new();
+    if let Some(backfill) = &write.backfill {
+        let staged = transaction
+            .snapshot()
+            .map_err(|error| ClusterDdlError::Backfill(error.to_string()))
+            .and_then(|snapshot| {
+                let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
+                slot.lock()
+                    .map_err(|_| ClusterDdlError::Backfill("snapshot slot poisoned".to_owned()))?
+                    .bind(snapshot);
+                let handle: Arc<Mutex<dyn ClusterSnapshot>> = slot;
+                backfiller
+                    .stage(backfill, handle, &buffer)
+                    .map_err(ClusterDdlError::Backfill)
+            });
+        if let Err(error) = staged {
+            // Nothing has been published: the entries only ever existed in this
+            // process's buffer, so a failed backfill leaves the cluster exactly
+            // as it was, index and rows both.
+            let _ = transaction.rollback();
+            return Err(error);
+        }
+    }
+    let planned_version = write.schema_version;
+    match transaction.commit_with(&buffer, write.mutations) {
+        Ok(_) => {
+            notify_schema_version(notifier, planned_version);
+            Ok(ClusterDdlReport::Applied {
+                schema_version: planned_version,
+                created_id: write.created_id,
+            })
+        }
+        // Every catalog change writes `SchemaVersionKey` from a value it read,
+        // so TiKV's 9007 here means the same thing it means on the meta-only
+        // path: something else committed over this transaction's snapshot.
+        Err(error) if error.code == WRITE_CONFLICT_CODE => {
+            Err(ClusterDdlError::ConcurrentSchemaChange {
+                planned_version,
+                detail: error.message,
+            })
+        }
+        Err(error) => Err(ClusterDdlError::NotCommitted(error.message)),
+    }
+}
+
+/// Go `errno.ErrWriteConflict`, which a lost optimistic prewrite reports.
+const WRITE_CONFLICT_CODE: u16 = 9007;
 
 /// Publishes a committed version, downgrading every failure to a warning.
 ///

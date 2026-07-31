@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Writing the catalog: `CREATE`/`DROP` for databases and tables, planned as
-//! one set of meta-key mutations over one snapshot.
+//! Writing the catalog: `CREATE`/`DROP` for databases, tables and indexes,
+//! planned as one set of meta-key mutations over one snapshot.
 //!
 //! Go source of truth is the *final meta mutation* of a DDL job, not the job
 //! queue around it:
@@ -37,6 +37,17 @@
 //!   is only safe while this node is the only writer of the catalog, so a
 //!   concurrent DDL must FAIL rather than interleave — see
 //!   [`plan_ddl`] on the `SchemaVersionKey` write.
+//!
+//!   `CREATE INDEX` widens that assumption, and this is the one place it is
+//!   written down: Go's `delete only` -> `write only` -> `reorg` -> `public`
+//!   ladder exists so a concurrent `INSERT` maintains the half-built index
+//!   while the reorg scans. This node has no such states — the index and every
+//!   entry the existing rows owe it become visible at ONE commit — so a row
+//!   another writer commits between this transaction's `start_ts` and its
+//!   commit is indexed by neither the scan nor the writer. The assumption is
+//!   therefore no longer "no concurrent DDL" but "no concurrent WRITE to the
+//!   table being indexed", and unlike the DDL half it is NOT enforced by a
+//!   write conflict.
 //! * **Bounded surface.** Only the column shapes this node can also serve are
 //!   admitted, and every refusal happens in [`lower_ddl`], before a timestamp is
 //!   spent or a single byte is written.
@@ -44,11 +55,12 @@
 use std::fmt;
 
 use tidb_ast::CiString;
-use tidb_ast::{CreateTableStmt, DdlStmt, DropTableStmt, Stmt};
+use tidb_ast::{CreateIndexStmt, CreateTableStmt, DdlStmt, DropIndexStmt, DropTableStmt, Stmt};
 use tidb_meta::{key, value};
 use tidb_metadef::MAX_USER_GLOBAL_ID;
 use tidb_model::action_type::ActionType;
 use tidb_model::db::DBInfo;
+use tidb_model::index::{IndexColumn, IndexInfo};
 use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
@@ -114,6 +126,34 @@ pub enum DdlStatement {
         /// Whether a missing table is a no-op rather than an error.
         if_exists: bool,
     },
+    /// `CREATE [UNIQUE] INDEX name ON [schema.]table (columns)`.
+    ///
+    /// Unlike the other four, this one changes DATA as well as metadata: the
+    /// rows the table already holds each need an index entry. Both halves are
+    /// published in the one transaction — see [`DdlWrite::backfill`].
+    CreateIndex {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// Whether an existing index of the same name is a no-op.
+        if_not_exists: bool,
+        /// The index to add, complete except for the ID and the column
+        /// offsets the publishing transaction resolves against the stored
+        /// table.
+        index: Box<IndexInfo>,
+    },
+    /// `DROP INDEX name ON [schema.]table`.
+    DropIndex {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The index name as written.
+        index: String,
+        /// Whether a missing index is a no-op rather than an error.
+        if_exists: bool,
+    },
 }
 
 /// Admits one parsed statement as a catalog change, or explains why not.
@@ -152,6 +192,8 @@ pub fn lower_ddl(
         })),
         DdlStmt::CreateTable(create) => lower_create_table(create, default_schema).map(Some),
         DdlStmt::DropTable(drop) => lower_drop_table(drop, default_schema).map(Some),
+        DdlStmt::CreateIndex(create) => lower_create_index(create, default_schema).map(Some),
+        DdlStmt::DropIndex(drop) => lower_drop_index(drop, default_schema).map(Some),
         _ => Ok(None),
     }
 }
@@ -226,6 +268,113 @@ fn lower_create_table(
     })
 }
 
+/// Admits a `CREATE INDEX`, refusing every shape whose entries this node would
+/// not go on to maintain.
+///
+/// The gate is not a taste judgement: [`crate::cluster_catalog`]'s loader and
+/// the session's table builder refuse a prefix index and a generated column
+/// outright, so publishing one here would write a `TableInfo` this very node
+/// then drops from its own catalog — the table would vanish from the
+/// connection that just indexed it. Each refusal names which half cannot carry
+/// the shape.
+fn lower_create_index(
+    create: &CreateIndexStmt,
+    default_schema: &str,
+) -> Result<DdlStatement, DdlAdmissionError> {
+    let (schema, table) = split_name(&create.table, default_schema, "table")?;
+    let unique = match create.kind {
+        tidb_ast::IndexKind::Ordinary => false,
+        tidb_ast::IndexKind::Unique => true,
+        other => {
+            return Err(DdlAdmissionError::unsupported(format!(
+                "CREATE {} INDEX is not supported by this node",
+                other.sql()
+            )))
+        }
+    };
+    if create.options.condition.is_some() {
+        return Err(DdlAdmissionError::unsupported(
+            "a partial index (CREATE INDEX ... WHERE) is not supported by this node: \
+             nothing here evaluates the condition, so every row would be indexed under \
+             a partial index's name",
+        ));
+    }
+    if create.options.global {
+        return Err(DdlAdmissionError::unsupported(
+            "a GLOBAL index is not supported by this node, which does not serve \
+             partitioned tables",
+        ));
+    }
+    let mut columns = Vec::with_capacity(create.parts.len());
+    for part in &create.parts {
+        let tidb_ast::IndexPart::Column {
+            name, prefix_len, ..
+        } = part
+        else {
+            return Err(DdlAdmissionError::unsupported(
+                "an expression index is not supported by this node: it is stored as a \
+                 hidden GENERATED column, which this node's catalog loader refuses",
+            ));
+        };
+        if prefix_len.is_some() {
+            return Err(DdlAdmissionError::unsupported(
+                "a prefix-length index is not supported by this node, which neither \
+                 reads nor writes entries cut to a prefix",
+            ));
+        }
+        columns.push(IndexColumn {
+            name: CiString::new(name.clone()),
+            // Resolved against the stored table when the change is planned.
+            offset: 0,
+            length: -1,
+            ..IndexColumn::default()
+        });
+    }
+    if columns.is_empty() {
+        return Err(DdlAdmissionError::new("CREATE INDEX names no column"));
+    }
+    Ok(DdlStatement::CreateIndex {
+        schema,
+        table,
+        if_not_exists: create.if_not_exists,
+        index: Box::new(IndexInfo {
+            // The publishing transaction allocates it from the table's own
+            // space, which is `TableInfo.MaxIndexID` and not the global one.
+            id: 0,
+            name: CiString::new(create.name.clone()),
+            columns,
+            state: SchemaState::PUBLIC,
+            comment: create.options.comment.clone().unwrap_or_default(),
+            tp: create
+                .options
+                .index_type
+                .unwrap_or(tidb_ast::IndexType::Btree),
+            unique,
+            primary: false,
+            invisible: create.options.visibility == Some(tidb_ast::IndexVisibility::Invisible),
+            ..IndexInfo::default()
+        }),
+    })
+}
+
+fn lower_drop_index(
+    drop: &DropIndexStmt,
+    default_schema: &str,
+) -> Result<DdlStatement, DdlAdmissionError> {
+    let (schema, table) = split_name(&drop.table, default_schema, "table")?;
+    if drop.is_hypo {
+        return Err(DdlAdmissionError::unsupported(
+            "DROP HYPO INDEX is not supported: this node creates no hypothetical indexes",
+        ));
+    }
+    Ok(DdlStatement::DropIndex {
+        schema,
+        table,
+        index: drop.name.clone(),
+        if_exists: drop.if_exists,
+    })
+}
+
 /// Why a planned catalog change cannot be built from the observed snapshot.
 #[derive(Clone, Debug)]
 pub enum DdlPlanError {
@@ -248,6 +397,17 @@ pub enum DdlPlanError {
         schema: String,
         /// The table name as written.
         table: String,
+    },
+    /// The table already has an index of that name (Go 1061).
+    DuplicateKeyName(String),
+    /// The named index is not on the named table (Go 1091).
+    UnknownIndex(String),
+    /// The index names a column the table does not have (Go 1072).
+    UnknownIndexColumn {
+        /// The column name as written.
+        column: String,
+        /// The index name as written.
+        index: String,
     },
     /// Go `GenGlobalIDs`' own limit: the user ID space is exhausted.
     GlobalIdExhausted {
@@ -274,6 +434,14 @@ impl fmt::Display for DdlPlanError {
             Self::TableExists { schema, table } => {
                 write!(formatter, "Table '{schema}.{table}' already exists")
             }
+            Self::DuplicateKeyName(name) => write!(formatter, "Duplicate key name '{name}'"),
+            Self::UnknownIndex(name) => {
+                write!(formatter, "index {name} doesn't exist")
+            }
+            Self::UnknownIndexColumn { column, index } => write!(
+                formatter,
+                "Key column '{column}' doesn't exist in table (index {index})"
+            ),
             Self::GlobalIdExhausted { wanted } => write!(
                 formatter,
                 "global id:{wanted} exceeds the limit:{MAX_USER_GLOBAL_ID}"
@@ -330,6 +498,34 @@ pub struct DdlWrite {
     pub diff: SchemaDiff,
     /// The object the change created, if it created one.
     pub created_id: Option<i64>,
+    /// The index entries the change also has to write or remove, if any.
+    ///
+    /// `CREATE INDEX` is the first change on this path whose correctness is not
+    /// finished by the meta keys: an index whose existing rows were never
+    /// scanned exists in the catalog and answers queries with the rows it
+    /// happens to hold, which is a silent wrong answer rather than an error.
+    /// The entries therefore ride the SAME transaction as the meta mutations
+    /// (see [`crate::real_tikv_ddl::commit_cluster_ddl_with_backfill`]), so the
+    /// index and its contents become visible at one commit timestamp and no
+    /// reader can see one without the other.
+    pub backfill: Option<IndexBackfill>,
+}
+
+/// The data half of an index change: which table's rows to walk, and what to
+/// do with the entries.
+///
+/// The table is carried as it was BEFORE the change, because that is the shape
+/// its stored rows have; the index is carried with its ID and offsets already
+/// resolved, so the walker needs nothing but this.
+#[derive(Clone, Debug)]
+pub struct IndexBackfill {
+    /// The table as the snapshot holds it, before this change.
+    pub table: Box<TableInfo>,
+    /// The index whose entries are to be written or removed.
+    pub index: Box<IndexInfo>,
+    /// Whether the entries are being written (`CREATE INDEX`) or removed
+    /// (`DROP INDEX`).
+    pub add: bool,
 }
 
 /// Plans one catalog change against one snapshot.
@@ -355,6 +551,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
     let schema_version = catalog.schema_version + 1;
     let mut writes = Vec::new();
     let mut created_id = None;
+    let mut backfill = None;
     let mut diff = SchemaDiff {
         version: schema_version,
         ..SchemaDiff::default()
@@ -497,6 +694,107 @@ pub fn plan_ddl<S: MetaSnapshot>(
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }
+        DdlStatement::CreateIndex {
+            schema,
+            table,
+            if_not_exists,
+            index,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            if let Some(existing) = find_index(stored, index.name.original()) {
+                if *if_not_exists {
+                    return Ok(already(format!(
+                        "index `{}` already exists on `{schema}`.`{table}`",
+                        existing.name.original()
+                    )));
+                }
+                return Err(DdlPlanError::DuplicateKeyName(
+                    index.name.original().to_owned(),
+                ));
+            }
+            let mut added = IndexInfo::clone(index);
+            // Go's `IndexColumn.Offset` is a position in `TableInfo.Columns`,
+            // and the loader reads it back that way, so it is resolved against
+            // the stored table rather than trusted from the statement.
+            for column in &mut added.columns {
+                let Some(stored_column) = stored
+                    .columns
+                    .iter()
+                    .find(|candidate| candidate.name.lowercase() == column.name.lowercase())
+                else {
+                    return Err(DdlPlanError::UnknownIndexColumn {
+                        column: column.name.original().to_owned(),
+                        index: index.name.original().to_owned(),
+                    });
+                };
+                column.name = stored_column.name.clone();
+                column.offset = stored_column.offset;
+            }
+            let mut info = TableInfo::clone(stored);
+            info.max_index_id += 1;
+            added.id = info.max_index_id;
+            added.table = info.name.clone();
+            info.indices.push(added.clone());
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            backfill = Some(IndexBackfill {
+                table: Box::new(stored.clone()),
+                index: Box::new(added),
+                add: true,
+            });
+            diff.action_type = ActionType::ACTION_ADD_INDEX;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::DropIndex {
+            schema,
+            table,
+            index,
+            if_exists,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let Some(dropped) = find_index(stored, index).cloned() else {
+                if *if_exists {
+                    return Ok(already(format!(
+                        "index `{index}` does not exist on `{schema}`.`{table}`"
+                    )));
+                }
+                return Err(DdlPlanError::UnknownIndex(index.clone()));
+            };
+            let mut info = TableInfo::clone(stored);
+            info.indices.retain(|candidate| candidate.id != dropped.id);
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            // Go moves a dropped index through `delete only` and hands its key
+            // range to the delete-range GC worker; this node is the single
+            // catalog writer and removes the entries in the same transaction,
+            // for the same reason it drops a table in one version. Leaving them
+            // behind would be worse than untidy: `TableInfo.MaxIndexID` never
+            // goes down, but a later index on the same table would still walk
+            // the same rows, and a stale entry under a REUSED id — which a
+            // restored or rebuilt table can produce — reads as a row that is
+            // not there.
+            backfill = Some(IndexBackfill {
+                table: Box::new(stored.clone()),
+                index: Box::new(dropped),
+                add: false,
+            });
+            diff.action_type = ActionType::ACTION_DROP_INDEX;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
     }
 
     // The version bump comes last so the write set always ends with the two
@@ -518,11 +816,42 @@ pub fn plan_ddl<S: MetaSnapshot>(
         schema_version,
         diff,
         created_id,
+        backfill,
     })))
 }
 
 fn already(detail: String) -> DdlPlan {
     DdlPlan::AlreadySatisfied { detail }
+}
+
+/// Resolves `schema`.`table` to its database ID and stored `TableInfo`.
+///
+/// An index change has no `IF EXISTS` for the TABLE, only for the index, so a
+/// missing database or table is always an error here.
+fn locate_table<'catalog>(
+    catalog: &'catalog ClusterCatalog,
+    schema: &str,
+    table: &str,
+) -> Result<(i64, &'catalog TableInfo), DdlPlanError> {
+    let Some(database) = find_database(catalog, schema) else {
+        return Err(DdlPlanError::UnknownDatabase(schema.to_owned()));
+    };
+    let Some(stored) = find_table(database, table) else {
+        return Err(DdlPlanError::UnknownTable {
+            schema: schema.to_owned(),
+            table: table.to_owned(),
+        });
+    };
+    Ok((database.info.id, stored))
+}
+
+/// The table's index of that name, matched the way MySQL matches one:
+/// case-insensitively.
+fn find_index<'table>(table: &'table TableInfo, name: &str) -> Option<&'table IndexInfo> {
+    table
+        .indices
+        .iter()
+        .find(|index| index.name.original().eq_ignore_ascii_case(name))
 }
 
 /// Go `GenGlobalIDs(n)`: `Inc(NextGlobalID, n)` answers the new maximum, and

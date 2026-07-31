@@ -442,10 +442,32 @@ impl SessionTransaction {
     /// transaction as an `Ok` value carrying the cause, so the outcome is
     /// classified here rather than treated as success.
     pub fn commit(
-        mut self,
+        self,
         buffer: &MutationBuffer,
     ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
-        let (mutations, _) = staged_mutations(buffer).map_err(coordinator_sql_error)?;
+        self.commit_with(buffer, Vec::new())
+    }
+
+    /// Publishes the staged writes together with `extra`, as one transaction at
+    /// this transaction's own `start_ts`.
+    ///
+    /// The two sets are one commit because they are one change: an index
+    /// change's meta keys say the index exists and its data keys are what it
+    /// contains, and a reader that saw the first without the second would get
+    /// the wrong rows with no error. Ordering between the sets is not the
+    /// caller's business — the coordinator sorts and validates the whole
+    /// mutation set before prewrite.
+    ///
+    /// # Errors
+    ///
+    /// Returns the client-visible error of any 2PC that did not commit.
+    pub fn commit_with(
+        mut self,
+        buffer: &MutationBuffer,
+        extra: Vec<OptimisticMutation>,
+    ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
+        let (mut mutations, _) = staged_mutations(buffer).map_err(coordinator_sql_error)?;
+        mutations.extend(extra);
         if mutations.is_empty() {
             self.thread.finish().map_err(storage_sql_error)?;
             return Ok(None);

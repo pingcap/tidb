@@ -18,16 +18,22 @@
 //! statement is routed here and what happens to the connection's own
 //! catalog afterwards.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_exec::catalog_reload::ReloadedCatalog;
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
-use tidb_exec::cluster_ddl::DdlStatement;
+use tidb_exec::cluster_ddl::{DdlStatement, IndexBackfill};
 use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
-use tidb_exec::real_tikv_ddl::{commit_cluster_ddl, ClusterDdlReport, SchemaVersionNotifier};
+use tidb_exec::real_tikv_ddl::{
+    commit_cluster_ddl_with_backfill, ClusterDdlReport, IndexBackfiller, SchemaVersionNotifier,
+};
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
+use tidb_executor::cluster_storage::{ClusterSnapshot, ClusterTableStorage, MutationBuffer};
+use tidb_executor::StmtContext;
 use tidb_pd_client::EtcdClient;
+
+use crate::cluster_session::{cluster_table, kv_index};
 
 /// This node's one route to the cluster's stored schema.
 ///
@@ -111,9 +117,62 @@ impl ClusterDdl for RealClusterDdl {
             .notifier
             .as_ref()
             .map(|client| Arc::as_ref(client) as &dyn SchemaVersionNotifier);
-        let report = commit_cluster_ddl(&self.opener, statement, self.timeout, notifier)
-            .map_err(|error| error.to_string())?;
+        let report = commit_cluster_ddl_with_backfill(
+            Arc::clone(&self.opener),
+            statement,
+            self.timeout,
+            notifier,
+            &KvTableIndexBackfiller,
+        )
+        .map_err(|error| error.to_string())?;
         self.refresh_catalog();
         Ok(report)
+    }
+}
+
+/// The index backfill, performed by the very code an `INSERT` uses.
+///
+/// `KvTable::create_index` is Go's reorg step expressed at this tier: it walks
+/// the table's rows, computes each entry from the row, and refuses a UNIQUE
+/// index whose existing rows already collide -- leaving the table without the
+/// index, which is what TiDB answers too. Nothing about it is
+/// cluster-specific; it is the same call the in-process tier makes, over the
+/// same `TableStorage` seam, which here is bound to the DDL transaction's
+/// snapshot and staging buffer. That reuse is the point: an index whose
+/// entries were written by a second implementation would disagree with the one
+/// the write path maintains from the next `INSERT` onwards.
+struct KvTableIndexBackfiller;
+
+impl IndexBackfiller for KvTableIndexBackfiller {
+    fn stage(
+        &self,
+        plan: &IndexBackfill,
+        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        buffer: &MutationBuffer,
+    ) -> Result<(), String> {
+        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
+        // Built from the table as it was BEFORE the change, which is the shape
+        // its stored rows have -- and, for a DROP, the state in which the
+        // index being removed is still one of the table's own.
+        let mut table = cluster_table(&plan.table, &storage)?;
+        let index = kv_index(&plan.index, &plan.table.cols())?;
+        let name = index.name.clone();
+        if plan.add {
+            // The DDL's own context: no session variables reach a catalog
+            // change, and the loader refuses a generated column outright, so
+            // nothing here can read a session fact that this default lacks.
+            table
+                .create_index(index, &StmtContext::default())
+                .map_err(|error| format!("{error:?}"))?;
+        } else if !table.drop_index(&name).map_err(|e| format!("{e:?}"))? {
+            // The plan found the index on the stored table, so the loader
+            // dropping it can only mean the two disagree about what the table
+            // has -- which must not end as a silent no-op.
+            return Err(format!(
+                "index {name} is on the stored table but not on the table this node built \
+                 from it, so its entries cannot be removed"
+            ));
+        }
+        Ok(())
     }
 }
