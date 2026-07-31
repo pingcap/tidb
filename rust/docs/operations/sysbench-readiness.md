@@ -1,8 +1,15 @@
 # Can the Rust SQL node run sysbench?
 
-**Verdict: yes, with `--auto-inc=off --create-secondary=off`. Stock sysbench
-connects, loads a table, and runs all four `oltp_*` workloads against this
-node.**
+**Verdict: yes, unmodified. Stock `sysbench` with no flags of ours connects,
+runs `prepare` to completion — `AUTO_INCREMENT` table, 1,000 rows, secondary
+index — and then runs all four `oltp_*` workloads against this node. The
+`--auto-inc=off --create-secondary=off` workarounds are retired.**
+
+The answer is now about speed, not capability: every statement is accepted and
+every answer is correct, but the range queries are **an order of magnitude
+slower than Go's** because this node's planner does not extract a range on the
+clustered primary key and does not push work to the coprocessor. That is
+measured, diagnosed, and recorded under "The new frontier" below.
 
 Every statement `sysbench`'s `oltp_*` workloads issue is accepted and answered
 correctly, with results byte-identical to a real Go `tidb-server` reading the
@@ -14,18 +21,21 @@ performs, backfill included, verified by Go's own `ADMIN CHECK TABLE`
 (blocker 2); and `AUTO_INCREMENT` allocates from the cluster's own counter
 (blocker 3).
 
-**No ladder run has been taken on a tree carrying all three fixes.** The three
-were built in parallel and each ladder run below predates the others' landing,
-so every rung result was measured with exactly ONE of the three present. Their
-being on one branch is not a combined measurement, and this document does not
-claim one: read each row as evidence about its own fix, not as the current
-end-to-end state, until a run on the merged tip replaces it.
+**This is a combined measurement.** Measured 2026-08-01 on `hparser-integration`
+at **`4634a071e7`**, the first tree carrying all three blocker fixes together
+(inbound TLS `1bef5f545e`, `CREATE INDEX` `275d296dba`, `AUTO_INCREMENT`
+`5c80c08269`). Release build, macOS arm64, against a `tiup playground v8.5.6`
+cluster (1 PD, 1 TiKV, 1 Go `tidb-server`), Rust node in `--cluster-session`,
+port offset 43000.
 
-Measured on 2026-08-01, `hparser-integration` + this unit, release build,
-macOS arm64, against a `tiup playground v8.5.6` cluster (1 PD, 1 TiKV, 1 Go
-`tidb-server`) with the Rust node in `--cluster-session` mode. The 2026-07-30
-measurement of the same ladder, before inbound TLS, failed at rung 4 for a
-different reason (the client could not connect at all).
+Every rung result in the table below comes from that one run. It supersedes
+the earlier per-fix runs, each of which had exactly ONE of the three fixes
+present and so stopped for a reason the others had already fixed: the
+2026-07-30 run (pre-TLS) could not connect at all; the TLS run stopped at
+`CREATE INDEX`; the index and auto-increment runs stopped at connect. Those
+runs' findings are kept in the blocker sections below, dated, because each is
+still true evidence about its own fix — but they are no longer the current
+end-to-end state.
 
 Reproduce with `rust/scripts/run-sysbench-ladder.sh` (starts and tears down
 everything it uses under an EXIT/INT/TERM trap that fails the run if any owned
@@ -40,33 +50,112 @@ port is still reachable).
 | 2. Stock MySQL client handshake, auth, `SELECT 1` | OK, `mysql_native_password` |
 | 2b. TLS accept control | OK both ways: `--ssl-mode=DISABLED` and `--ssl-mode=REQUIRED` each return `SELECT 1` |
 | 3. `CREATE DATABASE sbtest` through the Rust node | OK |
-| 3b. Capability probe | `rust: 0x00158a08 CLIENT_SSL=yes`, `go: 0x0015aeaf CLIENT_SSL=yes` (TLS run) |
-| 4. `sysbench oltp_read_only ... prepare` | TLS run: `--auto-inc=off` connects, creates the table, inserts all 1,000 rows, then FAILs at `CREATE INDEX`. Index run (pre-TLS): FAIL at connect |
-| 5. Dataset correctness | skipped in both runs — the ladder only checks a dataset it saw `prepare` finish |
-| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | TLS run: **all eight ran** against the table rung 4 left behind. Index run: all FAIL at connect |
-| 7. sysbench's own statements driven by hand | TLS run 16/4; index run **21 accepted, 3 refused** (was 17/3), the 3 being `AUTO_INCREMENT` |
+| 3b. Capability probe | `rust: 0x00158a08 CLIENT_SSL=yes`, `go: 0x0015aeaf CLIENT_SSL=yes` — unchanged from the TLS run |
+| 3c. Go control: `sysbench prepare` against the Go `tidb-server` | **FAIL**, on the Go side: `error 8256 ... no enough space in /tmp/tidb/tmp_ddl-47000` at `CREATE INDEX`. See "The Go control rung" below |
+| 4. `sysbench oltp_read_only ... prepare` | **OK on the FIRST attempt, `--auto-inc=on`** — sysbench's own default schema. Table created, 1,000 rows inserted, secondary index created, all unmodified |
+| 5. Dataset correctness, Rust vs Go on the same TiKV | **RAN for the first time.** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000` — identical |
+| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | all eight ran, **with the secondary index present** |
+| 7. sysbench's own statements driven by hand | **24 accepted, 0 refused** (was 21/3, and 16/4 before that) |
 
-### Throughput, `--threads=1 --time=10`, no secondary index
+Rung 5 is the row that had never been produced: the ladder gates it on a
+`prepare` that returned success, and no prior run had one. `SUM(k)` differs
+from the banked `506087` only because `prepare` randomises `k`; rung 7's
+deterministic 1,000-row load reproduced the banked figures exactly —
+`1000 500500 506087 1 1000` after load and `1000 500500 505171` after the
+write/txn statements, agreeing with Go both times.
+
+### Throughput, `--threads=1 --time=10`, **secondary index present**
+
+These are the first numbers taken with the index sysbench actually creates, so
+they are the first that are structurally comparable to a Go or published run.
+The 2026-08-01 pre-merge figures are kept in the row beneath each, marked
+`(no index)`, because they are real measurements of a different table shape —
+not because they are the better number.
 
 | Workload | text (`--db-ps-mode=disable`) | binary prepared (default) |
 | --- | --- | --- |
-| `oltp_point_select` | 3,931.92 qps | 3,875.83 qps |
-| `oltp_read_only` | 1,292.04 qps (80.75 tps) | 1,035.92 qps (64.74 tps) |
-| `oltp_write_only` | 292.16 qps (48.69 tps) | 575.10 qps (95.85 tps) |
-| `oltp_read_write` | 927.41 qps (46.37 tps) | 847.49 qps (42.37 tps) |
+| `oltp_point_select` | 3,272.84 qps | 3,827.20 qps |
+| `oltp_point_select` (no index, superseded) | 3,931.92 qps | 3,875.83 qps |
+| `oltp_read_only` | **187.25 qps (11.70 tps)** | **181.67 qps (11.35 tps)** |
+| `oltp_read_only` (no index, superseded) | 1,292.04 qps (80.75 tps) | 1,035.92 qps (64.74 tps) |
+| `oltp_write_only` | 567.78 qps (94.63 tps) | 496.60 qps (82.77 tps) |
+| `oltp_write_only` (no index, superseded) | 292.16 qps (48.69 tps) | 575.10 qps (95.85 tps) |
+| `oltp_read_write` | 172.43 qps (8.62 tps) | 147.88 qps (7.39 tps) |
+| `oltp_read_write` (no index, superseded) | 927.41 qps (46.37 tps) | 847.49 qps (42.37 tps) |
 
-Read these as "the workloads run", not as a benchmark result. One thread, a
-1,000-row table, a laptop also running the cluster it queries, and — the part
-that matters for comparison — **no secondary index**, because `CREATE INDEX`
-was still refused on the tree this run measured. `oltp_read_only`'s range and
-`SUM(k)` queries therefore scan where a real sysbench run would seek, so these
-numbers are not comparable to a published figure or to the Go server. Blocker 2
-has since landed; no run with the index present has been taken.
+Still one thread, a 1,000-row table, and a laptop also running the cluster it
+queries, so read the absolute values with that in mind. But the shape is the
+finding and it is not a measurement artefact: **adding the index sysbench asks
+for made the read workloads about seven times SLOWER**, from 80.75 to 11.70
+transactions per second on `oltp_read_only`. Point-select is unchanged, and
+the write workloads improved. The cause is in the next section.
 
-Rung 5's Rust-vs-Go checksum comparison did not run: the ladder gates it on a
-`prepare` that returned success, and this one ended on `CREATE INDEX`. The
-dataset was still correct enough for eight workloads to run against it, but
-the independent Go-side check is the evidence that matters and it is pending.
+## The new frontier: no PK range extraction, and nothing pushed down
+
+With the three blockers gone, the first honest limit is the planner. `EXPLAIN`
+of the four `oltp_read_only` range queries, side by side with the Go server on
+the same cluster and the same table, names it exactly (measured 2026-08-01,
+`4634a071e7`, port offset 44000):
+
+```
+SELECT c FROM sbtest1 WHERE id BETWEEN 100 AND 199
+  rust: Projection_3 8000.00 root
+        └─Selection_2 8000.00 root  `id` BETWEEN 100 AND 199
+          └─TableFullScan_1 10000.00 root  table:sbtest1
+  go:   TableReader_9 99.00 root  data:Projection_5
+        └─Projection_5 99.00 cop[tikv]
+          └─TableRangeScan_8 99.00 cop[tikv]  range:[100,199]
+```
+
+Three defects, in descending order of cost:
+
+1. **No range extraction on the clustered primary key.** `id BETWEEN 100 AND
+   199` becomes a `TableFullScan` plus a filter, so the node reads all 1,000
+   rows to answer a 99-row range. Go builds `TableRangeScan range:[100,199]`.
+2. **Nothing is pushed to the coprocessor.** Every Rust plan node reports
+   `root`; Go runs the selection, the projection and the aggregate at
+   `cop[tikv]`. So the rows do not merely get read, they get shipped.
+3. **The secondary index is chosen for a predicate that does not mention it** —
+   this is what made the index a regression rather than a win:
+
+```
+SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN 100 AND 199
+  rust: HashAgg_3 1.00 root  funcs:sum(k)
+        └─Selection_2 8000.00 root  `id` BETWEEN 100 AND 199
+          └─IndexFullScan_1 10000.00 root  index:k_1(k)
+  go:   StreamAgg_17 → TableReader_18 → StreamAgg_9 cop[tikv]
+        └─TableRangeScan_16 99.00 cop[tikv]  range:[100,199]
+```
+
+Before `k_1` existed the only path was a table scan; now the optimizer prefers
+a **full scan of `k_1`** for a predicate on `id`, and still filters at `root`.
+That single query is one of the four in every `oltp_read_only` transaction,
+which is where the seven-fold slowdown comes from.
+
+The row estimates show why the cost model cannot prefer the range: the Rust
+side estimates `8000.00` rows for a range that returns 99, because with no
+range extraction there is no range to estimate. `stats:pseudo` on both sides,
+so this is not a statistics gap — it is the access-path construction.
+
+A fourth, cosmetic: `WHERE id=500` reaches `Point_Get` on both engines, but the
+Rust plan wraps it in a redundant `Selection` + `Projection` that Go does not
+emit. Consistent with point-select throughput being the one workload that did
+not regress.
+
+**None of this is a correctness defect.** Every result matched Go byte for
+byte, rung 5 and rung 7 both. Reproduce with the ladder plus an `EXPLAIN` of
+the statements above; the table is exactly what stock `prepare` builds:
+
+```
+CREATE TABLE `sbtest1` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `k` int NOT NULL DEFAULT '0',
+  `c` char(120) NOT NULL DEFAULT '',
+  `pad` char(60) NOT NULL DEFAULT '',
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `k_1` (`k`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+```
 
 ## Blocker 1 (FIXED): inbound TLS on the MySQL port
 
@@ -148,7 +237,10 @@ Rung 7 totals moved from 17 accepted / 3 refused to **21 accepted / 3
 refused**; the three refusals are all blocker 3 (`AUTO_INCREMENT`).
 
 `--create-secondary=off` is no longer needed, so `oltp_read_only`'s range and
-`SUM(k)` queries keep the index they exist to exercise.
+`SUM(k)` queries keep the index they exist to exercise. Measuring that on the
+merged tip turned up the sting: the planner then picks a FULL scan of that
+index for a predicate on `id`, so keeping the index costs throughput rather
+than earning it. Correctness is unaffected; see "The new frontier".
 
 Two things this deliberately does not do, both stated in
 `tidb_exec::cluster_ddl`'s module doc:
@@ -170,7 +262,16 @@ Worth recording: on this machine the **Go** control run could not create the
 index at all (`error 8256: Check ingest environment failed: no enough space in
 /tmp/tidb/tmp_ddl-45000`), while the Rust node could. Go's add-index goes
 through the ingest/lightning path and needs that temp directory; this node's
-backfill writes entries through the ordinary 2PC and needs no local disk.
+backfill writes entries through the ordinary 2PC and needs no local disk. This
+reproduced again on the 2026-08-01 merged-tip run; the threshold that causes it
+is analysed under "The Go control rung".
+
+**Still true on the merged tip (2026-08-01, `4634a071e7`):** rung 7's
+`CREATE INDEX` / `ADMIN CHECK TABLE` / `USE INDEX` vs `IGNORE INDEX` /
+`DROP INDEX` / re-`ADMIN CHECK` sequence all passed, and the index is now also
+built by stock `sysbench prepare` rather than only by hand. Rung 7 totals moved
+again, from 21 accepted / 3 refused to **24 accepted / 0 refused**, the three
+former refusals being blocker 3.
 
 ## Blocker 3 (FIXED): `AUTO_INCREMENT` is served
 
@@ -299,27 +400,62 @@ integer-to-integer.
    served.
 2. ~~`CREATE INDEX` in the DDL surface, so `prepare` runs unmodified.~~ Done —
    see blocker 2 above, verified by Go's own `ADMIN CHECK TABLE`.
-3. `--auto-inc=off` remains the documented configuration: the create/serve
-   mismatch is resolved as a refusal, and serving the clause needs the
-   persistent allocator unit described under blocker 3.
-4. **A ladder run on a tree carrying both fix 1 and fix 2.** Neither run above
-   had the other's fix, so nothing here yet shows `prepare` completing — which
-   is also what gates rung 5's Rust-vs-Go checksum and what makes the rung-6
-   numbers comparable, since they were taken with no secondary index.
+3. ~~`--auto-inc=off`~~ — done; the persistent allocator under blocker 3 landed
+   and `prepare` runs with sysbench's default schema.
+4. ~~A ladder run on a tree carrying all three fixes.~~ Done, 2026-08-01 at
+   `4634a071e7`: `prepare` completes, rung 5's Rust-vs-Go checksum ran and
+   matched, rung 7 is 24/0.
+5. **Range extraction on the clustered primary key, and coprocessor
+   pushdown.** This is now the only thing between here and a number worth
+   publishing — see "The new frontier". It is a throughput gap, not a
+   capability gap.
+6. **A Go baseline on this machine**, which needs ~93Gi free or a playground
+   newer than `v8.5.6` — see "The Go control rung".
 
-With `--create-secondary=off` a number is available today, and the table above
-is it.
+An unqualified sysbench number is available today in the sense that stock
+sysbench runs unmodified end to end. It is not yet a competitive one.
 
-## Unrelated environment note
+## The Go control rung: still no Go baseline, and now we know exactly why
 
-The Go control rung fails, but on the Go side and for a local reason:
-`CREATE INDEX` returns `error 8256: Check ingest environment failed: no enough
-space in /tmp/tidb/tmp_ddl-<port>`. That is this machine's disk, not a TiDB or
-Rust defect; it reproduced on both 2026-08-01 runs. A Go-side baseline to
-compare the rung-6 numbers against will need space freed for the playground's
-DDL temp directory.
+The Go control (rung 3c) fails again on the merged-tip run, with the same
+`error 8256: Check ingest environment failed: no enough space in
+/tmp/tidb/tmp_ddl-47000` at `CREATE INDEX`. Freeing ~52GB before this run did
+not clear it, and the reason is that **the check is a percentage of the volume,
+not an absolute amount** — `pkg/ddl/ingest/disk_root.go`:
 
-In the same run, Go could not create the index and the Rust node could — not a
-correctness claim about either, just a difference in where the work stages:
-Go's add-index reorg goes through that local temp directory, while this node's
-backfill writes its entries through the ordinary 2PC and needs no local disk.
+```go
+const capacityThreshold = 0.9
+
+func RiskOfDiskFull(available, capacity uint64) bool {
+	return float64(available) < (1-capacityThreshold)*float64(capacity)
+}
+```
+
+`PreCheckUsage` refuses whenever free space is under 10% of capacity. At the
+time of this run `df -h` reported **44–49Gi available of 926Gi, i.e. ~5%**, so
+the check trips. On this machine a Go baseline needs roughly **93Gi free**, and
+no amount of clearing the temp directories helps: `/tmp/tidb/tmp_ddl-*` are all
+0 bytes. It was never about their contents.
+
+So the disk theory is confirmed as the mechanism and refuted as stated: the
+requirement is proportional to a 926Gi volume, not to the tiny index being
+built.
+
+Two further notes, neither of which changes the above:
+
+* On current `master` this would not error at all — `PreCheckUsage` gained an
+  explicit `runtime.GOOS == "darwin"` early return in `c619031356` ("ddl:
+  ignore ingest's disk check in the darwin", #60894, 2025-04-29). The
+  playground runs the released `v8.5.6` binary, which predates it. A newer
+  playground version is therefore a second way to get a Go baseline.
+* Go could not create the index and the Rust node could, on the same volume in
+  the same run. That is not a correctness claim about either — it is a
+  difference in where the work stages. Go's add-index reorg goes through the
+  local ingest/lightning temp directory; this node's backfill writes entries
+  through the ordinary 2PC and needs no local disk.
+
+**Consequence for this document: there is still no Go throughput baseline.**
+The rung-6 table above is comparable in table SHAPE to a real sysbench run for
+the first time, but it is not yet compared against Go numbers from this
+machine. The `EXPLAIN` comparison in "The new frontier" is what stands in for
+it, and it does not need the index to be built on the Go side.
