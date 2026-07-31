@@ -1719,3 +1719,92 @@ fn kill_connection_ends_the_targeted_peer() {
     assert!(exits.contains(&ConnectionExit::Quit), "{exits:?}");
     drop(victim);
 }
+
+/// Sends COM_STMT_EXECUTE for a parameterless statement and returns the OK
+/// packet's `SERVER_STATUS_IN_TRANS` bit, the way [`run_transaction_control`]
+/// does for the text protocol.
+fn execute_transaction_control(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    statement_id: u32,
+) -> bool {
+    let mut command = vec![COM_STMT_EXECUTE];
+    command.extend_from_slice(&statement_id.to_le_bytes());
+    command.push(0); // CURSOR_TYPE_NO_CURSOR
+    command.extend_from_slice(&1u32.to_le_bytes()); // iteration count
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let packet = reader.read_packet().unwrap();
+    assert_eq!(
+        packet[0], 0x00,
+        "prepared transaction control answers with an OK packet: {packet:?}"
+    );
+    u16::from_le_bytes([packet[3], packet[4]]) & 0x0001 != 0
+}
+
+/// A prepared `BEGIN`/`ROLLBACK` is the text protocol's own transaction
+/// control: the same OK packet, carrying the same `SERVER_STATUS_IN_TRANS`
+/// flag, and the same effect on the connection's transaction.
+///
+/// The flag is the client-visible half, and it is not cosmetic: a driver that
+/// reads it back as clear after a prepared `BEGIN` believes it is in
+/// autocommit and will not send a `COMMIT` at all.
+#[test]
+fn prepared_transaction_control_answers_like_the_text_protocol() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let store = users();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &store,
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader);
+    assert_eq!(
+        run_write(&mut client, &mut reader, "CREATE TABLE t (a BIGINT)"),
+        0
+    );
+
+    // PREPARE reports transaction control as it is: no markers to bind and no
+    // result columns for a client to frame its EXECUTE answer against.
+    let (begin_id, begin_params, begin_columns) =
+        prepare_statement(&mut client, &mut reader, "BEGIN");
+    assert_eq!((begin_params, begin_columns), (0, 0));
+    let (rollback_id, _, _) = prepare_statement(&mut client, &mut reader, "ROLLBACK");
+
+    assert!(
+        execute_transaction_control(&mut client, &mut reader, begin_id),
+        "a prepared BEGIN must report SERVER_STATUS_IN_TRANS"
+    );
+    assert_eq!(
+        run_write(&mut client, &mut reader, "INSERT INTO t VALUES (1)"),
+        1
+    );
+    assert!(
+        !execute_transaction_control(&mut client, &mut reader, rollback_id),
+        "a prepared ROLLBACK must clear SERVER_STATUS_IN_TRANS"
+    );
+    // And it really discarded: the row the transaction staged is gone.
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT COUNT(*) FROM t"),
+        vec![vec!["0".to_owned()]]
+    );
+
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+}
