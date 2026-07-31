@@ -42,6 +42,38 @@
 //! is TiDB's own recorded `r/<topic>.result` text, so this is an oracle and
 //! not a mirror.
 //!
+//! # What three reverted bugs proved, including the two it did NOT catch
+//!
+//! An oracle that would not have caught the bugs that motivated it is not
+//! worth landing, so three of the eight were reverted IN PLACE and the gate
+//! re-run. Every revert was confirmed live by `tidb-session`'s own unit tests
+//! going red first, so a miss here is a statement about the CORPUS and not
+//! about the revert.
+//!
+//!  * `bit(N) DEFAULT <literal>` printing through `to_bit_literal_string`
+//!    (`show::column_default_text`) -- NOT CAUGHT. Six unit tests failed and
+//!    this gate did not move by one. The reason is not subtlety: the corpus
+//!    contains no BIT column with a DEFAULT that is ever read back. Its only
+//!    bit columns are `ddl/column_type_change`'s `bit(13)` with no default,
+//!    and `ddl/db_integration`'s `int default b'1'`, which is an INT column
+//!    and never reaches this branch.
+//!  * The `MODIFY COLUMN` nullable primary key (`alter_table.rs`'s copy of
+//!    the old column's `PRI_KEY_FLAG`) -- NOT CAUGHT, for the same reason.
+//!    `ddl/modify_column` holds 133 `ALTER`s and prints no `SHOW CREATE
+//!    TABLE` at all, so the read-back the bug corrupts is never recorded.
+//!  * The SAME BUG CLASS at CREATE time -- a primary key that is not
+//!    implicitly `NOT NULL` (`ddl.rs`'s `NOT_NULL_FLAG | PRI_KEY_FLAG`) --
+//!    CAUGHT, and by all three assertions at once: matched fell 102 -> 99,
+//!    divergences rose 111 -> 114, and the fingerprint moved.
+//!
+//! So the gate has real teeth on the seam, and the honest limit is that
+//! TiDB's recording only ever asks for a table's definition where TiDB's own
+//! authors thought to ask. Where it asks, a wrong catalog now fails. Where it
+//! does not, the hand-built captures in `tidb-session`'s `tests_column_defaults`
+//! and `tests_alter_column` remain the only cover -- which is exactly the
+//! division of labour to expect, and a reason to keep writing them rather
+//! than to treat this file as having replaced them.
+//!
 //! # Every statement still RUNS
 //!
 //! Only the COMPARISON is scoped. Each non-catalog statement is executed and
@@ -365,6 +397,38 @@ const KNOWN_CATALOG_DIVERGENCES: usize = 111;
 /// gate.
 const MATCHED_FLOOR: usize = 102;
 
+/// A fingerprint over the TEXT of every carried divergence, and the reason it
+/// exists is a hole this gate was CAUGHT having on its first day.
+///
+/// The `bit(10) DEFAULT 250` bug -- one of the eight catalog bugs that
+/// motivated this file -- was reverted in place to check that the gate would
+/// have caught it. It did not. Six `tidb-session` unit tests went red, so the
+/// revert was certainly live, and the catalog counts did not move by one:
+/// the corpus's only bit column, `ddl/column_type_change`'s `bit(13)`, was
+/// ALREADY diverging for an unrelated reason, so the mutation changed the
+/// divergence's TEXT while leaving the COUNT identical.
+///
+/// That is the general failure of a counting ratchet: it is blind inside its
+/// own red set, and the red set is exactly where the unfixed bugs are, so a
+/// second bug landing on an already-red statement is invisible. Hashing the
+/// divergence text closes it. The hash is FNV-1a, written out here rather
+/// than taken from `DefaultHasher`, because a gate constant has to mean the
+/// same thing in a future toolchain.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 15_209_155_495_828_413_401;
+
+/// FNV-1a over the sorted divergence texts. Sorted because the value must
+/// depend on WHAT diverges and not on the order topics happen to run in.
+fn fingerprint(divergences: &[String]) -> u64 {
+    let mut sorted: Vec<&str> = divergences.iter().map(String::as_str).collect();
+    sorted.sort_unstable();
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in sorted.join("\n").bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
 #[test]
 fn catalog_reads_match_recorded_tidb_output() {
     let mut total = CatalogReport::default();
@@ -415,6 +479,15 @@ fn catalog_reads_match_recorded_tidb_output() {
         total.divergences.len(),
         KNOWN_CATALOG_DIVERGENCES,
         total.divergences.len(),
+    );
+    let seen = fingerprint(&total.divergences);
+    assert_eq!(
+        seen, CATALOG_DIVERGENCE_FINGERPRINT,
+        "the SET of carried catalog divergences changed while the COUNT did \
+         not. Something inside the already-red set now reads back differently \
+         -- which is either a fix (update the fingerprint to {seen} and say \
+         what it fixed) or a second bug landing on a statement that was \
+         already wrong. Run with CATALOG_SHOW_DIVERGENCES=1 to diff them."
     );
     assert!(
         total.matched >= MATCHED_FLOOR,
