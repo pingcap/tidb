@@ -15,14 +15,27 @@
 //! Source-shaped connection dispatch for the standalone Rust SQL node.
 //!
 //! This is the first server-layer consumer of `tidb-protocol`'s command
-//! decoder and `tidb-exec`'s shared session. It owns the currently executable
-//! `COM_QUERY`, `COM_PING`, and `COM_QUIT` lifecycle, plus one authenticated
-//! configured signed-BIGINT `COM_STMT_PREPARE`/`EXECUTE`/`CLOSE` point-read
-//! path, the bounded table-less automatic result-metadata path, source-shaped
-//! handshake primitives, negotiated compressed command I/O, and TCP listener
-//! lifecycle. TLS, database selection, general prepared statements, broad
-//! catalog-backed schema binding, and every unsupported command remain
-//! explicit boundaries instead of becoming fake success paths.
+//! decoder and `tidb-exec`'s shared session. Dispatched today, each with a
+//! real arm in [`mysql_connection`]: `COM_QUERY`, `COM_PING`, `COM_QUIT`,
+//! `COM_INIT_DB` (which really selects a schema), and the binary
+//! prepared-statement family `COM_STMT_PREPARE`/`EXECUTE`/`CLOSE`/`RESET`/
+//! `COM_STMT_FETCH`. A prepare falls through three tiers -- point read, then
+//! write, then general -- so it is no longer the single signed-BIGINT
+//! point-read path this paragraph used to describe. Also owned: the bounded
+//! table-less automatic result-metadata path, source-shaped handshake
+//! primitives, negotiated compressed command I/O, and TCP listener lifecycle.
+//!
+//! STILL EXPLICIT BOUNDARIES, refused rather than faked: inbound TLS on the
+//! MySQL port (the handshake parses `SSLRequest` and no listener performs the
+//! upgrade -- advertising `CLIENT_SSL` without it would hang every client
+//! that asks), `COM_FIELD_LIST`, `COM_SET_OPTION`, `COM_RESET_CONNECTION`,
+//! and every unknown command.
+//!
+//! This paragraph claimed "database selection" and "general prepared
+//! statements" were boundaries after both had landed. It is the third module
+//! doc in this tree found asserting behaviour that was no longer true, so:
+//! when a unit changes what this crate accepts, correct this list in the
+//! same commit.
 
 mod aggregate_result_set;
 mod auth_exchange;
