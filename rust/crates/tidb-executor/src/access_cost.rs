@@ -490,17 +490,38 @@ pub(crate) fn enumerate_paths(
         table_filter_count: 0,
         path: table_scan,
     }];
+    // Go's `GcSubstituter`, run once per table: an expression an indexed
+    // generated column already stores becomes a reference to that column, so
+    // the ranger can narrow on it (`WHERE a+1 = 3` over `KEY((a+1))` reads
+    // `range:[3,3]`, captured). The rewritten copy is used for RANGE BUILDING
+    // ALONE -- the caller leaves the original `WHERE` in the pipeline above
+    // the source, so a substitution can only narrow what is read, never
+    // change what is evaluated. See [`crate::generated_column_substitute`].
+    let substitution = crate::generated_column_substitute::SubstitutionMap::collect(table);
+    let substituted = where_clause.and_then(|clause| substitution.substitute_condition(clause));
+    let range_clause = substituted.as_ref().or(where_clause);
     for index in table.plan_indexes() {
+        // An index key part is named by the TABLE, not by the query's scope:
+        // the hidden column an expression index was rewritten into is a
+        // column of the table that no query can see, so the scope has no
+        // entry at its offset.
         let index_columns: Vec<(String, FieldType)> = index
             .column_offsets
             .iter()
-            .filter_map(|offset| columns.get(*offset).cloned())
+            .filter_map(|offset| {
+                columns.get(*offset).cloned().or_else(|| {
+                    table
+                        .columns
+                        .get(*offset)
+                        .map(|column| (column.name.clone(), column.field_type.clone()))
+                })
+            })
             .collect();
         if index_columns.len() != index.column_offsets.len() {
             continue;
         }
-        let built = where_clause.and_then(|where_clause| {
-            crate::index_range::detach_cond_and_build_range_for_index(&index_columns, where_clause)
+        let built = range_clause.and_then(|range_clause| {
+            crate::index_range::detach_cond_and_build_range_for_index(&index_columns, range_clause)
         });
         let Some(built) = built else {
             // Go's `keepIndex := len(path.AccessConds) > 0 || ... ||

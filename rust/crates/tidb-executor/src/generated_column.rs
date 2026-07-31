@@ -115,30 +115,31 @@
 //! `@@max_connections`, a subquery) along with functions simply not ported
 //! yet.
 //!
-//! # The substitution rule is a unit of its own, and here is its obstacle
+//! # The substitution rule, and why its obstacle turned out not to exist
 //!
 //! Go rewrites a predicate like `a+1=3` into the indexed virtual generated
 //! column that stores `a+1`, so the index can serve the query
-//! (`pkg/planner/core/rule_generate_column_substitute.go`; the
-//! `explain_generate_column_substitute` topic is its whole test surface). It
-//! is NOT ported here, and the reason is structural rather than a matter of
-//! volume -- the rule itself is ~220 lines of Go, and every other piece it
-//! needs already exists: [`tidb_expr::expression::Expression::equal`] and
-//! `hash_code` give the expression equality it is built on, the cost-based
-//! path choice in [`crate::access_cost`] is what would consume the rewrite,
-//! and an index over a virtual generated column is already maintained
-//! correctly because index entries are written from the materialized row (see
-//! the rule above).
+//! (`pkg/planner/core/rule_generate_column_substitute.go`). The predicate
+//! half of that rule is now ported, in
+//! [`crate::generated_column_substitute`].
 //!
-//! The obstacle is that the two expressions to compare live in DIFFERENT
-//! COLUMN NAMESPACES. A [`GeneratedColumn::expr`]'s `Column` nodes index the
-//! row by OFFSET -- deliberately, so the evaluation row is the row a write
-//! builds and a read decodes, with no schema mapping between them -- while a
-//! `WHERE` condition's `Column` nodes index the QUERY's schema. Go gets the
-//! comparison for free because both sides are already schema columns
-//! (`expression.ColInfo2Col` against `ds.Schema()`). Here an explicit mapping
-//! has to be built and kept honest across pruning and derived tables before
-//! `equal` means anything, and that mapping -- not the rule -- is the work.
+//! This section used to record an obstacle, and it was the wrong one, so read
+//! it as a correction rather than a status: the two expressions to compare
+//! DO live in different column namespaces -- a [`GeneratedColumn::expr`]'s
+//! `Column` nodes index the row by OFFSET, deliberately, so the evaluation
+//! row is the row a write builds and a read decodes, while a `WHERE`
+//! condition's columns index the query -- and the conclusion drawn from that,
+//! that an explicit mapping between the two had to be built and kept honest
+//! across pruning and derived tables, was wrong.
+//!
+//! The two never have to meet in the offset namespace at all. The consumer of
+//! the rewrite is the access-path choice, and that consumes the `WHERE` as an
+//! `tidb_ast::Expr` with column NAMES -- not as a resolved `Expression`. The
+//! table side already carries [`GeneratedColumn::expr_text`], the canonically
+//! restored text of the same AST. Reducing both sides with the one flag set
+//! they are already stored under ([`generated_restore_flags`]) gives a single
+//! equality with no mapping and no second comparison mode. The offset-indexed
+//! [`GeneratedColumn::expr`] is not consulted by the rule at all.
 
 use std::cell::RefCell;
 

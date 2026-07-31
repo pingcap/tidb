@@ -129,11 +129,12 @@ pub(crate) fn commit_fast_path_source(
                     .iter()
                     .find(|index| index.id == index_id)
                     .expect("the chosen path names an index of this table");
-                let index_columns: Vec<&str> = index
+                let index_columns: Vec<String> = index
                     .column_offsets
                     .iter()
-                    .map(|offset| columns[*offset].0.as_str())
+                    .map(|offset| index_key_part_name(&table, *offset))
                     .collect();
+                let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
                 // A path the ranger narrowed nothing on reads the whole
                 // index, which Go names `IndexFullScan` and prints without a
                 // `range:`.
@@ -357,6 +358,23 @@ pub(crate) fn choose_index_range_path(
     let best = crate::access_cost::choose_access_path(paths, stats, cap.is_some())?;
     let (index_id, ranges) = best.index?;
     Some((index_id, ranges, best.estimate))
+}
+
+/// How `EXPLAIN` names one key part of an index.
+///
+/// An ordinary key part is the column's name. An expression index's key part
+/// is the EXPRESSION, not the hidden column the DDL rewrote it into: Go
+/// prints `` index:k1(`a` + 1, b) ``, and the hidden column's generated name
+/// appears in no user-visible output at all. The text is the one the column
+/// already stores, so the plan and `SHOW CREATE TABLE` cannot disagree.
+fn index_key_part_name(table: &KvTable, offset: usize) -> String {
+    let Some(column) = table.columns.get(offset) else {
+        return String::new();
+    };
+    match &column.generated {
+        Some(generated) if table.is_hidden(offset) => generated.expr_text.clone(),
+        _ => column.name.clone(),
+    }
 }
 
 /// The `offset + count` an index path may be costed under, when nothing

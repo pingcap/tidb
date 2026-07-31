@@ -84,6 +84,18 @@
 //!
 //! # NOT MODELLED
 //!
+//! A DECLARED generated column (`c BIGINT AS (a+1)` with `KEY(c)`) does not
+//! substitute yet, and the cause is upstream of this rule: this tier's
+//! `CREATE TABLE` does not normalize a declared numeric column's type, so
+//! `BIGINT` is stored as `flen: -1, charset: utf8mb4` while the same
+//! expression infers `flen: 20, charset: binary`, and the `PartialEqual` gate
+//! refuses the pair -- correctly, given the two types it is handed. Go fills
+//! those in at DDL time (`setCharsetCollationFlenDecimal`). An expression
+//! index is unaffected because its hidden column takes its type FROM the
+//! expression, so the two agree by construction. See the `#[ignore]`d
+//! `a_declared_generated_column_offers_the_same_key`, which asserts the Go
+//! answer and turns green the day the type is normalized.
+//!
 //! Go also substitutes in the projection, `ORDER BY` and `GROUP BY`, which is
 //! what lets an index scan supply an ordering (`SELECT a+1 FROM t ORDER BY
 //! a+1` reads `IndexFullScan ... keep order:true`, captured). Those wins
@@ -145,13 +157,11 @@ impl SubstitutionMap {
                 if !column.field_type.partial_equal(expression_type, false) {
                     continue;
                 }
-                if candidates
-                    .iter()
-                    .any(|(text, _)| *text == generated.expr_text)
-                {
+                let key = canonical_key(&generated.expr_text);
+                if candidates.iter().any(|(text, _)| *text == key) {
                     continue;
                 }
-                candidates.push((generated.expr_text.clone(), column.name.clone()));
+                candidates.push((key, column.name.clone()));
             }
         }
         SubstitutionMap { candidates }
@@ -279,6 +289,36 @@ impl SubstitutionMap {
     fn substituted(&self, operand: &Expr) -> Option<Expr> {
         self.column_for(operand)
             .map(|column| Expr::Column(vec![column.to_owned()]))
+    }
+}
+
+/// The canonical key for an expression a generated column stores.
+///
+/// `expr_text` is the expression as the DDL WROTE it, parentheses included:
+/// `c BIGINT AS ((a+1))` stores `` (`a` + 1) `` and the expression index
+/// `KEY((a+1))` stores `` `a` + 1 ``, because one spelling was written inside
+/// a second pair of parentheses and the other was not. That difference is
+/// punctuation, and Go never sees it -- its expression builder unwraps
+/// `ast.ParenthesesExpr`, so both reach `Equal` as the same `plus(a, 1)`.
+///
+/// Re-parsing is what removes it here, and it is always possible: `expr_text`
+/// is restored SQL by construction, which is the same reason `SHOW CREATE
+/// TABLE`'s output can be fed back to the parser. A text that somehow does
+/// not parse keeps its raw form rather than being guessed at -- the effect is
+/// a candidate that matches nothing, never one that matches wrongly.
+fn canonical_key(expr_text: &str) -> String {
+    let Ok(tidb_ast::Stmt::Query(query)) = tidb_parser::parse(&format!("select {expr_text}"))
+    else {
+        return expr_text.to_owned();
+    };
+    let tidb_ast::QueryStmt::Select(select) = &*query else {
+        return expr_text.to_owned();
+    };
+    match select.fields.fields().first() {
+        Some(tidb_ast::SelectField::Expr { expr, .. }) => {
+            peel(expr).restore_with_flags(generated_restore_flags())
+        }
+        _ => expr_text.to_owned(),
     }
 }
 
@@ -469,6 +509,90 @@ mod tests {
         assert!(map
             .substitute_condition(&condition("abs(a+1) = 5"))
             .is_none());
+    }
+
+    /// The candidates a real table offers, collected through the real DDL --
+    /// the only way to prove the two sides agree, since the table side's text
+    /// is written by `CREATE TABLE` and never by this module.
+    fn candidates_of(create: &str) -> Vec<(String, String)> {
+        let mut catalog = crate::driver::Catalog::default();
+        crate::ddl::run_create_table_on(create, &mut catalog).expect("the table is created");
+        let Some(crate::TableEntry::Kv(table)) = catalog.get_table_for_test("t") else {
+            panic!("expected a kv table");
+        };
+        SubstitutionMap::collect(table).candidates
+    }
+
+    /// An expression index's hidden column is a candidate under the
+    /// expression it indexes.
+    #[test]
+    fn an_expression_index_offers_its_expression() {
+        let candidates = candidates_of("CREATE TABLE t (a INT, b INT, KEY k ((a+1)))");
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|(text, _)| text.as_str())
+                .collect::<Vec<_>>(),
+            vec![A_PLUS_ONE],
+            "the key is the expression, canonically restored"
+        );
+    }
+
+    /// A DECLARED generated column offers the same key as the expression
+    /// index does -- Go substitutes both, and the recording's
+    /// `desc select * from t where a+1=3` over `c BIGINT AS ((a+1))` with
+    /// `KEY idx_c (c)` reads `IndexRangeScan ... index:idx_c(c)`.
+    ///
+    /// It does not here, and the cause is NOT in this rule: a declared
+    /// column's `FieldType` is not normalized by this tier's `CREATE TABLE`.
+    /// `BIGINT` is stored as `flen: -1, charset: utf8mb4, collate:
+    /// utf8mb4_bin`, while the same expression's inferred type is `flen: 20,
+    /// charset: binary, collate: binary` -- so the `PartialEqual` gate that
+    /// exists to REFUSE `float(24)` vs `double` refuses this too, correctly
+    /// given the two types it was handed. Go's `setCharsetCollationFlenDecimal`
+    /// fills a numeric column's charset, collation and flen at DDL time, and
+    /// until that runs here the two sides cannot agree.
+    ///
+    /// The parenthesis half of the same case IS fixed and is asserted:
+    /// `AS ((a+1))` stores `` (`a` + 1) `` and still keys as `` `a` + 1 ``.
+    #[test]
+    #[ignore = "blocked on CREATE TABLE not normalizing a declared numeric column's \
+                charset/collation/flen (Go setCharsetCollationFlenDecimal)"]
+    fn a_declared_generated_column_offers_the_same_key() {
+        let candidates =
+            candidates_of("CREATE TABLE t (a INT, c BIGINT AS ((a+1)) VIRTUAL, KEY idx_c (c))");
+        assert_eq!(
+            candidates,
+            vec![(A_PLUS_ONE.to_owned(), "c".to_owned())],
+            "parentheses are punctuation on the table side too"
+        );
+    }
+
+    /// The half of the case above that this rule DOES own: the table side's
+    /// parentheses are gone from the key, whatever the type gate then does
+    /// with the candidate.
+    #[test]
+    fn a_declared_columns_ddl_parentheses_leave_the_key() {
+        assert_eq!(canonical_key("(`a` + 1)"), A_PLUS_ONE);
+        assert_eq!(canonical_key("((`a` + 1))"), A_PLUS_ONE);
+        assert_eq!(canonical_key(A_PLUS_ONE), A_PLUS_ONE);
+        // A text that does not parse keeps its raw form: a candidate that
+        // matches nothing, never one that matches wrongly.
+        assert_eq!(canonical_key("not an expression ("), "not an expression (");
+    }
+
+    /// A STORED column and an unindexed one are both collected by nobody.
+    #[test]
+    fn only_an_indexed_virtual_column_is_a_candidate() {
+        assert!(
+            candidates_of("CREATE TABLE t (a INT, c BIGINT AS (a+1) STORED, KEY idx_c (c))")
+                .is_empty(),
+            "Go collects virtual generated columns only"
+        );
+        assert!(
+            candidates_of("CREATE TABLE t (a INT, c BIGINT AS (a+1) VIRTUAL)").is_empty(),
+            "a column no index covers can serve no access path"
+        );
     }
 
     /// An empty map short-circuits, which is Go's own early return.
