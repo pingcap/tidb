@@ -972,6 +972,125 @@ fn json_search_go_vectors() {
     .is_err());
 }
 
+/// The two ways `JSON_SEARCH`'s walk differs from `JSON_EXTRACT`'s, both of
+/// which this evaluator got wrong by reusing the extraction rules.
+///
+/// Go runs `extractToCallback`, not `extractTo`. It enters its
+/// array-selection branch only `&& bj.TypeCode == JSONTypeCodeArray` ("NOTICE:
+/// path [0] & [*] for JSON object other than array is INVALID, which is
+/// different from extractTo"), and `Walk` carries a `pathSet` that refuses to
+/// visit any full path twice for the whole walk.
+#[test]
+fn json_search_walk_is_not_the_extract_walk() {
+    // Captured from this tree's TiDB (`goeval`): both answer NULL, where
+    // `JSON_EXTRACT('{"a":"foo"}', '$[0].a')` selects "foo".
+    assert_eq!(
+        call(
+            "JSON_SEARCH",
+            &[
+                s(r#"{"a":"foo"}"#),
+                s("all"),
+                s("foo"),
+                Datum::Null,
+                s("$[0].a")
+            ]
+        ),
+        Datum::Null
+    );
+    assert_eq!(
+        call(
+            "JSON_SEARCH",
+            &[
+                s(r#"{"a":"foo"}"#),
+                s("all"),
+                s("foo"),
+                Datum::Null,
+                s("$[0 to 1].a")
+            ]
+        ),
+        Datum::Null
+    );
+    // An array-selection leg still applies to a real array.
+    assert_eq!(
+        call(
+            "JSON_SEARCH",
+            &[
+                s(r#"[{"a":"foo"}]"#),
+                s("all"),
+                s("foo"),
+                Datum::Null,
+                s("$[0].a")
+            ]
+        ),
+        s(r#""$[0].a""#)
+    );
+
+    // `$**.a` reaches `$.a.a` twice -- once descending from the root and once
+    // recursing into `$.a` -- with `$.a.b` collected in between, so the
+    // repeat is NOT adjacent. Go's pathSet reports it once.
+    assert_eq!(
+        call(
+            "JSON_SEARCH",
+            &[
+                s(r#"{"a":{"b":"x","a":"x"}}"#),
+                s("all"),
+                s("x"),
+                Datum::Null,
+                s("$**.a")
+            ]
+        ),
+        s(r#"["$.a.a", "$.a.b"]"#)
+    );
+    // Two path arguments naming the same leaf, with a third path between
+    // them: again a non-adjacent repeat.
+    assert_eq!(
+        call(
+            "JSON_SEARCH",
+            &[
+                s(r#"{"a":"x","b":"x"}"#),
+                s("all"),
+                s("x"),
+                Datum::Null,
+                s("$.a"),
+                s("$.b"),
+                s("$.a")
+            ]
+        ),
+        s(r#"["$.a", "$.b"]"#)
+    );
+}
+
+/// `one_or_all` is a USER error, not an evaluator gap, and Go raises a
+/// different code per function: 3154 `ErrJSONBadOneOrAllArg` from
+/// `builtinJSONContainsPathSig.evalInt`, 3150
+/// `ErrInvalidJSONContainsPathType` from `builtinJSONSearchSig.evalJSON`.
+#[test]
+fn json_one_or_all_argument_errors() {
+    use crate::{EvalError, JsonError};
+
+    assert_eq!(
+        call_result(
+            "JSON_CONTAINS_PATH",
+            &[s(r#"{"a":1}"#), s("bogus"), s("$.a")]
+        ),
+        Err(EvalError::Json(JsonError::BadOneOrAllArg {
+            function: "json_contains_path"
+        }))
+    );
+    assert_eq!(
+        call_result("JSON_SEARCH", &[s(r#"{"a":"x"}"#), s("bogus"), s("x")]),
+        Err(EvalError::Json(JsonError::InvalidContainsPathType))
+    );
+    assert_eq!(
+        JsonError::BadOneOrAllArg {
+            function: "json_contains_path"
+        }
+        .code(),
+        3154
+    );
+    assert_eq!(JsonError::InvalidContainsPathType.code(), 3150);
+}
+
 /// Source-shaped scalar table from `TestJSONSetInsertReplace` in
 /// `pkg/expression/builtin_json_test.go:271`.  Value strings remain JSON
 /// strings, paths are exact and sequential, SQL NULL propagates from the

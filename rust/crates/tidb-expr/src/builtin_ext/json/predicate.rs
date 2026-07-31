@@ -123,7 +123,14 @@ pub(super) fn json_contains_path(vals: &[Datum]) -> Result<Datum, EvalError> {
     let one = match contain_type.as_str() {
         "one" => true,
         "all" => false,
-        _ => return Err(EvalError::Unsupported("invalid JSON_CONTAINS_PATH mode")),
+        // Go: `ErrJSONBadOneOrAllArg` (3154). This is a user error in the
+        // SQL, not a gap in this evaluator, so it must not surface as
+        // `Unsupported`.
+        _ => {
+            return Err(EvalError::Json(JsonError::BadOneOrAllArg {
+                function: "json_contains_path",
+            }))
+        }
     };
 
     let mut contains = false;

@@ -23,17 +23,25 @@
 //! reusing `super::path`'s -- the output is `$.a[0].b`, an ECMAScript-quoted
 //! path string, not a value. `one` mode stops at the first hit, so the walk
 //! is threaded with a stop flag rather than collecting and truncating.
+//!
+//! Two rules here differ from `super::path`'s extraction walk, and reusing
+//! that one's rules produced wrong ROW output before:
+//!
+//! - an array-selection leg matches ONLY an array. `$[0].a` on the object
+//!   `{"a":"foo"}` finds nothing, where `JSON_EXTRACT` would select the
+//!   object itself.
+//! - the same full path is reported at most ONCE across the entire walk
+//!   (Go's `pathSet`), not merely deduplicated where repeats land adjacent.
+
+use std::collections::HashSet;
 
 use serde_json::Value as Json;
 
-use super::path::parse_path;
-use super::path::{
-    array_range, is_ecmascript_identifier, select_non_array, ArraySelection, PathLeg,
-};
+use super::path::{array_range, is_ecmascript_identifier, parse_path, PathLeg};
 use super::text::format_json;
 use super::value::parse_json_document_argument;
 use crate::coerce::coerce_str;
-use crate::{Datum, EvalError};
+use crate::{Datum, EvalError, JsonError};
 
 /// `JSON_SEARCH(json_doc, one_or_all, search_str [, escape_char [, path] ...])`,
 /// port of `builtinJSONSearchSig.evalJSON` and `BinaryJSON.Search`.
@@ -51,7 +59,10 @@ pub(super) fn json_search(vals: &[Datum]) -> Result<Datum, EvalError> {
     };
     let mode = mode.to_ascii_lowercase();
     if mode != "one" && mode != "all" {
-        return Err(EvalError::Unsupported("invalid JSON_SEARCH mode"));
+        // Go: `ErrInvalidJSONContainsPathType` (3150), NOT the 3154 the same
+        // mistake raises in `JSON_CONTAINS_PATH`. A user error either way, so
+        // neither may surface as `Unsupported`.
+        return Err(EvalError::Json(JsonError::InvalidContainsPathType));
     }
     let Some(pattern) = coerce_str(&vals[2])? else {
         return Ok(Datum::Null);
@@ -108,7 +119,17 @@ pub(super) fn json_search(vals: &[Datum]) -> Result<Datum, EvalError> {
             }
         }
     }
-    matches.dedup();
+    // Go's `BinaryJSON.Walk` carries a `pathSet` and refuses to visit a full
+    // path twice for the WHOLE walk, not merely for consecutive visits: a
+    // `**` leg reaches `$.a.a` once by descending from the root and again by
+    // recursing into `$.a`, and two path arguments naming overlapping
+    // subtrees reach shared leaves twice. `Vec::dedup` only collapses
+    // ADJACENT repeats, so `$**.a` over `{"a":{"b":"x","a":"x"}}` used to
+    // answer the three-element `["$.a.a", "$.a.b", "$.a.a"]`. Visiting a
+    // path a second time can only re-derive results already collected, so
+    // dropping the repeats from the OUTPUT is the same walk Go performs.
+    let mut seen = HashSet::new();
+    matches.retain(|path| seen.insert(path.clone()));
     if matches.is_empty() {
         return Ok(Datum::Null);
     }
@@ -191,17 +212,14 @@ fn select_search(
                         }
                     }
                 }
-            } else if select_non_array(selection) {
-                select_search(
-                    value,
-                    &legs[1..],
-                    path,
-                    pattern,
-                    escape,
-                    output,
-                    stop_after_one,
-                );
             }
+            // NOT the `extractTo` rule. `BinaryJSON.Extract` lets `$[0]` and
+            // `$[0 to N]` name a NON-array value itself, but the callback
+            // walk `JSON_SEARCH` runs does not -- `extractToCallback` enters
+            // its array-selection branch only `&& bj.TypeCode ==
+            // JSONTypeCodeArray`, and Go says so out loud: "NOTICE: path [0]
+            // & [*] for JSON object other than array is INVALID, which is
+            // different from extractTo".
         }
         PathLeg::Recursive => {
             select_search(

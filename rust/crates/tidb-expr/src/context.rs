@@ -194,6 +194,20 @@ pub enum JsonError {
     /// `ErrInvalidJSONPathArrayCell` (3165): `JSON_ARRAY_INSERT`'s last leg
     /// is not an array index, so there is no cell to insert before.
     InvalidPathArrayCell,
+    /// `ErrJSONBadOneOrAllArg` (3154): `JSON_CONTAINS_PATH`'s `one_or_all`
+    /// argument is neither `'one'` nor `'all'`.
+    BadOneOrAllArg {
+        /// The lowercase function name Go names in the message.
+        function: &'static str,
+    },
+    /// `ErrInvalidJSONContainsPathType` (3150): `JSON_SEARCH`'s `one_or_all`
+    /// argument is neither `'one'` nor `'all'`.
+    ///
+    /// Go raises a DIFFERENT error here than `JSON_CONTAINS_PATH` raises for
+    /// the identical mistake -- `builtinJSONSearchSig.evalJSON` checks the
+    /// argument itself and returns this, so `BinaryJSON.Search`'s own
+    /// `ErrJSONBadOneOrAllArg` is unreachable from SQL.
+    InvalidContainsPathType,
 }
 
 impl JsonError {
@@ -209,6 +223,8 @@ impl JsonError {
             JsonError::NullMemberName => 3158,
             JsonError::VacuousPath => 3153,
             JsonError::InvalidPathArrayCell => 3165,
+            JsonError::BadOneOrAllArg { .. } => 3154,
+            JsonError::InvalidContainsPathType => 3150,
         }
     }
 
@@ -243,6 +259,12 @@ impl JsonError {
             }
             JsonError::InvalidPathArrayCell => {
                 "A path expression is not a path to a cell in an array.".to_owned()
+            }
+            JsonError::BadOneOrAllArg { function } => format!(
+                "The oneOrAll argument to {function} may take these values: 'one' or 'all'."
+            ),
+            JsonError::InvalidContainsPathType => {
+                "The second argument can only be either 'one' or 'all'.".to_owned()
             }
         }
     }

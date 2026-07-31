@@ -373,7 +373,14 @@ pub(super) fn array_range(selection: &ArraySelection, len: usize) -> (usize, usi
     }
 }
 
-pub(super) fn select_non_array(selection: &ArraySelection) -> bool {
+/// Whether an array-selection leg names a NON-array value itself, per
+/// `extractTo`'s "If the current object is not an array, still append them if
+/// the selection includes 0 or last" arm.
+///
+/// Private on purpose: this rule belongs to `extractTo` ALONE.
+/// `extractToCallback`, the walk `JSON_SEARCH` runs, deliberately has no
+/// equivalent, so `super::search` must not reach for it.
+fn select_non_array(selection: &ArraySelection) -> bool {
     match *selection {
         ArraySelection::Index(index) => index == 0 || index == -1,
         ArraySelection::Range(start, end) => start == 0 && end >= -1,
