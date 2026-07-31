@@ -956,6 +956,78 @@ fn a_view_reports_its_columns_and_status() {
     assert_eq!(rows[0][rows[0].len() - 1], "");
 }
 
+/// `DESC <view>` and `information_schema.columns` DISAGREE about the same
+/// column, and that disagreement is TiDB's contract, not a bug.
+///
+/// Captured from a real TiDB over the view `tests/integrationtest/t/explain`
+/// creates:
+///
+/// ```text
+/// desc v                            ->  event_id | varchar(32)    | NO
+/// information_schema.columns for v  ->  event_id | var_string(32) | YES
+/// ```
+///
+/// Both halves come from the SAME re-planned type. `tryFillViewColumnType`
+/// (`pkg/executor/show.go`) overwrites the stored column with it AND rewrites
+/// `VarString` to `Varchar`, so the SHOW row reads the plan's spelling and the
+/// plan's NOT NULL. `dataForColumnsInTable` keeps the stored column for
+/// `IS_NULLABLE` -- a view's stored columns declare no NOT NULL -- and prints
+/// `COLUMN_TYPE` from the un-remapped type. Making the two agree would be the
+/// regression.
+///
+/// The NOT NULL itself is Go's `foldConstant`: a wholly-constant `CAST`
+/// evaluates to a non-NULL value, and the fold stamps `NotNullFlag` on the
+/// result type. Nothing in the view's own definition says NOT NULL.
+#[test]
+fn desc_of_a_view_and_information_schema_disagree_the_way_tidb_does() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE VIEW v AS SELECT CAST(REPLACE(SUBSTRING_INDEX(\
+                 SUBSTRING_INDEX(\"\",',',1),':',-1),'\"','') AS CHAR(32)) AS event_id",
+        )
+        .unwrap();
+
+    let (_, rows) = query_text(&mut session, "DESC v");
+    assert_eq!(rows, [["event_id", "varchar(32)", "NO", "", "<nil>", ""]]);
+
+    let (_, rows) = query_text(
+        &mut session,
+        "SELECT column_name, data_type, column_type, is_nullable \
+             FROM information_schema.columns \
+             WHERE table_schema = 'test' AND table_name = 'v'",
+    );
+    assert_eq!(rows, [["event_id", "varchar", "var_string(32)", "YES"]]);
+}
+
+/// A view over a NULLABLE base column keeps reporting `YES` on both surfaces:
+/// the fold above only fires for a constant, so it cannot manufacture a NOT
+/// NULL where the plan does not have one.
+#[test]
+fn a_view_over_a_nullable_column_stays_nullable_on_both_surfaces() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE nb (n BIGINT, nn BIGINT NOT NULL)")
+        .unwrap();
+    session
+        .run("CREATE VIEW vn AS SELECT n, nn FROM nb")
+        .unwrap();
+
+    let (_, rows) = query_text(&mut session, "DESC vn");
+    assert_eq!(
+        rows.iter().map(|row| row[2].clone()).collect::<Vec<_>>(),
+        ["YES", "NO"]
+    );
+    // information_schema builds IS_NULLABLE from the view's STORED columns,
+    // which declare no NOT NULL at all -- so both read YES here.
+    let (_, rows) = query_text(
+        &mut session,
+        "SELECT is_nullable FROM information_schema.columns \
+             WHERE table_schema = 'test' AND table_name = 'vn' ORDER BY ordinal_position",
+    );
+    assert_eq!(rows, [["YES"], ["YES"]]);
+}
+
 /// A view's column types are its base tables' types *now*, not the ones
 /// they had at `CREATE VIEW`.
 #[test]

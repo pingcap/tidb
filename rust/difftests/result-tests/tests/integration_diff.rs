@@ -220,6 +220,14 @@ const TOPICS: &[(&str, &str)] = &[
          tables that already hold rows, so it is the read-back of an origin \
          default that it really gates",
     ),
+    (
+        "explain",
+        "the only onboarded topic that compares `DESC <view>`, which is the one \
+         place a view's column metadata is read back through the SHOW surface \
+         rather than through `information_schema.columns` -- the two disagree \
+         on purpose (see `view_column_description` in `tidb_session::show`) \
+         and only a recording can hold both halves in place at once",
+    ),
 ];
 
 /// Why one statement did not produce a comparable outcome. Every skip lands in

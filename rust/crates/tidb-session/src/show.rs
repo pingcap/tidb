@@ -437,14 +437,32 @@ fn column_description(
 ///
 /// A view carries no storage metadata, so Go reports no key, no default and
 /// no extra for every one of its columns; only the name, the type the body
-/// produced, and nullability come from the definition. The body's columns are
-/// nullable here because nothing propagates a base column's NOT NULL through
-/// the view's stored types, which is what Go reports for these views too.
+/// produced, and nullability come from the definition.
+///
+/// # Why this disagrees with `information_schema.columns`, on purpose
+///
+/// Go's `tryFillViewColumnType` (`pkg/executor/show.go`) OVERWRITES the stored
+/// column's `FieldType` with the re-planned one and then rewrites `VarString`
+/// to `Varchar` in place, so every cell this row prints -- type text, charset,
+/// collation, nullability -- is read off the PLAN's type.
+/// `dataForColumnsInTable` does not: it keeps the re-planned type for
+/// `COLUMN_TYPE`/`DATA_TYPE` only and builds the rest from the STORED column,
+/// and it does the `VarString` remap for `DATA_TYPE` alone.
+///
+/// One captured view makes both halves visible at once:
+///
+/// ```text
+/// desc v                            ->  event_id | varchar(32)    | NO
+/// information_schema.columns for v  ->  event_id | var_string(32) | YES
+/// ```
+///
+/// Making the two surfaces agree would be the regression, not the fix.
 fn view_column_description(
     name: &str,
     field_type: &tidb_datatype::FieldType,
     full: bool,
 ) -> Vec<Datum> {
+    let field_type = &show_columns_view_type(field_type);
     let null_flag = if field_type.flags() & NOT_NULL_FLAG != 0 {
         "NO"
     } else {
@@ -472,6 +490,21 @@ fn view_column_description(
         Datum::Bytes(FULL_COL_DESC_PRIVILEGES.as_bytes().to_vec()),
         Datum::Bytes(Vec::new()),
     ]
+}
+
+/// Go `tryFillViewColumnType`'s closing rewrite: a re-planned view column
+/// whose type came back `VarString` is reported as a `VARCHAR`.
+///
+/// `CAST(... AS CHAR(32))` yields a `VarString` in the plan, so without this a
+/// view over one describes itself with a type name no `CREATE TABLE` can
+/// spell. The rewrite is confined to the `SHOW` surface; see
+/// [`view_column_description`] for the surface that deliberately does not.
+fn show_columns_view_type(field_type: &tidb_datatype::FieldType) -> tidb_datatype::FieldType {
+    let mut field_type = field_type.clone();
+    if field_type.code() == tidb_datatype::FieldTypeCode::VarString {
+        field_type.set_code(tidb_datatype::FieldTypeCode::Varchar);
+    }
+    field_type
 }
 
 /// Go `mysql.NotNullFlag`.
