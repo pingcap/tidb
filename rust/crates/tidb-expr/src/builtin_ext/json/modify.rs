@@ -30,7 +30,7 @@ use serde_json::Value as Json;
 
 use super::path::{parse_path, ArraySelection, PathLeg};
 use super::text::format_json;
-use super::value::{json_mutation_value_argument, parse_json_document_argument};
+use super::value::{json_argument, parse_json_document_argument, StringArgument};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 use tidb_datatype::FieldType;
@@ -97,7 +97,7 @@ pub(super) fn json_array_append(
         if path.could_match_multiple {
             return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
         }
-        let value = json_mutation_value_argument(&pair[1], types[1].as_ref())?;
+        let value = json_argument(&pair[1], StringArgument::Value, types[1].as_ref())?;
         append_at_path(&mut document, &path.legs, &value);
     }
     Ok(Datum::new_string(format_json(&document)))
@@ -144,7 +144,7 @@ pub(super) fn json_array_insert(
         }) {
             return Err(EvalError::Json(JsonError::InvalidPathArrayCell));
         }
-        let value = json_mutation_value_argument(&pair[1], types[1].as_ref())?;
+        let value = json_argument(&pair[1], StringArgument::Value, types[1].as_ref())?;
         insert_at_path(&mut document, &path.legs, *index, &value);
     }
     Ok(Datum::new_string(format_json(&document)))
@@ -194,7 +194,7 @@ pub(super) fn json_modify(
         {
             return Err(EvalError::Json(JsonError::InvalidPathMultipleSelection));
         }
-        let value = json_mutation_value_argument(&pair[1], types[1].as_ref())?;
+        let value = json_argument(&pair[1], StringArgument::Value, types[1].as_ref())?;
         let exists = descend_exact_mut(&mut document, &path.legs).is_some();
         match mode {
             JsonModifyMode::Set => {

@@ -27,7 +27,7 @@
 use serde_json::Value as Json;
 
 use super::text::format_json;
-use super::value::{json_mutation_value_argument, json_sql_string};
+use super::value::{json_argument, json_sql_string, StringArgument};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 use tidb_datatype::FieldType;
@@ -83,7 +83,7 @@ pub(super) fn json_array(
     let values = vals
         .iter()
         .zip(arg_types.iter())
-        .map(|(v, ft)| json_mutation_value_argument(v, ft.as_ref()))
+        .map(|(v, ft)| json_argument(v, StringArgument::Value, ft.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Datum::new_string(format_json(&Json::Array(values))))
 }
@@ -107,7 +107,7 @@ pub(super) fn json_object(
         let Some(key) = coerce_str(&pair[0])? else {
             return Err(EvalError::Json(JsonError::NullMemberName));
         };
-        let value = json_mutation_value_argument(&pair[1], types[1].as_ref())?;
+        let value = json_argument(&pair[1], StringArgument::Value, types[1].as_ref())?;
         object.insert(key, value);
     }
     Ok(Datum::new_string(format_json(&Json::Object(object))))

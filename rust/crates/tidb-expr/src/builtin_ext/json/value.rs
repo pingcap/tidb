@@ -155,16 +155,43 @@ pub(crate) fn cast_as_json_typed(
     cast_as_json(value)
 }
 
-/// The value-side coercion used by both array mutation signatures.  This is
-/// deliberately distinct from `parse_json_value_argument`: Go disables
-/// `ParseToJSONFlag` for these arguments, so strings remain JSON strings.
+/// What a SQL STRING argument means to the signature receiving it -- Go's
+/// `ParseToJSONFlag`, the single bit that separates the JSON family's two
+/// argument kinds.
+#[derive(Clone, Copy)]
+pub(super) enum StringArgument {
+    /// The flag is SET: the string IS a JSON document, so `'1'` is the JSON
+    /// number 1 and `'{}'` the empty object. `JSON_CONTAINS`'s candidate and
+    /// `JSON_OVERLAPS`'s two arguments.
+    Document,
+    /// `DisableParseJSONFlag4Expr`: the string is a JSON string VALUE, so
+    /// `'1'` is `"1"` and `'{}'` is `"{}"`. `MEMBER OF`'s candidate and every
+    /// `JSON_SET`/`JSON_ARRAY`/`JSON_ARRAY_APPEND` value.
+    Value,
+}
+
+/// The one SQL-value to JSON-value coercion behind every non-document
+/// argument in this family, a port of `getRealJSONValue` plus the implicit
+/// `CAST(... AS JSON)` the signatures build over their arguments.
 ///
-/// `field_type` is the argument's static type when the caller has one (see
-/// [`dispatch_typed`]); a BINARY-charset payload then renders as the JSON
-/// `Opaque` value Go's implicit `CAST(... AS JSON)` produces instead of an
-/// ordinary JSON string.
-pub(super) fn json_mutation_value_argument(
+/// Exactly two things vary between call sites, and both are parameters here
+/// rather than a third copy of the datum table:
+///
+/// - `string` decides a SQL string's meaning ([`StringArgument`]). This is
+///   the whole reason `JSON_CONTAINS('[1]', '1')` is TRUE while
+///   `JSON_ARRAY('1')` is `["1"]`.
+/// - `field_type` is the argument's static type when the caller has one (see
+///   [`super::dispatch_typed`]), so a genuine BINARY-charset payload renders
+///   as the JSON `Opaque` value (`"base64:type15:..."`) Go produces instead
+///   of an ordinary JSON string. `None` is the untyped row/AST path.
+///
+/// SQL NULL becomes JSON `null`: that is what the mutation signatures store
+/// (`JSON_SET('{}', '$.a', NULL)` is `{"a": null}`). The predicate callers
+/// answer SQL NULL for a NULL argument BEFORE calling, so they never observe
+/// this arm.
+pub(super) fn json_argument(
     value: &Datum,
+    string: StringArgument,
     field_type: Option<&FieldType>,
 ) -> Result<Json, EvalError> {
     if let Some(field_type) = field_type {
@@ -173,53 +200,13 @@ pub(super) fn json_mutation_value_argument(
         }
     }
     if let Some(text) = json_sql_string(value)? {
-        return Ok(Json::String(text.to_owned()));
+        return match string {
+            StringArgument::Document => parse_json(text),
+            StringArgument::Value => Ok(Json::String(text.to_owned())),
+        };
     }
     match value {
         Datum::Null => Ok(Json::Null),
-        Datum::Int(value) => Ok(Json::Number((*value).into())),
-        Datum::UInt(value) => Ok(Json::Number((*value).into())),
-        Datum::Real(value) => Number::from_f64(*value)
-            .map(Json::Number)
-            .ok_or(EvalError::FloatOverflow),
-        Datum::Decimal(value) => parse_json(&value.to_string()),
-        Datum::MinNotNull | Datum::MaxValue => {
-            Err(EvalError::Unsupported("range sentinel JSON mutation value"))
-        }
-        other => datum_json_scalar(other),
-    }
-}
-
-/// The ordinary JSON cast used by the Go signatures.  The seed evaluator has
-/// no JSON datum variant, so textual values are parsed and scalar datums are
-/// lifted to their equivalent JSON scalar without pretending bytes are text.
-pub(super) fn parse_json_value_argument(value: &Datum) -> Result<Json, EvalError> {
-    if let Some(text) = json_sql_string(value)? {
-        return parse_json(text);
-    }
-    match value {
-        Datum::Null => Err(EvalError::Unsupported("JSON value is NULL")),
-        Datum::Int(value) => Ok(Json::Number((*value).into())),
-        Datum::UInt(value) => Ok(Json::Number((*value).into())),
-        Datum::Real(value) => Number::from_f64(*value)
-            .map(Json::Number)
-            .ok_or(EvalError::FloatOverflow),
-        Datum::Decimal(value) => parse_json(&value.to_string()),
-        Datum::MinNotNull | Datum::MaxValue => {
-            Err(EvalError::Unsupported("range sentinel JSON value"))
-        }
-        other => datum_json_scalar(other),
-    }
-}
-
-/// The candidate-side cast in `JSON_MEMBER_OF`: SQL strings become JSON
-/// strings, while numeric datums retain their JSON numeric kind.
-pub(super) fn json_value_argument(value: &Datum) -> Result<Json, EvalError> {
-    if let Some(text) = json_sql_string(value)? {
-        return Ok(Json::String(text.to_owned()));
-    }
-    match value {
-        Datum::Null => Err(EvalError::Unsupported("JSON value is NULL")),
         Datum::Int(value) => Ok(Json::Number((*value).into())),
         Datum::UInt(value) => Ok(Json::Number((*value).into())),
         Datum::Real(value) => Number::from_f64(*value)
