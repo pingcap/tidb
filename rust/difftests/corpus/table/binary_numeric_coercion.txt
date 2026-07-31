@@ -1,0 +1,12 @@
+## A `varbinary` payload is not required to be valid UTF-8, and TiDB's
+## `StrToFloat` scans it as BYTES: `SQRT(0x3439FF)` reads 49, not 0. Reading
+## such a column as 0.0 does not just return a wrong scalar -- it changes the
+## ROW SET behind a WHERE and the ORDER of a sort, which is what these
+## queries pin. Goldens captured with ./gorun.
+create table binary_numeric_coercion(id int, v varbinary(16))
+insert into binary_numeric_coercion values(1,0x3439FF),(2,0x39FF),(3,0x30)
+select id from binary_numeric_coercion where sqrt(v) > 5 order by id
+select id, sqrt(v) from binary_numeric_coercion order by sqrt(v) desc, id
+select id from binary_numeric_coercion where interval(v, 5, 15) = 1
+select id, format(v, 1), format_bytes(v), field(9, v) from binary_numeric_coercion order by id
+select id from binary_numeric_coercion where v > 5 order by id
