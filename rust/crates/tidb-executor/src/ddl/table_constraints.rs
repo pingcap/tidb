@@ -510,14 +510,19 @@ pub(crate) fn is_int_column(column: &ColumnInfo) -> bool {
     )
 }
 
-/// The single column a `PRIMARY KEY` names, whether written inline on the
-/// column or as a table constraint.
+/// The columns a `PRIMARY KEY` names, whether written inline on the column or
+/// as a table constraint.
 ///
-/// DEFERRED (documented): a multi-column primary key, which Go turns into a
-/// clustered common handle (`IsCommonHandle`); an expression or
-/// prefix-length key; and `UNIQUE`/`KEY`/`FOREIGN KEY` constraints, which
-/// need the index tier. All are rejected rather than silently dropped, so a
-/// table never claims a constraint it does not enforce.
+/// A key part's declared LENGTH goes through
+/// [`crate::ddl::index_prefix::check_key_part`], the rule set shared with the
+/// other `CREATE TABLE` builder, so a primary key reports an illegal prefix
+/// under the same Go error any other index would (1089/1170/1391/1071) rather
+/// than a refusal of its own. A legal prefix is deferred there for the reason
+/// that module documents.
+///
+/// DEFERRED (documented): an expression primary key. It is rejected rather
+/// than silently dropped, so a table never claims a constraint it does not
+/// enforce.
 pub(crate) fn primary_key_column(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],

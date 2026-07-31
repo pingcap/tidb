@@ -56,6 +56,14 @@
 //! unified, because the two lower onto different shapes (`KvIndex` column
 //! OFFSETS here, `IndexInfo` there).
 //!
+//! One rule set has since been lifted OUT of that half. A key part's declared
+//! LENGTH (`KEY idx (a(10))`) is validated by [`index_prefix`], because
+//! whether a length is legal, and what length TiDB then stores, is a pure
+//! function of the column's `FieldType` and the declared number and mentions
+//! neither an offset nor an `IndexColumn`. It was written twice, and the two
+//! copies disagreed: the `TableInfo` builder validated nothing at all. See
+//! that module for the evidence and for what it deliberately does not decide.
+//!
 //! # `PARTITION BY HASH` is REAL here; the other three methods are REFUSED
 //!
 //! This builder once skipped `CreateTableStmt::partitioning` entirely, so a
