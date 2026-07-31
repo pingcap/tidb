@@ -353,6 +353,11 @@ pub enum DriverError {
     },
     /// Go `types.ErrInvalidDefault` (1067).
     InvalidDefault(String),
+    /// Go `dbterror.ErrPrimaryCantHaveNull` (1171): a `PRIMARY KEY` column
+    /// was given `DEFAULT NULL`. Go's `checkDefaultValue` tests this BEFORE
+    /// the plain NOT NULL arm, so a primary key -- which is implicitly NOT
+    /// NULL -- reports 1171 and not 1067.
+    PrimaryCantHaveNull,
     /// Go `ErrDataTooLong` (1406).
     DataTooLong {
         /// The column written.
@@ -1985,6 +1990,13 @@ impl DriverError {
             1067,
             *b"42000",
             format!("Invalid default value for '{column}'"),
+        ),
+        DriverError::PrimaryCantHaveNull => MysqlError::new(
+            1171,
+            *b"42000",
+            "All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, \
+             use UNIQUE instead"
+                .to_owned(),
         ),
         // Go: "Data too long for column '%s' at row %d".
         DriverError::DataTooLong { column, row } => MysqlError::new(

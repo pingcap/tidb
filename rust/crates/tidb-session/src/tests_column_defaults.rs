@@ -633,3 +633,243 @@ fn a_bare_bit_column_is_one_bit_wide_and_holds_null() {
         "a bare BIT column did not settle to bit(1) DEFAULT b'1': {body}"
     );
 }
+
+/// Transcreates the `ALTER TABLE ... ALTER COLUMN` half of Go
+/// `pkg/ddl/db_integration_test.go`'s `TestAlterColumn`, statement for
+/// statement.
+///
+/// `ALTER COLUMN ... SET DEFAULT` replaces the column's default and NOTHING
+/// else: the rows already written keep what they hold, and only a row written
+/// AFTERWARDS that omits the column takes the new value. Go `AlterColumn`
+/// touches `ColumnInfo.DefaultValue` alone.
+///
+/// The accept-then-discard candidate in this statement is the LAST assertion:
+/// `SET DEFAULT NULL` on a `NOT NULL` column is `ErrInvalidDefault` (1067),
+/// because the column could never hold it. An engine that stores the default
+/// it was handed accepts a `NOT NULL` column whose default is NULL.
+///
+/// Captured from real TiDB through `rust/difftests/gorun`, verbatim:
+///
+/// ```text
+/// create table test_alter_column (a int default 111, b varchar(8),
+///                                 c varchar(8) not null,
+///                                 d timestamp on update current_timestamp)
+/// insert into test_alter_column set b = 'a', c = 'aa'
+/// select a from test_alter_column                             ->  111
+/// alter table test_alter_column alter column a set default 222
+/// insert into test_alter_column set b = 'b', c = 'bb'
+/// select a from test_alter_column                             ->  111;222
+/// alter table test_alter_column alter column b set default null
+/// insert into test_alter_column set c = 'cc'
+/// select b from test_alter_column                             ->  <nil>;a;b
+/// alter table test_alter_column alter column c set default 'xx'
+/// insert into test_alter_column set a = 123
+/// select c from test_alter_column                             ->  aa;bb;cc;xx
+/// show create table test_alter_column
+///   `a` int(11) DEFAULT '222',
+///   `b` varchar(8) DEFAULT NULL,
+///   `c` varchar(8) NOT NULL DEFAULT 'xx',
+///   `d` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
+/// alter table db_not_exist.test_alter_column alter column b set default 'c' ERR 1146
+/// alter table test_not_exist alter column b set default 'c'                 ERR 1146
+/// alter table test_alter_column alter column col_not_exist set default 'c'  ERR 1054
+/// alter table test_alter_column alter column c set default null             ERR 1067
+/// ```
+///
+/// The error NUMBERS come from the Go test's own `MustGetErrCode` calls
+/// (`ErrNoSuchTable`, `ErrBadField`, `ErrInvalidDefault`); `gorun` prints a
+/// bare `ERR`.
+#[test]
+fn alter_column_set_default_reaches_the_next_row_only() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE test_alter_column (a INT DEFAULT 111, b VARCHAR(8), \
+             c VARCHAR(8) NOT NULL, d TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO test_alter_column SET b = 'a', c = 'aa'")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a FROM test_alter_column"),
+        vec![vec!["111".to_owned()]]
+    );
+
+    session
+        .run("ALTER TABLE test_alter_column ALTER COLUMN a SET DEFAULT 222")
+        .unwrap();
+    session
+        .run("INSERT INTO test_alter_column SET b = 'b', c = 'bb'")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a FROM test_alter_column"),
+        vec![vec!["111".to_owned()], vec!["222".to_owned()]],
+        "SET DEFAULT rewrote the row written before it"
+    );
+
+    session
+        .run("ALTER TABLE test_alter_column ALTER COLUMN b SET DEFAULT null")
+        .unwrap();
+    session
+        .run("INSERT INTO test_alter_column SET c = 'cc'")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT b FROM test_alter_column"),
+        vec![
+            vec!["a".to_owned()],
+            vec!["b".to_owned()],
+            vec!["NULL".to_owned()]
+        ]
+    );
+
+    session
+        .run("ALTER TABLE test_alter_column ALTER COLUMN c SET DEFAULT 'xx'")
+        .unwrap();
+    session
+        .run("INSERT INTO test_alter_column SET a = 123")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT c FROM test_alter_column"),
+        vec![
+            vec!["aa".to_owned()],
+            vec!["bb".to_owned()],
+            vec!["cc".to_owned()],
+            vec!["xx".to_owned()]
+        ],
+        "the NOT NULL column's new default did not reach the row that omitted it"
+    );
+
+    let body = show_create(&mut session, "test_alter_column");
+    for clause in [
+        "`a` int DEFAULT '222'",
+        "`b` varchar(8) DEFAULT NULL",
+        "`c` varchar(8) NOT NULL DEFAULT 'xx'",
+    ] {
+        assert!(body.contains(clause), "missing `{clause}`: {body}");
+    }
+
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE db_not_exist.test_alter_column ALTER COLUMN b SET DEFAULT 'c'"
+        ),
+        Some(1146)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE test_not_exist ALTER COLUMN b SET DEFAULT 'c'"
+        ),
+        Some(1146)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE test_alter_column ALTER COLUMN col_not_exist SET DEFAULT 'c'"
+        ),
+        Some(1054)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE test_alter_column ALTER COLUMN c SET DEFAULT null"
+        ),
+        Some(1067),
+        "a NOT NULL column accepted a DEFAULT it can never hold"
+    );
+}
+
+/// Go `pkg/ddl/add_column.go` `checkDefaultValue`'s last two arms, which every
+/// path that writes a default runs -- `CREATE TABLE`, `ADD COLUMN`,
+/// `MODIFY COLUMN` and `ALTER COLUMN ... SET DEFAULT` alike:
+///
+///  * a `NOT NULL` column whose `DEFAULT` is `NULL` is `ErrInvalidDefault`
+///    (1067);
+///  * a `PRIMARY KEY` column whose `DEFAULT` is `NULL` is
+///    `ErrPrimaryCantHaveNull` (1171), which is checked FIRST and so wins on a
+///    column that is both.
+///
+/// This is accept-then-discard in its purest form: the column is declared
+/// unable to hold NULL and handed NULL as the value an omitted column takes.
+///
+/// Captured from real TiDB through `rust/difftests/gorun`, verbatim:
+///
+/// ```text
+/// create table n1 (a int not null default null)                ERR
+/// create table n2 (a int primary key default null)             ERR
+/// create table n3 (a int not null)                             OK
+/// alter table n3 add column b varchar(4) not null default null ERR
+/// ```
+///
+/// The error NUMBERS are `checkDefaultValue`'s own returns; `gorun` prints a
+/// bare `ERR`.
+#[test]
+fn a_column_that_cannot_hold_null_cannot_default_to_it() {
+    let mut session = Session::new();
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE n1 (a INT NOT NULL DEFAULT null)"
+        ),
+        Some(1067)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE n2 (a INT PRIMARY KEY DEFAULT null)"
+        ),
+        Some(1171)
+    );
+    session.run("CREATE TABLE n3 (a INT NOT NULL)").unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE n3 ADD COLUMN b VARCHAR(4) NOT NULL DEFAULT null"
+        ),
+        Some(1067)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE n3 MODIFY COLUMN a INT NOT NULL DEFAULT null"
+        ),
+        Some(1067)
+    );
+}
+
+/// `checkColumnDefaultValue`'s `TypeBit` arm: a `BIT(n)` default must FIT in
+/// the declared width, or it is `ErrInvalidDefault` (1067). Go reads the
+/// settled bits back as an integer and compares against `1 << flen`.
+///
+/// Captured from real TiDB through `rust/difftests/gorun`, verbatim:
+///
+/// ```text
+/// create table n4 (a bit(1) default 250)                     ERR
+/// create table n5 (a bit(10) default 1024)                   ERR
+/// create table n6 (a bit(10) default 1023)                   OK
+///   `a` bit(10) DEFAULT b'1111111111'
+/// create table n7 (a bit(64) default 18446744073709551615)   OK
+///   `a` bit(64) DEFAULT b'111...1'  (64 ones)
+/// ```
+#[test]
+fn a_bit_default_wider_than_its_column_is_refused() {
+    let mut session = Session::new();
+    assert_eq!(
+        code(&mut session, "CREATE TABLE n4 (a BIT(1) DEFAULT 250)"),
+        Some(1067)
+    );
+    assert_eq!(
+        code(&mut session, "CREATE TABLE n5 (a BIT(10) DEFAULT 1024)"),
+        Some(1067)
+    );
+    session
+        .run("CREATE TABLE n6 (a BIT(10) DEFAULT 1023)")
+        .unwrap();
+    assert!(show_create(&mut session, "n6").contains("`a` bit(10) DEFAULT b'1111111111'"));
+    session
+        .run("CREATE TABLE n7 (a BIT(64) DEFAULT 18446744073709551615)")
+        .unwrap();
+    assert!(show_create(&mut session, "n7")
+        .contains(&format!("`a` bit(64) DEFAULT b'{}'", "1".repeat(64))));
+}

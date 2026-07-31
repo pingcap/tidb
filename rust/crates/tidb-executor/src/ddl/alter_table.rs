@@ -478,6 +478,17 @@ pub(crate) fn normalize_column_default(
     if !value.is_null() && field_type.code() == tidb_datatype::FieldTypeCode::Json {
         return Err(DriverError::BlobCantHaveDefault(column.to_owned()));
     }
+    // Go `checkDefaultValue`'s two arms for a NULL default, in Go's order: a
+    // column that cannot HOLD NULL cannot DEFAULT to it, and a primary key
+    // says so with its own error rather than 1067.
+    if value.is_null() {
+        if field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
+            return Err(DriverError::PrimaryCantHaveNull);
+        }
+        if field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
+            return Err(DriverError::InvalidDefault(column.to_owned()));
+        }
+    }
     let invalid = || DriverError::InvalidDefault(column.to_owned());
     let normalized = match field_type.code() {
         tidb_datatype::FieldTypeCode::Tiny
