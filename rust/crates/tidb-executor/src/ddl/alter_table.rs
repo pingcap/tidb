@@ -136,13 +136,15 @@ pub fn run_alter_table_in(
                 position,
             } => modify_column_action(
                 catalog,
-                &database,
-                &name,
-                &column.name,
-                column,
-                position,
-                *if_exists,
-                ctx.allow_remove_auto_inc(),
+                &ModifyColumnRequest {
+                    database: &database,
+                    table_name: &name,
+                    old_name: &column.name,
+                    def: column,
+                    position,
+                    if_exists: *if_exists,
+                    allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
+                },
             )?,
             tidb_ast::AlterTableAction::ChangeColumn {
                 if_exists,
@@ -155,13 +157,15 @@ pub fn run_alter_table_in(
                     .ok_or(DriverError::Unsupported("empty CHANGE COLUMN name"))?;
                 modify_column_action(
                     catalog,
-                    &database,
-                    &name,
-                    old,
-                    column,
-                    position,
-                    *if_exists,
-                    ctx.allow_remove_auto_inc(),
+                    &ModifyColumnRequest {
+                        database: &database,
+                        table_name: &name,
+                        old_name: old,
+                        def: column,
+                        position,
+                        if_exists: *if_exists,
+                        allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
+                    },
                 )?;
             }
             tidb_ast::AlterTableAction::DropColumn {
@@ -735,16 +739,35 @@ fn existing_table_charset(catalog: &Catalog, database: &str, table_name: &str) -
     }
 }
 
+/// What one `MODIFY COLUMN` / `CHANGE COLUMN` action states, plus the session
+/// facts it is decided against. Grouped because the old column's own
+/// definition is only half the input: the rest is what the STATEMENT says and
+/// what the SESSION allows.
+struct ModifyColumnRequest<'a> {
+    database: &'a str,
+    table_name: &'a str,
+    /// The column being modified, which `CHANGE COLUMN` may rename.
+    old_name: &'a str,
+    def: &'a ColumnDef,
+    position: &'a tidb_ast::ColumnPosition,
+    if_exists: bool,
+    /// `@@tidb_allow_remove_auto_inc`.
+    allow_remove_auto_inc: bool,
+}
+
 fn modify_column_action(
     catalog: &mut Catalog,
-    database: &str,
-    table_name: &str,
-    old_name: &str,
-    def: &ColumnDef,
-    position: &tidb_ast::ColumnPosition,
-    if_exists: bool,
-    allow_remove_auto_inc: bool,
+    request: &ModifyColumnRequest<'_>,
 ) -> Result<(), DriverError> {
+    let &ModifyColumnRequest {
+        database,
+        table_name,
+        old_name,
+        def,
+        position,
+        if_exists,
+        allow_remove_auto_inc,
+    } = request;
     let field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
     let mut default_value = None;
     for option in &def.options {
