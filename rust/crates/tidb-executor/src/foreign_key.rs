@@ -394,6 +394,15 @@ fn cascade_at_depth(
     if dependents.is_empty() {
         return Ok(());
     }
+    // A cascade in Go is a SUB-STATEMENT: `FKCascadeExec.buildExecutor` builds
+    // an `UPDATE`/`DELETE` over the child table and runs it against the SAME
+    // `StmtCtx.MemTracker`, so the child rows it reads and stages count
+    // against `tidb_mem_quota_query` exactly as the outer statement's do. The
+    // cascade operator itself accounts nothing in either tier -- this is the
+    // sub-statement's accounting, at the one place this tier reads the child.
+    let accountant = ctx
+        .statement_memory()
+        .write_accountant(crate::mem_quota::label::FK_CASCADE);
     // Every dependent's RESTRICT verdict is taken BEFORE any of them mutates,
     // so a statement whose first dependent cascades and whose second
     // restricts changes nothing at this level.
@@ -435,6 +444,7 @@ fn cascade_at_depth(
         };
         let mut affected: Vec<(usize, Option<Vec<Datum>>)> = Vec::new();
         for (index, row) in child_rows.iter().enumerate() {
+            accountant.account_row(row).map_err(DriverError::Exec)?;
             let Some(key) = key_at(row, &foreign_key.cols) else {
                 continue;
             };
@@ -506,6 +516,7 @@ fn cascade_at_depth(
                             _ => Datum::Null,
                         };
                     }
+                    accountant.account_row(&new).map_err(DriverError::Exec)?;
                     rewritten.push((old, new));
                 }
                 let nested: Vec<ParentChange<'_>> = rewritten

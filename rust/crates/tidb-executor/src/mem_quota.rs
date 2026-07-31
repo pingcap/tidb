@@ -52,10 +52,18 @@
 //! operator polls, so a Go statement stops in whatever operator notices
 //! first. Until a session-wide killer is plumbed through the executor tree,
 //! a statement here stops in the ACCOUNTING operator only.
+//!
+//! WHICH OPERATORS ACCOUNT: the sort (`crate::sort`), and the WRITE path --
+//! `UPDATE`, `DELETE`, `INSERT`/`REPLACE`, and the rows a foreign-key cascade
+//! reads and rewrites -- through [`WriteMemory`], whose doc states what is
+//! counted and how it differs from Go's chunk arithmetic. A read path other
+//! than the sort still accounts nothing, so a `SELECT` under a small quota
+//! runs to completion here where TiDB cancels it.
 
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 
+use tidb_datatype::{estimated_mem_usage, Datum};
 use tidb_util::memory::{
     ActionOnExceed, ArcAction, BaseOomAction, LogOnExceed, Tracker, DEF_MEM_QUOTA_QUERY,
     DEF_PANIC_PRIORITY, LABEL_FOR_SESSION, LABEL_FOR_SQL_TEXT,
@@ -267,6 +275,16 @@ impl StatementMemory {
         }
     }
 
+    /// An accountant for one write operator, labelled by the operator it
+    /// stands for. See [`WriteMemory`].
+    #[must_use]
+    pub fn write_accountant(&self, label: i64) -> WriteMemory {
+        WriteMemory {
+            tracker: self.operator_tracker(label),
+            memory: self.clone(),
+        }
+    }
+
     /// Bytes the whole statement currently accounts for (Go
     /// `SessionVars.MemTracker.BytesConsumed()`).
     #[must_use]
@@ -278,6 +296,92 @@ impl StatementMemory {
     #[must_use]
     pub fn quota(&self) -> i64 {
         self.session.get_bytes_limit()
+    }
+}
+
+/// Operator labels for the write path. Go labels an operator's tracker with
+/// its PLAN ID, which is per-statement and carries no meaning across
+/// statements; this tier's writes are not plan nodes, so each write operator
+/// gets one stable label instead. Labels are diagnostic only -- the quota is
+/// enforced at the session root either way.
+pub mod label {
+    /// Go `UpdateExec.memTracker`.
+    pub const UPDATE: i64 = 1;
+    /// Go `DeleteExec.memTracker`.
+    pub const DELETE: i64 = 2;
+    /// Go `InsertValues.memTracker`, shared by `INSERT` and `REPLACE`.
+    pub const INSERT: i64 = 3;
+    /// The `UpdateExec`/`DeleteExec` a foreign-key cascade builds for its
+    /// child table (Go `FKCascadeExec.buildExecutor`). The cascade itself
+    /// accounts nothing in Go -- the sub-statement's own executor does.
+    pub const FK_CASCADE: i64 = 4;
+}
+
+/// The write path's memory accounting: one operator tracker plus the check
+/// that turns an overrun into 8175.
+///
+/// # What is counted, and why it is the datum rows
+///
+/// Go's three write executors all account the ROWS they hold, in two shapes:
+///
+/// * `types.EstimatedMemUsage(rows[0], len(rows))` over the datum rows a
+///   statement has staged but not yet written (`InsertValues.insertRows`,
+///   `UpdateExec.mergeNonGenerated`, `DeleteExec.composeTblRowMap`).
+/// * `chk.MemoryUsage()` for the CHUNK the child produced, consumed on the way
+///   in and released on the way out, so one chunk is held at a time
+///   (`UpdateExec.updateRows`, `DeleteExec.deleteSingleTableByChunk`,
+///   `InsertValues.insertRowsFromSelect`).
+///
+/// [`Self::account_row`] is the second shape's analogue and
+/// [`Self::account_rows`] is the first, ported literally.
+///
+/// DELIBERATE DIVERGENCE, in the direction Go's own comment justifies: there
+/// is no chunk pipeline on this tier's write path -- `scan_rows_with_handles`
+/// materializes the whole table as `Vec<Datum>` rows before the statement
+/// walks them -- so the per-row number here is what the process HOLDS, and it
+/// is never released mid-statement the way Go releases a spent chunk. Against
+/// Go that is smaller per row (a chunk over-allocates to its capacity) and
+/// larger in total (every row read is still held). Both halves are the truth
+/// about this process, which is the property a quota has to bound; a tracker
+/// reporting Go's number while holding different memory would not protect.
+/// The consequence is that the exact byte at which a statement crosses a given
+/// quota differs from Go's, so only quotas far from the boundary -- which is
+/// what the suite sets, 244 and 81920 against a 1GiB default -- classify
+/// identically.
+#[derive(Clone)]
+pub struct WriteMemory {
+    tracker: Arc<Tracker>,
+    memory: StatementMemory,
+}
+
+impl WriteMemory {
+    /// Accounts one row the statement has read or staged, and stops the
+    /// statement if that crossed the quota.
+    ///
+    /// Called INSIDE the loop that produces rows, which is what makes a write
+    /// over a large table stop before staging the rest rather than after
+    /// materializing all of it.
+    pub fn account_row(&self, row: &[Datum]) -> Result<(), ExecError> {
+        self.consume(estimated_mem_usage(row, 1));
+        self.memory.check()
+    }
+
+    /// Go `types.EstimatedMemUsage(rows[0], len(rows))`: the first row's
+    /// usage taken as every row's, which is how Go prices a staged row batch.
+    ///
+    /// An empty `rows` accounts nothing, as Go's `if len(rows) != 0` guard
+    /// does.
+    pub fn account_rows(&self, rows: &[Vec<Datum>]) -> Result<(), ExecError> {
+        let Some(first) = rows.first() else {
+            return Ok(());
+        };
+        self.consume(estimated_mem_usage(first, rows.len()));
+        self.memory.check()
+    }
+
+    fn consume(&self, bytes: usize) {
+        self.tracker
+            .consume(i64::try_from(bytes).unwrap_or(i64::MAX));
     }
 }
 

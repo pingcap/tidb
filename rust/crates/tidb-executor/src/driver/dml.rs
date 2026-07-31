@@ -423,6 +423,15 @@ pub(crate) fn run_insert_traced(
         new_rows.push(row);
         inserted += 1;
     }
+    // Go `InsertValues.insertRows`/`insertRowsFromSelect`, the consume that
+    // sits immediately before `base.exec(ctx, rows)`:
+    // `types.EstimatedMemUsage(rows[0], len(rows))` over the staged rows.
+    // Accounting HERE, before a single row is written, is what makes a
+    // cancelled INSERT leave the table exactly as it found it.
+    ctx.statement_memory()
+        .write_accountant(mem_quota::label::INSERT)
+        .account_rows(&new_rows)
+        .map_err(DriverError::Exec)?;
     // A matrix table has neither an allocator nor constraints, so it is
     // finished here; everything below is the byte-backed write path.
     if let TableEntry::Mem(mem) = table {
@@ -1288,11 +1297,20 @@ pub(crate) fn run_update_traced(
                 ctx,
             )?;
             scanned = rows.len() as u64;
+            // Go `UpdateExec.updateRows` accounts the child's chunk on the way
+            // in and its staged rows as it merges them; this tier holds both
+            // the row it is looking at and every rewrite it has staged, so
+            // both are counted, per row and inside the loop -- an update over
+            // a table too large for the quota stops without staging the rest.
+            let accountant = ctx
+                .statement_memory()
+                .write_accountant(mem_quota::label::UPDATE);
             // The rewrites are STAGED rather than applied, because both
             // referential checks need the table released: the child-side
             // check reads the parent tables, and the parent-side cascade
             // writes the dependent ones.
             for (handle, row) in rows {
+                accountant.account_row(&row).map_err(DriverError::Exec)?;
                 // Go's `LIMIT` is a plan operator over the rows the statement
                 // reaches, so it counts MATCHED rows -- not the subset whose
                 // value ended up different. Counting changed rows lets a run of
@@ -1323,6 +1341,9 @@ pub(crate) fn run_update_traced(
                     // recompute stays a no-op.
                     kv.materialize_generated(&mut new_row, ctx)
                         .map_err(kv_write_error)?;
+                    accountant
+                        .account_row(&new_row)
+                        .map_err(DriverError::Exec)?;
                     rewrites.push((handle, row, new_row));
                 }
             }
@@ -1594,10 +1615,19 @@ pub(crate) fn run_delete_traced(
                 ctx,
             )?;
             scanned = rows.len() as u64;
+            // Go `DeleteExec.deleteSingleTableByChunk`: the child's chunk is
+            // consumed as it arrives, which is why a `DELETE` over a table
+            // too large for the quota is cancelled by the DELETE and not by
+            // the read below it. Here the rows are already materialized, so
+            // the equivalent is per row, inside the loop.
+            let accountant = ctx
+                .statement_memory()
+                .write_accountant(mem_quota::label::DELETE);
             // Selected first, deleted after: the parent-side cascade below
             // needs the table released, because it writes the DEPENDENT
             // tables the statement never named.
             for (handle, row) in rows {
+                accountant.account_row(&row).map_err(DriverError::Exec)?;
                 // Go's LIMIT caps the rows DELETED, not the rows examined.
                 if row_limit.is_some_and(|cap| doomed.len() as u64 >= cap) {
                     break;

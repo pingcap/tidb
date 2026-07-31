@@ -18,6 +18,7 @@ mod dml;
 mod index_ranges;
 mod indexes;
 mod joins;
+mod mem_quota;
 mod point_get;
 mod predicate_pushdown;
 mod primary_keys;

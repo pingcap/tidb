@@ -35,6 +35,7 @@ use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
 use crate::join::{JoinExec, JoinKind};
 use crate::kv_table::{IndexRange, KvTable, TableHandle, TableScanExec};
 use crate::limit::LimitExec;
+use crate::mem_quota;
 use crate::mem_table::MemTableSourceExec;
 use crate::plan_trace::{PlanTrace, Qualifier};
 use crate::predicate_pushdown::{
