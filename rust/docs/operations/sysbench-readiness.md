@@ -5,11 +5,14 @@ runs `prepare` to completion — `AUTO_INCREMENT` table, 1,000 rows, secondary
 index — and then runs all four `oltp_*` workloads against this node. The
 `--auto-inc=off --create-secondary=off` workarounds are retired.**
 
-The answer is now about speed, not capability: every statement is accepted and
-every answer is correct, but the range queries are **an order of magnitude
-slower than Go's** because this node's planner does not extract a range on the
-clustered primary key and does not push work to the coprocessor. That is
-measured, diagnosed, and recorded under "The new frontier" below.
+The answer is now about speed, not capability. **Update 2026-08-01
+(`8eacf363e5`): the clustered-primary-key range extraction landed and
+`oltp_read_only` went from 11.70 to 89.15 tps, 7.6x, on the same table shape.**
+A Go baseline on this machine now exists too: Go does 419.71 tps on the same
+workload, so the remaining read gap is 4.7x, and coprocessor/aggregate pushdown
+is the outstanding cause. One regression came with the run — binary prepared
+statements now fail on the parameterised range select with error 2014. All of
+it is measured under "Throughput" and "The new frontier" below.
 
 Every statement `sysbench`'s `oltp_*` workloads issue is accepted and answered
 correctly, with results byte-identical to a real Go `tidb-server` reading the
@@ -20,6 +23,12 @@ capabilities read `CLIENT_SSL=yes` and MariaDB Connector/C stops refusing it
 performs, backfill included, verified by Go's own `ADMIN CHECK TABLE`
 (blocker 2); and `AUTO_INCREMENT` allocates from the cluster's own counter
 (blocker 3).
+
+**Superseded by the range-fix run.** The rung table and the throughput figures
+below were re-measured on 2026-08-01 at **`8eacf363e5`**, the first tree
+carrying the clustered-handle range fix, port offset 43000; a Go throughput
+baseline was taken the same day at port offset 44000. The description that
+follows is of the earlier combined run and is kept for provenance.
 
 **This is a combined measurement.** Measured 2026-08-01 on `hparser-integration`
 at **`4634a071e7`**, the first tree carrying all three blocker fixes together
@@ -51,11 +60,11 @@ port is still reachable).
 | 2b. TLS accept control | OK both ways: `--ssl-mode=DISABLED` and `--ssl-mode=REQUIRED` each return `SELECT 1` |
 | 3. `CREATE DATABASE sbtest` through the Rust node | OK |
 | 3b. Capability probe | `rust: 0x00158a08 CLIENT_SSL=yes`, `go: 0x0015aeaf CLIENT_SSL=yes` — unchanged from the TLS run |
-| 3c. Go control: `sysbench prepare` against the Go `tidb-server` | **FAIL**, on the Go side: `error 8256 ... no enough space in /tmp/tidb/tmp_ddl-47000` at `CREATE INDEX`. See "The Go control rung" below |
+| 3c. Go control: `sysbench prepare` against the Go `tidb-server` | **FAIL again on the `v8.5.6` playground the ladder starts**: `error 8256 ... no enough space in /tmp/tidb/tmp_ddl-47000` at `CREATE INDEX`. Cleared out-of-band by a newer playground — a full Go baseline now exists, see "The Go control rung" below |
 | 4. `sysbench oltp_read_only ... prepare` | **OK on the FIRST attempt, `--auto-inc=on`** — sysbench's own default schema. Table created, 1,000 rows inserted, secondary index created, all unmodified |
-| 5. Dataset correctness, Rust vs Go on the same TiKV | **RAN for the first time.** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000` — identical |
-| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | all eight ran, **with the secondary index present** |
-| 7. sysbench's own statements driven by hand | **24 accepted, 0 refused** (was 21/3, and 16/4 before that) |
+| 5. Dataset correctness, Rust vs Go on the same TiKV | **OK, and still identical on the range-fix tip:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`. The performance change altered no row set — this is a correctness gate, and it held |
+| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | **six of eight ran**, with the secondary index present. The two `--db-ps-mode` default (binary prepared) cells of `oltp_read_only` and `oltp_read_write` now FAIL with error 2014 — a new regression, see "Regression found by this run" |
+| 7. sysbench's own statements driven by hand | **24 accepted, 0 refused** — unchanged on the range-fix tip (was 21/3, and 16/4 before that). Includes both `ADMIN CHECK TABLE`s on the Go server, and `USE INDEX` vs `IGNORE INDEX` agreeing at `1000 500500` |
 
 Rung 5 is the row that had never been produced: the ladder gates it on a
 `prepare` that returned success, and no prior run had one. `SUM(k)` differs
@@ -66,31 +75,132 @@ write/txn statements, agreeing with Go both times.
 
 ### Throughput, `--threads=1 --time=10`, **secondary index present**
 
-These are the first numbers taken with the index sysbench actually creates, so
-they are the first that are structurally comparable to a Go or published run.
-The 2026-08-01 pre-merge figures are kept in the row beneath each, marked
-`(no index)`, because they are real measurements of a different table shape —
-not because they are the better number.
+**Current measurement: 2026-08-01 on `hparser-integration` at `8eacf363e5`**,
+the first tree carrying the clustered-handle range fix. Release build, macOS
+arm64, `tiup playground v8.5.6`, Rust node in `--cluster-session`, **port
+offset 43000** — every Rust line below is keyed to that offset and comes from
+that single run.
 
-| Workload | text (`--db-ps-mode=disable`) | binary prepared (default) |
+**The secondary index `k_1` existed during every measurement in this table.**
+Stock `sysbench prepare` created it at rung 4 (`prepare-auto-inc-on.log`:
+`Creating a secondary index on 'sbtest1'...`, no error), and an independent
+read-only observer polling `information_schema.STATISTICS` **on the Go server**
+reported `PRIMARY,k_1` continuously across rung 6. This matters because the
+rows marked `(no index)` below are measurements of a different table shape and
+are not comparable.
+
+| Workload | Rust text (`--db-ps-mode=disable`) | Rust binary prepared (default) |
 | --- | --- | --- |
-| `oltp_point_select` | 3,272.84 qps | 3,827.20 qps |
+| `oltp_point_select` | 3,847.51 qps | 3,372.71 qps |
+| `oltp_point_select` (index, pre-range-fix, superseded) | 3,272.84 qps | 3,827.20 qps |
 | `oltp_point_select` (no index, superseded) | 3,931.92 qps | 3,875.83 qps |
-| `oltp_read_only` | **187.25 qps (11.70 tps)** | **181.67 qps (11.35 tps)** |
+| `oltp_read_only` | **1,426.46 qps (89.15 tps)** | **FAIL, error 2014** (see below) |
+| `oltp_read_only` (index, pre-range-fix, superseded) | 187.25 qps (11.70 tps) | 181.67 qps (11.35 tps) |
 | `oltp_read_only` (no index, superseded) | 1,292.04 qps (80.75 tps) | 1,035.92 qps (64.74 tps) |
-| `oltp_write_only` | 567.78 qps (94.63 tps) | 496.60 qps (82.77 tps) |
+| `oltp_write_only` | 634.18 qps (105.70 tps) | 561.90 qps (93.65 tps) |
+| `oltp_write_only` (index, pre-range-fix, superseded) | 567.78 qps (94.63 tps) | 496.60 qps (82.77 tps) |
 | `oltp_write_only` (no index, superseded) | 292.16 qps (48.69 tps) | 575.10 qps (95.85 tps) |
-| `oltp_read_write` | 172.43 qps (8.62 tps) | 147.88 qps (7.39 tps) |
+| `oltp_read_write` | 1,185.45 qps (59.27 tps) | **FAIL, error 2014** (see below) |
+| `oltp_read_write` (index, pre-range-fix, superseded) | 172.43 qps (8.62 tps) | 147.88 qps (7.39 tps) |
 | `oltp_read_write` (no index, superseded) | 927.41 qps (46.37 tps) | 847.49 qps (42.37 tps) |
 
-Still one thread, a 1,000-row table, and a laptop also running the cluster it
-queries, so read the absolute values with that in mind. But the shape is the
-finding and it is not a measurement artefact: **adding the index sysbench asks
-for made the read workloads about seven times SLOWER**, from 80.75 to 11.70
-transactions per second on `oltp_read_only`. Point-select is unchanged, and
-the write workloads improved. The cause is in the next section.
+**The range fix worked, and it is not a small effect.** On the same table shape
+— index present both times — `oltp_read_only` went from **11.70 to 89.15
+transactions per second, a 7.6x improvement**, and `oltp_read_write` from 8.62
+to 59.27 tps, a 6.9x improvement. Both now also clear the old `(no index)`
+figures (80.75 and 46.37 tps), so the index sysbench creates has stopped being
+a net cost and started being a win, which was the whole point. Point-select is
+unchanged, as expected — it never went through a range. `oltp_write_only`
+improved modestly (94.63 -> 105.70 tps), consistent with its reads being point
+lookups.
 
-## The new frontier: no PK range extraction, and nothing pushed down
+### The Go baseline, same shapes, same machine
+
+**Obtained for the first time on 2026-08-01**, port offset 44000, via a
+`tiup playground v9.0.0-beta.2.pre-nightly` (server version
+`8.0.11-TiDB-v9.0.0-beta.2.pre-2052-g23bff31318`). Identical sysbench
+invocation: `--tables=1 --table-size=1000 --threads=1 --time=10`, stock
+`prepare` with the default `AUTO_INCREMENT` schema, `PRIMARY,k_1` present.
+
+| Workload | Go text (`--db-ps-mode=disable`) | Go binary prepared (default) |
+| --- | --- | --- |
+| `oltp_point_select` | 7,749.02 qps | 9,408.95 qps |
+| `oltp_read_only` | 6,715.43 qps (419.71 tps) | 7,935.14 qps (495.95 tps) |
+| `oltp_write_only` | 6,237.96 qps (1,039.66 tps) | 6,453.74 qps (1,075.62 tps) |
+| `oltp_read_write` | 4,831.79 qps (241.59 tps) | 5,341.51 qps (267.08 tps) |
+
+Text-mode Rust-vs-Go ratios, the only column both engines completed:
+
+| Workload | Rust | Go | Go is faster by |
+| --- | --- | --- | --- |
+| `oltp_point_select` | 3,847.51 qps | 7,749.02 qps | 2.0x |
+| `oltp_read_only` | 89.15 tps | 419.71 tps | 4.7x |
+| `oltp_write_only` | 105.70 tps | 1,039.66 tps | 9.8x |
+| `oltp_read_write` | 59.27 tps | 241.59 tps | 4.1x |
+
+**Caveat on comparability, stated rather than buried:** the Rust ladder ran
+against a `v8.5.6` playground and the Go baseline against a
+`v9.0.0-beta.2.pre-nightly` one, because that version difference is exactly
+what made the Go run possible at all (see "The Go control rung"). The TiKV
+underneath therefore differs, and the two runs were sequential rather than
+simultaneous. These are the right order of magnitude, not a controlled A/B.
+
+Still one thread, a 1,000-row table, and a laptop also running the cluster it
+queries, so read the absolute values with that in mind.
+
+**Where the remaining read gap goes.** The 4.7x on `oltp_read_only` is the
+predicted residual, not a failure of the range fix: aggregate pushdown is still
+absent, so Go runs a cop-side `StreamAgg` for `SUM(k)` while this node drags
+the rows to the root and aggregates there. The write gap (9.8x) is larger and
+is a separate, so-far unanalysed matter — it is not explained by the read path.
+
+### Regression found by this run: error 2014 under binary prepared statements
+
+Two cells that previously held numbers now fail. `oltp_read_only` and
+`oltp_read_write` under the **default** `--db-ps-mode` (binary prepared
+statements) both abort with the same error, on the same statement:
+
+```
+FATAL: mysql_stmt_execute() returned error 2014 (Commands out of sync;
+you can't run this command now)
+for query 'SELECT c FROM sbtest1 WHERE id BETWEEN ? AND ?'
+   at oltp_common.lua:432
+```
+
+This is a protocol-framing defect, not a SQL one: "commands out of sync" means
+the client found the server's packet stream in a state it did not expect, so
+the binary-protocol resultset for that statement is malformed or mis-sequenced.
+
+What narrows it:
+
+* It is **specific to the parameterised range select**. `oltp_point_select`
+  under the same binary protocol runs fine (3,372.71 qps), as does
+  `oltp_write_only` (93.65 tps). Only the two workloads containing
+  `SELECT c ... WHERE id BETWEEN ? AND ?` fail.
+* The identical statement in **text** mode succeeds — that is the 89.15 tps
+  cell.
+* It is **new**. The pre-range-fix run measured both these cells (11.35 and
+  7.39 tps), so the binary path served this statement before.
+* The failing statement is exactly the shape the clustered-handle range fix
+  changed, and the fix altered which executor serves it.
+
+Taken together, the range path reached under binary prepared statements is the
+prime suspect. Reproduce with `rust/scripts/run-sysbench-ladder.sh` and read
+`oltp_read_only-ps-auto.log`. **This is a real defect and it is not counted as
+a success anywhere above.**
+
+## The new frontier: pushdown (range extraction is FIXED)
+
+**Status update, 2026-08-01, `8eacf363e5`.** Defects 1 and 3 below are fixed.
+The planner now builds `TableRangeScan ... range:[100,199]` with a 99-row
+estimate where it used to print `TableFullScan 10000.00`, and `SUM(k)` no
+longer picks a full scan of an index its predicate never mentions. The
+throughput consequence is measured above: `oltp_read_only` 11.70 -> 89.15 tps.
+**Defect 2, coprocessor pushdown, remains** — every Rust plan node still
+reports `root`, so Go's cop-side `StreamAgg` for `SUM(k)` has no counterpart
+here and the rows still cross the wire to be aggregated. That is the 4.7x that
+is left against the Go baseline. The diagnosis below is retained as the record
+of what was wrong and how it was found.
 
 With the three blockers gone, the first honest limit is the planner. `EXPLAIN`
 of the four `oltp_read_only` range queries, side by side with the Go server on
@@ -405,17 +515,38 @@ integer-to-integer.
 4. ~~A ladder run on a tree carrying all three fixes.~~ Done, 2026-08-01 at
    `4634a071e7`: `prepare` completes, rung 5's Rust-vs-Go checksum ran and
    matched, rung 7 is 24/0.
-5. **Range extraction on the clustered primary key, and coprocessor
-   pushdown.** This is now the only thing between here and a number worth
-   publishing — see "The new frontier". It is a throughput gap, not a
-   capability gap.
-6. **A Go baseline on this machine**, which needs ~93Gi free or a playground
-   newer than `v8.5.6` — see "The Go control rung".
+5. ~~Range extraction on the clustered primary key~~ — done, `8eacf363e5`,
+   worth 7.6x on `oltp_read_only` (11.70 -> 89.15 tps).
+6. ~~A Go baseline on this machine.~~ Done, 2026-08-01, via a
+   `v9.0.0-beta.2.pre-nightly` playground; ~93Gi free was never needed.
+7. **Coprocessor and aggregate pushdown.** Now the largest known read-side
+   gap: 4.7x against Go on `oltp_read_only` — see "The new frontier".
+8. **The error-2014 regression** on `SELECT c ... WHERE id BETWEEN ? AND ?`
+   under binary prepared statements. This is a correctness/protocol defect and
+   outranks the throughput work.
+9. **The write gap.** Go does 1,039.66 tps on `oltp_write_only` to this node's
+   105.70, a 9.8x difference that the read-path analysis does not explain and
+   that nobody has yet looked at.
 
 An unqualified sysbench number is available today in the sense that stock
 sysbench runs unmodified end to end. It is not yet a competitive one.
 
-## The Go control rung: still no Go baseline, and now we know exactly why
+## The Go control rung: the baseline now exists
+
+**Resolved 2026-08-01.** The newer-playground route works and is cheap. A
+`tiup playground v9.0.0-beta.2.pre-nightly` (server
+`8.0.11-TiDB-v9.0.0-beta.2.pre-2052-g23bff31318`) at port offset 44000 runs
+stock `sysbench prepare` to completion — `CREATE INDEX` included, `PRIMARY,k_1`
+present, `1000 500500 1 1000` — with **38Gi free of 926Gi**, i.e. about 4%,
+far under the 10% the check nominally demands. That confirms the `darwin`
+early return is what carries it, and that no disk needed freeing. The
+throughput figures are in "The Go baseline" above.
+
+The ladder script itself still pins `v8.5.6`, so its own rung 3c still fails;
+the baseline above was taken out-of-band with the same sysbench invocation.
+Pointing the ladder at a newer playground would fold the control back in.
+
+The original diagnosis follows, and remains correct about the mechanism.
 
 The Go control (rung 3c) fails again on the merged-tip run, with the same
 `error 8256: Check ingest environment failed: no enough space in
@@ -454,8 +585,7 @@ Two further notes, neither of which changes the above:
   local ingest/lightning temp directory; this node's backfill writes entries
   through the ordinary 2PC and needs no local disk.
 
-**Consequence for this document: there is still no Go throughput baseline.**
-The rung-6 table above is comparable in table SHAPE to a real sysbench run for
-the first time, but it is not yet compared against Go numbers from this
-machine. The `EXPLAIN` comparison in "The new frontier" is what stands in for
-it, and it does not need the index to be built on the Go side.
+~~**Consequence for this document: there is still no Go throughput baseline.**~~
+**Superseded 2026-08-01** — the baseline was taken via the newer playground, as
+described at the head of this section. The rung-6 table is now compared against
+real Go numbers from this machine, with the version caveat stated there.
