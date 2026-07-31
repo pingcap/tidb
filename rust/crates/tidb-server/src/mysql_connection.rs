@@ -48,6 +48,7 @@ use crate::sql_node::{
     PreparedStatement, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
 };
 use tidb_planner::prepared_dml::PreparedBindValue;
+use tidb_planner::transaction_control::classify_transaction_control;
 
 /// Extracts the signed-integer parameters a point read requires, rejecting a
 /// string parameter (a point read binds only a clustered integer handle).
@@ -847,34 +848,49 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         continue;
                     }
                 };
+                // Transaction control is claimed before any planner sees the
+                // statement, because a prepared `BEGIN` is a `BEGIN`: its
+                // meaning is the connection's transaction, not a plan. Left to
+                // the general path it would be *executed* by the prepare-time
+                // column probe and then executed again at EXECUTE, and neither
+                // run would reach `control_transaction` -- so the connection's
+                // transaction never opens and every statement of the
+                // transaction reads at its own fresh timestamp. The predicate
+                // is the same one the text arm routes on, so a statement takes
+                // the same route whichever protocol carried it.
+                let statement = if classify_transaction_control(sql).is_some() {
+                    PreparedStatement::TransactionControl(sql.to_owned())
+                }
                 // A read is admitted first so an existing prepared SELECT
                 // keeps its exact error text; only a statement the read path
                 // rejects is offered to the write planner.
-                let statement = match engine.prepare_point_read(sql) {
-                    Ok(point_read) => PreparedStatement::PointRead(point_read),
-                    Err(read_error) => match engine.prepare_write(sql) {
-                        Ok(write) => PreparedStatement::Write(write),
-                        // Any other statement takes the general path, which
-                        // binds its markers and runs it through the session.
-                        Err(_) => match engine.prepare_general(sql) {
-                            Ok(general) => PreparedStatement::General(general),
-                            Err(general_error) => {
-                                // The configured read's own message is the
-                                // more specific one when the general path
-                                // simply has no session behind it.
-                                let reported = if general_error
-                                    .message
-                                    .contains("does not support general prepared statements")
-                                {
-                                    read_error
-                                } else {
-                                    general_error
-                                };
-                                write_query_error(&mut output, &reported, protocol_41)?;
-                                continue;
-                            }
+                else {
+                    match engine.prepare_point_read(sql) {
+                        Ok(point_read) => PreparedStatement::PointRead(point_read),
+                        Err(read_error) => match engine.prepare_write(sql) {
+                            Ok(write) => PreparedStatement::Write(write),
+                            // Any other statement takes the general path, which
+                            // binds its markers and runs it through the session.
+                            Err(_) => match engine.prepare_general(sql) {
+                                Ok(general) => PreparedStatement::General(general),
+                                Err(general_error) => {
+                                    // The configured read's own message is the
+                                    // more specific one when the general path
+                                    // simply has no session behind it.
+                                    let reported = if general_error
+                                        .message
+                                        .contains("does not support general prepared statements")
+                                    {
+                                        read_error
+                                    } else {
+                                        general_error
+                                    };
+                                    write_query_error(&mut output, &reported, protocol_41)?;
+                                    continue;
+                                }
+                            },
                         },
-                    },
+                    }
                 };
                 let result_columns = statement.result_columns().to_vec();
                 let parameter_count = statement.parameter_count();
@@ -979,6 +995,36 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 }
                 let values = execute.values;
                 match prepared_statement {
+                    // The same two lines the text arm runs, so the transaction
+                    // a prepared BEGIN opens, and the status flag the client
+                    // reads back, are the text protocol's own.
+                    PreparedStatement::TransactionControl(sql) => {
+                        match engine.control_transaction(&sql) {
+                            Ok(Some(in_transaction)) => {
+                                write_transaction_control_ok(
+                                    &mut output,
+                                    1,
+                                    in_transaction,
+                                    protocol_41,
+                                )?;
+                                queries += 1;
+                                commands.stmt_execute_successes += 1;
+                            }
+                            // A statement PREPARE classified as transaction
+                            // control that the session then declines is a
+                            // disagreement between the two, not a client
+                            // error: report it rather than answering OK.
+                            Ok(None) => write_error(
+                                &mut output,
+                                1,
+                                ER_UNKNOWN_ERROR,
+                                *b"HY000",
+                                "prepared transaction control was not applied",
+                                protocol_41,
+                            )?,
+                            Err(error) => write_query_error(&mut output, &error, protocol_41)?,
+                        }
+                    }
                     PreparedStatement::PointRead(point_read) => {
                         // A point read binds a signed-integer clustered handle; a
                         // string parameter has no place there.

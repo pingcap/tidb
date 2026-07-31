@@ -400,6 +400,15 @@ pub enum PreparedStatement {
     Write(PreparedWrite),
     /// Any other statement, bound and run through the session.
     General(PreparedGeneral),
+    /// `BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT` and friends, carried as written.
+    ///
+    /// Transaction control is recognized at PREPARE and applied through
+    /// [`QuerySession::control_transaction`] at EXECUTE, which is the same
+    /// route the text protocol takes. Running it as an ordinary statement
+    /// instead would flip only the driver session's own flag and leave the
+    /// connection's transaction unopened, so every following statement would
+    /// read at a fresh timestamp -- the wrong snapshot, not merely a slow one.
+    TransactionControl(String),
 }
 
 impl PreparedStatement {
@@ -410,6 +419,8 @@ impl PreparedStatement {
             Self::PointRead(_) => 1,
             Self::Write(write) => write.parameter_count(),
             Self::General(general) => general.parameter_count(),
+            // Transaction control has no markers to bind.
+            Self::TransactionControl(_) => 0,
         }
     }
 
@@ -420,6 +431,7 @@ impl PreparedStatement {
             Self::PointRead(read) => read.result_columns(),
             Self::Write(_) => &[],
             Self::General(general) => general.result_columns(),
+            Self::TransactionControl(_) => &[],
         }
     }
 }

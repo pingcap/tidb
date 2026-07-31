@@ -880,6 +880,14 @@ impl QuerySession for ClusterServerSession {
     }
 
     fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
+        // Transaction control carries no markers and answers with no columns,
+        // so there is nothing to probe -- and probing it would RUN it, which
+        // for `ROLLBACK` means publishing the buffer this connection is about
+        // to discard. It is applied at EXECUTE, through
+        // [`Self::control_transaction`].
+        if classify_transaction_control(sql).is_some() {
+            return Ok(PreparedGeneral::new(sql.to_owned(), 0, Vec::new()));
+        }
         let parameter_count = self.session.parameter_count(sql).map_err(map_error)?;
         let kind = self.session.statement_kind(sql).map_err(map_error)?;
         if kind == StmtKind::Write {
@@ -925,6 +933,19 @@ impl QuerySession for ClusterServerSession {
         statement: &PreparedGeneral,
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        // A `BEGIN` is a `BEGIN` whichever protocol carried it. Run as an
+        // ordinary statement it would flip only the driver session's own flag
+        // and leave `self.explicit` unopened -- the two pieces of transaction
+        // state disagreeing, with every following statement reading at a fresh
+        // timestamp and a racing writer never detected. Routed here the state
+        // cannot diverge, whoever calls this.
+        if classify_transaction_control(statement.sql()).is_some() {
+            self.control_transaction(statement.sql())?;
+            return Ok(GeneralExecuteOutcome::Write(WriteOutcome {
+                affected_rows: 0,
+                last_insert_id: 0,
+            }));
+        }
         match self.schema_route(statement.sql())? {
             StatementRoute::Ddl(ddl) => {
                 return self.run_ddl(&ddl).map(GeneralExecuteOutcome::Write)
