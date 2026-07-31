@@ -39,6 +39,12 @@
 //!   ERR                                          -- not on Go's whitelist
 //! ```
 //!
+//! Those bodies are `gorun`'s output verbatim, and `int(11)` is the one place
+//! they do NOT describe a running node: `deprecate-integer-display-length`
+//! defaults to true and only `cmd/tidb-server/main.go` applies it, so a real
+//! server prints `int` there. The assertions below quote the DEFAULT, which
+//! the switch does not touch.
+//!
 //! Mirrors Go `pkg/ddl/add_column.go` (`SetDefaultValue`, `getDefaultValue`,
 //! `getFuncCallDefaultValue`), `pkg/table/column.go` (`GetColDefaultValue`,
 //! `NewColDesc`) and `pkg/executor/show.go`'s default printer.

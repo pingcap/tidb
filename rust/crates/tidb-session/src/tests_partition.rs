@@ -39,24 +39,24 @@ use crate::*;
 
 /// Go's `SHOW CREATE TABLE h1` for
 /// `create table h1 (a int, b int) partition by hash(a) partitions 4`.
-const GO_HASH: &str = "CREATE TABLE `h1` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY HASH (`a`) PARTITIONS 4";
+const GO_HASH: &str = "CREATE TABLE `h1` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY HASH (`a`) PARTITIONS 4";
 
 /// Go's `SHOW CREATE TABLE h3` for `partition by hash(a+b) partitions 3`.
 /// The expression keeps Go's own bracketed, space-free spelling.
-const GO_HASH_EXPR: &str = "CREATE TABLE `h3` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY HASH ((`a`+`b`)) PARTITIONS 3";
+const GO_HASH_EXPR: &str = "CREATE TABLE `h3` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY HASH ((`a`+`b`)) PARTITIONS 3";
 
 /// Go's `SHOW CREATE TABLE lh` for `partition by linear hash(a) partitions
 /// 4`: the LINEAR keyword is accepted, warned about, and NOT printed back.
-const GO_LINEAR_HASH: &str = "CREATE TABLE `lh` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY HASH (`a`) PARTITIONS 4";
+const GO_LINEAR_HASH: &str = "CREATE TABLE `lh` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY HASH (`a`) PARTITIONS 4";
 
 /// Go's `SHOW CREATE TABLE r1` for a three-way RANGE table with `MAXVALUE`.
-const GO_RANGE: &str = "CREATE TABLE `r1` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE (`a`)\n(PARTITION `p0` VALUES LESS THAN (10),\n PARTITION `p1` VALUES LESS THAN (20),\n PARTITION `pm` VALUES LESS THAN (MAXVALUE))";
+const GO_RANGE: &str = "CREATE TABLE `r1` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE (`a`)\n(PARTITION `p0` VALUES LESS THAN (10),\n PARTITION `p1` VALUES LESS THAN (20),\n PARTITION `pm` VALUES LESS THAN (MAXVALUE))";
 
 /// Go's `SHOW CREATE TABLE l1` for a two-way LIST table.
-const GO_LIST: &str = "CREATE TABLE `l1` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY LIST (`a`)\n(PARTITION `p0` VALUES IN (1,2,3),\n PARTITION `p1` VALUES IN (4,5,6))";
+const GO_LIST: &str = "CREATE TABLE `l1` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY LIST (`a`)\n(PARTITION `p0` VALUES IN (1,2,3),\n PARTITION `p1` VALUES IN (4,5,6))";
 
 /// Go's `SHOW CREATE TABLE k1` for `partition by key(a) partitions 3`.
-const GO_KEY: &str = "CREATE TABLE `k1` (\n  `a` int(11) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY KEY (`a`) PARTITIONS 3";
+const GO_KEY: &str = "CREATE TABLE `k1` (\n  `a` int NOT NULL,\n  `b` int DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY KEY (`a`) PARTITIONS 3";
 
 /// How many rows each partition of `table` holds, in definition order. This
 /// is the routing made visible; see `KvTable::partition_row_counts`.

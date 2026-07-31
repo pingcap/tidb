@@ -396,8 +396,8 @@ fn show_create_table_prints_the_constraint_and_its_implicit_index() {
     assert_eq!(
         rows(&mut session, "SHOW CREATE TABLE c")[0][1],
         "CREATE TABLE `c` (\n  \
-         `id` int(11) DEFAULT NULL,\n  \
-         `pid` int(11) DEFAULT NULL,\n  \
+         `id` int DEFAULT NULL,\n  \
+         `pid` int DEFAULT NULL,\n  \
          KEY `fk_1` (`pid`),\n  \
          CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `p` (`id`) ON DELETE CASCADE\n\
          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"

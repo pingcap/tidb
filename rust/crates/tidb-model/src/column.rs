@@ -543,24 +543,14 @@ impl ColumnInfo {
     ///
     /// Go reads the process-wide `TiDBStrictIntegerDisplayWidth` inside
     /// `FieldType.CompactStr()`; this port takes it as `strict_integer_
-    /// display_width` instead of threading that global. The `unsigned`/
-    /// `zerofill` suffix rules (excluding BIT/YEAR for unsigned, YEAR for
-    /// zerofill) match Go exactly.
+    /// display_width` instead of threading that global.
+    ///
+    /// The text itself is `FieldType::type_desc`, because the `unsigned`/
+    /// `zerofill` rules read only the field type's own flags and the SHOW
+    /// surfaces reach them without a `Column` in hand.
     #[must_use]
     pub fn get_type_desc(&self, strict_integer_display_width: bool) -> String {
-        let mut desc = self.field_type.compact_str(strict_integer_display_width);
-        let flag = self.get_flag();
-        let code = self.get_type();
-        if flag & FieldTypeFlags::UNSIGNED != 0
-            && code != FieldTypeCode::Bit
-            && code != FieldTypeCode::Year
-        {
-            desc.push_str(" unsigned");
-        }
-        if flag & FieldTypeFlags::ZEROFILL != 0 && code != FieldTypeCode::Year {
-            desc.push_str(" zerofill");
-        }
-        desc
+        self.field_type.type_desc(strict_integer_display_width)
     }
 
     /// Go `IsGenerated`: whether the column is a generated column.

@@ -73,6 +73,18 @@ pub const MAX_DECIMAL_WIDTH: i64 = 65;
 /// Variable-width storage sentinel from the source package.
 pub const VAR_STORAGE_LEN: i64 = -1;
 
+/// Go `parsertypes.TiDBStrictIntegerDisplayWidth`, as a real server runs.
+///
+/// Go keeps it as a process-wide variable that `cmd/tidb-server/main.go` sets
+/// once from the `deprecate-integer-display-length` config, whose default is
+/// TRUE -- so an integer's display width is DROPPED from every type this node
+/// prints, matching MySQL 8.0 (`TINYINT(1)` and any `ZEROFILL` column keep
+/// theirs, which `compact_str` handles). A running node has no way to turn it
+/// off, so it is a constant here rather than a threaded setting; the switch
+/// stays a parameter on the formatters because Go's own tests drive both
+/// sides of it.
+pub const STRICT_INTEGER_DISPLAY_WIDTH: bool = true;
+
 /// MySQL/TiDB field flag bit positions from `pkg/parser/mysql/type.go`.
 ///
 /// The values remain plain `u32` masks so callers can combine source flags
@@ -1111,6 +1123,23 @@ impl FieldType {
             _ => {}
         }
         format!("{}{}", type_to_str(self.code(), &self.charset_name), suffix)
+    }
+
+    /// Mirrors Go `table.Column.GetTypeDesc`: the compact spelling with the
+    /// `unsigned` and `zerofill` words a column carries as FLAGS rather than
+    /// in its type, which is what `SHOW CREATE TABLE` and `SHOW COLUMNS`
+    /// print. `YEAR` takes neither and `BIT` takes no `unsigned`, exactly as
+    /// Go excludes them.
+    ///
+    /// [`Self::info_schema_str`] is the same text WITHOUT `zerofill`, because
+    /// `information_schema.columns.COLUMN_TYPE` reads Go's `InfoSchemaStr`
+    /// instead; the two surfaces really do differ on that one word.
+    pub fn type_desc(&self, strict_integer_display_width: bool) -> String {
+        let mut desc = self.info_schema_str(strict_integer_display_width);
+        if self.has_flag(FieldTypeFlags::ZEROFILL) && self.code() != FieldTypeCode::Year {
+            desc.push_str(" zerofill");
+        }
+        desc
     }
 
     /// Mirrors `FieldType.InfoSchemaStr`.

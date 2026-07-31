@@ -25,6 +25,17 @@
 //! to from [`Session::dispatch_admin_stmt`] here.
 
 use crate::*;
+use tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH;
+
+/// The `Type` cell of a `SHOW COLUMNS`/`DESCRIBE` row: Go `NewColDesc`'s
+/// `col.GetTypeDesc()`.
+fn type_desc_cell(field_type: &tidb_datatype::FieldType) -> Datum {
+    Datum::Bytes(
+        field_type
+            .type_desc(STRICT_INTEGER_DISPLAY_WIDTH)
+            .into_bytes(),
+    )
+}
 
 /// Go `stringutil.Escape` with a non-ANSI_QUOTES sql_mode: backtick-quoted,
 /// with an embedded backtick doubled.
@@ -118,7 +129,7 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
         let mut clause = format!(
             "  {} {}",
             escape_name(&column.name),
-            column.field_type.compact_str(false)
+            column.field_type.type_desc(STRICT_INTEGER_DISPLAY_WIDTH)
         );
         clause.push_str(&column_charset_clause(&column.field_type, table_charset));
         let not_null = column.field_type.flags() & NOT_NULL_FLAG != 0;
@@ -401,7 +412,7 @@ fn column_description(
     if !full {
         return vec![
             Datum::Bytes(column.name.clone().into_bytes()),
-            Datum::Bytes(column.field_type.compact_str(false).into_bytes()),
+            type_desc_cell(&column.field_type),
             Datum::Bytes(null_flag.as_bytes().to_vec()),
             Datum::Bytes(key_flag.into_bytes()),
             default,
@@ -411,7 +422,7 @@ fn column_description(
     let collation = column_collation_cell(&column.field_type);
     vec![
         Datum::Bytes(column.name.clone().into_bytes()),
-        Datum::Bytes(column.field_type.compact_str(false).into_bytes()),
+        type_desc_cell(&column.field_type),
         collation,
         Datum::Bytes(null_flag.as_bytes().to_vec()),
         Datum::Bytes(key_flag.into_bytes()),
@@ -442,7 +453,7 @@ fn view_column_description(
     if !full {
         return vec![
             Datum::Bytes(name.as_bytes().to_vec()),
-            Datum::Bytes(field_type.compact_str(false).into_bytes()),
+            type_desc_cell(field_type),
             Datum::Bytes(null_flag.as_bytes().to_vec()),
             Datum::Bytes(Vec::new()),
             Datum::Null,
@@ -452,7 +463,7 @@ fn view_column_description(
     let collation = column_collation_cell(field_type);
     vec![
         Datum::Bytes(name.as_bytes().to_vec()),
-        Datum::Bytes(field_type.compact_str(false).into_bytes()),
+        type_desc_cell(field_type),
         collation,
         Datum::Bytes(null_flag.as_bytes().to_vec()),
         Datum::Bytes(Vec::new()),

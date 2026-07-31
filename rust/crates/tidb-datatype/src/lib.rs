@@ -186,7 +186,7 @@ pub use field_type::{
     enum_set_display_length_from_lengths, field_type_has_charset, merge_field_type,
     parser_default_field_type_for_value, set_type_flag, str_to_type, type_str, type_to_str,
     FieldType, FieldTypeBuilder, FieldTypeCode, FieldTypeFlags, FieldTypeValue, MAX_DECIMAL_SCALE,
-    MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
+    MAX_DECIMAL_WIDTH, STRICT_INTEGER_DISPLAY_WIDTH, UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
 };
 pub use format::{
     output_format, FlatFormatter, FormatFragment, FormatWriteError, Formatter, IndentFormatter,

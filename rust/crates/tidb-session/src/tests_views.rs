@@ -676,8 +676,8 @@ fn views_appear_in_the_metadata_statements() {
     assert_eq!(
         rows,
         [
-            ["a", "bigint(20)", "YES", "", "<nil>", ""],
-            ["b", "bigint(20)", "YES", "", "<nil>", ""],
+            ["a", "bigint", "YES", "", "<nil>", ""],
+            ["b", "bigint", "YES", "", "<nil>", ""],
         ]
     );
 }
@@ -916,7 +916,7 @@ fn a_view_reports_its_columns_and_status() {
                 "bigint",
                 "<nil>",
                 "19",
-                "bigint(20)",
+                "bigint",
                 "",
                 "",
                 "select,insert,update,references",
@@ -930,7 +930,7 @@ fn a_view_reports_its_columns_and_status() {
                 "bigint",
                 "<nil>",
                 "19",
-                "bigint(20)",
+                "bigint",
                 "",
                 "",
                 "select,insert,update,references",
@@ -974,15 +974,12 @@ fn a_view_column_type_follows_the_base_column() {
                              WHERE table_schema = 'test' AND table_name = 'vb' \
                              ORDER BY ordinal_position";
     let (_, rows) = query_text(&mut session, "DESCRIBE vb");
-    assert_eq!(rows[0][1], "bigint(20)");
+    assert_eq!(rows[0][1], "bigint");
     assert_eq!(rows[1][1], "varchar(10)");
     let (_, rows) = query_text(&mut session, columns_query);
     assert_eq!(
         rows,
-        [
-            ["x", "bigint", "bigint(20)"],
-            ["y", "varchar", "varchar(10)"],
-        ]
+        [["x", "bigint", "bigint"], ["y", "varchar", "varchar(10)"],]
     );
 
     // Captured: altering the base columns shows through immediately, with

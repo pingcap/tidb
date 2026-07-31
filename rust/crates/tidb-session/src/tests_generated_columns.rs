@@ -225,11 +225,11 @@ fn show_create_table_round_trips_the_expression() {
     let mut session = chain();
     let text = rows(&mut session, "SHOW CREATE TABLE t1")[0][1].clone();
     assert!(
-        text.contains("`b` int(11) GENERATED ALWAYS AS (`a` + 1) VIRTUAL,"),
+        text.contains("`b` int GENERATED ALWAYS AS (`a` + 1) VIRTUAL,"),
         "{text}"
     );
     assert!(
-        text.contains("`c` int(11) GENERATED ALWAYS AS (`b` + 1) STORED\n"),
+        text.contains("`c` int GENERATED ALWAYS AS (`b` + 1) STORED\n"),
         "{text}"
     );
     // gorun `show create table t4`: an omitted keyword prints VIRTUAL, and a
@@ -239,7 +239,7 @@ fn show_create_table_round_trips_the_expression() {
         .unwrap();
     let text = rows(&mut session, "SHOW CREATE TABLE t4")[0][1].clone();
     assert!(
-        text.contains("`c` int(11) GENERATED ALWAYS AS (`b` + 1) VIRTUAL\n"),
+        text.contains("`c` int GENERATED ALWAYS AS (`b` + 1) VIRTUAL\n"),
         "{text}"
     );
     assert!(!text.contains("VIRTUAL DEFAULT"), "{text}");
@@ -249,7 +249,7 @@ fn show_create_table_round_trips_the_expression() {
         .unwrap();
     let text = rows(&mut session, "SHOW CREATE TABLE t8")[0][1].clone();
     assert!(
-        text.contains("`b` int(11) GENERATED ALWAYS AS (`a` + 1) VIRTUAL NOT NULL"),
+        text.contains("`b` int GENERATED ALWAYS AS (`a` + 1) VIRTUAL NOT NULL"),
         "{text}"
     );
 }

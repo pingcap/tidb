@@ -303,7 +303,7 @@ fn an_inline_expression_index_is_maintained_too() {
     admin_check(&mut session, "t2", "UPDATE");
     assert_eq!(
         show_create(&mut session, "t2"),
-        "CREATE TABLE `t2` (\n  `a` int(11) DEFAULT NULL,\n  KEY `idx` ((`a` + 1))\n) \
+        "CREATE TABLE `t2` (\n  `a` int DEFAULT NULL,\n  KEY `idx` ((`a` + 1))\n) \
          ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
     );
 }

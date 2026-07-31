@@ -703,7 +703,7 @@ fn column_default_is_normalized_and_checked() {
         created.contains("`d` decimal(10,3) DEFAULT '1.5'"),
         "{created}"
     );
-    assert!(created.contains("`i` int(11) DEFAULT '8'"), "{created}");
+    assert!(created.contains("`i` int DEFAULT '8'"), "{created}");
     assert!(created.contains("`v` varchar(4) DEFAULT 'ab'"), "{created}");
 
     // Captured: a row that takes the defaults casts them to the column,
@@ -760,29 +760,43 @@ fn column_default_is_normalized_and_checked() {
     ));
 }
 
-/// A column type written WITHOUT a display width is not stored as written:
-/// Go's parser leaves the flen unspecified and
-/// `setCharsetCollationFlenDecimal` fills in the type's default, so a declared
-/// `BIGINT` is a `bigint(20)` on every surface that reports it. This pins the
-/// three surfaces together, because Go reaches them through different code and
+/// What a declared column type REPORTS on the three surfaces that report it,
+/// which is two rules pulling in opposite directions.
+///
+/// A width the declaration omits is FILLED IN: Go's parser leaves the flen
+/// unspecified and `setCharsetCollationFlenDecimal` gives it the type's
+/// default, which is why `DECIMAL` reads back as `decimal(10,0)`. A width on
+/// an INTEGER is then DROPPED again when the type is printed, because
+/// `deprecate-integer-display-length` defaults to true and
+/// `parsertypes.CompactStr` omits the suffix -- so `BIGINT` and `BIGINT(30)`
+/// are the same `bigint`, and the stored flen (still 20, still what
+/// `NUMERIC_PRECISION` is derived from) is simply not shown.
+///
+/// The three surfaces are pinned TOGETHER because Go reaches them through
+/// different code -- `SHOW CREATE TABLE` and `SHOW COLUMNS` through
+/// `GetTypeDesc`, `information_schema.columns` through `InfoSchemaStr` -- and
 /// a normalization that fixed only one of them would be a regression.
 ///
-/// Captured from real TiDB for
-/// `create table w (a bigint, b int, c smallint, d tinyint, e mediumint,
-/// h bigint(30), i decimal, j float, k double, l char, m varchar(7), n year,
-/// o bit, p bool)`:
+/// The oracle is `tests/integrationtest/r/explain.result`, which records a
+/// real `tidb-server`:
 ///
 /// ```text
-/// SHOW CREATE TABLE w / information_schema.columns.column_type
-///   a bigint(20)   b int(11)      c smallint(6)  d tinyint(4)
-///   e mediumint(9) h bigint(30)   i decimal(10,0)
-///   j float        k double       l char(1)      m varchar(7)
-///   n year(4)      o bit(1)       p tinyint(1)
+/// create table t (id int, c1 timestamp);
+/// show columns from t;
+/// Field  Type       Null  Key  Default  Extra
+/// id     int        YES        NULL
+/// c1     timestamp  YES        NULL
 /// ```
 ///
-/// `FLOAT`/`DOUBLE` are the counter-example that shows this is not "always
-/// print a width": Go stores their default flen but the printer omits it, so
-/// the declared spelling survives there.
+/// Note that a `gorun` capture disagrees and says `int(11)`: the switch is a
+/// process-wide variable that only `cmd/tidb-server/main.go` sets from the
+/// config, so an in-process harness leaves it off. The recorded `.result` is
+/// the one that describes a running node.
+///
+/// `TINYINT(1)` and `BIT`/`YEAR`/`CHAR`/`VARCHAR`/`DECIMAL` are the
+/// counter-examples that keep this from being read as either rule alone:
+/// `BOOL` must stay `tinyint(1)` (MySQL 8.0 keeps it so connectors can still
+/// recognise a boolean), and the non-integer widths are never dropped.
 #[test]
 fn a_declared_type_without_a_width_normalizes_to_its_default() {
     let mut session = Session::new();
@@ -794,12 +808,12 @@ fn a_declared_type_without_a_width_normalizes_to_its_default() {
         )
         .unwrap();
     let expected = [
-        ("a", "bigint(20)"),
-        ("b", "int(11)"),
-        ("c", "smallint(6)"),
-        ("d", "tinyint(4)"),
-        ("e", "mediumint(9)"),
-        ("h", "bigint(30)"),
+        ("a", "bigint"),
+        ("b", "int"),
+        ("c", "smallint"),
+        ("d", "tinyint"),
+        ("e", "mediumint"),
+        ("h", "bigint"),
         ("i", "decimal(10,0)"),
         ("j", "float"),
         ("k", "double"),

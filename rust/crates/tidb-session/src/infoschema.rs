@@ -34,7 +34,7 @@
 //! tables; and the `mysql`, `performance_schema`, `sys` and `metrics_schema`
 //! databases, whose contents are separate tiers.
 
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, STRICT_INTEGER_DISPLAY_WIDTH};
 use tidb_executor::{Catalog, KvTable, TableEntry};
 
 /// Go's schema name for the virtual database.
@@ -843,7 +843,7 @@ fn column_row(
         Datum::Null,
         charset_name,
         collation_name,
-        text(&field_type.compact_str(false)),
+        text(&field_type.info_schema_str(STRICT_INTEGER_DISPLAY_WIDTH)),
         text(&crate::show::column_key_flag(table, offset)),
         text(if table.auto_increment_offset() == Some(offset) {
             "auto_increment"
@@ -949,7 +949,7 @@ fn view_column_row(
         Datum::Null,
         charset_name,
         collation_name,
-        text(&field_type.compact_str(false)),
+        text(&field_type.info_schema_str(STRICT_INTEGER_DISPLAY_WIDTH)),
         text(""),
         text(""),
         text(PRIVILEGES),

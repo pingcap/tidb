@@ -1,3 +1,19 @@
+//! The `SHOW` family over a real session, against captured TiDB output.
+//!
+//! # One capture in here is not a running node, and it is called out inline
+//!
+//! An INTEGER's display width is dropped from every type a real server
+//! prints: `deprecate-integer-display-length` defaults to true, and only
+//! `cmd/tidb-server/main.go` copies it into the process-wide
+//! `parsertypes.TiDBStrictIntegerDisplayWidth` that `CompactStr` reads. An
+//! in-process capture harness never runs that line, so `gorun` prints
+//! `int(11)` where `tests/integrationtest/r/explain.result` -- recorded
+//! against a real `tidb-server` -- records `int`. The assertions here follow
+//! the recording; the few comments that quote `gorun` verbatim say so.
+//!
+//! `TINYINT(1)` and `ZEROFILL` keep their widths either way, which is Go's
+//! own exception for connectors that read `tinyint(1)` as a boolean.
+
 #![cfg(test)]
 
 use crate::tests_support::*;
@@ -99,26 +115,27 @@ fn show_columns_and_describe() {
         rows,
         vec![
             // A handle primary key is NOT NULL and PRI, as Go marks it.
-            vec!["id", "bigint(20)", "NO", "PRI", "NULL", ""],
+            vec!["id", "bigint", "NO", "PRI", "NULL", ""],
             // A column that is the whole of a unique index is UNI.
             vec!["code", "varchar(8)", "YES", "UNI", "NULL", ""],
             // A column leading a non-unique index is MUL.
             vec!["tag", "varchar(4)", "YES", "MUL", "NULL", ""],
             // An unindexed column has no key flag.
-            vec!["v", "bigint(20)", "YES", "", "NULL", ""],
+            vec!["v", "bigint", "YES", "", "NULL", ""],
         ]
     );
 
     // Go reports auto_increment in Extra; captured from TiDB's DESCRIBE:
     // [[id bigint(20) NO PRI <nil> auto_increment] [v bigint(20) YES  <nil> ]]
+    // -- `gorun` spells the width; a real server drops it (see the module doc).
     session
         .run("CREATE TABLE ai (id BIGINT AUTO_INCREMENT PRIMARY KEY, v BIGINT)")
         .unwrap();
     assert_eq!(
         describe(&mut session, "DESCRIBE ai").1,
         vec![
-            vec!["id", "bigint(20)", "NO", "PRI", "NULL", "auto_increment"],
-            vec!["v", "bigint(20)", "YES", "", "NULL", ""],
+            vec!["id", "bigint", "NO", "PRI", "NULL", "auto_increment"],
+            vec!["v", "bigint", "YES", "", "NULL", ""],
         ]
     );
 
@@ -129,7 +146,7 @@ fn show_columns_and_describe() {
     assert_eq!(
         describe(&mut session, "DESCRIBE withdef").1,
         vec![
-            vec!["a", "bigint(20)", "YES", "", "7", ""],
+            vec!["a", "bigint", "YES", "", "7", ""],
             vec!["b", "varchar(4)", "YES", "", "zz", ""],
         ]
     );
@@ -158,7 +175,8 @@ fn show_columns_and_describe() {
 /// SHOW FULL COLUMNS, checked against a capture from real TiDB
 /// (`SHOW FULL COLUMNS FROM t` over `create table t (a int, b
 /// varchar(20))`):
-/// `[a int(11) <nil> YES  <nil>  select,insert,update,references ]`
+/// `[a int(11) <nil> YES  <nil>  select,insert,update,references ]` -- the
+/// width is `gorun`'s; a real server prints `int` (see the module doc).
 /// `[b varchar(20) utf8mb4_bin YES  <nil>  select,insert,update,references ]`
 #[test]
 fn show_full_columns() {
@@ -209,7 +227,7 @@ fn show_full_columns() {
             // A numeric column's Collation is NULL.
             vec![
                 "a",
-                "int(11)",
+                "int",
                 "NULL",
                 "YES",
                 "",
@@ -267,10 +285,10 @@ fn show_create_table() {
             "t1"
         ),
         "CREATE TABLE `t1` (\n  \
-             `id` bigint(20) NOT NULL,\n  \
+             `id` bigint NOT NULL,\n  \
              `code` varchar(8) DEFAULT NULL,\n  \
              `tag` varchar(4) DEFAULT NULL,\n  \
-             `v` bigint(20) DEFAULT NULL,\n  \
+             `v` bigint DEFAULT NULL,\n  \
              PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  \
              KEY `tag_idx` (`tag`),\n  \
              UNIQUE KEY `code` (`code`)\n\
@@ -285,10 +303,10 @@ fn show_create_table() {
             "t2"
         ),
         "CREATE TABLE `t2` (\n  \
-             `a` bigint(20) DEFAULT '7',\n  \
+             `a` bigint DEFAULT '7',\n  \
              `b` varchar(4) DEFAULT 'zz',\n  \
-             `c` bigint(20) NOT NULL,\n  \
-             `d` bigint(20) DEFAULT NULL\n\
+             `c` bigint NOT NULL,\n  \
+             `d` bigint DEFAULT NULL\n\
              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
     );
 
@@ -299,8 +317,8 @@ fn show_create_table() {
             "t4"
         ),
         "CREATE TABLE `t4` (\n  \
-             `a` bigint(20) DEFAULT NULL,\n  \
-             `b` bigint(20) DEFAULT NULL,\n  \
+             `a` bigint DEFAULT NULL,\n  \
+             `b` bigint DEFAULT NULL,\n  \
              KEY `ab` (`a`,`b`)\n\
              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
     );
@@ -314,8 +332,8 @@ fn show_create_table() {
             "x1"
         ),
         "CREATE TABLE `x1` (\n  \
-             `a` bigint(20) DEFAULT NULL,\n  \
-             `b` bigint(20) DEFAULT NULL,\n  \
+             `a` bigint DEFAULT NULL,\n  \
+             `b` bigint DEFAULT NULL,\n  \
              KEY `kb` (`b`),\n  \
              UNIQUE KEY `a` (`a`),\n  \
              UNIQUE KEY `b` (`b`)\n\
@@ -334,8 +352,8 @@ fn show_create_table() {
             "n2"
         ),
         "CREATE TABLE `n2` (\n  \
-             `a` bigint(20) DEFAULT NULL,\n  \
-             `b` bigint(20) DEFAULT NULL,\n  \
+             `a` bigint DEFAULT NULL,\n  \
+             `b` bigint DEFAULT NULL,\n  \
              UNIQUE KEY `a` (`a`,`b`)\n\
              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
     );
@@ -346,8 +364,8 @@ fn show_create_table() {
             "n3"
         ),
         "CREATE TABLE `n3` (\n  \
-             `a` bigint(20) DEFAULT NULL,\n  \
-             `b` bigint(20) DEFAULT NULL,\n  \
+             `a` bigint DEFAULT NULL,\n  \
+             `b` bigint DEFAULT NULL,\n  \
              UNIQUE KEY `a` (`a`),\n  \
              KEY `a_2` (`a`)\n\
              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
@@ -377,8 +395,8 @@ fn show_create_table() {
             "a1"
         ),
         "CREATE TABLE `a1` (\n  \
-             `id` bigint(20) NOT NULL AUTO_INCREMENT,\n  \
-             `v` bigint(20) DEFAULT NULL,\n  \
+             `id` bigint NOT NULL AUTO_INCREMENT,\n  \
+             `v` bigint DEFAULT NULL,\n  \
              PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n\
              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
     );
@@ -491,7 +509,7 @@ fn information_schema() {
     assert_eq!(
         &id[15..19],
         [
-            "bigint(20)",
+            "bigint",
             "PRI",
             "auto_increment",
             "select,insert,update,references"
@@ -1203,7 +1221,7 @@ fn charset_and_collation_metadata_surfaces() {
             ("varchar(10)".to_owned(), "utf8mb4_bin".to_owned()),
             ("enum('a','B')".to_owned(), "utf8mb4_bin".to_owned()),
             ("set('a','B')".to_owned(), "utf8mb4_bin".to_owned()),
-            ("int(11)".to_owned(), "<nil>".to_owned()),
+            ("int".to_owned(), "<nil>".to_owned()),
         ]
     );
 
@@ -1418,8 +1436,8 @@ fn a_check_constraint_is_accepted_discarded_and_warned_about() {
     assert_eq!(
         create_table_text(&mut session, "ck"),
         "CREATE TABLE `ck` (\n  \
-             `a` int(11) DEFAULT NULL,\n  \
-             `b` int(11) DEFAULT NULL\n\
+             `a` int DEFAULT NULL,\n  \
+             `b` int DEFAULT NULL\n\
          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
     );
 
@@ -1431,8 +1449,8 @@ fn a_check_constraint_is_accepted_discarded_and_warned_about() {
     assert_eq!(
         create_table_text(&mut session, "ck3"),
         "CREATE TABLE `ck3` (\n  \
-             `a` int(11) DEFAULT NULL,\n  \
-             `b` int(11) DEFAULT NULL\n\
+             `a` int DEFAULT NULL,\n  \
+             `b` int DEFAULT NULL\n\
          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
     );
 
