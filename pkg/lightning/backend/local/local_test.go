@@ -2786,11 +2786,8 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 	require.True(t, data.GetRefCount() == 0, "ref count should be 0 after all jobs are done")
 }
 
-<<<<<<< HEAD:pkg/lightning/backend/local/local_test.go
-// mockEngineWithData is a mock engine that implements common.Engine
-=======
 func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/fakeRegionJobs", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -2806,12 +2803,12 @@ func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
 		},
 	}
 	jobs := []*regionJob{
-		{keyRange: engineapi.Range{Start: []byte("a"), End: []byte("b")}, ingestData: data, region: dummyRegionInfo},
-		{keyRange: engineapi.Range{Start: []byte("b"), End: []byte("c")}, ingestData: data, region: dummyRegionInfo},
-		{keyRange: engineapi.Range{Start: []byte("c"), End: []byte("d")}, ingestData: data, region: dummyRegionInfo},
-		{keyRange: engineapi.Range{Start: []byte("d"), End: []byte("e")}, ingestData: data, region: dummyRegionInfo},
+		{keyRange: common.Range{Start: []byte("a"), End: []byte("b")}, ingestData: data},
+		{keyRange: common.Range{Start: []byte("b"), End: []byte("c")}, ingestData: data},
+		{keyRange: common.Range{Start: []byte("c"), End: []byte("d")}, ingestData: data},
+		{keyRange: common.Range{Start: []byte("d"), End: []byte("e")}, ingestData: data},
 	}
-	jobRange := engineapi.Range{Start: []byte("a"), End: []byte("e")}
+	jobRange := common.Range{Start: []byte("a"), End: []byte("e")}
 	fakeRegionJobs = map[[2]string]struct {
 		jobs []*regionJob
 		err  error
@@ -2826,7 +2823,7 @@ func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
 
 	mockEngine := &mockEngineWithData{
 		data:   data,
-		ranges: []engineapi.Range{jobRange},
+		ranges: []common.Range{jobRange},
 	}
 	jobToWorkerCh := make(chan *regionJob)
 	var jobWg sync.WaitGroup
@@ -2850,8 +2847,7 @@ func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
 	require.Equal(t, int64(0), data.GetRefCount())
 }
 
-// mockEngineWithData is a mock engine that implements engineapi.Engine
->>>>>>> 9f9c4f8b763 (ingest: release unsent jobs when generateAndSendJob is canceled (#69241)):pkg/ingestor/ingestctrl/local_test.go
+// mockEngineWithData is a mock engine that implements common.Engine
 type mockEngineWithData struct {
 	data   common.IngestData
 	ranges []common.Range
