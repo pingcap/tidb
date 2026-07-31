@@ -226,16 +226,17 @@ const MIN_ROW_SIZE: f64 = 2.0;
 /// know how `mysql.stats_*` is stored.
 #[derive(Clone, Debug, Default)]
 pub struct TableStatistics {
-    /// Go `HistColl.Pseudo`: the table has a `mysql.stats_meta` row -- so its
-    /// ROW COUNT is real -- but not one analyzed column or index histogram,
-    /// so its DISTRIBUTION is not.
+    /// Go `HistColl.Pseudo`: this table's DISTRIBUTION is the pseudo one, and
+    /// `EXPLAIN` says so with `stats:pseudo`. Decided by
+    /// [`TableStatistics::new`], which is where the rule and its capture live.
     ///
-    /// The two halves move independently and Go prints them independently: a
-    /// table in this state shows a real `estRows` on its `TableFullScan` and
-    /// still says `stats:pseudo`, because the scan's row count came from
-    /// `stats_meta` while every selectivity below it came from the pseudo
-    /// rates. Collapsing the two would either invent a distribution or throw
-    /// away a row count the cluster really knows.
+    /// The row count is a separate field because the two halves move
+    /// independently and Go prints them independently: a table with a
+    /// `stats_meta` row but no analyzed histogram shows a real `estRows` on
+    /// its `TableFullScan` and still says `stats:pseudo`, because the scan's
+    /// row count came from `stats_meta` while every selectivity below it came
+    /// from the pseudo rates. Collapsing the two would either invent a
+    /// distribution or throw away a row count the cluster really knows.
     pub pseudo: bool,
     /// Go `HistColl.RealtimeCount`, from `mysql.stats_meta.count`.
     pub row_count: i64,
@@ -245,6 +246,44 @@ pub struct TableStatistics {
     pub columns: BTreeMap<i64, ColumnStats>,
     /// Index statistics by index ID.
     pub indexes: BTreeMap<i64, IndexStats>,
+}
+
+impl TableStatistics {
+    /// One table's statistics with [`Self::pseudo`] decided the way Go decides
+    /// it, so no caller has to decide it again.
+    ///
+    /// `pkg/planner/core/stats.GetStatsTable` reaches `PseudoTable` by three
+    /// routes, and the two that survive default settings are both here:
+    ///
+    /// * **`RealtimeCount == 0`** (its step 2). An ANALYZED EMPTY table is
+    ///   pseudo -- captured: `CREATE TABLE e(a INT, KEY(a)); ANALYZE TABLE e;
+    ///   EXPLAIN SELECT * FROM e WHERE a > 2` prints `stats:pseudo` and
+    ///   estimates 3333.33, which is the pseudo row count through the pseudo
+    ///   selectivity, NOT the zero the `stats_meta` row states. Go declines to
+    ///   plan against a count of zero because an empty table is the state a
+    ///   table is least likely to STAY in.
+    /// * **Nothing initialized** (its step 3, `!Table.IsInitialized()`): no
+    ///   column and no index has an analyzed histogram. The row count can
+    ///   still be real, which is why the two halves are separate fields.
+    ///
+    /// Its third route, `IsOutdated`, is gated on
+    /// `tidb_enable_pseudo_for_outdated_stats`, whose default is `false`
+    /// (`vardef.DefTiDBEnablePseudoForOutdatedStats`), so it never fires here.
+    #[must_use]
+    pub fn new(
+        row_count: i64,
+        modify_count: i64,
+        columns: BTreeMap<i64, ColumnStats>,
+        indexes: BTreeMap<i64, IndexStats>,
+    ) -> Self {
+        Self {
+            pseudo: row_count == 0 || (columns.is_empty() && indexes.is_empty()),
+            row_count,
+            modify_count,
+            columns,
+            indexes,
+        }
+    }
 }
 
 /// The estimate one committed access path carries into `EXPLAIN`.
@@ -387,8 +426,10 @@ pub(crate) fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
         // path cost nothing and the choice arbitrary; a live playground shows
         // exactly that on a freshly loaded table, where Go still says 10000.
         //
-        // An ANALYZED table that really is empty keeps its zero: it is not
-        // pseudo, and `0` is then a measurement.
+        // An ANALYZED table that really is empty lands here too, because a
+        // zero count is one of Go's own routes to `PseudoTable` -- see
+        // [`TableStatistics::new`], where that rule lives, and the capture
+        // that pins it.
         Some(stats) if stats.pseudo => PSEUDO_ROW_COUNT,
         Some(stats) => stats.row_count.max(0) as f64,
         None => PSEUDO_ROW_COUNT,

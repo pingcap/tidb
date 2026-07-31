@@ -241,6 +241,7 @@ pub use tidb_executor::TxnErrorKind;
 
 mod account;
 mod admin_check_arm;
+mod analyze_arm;
 mod classify;
 mod dispatch;
 mod explain_arm;
@@ -462,6 +463,8 @@ impl Session {
 
 #[cfg(test)]
 mod tests_admin_check;
+#[cfg(test)]
+mod tests_analyze;
 #[cfg(test)]
 mod tests_auto_increment;
 #[cfg(test)]

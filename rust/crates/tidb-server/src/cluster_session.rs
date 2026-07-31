@@ -318,16 +318,15 @@ fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStat
             index_statistics(item, index.columns.len(), index.unique),
         );
     }
-    TableStatistics {
-        // Go `Table.IsInitialized()`: a table whose every histogram is
-        // uninitialized is `HistColl.Pseudo`, even though the `stats_meta`
-        // row that made this function run gives it a real row count.
-        pseudo: columns.is_empty() && indexes.is_empty(),
-        row_count: i64::try_from(stats.row_count).unwrap_or(i64::MAX),
-        modify_count: stats.modify_count,
+    // `TableStatistics::new` decides `pseudo` -- Go's `GetStatsTable` reaches
+    // it both from an uninitialized histogram set and from a zero row count,
+    // and that rule lives in one place for both tiers.
+    TableStatistics::new(
+        i64::try_from(stats.row_count).unwrap_or(i64::MAX),
+        stats.modify_count,
         columns,
         indexes,
-    }
+    )
 }
 
 /// Go `Column.StatsAvailable()` / `IsColumnAnalyzedOrSynthesized`: whether

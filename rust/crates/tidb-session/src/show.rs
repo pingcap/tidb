@@ -865,6 +865,13 @@ impl Session {
             // See `tidb_executor::explain`'s module doc for every place
             // this tier's plan text diverges from Go's and why.
             tidb_ast::AdminStmt::Explain(explain) => self.explain_stmt(explain),
+            // `ANALYZE TABLE`, over this session's own catalog. See
+            // `crate::analyze_arm` for why an in-process session runs it here
+            // rather than routing it at a cluster node that can write
+            // `mysql.stats_*`.
+            tidb_ast::AdminStmt::AnalyzeTable(_) | tidb_ast::AdminStmt::AnalyzeIncremental(_) => {
+                self.analyze_stmt(admin)
+            }
             tidb_ast::AdminStmt::Grant(grant) => Ok(Some(self.grant_stmt(grant)?)),
             tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
             tidb_ast::AdminStmt::ShowGrants(show) => Ok(Some(self.show_grants_stmt(show)?)),
