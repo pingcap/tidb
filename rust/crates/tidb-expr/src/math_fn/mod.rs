@@ -233,7 +233,9 @@ fn sign(vals: &[Datum]) -> Result<Datum, EvalError> {
         // `signFunctionClass` selects ETReal for strings. Preserve MySQL's
         // numeric-prefix coercion even though this compact evaluator has no
         // warning channel.
-        [Datum::String(_)] => Ok(Datum::Int(sign_of_real(to_f64_with_mysql_string(&vals[0])))),
+        [Datum::String(_)] => Ok(Datum::Int(sign_of_real(to_f64_with_mysql_string(
+            &vals[0],
+        )?))),
         _ => Err(EvalError::Unsupported("bad function arity")),
     }
 }
@@ -248,7 +250,7 @@ fn sign(vals: &[Datum]) -> Result<Datum, EvalError> {
 fn numeric_arg(v: &Datum) -> Result<Option<f64>, EvalError> {
     match v {
         Datum::Null => Ok(None),
-        Datum::String(_) | Datum::Bytes(_) => Ok(Some(to_f64_with_mysql_string(v))),
+        Datum::String(_) | Datum::Bytes(_) => Ok(Some(to_f64_with_mysql_string(v)?)),
         Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) => {
             Ok(Some(to_f64(v.clone())))
         }
@@ -600,7 +602,7 @@ fn ceil_floor(vals: &[Datum], ceiling: bool) -> Result<Datum, EvalError> {
         // addition to the numeric-prefix coercion: CEIL('1.23') is 2.0,
         // unlike CEIL(Decimal('1.23')) which has a DECIMAL signature.
         Datum::String(_) | Datum::Bytes(_) => {
-            let f = to_f64_with_mysql_string(v);
+            let f = to_f64_with_mysql_string(v)?;
             Datum::Real(if ceiling { f.ceil() } else { f.floor() })
         }
         Datum::MinNotNull | Datum::MaxValue => {

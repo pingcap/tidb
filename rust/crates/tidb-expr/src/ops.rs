@@ -236,8 +236,9 @@ pub(crate) fn eval_binary_full(
     //   * a `Div` or a `Decimal` operand reaches [`to_decimal`], whose
     //     fallback `.expect()` PANICS on either kind;
     //   * a comparison against a string reaches
-    //     [`to_f64_with_mysql_string`], whose fallback silently substitutes
-    //     `0.0` -- a wrong ANSWER, which is worse;
+    //     [`to_f64_with_mysql_string`], which used to substitute `0.0` for
+    //     either kind -- a wrong ANSWER, which is worse -- and now returns
+    //     the same statement error this guard does;
     //   * everything else reaches the integer residue at the bottom.
     //
     // One guard makes all three the same statement error. `Raw` compared
@@ -342,8 +343,8 @@ pub(crate) fn eval_binary_full(
             }
             return real_compare(
                 op,
-                to_f64_with_mysql_string(&l),
-                to_f64_with_mysql_string(&r),
+                to_f64_with_mysql_string(&l)?,
+                to_f64_with_mysql_string(&r)?,
             );
         }
         return Err(EvalError::Unsupported("string operand"));
@@ -832,11 +833,12 @@ fn time_compare_ordering(
 /// accepted the same values.
 ///
 /// This is a proof about CALLERS, so it lapses if someone calls these from
-/// somewhere new. Note that [`to_f64_with_mysql_string`] is ALREADY called
-/// from `math_fn`, `string_fn` and `builtin_ext::info` on datums those
-/// guards never saw; its fallback silently reads an unconvertible operand as
-/// `0.0` rather than erroring, which is a wrong answer waiting on those
-/// paths, not this one.
+/// somewhere new -- which is exactly what happened to
+/// [`to_f64_with_mysql_string`], reached from `math_fn`, `string_fn`,
+/// `builtin_ext::info` and `builtin_ext::compare2` on datums these guards
+/// never saw. That function no longer relies on a caller proof at all: it
+/// returns a `Result` and lets `Datum::to_f64` decide, per its own audit
+/// table. `to_decimal` still rests on the argument above.
 pub(crate) fn to_decimal(v: Datum) -> Decimal {
     match v {
         Datum::Decimal(d) => d,
@@ -1015,78 +1017,52 @@ pub(crate) fn to_f64(v: Datum) -> f64 {
 /// | `Bit`/`BinaryLiteral` | unsigned integer value (`b'11'` is 3) | same | MATCHES |
 /// | `Time`/`Duration` | numeric form (`FORMAT_BYTES(DATE'2021-01-01')` reads 20210101) | same | MATCHES |
 /// | `Json` | `ConvertJSONToFloat` (a JSON string takes the prefix rule) | same | MATCHES |
-/// | `Raw`/`VectorFloat32` | ERROR (`SQRT(vec)`, `FIELD(1,vec)`, `INTERVAL(1,vec)` all fail) | `0.0` | DIVERGES |
-/// | `Null`/`MinNotNull`/`MaxValue` | ERROR | `unreachable!` panic | DIVERGES |
+/// | `Raw`/`VectorFloat32` | ERROR (`SQRT(vec)`, `FIELD(1,vec)`, `INTERVAL(1,vec)` all fail) | ERROR | MATCHES |
+/// | `Null`/`MinNotNull`/`MaxValue` | ERROR | ERROR | MATCHES |
 ///
-/// The one gap left unfixed: TiDB raises `1292 Truncated incorrect DOUBLE
-/// value: '<text>'` whenever the prefix is shorter than the operand, and this
-/// layer still has no warning channel to raise it on -- `dispatch_values` is
-/// deliberately a pure function of already-evaluated arguments, shared with
-/// the chunk-row bridge, so a warning sink is a separate structural change.
-/// The VALUE is TiDB's in every MATCHES row above.
-pub(crate) fn to_f64_with_mysql_string(v: &Datum) -> f64 {
+/// The last two rows are why this returns a `Result`. There is no kind whose
+/// conversion may be assumed to succeed, so there is no fallback to pick a
+/// value for and no `unreachable!` left to be wrong about: whatever
+/// `Datum::to_f64` declines, TiDB declines too, and the caller propagates it.
+///
+/// Two gaps this audit found and did NOT close, both outside this function:
+///
+///  * `math_fn::abs` has arms for `Int`/`UInt`/`Decimal`/`Real` only and
+///    never reaches this coercion, so `ABS('12abc')` and `ABS(<enum>)` are
+///    errors here where TiDB answers 12 and the ordinal. That is a missing
+///    signature, not a wrong answer, so it is reported rather than patched
+///    into an unrelated change.
+///  * TiDB raises `1292 Truncated incorrect DOUBLE value: '<text>'` whenever
+///    the prefix is shorter than the operand, and this layer has no warning
+///    channel to raise it on -- `dispatch_values` is deliberately a pure
+///    function of already-evaluated arguments, shared with the chunk-row
+///    bridge, so a warning sink is a separate structural change. The VALUE is
+///    TiDB's in every MATCHES row above.
+pub(crate) fn to_f64_with_mysql_string(v: &Datum) -> Result<f64, EvalError> {
     match v {
-        Datum::String(s) => s.as_utf8().map(mysql_real_prefix).unwrap_or(0.0),
-        Datum::Bytes(s) => std::str::from_utf8(s).map(mysql_real_prefix).unwrap_or(0.0),
+        Datum::String(s) => Ok(bytes_to_f64(s.bytes())),
+        Datum::Bytes(s) => Ok(bytes_to_f64(s)),
         Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_) => {
-            to_f64(v.clone())
+            Ok(to_f64(v.clone()))
         }
-        Datum::Null | Datum::MinNotNull | Datum::MaxValue => {
-            unreachable!("non-scalar values are handled before numeric coercion")
-        }
-        other => other.to_f64().map_or(0.0, |converted| converted.value),
+        other => other
+            .to_f64()
+            .map(|converted| converted.value)
+            .map_err(|_| EvalError::Unsupported("numeric argument conversion")),
     }
 }
 
-fn mysql_real_prefix(s: &str) -> f64 {
-    let s = s.trim_start();
-    let bytes = s.as_bytes();
-    let mut end = 0;
-    if matches!(bytes.first(), Some(b'+' | b'-')) {
-        end = 1;
-    }
-    let integer_start = end;
-    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
-        end += 1;
-    }
-    let has_integer = end != integer_start;
-    let mut has_fraction = false;
-    if bytes.get(end) == Some(&b'.') {
-        end += 1;
-        let fraction_start = end;
-        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
-            end += 1;
-        }
-        has_fraction = end != fraction_start;
-    }
-    if !has_integer && !has_fraction {
-        return 0.0;
-    }
-    if matches!(bytes.get(end), Some(b'e' | b'E')) {
-        let exponent_start = end;
-        let mut exponent_end = end + 1;
-        if matches!(bytes.get(exponent_end), Some(b'+' | b'-')) {
-            exponent_end += 1;
-        }
-        let exponent_digits = exponent_end;
-        while bytes.get(exponent_end).is_some_and(u8::is_ascii_digit) {
-            exponent_end += 1;
-        }
-        if exponent_end != exponent_digits {
-            end = exponent_end;
-        } else {
-            end = exponent_start;
-        }
-    }
-    match s[..end].parse::<f64>() {
-        Ok(value) if value.is_finite() => value,
-        // `types.StrToFloat` clamps an overflowing text magnitude to the
-        // largest finite DOUBLE and records a warning.  Keeping the clamp
-        // finite is important because this helper also feeds math signatures
-        // such as SQRT/LOG, not just comparisons.
-        Ok(_) | Err(_) if s.starts_with('-') => -f64::MAX,
-        Ok(_) | Err(_) => f64::MAX,
-    }
+/// `types.StrToFloat` over the RAW BYTES of a SQL string.
+///
+/// Go strings are byte slices, so `StrToFloat` scans a `latin1`/`binary`
+/// payload exactly as it scans a UTF-8 one: `ABS(0x3132FF)` is 12, not 0.
+/// Decoding lossily is equivalent AND total here, because every byte an
+/// invalid sequence can hold is a byte the numeric-prefix scan stops on
+/// anyway -- so U+FFFD ends the prefix precisely where the raw byte would.
+/// That leaves one implementation of the prefix rule instead of a decode
+/// that can fail and a fallback that has to guess.
+fn bytes_to_f64(bytes: &[u8]) -> f64 {
+    tidb_datatype::str_to_float(&String::from_utf8_lossy(bytes), false).value
 }
 
 fn real_compare(op: BinaryOp, a: f64, b: f64) -> Result<Datum, EvalError> {
@@ -1302,7 +1278,7 @@ fn null_safe_eq(l: Datum, r: Datum) -> Result<Datum, EvalError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{eval_binary, mysql_real_prefix};
+    use super::{bytes_to_f64, eval_binary, to_f64_with_mysql_string};
     use crate::{Datum, Decimal, EvalError};
     use tidb_ast::BinaryOp;
 
@@ -1428,6 +1404,66 @@ mod tests {
         );
     }
 
+    /// The SAME unclaimed kinds, reached through the FUNCTION callers rather
+    /// than through `eval_binary`.
+    ///
+    /// `eval_binary`'s guard above is a proof about one caller, and
+    /// `to_f64_with_mysql_string` has four others that guard nothing:
+    /// `math_fn`, `string_fn`, `builtin_ext::info` and
+    /// `builtin_ext::compare2`. Every one of them used to read a vector as
+    /// `0.0` -- `FORMAT_BYTES(vec)` answered `0 bytes`. TiDB errors on all of
+    /// these (`SQRT(VEC_FROM_TEXT('[1,2]'))`, `FIELD(1, ...)`,
+    /// `INTERVAL(1, ...)`, `FORMAT_BYTES(...)`, `FORMAT(..., 2)` -- captured,
+    /// each one `ERR`), and the enum/ordinal controls beside them must keep
+    /// their VALUES.
+    #[test]
+    fn function_callers_reject_the_unclaimed_kinds_too() {
+        use tidb_datatype::{Collation, MysqlEnum, VectorFloat32};
+        let vector = || Datum::VectorFloat32(VectorFloat32::must_create(vec![1.0, 2.0]));
+        assert!(to_f64_with_mysql_string(&vector()).is_err());
+        assert!(to_f64_with_mysql_string(&Datum::Raw(vec![0x08])).is_err());
+        // `Null` and the range sentinels are errors in Go's `ToFloat64` as
+        // well, and are no longer an `unreachable!` betting on the caller.
+        assert!(to_f64_with_mysql_string(&Datum::Null).is_err());
+        assert!(to_f64_with_mysql_string(&Datum::MaxValue).is_err());
+
+        for name in ["SQRT", "EXP", "LN", "SIN", "CEIL", "FLOOR"] {
+            assert!(
+                crate::math_fn::dispatch_values(name, &[vector()])
+                    .expect("dispatches")
+                    .is_err(),
+                "{name}(vector)"
+            );
+        }
+        assert!(crate::string_fn::field(&[Datum::Int(1), vector()]).is_err());
+        assert!(crate::string_fn::format_num(&[vector(), Datum::Int(2)]).is_err());
+        assert!(crate::builtin_ext::dispatch("FORMAT_BYTES", &[vector()])
+            .expect("dispatches")
+            .is_err());
+        assert!(
+            crate::builtin_ext::dispatch("INTERVAL", &[Datum::Int(1), vector()])
+                .expect("dispatches")
+                .is_err()
+        );
+
+        // CONTROLS: the kinds that DO convert keep TiDB's value. `'8'` is
+        // ordinal 2 of `enum('9','8','7')`, and `gorun` reads it as the
+        // ordinal, never as the name -- `SQRT(e)` is `SQRT(2)`.
+        let e = || Datum::Enum(MysqlEnum::new("8", 2), Collation::Utf8Mb4Bin);
+        assert_eq!(to_f64_with_mysql_string(&e()), Ok(2.0));
+        assert_eq!(
+            crate::math_fn::dispatch_values("SQRT", &[e()]).expect("dispatches"),
+            Ok(Datum::Real(2.0f64.sqrt()))
+        );
+        // `FORMAT_BYTES(e)` is `2 bytes`, not `0 bytes`.
+        assert_eq!(
+            crate::builtin_ext::dispatch("FORMAT_BYTES", &[e()])
+                .expect("dispatches")
+                .map(|value| value.sql_string().unwrap()),
+            Ok("2 bytes".to_owned())
+        );
+    }
+
     /// `enum`/`set` comparisons, both halves of Go's split.
     ///
     /// Against a NUMBER the ordinal is compared; against a STRING (or another
@@ -1508,10 +1544,21 @@ mod tests {
             ("1e", 1.0),
             ("not a number", 0.0),
         ] {
-            assert_eq!(mysql_real_prefix(text), expected, "{text}");
+            assert_eq!(bytes_to_f64(text.as_bytes()), expected, "{text}");
         }
-        assert_eq!(mysql_real_prefix("1e999"), f64::MAX);
-        assert_eq!(mysql_real_prefix("-1e999"), -f64::MAX);
+        assert_eq!(bytes_to_f64(b"1e999"), f64::MAX);
+        assert_eq!(bytes_to_f64(b"-1e999"), -f64::MAX);
+        // A `binary`/`latin1` payload is not UTF-8, and TiDB still reads its
+        // numeric prefix: `SELECT ABS(0x3132FF)` answers 12, captured from a
+        // running session. Reading it as 0.0 was a silent wrong answer.
+        assert_eq!(bytes_to_f64(&[b'1', b'2', 0xFF]), 12.0);
+        assert_eq!(bytes_to_f64(&[0xFF]), 0.0);
+        for datum in [
+            Datum::Bytes(vec![b'4', 0xFF]),
+            Datum::new_string(vec![b'4', 0xFF]),
+        ] {
+            assert_eq!(to_f64_with_mysql_string(&datum), Ok(4.0));
+        }
         assert_eq!(
             eval_binary(
                 BinaryOp::Eq,

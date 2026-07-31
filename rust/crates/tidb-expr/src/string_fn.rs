@@ -875,8 +875,8 @@ pub(crate) fn field_with_collation(
                     == Datum::Int(1)
             }
             FieldComparisonMode::Real => {
-                let needle = Datum::Real(to_f64_with_mysql_string(&vals[0]));
-                let candidate = Datum::Real(to_f64_with_mysql_string(v));
+                let needle = Datum::Real(to_f64_with_mysql_string(&vals[0])?);
+                let candidate = Datum::Real(to_f64_with_mysql_string(v)?);
                 crate::eval_binary(tidb_ast::BinaryOp::Eq, needle, candidate)? == Datum::Int(1)
             }
         };
@@ -1458,7 +1458,7 @@ fn format_number_text(value: &Datum) -> Result<Option<String>, EvalError> {
         // is this crate's port of that numeric-prefix conversion; its warning is
         // outside this value-only domain.
         Datum::String(_) | Datum::Bytes(_) => {
-            Some(crate::ops::to_f64_with_mysql_string(value).to_string())
+            Some(crate::ops::to_f64_with_mysql_string(value)?.to_string())
         }
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel FORMAT argument"));

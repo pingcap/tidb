@@ -30,7 +30,7 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
 /// `FORMAT_BYTES(value)`, ported from `builtinFormatBytesSig.evalString` and
 /// `GetFormatBytes` in `pkg/expression/builtin_info.go` / `util.go`.
 fn format_bytes(value: &Datum) -> Result<Datum, EvalError> {
-    let Some(value) = real_arg(value) else {
+    let Some(value) = real_arg(value)? else {
         return Ok(Datum::Null);
     };
     Ok(Datum::new_string(format_scaled(
@@ -52,7 +52,7 @@ fn format_bytes(value: &Datum) -> Result<Datum, EvalError> {
 /// Despite the similarly named MySQL documentation function, TiDB's SQL name
 /// is `FORMAT_NANO_TIME` and its input unit is nanoseconds.
 fn format_nano_time(value: &Datum) -> Result<Datum, EvalError> {
-    let Some(value) = real_arg(value) else {
+    let Some(value) = real_arg(value)? else {
         return Ok(Datum::Null);
     };
     Ok(Datum::new_string(format_scaled(
@@ -71,11 +71,13 @@ fn format_nano_time(value: &Datum) -> Result<Datum, EvalError> {
 
 /// The function classes build their sole argument as ETReal.  Reuse the
 /// shared MySQL numeric-prefix coercion so strings, decimals, and integers
-/// reach the formatter exactly as they do in TiDB; `NULL` alone propagates.
-fn real_arg(value: &Datum) -> Option<f64> {
+/// reach the formatter exactly as they do in TiDB; `NULL` alone propagates,
+/// and an argument with no ETReal reading at all (a vector, say) is the
+/// error TiDB raises rather than a formatted `0 bytes`.
+fn real_arg(value: &Datum) -> Result<Option<f64>, EvalError> {
     match value {
-        Datum::Null => None,
-        _ => Some(to_f64_with_mysql_string(value)),
+        Datum::Null => Ok(None),
+        _ => to_f64_with_mysql_string(value).map(Some),
     }
 }
 

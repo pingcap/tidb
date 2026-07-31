@@ -182,100 +182,36 @@ fn interval(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::Int(index as i64));
     }
 
-    let target = interval_real(&vals[0]);
+    let target = interval_real(&vals[0])?;
+    // Every boundary is converted UP FRONT: a boundary with no ETReal
+    // reading is an error in TiDB, and an error cannot leave
+    // `partition_point`'s comparator.
+    let boundaries = vals[1..]
+        .iter()
+        .map(|boundary| match boundary {
+            Datum::Null => Ok(None),
+            other => interval_real(other).map(Some),
+        })
+        .collect::<Result<Vec<_>, EvalError>>()?;
     let index = if nullable {
-        let mut index = vals.len() - 1;
-        for (offset, boundary) in vals[1..].iter().enumerate() {
-            if !matches!(boundary, Datum::Null) && target < interval_real(boundary) {
-                index = offset;
-                break;
-            }
-        }
-        index
+        boundaries
+            .iter()
+            .position(|boundary| boundary.is_some_and(|value| target < value))
+            .unwrap_or(vals.len() - 1)
     } else {
-        vals[1..].partition_point(|boundary| interval_real(boundary) <= target)
+        boundaries.partition_point(|boundary| boundary.is_some_and(|value| value <= target))
     };
     Ok(Datum::Int(index as i64))
 }
 
-/// TiDB's real signature evaluates every argument as `ETReal`. `Datum` has
-/// no type metadata, so this local conversion is limited to the scalar types
-/// it can represent; the string path implements MySQL's numeric-prefix rule
-/// required by `TestIntervalFunc` (`'b'` becomes `0`).
-fn interval_real(value: &Datum) -> f64 {
-    match value {
-        Datum::Int(value) => *value as f64,
-        Datum::UInt(value) => *value as f64,
-        Datum::Decimal(value) => value.to_f64(),
-        Datum::Real(value) => *value,
-        Datum::String(value) => value.as_utf8().map(mysql_real_prefix).unwrap_or(0.0),
-        Datum::Bytes(value) => std::str::from_utf8(value)
-            .map(mysql_real_prefix)
-            .unwrap_or(0.0),
-        Datum::Null | Datum::MinNotNull | Datum::MaxValue => {
-            unreachable!("non-scalar boundaries are rejected before conversion")
-        }
-        other => other.to_f64().map_or(0.0, |converted| converted.value),
-    }
-}
-
-/// Parses the numeric prefix MySQL uses when an `ETString` is evaluated as a
-/// real. No prefix (including an empty string) is numeric zero.
-fn mysql_real_prefix(text: &str) -> f64 {
-    let text = text.trim_start();
-    let bytes = text.as_bytes();
-    let mut end = 0;
-    if matches!(bytes.first(), Some(b'+' | b'-')) {
-        end = 1;
-    }
-    let integer_start = end;
-    while matches!(bytes.get(end), Some(b'0'..=b'9')) {
-        end += 1;
-    }
-    let mut has_digits = end > integer_start;
-    if matches!(bytes.get(end), Some(b'.')) {
-        let decimal = end;
-        end += 1;
-        let fractional_start = end;
-        while matches!(bytes.get(end), Some(b'0'..=b'9')) {
-            end += 1;
-        }
-        has_digits |= end > fractional_start;
-        if !has_digits {
-            end = decimal;
-        }
-    }
-    if has_digits && matches!(bytes.get(end), Some(b'e' | b'E')) {
-        let exponent = end;
-        end += 1;
-        if matches!(bytes.get(end), Some(b'+' | b'-')) {
-            end += 1;
-        }
-        let exponent_start = end;
-        while matches!(bytes.get(end), Some(b'0'..=b'9')) {
-            end += 1;
-        }
-        if exponent_start == end {
-            end = exponent;
-        }
-    }
-    if !has_digits {
-        return 0.0;
-    }
-    // `types.StrToFloat` saturates an overflowing `ParseFloat` result to the
-    // corresponding finite bound after recording the truncation warning. The
-    // INTERVAL test runs with truncation ignored, so the value used for the
-    // comparison is still `MAXFLOAT`/`-MAXFLOAT`, not zero. Rust's parser
-    // reports the overflow as an error, but this prefix is already known to
-    // be syntactically numeric; therefore every parse error here is that
-    // range condition.
-    text[..end].parse().unwrap_or_else(|_| {
-        if text.as_bytes().first() == Some(&b'-') {
-            -f64::MAX
-        } else {
-            f64::MAX
-        }
-    })
+/// TiDB's real signature evaluates every argument as `ETReal`, which is the
+/// same coercion `eval_binary` performs when a string meets a number -- down
+/// to `INTERVAL('b', ...)` reading `'b'` as 0 (`TestIntervalFunc`). Sharing
+/// that one port instead of keeping a second copy of the numeric-prefix rule
+/// here is what makes an invalid-UTF-8 boundary read its prefix rather than
+/// silently sort as zero.
+fn interval_real(value: &Datum) -> Result<f64, EvalError> {
+    crate::ops::to_f64_with_mysql_string(value)
 }
 
 /// `INET_ATON(expr)`: decimal dotted IPv4 to an unsigned 32-bit integer,
