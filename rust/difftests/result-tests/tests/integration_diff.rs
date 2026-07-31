@@ -209,6 +209,14 @@ const TOPICS: &[(&str, &str)] = &[
         "index-lookup pushdown against a partitioned table -- the smallest of \
          the four and the only one that reaches a partitioned read path at all",
     ),
+    (
+        "table/cache",
+        "reached zero divergences (82 matched, from 20) when a NOT NULL column \
+         added by `ALTER TABLE` stopped backfilling NULL into the rows written \
+         before it: the topic is dense in `ALTER TABLE ... ADD COLUMN` over \
+         tables that already hold rows, so it is the read-back of an origin \
+         default that it really gates",
+    ),
 ];
 
 /// Why one statement did not produce a comparable outcome. Every skip lands in
