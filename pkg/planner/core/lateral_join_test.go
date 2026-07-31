@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -45,9 +46,9 @@ func TestLateralJoinPlanBuilding(t *testing.T) {
 			expectApply: true,
 		},
 		{
-			name:        "LATERAL with LEFT JOIN not yet supported",
+			name:        "LATERAL with LEFT JOIN builds LogicalApply",
 			sql:         "SELECT * FROM t LEFT JOIN LATERAL (SELECT t.b) AS dt ON true",
-			expectError: true,
+			expectApply: true,
 		},
 		{
 			name:        "LATERAL with CROSS JOIN builds LogicalApply",
@@ -333,9 +334,9 @@ func TestLateralJoinErrorPaths(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name:        "LEFT JOIN with LATERAL not yet supported",
+			name:        "LEFT JOIN with LATERAL is valid",
 			sql:         "SELECT * FROM t LEFT JOIN LATERAL (SELECT t.a) AS dt ON true",
-			expectError: true,
+			expectError: false,
 		},
 		{
 			name:        "CROSS JOIN with LATERAL is valid",
@@ -562,6 +563,43 @@ func TestLateralJoinDecorrelateWithUSINGAndON(t *testing.T) {
 	require.NotNil(t, apply, "Expected LogicalApply to survive decorrelation")
 	require.Greater(t, len(apply.CorCols), 0,
 		"CorCols must not be empty; the LATERAL subquery references a merged USING column")
+}
+
+// TestLeftJoinLateralBuildsOuterApply verifies that LEFT JOIN LATERAL produces a
+// LeftOuterJoin Apply whose inner columns are nullable: the LATERAL subquery may
+// return no row for an outer row, and that row is then NULL-extended.
+func TestLeftJoinLateralBuildsOuterApply(t *testing.T) {
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	ctx := context.Background()
+
+	// t.a is NOT NULL in the test schema, so the inner side carries the flag until
+	// the outer join clears it.
+	sql := "SELECT * FROM t AS t1 LEFT JOIN LATERAL (SELECT a FROM t AS t2 WHERE t2.a=t1.a) AS dt ON TRUE"
+	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	nodeW := resolve.NewNodeW(stmt)
+	p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
+	require.NoError(t, err)
+
+	lp, ok := p.(base.LogicalPlan)
+	require.True(t, ok)
+	apply := findFirstLogicalApply(lp)
+	require.NotNil(t, apply, "LEFT JOIN LATERAL must build a LogicalApply")
+	require.Equal(t, base.LeftOuterJoin, apply.JoinType)
+	require.True(t, apply.IsLateral)
+
+	outerLen := apply.Children()[0].Schema().Len()
+	for i := outerLen; i < apply.Schema().Len(); i++ {
+		require.False(t, mysql.HasNotNullFlag(apply.Schema().Columns[i].RetType.GetFlag()),
+			"inner column %d of a LEFT JOIN LATERAL must be nullable", i)
+	}
+	require.NotNil(t, apply.FullSchema)
+	for i := outerLen; i < apply.FullSchema.Len(); i++ {
+		require.False(t, mysql.HasNotNullFlag(apply.FullSchema.Columns[i].RetType.GetFlag()),
+			"inner FullSchema column %d of a LEFT JOIN LATERAL must be nullable", i)
+	}
 }
 
 // Helper functions
