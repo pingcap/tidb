@@ -113,7 +113,11 @@ pub(crate) fn table_indexes(
     ///
     /// Captured: `create table n3 (a int, b int, unique key (a), key (a))`
     /// prints `UNIQUE KEY \`a\` (\`a\`)` and `KEY \`a_2\` (\`a\`)`.
-    fn anonymous_index_name(indexes: &[KvIndex], first_column: &str) -> String {
+    fn anonymous_index_name(
+        indexes: &[KvIndex],
+        reserved: &[String],
+        first_column: &str,
+    ) -> String {
         let mut id = 2;
         let mut name = if first_column.eq_ignore_ascii_case("primary") {
             id = 3;
@@ -121,15 +125,33 @@ pub(crate) fn table_indexes(
         } else {
             first_column.to_owned()
         };
-        while indexes
-            .iter()
-            .any(|index| index.name.eq_ignore_ascii_case(&name))
-        {
+        let taken = |name: &str| {
+            indexes
+                .iter()
+                .any(|index| index.name.eq_ignore_ascii_case(name))
+                || reserved
+                    .iter()
+                    .any(|given| given.eq_ignore_ascii_case(name))
+        };
+        while taken(&name) {
             name = format!("{first_column}_{id}");
             id += 1;
         }
         name
     }
+    // Go `checkConstraintNames` reserves every EXPLICIT key name in a first
+    // pass, then fills the anonymous ones from the same pool, so an anonymous
+    // index never takes a name a later constraint spells out. Captured:
+    // `create table n4 (a int, b int, key a_2(b), unique(a), key(a))` names
+    // the two anonymous keys `a` and `a_3`.
+    let mut reserved: Vec<String> = create
+        .table_constraints
+        .iter()
+        .filter_map(|constraint| match constraint {
+            tidb_ast::TableConstraint::Index(index) => index.name.clone(),
+            _ => None,
+        })
+        .collect();
     let mut indexes: Vec<KvIndex> = Vec::new();
 
     for constraint in &create.table_constraints {
@@ -166,14 +188,14 @@ pub(crate) fn table_indexes(
                 Some(given) => given,
                 None => match index.parts.first() {
                     Some(tidb_ast::IndexPart::Column { name, .. }) => {
-                        anonymous_index_name(&indexes, name)
+                        anonymous_index_name(&indexes, &reserved, name)
                     }
                     // Go `getAnonymousIndexPrefix`: an expression key part has
                     // no column name to be named after. Captured: two unnamed
                     // expression indexes become `expression_index` and
                     // `expression_index_2`.
                     Some(tidb_ast::IndexPart::Expr { .. }) => {
-                        anonymous_index_name(&indexes, "expression_index")
+                        anonymous_index_name(&indexes, &reserved, "expression_index")
                     }
                     None => return Err(DriverError::Unsupported("an index names no column")),
                 },
@@ -224,17 +246,30 @@ pub(crate) fn table_indexes(
         for option in &def.options {
             if let tidb_ast::ColumnOption::InlineKey(key) = option {
                 match key.kind {
+                    // An inline `UNIQUE` is an anonymous constraint like any
+                    // other: Go names it after its column and appends `_2`,
+                    // `_3`, ... on a collision. Naming it `def.name` outright
+                    // let `create table (a int unique unique)` build a table
+                    // with TWO indexes called `a` -- a catalog whose own
+                    // `SHOW CREATE TABLE` body cannot be re-executed.
                     tidb_ast::InlineKeyKind::Unique => {
                         let offset = offset_of(&def.name)?;
-                        push(&mut indexes, def.name.clone(), true, vec![offset], true);
+                        let name = anonymous_index_name(&indexes, &reserved, &def.name);
+                        push(&mut indexes, name, true, vec![offset], true);
                     }
                     // A primary key that is not the row handle still needs an
-                    // index to enforce its uniqueness.
-                    tidb_ast::InlineKeyKind::Primary { .. } if !pk_is_handle => {
+                    // index to enforce its uniqueness. Either way it CONSUMES
+                    // the anonymous name for its column before it is renamed
+                    // to `PRIMARY`, which is why Go's captured
+                    // `create table p1 (a int primary key unique, b int)`
+                    // calls the unique key `a_2` and not `a`.
+                    tidb_ast::InlineKeyKind::Primary { .. } => {
                         let offset = offset_of(&def.name)?;
-                        push(&mut indexes, "PRIMARY".to_owned(), true, vec![offset], true);
+                        reserved.push(anonymous_index_name(&indexes, &reserved, &def.name));
+                        if !pk_is_handle {
+                            push(&mut indexes, "PRIMARY".to_owned(), true, vec![offset], true);
+                        }
                     }
-                    tidb_ast::InlineKeyKind::Primary { .. } => {}
                 }
             }
         }
