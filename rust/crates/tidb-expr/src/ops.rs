@@ -390,7 +390,7 @@ pub(crate) fn eval_binary_full(
         return decimal_binary(op, l, r, ctx);
     }
     if op == NullEq {
-        return Ok(null_safe_eq(l, r));
+        return null_safe_eq(l, r);
     }
     // By this point `l`/`r` should only be an integral value or `Null`: `Str`
     // is guarded out at the very top, `Float`/`Decimal`/`Div`/`Json`/temporal
@@ -1125,9 +1125,22 @@ fn f64_to_u64(f: f64) -> Option<u64> {
 /// has no arm: `TypeBit`'s eval type is ETInt, so Go compares a bit column
 /// NUMERICALLY even against a string (confirmed via `gorun`: for `bit(16) b`
 /// holding `b'0100000101000010'`, `b = 'AB'` is 0 while `b = 16706` is 1).
+/// `Enum`/`Set` DO get an arm, and it is their NAME, not their ordinal.
+/// Go's `compareMysqlEnum`/`compareMysqlSet` compare against a `KindString`,
+/// `KindBytes`, `KindMysqlEnum` or `KindMysqlSet` operand through the
+/// COLLATOR on the element spelling, and drop to the ordinal only in the
+/// `default` arm -- which is where a numeric operand lands, and where
+/// [`integer_of`] already puts them. Captured via `gorun` for
+/// `enum('a','b','c') e` holding `'b'` and `set('x','y') s` holding `'x'`:
+/// `e = 'b'` is 1, `e < 'c'` is 1, `e = 'zzz'` is 0, `s = 'x'` is 1, and
+/// `e = e2` is 1 for a DIFFERENTLY ORDERED `enum('b','z')` also holding
+/// `'b'` -- ordinal 2 against ordinal 1, equal only by name. The numeric
+/// readings stay: `e = 2` is 1 and `e <=> 3` is 0.
 fn string_cmp_operand(value: &Datum, comparison: bool) -> Option<&[u8]> {
     match value {
         Datum::BinaryLiteral(literal) if comparison => Some(literal.as_bytes()),
+        Datum::Enum(value, _) if comparison => Some(value.name().as_bytes()),
+        Datum::Set(value, _) if comparison => Some(value.name().as_bytes()),
         other => other.as_raw_bytes(),
     }
 }
@@ -1202,25 +1215,42 @@ fn logic_xor(l: Datum, r: Datum) -> Result<Datum, EvalError> {
     })
 }
 
-/// Only ever called from `eval_binary`'s own `NullEq` arm, AFTER its
-/// `Str`/`Float`/`Decimal` guards have already run — so `l`/`r` here can
-/// only be `Int` or `Null`, the SAME invariant `eval_binary`'s own final
-/// match relies on (see that match's own comment). An explicit
-/// `unreachable!()` for anything else, not a silent wildcard, for the
-/// same reason.
-fn null_safe_eq(l: Datum, r: Datum) -> Datum {
-    match (l, r) {
-        (Datum::Int(a), Datum::Int(b)) => bool_int(a == b),
-        (Datum::Int(a), Datum::UInt(b)) => {
-            bool_int(integer_cmp(Integer::Signed(a), Integer::Unsigned(b)).is_eq())
-        }
-        (Datum::UInt(a), Datum::Int(b)) => {
-            bool_int(integer_cmp(Integer::Unsigned(a), Integer::Signed(b)).is_eq())
-        }
-        (Datum::UInt(a), Datum::UInt(b)) => bool_int(a == b),
-        (Datum::Null, Datum::Null) => Datum::Int(1),
-        (Datum::Null, _) | (_, Datum::Null) => Datum::Int(0),
-        (l, r) => unreachable!("null_safe_eq's own caller excludes this: {l:?} {r:?}"),
+/// Called from `eval_binary`'s own `NullEq` arm, after its `Str`/`Float`/
+/// `Decimal`/`Json`/temporal guards have run.
+///
+/// The comment this replaces claimed the survivors "can only be `Int` or
+/// `Null`". That was FALSE, and asserted without a capture. `Enum`, `Set`,
+/// `Bit` and `BinaryLiteral` all reach here -- none is a string by
+/// `as_raw_bytes`, and none has a numeric guard above -- and every one of
+/// them hit the `unreachable!` and ABORTED THE PROCESS. `e <=> 2` on an
+/// `enum` column was a one-query kill switch for the whole server.
+///
+/// The four are integral values, which is exactly what [`integer_of`]
+/// already says about them, matching the `default` arms of Go's
+/// `compareMysqlEnum`/`compareMysqlSet`/`compareBinaryLiteral` (all of which
+/// fall through to a numeric comparison for a non-string operand). Captured
+/// via `gorun` for `enum('a','b','c') e` = `'b'`, `set('x','y') s` = `'x'`,
+/// `bit(8) b` = `b'00000010'`: `e <=> 2` is 1, `e <=> 5` is 0,
+/// `e <=> null` is 0, `s <=> 1` is 1, `b <=> 2` is 1.
+///
+/// (`e <=> 'b'` is 1 too, but that pair never arrives here -- comparing an
+/// enum with a string is a NAME comparison resolved by
+/// [`string_cmp_operand`] further up.)
+///
+/// `<=>` is the one comparison with no NULL result: an operand that is NULL
+/// makes the answer 0, or 1 when both are, and never propagates.
+fn null_safe_eq(l: Datum, r: Datum) -> Result<Datum, EvalError> {
+    match (&l, &r) {
+        (Datum::Null, Datum::Null) => return Ok(Datum::Int(1)),
+        (Datum::Null, _) | (_, Datum::Null) => return Ok(Datum::Int(0)),
+        _ => {}
+    }
+    match (integer_of(&l)?, integer_of(&r)?) {
+        (Some(a), Some(b)) => Ok(bool_int(integer_cmp(a, b).is_eq())),
+        // The residue is an error, not a panic, for the reason recorded on
+        // `eval_binary_full`'s own residue: the previous assertion that this
+        // point was unreachable was wrong, and being wrong cost the process.
+        _ => Err(EvalError::UnsupportedOperandPair(l.kind(), r.kind())),
     }
 }
 
@@ -1349,6 +1379,76 @@ mod tests {
         assert_eq!(
             eval_binary(BinaryOp::Lt, raw(), Datum::Bytes(vec![0x09])),
             Ok(Datum::Int(1))
+        );
+    }
+
+    /// `enum`/`set` comparisons, both halves of Go's split.
+    ///
+    /// Against a NUMBER the ordinal is compared; against a STRING (or another
+    /// enum/set) the element NAME is, through the collator. Go's
+    /// `compareMysqlEnum`/`compareMysqlSet` make that split explicitly and
+    /// this evaluator made neither side of it: the numeric side reached
+    /// `null_safe_eq`'s `unreachable!` and ABORTED THE PROCESS on
+    /// `e <=> 2`, and the name side fell to the string-vs-numeric rule,
+    /// which read `'b'` as the numeric prefix `0.0` and answered `e = 'b'`
+    /// FALSE.
+    ///
+    /// Every expectation below is a `gorun` capture over
+    /// `enum('a','b','c') e` holding `'b'`, a second `enum('b','z') e2` also
+    /// holding `'b'`, and `set('x','y') s` holding `'x'`.
+    #[test]
+    fn enum_and_set_compare_by_name_against_text_and_by_ordinal_against_numbers() {
+        use tidb_datatype::{Collation, MysqlEnum, MysqlSet};
+        // 'b' is ordinal 2 in enum('a','b','c') but ordinal 1 in enum('b','z').
+        let e = || Datum::Enum(MysqlEnum::new("b", 2), Collation::Utf8Mb4Bin);
+        let e2 = || Datum::Enum(MysqlEnum::new("b", 1), Collation::Utf8Mb4Bin);
+        let s = || Datum::Set(MysqlSet::new("x", 1), Collation::Utf8Mb4Bin);
+        let text = |t: &str| Datum::Bytes(t.as_bytes().to_vec());
+
+        // Against text: by NAME. `e = e2` is the sharpest case -- ordinal 2
+        // against ordinal 1, equal only because both spell "b".
+        for (op, l, r, want) in [
+            (BinaryOp::Eq, e(), text("b"), 1),
+            (BinaryOp::NullEq, e(), text("b"), 1),
+            (BinaryOp::Lt, e(), text("c"), 1),
+            (BinaryOp::Eq, e(), text("zzz"), 0),
+            (BinaryOp::Eq, e(), e2(), 1),
+            (BinaryOp::Eq, s(), text("x"), 1),
+        ] {
+            assert_eq!(
+                eval_binary(op, l.clone(), r.clone()),
+                Ok(Datum::Int(want)),
+                "{l:?} {op:?} {r:?}"
+            );
+        }
+
+        // Against a number: by ORDINAL, and `<=>` never yields NULL.
+        for (op, l, r, want) in [
+            (BinaryOp::Eq, e(), Datum::Int(2), 1),
+            (BinaryOp::NullEq, e(), Datum::Int(2), 1),
+            (BinaryOp::NullEq, e(), Datum::Int(5), 0),
+            (BinaryOp::NullEq, e(), Datum::Null, 0),
+            (BinaryOp::NullEq, s(), Datum::Int(1), 1),
+            (BinaryOp::Eq, s(), Datum::Int(1), 1),
+        ] {
+            assert_eq!(
+                eval_binary(op, l.clone(), r.clone()),
+                Ok(Datum::Int(want)),
+                "{l:?} {op:?} {r:?}"
+            );
+        }
+
+        // A BIT column stays numeric even against text -- `TypeBit`'s eval
+        // type is ETInt -- so it deliberately gains no name arm. `b <=> 2`
+        // is 1 where it used to abort.
+        let bit = || Datum::Bit(tidb_datatype::BinaryLiteral::from(vec![0x02_u8]));
+        assert_eq!(
+            eval_binary(BinaryOp::NullEq, bit(), Datum::Int(2)),
+            Ok(Datum::Int(1))
+        );
+        assert_eq!(
+            eval_binary(BinaryOp::NullEq, bit(), Datum::Null),
+            Ok(Datum::Int(0))
         );
     }
 
