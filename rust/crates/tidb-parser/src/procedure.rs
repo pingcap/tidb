@@ -240,9 +240,9 @@ impl Parser {
             if token.kind != TokenKind::Str {
                 return Err(self.err_here("expected SQLSTATE string"));
             }
-            return Ok(ProcedureHandlerCondition::SqlState(self.decode_string(
-                &token.text,
-            )));
+            return Ok(ProcedureHandlerCondition::SqlState(
+                self.decode_string(&token.text),
+            ));
         }
         if self.is_kw("SQLWARNING") {
             self.bump();

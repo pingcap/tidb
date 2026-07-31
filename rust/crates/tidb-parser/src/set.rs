@@ -468,7 +468,10 @@ impl Parser {
         // lower-case variable name even when the source wrote `SQL_MODE` in
         // upper case. Keep this normalization local to SET's variable leaf;
         // expression-level `@@` references retain their own AST contract.
-        Ok((scope, decode_set_variable_name(self, name).to_ascii_lowercase()))
+        Ok((
+            scope,
+            decode_set_variable_name(self, name).to_ascii_lowercase(),
+        ))
     }
 
     fn parse_system_variable_name(&mut self) -> PResult<String> {

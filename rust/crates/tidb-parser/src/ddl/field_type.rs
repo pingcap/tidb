@@ -244,7 +244,9 @@ impl Parser {
                     let value = match token.kind {
                         TokenKind::Str => {
                             self.bump();
-                            ColumnTypeArg::text(self.decode_string(&token.text).trim_end_matches(' '))
+                            ColumnTypeArg::text(
+                                self.decode_string(&token.text).trim_end_matches(' '),
+                            )
                         }
                         TokenKind::HexLit | TokenKind::BitLit => {
                             self.bump();

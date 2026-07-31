@@ -747,7 +747,6 @@ impl Parser {
         }
     }
 
-
     fn reset_param_marker_positions(&mut self) {
         self.param_marker_position = 0;
     }
@@ -1143,9 +1142,9 @@ impl Parser {
                 return Err(self.err_here("expected PLAN REPLAYER file"));
             }
             return Ok(Stmt::Admin(tidb_ast::NodeBox::new(
-                AdminStmt::PlanReplayer(Box::new(PlanReplayerStmt::Load(self.decode_string(
-                    &token.text,
-                )))),
+                AdminStmt::PlanReplayer(Box::new(PlanReplayerStmt::Load(
+                    self.decode_string(&token.text),
+                ))),
             )));
         }
         if self.is_kw("CAPTURE") {
@@ -1341,7 +1340,8 @@ impl Parser {
     /// strings, back-quoted identifiers, and single-@ names when their payload
     /// spells the requested word.
     fn token_literal_is_at(&self, offset: usize, expected: &str) -> bool {
-        self.token_literal_text(self.peek_n(offset)).eq_ignore_ascii_case(expected)
+        self.token_literal_text(self.peek_n(offset))
+            .eq_ignore_ascii_case(expected)
     }
 
     fn expect_token_literal(&mut self, expected: &str) -> PResult<()> {
@@ -1357,7 +1357,9 @@ impl Parser {
     fn keyword_or_ident_is_at(&self, offset: usize, expected: &str) -> bool {
         let token = self.peek_n(offset);
         matches!(token.kind, TokenKind::Keyword | TokenKind::Ident)
-            && self.token_literal_text(token).eq_ignore_ascii_case(expected)
+            && self
+                .token_literal_text(token)
+                .eq_ignore_ascii_case(expected)
     }
 
     fn expect_keyword_or_ident(&mut self, expected: &str) -> PResult<()> {
@@ -1372,7 +1374,10 @@ impl Parser {
     /// `isIdentLike`, then dispatch on the decoded literal.
     fn ident_like_literal_is_at(&self, offset: usize, expected: &str) -> bool {
         let token = self.peek_n(offset);
-        is_ident_like_name(token) && self.token_literal_text(token).eq_ignore_ascii_case(expected)
+        is_ident_like_name(token)
+            && self
+                .token_literal_text(token)
+                .eq_ignore_ascii_case(expected)
     }
 
     fn parse_ident_like_name_list(&mut self) -> PResult<Vec<String>> {

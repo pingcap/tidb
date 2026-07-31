@@ -80,7 +80,10 @@ fn no_backslash_escapes_reaches_select_and_the_re_parsed_insert() {
 
     assert_eq!(one(&mut session, r"SELECT LENGTH('a\nb')"), "3");
     session.run(r"INSERT INTO t VALUES (1, 'a\nb')").unwrap();
-    assert_eq!(one(&mut session, "SELECT LENGTH(s) FROM t WHERE id = 1"), "3");
+    assert_eq!(
+        one(&mut session, "SELECT LENGTH(s) FROM t WHERE id = 1"),
+        "3"
+    );
 
     session.run("SET sql_mode='NO_BACKSLASH_ESCAPES'").unwrap();
 
@@ -88,11 +91,17 @@ fn no_backslash_escapes_reaches_select_and_the_re_parsed_insert() {
     // The write door: the backslash is an ordinary character, so four bytes
     // are STORED, not three.
     session.run(r"INSERT INTO t VALUES (2, 'a\nb')").unwrap();
-    assert_eq!(one(&mut session, "SELECT LENGTH(s) FROM t WHERE id = 2"), "4");
+    assert_eq!(
+        one(&mut session, "SELECT LENGTH(s) FROM t WHERE id = 2"),
+        "4"
+    );
 
     // ... and the row written under the default mode is untouched: the mode
     // decides how text is LEXED, not how stored bytes are read back.
-    assert_eq!(one(&mut session, "SELECT LENGTH(s) FROM t WHERE id = 1"), "3");
+    assert_eq!(
+        one(&mut session, "SELECT LENGTH(s) FROM t WHERE id = 1"),
+        "3"
+    );
 }
 
 /// An UPDATE re-parses its own text too, so the same flag has to reach it.
@@ -105,7 +114,9 @@ fn no_backslash_escapes_reaches_update_and_delete() {
     session.run("INSERT INTO u VALUES (1, 'x')").unwrap();
     session.run("SET sql_mode='NO_BACKSLASH_ESCAPES'").unwrap();
 
-    session.run(r"UPDATE u SET s = 'a\nb' WHERE id = 1").unwrap();
+    session
+        .run(r"UPDATE u SET s = 'a\nb' WHERE id = 1")
+        .unwrap();
     assert_eq!(one(&mut session, "SELECT LENGTH(s) FROM u"), "4");
 
     // The DELETE door lexes the same literal, so it matches the row the
@@ -132,9 +143,7 @@ fn ansi_quotes_makes_a_double_quoted_token_an_identifier() {
 
     // The write door -- a re-parsed statement -- reads the same token the same
     // way: the UPDATE names the COLUMN on both sides.
-    session
-        .run(r#"UPDATE t SET "id" = "id" + 1"#)
-        .unwrap();
+    session.run(r#"UPDATE t SET "id" = "id" + 1"#).unwrap();
     assert_eq!(one(&mut session, r#"SELECT "id" FROM t"#), "8");
 }
 

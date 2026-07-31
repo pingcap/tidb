@@ -984,8 +984,9 @@ impl Parser {
             TokenKind::Ident => self.parse_ident_or_func(),
             TokenKind::UserVar => {
                 self.bump();
-                let var =
-                    self.parse_variable(&t.text).ok_or_else(|| self.err_here("malformed variable"))?;
+                let var = self
+                    .parse_variable(&t.text)
+                    .ok_or_else(|| self.err_here("malformed variable"))?;
                 // `:=` following ANY variable atom is an inline
                 // assignment expression, ALWAYS targeting a plain user
                 // variable by its own bare name regardless of whether

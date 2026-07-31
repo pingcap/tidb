@@ -103,7 +103,9 @@ impl Parser {
                     ));
                 } else if option.text.eq_ignore_ascii_case("SPEED") {
                     let value = self.bump();
-                    options.push(TrafficReplayOption::Speed(traffic_token_value(self, &value)));
+                    options.push(TrafficReplayOption::Speed(traffic_token_value(
+                        self, &value,
+                    )));
                 } else if option.text.eq_ignore_ascii_case("READ_ONLY")
                     || option.text.eq_ignore_ascii_case("READONLY")
                 {
