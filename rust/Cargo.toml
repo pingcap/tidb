@@ -120,6 +120,17 @@ hashbrown = "=0.15.5"
 # distribution, rather than storing a test-only marker disconnected from map
 # behavior.
 foldhash = "=0.1.5"
+# Inbound TLS on the MySQL port (Go's `pkg/server`: `crypto/tls` +
+# `tls.LoadX509KeyPair`, with a self-signed pair generated under `auto-tls`).
+# rustls is already in this lockfile through the TiKV client's gRPC transport,
+# and the `ring` provider it uses is likewise already built, so the MySQL port
+# reuses that same TLS stack rather than introducing a second one. `rcgen` is
+# the counterpart of Go's `createTLSCertificates`.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pemfile = "2"
+# Default features drag in `x509-parser` (for reading an existing CA) which
+# this node never does: it only emits one self-signed leaf.
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"        # Phase 0 is safe Rust end-to-end.

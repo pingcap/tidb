@@ -26,7 +26,8 @@ use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
 
 use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
-use crate::mysql_connection::{serve_mysql_connection, MysqlConnectionError};
+use crate::mysql_connection::{serve_mysql_connection_with_tls, MysqlConnectionError};
+use crate::mysql_tls::{resolve_server_tls, MysqlServerTls};
 use crate::node_config::NodeConfig;
 use crate::resultset_source::ResultSetSource;
 use tidb_session::process::ProcessKillTarget;
@@ -896,6 +897,9 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     users: Arc<ConfiguredUserStore>,
     tracker: Arc<ConnectionTracker>,
     max_allowed_packet: usize,
+    /// Server TLS material, or `None` for a plaintext-only MySQL port. This is
+    /// the only thing that lets a connection advertise `CLIENT_SSL`.
+    tls: Option<MysqlServerTls>,
     worker_count: usize,
     shutdown: ShutdownHandle,
     shutdown_grace: Duration,
@@ -909,16 +913,28 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         factory: Arc<F>,
         users: Arc<ConfiguredUserStore>,
     ) -> Result<Self, SqlNodeError> {
+        let tls = resolve_server_tls(
+            config.ssl_cert.as_deref(),
+            config.ssl_key.as_deref(),
+            config.auto_tls,
+        )
+        .map_err(|error| SqlNodeError::Tls(error.to_string()))?;
         let listener = TcpListener::bind((config.host, config.port)).map_err(SqlNodeError::Bind)?;
         listener
             .set_nonblocking(true)
             .map_err(SqlNodeError::Listener)?;
+        eprintln!(
+            "{{\"event\":\"mysql_tls\",\"enabled\":{},\"origin\":{:?}}}",
+            tls.is_some(),
+            tls.as_ref().map_or("none", MysqlServerTls::origin)
+        );
         Ok(Self {
             listener,
             factory,
             users,
             tracker: Arc::new(ConnectionTracker::default()),
             max_allowed_packet: config.max_allowed_packet,
+            tls,
             worker_count: config.max_connections,
             shutdown: ShutdownHandle::default(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
@@ -1004,6 +1020,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             &self.users,
             &self.tracker,
             self.max_allowed_packet,
+            self.tls.clone(),
         )?;
 
         let mut accepted = 0_usize;
@@ -1102,6 +1119,7 @@ fn spawn_workers<F: QuerySessionFactory>(
     users: &Arc<ConfiguredUserStore>,
     tracker: &Arc<ConnectionTracker>,
     max_allowed_packet: usize,
+    tls: Option<MysqlServerTls>,
 ) -> Result<WorkerPool, SqlNodeError> {
     spawn_workers_with(
         count,
@@ -1109,6 +1127,7 @@ fn spawn_workers<F: QuerySessionFactory>(
         users,
         tracker,
         max_allowed_packet,
+        tls,
         |index, job| {
             std::thread::Builder::new()
                 .name(format!("tidb-sql-connection-{index}"))
@@ -1123,6 +1142,7 @@ fn spawn_workers_with<F, S>(
     users: &Arc<ConfiguredUserStore>,
     tracker: &Arc<ConnectionTracker>,
     max_allowed_packet: usize,
+    tls: Option<MysqlServerTls>,
     mut spawn: S,
 ) -> Result<WorkerPool, SqlNodeError>
 where
@@ -1140,6 +1160,7 @@ where
         let worker_tracker = Arc::clone(tracker);
         let worker_available = available_sender.clone();
         let worker_terminal = terminal_sender.clone();
+        let worker_tls = tls.clone();
         let job: WorkerJob = Box::new(move || {
             run_worker(
                 index,
@@ -1153,7 +1174,7 @@ where
                         cancellation,
                         registration: _registration,
                     } = work;
-                    if let Err(error) = serve_mysql_connection(
+                    if let Err(error) = serve_mysql_connection_with_tls(
                         stream,
                         peer_addr,
                         cancellation,
@@ -1161,6 +1182,7 @@ where
                         users.as_ref(),
                         &worker_tracker,
                         max_allowed_packet,
+                        worker_tls.as_ref(),
                     ) {
                         let message = error.to_string();
                         eprintln!("{{\"event\":\"connection_error\",\"error\":{message:?}}}");
@@ -1316,6 +1338,8 @@ pub enum SqlNodeError {
     ConnectionIdentityExhausted,
     /// One accepted connection failed in a direct lifecycle proof.
     Connection(MysqlConnectionError),
+    /// Server TLS material for the MySQL port could not be obtained.
+    Tls(String),
     /// Independent node or drain failures retained after all cleanup attempts.
     Multiple(Vec<SqlNodeError>),
 }
@@ -1339,6 +1363,7 @@ impl fmt::Display for SqlNodeError {
                 formatter.write_str("SQL connection identity space exhausted")
             }
             Self::Connection(error) => write!(formatter, "MySQL connection failed: {error}"),
+            Self::Tls(detail) => write!(formatter, "MySQL port TLS is unusable: {detail}"),
             Self::Multiple(failures) => {
                 formatter.write_str("multiple SQL node failures")?;
                 for failure in failures {
@@ -1360,6 +1385,7 @@ impl std::error::Error for SqlNodeError {
             | Self::WorkersPanicked { .. }
             | Self::WorkerStatePoisoned
             | Self::ConnectionIdentityExhausted
+            | Self::Tls(_)
             | Self::Multiple(_) => None,
         }
     }

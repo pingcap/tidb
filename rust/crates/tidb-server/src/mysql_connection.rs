@@ -34,11 +34,12 @@ use crate::connection_resultset::{
     write_connection_binary_result_set_to_sink, write_connection_result_set_to_sink,
 };
 use crate::handshake::{
-    negotiate_capabilities, parse_response, InitialHandshake, AUTH_NATIVE_PASSWORD,
-    CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41,
-    CLIENT_SECURE_CONNECTION, DEFAULT_COLLATION_ID, SERVER_STATUS_AUTOCOMMIT,
-    SERVER_STATUS_IN_TRANS,
+    negotiate_capabilities, parse_response, parse_response_header, InitialHandshake,
+    AUTH_NATIVE_PASSWORD, CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH,
+    CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION, CLIENT_SSL, DEFAULT_COLLATION_ID,
+    SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_IN_TRANS,
 };
+use crate::mysql_tls::{ClientStream, MysqlServerTls};
 use crate::native_password::generate_handshake_salt;
 use crate::resultset_source::ResultSetSource;
 use crate::resultset_writer::{ResultSetSink, SinkWriteError};
@@ -333,8 +334,10 @@ impl From<PacketError> for MysqlConnectionError {
     }
 }
 
-/// Serves one accepted socket through handshake, authentication, commands,
-/// result/error writes, and exactly-once connection cleanup.
+/// Serves one accepted socket on a MySQL port that offers no TLS.
+///
+/// The port advertises no `CLIENT_SSL`, so a client that wants TLS is refused
+/// by the negotiation rather than left waiting for an upgrade.
 pub fn serve_mysql_connection<F: QuerySessionFactory>(
     stream: TcpStream,
     peer_addr: SocketAddr,
@@ -343,6 +346,36 @@ pub fn serve_mysql_connection<F: QuerySessionFactory>(
     users: &ConfiguredUserStore,
     tracker: &Arc<ConnectionTracker>,
     max_allowed_packet: usize,
+) -> Result<ConnectionReport, MysqlConnectionError> {
+    serve_mysql_connection_with_tls(
+        stream,
+        peer_addr,
+        cancellation,
+        factory,
+        users,
+        tracker,
+        max_allowed_packet,
+        None,
+    )
+}
+
+/// Serves one accepted socket through handshake, optional TLS upgrade,
+/// authentication, commands, result/error writes, and exactly-once connection
+/// cleanup.
+///
+/// `tls` is both the advertisement and the capability: `CLIENT_SSL` reaches the
+/// initial handshake packet exactly when material is present, matching Go's
+/// `s.capability |= mysql.ClientSSL` guard in `pkg/server/server.go`.
+#[allow(clippy::too_many_arguments)]
+pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
+    stream: TcpStream,
+    peer_addr: SocketAddr,
+    cancellation: ConnectionCancellation,
+    factory: &F,
+    users: &ConfiguredUserStore,
+    tracker: &Arc<ConnectionTracker>,
+    max_allowed_packet: usize,
+    tls: Option<&MysqlServerTls>,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
     let mut lease = tracker.begin();
     eprintln!(
@@ -363,6 +396,7 @@ pub fn serve_mysql_connection<F: QuerySessionFactory>(
         factory,
         users,
         max_allowed_packet,
+        tls,
         &mut commands,
     );
     let failed = result.is_err() && !shutdown.is_cancelled();
@@ -387,6 +421,7 @@ pub fn serve_mysql_connection<F: QuerySessionFactory>(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serve_connection_inner<F: QuerySessionFactory>(
     stream: TcpStream,
     identity: AcceptedConnectionIdentity,
@@ -394,6 +429,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     factory: &F,
     users: &ConfiguredUserStore,
     max_allowed_packet: usize,
+    tls: Option<&MysqlServerTls>,
     commands: &mut ConnectionCommandCounts,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
     let AcceptedConnectionIdentity {
@@ -401,13 +437,25 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         peer_addr,
     } = identity;
     stream.set_nodelay(true).map_err(MysqlConnectionError::Io)?;
-    let mut output = stream.try_clone().map_err(MysqlConnectionError::Io)?;
+    // The KILL path shuts the raw socket down from another thread, so it keeps
+    // its own descriptor: a TLS session cannot be cloned, and shutting the
+    // descriptor down is what wakes a blocked read either way.
     let stream_for_close = stream.try_clone().map_err(MysqlConnectionError::Io)?;
+    // Reader and writer share one connection object, because after a TLS
+    // upgrade there is exactly one TLS session and both directions run through
+    // it.
+    let socket = ClientStream::plain(stream);
+    let mut output = socket.clone();
+    let server_capabilities = if tls.is_some() {
+        SERVER_CAPABILITIES | CLIENT_SSL
+    } else {
+        SERVER_CAPABILITIES
+    };
     let salt = generate_handshake_salt();
     let handshake = InitialHandshake {
         connection_id: u32::try_from(connection_id).unwrap_or(u32::MAX),
         salt: salt.to_vec(),
-        capability: SERVER_CAPABILITIES,
+        capability: server_capabilities,
         collation: DEFAULT_COLLATION_ID,
         status_flags: SERVER_STATUS_AUTOCOMMIT,
         server_version: "5.7.25-TiDB-Rust".to_owned(),
@@ -422,9 +470,27 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         .map_err(MysqlConnectionError::Io)?;
     output.flush().map_err(MysqlConnectionError::Io)?;
 
-    let mut reader = PacketReader::with_max_allowed_packet(stream, max_allowed_packet);
+    let mut reader = PacketReader::with_max_allowed_packet(socket.clone(), max_allowed_packet);
     reader.set_sequence(1);
-    let auth_payload = reader.read_packet()?;
+    let mut auth_payload = reader.read_packet()?;
+    // Go's `clientConn.handshake`: the common header is parsed first, and a
+    // response that set CLIENT_SSL while the server holds a TLS config is a
+    // *truncated* SSLRequest -- the socket is upgraded and the client repeats a
+    // full HandshakeResponse41 over the encrypted stream, so this connection
+    // reads two response packets. Sequence numbering is continuous across the
+    // upgrade, which is why every later reply sequence shifts by one.
+    let mut reply_sequence = 2_u8;
+    if let Some(tls) = tls {
+        let wants_tls = parse_response_header(&auth_payload)
+            .is_ok_and(|(header, _)| header.capability & CLIENT_SSL != 0);
+        if wants_tls {
+            socket
+                .upgrade_to_tls(tls)
+                .map_err(MysqlConnectionError::Io)?;
+            auth_payload = reader.read_packet()?;
+            reply_sequence = 3;
+        }
+    }
     let response = match parse_response(&auth_payload) {
         Ok(response) => response,
         Err(_error) => {
@@ -433,7 +499,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             // like this.
             write_error(
                 &mut output,
-                2,
+                reply_sequence,
                 ER_ACCESS_DENIED_ERROR,
                 *b"28000",
                 access_denied_message("", &peer_addr.ip().to_string(), &[]),
@@ -447,12 +513,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             });
         }
     };
-    let capabilities = match negotiate_capabilities(response.capability, SERVER_CAPABILITIES) {
+    let capabilities = match negotiate_capabilities(response.capability, server_capabilities) {
         Ok(capabilities) => capabilities,
         Err(_error) => {
             write_error(
                 &mut output,
-                2,
+                reply_sequence,
                 ER_ACCESS_DENIED_ERROR,
                 *b"28000",
                 access_denied_message(&response.user, &peer_addr.ip().to_string(), &response.auth),
@@ -470,7 +536,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     if !protocol_41 {
         write_error(
             &mut output,
-            2,
+            reply_sequence,
             ER_ACCESS_DENIED_ERROR,
             *b"28000",
             access_denied_message(&response.user, &peer_addr.ip().to_string(), &response.auth),
@@ -489,11 +555,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     {
         let request = AuthSwitchRequest::new(AUTH_NATIVE_PASSWORD, salt.to_vec())
             .map_err(|error| MysqlConnectionError::Handshake(error.to_string()))?;
-        write_payload(&mut output, 2, &request.encode_payload())?;
-        reader.set_sequence(3);
-        (reader.read_packet()?, 4)
+        write_payload(&mut output, reply_sequence, &request.encode_payload())?;
+        reader.set_sequence(reply_sequence + 1);
+        (reader.read_packet()?, reply_sequence + 2)
     } else {
-        (response.auth, 2)
+        (response.auth, reply_sequence)
     };
     let auth_result = users.authenticate_native(
         &response.user,
@@ -1287,7 +1353,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
 
 /// Writes the OK packet that answers a successful prepared write.
 fn write_affected_rows_ok(
-    output: &mut TcpStream,
+    output: &mut ClientStream,
     sequence: u8,
     affected_rows: u64,
     last_insert_id: u64,
@@ -1306,7 +1372,7 @@ fn write_affected_rows_ok(
 /// Writes the OK packet answering a `BEGIN`/`COMMIT`/`ROLLBACK`, advertising the
 /// resulting transaction status so the client tracks whether one is open.
 fn write_transaction_control_ok(
-    output: &mut TcpStream,
+    output: &mut ClientStream,
     sequence: u8,
     in_transaction: bool,
     protocol_41: bool,
@@ -1375,7 +1441,7 @@ fn drain_result_rows(
 
 /// Writes one packet with an explicit sequence number.
 fn write_packet_to(
-    output: &mut TcpStream,
+    output: &mut ClientStream,
     sequence: u8,
     payload: &[u8],
 ) -> Result<(), MysqlConnectionError> {
@@ -1389,7 +1455,7 @@ fn write_packet_to(
 /// Writes the terminal EOF (or its deprecate-EOF OK form) carrying the given
 /// options' status flags.
 fn write_eof_or_ok(
-    output: &mut TcpStream,
+    output: &mut ClientStream,
     sequence: u8,
     options: ResultSetOptions,
 ) -> Result<(), MysqlConnectionError> {
@@ -1406,7 +1472,7 @@ fn write_eof_or_ok(
 /// Writes one `COM_STMT_FETCH` answer: up to the requested number of binary
 /// rows and the EOF whose status says whether the cursor survives.
 fn write_cursor_fetch_batch(
-    output: &mut TcpStream,
+    output: &mut ClientStream,
     columns: &[tidb_protocol::ColumnInfo],
     rows: &[Vec<tidb_datatype::Datum>],
     options: ResultSetOptions,
@@ -1444,7 +1510,7 @@ fn write_cursor_fetch_batch(
 }
 
 fn write_unknown_statement(
-    output: &mut TcpStream,
+    output: &mut ClientStream,
     statement_id: u32,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
@@ -1459,7 +1525,7 @@ fn write_unknown_statement(
 }
 
 fn write_ok(
-    output: &mut TcpStream,
+    output: &mut ClientStream,
     sequence: u8,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
@@ -1472,7 +1538,7 @@ fn write_ok(
 }
 
 fn write_query_error(
-    output: &mut TcpStream,
+    output: &mut ClientStream,
     error: &SqlQueryError,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
@@ -1480,7 +1546,7 @@ fn write_query_error(
 }
 
 fn write_query_error_at(
-    output: &mut TcpStream,
+    output: &mut ClientStream,
     sequence: u8,
     error: &SqlQueryError,
     protocol_41: bool,
@@ -1520,7 +1586,7 @@ fn account_locked_message(user: &str, host: &str) -> String {
 }
 
 fn write_error(
-    output: &mut TcpStream,
+    output: &mut ClientStream,
     sequence: u8,
     code: u16,
     state: [u8; 5],
@@ -1537,7 +1603,7 @@ fn write_error(
 }
 
 fn write_payload(
-    output: &mut TcpStream,
+    output: &mut ClientStream,
     sequence: u8,
     payload: &[u8],
 ) -> Result<(), MysqlConnectionError> {
@@ -1548,13 +1614,13 @@ fn write_payload(
 }
 
 struct TcpResultSetSink<'a> {
-    output: &'a mut TcpStream,
+    output: &'a mut ClientStream,
     sequence: u8,
     packets: usize,
 }
 
 impl<'a> TcpResultSetSink<'a> {
-    const fn new(output: &'a mut TcpStream, sequence: u8) -> Self {
+    const fn new(output: &'a mut ClientStream, sequence: u8) -> Self {
         Self {
             output,
             sequence,

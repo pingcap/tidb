@@ -156,6 +156,21 @@ pub struct NodeConfig {
     /// re-reads the catalog every `schema_lease / 2`, so it is never more than
     /// one lease behind the cluster's schema version.
     pub schema_lease: Duration,
+    /// Server certificate for inbound TLS on the MySQL port (TiDB's
+    /// `[security] ssl-cert`). `None` with [`Self::auto_tls`] set generates a
+    /// self-signed pair instead.
+    pub ssl_cert: Option<PathBuf>,
+    /// Private key matching [`Self::ssl_cert`] (TiDB's `[security] ssl-key`).
+    pub ssl_key: Option<PathBuf>,
+    /// Generate a self-signed certificate when no `--ssl-cert`/`--ssl-key` is
+    /// configured, as TiDB's `[security] auto-tls` does.
+    ///
+    /// On by default, unlike `pkg/config`'s own `false`: the TiUP playground
+    /// Go server this node is compared against runs with it enabled, and a
+    /// MySQL port with no `CLIENT_SSL` is refused outright by clients that
+    /// link MariaDB Connector/C (which requires the bit even under
+    /// `--mysql-ssl=off`). `--no-auto-tls` restores the plaintext-only port.
+    pub auto_tls: bool,
     /// Cluster-facing gRPC transport security (TiDB's `[security]`
     /// `cluster-ssl-ca` / `cluster-ssl-cert` / `cluster-ssl-key` /
     /// `cluster-verify-cn`). Plaintext by default; setting a CA path engages
@@ -245,6 +260,9 @@ impl NodeConfig {
         let mut schema_lease_ms = None;
         let mut load_privileges = false;
         let mut cluster_session = false;
+        let mut ssl_cert = None;
+        let mut ssl_key = None;
+        let mut no_auto_tls = false;
         let mut cluster_ssl_ca = None;
         let mut cluster_ssl_cert = None;
         let mut cluster_ssl_key = None;
@@ -267,6 +285,13 @@ impl NodeConfig {
                     return Err(NodeConfigError::DuplicateOption(argument));
                 }
                 load_privileges = true;
+                continue;
+            }
+            if argument == "--no-auto-tls" {
+                if no_auto_tls {
+                    return Err(NodeConfigError::DuplicateOption(argument));
+                }
+                no_auto_tls = true;
                 continue;
             }
             if argument == "--cluster-session" {
@@ -318,6 +343,8 @@ impl NodeConfig {
                 "--load-table" => load_tables.push(parse_loaded_table_name(&value)?),
                 "--max-topn-rows" => set_once(&mut max_topn_rows, option, value)?,
                 "--lease-ms" => set_once(&mut schema_lease_ms, option, value)?,
+                "--ssl-cert" => set_once(&mut ssl_cert, option, value)?,
+                "--ssl-key" => set_once(&mut ssl_key, option, value)?,
                 "--cluster-ssl-ca" => set_once(&mut cluster_ssl_ca, option, value)?,
                 "--cluster-ssl-cert" => set_once(&mut cluster_ssl_cert, option, value)?,
                 "--cluster-ssl-key" => set_once(&mut cluster_ssl_key, option, value)?,
@@ -414,6 +441,9 @@ impl NodeConfig {
             schema_lease,
             load_privileges,
             cluster_session,
+            ssl_cert: ssl_cert.map(PathBuf::from),
+            ssl_key: ssl_key.map(PathBuf::from),
+            auto_tls: !no_auto_tls,
             cluster_security,
         })
     }
@@ -432,6 +462,7 @@ impl NodeConfig {
 [--auth-file <mode-0600-tsv> | --load-privileges] \
 [--host <loopback-ip>] [-P <port>|--port <port>] [--store tikv] \
 [--max-allowed-packet <bytes>] \
+[--ssl-cert <cert-pem> --ssl-key <key-pem>] [--no-auto-tls] \
 [--cluster-ssl-ca <ca-pem> [--cluster-ssl-cert <cert-pem> --cluster-ssl-key <key-pem>] \
 [--cluster-verify-cn <cn[,cn...]>]]"
     }

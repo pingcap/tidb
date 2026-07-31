@@ -25,11 +25,17 @@
 //! table-less automatic result-metadata path, source-shaped handshake
 //! primitives, negotiated compressed command I/O, and TCP listener lifecycle.
 //!
-//! STILL EXPLICIT BOUNDARIES, refused rather than faked: inbound TLS on the
-//! MySQL port (the handshake parses `SSLRequest` and no listener performs the
-//! upgrade -- advertising `CLIENT_SSL` without it would hang every client
-//! that asks), `COM_FIELD_LIST`, `COM_SET_OPTION`, `COM_RESET_CONNECTION`,
-//! and every unknown command.
+//! Inbound TLS on the MySQL port is now served, not refused: with server
+//! certificate material present (`--ssl-cert`/`--ssl-key`, or the self-signed
+//! pair `--auto-tls` generates) the node advertises `CLIENT_SSL`, upgrades the
+//! socket in place on an `SSLRequest`, and reads the real
+//! `HandshakeResponse41` off the encrypted stream. Without material the bit
+//! stays clear, because advertising it without performing the upgrade hangs
+//! every client that asks.
+//!
+//! STILL EXPLICIT BOUNDARIES, refused rather than faked: client-certificate
+//! authentication (`--ssl-ca` and `REQUIRE X509`), `COM_FIELD_LIST`,
+//! `COM_SET_OPTION`, `COM_RESET_CONNECTION`, and every unknown command.
 //!
 //! This paragraph claimed "database selection" and "general prepared
 //! statements" were boundaries after both had landed. It is the third module
@@ -58,6 +64,7 @@ pub mod handshake;
 mod handshake_response;
 mod listener;
 mod mysql_connection;
+mod mysql_tls;
 mod native_password;
 mod node_config;
 mod pipeline_session;
@@ -116,9 +123,10 @@ pub use handshake::{
 pub use handshake_response::HandshakeResponse41;
 pub use listener::{ListenerConfig, ListenerError, ListenerLifecycle, ListenerState};
 pub use mysql_connection::{
-    serve_mysql_connection, ConnectionCommandCounts, ConnectionExit, ConnectionReport,
-    MysqlConnectionError,
+    serve_mysql_connection, serve_mysql_connection_with_tls, ConnectionCommandCounts,
+    ConnectionExit, ConnectionReport, MysqlConnectionError,
 };
+pub use mysql_tls::{resolve_server_tls, ClientStream, MysqlServerTls, MysqlTlsError};
 pub use native_password::{
     generate_handshake_salt, verify_candidate, NativePasswordHash, NativePasswordHashError,
     HANDSHAKE_SALT_LEN, NATIVE_PASSWORD_HASH_LEN,
