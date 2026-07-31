@@ -80,6 +80,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	toTSO                "TO TSO"
 	memberof             "MEMBER OF"
 	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
+	fullJoinType         "FULL OUTER JOIN"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -679,6 +680,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	statsSampleRate            "STATS_SAMPLE_RATE"
 	status                     "STATUS"
 	storage                    "STORAGE"
+	storageClass               "STORAGE_CLASS"
 	strictFormat               "STRICT_FORMAT"
 	subject                    "SUBJECT"
 	subpartition               "SUBPARTITION"
@@ -888,7 +890,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	builtinExtract
 	builtinGroupConcat
 	builtinMax
+	builtinMaxCount
 	builtinMin
+	builtinMinCount
 	builtinNow
 	builtinPosition
 	builtins                   "BUILTINS"
@@ -1754,7 +1758,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 %right '('
 %left ')'
 %precedence higherThanParenthese
-%left join straightJoin inner cross left right full natural
+%left join straightJoin inner cross left right full fullJoinType natural
 %precedence lowerThanOn
 %precedence on using
 %right assignmentEq
@@ -7354,6 +7358,7 @@ UnReservedKeyword:
 |	"ENGINES"
 |	"ENGINE_ATTRIBUTE"
 |	"SECONDARY_ENGINE_ATTRIBUTE"
+|	"STORAGE_CLASS"
 |	"ENUM"
 |	"ERROR"
 |	"ERRORS"
@@ -9209,12 +9214,44 @@ SumExpr:
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 		}
 	}
+|	builtinMaxCount '(' Expression ')' OptWindowingClause
+	{
+		if $5 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
+		}
+	}
+|	builtinMaxCount '(' "ALL" Expression ')' OptWindowingClause
+	{
+		if $6 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
+		}
+	}
 |	builtinMin '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
 			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+		}
+	}
+|	builtinMinCount '(' Expression ')' OptWindowingClause
+	{
+		if $5 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, Spec: *($5.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
+		}
+	}
+|	builtinMinCount '(' "ALL" Expression ')' OptWindowingClause
+	{
+		if $6 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Spec: *($6.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
 		}
 	}
 |	builtinSum '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
@@ -10749,6 +10786,10 @@ JoinType:
 |	"RIGHT"
 	{
 		$$ = ast.RightJoin
+	}
+|	fullJoinType
+	{
+		$$ = ast.FullJoin
 	}
 
 OuterOpt:
@@ -13326,6 +13367,10 @@ TableElementListOpt:
 
 TableOption:
 	PartDefOption
+|	"STORAGE_CLASS" EqOpt StringName
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStorageClass, StrValue: strings.ToUpper($3)}
+	}
 |	DefaultKwdOpt CharsetKw EqOpt CharsetName
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionCharset, StrValue: $4,

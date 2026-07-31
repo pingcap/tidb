@@ -543,6 +543,8 @@ const (
 	TiDBMaxPagingSize = "tidb_max_paging_size"
 
 	// TiDBPagingSizeBytes is the byte budget per coprocessor page.
+	// A non-zero value takes effect only when Resource Control is enabled and the active Resource Group
+	// is non-burstable (has limited burst).
 	// 0 means disabled (no byte-budget paging).
 	TiDBPagingSizeBytes = "tidb_paging_size_bytes"
 
@@ -1112,6 +1114,9 @@ const (
 	// TiDBOptEnableHashJoin indicates whether to enable hash join.
 	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
 
+	// TiDBEnableFullOuterJoin indicates whether to enable FULL OUTER JOIN.
+	TiDBEnableFullOuterJoin = "tidb_enable_full_outer_join"
+
 	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 	TiDBHashJoinVersion = "tidb_hash_join_version"
 
@@ -1174,6 +1179,10 @@ const (
 	// `PREDICATE`: Analyze only the columns that are used in the predicates of the query.
 	// `ALL`: Analyze all columns in the table.
 	TiDBAnalyzeColumnOptions = "tidb_analyze_column_options"
+	// TiDBAnalyzeDefaultNumBuckets sets the default number of histogram buckets for analyze operations.
+	TiDBAnalyzeDefaultNumBuckets = "tidb_analyze_default_num_buckets"
+	// TiDBAnalyzeDefaultNumTopN sets the default number of TopN entries for analyze operations.
+	TiDBAnalyzeDefaultNumTopN = "tidb_analyze_default_num_topn"
 	// TiDBDisableColumnTrackingTime records the last time TiDBEnableColumnTracking is set off.
 	// It is used to invalidate the collected predicate columns after turning off TiDBEnableColumnTracking, which avoids physical deletion.
 	// It doesn't have cache in memory, and we directly get/set the variable value from/to mysql.tidb.
@@ -1233,10 +1242,6 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
-	// TiDBEnforceDiskSpacePrecheckBeforeAddIndex controls whether add-index TiKV disk
-	// space precheck failures reject the DDL. When disabled, TiDB still runs the
-	// precheck and logs warnings, but does not reject the DDL.
-	TiDBEnforceDiskSpacePrecheckBeforeAddIndex = "enforce_disk_space_precheck_before_add_index"
 	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
 	// TiDBAutoBuildStatsConcurrency is the number of concurrent workers to automatically analyze tables or partitions.
@@ -1407,6 +1412,9 @@ const (
 
 	// TiDBIndexLookUpPushDownPolicy controls the push down policy of index lookup.
 	TiDBIndexLookUpPushDownPolicy = "tidb_index_lookup_pushdown_policy"
+
+	// TiDBEnableConnectionEventLog controls whether to log connection events.
+	TiDBEnableConnectionEventLog = "tidb_enable_connection_event_log"
 )
 
 // TiDB intentional limits, can be raised in the future.
@@ -1442,82 +1450,90 @@ const (
 
 // Default TiDB system variable values.
 const (
-	DefHostname                             = "localhost"
-	DefIndexLookupConcurrency               = ConcurrencyUnset
-	DefIndexLookupJoinConcurrency           = ConcurrencyUnset
-	DefTiDBEnableAdaptiveLimitScan          = false
-	DefIndexSerialScanConcurrency           = 1
-	DefIndexJoinBatchSize                   = 25000
-	DefIndexLookupSize                      = 20000
-	DefDistSQLScanConcurrency               = 15
-	DefAnalyzeDistSQLScanConcurrency        = 4
-	DefBuildStatsConcurrency                = 2
-	DefBuildSamplingStatsConcurrency        = 2
-	DefAutoAnalyzeRatio                     = 0.5
-	DefAutoAnalyzeStartTime                 = "00:00 +0000"
-	DefAutoAnalyzeEndTime                   = "23:59 +0000"
-	DefAutoIncrementIncrement               = 1
-	DefAutoIncrementOffset                  = 1
-	DefChecksumTableConcurrency             = 4
-	DefSkipUTF8Check                        = false
-	DefSkipASCIICheck                       = false
-	DefOptAggPushDown                       = false
-	DefOptDeriveTopN                        = false
-	DefOptCartesianBCJ                      = 1
-	DefOptMPPOuterJoinFixedBuildSide        = false
-	DefOptWriteRowID                        = false
-	DefOptEnableCorrelationAdjustment       = true
-	DefOptLimitPushDownThreshold            = 5000
-	DefOptCorrelationThreshold              = 0.9
-	DefOptCorrelationExpFactor              = 1
-	DefOptRiskEqSkewRatio                   = 0.0
-	DefOptRiskRangeSkewRatio                = 0.0
-	DefOptRiskScaleNDVSkewRatio             = 1.0
-	DefOptRiskGroupNDVSkewRatio             = 0.0
-	DefOptAlwaysKeepJoinKey                 = true
-	DefOptCartesianJoinOrderThreshold       = 0.0
-	DefOptCPUFactor                         = 3.0
-	DefOptCopCPUFactor                      = 3.0
-	DefOptTiFlashConcurrencyFactor          = 24.0
-	DefOptNetworkFactor                     = 1.0
-	DefOptScanFactor                        = 1.5
-	DefOptDescScanFactor                    = 3.0
-	DefOptSeekFactor                        = 20.0
-	DefOptMemoryFactor                      = 0.001
-	DefOptDiskFactor                        = 1.5
-	DefOptConcurrencyFactor                 = 3.0
-	DefOptIndexScanCostFactor               = 1.0
-	DefOptIndexReaderCostFactor             = 1.0
-	DefOptTableReaderCostFactor             = 1.0
-	DefOptTableFullScanCostFactor           = 1.0
-	DefOptTableRangeScanCostFactor          = 1.0
-	DefOptTableRowIDScanCostFactor          = 1.0
-	DefOptTableTiFlashScanCostFactor        = 1.0
-	DefOptIndexLookupCostFactor             = 1.0
-	DefOptIndexMergeCostFactor              = 1.0
-	DefOptSortCostFactor                    = 1.0
-	DefOptTopNCostFactor                    = 1.0
-	DefOptLimitCostFactor                   = 1.0
-	DefOptStreamAggCostFactor               = 1.0
-	DefOptHashAggCostFactor                 = 1.0
-	DefOptMergeJoinCostFactor               = 1.0
-	DefOptHashJoinCostFactor                = 1.0
-	DefOptIndexJoinCostFactor               = 1.0
-	DefOptIndexJoinMaxScanRowsRatio         = 0.0
-	DefOptSelectivityFactor                 = 0.8
-	DefOptForceInlineCTE                    = false
-	DefOptInSubqToJoinAndAgg                = true
-	DefOptPreferRangeScan                   = true
-	DefOptEnableNoDecorrelateInSelect       = false
-	DefOptEnableAlternativeLogicalPlans     = false
-	DefOptEnableSemiJoinRewrite             = false
-	DefBatchInsert                          = false
-	DefBatchDelete                          = false
-	DefBatchCommit                          = false
-	DefCurretTS                             = 0
-	DefInitChunkSize                        = 32
-	DefMinPagingSize                        = int(paging.MinPagingSize)
-	DefMaxPagingSize                        = int(paging.MinAllowedMaxPagingSize)
+	DefHostname                         = "localhost"
+	DefIndexLookupConcurrency           = ConcurrencyUnset
+	DefIndexLookupJoinConcurrency       = ConcurrencyUnset
+	DefTiDBEnableAdaptiveLimitScan      = false
+	DefIndexSerialScanConcurrency       = 1
+	DefIndexJoinBatchSize               = 25000
+	DefIndexLookupSize                  = 20000
+	DefDistSQLScanConcurrency           = 15
+	DefAnalyzeDistSQLScanConcurrency    = 4
+	DefBuildStatsConcurrency            = 2
+	DefBuildSamplingStatsConcurrency    = 2
+	DefAutoAnalyzeRatio                 = 0.5
+	DefAutoAnalyzeStartTime             = "00:00 +0000"
+	DefAutoAnalyzeEndTime               = "23:59 +0000"
+	DefAutoIncrementIncrement           = 1
+	DefAutoIncrementOffset              = 1
+	DefChecksumTableConcurrency         = 4
+	DefSkipUTF8Check                    = false
+	DefSkipASCIICheck                   = false
+	DefOptAggPushDown                   = false
+	DefOptDeriveTopN                    = false
+	DefOptCartesianBCJ                  = 1
+	DefOptMPPOuterJoinFixedBuildSide    = false
+	DefOptWriteRowID                    = false
+	DefOptEnableCorrelationAdjustment   = true
+	DefOptLimitPushDownThreshold        = 5000
+	DefOptCorrelationThreshold          = 0.9
+	DefOptCorrelationExpFactor          = 1
+	DefOptRiskEqSkewRatio               = 0.0
+	DefOptRiskRangeSkewRatio            = 0.0
+	DefOptRiskScaleNDVSkewRatio         = 1.0
+	DefOptRiskGroupNDVSkewRatio         = 0.0
+	DefOptAlwaysKeepJoinKey             = true
+	DefOptCartesianJoinOrderThreshold   = 0.0
+	DefOptCPUFactor                     = 3.0
+	DefOptCopCPUFactor                  = 3.0
+	DefOptTiFlashConcurrencyFactor      = 24.0
+	DefOptNetworkFactor                 = 1.0
+	DefOptScanFactor                    = 1.5
+	DefOptDescScanFactor                = 3.0
+	DefOptSeekFactor                    = 20.0
+	DefOptMemoryFactor                  = 0.001
+	DefOptDiskFactor                    = 1.5
+	DefOptConcurrencyFactor             = 3.0
+	DefOptIndexScanCostFactor           = 1.0
+	DefOptIndexReaderCostFactor         = 1.0
+	DefOptTableReaderCostFactor         = 1.0
+	DefOptTableFullScanCostFactor       = 1.0
+	DefOptTableRangeScanCostFactor      = 1.0
+	DefOptTableRowIDScanCostFactor      = 1.0
+	DefOptTableTiFlashScanCostFactor    = 1.0
+	DefOptIndexLookupCostFactor         = 1.0
+	DefOptIndexMergeCostFactor          = 1.0
+	DefOptSortCostFactor                = 1.0
+	DefOptTopNCostFactor                = 1.0
+	DefOptLimitCostFactor               = 1.0
+	DefOptStreamAggCostFactor           = 1.0
+	DefOptHashAggCostFactor             = 1.0
+	DefOptMergeJoinCostFactor           = 1.0
+	DefOptHashJoinCostFactor            = 1.0
+	DefOptIndexJoinCostFactor           = 1.0
+	DefOptIndexJoinMaxScanRowsRatio     = 0.0
+	DefOptSelectivityFactor             = 0.8
+	DefOptForceInlineCTE                = false
+	DefOptInSubqToJoinAndAgg            = true
+	DefOptPreferRangeScan               = true
+	DefOptEnableNoDecorrelateInSelect   = false
+	DefOptEnableAlternativeLogicalPlans = false
+	DefOptEnableSemiJoinRewrite         = false
+	DefBatchInsert                      = false
+	DefBatchDelete                      = false
+	DefBatchCommit                      = false
+	DefCurretTS                         = 0
+	DefInitChunkSize                    = 32
+	DefMinPagingSize                    = int(paging.MinPagingSize)
+	DefMaxPagingSize                    = int(paging.MinAllowedMaxPagingSize)
+	// DefPagingSizeBytes defaults to 0 (byte-budget paging disabled).
+	// A non-zero value takes effect only when Resource Control is enabled and the active Resource Group
+	// is non-burstable (has limited burst).
+	// Regression tests across cap-bound and under-cap TPC-C, FullScan, and Join workloads found no
+	// material performance regression with byte-budget paging. Among the tested 1, 2, 4, 8, and 16 MiB
+	// candidates, 4 MiB provided the best overall balance of throughput, tail latency, RU stability,
+	// RPC overhead, CPU, and RU efficiency. Consider setting this to 4 MiB (4194304) when enabling
+	// byte-budget paging for resource groups with limited burst.
 	DefPagingSizeBytes                      = 0
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
@@ -1684,6 +1700,8 @@ const (
 	DefTiDBEnableAutoAnalyze                          = true
 	DefTiDBEnableAutoAnalyzePriorityQueue             = true
 	DefTiDBAnalyzeColumnOptions                       = "ALL"
+	DefTiDBAnalyzeDefaultNumBuckets                   = 256
+	DefTiDBAnalyzeDefaultNumTopN                      = 100
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
 	DefTiDBAutoAnalyzeConcurrency                     = 3
@@ -1715,7 +1733,6 @@ const (
 	DefMemoryUsageAlarmKeepRecordNum                  = 5
 	DefTiDBEnableFastReorg                            = true
 	DefTiDBDDLDiskQuota                               = 100 * 1024 * 1024 * 1024 // 100GB
-	DefEnforceDiskSpacePrecheckBeforeAddIndex         = false
 	DefExecutorConcurrency                            = 5
 	DefTiDBEnableNonPreparedPlanCache                 = false
 	DefTiDBEnableNonPreparedPlanCacheForDML           = true
@@ -1811,6 +1828,7 @@ const (
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
+	DefTiDBEnableFullOuterJoin                        = false
 	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionOptimized
 	DefTiDBOptIndexJoinBuild                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
@@ -1835,14 +1853,26 @@ const (
 	DefTiDBEnableBindingUsage                         = true
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 	DefTiDBMemArbitratorSoftLimitText                 = memory.ArbitratorSoftLimitModDisableName
-	DefTiDBMemArbitratorModeText                      = memory.ArbitratorModeDisableName
+	DefTiDBMemArbitratorModeText                      = memory.DefaultGlobalMemArbitratorModeName
 	DefTiDBMemArbitratorQueryReservedText             = "0"
 	DefTiDBMemArbitratorWaitAverse                    = "0"
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
 	DefEnableCachePrepareStmt                         = false
 	// DefConnectAttrsSize is the default max aggregate byte size of connection attributes per connection.
 	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
-	DefConnectAttrsSize int64 = 4096
+	DefConnectAttrsSize             int64 = 4096
+	DefTiDBEnableConnectionEventLog       = false
+)
+
+const (
+	// MinTiDBAnalyzeDefaultNumBuckets is the lower bound for the default ANALYZE bucket count.
+	MinTiDBAnalyzeDefaultNumBuckets int64 = 1
+	// MaxTiDBAnalyzeDefaultNumBuckets is the upper bound for the default ANALYZE bucket count.
+	MaxTiDBAnalyzeDefaultNumBuckets uint64 = 100000
+	// MinTiDBAnalyzeDefaultNumTopN is the lower bound for the default ANALYZE TopN count; 0 disables TopN collection.
+	MinTiDBAnalyzeDefaultNumTopN int64 = 0
+	// MaxTiDBAnalyzeDefaultNumTopN is the upper bound for the default ANALYZE TopN count.
+	MaxTiDBAnalyzeDefaultNumTopN uint64 = 100000
 )
 
 // Process global variables.
@@ -1858,7 +1888,12 @@ var (
 	//    the value of `tidb_analyze_column_options` determines the behavior of the analyze operation.
 	// 2. If `tidb_persist_analyze_options` is disabled, `tidb_analyze_column_options` is used directly to decide
 	//    whether to analyze all columns or just the predicate columns.
-	AnalyzeColumnOptions           = atomic.NewString(DefTiDBAnalyzeColumnOptions)
+	AnalyzeColumnOptions = atomic.NewString(DefTiDBAnalyzeColumnOptions)
+	// AnalyzeDefaultNumBuckets is the global default number of histogram buckets for analyze operations.
+	AnalyzeDefaultNumBuckets = atomic.NewUint64(DefTiDBAnalyzeDefaultNumBuckets)
+	// AnalyzeDefaultNumTopN is the global default number of TopN entries for analyze operations.
+	AnalyzeDefaultNumTopN = atomic.NewUint64(DefTiDBAnalyzeDefaultNumTopN)
+
 	GlobalLogMaxDays               = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
 	QueryLogMaxLen                 = atomic.NewInt32(DefTiDBQueryLogMaxLen)
 	EnablePProfSQLCPU              = atomic.NewBool(false)
@@ -1916,9 +1951,6 @@ var (
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
-	// EnforceDiskSpacePrecheckBeforeAddIndex controls whether add-index disk-space
-	// precheck failures are enforced.
-	EnforceDiskSpacePrecheckBeforeAddIndex = atomic.NewBool(DefEnforceDiskSpacePrecheckBeforeAddIndex)
 	// EnableForeignKey indicates whether to enable foreign key feature.
 	EnableForeignKey    = atomic.NewBool(true)
 	EnableRCReadCheckTS = atomic.NewBool(false)
@@ -1989,6 +2021,8 @@ var (
 	ConnectAttrsLongestSeen = atomic.NewInt64(0)
 	// ConnectAttrsLost counts the number of connections whose attributes were truncated.
 	ConnectAttrsLost = atomic.NewInt64(0)
+
+	EnableConnectionEventLog = atomic.NewBool(DefTiDBEnableConnectionEventLog)
 )
 
 func serverMemoryLimitDefaultValue() string {

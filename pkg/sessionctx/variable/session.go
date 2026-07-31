@@ -1502,6 +1502,9 @@ type SessionVars struct {
 	// UseHashJoinV2 indicates whether to use hash join v2.
 	UseHashJoinV2 bool
 
+	// EnableFullOuterJoin indicates whether to enable full outer join.
+	EnableFullOuterJoin bool
+
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
 
@@ -2467,6 +2470,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
+		EnableFullOuterJoin:              vardef.DefTiDBEnableFullOuterJoin,
 		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,

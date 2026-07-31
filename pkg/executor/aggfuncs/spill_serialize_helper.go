@@ -91,6 +91,12 @@ func (s *SerializeHelper) serializePartialResult4MaxMinJSON(value partialResult4
 	return s.buf
 }
 
+func (s *SerializeHelper) serializePartialResult4MaxMinVectorFloat32(value partialResult4MaxMinVectorFloat32) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	return util.SerializeVectorFloat32(value.val, s.buf)
+}
+
 func (s *SerializeHelper) serializePartialResult4MaxMinEnum(value partialResult4MaxMinEnum) []byte {
 	s.buf = s.buf[:0]
 	s.buf = util.SerializeBool(value.isNull, s.buf)
@@ -101,6 +107,92 @@ func (s *SerializeHelper) serializePartialResult4MaxMinEnum(value partialResult4
 func (s *SerializeHelper) serializePartialResult4MaxMinSet(value partialResult4MaxMinSet) []byte {
 	s.buf = s.buf[:0]
 	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeSet(&value.val, s.buf)
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4MaxMinCountInt(value partialResult4MaxMinCountInt) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	return util.SerializeInt64(value.val, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4MaxMinCountUint(value partialResult4MaxMinCountUint) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	return util.SerializeUint64(value.val, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4MaxMinCountDecimal(value partialResult4MaxMinCountDecimal) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	return util.SerializeMyDecimal(&value.val, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4MaxMinCountFloat32(value partialResult4MaxMinCountFloat32) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	return util.SerializeFloat32(value.val, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4MaxMinCountFloat64(value partialResult4MaxMinCountFloat64) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	return util.SerializeFloat64(value.val, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4MaxMinCountString(value partialResult4MaxMinCountString) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	return util.SerializeString(value.val, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4MaxMinCountTime(value partialResult4MaxMinCountTime) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	return util.SerializeTime(value.val, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4MaxMinCountDuration(value partialResult4MaxMinCountDuration) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	return util.SerializeTypesDuration(value.val, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4MaxMinCountJSON(value partialResult4MaxMinCountJSON) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	return util.SerializeBinaryJSON(&value.val, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4MaxMinCountVectorFloat32(value partialResult4MaxMinCountVectorFloat32) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	return util.SerializeVectorFloat32(value.val, s.buf)
+}
+
+func (s *SerializeHelper) serializePartialResult4MaxMinCountEnum(value partialResult4MaxMinCountEnum) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	s.buf = util.SerializeEnum(&value.val, s.buf)
+	return s.buf
+}
+
+func (s *SerializeHelper) serializePartialResult4MaxMinCountSet(value partialResult4MaxMinCountSet) []byte {
+	s.buf = s.buf[:0]
+	s.buf = util.SerializeBool(value.isNull, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
 	s.buf = util.SerializeSet(&value.val, s.buf)
 	return s.buf
 }

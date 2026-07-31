@@ -102,26 +102,16 @@ func sendMeterOnCleanUp(ctx context.Context, task *proto.Task, logger *zap.Logge
 	if err != nil {
 		return err
 	}
-	rowCount, indexKVSize, err := sumReadIndexSubtaskSummary(subtasks)
-	if err != nil {
-		return err
-	}
-	return handle.SendRowAndSizeMeterData(ctx, task, rowCount, 0, indexKVSize, logger)
-}
-
-func sumReadIndexSubtaskSummary(subtasks []*proto.Subtask) (rowCount, processedBytes int64, err error) {
-	for _, subtask := range subtasks {
-		if len(subtask.Summary) == 0 {
-			continue
-		}
+	var rowCount, indexKVSize int64
+	for _, st := range subtasks {
 		summary := &execute.SubtaskSummary{}
-		if err = json.Unmarshal([]byte(subtask.Summary), summary); err != nil {
-			return 0, 0, errors.Trace(err)
+		if err = json.Unmarshal([]byte(st.Summary), summary); err != nil {
+			return errors.Trace(err)
 		}
 		rowCount += summary.RowCnt.Load()
-		processedBytes += summary.Processed.Load()
+		indexKVSize += summary.Processed.Load()
 	}
-	return rowCount, processedBytes, nil
+	return handle.SendRowAndSizeMeterData(ctx, task, rowCount, 0, indexKVSize, logger)
 }
 
 func redactCloudStorageURI(

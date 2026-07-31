@@ -17,12 +17,14 @@ package executor
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -42,6 +44,7 @@ import (
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/tikv/client-go/v2/oracle/oracles"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -189,6 +192,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			logstr = "set instance var"
 		}
 		logutil.BgLogger().Info(logstr, zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
+		if v.IsGlobal && name == vardef.TiDBGCLifetime {
+			notifyExternalWorkloadGCLifeTime(ctx, e.Ctx(), showValStr)
+		}
 		if name == vardef.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
 			// SetInstanceSysVar has already updated vardef.ServiceScope in the sysvar hook.
@@ -273,6 +279,36 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	// autocommit, timezone, etc
 	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
+}
+
+func notifyExternalWorkloadGCLifeTime(ctx context.Context, sctx sessionctx.Context, setValue string) {
+	mgr := extworkload.GetManagerFromStore(sctx.GetStore())
+	if !extworkload.IsEnabled(mgr) || !pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
+		return
+	}
+
+	gcLifeTimeVal, err := variable.GetSysVar(vardef.TiDBGCLifetime).GetGlobalFromHook(ctx, sctx.GetSessionVars())
+	if err != nil {
+		logutil.BgLogger().Warn("failed to load effective external workload GC life time",
+			zap.String("name", vardef.TiDBGCLifetime),
+			zap.String("val", setValue),
+			zap.Error(err))
+		return
+	}
+	gcLifeTime, err := time.ParseDuration(gcLifeTimeVal)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to parse effective external workload GC life time",
+			zap.String("name", vardef.TiDBGCLifetime),
+			zap.String("val", gcLifeTimeVal),
+			zap.Error(err))
+		return
+	}
+	if err := mgr.UpdateGCLifeTime(ctx, gcLifeTime); err != nil {
+		logutil.BgLogger().Warn("failed to update external workload GC life time",
+			zap.String("name", vardef.TiDBGCLifetime),
+			zap.String("val", gcLifeTimeVal),
+			zap.Error(err))
+	}
 }
 
 func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {

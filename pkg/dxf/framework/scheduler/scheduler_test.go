@@ -166,10 +166,9 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	// test scheduleTaskLoop
 	// test parallelism control
-	var originalConcurrency int
+	restoreMaxConcurrentTask := func() {}
 	if taskCnt == 1 {
-		originalConcurrency = proto.MaxConcurrentTask
-		proto.MaxConcurrentTask = 1
+		restoreMaxConcurrentTask = proto.SetMaxConcurrentTaskForTest(1)
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -190,10 +189,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	sch.Start()
 	defer func() {
 		sch.Stop()
-		// make data race happy
-		if taskCnt == 1 {
-			proto.MaxConcurrentTask = originalConcurrency
-		}
+		restoreMaxConcurrentTask()
 	}()
 
 	// 3s
@@ -203,18 +199,18 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		}, 5*time.Second, 50*time.Millisecond)
 	}
 
-	checkTaskRunningCnt := func() []*proto.Task {
-		var tasks []*proto.Task
+	checkTaskRunningCnt := func() []*proto.TaskBase {
+		var tasks []*proto.TaskBase
 		require.Eventually(t, func() bool {
 			var err error
-			tasks, err = mgr.GetTasksInStates(ctx, proto.TaskStateRunning)
+			tasks, err = mgr.GetTaskBasesInStates(ctx, proto.TaskStateRunning)
 			require.NoError(t, err)
 			return len(tasks) == taskCnt
 		}, 5*time.Second, 50*time.Millisecond)
 		return tasks
 	}
 
-	checkSubtaskCnt := func(tasks []*proto.Task, taskIDs []int64) {
+	checkSubtaskCnt := func(tasks []*proto.TaskBase, taskIDs []int64) {
 		for i, taskID := range taskIDs {
 			require.Equal(t, taskID, tasks[i].ID)
 			require.Eventually(t, func() bool {
@@ -249,7 +245,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	// test DetectTaskLoop
 	checkGetTaskState := func(expectedState proto.TaskState) {
 		require.Eventually(t, func() bool {
-			tasks, err := mgr.GetTasksInStates(ctx, expectedState)
+			tasks, err := mgr.GetTaskBasesInStates(ctx, expectedState)
 			require.NoError(t, err)
 			if len(tasks) == taskCnt {
 				return true
@@ -406,13 +402,6 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 	}
 }
 
-func TestIsCancelledErr(t *testing.T) {
-	require.False(t, scheduler.IsCancelledErr(nil))
-	require.False(t, scheduler.IsCancelledErr(errors.New("some err")))
-	require.False(t, scheduler.IsCancelledErr(context.Canceled))
-	require.True(t, scheduler.IsCancelledErr(errors.New("cancelled by user")))
-}
-
 func TestManagerScheduleLoop(t *testing.T) {
 	// Mock 16 cpu node.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
@@ -467,7 +456,7 @@ func TestManagerScheduleLoop(t *testing.T) {
 		},
 	)
 	getRunningTaskKeys := func() []string {
-		tasks, err := taskMgr.GetTasksInStates(ctx, proto.TaskStateRunning)
+		tasks, err := taskMgr.GetTaskBasesInStates(ctx, proto.TaskStateRunning)
 		require.NoError(t, err)
 		taskKeys := make([]string, len(tasks))
 		for i, task := range tasks {

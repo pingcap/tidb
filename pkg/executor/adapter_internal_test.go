@@ -481,8 +481,8 @@ func (m *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ..
 	}, nil
 }
 
-func (*mockResourceGroupProvider) Watch(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (chan []*meta_storagepb.Event, error) {
-	ch := make(chan []*meta_storagepb.Event)
+func (*mockResourceGroupProvider) Watch(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (chan *metastorage.WatchResponse, error) {
+	ch := make(chan *metastorage.WatchResponse)
 	go func() {
 		<-ctx.Done()
 		close(ch)

@@ -86,6 +86,7 @@ go_test(
         "//pkg/ingestor/errdef",
         "//pkg/keyspace",
         "//pkg/kv",
+        "//pkg/lightning/common",
         "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

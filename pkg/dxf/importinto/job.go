@@ -145,6 +145,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
 	dxfTaskMgr := taskManager
 	if runningOnUserKS {
+		failpoint.InjectCall("afterUserImportJobCreatedBeforeDXFTask", jobID)
 		var err2 error
 		dxfTaskMgr, err2 = storage.GetDXFSvcTaskMgr()
 		if err2 != nil {
@@ -403,7 +404,7 @@ func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) 
 					union
 				select state_update_time from mysql.tidb_background_subtask_history where task_key = %?
 			) t`,
-			task.ID, task.ID,
+			storage.TaskIDToKey(task.ID), storage.TaskIDToKey(task.ID),
 		)
 		return err
 	})

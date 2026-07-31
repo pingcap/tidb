@@ -17,6 +17,8 @@ package index
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -448,6 +450,153 @@ func TestPartialIndexWithIndexPrune(t *testing.T) {
 		}))
 		tk.MustQuery("explain format = 'plan_tree' select * from t where a is null").CheckNotContain("idx1")
 		require.NoError(t, failpoint.Disable(fpName))
+	})
+}
+
+func TestIndexPruneWithSharedClusteredPrefix(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+		tk.MustExec("drop table if exists tenant_obj")
+		// Multi-tenant shape: every secondary index leads with the clustered-key
+		// prefix column tenant_ws, so absolute coverage cannot differentiate them.
+		tk.MustExec(`create table tenant_obj (
+			id binary(16) not null,
+			tenant_ws varchar(64) not null,
+			label varchar(255),
+			obj_type_id binary(16),
+			payload text,
+			num1 decimal(10,2), num2 decimal(10,2), num3 decimal(10,2),
+			txt1 varchar(255), txt2 varchar(255), txt3 varchar(255), txt4 varchar(255),
+			txt5 varchar(255), txt6 varchar(255), txt7 varchar(255), txt8 varchar(255),
+			created_on timestamp,
+			primary key (tenant_ws, id) clustered,
+			key ix_tenant_label (tenant_ws, label),
+			key ix_tenant_obj_type (tenant_ws, obj_type_id),
+			unique key uk_tenant_type_num1 (tenant_ws, obj_type_id, num1),
+			key ix_tenant_num1 (tenant_ws, num1),
+			key ix_tenant_num2 (tenant_ws, num2),
+			key ix_tenant_num3 (tenant_ws, num3),
+			key ix_tenant_txt1 (tenant_ws, txt1),
+			key ix_tenant_txt2 (tenant_ws, txt2),
+			key ix_tenant_txt3 (tenant_ws, txt3),
+			key ix_tenant_txt4 (tenant_ws, txt4),
+			key ix_tenant_txt5 (tenant_ws, txt5),
+			key ix_tenant_txt6 (tenant_ws, txt6),
+			key ix_tenant_txt7 (tenant_ws, txt7),
+			key ix_tenant_txt8 (tenant_ws, txt8),
+			key ix_tenant_created (tenant_ws, created_on),
+			key ix_tenant_label_type (tenant_ws, label, obj_type_id))`)
+		// Force ranking mode: the default threshold (20) exceeds this table's path
+		// count and would fall into the prune-zero-score-only mode.
+		tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
+
+		fpName := "github.com/pingcap/tidb/pkg/planner/core/rule/InjectCheckForIndexPrune"
+		// keptIndexes captures the secondary-index names kept for tenant_obj. The
+		// failpoint fires for every planned query (including internal ones), so
+		// callbacks identify relevance via the tenant_ws leading column.
+		var keptIndexes []string
+		seen := false
+		require.NoError(t, failpoint.EnableCall(fpName, func(paths []*util.AccessPath) {
+			names := make([]string, 0, len(paths))
+			relevant := false
+			for _, path := range paths {
+				if path == nil || path.Index == nil || len(path.Index.Columns) == 0 {
+					continue
+				}
+				if path.Index.Columns[0].Name.L == "tenant_ws" {
+					relevant = true
+				}
+				if !path.IsTablePath() {
+					names = append(names, path.Index.Name.L)
+				}
+			}
+			if relevant {
+				slices.Sort(names)
+				keptIndexes = names
+				seen = true
+			}
+		}))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fpName))
+		}()
+		runQuery := func(sql string) []string {
+			keptIndexes, seen = nil, false
+			tk.MustQuery(sql)
+			require.True(t, seen, "prune callback did not fire for: %s", sql)
+			return keptIndexes
+		}
+
+		// Predicates on obj_type_id/num1/num3 plus ORDER BY label: only indexes
+		// covering those columns beyond the discounted tenant_ws prefix survive.
+		kept := runQuery(`explain format = 'plan_tree' select label from tenant_obj
+			where tenant_ws = 'w1' and obj_type_id = 0x01 and num1 = 1 and num3 = 2
+			order by label limit 10`)
+		require.Equal(t, []string{
+			"ix_tenant_label", "ix_tenant_label_type", "ix_tenant_num1",
+			"ix_tenant_num3", "ix_tenant_obj_type", "uk_tenant_type_num1",
+		}, kept)
+
+		// Only ORDER BY label beyond the tenant prefix: ix_tenant_label_type has the
+		// identical coverage signature as ix_tenant_label and is deduplicated.
+		kept = runQuery(`explain format = 'plan_tree' select label from tenant_obj
+			where tenant_ws = 'w1' order by label limit 10`)
+		require.Equal(t, []string{"ix_tenant_label"}, kept)
+
+		// Nothing interesting beyond the tenant prefix and no covering index: the
+		// clustered table path serves the query alone; all indexes are pruned.
+		kept = runQuery("explain format = 'plan_tree' select payload from tenant_obj where tenant_ws = 'w1'")
+		require.Empty(t, kept)
+
+		// The null-safe equality <=> binds the tenant prefix exactly as = does (the
+		// ranger builds the same access range), so the same all-pruned outcome holds.
+		kept = runQuery("explain format = 'plan_tree' select payload from tenant_obj where tenant_ws <=> 'w1'")
+		require.Empty(t, kept)
+
+		// Without an equality on tenant_ws there is no discount: indexes covering
+		// the predicate column are kept as before.
+		kept = runQuery("explain format = 'plan_tree' select label from tenant_obj where num1 = 1")
+		require.True(t, slices.Contains(kept, "ix_tenant_num1"), "kept: %v", kept)
+		for _, name := range kept {
+			require.False(t, strings.HasPrefix(name, "ix_tenant_txt"), "kept: %v", kept)
+		}
+
+		// Hinted indexes bypass pruning entirely.
+		tk.MustQuery(`explain format = 'plan_tree' select payload from tenant_obj
+			force index (ix_tenant_created) where tenant_ws = 'w1'`).CheckContain("ix_tenant_created")
+
+		// idx(tenant_ws, a) and idx(a) cover the same interesting columns but through
+		// different leading columns. The common handle (tenant_ws, id) is appended to a
+		// non-unique secondary index's key, so idx(a) accesses (a=, tenant_ws=) while
+		// idx(tenant_ws, a) accesses (tenant_ws=, a=). Neither consecutive prefix is a
+		// prefix of the other, so neither dominates and both must survive as distinct
+		// access orders. ix_tenant_a_c_b is declared before ix_tenant_a_c so that an
+		// index-ID tiebreak would keep the wider index; the column-count tiebreak must
+		// prefer the narrower one at any chain length.
+		tk.MustExec("drop table if exists tenant_dup")
+		tk.MustExec(`create table tenant_dup (
+			id binary(16) not null,
+			tenant_ws varchar(64) not null,
+			a int, b int, c int, payload text,
+			primary key (tenant_ws, id) clustered,
+			key ix_tenant_ws_a (tenant_ws, a),
+			key ix_dup_a (a),
+			key ix_dup_a_b (a, b),
+			key ix_tenant_a_c_b (tenant_ws, a, c, b),
+			key ix_tenant_a_c (tenant_ws, a, c))`)
+		tk.MustExec("set @@tidb_opt_index_prune_threshold=5")
+
+		// idx(tenant_ws, a) and idx(a) both kept (different chains); idx(a, b) is a
+		// duplicate of idx(a), and both 3/4-column tenant indexes duplicate the
+		// (tenant_ws, a) chain with unused trailing columns.
+		kept = runQuery("explain format = 'plan_tree' select payload from tenant_dup where tenant_ws = 'w' and a = 1")
+		require.Equal(t, []string{"ix_dup_a", "ix_tenant_ws_a"}, kept)
+
+		// Longer chain: ix_tenant_a_c and ix_tenant_a_c_b share the chain
+		// (tenant_ws, a, c); the narrower ix_tenant_a_c must win the tie despite
+		// its larger index ID.
+		kept = runQuery("explain format = 'plan_tree' select payload from tenant_dup where tenant_ws = 'w' and a = 1 and c = 2")
+		require.Equal(t, []string{"ix_dup_a", "ix_tenant_a_c", "ix_tenant_ws_a"}, kept)
 	})
 }
 

@@ -68,6 +68,11 @@ func (*oversizedChunkSelectResult) IntoIter([][]*types.FieldType) (distsql.Selec
 	return nil, nil
 }
 
+// CancelAndWaitImportJobForTest exposes cancelAndWaitImportJob to external package tests.
+func CancelAndWaitImportJobForTest(ctx context.Context, jobID int64) error {
+	return cancelAndWaitImportJob(ctx, jobID)
+}
+
 func TestNestedLoopApply(t *testing.T) {
 	ctx := context.Background()
 	sctx := mock.NewContext()
