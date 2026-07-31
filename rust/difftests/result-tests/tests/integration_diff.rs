@@ -629,17 +629,8 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // work is already measured: `INTEGRATION_SHOW_DIVERGENCES=1` on either
     // topic prints the per-table pairs, and 17 of the 26 in
     // `join_reorder_through_projection` are the covering-index class alone.
-    //  * DISTINCT WITH AN ORDER BY OUTSIDE THE SELECT LIST (the +3 that took
-    //    this from 61 to 64, all in `planner/funcdep/only_full_group_by`).
-    //    `SELECT DISTINCT t1.a FROM t as t1 ORDER BY t1.d LIMIT 1` is TiDB's
-    //    3065; this tier accepts it. NOT a generated-column divergence: the
-    //    same statement over `CREATE TABLE zt (a INT, c INT, d INT)` -- no
-    //    generated column anywhere -- is accepted here too, so the rule is
-    //    simply absent. It became MEASURABLE only when generated columns
-    //    landed, because the three statements sit under `CREATE TABLE t (a
-    //    INT, c INT GENERATED ALWAYS AS (a+2), d INT GENERATED ALWAYS AS
-    //    (c+2))`, whose refusal used to put them out of domain. Worked off by
-    //    porting Go's `checkOrderByInDistinct`.
+    //  * DISTINCT WITH AN ORDER BY OUTSIDE THE SELECT LIST. FIXED -- see the
+    //    58 -> 55 note below.
     //
     // 64 -> 58 when `tidb_executor::access_cost` learned Go's `keepIndex :=
     // ... || path.IsSingleScan`: an index the ranger narrowed nothing on is
@@ -652,7 +643,25 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // join, and the single-table seam that commits an access path
     // (`driver::access::commit_fast_path_source`) is never reached for a
     // join input. That is the next increment there, and it is a bigger one.
-    const KNOWN_DIVERGENCES: usize = 58;
+    //
+    // 58 -> 55, and `planner/funcdep/only_full_group_by` is at ZERO: Go's
+    // `checkOrderByInDistinct` is ported (`tidb_executor::driver::
+    // only_full_group_by::check_order_by_in_distinct`), so `SELECT DISTINCT
+    // t1.a FROM t as t1 ORDER BY t1.d LIMIT 1` is 3065 here as it is in TiDB.
+    // The rule needed none of the functional-dependency machinery 1055 needs,
+    // and the capture is why: `SELECT DISTINCT id, v FROM pk(id INT PRIMARY
+    // KEY, v, w) ORDER BY w` is 3065 even though the key IS in the select
+    // list, because after DISTINCT the query does not report `w` at all.
+    // Nothing else moved -- `PlanProperty` stayed at 177, `Rows` at 347 and
+    // `SideEffect` at 1212 -- and the three statements moved from `diverged`
+    // to `BothRejected`, which asserts the REJECTION only; the errno and the
+    // message text are pinned by `tidb_session`'s
+    // `select_distinct_may_only_order_by_a_field_it_reports`.
+    //
+    // The remaining 55 are the access-path classes above, in two topics:
+    // `explain_easy` 28 and `planner/core/join_reorder_through_projection` 26,
+    // plus 1 in `subquery`. Every other onboarded topic is at zero.
+    const KNOWN_DIVERGENCES: usize = 55;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

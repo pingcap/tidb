@@ -285,6 +285,11 @@ pub(crate) fn check_order_by_in_distinct(
             }
         }
     }
+    // A select-list alias is visible in `ORDER BY` only as the WHOLE item: Go
+    // resolves a bare `ORDER BY v` to the field aliased `v`, and `ORDER BY
+    // v+1` to the TABLE's `v`. Captured over `SELECT DISTINCT k AS v FROM gg`
+    // -- `ORDER BY v` answers `1;2`, `ORDER BY v+1` is 3065 naming
+    // `test.gg.v` -- which is why this is not consulted per column below.
     let names_a_reported_field = |path: &[String]| {
         matches!(path, [name]
             if reported_names.iter().any(|reported| reported.eq_ignore_ascii_case(name)))
@@ -313,7 +318,7 @@ pub(crate) fn check_order_by_in_distinct(
             let Some((offset, _, _)) = resolver.resolve(&path) else {
                 continue;
             };
-            if reported_offsets.contains(&offset) || names_a_reported_field(&path) {
+            if reported_offsets.contains(&offset) {
                 continue;
             }
             return Err(DriverError::FieldInOrderNotSelect {

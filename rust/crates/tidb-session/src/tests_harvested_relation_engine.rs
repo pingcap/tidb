@@ -859,6 +859,183 @@ fn only_full_group_by_pins_by_name_by_where_equality_and_by_candidate_key() {
     );
 }
 
+/// `SELECT DISTINCT` may only order by something its own result carries
+/// (Go's `checkOrderByInDistinct`, MySQL #12442).
+///
+/// A separate rule from the one above, sharing only the `sql_mode` gate, and
+/// the difference is what makes it worth pinning: the rule above asks whether
+/// the GROUPING determines a column, this one asks only whether the SELECT
+/// LIST reports it. Captured from `gorun` over `gg(k,v) =
+/// (1,10),(1,20),(2,30)` and `pk(id PRIMARY KEY, w, z) =
+/// (1,10,100),(2,20,200)`:
+///
+/// | query | ONLY_FULL_GROUP_BY on | off |
+/// |---|---|---|
+/// | `SELECT DISTINCT k FROM gg ORDER BY v` | 3065 `test.gg.v` | `1;2` |
+/// | `SELECT DISTINCT k+1 FROM gg ORDER BY k+2` | 3065 `test.gg.k` | — |
+/// | `SELECT DISTINCT count(v) ... GROUP BY k ORDER BY sum(v)` | 3066 | `2;1` |
+/// | `SELECT DISTINCT count(v) ... GROUP BY k ORDER BY k` | 3065 `test.gg.k` | — |
+/// | `SELECT DISTINCT id, w FROM pk ORDER BY z` | 3065 `test.pk.z` | `1\|10;2\|20` |
+/// | `SELECT DISTINCT k, v FROM gg ORDER BY k+v` | permitted | permitted |
+/// | `SELECT DISTINCT k+1 FROM gg ORDER BY k+1` | permitted | permitted |
+/// | `SELECT DISTINCT k AS x FROM gg ORDER BY x` | permitted | permitted |
+/// | `SELECT DISTINCT k FROM gg ORDER BY 1` | permitted | permitted |
+/// | `SELECT DISTINCT * FROM gg ORDER BY v` | permitted | permitted |
+/// | `SELECT DISTINCT count(v) ... ORDER BY count(v)` | permitted | permitted |
+/// | `SELECT k FROM gg ORDER BY v` | permitted | permitted |
+///
+/// The `pk` row is the one that separates the two rules, and it is the reason
+/// this needs none of the functional-dependency machinery: `id` is the whole
+/// primary key and IS in the select list, which is exactly what lets
+/// `SELECT z, w, count(*) FROM pk GROUP BY id` through above -- and `ORDER BY
+/// z` is STILL 3065 here, because after `DISTINCT` the query does not report
+/// `z` at all. `ORDER BY k` over `GROUP BY k` is refused for the same reason
+/// while the grouping rule permits it.
+///
+/// The two aggregate rows are the 3066/3065 split: Go reports 3066 only when
+/// the ORDER BY item IS an aggregate the select list does not contain.
+#[test]
+fn select_distinct_may_only_order_by_a_field_it_reports() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE gg (k INT, v INT)").unwrap();
+    session
+        .run("INSERT INTO gg VALUES (1,10),(1,20),(2,30)")
+        .unwrap();
+    session
+        .run("CREATE TABLE pk (id INT PRIMARY KEY, w INT, z INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO pk VALUES (1,10,100),(2,20,200)")
+        .unwrap();
+
+    let rejected = [
+        ("SELECT DISTINCT k FROM gg ORDER BY v", 3065, "'test.gg.v'"),
+        (
+            "SELECT DISTINCT k FROM gg ORDER BY v LIMIT 1",
+            3065,
+            "'test.gg.v'",
+        ),
+        (
+            "SELECT DISTINCT k FROM gg ORDER BY v+1",
+            3065,
+            "'test.gg.v'",
+        ),
+        (
+            "SELECT DISTINCT k+1 FROM gg ORDER BY k+2",
+            3065,
+            "'test.gg.k'",
+        ),
+        (
+            "SELECT DISTINCT k FROM gg ORDER BY k+v",
+            3065,
+            "'test.gg.v'",
+        ),
+        (
+            "SELECT DISTINCT count(v) FROM gg GROUP BY k ORDER BY sum(v)",
+            3066,
+            "contains aggregate function",
+        ),
+        (
+            "SELECT DISTINCT count(v) FROM gg GROUP BY k ORDER BY k",
+            3065,
+            "'test.gg.k'",
+        ),
+        (
+            "SELECT DISTINCT id, w FROM pk ORDER BY z",
+            3065,
+            "'test.pk.z'",
+        ),
+        (
+            "SELECT DISTINCT k AS v FROM gg ORDER BY v+1",
+            3065,
+            "'test.gg.v'",
+        ),
+        (
+            "SELECT DISTINCT k FROM gg ORDER BY gg.v",
+            3065,
+            "'test.gg.v'",
+        ),
+    ];
+    // Every accepted case is asserted by its ANSWER, not merely by not being
+    // rejected: an over-strict rule and a rule that silently drops the ORDER
+    // BY would both survive an `is_ok()` check.
+    let permitted: [(&str, &[&[&str]]); 14] = [
+        // An alias SHADOWS a table column of the same name -- but only as the
+        // whole item, which is what the `ORDER BY v+1` refusal above pins.
+        (
+            "SELECT DISTINCT k AS v FROM gg ORDER BY v",
+            &[&["1"], &["2"]],
+        ),
+        (
+            "SELECT DISTINCT k+1 AS v FROM gg ORDER BY v",
+            &[&["2"], &["3"]],
+        ),
+        (
+            "SELECT DISTINCT count(v) AS c FROM gg GROUP BY k ORDER BY c",
+            &[&["1"], &["2"]],
+        ),
+        ("SELECT DISTINCT k FROM gg ORDER BY k", &[&["1"], &["2"]]),
+        (
+            "SELECT DISTINCT k AS x FROM gg ORDER BY x",
+            &[&["1"], &["2"]],
+        ),
+        (
+            "SELECT DISTINCT k AS x FROM gg ORDER BY k",
+            &[&["1"], &["2"]],
+        ),
+        ("SELECT DISTINCT k FROM gg ORDER BY 1", &[&["1"], &["2"]]),
+        (
+            "SELECT DISTINCT k, v FROM gg ORDER BY k+v",
+            &[&["1", "10"], &["1", "20"], &["2", "30"]],
+        ),
+        (
+            "SELECT DISTINCT k+1 FROM gg ORDER BY k+1",
+            &[&["2"], &["3"]],
+        ),
+        (
+            "SELECT DISTINCT * FROM gg ORDER BY v",
+            &[&["1", "10"], &["1", "20"], &["2", "30"]],
+        ),
+        (
+            "SELECT DISTINCT count(v) FROM gg GROUP BY k ORDER BY count(v)",
+            &[&["1"], &["2"]],
+        ),
+        ("SELECT DISTINCT (k) FROM gg ORDER BY +k", &[&["1"], &["2"]]),
+        ("SELECT k FROM gg ORDER BY v", &[&["1"], &["1"], &["2"]]),
+        (
+            "SELECT DISTINCT z, w, count(*) FROM pk GROUP BY id",
+            &[&["100", "10", "1"], &["200", "20", "1"]],
+        ),
+    ];
+
+    for (sql, code, message) in rejected {
+        let err = session.run(sql).expect_err(sql).to_mysql_error();
+        assert_eq!(err.code, code, "{sql}: {err:?}");
+        assert!(err.message.contains(message), "{sql}: {}", err.message);
+    }
+    for (sql, expected) in permitted {
+        assert_eq!(rows(&mut session, sql), expected, "{sql}");
+    }
+
+    // Clearing the mode restores the permissive answer for every refusal.
+    session.run("SET sql_mode = 'STRICT_TRANS_TABLES'").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT DISTINCT k FROM gg ORDER BY v"),
+        [["1"], ["2"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT DISTINCT count(v) FROM gg GROUP BY k ORDER BY sum(v)"
+        ),
+        [["2"], ["1"]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT DISTINCT id, w FROM pk ORDER BY z"),
+        [["1", "10"], ["2", "20"]]
+    );
+}
+
 /// `HAVING` resolves against the AGGREGATION's output, so an ungrouped source
 /// column is not visible there at all — and that is a name-resolution rule,
 /// not an `ONLY_FULL_GROUP_BY` one.
