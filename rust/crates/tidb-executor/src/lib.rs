@@ -62,6 +62,7 @@ pub(crate) mod foreign_key;
 pub mod generated_column;
 pub mod generated_column_substitute;
 mod go_quote;
+pub(crate) mod handle_range;
 pub mod hash_agg;
 mod hash_join;
 mod index_range;

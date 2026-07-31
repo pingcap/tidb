@@ -1641,6 +1641,7 @@ dependencies = [
  "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-distsql",
  "tidb-error",
  "tidb-expr",
  "tidb-model",

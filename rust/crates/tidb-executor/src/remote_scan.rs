@@ -104,10 +104,15 @@ pub struct PushdownScanRequest {
     /// The timestamp the remote scan must read at: the statement's own
     /// snapshot, filled in by the storage that owns it.
     pub snapshot_ts: u64,
-    /// Start of the scanned record range, inclusive.
-    pub start: Key,
-    /// End of the scanned record range, exclusive.
-    pub end: Key,
+    /// The scanned record ranges, as half-open `[start, end)` pairs in
+    /// ascending key order.
+    ///
+    /// A whole-table scan is one range. A `TableRangeScan` over a clustered
+    /// handle is one per handle range, which is what a coprocessor request
+    /// carries natively (`Request.Ranges` is a list), so the narrowing
+    /// reaches the region rather than being re-applied after the rows have
+    /// already crossed the network.
+    pub ranges: Vec<(Key, Key)>,
 }
 
 /// A lazily pulled stream of snapshot rows a backend served remotely.
@@ -253,8 +258,10 @@ mod tests {
             let mut store = MemTableStorage::new();
             {
                 let mut snapshot = self.snapshot.lock().unwrap();
-                for (key, value) in snapshot.scan(&request.start, &request.end, None).unwrap() {
-                    store.set(Key::from_bytes(key), value).unwrap();
+                for (start, end) in &request.ranges {
+                    for (key, value) in snapshot.scan(start, end, None).unwrap() {
+                        store.set(Key::from_bytes(key), value).unwrap();
+                    }
                 }
             }
             let mut table =
@@ -277,7 +284,7 @@ mod tests {
                         .expect("a requested column belongs to the table")
                 })
                 .collect();
-            let mut cursor = table.row_cursor_projected(Some(&keep)).unwrap();
+            let mut cursor = table.row_cursor_projected(Some(&keep), None).unwrap();
             let mut rows = Vec::new();
             while let Some((handle, mut row)) = cursor.next_row().unwrap() {
                 self.scanned.fetch_add(1, Ordering::Relaxed);

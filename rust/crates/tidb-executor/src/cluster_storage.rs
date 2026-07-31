@@ -424,7 +424,17 @@ impl TableStorage for ClusterTableStorage {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .start_ts();
-        let staged = self.buffer.range(&request.start, &request.end);
+        // One staged slice per requested range, concatenated. The ranges are
+        // ascending and disjoint, so the concatenation is still in key order,
+        // which is the order the merge below relies on. A staged row outside
+        // every range is dropped for the same reason a snapshot row there is:
+        // the ranges bound the `WHERE`'s access conditions, so no row outside
+        // them can satisfy the statement.
+        let staged: Vec<_> = request
+            .ranges
+            .iter()
+            .flat_map(|(start, end)| self.buffer.range(start, end))
+            .collect();
         let mut request = request.clone();
         request.snapshot_ts = snapshot_ts;
         if !staged.is_empty() {

@@ -107,22 +107,47 @@ impl KvTable {
     /// returns an owned iterator, so the cursor does not borrow the table and
     /// a caller may hold it across chunk boundaries.
     pub fn row_cursor(&mut self) -> Result<RowCursor, KvTableError> {
-        self.row_cursor_projected(None)
+        self.row_cursor_projected(None, None)
     }
 
     /// [`KvTable::row_cursor`] narrowed to the columns at `keep`: the cursor
     /// decodes and yields exactly those columns, in `keep`'s order.
+    ///
+    /// `handle_ranges` narrows which RECORDS are read, as
+    /// [`crate::table_access::TableAccess::accept_handle_ranges`] describes:
+    /// `None` reads the whole table.
     pub fn row_cursor_projected(
         &mut self,
         keep: Option<&[usize]>,
+        handle_ranges: Option<&[IndexRange]>,
     ) -> Result<RowCursor, KvTableError> {
         let decoder = self.row_decoder_projected(keep);
-        let (low, upper) = self.record_key_range();
-        let iterator = self
-            .store
-            .iter(Some(&low), Some(&upper))
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        Ok(RowCursor { iterator, decoder })
+        let mut iterators = Vec::new();
+        for (low, upper) in self.record_key_ranges(handle_ranges) {
+            iterators.push(
+                self.store
+                    .iter(Some(&low), Some(&upper))
+                    .map_err(|e| KvTableError::Storage(format!("{e:?}")))?,
+            );
+        }
+        Ok(RowCursor {
+            iterators: iterators.into_iter(),
+            current: None,
+            decoder,
+        })
+    }
+
+    /// The record ranges this scan reads, as the storage seam's half-open
+    /// `[start, end)` pairs in ascending key order.
+    ///
+    /// With no handle ranges this is the ONE range the whole relation lives
+    /// in ([`KvTable::record_key_range`]). With them it is the intervals
+    /// [`crate::handle_range::record_key_ranges`] encodes, which is what
+    /// makes a `TableRangeScan` read less than the table.
+    fn record_key_ranges(&self, handle_ranges: Option<&[IndexRange]>) -> Vec<(Key, Key)> {
+        handle_ranges
+            .and_then(|ranges| crate::handle_range::record_key_ranges(self, ranges))
+            .unwrap_or_else(|| vec![self.record_key_range()])
     }
 
     /// The record range this table's rows live in, as the storage seam's
@@ -163,6 +188,7 @@ impl KvTable {
         keep: &[usize],
         predicates: &[ScanPredicate],
         limit: Option<u64>,
+        handle_ranges: Option<&[IndexRange]>,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         if !self.common_handle_offsets.is_empty() {
             return Ok(None);
@@ -209,7 +235,6 @@ impl KvTable {
                 columns.len() - 1
             }
         };
-        let (start, end) = self.record_key_range();
         let request = PushdownScanRequest {
             table_id: self.table_id,
             columns,
@@ -219,8 +244,7 @@ impl KvTable {
             // The storage that owns the snapshot fills this in; the table has
             // no timestamp of its own.
             snapshot_ts: 0,
-            start,
-            end,
+            ranges: self.record_key_ranges(handle_ranges),
         };
         let Some(scan) = self.store.open_remote_scan(&request) else {
             return Ok(None);
@@ -285,7 +309,7 @@ impl KvTable {
         &mut self,
         keep: &[usize],
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        let mut cursor = self.row_cursor_projected(Some(keep))?;
+        let mut cursor = self.row_cursor_projected(Some(keep), None)?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_row()? {
             rows.push(entry);
@@ -562,31 +586,53 @@ impl RowDecoder {
 /// iterator is the merged stream (snapshot plus the session's staged mutation
 /// buffer), so a cursor sees exactly the rows a materializing scan saw.
 pub struct RowCursor {
-    iterator: Box<dyn StorageIterator>,
+    /// The ranges left to read, in ascending key order. A whole-table scan
+    /// holds exactly one; a `TableRangeScan` holds one per handle range (per
+    /// partition, for a partitioned table).
+    iterators: std::vec::IntoIter<Box<dyn StorageIterator>>,
+    current: Option<Box<dyn StorageIterator>>,
     decoder: RowDecoder,
 }
 
 impl RowCursor {
-    /// The next row in key order, or `None` at the end of the range.
+    /// The next row in key order, or `None` at the end of the last range.
     pub fn next_row(&mut self) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
-        if !self.iterator.valid() {
-            return Ok(None);
+        loop {
+            let Some(iterator) = self.current.as_mut() else {
+                // Every range is opened when the cursor is, so advancing is
+                // only ever moving to the next already-open one.
+                self.current = self.iterators.next();
+                if self.current.is_none() {
+                    return Ok(None);
+                }
+                continue;
+            };
+            if !iterator.valid() {
+                self.current.take().expect("just borrowed").close();
+                continue;
+            }
+            let decoded = self
+                .decoder
+                .decode(iterator.key().as_bytes(), iterator.value())?;
+            iterator
+                .next()
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            return Ok(Some(decoded));
         }
-        let decoded = self
-            .decoder
-            .decode(self.iterator.key().as_bytes(), self.iterator.value())?;
-        self.iterator
-            .next()
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        Ok(Some(decoded))
     }
 }
 
 impl Drop for RowCursor {
-    /// An abandoned cursor (an early-stopping `LIMIT`) must still release the
-    /// iterator, which a drained loop's explicit `close` would have done.
+    /// An abandoned cursor (an early-stopping `LIMIT`) must still release
+    /// every iterator, which a drained loop's explicit `close` would have
+    /// done -- including the ranges it never reached.
     fn drop(&mut self) {
-        self.iterator.close();
+        if let Some(current) = self.current.as_mut() {
+            current.close();
+        }
+        for mut iterator in self.iterators.by_ref() {
+            iterator.close();
+        }
     }
 }
 
@@ -774,6 +820,10 @@ pub struct TableScanExec {
     limit: Option<u64>,
     /// Qualifying rows emitted so far, against `limit`.
     emitted: u64,
+    /// The clustered-handle ranges this scan reads, when the driver offered
+    /// them and this scan took them ([`Executor::accept_handle_ranges`]).
+    /// `None` reads the whole table, which is every scan until the offer.
+    handle_ranges: Option<Vec<IndexRange>>,
 }
 
 impl TableScanExec {
@@ -798,6 +848,7 @@ impl TableScanExec {
             scanned: std::rc::Rc::new(std::cell::Cell::new(0)),
             limit: None,
             emitted: 0,
+            handle_ranges: None,
         }
     }
 
@@ -849,7 +900,12 @@ impl Executor for TableScanExec {
         // one.
         self.remote = self
             .table
-            .pushdown_row_cursor(&self.keep.clone(), &self.pushed, self.limit)
+            .pushdown_row_cursor(
+                &self.keep.clone(),
+                &self.pushed,
+                self.limit,
+                self.handle_ranges.as_deref(),
+            )
             .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
         if self.remote.is_some() {
             return Ok(());
@@ -861,9 +917,10 @@ impl Executor for TableScanExec {
         } else {
             Some(&self.keep)
         };
+        let handle_ranges = self.handle_ranges.clone();
         self.cursor = Some(
             self.table
-                .row_cursor_projected(projection)
+                .row_cursor_projected(projection, handle_ranges.as_deref())
                 .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?,
         );
         Ok(())
@@ -967,6 +1024,20 @@ impl crate::table_access::TableAccess for TableScanExec {
 
     fn scanned_rows_counter(&self) -> Option<std::rc::Rc<std::cell::Cell<u64>>> {
         Some(self.scanned_rows())
+    }
+
+    /// The scan reads the record keys the ranges cover and nothing else, on
+    /// both cursors: the byte cursor opens one storage iterator per range,
+    /// and the coprocessor request carries them as its key ranges.
+    ///
+    /// A shape [`crate::handle_range::record_key_ranges`] cannot encode falls
+    /// back to the whole record range, which is a SUPERSET of the ranges and
+    /// therefore still every row the statement admits -- the weaker half of
+    /// the promise in [`crate::table_access`], and the only one that matters
+    /// for correctness.
+    fn accept_handle_ranges(&mut self, ranges: &[IndexRange]) -> bool {
+        self.handle_ranges = Some(ranges.to_vec());
+        true
     }
 
     /// The scan narrows both what it decodes and what it emits, so the

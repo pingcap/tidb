@@ -326,9 +326,19 @@ pub(crate) struct PushedLimit<'a> {
 /// One way of reading the table, with the rows and the cost it was chosen by.
 #[derive(Clone, Debug)]
 pub(crate) struct AccessPath {
-    /// The index this path reads, and the ranges it reads of it; `None` is
-    /// the full table scan.
+    /// The index this path reads, and the ranges it reads of it; `None` is a
+    /// table path, which reads through the row handle.
     pub(crate) index: Option<(i64, Vec<IndexRange>)>,
+    /// A table path's ranges over the CLUSTERED INTEGER HANDLE -- Go's
+    /// `path.Ranges` for a `tablePath`, which `ranger.BuildTableRange` builds
+    /// (see [`crate::handle_range`]).
+    ///
+    /// `None` is Go's full range, the whole table, which `EXPLAIN` prints as
+    /// `TableFullScan`. `Some` is its `TableRangeScan` -- including
+    /// `Some(vec![])`, the contradictory `WHERE` no handle satisfies, which
+    /// reads nothing rather than everything. Always `None` on an index path,
+    /// whose ranges live in [`AccessPath::index`].
+    pub(crate) table_ranges: Option<Vec<IndexRange>>,
     /// The estimate `EXPLAIN` prints for the scan node.
     pub(crate) estimate: ScanEstimate,
     /// `plan_cost_ver2.go`'s cost of the reader this path lowers to.
@@ -468,24 +478,49 @@ pub(crate) fn enumerate_paths(
 ) -> Vec<Candidate<AccessPath>> {
     let realtime = realtime_row_count(stats);
     let source_rows = source_row_count(table, where_clause, resolver, stats, realtime);
-    let table_scan = table_scan_path(table, where_clause, resolver, stats, realtime);
-    // Go's `getTableCandidate`: a table path is always a single scan, its
-    // access-condition map is empty because this tier builds no primary-key
-    // range (a point read is settled before costing, see the module doc), and
-    // its range is therefore always the full one.
+    // Go's `deriveTablePathStats`: the table path's own ranges, over the
+    // clustered integer handle. Nothing here narrows what is EVALUATED -- the
+    // `WHERE` stays in the pipeline above the source -- so a range only ever
+    // decides how much is read and what the path is costed at.
+    let handle =
+        where_clause.and_then(|clause| crate::handle_range::build_handle_ranges(table, clause));
+    let handle_ranges = handle.as_ref().map(|built| built.ranges.clone());
+    let table_scan = table_scan_path(
+        table,
+        where_clause,
+        resolver,
+        stats,
+        realtime,
+        handle_ranges.as_deref(),
+    );
+    // Go's `getTableCandidate`: a table path is always a single scan, and it
+    // is the full range exactly when the ranger built nothing. Its access
+    // column is the handle itself, which is what lets skyline pruning see
+    // that a narrowed table path accesses a column an unrelated index does
+    // not.
+    let handle_access_columns: ColSet = handle
+        .as_ref()
+        .and_then(|_| table.pk_handle_offset())
+        .into_iter()
+        .collect();
     let mut candidates = vec![Candidate {
-        access_columns: ColSet::new(),
+        access_columns: handle_access_columns,
         index_columns: ColSet::new(),
         single_scan: true,
-        eq_or_in_count: 0,
-        full_range: true,
-        count_after_access: table_scan.estimate.rows,
+        eq_or_in_count: handle.as_ref().map_or(0, |built| built.eq_or_in_count),
+        full_range: handle_ranges.is_none(),
+        // Skyline and the cost formula compare paths by what they READ, which
+        // is Go's `CountAfterAccess`, not by the number the scan node prints.
+        count_after_access: match handle_ranges.as_deref() {
+            None => realtime,
+            Some(ranges) => crate::handle_range::handle_range_row_count(table, ranges, stats, true),
+        },
         max_count_after_access: table_scan.risk.max,
         min_count_after_access: table_scan.risk.min,
         count_after_index: table_scan.risk.after_index,
         pseudo: is_pseudo(stats),
         index_width: 0,
-        empty_range: false,
+        empty_range: handle_ranges.as_ref().is_some_and(Vec::is_empty),
         index_filter_count: 0,
         table_filter_count: 0,
         path: table_scan,
@@ -702,14 +737,23 @@ fn split_index_filter_conditions<'a>(
     (columns, index_filters, table_filters)
 }
 
-/// The full-scan candidate: a `PhysicalTableReader` over a
-/// `PhysicalTableScan` reading every row.
+/// The table candidate: a `PhysicalTableReader` over a `PhysicalTableScan`,
+/// reading the handle ranges `where_clause` implies and every row when it
+/// implies none.
+///
+/// `ranges` is [`crate::handle_range::build_handle_ranges`]' output. Go's
+/// `deriveTablePathStats` reads exactly two numbers off it, and this builds
+/// both from that module: the printed estimate and, in [`AccessPath::risk`]'s
+/// place, the `CountAfterAccess` the cost is charged for. They are NOT the
+/// same number -- see [`crate::handle_range`]'s doc for the capture that
+/// separates them.
 fn table_scan_path(
     table: &KvTable,
     where_clause: Option<&tidb_ast::Expr>,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
     realtime: f64,
+    ranges: Option<&[IndexRange]>,
 ) -> AccessPath {
     let row_columns: Vec<RowSizeColumn> = table
         .columns
@@ -724,24 +768,40 @@ fn table_scan_path(
         table.pk_handle_offset().is_some(),
         false,
     );
+    // Go `deriveTablePathStats`: with no access condition the range is the
+    // full one and `CountAfterAccess` is the realtime count, taken without
+    // consulting the estimator at all ("Skip the expensive
+    // GetRowCountByIntColumnRanges call in this case"). With one, it is the
+    // estimate over the CONVERTED ranges.
+    let count_after_access = match ranges {
+        None => realtime,
+        Some(ranges) => crate::handle_range::handle_range_row_count(table, ranges, stats, true),
+    };
     // Go costs the scan at the rows it READS and the reader's net transfer at
     // the rows that leave the cop task, which is after the pushed Selection.
-    let scan_rows = realtime.max(MIN_NUM_ROWS);
+    let scan_rows = count_after_access.max(MIN_NUM_ROWS);
     let scanned = scan_cost(scan_rows, row_size.max(MIN_ROW_SIZE));
     let after_filter = source_row_count(table, where_clause, resolver, stats, realtime);
     let transferred = net_cost(after_filter, row_size.max(MIN_ROW_SIZE));
+    // What `EXPLAIN` prints on the scan node is Go's `ds.StatsInfo().RowCount`
+    // for the access conditions, which is the estimate over the UNCONVERTED
+    // ranges; only the `-inf`-low shapes make it differ from the count above.
+    let printed = match ranges {
+        None => realtime,
+        Some(ranges) => crate::handle_range::handle_range_row_count(table, ranges, stats, false),
+    };
     AccessPath {
         index: None,
+        table_ranges: ranges.map(<[IndexRange]>::to_vec),
         estimate: ScanEstimate {
-            rows: realtime,
+            rows: printed,
             pseudo: is_pseudo(stats),
         },
         cost: (scanned + transferred) / DIST_SQL_SCAN_CONCURRENCY,
-        // Go leaves all three at zero for a table path: this tier builds no
-        // primary-key range, so `CountAfterAccess` is the whole table and
-        // `adjustCountAfterAccess` -- the only thing that could move the
-        // bounds -- cannot fire against a row count that is already the
-        // maximum. `CountAfterIndex` is documented as meaningless here.
+        // Go leaves all three at zero for a table path, and
+        // `adjustCountAfterAccess` -- the only thing that could move them --
+        // is not ported here (see [`source_row_count`]). `CountAfterIndex` is
+        // documented as meaningless for a table path either way.
         risk: RowRisk::default(),
     }
 }
@@ -867,6 +927,7 @@ fn index_path(
     };
     AccessPath {
         index: Some((index.id, ranges)),
+        table_ranges: None,
         estimate: ScanEstimate {
             rows: estimated,
             pseudo: is_pseudo(stats),
@@ -1277,7 +1338,7 @@ mod tests {
 
         // The crossover itself: a point range keeps the index, a range
         // covering the whole table does not.
-        let scan = table_scan_path(&table, None, &NoResolver, None, realtime);
+        let scan = table_scan_path(&table, None, &NoResolver, None, realtime, None);
         assert!(
             non_covering.cost < scan.cost,
             "a one-row lookup must beat a {realtime}-row scan: index {} vs \

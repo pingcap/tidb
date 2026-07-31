@@ -130,6 +130,27 @@ pub trait TableAccess {
         None
     }
 
+    /// Offers this source the clustered-handle ranges the `WHERE` implies, as
+    /// Go's `deriveTablePathStats` gives a `PhysicalTableScan` its
+    /// `ranger.BuildTableRange` ranges and turns a `TableFullScan` into a
+    /// `TableRangeScan`.
+    ///
+    /// This offer is unlike the others above: it is not a promise to take
+    /// over any *evaluation*. The `WHERE` those ranges were derived from
+    /// stays in the pipeline above the source either way, so a source that
+    /// accepts still returns every row the statement admits -- it just does
+    /// not read the records that lie outside the ranges. A source is free to
+    /// read a SUPERSET of them (that is the ordinary answer for a shape it
+    /// cannot encode); it must never read less.
+    ///
+    /// `ranges` is over the single handle column, ascending and disjoint, in
+    /// [`crate::handle_range`]'s form. An EMPTY slice is the contradictory
+    /// `WHERE` no handle satisfies, and reads nothing.
+    fn accept_handle_ranges(&mut self, ranges: &[crate::kv_table::IndexRange]) -> bool {
+        let _ = ranges;
+        false
+    }
+
     /// Offers this source the chance to emit only the columns at `keep`
     /// (offsets into its current output row, ascending and unique), as Go's
     /// column pruning narrows a `DataSource`'s schema.

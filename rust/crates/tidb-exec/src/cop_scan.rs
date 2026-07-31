@@ -270,7 +270,11 @@ where
         .map_err(|error| PushdownScannerError::Unsupported(error.to_string()))?;
 
         let summary = dag_summary(&dag);
-        let key_range = KeyRange::new(request.start.clone(), request.end.clone());
+        let key_ranges: Vec<KeyRange> = request
+            .ranges
+            .iter()
+            .map(|(start, end)| KeyRange::new(start.clone(), end.clone()))
+            .collect();
         let mut shapes = vec![ExecutorShape::new(ExecutorKind::TableScan)];
         if !conditions.is_empty() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
@@ -281,7 +285,7 @@ where
         let plan = RemoteScanPlan {
             dag,
             envelope: RequestEnvelope::new(shapes),
-            key_range,
+            key_ranges,
             snapshot_ts: request.snapshot_ts,
             field_types,
         };
@@ -359,7 +363,10 @@ struct RemoteScanPlan {
     /// The executor shapes the request builder reads for concurrency, which
     /// must match the DAG's own executor list.
     envelope: RequestEnvelope,
-    key_range: KeyRange,
+    /// The record intervals to read, ascending and disjoint. A whole-table
+    /// scan is one; a `TableRangeScan` over a clustered handle is one per
+    /// handle range, and the coprocessor request carries them all.
+    key_ranges: Vec<KeyRange>,
     snapshot_ts: u64,
     field_types: Vec<FieldType>,
 }
@@ -398,7 +405,7 @@ where
     builder
         .set_start_ts(plan.snapshot_ts)
         .set_keep_order(true)
-        .set_non_partitioned_key_ranges(vec![plan.key_range])
+        .set_non_partitioned_key_ranges(plan.key_ranges)
         .set_dag_request(plan.envelope, plan.dag.encode_to_vec());
     let request = builder
         .build_transport_request(Arc::clone(&cancellation))
