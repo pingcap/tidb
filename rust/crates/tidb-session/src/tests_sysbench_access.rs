@@ -235,6 +235,67 @@ fn narrowed_ranges_return_the_same_rows_as_a_full_scan() {
     }
 }
 
+/// The RECORDS a handle range actually reads, from `EXPLAIN ANALYZE`'s
+/// `actRows` -- the receipt no plan assertion can give.
+///
+/// A plan may say `TableRangeScan range:[100,199]` and still walk the whole
+/// table underneath: the `WHERE` above the source would filter the surplus,
+/// the answer would be right, and every assertion about the printed tree
+/// would pass while the read that the range exists to avoid still happened.
+/// That is exactly the shape of a performance fix that is not one, so it is
+/// asserted separately here, against a table whose rows are known.
+///
+/// The scan's `actRows` is rows READ before any filter, so a narrowed scan
+/// reports the records inside its ranges and a full scan reports all
+/// thirteen.
+#[test]
+fn a_handle_range_reads_only_the_records_inside_it() {
+    let mut session = sbtest1();
+    for id in [-3i64, -1, 0, 1, 2, 3, 98, 99, 100, 150, 199, 200, 201] {
+        session
+            .run(&format!(
+                "INSERT INTO sbtest1 (id, k, c, pad) VALUES ({id}, {}, 'c{id}', 'p')",
+                id * 2
+            ))
+            .unwrap();
+    }
+    // (predicate, records the scan must read, rows the statement returns)
+    for (predicate, read, returned) in [
+        // Three of the thirteen lie in [100,199]; a full scan would say 13.
+        ("id BETWEEN 100 AND 199", "3", "3"),
+        // Two disjoint ranges, so the two-range cursor is exercised: a scan
+        // that collapsed them to their SPAN would read all thirteen.
+        ("id NOT BETWEEN 0 AND 200", "3", "3"),
+        ("id > 199", "2", "2"),
+        ("id <= -1", "2", "2"),
+        // Three point ranges out of thirteen records.
+        ("id IN (-1, 2, 150)", "3", "3"),
+        // The contradictory `WHERE`: reads NOTHING, which is the one
+        // direction an empty range list must never be read as "everything".
+        ("id > 100 AND id < 100", "0", "0"),
+        // A residual condition the range did not consume still reads the
+        // whole range and filters above it.
+        ("id BETWEEN 100 AND 199 AND c = 'c150'", "3", "1"),
+        // No handle bound: the whole table, unchanged. `k` is `id * 2`, so
+        // `k > 5` keeps the eight records with `id >= 3`.
+        ("k > 5", "13", "8"),
+    ] {
+        let rows = row_text(session.run(&format!(
+            "EXPLAIN ANALYZE SELECT c FROM sbtest1 WHERE {predicate}"
+        )));
+        let scan = rows.last().expect("a plan has a source row");
+        assert_eq!(
+            scan[2], read,
+            "records read changed for `{predicate}` (source: {})",
+            scan[0]
+        );
+        assert_eq!(
+            rows[0][2], returned,
+            "rows returned changed for `{predicate}`"
+        );
+    }
+}
+
 /// The whole eighteen-shape corpus above, as `operator | estRows | range`.
 ///
 /// The four shapes sysbench itself runs are asserted individually above; this

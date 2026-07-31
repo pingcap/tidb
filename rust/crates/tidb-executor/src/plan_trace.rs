@@ -240,6 +240,19 @@ impl PlanTrace {
         self.stack.push(node);
     }
 
+    /// [`PlanTrace::replace_top`] for a node whose EXECUTOR did not change,
+    /// only its name and operator info.
+    ///
+    /// The row counter belongs to the executor, not to the printed node, so
+    /// renaming must carry it across -- otherwise `EXPLAIN ANALYZE` reports
+    /// `N/A` for a scan that is still running and still counting. Every other
+    /// replacement here swaps the executor too and must NOT keep it.
+    fn rename_top(&mut self, mut node: PlanNode) {
+        let previous = self.stack.pop();
+        node.act_rows = previous.and_then(|previous| previous.act_rows);
+        self.stack.push(node);
+    }
+
     fn wrap(&mut self, name: &'static str, est: Est, info: String) {
         let est_rows = est.apply(self.top_est());
         let child = self.stack.pop();
@@ -357,7 +370,10 @@ impl PlanTrace {
         estimate: ScanEstimate,
     ) {
         let printed: Vec<String> = ranges.iter().map(range_text).collect();
-        self.replace_top(PlanNode::new(
+        // A RENAME, not a replacement: the whole-table scan `build_from`
+        // installed is the executor that runs, narrowed by the ranges it
+        // accepted, so its row counter is still the right one.
+        self.rename_top(PlanNode::new(
             "TableRangeScan",
             Some(estimate.rows),
             format!("table:{visible}"),
