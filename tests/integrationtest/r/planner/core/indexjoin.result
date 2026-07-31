@@ -1163,3 +1163,62 @@ NULL	xUhXa6=s%j7h~!G,yKuo#WH)4F30	yKuo#WH)4F30	NULL
 NULL	xUhXa6=s%j7h~!G,zybQlXsQiqNIXAl5p!#	zybQlXsQiqNIXAl5p!#	NULL
 rollback;
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
+drop table if exists t_inner_pk;
+drop table if exists t_outer_pk;
+create table t_inner_pk (
+a int,
+b int,
+data char(100),
+primary key (a, b) clustered
+);
+create table t_outer_pk (
+a int,
+val int,
+key(val)
+);
+insert into t_inner_pk select 1, n, 'padding' from (
+with recursive x as (
+select 1 as n
+union all
+select n + 1 from x where n < 100
+)
+select n from x
+) t;
+insert into t_outer_pk values (1, 100);
+analyze table t_inner_pk;
+analyze table t_outer_pk;
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
+from t_outer_pk o
+join t_inner_pk i on o.a = i.a
+where o.val = 100;
+id	estRows	task	access object	operator info
+IndexJoin	100.00	root		inner join, inner:TableReader, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
+└─TableReader(Probe)	100.00	root		data:TableRangeScan
+  └─TableRangeScan	100.00	cop[tikv]	table:i	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a)], keep order:false
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
+from t_outer_pk o
+join t_inner_pk i on o.a = i.a and i.b = 1
+where o.val = 100;
+id	estRows	task	access object	operator info
+IndexJoin	1.00	root		inner join, inner:TableReader, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
+└─TableReader(Probe)	0.01	root		data:Selection
+  └─Selection	0.01	cop[tikv]		eq(planner__core__indexjoin.t_inner_pk.b, 1)
+    └─TableRangeScan	1.00	cop[tikv]	table:i	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a) eq(planner__core__indexjoin.t_inner_pk.b, 1)], keep order:false
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
+from t_outer_pk o
+join t_inner_pk i on o.a = i.a and i.b > 50
+where o.val = 100;
+id	estRows	task	access object	operator info
+IndexJoin	50.00	root		inner join, inner:TableReader, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
+└─TableReader(Probe)	50.00	root		data:Selection
+  └─Selection	50.00	cop[tikv]		gt(planner__core__indexjoin.t_inner_pk.b, 50)
+    └─TableRangeScan	100.00	cop[tikv]	table:i	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a) gt(planner__core__indexjoin.t_inner_pk.b, 50)], keep order:false
