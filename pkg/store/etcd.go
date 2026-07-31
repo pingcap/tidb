@@ -25,7 +25,6 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
-	"google.golang.org/grpc/keepalive"
 )
 
 // NewEtcdCli creates a new clientv3.Client from store if the store support it.
@@ -70,21 +69,31 @@ func NewEtcdCliWithAddrs(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, 
 	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
 	backoffCfg := backoff.DefaultConfig
 	backoffCfg.MaxDelay = 3 * time.Second
-	cli, err := clientv3.New(clientv3.Config{
-		LogConfig:        &etcdLogCfg,
-		Endpoints:        addrs,
-		AutoSyncInterval: 30 * time.Second,
-		DialTimeout:      5 * time.Second,
+	dialKeepAliveTime := time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
+	clientCfg := clientv3.Config{
+		LogConfig: &etcdLogCfg,
+		Endpoints: addrs,
+		// Endpoint membership and health are synchronized by etcdHealthChecker.
+		AutoSyncInterval:     0,
+		DialTimeout:          5 * time.Second,
+		DialKeepAliveTime:    dialKeepAliveTime,
+		DialKeepAliveTimeout: cfg.TiKVClient.GetGrpcKeepAliveTimeout(),
 		DialOptions: []grpc.DialOption{
 			grpc.WithConnectParams(grpc.ConnectParams{
 				Backoff: backoffCfg,
 			}),
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
-				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
-			}),
 		},
 		TLS: ebd.TLSConfig(),
-	})
-	return cli, err
+	}
+	cli, err := clientv3.New(clientCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	checkerInterval := dialKeepAliveTime
+	if checkerInterval <= 0 {
+		checkerInterval = defaultEtcdHealthCheckInterval
+	}
+	initEtcdHealthChecker(checkerInterval, clientCfg, cli)
+	return cli, nil
 }

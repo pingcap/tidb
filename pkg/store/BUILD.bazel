@@ -4,6 +4,7 @@ go_library(
     name = "store",
     srcs = [
         "etcd.go",
+        "etcd_health_checker.go",
         "store.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/store",
@@ -21,10 +22,11 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/pdpb",
         "@com_github_tikv_pd_client//errs",
+        "@io_etcd_go_etcd_api_v3//etcdserverpb",
+        "@io_etcd_go_etcd_api_v3//v3rpc/rpctypes",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//backoff",
-        "@org_golang_google_grpc//keepalive",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -40,7 +42,7 @@ go_test(
     ],
     embed = [":store"],
     flaky = True,
-    shard_count = 23,
+    shard_count = 25,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -58,6 +60,8 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_pd_client//errs",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@io_etcd_go_etcd_server_v3//embed",
         "@org_uber_go_goleak//:goleak",
     ],
 )
