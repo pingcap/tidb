@@ -87,19 +87,103 @@ fn current_timestamp_default_prints_as_the_marker() {
     }
 }
 
-/// TiDB accepts `DEFAULT CURRENT_TIMESTAMP(3)` on a `TIMESTAMP(3)` column and
-/// prints it back with the fsp (captured: `` `b` timestamp(3) DEFAULT
-/// CURRENT_TIMESTAMP(3) ``). This tier stores a temporal type's written `(n)`
-/// in `flen` rather than in `decimal`, so it cannot apply Go's
-/// fsp-must-match rule; the form is REFUSED rather than accepted under a
-/// guess. This test pins the refusal so that fixing the fsp storage is what
-/// turns it into support.
+/// Go `getFuncCallDefaultValue`'s whole rule for the clock marker on a
+/// `TIMESTAMP`/`DATETIME` column: the fsp WRITTEN on the default -- 0 when it
+/// is written bare -- must EQUAL the column's own fsp, and `ErrInvalidDefault`
+/// (1067) is the answer when it does not. So the two spellings are not
+/// interchangeable on a column that has an fsp: `DATETIME(3)` demands
+/// `CURRENT_TIMESTAMP(3)` and refuses the bare word.
+///
+/// Captured from real TiDB, statement by statement:
+///
+/// ```text
+/// create table a10 (ts timestamp(3) default current_timestamp(3))  OK
+/// create table a3  (ts datetime(3)  default now(3))                OK
+/// create table a1  (ts datetime(3)  default current_timestamp)     ERR
+/// create table a2  (ts datetime     default current_timestamp(3))  ERR
+/// create table a6  (ts datetime(3)  default current_timestamp(2))  ERR
+/// ```
 #[test]
-fn an_explicit_fsp_on_the_clock_default_is_refused() {
+fn the_clock_defaults_fsp_must_equal_the_columns_own() {
     let mut session = Session::new();
-    assert!(session
-        .run("CREATE TABLE t7 (a INT, b TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3))")
-        .is_err());
+    for (table, written) in [
+        ("t7", "b TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3)"),
+        ("t7b", "b DATETIME(3) DEFAULT now(3)"),
+        ("t7c", "b TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+    ] {
+        session
+            .run(&format!("CREATE TABLE {table} (a INT, {written})"))
+            .unwrap_or_else(|error| panic!("{written}: {error:?}"));
+    }
+    for written in [
+        "b DATETIME(3) DEFAULT CURRENT_TIMESTAMP",
+        "b DATETIME DEFAULT CURRENT_TIMESTAMP(3)",
+        "b DATETIME(3) DEFAULT CURRENT_TIMESTAMP(2)",
+        "b TIMESTAMP(6) DEFAULT now()",
+    ] {
+        assert_eq!(
+            code(
+                &mut session,
+                &format!("CREATE TABLE bad (a INT, {written})")
+            ),
+            Some(1067),
+            "{written}"
+        );
+    }
+}
+
+/// The fsp travels from the declared type through the stored default and into
+/// the WRITE: an omitted `DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)` column
+/// stores a clock reading with three fractional digits, not a whole second.
+///
+/// Captured from real TiDB:
+///
+/// ```text
+/// create table t72 (id int primary key, ts datetime(3) default current_timestamp(3),
+///                   d datetime(6) default current_timestamp(6),
+///                   z datetime default current_timestamp)
+/// insert into t72 (id) values (1)
+/// select id, ts, d, z from t72
+///   1|2026-08-01 00:40:17.093|2026-08-01 00:40:17.093391|2026-08-01 00:40:17
+/// select length(ts), length(d), length(z) from t72
+///   23|26|19
+/// ```
+#[test]
+fn the_columns_fsp_reaches_the_value_a_clock_default_writes() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t72 (id INT PRIMARY KEY, \
+             ts DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3), \
+             d DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6), \
+             z DATETIME DEFAULT CURRENT_TIMESTAMP)",
+        )
+        .unwrap();
+    session.run("INSERT INTO t72 (id) VALUES (1)").unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT LENGTH(ts), LENGTH(d), LENGTH(z) FROM t72"
+        ),
+        vec![vec!["23".to_owned(), "26".to_owned(), "19".to_owned()]]
+    );
+}
+
+/// `SHOW CREATE TABLE` prints the marker with the column's fsp appended, and
+/// `now(3)` prints back as `CURRENT_TIMESTAMP(3)` because Go stores the marker
+/// word rather than the written spelling. Captured:
+/// `` `ts` datetime(3) DEFAULT CURRENT_TIMESTAMP(3) ``.
+#[test]
+fn a_clock_default_with_an_fsp_prints_the_marker_with_it() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE a3 (ts DATETIME(3) DEFAULT now(3))")
+        .unwrap();
+    assert!(
+        show_create(&mut session, "a3").contains("`ts` datetime(3) DEFAULT CURRENT_TIMESTAMP(3)"),
+        "{}",
+        show_create(&mut session, "a3")
+    );
 }
 
 /// An omitted `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` column takes a clock

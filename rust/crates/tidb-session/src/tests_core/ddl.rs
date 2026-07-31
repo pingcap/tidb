@@ -759,3 +759,80 @@ fn column_default_is_normalized_and_checked() {
         Err(DriverError::InvalidDefault(_))
     ));
 }
+
+/// A column type written WITHOUT a display width is not stored as written:
+/// Go's parser leaves the flen unspecified and
+/// `setCharsetCollationFlenDecimal` fills in the type's default, so a declared
+/// `BIGINT` is a `bigint(20)` on every surface that reports it. This pins the
+/// three surfaces together, because Go reaches them through different code and
+/// a normalization that fixed only one of them would be a regression.
+///
+/// Captured from real TiDB for
+/// `create table w (a bigint, b int, c smallint, d tinyint, e mediumint,
+/// h bigint(30), i decimal, j float, k double, l char, m varchar(7), n year,
+/// o bit, p bool)`:
+///
+/// ```text
+/// SHOW CREATE TABLE w / information_schema.columns.column_type
+///   a bigint(20)   b int(11)      c smallint(6)  d tinyint(4)
+///   e mediumint(9) h bigint(30)   i decimal(10,0)
+///   j float        k double       l char(1)      m varchar(7)
+///   n year(4)      o bit(1)       p tinyint(1)
+/// ```
+///
+/// `FLOAT`/`DOUBLE` are the counter-example that shows this is not "always
+/// print a width": Go stores their default flen but the printer omits it, so
+/// the declared spelling survives there.
+#[test]
+fn a_declared_type_without_a_width_normalizes_to_its_default() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE w (a BIGINT, b INT, c SMALLINT, d TINYINT, e MEDIUMINT, \
+             h BIGINT(30), i DECIMAL, j FLOAT, k DOUBLE, l CHAR, m VARCHAR(7), \
+             n YEAR, o BIT, p BOOL)",
+        )
+        .unwrap();
+    let expected = [
+        ("a", "bigint(20)"),
+        ("b", "int(11)"),
+        ("c", "smallint(6)"),
+        ("d", "tinyint(4)"),
+        ("e", "mediumint(9)"),
+        ("h", "bigint(30)"),
+        ("i", "decimal(10,0)"),
+        ("j", "float"),
+        ("k", "double"),
+        ("l", "char(1)"),
+        ("m", "varchar(7)"),
+        ("n", "year(4)"),
+        ("o", "bit(1)"),
+        ("p", "tinyint(1)"),
+    ];
+
+    let created = show_create(&mut session, "w");
+    for (column, printed) in expected {
+        assert!(
+            created.contains(&format!("`{column}` {printed} ")),
+            "SHOW CREATE TABLE is missing `{column}` {printed}:\n{created}"
+        );
+    }
+
+    let described = row_text(session.run("SHOW COLUMNS FROM w"));
+    let reported = row_text(session.run(
+        "SELECT column_name, column_type FROM information_schema.columns \
+         WHERE table_name = 'w' ORDER BY ordinal_position",
+    ));
+    for (index, (column, printed)) in expected.iter().enumerate() {
+        assert_eq!(
+            (described[index][0].as_str(), described[index][1].as_str()),
+            (*column, *printed),
+            "SHOW COLUMNS"
+        );
+        assert_eq!(
+            (reported[index][0].as_str(), reported[index][1].as_str()),
+            (*column, *printed),
+            "information_schema.columns"
+        );
+    }
+}
