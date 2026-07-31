@@ -542,7 +542,9 @@ pub fn run_create_table_in(
         // domain; captured from Go, the two really do disagree here.
         if let Some(seed) = auto_increment_option(&create.table_options)? {
             if seed > 1 {
-                table.rebase_auto_increment(seed);
+                table
+                    .rebase_auto_increment(seed)
+                    .map_err(|error| DriverError::AutoIdUnavailable(error.0))?;
             }
         }
     }

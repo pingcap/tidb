@@ -450,7 +450,9 @@ fn set_table_options_action(
             "ALTER TABLE ... AUTO_INCREMENT needs an AUTO_INCREMENT column",
         ));
     }
-    table.rebase_auto_increment(seed);
+    table
+        .rebase_auto_increment(seed)
+        .map_err(|error| DriverError::AutoIdUnavailable(error.0))?;
     Ok(())
 }
 

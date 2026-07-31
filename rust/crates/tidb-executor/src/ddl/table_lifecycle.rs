@@ -130,7 +130,12 @@ pub fn run_truncate_table_in(
             format!("{database}.{name}"),
         )));
     };
-    table.truncate();
+    // TRUNCATE starts the counter over, and on a shared counter that is a
+    // write like any other: a failure here must not be reported as a
+    // successful truncate whose next insert then collides.
+    table
+        .truncate()
+        .map_err(|error| DriverError::AutoIdUnavailable(error.0))?;
     Ok(())
 }
 

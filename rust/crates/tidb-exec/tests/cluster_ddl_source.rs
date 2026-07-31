@@ -585,21 +585,33 @@ fn create_table_with_auto_increment_is_admitted_now_the_counter_has_a_home() {
 
 /// `AUTO_ID_CACHE 1` is Go's `SepAutoInc`, and only then does the counter move
 /// to its own `IID:` key.
+///
+/// This node's own `CREATE TABLE` refuses the `AUTO_ID_CACHE` option (a
+/// separate, pre-existing refusal), so the shape is built here the way it
+/// really reaches this node: LOADED, from a table a Go `tidb-server` created.
+/// The branch is not dead code — it is the case where reading `TID:` would
+/// silently count in a key the owning Go node never touches.
 #[test]
 fn a_separate_allocator_table_counts_in_the_increment_key() {
-    let parsed =
-        tidb_parser::parse("CREATE TABLE t (id BIGINT AUTO_INCREMENT PRIMARY KEY) AUTO_ID_CACHE 1")
-            .expect("the fixture SQL parses");
-    let DdlStatement::CreateTable { template, .. } = lower_ddl(&parsed, "u6")
-        .expect("admitted")
-        .expect("a catalog change")
-    else {
-        panic!("a CREATE TABLE");
+    let mut template = tidb_model::table_info::TableInfo {
+        id: 91,
+        version: tidb_model::table_info::TABLE_INFO_VERSION5,
+        ..tidb_model::table_info::TableInfo::default()
     };
+    assert!(
+        !template.sep_auto_inc(),
+        "an ordinary table counts in the row-id key"
+    );
+    assert_eq!(
+        tidb_exec::cluster_auto_id::auto_id_key_for(7, &template),
+        tidb_meta::key::auto_table_id_kv_key(7, 91),
+    );
+
+    template.auto_id_cache = 1;
     assert!(template.sep_auto_inc(), "AUTO_ID_CACHE 1 is Go's SepAutoInc");
     assert_eq!(
         tidb_exec::cluster_auto_id::auto_id_key_for(7, &template),
-        tidb_meta::key::auto_increment_id_kv_key(7, template.id),
+        tidb_meta::key::auto_increment_id_kv_key(7, 91),
     );
 }
 
