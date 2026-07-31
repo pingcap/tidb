@@ -131,9 +131,7 @@ impl AutoIdSource<'_> {
     fn allocator_for(&self, table: &TableInfo) -> TableAutoId {
         match self {
             AutoIdSource::In { db_id, ids } => ids.allocator_for(*db_id, table),
-            AutoIdSource::Unavailable => {
-                TableAutoId::over(Arc::new(UnavailableAutoIdStore), 1)
-            }
+            AutoIdSource::Unavailable => TableAutoId::over(Arc::new(UnavailableAutoIdStore), 1),
         }
     }
 }
@@ -1004,6 +1002,77 @@ mod tests {
         let first = homes.allocator_for(1, &table);
         let second = homes.allocator_for(1, &table);
         assert!(first.same_allocator_as(&second));
+    }
+
+    /// The `CREATE INDEX`/`DROP INDEX` backfill walks the rows a table already
+    /// has and never allocates, which is why it is given no counter -- and
+    /// this is the proof rather than the assumption.
+    ///
+    /// The table is deliberately one WITH an `AUTO_INCREMENT` column, because
+    /// that is the only case where a counter is installed at all. It is loaded
+    /// twice from one storage, exactly as production does: once as a session's
+    /// table, which inserts the rows, and once as
+    /// [`AutoIdSource::Unavailable`], which is the shape
+    /// `KvTableIndexBackfiller::stage` builds. Both index walks then succeed
+    /// over a counter that answers every request with an error, so neither can
+    /// have asked it for anything.
+    ///
+    /// The last assertion is what keeps the test from being vacuous: it shows
+    /// the counter really does refuse, so the two passes above are evidence and
+    /// not an allocator that quietly worked. Should `create_index` ever grow a
+    /// path that allocates, this test fails loudly instead of that path reading
+    /// a counter with no home.
+    #[test]
+    fn the_index_backfill_never_asks_the_counter_it_was_not_given() {
+        let mut v = column(2, 1, "v", false);
+        v.field_type
+            .add_flags(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT | 1);
+        let table = TableInfo {
+            id: 402,
+            name: CiString::new("ai"),
+            columns: vec![column(1, 0, "id", true), v],
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        let (storage, buffer, _snapshot) = cluster_storage();
+
+        // The rows the backfill will walk, inserted the way a session inserts
+        // them -- through a real allocator, since an INSERT genuinely does
+        // allocate.
+        let (mut session, _) = session_with_cluster_storage(
+            &one_table_catalog(table.clone()),
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
+        session.run("USE app").unwrap();
+        session
+            .run("INSERT INTO ai (id) VALUES (1), (2), (3)")
+            .unwrap();
+        assert_eq!(buffer.len(), 3, "three rows are staged for the walk");
+
+        // Now the backfill's own view of the same table: no counter at all.
+        let mut walked = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+            .expect("the backfill builds this table");
+        let index =
+            kv_index(&index(1, "vi", "v", 1, -1), &table.cols()).expect("a full-value index");
+
+        walked
+            .create_index(index, &tidb_executor::StmtContext::default())
+            .expect("a backfill that allocates nothing needs no allocator");
+        assert!(
+            walked
+                .drop_index("vi")
+                .expect("the removal walk also allocates nothing"),
+            "the index it just created is the one it removes"
+        );
+
+        // Not vacuous: the counter these two walks held really does refuse.
+        assert!(
+            walked.rebase_auto_increment(9).is_err(),
+            "a counter with no home must report that, not hand out an id"
+        );
     }
 
     /// A prefix index stores each value CUT to the prefix length. Nothing on

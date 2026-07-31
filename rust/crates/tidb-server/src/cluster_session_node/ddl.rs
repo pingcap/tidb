@@ -33,7 +33,7 @@ use tidb_executor::cluster_storage::{ClusterSnapshot, ClusterTableStorage, Mutat
 use tidb_executor::StmtContext;
 use tidb_pd_client::EtcdClient;
 
-use crate::cluster_session::{AutoIdSource, cluster_table, kv_index};
+use crate::cluster_session::{cluster_table, kv_index, AutoIdSource};
 
 /// This node's one route to the cluster's stored schema.
 ///

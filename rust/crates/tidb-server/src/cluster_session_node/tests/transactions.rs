@@ -336,10 +336,10 @@ fn a_failed_statement_leaves_no_bytes_of_its_own_in_the_mutation_buffer() {
 /// reuses the handle that statement consumed. `AutoIdAllocator` is a
 /// SHARED cell the image keeps pointing at, so an AUTO_INCREMENT burn
 /// survives instead, which is Go's rule and which
-/// `tidb_session`'s `tests_statement_rollback` pins in process. On the
-/// cluster path only the first counter is reachable at all:
-/// [`crate::cluster_session`]'s `cluster_table` sets no auto-increment
-/// offset, so no statement here can consume the allocator.
+/// `tidb_session`'s `tests_statement_rollback` pins in process. Only the
+/// first counter is in play below, because `hnd` carries no AUTO_INCREMENT
+/// column -- [`crate::cluster_session`]'s `cluster_table` installs an
+/// allocator only for a table that has one.
 #[test]
 fn a_failed_statement_gives_back_the_row_handle_it_consumed() {
     let (mut session, cluster) = open_session();
