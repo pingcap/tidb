@@ -117,6 +117,14 @@ const TOPICS: &[(&str, &str)] = &[
         "correlated and uncorrelated subqueries in every clause",
     ),
     (
+        "table/cache",
+        "cached tables: every statement of the topic compares, and none diverges",
+    ),
+    (
+        "session/variable",
+        "session and global variable reads and writes, row results throughout",
+    ),
+    (
         "session/user_variables",
         "every statement compares: user variables end to end, nothing skipped",
     ),
