@@ -522,6 +522,8 @@ mod tests_show;
 #[cfg(test)]
 mod tests_sql_mode_scanner;
 #[cfg(test)]
+mod tests_sysbench_access;
+#[cfg(test)]
 mod tests_statement_rollback;
 mod tests_subquery;
 #[cfg(test)]
