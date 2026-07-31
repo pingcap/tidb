@@ -381,6 +381,63 @@ fn execute_statement(
     rows
 }
 
+/// Sends COM_STMT_EXECUTE and classifies every packet of the answer in the
+/// order it arrives, so a test can pin the SEQUENCE a client frames against
+/// rather than only the decoded rows.
+///
+/// The tags are the client's own reading of each packet's first byte in
+/// context: `header:<n>` is the column-count packet that opens a result set,
+/// `ok` is an OK packet answering with no result set at all, `error` is an
+/// error packet, `column` a definition, `row` a binary row, and `terminator`
+/// the EOF/OK that closes the set.
+fn execute_statement_packet_tags(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    statement_id: u32,
+    parameters: &[i64],
+) -> Vec<String> {
+    let mut command = vec![COM_STMT_EXECUTE];
+    command.extend_from_slice(&statement_id.to_le_bytes());
+    command.push(0); // no cursor
+    command.extend_from_slice(&1u32.to_le_bytes()); // iteration count
+    if !parameters.is_empty() {
+        command.extend(std::iter::repeat_n(0u8, parameters.len().div_ceil(8)));
+        command.push(1); // a new parameter-type vector follows
+        for _ in parameters {
+            command.push(8); // MYSQL_TYPE_LONGLONG
+            command.push(0); // signed
+        }
+        for value in parameters {
+            command.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+
+    let first = reader.read_packet().unwrap();
+    match first[0] {
+        0xff => return vec!["error".to_owned()],
+        0x00 => return vec!["ok".to_owned()],
+        _ => {}
+    }
+    let column_count = usize::from(first[0]);
+    let mut tags = vec![format!("header:{column_count}")];
+    for _ in 0..column_count {
+        reader.read_packet().unwrap();
+        tags.push("column".to_owned());
+    }
+    loop {
+        let packet = reader.read_packet().unwrap();
+        // An EOF-shaped packet this short is the terminator; a binary row
+        // begins with 0x00 and carries the row's own bytes.
+        if packet[0] == 0xfe && packet.len() < 9 + 4 {
+            tags.push("terminator".to_owned());
+            return tags;
+        }
+        tags.push("row".to_owned());
+    }
+}
+
 /// Sends COM_STMT_EXECUTE with explicitly typed parameters -- the shapes a
 /// real driver binds -- and reads the binary result set back.
 fn execute_statement_typed(
@@ -1430,6 +1487,138 @@ fn mysql_client_reads_the_process_list_and_kills_by_id() {
     worker.join().unwrap();
 }
 
+
+/// sysbench's `simple_ranges` over the binary protocol, whose packet SEQUENCE
+/// is what a client frames its next command against.
+///
+/// A MySQL client reads a `COM_STMT_EXECUTE` answer against the column count
+/// the PREPARE reported: a prepare that says zero columns and an execute that
+/// then sends a result set leave the client one result set behind, and its
+/// next command fails with `2014 Commands out of sync`. That is a framing
+/// contract between two packets sent seconds apart, so both ends of it are
+/// asserted here rather than only the rows: the prepare-OK's column count,
+/// the count the execute's own header repeats, and the exact packet run --
+/// one header, one definition per column, one row packet per row, one
+/// terminator, nothing after it.
+///
+/// The statement is sysbench `oltp_read_only`'s, over sysbench's own table
+/// shape and inside its transaction, because the shape is what decides the
+/// access path underneath.
+#[test]
+fn prepared_handle_range_frames_its_binary_result_set() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let store = users();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &store,
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader);
+    run_write(
+        &mut client,
+        &mut reader,
+        "CREATE TABLE sbtest1 (id BIGINT NOT NULL PRIMARY KEY, k BIGINT NOT NULL DEFAULT 0, \
+         c CHAR(120) NOT NULL DEFAULT '', pad CHAR(60) NOT NULL DEFAULT '', INDEX k_1(k))",
+    );
+    for block in 0..10 {
+        let values: Vec<String> = (0..100)
+            .map(|offset| {
+                let id = block * 100 + offset + 1;
+                format!("({id},{id},'c{id}','p{id}')")
+            })
+            .collect();
+        run_write(
+            &mut client,
+            &mut reader,
+            &format!("INSERT INTO sbtest1 VALUES {}", values.join(",")),
+        );
+    }
+    // sysbench prepares every statement of the transaction up front, and the
+    // marker count is the only thing it binds later. A prepare plans with the
+    // markers bound to NULL, which is the shape that first met the empty
+    // handle range.
+    let (point, point_parameters, point_columns) =
+        prepare_statement(&mut client, &mut reader, "SELECT c FROM sbtest1 WHERE id = ?");
+    let (simple, simple_parameters, simple_columns) = prepare_statement(
+        &mut client,
+        &mut reader,
+        "SELECT c FROM sbtest1 WHERE id BETWEEN ? AND ?",
+    );
+    let (sum, _, sum_columns) = prepare_statement(
+        &mut client,
+        &mut reader,
+        "SELECT SUM(k) FROM sbtest1 WHERE id BETWEEN ? AND ?",
+    );
+    assert_eq!((point_parameters, point_columns), (1, 1));
+    assert_eq!(
+        (simple_parameters, simple_columns),
+        (2, 1),
+        "the range select reports its one result column at PREPARE; zero here \
+         is what a client answers with `Commands out of sync` at EXECUTE"
+    );
+    assert_eq!(sum_columns, 1);
+
+    run_transaction_control(&mut client, &mut reader, "BEGIN");
+    for _ in 0..10 {
+        assert_eq!(
+            execute_statement(&mut client, &mut reader, point, &[500]),
+            vec![vec!["c500".to_owned()]]
+        );
+    }
+
+    // The sequence, packet by packet: a header repeating the count the
+    // PREPARE promised, that many definitions, one row packet per row, and
+    // one terminator with nothing behind it.
+    let mut expected = vec!["header:1".to_owned()];
+    expected.push("column".to_owned());
+    expected.extend(std::iter::repeat_n("row".to_owned(), 100));
+    expected.push("terminator".to_owned());
+    assert_eq!(
+        execute_statement_packet_tags(&mut client, &mut reader, simple, &[100, 199]),
+        expected
+    );
+    // The same connection keeps working afterwards, which is the property
+    // `Commands out of sync` denies.
+    assert_eq!(
+        execute_statement(&mut client, &mut reader, sum, &[100, 199]),
+        vec![vec!["14950".to_owned()]]
+    );
+    assert_eq!(
+        execute_statement(&mut client, &mut reader, simple, &[100, 199])[0],
+        vec!["c100".to_owned()]
+    );
+    run_transaction_control(&mut client, &mut reader, "COMMIT");
+
+    // A range that admits nothing is still a one-column result set with no
+    // rows -- never an error, and never a bare OK.
+    assert_eq!(
+        execute_statement_packet_tags(&mut client, &mut reader, simple, &[199, 100]),
+        vec![
+            "header:1".to_owned(),
+            "column".to_owned(),
+            "terminator".to_owned()
+        ]
+    );
+
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+    worker.join().unwrap();
+}
 
 /// Two connections on one server: the second sees BOTH rows in the process
 /// list, and `KILL <id>` ends the first one -- Go's `KILL` closes the target

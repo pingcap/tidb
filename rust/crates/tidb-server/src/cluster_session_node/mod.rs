@@ -906,8 +906,10 @@ impl QuerySession for ClusterServerSession {
                     crate::pipeline_session::select_columns(&columns)
                 }
                 // A query whose metadata cannot be resolved without real
-                // values reports none at prepare time; the execute answer
-                // still carries its own.
+                // values reports none at prepare time -- which a client
+                // frames its EXECUTE against, so it is the shape that
+                // answers `2014 Commands out of sync` rather than a harmless
+                // omission. See `crate::pipeline_session::prepare_general`.
                 _ => Vec::new(),
             })
         })?;

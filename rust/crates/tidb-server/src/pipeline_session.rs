@@ -270,9 +270,14 @@ impl QuerySession for PipelineServerSession {
                 match self.session.run_with_params(sql, &probe) {
                     Ok(StmtOutput::Rows { columns, .. }) => select_columns(&columns),
                     // A query whose metadata this tier cannot resolve without
-                    // real values reports no columns at prepare time; the
-                    // execute answer still carries its own metadata, which is
-                    // where a client reads it.
+                    // real values reports no columns at prepare time. That is
+                    // a LAST resort and not a free one: a MySQL client frames
+                    // the EXECUTE answer against this count, so zero here and
+                    // a result set there is what it reports as
+                    // `2014 Commands out of sync`. The probe must therefore be
+                    // made to succeed for any shape a client will execute --
+                    // see `prepared_handle_range_frames_its_binary_result_set`
+                    // in `pipeline_mysql_client_source`, which pins both ends.
                     _ => Vec::new(),
                 }
             }
