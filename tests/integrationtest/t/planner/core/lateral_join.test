@@ -19,12 +19,94 @@ drop table if exists t1, t2;
 create table t1 (a int);
 create table t2 (a int, b varchar(10));
 
-## LEFT JOIN LATERAL - not yet supported
+## RIGHT JOIN LATERAL - not yet supported
 --error 3809
-select * from t1 left join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true order by t1.a;
+select * from t1 right join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true order by t1.a;
+
+## NATURAL JOIN LATERAL - not supported
+--error 3809
+select * from t1 natural join lateral (select b from t2 where t2.a = t1.a) as lat;
 
 ## CROSS JOIN LATERAL - works (same as comma syntax)
 select * from t1 cross join lateral (select b from t2 where t2.a = t1.a) as lat;
+
+# TestLeftJoinLateral
+drop table if exists t1, t2, t3;
+create table t1 (a int, x int);
+create table t2 (a int not null, b varchar(10) not null);
+create table t3 (a int primary key, b varchar(10));
+insert into t1 values (1, 10), (2, 20), (3, 30), (4, 40);
+insert into t2 values (1, 'a'), (2, 'c'), (3, 'd'), (3, 'e');
+insert into t3 values (1, 'p'), (2, 'q'), (3, 'r');
+
+## Outer rows without a matching inner row are NULL-extended; t1.a=4 has no match
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.b;
+
+## The inner NOT NULL column becomes nullable
+select t1.a, lat.b is null from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true order by t1.a, lat.b;
+
+## LIMIT in the derived table keeps the Apply; still one row per outer row
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a order by b desc limit 1) as lat on true order by t1.a;
+
+## Non-trivial ON condition: rows failing it are non-matches, not filtered outer rows
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on lat.b > 'd' order by t1.a, lat.b;
+
+## ON condition referencing only the outer side
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on t1.a > 2 order by t1.a, lat.b;
+
+## A scalar aggregate always returns one row, so COUNT(*) is 0, not NULL
+select * from t1 left join lateral (select count(*) as c from t2 where t2.a = t1.a) as lat on true order by t1.a;
+
+## HAVING can remove that row again, and then NULL is correct
+select * from t1 left join lateral (select count(*) as c from t2 where t2.a = t1.a having count(*) > 1) as lat on true order by t1.a;
+
+## With an explicit GROUP BY the derived table returns no row, so COUNT(*) must be NULL
+select * from t1 left join lateral (select a as ga, count(*) as c from t2 where t2.a = t1.a group by a) as lat on true order by t1.a;
+
+## GROUP BY plus HAVING
+select * from t1 left join lateral (select a as ga, count(*) as c from t2 where t2.a = t1.a group by a having count(*) > 1) as lat on true order by t1.a;
+
+## Multiple groups per outer row
+select * from t1 left join lateral (select b as gb, count(*) as c from t2 where t2.a = t1.a group by b) as lat on true order by t1.a, gb;
+
+## An unused LATERAL output that can return several rows must not be eliminated
+select t1.a from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true order by t1.a;
+
+## The same shape over a unique key returns one row per outer row
+select t1.a from t1 left join lateral (select b from t3 where t3.a = t1.a) as lat on true order by t1.a;
+
+## NULL-rejecting predicate above the join behaves like an inner join
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true where lat.b is not null order by t1.a, lat.b;
+
+## IS NULL selects exactly the non-matching outer rows
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true where lat.b is null order by t1.a;
+
+## Aggregates over the join must not count the NULL-extended rows
+select count(lat.b), count(*) from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true;
+
+## UNION ALL inside the LATERAL derived table
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a union all select b from t3 where t3.a = t1.a) as lat on true order by t1.a, lat.b;
+
+## Chained LATERAL joins: the second one sees the NULL-extended output of the first
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as l1 on true left join lateral (select concat(l1.b, '!') as bb) as l2 on true order by t1.a, l1.b;
+
+## LEFT JOIN LATERAL on the right of a USING join
+select * from t1 join t3 using (a) left join lateral (select b as lb from t2 where t2.a = t1.a) as lat on true order by a, lb;
+
+## LEFT JOIN LATERAL nested under an INNER JOIN LATERAL
+select * from t1 join lateral (select b from t2 where t2.a = t1.a) as i on true left join lateral (select b as b2 from t2 where t2.a = t1.a + 1) as o on true order by t1.a, i.b, o.b2;
+
+## A derived table that only projects outer columns always returns one row
+select * from t1 left join lateral (select t1.x as xx) as lat on true order by t1.a;
+
+## Apply is preserved when the projection is constant-only
+select * from t1 left join lateral (select 1 as one from t2 where t2.a = t1.a) as lat on true order by t1.a, one;
+
+## EXPLAIN: LIMIT prevents decorrelation, so the Apply is a left outer join
+explain format='plan_tree' select * from t1 left join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true;
+
+## EXPLAIN: the decorrelated form is a left outer hash join
+explain format='plan_tree' select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true;
 
 # TestLateralJoinExplain
 drop table if exists t1, t2;
