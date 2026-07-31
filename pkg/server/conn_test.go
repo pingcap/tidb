@@ -2351,15 +2351,9 @@ func TestIssue54335(t *testing.T) {
 	session.MustExec(t, se, "use test;")
 	session.MustExec(t, se, "CREATE TABLE testTable2 (id bigint,  age int)")
 	str := fmt.Sprintf("insert into testTable2 values(%d, %d)", 1, 1)
-<<<<<<< HEAD
-	tk.MustExec(str)
-	for i := 0; i < 14; i++ {
-		tk.MustExec("insert into testTable2 select * from testTable2")
-=======
 	session.MustExec(t, se, str)
 	for range 14 {
 		session.MustExec(t, se, "insert into testTable2 select * from testTable2")
->>>>>>> 56490d622d7 (pkg/server: stabilize flaky TestIssue54335 (#67888))
 	}
 
 	times := 100
