@@ -62,6 +62,22 @@ use tidb_expr::schema::Schema;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::kv_table::{IndexRange, IndexRangeCursor, KvTable, TableHandle};
 
+/// The prefix of a decoded table row that a source emits.
+///
+/// `KvTable::get_row_by_handle` decodes and materializes EVERY column of the
+/// table, hidden ones included -- the hidden column an expression index was
+/// rewritten into has to be computed so an index entry can be written from
+/// the same row. A read never wants it: the schema these sources append into
+/// is the visible one, and the hidden columns are the row's trailing tail by
+/// construction (`KvTable::add_hidden_column`), so the visible row is a
+/// prefix rather than a gather.
+///
+/// `TableScanExec` states the same rule as its `keep` list; this is that rule
+/// for the two narrowed sources, which read their rows by handle instead.
+fn visible_of<'a>(table: &KvTable, row: &'a [tidb_datatype::Datum]) -> &'a [tidb_datatype::Datum] {
+    &row[..row.len().min(table.visible_column_count())]
+}
+
 /// Reads rows for an already-known handle list, one per pull: the source
 /// behind Go's `PointGet` (one handle) and `Batch_Point_Get` (several).
 ///
@@ -122,7 +138,7 @@ impl Executor for HandleSourceExec {
                 .get_row_by_handle(handle)
                 .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
             if let Some(row) = row {
-                for (c, value) in row.iter().enumerate() {
+                for (c, value) in visible_of(&self.table, &row).iter().enumerate() {
                     req.append_datum(c, value);
                 }
                 self.produced.set(self.produced.get() + 1);
@@ -281,8 +297,9 @@ impl Executor for IndexRangeSourceExec {
             // `if let Some(row)` the materializing path had.
             if let Some(row) = row {
                 self.scanned.set(self.scanned.get() + 1);
+                let row = visible_of(&self.table, &row);
                 if let Some(filter) = self.filter.as_mut() {
-                    if !filter.admits(&row)? {
+                    if !filter.admits(row)? {
                         continue;
                     }
                 }
