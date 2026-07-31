@@ -405,45 +405,45 @@ func TestCheckFinishedJobRecyclesExternalTTLTask(t *testing.T) {
 		require.Equal(t, 4, sqlCounter)
 	})
 
-	t.Run("recycle when only some local jobs finish", func(t *testing.T) {
-		finishedCreateTime := time.Unix(1234, 0)
-		runningCreateTime := time.Unix(2234, 0)
+	t.Run("do not recycle when an older local job is still running", func(t *testing.T) {
+		runningCreateTime := time.Unix(1234, 0)
+		finishedCreateTime := time.Unix(2234, 0)
 		externalMgr := &fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker}
 		m := NewJobManager("test-id", nil, nil, nil, nil, externalMgr)
 		m.runningJobs = []*ttlJob{
 			{
-				id:         "job-finished",
+				id:         "job-running",
 				ownerID:    "test-id",
-				createTime: finishedCreateTime,
+				createTime: runningCreateTime,
 				tableID:    1,
 				status:     cache.JobStatusRunning,
 			},
 			{
-				id:         "job-running",
+				id:         "job-finished",
 				ownerID:    "test-id",
-				createTime: runningCreateTime,
+				createTime: finishedCreateTime,
 				tableID:    2,
 				status:     cache.JobStatusRunning,
 			},
 		}
 
-		finishedTasks := newTTLTaskRows(t, &cache.TTLTask{
-			JobID:            "job-finished",
-			TableID:          1,
-			ScanID:           1,
-			ExpireTime:       finishedCreateTime,
-			Status:           cache.TaskStatusFinished,
-			StatusUpdateTime: finishedCreateTime,
-			CreatedTime:      finishedCreateTime,
-		})
 		runningTasks := newTTLTaskRows(t, &cache.TTLTask{
 			JobID:            "job-running",
-			TableID:          2,
+			TableID:          1,
 			ScanID:           1,
 			ExpireTime:       runningCreateTime,
 			Status:           cache.TaskStatusRunning,
 			StatusUpdateTime: runningCreateTime,
 			CreatedTime:      runningCreateTime,
+		})
+		finishedTasks := newTTLTaskRows(t, &cache.TTLTask{
+			JobID:            "job-finished",
+			TableID:          2,
+			ScanID:           1,
+			ExpireTime:       finishedCreateTime,
+			Status:           cache.TaskStatusFinished,
+			StatusUpdateTime: finishedCreateTime,
+			CreatedTime:      finishedCreateTime,
 		})
 
 		se := newMockSession(t)
@@ -453,21 +453,21 @@ func TestCheckFinishedJobRecyclesExternalTTLTask(t *testing.T) {
 				return nil, nil
 			}
 			switch args[0] {
-			case "job-finished":
-				return finishedTasks, nil
-			case "job-running":
-				return runningTasks, nil
-			default:
-				return nil, nil
+				case "job-running":
+					return runningTasks, nil
+				case "job-finished":
+					return finishedTasks, nil
+				default:
+					return nil, nil
+				}
 			}
-		}
 
-		m.CheckFinishedJob(se)
-		require.Len(t, m.runningJobs, 1)
-		require.Equal(t, "job-running", m.runningJobs[0].id)
-		require.Equal(t, uint64(finishedCreateTime.Unix()), externalMgr.recycledCreateTS)
-	})
-}
+			m.CheckFinishedJob(se)
+			require.Len(t, m.runningJobs, 1)
+			require.Equal(t, "job-running", m.runningJobs[0].id)
+			require.Equal(t, uint64(0), externalMgr.recycledCreateTS)
+		})
+	}
 
 func TestCheckFinishedJobDoesNotRecycleExternalTTLTaskFromMaster(t *testing.T) {
 	externalMgr := &fakeExternalWorkloadManager{role: config.RoleMaster}

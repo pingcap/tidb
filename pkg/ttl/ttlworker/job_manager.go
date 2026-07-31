@@ -602,6 +602,7 @@ func (m *JobManager) findAllTasksForJob(se session.Session, jobID string) ([]*ca
 }
 
 func (m *JobManager) checkFinishedJob(se session.Session) {
+	runningJobsCount := len(m.runningJobs)
 	totalFinishedJobs := 0
 	maxJobCreateTime := uint64(0)
 	// reverse iteration so that we could remove the job safely in the loop
@@ -643,7 +644,7 @@ func (m *JobManager) checkFinishedJob(se session.Session) {
 			}
 		}
 	}
-	if totalFinishedJobs > 0 && extworkload.IsTTLTaskWorker(m.extWorkload) {
+	if runningJobsCount > 0 && totalFinishedJobs == runningJobsCount && extworkload.IsTTLTaskWorker(m.extWorkload) {
 		if err := m.extWorkload.RecycleTTLTask(m.ctx, maxJobCreateTime); err != nil {
 			logutil.Logger(m.ctx).Warn("failed to recycle TTL task from external workload controller",
 				zap.Uint64("completedJobCreateTime", maxJobCreateTime),
