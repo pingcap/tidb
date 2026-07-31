@@ -332,7 +332,9 @@ pub(crate) fn check_order_by_in_distinct(
         // written there. A nested aggregate (`ORDER BY sum(a)+1`) is left
         // alone -- the permissive side, and no captured case reaches it.
         if is_exempt(expr) {
-            return Err(DriverError::AggregateInOrderNotSelect { position: index + 1 });
+            return Err(DriverError::AggregateInOrderNotSelect {
+                position: index + 1,
+            });
         }
     }
     Ok(())
