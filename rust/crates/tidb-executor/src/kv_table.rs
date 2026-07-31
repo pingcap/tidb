@@ -499,6 +499,15 @@ impl KvTable {
         self.auto_id.set_unsigned(unsigned);
     }
 
+    /// Unmarks the AUTO_INCREMENT column, which `ALTER TABLE ... MODIFY
+    /// COLUMN` does when the new definition drops the option and
+    /// `@@tidb_allow_remove_auto_inc` allows it. The allocator itself stays,
+    /// as Go's does: nothing hands out ids while no column claims them, and
+    /// re-adding the option is refused anyway.
+    pub fn clear_auto_increment_offset(&mut self) {
+        self.auto_increment_offset = None;
+    }
+
     /// Gives the table an allocator built elsewhere and kept alive across
     /// catalog rebuilds.
     ///

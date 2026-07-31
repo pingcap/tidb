@@ -123,6 +123,10 @@ pub struct StmtContext {
     /// default): whether referential integrity is enforced at all. A context
     /// with no session behind it enforces, as a stock session does.
     foreign_key_checks: bool,
+
+    /// Go `SessionVars.AllowRemoveAutoInc` (`@@tidb_allow_remove_auto_inc`,
+    /// OFF by default), read by `ALTER TABLE ... MODIFY COLUMN`.
+    allow_remove_auto_inc: bool,
     /// Go `SessionVars.CTEMaxRecursionDepth` (`@@cte_max_recursion_depth`,
     /// default `1000`): how many rounds a `WITH RECURSIVE` fixpoint may run
     /// before `ErrCTEMaxRecursionDepth`. Go's variable is signed and a
@@ -263,6 +267,7 @@ impl StmtContext {
             only_full_group_by: false,
             default_week_format: 0,
             foreign_key_checks: true,
+            allow_remove_auto_inc: false,
             div_precision_increment: 4,
             cte_max_recursion_depth: 1000,
             sequences: Rc::default(),
@@ -377,6 +382,23 @@ impl StmtContext {
     #[must_use]
     pub fn foreign_key_checks(&self) -> bool {
         self.foreign_key_checks
+    }
+
+    /// Sets `@@tidb_allow_remove_auto_inc` for this statement.
+    #[must_use]
+    pub fn with_allow_remove_auto_inc(mut self, allow_remove_auto_inc: bool) -> Self {
+        self.allow_remove_auto_inc = allow_remove_auto_inc;
+        self
+    }
+
+    /// Whether `ALTER TABLE ... MODIFY COLUMN` may drop AUTO_INCREMENT.
+    ///
+    /// Go's default is OFF, so a `MODIFY COLUMN` that leaves the option out
+    /// of the new definition is refused (8200) rather than quietly turning
+    /// the column into an ordinary one.
+    #[must_use]
+    pub fn allow_remove_auto_inc(&self) -> bool {
+        self.allow_remove_auto_inc
     }
 
     /// Attaches the session state the builtins read: Go reads both from

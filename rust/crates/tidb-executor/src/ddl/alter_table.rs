@@ -35,6 +35,7 @@
 
 use super::column_types::{field_type_of, NOT_NULL_FLAG};
 use super::indexes::{add_index_to_table, drop_index_from_table, is_visible};
+use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
 use super::{
     auto_increment_option, Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset,
 };
@@ -141,6 +142,7 @@ pub fn run_alter_table_in(
                 column,
                 position,
                 *if_exists,
+                ctx.allow_remove_auto_inc(),
             )?,
             tidb_ast::AlterTableAction::ChangeColumn {
                 if_exists,
@@ -151,7 +153,16 @@ pub fn run_alter_table_in(
                 let old = old_name
                     .last()
                     .ok_or(DriverError::Unsupported("empty CHANGE COLUMN name"))?;
-                modify_column_action(catalog, &database, &name, old, column, position, *if_exists)?;
+                modify_column_action(
+                    catalog,
+                    &database,
+                    &name,
+                    old,
+                    column,
+                    position,
+                    *if_exists,
+                    ctx.allow_remove_auto_inc(),
+                )?;
             }
             tidb_ast::AlterTableAction::DropColumn {
                 if_exists,
@@ -726,6 +737,7 @@ fn modify_column_action(
     def: &ColumnDef,
     position: &tidb_ast::ColumnPosition,
     if_exists: bool,
+    allow_remove_auto_inc: bool,
 ) -> Result<(), DriverError> {
     let field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
     let mut default_value = None;
@@ -748,7 +760,12 @@ fn modify_column_action(
                         .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?,
                 );
             }
-            tidb_ast::ColumnOption::NotNull | tidb_ast::ColumnOption::Null => {}
+            tidb_ast::ColumnOption::NotNull
+            | tidb_ast::ColumnOption::Null
+            // AUTO_INCREMENT is legal here as long as the column already has
+            // it; the set/remove rules are checked below, once the old column
+            // is in hand.
+            | tidb_ast::ColumnOption::AutoIncrement => {}
             _ => {
                 return Err(DriverError::Unsupported(
                     "this column option is not supported in ALTER TABLE MODIFY COLUMN",
@@ -760,6 +777,10 @@ fn modify_column_action(
         .options
         .iter()
         .any(|option| matches!(option, tidb_ast::ColumnOption::NotNull));
+    let wants_auto_increment = def
+        .options
+        .iter()
+        .any(|option| matches!(option, tidb_ast::ColumnOption::AutoIncrement));
 
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::Unsupported(
@@ -795,6 +816,36 @@ fn modify_column_action(
     if not_null {
         field_type.add_flags(NOT_NULL_FLAG);
     }
+    // Go `pkg/ddl/modify_column.go`: the new column is built from the new
+    // definition, then the OLD column's index flags are copied onto it and a
+    // primary key re-implies NOT NULL. Without this the definition alone
+    // decides, so `ALTER TABLE mc MODIFY COLUMN a bigint` on a primary key
+    // silently made the key column nullable and printed `DEFAULT NULL`.
+    let old_flags = table.columns[offset].field_type.flags();
+    if old_flags & PRI_KEY_FLAG != 0 {
+        field_type.add_flags(PRI_KEY_FLAG | NOT_NULL_FLAG);
+    }
+    // Go, same file: `can't set auto_increment` (8200) for a column that did
+    // not have it, and dropping it needs `@@tidb_allow_remove_auto_inc`.
+    // Keeping it is the only combination that changes nothing.
+    let was_auto_increment = table.auto_increment_offset() == Some(offset);
+    if wants_auto_increment && !was_auto_increment {
+        return Err(DriverError::UnsupportedModifyColumn(
+            "can't set auto_increment",
+        ));
+    }
+    if wants_auto_increment && default_value.is_some() {
+        return Err(DriverError::InvalidDefault(def.name.clone()));
+    }
+    if was_auto_increment && !wants_auto_increment && !allow_remove_auto_inc {
+        return Err(DriverError::UnsupportedModifyColumn(
+            "can't remove auto_increment without @@tidb_allow_remove_auto_inc enabled",
+        ));
+    }
+    if was_auto_increment && wants_auto_increment {
+        field_type.add_flags(AUTO_INCREMENT_FLAG | NOT_NULL_FLAG);
+    }
+    let drop_auto_increment = was_auto_increment && !wants_auto_increment;
     let integer_type = |code| {
         matches!(
             code,
@@ -867,6 +918,9 @@ fn modify_column_action(
         default_value: stored_default,
         origin_default: default_value,
     };
+    if drop_auto_increment {
+        table.clear_auto_increment_offset();
+    }
     table
         .modify_column(offset, column, new_position)
         .map_err(|e| match e {

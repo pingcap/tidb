@@ -294,6 +294,7 @@ impl Session {
         .with_auto_increment_step_default(self.auto_increment_step_is_default())
         .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
         .with_foreign_key_checks(self.foreign_key_checks())
+        .with_allow_remove_auto_inc(self.allow_remove_auto_inc())
         .with_cte_max_recursion_depth(cte_depth)
     }
 
@@ -305,6 +306,19 @@ impl Session {
         !matches!(
             self.vars.get_system("foreign_key_checks").as_deref(),
             Ok("OFF") | Ok("off") | Ok("0")
+        )
+    }
+
+    /// Go `SessionVars.AllowRemoveAutoInc`, read off
+    /// `@@tidb_allow_remove_auto_inc`. The default is OFF, and unlike
+    /// `foreign_key_checks` the safe fallback for an unreadable value is OFF:
+    /// dropping AUTO_INCREMENT is the destructive direction.
+    pub(crate) fn allow_remove_auto_inc(&self) -> bool {
+        matches!(
+            self.vars
+                .get_system("tidb_allow_remove_auto_inc")
+                .as_deref(),
+            Ok("ON") | Ok("on") | Ok("1")
         )
     }
 
