@@ -66,7 +66,6 @@ go_test(
     deps = [
         ":storage",
         "//pkg/domain",
-        "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/sessionctx",

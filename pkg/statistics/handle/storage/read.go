@@ -319,15 +319,6 @@ func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID i
 	return topNFromStorageWithPriorityAndLimit(util.StatsCtx, sctx, tblID, isIndex, histID, kv.PriorityHigh, 0, 0)
 }
 
-// TopNFromStorageWithPriorityAndLimit reads at most limit TopN values with the highest counts from storage.
-func TopNFromStorageWithPriorityAndLimit(ctx context.Context, sctx sessionctx.Context, tblID int64, isIndex int, histID int64, priority, limit int) (_ *statistics.TopN, err error) {
-	if limit <= 0 {
-		return nil, nil
-	}
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
-	return topNFromStorageWithPriorityAndLimit(ctx, sctx, tblID, isIndex, histID, priority, limit, 0)
-}
-
 func topNFromStorageWithPriorityAndLimit(
 	ctx context.Context,
 	sctx sessionctx.Context,

@@ -29,7 +29,7 @@ Add index is a “normal” DDL action in terms of SQL surface, but the job args
   - Build: `pkg/ddl/executor.go:checkIndexNameAndColumns`
   - Publish: `pkg/ddl/index.go:moveAndUpdateHiddenColumnsToPublic` (done when moving `StateNone` → `StateDeleteOnly`)
 - Pre-split index regions (optional `PRE_SPLIT_REGIONS` index option):
-  - Manual forms persist numeric, `BY`, or `BETWEEN` boundaries in each `model.IndexArgSplitOpt`.
+  - Manual forms persist either a region count, explicit `BY` values, or `BETWEEN` bounds with a region count in each `model.IndexArgSplitOpt`.
   - `PRE_SPLIT_REGIONS AUTO` persists a per-index AUTO marker and derives boundaries from existing statistics.
   - Parse: `pkg/ddl/executor.go:buildIndexPresplitOpt`
   - Execute: `pkg/ddl/index_presplit.go:preSplitIndexRegions`
