@@ -593,6 +593,67 @@ fn narrowed_writes_change_exactly_the_rows_a_full_scan_changed() {
     }
 }
 
+/// Write shapes whose `WHERE` mentions the handle but which the ranger must
+/// still get exactly right, or must decline entirely.
+///
+/// These are the interactions where "which feature runs first" decides the
+/// answer: an alias renames the table the `WHERE` qualifies, `ORDER BY` +
+/// `LIMIT` picks a SUBSET of the matched rows, and a subquery bound is not a
+/// constant the ranger may fold. Each is checked by its EFFECT on the table,
+/// so a range that admits the wrong records fails here regardless of what the
+/// plan printed.
+#[test]
+fn narrowing_survives_aliases_ordering_limits_and_subqueries() {
+    // An alias: the `WHERE` names `y.id`, and the ranger matches the handle
+    // column by name ignoring the qualifier, as the read side does.
+    let mut session = sbtest1_with_rows();
+    session
+        .run("UPDATE sbtest1 AS y SET pad = 'W' WHERE y.id BETWEEN 100 AND 199")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id FROM sbtest1 WHERE pad = 'W' ORDER BY id")),
+        vec![
+            vec!["100".to_owned()],
+            vec!["150".to_owned()],
+            vec!["199".to_owned()]
+        ]
+    );
+
+    // `ORDER BY` + `LIMIT` over a narrowed read: the LIMIT picks from the
+    // rows the `WHERE` matched, so the range must still deliver ALL of them
+    // before the ordering chooses. Reading a prefix of the range would take
+    // the wrong two rows here rather than fewer.
+    let mut session = sbtest1_with_rows();
+    session
+        .run("UPDATE sbtest1 SET pad = 'W' WHERE id BETWEEN 100 AND 199 ORDER BY id DESC LIMIT 2")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id FROM sbtest1 WHERE pad = 'W' ORDER BY id")),
+        vec![vec!["150".to_owned()], vec!["199".to_owned()]]
+    );
+
+    // A subquery bound is not a constant the ranger may fold. This tier's
+    // write driver refuses the statement before the read happens at all
+    // (its rewriter has no subquery form), which is the behaviour this unit
+    // found and did not change; what matters here is that the ranger declines
+    // rather than folding an expression it cannot evaluate into a bound.
+    let mut session = sbtest1_with_rows();
+    assert!(session
+        .run("UPDATE sbtest1 SET pad = 'W' WHERE id = (SELECT MAX(id) FROM sbtest1)")
+        .is_err());
+
+    // A `WHERE` on the handle that is not a bound at all: the ranger declines
+    // and the statement still reaches every row it names.
+    let mut session = sbtest1_with_rows();
+    session
+        .run("UPDATE sbtest1 SET pad = 'W' WHERE id + 1 > 200")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id FROM sbtest1 WHERE pad = 'W' ORDER BY id")),
+        vec![vec!["200".to_owned()], vec!["201".to_owned()]]
+    );
+}
+
 /// The RECORDS a narrowed write actually reads, from `EXPLAIN ANALYZE`'s
 /// `actRows` -- the receipt no plan assertion can give.
 ///
