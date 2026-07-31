@@ -64,21 +64,9 @@
 
 use tidb_datatype::{Datum, FieldTypeCode, Time};
 
-/// The three SQL-mode bits that change what a temporal write means, carried
-/// together because no path needs one without the others.
-///
-/// Go reads them off `SessionVars.SQLMode` as `HasNoZeroDateMode`,
-/// `HasNoZeroInDateMode` and `HasAllowInvalidDatesMode`. All three are false
-/// in `mysql.ModeNone`; TiDB's shipped `DefaultSQLMode` sets the first two.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DateModes {
-    /// `NO_ZERO_DATE`.
-    pub no_zero_date: bool,
-    /// `NO_ZERO_IN_DATE`.
-    pub no_zero_in_date: bool,
-    /// `ALLOW_INVALID_DATES`.
-    pub allow_invalid_dates: bool,
-}
+/// The mode bits this table reads, which now live in `tidb_datatype` because
+/// the READ path needs the same three and cannot depend on this crate.
+pub use tidb_datatype::DateModes;
 
 /// What the write path should do with one converted temporal value.
 #[derive(Clone, Debug, PartialEq)]

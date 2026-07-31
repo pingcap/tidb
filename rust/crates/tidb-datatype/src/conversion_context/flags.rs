@@ -22,6 +22,44 @@ pub const DEFAULT_STATEMENT_FLAGS: ConversionFlags = ConversionFlags::from_bits(
     ConversionFlags::ALLOW_NEGATIVE_TO_UNSIGNED | ConversionFlags::IGNORE_ZERO_DATE_ERR,
 );
 
+/// The three SQL-mode bits that change what a temporal value MEANS, carried
+/// together because no path needs one without the others.
+///
+/// Go reads them off `SessionVars.SQLMode` as `HasNoZeroDateMode`,
+/// `HasNoZeroInDateMode` and `HasAllowInvalidDatesMode`. All three are false
+/// in `mysql.ModeNone`; TiDB's shipped `DefaultSQLMode` sets the first two.
+///
+/// This lives beside [`ConversionFlags`] rather than in the executor because
+/// BOTH sides of a temporal value need it and they sit on opposite sides of
+/// the crate graph: the write path turns these bits into a store-or-refuse
+/// decision (`tidb_executor::zero_date`), and the read path turns the SAME
+/// bits into the parse flags an expression converts under
+/// (`tidb_expr::cast`). A second copy would be two sources of truth for one
+/// table, which is the shape that produced the read-path divergences this
+/// module's shared home closes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DateModes {
+    /// `NO_ZERO_DATE`.
+    pub no_zero_date: bool,
+    /// `NO_ZERO_IN_DATE`.
+    pub no_zero_in_date: bool,
+    /// `ALLOW_INVALID_DATES`.
+    pub allow_invalid_dates: bool,
+}
+
+impl DateModes {
+    /// TiDB's shipped `DefaultSQLMode`, in these three bits: both zero-date
+    /// modes on, invalid dates off.
+    ///
+    /// This is the value an evaluation with NO session assumes, so a folded
+    /// constant answers the way the default-configured server does.
+    pub const TIDB_DEFAULT_SQL_MODE: Self = Self {
+        no_zero_date: true,
+        no_zero_in_date: true,
+        allow_invalid_dates: false,
+    };
+}
+
 /// Flags controlling datatype conversion behavior.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct ConversionFlags(u16);

@@ -21,7 +21,7 @@ use std::fmt;
 
 use tidb_error::terror::TerrorError;
 
-pub use flags::{ConversionFlags, DEFAULT_STATEMENT_FLAGS, STRICT_FLAGS};
+pub use flags::{ConversionFlags, DateModes, DEFAULT_STATEMENT_FLAGS, STRICT_FLAGS};
 
 /// Opaque source `time.Location` identity carried by datatype conversion.
 ///
