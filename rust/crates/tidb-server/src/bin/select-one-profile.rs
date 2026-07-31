@@ -30,9 +30,7 @@ use sha1::{Digest, Sha1};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::Instant;
-use tidb_protocol::{
-    PacketReader, PacketWriter, COM_QUERY, COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET,
-};
+use tidb_protocol::{PacketReader, PacketWriter, COM_QUERY, COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET};
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker,
     PipelineSessionFactory,
