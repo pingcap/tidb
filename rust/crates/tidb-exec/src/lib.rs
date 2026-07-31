@@ -20,8 +20,8 @@
 //! (`Executor` trait, chunk-based, pull-driven; `hash_agg`/`sort`/`limit`/
 //! `join`/`window`). `tidb-session` reaches it directly and does not depend on
 //! this crate at all. The edge runs `tidb-exec` -> `tidb-executor`, and only
-//! for storage/scan seam types (`cluster_storage`, `pushdown_scan`,
-//! `scan_pushdown`, `StorageError`) -- no operator ever crosses.
+//! for storage/scan seam types (`cluster_storage`, `remote_scan`,
+//! `tikv_scan_spec`, `StorageError`) -- no operator ever crosses.
 //!
 //! A SECOND, EARLIER query engine (`Database`/`Cluster`/`Session`: datum-based
 //! `Row = Vec<Datum>`, fully eager, linear-scan grouping, O(n^2) RANGE framing)

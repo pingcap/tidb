@@ -61,7 +61,7 @@
 //!
 //! A refusal costs network only. The scan source applies every pushed
 //! conjunct to every row it emits regardless
-//! (`tidb_executor::scan_pushdown`), so a conjunct the store does not filter
+//! (`tidb_executor::predicate_pushdown`), so a conjunct the store does not filter
 //! is still filtered locally. A conjunct lowered *wrongly* would drop a row
 //! the query selects, and no local pass can put back a row that never crossed
 //! the wire -- which is why every row of the table below cites the Go

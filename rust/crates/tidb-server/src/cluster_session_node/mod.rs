@@ -125,7 +125,7 @@ use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::cluster_storage::{
     BufferImage, ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
-use tidb_executor::pushdown_scan::PushdownScanner;
+use tidb_executor::remote_scan::PushdownScanner;
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
@@ -267,7 +267,7 @@ impl ClusterSessionFactory {
     ///
     /// The staged-write half is untouched: a session's uncommitted rows are
     /// merged client-side and re-tested by the same predicate (see
-    /// [`tidb_executor::pushdown_scan`]).
+    /// [`tidb_executor::remote_scan`]).
     #[must_use]
     pub fn with_cop_scans(mut self, scanner: Arc<dyn PushdownScanner>) -> Self {
         self.cop_scans = Some(scanner);
@@ -304,7 +304,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&slot) as _;
         let mut storage = ClusterTableStorage::new(buffer.clone(), handle);
         if let Some(scanner) = self.cop_scans.as_ref() {
-            storage = storage.with_pushdown_scanner(Arc::clone(scanner));
+            storage = storage.with_remote_scanner(Arc::clone(scanner));
         }
         let loaded = self.catalog.load();
         let statistics = self.stats.load();

@@ -207,7 +207,7 @@ fn build_supported_table_task(
     if path.is_partitioned()
         || matches!(
             path.pushdown().unsupported,
-            Some(crate::scan_pushdown::UnsupportedScanFeature::Partition)
+            Some(crate::tikv_scan_spec::UnsupportedScanFeature::Partition)
         )
     {
         return invalid_table(TableTaskRejection::Partition);

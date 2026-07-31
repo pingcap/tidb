@@ -31,7 +31,7 @@ use tidb_planner::{
     physical_index_scan::PhysicalIndexScanPlan,
     physical_selection::{ComparisonOp, ComparisonOperand, PhysicalSelectionPlan},
     physical_table_scan::PhysicalTableScanPlan,
-    scan_pushdown::{
+    tikv_scan_spec::{
         check_cover_index, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
         UnsupportedScanFeature,
     },

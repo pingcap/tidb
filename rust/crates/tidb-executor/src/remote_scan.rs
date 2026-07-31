@@ -61,7 +61,7 @@ use std::fmt;
 use tidb_datatype::{Datum, FieldType};
 use tidb_txnkv::Key;
 
-use crate::scan_pushdown::ScanPredicate;
+use crate::predicate_pushdown::ScanPredicate;
 use crate::storage::StorageError;
 
 /// One column a remote scan must return, in the order the caller wants it.
@@ -198,7 +198,7 @@ mod tests {
     };
     use crate::driver::{run_select_on, Catalog};
     use crate::kv_table::{KvColumn, KvTable, TableHandle};
-    use crate::scan_pushdown::{ScanComparisonOp, ScanPredicate};
+    use crate::predicate_pushdown::{ScanComparisonOp, ScanPredicate};
     use crate::storage::{MemTableStorage, TableStorage};
 
     /// The committed half of a cluster read, shared by the snapshot the
@@ -445,7 +445,7 @@ mod tests {
             scanned: Arc::clone(&scanned),
         });
         let storage = ClusterTableStorage::new(buffer.clone(), handle)
-            .with_pushdown_scanner(scanner as Arc<dyn PushdownScanner>);
+            .with_remote_scanner(scanner as Arc<dyn PushdownScanner>);
         Fixture {
             table: KvTable::with_storage(91, columns, Box::new(storage)),
             buffer,
@@ -527,7 +527,7 @@ mod tests {
     /// The correctness core. A coprocessor answers from the snapshot, so the
     /// transaction's own staged writes must be merged back in and filtered by
     /// the same predicate: this is the remote twin of the byte-level test in
-    /// `crate::scan_pushdown`, and it must produce the identical answer.
+    /// `crate::predicate_pushdown`, and it must produce the identical answer.
     #[test]
     fn staged_rows_survive_the_remote_scan_and_are_filtered_by_the_same_predicate() {
         let mut fixture = fixture();

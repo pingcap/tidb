@@ -20,7 +20,7 @@
 
 use crate::{
     cardinality::live_index_optimizer::{estimate_proven_point_rows, LiveIndexCandidate},
-    scan_pushdown::{
+    tikv_scan_spec::{
         IndexPushdownMetadataError, ResolvedIndexDescriptor, TiKvIndexScanSpec, TiKvTableScanSpec,
         ValidatedIndexPushdown,
     },

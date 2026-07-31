@@ -31,10 +31,10 @@ use super::{
     index_entry_handle, IndexRange, KvColumn, KvIndex, KvTable, KvTableError, TableHandle,
 };
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::pushdown_scan::{
+use crate::remote_scan::{
     PushdownRowStream, PushdownScanColumn, PushdownScanRequest, EXTRA_HANDLE_COLUMN_ID,
 };
-use crate::scan_pushdown::ScanPredicate;
+use crate::predicate_pushdown::ScanPredicate;
 use crate::storage::StorageIterator;
 use std::collections::BTreeMap;
 use tidb_chunk::chunk::Chunk;
@@ -206,7 +206,7 @@ impl KvTable {
             start,
             end,
         };
-        let Some(scan) = self.store.open_pushdown_scan(&request) else {
+        let Some(scan) = self.store.open_remote_scan(&request) else {
             return Ok(None);
         };
         let scan = scan.map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -742,7 +742,7 @@ pub struct TableScanExec {
     /// The open coprocessor-served cursor, when the backend has one.
     remote: Option<RemoteRowCursor>,
     /// Conjuncts this scan took over from the `Selection` above it.
-    filter: Option<crate::scan_pushdown::ScanFilterProbe>,
+    filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// The same conjuncts as a description, for a backend that can evaluate
     /// them at the region. They are applied locally regardless.
     pushed: Vec<ScanPredicate>,
@@ -926,14 +926,14 @@ impl crate::table_access::TableAccess for TableScanExec {
     /// [`crate::table_access`] hold on both cursors.
     fn accept_scan_filter(
         &mut self,
-        filter: &crate::scan_pushdown::PushedScanFilter,
+        filter: &crate::predicate_pushdown::PushedScanFilter,
         ctx: &crate::StmtContext,
     ) -> bool {
         if filter.is_empty() {
             return false;
         }
         self.pushed = filter.predicates().to_vec();
-        self.filter = Some(crate::scan_pushdown::ScanFilterProbe::new(
+        self.filter = Some(crate::predicate_pushdown::ScanFilterProbe::new(
             filter.clone(),
             ctx.clone(),
             self.meta.new_chunk(),

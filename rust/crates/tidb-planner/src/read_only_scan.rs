@@ -60,7 +60,7 @@ use crate::{
         PhysicalSelectionPlan,
     },
     physical_table_scan::PhysicalTableScanPlan,
-    scan_pushdown::{ScanColumnInfo, TiKvTableScanSpec},
+    tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec},
     signed_bigint_ranger::{detach_clustered_signed_bigint_ranges, SignedBigIntRange},
     task_type::TaskType,
 };

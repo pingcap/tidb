@@ -21,7 +21,7 @@ use std::sync::Arc;
 use tidb_exec::cop_scan::CopScanSource;
 use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
 use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
-use tidb_executor::pushdown_scan::PushdownScanner;
+use tidb_executor::remote_scan::PushdownScanner;
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 
 use crate::cluster_account_seam::RealClusterAccountWriter;

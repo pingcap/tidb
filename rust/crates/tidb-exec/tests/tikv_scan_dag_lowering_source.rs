@@ -30,7 +30,7 @@ use tidb_planner::{
     logical_data_source_task::IndexTaskProperty,
     physical_index_scan::PhysicalIndexScanPlan,
     physical_table_scan::PhysicalTableScanPlan,
-    scan_pushdown::{
+    tikv_scan_spec::{
         check_cover_index, IndexPushdownMetadataError, ResolvedIndexDescriptor, ScanColumnInfo,
         TiKvIndexScanSpec, TiKvTableScanSpec, UnsupportedScanFeature,
     },

@@ -266,7 +266,7 @@ fn test_request_builder_scan_limit_concurrency_source_vectors() {
 }
 
 #[test]
-fn test_request_builder_index_lookup_pushdown_scan_concurrency_source_vectors() {
+fn test_request_builder_index_lookup_remote_scan_concurrency_source_vectors() {
     let default_concurrency = 15;
     for (limit, expected) in [(1, 1), (1_000_000, default_concurrency)] {
         let mut envelope = RequestEnvelope::new(vec![

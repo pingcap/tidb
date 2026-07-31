@@ -37,7 +37,7 @@ use tidb_executor::cluster_storage::{
 };
 use tidb_executor::driver::{run_select_on, Catalog};
 use tidb_executor::kv_table::{KvColumn, KvTable};
-use tidb_executor::pushdown_scan::PushdownScanner;
+use tidb_executor::remote_scan::PushdownScanner;
 use tidb_executor::storage::StorageError;
 use tidb_executor::StmtContext;
 use tidb_proto::tipb::{Chunk, DagRequest, ExecType, SelectResponse};
@@ -256,7 +256,7 @@ fn fixture() -> (Catalog, Arc<FakeRegion>) {
     let snapshot: Arc<Mutex<dyn ClusterSnapshot>> = Arc::new(Mutex::new(EmptySnapshot));
     let columns = vec![column("id", 1, false), column("tag", 2, true)];
     let storage = ClusterTableStorage::new(MutationBuffer::new(), snapshot)
-        .with_pushdown_scanner(scanner as Arc<dyn PushdownScanner>);
+        .with_remote_scanner(scanner as Arc<dyn PushdownScanner>);
     let mut catalog = Catalog::default();
     catalog.register_kv(
         "t",

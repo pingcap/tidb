@@ -62,7 +62,7 @@
 //! but the source must still evaluate the full pushed predicate locally on the
 //! merged stream, and a cap may only travel with the request when nothing is
 //! staged. Remote evaluation is thus always a *performance* choice and never a
-//! semantic one -- see [`crate::pushdown_scan`].
+//! semantic one -- see [`crate::remote_scan`].
 //!
 //! A source that cannot make one of these promises does not implement that
 //! method: the fail-closed default answers `false` and the operator above keeps
@@ -80,7 +80,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use crate::scan_pushdown::PushedScanFilter;
+use crate::predicate_pushdown::PushedScanFilter;
 use crate::StmtContext;
 
 /// A base-table source that can take over work from the operators above it.
@@ -98,7 +98,7 @@ pub trait TableAccess {
     /// doc). A source that cannot promise that leaves the default `false` and
     /// the whole `WHERE` stays where it was.
     ///
-    /// See [`crate::scan_pushdown`] for the split rule and the reasoning.
+    /// See [`crate::predicate_pushdown`] for the split rule and the reasoning.
     fn accept_scan_filter(&mut self, filter: &PushedScanFilter, ctx: &StmtContext) -> bool {
         let _ = (filter, ctx);
         false

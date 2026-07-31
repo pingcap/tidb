@@ -195,7 +195,7 @@ pub struct IndexRangeSourceExec {
     /// access operator reports once it filters internally.
     scanned: Rc<Cell<u64>>,
     /// Conjuncts this source took over from the `Selection` above it.
-    filter: Option<crate::scan_pushdown::ScanFilterProbe>,
+    filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// A pushed row cap (`offset + count`); see [`Executor::accept_scan_limit`].
     limit: Option<u64>,
 }
@@ -342,13 +342,13 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     /// promise in [`crate::table_access`] is kept.
     fn accept_scan_filter(
         &mut self,
-        filter: &crate::scan_pushdown::PushedScanFilter,
+        filter: &crate::predicate_pushdown::PushedScanFilter,
         ctx: &crate::StmtContext,
     ) -> bool {
         if filter.is_empty() {
             return false;
         }
-        self.filter = Some(crate::scan_pushdown::ScanFilterProbe::new(
+        self.filter = Some(crate::predicate_pushdown::ScanFilterProbe::new(
             filter.clone(),
             ctx.clone(),
             self.meta.new_chunk(),

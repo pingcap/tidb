@@ -18,7 +18,7 @@ use tidb_planner::{
     logical_data_source_task::IndexTaskProperty,
     physical_index_scan::PhysicalIndexScanPlan,
     physical_property::IndexOrderingRequirement,
-    scan_pushdown::TiKvTableScanSpec,
+    tikv_scan_spec::TiKvTableScanSpec,
     task_type::TaskType,
 };
 

@@ -24,10 +24,10 @@ use tidb_exec::dag_request::{
 use tidb_exec::wide_scan_selection::{
     accepts, wide_scan_selection_conditions, WideScanSelectionError,
 };
-use tidb_executor::scan_pushdown::{ScanComparison, ScanComparisonOp, ScanPredicate};
+use tidb_executor::predicate_pushdown::{ScanComparison, ScanComparisonOp, ScanPredicate};
 use tidb_planner::{
     physical_table_scan::PhysicalTableScanPlan,
-    scan_pushdown::{ScanColumnInfo, TiKvTableScanSpec},
+    tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec},
 };
 use tidb_proto::tipb::{DagRequest, ExecType, Expr, ExprType, ScalarFuncSig};
 

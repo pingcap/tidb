@@ -48,7 +48,7 @@ use tidb_exec::stats_watch::StatsSnapshot;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
-use tidb_executor::pushdown_scan::PushdownScanner;
+use tidb_executor::remote_scan::PushdownScanner;
 use tidb_server::cluster_session::session_with_cluster_storage;
 use tidb_session::StmtResult;
 
@@ -230,7 +230,7 @@ fn run_explicit_transaction(
     let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&slot) as _;
     let mut storage = ClusterTableStorage::new(buffer.clone(), handle);
     if let Some(scans) = cop_scans {
-        storage = storage.with_pushdown_scanner(Arc::clone(scans) as Arc<dyn PushdownScanner>);
+        storage = storage.with_remote_scanner(Arc::clone(scans) as Arc<dyn PushdownScanner>);
     }
     for sql in &arguments.statements {
         let snapshot = match transaction.snapshot() {
@@ -304,7 +304,7 @@ fn run_statement(
     let (mut storage, snapshot) = statement_storage(Arc::clone(opener), buffer.clone(), TIMEOUT)
         .map_err(|error| error.to_string())?;
     if let Some(scans) = cop_scans {
-        storage = storage.with_pushdown_scanner(Arc::clone(scans) as Arc<dyn PushdownScanner>);
+        storage = storage.with_remote_scanner(Arc::clone(scans) as Arc<dyn PushdownScanner>);
     }
     let start_ts = snapshot
         .lock()

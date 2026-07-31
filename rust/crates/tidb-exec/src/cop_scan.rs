@@ -43,7 +43,7 @@
 //!   timestamp would not be repeatable read.
 //! * **It never has the last word.** The scan source applies the pushed
 //!   conjuncts and the cap to every row it emits, and merges the session's
-//!   staged buffer on top (see [`tidb_executor::pushdown_scan`]). So this
+//!   staged buffer on top (see [`tidb_executor::remote_scan`]). So this
 //!   module may lower all, some, or none of the predicate and the answer is
 //!   the same; only the number of rows on the wire changes.
 //!
@@ -72,14 +72,14 @@ use tidb_distsql::{
     QueryResultContext, QueryTransport, RequestBuilder, RequestEnvelope, SelectInput,
     WarningCollector,
 };
-use tidb_executor::pushdown_scan::{
+use tidb_executor::remote_scan::{
     PushdownRowStream, PushdownScanColumn, PushdownScanRequest, PushdownScanner,
     PushdownScannerError, EXTRA_HANDLE_COLUMN_ID,
 };
-use tidb_executor::scan_pushdown::ScanPredicate;
+use tidb_executor::predicate_pushdown::ScanPredicate;
 use tidb_executor::storage::StorageError;
 use tidb_planner::physical_table_scan::PhysicalTableScanPlan;
-use tidb_planner::scan_pushdown::{ScanColumnInfo, TiKvTableScanSpec};
+use tidb_planner::tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec};
 use tidb_proto::tipb::{ExecType, Expr};
 use tidb_txnkv::KeyRange;
 

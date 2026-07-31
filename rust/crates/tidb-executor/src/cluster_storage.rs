@@ -65,7 +65,7 @@ use std::sync::{Arc, Mutex};
 
 use tidb_txnkv::Key;
 
-use crate::pushdown_scan::{
+use crate::remote_scan::{
     PushdownScan, PushdownScanRequest, PushdownScanner, PushdownScannerError,
 };
 use crate::storage::{StorageError, StorageIterator, TableStorage};
@@ -329,9 +329,9 @@ impl ClusterTableStorage {
     /// range's bytes have crossed the network.
     ///
     /// The staged buffer is untouched by it: see
-    /// [`TableStorage::open_pushdown_scan`] below for how the two are merged.
+    /// [`TableStorage::open_remote_scan`] below for how the two are merged.
     #[must_use]
-    pub fn with_pushdown_scanner(mut self, scanner: Arc<dyn PushdownScanner>) -> Self {
+    pub fn with_remote_scanner(mut self, scanner: Arc<dyn PushdownScanner>) -> Self {
         self.scanner = Some(scanner);
         self
     }
@@ -411,7 +411,7 @@ impl TableStorage for ClusterTableStorage {
     /// last remote row, and a staged delete uncovers a row past it. So the cap
     /// travels only when the staged range is empty, and the caller enforces it
     /// again either way.
-    fn open_pushdown_scan(
+    fn open_remote_scan(
         &mut self,
         request: &PushdownScanRequest,
     ) -> Option<Result<PushdownScan, StorageError>> {

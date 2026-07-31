@@ -17,7 +17,7 @@
 //!
 //! The driver splits a `WHERE` into the conjuncts a base-table scan applies
 //! itself and the residual above it
-//! ([`tidb_executor::scan_pushdown`]). Those pushed conjuncts are described
+//! ([`tidb_executor::predicate_pushdown`]). Those pushed conjuncts are described
 //! independently of how they are evaluated; this module turns one description
 //! into the TiPB condition tree
 //! [`crate::dag_request::construct_capped_read_only_dag_req_with_conditions`]
@@ -51,7 +51,7 @@
 //!
 //! A conjunct this module refuses stays in the request as a description the
 //! backend simply does not evaluate; the caller applies every pushed conjunct
-//! to every row it emits anyway ([`tidb_executor::pushdown_scan`]), so a
+//! to every row it emits anyway ([`tidb_executor::remote_scan`]), so a
 //! refusal costs network and nothing else. A conjunct lowered *wrongly*,
 //! though, would make the coprocessor drop a row the query selects -- and the
 //! local filter cannot put back a row that never crossed the wire. Every
@@ -72,12 +72,12 @@ use std::error::Error;
 use std::fmt;
 
 use tidb_datatype::Datum;
-use tidb_executor::scan_pushdown::{ScanComparison, ScanComparisonOp, ScanPredicate};
+use tidb_executor::predicate_pushdown::{ScanComparison, ScanComparisonOp, ScanPredicate};
 use tidb_expr::pb_predicate::{
     int_comparison_to_pb, int_field_type, int_in_to_pb, int_is_null_to_pb, is_int_family_type,
     is_unsigned, logical_not_to_pb, logical_or_to_pb, IntPbOperand, PbPredicateError,
 };
-use tidb_planner::scan_pushdown::ScanColumnInfo;
+use tidb_planner::tikv_scan_spec::ScanColumnInfo;
 use tidb_proto::tipb::Expr;
 
 /// Why a pushed conjunct cannot become a coprocessor Selection condition.

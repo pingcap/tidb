@@ -20,7 +20,7 @@ use crate::{
         ValidatedTablePushdown,
     },
     plan::PlanNode,
-    scan_pushdown::TiKvTableScanSpec,
+    tikv_scan_spec::TiKvTableScanSpec,
 };
 
 /// The source plan-codec type assigned by `PhysicalTableScan.Init`.

@@ -19,7 +19,7 @@ use crate::{
     physical_table_dual::PhysicalTableDualPlan,
     physical_table_reader::{MissingTableDescriptorError, PhysicalTableReaderPlan},
     physical_table_scan::PhysicalTableScanPlan,
-    scan_pushdown::UnsupportedScanFeature,
+    tikv_scan_spec::UnsupportedScanFeature,
 };
 
 /// Why the bounded index task builder did not construct a task.

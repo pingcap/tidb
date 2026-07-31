@@ -20,7 +20,7 @@ mod indexes;
 mod joins;
 mod point_get;
 mod primary_keys;
-mod scan_pushdown;
+mod predicate_pushdown;
 mod select_clauses;
 mod set_operations;
 mod subqueries;

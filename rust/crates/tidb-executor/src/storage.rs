@@ -104,7 +104,7 @@ use tidb_txnkv::{
     GetOptions, Getter, Key, KvIterator, MemStorage, MemStorageError, Mutator, Retriever,
 };
 
-use crate::pushdown_scan::{PushdownScan, PushdownScanRequest};
+use crate::remote_scan::{PushdownScan, PushdownScanRequest};
 
 /// A failure reported by a storage backend.
 ///
@@ -221,8 +221,8 @@ pub trait TableStorage: fmt::Debug + Send {
     /// [`iter`](TableStorage::iter). A returned [`PushdownScan`] carries the
     /// session's staged writes alongside the remote rows, because a
     /// coprocessor answers from the snapshot only; see
-    /// [`crate::pushdown_scan`].
-    fn open_pushdown_scan(
+    /// [`crate::remote_scan`].
+    fn open_remote_scan(
         &mut self,
         _request: &PushdownScanRequest,
     ) -> Option<Result<PushdownScan, StorageError>> {

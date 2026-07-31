@@ -20,7 +20,7 @@
 //! of a specific Go executor; it stands in for one, and is documented as such.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::scan_pushdown::{PushedScanFilter, ScanFilterProbe};
+use crate::predicate_pushdown::{PushedScanFilter, ScanFilterProbe};
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;

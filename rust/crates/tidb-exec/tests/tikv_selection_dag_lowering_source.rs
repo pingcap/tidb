@@ -24,7 +24,7 @@ use tidb_planner::{
         BigIntComparison, ComparisonOp, ComparisonOperand, PhysicalSelectionPlan,
     },
     physical_table_scan::PhysicalTableScanPlan,
-    scan_pushdown::{ScanColumnInfo, TiKvTableScanSpec},
+    tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec},
 };
 use tidb_proto::tipb::{DagRequest, ExecType, ExprType, ScalarFuncSig};
 

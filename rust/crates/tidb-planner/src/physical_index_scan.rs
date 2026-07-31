@@ -26,7 +26,7 @@ use crate::{
     cardinality::index_range_policy::IndexRangeShape,
     cardinality::live_index_optimizer::{live_index_choice, LiveIndexCandidate, LiveIndexChoice},
     plan::PlanNode,
-    scan_pushdown::{
+    tikv_scan_spec::{
         IndexPushdownMetadataError, ResolvedIndexDescriptor, TiKvIndexScanSpec,
         ValidatedIndexPushdown,
     },

@@ -20,7 +20,7 @@ use tidb_planner::{
     physical_property::IndexOrderingRequirement,
     physical_table_reader::PhysicalTableReaderPlan,
     physical_table_scan::PhysicalTableScanPlan,
-    scan_pushdown::{ScanColumnInfo, TiKvTableScanSpec, UnsupportedScanFeature},
+    tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec, UnsupportedScanFeature},
     task_type::TaskType,
 };
 

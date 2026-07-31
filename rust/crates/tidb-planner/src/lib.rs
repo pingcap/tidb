@@ -109,7 +109,7 @@ pub mod residual_condition;
 pub mod resolve_grouping_expand;
 pub mod rule_set;
 pub mod rule_type;
-pub mod scan_pushdown;
+pub mod tikv_scan_spec;
 pub mod scheduler_contract;
 pub mod schema_table_key;
 pub mod selectivity_greedy;

@@ -480,7 +480,7 @@ pub(crate) fn single_table_trace_estimate(
 ///
 /// This is Go's `rule_predicate_push_down` split narrowed to the shape the
 /// bounded TiKV Selection lowering already speaks -- see
-/// [`crate::scan_pushdown`] for the rule and for why the pushed half may be
+/// [`crate::predicate_pushdown`] for the rule and for why the pushed half may be
 /// removed from the `Selection` only when the source promises to apply it to
 /// every row, staged writes included.
 ///
