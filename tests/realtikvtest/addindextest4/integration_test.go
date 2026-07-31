@@ -146,13 +146,26 @@ func TestFixAdminAlterDDLJobs(t *testing.T) {
 			}
 
 			ch := make(chan struct{})
+			released := false
+			defer func() {
+				if !released {
+					close(ch)
+				}
+			}()
+			// Wait for a running worker so ADMIN ALTER exercises dynamic adjustment. See issue #70138.
+			workerStarted := make(chan struct{}, 1)
 			testfailpoint.EnableCall(t, tc.stuckFp, func() {
+				select {
+				case workerStarted <- struct{}{}:
+				default:
+				}
 				<-ch
 			})
 			var wg util.WaitGroupWrapper
 			wg.Run(func() {
 				tk1.MustExec(tc.sql)
 			})
+			<-workerStarted
 			var (
 				realWorkerCnt     atomic.Int64
 				realBatchSize     atomic.Int64
@@ -183,6 +196,7 @@ func TestFixAdminAlterDDLJobs(t *testing.T) {
 				return realWorkerCnt.Load() == workerCnt && realBatchSize.Load() == batchSize && realMaxWriteSpeed.Load() == maxWriteSpeed
 			}, 30*time.Second, time.Millisecond*100)
 			close(ch)
+			released = true
 			wg.Wait()
 			if tc.revertVars != "" {
 				tk1.MustExec(tc.revertVars)
