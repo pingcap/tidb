@@ -133,6 +133,9 @@ pub(crate) fn run_aggregate_select(
     // only point where the select list still distinguishes a bare column from
     // the FIRST_ROW carrier the stages below turn it into.
     super::only_full_group_by::check_only_full_group_by(select, resolver.scope, ctx)?;
+    // ... and then the DISTINCT rule, in Go's order: `checkOnlyFullGroupBy`
+    // runs in `buildSelect`, `checkOrderByInDistinct` later in `buildSort`.
+    super::only_full_group_by::check_order_by_in_distinct(select, resolver.scope, ctx)?;
 
     let mut state = AggPipelineState {
         group_by_names: group_by_display_names(select, resolver),

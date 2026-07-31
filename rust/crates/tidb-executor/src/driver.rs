@@ -380,6 +380,11 @@ pub(crate) fn run_select_traced(
         );
     }
 
+    // `SELECT DISTINCT ... ORDER BY`, for the queries that never reach the
+    // aggregate pipeline. The aggregate path runs the same check itself, after
+    // ONLY_FULL_GROUP_BY, which is the order Go's two builders impose.
+    only_full_group_by::check_order_by_in_distinct(select, resolver.scope, ctx)?;
+
     // Source: the table rows (matrix- or TiKV-byte-backed), or one virtual row
     // from a table-dual.
     let (mut source, source_schema): (Box<dyn Executor>, Schema) = match from_source {

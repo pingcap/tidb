@@ -281,6 +281,22 @@ pub enum DriverError {
         /// The offending `ORDER BY` item's 1-based position.
         position: usize,
     },
+    /// Go `plannererrors.ErrFieldInOrderNotSelect` (3065): a `SELECT DISTINCT`
+    /// orders by an expression reading a column the select list does not
+    /// report, so the row the order would pick is not one the result has.
+    FieldInOrderNotSelect {
+        /// The offending `ORDER BY` item's 1-based position.
+        position: usize,
+        /// The column, qualified as Go qualifies it (`db.tbl.col`).
+        column: String,
+    },
+    /// Go `plannererrors.ErrAggregateInOrderNotSelect` (3066): the same rule
+    /// where the `ORDER BY` item is an aggregate call the select list does not
+    /// contain.
+    AggregateInOrderNotSelect {
+        /// The offending `ORDER BY` item's 1-based position.
+        position: usize,
+    },
     /// Go `types.ErrInvalidDefault` (1067).
     InvalidDefault(String),
     /// Go `ErrDataTooLong` (1406).
@@ -1731,6 +1747,22 @@ impl DriverError {
                 "In aggregated query without GROUP BY, expression #{position} of SELECT list \
                  contains nonaggregated column '{column}'; this is incompatible with \
                  sql_mode=only_full_group_by"
+            ),
+        ),
+        DriverError::FieldInOrderNotSelect { position, column } => MysqlError::new(
+            3065,
+            *b"HY000",
+            format!(
+                "Expression #{position} of ORDER BY clause is not in SELECT list, references \
+                 column '{column}' which is not in SELECT list; this is incompatible with DISTINCT"
+            ),
+        ),
+        DriverError::AggregateInOrderNotSelect { position } => MysqlError::new(
+            3066,
+            *b"HY000",
+            format!(
+                "Expression #{position} of ORDER BY clause is not in SELECT list, contains \
+                 aggregate function; this is incompatible with DISTINCT"
             ),
         ),
         // Go: "Invalid default value for '%-.192s'".

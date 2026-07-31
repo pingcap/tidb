@@ -217,6 +217,122 @@ pub(crate) fn check_only_full_group_by(
     Ok(())
 }
 
+/// Go `PlanBuilder.checkOrderByInDistinct`: a `SELECT DISTINCT` may only order
+/// by something its own result carries.
+///
+/// `DISTINCT` collapses rows the select list cannot tell apart, so ordering by
+/// a column the select list does NOT report asks for an order over values that
+/// no longer exist -- MySQL's #12442. The test is membership in the select
+/// list, in the two forms Go compares against: the field's own expression
+/// (`originalExprs`) and the field's output column (`p.Schema().Columns`,
+/// which is what an alias names). An item passes whole, or else every column
+/// it reads outside an aggregate must itself be a reported field.
+///
+/// This rule is NOT the functional-dependency rule and does not get to use it.
+/// Captured: `SELECT DISTINCT id, v FROM pk ORDER BY w` over `pk(id INT
+/// PRIMARY KEY, v INT, w INT)` is 3065, even though the primary key in the
+/// select list determines `w` -- because after `DISTINCT` the query is not
+/// asking for `w` at all. So the rule needs nothing this tier lacks.
+///
+/// Runs only under `ONLY_FULL_GROUP_BY` (Go gates the whole
+/// `buildSortWithCheck` call on `SQLMode.HasOnlyFullGroupBy()`), and always
+/// AFTER [`check_only_full_group_by`], which is where `SELECT DISTINCT a FROM
+/// t ORDER BY sum(b)` gets its 3029 rather than a 3066 from here.
+pub(crate) fn check_order_by_in_distinct(
+    select: &tidb_ast::SelectStmt,
+    scope: &FromScope,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    if !ctx.only_full_group_by() || !select.distinct || select.order_by.is_empty() {
+        return Ok(());
+    }
+    let fields = select.fields.fields();
+    // A wildcard's expansion is not written in the select list, so a field
+    // list containing one cannot be compared item by item here. Skipping is
+    // the permissive side and matches every captured case: `SELECT DISTINCT *
+    // FROM t ORDER BY c` and `SELECT DISTINCT t.* FROM t ORDER BY c` are both
+    // accepted by TiDB.
+    if fields
+        .iter()
+        .any(|field| matches!(field, tidb_ast::SelectField::Wildcard(_)))
+    {
+        return Ok(());
+    }
+    let resolver = ScopeResolver { scope };
+    let offset_of = |expr: &tidb_ast::Expr| match strip(expr) {
+        tidb_ast::Expr::Column(path) => resolver.resolve(path).map(|(offset, _, _)| offset),
+        _ => None,
+    };
+
+    // The select list in the three forms an ORDER BY item can name it: the
+    // scope offset of a field that IS a column, the field's written
+    // expression, and the field's output name (its alias, else its column).
+    let mut reported_offsets: HashSet<usize> = HashSet::new();
+    let mut reported_exprs: Vec<&tidb_ast::Expr> = Vec::new();
+    let mut reported_names: Vec<&str> = Vec::new();
+    for field in fields {
+        let tidb_ast::SelectField::Expr { expr, alias } = field else {
+            continue;
+        };
+        reported_offsets.extend(offset_of(expr));
+        reported_exprs.push(strip(expr));
+        match alias {
+            Some(alias) => reported_names.push(alias),
+            None => {
+                if let tidb_ast::Expr::Column(path) = strip(expr) {
+                    reported_names.extend(path.last().map(String::as_str));
+                }
+            }
+        }
+    }
+    let names_a_reported_field = |path: &[String]| {
+        matches!(path, [name]
+            if reported_names.iter().any(|reported| reported.eq_ignore_ascii_case(name)))
+    };
+
+    for (index, item) in select.order_by.iter().enumerate() {
+        let expr = strip(&item.expr);
+        // `ORDER BY <n>` names a select field by ordinal, so it is reported by
+        // construction.
+        if matches!(expr, tidb_ast::Expr::Int(_)) {
+            continue;
+        }
+        let whole_item_is_reported = match expr {
+            tidb_ast::Expr::Column(path) => {
+                offset_of(expr).is_some_and(|offset| reported_offsets.contains(&offset))
+                    || names_a_reported_field(path)
+            }
+            other => reported_exprs.contains(&other),
+        };
+        if whole_item_is_reported {
+            continue;
+        }
+        for path in bare_columns(expr) {
+            // A name this scope cannot resolve is the column resolver's to
+            // report, with its own error.
+            let Some((offset, _, _)) = resolver.resolve(&path) else {
+                continue;
+            };
+            if reported_offsets.contains(&offset) || names_a_reported_field(&path) {
+                continue;
+            }
+            return Err(DriverError::FieldInOrderNotSelect {
+                position: index + 1,
+                column: qualified_name(offset, scope),
+            });
+        }
+        // An aggregate reads no bare column of its own, so it reaches here
+        // with nothing collected: Go compares the aggregation's OUTPUT column
+        // against the select list, which holds it only if the same call is
+        // written there. A nested aggregate (`ORDER BY sum(a)+1`) is left
+        // alone -- the permissive side, and no captured case reaches it.
+        if is_exempt(expr) {
+            return Err(DriverError::AggregateInOrderNotSelect { position: index + 1 });
+        }
+    }
+    Ok(())
+}
+
 /// Records every column `expr` reports that the grouping does not justify.
 ///
 /// Go's `checkExprInGroupByOrIsSingleValue`: an aggregate is exempt outright,
