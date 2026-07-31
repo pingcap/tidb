@@ -65,8 +65,8 @@ use std::fmt;
 use tidb_ast::IndexType;
 use tidb_ast::{CiString, IndexOptions};
 use tidb_ast::{
-    ColumnDef, ColumnOption, ColumnType, ColumnTypeArg, CreateTableStmt, Expr, IndexConstraintKind,
-    IndexPart, InlineKeyKind, PrimaryKeyStorage, TableConstraint, TableOption, UnaryOp,
+    ColumnDef, ColumnOption, ColumnType, CreateTableStmt, Expr, IndexConstraintKind, IndexPart,
+    InlineKeyKind, PrimaryKeyStorage, TableConstraint, TableOption, UnaryOp,
 };
 use tidb_datatype::{
     get_collation_by_name, get_default_charset_and_collate, get_default_collation, FieldType,
