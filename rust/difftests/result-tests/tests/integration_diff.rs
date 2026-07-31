@@ -584,10 +584,12 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //    TiDB reads NOTHING at all; this tier still plans a scan (with an
     //    empty range, or a Selection that filters every row) and answers the
     //    same empty result the slow way.
-    //  * WRITES DO NOT CHOOSE AN ACCESS PATH (4). `update`/`delete` always
-    //    scan and filter here, which `tidb_executor::explain`'s module docs
-    //    already name as divergence 8; TiDB reaches `Point_Get` and
-    //    `IndexRangeScan` for the same WHERE.
+    //  * WRITES ARE NOT OFFERED AN INDEX PATH (2). An `update`/`delete` whose
+    //    `WHERE` names a non-unique secondary index scans and filters here
+    //    where TiDB reaches `IndexRangeScan`; `tidb_executor::explain`'s
+    //    module docs name it as what is left of divergence 8. (The `Point_Get`
+    //    half of this class closed when the write path started calling
+    //    `try_point_get`, which is the 51 -> 49 note below.)
     //  * NO CLUSTERED-PK RANGE (3 + 1 `Point_Get`). `where t1.c1 > 0` on an
     //    integer primary key is `TableRangeScan range:(0,+inf]` in TiDB and a
     //    `TableFullScan` here: ranges are derived for INDEXES, not for the
@@ -745,7 +747,20 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // Nothing here moved a ROW: `explain_easy` matches only `PlanProperty`
     // and `SideEffect`, and every topic's `Rows` count is unchanged.
-    const KNOWN_DIVERGENCES: usize = 51;
+    //
+    // # 51 -> 49: the write's point plan
+    //
+    // A single-table `UPDATE`/`DELETE` whose `WHERE` pins a whole key now
+    // plans Go's `Point_Get` instead of a `TableRangeScan` over the
+    // degenerate range, because the write path calls `try_point_get` -- the
+    // same function a `SELECT` reaches -- exactly as
+    // `tryUpdatePointPlan`/`tryDeletePointPlan` hand `tryPointGetPlan` a
+    // `SelectStmt` synthesized from the write's own clauses. That closes two
+    // more of `explain_easy`'s access-path divergences (21 -> 19, and its
+    // `PlanProperty` matches 71 -> 73); no other topic's count moved, and
+    // again no `Rows` count moved anywhere -- the point plan changes which
+    // request finds the row, never which row is found.
+    const KNOWN_DIVERGENCES: usize = 49;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

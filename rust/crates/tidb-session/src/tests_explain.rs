@@ -277,9 +277,11 @@ fn explain_analyze_insert_executes() {
 /// `0` (a write is a side effect, same as `Insert_1`), with a
 /// `Selection` (`actRows` `1`, the real number of `WHERE`-matching
 /// rows) over a `TableFullScan` (`actRows` `4`, the real pre-write row
-/// count) beneath it -- the write path always full-scans here (`explain`
-/// module doc, divergence 8), never a `Point_Get`, even for a
-/// primary-key equality.
+/// count) beneath it. The scan is the right read for THIS `WHERE`: `c` is an
+/// ordinary column that neither pins a key nor bounds the handle, so both
+/// engines read the table. The key and handle shapes are
+/// `explain_update_and_delete_plan_without_writing` and
+/// `tidb_session::tests_sysbench_access`.
 #[test]
 fn explain_analyze_update_executes() {
     let mut session = Session::new();

@@ -1135,10 +1135,12 @@ pub(crate) fn run_update_stmt(
 
 /// [`run_update_stmt`], recording the plan it builds into `trace`.
 ///
-/// The read plan is the one this function performs, which is why it is always
-/// a `TableFullScan` (+ a `Selection` for the `WHERE`): the write path takes
-/// no point-get/index fast path at all -- see `explain`'s divergence 8. Its
-/// `actRows` are counted off the very scan and predicate the update runs.
+/// The read plan is the one this function performs -- the `Point_Get`,
+/// `TableRangeScan` or `TableFullScan` [`super::access::write_read_path`]
+/// chose, with a `Selection` above it for the `WHERE`. Its `actRows` are
+/// counted off the very read and predicate the update runs. The one access
+/// path a write is still never offered is a non-unique INDEX; see `explain`'s
+/// divergence 8.
 pub(crate) fn run_update_traced(
     update: &tidb_ast::UpdateStmt,
     catalog: &mut Catalog,

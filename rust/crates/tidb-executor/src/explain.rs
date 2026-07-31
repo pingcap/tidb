@@ -281,8 +281,9 @@ pub fn explain_analyze_insert_stmt(
 
 /// Plans an `UPDATE` and reports the plan as EXPLAIN rows, executing nothing.
 /// `Update_N`'s one child is the read the driver performs to find the rows to
-/// update: a `TableFullScan`, with a `Selection` above it for the `WHERE`
-/// (divergence 8).
+/// update -- a `Point_Get`, a `TableRangeScan` or a `TableFullScan`, whichever
+/// `driver::access::write_read_path` chose -- with a `Selection` above it for
+/// the `WHERE` (divergences 7 and 8).
 pub fn explain_update_stmt(
     update: &tidb_ast::UpdateStmt,
     catalog: &mut Catalog,
@@ -312,8 +313,8 @@ pub fn explain_delete_stmt(
 /// `EXPLAIN ANALYZE <update>`: unlike [`explain_update_stmt`], this really
 /// runs the `UPDATE` (captured: the table's rows change afterward, both for a
 /// primary-key `WHERE` and an ordinary-column one). The read child's
-/// `actRows` come off that same run: `TableFullScan`'s is the number of rows
-/// the update's own scan examined, and `Selection`'s the number its own
+/// `actRows` come off that same run: the read node's is the number of records
+/// the update's own read examined, and `Selection`'s the number its own
 /// `WHERE` passed -- both confirmed by capture. Like `Insert_1`, `Update_N`'s
 /// own `actRows` is always `0` (captured): the write is a side effect, not a
 /// row this operator's `Next()` produces.
