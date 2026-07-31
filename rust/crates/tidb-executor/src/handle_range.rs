@@ -30,37 +30,49 @@
 //!    range encodable as a key interval.
 //! 3. `cardinality.GetRowCountByColumnRanges` with `pkIsHandle` estimates it.
 //!
-//! # The two row counts, and which one `EXPLAIN` prints
+//! # Why the conversion of step 2 decides the number, and the one step that
+//! is NOT ported
 //!
-//! Go computes the handle range's row count TWICE, from ranges of different
-//! shapes, and the numbers differ. `deriveTablePathStats` estimates the
-//! CONVERTED ranges of step 2, whose low bound is a real `KindInt64`
-//! `math.MinInt64`; that is `path.CountAfterAccess`, which costing and
-//! skyline pruning read. `DeriveStats`/`Selectivity` estimates the
-//! UNCONVERTED column ranges, whose open low bound is still `KindMinNotNull`;
-//! that is `ds.StatsInfo().RowCount`, and it is what `EXPLAIN` prints on the
-//! scan node.
+//! `GetRowCountByColumnRanges` dispatches on the FIRST range's low-bound
+//! KIND: `KindInt64` takes the SIGNED pseudo estimator, anything else takes
+//! the UNSIGNED one, which reads the bound's BITS as a `uint64`. Step 2 is
+//! what settles that kind for this call -- after `points2TableRanges` an open
+//! low bound is a real `KindInt64` `math.MinInt64`, so a table path always
+//! takes the signed arm. `CountAfterAccess` is that number, and it is what
+//! `EXPLAIN` prints on the scan node (`convertToTableScan` gives the
+//! `PhysicalTableScan` its stats from `path.CountAfterAccess`).
 //!
-//! The difference is not cosmetic, because `GetRowCountByColumnRanges`
-//! dispatches on exactly that kind: `KindInt64` takes the SIGNED pseudo
-//! estimator, anything else takes the UNSIGNED one. Instrumenting Go's own
-//! dispatch on `sbtest1(id bigint primary key, ...)` with no statistics shows
-//! both calls, in this order:
+//! Go calls the same estimator a SECOND time, from `Selectivity`, over the
+//! UNCONVERTED column ranges whose open low bound is still `KindMinNotNull`
+//! -- and that call takes the unsigned arm. Instrumenting Go's own dispatch
+//! on `sbtest1(id bigint primary key, ...)` with no statistics shows both,
+//! in this order:
 //!
 //! ```text
 //!   explain select c from sbtest1 where id < -1
 //!     ranges=[[-inf,-1)] lowKind=KindMinNotNull  -> unsigned -> 10000.00
 //!     ranges=[[-inf,-1)] lowKind=KindInt64       -> signed   ->  3333.33
-//!     printed: TableRangeScan_8  10000.00  range:[-inf,-1)
+//!     printed: TableRangeScan_8  10000.00
 //! ```
 //!
-//! The unsigned arm reads `-1`'s bits as `u64::MAX`, so `[-inf,-1)` becomes
-//! the whole unsigned domain and estimates the whole table; the signed arm
-//! reads the same range as a third of it. `id < -1` and `id <= -1` are the
-//! only shapes in the captured corpus where the two disagree, which is why
-//! taking either one for both purposes would have looked right almost
-//! everywhere. Both are computed here, from the same estimator, by handing it
-//! the ranges of the step Go hands it.
+//! That second number is `ds.StatsInfo().RowCount`, and it reaches the scan
+//! only through `adjustCountAfterAccess`, which RAISES `CountAfterAccess` to
+//! `RowCount / SelectionFactor` when the path's own estimate falls below it.
+//! `id < -1` is exactly that case: the unsigned arm reads `-1`'s bits as
+//! `u64::MAX`, calls `[-inf,-1)` the whole domain, and the adjustment lifts
+//! the printed 3333.33 to 10000.00.
+//!
+//! `adjustCountAfterAccess` is NOT ported here, for the reason
+//! [`crate::access_cost::source_row_count`] already records: the
+//! `ds.StatsInfo().RowCount` it reads is not yet Go's under pseudo
+//! statistics, so porting the adjustment on top of this tier's number would
+//! fire where Go's does not. The measured consequence is two shapes of the
+//! captured corpus, `id < -1` and `id <= -1`, where this tier prints 3333.33
+//! against Go's 10000.00 -- classified in
+//! `tidb_session::tests_sysbench_access`, which asserts this tier's value and
+//! quotes Go's beside it. Both are the un-adjusted `CountAfterAccess`, so the
+//! divergence is one missing step and not a different estimator. The
+//! remaining sixteen shapes agree exactly.
 
 use crate::access_cost::realtime_row_count;
 use crate::access_cost::TableStatistics;
@@ -146,17 +158,10 @@ fn to_table_range(range: &IndexRange) -> (i64, i64, bool, bool) {
     (low_value, high_value, low_exclusive, high_exclusive)
 }
 
-/// One range as the estimator's column range, in the shape of whichever of
-/// Go's two calls the caller is standing in for (see the module doc).
-fn column_range(range: &IndexRange, converted: bool) -> ColumnRange {
-    if !converted {
-        return ColumnRange {
-            low: range.low.first().cloned().unwrap_or(Datum::MinNotNull),
-            high: range.high.first().cloned().unwrap_or(Datum::MaxValue),
-            low_exclude: range.low_exclusive,
-            high_exclude: range.high_exclusive,
-        };
-    }
+/// One range as the estimator's column range, after step 2's conversion --
+/// which is what puts a real `KindInt64` in the low bound, and so decides
+/// which arm of the estimator runs (see the module doc).
+fn column_range(range: &IndexRange) -> ColumnRange {
     let (low, high, low_exclude, high_exclude) = to_table_range(range);
     ColumnRange {
         low: Datum::Int(low),
@@ -166,28 +171,23 @@ fn column_range(range: &IndexRange, converted: bool) -> ColumnRange {
     }
 }
 
-/// Go `cardinality.GetRowCountByColumnRanges` with `pkIsHandle` over the
-/// handle ranges.
+/// Go `deriveTablePathStats`' `path.CountAfterAccess`:
+/// `cardinality.GetRowCountByColumnRanges` with `pkIsHandle` over the
+/// table-converted handle ranges.
 ///
-/// `converted` picks which of Go's two calls this is: `false` is
-/// `Selectivity`'s, over the unconverted column ranges, which is the number
-/// `EXPLAIN` prints; `true` is `deriveTablePathStats`', over the
-/// table-converted ranges, which is `CountAfterAccess`. The module doc has
-/// the capture that separates them.
+/// This is the number `EXPLAIN` prints on the scan node AND the number the
+/// path is costed at; the module doc explains why they are the same here and
+/// what the one un-ported step (`adjustCountAfterAccess`) would change.
 pub(crate) fn handle_range_row_count(
     table: &KvTable,
     ranges: &[IndexRange],
     stats: Option<&TableStatistics>,
-    converted: bool,
 ) -> f64 {
     let realtime = realtime_row_count(stats);
     let Some(column) = handle_column(table) else {
         return realtime;
     };
-    let column_ranges: Vec<ColumnRange> = ranges
-        .iter()
-        .map(|range| column_range(range, converted))
-        .collect();
+    let column_ranges: Vec<ColumnRange> = ranges.iter().map(column_range).collect();
     get_row_count_by_column_ranges(
         stats.and_then(|stats| stats.columns.get(&column.id)),
         &column_ranges,

@@ -719,7 +719,25 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // * `HEX()` OF A BIT COLUMN KEEPS LEADING ZERO BYTES (1). `hex(b)` reads
     //   `00080A0D091A` here and `80A0D091A` in TiDB. Nothing to do with
     //   partitioning -- it became measurable because the table now exists.
-    const KNOWN_DIVERGENCES: usize = 52;
+    // # 52 -> 51: the clustered-handle range
+    //
+    // The table path now builds ranges over an integer primary key
+    // (`tidb_executor::handle_range`), so a `WHERE` that bounds the handle
+    // reads `TableRangeScan range:[...]` instead of `TableFullScan`. That
+    // closes one of `explain_easy`'s access-path divergences (22 -> 21, and
+    // its `PlanProperty` matches 70 -> 71); no other topic's count moved.
+    //
+    // The remaining `explain_easy` 21 are all still the SAME access-path
+    // class -- Go reaching an index or a point get where this tier reaches a
+    // scan -- and several are now a range scan rather than a full scan, which
+    // is closer to Go's row count without yet being its operator. Two named
+    // shapes stay out of reach on purpose: a handle bound under a JOIN (the
+    // range is offered by the single-table fast path only), and
+    // `USE INDEX(idx)`, whose hint this tier does not honour either way.
+    //
+    // Nothing here moved a ROW: `explain_easy` matches only `PlanProperty`
+    // and `SideEffect`, and every topic's `Rows` count is unchanged.
+    const KNOWN_DIVERGENCES: usize = 51;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

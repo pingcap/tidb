@@ -332,6 +332,44 @@ impl PlanTrace {
         ));
     }
 
+    /// A read of a bounded stretch of the CLUSTERED HANDLE, which REPLACES
+    /// the whole-table read above.
+    ///
+    /// Go's `TableRangeScan`: the same `PhysicalTableScan` as
+    /// [`PlanTrace::table_full_scan`], named differently because
+    /// `ranger.BuildTableRange` gave it ranges (`physical_table_scan.go`
+    /// prints `TableRangeScan` exactly when `len(Ranges) > 0` and they are
+    /// not the full range). Captured on `sbtest1`:
+    ///
+    /// ```text
+    /// TableRangeScan_8  99.00  cop[tikv]  table:sbtest1
+    ///   range:[100,199], keep order:false, stats:pseudo
+    /// ```
+    ///
+    /// The ranges printed are the UNCONVERTED ones, which is what makes an
+    /// open bound read `-inf`/`+inf` rather than `math.MinInt64`; Go's
+    /// `formatDatum` reaches the same text from the converted bound by
+    /// special-casing the extremes, so the two agree on every shape.
+    pub(crate) fn table_range_scan(
+        &mut self,
+        visible: &str,
+        ranges: &[crate::kv_table::IndexRange],
+        estimate: ScanEstimate,
+    ) {
+        let printed: Vec<String> = ranges.iter().map(range_text).collect();
+        self.replace_top(PlanNode::new(
+            "TableRangeScan",
+            Some(estimate.rows),
+            format!("table:{visible}"),
+            format!(
+                "range:{}, keep order:false{}",
+                printed.join(", "),
+                pseudo_suffix(estimate)
+            ),
+        ));
+        self.consumed = true;
+    }
+
     /// Go's `Batch_Point_Get` fast path, which REPLACES the source scan.
     pub(crate) fn batch_point_get(&mut self, visible: &str, handles: &[TableHandle]) {
         let printed: Vec<String> = handles.iter().map(handle_text).collect();

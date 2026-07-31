@@ -18,43 +18,23 @@
 //! source the plan reads through, the range it reads, and the row estimate
 //! that choice was made on.
 //!
-//! # Why three of these are `#[ignore]`
+//! # What makes the three range shapes work
 //!
-//! This tier has no clustered-handle range access path at all. Its source
-//! choice (`tidb_executor::driver::access::commit_fast_path_source`) offers a
-//! batch point get, an index range, and a point get -- Go's `TryFastPlan`
-//! order -- and nothing between "one handle" and "every handle". A `WHERE`
-//! that bounds the handle without pinning it therefore falls through to
-//! `TableFullScan`, and `SUM(k)`'s reaches an `IndexFullScan` on `k_1`
-//! because a full index scan and a full table scan are costed as the same
-//! 10000 rows and the index wins the tie.
+//! `tidb_executor::handle_range` builds the table path's ranges, and the
+//! driver offers them to the whole-table source already installed rather than
+//! replacing it -- Go's `TableRangeScan` is the same `PhysicalTableScan` with
+//! ranges, so there is one scan executor and not two. The builder is the
+//! index detacher run over the primary key as a one-column index, because
+//! Go's `ranger.BuildTableRange` IS `buildColumnRange` with `tableRange=true`
+//! over one column: no second range algebra.
 //!
-//! The ranger that would build these ranges is already here and already
-//! complete: `tidb_executor::index_range` ports `pkg/util/ranger`'s point
-//! algebra including `BETWEEN`, `IN`, `NOT BETWEEN` and the DNF walk. Go
-//! builds a table range with that SAME algebra over one column
-//! (`ranger.BuildTableRange` -> `buildColumnRange`), so
-//! `detach_cond_and_build_range_for_index` over the primary key as a
-//! one-column index is the range builder -- no second ranger is needed.
-//!
-//! The row ESTIMATE the range is costed on is pinned too, and is what makes
-//! these implementable rather than guesswork: it decides whether the range
-//! beats the index full scan. It is not
-//! `getPseudoRowCountBySignedIntRanges` alone -- Go dispatches on the FIRST
-//! range's low bound and its `else` arm is the UNSIGNED estimator, which is
-//! why `id < 0` estimates 3333.33 while `id < -1` estimates 10000.00 from
-//! ranges of identical shape. Both arms are ported in
-//! `tidb_planner::cardinality::pseudo`, and
-//! `row_count_estimator::pseudo_row_count` now performs Go's dispatch
-//! between them.
-//!
-//! So what remains for these three is the access path itself: build the
-//! handle ranges, give the table candidate in
-//! `tidb_executor::access_cost::enumerate_paths` a range instead of the
-//! hard-coded full one (its own comment says "this tier builds no
-//! primary-key range ... its range is therefore always the full one"), teach
-//! `KvTable`'s `record_key_range` and `pushdown_row_cursor` to read a
-//! narrowed span, and print the node as `TableRangeScan`.
+//! The row ESTIMATE decides whether the range beats the index full scan. It
+//! is `path.CountAfterAccess`, estimated over the ranges AFTER
+//! `points2TableRanges` has replaced their open endpoints -- which is what
+//! makes Go's estimator take its signed arm for a table path.
+//! `tidb_executor::handle_range`'s doc has the instrumented capture of Go's
+//! own dispatch, and names the one further step (`adjustCountAfterAccess`)
+//! that is not ported and the two corpus shapes it moves.
 //!
 //! # The captured Go corpus
 //!
@@ -146,7 +126,6 @@ fn point_select_reads_one_handle() {
 /// `10000 / pseudoBetweenRate` = 250, then clamps to the range's own width
 /// `high - low` = 99.
 #[test]
-#[ignore = "no clustered-handle range access path yet; see this module's doc"]
 fn range_select_reads_only_the_handle_range() {
     let mut session = sbtest1();
     assert_eq!(
@@ -170,7 +149,6 @@ fn range_select_reads_only_the_handle_range() {
 /// range instead: `TableRangeScan_16 | 99.00 | cop[tikv] | table:sbtest1 |
 /// range:[100,199], keep order:false, stats:pseudo`.
 #[test]
-#[ignore = "no clustered-handle range access path yet; see this module's doc"]
 fn aggregate_over_a_range_does_not_scan_an_unrelated_index() {
     let mut session = sbtest1();
     assert_eq!(
@@ -192,7 +170,6 @@ fn aggregate_over_a_range_does_not_scan_an_unrelated_index() {
 /// for both; the ordering and dedup are stages above the read and do not
 /// change which rows the source has to produce.
 #[test]
-#[ignore = "no clustered-handle range access path yet; see this module's doc"]
 fn ordered_and_distinct_selects_read_the_same_range() {
     let mut session = sbtest1();
     let expected = vec![
@@ -255,5 +232,137 @@ fn narrowed_ranges_return_the_same_rows_as_a_full_scan() {
             .map(|row| row[0].clone())
             .collect();
         assert_eq!(rows, expected, "rows changed for `{predicate}`");
+    }
+}
+
+/// The whole eighteen-shape corpus above, as `operator | estRows | range`.
+///
+/// The four shapes sysbench itself runs are asserted individually above; this
+/// is the acceptance set for the RANGE BUILDER and the estimator behind it,
+/// which the four alone do not exercise -- the open bounds, the multi-range
+/// `OR`/`<>` walks, the two `-1` shapes that separate Go's two estimator arms,
+/// and the shapes that must NOT become a range scan at all.
+#[test]
+fn the_handle_range_corpus_matches_go() {
+    let mut session = sbtest1();
+    for (predicate, operator, est_rows, info) in [
+        (
+            "id BETWEEN 100 AND 199",
+            "TableRangeScan",
+            "99.00",
+            "range:[100,199]",
+        ),
+        ("id > 199", "TableRangeScan", "3333.33", "range:(199,+inf]"),
+        ("id >= 199", "TableRangeScan", "3333.33", "range:[199,+inf]"),
+        ("id < 5", "TableRangeScan", "3333.33", "range:[-inf,5)"),
+        ("id < 0", "TableRangeScan", "3333.33", "range:[-inf,0)"),
+        // CLASSIFIED DIVERGENCE, the only two in this corpus. Go prints
+        // 10000.00 for both. Its `CountAfterAccess` here is the same 3333.33
+        // this tier computes; what lifts it is `adjustCountAfterAccess`,
+        // which raises a path's estimate to `ds.StatsInfo().RowCount /
+        // SelectionFactor` -- and `RowCount` reaches 10000 only because
+        // `Selectivity` estimates the UNCONVERTED range, whose `-inf` low
+        // makes the estimator read `-1`'s bits as `u64::MAX` and call
+        // `[-inf,-1)` the whole domain. That adjustment is not ported while
+        // this tier's `RowCount` is not yet Go's under pseudo statistics
+        // (`tidb_executor::access_cost::source_row_count` holds the reason
+        // and the live differential that forced it). The direction is
+        // conservative: an UNDER-estimate of a range this tier reads in full
+        // anyway, so it can only lose an optimization, never a row.
+        ("id < -1", "TableRangeScan", "3333.33", "range:[-inf,-1)"),
+        ("id <= -1", "TableRangeScan", "3333.33", "range:[-inf,-1]"),
+        (
+            "id < -100000",
+            "TableRangeScan",
+            "3333.33",
+            "range:[-inf,-100000)",
+        ),
+        (
+            "id > -5 AND id < 5",
+            "TableRangeScan",
+            "10.00",
+            "range:(-5,5)",
+        ),
+        (
+            "id > 2 AND id < 99",
+            "TableRangeScan",
+            "97.00",
+            "range:(2,99)",
+        ),
+        (
+            "id <> 0 AND id < 3",
+            "TableRangeScan",
+            "3336.33",
+            "range:[-inf,0), (0,3)",
+        ),
+        (
+            "id NOT BETWEEN 0 AND 200",
+            "TableRangeScan",
+            "6666.67",
+            "range:[-inf,0), (200,+inf]",
+        ),
+        // A residual condition on a non-handle column narrows nothing here:
+        // Go keeps the same range and puts a cop `Selection` above it.
+        (
+            "id BETWEEN 100 AND 199 AND c = 'c150'",
+            "TableRangeScan",
+            "99.00",
+            "range:[100,199]",
+        ),
+        // CLASSIFIED DIVERGENCE, and NOT one this range work introduced: Go
+        // reads `TableRangeScan (0,+inf] 3333.33` with a cop `Selection` for
+        // `k = 4`, where this tier takes `k_1` and looks the rows up. The
+        // handle range only made the table path CHEAPER than it was before
+        // (3333.33 rows instead of 10000), so the index path had already won
+        // this comparison and still does. What separates them is the pseudo
+        // estimate of an equality on a non-covering index, which is the same
+        // pseudo-selectivity gap `source_row_count` records; the row set is
+        // identical either way and is pinned by
+        // `narrowed_ranges_return_the_same_rows_as_a_full_scan`, which runs
+        // this very predicate.
+        ("id > 0 AND k = 4", "IndexRangeScan", "10.00", "range:[4,4]"),
+        // CLASSIFIED DIVERGENCE, in the direction of Go rather than away from
+        // it. Go settles a `WHERE` that PINS handles before costing and
+        // prints `Batch_Point_Get ... handle:[-1 2 150]`; this tier's
+        // `try_batch_point_get` does not claim these two shapes, so before
+        // the handle range they fell all the way through to a
+        // `TableFullScan` over 10000 rows. They now read the three (and two)
+        // point ranges the handles name -- the same records Go's batch point
+        // get reads, through a scan node instead of a point node. Closing the
+        // rest is `try_batch_point_get`'s gate, which this unit did not
+        // touch.
+        (
+            "id IN (-1, 2, 150)",
+            "TableRangeScan",
+            "3.00",
+            "range:[-1,-1], [2,2], [150,150]",
+        ),
+        (
+            "id = 150 OR id = 1",
+            "TableRangeScan",
+            "2.00",
+            "range:[1,1], [150,150]",
+        ),
+        // A `WHERE` no handle satisfies reads NOTHING, which is the one
+        // direction a range must never get wrong.
+        ("id > 100 AND id < 100", "TableRangeScan", "0.00", "range:"),
+        // No handle bound at all: still the whole table.
+        ("k > 5", "TableFullScan", "10000.00", "keep order:false"),
+    ] {
+        let row = source_row(
+            &mut session,
+            &format!("EXPLAIN SELECT c FROM sbtest1 WHERE {predicate}"),
+        );
+        assert_eq!(
+            (row[0].as_str(), row[1].as_str()),
+            (format!("{operator}_1").as_str(), est_rows),
+            "operator or estRows changed for `{predicate}` (info: {})",
+            row[3]
+        );
+        assert!(
+            row[3].starts_with(info),
+            "range changed for `{predicate}`: expected a prefix of `{info}`, got `{}`",
+            row[3]
+        );
     }
 }

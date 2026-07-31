@@ -459,9 +459,13 @@ fn net_cost(rows: f64, row_size: f64) -> f64 {
 
 /// Every candidate way of reading `table` under `where_clause`.
 ///
-/// The full scan is always a candidate -- Go's `tablePath` is built
+/// The table path is always a candidate -- Go's `tablePath` is built
 /// unconditionally in `DeriveStats` -- and each index contributes one
 /// candidate when the detacher produced ranges for it.
+///
+/// The table path is a FULL scan only when the ranger built nothing over the
+/// clustered integer handle; with a handle bound it carries its own ranges
+/// (see [`crate::handle_range`]) and lowers to Go's `TableRangeScan`.
 ///
 /// `needed_columns` are the row offsets the statement actually reads, which
 /// decides whether an index path is covering (Go's `isCoveringIndex`): a
@@ -509,12 +513,7 @@ pub(crate) fn enumerate_paths(
         single_scan: true,
         eq_or_in_count: handle.as_ref().map_or(0, |built| built.eq_or_in_count),
         full_range: handle_ranges.is_none(),
-        // Skyline and the cost formula compare paths by what they READ, which
-        // is Go's `CountAfterAccess`, not by the number the scan node prints.
-        count_after_access: match handle_ranges.as_deref() {
-            None => realtime,
-            Some(ranges) => crate::handle_range::handle_range_row_count(table, ranges, stats, true),
-        },
+        count_after_access: table_scan.estimate.rows,
         max_count_after_access: table_scan.risk.max,
         min_count_after_access: table_scan.risk.min,
         count_after_index: table_scan.risk.after_index,
@@ -743,10 +742,10 @@ fn split_index_filter_conditions<'a>(
 ///
 /// `ranges` is [`crate::handle_range::build_handle_ranges`]' output. Go's
 /// `deriveTablePathStats` reads exactly two numbers off it, and this builds
-/// both from that module: the printed estimate and, in [`AccessPath::risk`]'s
-/// place, the `CountAfterAccess` the cost is charged for. They are NOT the
-/// same number -- see [`crate::handle_range`]'s doc for the capture that
-/// separates them.
+/// `ranges` is [`crate::handle_range::build_handle_ranges`]' output, and Go's
+/// `deriveTablePathStats` turns it into `path.CountAfterAccess` -- the rows
+/// the scan reads, the rows it is costed at, and the rows `EXPLAIN` prints,
+/// which are one number for a table path.
 fn table_scan_path(
     table: &KvTable,
     where_clause: Option<&tidb_ast::Expr>,
@@ -775,7 +774,7 @@ fn table_scan_path(
     // estimate over the CONVERTED ranges.
     let count_after_access = match ranges {
         None => realtime,
-        Some(ranges) => crate::handle_range::handle_range_row_count(table, ranges, stats, true),
+        Some(ranges) => crate::handle_range::handle_range_row_count(table, ranges, stats),
     };
     // Go costs the scan at the rows it READS and the reader's net transfer at
     // the rows that leave the cop task, which is after the pushed Selection.
@@ -783,18 +782,11 @@ fn table_scan_path(
     let scanned = scan_cost(scan_rows, row_size.max(MIN_ROW_SIZE));
     let after_filter = source_row_count(table, where_clause, resolver, stats, realtime);
     let transferred = net_cost(after_filter, row_size.max(MIN_ROW_SIZE));
-    // What `EXPLAIN` prints on the scan node is Go's `ds.StatsInfo().RowCount`
-    // for the access conditions, which is the estimate over the UNCONVERTED
-    // ranges; only the `-inf`-low shapes make it differ from the count above.
-    let printed = match ranges {
-        None => realtime,
-        Some(ranges) => crate::handle_range::handle_range_row_count(table, ranges, stats, false),
-    };
     AccessPath {
         index: None,
         table_ranges: ranges.map(<[IndexRange]>::to_vec),
         estimate: ScanEstimate {
-            rows: printed,
+            rows: count_after_access,
             pseudo: is_pseudo(stats),
         },
         cost: (scanned + transferred) / DIST_SQL_SCAN_CONCURRENCY,

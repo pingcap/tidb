@@ -241,8 +241,15 @@ fn index_ranges_are_built_the_way_go_builds_them() {
             panic!("not a select")
         };
         let scope = crate::plan_trace::PlanTrace::single_table_scope("q", None, columns.clone());
-        choose_index_range_path(select, &catalog, &scope, table, &columns)
-            .map(|(id, ranges, _)| (id, ranges))
+        // This case is about INDEX paths; a table path chosen here would be a
+        // different assertion and must not be silently read as one.
+        match choose_index_range_path(select, &catalog, &scope, table, &columns) {
+            Some(crate::driver::access::ChosenPath::Index(id, ranges, _)) => Some((id, ranges)),
+            Some(crate::driver::access::ChosenPath::HandleRange(ranges, _)) => {
+                panic!("expected an index path, got a handle range {ranges:?}")
+            }
+            None => None,
+        }
     };
 
     // Go: GT is (v, MaxValue], LT is [MinNotNull, v).

@@ -99,64 +99,43 @@ pub(crate) fn commit_fast_path_source(
     // full scan with the rows the index covers, and the WHERE stays above to
     // apply the conditions the ranges did not consume.
     if try_point_get(select, &table, &columns)?.is_none() {
-        if let Some((index_id, ranges, estimate)) =
-            choose_index_range_path(select, catalog, scope, &table, &columns)
-        {
-            let exec = IndexRangeSourceExec::new(
-                ExecutorMeta::new(
-                    Schema::new(source_schema_columns(&columns)),
-                    0,
-                    INIT_CAP,
-                    MAX_CHUNK_SIZE,
-                ),
-                table.clone(),
-                index_id,
-                ranges.clone(),
-            );
-            index_order = Some(IndexAccessOrder {
-                column_offsets: table
-                    .indexes()
-                    .iter()
-                    .find(|index| index.id == index_id)
-                    .expect("the chosen path names an index of this table")
-                    .column_offsets
-                    .clone(),
-                single_range: ranges.len() == 1,
-            });
-            if let Some(trace) = trace.as_deref_mut() {
-                let index = table
-                    .indexes()
-                    .iter()
-                    .find(|index| index.id == index_id)
-                    .expect("the chosen path names an index of this table");
-                let index_columns: Vec<String> = index
-                    .column_offsets
-                    .iter()
-                    .map(|offset| index_key_part_name(&table, *offset))
-                    .collect();
-                let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
-                // A path the ranger narrowed nothing on reads the whole
-                // index, which Go names `IndexFullScan` and prints without a
-                // `range:`.
-                if ranges.len() == 1 && ranges[0].is_full() {
-                    trace.index_full_scan(
-                        source_table_name(scope, &table.name),
-                        &index.name,
-                        &index_columns,
-                        estimate,
-                    );
-                } else {
-                    trace.index_range_scan(
-                        source_table_name(scope, &table.name),
-                        &index.name,
-                        &index_columns,
-                        &ranges,
-                        estimate,
-                    );
+        match choose_index_range_path(select, catalog, scope, &table, &columns) {
+            // A table path the ranger narrowed. The source already installed
+            // by `build_from` IS the right executor -- a `TableRangeScan` is
+            // Go's same `PhysicalTableScan` with ranges -- so this offers it
+            // the ranges rather than replacing it, and only renames the
+            // traced node once the source has taken them. A source that
+            // refuses keeps reading the whole table, which is still every row
+            // the statement admits.
+            Some(ChosenPath::HandleRange(ranges, estimate)) => {
+                let accepted = from_source
+                    .as_mut()
+                    .and_then(|source| source.table_access())
+                    .is_some_and(|access| access.accept_handle_ranges(&ranges));
+                if accepted {
+                    if let Some(trace) = trace.as_deref_mut() {
+                        trace.table_range_scan(
+                            source_table_name(scope, &table.name),
+                            &ranges,
+                            estimate,
+                        );
+                    }
                 }
-                trace.set_scan_act_rows(exec.produced_rows());
             }
-            *from_source = Some(Box::new(exec));
+            Some(ChosenPath::Index(index_id, ranges, estimate)) => {
+                commit_index_range_source(
+                    &table,
+                    scope,
+                    &columns,
+                    index_id,
+                    ranges,
+                    estimate,
+                    from_source,
+                    trace.as_deref_mut(),
+                    &mut index_order,
+                );
+            }
+            None => {}
         }
     }
     if let Some(handle) = try_point_get(select, &table, &columns)? {
@@ -182,6 +161,70 @@ pub(crate) fn commit_fast_path_source(
         *from_source = Some(Box::new(exec));
     }
     Ok(index_order)
+}
+
+/// Installs the streaming index-range source for a committed index path, and
+/// records the node `EXPLAIN` prints for it.
+#[allow(clippy::too_many_arguments)]
+fn commit_index_range_source(
+    table: &KvTable,
+    scope: &FromScope,
+    columns: &[(String, FieldType)],
+    index_id: i64,
+    ranges: Vec<IndexRange>,
+    estimate: crate::access_cost::ScanEstimate,
+    from_source: &mut Option<Box<dyn Executor>>,
+    trace: Option<&mut PlanTrace>,
+    index_order: &mut Option<IndexAccessOrder>,
+) {
+    let exec = IndexRangeSourceExec::new(
+        ExecutorMeta::new(
+            Schema::new(source_schema_columns(columns)),
+            0,
+            INIT_CAP,
+            MAX_CHUNK_SIZE,
+        ),
+        table.clone(),
+        index_id,
+        ranges.clone(),
+    );
+    let index = table
+        .indexes()
+        .iter()
+        .find(|index| index.id == index_id)
+        .expect("the chosen path names an index of this table");
+    *index_order = Some(IndexAccessOrder {
+        column_offsets: index.column_offsets.clone(),
+        single_range: ranges.len() == 1,
+    });
+    if let Some(trace) = trace {
+        let index_columns: Vec<String> = index
+            .column_offsets
+            .iter()
+            .map(|offset| index_key_part_name(table, *offset))
+            .collect();
+        let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
+        // A path the ranger narrowed nothing on reads the whole index, which
+        // Go names `IndexFullScan` and prints without a `range:`.
+        if ranges.len() == 1 && ranges[0].is_full() {
+            trace.index_full_scan(
+                source_table_name(scope, &table.name),
+                &index.name,
+                &index_columns,
+                estimate,
+            );
+        } else {
+            trace.index_range_scan(
+                source_table_name(scope, &table.name),
+                &index.name,
+                &index_columns,
+                &ranges,
+                estimate,
+            );
+        }
+        trace.set_scan_act_rows(exec.produced_rows());
+    }
+    *from_source = Some(Box::new(exec));
 }
 
 /// The schema a fast-path source emits: the scope's columns in scope order,
@@ -312,13 +355,27 @@ pub(crate) fn offer_scan_limit(
 ///
 /// The whole `WHERE` stays in the pipeline either way, so the filter half of
 /// the split is applied by the selection rather than dropped.
+/// The narrowed source [`choose_access_path`] committed to, when it narrowed
+/// one at all.
+///
+/// Go's `findBestTask` returns ONE path over a data source and the reader it
+/// lowers to follows from which; splitting the two here keeps the driver from
+/// having to ask an `Option<index>` what kind of scan it is holding.
+pub(crate) enum ChosenPath {
+    /// An index path: the index's id and the ranges of it to read.
+    Index(i64, Vec<IndexRange>, crate::access_cost::ScanEstimate),
+    /// A table path the ranger narrowed, over the clustered integer handle.
+    /// An EMPTY range list is the contradictory `WHERE` that reads nothing.
+    HandleRange(Vec<IndexRange>, crate::access_cost::ScanEstimate),
+}
+
 pub(crate) fn choose_index_range_path(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     scope: &FromScope,
     table: &KvTable,
     columns: &[(String, FieldType)],
-) -> Option<(i64, Vec<IndexRange>, crate::access_cost::ScanEstimate)> {
+) -> Option<ChosenPath> {
     // No `WHERE` at all is not a reason to stop: a covering index is still a
     // candidate, and reading the whole of a narrow index beats reading the
     // whole table (Go's `path.IsSingleScan` arm of `keepIndex`).
@@ -356,8 +413,14 @@ pub(crate) fn choose_index_range_path(
     // Go's `prop.ExpectedCnt != math.MaxFloat64`: a row cap on the required
     // property is what disables Fix45132's row-ratio rule inside pruning.
     let best = crate::access_cost::choose_access_path(paths, stats, cap.is_some())?;
-    let (index_id, ranges) = best.index?;
-    Some((index_id, ranges, best.estimate))
+    let estimate = best.estimate;
+    match (best.index, best.table_ranges) {
+        (Some((index_id, ranges)), _) => Some(ChosenPath::Index(index_id, ranges, estimate)),
+        (None, Some(ranges)) => Some(ChosenPath::HandleRange(ranges, estimate)),
+        // The table path the ranger narrowed nothing on: the whole-table read
+        // `build_from` already installed is the answer, unchanged.
+        (None, None) => None,
+    }
 }
 
 /// How `EXPLAIN` names one key part of an index.
