@@ -680,6 +680,57 @@ fn narrowing_survives_aliases_ordering_limits_and_subqueries() {
     );
 }
 
+/// The REQUEST KIND a write reads its records with, from the storage seam.
+///
+/// This is the receipt `actRows` cannot give, and the reason this unit
+/// exists. A scan over the one-key range `[150,150]` and a lookup of key 150
+/// both print `1` row read; they are not the same request. Go's seam names
+/// the two kinds (`kv.Retriever.Get` -> `kv_get`,
+/// `kv.Retriever.Iter` -> `kv_scan`), a real cluster's gRPC counters count
+/// them separately, and the measured gap against Go was one `kv_scan` per
+/// write where Go sends a `kv_get`. So the assertion is on the count of
+/// ITERATORS OPENED, and for a point plan that count is zero: not a narrower
+/// scan, no scan.
+///
+/// The range shapes are the control. They must keep opening iterators -- a
+/// point plan that swallowed them would be reading one record where the
+/// statement names several, which is the silent-wrong-answer direction.
+#[test]
+fn a_point_write_opens_no_scan_at_all() {
+    // (`WHERE`, iterators the statement may open)
+    for (predicate, scans) in [
+        // The unit: a pinned key, read by key.
+        ("id = 150", 0),
+        // A key no record carries is still a lookup, not a scan.
+        ("id = 151", 0),
+        // The SAME single record, named as a range instead. Go plans a
+        // `TableRangeScan` here too (`getNameValuePairs` takes equalities
+        // only), and a range is scanned -- which is exactly what the point
+        // plan avoids, spelled as the same one record.
+        ("id BETWEEN 150 AND 150", 1),
+        ("id BETWEEN 100 AND 199", 1),
+        // Two disjoint ranges, one iterator each.
+        ("id NOT BETWEEN 0 AND 200", 2),
+        // No handle bound at all: the whole table, one iterator.
+        ("k > 5", 1),
+    ] {
+        for statement in [
+            format!("UPDATE sbtest1 SET pad = 'W' WHERE {predicate}"),
+            format!("DELETE FROM sbtest1 WHERE {predicate}"),
+        ] {
+            let mut session = sbtest1_with_rows();
+            let (result, ops) =
+                tidb_executor::storage::capture_storage_ops(|| session.run(&statement));
+            result.unwrap();
+            assert_eq!(
+                ops.scans, scans,
+                "iterators opened changed for `{statement}` (gets: {})",
+                ops.gets
+            );
+        }
+    }
+}
+
 /// The RECORDS a narrowed write actually reads, from `EXPLAIN ANALYZE`'s
 /// `actRows` -- the receipt no plan assertion can give.
 ///
@@ -690,6 +741,10 @@ fn narrowing_survives_aliases_ordering_limits_and_subqueries() {
 /// `narrowed_writes_change_exactly_the_rows_a_full_scan_changed` would pass
 /// while the read the range exists to avoid still happened. That read IS the
 /// measured gap against Go, so it is asserted directly.
+///
+/// `actRows` cannot tell a one-key scan from a key lookup, though -- both
+/// read one record. `a_point_write_opens_no_scan_at_all` is the receipt for
+/// that half.
 #[test]
 fn writes_read_only_the_records_inside_their_handle_range() {
     // (`WHERE`, records the write's scan must read)
@@ -697,7 +752,7 @@ fn writes_read_only_the_records_inside_their_handle_range() {
         // One of thirteen records. Before the narrowing this was 13, which is
         // the `kv_scan`-per-statement gap measured against Go.
         ("id = 150", "1"),
-        // A handle no record carries: a point range that is empty.
+        // A handle no record carries: a point plan that finds nothing.
         ("id = 151", "0"),
         ("id BETWEEN 100 AND 199", "3"),
         // Two disjoint ranges, so the multi-range cursor is exercised: a scan
