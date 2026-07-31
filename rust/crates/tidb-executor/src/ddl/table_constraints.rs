@@ -298,6 +298,11 @@ pub(crate) fn table_foreign_keys(
                 reason: "Key reference and table reference don't match".to_owned(),
             });
         }
+        let fk_name = definition
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("fk_{}", keys.len() + 1));
+        child_generated_column_rules(create, &cols, definition, &fk_name)?;
         if foreign_key_checks {
             // Go `checkTableInfoValid`: an unresolvable reference is
             // `ErrNoReferencedRow`-adjacent at DDL time, not at write time.
@@ -318,12 +323,32 @@ pub(crate) fn table_foreign_keys(
                     });
                 }
             }
+            // Go `checkTableForeignKey`: the REFERENCED column may not be
+            // virtual either. Unlike the child-side rule above this one sits
+            // behind the switch, because it is the parent lookup that reaches
+            // it at all.
+            let crate::TableEntry::Kv(parent) = parent else {
+                return Err(DriverError::Unsupported(
+                    "a foreign key may not reference a view",
+                ));
+            };
+            for name in &ref_cols {
+                let virtual_generated = parent
+                    .columns
+                    .iter()
+                    .find(|column| column.name.eq_ignore_ascii_case(name))
+                    .and_then(|column| column.generated.as_ref())
+                    .is_some_and(|generated| !generated.stored);
+                if virtual_generated {
+                    return Err(DriverError::ForeignKeyUsesVirtualColumn {
+                        foreign_key: fk_name.clone(),
+                        column: name.clone(),
+                    });
+                }
+            }
         }
         keys.push(KvForeignKey {
-            name: definition
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("fk_{}", keys.len() + 1)),
+            name: fk_name,
             cols,
             ref_schema,
             ref_table,
@@ -333,6 +358,78 @@ pub(crate) fn table_foreign_keys(
         });
     }
     Ok(keys)
+}
+
+/// Go `buildFKInfo`'s generated-column arm: what a constraint may name on the
+/// CHILD side.
+///
+/// * A VIRTUAL referencing column is 3733. There is no stored value to key
+///   the constraint on.
+/// * A STORED referencing column is legal, but only under actions that never
+///   WRITE it: `ON UPDATE CASCADE`, `ON UPDATE SET NULL` and
+///   `ON DELETE SET NULL` are 3104, because each would assign a column whose
+///   value the table computes. `ON DELETE CASCADE` removes the row instead of
+///   writing the column, so it is accepted -- captured, not inferred.
+///
+/// NOT gated on `foreign_key_checks`: captured, `create table t2 (a int,
+/// c int as (a+1) virtual, constraint fk foreign key(c) references t1(a))` is
+/// 3733 with the switch at 0, because Go reaches this from `buildFKInfo`,
+/// which runs unconditionally, rather than from the reference resolution the
+/// switch guards.
+fn child_generated_column_rules(
+    create: &tidb_ast::CreateTableStmt,
+    cols: &[usize],
+    definition: &tidb_ast::ForeignKeyConstraintDefinition,
+    fk_name: &str,
+) -> Result<(), DriverError> {
+    for offset in cols {
+        let Some(column) = create.columns.get(*offset) else {
+            continue;
+        };
+        let Some((_, stored)) = column.options.iter().find_map(|option| match option {
+            tidb_ast::ColumnOption::Generated {
+                expression_text,
+                stored,
+                ..
+            } => Some((expression_text, *stored)),
+            _ => None,
+        }) else {
+            continue;
+        };
+        if !stored {
+            return Err(DriverError::ForeignKeyUsesVirtualColumn {
+                foreign_key: fk_name.to_owned(),
+                column: column.name.clone(),
+            });
+        }
+        // Go spells the clause back verbatim in the message, which is why the
+        // AST action is read here rather than the `FkAction` it collapses to:
+        // `SET DEFAULT` behaves as `RESTRICT` at run time but is still named
+        // as itself by this refusal.
+        let writes = |action: Option<tidb_ast::ReferentialAction>| -> Option<&'static str> {
+            match action? {
+                tidb_ast::ReferentialAction::Cascade => Some("CASCADE"),
+                tidb_ast::ReferentialAction::SetNull => Some("SET NULL"),
+                tidb_ast::ReferentialAction::SetDefault => Some("SET DEFAULT"),
+                _ => None,
+            }
+        };
+        if let Some(action) = writes(definition.reference.on_update) {
+            return Err(DriverError::WrongFkOptionForGeneratedColumn {
+                clause: format!("ON UPDATE {action}"),
+            });
+        }
+        // ON DELETE CASCADE is absent here on purpose: it deletes the row
+        // rather than writing the generated column, and TiDB accepts it.
+        if let Some(action) =
+            writes(definition.reference.on_delete).filter(|action| *action != "CASCADE")
+        {
+            return Err(DriverError::WrongFkOptionForGeneratedColumn {
+                clause: format!("ON DELETE {action}"),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Go `ast.ReferOptionType` -> the behaviour it actually produces. See

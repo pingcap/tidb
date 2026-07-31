@@ -678,3 +678,127 @@ fn the_clustered_handle_exemption_does_not_reach_the_child_index() {
         Some(1553)
     );
 }
+
+/// Go's 3733: a constraint may not name a VIRTUAL generated column, on
+/// either side. A TRIPWIRE -- both statements were ACCEPTED here.
+#[test]
+fn a_foreign_key_cannot_name_a_virtual_generated_column() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a INT, b INT AS (a+1) VIRTUAL, INDEX(b))")
+        .unwrap();
+    // The REFERENCED column is virtual.
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE t2 (a INT, b INT, CONSTRAINT fk FOREIGN KEY(b) REFERENCES t1(b))"
+        ),
+        Some(3733)
+    );
+    session.run("DROP TABLE t1").unwrap();
+    session.run("CREATE TABLE t1 (a INT KEY)").unwrap();
+    // The REFERENCING column is virtual.
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE t2 (a INT, c INT AS (a+1) VIRTUAL, \
+             CONSTRAINT fk FOREIGN KEY(c) REFERENCES t1(a))"
+        ),
+        Some(3733)
+    );
+    // Captured: the CHILD-side rule is NOT gated on foreign_key_checks. Go
+    // reaches it from `buildFKInfo`, which runs whether or not references are
+    // being resolved, so the refusal stands with the switch at 0.
+    session.run("SET @@foreign_key_checks=0").unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE t3 (a INT, c INT AS (a+1) VIRTUAL, \
+             CONSTRAINT fk FOREIGN KEY(c) REFERENCES t1(a))"
+        ),
+        Some(3733)
+    );
+    session.run("SET @@foreign_key_checks=1").unwrap();
+}
+
+/// Go's 3104: a STORED generated column may carry a constraint, but not
+/// under an action that would WRITE it. A TRIPWIRE -- all three were
+/// ACCEPTED here.
+#[test]
+fn a_referential_action_may_not_write_a_generated_column() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a INT, b INT AS (a) STORED, INDEX(b))")
+        .unwrap();
+    for action in [
+        "ON UPDATE CASCADE",
+        "ON UPDATE SET NULL",
+        "ON DELETE SET NULL",
+    ] {
+        assert_eq!(
+            code(
+                &mut session,
+                &format!(
+                    "CREATE TABLE t2 (a INT, b INT AS (a) STORED, \
+                     CONSTRAINT fk FOREIGN KEY(b) REFERENCES t1(b) {action})"
+                )
+            ),
+            Some(3104),
+            "{action} on a stored generated referencing column"
+        );
+    }
+}
+
+/// THE CONTROLS for the two refusals above. Each is a statement TiDB
+/// ACCEPTS, and each is one a slightly-too-broad rule would break: a
+/// generated column near a constraint is not itself an error, and the 3104
+/// rule turns on WHICH action, not on the column being generated.
+#[test]
+fn a_generated_column_near_a_foreign_key_is_not_itself_an_error() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a INT, b INT AS (a) STORED, INDEX(b))")
+        .unwrap();
+    // A STORED referenced column, under the very actions 3733 would refuse
+    // if the column were virtual.
+    session
+        .run(
+            "CREATE TABLE t2 (a INT, b INT, CONSTRAINT fk FOREIGN KEY(b) REFERENCES t1(b) \
+             ON DELETE CASCADE ON UPDATE CASCADE)",
+        )
+        .unwrap();
+    session.run("DROP TABLE t2").unwrap();
+    // ON DELETE CASCADE on a STORED referencing column: it removes the row
+    // rather than writing the computed column, so it is not 3104.
+    session
+        .run(
+            "CREATE TABLE t2 (a INT, b INT AS (a) STORED, \
+             CONSTRAINT fk FOREIGN KEY(b) REFERENCES t1(b) ON DELETE CASCADE)",
+        )
+        .unwrap();
+    session.run("DROP TABLE t2").unwrap();
+    // A STORED referencing column with no action at all.
+    session
+        .run(
+            "CREATE TABLE t2 (a INT, b INT AS (a) STORED, \
+             CONSTRAINT fk FOREIGN KEY(b) REFERENCES t1(b))",
+        )
+        .unwrap();
+    session.run("DROP TABLE t2").unwrap();
+    // ON UPDATE CASCADE on an ORDINARY referencing column.
+    session
+        .run(
+            "CREATE TABLE t2 (a INT, b INT, \
+             CONSTRAINT fk FOREIGN KEY(b) REFERENCES t1(b) ON UPDATE CASCADE)",
+        )
+        .unwrap();
+    session.run("DROP TABLE t2").unwrap();
+    // A VIRTUAL column the constraint does not name, on either side.
+    session.run("DROP TABLE t1").unwrap();
+    session
+        .run("CREATE TABLE t1 (a INT KEY, z INT AS (a+1) VIRTUAL)")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (a INT, b INT, CONSTRAINT fk FOREIGN KEY(b) REFERENCES t1(a))")
+        .unwrap();
+}
