@@ -1836,6 +1836,92 @@ func TestLateralJoinCardinality(t *testing.T) {
 	require.Equal(t, act, est, "a lateral GROUP BY produces one row per group per outer row")
 }
 
+// TestApplyCacheEnabledByOuterRowCount checks that the Apply cache is enabled from how often the
+// correlated values repeat across outer rows, which is what decides whether a lookup can hit. A
+// LATERAL join may emit several rows per outer row, and those extra rows must not be mistaken for
+// extra chances to hit the cache.
+func TestApplyCacheEnabledByOuterRowCount(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tac_inner (k1 int not null, k2 int not null, primary key (k1, k2) clustered)")
+	tk.MustExec("create table tac_uniq (id int primary key, k1 int not null)")
+	tk.MustExec("create table tac_rep (id int primary key, k1 int not null)")
+	var inner, uniq, rep strings.Builder
+	for key := range 50 {
+		for i := range 40 {
+			if inner.Len() > 0 {
+				inner.WriteString(",")
+			}
+			fmt.Fprintf(&inner, "(%d,%d)", key, key*1000+i)
+		}
+	}
+	// One outer row per key, so no lookup can ever hit.
+	for i := range 50 {
+		if uniq.Len() > 0 {
+			uniq.WriteString(",")
+		}
+		fmt.Fprintf(&uniq, "(%d,%d)", i, i)
+	}
+	// Ten outer rows per key, so nine lookups in ten can hit.
+	for i := range 500 {
+		if rep.Len() > 0 {
+			rep.WriteString(",")
+		}
+		fmt.Fprintf(&rep, "(%d,%d)", i, i%50)
+	}
+	tk.MustExec("insert into tac_inner values " + inner.String())
+	tk.MustExec("insert into tac_uniq values " + uniq.String())
+	tk.MustExec("insert into tac_rep values " + rep.String())
+	for _, table := range []string{"tac_inner", "tac_uniq", "tac_rep"} {
+		tk.MustExec("analyze table " + table + " all columns")
+	}
+	// Keep the subquery correlated so that it is executed as an Apply.
+	tk.MustExec(`insert into mysql.opt_rule_blacklist value("decorrelate")`)
+	tk.MustExec("admin reload opt_rule_blacklist")
+	defer func() {
+		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "decorrelate"`)
+		tk.MustExec("admin reload opt_rule_blacklist")
+	}()
+
+	// applyCacheInfo returns the execution info of the Apply operator.
+	applyCacheInfo := func(sql string) string {
+		t.Helper()
+		for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+			if strings.Contains(fmt.Sprintf("%v", row[0]), "Apply") {
+				return fmt.Sprintf("%v", row[5])
+			}
+		}
+		require.FailNow(t, "no Apply in plan", sql)
+		return ""
+	}
+
+	// The lateral derived table returns 40 rows per outer row either way, so the row count of
+	// the Apply cannot be what the decision is taken from.
+	lateral := "inner join lateral (select t2.k2 from tac_inner t2 where t2.k1 = o.k1) f"
+	info := applyCacheInfo("select o.k1, f.k2 from tac_uniq o " + lateral)
+	require.Contains(t, info, "cache:OFF", "every outer row has its own key, so the cache cannot hit")
+
+	info = applyCacheInfo("select o.k1, f.k2 from tac_rep o " + lateral)
+	require.Contains(t, info, "cache:ON", "each key repeats over ten outer rows")
+
+	// A key that is unique in its own table still repeats once an upstream join duplicates it,
+	// so what matters is the rows reaching the Apply, not the uniqueness of the column.
+	tk.MustExec("create table tac_fan (id int primary key, k1 int not null, key ik (k1))")
+	var fan strings.Builder
+	for i := range 500 {
+		if fan.Len() > 0 {
+			fan.WriteString(",")
+		}
+		fmt.Fprintf(&fan, "(%d,%d)", i, i%50)
+	}
+	tk.MustExec("insert into tac_fan values " + fan.String())
+	tk.MustExec("analyze table tac_fan all columns")
+	// tac_uniq.k1 is a primary key, but joining it to tac_fan repeats every value ten times.
+	info = applyCacheInfo("select o.k1, f.k2 from tac_uniq o join tac_fan on tac_fan.k1 = o.k1 " + lateral)
+	require.Contains(t, info, "cache:ON", "a unique key duplicated by a join can still hit the cache")
+}
+
 // TestExplainAnalyzeDMLCommit covers the issue #37373.
 func TestExplainAnalyzeDMLCommit(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
