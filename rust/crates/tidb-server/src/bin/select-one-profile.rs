@@ -275,6 +275,37 @@ fn statement_thread_scaffolding(iterations: usize) {
     report("per-statement snapshot thread (no PD)", samples);
 }
 
+/// What the same scaffolding costs on a thread that outlives the statement.
+///
+/// The difference against [`statement_thread_scaffolding`] is what a
+/// connection-lifetime transaction worker would save per statement; it is the
+/// ceiling on that change, since the PD timestamp would still be spent.
+fn persistent_thread_scaffolding(iterations: usize) {
+    use std::sync::mpsc;
+    let (requests, incoming) = mpsc::channel::<mpsc::Sender<u64>>();
+    let worker = std::thread::Builder::new()
+        .name("persistent-statement-worker".to_owned())
+        .spawn(move || {
+            while let Ok(reply) = incoming.recv() {
+                let _ = reply.send(0);
+            }
+        })
+        .unwrap();
+    let mut samples = Vec::with_capacity(iterations);
+    for index in 0..iterations + iterations / 10 {
+        let start = Instant::now();
+        let (reply, answer) = mpsc::channel();
+        requests.send(reply).unwrap();
+        answer.recv().unwrap();
+        if index >= iterations / 10 {
+            samples.push(start.elapsed().as_nanos());
+        }
+    }
+    drop(requests);
+    worker.join().unwrap();
+    report("same work on a persistent thread", samples);
+}
+
 fn main() {
     let iterations: usize = std::env::args()
         .nth(1)
@@ -284,6 +315,7 @@ fn main() {
     session_stages(iterations);
     println!();
     statement_thread_scaffolding(iterations);
+    persistent_thread_scaffolding(iterations);
     println!();
     wire_floor(iterations);
 }
