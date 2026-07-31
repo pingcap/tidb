@@ -81,17 +81,25 @@
 //!    driver really does build all three, in that order. Because the access
 //!    path already priced those conditions, the selection does not reduce the
 //!    estimate again (see `PlanTrace::selection`).
-//! 8. **`UPDATE`/`DELETE` always show `TableFullScan`, never `Point_Get` or
-//!    `IndexRangeScan`.** Go's planner finds the same fast access paths for
-//!    a write as for a `SELECT`. This tier's write drivers
-//!    ([`crate::driver::run_update_in`], [`crate::driver::run_delete_in`])
-//!    do not: both unconditionally scan the whole table and filter each row
-//!    with the `WHERE` in a plain iterator, with no access-path selection at
-//!    all. The recorder IS those functions, so a write's read plan is always
-//!    `TableFullScan` (+ `Selection` for a `WHERE`), even for `WHERE
-//!    <primary key> = <literal>`, where Go itself prints `Point_Get`
-//!    (captured). This divergence can no longer drift: there is no second
-//!    description of the write's read path left to drift from.
+//! 8. **`UPDATE`/`DELETE` show `TableRangeScan` where Go shows `Point_Get`,
+//!    and never show an `IndexRangeScan`.** Go's planner finds the same
+//!    access paths for a write as for a `SELECT`
+//!    (`tryUpdatePointPlan`/`tryDeletePointPlan` run `tryPointGetPlan` over a
+//!    `SelectStmt` synthesized from the write's own clauses). This tier's
+//!    write drivers ([`crate::driver::run_update_in`],
+//!    [`crate::driver::run_delete_in`]) take the TABLE half of that: the
+//!    `WHERE`'s handle intervals from [`crate::handle_range`] -- the same
+//!    builder and the same ranges the read side uses -- narrow which records
+//!    the write fetches, so a bounded write records `TableRangeScan` (+
+//!    `Selection` for the `WHERE`) instead of `TableFullScan`. Two gaps
+//!    remain. Where the range is a single point Go REPLACES the read with
+//!    `Point_Get`, while this tier keeps the scan and prints
+//!    `TableRangeScan range:[500,500]`; both read exactly one record, and the
+//!    difference is the node name. And no index path is offered to a write at
+//!    all, so a `WHERE` on a secondary index still scans -- Go would read the
+//!    index. The recorder IS those driver functions, so what is printed and
+//!    what is read cannot drift apart: the records a write reads are pinned
+//!    by `actRows` in `tidb_session::tests_sysbench_access`.
 //!
 //! # Shapes EXPLAIN refuses
 //!

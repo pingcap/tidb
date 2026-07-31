@@ -427,3 +427,216 @@ fn the_handle_range_corpus_matches_go() {
         );
     }
 }
+
+/// The sysbench WRITE shapes, as the source row of their plan.
+///
+/// Go plans a write's read from the same predicate as a read's:
+/// `tryUpdatePointPlan`/`tryDeletePointPlan` hand `tryPointGetPlan` an
+/// `ast.SelectStmt` synthesized from the write's own `TableRefs`/`Where`/
+/// `Order`/`Limit`, and the ordinary path plans a `DataSource` whose table
+/// path gets its ranges from `deriveTablePathStats` exactly as a `SELECT`'s
+/// does. This tier reuses the TABLE half of that -- one call into
+/// `tidb_executor::handle_range`, the crate's single range algebra -- so a
+/// bounded write reads a `TableRangeScan` over the handle intervals its
+/// `WHERE` implies instead of the whole table.
+///
+/// The remaining divergence from Go is the NODE NAME for a range that is a
+/// single point: Go replaces the whole read with `Point_Get`, this tier keeps
+/// the scan and prints `TableRangeScan range:[500,500]`. Both read exactly one
+/// record, which is what `writes_read_only_the_records_inside_their_handle_range`
+/// asserts; `tidb_executor::explain`'s divergence 8 records the naming gap.
+#[test]
+fn the_sysbench_write_shapes_read_a_handle_range() {
+    let mut session = sbtest1();
+    for (sql, operator, est_rows, info) in [
+        (
+            "UPDATE sbtest1 SET k = k + 1 WHERE id = 500",
+            "TableRangeScan",
+            "1.00",
+            "range:[500,500]",
+        ),
+        (
+            "UPDATE sbtest1 SET c = 'x' WHERE id = 500",
+            "TableRangeScan",
+            "1.00",
+            "range:[500,500]",
+        ),
+        (
+            "DELETE FROM sbtest1 WHERE id = 500",
+            "TableRangeScan",
+            "1.00",
+            "range:[500,500]",
+        ),
+        // A write whose `WHERE` bounds no handle still reads the whole table:
+        // the narrowing is the ranger's answer, not a blanket rewrite.
+        (
+            "UPDATE sbtest1 SET c = 'x' WHERE k = 500",
+            "TableFullScan",
+            "10000.00",
+            "keep order:false",
+        ),
+        // No `WHERE` at all: also the whole table, which is every row the
+        // statement names.
+        (
+            "UPDATE sbtest1 SET c = 'x'",
+            "TableFullScan",
+            "10000.00",
+            "keep order:false",
+        ),
+    ] {
+        let row = source_row(&mut session, &format!("EXPLAIN {sql}"));
+        assert_eq!(
+            (row[0].as_str(), row[1].as_str()),
+            (format!("{operator}_1").as_str(), est_rows),
+            "operator or estRows changed for `{sql}` (info: {})",
+            row[3]
+        );
+        assert!(
+            row[3].starts_with(info),
+            "range changed for `{sql}`: expected a prefix of `{info}`, got `{}`",
+            row[3]
+        );
+    }
+}
+
+/// A table of thirteen known records, the fixture the two write receipts use.
+fn sbtest1_with_rows() -> Session {
+    let mut session = sbtest1();
+    for id in SEEDED_IDS {
+        session
+            .run(&format!(
+                "INSERT INTO sbtest1 (id, k, c, pad) VALUES ({id}, {}, 'c{id}', 'p')",
+                id * 2
+            ))
+            .unwrap();
+    }
+    session
+}
+
+/// The handles `sbtest1_with_rows` seeds. Chosen to straddle every bound the
+/// predicates below name, so a range that is off by one record is visible.
+const SEEDED_IDS: [i64; 13] = [-3, -1, 0, 1, 2, 3, 98, 99, 100, 150, 199, 200, 201];
+
+/// The rows a narrowed write CHANGES are the rows the full scan changed.
+///
+/// This is `narrowed_ranges_return_the_same_rows_as_a_full_scan` for the write
+/// path, and it is the load-bearing evidence: a range that reads fewer records
+/// than the `WHERE` admits does not merely return a wrong answer here, it
+/// MODIFIES THE WRONG ROWS and leaves the damage behind. The whole table is
+/// compared afterwards, so a row the write should have left alone is caught as
+/// loudly as a row it should have touched -- including the handles adjacent to
+/// each range's own bounds.
+#[test]
+fn narrowed_writes_change_exactly_the_rows_a_full_scan_changed() {
+    // (`WHERE`, the ids the statement must touch and no others)
+    for (predicate, affected) in [
+        ("id = 150", vec![150i64]),
+        // A point range over a handle no record carries.
+        ("id = 151", vec![]),
+        ("id BETWEEN 100 AND 199", vec![100, 150, 199]),
+        ("id NOT BETWEEN 0 AND 200", vec![-3, -1, 201]),
+        ("id > 199", vec![200, 201]),
+        ("id >= 199", vec![199, 200, 201]),
+        ("id <= -1", vec![-3, -1]),
+        ("id IN (-1, 2, 150)", vec![-1, 2, 150]),
+        ("id <> 0 AND id < 3", vec![-3, -1, 1, 2]),
+        ("id > 2 AND id < 99", vec![3, 98]),
+        // The contradictory `WHERE`: the one direction an empty range list
+        // must never be read as "every row".
+        ("id > 100 AND id < 100", vec![]),
+        ("id = 150 OR id = 1", vec![1, 150]),
+        // A residual condition the range did not consume still filters.
+        ("id BETWEEN 100 AND 199 AND c = 'c150'", vec![150]),
+        // No handle bound: the whole table, unchanged in behaviour.
+        ("k > 5", vec![3, 98, 99, 100, 150, 199, 200, 201]),
+    ] {
+        let mut session = sbtest1_with_rows();
+        session
+            .run(&format!("UPDATE sbtest1 SET pad = 'W' WHERE {predicate}"))
+            .unwrap();
+        let rows: Vec<(String, String)> =
+            row_text(session.run("SELECT id, pad FROM sbtest1 ORDER BY id"))
+                .into_iter()
+                .map(|row| (row[0].clone(), row[1].clone()))
+                .collect();
+        let expected: Vec<(String, String)> = SEEDED_IDS
+            .iter()
+            .map(|id| {
+                let pad = if affected.contains(id) { "W" } else { "p" };
+                (id.to_string(), pad.to_owned())
+            })
+            .collect();
+        assert_eq!(
+            rows, expected,
+            "UPDATE touched the wrong rows for `{predicate}`"
+        );
+
+        // The same predicate as a DELETE: the survivors are exactly the
+        // complement of the same affected set.
+        let mut session = sbtest1_with_rows();
+        session
+            .run(&format!("DELETE FROM sbtest1 WHERE {predicate}"))
+            .unwrap();
+        let survivors: Vec<String> = row_text(session.run("SELECT id FROM sbtest1 ORDER BY id"))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect();
+        let expected: Vec<String> = SEEDED_IDS
+            .iter()
+            .filter(|id| !affected.contains(id))
+            .map(i64::to_string)
+            .collect();
+        assert_eq!(
+            survivors, expected,
+            "DELETE removed the wrong rows for `{predicate}`"
+        );
+    }
+}
+
+/// The RECORDS a narrowed write actually reads, from `EXPLAIN ANALYZE`'s
+/// `actRows` -- the receipt no plan assertion can give.
+///
+/// A write may print `TableRangeScan range:[150,150]` and still walk all
+/// thirteen records underneath: the `WHERE` above the scan would filter the
+/// surplus, exactly one row would change, and every assertion in
+/// `the_sysbench_write_shapes_read_a_handle_range` and
+/// `narrowed_writes_change_exactly_the_rows_a_full_scan_changed` would pass
+/// while the read the range exists to avoid still happened. That read IS the
+/// measured gap against Go, so it is asserted directly.
+#[test]
+fn writes_read_only_the_records_inside_their_handle_range() {
+    // (`WHERE`, records the write's scan must read)
+    for (predicate, read) in [
+        // One of thirteen records. Before the narrowing this was 13, which is
+        // the `kv_scan`-per-statement gap measured against Go.
+        ("id = 150", "1"),
+        // A handle no record carries: a point range that is empty.
+        ("id = 151", "0"),
+        ("id BETWEEN 100 AND 199", "3"),
+        // Two disjoint ranges, so the multi-range cursor is exercised: a scan
+        // that collapsed them to their SPAN would read all thirteen.
+        ("id NOT BETWEEN 0 AND 200", "3"),
+        ("id > 199", "2"),
+        ("id <= -1", "2"),
+        ("id IN (-1, 2, 150)", "3"),
+        ("id > 100 AND id < 100", "0"),
+        // A residual condition still reads the whole range and filters above.
+        ("id BETWEEN 100 AND 199 AND c = 'c150'", "3"),
+        // No handle bound: the whole table, unchanged.
+        ("k > 5", "13"),
+    ] {
+        for statement in [
+            format!("UPDATE sbtest1 SET pad = 'W' WHERE {predicate}"),
+            format!("DELETE FROM sbtest1 WHERE {predicate}"),
+        ] {
+            let mut session = sbtest1_with_rows();
+            let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {statement}")));
+            let scan = rows.last().expect("a write plan has a source row");
+            assert_eq!(
+                scan[2], read,
+                "records read changed for `{statement}` (source: {})",
+                scan[0]
+            );
+        }
+    }
+}

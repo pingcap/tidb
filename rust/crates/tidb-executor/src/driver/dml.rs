@@ -1226,6 +1226,11 @@ pub(crate) fn run_update_traced(
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
     let row_limit = dml_row_limit(&update.limit)?;
+    // The records this write FETCHES, narrowed to what the `WHERE` implies
+    // about the clustered handle; see `access::write_handle_ranges` for why
+    // that cannot change which rows the statement acts on.
+    let handle_ranges =
+        super::access::write_handle_ranges(catalog, &database, &name, update.where_clause.as_ref());
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
             trace,
@@ -1237,6 +1242,7 @@ pub(crate) fn run_update_traced(
             },
             &column_list,
             &update.where_clause,
+            handle_ranges.as_ref(),
             current_db,
         );
         trace.write("Update", true);
@@ -1294,7 +1300,9 @@ pub(crate) fn run_update_traced(
         }
         TableEntry::Kv(kv) => {
             let mut rows = kv
-                .scan_rows_with_handles()
+                .scan_rows_with_handles_in(
+                    handle_ranges.as_ref().map(|(ranges, _)| ranges.as_slice()),
+                )
                 .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
             order_rows_for_dml(
                 &mut rows,
@@ -1568,6 +1576,10 @@ pub(crate) fn run_delete_traced(
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
     let row_limit = dml_row_limit(&delete.limit)?;
+    // As in UPDATE: the handle intervals the `WHERE` implies are the records
+    // this write fetches.
+    let handle_ranges =
+        super::access::write_handle_ranges(catalog, &database, &name, delete.where_clause.as_ref());
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
             trace,
@@ -1579,6 +1591,7 @@ pub(crate) fn run_delete_traced(
             },
             &column_list,
             &delete.where_clause,
+            handle_ranges.as_ref(),
             current_db,
         );
         trace.write("Delete", true);
@@ -1612,7 +1625,9 @@ pub(crate) fn run_delete_traced(
         }
         TableEntry::Kv(kv) => {
             let mut rows = kv
-                .scan_rows_with_handles()
+                .scan_rows_with_handles_in(
+                    handle_ranges.as_ref().map(|(ranges, _)| ranges.as_slice()),
+                )
                 .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
             order_rows_for_dml(
                 &mut rows,
@@ -1694,8 +1709,9 @@ pub(crate) fn run_delete_traced(
 }
 
 /// Records the read plan a single-table write performs to find its target
-/// rows: always a whole-table scan, with a `Selection` above it for the
-/// `WHERE` (`explain`'s divergence 8).
+/// rows: the table scan the write really runs -- narrowed to a
+/// `TableRangeScan` when the `WHERE` bounded the clustered handle -- with a
+/// `Selection` above it for the `WHERE` (`explain`'s divergence 8).
 ///
 /// The table a single-table write reads, as the statement names it.
 struct DmlTarget<'a> {
@@ -1713,6 +1729,10 @@ fn trace_dml_source(
     target: DmlTarget<'_>,
     columns: &[(String, FieldType)],
     where_clause: &Option<tidb_ast::Expr>,
+    handle_ranges: Option<&(
+        Vec<crate::kv_table::IndexRange>,
+        crate::access_cost::ScanEstimate,
+    )>,
     current_db: &str,
 ) {
     let DmlTarget {
@@ -1730,6 +1750,12 @@ fn trace_dml_source(
         where_clause.as_ref(),
     );
     trace.table_full_scan(&visible, estimate);
+    // The rename the read side performs for the same narrowing: the scan the
+    // write runs IS the one just recorded, reading only its ranges, so the
+    // node is renamed rather than replaced.
+    if let Some((ranges, range_estimate)) = handle_ranges {
+        trace.table_range_scan(&visible, ranges, *range_estimate);
+    }
     let Some(predicate) = where_clause else {
         return;
     };

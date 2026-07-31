@@ -304,7 +304,24 @@ impl KvTable {
     pub fn scan_rows_with_handles(
         &mut self,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        let mut cursor = self.row_cursor()?;
+        self.scan_rows_with_handles_in(None)
+    }
+
+    /// [`KvTable::scan_rows_with_handles`] narrowed to `handle_ranges`: the
+    /// same intervals the read side offers a `TableRangeScan` through
+    /// [`crate::table_access::TableAccess::accept_handle_ranges`]. `None`
+    /// reads the whole table.
+    ///
+    /// This is the WRITE path's form of that narrowing, and it narrows only
+    /// WHICH RECORDS ARE FETCHED: the ranges are a superset of the rows the
+    /// `WHERE` admits, and the caller still evaluates that `WHERE` per row, so
+    /// the set of rows a statement acts on is the same set the full scan
+    /// produced.
+    pub fn scan_rows_with_handles_in(
+        &mut self,
+        handle_ranges: Option<&[IndexRange]>,
+    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
+        let mut cursor = self.row_cursor_projected(None, handle_ranges)?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_row()? {
             rows.push(entry);

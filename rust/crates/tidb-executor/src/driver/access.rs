@@ -556,6 +556,45 @@ pub(crate) fn single_table_trace_estimate(
     )
 }
 
+/// The handle ranges a single-table `UPDATE`/`DELETE` reads through, and the
+/// estimate `EXPLAIN` prints for that read; `None` when the `WHERE` narrows
+/// the clustered integer handle by nothing and the write reads the whole
+/// table.
+///
+/// Go plans a write's read from the same predicate, with the same builder, as
+/// a read's: `tryUpdatePointPlan`/`tryDeletePointPlan`
+/// (`pkg/planner/core/point_get_plan.go`) synthesize an `ast.SelectStmt` out
+/// of the write's `TableRefs`/`Where`/`Order`/`Limit` and hand it to
+/// `tryPointGetPlan`, and the ordinary path plans a `DataSource` whose table
+/// path gets its ranges from `deriveTablePathStats` exactly as a `SELECT`'s
+/// does. This is the table half of that on this tier -- one call into
+/// [`crate::handle_range`], the crate's single range algebra, which is also
+/// what the read side's [`choose_index_range_path`] builds table ranges with.
+///
+/// Ranges narrow WHICH RECORDS ARE FETCHED and nothing else. The write's own
+/// per-row `WHERE` evaluation is unchanged and still decides which rows the
+/// statement acts on, so the affected row set is the full scan's, by
+/// construction.
+pub(crate) fn write_handle_ranges(
+    catalog: &Catalog,
+    database: &str,
+    name: &str,
+    where_clause: Option<&tidb_ast::Expr>,
+) -> Option<(Vec<IndexRange>, crate::access_cost::ScanEstimate)> {
+    let where_clause = where_clause?;
+    let Some(TableEntry::Kv(table)) = catalog.get_in(database, name) else {
+        return None;
+    };
+    let ranges = crate::handle_range::build_handle_ranges(table, where_clause)?.ranges;
+    let stats = catalog.table_statistics(table.table_id);
+    let stats = stats.as_ref().map(AsRef::as_ref);
+    let estimate = crate::access_cost::ScanEstimate {
+        rows: crate::handle_range::handle_range_row_count(table, &ranges, stats),
+        pseudo: stats.is_none_or(|stats| stats.pseudo),
+    };
+    Some((ranges, estimate))
+}
+
 /// Splits a `WHERE` over one base table into the conjuncts the scan can apply
 /// itself and the predicate that must stay above it.
 ///
