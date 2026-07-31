@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -31,28 +31,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTopNFromStorageWithPriorityAndLimit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	const tableID int64 = 100
-	const histID int64 = 1
-	tk.MustExec(`insert into mysql.stats_top_n(table_id, is_index, hist_id, value, count) values
-		(100, 0, 1, 'a', 10), (100, 0, 1, 'b', 50), (100, 0, 1, 'c', 30), (100, 0, 1, 'd', 40)`)
-
-	topN, err := storage.TopNFromStorageWithPriorityAndLimit(
-		context.Background(), tk.Session(), tableID, 0, histID, kv.PriorityNormal, 2)
-	require.NoError(t, err)
-	require.Len(t, topN.TopN, 2)
-	require.Equal(t, []uint64{50, 40}, []uint64{topN.TopN[0].Count, topN.TopN[1].Count})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err = storage.TopNFromStorageWithPriorityAndLimit(
-		ctx, tk.Session(), tableID, 0, histID, kv.PriorityNormal, 2)
-	require.ErrorIs(t, err, context.Canceled)
-}
-
 func TestLoadStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -60,14 +38,14 @@ func TestLoadStats(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
-	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,1),(5,5,1)")
 
 	oriLease := dom.StatsHandle().Lease()
 	dom.StatsHandle().SetLease(1)
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t all columns with 2 topn, 2 buckets")
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -77,6 +55,17 @@ func TestLoadStats(t *testing.T) {
 	colCID := tableInfo.Columns[2].ID
 	idxBID := tableInfo.Indices[0].ID
 	h := dom.StatsHandle()
+
+	loaded, err := storage.LoadColumnStatsForAutoPresplit(
+		context.Background(), testKit.Session(), tableInfo.ID, colCID, tableInfo.Columns[2], 1)
+	require.NoError(t, err)
+	require.Len(t, loaded.Column.TopN.TopN, 1)
+	require.Equal(t, uint64(3), loaded.Column.TopN.TopN[0].Count)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = storage.LoadColumnStatsForAutoPresplit(
+		ctx, testKit.Session(), tableInfo.ID, colCID, tableInfo.Columns[2], 1)
+	require.ErrorIs(t, err, context.Canceled)
 
 	// Index/column stats are not loaded after analyze.
 	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -117,6 +106,86 @@ func TestLoadStats(t *testing.T) {
 	topN := idx.TopN
 	require.Greater(t, float64(topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.True(t, idx.IsFullLoad())
+}
+
+func TestLoadColumnStatsForAutoPresplitUsesOneSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	writerTK := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	writerTK.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values " +
+		"(1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(7,1),(8,1),(9,1),(10,1)," +
+		"(11,2),(12,2),(13,2),(14,2),(15,2),(16,3),(17,4),(18,5),(19,6),(20,7)")
+	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+
+	tbl, err := dom.InfoSchema().TableByName(
+		context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	colInfo := tblInfo.Columns[1]
+	before, err := storage.LoadColumnStatsForAutoPresplit(
+		context.Background(), tk.Session(), tblInfo.ID, colInfo.ID, colInfo, 2)
+	require.NoError(t, err)
+
+	entered := make(chan struct{})
+	resume := make(chan struct{}, 1)
+	blocked := make(chan struct{}, 1)
+	t.Cleanup(func() {
+		select {
+		case resume <- struct{}{}:
+		default:
+		}
+	})
+	const failpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithPriority"
+	require.NoError(t, failpoint.EnableCall(failpointName,
+		func(tableID int64, _ int, _ int64, _ int) {
+			if tableID != tblInfo.ID {
+				return
+			}
+			select {
+			case blocked <- struct{}{}:
+				close(entered)
+				<-resume
+			default:
+			}
+		}))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	})
+
+	type loadResult struct {
+		stats *storage.AutoPresplitColumnStats
+		err   error
+	}
+	resultCh := make(chan loadResult, 1)
+	go func() {
+		stats, loadErr := storage.LoadColumnStatsForAutoPresplit(
+			context.Background(), tk.Session(), tblInfo.ID, colInfo.ID, colInfo, 2)
+		resultCh <- loadResult{stats: stats, err: loadErr}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("auto pre-split stats loader did not reach TopN loading")
+	}
+
+	// Use another session to replace the statistics while the loader is paused.
+	writerTK.MustExec("update t set b = 9")
+	writerTK.MustExec("analyze table t all columns with 2 topn, 2 buckets")
+	resume <- struct{}{}
+	result := <-resultCh
+	require.NoError(t, result.err)
+	require.Equal(t, before.Column.LastUpdateVersion, result.stats.Column.LastUpdateVersion)
+	require.Equal(t, before.Column.TopN, result.stats.Column.TopN)
+	require.Equal(t, before.Column.Histogram, result.stats.Column.Histogram)
+
+	after, err := storage.LoadColumnStatsForAutoPresplit(
+		context.Background(), tk.Session(), tblInfo.ID, colInfo.ID, colInfo, 2)
+	require.NoError(t, err)
+	require.NotEqual(t, before.Column.LastUpdateVersion, after.Column.LastUpdateVersion)
+	require.Equal(t, uint64(20), after.Column.TopN.TopN[0].Count)
 }
 
 func TestLoadNonExistentIndexStats(t *testing.T) {

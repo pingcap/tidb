@@ -33,11 +33,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const autoPresplitInterval float64 = 0.02
+const boundaryRatioStep float64 = 0.02
 
 type autoPresplitStatsProvider interface {
 	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
-	LoadColumnStats(
+	LoadColumnStatsForAutoPresplit(
 		ctx context.Context,
 		sctx sessionctx.Context,
 		physicalTableID, columnID int64,
@@ -50,7 +50,7 @@ type autoPresplitConfig struct {
 	minTableRows           int64
 	maxTopNKeysPerPhysical int
 	minStatsHealthy        int64
-	interval               float64
+	boundaryRatioStep      float64
 }
 
 func getAutoPresplitConfig() autoPresplitConfig {
@@ -58,7 +58,7 @@ func getAutoPresplitConfig() autoPresplitConfig {
 		minTableRows:           1_000_000,
 		maxTopNKeysPerPhysical: int(vardef.MaxTiDBAnalyzeDefaultNumTopN),
 		minStatsHealthy:        80,
-		interval:               autoPresplitInterval,
+		boundaryRatioStep:      boundaryRatioStep,
 	}
 	failpoint.Inject("mockAutoPresplitConfig", func(val failpoint.Value) {
 		if minRows, ok := val.(int); ok && minRows > 0 {
@@ -80,6 +80,19 @@ func planAutoPresplitIndexRegions(
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	cfg autoPresplitConfig,
+) ([][]byte, string, error) {
+	return planAutoPresplitWithCache(
+		ctx, sctx, statsProvider, tblInfo, idxInfo, cfg, nil)
+}
+
+func planAutoPresplitWithCache(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	statsProvider autoPresplitStatsProvider,
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+	cfg autoPresplitConfig,
+	boundaryCache map[int64][][]types.Datum,
 ) ([][]byte, string, error) {
 	if tblInfo.GetPartitionInfo() != nil {
 		return nil, "partitioned table", nil
@@ -131,6 +144,11 @@ func planAutoPresplitIndexRegions(
 	if types.IsString(leadingCol.GetType()) && leadingIdxCol.Length != types.UnspecifiedLength {
 		return nil, "leading string column uses prefix index", nil
 	}
+	// Reuse sampled boundaries for indexes sharing a leading column, avoiding duplicate
+	// statistics loads within one add-index statement.
+	if boundaryRows, ok := boundaryCache[leadingCol.ID]; ok {
+		return buildAutoPresplitIndexKeys(sctx, tblInfo, idxInfo, boundaryRows)
+	}
 	colStats, loadNeeded, hasAnalyzed := statsTbl.ColumnIsLoadNeeded(leadingCol.ID, true)
 	if !hasAnalyzed {
 		return nil, "leading column stats missing or not analyzed", nil
@@ -139,7 +157,7 @@ func planAutoPresplitIndexRegions(
 	loaded := &handle.AutoPresplitColumnStats{Column: colStats}
 	if loadNeeded {
 		var err error
-		loaded, err = statsProvider.LoadColumnStats(
+		loaded, err = statsProvider.LoadColumnStatsForAutoPresplit(
 			ctx, sctx, tblInfo.ID, leadingCol.ID, leadingCol, cfg.maxTopNKeysPerPhysical)
 		if cause := context.Cause(ctx); cause != nil {
 			return nil, "", cause
@@ -155,6 +173,8 @@ func planAutoPresplitIndexRegions(
 		return nil, fmt.Sprintf("leading column stats version %d is not Analyze V2", loaded.Column.StatsVer), nil
 	}
 
+	// Bound statistics events by entry count; byte budgeting adds complexity without
+	// estimating composite-index size, acceptable for best-effort auto pre-split.
 	events := make([]autoPresplitEvent, 0, cfg.maxTopNKeysPerPhysical+loaded.Column.Histogram.Len()+1)
 	if loaded.NullCountError != nil {
 		logAutoPresplitComponentFailure(tblInfo, idxInfo, "NullCount", loaded.NullCountError)
@@ -204,11 +224,28 @@ func planAutoPresplitIndexRegions(
 	if totalCount == 0 {
 		return nil, "no usable leading column distribution", nil
 	}
-	boundaryRows := sampleAutoPresplitEvents(events, totalCount, cfg.interval)
+	boundaryRows := sampleAutoPresplitEvents(events, totalCount, cfg.boundaryRatioStep)
 	if len(boundaryRows) == 0 {
 		return nil, "no internal distribution boundary", nil
 	}
-	splitKeys, err := getSplitIdxKeysFromValueList(sctx, tblInfo, idxInfo, boundaryRows)
+	splitKeys, reason, err := buildAutoPresplitIndexKeys(sctx, tblInfo, idxInfo, boundaryRows)
+	if err == nil && boundaryCache != nil {
+		boundaryCache[leadingCol.ID] = boundaryRows
+	}
+	return splitKeys, reason, err
+}
+
+func buildAutoPresplitIndexKeys(
+	sctx sessionctx.Context,
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+	boundaryRows [][]types.Datum,
+) ([][]byte, string, error) {
+	rows := make([][]types.Datum, len(boundaryRows))
+	for i := range boundaryRows {
+		rows[i] = types.CloneRow(boundaryRows[i])
+	}
+	splitKeys, err := getSplitIdxKeysFromValueList(sctx, tblInfo, idxInfo, rows)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to build auto presplit keys: %w", err)
 	}
@@ -354,9 +391,10 @@ func addAutoPresplitCount(a, b uint64) (uint64, bool) {
 func sampleAutoPresplitEvents(
 	events []autoPresplitEvent,
 	totalCount uint64,
-	interval float64,
+	boundaryRatioStep float64,
 ) [][]types.Datum {
-	if totalCount == 0 || math.IsNaN(interval) || math.IsInf(interval, 0) || interval <= 0 || interval > 1 {
+	if totalCount == 0 || math.IsNaN(boundaryRatioStep) || math.IsInf(boundaryRatioStep, 0) ||
+		boundaryRatioStep <= 0 || boundaryRatioStep > 1 {
 		return nil
 	}
 	nextThresholdIndex := float64(1)
@@ -364,7 +402,7 @@ func sampleAutoPresplitEvents(
 	rows := make([][]types.Datum, 0)
 	for _, event := range events {
 		cumulative += event.count
-		nextThreshold := nextThresholdIndex * interval
+		nextThreshold := nextThresholdIndex * boundaryRatioStep
 		if autoPresplitThresholdReached(nextThreshold, 1) {
 			break
 		}
@@ -373,7 +411,7 @@ func sampleAutoPresplitEvents(
 			continue
 		}
 		rows = append(rows, []types.Datum{event.value})
-		crossedThresholds := math.Floor(math.Nextafter(cumulativeRatio/interval, math.Inf(1)))
+		crossedThresholds := math.Floor(math.Nextafter(cumulativeRatio/boundaryRatioStep, math.Inf(1)))
 		nextThresholdIndex = max(nextThresholdIndex+1, crossedThresholds+1)
 	}
 	return rows
