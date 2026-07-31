@@ -344,6 +344,7 @@ mod coerce;
 pub mod collation_derive;
 pub mod column;
 pub mod constant;
+mod constant_fold;
 mod context;
 pub mod convert_charset;
 pub mod expr_collation;

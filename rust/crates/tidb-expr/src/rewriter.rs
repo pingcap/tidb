@@ -832,6 +832,7 @@ pub fn rewrite_expr_resolved(
     }
     let mut built = rewrite_leaf(expr, resolver)?;
     derive_tree_collation(&mut built)?;
+    crate::constant_fold::derive_constant_null_flag(&mut built);
     Ok(built)
 }
 
