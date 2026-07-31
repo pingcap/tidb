@@ -173,10 +173,12 @@ Per-package confidence, honestly:
 | `pkg/util/chunk` specifically | **not a claim at all** | `rust/crates/tidb-chunk/src/lib.rs` self-declares "SEED SCOPE" and lists deferrals. It should not appear in any completed-package accounting until it stops saying that. Same for `tidb-session`. |
 | everything else | **UNKNOWN** | Name evidence only. |
 
-**Not reached.** `pkg/ddl`, `pkg/infoschema`, `pkg/domain`, `pkg/privilege`,
-`pkg/table`, `pkg/store/copr`, `pkg/store/gcworker`, `pkg/util/*` packages with
+**Not reached.** `pkg/domain`, `pkg/store/gcworker`, `pkg/util/*` packages with
 no transcreate commit, and everything under `br/`, `dumpling/`,
-`lightning/`. The mapping table in the script is the list of what *is* covered;
+`lightning/`. (`pkg/ddl`, `pkg/infoschema`, `pkg/privilege/privileges`,
+`pkg/table` and `pkg/store/copr` used to be on this list while the tree
+implemented them; see "Instrument bug 4" below.)
+The mapping table in the script is the list of what *is* covered;
 anything absent from it was not measured, not measured-and-clean. Also not
 reached: `tests/integrationtest` and `tests/realtikvtest`, which are SQL-level
 surfaces this inventory has no way to attribute to a Rust test.
@@ -204,8 +206,74 @@ rust/crates/*/src/tests_*.rs`) and should be swept whenever a deferral closes.
 No Rust test was found asserting a Go-contradicting *value* as if it were
 correct.
 
+## Instrument bug 4: the denominator, not the ratio
+
+The three instrument bugs above all moved tests between buckets. This one
+removed them from the accounting entirely.
+
+Thirteen Go packages that this tree demonstrably implements were named in no
+`Mapping` row: `pkg/ddl`, `pkg/meta/autoid`, `pkg/table`, `pkg/table/tables`,
+`pkg/table/temptable`, `pkg/infoschema`, `pkg/privilege/privileges`,
+`pkg/executor/{join,sortexec,aggregate}`, `pkg/expression/aggregation`,
+`pkg/planner/core/rule`, `pkg/store/copr`. Their 921 counted Go tests were not
+reported as uncovered -- they were not reported. The "Not reached" paragraph
+above named some of them as future work, which is exactly how a silent
+denominator survives: the omission was documented in prose and invisible in the
+number everyone quotes.
+
+That matters more than the arithmetic, because the omitted packages own every
+silent-wrong-answer bug class this project has shipped: `AUTO_INCREMENT`
+(`pkg/meta/autoid`), `PARTITION BY` and the partial-index name (`pkg/ddl`),
+`CREATE TEMPORARY TABLE` (`pkg/table/temptable`, `pkg/ddl`). The measurement
+was blindest exactly where the port had already been caught being wrong.
+
+Honest totals move from 1304/2622 (49%) uncovered to **2035/3543 (57%)**.
+Nothing regressed to produce that; the earlier figure was measured against a
+smaller world. Between the two runs ~500 new Rust tests landed in mapped paths
+and closed exactly ZERO named Go gaps, which is worth knowing on its own: new
+tests in this tree are overwhelmingly new behaviour, not Go-test transcreation.
+
+## Measured negatives
+
+Recorded so the next worker does not re-derive them. Each is a gap the
+inventory reports that turns out not to be one, or not to be one at this tier.
+
+- **`pkg/meta/autoid` reads 14/14 uncovered and is behaviourally covered.**
+  `rust/crates/tidb-session/src/tests_auto_increment.rs` carries 24 SQL-level
+  tests over the same rules `TestSignedAutoid`/`TestUnsignedAutoid` assert
+  (monotonic allocation, rebase-up-only, the domain end reporting 1467, the
+  unsigned domain above `i64::MAX`, TRUNCATE restarting the counter, a rolled
+  back transaction burning its ids). None of them carries a Go test's name, so
+  the row is a NAME-level false negative end to end. Do not "close" this
+  package by porting names onto tests that already exist.
+- **`auto_increment_increment`/`auto_increment_offset` are refused, not
+  discarded.** `TestSignedAutoid`'s increment/offset half (`CalcNeededBatchSize`,
+  `SeekToFirstAutoIDSigned`) does not apply: `StmtContext::auto_increment_step_is_default`
+  refuses an insert into an auto-increment table when either variable is off 1,
+  and `tests_auto_increment.rs:262` pins that refusal. This is the good shape --
+  a value the engine cannot honour is rejected rather than accepted and ignored --
+  and it means the arithmetic those Go helpers test has no counterpart to test.
+- **`pkg/meta/autoid`'s `autoid_service_test.go` (3 tests) is not this tier.**
+  `TestAllocCanceledRPCReturnsQuickly`, `TestRebaseCanceledRPCReturnsQuickly`
+  and `TestBackoffCtxAware` test the separate autoid *service* RPC client. This
+  tree keeps the counter in a meta key read by the session
+  (`tidb-exec/src/cluster_auto_id.rs`); there is no service to cancel.
+- **No fourth wrong-crate mapping.** Every `NONE` Go test name was re-matched
+  against a `#[test]` index built over the WHOLE `rust/` tree, ignoring the
+  mapping table. Four hits, all coincidences (`TestCurrentRole` and
+  `TestWeightString` against parser tests named for the same SQL keyword,
+  `TestLastInsertID` against a session status-value test, `TestDifferential`
+  against the parser difftest harness). The `pkg/parser/ast` class of bug did
+  not recur.
+- **`pkg/util/tiflash` has no `*_test.go`.** It is absent from the mapping table
+  and, uniquely among the transcreated packages, that costs nothing.
+
 ## What to do with this
 
 Close gaps package by package, highest risk first, and re-run the script. The
 number to drive down is the `NONE` column on risk-3 rows. Do not celebrate a
 `NAME-EXACT` rate; it is not evidence.
+
+And before believing any of it, check the mapping table against the crates that
+exist. Four instrument bugs in, the pattern is unbroken: every one was in how
+the Go package was mapped to Rust, and none was in the port.
