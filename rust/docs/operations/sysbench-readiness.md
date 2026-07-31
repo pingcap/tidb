@@ -16,6 +16,22 @@ the two cells that aborted last run; rung 5's Rust-vs-Go checksum still matches
 at `1000 500500 501715 1 1000`, so the protocol fix altered no row set. The
 `FAIL, error 2014` cells below are corrected to those numbers.
 
+**Update 2026-08-01, `dd97293671`, ladder at port offset 42000 and probe at
+port offset 43000: the write path now plans `Point_Get`, the `kv_scan` RPCs are
+gone — and the throughput did not move.** This is the negative result the
+task #114 prediction was written to expose, and it is reported first because it
+redirects the work: `kv_scan` per single-row write fell from ~1.0 to ~0.03 and
+`kv_get` rose to match, exactly as predicted, while the within-run Rust-vs-Go
+gap on the same three shapes stayed at 2.31x / 2.97x / 1.83x against 2.11x /
+2.90x / 1.90x before. **RPC shape was not what the remaining 2x was made of.**
+See "The write path: `Point_Get` landed, the gap did not close (task #115)".
+
+The same run measured `oltp_point_select` for the first time (task #117) and
+found the cost is **not** in the access path, the storage round trips, or
+result-set encoding — all three are ruled out by measurement — but in a
+per-statement floor that `SELECT 1` already pays. See "Where
+`oltp_point_select` actually goes (task #117)".
+
 **A second run the same day (port offset 44000) made the Rust-vs-Go comparison
 controlled — both engines on ONE `v9.0.0-beta.2.pre-nightly` cluster — and
 found the cause of the write gap by measurement.** The 9.8x on
@@ -74,9 +90,9 @@ port is still reachable).
 | 3b. Capability probe | `rust: 0x00158a08 CLIENT_SSL=yes`, `go: 0x0015aeaf CLIENT_SSL=yes` — unchanged from the TLS run |
 | 3c. Go control: `sysbench prepare` against the Go `tidb-server` | **FAIL again on the `v8.5.6` playground the ladder starts**: `error 8256 ... no enough space in /tmp/tidb/tmp_ddl-47000` at `CREATE INDEX`. Cleared out-of-band by a newer playground — a full Go baseline now exists, see "The Go control rung" below |
 | 4. `sysbench oltp_read_only ... prepare` | **OK on the FIRST attempt, `--auto-inc=on`** — sysbench's own default schema. Table created, 1,000 rows inserted, secondary index created, all unmodified |
-| 5. Dataset correctness, Rust vs Go on the same TiKV | **OK, and identical again at `de899c65d1`:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000` — the same figures as the range-fix run. Neither the range fix nor the binary-protocol fix altered a row set. The post-run re-check also agreed, `1000 500500 502334` on both sides |
-| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | **EIGHT of eight, 2026-08-01 at `de899c65d1`, offset 45000**, secondary index present, `ignored errors: 0` in every log. (Was six of eight at `8eacf363e5`: the two binary-prepared cells aborted with error 2014, now fixed — see "Regression found by this run, and closed") |
-| 7. sysbench's own statements driven by hand | **24 accepted, 0 refused** — unchanged at `de899c65d1` (was 21/3, and 16/4 before that). Includes both `ADMIN CHECK TABLE`s on the Go server, and `USE INDEX` vs `IGNORE INDEX` agreeing at `1000 500500` |
+| 5. Dataset correctness, Rust vs Go on the same TiKV | **OK, and identical again at `dd97293671`, offset 42000, with the write path on `Point_Get`:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, and the post-run re-check `1000 500500 503191` on both sides. **The write-path change altered no row set** — this is the gate a write-path change has to clear, and it cleared it. Earlier, at `de899c65d1`: Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000` — the same figures as the range-fix run. Neither the range fix nor the binary-protocol fix altered a row set. The post-run re-check also agreed, `1000 500500 502334` on both sides |
+| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | **EIGHT of eight again, 2026-08-01 at `dd97293671`, offset 42000**, `ignored errors: 0` in all eight logs and no `FAIL` cell: the `error 2014` fix is still holding after the write-path change. Also eight of eight at `de899c65d1`, offset 45000, secondary index present, `ignored errors: 0` in every log; and six of eight at `8eacf363e5`, where the two binary-prepared cells aborted with error 2014 — see "Regression found by this run, and closed") |
+| 7. sysbench's own statements driven by hand | **24 accepted, 0 refused** — unchanged at `dd97293671`, offset 42000, and at `de899c65d1` before it (was 21/3, and 16/4 before that). Includes both `ADMIN CHECK TABLE`s on the Go server, and `USE INDEX` vs `IGNORE INDEX` agreeing at `1000 500500` |
 
 Rung 5 is the row that had never been produced: the ladder gates it on a
 `prepare` that returned success, and no prior run had one. `SUM(k)` differs
@@ -87,7 +103,31 @@ write/txn statements, agreeing with Go both times.
 
 ### Throughput, `--threads=1 --time=10`, **secondary index present**
 
-**Current measurement: 2026-08-01 on `hparser-integration` at `28eebaffa1`**,
+**Current ladder measurement: 2026-08-01 on `hparser-integration` at
+`dd97293671`**, the tree carrying the write-path `Point_Get` plan (task #115).
+Release build, macOS arm64, `tiup playground v9.0.0-beta.2.pre-nightly` (server
+`8.0.11-TiDB-v9.0.0-beta.2.pre-2052-g23bff31318`), Rust node in
+`--cluster-session`, **port offset 42000** — every line in this table is keyed
+to that offset and comes from that single run, whose artifacts are the
+`u115/ladder-42000` set. All eight cells ran, `ignored errors: 0` in every log,
+rung 3c passed, and rung 3b read `rust: 0x00158a08 CLIENT_SSL=yes`,
+`go: 0x0015aeaf CLIENT_SSL=yes`.
+
+| Workload | Rust text (`--db-ps-mode=disable`) | Rust binary prepared (default) |
+| --- | --- | --- |
+| `oltp_point_select` | 3,876.16 qps | 3,928.05 qps |
+| `oltp_read_only` | 3,332.22 qps (208.26 tps) | 2,791.88 qps (174.49 tps) |
+| `oltp_write_only` | 2,684.38 qps (447.40 tps) | 2,192.15 qps (365.36 tps) |
+| `oltp_read_write` | 2,786.41 qps (139.32 tps) | 2,335.07 qps (116.75 tps) |
+
+These are within noise of the `28eebaffa1` table below on every cell, which is
+consistent with the controlled A/B: the write-path `Point_Get` changed the RPC
+shape and not the throughput. Read the within-run ratios in "The controlled A/B
+at `dd97293671`" rather than these absolutes.
+
+#### Superseded: the same table at `28eebaffa1`, before the write-path `Point_Get`
+
+Conditions: 2026-08-01 on `hparser-integration` at `28eebaffa1`,
 the tree carrying the clustered-handle range fix, the binary-prepared
 rangeless-scan fix, AND the write-path handle-range lowering (task #114).
 Release build, macOS arm64, `tiup playground v9.0.0-beta.2.pre-nightly` (server
@@ -217,6 +257,174 @@ cluster.**
 
 Still one thread, a 1,000-row table, and a laptop also running the cluster it
 queries, so read the absolute values with that in mind.
+
+### The controlled A/B at `dd97293671`: all four workloads, both ps modes
+
+**2026-08-01, port offset 43000, ONE `tiup playground
+v9.0.0-beta.2.pre-nightly` cluster**, both engines inside the one run.
+Artifacts: the `u115/out-43000` set. Compare the ratios, not the absolutes —
+cross-run absolutes on this machine are not comparable.
+
+| Workload | Rust text | Go text | Go faster by | Rust binary | Go binary | Go faster by |
+| --- | --- | --- | --- | --- | --- | --- |
+| `oltp_point_select` | 3,797.67 qps | 8,518.12 qps | **2.24x** | 4,018.42 qps | 9,132.63 qps | **2.27x** |
+| `oltp_read_only` | 212.95 tps | 430.44 tps | 2.02x | 173.31 tps | 487.72 tps | 2.81x |
+| `oltp_write_only` | 435.81 tps | 1,060.91 tps | 2.43x | 376.41 tps | 1,142.00 tps | 3.03x |
+| `oltp_read_write` | 140.51 tps | 244.67 tps | 1.74x | 118.39 tps | 279.41 tps | 2.36x |
+
+Against the task #114 run (offset 44000) the picture is flat to slightly worse:
+`oltp_write_only` text 2.00x -> 2.43x, `oltp_read_only` text 1.30x -> 2.02x,
+`oltp_point_select` 2.13x -> 2.24x. **No workload improved from the write-path
+`Point_Get` change.** The `oltp_read_only` movement is the least trustworthy
+number here — that workload has swung widely between runs on this machine
+(Go's own `oltp_read_only` has measured 249.45, 430.44 and 487.72 tps across
+three runs) — but nothing in the table supports a claim of improvement.
+
+### The write path: `Point_Get` landed, the gap did not close (task #115)
+
+**2026-08-01, `dd97293671`, port offset 43000, ONE `tiup playground
+v9.0.0-beta.2.pre-nightly` cluster** (server
+`8.0.11-TiDB-v9.0.0-beta.2.pre-2052-g23bff31318`), both engines inside the one
+run, `--threads=1 --table-size=1000`, ten seconds per window, `ignored errors:
+0` everywhere. Artifacts: the `u115/out-43000` set. Every line here is keyed to
+offset 43000 and to that single run.
+
+`EXPLAIN` confirms the plan changed. All three write shapes now print what the
+read path prints for the identical predicate:
+
+```
+rust> EXPLAIN UPDATE sbtest.sbtest1 SET c='x' WHERE id=500
+  Update_3              N/A    root
+  └─Selection_2         1.00   root   eq(test.sbtest1.id, 500)
+    └─Point_Get_1       1.00   root   table:sbtest1  handle:500
+```
+
+`UPDATE ... SET k=k+1` and `DELETE ... WHERE id=500` print the same
+`Point_Get_1 handle:500`, where at `28eebaffa1` all three printed
+`TableRangeScan_1 range:[500,500]`.
+
+**The RPC-shape prediction held exactly. The throughput prediction did not.**
+Those are two separate claims, both were checked, and they disagree:
+
+| Statement shape | Rust `kv_scan` before | **Rust `kv_scan` now** | Rust `kv_get` now | Go `kv_scan` | Go `kv_get` |
+| --- | --- | --- | --- | --- | --- |
+| `UPDATE ... k=k+1` | 0.97 | **0.04** | 2.91 | 0.02 | 1.03 |
+| `UPDATE ... c=?` | 1.02 | **0.04** | 2.94 | 0.01 | 1.07 |
+| `DELETE` | 0.99 | **0.01** | 1.03 | 0.01 | 0.98 |
+| `INSERT` (control) | 0.05 | **0.04** | 2.12 | 0.02 | 0.04 |
+
+The scans are gone and the gets replaced them. `INSERT`, the control, did not
+move on either instrument — it has no `WHERE` clause, so the point plan had
+nothing to narrow for it.
+
+**And the tps did not follow.** Within-run Rust-vs-Go ratios, before at offset
+44000 (`28eebaffa1`) and now at offset 43000 (`dd97293671`):
+
+| Statement shape | Rust before | Rust now | Go now | Gap before | **Gap now** |
+| --- | --- | --- | --- | --- | --- |
+| `UPDATE ... SET k=k+1 WHERE id=?` | 1,068.46 | 1,013.60 | 2,339.50 | 2.11x | **2.31x** |
+| `UPDATE ... SET c=? WHERE id=?` | 1,056.71 | 1,023.76 | 3,037.89 | 2.90x | **2.97x** |
+| `DELETE WHERE id=?` | 3,318.28 | 3,415.24 | 6,260.38 | 1.90x | **1.83x** |
+| `INSERT` (control) | 928.15 | 964.18 | 2,728.10 | 2.85x | **2.83x** |
+
+Two shapes got marginally worse, one marginally better, none by more than the
+run-to-run spread. Go's own numbers barely moved between the two runs
+(2,254.70 -> 2,339.50, 3,069.48 -> 3,037.89, 6,310.50 -> 6,260.38, 2,646.37 ->
+2,728.10), which is what makes the Rust column's *lack* of movement readable
+rather than noise.
+
+**What this rules out.** Converting one `kv_scan` into one `kv_get` per
+single-row write was worth nothing measurable. The remaining ~2x on the write
+shapes is therefore **not** RPC shape and not scan amplification — both have now
+been driven to Go's own levels with no effect. The write gap is made of the
+same thing the read gap is made of; see task #117 below, which measures it
+directly.
+
+**One residual the counters do name**, offered as an observation and not as a
+cause, since the last shape-level fix bought nothing: the two `UPDATE`s issue
+**2.9 `kv_get` per single-row statement where Go issues 1.0**, and `INSERT`
+issues 2.1 where Go issues 0.04. `DELETE` is the one shape at parity (1.03 vs
+0.98) and also the one with the smallest gap (1.83x). That correlation is
+suggestive, but the task #115 result above is precisely a case of a suggestive
+RPC-count correlation that did not survive being fixed, so it should be
+measured before it is believed.
+
+### Where `oltp_point_select` actually goes (task #117)
+
+Same run, same cluster, same offset 43000, plus a second confirming run at the
+same offset (`u115/out-43000-c`) that reproduced every figure below.
+
+Both engines plan `Point_Get` for this workload, so the question was never the
+access path. Three candidates were measured and **all three are ruled out**:
+
+| Candidate | Measurement | Verdict |
+| --- | --- | --- |
+| Extra storage round trips | `kv_get` per statement: **Rust 0.99-1.10, Go 0.91-1.10** | **Ruled out** — identical, one get per statement on both |
+| Result-set encoding | `SELECT c` (CHAR(120)) vs `SELECT k` (INTEGER), same key, same path: Rust 3,902.48 vs 3,873.80 qps; Go 8,451.83 vs 8,361.53 | **Ruled out** — dropping 120 bytes of result changes nothing on either engine (2.17x vs 2.16x) |
+| Snapshot/timestamp acquisition | PD `pd_server_handle_tso_duration_seconds_count` per statement: **Rust 1.00, Go 0.002** | Real difference, but **not the cause** — see below |
+
+**The floor is what carries it.** `SELECT 1` — no table, no storage, no
+snapshot, one tiny column — is already **2.59x** (Rust 7,134.26 qps, Go
+18,466.63; reproduced at 7,213.42 vs 18,648.35 in the first run). The full
+`oltp_point_select` gap is **2.17x**, i.e. *smaller* than the floor. Per
+statement at one thread:
+
+| Statement | Go | Rust | Rust excess |
+| --- | --- | --- | --- |
+| `SELECT 1` (per-statement floor) | 54.15 µs | 140.17 µs | **86.02 µs** |
+| `SELECT c ... WHERE id=?` (stock) | 117.00 µs | 258.59 µs | **141.59 µs** |
+| the point read alone (difference) | 62.85 µs | 118.42 µs | 55.57 µs |
+
+**About 61% of Rust's per-statement excess on `oltp_point_select` is present
+before the statement touches a table at all.** The remaining ~39% is the point
+read itself, and Rust's marginal cost for that read is ~1.9x Go's — including
+the one PD TSO round trip Rust takes and Go does not.
+
+**Why this matters out of proportion to `oltp_point_select`.** An 86 µs
+per-statement constant is charged to every statement of every workload, and it
+is the same constant whether the statement does one `kv_get` or a whole
+transaction. That is why it dominates the workload that does the least engine
+work, and why it is diluted — not absent — in the others. It is also the
+simplest explanation available for the task #115 result above: the write shapes
+did not speed up when their RPCs changed shape because their RPCs were never
+the binding constraint.
+
+**The TSO difference, named precisely.** Go skips the timestamp entirely for
+autocommit point reads. `pkg/sessiontxn/isolation/optimistic.go`:
+
+```go
+// AdviseOptimizeWithPlan providers optimization according to the plan
+// It will use MaxTS as the startTS in autocommit txn for some plans.
+	ok = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx.GetSessionVars(), realPlan)
+	if ok {
+		...
+		if err = p.forcePrepareConstStartTS(math.MaxUint64); err != nil {
+```
+
+`GetStmtReadTS` then returns `math.MaxUint64` without activating the
+transaction. The measured Go TSO rate for `oltp_point_select` (0.002 per
+statement) matches that exactly, and Go's rate for `SELECT 1` is 1.00 — the
+optimization is plan-gated, so it fires for the point get and not for the
+constant select. This is a real, cheap, identified difference, but note the
+arithmetic: it lives inside the 55.57 µs marginal term, not the 86.02 µs floor,
+so it cannot be worth more than ~39% of this workload's gap.
+
+**A separate finding from the same counters: binary-prepared mode takes a
+timestamp per statement instead of per transaction.** In text mode Rust takes
+~1.0 TSO per *transaction*; under `--db-ps-mode=auto` it takes one per
+*statement*:
+
+| Workload | Rust TSO/txn, text | Rust TSO/txn, binary | Go TSO/txn | Rust tps text | Rust tps binary |
+| --- | --- | --- | --- | --- | --- |
+| `oltp_read_only` (14 stmt/txn) | 1.08 | **16.11** | 1.04 | 212.95 | 173.31 |
+| `oltp_write_only` (6 stmt/txn) | 1.04 | **7.04** | 2.02 | 435.81 | 376.41 |
+| `oltp_read_write` (20 stmt/txn) | 1.13 | **21.15** | 2.06 | 140.51 | 118.39 |
+
+This is the mechanism behind a pattern visible in every table in this document
+and never explained: **binary prepared is consistently slower than text on the
+Rust node, while it is consistently faster on Go.** A per-statement PD round
+trip inside a multi-statement transaction is also a correctness-adjacent smell,
+not only a throughput one, and it is worth its own investigation.
 
 ### The controlled A/B (task #114): after the write-path point plan
 
@@ -867,13 +1075,35 @@ integer-to-integer.
    controlled-A/B `oltp_write_only` gap from **9.97x to 2.00x** in text mode and
    `kv_scan` per single-row write from 5.6-6.5 to ~1.0. What remains of it is
    item 10.
-10. **`Point_Get` for writes.** The write path narrows to a one-key
-    `TableRangeScan` and still issues a `kv_scan` RPC per row where Go issues a
-    `kv_get`. Worth roughly the remaining 2x on the write shapes.
-11. **`oltp_point_select` is now the widest gap in the controlled A/B** at
-    2.13x, having been overtaken by nothing — the other workloads improved past
-    it. It reads a single row through `Point_Get` already, so the cost is in the
-    per-statement path, not the access path.
+10. ~~**`Point_Get` for writes.**~~ Done, 2026-08-01 at `dd97293671`, and
+    **it was worth nothing measurable.** The plan changed, `kv_scan` per
+    single-row write fell from ~1.0 to ~0.03 and `kv_get` rose to match — and
+    the within-run gap stayed at 2.31x / 2.97x / 1.83x against 2.11x / 2.90x /
+    1.90x. The estimate that it was "worth roughly the remaining 2x" was
+    **wrong**, and the reason it was wrong is item 12.
+11. ~~**`oltp_point_select` is the widest gap.**~~ Measured, 2026-08-01. It is
+    not an access-path, round-trip, or encoding problem: `kv_get` per statement
+    is 1.0 on both engines, and projecting an `INTEGER` instead of a
+    `CHAR(120)` changes nothing. It is item 12.
+12. **The per-statement floor: ~86 µs that Rust pays before a statement touches
+    a table.** `SELECT 1` measures 2.59x against Go, which is *wider* than
+    `oltp_point_select`'s own 2.17x. This constant is charged to every
+    statement of every workload — it dominates the workloads that do the least
+    engine work and is diluted, never absent, in the rest. **It is now the
+    single largest known item on this list**, it explains why item 10 bought
+    nothing, and unlike the access-path work its fix lifts all four workloads.
+    Where the 86 µs goes inside the Rust node has not yet been profiled; that
+    is the next measurement, not the next guess.
+13. **Binary-prepared execution takes a TSO per statement, not per
+    transaction** (16.11 per `oltp_read_only` transaction against 1.08 in text
+    mode). This is why binary prepared is slower than text on this node while
+    it is faster on Go, and it is correctness-adjacent enough to look at on its
+    own merits.
+14. **Autocommit point reads could skip the timestamp entirely,** as Go does
+    via `IsPointGetWithPKOrUniqueKeyByAutoCommit` and a `MaxUint64` start ts.
+    Rust takes 1.00 TSO per point select where Go takes 0.002. Bounded by the
+    arithmetic in task #117 to at most ~39% of that workload's gap, so it ranks
+    below item 12.
 
 An unqualified sysbench number is available today in the sense that stock
 sysbench runs unmodified end to end. It is not yet a competitive one.
