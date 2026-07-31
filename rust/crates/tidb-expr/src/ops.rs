@@ -228,6 +228,32 @@ pub(crate) fn eval_binary_full(
     ) {
         return string_compare(op, a, b, collation);
     }
+    // `Raw` and `VectorFloat32` are the two kinds that no dispatch below
+    // claims, and they are rejected HERE -- as one guard, above every
+    // numeric path -- rather than at each of the places they would otherwise
+    // land, because those places do not fail alike:
+    //
+    //   * a `Div` or a `Decimal` operand reaches [`to_decimal`], whose
+    //     fallback `.expect()` PANICS on either kind;
+    //   * a comparison against a string reaches
+    //     [`to_f64_with_mysql_string`], whose fallback silently substitutes
+    //     `0.0` -- a wrong ANSWER, which is worse;
+    //   * everything else reaches the integer residue at the bottom.
+    //
+    // One guard makes all three the same statement error. `Raw` compared
+    // with `Raw` (or with a string) is deliberately still handled by the
+    // branch just above, since `as_raw_bytes` gives it real byte semantics.
+    //
+    // Go reaches neither kind by this route: `KindRaw` is internal encoding
+    // state that `Datum.Compare` answers 0 for out of its `default` arm, and
+    // a vector column's comparisons go through `compareVectorFloat32`, which
+    // this evaluator has not ported. Returning an error says exactly that,
+    // and says it without taking the process down.
+    if matches!(l, Datum::Raw(_) | Datum::VectorFloat32(_))
+        || matches!(r, Datum::Raw(_) | Datum::VectorFloat32(_))
+    {
+        return Err(EvalError::UnsupportedOperandPair(l.kind(), r.kind()));
+    }
     // A datetime/date value compares in the TIME domain: Go's
     // `GetCmpFunction` picks the datetime comparer when either side is a
     // temporal type, parsing the other side -- a string or a number -- into a
@@ -366,18 +392,28 @@ pub(crate) fn eval_binary_full(
     if op == NullEq {
         return Ok(null_safe_eq(l, r));
     }
-    // By this point `l`/`r` can only be an integral value or `Null` — `Str` is
-    // guarded out at the very top, `Float`/`Decimal`/`Div` are all
-    // intercepted above — so an explicit NULL-propagation arm here,
-    // rather than a silent wildcard, means a FUTURE `Datum` variant
-    // added without updating those upstream guards PANICS instead of
-    // silently being treated as NULL.
+    // By this point `l`/`r` should only be an integral value or `Null`: `Str`
+    // is guarded out at the very top, `Float`/`Decimal`/`Div`/`Json`/temporal
+    // are all intercepted above, and `integer_of` maps the remaining integral
+    // kinds -- `Enum`, `Set`, `Bit`, `BinaryLiteral` -- to their unsigned
+    // numeric value the way Go's `Datum.GetInt64`/`GetUint64` do.
+    //
+    // "Should" is not "does". `integer_of` still answers `None` for `Raw` and
+    // `VectorFloat32`, and `Err` for the `MinNotNull`/`MaxValue` range
+    // sentinels; none of those has a dispatch above. The predecessor of this
+    // code asserted the guards were exhaustive with an `unreachable!`, and
+    // that assertion was false twice -- for `Float32` and for `Json` -- each
+    // time turning one user query into a process abort that killed every
+    // other connection. So the residue returns a statement error naming BOTH
+    // kinds instead of panicking.
     if l == Datum::Null || r == Datum::Null {
         return Ok(Datum::Null);
     }
+    // `integer_of`'s own `Err` (the range sentinels) keeps its existing
+    // message; only the `None` residue, which used to panic, is new.
     let (a, b) = match (integer_of(&l)?, integer_of(&r)?) {
         (Some(a), Some(b)) => (a, b),
-        _ => unreachable!("eval_binary's own upstream guards exclude this: {l:?} {r:?}"),
+        _ => return Err(EvalError::UnsupportedOperandPair(l.kind(), r.kind())),
     };
     integer_binary(op, a, b, ctx)
 }
@@ -1248,6 +1284,72 @@ mod tests {
             eval_binary(BinaryOp::Plus, json("1"), Datum::Int(1)),
             Err(EvalError::Unsupported(_))
         ));
+    }
+
+    /// The third escape from the same catch-all, closed before it happened.
+    ///
+    /// `Float32` and `Json` each reached the integer-only residue and aborted
+    /// the PROCESS -- every connection, not just the offending one. `Raw` and
+    /// `VectorFloat32` are the kinds still unclaimed by any dispatch, and
+    /// they were on exactly the same track. What each one hit differed by
+    /// operator, which is why the guard is one check rather than several:
+    /// `Div`/`Decimal` panicked inside `to_decimal`'s `.expect`, a
+    /// string comparison silently substituted `0.0` and returned a WRONG
+    /// answer, and everything else hit the `unreachable!`.
+    ///
+    /// Assertions are on the error, not merely on "did not panic": the
+    /// string-comparison case in particular used to RETURN, so a test that
+    /// only checked for absence of a panic would have passed against the bug.
+    #[test]
+    fn unclaimed_datum_kinds_report_an_error_instead_of_aborting_or_guessing() {
+        use tidb_datatype::{DatumKind, VectorFloat32};
+        let raw = || Datum::Raw(vec![0x08, 0x02]);
+        let vector = || Datum::VectorFloat32(VectorFloat32::must_create(vec![1.0, 2.0]));
+        for (name, operand, kind) in [
+            ("raw", raw as fn() -> Datum, DatumKind::Raw),
+            ("vector", vector as fn() -> Datum, DatumKind::VectorFloat32),
+        ] {
+            for op in [
+                BinaryOp::Eq,
+                BinaryOp::Lt,
+                BinaryOp::Plus,
+                BinaryOp::Div,
+                BinaryOp::Mul,
+            ] {
+                assert_eq!(
+                    eval_binary(op, operand(), Datum::Int(1)),
+                    Err(EvalError::UnsupportedOperandPair(kind, DatumKind::Int)),
+                    "{name} {op:?} int"
+                );
+                assert_eq!(
+                    eval_binary(op, Datum::Decimal(Decimal::from_int(3)), operand()),
+                    Err(EvalError::UnsupportedOperandPair(DatumKind::Decimal, kind)),
+                    "decimal {op:?} {name}"
+                );
+            }
+        }
+        // A vector compared with a STRING is the silent-wrong-answer case:
+        // `to_f64_with_mysql_string` used to read the vector as `0.0`, so
+        // `vector = '0'` answered TRUE. It is an error now.
+        assert_eq!(
+            eval_binary(BinaryOp::Eq, vector(), Datum::Bytes(b"0".to_vec()),),
+            Err(EvalError::UnsupportedOperandPair(
+                DatumKind::VectorFloat32,
+                DatumKind::Bytes
+            ))
+        );
+        // CONTROL: `Raw` keeps the byte semantics `as_raw_bytes` gives it, so
+        // raw-vs-raw and raw-vs-string comparisons must be unaffected by the
+        // guard above them.
+        assert_eq!(eval_binary(BinaryOp::Eq, raw(), raw()), Ok(Datum::Int(1)));
+        assert_eq!(
+            eval_binary(BinaryOp::Eq, raw(), Datum::Bytes(vec![0x08, 0x02])),
+            Ok(Datum::Int(1))
+        );
+        assert_eq!(
+            eval_binary(BinaryOp::Lt, raw(), Datum::Bytes(vec![0x09])),
+            Ok(Datum::Int(1))
+        );
     }
 
     #[test]

@@ -25,6 +25,21 @@ use tidb_datatype::Datum;
 pub enum EvalError {
     /// The expression uses a construct outside the currently ported domain.
     Unsupported(&'static str),
+    /// A binary operation reached the evaluator with an operand pair that no
+    /// domain dispatch claims.
+    ///
+    /// This is deliberately an error rather than a panic. The catch-all it
+    /// replaces asserted that the dispatches above it were exhaustive, and
+    /// that assertion was FALSE TWICE in production paths -- once for
+    /// `Float32` (a `FLOAT` column compared with an integer) and once for
+    /// `Json` (`MIN` over a json column, TiDB issue 31640). Each time a
+    /// single user query aborted the whole process, killing every other
+    /// connection. A statement-level error is a far cheaper way to learn the
+    /// same fact.
+    ///
+    /// Both kinds are carried because the identity of the unhandled kind is
+    /// the entire diagnostic value; a fixed string names neither.
+    UnsupportedOperandPair(tidb_datatype::DatumKind, tidb_datatype::DatumKind),
     /// An integer literal did not fit the supported integer domain.
     IntOverflow,
     /// A floating-point arithmetic result overflowed to infinity.
