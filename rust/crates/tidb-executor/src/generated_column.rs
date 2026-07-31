@@ -77,11 +77,28 @@
 //! | `b INT AS (a) STORED`, `a = '12abc'` | 1366 | truncated to 12 |
 //! | `b INT AS (a+1) STORED NOT NULL`, `a = NULL` | 1048 | stored NULL |
 //!
-//! These are one seam, not five bugs: the statement's
-//! `StatementContext.TypeFlags` and its NOT NULL enforcement have to reach
-//! `Datum::convert_to` for EVERY column write, generated or not. Doing it here
-//! only would give generated columns a strictness ordinary columns do not
-//! have, so it is left whole and named rather than half-threaded.
+//! Every row above was RE-CAPTURED and still holds. What has changed is the
+//! reason it holds, so read the old one with care: this was once "the
+//! ORDINARY write path is equally lax, so fixing it here alone would give
+//! generated columns a strictness ordinary columns do not have". The ordinary
+//! path has since been fixed, and the asymmetry now runs the other way.
+//! `INSERT INTO t(a INT NOT NULL) VALUES (NULL)` is 1048 and
+//! `INSERT INTO t(a INT UNSIGNED) VALUES (-5)` overflows, in both SQL modes,
+//! while the same values reaching the same columns THROUGH a generated
+//! expression are still stored.
+//!
+//! The reason this half stayed behind is a signature, not a decision to defer
+//! twice: [`materialize`] takes a `tidb_expr::Columns`, the EXPRESSION
+//! context, and the write-level rules live on `StmtContext` --
+//! `write_conversion_flags` (Go `GetTypeFlagsForInsert`), the warning buffer,
+//! and the per-statement `bad_null::NullLevel`. Go has no such split: its
+//! `table.CastValue` takes the session and every caller of it is a write. The
+//! honest unit here is therefore to route generation's cast through
+//! `driver::dml::cast_value_for_column` and `bad_null::handle_bad_null`, which
+//! means giving `materialize` the statement context -- and its callers are not
+//! all writes (a virtual column is filled on READ, and an index backfill is a
+//! write at DDL level), so each call site has to choose its level rather than
+//! inherit one. That is why it is still one named seam and not a patch here.
 //!
 //! # What Go refuses, and this refuses with it
 //!
