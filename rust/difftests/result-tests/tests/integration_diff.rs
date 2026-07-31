@@ -49,7 +49,10 @@
 //! Row results are directly comparable and are the bulk of the value. Plan
 //! text is NOT: this tier's `EXPLAIN` printer deliberately describes the
 //! executors it has rather than Go's, so an `EXPLAIN` is compared by the
-//! access PROPERTY its case guards -- see `integration_plan_property`.
+//! access PROPERTY its case guards -- see `integration_plan_property`, which
+//! also owns the rule for WHICH statements are plans: `EXPLAIN`, `DESCRIBE`
+//! and `DESC` are one statement in TiDB's parser, and the split against
+//! `DESC <table>`'s column list is made by the token after the keyword.
 
 #[path = "integration_plan_property.rs"]
 mod integration_plan_property;

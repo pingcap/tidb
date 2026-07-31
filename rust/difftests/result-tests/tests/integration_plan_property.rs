@@ -35,6 +35,27 @@
 //!
 //! A case whose plan text yields NO access row has no extractable property
 //! and must be skipped by name by the caller rather than compared to nothing.
+//!
+//! # Which statements ARE plan statements
+//!
+//! `EXPLAIN`, `DESCRIBE` and `DESC` are one statement in TiDB's parser: all
+//! three enter `parseExplainStmt` (`pkg/parser/set_explain_parser.go`) and
+//! build the same `ExplainStmt`. What splits a plan from a column list is not
+//! the keyword but the token AFTER it -- Go's `ExplainableStmt` switch. A name
+//! there makes the statement a `SHOW COLUMNS` (`DESC t`, and equally
+//! `EXPLAIN t`), whose recording is a row result to compare cell by cell.
+//!
+//! Reading only the leading word got both halves wrong, and neither error
+//! looked like one. `DESC <select>` was compared as ROWS against recorded plan
+//! text and diverged on every line -- 23 manufactured divergences across the
+//! corpus (`explain_generate_column_substitute` 64 -> 46, `select` 20 -> 16,
+//! `bindinfo/bind` 19 -> 18, `executor/partition/issues` 6 -> 5), every one of
+//! them now a matched `PlanProperty` over the same compared total. `EXPLAIN
+//! <table>` went the other way: its `SHOW COLUMNS` rows carry no access row,
+//! so it was skipped as `PlanWithoutProperty` and never compared at all. It is
+//! compared now, and it FAILS on a real gap (`int(11)` where TiDB 8.x prints
+//! `int`) -- the same gap its `desc t` and `show columns from t` neighbours
+//! were already reporting.
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
@@ -59,17 +80,42 @@ pub enum PlanStatement {
 /// Plan formats whose recording is the same operator tree in text.
 const TEXT_TREE_FORMATS: &[&str] = &["row", "brief", "traditional", "plan_tree", "plan_cache"];
 
+/// The three spellings that reach Go's `parseExplainStmt`
+/// (`pkg/parser/set_explain_parser.go`). They are one statement in the parser;
+/// the leading word carries no information beyond entering it.
+const EXPLAIN_SPELLINGS: &[&str] = &["explain", "describe", "desc"];
+
+/// What may follow the keyword and still be a PLAN. This is Go's
+/// `ExplainableStmt` switch verbatim (`parseExplainStmt`): anything else that
+/// looks like a name is a table, and `EXPLAIN`/`DESC <table>` is then a
+/// `SHOW COLUMNS` -- a row result, not an operator tree. The keyword does not
+/// decide this; what follows it does.
+const EXPLAINABLE_LEADS: &[&str] = &[
+    "select", "insert", "replace", "update", "delete", "alter", "with", "table", "values", "import",
+];
+
+/// Whether `rest` begins an explainable statement rather than a table name.
+fn is_explainable(rest: &str) -> bool {
+    if rest.starts_with('(') {
+        return true;
+    }
+    let word_end = rest
+        .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .unwrap_or(rest.len());
+    EXPLAINABLE_LEADS
+        .iter()
+        .any(|lead| rest[..word_end].eq_ignore_ascii_case(lead))
+}
+
 /// Classifies one statement as a plan statement, if it is one.
 pub fn plan_statement(sql: &str) -> Option<PlanStatement> {
     let sql = sql.trim().trim_end_matches(';');
-    let keyword = "explain";
-    let boundary = sql
-        .as_bytes()
-        .get(keyword.len())
-        .is_some_and(|c| !c.is_ascii_alphanumeric() && *c != b'_');
-    if !boundary || !sql[..keyword.len()].eq_ignore_ascii_case(keyword) {
-        return None;
-    }
+    let keyword = EXPLAIN_SPELLINGS.iter().find(|keyword| {
+        sql.len() > keyword.len()
+            && sql[..keyword.len()].eq_ignore_ascii_case(keyword)
+            && !sql.as_bytes()[keyword.len()].is_ascii_alphanumeric()
+            && sql.as_bytes()[keyword.len()] != b'_'
+    })?;
     let rest = sql[keyword.len()..].trim_start();
     let lower = rest.to_ascii_lowercase();
 
@@ -79,7 +125,12 @@ pub fn plan_statement(sql: &str) -> Option<PlanStatement> {
         ));
     }
     let Some(after_format) = lower.strip_prefix("format") else {
-        return Some(PlanStatement::RunDefaultExplain(sql.to_owned()));
+        // `DESC t` / `EXPLAIN t` is a column list, and its recording is a row
+        // result to compare cell by cell -- not a plan.
+        if !is_explainable(rest) {
+            return None;
+        }
+        return Some(PlanStatement::RunDefaultExplain(format!("explain {rest}")));
     };
     let Some(value) = after_format.trim_start().strip_prefix('=') else {
         return Some(PlanStatement::NotComparable(
@@ -107,9 +158,12 @@ pub fn plan_statement(sql: &str) -> Option<PlanStatement> {
     // The format clause's own span in the ORIGINAL sql, whose case and spacing
     // the lowercased copy mirrors byte for byte.
     let clause_len = rest.len() - value.len() + name_end + usize::from(quote);
+    let explained = rest[clause_len..].trim_start();
+    if !is_explainable(explained) {
+        return None;
+    }
     Some(PlanStatement::RunDefaultExplain(format!(
-        "explain {}",
-        rest[clause_len..].trim_start()
+        "explain {explained}"
     )))
 }
 
@@ -337,6 +391,43 @@ mod tests {
             ))
         );
         assert_eq!(plan_statement("select 1;"), None);
+    }
+
+    /// `DESC`/`DESCRIBE`/`EXPLAIN` are one statement in Go's parser
+    /// (`parseExplainStmt`), and the split between a plan and a column list is
+    /// made by what FOLLOWS the keyword, not by the keyword.
+    #[test]
+    fn desc_of_a_query_is_a_plan_and_desc_of_a_table_is_not() {
+        for keyword in ["explain", "desc", "describe", "DESC", "Describe"] {
+            assert_eq!(
+                plan_statement(&format!("{keyword} select * from t;")),
+                Some(PlanStatement::RunDefaultExplain(
+                    "explain select * from t".to_owned()
+                )),
+                "{keyword} of a query is a plan"
+            );
+            assert_eq!(
+                plan_statement(&format!("{keyword} t;")),
+                None,
+                "{keyword} of a table is a column list"
+            );
+        }
+        assert_eq!(
+            plan_statement("desc format = 'brief' select 1;"),
+            Some(PlanStatement::RunDefaultExplain(
+                "explain select 1".to_owned()
+            ))
+        );
+        assert_eq!(
+            plan_statement("desc (select 1) t;"),
+            Some(PlanStatement::RunDefaultExplain(
+                "explain (select 1) t".to_owned()
+            ))
+        );
+        // The keyword must stand alone: `describe` is not `desc`'s argument,
+        // and a name that merely starts with one of the spellings is a name.
+        assert_eq!(plan_statement("description_of_t"), None);
+        assert_eq!(plan_statement("descending select 1"), None);
     }
 
     #[test]
