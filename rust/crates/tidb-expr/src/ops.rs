@@ -1437,6 +1437,7 @@ mod tests {
         }
         assert!(crate::string_fn::field(&[Datum::Int(1), vector()]).is_err());
         assert!(crate::string_fn::format_num(&[vector(), Datum::Int(2)]).is_err());
+        assert!(crate::string_fn::format_num(&[Datum::Raw(vec![0x08]), Datum::Int(2)]).is_err());
         assert!(crate::builtin_ext::dispatch("FORMAT_BYTES", &[vector()])
             .expect("dispatches")
             .is_err());
@@ -1461,6 +1462,27 @@ mod tests {
                 .expect("dispatches")
                 .map(|value| value.sql_string().unwrap()),
             Ok("2 bytes".to_owned())
+        );
+        // `FORMAT` reads the same ETReal: TiDB answers `2.00` for the enum's
+        // ordinal, and for a temporal argument it formats that argument's
+        // NUMBER, never its text. `FORMAT(CAST('2021-01-01' AS DATETIME),2)`
+        // is `20,210,101,000,000.00` (a DATE column, whose number carries no
+        // time part, gives `20,210,101.00`) -- captured, where rendering the
+        // text `'2021-01-01'` used to answer `2.00`.
+        assert_eq!(
+            crate::string_fn::format_num(&[e(), Datum::Int(2)])
+                .map(|value| value.sql_string().unwrap()),
+            Ok("2.00".to_owned())
+        );
+        let date = Datum::Time(
+            tidb_datatype::str_to_datetime("2021-01-01", 0, &chrono_tz::Tz::UTC)
+                .expect("literal date")
+                .value,
+        );
+        assert_eq!(
+            crate::string_fn::format_num(&[date, Datum::Int(2)])
+                .map(|value| value.sql_string().unwrap()),
+            Ok("20,210,101,000,000.00".to_owned())
         );
     }
 

@@ -1454,20 +1454,14 @@ fn format_number_text(value: &Datum) -> Result<Option<String>, EvalError> {
         Datum::UInt(n) => Some(n.to_string()),
         Datum::Decimal(n) => Some(n.to_string()),
         Datum::Real(n) => Some(n.to_string()),
-        // `FORMAT` requests ETReal for string inputs.  `to_f64_with_mysql_string`
-        // is this crate's port of that numeric-prefix conversion; its warning is
-        // outside this value-only domain.
-        Datum::String(_) | Datum::Bytes(_) => {
-            Some(crate::ops::to_f64_with_mysql_string(value)?.to_string())
-        }
-        Datum::MinNotNull | Datum::MaxValue => {
-            return Err(EvalError::Unsupported("range sentinel FORMAT argument"));
-        }
-        other => Some(
-            other
-                .sql_string()
-                .map_err(|_| EvalError::Unsupported("FORMAT argument conversion"))?,
-        ),
+        // `FORMAT` requests ETReal for everything else, and that is the
+        // NUMERIC reading of the argument, never its text: captured from
+        // TiDB, `FORMAT(d,2)` on `DATE'2021-01-01'` is `20,210,101.00`,
+        // `FORMAT(t,2)` on `TIME'10:20:30'` is `102,030.00`, an `enum` gives
+        // its ordinal and a `json` string its numeric prefix. Rendering
+        // `sql_string()` here instead formatted `'2021-01-01'` -- the text --
+        // and answered `2.00`.
+        other => Some(crate::ops::to_f64_with_mysql_string(other)?.to_string()),
     })
 }
 
