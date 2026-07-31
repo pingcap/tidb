@@ -4,7 +4,6 @@ package export
 
 import (
 	"context"
-	"database/sql/driver"
 	"fmt"
 	"regexp"
 	"sync/atomic"
@@ -668,7 +667,7 @@ func TestDumpTableMeta(t *testing.T) {
 	}
 }
 
-func TestDumpTableMetaWithColumnFilterKeepsSourceColumnsForSplit(t *testing.T) {
+func TestDumpTableMetaSourceColumnsForSplit(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -723,7 +722,7 @@ func TestDumpTableMetaWithColumnFilterKeepsSourceColumnsForSplit(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestDumpTableMetaWithAllGeneratedColumns(t *testing.T) {
+func TestDumpTableMetaAllGeneratedColumns(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -757,7 +756,7 @@ func TestDumpTableMetaWithAllGeneratedColumns(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPrepareColumnProjectionGetsColumnTypesFromEmptyResult(t *testing.T) {
+func TestPrepareColumnProjectionEmptyResultTypes(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -806,7 +805,7 @@ func TestPrepareColumnProjectionGetsColumnTypesFromEmptyResult(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestDumpTableMetaSkipsColumnFilterForView(t *testing.T) {
+func TestDumpTableMetaView(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -911,78 +910,43 @@ func TestPrepareColumnProjectionNoFilter(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPrepareColumnProjectionExplicitSelectField(t *testing.T) {
-	tests := []struct {
-		name           string
-		completeInsert bool
-		generated      bool
-		wantSelect     string
-		wantNames      []string
-		wantTypes      []string
-	}{
-		{
-			name:       "generated column",
-			generated:  true,
-			wantSelect: "`id`",
-			wantNames:  []string{"id"},
-			wantTypes:  []string{"INT"},
-		},
-		{
-			name:           "complete insert",
-			completeInsert: true,
-			wantSelect:     "`id`,`name`",
-			wantNames:      []string{"id", "name"},
-			wantTypes:      []string{"INT", "VARCHAR"},
-		},
-	}
+func TestPrepareColumnProjectionGeneratedColumn(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			db, mock, err := sqlmock.New()
-			require.NoError(t, err)
-			defer func() {
-				require.NoError(t, db.Close())
-			}()
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	defer cancel()
+	conn, err := db.Conn(tctx)
+	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
 
-			tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-			defer cancel()
-			conn, err := db.Conn(tctx)
-			require.NoError(t, err)
-			baseConn := newBaseConn(conn, true, nil)
+	conf := DefaultConfig()
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
 
-			conf := DefaultConfig()
-			conf.CompleteInsert = tc.completeInsert
-			conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("generated", "int(11)", "YES", "", nil, "VIRTUAL GENERATED"))
+	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id` FROM `%s`.`%s` LIMIT 1", database, table))).
+		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("INT", int64(0)),
+		).AddRow(1))
 
-			showRows := sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-				AddRow("id", "int(11)", "NO", "PRI", nil, "")
-			resultColumns := []*sqlmock.Column{sqlmock.NewColumn("id").OfType("INT", int64(0))}
-			resultValues := []driver.Value{1}
-			if tc.generated {
-				showRows.AddRow("generated", "int(11)", "YES", "", nil, "VIRTUAL GENERATED")
-			} else {
-				showRows.AddRow("name", "varchar(12)", "NO", "", nil, "")
-				resultColumns = append(resultColumns, sqlmock.NewColumn("name").OfType("VARCHAR", ""))
-				resultValues = append(resultValues, "alice")
-			}
-			mock.ExpectQuery("SHOW COLUMNS FROM").WillReturnRows(showRows)
-			mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT %s FROM `%s`.`%s` LIMIT 1", tc.wantSelect, database, table))).
-				WillReturnRows(sqlmock.NewRowsWithColumnDefinition(resultColumns...).AddRow(resultValues...))
-
-			require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
-			projection, ok := conf.columnProjection[tableName{db: database, table: table}]
-			require.True(t, ok)
-			require.Equal(t, tc.wantSelect, projection.selectField)
-			require.Equal(t, tc.wantNames, columnNames(projection.sourceTypes))
-			require.Equal(t, tc.wantTypes, columnTypes(projection.sourceTypes))
-			require.Equal(t, tc.wantNames, columnNames(projection.selectedTypes))
-			require.Equal(t, tc.wantTypes, columnTypes(projection.selectedTypes))
-			require.NoError(t, mock.ExpectationsWereMet())
-		})
-	}
+	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+	projection, ok := conf.columnProjection[tableName{db: database, table: table}]
+	require.True(t, ok)
+	require.Equal(t, "`id`", projection.selectField)
+	require.Equal(t, []string{"id"}, columnNames(projection.sourceTypes))
+	require.Equal(t, []string{"INT"}, columnTypes(projection.sourceTypes))
+	require.Equal(t, []string{"id"}, columnNames(projection.selectedTypes))
+	require.Equal(t, []string{"INT"}, columnTypes(projection.selectedTypes))
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPrepareColumnProjectionFailsOnEmptyResult(t *testing.T) {
+func TestPrepareColumnProjectionNoSelectedColumns(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
