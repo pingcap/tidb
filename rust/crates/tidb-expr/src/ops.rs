@@ -819,6 +819,24 @@ fn time_compare_ordering(
     }
 }
 
+/// AUDIT (with [`to_f64`] and [`to_f64_with_mysql_string`] below): the
+/// `unreachable!` and `.expect()` here are the ones a caller can reach with a
+/// datum, so the claim is spelled out rather than asserted.
+///
+/// `Null` and the sentinels are rejected by [`eval_binary_full`]'s own early
+/// returns, `String`/`Bytes` by its top guard, and `Raw`/`VectorFloat32` by
+/// the guard added for them; every remaining kind -- including `Enum`,
+/// `Set`, `Bit`, `BinaryLiteral`, `Time`, `Duration`, `Json` -- has an arm in
+/// `Datum::to_decimal`, so the `.expect()` cannot fire. `extremum` is the
+/// other caller, and it reaches these only after `eval_binary` has already
+/// accepted the same values.
+///
+/// This is a proof about CALLERS, so it lapses if someone calls these from
+/// somewhere new. Note that [`to_f64_with_mysql_string`] is ALREADY called
+/// from `math_fn`, `string_fn` and `builtin_ext::info` on datums those
+/// guards never saw; its fallback silently reads an unconvertible operand as
+/// `0.0` rather than erroring, which is a wrong answer waiting on those
+/// paths, not this one.
 pub(crate) fn to_decimal(v: Datum) -> Decimal {
     match v {
         Datum::Decimal(d) => d,
