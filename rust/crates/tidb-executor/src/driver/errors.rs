@@ -324,6 +324,24 @@ pub enum DriverError {
         /// The offending row's 1-based position.
         row: usize,
     },
+    /// Go `types.ErrWrongValue` (1292) as the write path reports it: the
+    /// SAME message as [`Self::IncorrectValue`] under a different code.
+    ///
+    /// A bad temporal value is 1292, not 1366, because Go raises it from
+    /// `handleZeroDatetime` with `types.ErrWrongValue` -- which is declared
+    /// against `mysql.ErrTruncatedWrongValue` -- before the generic
+    /// column-cast error can be reached. `completeInsertErr` then appends the
+    /// column and row, which is why the two texts coincide.
+    IncorrectTemporalValue {
+        /// The column type's name, as Go `types.TypeStr` prints it.
+        type_name: String,
+        /// The rejected value.
+        value: String,
+        /// The column written.
+        column: String,
+        /// The offending row's 1-based position.
+        row: usize,
+    },
     /// Go `ErrTruncatedWrongValueForField` (1265), row form.
     DataTruncatedAtRow {
         /// The column being modified.
@@ -1835,6 +1853,17 @@ impl DriverError {
         } => MysqlError::new(
             1366,
             *b"HY000",
+            format!("Incorrect {type_name} value: '{value}' for column '{column}' at row {row}"),
+        ),
+        // Go: `types.ErrWrongValue` completed by `completeInsertErr`.
+        DriverError::IncorrectTemporalValue {
+            type_name,
+            value,
+            column,
+            row,
+        } => MysqlError::new(
+            1292,
+            *b"22007",
             format!("Incorrect {type_name} value: '{value}' for column '{column}' at row {row}"),
         ),
         // Go: "Failed to read auto-increment value from storage engine",

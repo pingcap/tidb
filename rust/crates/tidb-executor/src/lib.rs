@@ -82,6 +82,7 @@ pub mod table_access;
 pub mod table_dual;
 pub mod view;
 mod window;
+pub mod zero_date;
 
 pub use apply::ApplyExec;
 pub use ddl::{

@@ -230,6 +230,11 @@ impl Session {
             has("ERROR_FOR_DIVISION_BY_ZERO"),
             has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
         )
+        .with_date_modes(tidb_executor::zero_date::DateModes {
+            no_zero_date: has("NO_ZERO_DATE"),
+            no_zero_in_date: has("NO_ZERO_IN_DATE"),
+            allow_invalid_dates: has("ALLOW_INVALID_DATES"),
+        })
         .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
         .with_session_state(current_db, version)
         .with_user(self.current_user.clone(), self.login_user.clone())

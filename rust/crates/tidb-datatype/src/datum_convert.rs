@@ -102,7 +102,7 @@ impl Datum {
             }
             FieldTypeCode::NewDecimal => self.convert_to_decimal_target(target),
             FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
-                self.convert_to_time_target(target)
+                self.convert_to_time_target(target, flags)
             }
             FieldTypeCode::Duration => self.convert_to_duration_target(target),
             FieldTypeCode::Year => self.convert_to_year(flags),
@@ -341,9 +341,22 @@ impl Datum {
         })
     }
 
+    /// Go `Datum.convertToMysqlTime` / `convertToMysqlTimestamp`.
+    ///
+    /// The two date flags are read off `flags` rather than hardcoded, because
+    /// they are exactly what the SQL mode moves: Go's `Time.Check` takes
+    /// `IgnoreZeroInDate` for `NO_ZERO_IN_DATE` and `IgnoreInvalidDateErr`
+    /// for `ALLOW_INVALID_DATES`, so a `'2024-00-01'` or a `'2024-02-31'`
+    /// either parses into a real value or fails HERE depending on the mode
+    /// the statement runs under.
+    ///
+    /// A failure returns [`DatumValueError::IncorrectTemporal`] carrying the
+    /// zero value of the target type, which is what Go returns in the datum
+    /// beside the error and what the non-strict write path stores.
     fn convert_to_time_target(
         &self,
         target: &FieldType,
+        flags: ConversionFlags,
     ) -> Result<Converted<Self>, DatumValueError> {
         let kind = match target.code() {
             FieldTypeCode::Date => TimeType::Date,
@@ -356,25 +369,38 @@ impl Datum {
         } else {
             target.decimal()
         };
+        let zero_in_date = flags.ignore_zero_in_date_err();
+        let invalid_date = flags.ignore_invalid_date_err();
+        // Go's fallback datum: `NewTime(ZeroCoreTime, tp, DefaultFsp)`.
+        let zero = Time::new(CoreTime::default(), kind, 0).map_err(conversion_error)?;
+        let wrong_value = move |_error| DatumValueError::IncorrectTemporal(zero);
         let mut event = None;
         let time = match self {
             Self::Time(value) => {
                 let (converted, adjusted) = value
-                    .convert_kind(kind, true, false, &Utc)
-                    .map_err(conversion_error)?;
+                    .convert_kind(kind, zero_in_date, invalid_date, &Utc)
+                    .map_err(wrong_value)?;
                 if adjusted {
                     event = Some(ScalarConversionEvent::Truncated);
                 }
-                converted.round_frac(fsp, &Utc).map_err(conversion_error)?
+                converted.round_frac(fsp, &Utc).map_err(wrong_value)?
             }
             Self::Duration(value) => value
-                .convert_to_time(Utc::now(), kind, true, false)
+                .convert_to_time(Utc::now(), kind, zero_in_date, invalid_date)
                 .and_then(|time| time.round_frac(fsp, &Utc))
-                .map_err(conversion_error)?,
+                .map_err(wrong_value)?,
             Self::String(value) => {
-                parse_time(value.as_utf8()?, kind, fsp, false, true, false, &Utc)
-                    .map_err(conversion_error)?
-                    .time
+                parse_time(
+                    value.as_utf8()?,
+                    kind,
+                    fsp,
+                    false,
+                    zero_in_date,
+                    invalid_date,
+                    &Utc,
+                )
+                .map_err(wrong_value)?
+                .time
             }
             Self::Bytes(value) => {
                 parse_time(
@@ -382,33 +408,41 @@ impl Datum {
                     kind,
                     fsp,
                     false,
-                    true,
-                    false,
+                    zero_in_date,
+                    invalid_date,
                     &Utc,
                 )
-                .map_err(conversion_error)?
+                .map_err(wrong_value)?
                 .time
             }
             Self::Int(value) => {
-                parse_time_from_num(*value, kind, fsp, true, false, &Utc)
-                    .map_err(conversion_error)?
+                parse_time_from_num(*value, kind, fsp, zero_in_date, invalid_date, &Utc)
+                    .map_err(wrong_value)?
                     .time
             }
             Self::UInt(value) if *value <= i64::MAX as u64 => {
-                parse_time_from_num(*value as i64, kind, fsp, true, false, &Utc)
-                    .map_err(conversion_error)?
+                parse_time_from_num(*value as i64, kind, fsp, zero_in_date, invalid_date, &Utc)
+                    .map_err(wrong_value)?
                     .time
             }
             Self::Decimal(value) => {
-                let mut time =
-                    parse_time_from_decimal(value, true, false, &Utc).map_err(conversion_error)?;
+                let mut time = parse_time_from_decimal(value, zero_in_date, invalid_date, &Utc)
+                    .map_err(wrong_value)?;
                 time.set_kind(kind);
-                time.round_frac(fsp, &Utc).map_err(conversion_error)?
+                time.round_frac(fsp, &Utc).map_err(wrong_value)?
             }
             Self::Json(value) => {
-                parse_time(&value.unquote()?, kind, fsp, false, true, false, &Utc)
-                    .map_err(conversion_error)?
-                    .time
+                parse_time(
+                    &value.unquote()?,
+                    kind,
+                    fsp,
+                    false,
+                    zero_in_date,
+                    invalid_date,
+                    &Utc,
+                )
+                .map_err(wrong_value)?
+                .time
             }
             _ => return Err(DatumValueError::Unsupported(self.kind(), "time")),
         };

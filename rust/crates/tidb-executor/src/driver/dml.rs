@@ -611,16 +611,26 @@ pub(crate) fn cast_value_for_column(
     if value.is_null() {
         return Ok(value);
     }
-    let converted = value
-        .convert_to(field_type, ctx.write_conversion_flags())
-        .map_err(|error| {
-            json_write_error(&error).unwrap_or(DriverError::IncorrectValue {
-                type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
-                value: datum_error_text(&value),
-                column: column.to_owned(),
-                row: row_index + 1,
-            })
-        })?;
+    let incorrect_value = || DriverError::IncorrectValue {
+        type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
+        value: datum_error_text(&value),
+        column: column.to_owned(),
+        row: row_index + 1,
+    };
+    let converted = match value.convert_to(field_type, ctx.write_conversion_flags()) {
+        Ok(converted) => converted,
+        // Go returns the value BESIDE the error here, and the temporal seam
+        // is the one place the write path needs it: without `NO_ZERO_DATE`
+        // and friends a bad date is stored as the zero date with a warning,
+        // so an error with no value would have nothing to store.
+        Err(tidb_datatype::DatumValueError::IncorrectTemporal(fallback)) => {
+            return apply_zero_date(fallback, true, field_type, &value, column, row_index, ctx);
+        }
+        Err(error) => return Err(json_write_error(&error).unwrap_or_else(incorrect_value)),
+    };
+    if let tidb_datatype::Datum::Time(time) = converted.value {
+        return apply_zero_date(time, false, field_type, &value, column, row_index, ctx);
+    }
     let Some(event) = converted.event else {
         return Ok(converted.value);
     };
@@ -647,12 +657,7 @@ pub(crate) fn cast_value_for_column(
         // `RoundedToScale` already returned above as silent; it is listed only
         // to keep this match exhaustive.
         tidb_datatype::ScalarConversionEvent::Truncated
-        | tidb_datatype::ScalarConversionEvent::RoundedToScale => DriverError::IncorrectValue {
-            type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
-            value: datum_error_text(&value),
-            column: column.to_owned(),
-            row: row_index + 1,
-        },
+        | tidb_datatype::ScalarConversionEvent::RoundedToScale => incorrect_value(),
     };
     if ctx.strict() {
         return Err(error);
@@ -660,6 +665,51 @@ pub(crate) fn cast_value_for_column(
     let reported = error.to_mysql_error();
     ctx.append_warning_parts(reported.code, &reported.message);
     Ok(converted.value)
+}
+
+/// Go `table.CastValue`'s temporal arm: runs `handleZeroDatetime` over the
+/// converted value and turns its verdict into a stored value, a warning plus
+/// a stored value, or a statement error.
+///
+/// `was_invalid` is Go's `tmIsInvalid` -- whether the conversion reported
+/// `ErrWrongValue` -- and it is a separate input from "the value is zero"
+/// because the two mean different things: a zero that the SOURCE asked for
+/// is only a problem under `NO_ZERO_DATE`, while a zero that a FAILED
+/// conversion produced is always one.
+#[allow(clippy::too_many_arguments)]
+fn apply_zero_date(
+    converted: tidb_datatype::Time,
+    was_invalid: bool,
+    field_type: &FieldType,
+    source: &Datum,
+    column: &str,
+    row_index: usize,
+    ctx: &crate::StmtContext,
+) -> Result<Datum, DriverError> {
+    use crate::zero_date::ZeroDateAction;
+
+    let action = crate::zero_date::handle_zero_datetime(
+        field_type.code(),
+        converted,
+        was_invalid,
+        ctx.date_modes(),
+        ctx.strict(),
+    );
+    let error = || DriverError::IncorrectTemporalValue {
+        type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
+        value: datum_error_text(source),
+        column: column.to_owned(),
+        row: row_index + 1,
+    };
+    match action {
+        ZeroDateAction::Store(value) => Ok(value),
+        ZeroDateAction::WarnAndStore(value) => {
+            let reported = error().to_mysql_error();
+            ctx.append_warning_parts(reported.code, &reported.message);
+            Ok(value)
+        }
+        ZeroDateAction::Refuse => Err(error()),
+    }
 }
 
 /// The `json`-class error a write into a JSON column reports as its own.

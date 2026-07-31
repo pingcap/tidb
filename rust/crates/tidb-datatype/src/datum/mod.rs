@@ -130,6 +130,17 @@ pub enum DatumValueError {
     Json(BinaryJSONError),
     /// A source comparison conversion failed.
     Comparison(String),
+    /// A DATE/DATETIME/TIMESTAMP source did not form a value the target
+    /// accepts -- Go `types.ErrWrongValue`, MySQL 1292.
+    ///
+    /// It carries the value Go returns BESIDE the error: `convertToMysqlTime`
+    /// and `convertToMysqlTimestamp` both do `ret.SetMysqlTime(t)` before
+    /// returning, and `table.CastValue`'s `handleZeroDatetime` reads that
+    /// datum on the very path where the error is downgraded to a warning. An
+    /// error with no value would leave the non-strict write path with nothing
+    /// to store; every caller that only wants the failure can still ignore
+    /// the payload.
+    IncorrectTemporal(Time),
 }
 
 impl fmt::Display for DatumValueError {
@@ -141,6 +152,7 @@ impl fmt::Display for DatumValueError {
             Self::InvalidUtf8(error) => error.fmt(formatter),
             Self::Json(error) => error.fmt(formatter),
             Self::Comparison(error) => formatter.write_str(error),
+            Self::IncorrectTemporal(_) => formatter.write_str("incorrect temporal value"),
         }
     }
 }

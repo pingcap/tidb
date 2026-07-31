@@ -40,6 +40,11 @@ pub struct StmtContext {
     warnings: Rc<RefCell<Vec<(u16, String)>>>,
     division_by_zero: ErrorLevel,
     strict: bool,
+    /// Go `SessionVars.SQLMode`'s three temporal bits; see
+    /// [`crate::zero_date`]. They ride the context rather than being derived
+    /// from `strict` because each answers a different question and TiDB's
+    /// default mode happens to set two of them at once.
+    date_modes: crate::zero_date::DateModes,
     current_db: Option<String>,
     version: Option<String>,
     current_user: Option<String>,
@@ -225,6 +230,7 @@ impl StmtContext {
             warnings: Rc::default(),
             division_by_zero,
             strict,
+            date_modes: crate::zero_date::DateModes::default(),
             current_db: None,
             version: None,
             current_user: None,
@@ -433,6 +439,19 @@ impl StmtContext {
         self.strict
     }
 
+    /// Attaches `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` and `ALLOW_INVALID_DATES`.
+    #[must_use]
+    pub fn with_date_modes(mut self, date_modes: crate::zero_date::DateModes) -> Self {
+        self.date_modes = date_modes;
+        self
+    }
+
+    /// The SQL mode's temporal bits; see [`crate::zero_date`].
+    #[must_use]
+    pub fn date_modes(&self) -> crate::zero_date::DateModes {
+        self.date_modes
+    }
+
     /// Go `StatementContext.TypeFlags` in the part conversion reads: a
     /// non-strict statement tolerates truncation instead of failing.
     #[must_use]
@@ -457,17 +476,20 @@ impl StmtContext {
     /// the strict mode's 1264 was already right -- a silently wrong VALUE
     /// with a correct-looking error path beside it.
     ///
-    /// NOT MODELLED, and named rather than guessed: `WithTruncateAsWarning`,
-    /// `WithIgnoreInvalidDateErr` and `WithIgnoreZeroInDate`. The first is
-    /// applied a level up instead -- `cast_value_for_column` reads
-    /// [`Self::strict`] to decide whether a conversion event is an error or a
-    /// warning -- and the last two need the `NO_ZERO_IN_DATE`,
-    /// `NO_ZERO_DATE` and `ALLOW_INVALID_DATES` mode bits, which this context
-    /// does not carry yet.
+    /// `WithIgnoreInvalidDateErr` and `WithIgnoreZeroInDate` come from
+    /// [`crate::zero_date::write_date_flags`], which needs the mode bits
+    /// [`Self::date_modes`] carries. NOT MODELLED, and named rather than
+    /// guessed: `WithTruncateAsWarning`, which is applied a level up instead
+    /// -- `cast_value_for_column` reads [`Self::strict`] to decide whether a
+    /// conversion event is an error or a warning.
     #[must_use]
     pub fn write_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
-        self.conversion_flags()
-            .with_allow_negative_to_unsigned(false)
+        crate::zero_date::write_date_flags(
+            self.conversion_flags()
+                .with_allow_negative_to_unsigned(false),
+            self.date_modes,
+            self.strict,
+        )
     }
 
     /// Records a warning the driver rendered itself.
