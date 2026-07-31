@@ -182,7 +182,9 @@ impl KvTable {
     ///
     /// A common-handle (clustered non-integer primary key) table is refused:
     /// the merge below addresses rows by their integer handle, so a handle
-    /// this cursor cannot compare is a shape it must not claim to serve.
+    /// this cursor cannot compare is a shape it must not claim to serve. So is
+    /// a scan whose handle ranges cover no record at all, which a coprocessor
+    /// request cannot express.
     pub fn pushdown_row_cursor(
         &mut self,
         keep: &[usize],
@@ -197,6 +199,18 @@ impl KvTable {
         // has several, so the request cannot describe it and the local scan
         // (which spans the whole partition block) serves the read instead.
         if self.partition.is_some() {
+            return Ok(None);
+        }
+        let ranges = self.record_key_ranges(handle_ranges);
+        // No range at all is a read of NOTHING -- `id > 100 AND id < 100`, or a
+        // bound that is NULL -- and a coprocessor request has no way to say
+        // that: its `Ranges` list is what the transport turns into region
+        // tasks, so an empty one is a malformed request rather than an empty
+        // answer (`tidb_distsql`'s `metadata_region_ranges` rejects it as
+        // `missing_ranges`). The local cursor states it exactly, by opening no
+        // iterator, so the read goes there. Go plans a `TableDual` for the same
+        // shape and sends no request either.
+        if ranges.is_empty() {
             return Ok(None);
         }
         let mut columns: Vec<PushdownScanColumn> = keep
@@ -244,7 +258,7 @@ impl KvTable {
             // The storage that owns the snapshot fills this in; the table has
             // no timestamp of its own.
             snapshot_ts: 0,
-            ranges: self.record_key_ranges(handle_ranges),
+            ranges,
         };
         let Some(scan) = self.store.open_remote_scan(&request) else {
             return Ok(None);

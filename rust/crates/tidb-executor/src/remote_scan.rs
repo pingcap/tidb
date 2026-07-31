@@ -243,6 +243,10 @@ mod tests {
     struct FakeCoprocessor {
         snapshot: Arc<Mutex<MockSnapshot>>,
         columns: Vec<KvColumn>,
+        /// The column a clustered integer primary key lives in, which the
+        /// region's own decode needs: those bytes are in the record KEY, not
+        /// the value.
+        pk_handle_offset: Option<usize>,
         /// Rows that crossed the wire, across every scan.
         returned: Arc<AtomicU64>,
         /// Rows the coprocessor read before its own filter.
@@ -254,6 +258,16 @@ mod tests {
             &self,
             request: &PushdownScanRequest,
         ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
+            // The real transport refuses a request with no ranges before it
+            // reaches a store: `metadata_region_ranges` in
+            // `tidb_distsql::cop_paging` answers `missing_ranges`, because the
+            // range list is what it turns into region tasks. A fake that
+            // quietly returned no rows would hide exactly that.
+            if request.ranges.is_empty() {
+                return Err(PushdownScannerError::Backend(StorageError::Backend(
+                    "missing_ranges".to_owned(),
+                )));
+            }
             // The region's committed bytes for the requested key range.
             let mut store = MemTableStorage::new();
             {
@@ -266,6 +280,9 @@ mod tests {
             }
             let mut table =
                 KvTable::with_storage(request.table_id, self.columns.clone(), Box::new(store));
+            if let Some(offset) = self.pk_handle_offset {
+                table.set_pk_handle_offset(offset);
+            }
             // Every requested column that is one of the table's own; the
             // appended handle column is not, and is filled from the key.
             let appended_handle =
@@ -439,6 +456,16 @@ mod tests {
 
     /// A cluster-backed `t(a, b)` whose scans go through the coprocessor.
     fn fixture() -> Fixture {
+        fixture_with(None)
+    }
+
+    /// [`fixture`] with `a` as the clustered integer handle, so a `WHERE` over
+    /// it builds handle ranges.
+    fn clustered_fixture() -> Fixture {
+        fixture_with(Some(0))
+    }
+
+    fn fixture_with(pk_handle_offset: Option<usize>) -> Fixture {
         let snapshot = Arc::new(Mutex::new(MockSnapshot::default()));
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
         let buffer = MutationBuffer::new();
@@ -450,11 +477,16 @@ mod tests {
             columns: columns.clone(),
             returned: Arc::clone(&returned),
             scanned: Arc::clone(&scanned),
+            pk_handle_offset,
         });
         let storage = ClusterTableStorage::new(buffer.clone(), handle)
             .with_remote_scanner(scanner as Arc<dyn PushdownScanner>);
+        let mut table = KvTable::with_storage(91, columns, Box::new(storage));
+        if let Some(offset) = pk_handle_offset {
+            table.set_pk_handle_offset(offset);
+        }
         Fixture {
-            table: KvTable::with_storage(91, columns, Box::new(storage)),
+            table,
             buffer,
             snapshot,
             returned,
@@ -503,6 +535,64 @@ mod tests {
             fixture.returned.load(Ordering::Relaxed),
             3,
             "but only the qualifying rows crossed the network"
+        );
+    }
+
+    /// A clustered handle whose `WHERE` admits NO handle at all reads nothing
+    /// -- it does not send a coprocessor request with no ranges.
+    ///
+    /// Both halves matter. `id > 97 AND id < 97` and a NULL bound each build an
+    /// EMPTY range list, which the local cursor states exactly by opening no
+    /// iterator; the coprocessor's `Ranges` list cannot state it, and the
+    /// transport rejects the request instead (`missing_ranges`). The control
+    /// below keeps the ordinary narrowed range on the coprocessor, so this is
+    /// not "stop pushing ranges down".
+    #[test]
+    fn an_empty_handle_range_reads_nothing_instead_of_a_rangeless_request() {
+        let mut fixture = clustered_fixture();
+        for a in 1..=100 {
+            fixture
+                .table
+                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.returned.store(0, Ordering::Relaxed);
+
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        assert_eq!(
+            run_select_on("SELECT a FROM t WHERE a > 97 AND a < 97", &catalog, &ctx).unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT a FROM t WHERE a BETWEEN NULL AND NULL",
+                &catalog,
+                &ctx
+            )
+            .unwrap(),
+            Vec::<Vec<Datum>>::new()
+        );
+        assert_eq!(
+            fixture.returned.load(Ordering::Relaxed),
+            0,
+            "no row crossed the network for a range that admits none"
+        );
+
+        // Control: a range that DOES admit rows still reaches the coprocessor.
+        assert_eq!(
+            run_select_on("SELECT a FROM t WHERE a BETWEEN 98 AND 100", &catalog, &ctx).unwrap(),
+            vec![
+                vec![Datum::Int(98)],
+                vec![Datum::Int(99)],
+                vec![Datum::Int(100)]
+            ]
+        );
+        assert_eq!(
+            fixture.returned.load(Ordering::Relaxed),
+            3,
+            "the narrowed range is still served remotely"
         );
     }
 
