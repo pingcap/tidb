@@ -151,7 +151,11 @@ func MatchSQLBindingWithCache(sctx sessionctx.Context, stmtNode ast.StmtNode, in
 	}
 	cache := getMatchSQLBindingCache(sessionVars, stmtNode)
 	if intest.InTest {
-		binding, matched, scope = matchSQLBindingCore(sctx, sessionVars, stmtNode, nil)
+		// Prepared statements may cache binding info before AST rewrites.
+		if cache != nil && info == nil {
+			return cache.binding, cache.matched, cache.scope
+		}
+		binding, matched, scope = matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
 		assertMatchSQLBinding(cache, matched, binding, scope)
 		return
 	}

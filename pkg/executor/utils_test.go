@@ -233,6 +233,9 @@ func TestWorkerPool(t *testing.T) {
 				return workers < 2 && tasks > 0
 			},
 		}
+		secondWorkerStarted := make(chan struct{})
+		finishSecondWorker := make(chan struct{})
+		errCh := make(chan string, 1)
 		wg := sync.WaitGroup{}
 		wg.Add(1)
 		pool.submit(func() {
@@ -240,15 +243,30 @@ func TestWorkerPool(t *testing.T) {
 			wg.Add(1)
 			pool.submit(func() {
 				push(3)
-				sleep(10)
+				close(secondWorkerStarted)
+				<-finishSecondWorker
 				push(4)
 				wg.Done()
 			})
-			sleep(1)
+			select {
+			case <-secondWorkerStarted:
+			case <-time.After(5 * time.Second):
+				errCh <- "the second worker did not start the queued task"
+				close(finishSecondWorker)
+				wg.Done()
+				return
+			}
 			push(2)
+			close(finishSecondWorker)
 			wg.Done()
 		})
 		wg.Wait()
+		select {
+		case err := <-errCh:
+			require.Fail(t, err)
+			return
+		default:
+		}
 		require.Equal(t, []int{1, 3, 2, 4}, list)
 	})
 
