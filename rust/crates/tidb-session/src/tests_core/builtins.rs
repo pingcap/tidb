@@ -128,6 +128,74 @@ fn time_compared_with_strings_and_numbers() {
     );
 }
 
+/// `1292 Truncated incorrect DOUBLE value` end to end, through a real
+/// session's chunk executor onto `SHOW WARNINGS`.
+///
+/// The values below always matched TiDB; the WARNINGS did not exist at all,
+/// because `crate::expr`'s values-only dispatch had no statement context to
+/// raise them on. Since the integration suite records `SHOW WARNINGS`, a
+/// statement could agree on every data row and still diverge on the warning
+/// line, which is why the count and text are asserted here and not just the
+/// presence of a warning.
+///
+/// Every expectation is a `gorun` capture. The one that constrains the design
+/// hardest is the last: Go raises the warning ONCE PER COERCION, so three rows
+/// read through two coercing sites record SIX warnings, in row order.
+#[test]
+fn numeric_prefix_strings_warn_once_per_coercion() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a VARCHAR(20))").unwrap();
+    session
+        .run("INSERT INTO t VALUES ('12abc'),('3x'),('zz')")
+        .unwrap();
+    let truncated = |text: &str| (1292, format!("Truncated incorrect DOUBLE value: '{text}'"));
+    let seen = |session: &Session| -> Vec<(u16, String)> {
+        session
+            .warnings()
+            .iter()
+            .map(|w| (w.code, w.message.clone()))
+            .collect()
+    };
+
+    // A constant argument: the value was already right, the warning was not
+    // raised at all.
+    assert_eq!(row_text(session.run("SELECT ABS('12abc')")), [["12"]]);
+    assert_eq!(seen(&session), [truncated("12abc")]);
+
+    // A comparison promoted to REAL raises the same warning. (Plain
+    // ARITHMETIC over a string operand is still `Unsupported` here -- see
+    // `tidb_expr::binary_literal`'s standing no-string-coercion boundary --
+    // so it has no row yet; when that boundary moves, the warning is already
+    // wired.)
+    assert_eq!(row_text(session.run("SELECT '12abc' = 12")), [["1"]]);
+    assert_eq!(seen(&session), [truncated("12abc")]);
+
+    // A complete number, a padded one, and the empty string are all silent
+    // -- the last only because the engine reaches the coercion through a
+    // function cast.
+    assert_eq!(row_text(session.run("SELECT ABS(' 12 ')")), [["12"]]);
+    assert_eq!(seen(&session), []);
+    assert_eq!(row_text(session.run("SELECT ABS('')")), [["0"]]);
+    assert_eq!(seen(&session), []);
+
+    // One per row, in row order.
+    assert_eq!(
+        row_text(session.run("SELECT ABS(a) FROM t")),
+        [["12"], ["3"], ["0"]]
+    );
+    assert_eq!(
+        seen(&session),
+        [truncated("12abc"), truncated("3x"), truncated("zz")]
+    );
+
+    // Two coercing sites over three rows: six warnings, not three.
+    assert_eq!(
+        row_text(session.run("SELECT ABS(a), SIGN(a) FROM t")),
+        [["12", "1"], ["3", "1"], ["0", "0"]]
+    );
+    assert_eq!(seen(&session).len(), 6, "one warning per coercion per row");
+}
+
 /// The math, conditional and TRIM builtins through the chunk executor,
 /// checked against captured TiDB output -- including the result TYPES,
 /// which are what size a chunk cell.
