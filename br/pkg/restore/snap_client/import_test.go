@@ -646,7 +646,7 @@ func TestBatchDownloadLatestMVCCParallelizesFileGroupsPerPeer(t *testing.T) {
 func TestBatchDownloadLatestMVCCSkipsDefaultOnlyFileGroups(t *testing.T) {
 	ctx := context.Background()
 	splitClient := split.NewFakeSplitClient()
-	splitClient.AppendPdRegion(&pd.Region{
+	splitClient.AppendPdRegion(&router.Region{
 		Meta: &metapb.Region{
 			Id:       1,
 			StartKey: codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(1)),
