@@ -528,6 +528,8 @@ mod tests_views;
 #[cfg(test)]
 mod tests_window;
 #[cfg(test)]
+mod tests_read_cast;
+#[cfg(test)]
 mod tests_write_conversion;
 #[cfg(test)]
 mod tests_zero_date;
