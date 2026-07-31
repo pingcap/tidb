@@ -731,6 +731,124 @@ fn a_point_write_opens_no_scan_at_all() {
     }
 }
 
+/// The keys a point WRITE makes newly reachable, each checked by its EFFECT
+/// on the table.
+///
+/// A write that takes the wrong path does not return a wrong answer, it
+/// modifies the wrong rows. These are the shapes where "reads by key" and
+/// "scans and filters" could disagree, and they are the shapes the write path
+/// had never reached before, because a scan reached the row no matter what
+/// the key logic thought.
+#[test]
+fn a_point_write_keys_the_row_a_scan_would_have_filtered_to() {
+    // A NULL bound pins no key: Go's `getNameValuePairs` returns nil for a
+    // NULL datum, so this is not a point plan at all -- and `id = NULL` is
+    // UNKNOWN for every row, so the write must touch NOTHING. Answering it
+    // by "look up the NULL key, find no record" would be right by accident;
+    // answering it by keying NULL as zero would delete row 0.
+    let mut session = sbtest1_with_rows();
+    session.run("DELETE FROM sbtest1 WHERE id = NULL").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT COUNT(*) FROM sbtest1")),
+        vec![vec!["13".to_owned()]]
+    );
+
+    // A constant that is not written as an integer. The key is the constant
+    // IN THE COLUMN'S DOMAIN or there is no point plan
+    // (`driver::point_get_key`), so `150.0` and `'150'` key row 150 and
+    // `150.5` keys nothing and reaches the row through a scan that matches
+    // nothing either.
+    for (predicate, operator, survivors) in [
+        ("id = 150.0", "Point_Get_1", 12),
+        ("id = '150'", "Point_Get_1", 12),
+        ("id = 150.5", "TableRangeScan_1", 13),
+    ] {
+        let mut session = sbtest1_with_rows();
+        assert_eq!(
+            source_row(
+                &mut session,
+                &format!("EXPLAIN DELETE FROM sbtest1 WHERE {predicate}")
+            )[0],
+            operator,
+            "`{predicate}` took the wrong access path"
+        );
+        session
+            .run(&format!("DELETE FROM sbtest1 WHERE {predicate}"))
+            .unwrap();
+        assert_eq!(
+            row_text(session.run("SELECT COUNT(*) FROM sbtest1")),
+            vec![vec![survivors.to_string()]],
+            "`{predicate}` removed the wrong number of rows"
+        );
+    }
+
+    // An UNSIGNED handle above `i64::MAX`. `handle_range` REFUSES to range
+    // over an unsigned handle (its record keys are not the interval their
+    // bounds read like), so before this unit such a write always scanned.
+    // The point plan does not refuse it: it keys the row by the same
+    // reinterpretation the read side keys a `SELECT` by, and the row was
+    // STORED under that same key. The adjacent handle is seeded so keying
+    // the wrong one is visible.
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE u (id BIGINT UNSIGNED PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO u VALUES (18446744073709551615, 1), (18446744073709551614, 2), (7, 3)")
+        .unwrap();
+    assert_eq!(
+        source_row(
+            &mut session,
+            "EXPLAIN UPDATE u SET v = 99 WHERE id = 18446744073709551615"
+        )[0],
+        "Point_Get_1",
+        "the unsigned handle must reach the point plan, not fall back to a scan"
+    );
+    session
+        .run("UPDATE u SET v = 99 WHERE id = 18446744073709551615")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id, v FROM u ORDER BY id")),
+        vec![
+            vec!["7".to_owned(), "3".to_owned()],
+            vec!["18446744073709551614".to_owned(), "2".to_owned()],
+            vec!["18446744073709551615".to_owned(), "99".to_owned()],
+        ]
+    );
+
+    // A whole UNIQUE INDEX pinned instead of the handle: Go's point plan
+    // covers this too, and it is the one arm that reads an index entry to
+    // find the key. The extra conjunct is the guard that the `WHERE` is
+    // still evaluated above the fetch -- the key did not pin `v`, so a
+    // point plan that dropped the filter would change the row anyway.
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE q (id INT PRIMARY KEY, uk INT UNIQUE, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO q VALUES (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+        .unwrap();
+    assert_eq!(
+        source_row(&mut session, "EXPLAIN UPDATE q SET v = 0 WHERE uk = 20")[0],
+        "Point_Get_1",
+        "a pinned unique index must reach the point plan"
+    );
+    session.run("UPDATE q SET v = 0 WHERE uk = 20").unwrap();
+    session
+        .run("UPDATE q SET v = 7 WHERE uk = 30 AND v = 999")
+        .unwrap();
+    // A unique key no row carries.
+    session.run("DELETE FROM q WHERE uk = 40").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id, v FROM q ORDER BY id")),
+        vec![
+            vec!["1".to_owned(), "100".to_owned()],
+            vec!["2".to_owned(), "0".to_owned()],
+            vec!["3".to_owned(), "300".to_owned()],
+        ]
+    );
+}
+
 /// The RECORDS a narrowed write actually reads, from `EXPLAIN ANALYZE`'s
 /// `actRows` -- the receipt no plan assertion can give.
 ///
