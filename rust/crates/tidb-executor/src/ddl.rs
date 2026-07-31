@@ -648,6 +648,7 @@ fn column_default_error(error: crate::column_default::DefaultError, column: &str
         DefaultError::FunctionNotAllowed(function) => {
             DriverError::DefaultFunctionNotAllowed(column.to_owned(), function)
         }
+        DefaultError::InvalidDefault => DriverError::InvalidDefault(column.to_owned()),
         DefaultError::Unsupported(reason) => DriverError::Unsupported(reason),
     }
 }

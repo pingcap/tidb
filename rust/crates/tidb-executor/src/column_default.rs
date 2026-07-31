@@ -33,7 +33,9 @@
 //! * `DEFAULT CURRENT_TIMESTAMP` on a `TIMESTAMP`/`DATETIME` column stores the
 //!   marker word and leaves `DefaultIsExpr` FALSE, so
 //!   `pkg/executor/show.go`'s `case "CURRENT_TIMESTAMP"` prints it bare, with
-//!   the column's own fsp appended when it has one.
+//!   the column's own fsp appended when it has one. The fsp the default is
+//!   WRITTEN with must already equal the column's, which is why the printer
+//!   never has to choose between them -- see [`func_call_default`].
 //! * every other computed default sets `DefaultIsExpr` TRUE, and the same
 //!   printer's `default:` arm wraps it: `` DEFAULT (`rand()`) `` without the
 //!   quotes a literal default would get.
@@ -164,6 +166,9 @@ pub enum DefaultError {
     /// names a function TiDB does not allow there. The payload is the
     /// function name as Go reports it.
     FunctionNotAllowed(String),
+    /// Go `dbterror.ErrInvalidDefaultValue` (1067): the default is not one
+    /// this column can carry. The caller names the column.
+    InvalidDefault,
     /// A form Go accepts that this tier does not model yet, named so a
     /// refusal says which.
     Unsupported(&'static str),
@@ -189,6 +194,20 @@ fn clock_marker_call(expr: &Expr) -> Option<&[Expr]> {
             [only] if is_clock_marker(only) => Some(&[]),
             _ => None,
         },
+        _ => None,
+    }
+}
+
+/// The fsp an explicit `CURRENT_TIMESTAMP(n)` argument names.
+///
+/// Go reads it as `expr.Args[0].(*driver.ValueExpr).GetInt64()`, so a
+/// non-integer there is not a value it has a reading for; `None` folds to the
+/// same 0 Go's zero-valued `ValueExpr` would give, which a column with an fsp
+/// then rejects. The parser admits only an integer literal in this position,
+/// so `None` is unreachable for a statement that parsed.
+fn clock_fsp_argument(arg: &Expr) -> Option<i64> {
+    match arg {
+        Expr::Int(digits) => digits.parse().ok(),
         _ => None,
     }
 }
@@ -225,16 +244,18 @@ fn func_call_default(
         ) {
             return Ok(None);
         }
-        // Go `getFuncCallDefaultValue` compares an explicit fsp argument
-        // against the COLUMN's fsp and answers 1067 when they differ. This
-        // tier stores a temporal type's written `(n)` in `flen` rather than in
-        // `decimal`, so it has no faithful reading of the column's fsp to
-        // compare against; the written form is refused by name rather than
-        // accepted under a rule that might be the wrong one.
-        if !args.is_empty() {
-            return Err(DefaultError::Unsupported(
-                "a DEFAULT CURRENT_TIMESTAMP with an explicit fsp argument",
-            ));
+        // Go `getFuncCallDefaultValue`: the fsp WRITTEN on the default -- 0
+        // when it is written bare -- must EQUAL the column's own, so
+        // `DATETIME(3)` demands `CURRENT_TIMESTAMP(3)` and refuses the bare
+        // word just as firmly as it refuses `CURRENT_TIMESTAMP(2)`. Go reads
+        // the argument only when there is exactly one; any other arity leaves
+        // the written fsp at 0, which a column with an fsp then rejects.
+        let written_fsp = match args {
+            [only] => clock_fsp_argument(only).unwrap_or(0),
+            _ => 0,
+        };
+        if written_fsp != field_type.decimal() {
+            return Err(DefaultError::InvalidDefault);
         }
         return Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
             // Go stores the marker word itself, not the written spelling, so
