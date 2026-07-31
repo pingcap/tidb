@@ -804,6 +804,7 @@ mod tests_push_down_verdict {
                 ],
                 offset: 0,
                 determinants: Vec::new(),
+                func_deps: Default::default(),
             }],
             ..FromScope::default()
         }

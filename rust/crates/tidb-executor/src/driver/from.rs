@@ -201,6 +201,68 @@ fn table_determinants(entry: &TableEntry, columns: &[(String, FieldType)]) -> Ve
         .collect()
 }
 
+/// Go `DataSource.ExtractFD`'s per-table facts, for
+/// [`FromTable::func_deps`].
+///
+/// The same indexes [`table_determinants`] reads, split by strength instead of
+/// filtered: a UNIQUE index with a nullable column is not dropped but kept as
+/// a LAX key, which a `WHERE` proving its nullable members non-null promotes.
+/// Generated columns are added as Go adds them -- one level each, letting the
+/// graph chain `c AS (a+2)`, `d AS (c+2)` into `{a} --> {d}`.
+fn table_func_deps(
+    entry: &TableEntry,
+    columns: &[(String, FieldType)],
+) -> crate::driver::funcdep::TableFuncDeps {
+    const NOT_NULL_FLAG: u32 = 1;
+    let mut deps = crate::driver::funcdep::TableFuncDeps::default();
+    let TableEntry::Kv(kv) = entry else {
+        return deps;
+    };
+    let not_null = |offsets: &[usize]| {
+        offsets.iter().all(|&offset| {
+            columns
+                .get(offset)
+                .is_some_and(|(_, ft)| ft.flags() & NOT_NULL_FLAG != 0)
+        })
+    };
+    let in_scope = |offsets: &[usize]| offsets.iter().all(|&offset| offset < columns.len());
+
+    let handle_key = kv
+        .pk_handle_offset()
+        .map(|offset| vec![offset])
+        .unwrap_or_else(|| kv.common_handle_offsets().to_vec());
+    for key in std::iter::once(handle_key).chain(
+        kv.indexes()
+            .iter()
+            .filter(|index| index.unique)
+            .map(|index| index.column_offsets.clone()),
+    ) {
+        if key.is_empty() || !in_scope(&key) {
+            continue;
+        }
+        if not_null(&key) {
+            deps.strict_keys.push(key);
+        } else {
+            deps.lax_keys.push(key);
+        }
+    }
+    for (offset, column) in kv.columns.iter().enumerate() {
+        if offset >= columns.len() {
+            break;
+        }
+        if let Some(generation) = crate::generated_column::GeneratedColumnSlot::generation(column) {
+            if !generation.dependencies.is_empty() && in_scope(&generation.dependencies) {
+                deps.generated
+                    .push((generation.dependencies.clone(), offset));
+            }
+        }
+        if column.field_type.flags() & NOT_NULL_FLAG != 0 {
+            deps.not_null.push(offset);
+        }
+    }
+    deps
+}
+
 /// Builds the `FROM` scope and the executor that produces its rows.
 ///
 /// Go's `buildJoin` builds a left-deep tree of `LogicalJoin`s over the
@@ -297,6 +359,7 @@ pub(crate) fn build_from(
                     // longer names the table once it is aliased.
                     database: table_ref.alias.is_none().then(|| database.to_owned()),
                     determinants: table_determinants(entry, &columns),
+                    func_deps: table_func_deps(entry, &columns),
                     columns,
                     offset: 0,
                 }],
@@ -407,6 +470,7 @@ pub(crate) fn build_derived_source(
             columns,
             offset: 0,
             determinants: Vec::new(),
+            func_deps: Default::default(),
         }],
         ..FromScope::default()
     };
@@ -616,6 +680,7 @@ pub(crate) fn build_lateral_join(
         columns: columns.clone(),
         offset: left_width,
         determinants: Vec::new(),
+        func_deps: Default::default(),
     });
 
     let inner_width = columns.len();
@@ -780,6 +845,7 @@ pub(crate) fn build_view_source(
             columns,
             offset: 0,
             determinants: Vec::new(),
+            func_deps: Default::default(),
         }],
         ..FromScope::default()
     };
@@ -989,6 +1055,7 @@ pub(crate) fn build_join(
             columns: table.columns,
             offset: table.offset + left_width,
             determinants: table.determinants,
+            func_deps: table.func_deps,
         });
     }
 

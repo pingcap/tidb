@@ -89,6 +89,7 @@ mod clause_resolve;
 mod dml;
 mod errors;
 mod from;
+pub(crate) mod funcdep;
 mod grouping;
 mod multi_dml;
 mod only_full_group_by;
@@ -476,6 +477,7 @@ pub(crate) fn run_select_traced(
                 columns: vec![(format!("__apply_{appended}"), value_type)],
                 offset: appended,
                 determinants: Vec::new(),
+                func_deps: Default::default(),
             });
             let columns: Vec<Column> = applied
                 .column_list()
@@ -628,6 +630,7 @@ pub(crate) fn run_select_traced(
                 columns: vec![(format!("__apply_{appended}"), value_type)],
                 offset: appended,
                 determinants: Vec::new(),
+                func_deps: Default::default(),
             });
             let columns: Vec<Column> = current_scope
                 .column_list()
@@ -940,6 +943,12 @@ pub(crate) struct FromTable {
     /// NULLs and so determines nothing). A derived table, a view or a
     /// synthetic scope carries none.
     pub(crate) determinants: Vec<Vec<String>>,
+    /// Go `DataSource.ExtractFD`'s contribution for this source: the keys in
+    /// both strengths and the generated columns' dependencies, as offsets
+    /// local to the source. [`determinants`](Self::determinants) is the
+    /// strict-key half of the same facts by name; this is what the
+    /// functional-dependency graph is built from.
+    pub(crate) func_deps: funcdep::TableFuncDeps,
 }
 
 /// Opens `exec`, drains every row as datums of `types`, and closes it.

@@ -1230,6 +1230,7 @@ pub(crate) fn compute_windows(
         columns,
         offset,
         determinants: Vec::new(),
+        func_deps: Default::default(),
     });
     Ok((out_rows, out_scope))
 }

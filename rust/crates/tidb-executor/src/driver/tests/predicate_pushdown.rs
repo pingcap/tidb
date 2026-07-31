@@ -32,6 +32,7 @@ fn the_scan_takes_comparisons_against_constants_and_nothing_else() {
             ],
             offset: 0,
             determinants: Vec::new(),
+            func_deps: Default::default(),
         }],
         ..FromScope::default()
     };
@@ -114,6 +115,7 @@ fn the_scan_takes_the_composed_predicates_tikv_evaluates() {
             ],
             offset: 0,
             determinants: Vec::new(),
+            func_deps: Default::default(),
         }],
         ..FromScope::default()
     };

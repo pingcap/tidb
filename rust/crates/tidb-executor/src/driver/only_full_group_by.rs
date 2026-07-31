@@ -66,34 +66,32 @@ struct Offender {
 /// TiDB's default `sql_mode` carries; clearing the mode restores the
 /// permissive `FIRST_ROW` behavior for every case below.
 ///
-/// DEFERRED, and it is a REFUSAL of queries TiDB answers, not a permission.
-/// Being narrower than Go here never permits what Go rejects, so it costs no
-/// wrong answers -- but it costs 44 statements in `tests/integrationtest`'s
-/// `planner/funcdep/only_full_group_by`, which TiDB's own recording shows
-/// accepted and which this tier refuses with 1055. They are the whole of that
-/// topic's remaining out-of-domain set (the integration ratchet counts them as
-/// SKIPPED, not as divergences, so the number does not show them), and they
-/// fall in three classes, each needing part of Go's `pkg/planner/funcdep`:
+/// What justifies a column is [`super::funcdep`]'s dependency graph: the
+/// grouping's STRICT closure. That covers the two of Go's three relaxations
+/// this tier once refused with a spurious 1055:
 ///
-///  * ACROSS A JOIN (24). Go derives a dependency from an equality in a
-///    `WHERE` or an `ON` (`buildWhereFuncDepend` / `buildJoinFuncDepend`), so
-///    grouping by one side's key justifies the other side's columns:
-///    `select t1.pk, t2.b from t1 join t2 on t1.pk=t2.pk group by t1.pk`.
-///    This checks each table's own candidate keys only.
-///  * A GENERATED COLUMN IS DETERMINED BY ITS SOURCE (7). Over `t(a INT, c
-///    INT GENERATED ALWAYS AS (a+2), d INT GENERATED ALWAYS AS (c+2))`,
-///    `SELECT c FROM t GROUP BY a` is legal, and transitively so is `SELECT d
-///    FROM t GROUP BY a`. A generated column's expression is a dependency
-///    this rule does not read at all.
-///  * A NULLABLE UNIQUE KEY BECOMES A CANDIDATE KEY (13). Over `t(a INT NULL,
-///    b INT NOT NULL, c INT, UNIQUE(a,b))`, `UNIQUE(a,b)` is not a candidate
-///    key while `a` may be NULL -- but `SELECT a,b,c FROM t WHERE a IS NOT
-///    NULL GROUP BY a,b` is legal, because the `WHERE` proves it. Go reaches
-///    the same conclusion from `a > 3`, `a = 3`, `a BETWEEN 3 AND 6`, `a IN
-///    (...)`, `a IS TRUE` and `a LIKE ...`, and NOT from `a <=> NULL` or `a
-///    IS NOT TRUE`, which the recording refuses with 1055. `determinants`
-///    below is the seam: it holds keys, with no notion of which are nullable
-///    or of what the `WHERE` has proved about them.
+///  * A GENERATED COLUMN IS DETERMINED BY ITS SOURCE. Over `t(a INT, c INT
+///    GENERATED ALWAYS AS (a+2), d INT GENERATED ALWAYS AS (c+2))`, `SELECT c
+///    FROM t GROUP BY a` is legal, and transitively so is `SELECT d FROM t
+///    GROUP BY a`.
+///  * A NULLABLE UNIQUE KEY BECOMES A CANDIDATE KEY. Over `t(a INT NULL, b
+///    INT NOT NULL, c INT, UNIQUE(a,b))`, `UNIQUE(a,b)` is a LAX key while `a`
+///    may be NULL, and a `WHERE` proving `a` non-null promotes it to a strict
+///    one -- so `SELECT a,b,c FROM t WHERE a IS NOT NULL GROUP BY a,b` is
+///    legal. `a > 3`, `a = 3`, `a BETWEEN 3 AND 6`, `a IN (...)`, `a IS TRUE`
+///    and `a LIKE ...` all prove it; `a <=> NULL` and `a IS NOT TRUE` do not,
+///    and stay 1055. [`super::funcdep::null_reject`] is that proof.
+///
+/// STILL DEFERRED: the dependency an equality ACROSS A JOIN carries, which
+/// costs 24 statements of `tests/integrationtest`'s
+/// `planner/funcdep/only_full_group_by` a spurious 1055 (the integration
+/// ratchet counts a refusal as SKIPPED, not as a divergence, so the number
+/// does not show them). Grouping by one side's key should justify the other
+/// side's columns: `select t1.pk, t2.b from t1 join t2 on t1.pk=t2.pk group by
+/// t1.pk`. It is its own unit because the outer-join form is not the inner
+/// one -- see [`super::funcdep`]'s module doc for what
+/// `FDSet.MakeOuterJoin` has to model. Being narrower than Go here never
+/// permits what Go rejects, so it costs no wrong answers.
 pub(crate) fn check_only_full_group_by(
     select: &tidb_ast::SelectStmt,
     scope: &FromScope,
@@ -219,8 +217,22 @@ pub(crate) fn check_only_full_group_by(
     if select.group_by.is_empty() && !has_aggregate {
         return Ok(());
     }
+    // Go's new checker asks the functional-dependency graph whether the
+    // grouping's strict closure covers the column. The closure subsumes the
+    // "a whole candidate key is pinned" test outright -- a candidate key IS a
+    // strict dependency on every other column of its source -- and adds the
+    // dependencies a key alone does not carry: a generated column's sources,
+    // and a nullable UNIQUE key the `WHERE` has proved non-null.
+    //
+    // The closure must be the STRICT one. The lax closure would reach a
+    // nullable UNIQUE key's dependents without the proof, which is exactly
+    // what the recording refuses with 1055.
+    let dependencies = super::funcdep::scope_fd_set(scope, select.where_clause.as_ref());
+    let determined = dependencies.closure_of_strict(&super::funcdep::col_set::ColSet::of(
+        pinned.iter().map(|&offset| offset as i32),
+    ));
     for offender in offenders {
-        if determined_by_a_pinned_key(offender.offset, scope, &pinned) {
+        if determined.contains(offender.offset as i32) {
             continue;
         }
         return Err(if select.group_by.is_empty() {
@@ -401,24 +413,6 @@ fn collect_offenders(
             clause,
         });
     }
-}
-
-/// Whether the column at `offset` belongs to a source one of whose candidate
-/// keys is entirely pinned, which makes every column of that source a single
-/// value per group (Go's `checkColFuncDepend`).
-fn determined_by_a_pinned_key(offset: usize, scope: &FromScope, pinned: &HashSet<usize>) -> bool {
-    let Some(table) = table_at(offset, scope) else {
-        return false;
-    };
-    table.determinants.iter().any(|key| {
-        key.iter().all(|name| {
-            table
-                .columns
-                .iter()
-                .position(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
-                .is_some_and(|index| pinned.contains(&(table.offset + index)))
-        })
-    })
 }
 
 /// The source the joined scope's column at `offset` came from.
