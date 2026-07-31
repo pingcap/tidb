@@ -19,9 +19,14 @@
 //! real arm in [`mysql_connection`]: `COM_QUERY`, `COM_PING`, `COM_QUIT`,
 //! `COM_INIT_DB` (which really selects a schema), and the binary
 //! prepared-statement family `COM_STMT_PREPARE`/`EXECUTE`/`CLOSE`/`RESET`/
-//! `COM_STMT_FETCH`. A prepare falls through three tiers -- point read, then
-//! write, then general -- so it is no longer the single signed-BIGINT
-//! point-read path this paragraph used to describe. Also owned: the bounded
+//! `COM_STMT_FETCH`. A prepare claims transaction control first -- `BEGIN`,
+//! `COMMIT`, `ROLLBACK` and the savepoint statements are applied through
+//! `control_transaction` at EXECUTE, exactly as the text arm applies them, so
+//! a prepared `BEGIN` opens the connection's transaction rather than being
+//! run as an ordinary statement -- and otherwise falls through three tiers,
+//! point read, then write, then general. It is no longer the single
+//! signed-BIGINT point-read path this paragraph used to describe. Also owned:
+//! the bounded
 //! table-less automatic result-metadata path, source-shaped handshake
 //! primitives, negotiated compressed command I/O, and TCP listener lifecycle.
 //!

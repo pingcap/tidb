@@ -426,6 +426,11 @@ Rust node, while it is consistently faster on Go.** A per-statement PD round
 trip inside a multi-statement transaction is also a correctness-adjacent smell,
 not only a throughput one, and it is worth its own investigation.
 
+*(That investigation is task #120, and the smell was the story: the prepared
+path never called `control_transaction`, so a prepared `BEGIN` opened no
+transaction at all. The numbers above stand as measured; the defect behind them
+is fixed. See open-items entry 13.)*
+
 ### The controlled A/B (task #114): after the write-path point plan
 
 **2026-08-01, `28eebaffa1`, port offset 44000, ONE `tiup playground
@@ -1094,11 +1099,18 @@ integer-to-integer.
     nothing, and unlike the access-path work its fix lifts all four workloads.
     Where the 86 µs goes inside the Rust node has not yet been profiled; that
     is the next measurement, not the next guess.
-13. **Binary-prepared execution takes a TSO per statement, not per
-    transaction** (16.11 per `oltp_read_only` transaction against 1.08 in text
-    mode). This is why binary prepared is slower than text on this node while
-    it is faster on Go, and it is correctness-adjacent enough to look at on its
-    own merits.
+13. ~~**Binary-prepared execution takes a TSO per statement, not per
+    transaction**~~ (16.11 per `oltp_read_only` transaction against 1.08 in
+    text mode) — **diagnosed and fixed, task #120.** The "correctness-adjacent"
+    reading was the right one and it was worse than the throughput: nothing on
+    the `COM_STMT_PREPARE`/`COM_STMT_EXECUTE` path called `control_transaction`,
+    so a prepared `BEGIN` never opened the connection's transaction and every
+    statement of the transaction read at its own fresh timestamp — no
+    repeatable read and no conflict detection, with a prepared `ROLLBACK`
+    publishing the buffer it was asked to discard. Transaction control is now
+    routed the way the text arm routes it; see
+    `cluster_session_node::tests::prepared_transactions`. The TSO rate itself
+    has not been re-measured on a cluster since the fix.
 14. **Autocommit point reads could skip the timestamp entirely,** as Go does
     via `IsPointGetWithPKOrUniqueKeyByAutoCommit` and a `MaxUint64` start ts.
     Rust takes 1.00 TSO per point select where Go takes 0.002. Bounded by the

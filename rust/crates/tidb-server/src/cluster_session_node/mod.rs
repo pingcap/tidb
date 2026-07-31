@@ -50,6 +50,13 @@
 //! writer that raced the transaction is rejected at prewrite as a write
 //! conflict instead of being silently overwritten.
 //!
+//! Which protocol carried the `BEGIN` does not enter into any of that: a
+//! prepared one is routed through [`ClusterServerSession::control_transaction`]
+//! like a text one. It used to be run as an ordinary statement instead, which
+//! flipped the driver session's `in_transaction` flag while leaving `explicit`
+//! unopened -- the two halves of the transaction state disagreeing, so every
+//! statement read at a fresh timestamp and no racing writer was ever detected.
+//!
 //! Writes never touch the slot: they stage into the connection's
 //! [`MutationBuffer`], which outlives the statement. A failed statement is
 //! rolled back to the buffer snapshot taken before it ran, so an explicit
