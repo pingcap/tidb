@@ -838,6 +838,134 @@ fn a_column_that_cannot_hold_null_cannot_default_to_it() {
     );
 }
 
+/// Go `pkg/ddl/add_column.go` `setDefaultValueWithBinaryPadding`: a fixed-width
+/// `BINARY(n)` column pads its `DEFAULT` with NUL bytes to the full width, the
+/// way a VALUE written into one is padded. `VARBINARY` and `VARCHAR` are
+/// variable width and are not padded.
+///
+/// Without the padding the stored default is shorter than anything the column
+/// can hold, so an omitted column and an explicitly written one disagree on a
+/// column whose whole point is a fixed width.
+///
+/// Captured from real TiDB through `rust/difftests/gorun`, verbatim:
+///
+/// ```text
+/// create table t_bin (a binary(4) default 0x61, b varbinary(4) default 0x61,
+///                     c varchar(4) default 0x61)
+///   `a` binary(4) DEFAULT 'a\0\0\0',
+///   `b` varbinary(4) DEFAULT 'a',
+///   `c` varchar(4) DEFAULT 'a'
+/// ```
+///
+/// The default is written as the hex literal `0x61` rather than `'a'` on
+/// purpose: it has to be decoded to the member text before it can be padded,
+/// so one fixture covers both steps.
+#[test]
+fn a_fixed_width_binary_default_is_padded_to_the_columns_width() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t_bin (a BINARY(4) DEFAULT 0x61, b VARBINARY(4) DEFAULT 0x61, \
+             c VARCHAR(4) DEFAULT 0x61)",
+        )
+        .unwrap();
+    session.run("INSERT INTO t_bin VALUES ()").unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT length(a), length(b), length(c) FROM t_bin"
+        ),
+        vec![vec!["4".to_owned(), "1".to_owned(), "1".to_owned()]],
+        "the fixed-width column's default was not padded to its width"
+    );
+    let body = show_create(&mut session, "t_bin");
+    for clause in [
+        // `format.OutputFormat` escapes the padding NULs.
+        "`a` binary(4) DEFAULT 'a\\0\\0\\0'",
+        "`b` varbinary(4) DEFAULT 'a'",
+        "`c` varchar(4) DEFAULT 'a'",
+    ] {
+        assert!(body.contains(clause), "missing `{clause}`: {body:?}");
+    }
+
+    // The same printer rule, on the character the escaping exists for.
+    // Captured: `create table q (a varchar(10) default 'a''b')` prints
+    // `` `a` varchar(10) DEFAULT 'a''b' `` and the stored value is `a'b`,
+    // length 3.
+    session
+        .run("CREATE TABLE q (a VARCHAR(10) DEFAULT 'a''b')")
+        .unwrap();
+    let body = show_create(&mut session, "q");
+    assert!(
+        body.contains("`a` varchar(10) DEFAULT 'a''b'"),
+        "an embedded quote was not doubled, so the body does not re-parse: {body}"
+    );
+    session.run("INSERT INTO q VALUES ()").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a, length(a) FROM q"),
+        vec![vec!["a'b".to_owned(), "3".to_owned()]]
+    );
+}
+
+/// PINS A REFUSAL. `ALTER TABLE ... ALTER COLUMN c DROP DEFAULT` is REFUSED by
+/// this tier rather than approximated, and this test exists so that the refusal
+/// cannot be forgotten: when the gap closes it FAILS, and the Go answers it
+/// carries -- captured, and asserted nowhere yet -- become its assertions.
+///
+/// Go's `DROP DEFAULT` is not "clear the default". `AlterColumn` sets
+/// `mysql.NoDefaultValueFlag`, and that flag is what a later `INSERT` reads:
+/// omitting the column is 1364 "Field 'a' doesn't have a default value" even on
+/// a NULLABLE column that would otherwise have taken NULL, and
+/// `SHOW CREATE TABLE` prints the column with NO `DEFAULT` clause at all rather
+/// than `DEFAULT NULL`. This tier models a default as "written or not written"
+/// with no such flag, so clearing it would silently answer NULL where TiDB
+/// raises 1364 -- a wrong answer in place of an error.
+///
+/// Captured from real TiDB through `rust/difftests/gorun`, verbatim:
+///
+/// ```text
+/// create table ti (a int)
+/// alter table ti alter column a drop default        OK
+/// insert into ti values ()                          ERR   (1364)
+/// show create table ti
+///   `a` int(11)                                     -- no DEFAULT clause
+///
+/// create table te (a enum('a','b'))
+/// alter table te alter column a drop default        OK
+/// insert into te values ()                          OK
+/// select * from te                                  ->  <nil>
+///
+/// create table te2 (a enum('a','b') not null)
+/// alter table te2 alter column a drop default       OK
+/// insert into te2 values ()                         OK
+/// select * from te2                                 ->  a
+/// ```
+///
+/// The 1364 is `errno.ErrNoDefaultForField`, named by the Go test itself.
+#[test]
+fn drop_default_is_refused_rather_than_approximated() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE ti (a INT)").unwrap();
+    let error = session
+        .run("ALTER TABLE ti ALTER COLUMN a DROP DEFAULT")
+        .expect_err(
+            "DROP DEFAULT now succeeds: replace this test with the captured Go answers above -- \
+             `INSERT INTO ti VALUES ()` must be 1364 and SHOW CREATE must print `a` with no \
+             DEFAULT clause",
+        );
+    assert!(
+        format!("{error:?}").contains("NoDefaultValueFlag"),
+        "refused for an unexpected reason: {error:?}"
+    );
+    // The CONTROL: a default that was never written still behaves, so the
+    // refusal above is about DROP DEFAULT and not about the column.
+    session.run("INSERT INTO ti VALUES ()").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a FROM ti"),
+        vec![vec!["NULL".to_owned()]]
+    );
+}
+
 /// `checkColumnDefaultValue`'s `TypeBit` arm: a `BIT(n)` default must FIT in
 /// the declared width, or it is `ErrInvalidDefault` (1067). Go reads the
 /// settled bits back as an integer and compares against `1 << flen`.

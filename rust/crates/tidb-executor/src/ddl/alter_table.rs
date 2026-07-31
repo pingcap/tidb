@@ -510,6 +510,31 @@ pub(crate) fn normalize_column_default(
             enum_set_column_default(&value, field_type).ok_or_else(invalid)?
         }
         tidb_datatype::FieldTypeCode::Bit => bit_column_default(&value, field_type, column)?,
+        // Go's `KindBinaryLiteral || KindMysqlBit` branch runs BEFORE its type
+        // switch and covers the string types alongside `BIT`, `ENUM` and
+        // `SET`: `DEFAULT 0x61` on a `VARCHAR` is the text `a` decoded in the
+        // column's charset, not a hex literal the printers have no rendering
+        // for.
+        tidb_datatype::FieldTypeCode::String
+        | tidb_datatype::FieldTypeCode::Varchar
+        | tidb_datatype::FieldTypeCode::VarString => {
+            let decoded = match &value {
+                Datum::BinaryLiteral(_) | Datum::Bit(_) => {
+                    let (bytes, error) = value
+                        .binary_string_decoded(
+                            tidb_datatype::STRICT_FLAGS,
+                            field_type.charset_name(),
+                        )
+                        .into_parts();
+                    if error.is_some() {
+                        return Err(invalid());
+                    }
+                    Datum::new_collation_string(bytes, field_type.collation())
+                }
+                _ => value.clone(),
+            };
+            pad_fixed_width_binary_default(decoded, field_type)
+        }
         _ => value.clone(),
     };
     // The check phase: strict conversion of what will be stored.
@@ -549,6 +574,31 @@ pub(crate) fn normalize_column_default(
 /// the written literal instead -- the shape this replaced -- leaves a column
 /// whose `DEFAULT` is not a value of its own type, so an omitted column on
 /// `INSERT` reads something the element list does not contain.
+/// Go `setDefaultValueWithBinaryPadding`: a FIXED-width binary column pads its
+/// stored `DEFAULT` with NUL bytes out to the declared width, exactly as a
+/// value written into `BINARY(n)` is padded. `VARBINARY` and every non-binary
+/// charset are variable width and keep the default as written.
+///
+/// Without it, `BINARY(4) DEFAULT 0x61` records a one-byte default for a
+/// column that can only ever hold four.
+fn pad_fixed_width_binary_default(value: Datum, field_type: &FieldType) -> Datum {
+    if field_type.code() != tidb_datatype::FieldTypeCode::String
+        || field_type.charset() != tidb_datatype::Charset::Binary
+    {
+        return value;
+    }
+    let width = field_type.flen();
+    let Some(bytes) = value.as_raw_bytes() else {
+        return value;
+    };
+    if width < 0 || bytes.len() >= width as usize {
+        return value;
+    }
+    let mut padded = bytes.to_vec();
+    padded.resize(width as usize, 0);
+    Datum::new_collation_string(padded, field_type.collation())
+}
+
 /// A `BIT(n)` column's written `DEFAULT`, settled to the BITS it names.
 ///
 /// Go `pkg/ddl/add_column.go` `getDefaultValue` reaches the same bits from two
