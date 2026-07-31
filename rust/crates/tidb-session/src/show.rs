@@ -98,7 +98,9 @@ fn index_part_text(table: &tidb_executor::KvTable, offset: usize) -> String {
 /// NOT MODELLED (documented, and each one rejected at DDL time so no table can
 /// carry it): AUTO_RANDOM, ON UPDATE
 /// CURRENT_TIMESTAMP, column and index comments, foreign keys, check
-/// constraints, partitioning, temporary tables, views and sequences.
+/// constraints, temporary tables, views and sequences. Partitioning IS
+/// printed, by [`partition_clause_text`], for the one method the tier
+/// builds.
 /// A column prints its own charset/collation only where it differs from the
 /// table's, which is Go's rule and what the capture shows: a column whose
 /// charset differs prints `CHARACTER SET <cs> COLLATE <coll>`, one that only
@@ -256,7 +258,30 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
         table_charset.charset.name(),
         table_charset.collation.name()
     ));
+    out.push_str(&partition_clause_text(table));
     out
+}
+
+/// Go `ddl.AppendPartitionInfo`: the `PARTITION BY ...` tail, or the empty
+/// string for an unpartitioned table.
+///
+/// The tail starts with a NEWLINE and no comma -- it follows the closing
+/// paren's `COLLATE=...`, not the column list. For HASH, Go prints the
+/// partition COUNT rather than the definitions whenever every partition still
+/// carries its default name `p{i}` and no comment or placement policy, which
+/// is the only shape this tier can build; the definition-list form belongs to
+/// the methods it refuses. Captured verbatim:
+/// ``\nPARTITION BY HASH (`a`) PARTITIONS 4``.
+fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
+    let Some(partition) = table.partition() else {
+        return String::new();
+    };
+    format!(
+        "\nPARTITION BY {} ({}) PARTITIONS {}",
+        partition.kind.sql(),
+        partition.expr_text,
+        partition.num()
+    )
 }
 
 /// The `ON DELETE`/`ON UPDATE` spelling `SHOW CREATE TABLE` prints, or

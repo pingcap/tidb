@@ -24,6 +24,7 @@
 use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
+use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
 use crate::{
     infoschema, statement_kind_of, Session, SqlWarning, StatementKind, StmtOutput, WarningLevel,
 };
@@ -515,6 +516,15 @@ impl Session {
                                 level: WarningLevel::Warning,
                                 code: CHECK_CONSTRAINT_IS_OFF_CODE,
                                 message: CHECK_CONSTRAINT_IS_OFF_MESSAGE.to_owned(),
+                            });
+                        }
+                        // Go accepts `LINEAR HASH` and builds the plain
+                        // non-linear table, warning that it did so.
+                        if let Some(message) = tidb_executor::linear_partitioning_warning(create) {
+                            self.warnings.push(SqlWarning {
+                                level: WarningLevel::Warning,
+                                code: UNSUPPORTED_CREATE_PARTITION_CODE,
+                                message,
                             });
                         }
                     }

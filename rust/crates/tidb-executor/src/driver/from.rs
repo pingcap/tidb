@@ -250,6 +250,16 @@ pub(crate) fn build_from(
             // A `db.t` reference resolves in that schema; a bare `t` resolves
             // in the session's current one (Go's name resolution).
             let (database, name) = split_table_path(&table_ref.name, current_db)?;
+            // `FROM t PARTITION (p0)` names the partitions the read is
+            // restricted to. Ignoring it would answer with the WHOLE table
+            // while reporting success, which is the exact silent-wrong-answer
+            // shape partitioning is being built to avoid, so it is refused
+            // until the scan can honour it.
+            if !table_ref.partitions.is_empty() {
+                return Err(DriverError::Unsupported(
+                    "SELECT ... PARTITION (...) is not supported yet",
+                ));
+            }
             let entry = catalog
                 .get_in(database, name)
                 .ok_or(DriverError::Unsupported("table not found in catalog"))?;
@@ -1137,6 +1147,13 @@ pub(crate) fn single_table_name(
     table_ref: &tidb_ast::TableRef,
     current_db: &str,
 ) -> Result<(String, String), DriverError> {
+    // As in `build_from`: a partition restriction that changes WHICH ROWS the
+    // statement touches may not be dropped on the floor.
+    if !table_ref.partitions.is_empty() {
+        return Err(DriverError::Unsupported(
+            "UPDATE/DELETE ... PARTITION (...) is not supported yet",
+        ));
+    }
     let (database, name) = split_table_path(&table_ref.name, current_db)?;
     Ok((database.to_owned(), name.to_owned()))
 }

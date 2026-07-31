@@ -27,25 +27,26 @@
 //! options are no longer deferred; see [`crate::column_default`] for what a
 //! `DEFAULT` may be.
 //!
-//! # `PARTITION BY` is REFUSED here, not ignored
+//! # `PARTITION BY HASH` is REAL here; the other three methods are REFUSED
 //!
-//! This builder used to skip `CreateTableStmt::partitioning` entirely, so a
+//! This builder once skipped `CreateTableStmt::partitioning` entirely, so a
 //! partitioned `CREATE TABLE` SUCCEEDED and produced an UNPARTITIONED table --
-//! a wrong table rather than a missing feature, since `SHOW CREATE TABLE`
-//! printed no `PARTITION BY` clause, pruning had nothing to prune, and
-//! `SELECT ... PARTITION (p0)` could not mean what it said. It now refuses
-//! through [`table_partition::refuse_table_partitioning`], which is what the
-//! sibling metadata builder `tidb_exec::table_info_build` already did; the two
-//! no longer disagree about the same statement.
+//! a wrong table rather than a missing feature. It then refused every method,
+//! which was honest but empty. It now BUILDS a real HASH partitioning:
+//! [`table_partition::build_table_partitioning`] allocates one physical table
+//! id per partition and validates the clause the way Go does, the rows are
+//! stored under those ids (see [`crate::partition_routing`]), and
+//! `SHOW CREATE TABLE` prints the clause back verbatim.
+//!
+//! RANGE, LIST and KEY are still refused, because this tier can neither route
+//! a row into one of their partitions nor prune them, and each carries
+//! validation of its own that would start silently passing the moment the
+//! clause was accepted. See [`table_partition`]'s module doc.
 //!
 //! Refusing was itself a cascade decision, taken deliberately: it moved
-//! `table not found in catalog` up sharply, because those tables now honestly
-//! do not exist. What it bought is that 1,171 statements stopped being
-//! compared against a table that was never partitioned -- `table/partition`
-//! and `planner/core/partition_pruner` went to ZERO divergences and onboarded.
-//! See [`table_partition`]'s module doc for Go's captured `SHOW CREATE TABLE`
-//! text and the eleven definitions TiDB rejects at CREATE, which are pinned so
-//! that real partitioning cannot land without its validation.
+//! `table not found in catalog` up sharply, because those tables honestly did
+//! not exist. Accepting HASH gives that back for the HASH-partitioned tables,
+//! which is the point of this direction.
 //!
 //! # Where a resolved collation is, and is NOT, consulted
 //!
@@ -106,9 +107,10 @@ mod column_types;
 mod indexes;
 mod table_constraints;
 mod table_lifecycle;
-mod table_partition;
+pub mod table_partition;
 
 pub use alter_table::run_alter_table_in;
+pub use table_partition::linear_partitioning_warning;
 
 use alter_table::normalize_column_default;
 use column_types::{field_type_of, table_charset_of, NOT_NULL_FLAG};
@@ -276,10 +278,6 @@ pub fn run_create_table_in(
             "temporary tables are not supported yet",
         ));
     }
-    // Before any metadata is built: this tier stores no `PartitionInfo`, so a
-    // partitioned table would silently become an ordinary one. See
-    // [`table_partition`]'s module doc for the captured Go answer.
-    table_partition::refuse_table_partitioning(create)?;
     if create.columns.is_empty() {
         return Err(DriverError::Unsupported("a table needs columns"));
     }
@@ -600,6 +598,26 @@ pub fn run_create_table_in(
         }
         table.allocate_foreign_key_id();
         table.add_foreign_key(foreign_key);
+    }
+    // Last, because Go's unique-key rule (8264/1503) reads the table's
+    // finished index list, and the partitions' physical ids are allocated
+    // from the same counter the table's own id came from -- as ONE ascending
+    // block right after it, which is what lets a scan cover the whole
+    // relation with a single key range.
+    let handle_offsets: &[usize] = if pk_is_handle {
+        pk_offsets.as_slice()
+    } else {
+        common_handle_offsets.as_slice()
+    };
+    if let Some(partition) = table_partition::build_table_partitioning(
+        create,
+        &column_names,
+        &column_types,
+        table.indexes(),
+        handle_offsets,
+        &mut || catalog.allocate_table_id(),
+    )? {
+        table.set_partition(partition);
     }
     catalog.register_kv_in(&database, name, table);
     Ok(true)

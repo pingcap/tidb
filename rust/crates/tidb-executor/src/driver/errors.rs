@@ -237,6 +237,33 @@ pub enum DriverError {
     DependentByFunctionalIndex(String),
     /// Go `dbterror.ErrTooLongIdent` (1059), carrying the identifier Go names.
     TooLongIdent(String),
+    /// Go `dbterror.ErrWrongExprInPartitionFunc` (1486): the partition
+    /// expression reads no column at all. See
+    /// [`crate::ddl::table_partition`].
+    PartitionWrongExprInFunc,
+    /// Go `dbterror.ErrTooManyPartitions` (1499).
+    PartitionTooMany,
+    /// Go `ast.ErrSubpartition` (1500): `SUBPARTITION BY` under a method
+    /// that cannot carry it.
+    PartitionSubpartition,
+    /// Go `dbterror.ErrUniqueKeyNeedAllFieldsInPf` (1503), carrying the kind
+    /// of key Go names (`CLUSTERED INDEX`).
+    PartitionUniqueKeyNeedAllFields(String),
+    /// Go `ast.ErrNoParts` (1504), carrying the noun Go counts
+    /// (`partitions`): `PARTITIONS 0`.
+    PartitionNoParts(&'static str),
+    /// Go `dbterror.ErrSameNamePartition` (1517), carrying the repeated name.
+    PartitionSameName(String),
+    /// Go `dbterror.ErrPartitionFunctionIsNotAllowed` (1564): the partition
+    /// expression calls something outside Go's whitelist.
+    PartitionFunctionNotAllowed,
+    /// Go `dbterror.ErrNotAllowedTypeInPartition` (1659), carrying the column
+    /// whose type the partition expression may not read.
+    PartitionFieldTypeNotAllowed(String),
+    /// Go `dbterror.ErrGlobalIndexNotExplicitlySet` (8264), carrying the
+    /// index name: a unique index that does not include every partitioning
+    /// column, without `GLOBAL`.
+    PartitionGlobalIndexNeeded(String),
     /// Go `dbterror.ErrUnsupportedOnGeneratedColumn` (3106), whose argument
     /// names what was attempted.
     UnsupportedOnGeneratedColumn(String),
@@ -1722,6 +1749,61 @@ impl DriverError {
             3107,
             *b"HY000",
             "Generated column can refer only to generated columns defined prior to it.".to_owned(),
+        ),
+        // The `CREATE TABLE ... PARTITION BY` refusals, each errno and
+        // wording captured from real TiDB through a mock-store session. See
+        // `crate::ddl::table_partition`.
+        DriverError::PartitionWrongExprInFunc => MysqlError::new(
+            1486,
+            *b"HY000",
+            "Constant, random or timezone-dependent expressions in (sub)partitioning function are \
+             not allowed"
+                .to_owned(),
+        ),
+        DriverError::PartitionTooMany => MysqlError::new(
+            1499,
+            *b"HY000",
+            "Too many partitions (including subpartitions) were defined".to_owned(),
+        ),
+        DriverError::PartitionSubpartition => MysqlError::new(
+            1500,
+            *b"HY000",
+            "It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for \
+             subpartitioning"
+                .to_owned(),
+        ),
+        DriverError::PartitionUniqueKeyNeedAllFields(kind) => MysqlError::new(
+            1503,
+            *b"HY000",
+            format!("A {kind} must include all columns in the table's partitioning function"),
+        ),
+        DriverError::PartitionNoParts(what) => MysqlError::new(
+            1504,
+            *b"HY000",
+            format!("Number of {what} = 0 is not an allowed value"),
+        ),
+        DriverError::PartitionSameName(name) => MysqlError::new(
+            1517,
+            *b"HY000",
+            format!("Duplicate partition name {name}"),
+        ),
+        DriverError::PartitionFunctionNotAllowed => MysqlError::new(
+            1564,
+            *b"HY000",
+            "This partition function is not allowed".to_owned(),
+        ),
+        DriverError::PartitionFieldTypeNotAllowed(column) => MysqlError::new(
+            1659,
+            *b"HY000",
+            format!("Field '{column}' is of a not allowed type for this type of partitioning"),
+        ),
+        DriverError::PartitionGlobalIndexNeeded(index) => MysqlError::new(
+            8264,
+            *b"HY000",
+            format!(
+                "Global Index is needed for index '{index}', since the unique index is not \
+                 including all partitioning columns, and GLOBAL is not given as IndexOption"
+            ),
         ),
         // The expression-index refusals, each errno and wording captured from
         // `gorun`. See `crate::expression_index`'s module doc for the script.

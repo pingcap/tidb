@@ -782,6 +782,12 @@ pub(crate) fn single_kv_table(
     let JoinNode::Table(table_ref) = &join.left else {
         return None;
     };
+    // A `PARTITION (...)` restriction is refused by `build_from`; declining
+    // the fast path here too keeps a point get from answering a statement the
+    // scan would have rejected.
+    if !table_ref.partitions.is_empty() {
+        return None;
+    }
     let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
     match catalog.get_in(database, name)? {
         TableEntry::Kv(kv) => Some(kv.clone()),

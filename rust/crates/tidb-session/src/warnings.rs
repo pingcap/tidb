@@ -32,6 +32,13 @@ pub(crate) const CHECK_CONSTRAINT_IS_OFF_CODE: u16 = 1105;
 /// interpolates, not a sentence, so it is reproduced verbatim.
 pub(crate) const CHECK_CONSTRAINT_IS_OFF_MESSAGE: &str = "tidb_enable_check_constraint is off";
 
+/// Go `dbterror.ErrUnsupportedCreatePartition` (8200), the code a `LINEAR
+/// HASH`/`LINEAR KEY` clause is warned under while the table is built as a
+/// plain non-linear one. Captured through testkit's `SHOW WARNINGS`:
+/// `Warning | 8200 | LINEAR HASH is not supported, using non-linear HASH
+/// instead`.
+pub(crate) const UNSUPPORTED_CREATE_PARTITION_CODE: u16 = 8200;
+
 /// A statement warning, which Go keeps in `StmtCtx` and `SHOW WARNINGS`
 /// reports as `Level | Code | Message`.
 #[derive(Debug, Clone, PartialEq, Eq)]

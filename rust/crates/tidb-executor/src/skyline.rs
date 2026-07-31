@@ -136,8 +136,11 @@
 //!   Go on a table with analyzed columns and an unanalyzed index, so
 //!   `riskResult` reads 0 where Go reads a winner -- it prunes less, not more.
 //! * `globalResult` (`compareGlobalIndex`) is held at 0. Also exact: it
-//!   compares `Index.Global`, and this tier reads no global (partitioned)
-//!   index -- partitioned tables are refused upstream by the session catalog.
+//!   compares `Index.Global`, and this tier has no global index to compare:
+//!   a HASH-partitioned table's indexes are keyed by the TABLE id, which is
+//!   sound only because every unique key covers the partitioning columns
+//!   (see `crate::ddl::table_partition`), and no index carries a
+//!   `GLOBAL` flag for the planner to read.
 //! * index-merge, multi-valued-index and TiFlash candidates never reach here
 //!   -- `access_cost::enumerate_paths` excludes them by name -- so
 //!   `isMVIndexPath`, `convergeIndexMergeCandidate` and the

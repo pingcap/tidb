@@ -30,9 +30,17 @@ pub(super) fn parse_table_partitioning(parser: &mut Parser) -> PResult<TablePart
     let method = parse_partition_method(parser, false)?;
 
     let mut method = method;
+    // `PARTITIONS 0` PARSES. Go rejects it at DDL with 1504 `Number of
+    // partitions = 0 is not an allowed value` (captured: the error class is
+    // `[ddl:...]`, so it got past the grammar), and the DDL layer here says
+    // the same -- which it can only do if the written zero survives, so this
+    // count is read without the positive-value guard the SUBPARTITIONS and
+    // KEY ALGORITHM counts keep.
+    let mut partitions_written = false;
     if parser.is_kw("PARTITIONS") {
         parser.bump();
-        method.count = parse_partition_count(parser, "partitions")?;
+        method.count = parse_partition_uint(parser, "partitions")?;
+        partitions_written = true;
     }
 
     let mut subpartition = if parser.is_kw("SUBPARTITION") {
@@ -85,7 +93,13 @@ pub(super) fn parse_table_partitioning(parser: &mut Parser) -> PResult<TablePart
         parser.expect_op(")")?;
     }
 
-    validate_partitioning(&mut method, &mut subpartition, &definitions, parser)?;
+    validate_partitioning(
+        &mut method,
+        &mut subpartition,
+        &definitions,
+        partitions_written,
+        parser,
+    )?;
     Ok(TablePartitioning {
         method,
         subpartition,
@@ -330,6 +344,7 @@ fn validate_partitioning(
     method: &mut PartitionMethod,
     subpartition: &mut Option<PartitionMethod>,
     definitions: &[PartitionDefinition],
+    partitions_written: bool,
     parser: &Parser,
 ) -> PResult<()> {
     if !definitions.is_empty() {
@@ -339,7 +354,11 @@ fn validate_partitioning(
         method.count = definitions.len() as u64;
     }
     match method.kind {
-        PartitionType::Hash | PartitionType::Key if method.count == 0 => method.count = 1,
+        // An OMITTED `PARTITIONS` means one partition; a WRITTEN zero means
+        // zero, and stays zero so DDL can report Go's 1504.
+        PartitionType::Hash | PartitionType::Key if method.count == 0 && !partitions_written => {
+            method.count = 1;
+        }
         PartitionType::Range | PartitionType::List
             if method.interval.is_none() && definitions.is_empty() =>
         {

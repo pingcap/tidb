@@ -73,6 +73,15 @@ fn create_table_partition_source_rows() {
             "create table t (a int) partition by hash(a) update indexes ('idx' global, @idx2 local)",
             "CREATE TABLE `t` (`a` INT) PARTITION BY HASH (`a`) PARTITIONS 1 UPDATE INDEXES (`idx` GLOBAL,`idx2` LOCAL)",
         ),
+        // `PARTITIONS 0` PARSES: real TiDB rejects it at DDL with 1504
+        // `Number of partitions = 0 is not an allowed value` (captured, and
+        // the `[ddl:...]` class proves it got past the grammar). Its restore
+        // drops the clause because Go's own `PartitionOptions.Restore` writes
+        // it only `if n.Num > 0`.
+        (
+            "create table t (a int) partition by hash (a) partitions 0",
+            "CREATE TABLE `t` (`a` INT) PARTITION BY HASH (`a`)",
+        ),
         (
             "create table t (a int) partition by linear range(a) (partition p values less than (1))",
             "CREATE TABLE `t` (`a` INT) PARTITION BY LINEAR RANGE (`a`) (PARTITION `p` VALUES LESS THAN (1))",
@@ -99,7 +108,6 @@ fn create_table_partition_source_rejections() {
         "create table t (a int) partition by system_time (partition p history)",
         "create table t (a int) partition by system_time interval 7 day limit 1 (partition p history, partition q current)",
         "create table t (a int) partition by range columns () (partition p values less than (1))",
-        "create table t (a int) partition by hash (a) partitions 0",
         "create table t (a int) partition by range (a) subpartition by range (a) (partition p values less than (1))",
     ] {
         assert!(parse(sql).is_err(), "{sql}");

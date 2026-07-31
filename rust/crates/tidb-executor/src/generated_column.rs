@@ -268,7 +268,7 @@ pub fn materialize<S: GeneratedColumnSlot>(
 /// generated expression is evaluated under the same SQL mode as any other
 /// expression of the statement that writes the row, which is what decides
 /// whether `100/0` is an error or a NULL.
-fn eval_over_row(
+pub(crate) fn eval_over_row(
     expr: &Expression,
     types: &[FieldType],
     row: &[Datum],

@@ -128,7 +128,17 @@ impl KvTable {
     /// The record range this table's rows live in, as the storage seam's
     /// half-open `[start, end)`.
     fn record_key_range(&self) -> (Key, Key) {
-        let (low, high) = get_table_handle_key_range(self.table_id);
+        // A partitioned table's rows live under its PARTITIONS' ids, which
+        // `CREATE TABLE` allocates as one contiguous ascending block, so the
+        // whole relation is still ONE range: from the first partition's low
+        // key to the last one's high key. Nothing else can fall inside it --
+        // the block is allocated together, and this table's own index entries
+        // sit under the (smaller) table id, below the block entirely.
+        let ids = self
+            .partition()
+            .map_or_else(|| vec![self.table_id], |p| p.physical_ids());
+        let (low, _) = get_table_handle_key_range(*ids.first().unwrap_or(&self.table_id));
+        let (_, high) = get_table_handle_key_range(*ids.last().unwrap_or(&self.table_id));
         // `get_table_handle_key_range` returns an inclusive upper bound, while
         // the seam's is exclusive, so the range runs to the key just past it.
         let mut upper = high;
@@ -155,6 +165,12 @@ impl KvTable {
         limit: Option<u64>,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         if !self.common_handle_offsets.is_empty() {
+            return Ok(None);
+        }
+        // A pushdown request names ONE physical table id. A partitioned table
+        // has several, so the request cannot describe it and the local scan
+        // (which spans the whole partition block) serves the read instead.
+        if self.partition.is_some() {
             return Ok(None);
         }
         let mut columns: Vec<PushdownScanColumn> = keep

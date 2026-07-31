@@ -12,79 +12,451 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `CREATE TABLE ... PARTITION BY`: the admission gate.
+//! `CREATE TABLE ... PARTITION BY`: building the partitioning, and refusing
+//! the methods this tier cannot route.
 //!
-//! Mirrors Go `pkg/ddl/partition.go`'s `buildTablePartitionInfo`, which is the
-//! function that turns an `ast.PartitionOptions` into the `model.PartitionInfo`
-//! a real TiDB stores on the table. This tier has no `PartitionInfo`, no
-//! per-partition physical table ids, and no partition pruning, so it builds
-//! NOTHING from that clause -- and therefore it must not accept it.
+//! Mirrors Go `pkg/ddl/partition.go`'s `buildTablePartitionInfo` together
+//! with the validation `checkTableInfoValidWithStmt` runs after it
+//! (`checkPartitionDefinitionConstraints`, `checkPartitionFuncType`,
+//! `checkPartitioningKeysConstraints`). The result is the
+//! [`crate::partition_routing::PartitionSpec`] the table stores; a table with
+//! no clause gets `None`.
 //!
-//! # Why this is a refusal and not a silent discard
+//! # What is accepted
 //!
-//! There IS a shape of `CREATE TABLE ... PARTITION BY` that real TiDB accepts
-//! while building an ordinary unpartitioned table: `buildTablePartitionInfo`
-//! leaves `enable == false`, warns
-//! `Unsupported partition type %v, treat as normal table`, and returns with
-//! `tbInfo.Partition` unset. That branch is why "accept and ignore" can look
-//! defensible. It is not, because the branch is unreachable for every method
-//! the grammar admits today: RANGE and LIST set `enable = true`
-//! unconditionally, and HASH/KEY set it in both arms of their own `if`
-//! (`Tp == Hash || len(ColumnNames) != 0`, else `Tp == Key && len == 0`).
-//! Reaching the warning needs a method that is none of the four, and
-//! `PartitionTypeSystemTime` -- the only other value -- never survives
-//! validation. So for every statement a user can write, Go builds a REAL
-//! partitioned table.
+//! HASH only. `PARTITION BY HASH (expr) PARTITIONS n` is routed by
+//! [`crate::partition_routing`], stored as n physical key prefixes, and
+//! printed back by `SHOW CREATE TABLE`. RANGE, LIST and KEY are REFUSED --
+//! this tier can neither route nor prune them, and accepting the clause
+//! would build an ordinary unpartitioned table that answers every
+//! partition-aware query wrongly while reporting success. That refusal is
+//! the same one HASH carried until this unit, kept for the methods still
+//! missing rather than deleted wholesale.
 //!
-//! Captured from real TiDB (`zz_partcap`, a mock-store session; see the unit's
-//! report for the raw transcript): `create table h1 (a int, b int) partition
-//! by hash(a) partitions 4` succeeds with NO warning, and `SHOW CREATE TABLE
-//! h1` restores the clause verbatim as
-//! ``PARTITION BY HASH (`a`) PARTITIONS 4``. Building an unpartitioned table
-//! for that statement is a silent wrong answer: `SHOW CREATE TABLE` loses the
-//! clause, `information_schema.partitions` has no rows,
-//! `SELECT ... PARTITION (p0)` cannot mean anything, and a RANGE table accepts
-//! rows no partition covers instead of raising 1526.
+//! # Why "accept and ignore" is never the answer
 //!
-//! Refusing keeps this node's answer honest and matches every other
-//! partition-aware path already in the tier: `ALTER TABLE`'s partition actions
-//! refuse, `INSERT`/`SELECT ... PARTITION (...)` refuse (see
-//! [`tidb_ast::InsertStmt::partitions`]), and `tidb_exec`'s own
-//! `build_table_info` already refused `PARTITION BY` -- this executor's
-//! `CREATE TABLE` path was the one hole left.
+//! There IS a shape of `CREATE TABLE ... PARTITION BY` that real TiDB
+//! accepts while building an ordinary table: `buildTablePartitionInfo`
+//! leaves `enable == false`, warns `Unsupported partition type %v, treat as
+//! normal table`, and returns with `tbInfo.Partition` unset. That branch is
+//! unreachable for every method the grammar admits: RANGE and LIST set
+//! `enable = true` unconditionally, and HASH/KEY set it in both arms of
+//! their own `if`. So for every statement a user can write, Go builds a REAL
+//! partitioned table, and a node that discards the clause is simply wrong.
 //!
-//! # This is a tripwire, not a dead end
+//! # The validation is not optional
 //!
-//! [`refuse_table_partitioning`] is the single place the refusal lives. When
-//! partitioning is implemented, this function is deleted and the tests that
-//! pin it (`tests_partition` in `tidb-session`) flip from asserting a refusal
-//! to asserting the captured `SHOW CREATE TABLE` text, which those tests
-//! already carry verbatim.
+//! Go rejects a great deal at `CREATE`, and a node that accepts the clause
+//! without those rules starts SUCCEEDING on statements TiDB refuses. Every
+//! rule below was captured from real TiDB; the ones that belong to a method
+//! still refused stay unported on purpose -- the refusal is what keeps them
+//! honest until the method lands.
+//!
+//! # LINEAR
+//!
+//! `LINEAR HASH` is ACCEPTED by Go as plain HASH, with warning 8200
+//! `LINEAR HASH is not supported, using non-linear HASH instead` (captured).
+//! It is accepted here the same way, and `SHOW CREATE TABLE` prints it back
+//! without the keyword, exactly as Go does.
 
-use tidb_ast::CreateTableStmt;
+use tidb_ast::{CreateTableStmt, Expr, PartitionDefinitionClause, PartitionType};
+use tidb_datatype::{FieldType, FieldTypeCode};
 
+use crate::generated_column::TableColumnResolver;
+use crate::kv_table::KvIndex;
+use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
 use crate::DriverError;
 
-/// The refusal a `CREATE TABLE` carrying `PARTITION BY` gets, named by the
-/// partition method it wrote.
+/// Go `checkAddPartitionTooManyPartitions`: the hard cap on partitions.
+const MAX_PARTITIONS: u64 = 8192;
+
+/// Builds a table's partitioning from its `PARTITION BY` clause.
 ///
-/// `Ok(())` for a statement with no partitioning clause, which is the whole
-/// of what this tier can execute faithfully.
+/// `names`/`types` are the table's own columns (the partition expression is
+/// resolved against them and evaluated by their offsets); `indexes` are the
+/// indexes already built for the table, which the unique-key rule reads;
+/// `handle_offsets` are the clustered primary key's column offsets, which
+/// carry the same rule without being an entry in `indexes`.
+/// `allocate_id` yields one physical table id per partition, in definition
+/// order, so the partitions occupy a contiguous ascending block.
+///
+/// `Ok(None)` for a statement with no partitioning clause. The one WARNING
+/// this clause can produce is reported by [`linear_partitioning_warning`],
+/// which the session reads from the statement itself.
 ///
 /// # Errors
 ///
-/// [`DriverError::UnsupportedKind`] when the statement carries any
-/// `PARTITION BY` clause.
-pub fn refuse_table_partitioning(create: &CreateTableStmt) -> Result<(), DriverError> {
+/// The captured `CREATE` rejections -- 1054, 1486, 1500, 1503, 1504, 1517,
+/// 1564, 1659, 8264 -- plus [`DriverError::UnsupportedKind`] for a method
+/// this tier does not route.
+pub fn build_table_partitioning(
+    create: &CreateTableStmt,
+    names: &[String],
+    types: &[FieldType],
+    indexes: &[KvIndex],
+    handle_offsets: &[usize],
+    allocate_id: &mut dyn FnMut() -> i64,
+) -> Result<Option<PartitionSpec>, DriverError> {
     let Some(partitioning) = &create.partitioning else {
-        return Ok(());
+        return Ok(None);
     };
-    // The method name is Go's own spelling, so the refusal reads like the
-    // clause the user wrote rather than like a Rust variant.
-    let method = partitioning.method.kind.sql();
-    Err(DriverError::UnsupportedKind(format!(
-        "CREATE TABLE ... PARTITION BY {method} is not supported by this node: \
-         it stores no partition metadata, so accepting the clause would build \
-         an ordinary unpartitioned table"
-    )))
+    let method = &partitioning.method;
+    if method.kind != PartitionType::Hash {
+        // The method name is Go's own spelling, so the refusal reads like the
+        // clause the user wrote rather than like a Rust variant.
+        let name = method.kind.sql();
+        return Err(DriverError::UnsupportedKind(format!(
+            "CREATE TABLE ... PARTITION BY {name} is not supported by this node: \
+             it can neither route a row to one of those partitions nor prune \
+             them, so accepting the clause would build an ordinary \
+             unpartitioned table"
+        )));
+    }
+    // Go `buildTablePartitionInfo`: subpartitioning is only legal under
+    // RANGE/LIST, so HASH with a `SUBPARTITION BY` is 1500.
+    if partitioning.subpartition.is_some() {
+        return Err(DriverError::PartitionSubpartition);
+    }
+
+    let Some(expr) = &method.expr else {
+        // `PARTITION BY HASH` with a column list rather than an expression is
+        // Go's KEY-shaped path, which this tier does not route.
+        return Err(DriverError::UnsupportedKind(
+            "CREATE TABLE ... PARTITION BY HASH COLUMNS is not supported by this node".to_owned(),
+        ));
+    };
+
+    let (expr_text, built, dependencies) = build_partition_expression(expr, names, types)?;
+    // Go `checkPartitionFuncType`: the partition expression must evaluate to
+    // an integer, reported against the COLUMN whose type it is (1659).
+    check_partition_expression_type(expr, &dependencies, names, types)?;
+
+    let definitions = build_hash_partition_definitions(create, method.count, allocate_id)?;
+    check_partition_name_unique(&definitions)?;
+    if definitions.len() as u64 > MAX_PARTITIONS {
+        return Err(DriverError::PartitionTooMany);
+    }
+    // Go `checkNoHashPartitions`, reached through `checkPartitionByHash`
+    // AFTER the definitions are built, which is why `PARTITIONS 0` is 1504
+    // rather than a name or type error.
+    if definitions.is_empty() {
+        return Err(DriverError::PartitionNoParts("partitions"));
+    }
+    check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependencies)?;
+
+    Ok(Some(PartitionSpec {
+        kind: PartitionKind::Hash,
+        expr_text,
+        expr: built,
+        dependencies,
+        definitions,
+    }))
+}
+
+/// The warning a `LINEAR HASH`/`LINEAR KEY` clause earns, or `None`.
+///
+/// Go accepts `LINEAR` and builds a plain non-linear table, appending
+/// `ErrUnsupportedCreatePartition` (8200). Captured verbatim:
+/// `LINEAR HASH is not supported, using non-linear HASH instead`, and
+/// `SHOW CREATE TABLE` then prints the clause WITHOUT the keyword.
+///
+/// It is computed from the statement rather than returned by
+/// [`build_table_partitioning`] because the session already reads a
+/// `CREATE TABLE`'s warnings off the AST that way (the discarded-`CHECK`
+/// warnings take the same route), so the build path needs no warning sink.
+#[must_use]
+pub fn linear_partitioning_warning(create: &CreateTableStmt) -> Option<String> {
+    let partitioning = create.partitioning.as_ref()?;
+    if !partitioning.method.linear {
+        return None;
+    }
+    let name = partitioning.method.kind.sql();
+    Some(format!(
+        "LINEAR {name} is not supported, using non-linear {name} instead"
+    ))
+}
+
+/// Go's restore flags for `PartitionInfo.Expr`
+/// (`format.DefaultRestoreFlags | RestoreBracketAroundBinaryOperation |
+/// RestoreWithoutSchemaName | RestoreWithoutTableName`).
+///
+/// The bracket flag is why `hash(a+b)` is stored -- and printed -- as
+/// ``(`a`+`b`)``, with no spaces around the operator, unlike a generated
+/// column's ``(`a` + 1)``. Captured: ``PARTITION BY HASH ((`a`+`b`))``.
+fn partition_restore_flags() -> tidb_ast::RestoreFlags {
+    tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
+        | tidb_ast::RestoreFlags::KEYWORD_UPPERCASE
+        | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
+        | tidb_ast::RestoreFlags::BRACKET_AROUND_BINARY_OPERATION
+        | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
+        | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME
+}
+
+/// Go `checkPartitionFuncValid` plus the expression build: the restored text
+/// Go stores, the evaluable form, and the column offsets it reads.
+fn build_partition_expression(
+    expr: &Expr,
+    names: &[String],
+    types: &[FieldType],
+) -> Result<(String, tidb_expr::expression::Expression, Vec<usize>), DriverError> {
+    check_partition_expression_allowed(expr)?;
+    let resolver = TableColumnResolver::new(names, types);
+    let built =
+        tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(|_| match resolver
+            .missing_name()
+        {
+            Some(name) => DriverError::UnknownColumnInClause {
+                column: name,
+                clause: "partition function".to_owned(),
+            },
+            None => DriverError::UnsupportedKind(
+                "this partition expression is not supported yet".to_owned(),
+            ),
+        })?;
+    // A rewrite can succeed while a branch failed to resolve only if the
+    // resolver was never consulted, so the missing name is still the
+    // authority on 1054.
+    if let Some(name) = resolver.missing_name() {
+        return Err(DriverError::UnknownColumnInClause {
+            column: name,
+            clause: "partition function".to_owned(),
+        });
+    }
+    let dependencies = resolver.dependencies();
+    // Go `checkPartitionFuncValid`: an expression naming no column at all is
+    // 1486 -- `PARTITION BY HASH(1)` has nothing to partition ON.
+    if dependencies.is_empty() {
+        return Err(DriverError::PartitionWrongExprInFunc);
+    }
+    Ok((
+        expr.restore_with_flags(partition_restore_flags()),
+        built,
+        dependencies,
+    ))
+}
+
+/// Go `AllowedPartitionFuncMap`, by lowercase function name.
+const ALLOWED_PARTITION_FUNCTIONS: &[&str] = &[
+    "to_days",
+    "to_seconds",
+    "dayofmonth",
+    "month",
+    "dayofyear",
+    "quarter",
+    "yearweek",
+    "year",
+    "weekday",
+    "dayofweek",
+    "day",
+    "hour",
+    "minute",
+    "second",
+    "time_to_sec",
+    "microsecond",
+    "unix_timestamp",
+    "from_days",
+    "extract",
+    "abs",
+    "ceiling",
+    "datediff",
+    "floor",
+    "mod",
+];
+
+/// Go `checkPartitionExprAllowed`: every node of a partition expression must
+/// be in the whitelist, or 1564.
+///
+/// Go's list is [`ALLOWED_PARTITION_FUNCTIONS`],
+/// `AllowedPartition4BinaryOpMap` (`+ - * DIV %`),
+/// `AllowedPartition4UnaryOpMap` (unary `+ -`), and the leaf forms: a column
+/// reference, parentheses, a literal, `MAXVALUE`, `DEFAULT`, a time unit.
+/// Everything else -- `rand()` being the captured case -- is refused.
+fn check_partition_expression_allowed(expr: &Expr) -> Result<(), DriverError> {
+    match expr {
+        Expr::Column(_)
+        | Expr::Int(_)
+        | Expr::Decimal(_)
+        | Expr::Float(_)
+        | Expr::Hex(_)
+        | Expr::Bit(_)
+        | Expr::String(_)
+        | Expr::Bool(_)
+        | Expr::Default(_) => Ok(()),
+        Expr::Paren(inner) => check_partition_expression_allowed(inner),
+        // Go `AllowedPartition4UnaryOpMap`.
+        Expr::Unary(tidb_ast::UnaryOp::Plus | tidb_ast::UnaryOp::Minus, inner) => {
+            check_partition_expression_allowed(inner)
+        }
+        // Go `AllowedPartition4BinaryOpMap`.
+        Expr::Binary(
+            tidb_ast::BinaryOp::Plus
+            | tidb_ast::BinaryOp::Minus
+            | tidb_ast::BinaryOp::Mul
+            | tidb_ast::BinaryOp::IntDiv
+            | tidb_ast::BinaryOp::Mod,
+            left,
+            right,
+        ) => {
+            check_partition_expression_allowed(left)?;
+            check_partition_expression_allowed(right)
+        }
+        Expr::Func { name, args, .. }
+            if ALLOWED_PARTITION_FUNCTIONS.contains(&name.to_ascii_lowercase().as_str()) =>
+        {
+            for arg in args {
+                check_partition_expression_allowed(arg)?;
+            }
+            Ok(())
+        }
+        _ => Err(DriverError::PartitionFunctionNotAllowed),
+    }
+}
+
+/// Go `checkPartitionFuncType`: the expression must evaluate to an integer.
+///
+/// Go builds the expression and asks its `EvalType()`; the same question is
+/// answered here from the columns it reads, because the only forms the
+/// whitelist admits are a bare column, an arithmetic tree over columns, and
+/// a function whose result type is fixed. Go names the offending COLUMN in
+/// 1659 (`Field 'a' is of a not allowed type for this type of
+/// partitioning`), which is why the check is written per dependency.
+fn check_partition_expression_type(
+    expr: &Expr,
+    dependencies: &[usize],
+    names: &[String],
+    types: &[FieldType],
+) -> Result<(), DriverError> {
+    // A bare column reference reports the name AS WRITTEN, which a qualified
+    // `t.a` shortens to `a` exactly as Go's `col2.Name.Name.L` does.
+    if let Expr::Column(path) = unwrap_parentheses(expr) {
+        let offset = dependencies
+            .first()
+            .copied()
+            .ok_or(DriverError::PartitionWrongExprInFunc)?;
+        if !is_integer_type(&types[offset]) {
+            let name = path
+                .last()
+                .cloned()
+                .unwrap_or_else(|| names[offset].clone());
+            return Err(DriverError::PartitionFieldTypeNotAllowed(name));
+        }
+        return Ok(());
+    }
+    for offset in dependencies {
+        if !is_integer_type(&types[*offset]) {
+            return Err(DriverError::PartitionFieldTypeNotAllowed(
+                names[*offset].clone(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The parenthesised expression's subject, since `(a)` partitions on `a`.
+fn unwrap_parentheses(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(inner) => unwrap_parentheses(inner),
+        other => other,
+    }
+}
+
+/// Whether a column's type is one a HASH partition expression may read: Go's
+/// `EvalType() == types.ETInt`.
+fn is_integer_type(field_type: &FieldType) -> bool {
+    matches!(
+        field_type.code(),
+        FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+            | FieldTypeCode::Year
+            | FieldTypeCode::Bit
+    )
+}
+
+/// Go `buildHashPartitionDefinitions`: `n` partitions, named `p0..pn-1`
+/// unless the statement named them itself.
+fn build_hash_partition_definitions(
+    create: &CreateTableStmt,
+    count: u64,
+    allocate_id: &mut dyn FnMut() -> i64,
+) -> Result<Vec<PartitionDef>, DriverError> {
+    // A HASH partition definition carries no values -- `tidb_parser`'s
+    // `validate_definition` already rejects `VALUES` on one -- so the written
+    // definitions contribute nothing but their names.
+    let written = create
+        .partitioning
+        .as_ref()
+        .map_or(&[][..], |partitioning| &partitioning.definitions);
+    debug_assert!(written
+        .iter()
+        .all(|definition| matches!(definition.clause, PartitionDefinitionClause::None)));
+    let mut definitions = Vec::with_capacity(count as usize);
+    for index in 0..count {
+        let name = written
+            .get(index as usize)
+            .map_or_else(|| format!("p{index}"), |written| written.name.clone());
+        definitions.push(PartitionDef {
+            id: allocate_id(),
+            name,
+        });
+    }
+    Ok(definitions)
+}
+
+/// Go `checkPartitionNameUnique` (1517), matched case-insensitively as
+/// partition names are.
+fn check_partition_name_unique(definitions: &[PartitionDef]) -> Result<(), DriverError> {
+    for (index, definition) in definitions.iter().enumerate() {
+        if definitions[..index]
+            .iter()
+            .any(|earlier| earlier.name.eq_ignore_ascii_case(&definition.name))
+        {
+            return Err(DriverError::PartitionSameName(definition.name.clone()));
+        }
+    }
+    Ok(())
+}
+
+/// Go `checkPartitionKeysConstraint` and `ErrGlobalIndexNotExplicitlySet`
+/// (8264): every UNIQUE key must contain every column the partition
+/// expression reads, unless the index was declared GLOBAL.
+///
+/// This rule is also what makes a LOCAL unique index and a GLOBAL one
+/// indistinguishable in this tier: because a unique key covers the partition
+/// columns, two rows sharing that key route to the SAME partition, so
+/// per-partition uniqueness and table-wide uniqueness are the same
+/// constraint. That equivalence is why index entries here stay keyed by the
+/// TABLE id rather than by the partition id -- and it holds only while this
+/// check does, which is why the two live in one file.
+fn check_unique_keys_include_partition_columns(
+    indexes: &[KvIndex],
+    handle_offsets: &[usize],
+    dependencies: &[usize],
+) -> Result<(), DriverError> {
+    for index in indexes {
+        if !index.unique {
+            continue;
+        }
+        if !dependencies
+            .iter()
+            .all(|offset| index.column_offsets.contains(offset))
+        {
+            return Err(DriverError::PartitionGlobalIndexNeeded(index.name.clone()));
+        }
+    }
+    // A clustered primary key is no entry in `indexes` -- its encoding IS the
+    // row key -- so Go checks it separately, and reports it as
+    // `CLUSTERED INDEX` rather than by name.
+    if !handle_offsets.is_empty()
+        && !dependencies
+            .iter()
+            .all(|offset| handle_offsets.contains(offset))
+    {
+        return Err(DriverError::PartitionUniqueKeyNeedAllFields(
+            "CLUSTERED INDEX".to_owned(),
+        ));
+    }
+    Ok(())
 }

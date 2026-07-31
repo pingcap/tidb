@@ -70,6 +70,7 @@ pub mod kv_table;
 pub mod limit;
 pub mod mem_quota;
 pub mod mem_table;
+pub mod partition_routing;
 mod plan_trace;
 pub mod predicate_pushdown;
 pub mod projection;
@@ -88,9 +89,9 @@ pub mod zero_date;
 
 pub use apply::ApplyExec;
 pub use ddl::{
-    check_constraint_count, run_alter_table_in, run_create_index_in, run_create_table_in,
-    run_create_table_on, run_drop_index_in, run_drop_table_in, run_rename_table_in,
-    run_truncate_table_in,
+    check_constraint_count, linear_partitioning_warning, run_alter_table_in, run_create_index_in,
+    run_create_table_in, run_create_table_on, run_drop_index_in, run_drop_table_in,
+    run_rename_table_in, run_truncate_table_in,
 };
 pub use ddl_sequence::{
     run_alter_sequence_in, run_create_sequence_in, run_drop_sequence_in, show_create_sequence,

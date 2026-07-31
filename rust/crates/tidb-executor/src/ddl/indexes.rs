@@ -225,6 +225,24 @@ pub(crate) fn add_index_to_table(
             }
         }
     }
+    // Go `checkPartitionKeysConstraint` reaches ADD INDEX too: a unique index
+    // on a partitioned table must include every partitioning column unless it
+    // is GLOBAL (8264). It is not merely a rule to copy -- this tier keys
+    // index entries by the TABLE id rather than by the partition id, and that
+    // is sound only while this holds. See `crate::ddl::table_partition`.
+    if unique {
+        if let Some(partition) = table.partition() {
+            if !partition
+                .dependencies
+                .iter()
+                .all(|offset| offsets.contains(offset))
+            {
+                return Err(DriverError::PartitionGlobalIndexNeeded(
+                    index_name.to_owned(),
+                ));
+            }
+        }
+    }
     let added = pending.len();
     for column in pending {
         table.add_hidden_column(KvColumn {

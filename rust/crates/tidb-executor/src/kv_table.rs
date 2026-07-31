@@ -53,7 +53,9 @@ use auto_id::AutoIdAllocator;
 use std::collections::BTreeMap;
 use table_meta::NOT_NULL_FLAG;
 use table_scan::fill_handle_columns;
-use tidb_codec::table_key::{encode_index_seek_key, encode_row_key_with_handle};
+use tidb_codec::table_key::{
+    encode_index_seek_key, encode_row_key_with_handle, get_table_handle_key_range,
+};
 use tidb_datatype::{Datum, FieldType};
 use tidb_tablecodec::{
     cut_index_key, decode_handle_in_index_value, decode_table_row_to_map,
@@ -113,6 +115,15 @@ pub struct KvTable {
     /// `fk_1` and adding another unnamed constraint yields `fk_2` rather than
     /// reusing the freed name.
     max_foreign_key_id: i64,
+    /// Go `TableInfo.Partition`: how the table's rows are spread over
+    /// physical key prefixes, or `None` for an ordinary table whose rows all
+    /// live under [`KvTable::table_id`].
+    ///
+    /// This is the ONLY branch partitioning adds to the write path: every
+    /// record key goes through [`KvTable::record_physical_id`], which reads
+    /// this field once and then has no cases left. See
+    /// [`crate::partition_routing`].
+    partition: Option<Box<crate::partition_routing::PartitionSpec>>,
 }
 
 /// A failure while encoding or decoding table bytes.
@@ -166,6 +177,11 @@ pub enum KvTableError {
         /// The offending row's 1-based position.
         row: usize,
     },
+    /// Go `table.ErrNoPartitionForGivenValue` (1526): the row's partition
+    /// value falls outside every partition. HASH cannot produce it; RANGE and
+    /// LIST can (captured: `insert into r2 values (20,0)` on a RANGE table
+    /// with no `MAXVALUE` partition is `Table has no partition for value 20`).
+    NoPartitionForValue(String),
     /// A stored value failed to decode.
     Decode(String),
     /// The storage layer refused a read or write.
@@ -216,7 +232,123 @@ impl KvTable {
             charset: TableCharset::default(),
             foreign_keys: Vec::new(),
             max_foreign_key_id: 0,
+            partition: None,
         }
+    }
+
+    /// Records how this table is partitioned (Go's `TableInfo.Partition`),
+    /// which is what makes its record keys carry a partition id.
+    pub fn set_partition(&mut self, partition: crate::partition_routing::PartitionSpec) {
+        self.partition = Some(Box::new(partition));
+    }
+
+    /// The table's partitioning, or `None` for an ordinary table.
+    #[must_use]
+    pub fn partition(&self) -> Option<&crate::partition_routing::PartitionSpec> {
+        self.partition.as_deref()
+    }
+
+    /// How many rows each partition holds, in definition order, or an empty
+    /// vector for an unpartitioned table.
+    ///
+    /// This is what Go reports as `information_schema.partitions.TABLE_ROWS`,
+    /// and it is the only way to SEE where a row was routed while
+    /// `SELECT ... PARTITION (...)` is still refused -- so it is also what
+    /// pins the routing against the answers captured from real TiDB.
+    ///
+    /// # Errors
+    ///
+    /// [`KvTableError::Storage`] when the backend refuses a scan.
+    pub fn partition_row_counts(&mut self) -> Result<Vec<(String, usize)>, KvTableError> {
+        let Some(partition) = self.partition.clone() else {
+            return Ok(Vec::new());
+        };
+        let mut counts = Vec::with_capacity(partition.definitions.len());
+        for definition in &partition.definitions {
+            let (low, high) = get_table_handle_key_range(definition.id);
+            let mut upper = high;
+            upper.push(0);
+            let mut iterator = self
+                .store
+                .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(upper)))
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            let mut rows = 0;
+            while iterator.valid() {
+                rows += 1;
+                iterator
+                    .next()
+                    .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            }
+            iterator.close();
+            counts.push((definition.name.clone(), rows));
+        }
+        Ok(counts)
+    }
+
+    /// The physical table id `row`'s record key is written under: the
+    /// partition it routes into, or the table itself.
+    ///
+    /// This is the whole of "an unpartitioned table is a table with one
+    /// partition whose id is its own" -- every write site calls this instead
+    /// of reading `table_id`, so none of them carries a partitioning branch.
+    fn record_physical_id(
+        &self,
+        row: &[Datum],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<i64, KvTableError> {
+        let Some(partition) = &self.partition else {
+            return Ok(self.table_id);
+        };
+        let types: Vec<FieldType> = self.columns.iter().map(|c| c.field_type.clone()).collect();
+        partition
+            .locate(row, &types, ctx)
+            .map_err(|error| match error {
+                crate::partition_routing::RoutingError::NoPartitionForValue(value) => {
+                    KvTableError::NoPartitionForValue(value)
+                }
+                crate::partition_routing::RoutingError::Eval(error) => {
+                    KvTableError::Decode(format!("{error:?}"))
+                }
+            })
+    }
+
+    /// Every physical table id this table's rows can live under, ascending.
+    ///
+    /// A read that has only a HANDLE cannot route -- the partition is a
+    /// function of the ROW -- so it probes these in turn. For an ordinary
+    /// table that is the single-element list holding the table id, which is
+    /// why the probe needs no unpartitioned special case.
+    fn record_physical_ids(&self) -> Vec<i64> {
+        self.partition
+            .as_ref()
+            .map_or_else(|| vec![self.table_id], |p| p.physical_ids())
+    }
+
+    /// The stored record for `handle` -- its key AND its bytes -- found by
+    /// probing the partitions, or `None` when none holds it.
+    ///
+    /// The bytes come back with the key because every caller that wants the
+    /// key wants either the row or nothing, and fetching them separately
+    /// would double the round trips a point read costs -- which the access-
+    /// path tests count.
+    fn stored_record(
+        &mut self,
+        handle: &TableHandle,
+    ) -> Result<Option<(Key, Vec<u8>)>, KvTableError> {
+        for id in self.record_physical_ids() {
+            let key = Key::from_bytes(encode_row_key_with_handle(id, &handle.record_handle()));
+            match self.store.get(&key) {
+                Ok(entry) => return Ok(Some((key, entry))),
+                Err(StorageError::NotFound) => {}
+                Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
+            }
+        }
+        Ok(None)
+    }
+
+    /// [`KvTable::stored_record`] without the bytes.
+    fn stored_record_key(&mut self, handle: &TableHandle) -> Result<Option<Key>, KvTableError> {
+        Ok(self.stored_record(handle)?.map(|(key, _)| key))
     }
 
     /// Records a foreign key this table declares.
@@ -776,6 +908,18 @@ impl KvTable {
         new_column: KvColumn,
         new_position: Option<usize>,
     ) -> Result<(), KvTableError> {
+        // Rewriting the rows here reads them back through the scan and writes
+        // them under a key built from the table id, which for a partitioned
+        // table would collapse every partition into one. Re-routing them
+        // instead would need the statement's evaluation context, which this
+        // path does not carry, and Go has its own rules for modifying a
+        // partitioning column besides -- so this refuses rather than moving
+        // rows it cannot place.
+        if self.partition.is_some() {
+            return Err(KvTableError::Storage(
+                "MODIFY COLUMN on a partitioned table is not supported by this node".to_owned(),
+            ));
+        }
         let target = new_column.field_type.clone();
         let not_null = target.flags() & NOT_NULL_FLAG != 0;
         let rows = self.scan_rows_with_handles()?;
@@ -1063,7 +1207,7 @@ impl KvTable {
             });
         }
         let key = Key::from_bytes(encode_row_key_with_handle(
-            self.table_id,
+            self.record_physical_id(row, ctx)?,
             &handle.record_handle(),
         ));
         // Go writes the row first, then its index entries; a duplicate on a
@@ -1151,8 +1295,10 @@ impl KvTable {
     /// Removes one row's record entry, leaving its index entries orphaned.
     /// See [`KvTable::delete_raw_key_for_test`].
     pub fn delete_record_for_test(&mut self, handle: &TableHandle) -> Result<(), KvTableError> {
-        let key = encode_row_key_with_handle(self.table_id, &handle.record_handle());
-        self.delete_raw_key_for_test(&key)
+        let Some(key) = self.stored_record_key(handle)? else {
+            return Ok(());
+        };
+        self.delete_raw_key_for_test(key.as_bytes())
     }
 
     /// Go `GenIndexKey`: the entry key for one index over `row`, plus Go's
@@ -1297,14 +1443,8 @@ impl KvTable {
 
     /// The row stored under `handle`, decoded, or `None` when absent.
     fn read_row(&mut self, handle: &TableHandle) -> Result<Option<Vec<Datum>>, KvTableError> {
-        let key = Key::from_bytes(encode_row_key_with_handle(
-            self.table_id,
-            &handle.record_handle(),
-        ));
-        let entry = match self.store.get(&key) {
-            Ok(entry) => entry,
-            Err(StorageError::NotFound) => return Ok(None),
-            Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
+        let Some((_, entry)) = self.stored_record(handle)? else {
+            return Ok(None);
         };
         let column_types: BTreeMap<i64, FieldType> = self
             .columns
@@ -1330,17 +1470,14 @@ impl KvTable {
         Ok(Some(row))
     }
 
-    /// Whether a row is already stored under `handle`.
+    /// Whether a row is already stored under `handle`, in ANY partition.
+    ///
+    /// Asking across partitions rather than within one is not a widening: a
+    /// clustered key includes every partitioning column (Go's 8264/1503
+    /// checks, ported in [`crate::ddl::table_partition`]), so two rows
+    /// sharing a handle route to the same partition anyway.
     fn row_exists(&mut self, handle: &TableHandle) -> Result<bool, KvTableError> {
-        let key = Key::from_bytes(encode_row_key_with_handle(
-            self.table_id,
-            &handle.record_handle(),
-        ));
-        match self.store.get(&key) {
-            Ok(_) => Ok(true),
-            Err(StorageError::NotFound) => Ok(false),
-            Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
-        }
+        Ok(self.stored_record_key(handle)?.is_some())
     }
 
     /// Replaces the row stored under `handle` (Go's `UPDATE` writes the new
@@ -1436,19 +1573,21 @@ impl KvTable {
         }
         // The handle columns stay out of the value, as on insert.
         let value = self.encode_row_value(row)?;
-        if new_handle != *handle {
-            let old_key = Key::from_bytes(encode_row_key_with_handle(
-                self.table_id,
-                &handle.record_handle(),
-            ));
+        // An update can move the row TWICE over: onto a new handle, and --
+        // when the update changes a partitioning column -- into a different
+        // partition. Both are the same move, because both change the record
+        // KEY, so the old key is removed whenever the new one differs from it
+        // and there is no "did the partition change" branch.
+        let old_key = self.stored_record_key(handle)?;
+        let key = Key::from_bytes(encode_row_key_with_handle(
+            self.record_physical_id(row, ctx)?,
+            &new_handle.record_handle(),
+        ));
+        if let Some(old_key) = old_key.filter(|old_key| *old_key != key) {
             self.store
                 .delete(old_key)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         }
-        let key = Key::from_bytes(encode_row_key_with_handle(
-            self.table_id,
-            &new_handle.record_handle(),
-        ));
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))
@@ -1461,10 +1600,9 @@ impl KvTable {
                 self.delete_index_entries(&row, handle)?;
             }
         }
-        let key = Key::from_bytes(encode_row_key_with_handle(
-            self.table_id,
-            &handle.record_handle(),
-        ));
+        let Some(key) = self.stored_record_key(handle)? else {
+            return Ok(());
+        };
         self.store
             .delete(key)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))
