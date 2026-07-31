@@ -527,3 +527,5 @@ mod tests_views;
 mod tests_window;
 #[cfg(test)]
 mod tests_write_conversion;
+#[cfg(test)]
+mod tests_zero_date;
