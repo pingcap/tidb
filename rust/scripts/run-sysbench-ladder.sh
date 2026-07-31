@@ -58,6 +58,12 @@ else
 fi
 
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# Both engines must run on ONE playground version for the rung-3c Go control to
+# be a control at all. `v8.5.6` predates `c619031356`, whose `runtime.GOOS ==
+# "darwin"` early return in `PreCheckUsage` is what lets Go's add-index ingest
+# run on a laptop whose free space is under 10% of the volume; on `v8.5.6` the
+# control fails at `CREATE INDEX` with `error 8256` and measures nothing.
+CLUSTER_VERSION=${SYSBENCH_CLUSTER_VERSION:-v9.0.0-beta.2.pre-nightly}
 TAG="sysbench-ladder-${$}-$(date +%s)"
 PORT_OFFSET=${SYSBENCH_PORT_OFFSET:-41000}
 if [[ ! "${PORT_OFFSET}" =~ ^[0-9]+$ ]] || [[ "${PORT_OFFSET}" -gt 45375 ]]; then
@@ -206,7 +212,7 @@ unset AUTH_HASH_HEX
 step "rung 0: real cluster (TiUP playground)"
 TIDB_CONFIG="${RUNTIME_DIR}/tidb.toml"
 printf 'lease = "2s"\n' >"${TIDB_CONFIG}"
-tiup playground v8.5.6 --without-monitor --tag "${TAG}" \
+tiup playground "${CLUSTER_VERSION}" --without-monitor --tag "${TAG}" \
   --db 1 --pd 1 --kv 1 --tiflash 0 --port-offset "${PORT_OFFSET}" \
   --db.config "${TIDB_CONFIG}" >"${PLAYGROUND_LOG}" 2>&1 &
 PLAYGROUND_PID=$!
