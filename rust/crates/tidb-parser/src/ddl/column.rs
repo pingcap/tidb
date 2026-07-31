@@ -22,7 +22,7 @@
 use tidb_ast::{ColumnDef, ColumnOption, ColumnType, InlineKeyOption};
 use tidb_lexer::TokenKind;
 
-use crate::{decode_string, PResult, Parser};
+use crate::{PResult, Parser};
 
 use super::field_type::{
     canonical_field_charset, normalize_binary_charset, type_rejects_charset,
@@ -111,7 +111,7 @@ impl Parser {
                     return Err(self.err_here("column type does not allow CHARACTER SET"));
                 }
                 let raw = if self.peek().kind == TokenKind::Str {
-                    decode_string(&self.bump().text)
+                    self.bumped_string()
                 } else {
                     self.parse_charset_name()?
                 };

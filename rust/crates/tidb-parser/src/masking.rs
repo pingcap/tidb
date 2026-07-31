@@ -20,7 +20,7 @@ use tidb_ast::{
 };
 use tidb_lexer::{is_reserved, TokenKind};
 
-use crate::{decode_string, prec, PResult, Parser};
+use crate::{prec, PResult, Parser};
 
 impl Parser {
     pub(crate) fn is_create_masking_policy_source_statement(&self) -> bool {
@@ -194,7 +194,7 @@ impl Parser {
             TokenKind::Keyword if !is_reserved(&token.text) => Ok(self.bump().text),
             TokenKind::Str => {
                 self.bump();
-                Ok(decode_string(&token.text))
+                Ok(self.decode_string(&token.text))
             }
             _ => Err(self.err_here("expected a masking-policy identifier")),
         }

@@ -20,7 +20,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{decode_at_name, decode_string, prec, PResult, Parser};
+use crate::{prec, PResult, Parser};
 
 impl Parser {
     pub(crate) fn parse_query_watch(&mut self) -> PResult<tidb_ast::AdminStmt> {
@@ -170,13 +170,13 @@ impl Parser {
     /// token as a name; RESOURCE GROUP keeps that token as an expression.
     fn parse_query_watch_name(&mut self, user_var_as_name: bool) -> PResult<String> {
         match self.peek().kind {
-            TokenKind::Str => Ok(decode_string(&self.bump().text)),
+            TokenKind::Str => Ok(self.bumped_string()),
             TokenKind::UserVar if user_var_as_name => {
                 let raw = self.bump().text;
                 if raw.starts_with("@@") {
                     Ok(raw)
                 } else {
-                    Ok(decode_at_name(&raw))
+                    Ok(self.decode_at_name(&raw))
                 }
             }
             _ => self.parse_name_or_keyword(),

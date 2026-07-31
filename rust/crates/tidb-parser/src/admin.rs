@@ -154,7 +154,7 @@ impl Parser {
         };
         let mut plugins = Vec::new();
         while !self.at_eof() && !self.is_op(";") {
-            plugins.push(crate::table_name_token_text(self.bump()));
+            plugins.push(self.bumped_table_name());
             if self.is_op(",") {
                 self.bump();
             } else {

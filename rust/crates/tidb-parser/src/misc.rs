@@ -21,7 +21,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{decode_string, prec, PResult, Parser};
+use crate::{prec, PResult, Parser};
 
 impl Parser {
     pub(crate) fn parse_trace(&mut self) -> PResult<TraceStmt> {
@@ -106,7 +106,7 @@ impl Parser {
         self.expect_kw("SET")?;
         self.expect_kw("CONFIG")?;
         let target = if self.peek().kind == TokenKind::Str {
-            SetConfigTarget::Instance(decode_string(&self.bump().text))
+            SetConfigTarget::Instance(self.bumped_string())
         } else {
             SetConfigTarget::Component(self.parse_name_or_keyword()?.to_ascii_lowercase())
         };
@@ -176,7 +176,7 @@ impl Parser {
         self.expect_kw("CREATE")?;
         self.expect_kw("STATISTICS")?;
         let if_not_exists = self.parse_if_not_exists()?;
-        let name = crate::table_name_token_text(self.bump());
+        let name = self.bumped_table_name();
         self.expect_op("(")?;
         let stats_type_token = self.bump();
         let stats_type = if stats_type_token.text.eq_ignore_ascii_case("DEPENDENCY") {
@@ -258,7 +258,7 @@ impl Parser {
                 "START_TIME" => CalibrateResourceOption::StartTime(self.parse_expr(prec::NONE)?),
                 "END_TIME" => CalibrateResourceOption::EndTime(self.parse_expr(prec::NONE)?),
                 _ if self.peek().kind == TokenKind::Str => {
-                    CalibrateResourceOption::DurationString(decode_string(&self.bump().text))
+                    CalibrateResourceOption::DurationString(self.bumped_string())
                 }
                 _ if self.is_kw("INTERVAL") => {
                     self.bump();
@@ -304,7 +304,7 @@ impl Parser {
         if token.kind != TokenKind::Str {
             return Err(self.err_here(&format!("expected {expected}")));
         }
-        Ok(decode_string(&token.text))
+        Ok(self.decode_string(&token.text))
     }
 
     fn parse_misc_u64(&mut self, expected: &str) -> PResult<u64> {

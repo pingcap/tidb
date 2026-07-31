@@ -620,6 +620,9 @@ struct Parser {
     connection_charset: String,
     connection_collation: String,
     real_as_float: bool,
+    /// `NO_BACKSLASH_ESCAPES`: a backslash in a string literal is an
+    /// ordinary character, so `Parser::decode_string` leaves it alone.
+    no_backslash_escapes: bool,
     high_not_precedence: bool,
     ignore_space: bool,
     warnings: Vec<HintDiagnostic>,
@@ -671,6 +674,7 @@ impl Parser {
             connection_charset: charset.to_owned(),
             connection_collation: collation.to_owned(),
             real_as_float: sql_mode.real_as_float,
+            no_backslash_escapes: sql_mode.no_backslash_escapes,
             high_not_precedence: sql_mode.high_not_precedence,
             ignore_space: sql_mode.ignore_space,
             warnings: lexer_warnings
@@ -679,6 +683,70 @@ impl Parser {
                 .collect(),
         }
     }
+
+    /// Decodes a string-literal token under THIS parser's `sql_mode`. Every
+    /// string literal in the grammar goes through here, so
+    /// `NO_BACKSLASH_ESCAPES` cannot be honored by one production and dropped
+    /// by the next.
+    fn decode_string(&self, raw: &str) -> String {
+        decode_string_with_mode(raw, self.no_backslash_escapes)
+    }
+
+    /// Consumes the next token and decodes it as a string literal. The
+    /// two-step shape exists because decoding reads the parser (for the
+    /// `sql_mode`) while bumping writes it.
+    fn bumped_string(&mut self) -> String {
+        let token = self.bump();
+        self.decode_string(&token.text)
+    }
+
+    /// Consumes the next token and decodes it as a `@name` payload.
+    fn bumped_at_name(&mut self) -> String {
+        let token = self.bump();
+        self.decode_at_name(&token.text)
+    }
+
+    /// Consumes the next token and decodes it as a name slot.
+    fn bumped_table_name(&mut self) -> String {
+        let token = self.bump();
+        self.table_name_token_text(token)
+    }
+
+    /// A name slot's text. A name WRITTEN as a string literal is decoded like
+    /// one, so it obeys the same `NO_BACKSLASH_ESCAPES` rule the literal does.
+    fn table_name_token_text(&self, token: Token) -> String {
+        match token.kind {
+            TokenKind::Str => self.decode_string(&token.text),
+            TokenKind::UserVar if token.text.starts_with("@@") => token.text,
+            TokenKind::UserVar => self.decode_at_name(&token.text),
+            _ => normalize_identifier(token.text),
+        }
+    }
+
+    /// [`Parser::table_name_token_text`] over a borrowed token.
+    fn token_literal_text(&self, token: &Token) -> String {
+        match token.kind {
+            TokenKind::Str => self.decode_string(&token.text),
+            TokenKind::UserVar if token.text.starts_with("@@") => token.text.clone(),
+            TokenKind::UserVar => self.decode_at_name(&token.text),
+            _ => normalize_identifier(token.text.clone()),
+        }
+    }
+
+    /// Decodes the payload of a raw `UserVar` token (the lexer scans `@name`,
+    /// `@'name'`, and `` @`name` `` as one token). Strips the leading `@`, then
+    /// decodes a quoted (`'`/`"`) string or a back-quoted identifier, or returns a
+    /// bare payload verbatim. Account hosts, prepared-statement parameters, and
+    /// binding values all share this lexical primitive.
+    fn decode_at_name(&self, raw: &str) -> String {
+        let rest = raw.strip_prefix('@').unwrap_or(raw);
+        match rest.as_bytes().first() {
+            Some(b'\'') | Some(b'"') => self.decode_string(rest),
+            Some(b'`') => rest.trim_matches('`').replace("``", "`"),
+            _ => rest.to_string(),
+        }
+    }
+
 
     fn reset_param_marker_positions(&mut self) {
         self.param_marker_position = 0;
@@ -718,6 +786,7 @@ impl Parser {
             connection_charset: tidb_mysql::DefaultCharset.to_owned(),
             connection_collation: tidb_mysql::DefaultCollationName.to_owned(),
             real_as_float: false,
+            no_backslash_escapes: false,
             high_not_precedence: false,
             ignore_space: false,
             warnings: Vec::new(),
@@ -834,7 +903,7 @@ impl Parser {
         if self.peek().kind != TokenKind::Str {
             return Err(self.err_here(message));
         }
-        Ok(decode_string(&self.bump().text))
+        Ok(self.bumped_string())
     }
 
     /// True if the token `n` positions ahead is the operator `op`.
@@ -900,10 +969,10 @@ impl Parser {
             let target = tables
                 .last_mut()
                 .expect("LOCK STATS requires its first table before partitions");
-            target.partitions.push(table_name_token_text(self.bump()));
+            target.partitions.push(self.bumped_table_name());
             while self.is_op(",") {
                 self.bump();
-                target.partitions.push(table_name_token_text(self.bump()));
+                target.partitions.push(self.bumped_table_name());
             }
             if parenthesized {
                 self.expect_op(")")?;
@@ -932,7 +1001,7 @@ impl Parser {
         let explore = if self.is_kw("EXPLORE") {
             self.bump();
             if self.peek().kind == TokenKind::Str {
-                let digest = decode_string(&self.bump().text);
+                let digest = self.bumped_string();
                 return Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::Explain(
                     Box::new(ExplainStmt {
                         analyze: false,
@@ -951,7 +1020,7 @@ impl Parser {
                     Box::new(ExplainStmt {
                         analyze: false,
                         format: String::new(),
-                        target: ExplainTarget::ExploreReplayer(decode_string(&token.text)),
+                        target: ExplainTarget::ExploreReplayer(self.decode_string(&token.text)),
                     }),
                 ))));
             }
@@ -973,7 +1042,7 @@ impl Parser {
             format = match token.kind {
                 TokenKind::Str => {
                     self.bump();
-                    decode_string(&token.text)
+                    self.decode_string(&token.text)
                 }
                 TokenKind::Ident | TokenKind::Keyword => {
                     self.bump();
@@ -1000,7 +1069,7 @@ impl Parser {
         }
 
         if self.peek().kind == TokenKind::Str {
-            let digest = decode_string(&self.bump().text);
+            let digest = self.bumped_string();
             return Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::Explain(
                 Box::new(ExplainStmt {
                     analyze,
@@ -1074,7 +1143,7 @@ impl Parser {
                 return Err(self.err_here("expected PLAN REPLAYER file"));
             }
             return Ok(Stmt::Admin(tidb_ast::NodeBox::new(
-                AdminStmt::PlanReplayer(Box::new(PlanReplayerStmt::Load(decode_string(
+                AdminStmt::PlanReplayer(Box::new(PlanReplayerStmt::Load(self.decode_string(
                     &token.text,
                 )))),
             )));
@@ -1095,8 +1164,8 @@ impl Parser {
             return Ok(Stmt::Admin(tidb_ast::NodeBox::new(
                 AdminStmt::PlanReplayer(Box::new(PlanReplayerStmt::Capture {
                     remove,
-                    sql_digest: decode_string(&sql_digest.text),
-                    plan_digest: decode_string(&plan_digest.text),
+                    sql_digest: self.decode_string(&sql_digest.text),
+                    plan_digest: self.decode_string(&plan_digest.text),
                 })),
             )));
         }
@@ -1120,7 +1189,7 @@ impl Parser {
             false
         };
         let target = if self.peek().kind == TokenKind::Str {
-            PlanReplayerTarget::File(decode_string(&self.bump().text))
+            PlanReplayerTarget::File(self.bumped_string())
         } else if self.is_op("(") && self.peek_n(1).kind == TokenKind::Str {
             self.bump();
             let mut statements = Vec::new();
@@ -1129,7 +1198,7 @@ impl Parser {
                 if token.kind != TokenKind::Str {
                     return Err(self.err_here("expected SQL string"));
                 }
-                statements.push(decode_string(&token.text));
+                statements.push(self.decode_string(&token.text));
                 if !self.is_op(",") {
                     break;
                 }
@@ -1250,7 +1319,7 @@ impl Parser {
 
     fn parse_ident_like_name(&mut self) -> PResult<String> {
         if is_ident_like_name(self.peek()) {
-            Ok(table_name_token_text(self.bump()))
+            Ok(self.bumped_table_name())
         } else {
             Err(self.err_here("expected an identifier-like name"))
         }
@@ -1264,7 +1333,7 @@ impl Parser {
     /// identifier-class check. A few legacy rename tails deliberately accept
     /// literals and even EOF, whose empty payload means no restored rename.
     fn parse_any_token_name(&mut self) -> String {
-        table_name_token_text(self.bump())
+        self.bumped_table_name()
     }
 
     /// Go's `Token.IsKeyword` compares the decoded token literal regardless
@@ -1272,7 +1341,7 @@ impl Parser {
     /// strings, back-quoted identifiers, and single-@ names when their payload
     /// spells the requested word.
     fn token_literal_is_at(&self, offset: usize, expected: &str) -> bool {
-        token_literal_text(self.peek_n(offset)).eq_ignore_ascii_case(expected)
+        self.token_literal_text(self.peek_n(offset)).eq_ignore_ascii_case(expected)
     }
 
     fn expect_token_literal(&mut self, expected: &str) -> PResult<()> {
@@ -1288,7 +1357,7 @@ impl Parser {
     fn keyword_or_ident_is_at(&self, offset: usize, expected: &str) -> bool {
         let token = self.peek_n(offset);
         matches!(token.kind, TokenKind::Keyword | TokenKind::Ident)
-            && token_literal_text(token).eq_ignore_ascii_case(expected)
+            && self.token_literal_text(token).eq_ignore_ascii_case(expected)
     }
 
     fn expect_keyword_or_ident(&mut self, expected: &str) -> PResult<()> {
@@ -1303,7 +1372,7 @@ impl Parser {
     /// `isIdentLike`, then dispatch on the decoded literal.
     fn ident_like_literal_is_at(&self, offset: usize, expected: &str) -> bool {
         let token = self.peek_n(offset);
-        is_ident_like_name(token) && token_literal_text(token).eq_ignore_ascii_case(expected)
+        is_ident_like_name(token) && self.token_literal_text(token).eq_ignore_ascii_case(expected)
     }
 
     fn parse_ident_like_name_list(&mut self) -> PResult<Vec<String>> {
@@ -1401,7 +1470,7 @@ impl Parser {
     /// not applied to `parse_charset_name` itself.
     fn parse_using_charset_name(&mut self) -> PResult<String> {
         if self.peek().kind == TokenKind::Str {
-            return Ok(decode_string(&self.bump().text));
+            return Ok(self.bumped_string());
         }
         self.parse_charset_name()
     }
@@ -1460,14 +1529,14 @@ impl Parser {
             self.bump();
             self.bump();
             let token = self.bump();
-            return Ok(vec!["*".to_owned(), table_name_token_text(token)]);
+            return Ok(vec!["*".to_owned(), self.table_name_token_text(token)]);
         }
 
         let token = self.bump();
         if !is_table_name_first_token(&token) {
             return Err(self.err_here("expected table name"));
         }
-        let first = table_name_token_text(token);
+        let first = self.table_name_token_text(token);
         if self.is_op(".") && !self.is_op_at(1, "*") {
             self.bump();
             let second = self.bump();
@@ -1480,7 +1549,7 @@ impl Parser {
             if first.trim().is_empty() {
                 return Err(self.err_here("incorrect database name"));
             }
-            Ok(vec![first, table_name_token_text(second)])
+            Ok(vec![first, self.table_name_token_text(second)])
         } else {
             Ok(vec![first])
         }
@@ -1493,7 +1562,7 @@ impl Parser {
         if first.kind == TokenKind::Str || !is_ident_like_name(&first) {
             return Err(self.err_here("expected column name"));
         }
-        let mut path = vec![table_name_token_text(first)];
+        let mut path = vec![self.table_name_token_text(first)];
         while self.is_op(".") {
             if path.len() == 3 {
                 return Err(self.err_here("column name has too many components"));
@@ -1508,7 +1577,7 @@ impl Parser {
             if !is_ident_like_name(&component) {
                 return Err(self.err_here("expected column name component"));
             }
-            path.push(table_name_token_text(component));
+            path.push(self.table_name_token_text(component));
         }
         Ok(path)
     }
@@ -1522,24 +1591,6 @@ fn is_name_or_keyword(t: &Token) -> bool {
 
 fn normalize_identifier(name: String) -> String {
     name.replace('\u{fffd}', "?")
-}
-
-fn table_name_token_text(token: Token) -> String {
-    match token.kind {
-        TokenKind::Str => decode_string(&token.text),
-        TokenKind::UserVar if token.text.starts_with("@@") => token.text,
-        TokenKind::UserVar => decode_at_name(&token.text),
-        _ => normalize_identifier(token.text),
-    }
-}
-
-fn token_literal_text(token: &Token) -> String {
-    match token.kind {
-        TokenKind::Str => decode_string(&token.text),
-        TokenKind::UserVar if token.text.starts_with("@@") => token.text.clone(),
-        TokenKind::UserVar => decode_at_name(&token.text),
-        _ => normalize_identifier(token.text.clone()),
-    }
 }
 
 fn is_table_name_first_token(token: &Token) -> bool {
@@ -1561,26 +1612,17 @@ fn is_ident_like_name(t: &Token) -> bool {
     }
 }
 
-/// Decodes the payload of a raw `UserVar` token (the lexer scans `@name`,
-/// `@'name'`, and `` @`name` `` as one token). Strips the leading `@`, then
-/// decodes a quoted (`'`/`"`) string or a back-quoted identifier, or returns a
-/// bare payload verbatim. Account hosts, prepared-statement parameters, and
-/// binding values all share this lexical primitive.
-fn decode_at_name(raw: &str) -> String {
-    let rest = raw.strip_prefix('@').unwrap_or(raw);
-    match rest.as_bytes().first() {
-        Some(b'\'') | Some(b'"') => decode_string(rest),
-        Some(b'`') => rest.trim_matches('`').replace("``", "`"),
-        _ => rest.to_string(),
-    }
-}
-
 /// Decodes a string-literal token's raw source (including delimiters) into its
-/// logical value: outer quotes removed, doubled delimiters collapsed, and the
-/// common backslash escapes resolved (matching the scanner's `handleEscape`).
-/// Shared by `crate::expr` (string literals) and `crate::ddl` (`COMMENT`
-/// text).
-fn decode_string(raw: &str) -> String {
+/// logical value: outer quotes removed, doubled delimiters collapsed, and --
+/// unless `NO_BACKSLASH_ESCAPES` is set -- the common backslash escapes
+/// resolved (Go's scanner `handleEscape`).
+///
+/// Under `NO_BACKSLASH_ESCAPES` a backslash is an ordinary character, so
+/// `'a\\nb'` is four bytes rather than three. Every caller reaches this
+/// through `Parser::decode_string`, which supplies the parser's own mode --
+/// the function is private precisely so a caller cannot decode with the wrong
+/// one.
+fn decode_string_with_mode(raw: &str, no_backslash_escapes: bool) -> String {
     let bytes = raw.as_bytes();
     if bytes.len() < 2 {
         return raw.to_string();
@@ -1597,7 +1639,7 @@ fn decode_string(raw: &str) -> String {
                 offset += 1;
             }
             out.push(byte);
-        } else if byte == b'\\' {
+        } else if byte == b'\\' && !no_backslash_escapes {
             if let Some(&escaped) = inner.get(offset + 1) {
                 out.extend(unescape_char(escaped));
                 offset += 1;

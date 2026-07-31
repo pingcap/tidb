@@ -120,7 +120,7 @@ impl Parser {
         if self.peek().kind != TokenKind::Str {
             return Err(self.err_here("expected a string literal after ESCAPE"));
         }
-        let decoded = decode_string(&self.bump().text);
+        let decoded = self.bumped_string();
         match decoded.as_bytes() {
             [] => Ok(Some(0)),
             [b'\\'] => Ok(None),

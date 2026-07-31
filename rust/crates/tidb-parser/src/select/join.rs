@@ -203,7 +203,7 @@ impl Parser {
     /// their narrower token contracts.
     fn parse_index_hint_name(&mut self) -> PResult<String> {
         if self.peek().kind == TokenKind::Str {
-            return Ok(decode_string(&self.bump().text));
+            return Ok(self.bumped_string());
         }
         self.parse_charset_name()
     }

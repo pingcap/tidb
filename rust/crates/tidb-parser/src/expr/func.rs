@@ -522,7 +522,7 @@ impl Parser {
         self.bump(); // DATE / TIME / TIMESTAMP
         let lit = self.bump();
         Ok(Expr::Cast(CastExpr {
-            expr: Box::new(Expr::String(decode_string(&lit.text))),
+            expr: Box::new(Expr::String(self.decode_string(&lit.text))),
             cast_type,
             style,
             array: false,

@@ -21,7 +21,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{decode_string, prec, PResult, Parser};
+use crate::{prec, PResult, Parser};
 
 impl Parser {
     pub(crate) fn parse_create_procedure(&mut self) -> PResult<CreateProcedureStmt> {
@@ -240,7 +240,7 @@ impl Parser {
             if token.kind != TokenKind::Str {
                 return Err(self.err_here("expected SQLSTATE string"));
             }
-            return Ok(ProcedureHandlerCondition::SqlState(decode_string(
+            return Ok(ProcedureHandlerCondition::SqlState(self.decode_string(
                 &token.text,
             )));
         }

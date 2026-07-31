@@ -517,7 +517,7 @@ pub(super) fn parse_alter_partition_action(
                     );
                 }
                 parser.bump();
-                Some(decode_string(&token.text))
+                Some(parser.decode_string(&token.text))
             };
             return Ok(Some(AlterPartitionAction::SetAttributes {
                 partition,

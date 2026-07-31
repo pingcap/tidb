@@ -17,7 +17,7 @@
 use tidb_ast::TableOption;
 use tidb_lexer::{canonical_charset, canonical_collation, TokenKind};
 
-use crate::{decode_string, prec, PResult, Parser};
+use crate::{prec, PResult, Parser};
 
 impl Parser {
     /// Parses one typed branch of Go's shared `parseTableOption`
@@ -382,7 +382,7 @@ impl Parser {
             return Err(self.err_here(&format!("expected a string literal after {keyword}")));
         }
         self.bump();
-        Ok(decode_string(&token.text))
+        Ok(self.decode_string(&token.text))
     }
 
     /// Parses a table option's value: a bare word (an identifier or
@@ -394,7 +394,7 @@ impl Parser {
     pub(super) fn parse_table_option_word(&mut self) -> PResult<String> {
         match self.peek().kind {
             TokenKind::Ident | TokenKind::Keyword => Ok(self.bump().text),
-            TokenKind::Str => Ok(decode_string(&self.bump().text)),
+            TokenKind::Str => Ok(self.bumped_string()),
             _ => Err(self.err_here("expected a table option value")),
         }
     }

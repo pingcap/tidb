@@ -376,7 +376,7 @@ impl Parser {
                 return Err(self.err_here("expected a string literal after SEPARATOR"));
             }
             self.bump();
-            decode_string(&t.text)
+            self.decode_string(&t.text)
         } else {
             ",".to_string()
         };

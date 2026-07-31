@@ -182,7 +182,7 @@ impl Parser {
             if self.is_op(".") {
                 return Err(self.err_here("ANALYZE column names must be unqualified"));
             }
-            columns.push(crate::table_name_token_text(token));
+            columns.push(self.table_name_token_text(token));
             if !self.is_op(",") {
                 break;
             }

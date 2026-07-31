@@ -25,7 +25,7 @@ use tidb_ast::{
 };
 use tidb_lexer::{canonical_charset, TokenKind};
 
-use crate::{decode_string, prec, PResult, Parser};
+use crate::{prec, PResult, Parser};
 
 impl Parser {
     /// Recognizes SET families whose typed payload is not the ordinary
@@ -80,14 +80,14 @@ impl Parser {
             }
             self.bump();
             self.expect_op(")")?;
-            decode_string(&token.text)
+            self.decode_string(&token.text)
         } else {
             let token = self.peek().clone();
             if token.kind != TokenKind::Str {
                 return Err(self.err_here("expected a password string"));
             }
             self.bump();
-            decode_string(&token.text)
+            self.decode_string(&token.text)
         };
         let retain_current_password = if self.is_kw("RETAIN") {
             self.bump();
@@ -186,7 +186,7 @@ impl Parser {
         if !token.text.starts_with('@') || token.text.starts_with("@@") {
             return Err(self.err_here("malformed user variable"));
         }
-        let name = crate::decode_at_name(&token.text);
+        let name = self.decode_at_name(&token.text);
         if self.is_op(":=") {
             self.bump();
         } else {
@@ -317,7 +317,7 @@ impl Parser {
         }
         self.bump();
         Ok(SetSessionStatesStmt {
-            session_states: decode_string(&token.text),
+            session_states: self.decode_string(&token.text),
         })
     }
 
@@ -385,7 +385,7 @@ impl Parser {
 
     fn parse_set_charset_name(&mut self) -> PResult<String> {
         let name = if self.peek().kind == TokenKind::Str {
-            decode_string(&self.bump().text)
+            self.bumped_string()
         } else {
             self.parse_charset_name()?
         };
@@ -396,7 +396,7 @@ impl Parser {
 
     fn parse_set_collation_name(&mut self) -> PResult<String> {
         if self.peek().kind == TokenKind::Str {
-            Ok(decode_string(&self.bump().text))
+            Ok(self.bumped_string())
         } else {
             self.parse_charset_name()
         }
@@ -468,7 +468,7 @@ impl Parser {
         // lower-case variable name even when the source wrote `SQL_MODE` in
         // upper case. Keep this normalization local to SET's variable leaf;
         // expression-level `@@` references retain their own AST contract.
-        Ok((scope, decode_set_variable_name(name).to_ascii_lowercase()))
+        Ok((scope, decode_set_variable_name(self, name).to_ascii_lowercase()))
     }
 
     fn parse_system_variable_name(&mut self) -> PResult<String> {
@@ -605,9 +605,9 @@ impl Parser {
     }
 }
 
-fn decode_set_variable_name(raw: &str) -> String {
+fn decode_set_variable_name(parser: &Parser, raw: &str) -> String {
     if matches!(raw.as_bytes().first(), Some(b'\'') | Some(b'"')) {
-        decode_string(raw)
+        parser.decode_string(raw)
     } else if raw.starts_with('`') && raw.ends_with('`') && raw.len() >= 2 {
         raw[1..raw.len() - 1].replace("``", "`")
     } else {

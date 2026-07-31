@@ -62,7 +62,7 @@ impl Parser {
                 // `MAX_EXECUTION_TIME`/`NTH_PLAN`/`QB_NAME` arms already
                 // use) — see `tidb_ast::HintKind::Tables`'s own doc.
                 let qb_name = if self.peek().kind == TokenKind::UserVar {
-                    Some(decode_at_name(&self.bump().text))
+                    Some(self.bumped_at_name())
                 } else {
                     None
                 };
@@ -126,7 +126,7 @@ impl Parser {
                 // prefix, one required hint table, optional comma, and
                 // optional index-name list.
                 let qb_name = if self.peek().kind == TokenKind::UserVar {
-                    Some(decode_at_name(&self.bump().text))
+                    Some(self.bumped_at_name())
                 } else {
                     None
                 };
@@ -171,7 +171,7 @@ impl Parser {
             "LEADING" => {
                 self.expect_op("(")?;
                 let qb_name = if self.peek().kind == TokenKind::UserVar {
-                    Some(decode_at_name(&self.bump().text))
+                    Some(self.bumped_at_name())
                 } else {
                     None
                 };
@@ -203,7 +203,7 @@ impl Parser {
             "USE_TOJA" | "USE_CASCADES" => {
                 self.expect_op("(")?;
                 let qb_name = if self.peek().kind == TokenKind::UserVar {
-                    Some(decode_at_name(&self.bump().text))
+                    Some(self.bumped_at_name())
                 } else {
                     None
                 };
@@ -265,7 +265,7 @@ impl Parser {
             "RESOURCE_GROUP" => {
                 self.expect_op("(")?;
                 let qb_name = if self.peek().kind == TokenKind::UserVar {
-                    Some(decode_at_name(&self.bump().text))
+                    Some(self.bumped_at_name())
                 } else {
                     None
                 };
@@ -282,7 +282,7 @@ impl Parser {
             "QUERY_TYPE" => {
                 self.expect_op("(")?;
                 let qb_name = if self.peek().kind == TokenKind::UserVar {
-                    Some(decode_at_name(&self.bump().text))
+                    Some(self.bumped_at_name())
                 } else {
                     None
                 };
@@ -301,7 +301,7 @@ impl Parser {
             "MEMORY_QUOTA" => {
                 self.expect_op("(")?;
                 let qb_name = if self.peek().kind == TokenKind::UserVar {
-                    Some(decode_at_name(&self.bump().text))
+                    Some(self.bumped_at_name())
                 } else {
                     None
                 };
@@ -337,12 +337,12 @@ impl Parser {
                 if self.peek().kind != TokenKind::Str {
                     return Err(self.err_here("expected TIME_RANGE start string"));
                 }
-                let from = decode_string(&self.bump().text);
+                let from = self.bumped_string();
                 self.expect_op(",")?;
                 if self.peek().kind != TokenKind::Str {
                     return Err(self.err_here("expected TIME_RANGE end string"));
                 }
-                let to = decode_string(&self.bump().text);
+                let to = self.bumped_string();
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
@@ -360,7 +360,7 @@ impl Parser {
             "MAX_EXECUTION_TIME" | "NTH_PLAN" => {
                 self.expect_op("(")?;
                 let qb_name = if self.peek().kind == TokenKind::UserVar {
-                    Some(decode_at_name(&self.bump().text))
+                    Some(self.bumped_at_name())
                 } else {
                     None
                 };
@@ -447,7 +447,7 @@ impl Parser {
             "READ_FROM_STORAGE" => {
                 self.expect_op("(")?;
                 let qb_name = if self.peek().kind == TokenKind::UserVar {
-                    Some(decode_at_name(&self.bump().text))
+                    Some(self.bumped_at_name())
                 } else {
                     None
                 };
@@ -507,7 +507,7 @@ impl Parser {
                 let qb_name = if self.is_op("(") {
                     self.bump();
                     let qb_name = if self.peek().kind == TokenKind::UserVar {
-                        Some(decode_at_name(&self.bump().text))
+                        Some(self.bumped_at_name())
                     } else {
                         None
                     };
@@ -551,7 +551,7 @@ impl Parser {
             None
         };
         let qb_name = if self.peek().kind == TokenKind::UserVar {
-            Some(decode_at_name(&self.bump().text))
+            Some(self.bumped_at_name())
         } else {
             None
         };
@@ -601,13 +601,13 @@ impl Parser {
             return Ok(HintTable {
                 db_name: None,
                 name: String::new(),
-                qb_name: Some(decode_at_name(&self.bump().text)),
+                qb_name: Some(self.bumped_at_name()),
                 partitions: Vec::new(),
             });
         }
         let name = self.parse_charset_name()?;
         let qb_name = if self.peek().kind == TokenKind::UserVar {
-            Some(decode_at_name(&self.bump().text))
+            Some(self.bumped_at_name())
         } else {
             None
         };
@@ -652,7 +652,7 @@ impl Parser {
     /// shape doesn't need to be preserved past this point.
     fn parse_hint_value(&mut self) -> PResult<String> {
         match self.peek().kind {
-            TokenKind::Str => Ok(decode_string(&self.bump().text)),
+            TokenKind::Str => Ok(self.bumped_string()),
             TokenKind::IntLit => {
                 let value = self.bump().text;
                 value

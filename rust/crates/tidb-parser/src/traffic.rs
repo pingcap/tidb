@@ -20,7 +20,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{decode_string, is_ident_like_name, PResult, Parser};
+use crate::{is_ident_like_name, PResult, Parser};
 
 impl Parser {
     pub(crate) fn is_traffic_source_statement(&self) -> bool {
@@ -103,13 +103,13 @@ impl Parser {
                     ));
                 } else if option.text.eq_ignore_ascii_case("SPEED") {
                     let value = self.bump();
-                    options.push(TrafficReplayOption::Speed(traffic_token_value(&value)));
+                    options.push(TrafficReplayOption::Speed(traffic_token_value(self, &value)));
                 } else if option.text.eq_ignore_ascii_case("READ_ONLY")
                     || option.text.eq_ignore_ascii_case("READONLY")
                 {
                     let value = self.bump();
                     options.push(TrafficReplayOption::ReadOnly(
-                        traffic_token_value(&value).eq_ignore_ascii_case("TRUE"),
+                        traffic_token_value(self, &value).eq_ignore_ascii_case("TRUE"),
                     ));
                 } else {
                     return Err(self.err_here("unknown TRAFFIC REPLAY option"));
@@ -200,13 +200,13 @@ impl Parser {
         if self.peek().kind != TokenKind::Str {
             return Err(self.err_here(message));
         }
-        Ok(decode_string(&self.bump().text))
+        Ok(self.bumped_string())
     }
 }
 
-fn traffic_token_value(token: &tidb_lexer::Token) -> String {
+fn traffic_token_value(parser: &Parser, token: &tidb_lexer::Token) -> String {
     if token.kind == TokenKind::Str {
-        decode_string(&token.text)
+        parser.decode_string(&token.text)
     } else {
         token.text.clone()
     }

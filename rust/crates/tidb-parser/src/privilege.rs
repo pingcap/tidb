@@ -180,7 +180,7 @@ impl Parser {
             return Err(self.err_here("expected GRANT TLS option string"));
         }
         self.bump();
-        Ok(crate::decode_string(&token.text))
+        Ok(self.decode_string(&token.text))
     }
 
     /// Direct translation of the privilege branch in Go's `parseRevokeStmt`.

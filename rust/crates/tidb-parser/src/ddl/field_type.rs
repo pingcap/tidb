@@ -17,7 +17,7 @@
 use tidb_ast::{ColumnType, ColumnTypeArg};
 use tidb_lexer::{canonical_charset, TokenKind};
 
-use crate::{decode_string, PResult, Parser};
+use crate::{PResult, Parser};
 
 impl Parser {
     /// Parses a column type: `INT`/`INTEGER`/`BIGINT`/`VARCHAR`/`CHAR`/
@@ -244,7 +244,7 @@ impl Parser {
                     let value = match token.kind {
                         TokenKind::Str => {
                             self.bump();
-                            ColumnTypeArg::text(decode_string(&token.text).trim_end_matches(' '))
+                            ColumnTypeArg::text(self.decode_string(&token.text).trim_end_matches(' '))
                         }
                         TokenKind::HexLit | TokenKind::BitLit => {
                             self.bump();

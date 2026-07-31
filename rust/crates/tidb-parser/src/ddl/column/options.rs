@@ -22,7 +22,7 @@
 use tidb_ast::{AutoRandomOption, ColumnFormat, ColumnOption, ColumnStorage, InlineKeyOption};
 use tidb_lexer::{canonical_collation, TokenKind};
 
-use crate::{decode_string, is_ident_like_name, PResult, Parser};
+use crate::{is_ident_like_name, PResult, Parser};
 
 impl Parser {
     /// Direct Go port of `HandParser.parseColumnOptions`, after the column
@@ -70,7 +70,7 @@ impl Parser {
                     return Err(self.err_here("expected a string literal after COMMENT"));
                 }
                 self.bump();
-                ColumnOption::Comment(decode_string(&token.text))
+                ColumnOption::Comment(self.decode_string(&token.text))
             } else if self.is_kw("SECONDARY_ENGINE_ATTRIBUTE") {
                 self.bump();
                 self.accept_optional_equals();
@@ -81,7 +81,7 @@ impl Parser {
                     );
                 }
                 self.bump();
-                ColumnOption::SecondaryEngineAttribute(decode_string(&token.text))
+                ColumnOption::SecondaryEngineAttribute(self.decode_string(&token.text))
             } else if self.is_kw("COLLATE") {
                 if column_type == "JSON" {
                     return Err(self.err_here("JSON does not allow COLLATE"));
@@ -100,7 +100,7 @@ impl Parser {
                 // quoted collation (for example `COLLATE 'binary'`) follows
                 // the same restore path as its bare identifier spelling.
                 let name = if self.peek().kind == TokenKind::Str {
-                    decode_string(&self.bump().text)
+                    self.bumped_string()
                 } else {
                     self.parse_charset_name()?
                 };

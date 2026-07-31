@@ -46,7 +46,7 @@ pub(super) fn parse(parser: &mut Parser) -> PResult<Option<AdminAlterDdlJobsStmt
         }
         let value = parse_signed_literal(parser)?;
         options.push(AdminAlterDdlJobOption {
-            name: crate::table_name_token_text(option_token).to_lowercase(),
+            name: parser.table_name_token_text(option_token).to_lowercase(),
             value,
         });
         if parser.is_op(",") {

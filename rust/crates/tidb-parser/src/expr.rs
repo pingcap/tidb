@@ -40,7 +40,7 @@ use tidb_lexer::{
     canonical_charset, canonical_collation, canonical_legacy_charset, is_reserved, TokenKind,
 };
 
-use crate::{decode_string, prec, PResult, Parser};
+use crate::{prec, PResult, Parser};
 
 mod func;
 use func::{is_datetime_precision_func, is_scalar_kw_func};
@@ -160,7 +160,7 @@ impl Parser {
                         self.err_here("-> requires a string literal JSON path on the right side")
                     );
                 }
-                let path = Expr::String(decode_string(&self.bump().text));
+                let path = Expr::String(self.bumped_string());
                 let extract = Expr::Func {
                     name: "JSON_EXTRACT".to_string(),
                     args: vec![left, path],
@@ -390,10 +390,10 @@ impl Parser {
             // `N`/charset-introduced literal either.
             TokenKind::Str => {
                 self.bump();
-                let mut val = decode_string(&t.text);
+                let mut val = self.decode_string(&t.text);
                 while self.peek().kind == TokenKind::Str {
                     let next = self.bump();
-                    val.push_str(&decode_string(&next.text));
+                    val.push_str(&self.decode_string(&next.text));
                 }
                 Ok(Expr::String(val))
             }
@@ -437,7 +437,7 @@ impl Parser {
                     // emits x'...' / b'...' (the same canonical form for
                     // `_binary 0x...` and `_utf8mb4 0x...`).
                     TokenKind::Str => {
-                        let value = decode_string(&self.bump().text);
+                        let value = self.bumped_string();
                         if charset == "utf8mb4" {
                             Ok(Expr::String(value))
                         } else {
@@ -985,7 +985,7 @@ impl Parser {
             TokenKind::UserVar => {
                 self.bump();
                 let var =
-                    parse_variable(&t.text).ok_or_else(|| self.err_here("malformed variable"))?;
+                    self.parse_variable(&t.text).ok_or_else(|| self.err_here("malformed variable"))?;
                 // `:=` following ANY variable atom is an inline
                 // assignment expression, ALWAYS targeting a plain user
                 // variable by its own bare name regardless of whether
@@ -1094,45 +1094,47 @@ fn normalize_bit(text: &str) -> String {
     }
 }
 
-/// Parses a variable token's text (`@name`, `@@name`, `@@scope.name`) into the
-/// AST. Returns `None` for shapes this phase does not model (e.g. quoted names).
-fn parse_variable(text: &str) -> Option<Expr> {
-    if let Some(rest) = text.strip_prefix("@@") {
-        // System variable, with an optional GLOBAL/SESSION/LOCAL scope.
-        if let Some((prefix, name)) = rest.split_once('.') {
-            let scope = match prefix.to_ascii_uppercase().as_str() {
-                "GLOBAL" => Some(SysVarScope::Global),
-                "SESSION" | "LOCAL" => Some(SysVarScope::Session),
-                "INSTANCE" => Some(SysVarScope::Instance),
-                _ => None,
-            };
-            if scope.is_some() {
+impl Parser {
+    /// Parses a variable token's text (`@name`, `@@name`, `@@scope.name`) into the
+    /// AST. Returns `None` for shapes this phase does not model (e.g. quoted names).
+    fn parse_variable(&self, text: &str) -> Option<Expr> {
+        if let Some(rest) = text.strip_prefix("@@") {
+            // System variable, with an optional GLOBAL/SESSION/LOCAL scope.
+            if let Some((prefix, name)) = rest.split_once('.') {
+                let scope = match prefix.to_ascii_uppercase().as_str() {
+                    "GLOBAL" => Some(SysVarScope::Global),
+                    "SESSION" | "LOCAL" => Some(SysVarScope::Session),
+                    "INSTANCE" => Some(SysVarScope::Instance),
+                    _ => None,
+                };
+                if scope.is_some() {
+                    return Some(Expr::SysVar {
+                        scope,
+                        name: self.decode_variable_name(name).to_ascii_lowercase(),
+                    });
+                }
+                // A dotted name with an unknown prefix is not a scope; keep it whole.
                 return Some(Expr::SysVar {
-                    scope,
-                    name: decode_variable_name(name).to_ascii_lowercase(),
+                    scope: None,
+                    name: self.decode_variable_name(rest).to_ascii_lowercase(),
                 });
             }
-            // A dotted name with an unknown prefix is not a scope; keep it whole.
             return Some(Expr::SysVar {
                 scope: None,
-                name: decode_variable_name(rest).to_ascii_lowercase(),
+                name: self.decode_variable_name(rest).to_ascii_lowercase(),
             });
         }
-        return Some(Expr::SysVar {
-            scope: None,
-            name: decode_variable_name(rest).to_ascii_lowercase(),
-        });
+        let name = text.strip_prefix('@')?;
+        Some(Expr::UserVar(self.decode_variable_name(name)))
     }
-    let name = text.strip_prefix('@')?;
-    Some(Expr::UserVar(decode_variable_name(name)))
-}
 
-fn decode_variable_name(raw: &str) -> String {
-    if matches!(raw.as_bytes().first(), Some(b'\'') | Some(b'"')) {
-        decode_string(raw)
-    } else if raw.starts_with('`') && raw.ends_with('`') && raw.len() >= 2 {
-        raw[1..raw.len() - 1].replace("``", "`")
-    } else {
-        raw.to_string()
+    fn decode_variable_name(&self, raw: &str) -> String {
+        if matches!(raw.as_bytes().first(), Some(b'\'') | Some(b'"')) {
+            self.decode_string(raw)
+        } else if raw.starts_with('`') && raw.ends_with('`') && raw.len() >= 2 {
+            raw[1..raw.len() - 1].replace("``", "`")
+        } else {
+            raw.to_string()
+        }
     }
 }

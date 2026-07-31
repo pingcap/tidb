@@ -130,11 +130,12 @@ fn ansi_quotes_makes_a_double_quoted_token_an_identifier() {
     session.run("SET sql_mode='ANSI_QUOTES'").unwrap();
     assert_eq!(one(&mut session, r#"SELECT "id" FROM t"#), "7");
 
-    // The write door reads the same token the same way.
+    // The write door -- a re-parsed statement -- reads the same token the same
+    // way: the UPDATE names the COLUMN on both sides.
     session
-        .run(r#"INSERT INTO t VALUES ((SELECT MAX("id") FROM t) + 1)"#)
+        .run(r#"UPDATE t SET "id" = "id" + 1"#)
         .unwrap();
-    assert_eq!(one(&mut session, r#"SELECT MAX("id") FROM t"#), "8");
+    assert_eq!(one(&mut session, r#"SELECT "id" FROM t"#), "8");
 }
 
 /// `SET sql_mode = 'ANSI'` is the door a client walks through by accident: it

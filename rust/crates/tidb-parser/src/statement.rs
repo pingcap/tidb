@@ -20,7 +20,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{decode_at_name, decode_string, prec, PResult, Parser};
+use crate::{prec, PResult, Parser};
 
 impl Parser {
     // ---- statements ----
@@ -78,7 +78,7 @@ impl Parser {
             self.bump();
             self.bump();
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(
-                AdminStmt::DropStatistics(crate::table_name_token_text(self.bump())),
+                AdminStmt::DropStatistics(self.bumped_table_name()),
             )))
         } else if self.is_kw("SET") && self.is_kw_at(1, "CONFIG") {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::SetConfig(
@@ -140,7 +140,7 @@ impl Parser {
             }
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::LoadStats(
                 Box::new(LoadStatsStmt {
-                    path: decode_string(&self.bump().text),
+                    path: self.bumped_string(),
                 }),
             ))))
         } else if self.is_kw("DROP") && self.is_kw_at(1, "STATS") {
@@ -475,7 +475,7 @@ impl Parser {
                     if token.kind == TokenKind::Eof {
                         return Err(self.err_here("expected database name"));
                     }
-                    crate::table_name_token_text(token)
+                    self.table_name_token_text(token)
                 },
             })))
         } else if self.is_kw("TRUNCATE") {
@@ -504,9 +504,9 @@ impl Parser {
             let name = self.parse_name_or_keyword()?;
             self.expect_kw("FROM")?;
             let source = if self.at_user_variable() {
-                PrepareSource::Var(decode_at_name(&self.bump().text))
+                PrepareSource::Var(self.bumped_at_name())
             } else if self.peek().kind == TokenKind::Str {
-                PrepareSource::Sql(decode_string(&self.bump().text))
+                PrepareSource::Sql(self.bumped_string())
             } else {
                 return Err(self.err_here("expected a string or @variable after FROM"));
             };
@@ -526,7 +526,7 @@ impl Parser {
                     if !self.at_user_variable() {
                         return Err(self.err_here("expected an @variable in USING"));
                     }
-                    using.push(Expr::UserVar(decode_at_name(&self.bump().text)));
+                    using.push(Expr::UserVar(self.bumped_at_name()));
                     if self.is_op(",") {
                         self.bump();
                     } else {

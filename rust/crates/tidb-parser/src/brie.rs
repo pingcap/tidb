@@ -17,7 +17,7 @@
 use tidb_ast::{BrieKind, BrieOption, BrieOptionLevel, BrieOptionValue, BrieStmt};
 use tidb_lexer::TokenKind;
 
-use crate::{decode_string, PResult, Parser};
+use crate::{PResult, Parser};
 
 impl Parser {
     pub(crate) fn parse_brie(&mut self) -> PResult<BrieStmt> {
@@ -216,7 +216,7 @@ impl Parser {
         if token.kind != TokenKind::Str {
             return Err(self.err_here("expected external-storage URL"));
         }
-        Ok(decode_string(&token.text))
+        Ok(self.decode_string(&token.text))
     }
 
     fn parse_brie_options(&mut self) -> PResult<Vec<BrieOption>> {
@@ -228,7 +228,7 @@ impl Parser {
                 self.bump();
             }
             let value = if self.peek().kind == TokenKind::Str {
-                BrieOptionValue::String(decode_string(&self.bump().text))
+                BrieOptionValue::String(self.bumped_string())
             } else if self.is_kw("OFF") || self.is_kw("FALSE") {
                 self.bump();
                 brie_level_value(&name, BrieOptionLevel::Off)

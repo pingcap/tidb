@@ -23,7 +23,7 @@ use tidb_ast::{
 };
 use tidb_lexer::{is_reserved, TokenKind};
 
-use crate::{decode_string, PResult, Parser};
+use crate::{PResult, Parser};
 
 #[derive(Clone, Copy)]
 enum UserDdlKind {
@@ -182,14 +182,14 @@ impl Parser {
         let user = match token.kind {
             TokenKind::Str => {
                 self.bump();
-                decode_string(&token.text)
+                self.decode_string(&token.text)
             }
             TokenKind::Ident => self.bump().text,
             TokenKind::Keyword if !is_reserved(&token.text) => self.bump().text,
             _ => return Err(self.err_here("expected a username")),
         };
         let host = if self.peek().kind == TokenKind::UserVar {
-            crate::decode_at_name(&self.bump().text).to_lowercase()
+            self.bumped_at_name().to_lowercase()
         } else {
             "%".to_string()
         };
@@ -380,7 +380,7 @@ impl Parser {
         match token.kind {
             TokenKind::Str => {
                 self.bump();
-                Ok(decode_string(&token.text))
+                Ok(self.decode_string(&token.text))
             }
             TokenKind::Ident => Ok(self.bump().text),
             TokenKind::Keyword if !is_reserved(&token.text) => Ok(self.bump().text),
@@ -393,7 +393,7 @@ impl Parser {
         match token.kind {
             TokenKind::Str => {
                 self.bump();
-                Ok(decode_string(&token.text))
+                Ok(self.decode_string(&token.text))
             }
             TokenKind::HexLit => {
                 self.bump();
@@ -412,13 +412,13 @@ impl Parser {
             TokenKind::Ident => self.bump().text,
             TokenKind::Str => {
                 self.bump();
-                decode_string(&token.text)
+                self.decode_string(&token.text)
             }
             TokenKind::Keyword if !is_reserved(&token.text) && composed => self.bump().text,
             _ => return Err(self.err_here("expected a role name")),
         };
         let host = if self.peek().kind == TokenKind::UserVar {
-            crate::decode_at_name(&self.bump().text).to_lowercase()
+            self.bumped_at_name().to_lowercase()
         } else {
             "%".to_string()
         };
@@ -561,7 +561,7 @@ fn parse_resource_group_name(parser: &mut Parser) -> PResult<String> {
     match token.kind {
         TokenKind::Str => {
             parser.bump();
-            Ok(decode_string(&token.text))
+            Ok(parser.decode_string(&token.text))
         }
         TokenKind::Ident => Ok(parser.bump().text),
         TokenKind::Keyword if !crate::is_reserved(&token.text) => Ok(parser.bump().text),
@@ -620,7 +620,7 @@ fn parse_tls_value(parser: &mut Parser) -> PResult<String> {
         return Err(parser.err_here("expected TLS option string"));
     }
     parser.bump();
-    Ok(decode_string(&token.text))
+    Ok(parser.decode_string(&token.text))
 }
 
 fn parse_resource_options(parser: &mut Parser) -> PResult<Vec<AlterUserResourceOption>> {

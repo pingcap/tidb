@@ -21,7 +21,7 @@ use tidb_ast::{
     StatementPriority, UnaryOp, UpdateKind, UpdateStmt,
 };
 
-use crate::{decode_string, prec, select::parse_hint_comment, PResult, Parser};
+use crate::{prec, select::parse_hint_comment, PResult, Parser};
 use tidb_lexer::TokenKind;
 
 impl Parser {
@@ -36,9 +36,9 @@ impl Parser {
         let first_name = match first.kind {
             TokenKind::Ident => first.text,
             TokenKind::Keyword if !crate::is_reserved(&first.text) => first.text,
-            TokenKind::Str => decode_string(&first.text),
+            TokenKind::Str => self.decode_string(&first.text),
             TokenKind::UserVar if first.text.starts_with("@@") => first.text,
-            TokenKind::UserVar => crate::decode_at_name(&first.text),
+            TokenKind::UserVar => self.decode_at_name(&first.text),
             _ => return Err(self.err_here("expected procedure name after CALL")),
         };
         let mut name = vec![first_name];
@@ -49,9 +49,9 @@ impl Parser {
             }
             let procedure = self.bump();
             name.push(match procedure.kind {
-                TokenKind::Str => decode_string(&procedure.text),
+                TokenKind::Str => self.decode_string(&procedure.text),
                 TokenKind::UserVar if procedure.text.starts_with("@@") => procedure.text,
-                TokenKind::UserVar => crate::decode_at_name(&procedure.text),
+                TokenKind::UserVar => self.decode_at_name(&procedure.text),
                 _ => procedure.text,
             });
         }
@@ -101,7 +101,7 @@ impl Parser {
         if self.peek().kind != TokenKind::Str {
             return Err(self.err_here("DISTRIBUTE TABLE option requires a string"));
         }
-        Ok(Some(decode_string(&self.bump().text)))
+        Ok(Some(self.bumped_string()))
     }
 
     /// Direct Rust translation of Go's `parseImportIntoStmt` in
@@ -139,7 +139,7 @@ impl Parser {
                     if name.starts_with('@') {
                         return Err(self.err_here("expected a single-@ IMPORT user variable"));
                     }
-                    columns.push(ColumnOrUserVar::UserVar(crate::decode_at_name(&token.text)));
+                    columns.push(ColumnOrUserVar::UserVar(self.decode_at_name(&token.text)));
                 } else {
                     columns.push(ColumnOrUserVar::Column(self.parse_name_or_keyword()?));
                 }
@@ -169,13 +169,13 @@ impl Parser {
 
         self.expect_kw("FROM")?;
         let source = if self.peek().kind == TokenKind::Str {
-            let path = decode_string(&self.bump().text);
+            let path = self.bumped_string();
             let format = if self.is_kw("FORMAT") {
                 self.bump();
                 if self.peek().kind != TokenKind::Str {
                     return Err(self.err_here("expected IMPORT FORMAT string"));
                 }
-                Some(decode_string(&self.bump().text))
+                Some(self.bumped_string())
             } else {
                 None
             };

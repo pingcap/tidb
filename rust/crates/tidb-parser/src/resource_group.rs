@@ -22,7 +22,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{decode_string, PResult, Parser};
+use crate::{PResult, Parser};
 
 impl Parser {
     pub(crate) fn is_resource_group_source_statement(&self) -> bool {
@@ -230,7 +230,7 @@ impl Parser {
                     self.accept_eq();
                     let tasks = if self.peek().kind == TokenKind::Str {
                         let token = self.bump();
-                        decode_string(&token.text)
+                        self.decode_string(&token.text)
                     } else {
                         String::new()
                     };
@@ -279,7 +279,7 @@ impl Parser {
             self.accept_eq();
             let value = if self.peek().kind == TokenKind::Str {
                 let token = self.bump();
-                decode_string(&token.text)
+                self.decode_string(&token.text)
             } else {
                 String::new()
             };
@@ -343,7 +343,7 @@ impl Parser {
                     None
                 } else if self.peek().kind == TokenKind::Str {
                     let token = self.bump();
-                    let duration = decode_string(&token.text);
+                    let duration = self.decode_string(&token.text);
                     (!duration.eq_ignore_ascii_case("UNLIMITED")).then_some(duration)
                 } else {
                     None

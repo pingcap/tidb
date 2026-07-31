@@ -22,7 +22,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{decode_at_name, decode_string, prec, PResult, Parser};
+use crate::{prec, PResult, Parser};
 
 impl Parser {
     /// Consumes the optional scope between a binding command and `BINDING`.
@@ -63,11 +63,11 @@ impl Parser {
         match token.kind {
             TokenKind::Str => {
                 self.bump();
-                Ok(BindingValue::String(decode_string(&token.text)))
+                Ok(BindingValue::String(self.decode_string(&token.text)))
             }
             TokenKind::UserVar => {
                 self.bump();
-                Ok(BindingValue::UserVar(decode_at_name(&token.text)))
+                Ok(BindingValue::UserVar(self.decode_at_name(&token.text)))
             }
             _ => Err(self.err_here("expected a string or @variable binding digest")),
         }
@@ -204,7 +204,7 @@ impl Parser {
                 return Err(self.err_here("expected a string SQL digest"));
             }
             self.bump();
-            SetBindingTarget::SqlDigest(decode_string(&token.text))
+            SetBindingTarget::SqlDigest(self.decode_string(&token.text))
         } else {
             let origin = self.parse_binding_statement()?;
             let hinted = if self.is_kw("USING") {

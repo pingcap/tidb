@@ -20,7 +20,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{decode_string, PResult, Parser};
+use crate::{PResult, Parser};
 
 type StringOptionConstructor = fn(String) -> PlacementOption;
 
@@ -145,7 +145,7 @@ impl Parser {
                 return Err(self.err_here("expected a string placement option value"));
             }
             self.bump();
-            let value = decode_string(&token.text);
+            let value = self.decode_string(&token.text);
             return Ok(Some(constructor(value)));
         }
 

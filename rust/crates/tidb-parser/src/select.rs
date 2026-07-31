@@ -74,7 +74,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{decode_at_name, decode_string, is_name_or_keyword, prec, PResult, Parser};
+use crate::{is_name_or_keyword, prec, PResult, Parser};
 
 mod hint;
 mod join;
@@ -716,7 +716,7 @@ impl Parser {
         if self.peek().kind != TokenKind::Str {
             return Err(self.err_here("expected a string literal after INTO OUTFILE"));
         }
-        let file_name = decode_string(&self.bump().text);
+        let file_name = self.bumped_string();
         let fields = if self.is_kw("FIELDS") || self.is_kw("COLUMNS") {
             self.bump();
             self.parse_fields_clause(false)?
@@ -1157,7 +1157,7 @@ impl Parser {
         if self.can_be_alias_name() {
             let name = self.bump();
             Ok(if name.kind == TokenKind::Str {
-                decode_string(&name.text)
+                self.decode_string(&name.text)
             } else {
                 crate::normalize_identifier(name.text)
             })

@@ -17,7 +17,7 @@
 use tidb_ast::{GrantRoleStmt, RevokeRoleStmt, RoleSpec};
 use tidb_lexer::{is_reserved, TokenKind};
 
-use crate::{decode_string, PResult, Parser};
+use crate::{PResult, Parser};
 
 impl Parser {
     /// Separates Go's no-`ON` role branches from privilege and PROXY forms
@@ -86,13 +86,13 @@ impl Parser {
             TokenKind::Ident => self.bump().text,
             TokenKind::Str => {
                 self.bump();
-                decode_string(&token.text)
+                self.decode_string(&token.text)
             }
             TokenKind::Keyword if !is_reserved(&token.text) && composed => self.bump().text,
             _ => return Err(self.err_here("expected a role name")),
         };
         let host = if self.peek().kind == TokenKind::UserVar {
-            crate::decode_at_name(&self.bump().text).to_lowercase()
+            self.bumped_at_name().to_lowercase()
         } else {
             "%".to_string()
         };

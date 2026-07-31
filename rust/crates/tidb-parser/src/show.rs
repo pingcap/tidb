@@ -34,7 +34,7 @@ use tidb_ast::{
 };
 use tidb_lexer::TokenKind;
 
-use crate::{decode_string, prec, PResult, Parser};
+use crate::{prec, PResult, Parser};
 
 impl Parser {
     /// Parses the currently typed ordinary `SHOW` inspection forms after the
@@ -189,7 +189,7 @@ impl Parser {
         if !crate::is_ident_like_name(self.peek()) {
             return Ok(None);
         }
-        let head = crate::token_literal_text(self.peek()).to_ascii_uppercase();
+        let head = self.token_literal_text(self.peek()).to_ascii_uppercase();
 
         let generic = match head.as_str() {
             "TRIGGERS" => Some((ShowInspectionKind::Triggers, true, true)),
@@ -663,7 +663,7 @@ impl Parser {
                 if token.kind != TokenKind::Str {
                     return Err(self.err_here("expected import group key"));
                 }
-                Some(decode_string(&token.text))
+                Some(self.decode_string(&token.text))
             } else {
                 None
             };

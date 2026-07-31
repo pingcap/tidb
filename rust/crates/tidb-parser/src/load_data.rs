@@ -20,7 +20,7 @@ use tidb_ast::{
 };
 use tidb_lexer::{canonical_charset, TokenKind};
 
-use crate::{decode_string, PResult, Parser};
+use crate::{PResult, Parser};
 
 impl Parser {
     /// Parses the complete Go-owned `LOAD DATA` grammar.
@@ -119,7 +119,7 @@ impl Parser {
                     if name.starts_with('@') {
                         return Err(self.err_here("expected a single-@ LOAD DATA user variable"));
                     }
-                    columns.push(ColumnOrUserVar::UserVar(crate::decode_at_name(&token.text)));
+                    columns.push(ColumnOrUserVar::UserVar(self.decode_at_name(&token.text)));
                 } else {
                     columns.push(ColumnOrUserVar::Column(self.parse_name_or_keyword()?));
                 }
@@ -262,7 +262,7 @@ impl Parser {
         if self.peek().kind != TokenKind::Str {
             return Err(self.err_here("expected LOAD DATA string literal"));
         }
-        Ok(decode_string(&self.bump().text))
+        Ok(self.bumped_string())
     }
 
     /// Go's `parseStringValue`: a regular quoted string, hexadecimal, or bit
@@ -272,7 +272,7 @@ impl Parser {
         match token.kind {
             TokenKind::Str => {
                 self.bump();
-                Ok(decode_string(&token.text))
+                Ok(self.decode_string(&token.text))
             }
             TokenKind::HexLit => {
                 self.bump();

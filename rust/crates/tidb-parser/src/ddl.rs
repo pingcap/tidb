@@ -26,7 +26,7 @@ use tidb_ast::{
 };
 use tidb_lexer::{canonical_charset, canonical_collation, TokenKind};
 
-use crate::{decode_string, prec, PResult, Parser};
+use crate::{prec, PResult, Parser};
 
 #[path = "ddl/alter.rs"]
 mod alter;
@@ -164,7 +164,7 @@ impl Parser {
             if self.peek().kind != TokenKind::Str {
                 return Err(self.err_here("FLASHBACK TIMESTAMP requires a string literal"));
             }
-            let timestamp = crate::decode_string(&self.bump().text);
+            let timestamp = self.bumped_string();
             return Ok(FlashbackToTimestampStmt {
                 flashback_ts: Some(Expr::RawString(timestamp)),
                 flashback_tso: 0,
@@ -337,7 +337,7 @@ impl Parser {
                     return Err(self.err_here("expected a string literal after ENCRYPTION"));
                 }
                 self.bump();
-                let value = decode_string(&token.text);
+                let value = self.decode_string(&token.text);
                 if !matches!(value.as_str(), "Y" | "y" | "N" | "n") {
                     return Err(self.err_here(&format!(
                         "[parser:1525]Incorrect argument (should be Y or N) value: '{value}'"
@@ -388,7 +388,7 @@ impl Parser {
                             return Err(self.err_here("expected a TiFlash location label string"));
                         }
                         self.bump();
-                        labels.push(decode_string(&token.text));
+                        labels.push(self.decode_string(&token.text));
                         if !self.is_op(",") {
                             break;
                         }
@@ -509,7 +509,7 @@ impl Parser {
         };
         self.expect_kw("INDEX")?;
         let if_exists = self.parse_if_exists()?;
-        let name = crate::table_name_token_text(self.bump());
+        let name = self.bumped_table_name();
         self.expect_kw("ON")?;
         let table = self.parse_table_name()?;
         let (algorithm, lock) = self.parse_drop_index_lock_and_algorithm()?;
@@ -1162,7 +1162,7 @@ impl Parser {
                     return Err(self.err_here("expected ATTRIBUTES string literal or DEFAULT"));
                 }
                 self.bump();
-                Some(decode_string(&token.text))
+                Some(self.decode_string(&token.text))
             };
             AlterTableAction::SetAttributes(tidb_ast::AttributesSpec { attributes })
         } else if self.is_kw("STATS_OPTIONS") {
@@ -1183,7 +1183,7 @@ impl Parser {
                     return Err(self.err_here("expected STATS_OPTIONS string literal or DEFAULT"));
                 }
                 self.bump();
-                Some(decode_string(&token.text))
+                Some(self.decode_string(&token.text))
             };
             AlterTableAction::SetStatsOptions(tidb_ast::StatsOptionsSpec { options })
         } else if let Some(first_option) = self.parse_table_option()? {
@@ -1529,7 +1529,7 @@ impl Parser {
                     if self.peek().kind != TokenKind::Str {
                         return Err(self.err_here("expected TiFlash location label"));
                     }
-                    labels.push(crate::decode_string(&self.bump().text));
+                    labels.push(self.bumped_string());
                     if self.is_op(",") {
                         self.bump();
                     } else {
