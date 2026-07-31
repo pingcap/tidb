@@ -22,12 +22,16 @@
 //! (the rewrite can change a field's type), which is why it works on the
 //! written AST here too.
 //!
-//! The rule is SYNTACTIC, not semantic: a column is justified by being NAMED
-//! in `GROUP BY`, by being pinned to a single value by an equality in `WHERE`,
-//! by appearing only inside an aggregate, or by belonging to a table whose
-//! candidate key `GROUP BY` already pins. Determining a column is not enough
-//! -- `GROUP BY k+0` fixes `k` for every group and Go still rejects a bare
-//! `k`, because `k+0` is not `k`.
+//! A column is justified by being NAMED in `GROUP BY`, by being pinned to a
+//! single value by an equality in `WHERE`, by appearing only inside an
+//! aggregate, or by being FUNCTIONALLY DETERMINED by the columns that are --
+//! the last of which is [`super::funcdep`]'s graph and the substance of the
+//! rule.
+//!
+//! What GROUPS is still read syntactically, and that is not the same question.
+//! `GROUP BY k+0` fixes `k` for every group, and Go still rejects a bare `k`,
+//! because the grouping is by the expression `k+0` and `k` is not written
+//! there -- so `k` never enters the set whose closure is taken.
 
 use super::*;
 use std::collections::HashSet;
