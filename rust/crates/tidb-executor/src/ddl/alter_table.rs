@@ -495,6 +495,9 @@ pub(crate) fn normalize_column_default(
                 _ => value.clone(),
             }
         }
+        tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set => {
+            enum_set_column_default(&value, field_type).ok_or_else(invalid)?
+        }
         _ => value.clone(),
     };
     // The check phase: strict conversion of what will be stored.
@@ -509,6 +512,82 @@ pub(crate) fn normalize_column_default(
         return Err(invalid());
     }
     Ok(normalized)
+}
+
+/// An `ENUM`/`SET` column's written `DEFAULT`, resolved to a MEMBER of the
+/// column's own element list, which is the only thing the column can hold.
+///
+/// Go `pkg/ddl/add_column.go` reaches the same value by three different
+/// routes, and the route is chosen by what the default was WRITTEN as:
+///
+///  * a hex/bit literal (`DEFAULT 0x61`) is decoded to text in the column's
+///    charset and taken verbatim -- `getDefaultValue`'s `KindBinaryLiteral`
+///    branch returns before the type switch, so the bytes name the member
+///    directly and are never read as a number;
+///  * an integer (`DEFAULT 2`) is an INDEX: one-based into the element list
+///    for `ENUM` (`getEnumDefaultValue` -> `ParseEnumValue`), a bit mask for
+///    `SET` (`ParseSetValue`);
+///  * anything else is text matched against the element list under the
+///    column's collation, with trailing spaces stripped first for `ENUM`
+///    because "trailing spaces are automatically deleted from ENUM member
+///    values" (`getEnumDefaultValue` -> `TrimRight` -> `ParseEnumName`), and
+///    with the empty string admitted for `SET` as the no-members-set value.
+///
+/// `None` means no member matches, which the caller reports as 1067. Storing
+/// the written literal instead -- the shape this replaced -- leaves a column
+/// whose `DEFAULT` is not a value of its own type, so an omitted column on
+/// `INSERT` reads something the element list does not contain.
+fn enum_set_column_default(value: &Datum, field_type: &FieldType) -> Option<Datum> {
+    let elements = field_type.elems();
+    let collation = field_type.collation();
+    let is_set = field_type.code() == tidb_datatype::FieldTypeCode::Set;
+    let member = match value {
+        // Decoded here rather than through `Datum::binary_string_decoded`,
+        // which is Go `GetBinaryStringDecoded`'s counterpart but reads its
+        // payload with `as_raw_bytes` and so answers `None` for the two kinds
+        // Go only ever calls it on. This mirrors what `datum_convert.rs`
+        // already does for a `BinaryLiteral` reaching a string type.
+        Datum::BinaryLiteral(literal) | Datum::Bit(literal) => {
+            let decoded = tidb_datatype::find_encoding(field_type.charset_name())
+                .transform(literal.as_bytes(), tidb_datatype::TransformOp::DECODE);
+            let (bytes, error) = decoded.into_parts();
+            if error.is_some() {
+                return None;
+            }
+            String::from_utf8(bytes).ok()?
+        }
+        Datum::Int(_) | Datum::UInt(_) => {
+            let index = value
+                .as_uint()
+                .or_else(|| value.as_int().map(|v| v as u64))?;
+            if is_set {
+                tidb_datatype::parse_set_value(elements, index)
+                    .ok()?
+                    .name()
+                    .to_owned()
+            } else {
+                tidb_datatype::parse_enum_value(elements, index)
+                    .ok()?
+                    .name()
+                    .to_owned()
+            }
+        }
+        _ => {
+            let text = value.sql_string().ok()?;
+            if is_set {
+                tidb_datatype::parse_set_name(elements, &text, collation)
+                    .ok()?
+                    .name()
+                    .to_owned()
+            } else {
+                tidb_datatype::parse_enum_name(elements, text.trim_end_matches(' '), collation)
+                    .ok()?
+                    .name()
+                    .to_owned()
+            }
+        }
+    };
+    Some(Datum::new_collation_string(member, collation))
 }
 
 /// `ALTER TABLE ... MODIFY COLUMN` and `... CHANGE COLUMN`, which differ only

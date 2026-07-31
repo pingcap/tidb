@@ -308,3 +308,111 @@ fn show_columns_reports_the_stored_default_text() {
     let clock = rows(&mut session, "SHOW COLUMNS FROM t1");
     assert_eq!(clock[1][4], "CURRENT_TIMESTAMP");
 }
+
+/// Transcreates Go `pkg/ddl/db_integration_test.go`'s `TestEnumAndSetDefaultValue`.
+///
+/// A HEX LITERAL is a legal way to spell an `ENUM`/`SET` element and its
+/// `DEFAULT`, and it must be RESOLVED to the member string before the column
+/// is stored -- `0x61` names the member `'a'`; it is not the number 97 and not
+/// the text `0x61`. Go decides this in `pkg/ddl/add_column.go`
+/// `getDefaultValue` -> `types.Datum.ConvertTo` against the enum's field type,
+/// so the resolution happens once at CREATE time and everything downstream
+/// reads a settled member.
+///
+/// This is the shape a wrong answer takes here: the hex is ACCEPTED by the
+/// parser and then DISCARDED by whoever stores it, leaving a column whose
+/// default is not a member of its own type. `0x61` is chosen over an ASCII
+/// `'a'` for exactly that reason -- with `'a'` written directly, an engine
+/// that never converts anything still passes.
+///
+/// Captured from real TiDB through `rust/difftests/gorun`, verbatim:
+///
+/// ```text
+/// create table t (a enum(0x61, 'b') not null default 0x61,
+///                 b set(0x61, 'b') not null default 0x61) character set latin1
+///   `a` enum('a','b') NOT NULL DEFAULT 'a',
+///   `b` set('a','b') NOT NULL DEFAULT 'a'
+/// ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin
+/// insert into t values ()
+/// select a, b from t   ->   a|a
+/// ```
+///
+/// The charset is varied because Go's conversion runs against the column's
+/// resolved charset: `latin1` and `utf8mb4` must reach the same member.
+#[test]
+fn a_hex_literal_enum_and_set_default_resolves_to_the_member_string() {
+    for (table, charset, collation) in [
+        ("t", "latin1", "latin1_bin"),
+        ("t2", "utf8mb4", "utf8mb4_bin"),
+    ] {
+        let mut session = Session::new();
+        session
+            .run(&format!(
+                "CREATE TABLE {table} (a ENUM(0x61, 'b') NOT NULL DEFAULT 0x61, \
+                 b SET(0x61, 'b') NOT NULL DEFAULT 0x61) CHARACTER SET {charset}"
+            ))
+            .unwrap();
+        let body = show_create(&mut session, table);
+        assert!(
+            body.contains("`a` enum('a','b') NOT NULL DEFAULT 'a'"),
+            "{charset}: enum column did not resolve its hex element/default: {body}"
+        );
+        assert!(
+            body.contains("`b` set('a','b') NOT NULL DEFAULT 'a'"),
+            "{charset}: set column did not resolve its hex element/default: {body}"
+        );
+        assert!(
+            body.contains(&format!("DEFAULT CHARSET={charset} COLLATE={collation}")),
+            "{charset}: table charset/collation: {body}"
+        );
+
+        session
+            .run(&format!("INSERT INTO {table} VALUES ()"))
+            .unwrap();
+        assert_eq!(
+            rows(&mut session, &format!("SELECT a, b FROM {table}")),
+            vec![vec!["a".to_owned(), "a".to_owned()]],
+            "{charset}: the omitted columns did not take the resolved member"
+        );
+    }
+}
+
+/// Transcreates Go `pkg/ddl/db_integration_test.go`'s `TestEnumDefaultValue`.
+///
+/// An `ENUM` `DEFAULT` is matched against the member list the way a VALUE of
+/// that type is: trailing spaces are not significant, so `DEFAULT 'b '`
+/// settles as the member `'b'` and prints back without its space. An engine
+/// that stores the literal it was handed keeps a default that no member equals.
+///
+/// The empty-string member is kept from the Go case on purpose: it makes
+/// "matched a member" distinguishable from "fell back to the first member",
+/// which for this list is `''` and not `'b'`.
+///
+/// Captured from real TiDB through `rust/difftests/gorun`, verbatim -- both
+/// the exact and the space-padded spelling produce the SAME body:
+///
+/// ```text
+/// CREATE TABLE t3 ( a enum('','a','b') NOT NULL DEFAULT 'b' )
+///   ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+///   `a` enum('','a','b') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'b'
+/// CREATE TABLE t4 ( a enum('','a','b') NOT NULL DEFAULT 'b ' )  -- trailing space
+///   `a` enum('','a','b') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'b'
+/// ```
+#[test]
+fn a_space_padded_enum_default_settles_on_the_member_it_names() {
+    let expected = "`a` enum('','a','b') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'b'";
+    for (table, written) in [("t3", "'b'"), ("t4", "'b '")] {
+        let mut session = Session::new();
+        session
+            .run(&format!(
+                "CREATE TABLE {table} ( a ENUM('','a','b') NOT NULL DEFAULT {written} ) \
+                 ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+            ))
+            .unwrap();
+        let body = show_create(&mut session, table);
+        assert!(
+            body.contains(expected),
+            "declared DEFAULT {written}: {body}"
+        );
+    }
+}

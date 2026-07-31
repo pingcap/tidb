@@ -308,6 +308,16 @@ fn referential_action_sql(action: tidb_executor::FkAction) -> Option<&'static st
 
 /// The ` CHARACTER SET x COLLATE y` tail a column clause carries when its own
 /// charset/collation differs from the table's default.
+///
+/// Matching the table is not on its own enough to omit the collation. Go
+/// `pkg/executor/show.go` has a second reason to print it, in the `else` of
+/// the table comparison: when the column collation equals the table's but is
+/// NOT the charset's own default (`charset.GetDefaultCollation`), the name is
+/// printed anyway, because re-reading the clause without it would resolve to
+/// that default and give a DIFFERENT column. `utf8mb4` defaults to
+/// `utf8mb4_bin` here, so every `COLLATE=utf8mb4_general_ci` table used to
+/// print columns whose comparison semantics the printed statement did not
+/// reproduce.
 fn column_charset_clause(
     field_type: &tidb_datatype::FieldType,
     table: tidb_executor::TableCharset,
@@ -319,7 +329,9 @@ fn column_charset_clause(
     let collation = field_type.collation_name();
     if charset != table.charset.name() {
         format!(" CHARACTER SET {charset} COLLATE {collation}")
-    } else if collation != table.collation.name() {
+    } else if collation != table.collation.name()
+        || collation != field_type.charset().default_collation().name()
+    {
         format!(" COLLATE {collation}")
     } else {
         String::new()
