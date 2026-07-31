@@ -719,7 +719,13 @@ fn enum_set_column_default(value: &Datum, field_type: &FieldType) -> Option<Datu
 /// on a clustered handle column to anything but another integer type (Go 8200
 /// "this column has primary key flag"), a BLOB/TEXT column that an index
 /// covers (Go 1170), generated columns, and the column options beyond
-/// NULL/NOT NULL/DEFAULT that CREATE TABLE also rejects here.
+/// NULL/NOT NULL/DEFAULT/AUTO_INCREMENT that CREATE TABLE also rejects here.
+/// A KEY or UNIQUE option lands in that last group, which is Go's rule too:
+/// MODIFY may keep a constraint but never ADD one.
+///
+/// NOT ENFORCED (measured, pinned in `tidb-session`'s `tests_alter_column`):
+/// Go's `ErrTooLongKey` (1071) when the new type widens a column an index
+/// covers past the key-length limit.
 /// The existing table's default charset/collation, which a column added or
 /// modified by ALTER TABLE inherits just as a CREATE TABLE column does.
 fn existing_table_charset(catalog: &Catalog, database: &str, table_name: &str) -> TableCharset {
@@ -843,6 +849,12 @@ fn modify_column_action(
         ));
     }
     if was_auto_increment && wants_auto_increment {
+        // Nothing in this tier READS this flag -- the observable
+        // AUTO_INCREMENT comes from the table-level offset above, which is
+        // why no test can kill this line. It is set so that a column reached
+        // through MODIFY carries exactly what the CREATE TABLE path
+        // (`ddl.rs`) gives the same column, rather than leaving two spellings
+        // of one catalog for the first reader of the flag to trip over.
         field_type.add_flags(AUTO_INCREMENT_FLAG | NOT_NULL_FLAG);
     }
     let drop_auto_increment = was_auto_increment && !wants_auto_increment;
