@@ -254,6 +254,24 @@ func TestString(t *testing.T) {
 		"1 Prewrite_region: 1 Txn_retry: 1 Process_keys: 10 Total_keys: 100 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: " +
 		"1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100 Rocksdb_block_read_time: 0.001"
 	require.Equal(t, expected, detail.String())
+	poolTaskDetails := &util.PoolTaskDetails{
+		TaskCount:        1,
+		PollCount:        1,
+		MaxPollCount:     1,
+		MinPollCount:     1,
+		DispatchCount:    1,
+		MaxDispatchCount: 1,
+		MinDispatchCount: 1,
+	}
+	detail.ReadPoolTaskDetails = poolTaskDetails
+	require.Contains(t, detail.String(), "Read_pool_task_details: {tasks:1,")
+
+	var syncedDetails SyncExecDetails
+	syncedDetails.MergeReadPoolTaskDetails(poolTaskDetails)
+	mergedDetails := syncedDetails.GetExecDetails()
+	require.Equal(t, poolTaskDetails, mergedDetails.ReadPoolTaskDetails)
+	require.Zero(t, mergedDetails.RequestCount)
+
 	detail = &ExecDetails{}
 	require.Equal(t, "", detail.String())
 
@@ -372,7 +390,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		RocksdbBlockReadCount:     20,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, util.TimeDetail{}, nil)
+	stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, util.TimeDetail{}, nil, nil)
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetCopStats(tableScanID)
@@ -395,6 +413,19 @@ func TestCopRuntimeStats(t *testing.T) {
 	// Print all fields even though the value of some fields is 0.
 	str := "tikv_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, scan_detail: {total_keys: 15, rocksdb: {delete_skipped_count: 5, block: {cache_hit_count: 10, read_byte: 100 Bytes}}}"
 	require.Equal(t, str, cop.String())
+	readPoolTaskDetails := &util.PoolTaskDetails{
+		TaskCount:        1,
+		PollCount:        1,
+		MaxPollCount:     1,
+		MinPollCount:     1,
+		DispatchCount:    1,
+		MaxDispatchCount: 1,
+		MinDispatchCount: 1,
+	}
+	stats.RecordCopStats(tableScanID, kv.TiKV, nil, util.TimeDetail{}, readPoolTaskDetails, nil)
+	cop = stats.GetCopStats(tableScanID)
+	require.Contains(t, cop.String(), "read_pool:{tasks:1,")
+	require.NotContains(t, cop.String(), "read_pool_task:")
 	zeroScanDetail := util.ScanDetail{}
 	zeroCopStats := CopRuntimeStats{}
 	require.Equal(t, "", zeroScanDetail.String())
@@ -715,7 +746,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		RocksdbBlockReadCount:     10,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordCopStats(tableScanID, kv.TiFlash, scanDetail, util.TimeDetail{}, nil)
+	stats.RecordCopStats(tableScanID, kv.TiFlash, scanDetail, util.TimeDetail{}, nil, nil)
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetCopStats(tableScanID)
@@ -1068,9 +1099,9 @@ func TestCopRuntimeStats2(t *testing.T) {
 		KvReadWallTime:   5 * time.Millisecond,
 		TotalRPCWallTime: 50 * time.Millisecond,
 	}
-	stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, util.TimeDetail{}, nil)
+	stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, util.TimeDetail{}, nil, nil)
 	for range 1005 {
-		stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, timeDetail, mockExecutorExecutionSummary(2, 2, 2))
+		stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, timeDetail, nil, mockExecutorExecutionSummary(2, 2, 2))
 	}
 
 	cop := stats.GetCopStats(tableScanID)

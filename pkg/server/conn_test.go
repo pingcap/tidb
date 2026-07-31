@@ -1933,6 +1933,56 @@ func TestChangeUserAuth(t *testing.T) {
 	err = cc.handleChangeUser(ctx, data)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/ChangeUserAuthSwitch"))
 	require.EqualError(t, err, t.Name())
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+}
+
+func TestChangeUserAuthFailureRestoresOldSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		peerHost:     "localhost",
+		collation:    mysql.DefaultCollationID,
+		capability:   mysql.ClientProtocol41,
+		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		server:       srv,
+		user:         "root",
+		dbname:       "old_db",
+	}
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc.SetCtx(tc)
+
+	data := []byte{}
+	data = append(data, "missing_user"...)
+	data = append(data, 0)
+	data = append(data, 0)
+	data = append(data, "new_db"...)
+	data = append(data, 0)
+	data = append(data, 0, 0)
+	err = cc.handleChangeUser(context.Background(), data)
+	require.Error(t, err)
+	require.Same(t, tc, cc.getCtx())
+	require.Equal(t, "root", cc.user)
+	require.Equal(t, "old_db", cc.dbname)
+	require.Equal(t, "root", cc.ctx.GetSessionVars().User.Username)
 }
 
 func TestAuthPlugin2(t *testing.T) {

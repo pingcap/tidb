@@ -19,10 +19,7 @@ This file provides guidance to agents working in this repository.
 
 ## Agent Interaction Overrides (Repo-Local)
 
-- For short non-code questions (definitions, acronyms, quick explanations), consider repository context first.
-- If a term may be repo-specific or appears in local docs/code, verify from repository files before answering.
-- If a term is clearly general and not repo-specific, answer directly without extra lookup.
-- When uncertain, prefer checking the repository.
+- For short non-code questions about definitions, acronyms, symbols, errors, or other potentially repository-specific terms, agents MUST search the active repository and read the closest authoritative local definition before answering, lead with the repository-specific meaning, and use general knowledge only when local evidence is absent or the user explicitly requests broader context.
 
 ## ExecPlans
 
@@ -164,7 +161,6 @@ Command details for package, integration-test, and RealTiKV surfaces live in `do
 
 - Prefer extending existing test suites and fixtures over creating new scaffolding.
 - Keep test changes minimal and deterministic; avoid broad golden/testdata churn unless required.
-- Follow `.agents/skills/tidb-test-guidelines` for placement, naming, `shard_count` guidance, planner-specific casetest rules, and related testdata conventions.
 - When recording outputs, verify changed result files before reporting completion.
 
 ### Docs and command snippets
