@@ -858,6 +858,12 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 		begin:        v.Offset,
 		end:          v.Offset + v.Count,
 	}
+	// V1 attaches one statement-local controller only to:
+	//
+	//	Limit -> Projection* -> ordered IndexLookUpJoin
+	//	      -> Projection* -> keep-order IndexLookUp
+	//
+	// Unsupported reader modes retain the existing execution path.
 	if b.sctx.GetSessionVars().EnableAdaptiveLimitScan {
 		if indexJoin := findAdaptiveLimitIndexJoin(childExec); indexJoin != nil && indexJoin.AdaptiveLimitEligible {
 			demandRows := v.Offset + v.Count

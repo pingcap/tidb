@@ -88,6 +88,8 @@ type lookupTableTask struct {
 	idxRows *chunk.Chunk
 	cursor  int
 
+	// The reservation remains owned by this task until all result rows are
+	// consumed, or until an error or cancellation aborts the task.
 	adaptiveLimitReservation int
 
 	// after the cop task is built, buildDone will be set to the current instant, for Next wait duration statistic.
@@ -515,6 +517,7 @@ type IndexLookUpExecutor struct {
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
 
+	// Non-nil only for an eligible reader under a statement-local LIMIT.
 	adaptiveLimitController *exec.AdaptiveLimitController
 
 	// memTracker is used to track the memory usage of this executor.
@@ -751,6 +754,8 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	e.pool = &workerPool{
 		needSpawn: func(workers, tasks uint32) bool {
 			if e.adaptiveLimitController != nil {
+				// A small admission window may expose only one lookup task. Spawn
+				// its table worker immediately instead of waiting for a second task.
 				return workers < uint32(e.indexLookupConcurrency) && tasks > 0
 			}
 			return workers < uint32(e.indexLookupConcurrency) && tasks > 1
@@ -1334,6 +1339,8 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 }
 
 func (e *IndexLookUpExecutor) completeAdaptiveLookupTask(task *lookupTableTask) {
+	// A fully consumed task is the smallest reliable lookup-yield sample. A task
+	// that is only built or fetched may never be observed by the LIMIT consumer.
 	if e.adaptiveLimitController == nil || task == nil || task.adaptiveLimitReservation == 0 || task.cursor < len(task.rows) {
 		return
 	}
@@ -1471,6 +1478,8 @@ type extractedLookupTaskData struct {
 	retChunk      *chunk.Chunk
 	exhausted     bool
 
+	// Reservation ownership moves to lookupTableTask when the task is
+	// dispatched. Every earlier exit must abort it here.
 	adaptiveLimitReservation int
 	adaptiveLimitStopped     bool
 }
@@ -1629,6 +1638,8 @@ func (w *indexWorker) extractLookupTaskData(
 ) (data extractedLookupTaskData, err error) {
 	data.startTime = time.Now()
 	if w.adaptiveLimitController != nil {
+		// Reserve before extracting handles so a large DistSQL chunk cannot be
+		// admitted directly into table lookup tasks beyond the physical window.
 		reserved, ok, err := w.adaptiveLimitController.ReserveLookup(ctx, w.batchSize)
 		if err != nil {
 			return data, err
@@ -1875,6 +1886,9 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 }
 
 func (w *indexWorker) takePendingHandles(handles []kv.Handle) []kv.Handle {
+	// A DistSQL chunk can contain more handles than the current reservation.
+	// Retain the excess locally and admit it under later reservations. Retained
+	// handles remain charged to the executor memory tracker.
 	if w.adaptiveLimitController == nil || len(w.pendingHandles) == 0 {
 		return handles
 	}

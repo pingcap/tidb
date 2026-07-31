@@ -90,7 +90,8 @@ type IndexLookUpJoin struct {
 	prepared bool
 
 	// AdaptiveLimitEligible is set when the outer physical property must keep order.
-	AdaptiveLimitEligible   bool
+	AdaptiveLimitEligible bool
+	// AdaptiveLimitController is shared with the eligible outer IndexLookUp.
 	AdaptiveLimitController *exec.AdaptiveLimitController
 }
 
@@ -295,6 +296,9 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	e.JoinResult.Reset()
 	adaptiveController := e.AdaptiveLimitController
+	// One outer row can produce output across several Next calls. Count output
+	// immediately toward LIMIT progress, but report a yield sample only after the
+	// corresponding outer row is fully consumed.
 	pendingConsumedRows, pendingOutputRows := 0, 0
 	flushAdaptiveProgress := func() {
 		if pendingConsumedRows == 0 && pendingOutputRows == 0 {
@@ -508,6 +512,8 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		lookupMap:   mvmap.NewMVMap(),
 	}
 	if ow.lookup.AdaptiveLimitController != nil {
+		// Commit converts the reservation to the actual fetched row count on every
+		// exit path, releasing unused capacity after EOF or an error.
 		defer func() {
 			ow.lookup.AdaptiveLimitController.CommitOuter(reservedRows, task.outerResult.Len())
 		}()

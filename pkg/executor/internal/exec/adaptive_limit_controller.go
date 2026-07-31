@@ -21,6 +21,9 @@ import (
 
 const adaptiveYieldWindowSize = 4
 
+// adaptiveYieldWindow keeps a small recent sample alongside the controller's
+// cumulative counters. The recent sample lets an ordered scan react when the
+// selectivity near its current position differs from earlier input.
 type adaptiveYieldWindow struct {
 	inputs  [adaptiveYieldWindowSize]uint64
 	outputs [adaptiveYieldWindowSize]uint64
@@ -42,6 +45,9 @@ func (w *adaptiveYieldWindow) totals() (input, output uint64) {
 }
 
 // AdaptiveLimitSnapshot is a point-in-time view of an AdaptiveLimitController.
+// Outer fields are measured in outer rows. Lookup reservation, handle, window,
+// and batch fields are measured in handles; LookupRows is measured in table
+// rows. DemandRows and OutputRows are measured in final Join output rows.
 type AdaptiveLimitSnapshot struct {
 	DemandRows              uint64
 	OutputRows              uint64
@@ -61,7 +67,8 @@ type AdaptiveLimitSnapshot struct {
 }
 
 // AdaptiveLimitConfig defines the immutable bounds of one statement-local
-// adaptive LIMIT controller.
+// adaptive LIMIT controller. Outer windows are measured in outer rows; lookup
+// windows and batches are measured in index handles.
 type AdaptiveLimitConfig struct {
 	DemandRows             uint64
 	InitialOuterWindow     uint64
@@ -74,33 +81,55 @@ type AdaptiveLimitConfig struct {
 
 // AdaptiveLimitController bounds speculative work for an early-stop LIMIT.
 // It is owned by one executor tree and learns only from the current execution.
+//
+// The controller maintains two independent admission lifecycles:
+//
+//	outer rows:     ReserveOuter -> CommitOuter -> ObserveJoinProgress
+//	lookup handles: ReserveLookup -> lookup task -> CompleteLookup / AbortLookup
+//
+// Outer admission is measured in IndexJoin outer rows. Lookup admission is
+// measured in index handles. The accounting must remain separate because a
+// table-side filter can make many handles produce few or no rows. Every
+// reservation must eventually be committed, completed, aborted, or cleared by
+// Stop. All mutable state below is protected by mu.
 type AdaptiveLimitController struct {
 	mu sync.Mutex
 
-	demandRows             uint64
-	outputRows             uint64
-	outerFetched           uint64
-	outerConsumed          uint64
-	outerReserved          uint64
+	// LIMIT demand and progress are measured in final Join output rows.
+	demandRows uint64
+	outputRows uint64
+	// Outer-stage counters are measured in outer rows.
+	outerFetched           uint64 // Committed by the outer worker.
+	outerConsumed          uint64 // Fully probed by IndexLookUpJoin.
+	outerReserved          uint64 // Admitted but not yet committed.
 	outerOutstandingAtStop uint64
-	pendingOuterOutput     uint64
-	recentOuterYield       adaptiveYieldWindow
+	// One outer row may produce output across several Next calls. Retain that
+	// output until the outer row is fully consumed and can form a yield sample.
+	pendingOuterOutput uint64
+	recentOuterYield   adaptiveYieldWindow
 
-	lookupReserved          uint64
-	lookupHandles           uint64
-	lookupRows              uint64
+	// Lookup-stage input is measured in handles and output in table rows.
+	lookupReserved          uint64 // Admitted handles not yet completed or aborted.
+	lookupHandles           uint64 // Handles from fully consumed lookup tasks.
+	lookupRows              uint64 // Rows returned by those lookup tasks.
 	recentLookupYield       adaptiveYieldWindow
 	lookupOutstandingAtStop uint64
 
+	// Windows are logical admission budgets. A worker may not have more than
+	// its current window outstanding at one time.
 	initialOuterWindow uint64
 	maxOuterWindow     uint64
 	outerWindow        uint64
+	// Growth barriers require new completed input before another feedback-driven
+	// increase; no-output counters drive growth when no ratio is available.
 	outerGrowthBarrier uint64
 	outerNoOutputRows  uint64
 
-	initialLookupWindow    uint64
-	maxLookupWindow        uint64
-	lookupWindow           uint64
+	initialLookupWindow uint64
+	maxLookupWindow     uint64
+	lookupWindow        uint64
+	// lookupBatchSize is execution granularity, not a second logical budget.
+	// The physical lookup window rounds the logical window to whole batches.
 	initialLookupBatchSize uint64
 	maxLookupBatchSize     uint64
 	lookupBatchSize        uint64
@@ -108,7 +137,9 @@ type AdaptiveLimitController struct {
 	lookupNoOutputRows     uint64
 	lookupInNoOutputPhase  bool
 
-	stopped       bool
+	stopped bool
+	// Notifications are edge-triggered wakeups. Their size-one buffers coalesce
+	// repeated state changes while no producer is waiting.
 	outerChanged  chan struct{}
 	lookupChanged chan struct{}
 	stopCh        chan struct{}
@@ -230,6 +261,8 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, oute
 		changed := c.lookupChanged
 		if outer {
 			window = c.outerWindow
+			// Fetched-but-unconsumed rows and uncommitted reservations both
+			// consume outer admission capacity.
 			outstanding = c.outerFetched - min(c.outerFetched, c.outerConsumed) + c.outerReserved
 			changed = c.outerChanged
 		}
@@ -411,6 +444,9 @@ func (c *AdaptiveLimitController) Snapshot() AdaptiveLimitSnapshot {
 }
 
 func (c *AdaptiveLimitController) recomputeOuterWindowLocked() {
+	// Estimate the input needed for the remaining LIMIT from cumulative yield.
+	// The recent estimate can detect a low-yield region hidden by earlier
+	// productive input; taking the larger estimate is conservative for progress.
 	remainingOutput := c.demandRows - c.outputRows
 	estimatedInput := divideAndRoundUp(saturatingMultiply(remainingOutput, c.outerConsumed), c.outputRows)
 	recentConsumed, recentOutput := c.recentOuterYield.totals()
@@ -422,6 +458,8 @@ func (c *AdaptiveLimitController) recomputeOuterWindowLocked() {
 		estimatedInput = max(estimatedInput, recentEstimate)
 	}
 	var target uint64
+	// Preserve more headroom early in the statement, then taper it as LIMIT
+	// completion approaches to reduce tail over-admission.
 	switch {
 	case remainingOutput <= c.demandRows/4:
 		target = estimatedInput
@@ -445,6 +483,8 @@ func (c *AdaptiveLimitController) recomputeLookupWindowLocked() {
 	}
 	lookupBuffered := c.lookupRows - min(c.lookupRows, c.outerConsumed)
 	outerBuffered := c.outerFetched - min(c.outerFetched, c.outerConsumed)
+	// Both stages can already hold rows that will satisfy the outer window. Use
+	// the larger visible buffer to avoid admitting the same demand twice.
 	bufferedRows := max(lookupBuffered, outerBuffered)
 	remainingOuter := c.outerWindow - min(c.outerWindow, bufferedRows)
 	target := divideAndRoundUp(saturatingMultiply(remainingOuter, c.lookupHandles), c.lookupRows)
@@ -470,6 +510,9 @@ func (c *AdaptiveLimitController) recomputeLookupWindowLocked() {
 }
 
 func (c *AdaptiveLimitController) growOuterWindowIfDrainedLocked() {
+	// A zero-output phase has no usable yield ratio. Grow only after the current
+	// window produced no output and all outstanding work drained, which
+	// guarantees progress without jumping to the maximum after one empty task.
 	outstanding := c.outerFetched - min(c.outerFetched, c.outerConsumed) + c.outerReserved
 	if outstanding != 0 || c.outerNoOutputRows < c.outerWindow {
 		return
@@ -486,6 +529,9 @@ func (c *AdaptiveLimitController) growOuterWindowIfDrainedLocked() {
 }
 
 func (c *AdaptiveLimitController) growLookupWindowIfDrainedLocked() {
+	// Grow both the logical budget and execution batch after a fully drained
+	// zero-output phase. Growing only the budget would still force a long series
+	// of tiny table lookup tasks through a low-selectivity interval.
 	if c.lookupReserved != 0 || c.lookupNoOutputRows < c.lookupWindow {
 		return
 	}
@@ -499,6 +545,8 @@ func (c *AdaptiveLimitController) growLookupWindowIfDrainedLocked() {
 }
 
 func (c *AdaptiveLimitController) lookupPhysicalWindowLocked() uint64 {
+	// Round the logical handle budget up to whole execution batches. Unless the
+	// configured maximum truncates it, physical slack is less than one batch.
 	if c.lookupWindow == 0 || c.lookupBatchSize == 0 {
 		return 0
 	}
@@ -552,6 +600,9 @@ func growAdaptiveWindow(window, maximum uint64) uint64 {
 }
 
 func adjustAdaptiveWindow(target, current, minimum, maximum uint64, canGrow bool) (uint64, bool) {
+	// Shrink immediately near LIMIT completion. Growth requires new input
+	// progress and is capped at 2x so transient feedback cannot open the window
+	// without bound in one adjustment.
 	target = min(max(target, minimum), maximum)
 	if target > current {
 		if !canGrow {

@@ -466,6 +466,8 @@ type LimitExec struct {
 	columnIdxsUsedByChild []int
 	columnSwapHelper      *chunk.ColumnSwapHelper
 
+	// The Limit owns the statement-local controller lifecycle. Reaching LIMIT or
+	// EOF stops admission; Open resets it after all prior workers have exited.
 	adaptiveLimitController *exec.AdaptiveLimitController
 
 	// Log the close time when opentracing is enabled.
