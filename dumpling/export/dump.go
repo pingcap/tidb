@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/dumpling/cli"
@@ -305,6 +304,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	if conf.SQL == "" {
 		if err = prepareColumnProjection(tctx, conf, baseConn); err != nil {
+			close(taskIn)
 			_ = baseConn.DBConn.Close()
 			return errors.Trace(err)
 		}
@@ -514,14 +514,14 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 	for _, tables := range conf.Tables {
 		tableCount += len(tables)
 	}
-	conf.columnProjection = make(map[restore.UniqueTableName]columnProjection, tableCount)
+	conf.columnProjection = make(map[tableName]columnProjection, tableCount)
 	for dbName, tables := range conf.Tables {
 		for _, table := range tables {
 			projection, err := buildColumnProjection(tctx, conf, conn, dbName, table)
 			if err != nil {
 				return err
 			}
-			conf.columnProjection[restore.UniqueTableName{DB: dbName, Table: table.Name}] = projection
+			conf.columnProjection[tableName{db: dbName, table: table.Name}] = projection
 		}
 	}
 	return nil
@@ -538,7 +538,7 @@ func buildColumnProjection(
 		return columnProjection{}, nil
 	}
 
-	sourceColumns, hasGenerateColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
+	sourceColumns, hasGeneratedColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
 	if err != nil {
 		return columnProjection{}, err
 	}
@@ -556,7 +556,7 @@ func buildColumnProjection(
 	projection := columnProjection{
 		selectField: strings.Join(selectedFields, ","),
 	}
-	if !hasGenerateColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
+	if !hasGeneratedColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
 		projection.selectField = "*"
 	}
 
@@ -1420,7 +1420,7 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 
 func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
-	projection, ok := conf.columnProjection[restore.UniqueTableName{DB: db, Table: tbl}]
+	projection, ok := conf.columnProjection[tableName{db: db, table: tbl}]
 	if !ok {
 		return nil, errors.Errorf(
 			"missing column projection for table `%s`.`%s`",

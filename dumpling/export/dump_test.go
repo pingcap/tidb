@@ -4,6 +4,7 @@ package export
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"regexp"
 	"sync/atomic"
@@ -14,7 +15,6 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -786,7 +786,7 @@ func TestPrepareColumnProjectionGetsColumnTypesFromEmptyResult(t *testing.T) {
 		))
 
 	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
-	projection, ok := conf.columnProjection[restore.UniqueTableName{DB: "lightning_task_info", Table: "conflict_records_v2"}]
+	projection, ok := conf.columnProjection[tableName{db: "lightning_task_info", table: "conflict_records_v2"}]
 	require.True(t, ok)
 	require.Equal(t, "*", projection.selectField)
 	require.Equal(t, []string{"id", "task_id"}, columnNames(projection.sourceTypes))
@@ -865,7 +865,7 @@ func TestPrepareColumnProjection(t *testing.T) {
 			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
 		).AddRow(1, "alice"))
 	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
-	projection, ok := conf.columnProjection[restore.UniqueTableName{DB: database, Table: table}]
+	projection, ok := conf.columnProjection[tableName{db: database, table: table}]
 	require.True(t, ok)
 	require.Equal(t, "*", projection.selectField)
 	require.Equal(t, []string{"id", "name"}, columnNames(projection.sourceTypes))
@@ -901,7 +901,7 @@ func TestPrepareColumnProjectionNoFilter(t *testing.T) {
 			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
 		).AddRow(1, "alice"))
 	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
-	projection, ok := conf.columnProjection[restore.UniqueTableName{DB: database, Table: table}]
+	projection, ok := conf.columnProjection[tableName{db: database, table: table}]
 	require.True(t, ok)
 	require.Equal(t, "*", projection.selectField)
 	require.Equal(t, []string{"id", "name"}, columnNames(projection.sourceTypes))
@@ -909,6 +909,77 @@ func TestPrepareColumnProjectionNoFilter(t *testing.T) {
 	require.Equal(t, []string{"id", "name"}, columnNames(projection.selectedTypes))
 	require.Equal(t, []string{"INT", "VARCHAR"}, columnTypes(projection.selectedTypes))
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPrepareColumnProjectionExplicitSelectField(t *testing.T) {
+	tests := []struct {
+		name           string
+		completeInsert bool
+		generated      bool
+		wantSelect     string
+		wantNames      []string
+		wantTypes      []string
+	}{
+		{
+			name:       "generated column",
+			generated:  true,
+			wantSelect: "`id`",
+			wantNames:  []string{"id"},
+			wantTypes:  []string{"INT"},
+		},
+		{
+			name:           "complete insert",
+			completeInsert: true,
+			wantSelect:     "`id`,`name`",
+			wantNames:      []string{"id", "name"},
+			wantTypes:      []string{"INT", "VARCHAR"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() {
+				require.NoError(t, db.Close())
+			}()
+
+			tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+			defer cancel()
+			conn, err := db.Conn(tctx)
+			require.NoError(t, err)
+			baseConn := newBaseConn(conn, true, nil)
+
+			conf := DefaultConfig()
+			conf.CompleteInsert = tc.completeInsert
+			conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+
+			showRows := sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+				AddRow("id", "int(11)", "NO", "PRI", nil, "")
+			resultColumns := []*sqlmock.Column{sqlmock.NewColumn("id").OfType("INT", int64(0))}
+			resultValues := []driver.Value{1}
+			if tc.generated {
+				showRows.AddRow("generated", "int(11)", "YES", "", nil, "VIRTUAL GENERATED")
+			} else {
+				showRows.AddRow("name", "varchar(12)", "NO", "", nil, "")
+				resultColumns = append(resultColumns, sqlmock.NewColumn("name").OfType("VARCHAR", ""))
+				resultValues = append(resultValues, "alice")
+			}
+			mock.ExpectQuery("SHOW COLUMNS FROM").WillReturnRows(showRows)
+			mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT %s FROM `%s`.`%s` LIMIT 1", tc.wantSelect, database, table))).
+				WillReturnRows(sqlmock.NewRowsWithColumnDefinition(resultColumns...).AddRow(resultValues...))
+
+			require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+			projection, ok := conf.columnProjection[tableName{db: database, table: table}]
+			require.True(t, ok)
+			require.Equal(t, tc.wantSelect, projection.selectField)
+			require.Equal(t, tc.wantNames, columnNames(projection.sourceTypes))
+			require.Equal(t, tc.wantTypes, columnTypes(projection.sourceTypes))
+			require.Equal(t, tc.wantNames, columnNames(projection.selectedTypes))
+			require.Equal(t, tc.wantTypes, columnTypes(projection.selectedTypes))
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestPrepareColumnProjectionFailsOnEmptyResult(t *testing.T) {

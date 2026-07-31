@@ -1061,6 +1061,11 @@ type columnProjection struct {
 	selectField   string
 }
 
+type tableName struct {
+	db    string
+	table string
+}
+
 func getWritableColumnNames(tctx *tcontext.Context, db *BaseConn, dbName, tableName string) ([]string, bool, error) {
 	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
 	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
@@ -1068,17 +1073,17 @@ func getWritableColumnNames(tctx *tcontext.Context, db *BaseConn, dbName, tableN
 		return nil, false, err
 	}
 	sourceColumns := make([]string, 0)
-	hasGenerateColumn := false
+	hasGeneratedColumn := false
 	for _, oneRow := range results {
 		fieldName, extra := oneRow[0], oneRow[1]
 		switch extra {
 		case "STORED GENERATED", "VIRTUAL GENERATED":
-			hasGenerateColumn = true
+			hasGeneratedColumn = true
 			continue
 		}
 		sourceColumns = append(sourceColumns, fieldName)
 	}
-	return sourceColumns, hasGenerateColumn, nil
+	return sourceColumns, hasGeneratedColumn, nil
 }
 
 func buildWhereClauses(handleColNames []string, handleVals [][]string) []string {

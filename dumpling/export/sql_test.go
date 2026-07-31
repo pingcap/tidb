@@ -47,13 +47,13 @@ const (
 )
 
 func selectedFieldForTest(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
-	sourceNames, hasGenerateColumn, err := getWritableColumnNames(tctx, db, dbName, tableName)
+	sourceNames, hasGeneratedColumn, err := getWritableColumnNames(tctx, db, dbName, tableName)
 	if err != nil {
 		return "", 0, err
 	}
 	sourceFields := columnNamesToSelectFields(sourceNames)
 	selectField := strings.Join(sourceFields, ",")
-	if !hasGenerateColumn && !completeInsert {
+	if !hasGeneratedColumn && !completeInsert {
 		selectField = "*"
 	}
 	return selectField, len(sourceFields), nil
