@@ -464,6 +464,8 @@ impl Session {
 #[cfg(test)]
 mod tests_admin_check;
 #[cfg(test)]
+mod tests_alter_column;
+#[cfg(test)]
 mod tests_analyze;
 #[cfg(test)]
 mod tests_auto_increment;
