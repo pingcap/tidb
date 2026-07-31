@@ -530,6 +530,34 @@ fn build_column(
             // Go stamps the flags here; the allocator itself is a separate
             // meta key this builder does not own.
             ColumnOption::AutoIncrement => {
+                // Go `preprocessor.checkAutoIncrementOp`: the allocator hands
+                // out integers, so only a numeric column can hold one. The
+                // list is Go's exactly, and it is WIDER than "integer" --
+                // FLOAT and DOUBLE are in it, and captured from TiDB
+                // `id DOUBLE NOT NULL AUTO_INCREMENT` really is accepted.
+                //
+                // Refused here rather than left to the writer: the cluster
+                // tier used to refuse every AUTO_INCREMENT table for its own
+                // reason, which hid this. Without the check a
+                // `VARCHAR AUTO_INCREMENT` table is created and then answers
+                // every INSERT with a decode failure -- a table that cannot be
+                // used, reported as a success.
+                if !matches!(
+                    field_type.code(),
+                    FieldTypeCode::Tiny
+                        | FieldTypeCode::Short
+                        | FieldTypeCode::Long
+                        | FieldTypeCode::Float
+                        | FieldTypeCode::Double
+                        | FieldTypeCode::LongLong
+                        | FieldTypeCode::Int24
+                ) {
+                    // Go raises a plain `errors.Errorf` here, not a coded
+                    // error, which is why TiDB answers 1105 and not 1063.
+                    return Err(DdlAdmissionError::new(format!(
+                        "Incorrect column specifier for column '{name}'"
+                    )));
+                }
                 field_type.add_flags(FieldTypeFlags::AUTO_INCREMENT | FieldTypeFlags::NOT_NULL);
             }
             ColumnOption::Comment(comment) => info.comment = comment.clone(),

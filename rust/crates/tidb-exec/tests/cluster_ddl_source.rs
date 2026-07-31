@@ -788,3 +788,39 @@ fn drop_index_removes_it_and_owes_the_entry_removal() {
         DdlPlan::Write(_) => panic!("IF EXISTS on a missing index must write nothing"),
     }
 }
+
+/// Go `preprocessor.checkAutoIncrementOp`: the allocator hands out integers,
+/// so a non-numeric AUTO_INCREMENT column is refused.
+///
+/// The cluster tier used to refuse EVERY `AUTO_INCREMENT` table for its own
+/// reason, which hid this. Captured from a Go `tidb-server` on the same
+/// cluster: `id VARCHAR(10) NOT NULL AUTO_INCREMENT` answers
+/// `ERROR 1105 (HY000): Incorrect column specifier for column 'id'`, while
+/// without the check this node created the table and then failed every INSERT
+/// with a decode error -- an unusable table reported as a success.
+#[test]
+fn a_non_numeric_auto_increment_column_is_refused_the_way_go_refuses_it() {
+    for sql in [
+        "CREATE TABLE t (id VARCHAR(10) NOT NULL AUTO_INCREMENT, PRIMARY KEY(id))",
+        "CREATE TABLE t (id DATETIME NOT NULL AUTO_INCREMENT, PRIMARY KEY(id))",
+        "CREATE TABLE t (id DECIMAL(10,2) NOT NULL AUTO_INCREMENT, PRIMARY KEY(id))",
+    ] {
+        let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
+        let refused = lower_ddl(&parsed, "u6").expect_err("this shape must be refused");
+        assert_eq!(
+            refused.reason, "Incorrect column specifier for column 'id'",
+            "`{sql}`"
+        );
+    }
+    // Go's list is WIDER than "integer": FLOAT and DOUBLE are in it, and a Go
+    // tidb-server really does accept `id DOUBLE NOT NULL AUTO_INCREMENT`.
+    for sql in [
+        "CREATE TABLE t (id TINYINT NOT NULL AUTO_INCREMENT, PRIMARY KEY(id))",
+        "CREATE TABLE t (id MEDIUMINT NOT NULL AUTO_INCREMENT, PRIMARY KEY(id))",
+        "CREATE TABLE t (id FLOAT NOT NULL AUTO_INCREMENT, PRIMARY KEY(id))",
+        "CREATE TABLE t (id DOUBLE NOT NULL AUTO_INCREMENT, PRIMARY KEY(id))",
+    ] {
+        let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
+        assert!(lower_ddl(&parsed, "u6").is_ok(), "`{sql}` must be admitted");
+    }
+}

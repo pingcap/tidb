@@ -204,6 +204,43 @@ in `cluster_auto_id::auto_id_key_for`, from the stored `TableInfo`.
 `CREATE TABLE ... AUTO_INCREMENT = n` seeds the key with `n - 1` inside the
 DDL's own transaction, which is Go's `handleAutoIncID`.
 
+### What was measured, against a Go `tidb-server` on the SAME cluster
+
+`tiup playground v8.5.6` (1 PD, 1 TiKV, 1 Go `tidb-server`), Rust node in
+`--cluster-session`, both writing one `probe.t`:
+
+| Check | Result |
+| --- | --- |
+| `INSERT` without the column | ids `1, 2, 3, 4` ascending |
+| `LAST_INSERT_ID()` after a 3-row insert | `2` — the FIRST id of the statement, as Go reports |
+| explicit id `100` (above), then allocate | `101` — the explicit value rebased the counter |
+| explicit id `7` (below), then allocate | `102` — unchanged, as Go's `Rebase` ignores it |
+| **Go server inserts on the same table** | got `30001` — its own reserved range, no collision |
+| **Rust node RESTARTED, then allocate** | `60001` — above everything issued; the counter is in TiKV, not the process |
+| a third node instance, then allocate | `90001` — still climbing, one `step` per reservation |
+| 4 concurrent sessions x 15 inserts | 60 rows, 60 distinct ids, `1..60`, 15 per writer |
+| `CREATE TABLE ... AUTO_INCREMENT=500` | first row lands on `500` |
+| Go's `SELECT id, v FROM probe.t` | byte-identical to the Rust node's answer |
+
+The 30000-sized jumps are Go's own behaviour, not a defect: each server
+reserves `autoid.GetStep()` ids at a time, so ids are ascending and unique but
+not dense across servers or restarts. A Go-only cluster does the same.
+
+### Known gaps this measurement exposed
+
+* **`SHOW CREATE TABLE` does not print the `AUTO_INCREMENT=` clause.** Go, on
+  the same table, prints `... COLLATE=utf8mb4_bin AUTO_INCREMENT=30500`; the
+  Rust node stops at the collation. The stored counter is correct — Go reads
+  it and continues from it — so this is a display gap in `SHOW CREATE TABLE`,
+  not a counter gap. Not fixed here; it belongs to the `SHOW` surface.
+* **A non-numeric `AUTO_INCREMENT` column was admitted** and produced a table
+  whose every `INSERT` failed to decode. The blanket refusal had hidden it.
+  Fixed with Go's own rule (`preprocessor.checkAutoIncrementOp`), whose
+  allowed list is wider than "integer" — `FLOAT` and `DOUBLE` are in it, and a
+  Go `tidb-server` really does accept `id DOUBLE NOT NULL AUTO_INCREMENT`. The
+  refusal is now byte-identical to Go's:
+  `ERROR 1105 (HY000): Incorrect column specifier for column 'id'`.
+
 ### Original report: an `AUTO_INCREMENT` table is created and then not served
 
 sysbench's default `id INTEGER NOT NULL AUTO_INCREMENT` was accepted by
