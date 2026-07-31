@@ -34,7 +34,9 @@
 //! tables; and the `mysql`, `performance_schema`, `sys` and `metrics_schema`
 //! databases, whose contents are separate tiers.
 
-use tidb_datatype::{Datum, FieldType, FieldTypeCode, STRICT_INTEGER_DISPLAY_WIDTH};
+use tidb_datatype::{
+    Datum, FieldType, FieldTypeCode, STRICT_INTEGER_DISPLAY_WIDTH, UNSPECIFIED_LENGTH,
+};
 use tidb_executor::{Catalog, KvTable, TableEntry};
 
 /// Go's schema name for the virtual database.
@@ -808,6 +810,7 @@ fn column_row(
         char_octet,
         numeric_precision,
         numeric_scale,
+        datetime_precision,
         charset_name,
         collation_name,
     } = type_cells(field_type);
@@ -839,8 +842,7 @@ fn column_row(
         char_octet,
         numeric_precision,
         numeric_scale,
-        // DATETIME_PRECISION, for the temporal types this tier does not report.
-        Datum::Null,
+        datetime_precision,
         charset_name,
         collation_name,
         text(&field_type.info_schema_str(STRICT_INTEGER_DISPLAY_WIDTH)),
@@ -863,6 +865,7 @@ struct TypeCells {
     char_octet: Datum,
     numeric_precision: Datum,
     numeric_scale: Datum,
+    datetime_precision: Datum,
     charset_name: Datum,
     collation_name: Datum,
 }
@@ -897,15 +900,55 @@ fn type_cells(field_type: &FieldType) -> TypeCells {
             char_octet: Datum::Int(flen.saturating_mul(charset.maxlen())),
             numeric_precision: Datum::Null,
             numeric_scale: Datum::Null,
+            datetime_precision: Datum::Null,
             charset_name,
             collation_name,
         }
     } else {
+        // Go `dataForColumnsInTable` substitutes the type's DEFAULT length and
+        // decimal whenever the column left them unspecified, and only then
+        // splits into the temporal and the numeric arm. Both cells are absent,
+        // not zero, for every type outside those two arms -- `YEAR` and `DATE`
+        // are neither fractionable nor numeric, so they report NULL twice.
+        let code = field_type.code();
+        let (default_flen, default_decimal) = code.default_length_and_decimal();
+        let flen = if field_type.flen() == UNSPECIFIED_LENGTH {
+            default_flen
+        } else {
+            field_type.flen()
+        };
+        let decimal = if field_type.decimal() == UNSPECIFIED_LENGTH {
+            default_decimal
+        } else {
+            field_type.decimal()
+        };
+        let (numeric_precision, numeric_scale, datetime_precision) = if code.is_type_fractionable()
+        {
+            (Datum::Null, Datum::Null, Datum::Int(decimal))
+        } else if code.is_type_numeric() {
+            // FLOAT and DOUBLE report no scale when none was written -- their
+            // default decimal is -1, which Go tests for rather than storing.
+            let scale = if !matches!(code, FieldTypeCode::Float | FieldTypeCode::Double)
+                || decimal != UNSPECIFIED_LENGTH
+            {
+                Datum::Int(decimal)
+            } else {
+                Datum::Null
+            };
+            (
+                Datum::Int(numeric_precision_of(field_type, flen)),
+                scale,
+                Datum::Null,
+            )
+        } else {
+            (Datum::Null, Datum::Null, Datum::Null)
+        };
         TypeCells {
             char_max: Datum::Null,
             char_octet: Datum::Null,
-            numeric_precision: Datum::Int(numeric_precision_of(field_type)),
-            numeric_scale: Datum::Int(0),
+            numeric_precision,
+            numeric_scale,
+            datetime_precision,
             charset_name: Datum::Null,
             collation_name: Datum::Null,
         }
@@ -930,6 +973,7 @@ fn view_column_row(
         char_octet,
         numeric_precision,
         numeric_scale,
+        datetime_precision,
         charset_name,
         collation_name,
     } = type_cells(field_type);
@@ -946,7 +990,7 @@ fn view_column_row(
         char_octet,
         numeric_precision,
         numeric_scale,
-        Datum::Null,
+        datetime_precision,
         charset_name,
         collation_name,
         text(&field_type.info_schema_str(STRICT_INTEGER_DISPLAY_WIDTH)),
@@ -959,24 +1003,50 @@ fn view_column_row(
     ]
 }
 
-/// Go `DATA_TYPE`: the type name without its display width, which is the
-/// `COLUMN_TYPE` text cut at the first parenthesis.
+/// Go `DATA_TYPE`: the bare type name, `types.TypeToStr` of the column's code
+/// and charset -- no display width, and no `(`-truncation of the printed type
+/// to fake one.
+///
+/// Go remaps `TypeVarString` to `TypeVarchar` for THIS cell alone; the
+/// `COLUMN_TYPE` cell beside it keeps the un-remapped spelling, which is why a
+/// view column can read `varchar` here and `var_string(32)` there.
 fn data_type_of(field_type: &FieldType) -> String {
-    let column_type = field_type.compact_str(false);
-    match column_type.find('(') {
-        Some(index) => column_type[..index].to_owned(),
-        None => column_type,
-    }
+    let code = match field_type.code() {
+        FieldTypeCode::VarString => FieldTypeCode::Varchar,
+        code => code,
+    };
+    tidb_datatype::type_to_str(code, field_type.charset_name()).to_owned()
 }
 
-/// Go's `NUMERIC_PRECISION` for the integer types, captured as 19 for bigint.
-fn numeric_precision_of(field_type: &FieldType) -> i64 {
+/// Go `getNumericPrecision`. `flen` is the caller's length with the type's
+/// default already substituted, which is what makes an unwritten `DECIMAL`
+/// report 10 and a `DECIMAL(20,4)` report 20.
+///
+/// MEDIUMINT and BIGINT report a WIDER precision when unsigned; the MEDIUMINT
+/// pair is MySQL bug 69042, which TiDB reproduces deliberately.
+fn numeric_precision_of(field_type: &FieldType, flen: i64) -> i64 {
     match field_type.code() {
         FieldTypeCode::Tiny => 3,
         FieldTypeCode::Short => 5,
-        FieldTypeCode::Int24 => 7,
+        FieldTypeCode::Int24 => {
+            if field_type.is_unsigned() {
+                8
+            } else {
+                7
+            }
+        }
         FieldTypeCode::Long => 10,
-        FieldTypeCode::LongLong => 19,
+        FieldTypeCode::LongLong => {
+            if field_type.is_unsigned() {
+                20
+            } else {
+                19
+            }
+        }
+        FieldTypeCode::Bit
+        | FieldTypeCode::Float
+        | FieldTypeCode::Double
+        | FieldTypeCode::NewDecimal => flen,
         _ => 0,
     }
 }

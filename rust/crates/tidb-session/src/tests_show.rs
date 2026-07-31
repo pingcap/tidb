@@ -1308,6 +1308,117 @@ fn charset_and_collation_metadata_surfaces() {
     );
 }
 
+/// `NUMERIC_PRECISION`, `NUMERIC_SCALE` and `DATETIME_PRECISION` across every
+/// type that has one, on all three metadata surfaces.
+///
+/// ABSENT and ZERO are different answers here. `FLOAT`/`DOUBLE` report a
+/// precision and NO scale, `YEAR` and `DATE` report neither cell, and a
+/// temporal type reports its fractional-second digits in a THIRD cell. Go
+/// reaches all of that from one if-chain in `dataForColumnsInTable`
+/// (`pkg/executor/infoschema_reader.go`) over `getNumericPrecision` plus
+/// `mysql.GetDefaultFieldLengthAndDecimal`, which is why an unwritten
+/// `DECIMAL` reports 10,0 while a written `DECIMAL(20,4)` reports 20,4.
+///
+/// The unsigned pairs are Go's too: BIGINT UNSIGNED widens 19 -> 20, and
+/// MEDIUMINT UNSIGNED widens 7 -> 8 (MySQL bug 69042, reproduced on purpose).
+#[test]
+fn numeric_and_temporal_precision_surfaces() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t3 (\
+                 c_tiny TINYINT, c_small SMALLINT, c_medium MEDIUMINT, \
+                 c_medium_u MEDIUMINT UNSIGNED, c_int INT, c_big BIGINT, \
+                 c_big_u BIGINT UNSIGNED, \
+                 c_dec DECIMAL, c_dec_md DECIMAL(20,4), \
+                 c_float FLOAT, c_float_md FLOAT(10,3), c_double DOUBLE, \
+                 c_bit BIT, c_bit8 BIT(8), c_year YEAR, \
+                 c_date DATE, c_datetime DATETIME, c_datetime3 DATETIME(3), \
+                 c_ts TIMESTAMP NULL, c_time TIME(6))",
+        )
+        .unwrap();
+
+    let (_, rows) = query_text(
+        &mut session,
+        "SELECT COLUMN_NAME, DATA_TYPE, NUMERIC_PRECISION, NUMERIC_SCALE, \
+             DATETIME_PRECISION FROM information_schema.columns WHERE table_name = 't3'",
+    );
+    assert_eq!(
+        rows,
+        vec![
+            vec!["c_tiny", "tinyint", "3", "0", "<nil>"],
+            vec!["c_small", "smallint", "5", "0", "<nil>"],
+            vec!["c_medium", "mediumint", "7", "0", "<nil>"],
+            vec!["c_medium_u", "mediumint", "8", "0", "<nil>"],
+            vec!["c_int", "int", "10", "0", "<nil>"],
+            vec!["c_big", "bigint", "19", "0", "<nil>"],
+            vec!["c_big_u", "bigint", "20", "0", "<nil>"],
+            vec!["c_dec", "decimal", "10", "0", "<nil>"],
+            vec!["c_dec_md", "decimal", "20", "4", "<nil>"],
+            vec!["c_float", "float", "12", "<nil>", "<nil>"],
+            vec!["c_float_md", "float", "10", "3", "<nil>"],
+            vec!["c_double", "double", "22", "<nil>", "<nil>"],
+            vec!["c_bit", "bit", "1", "0", "<nil>"],
+            vec!["c_bit8", "bit", "8", "0", "<nil>"],
+            vec!["c_year", "year", "<nil>", "<nil>", "<nil>"],
+            vec!["c_date", "date", "<nil>", "<nil>", "<nil>"],
+            vec!["c_datetime", "datetime", "<nil>", "<nil>", "0"],
+            vec!["c_datetime3", "datetime", "<nil>", "<nil>", "3"],
+            vec!["c_ts", "timestamp", "<nil>", "<nil>", "0"],
+            vec!["c_time", "time", "<nil>", "<nil>", "6"],
+        ]
+    );
+
+    // The two PRINTED-type surfaces must keep agreeing with each other while
+    // the cells above change: SHOW COLUMNS and SHOW CREATE TABLE both spell
+    // the width, which the DATA_TYPE cell above never does.
+    let (_, rows) = query_text(&mut session, "SHOW COLUMNS FROM t3");
+    assert_eq!(
+        rows.iter().map(|row| row[1].clone()).collect::<Vec<_>>(),
+        vec![
+            "tinyint",
+            "smallint",
+            "mediumint",
+            "mediumint unsigned",
+            "int",
+            "bigint",
+            "bigint unsigned",
+            "decimal(10,0)",
+            "decimal(20,4)",
+            "float",
+            "float(10,3)",
+            "double",
+            // `year(4)` keeps its width: the display-width deprecation covers
+            // the INTEGER types only (oracle: `tests/integrationtest/r`).
+            "bit(1)",
+            "bit(8)",
+            "year(4)",
+            "date",
+            "datetime",
+            "datetime(3)",
+            "timestamp",
+            "time(6)",
+        ]
+    );
+    let create = show_create(&mut session, "t3");
+    for spelling in [
+        "`c_medium_u` mediumint unsigned",
+        "`c_big_u` bigint unsigned",
+        "`c_dec` decimal(10,0)",
+        "`c_dec_md` decimal(20,4)",
+        "`c_float` float",
+        "`c_float_md` float(10,3)",
+        "`c_bit` bit(1)",
+        "`c_datetime3` datetime(3)",
+        "`c_time` time(6)",
+    ] {
+        assert!(
+            create.contains(spelling),
+            "{spelling} missing from {create}"
+        );
+    }
+}
+
 /// Captured from TiDB over `... DEFAULT CHARSET=latin1`: the table tail
 /// reports latin1/latin1_bin, a column whose charset differs prints the full
 /// `CHARACTER SET ... COLLATE ...` pair, and `CHARACTER SET binary` on a
