@@ -283,3 +283,48 @@ fn an_unimplemented_analyze_clause_is_refused() {
         "keep order:false, stats:pseudo"
     );
 }
+
+/// `ANALYZE` inside an explicit transaction runs, and a `ROLLBACK` takes its
+/// statistics back with it. TiDB's do NOT come back -- captured:
+///
+/// ```text
+/// create table t (a int, key ka(a))
+/// insert into t values (1),(2),(3)
+/// begin
+/// analyze table t
+/// explain select * from t     -- IndexFullScan_6  3.00  (no stats:pseudo)
+/// rollback
+/// explain select * from t     -- IndexFullScan_6  3.00  STILL 3.00
+/// ```
+///
+/// DIVERGENCE, named rather than papered over (see [`crate::analyze_arm`]):
+/// TiDB's `ANALYZE` writes through an INTERNAL session, so its statistics are
+/// not the rolling-back transaction's to discard. This tier runs it against
+/// the catalog the statement sees, so they are. Making the WRITE escape the
+/// transaction would also make the READ escape it, and sampling rows the
+/// statement cannot see is the worse of the two errors: it would build a
+/// histogram of a table state this session never observed.
+///
+/// The committed path is the one the scripts take, and it agrees with TiDB.
+#[test]
+fn analyze_inside_a_transaction_rolls_back_with_it() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, KEY ka(a))").unwrap();
+    session.run("INSERT INTO t VALUES (1),(2),(3)").unwrap();
+
+    session.run("BEGIN").unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    // Inside the transaction the estimate is TiDB's.
+    assert_eq!(scan_row(&mut session, "EXPLAIN SELECT * FROM t").0, "3.00");
+    session.run("ROLLBACK").unwrap();
+    assert_eq!(
+        scan_row(&mut session, "EXPLAIN SELECT * FROM t").0,
+        "10000.00",
+        "the divergence above: TiDB keeps 3.00 here"
+    );
+
+    session.run("BEGIN").unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("COMMIT").unwrap();
+    assert_eq!(scan_row(&mut session, "EXPLAIN SELECT * FROM t").0, "3.00");
+}
