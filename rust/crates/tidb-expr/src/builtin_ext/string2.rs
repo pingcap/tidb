@@ -22,11 +22,15 @@ use crate::string_signature::StrUnits;
 use crate::{Datum, EvalError};
 
 /// Dispatches this family's builtins; `None` if `name` isn't one of them.
-pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
+pub(crate) fn dispatch(
+    name: &str,
+    vals: &[Datum],
+    ctx: &dyn crate::Columns,
+) -> Option<Result<Datum, EvalError>> {
     match (name, vals.len()) {
         ("SUBSTRING" | "SUBSTR" | "MID", 2) => Some(substring(vals)),
         ("LOCATE", 3) => Some(locate3(vals)),
-        ("FORMAT", 3) => Some(format_with_locale(vals)),
+        ("FORMAT", 3) => Some(format_with_locale(vals, ctx)),
         ("FIND_IN_SET", 2) => Some(find_in_set(vals)),
         ("EXPORT_SET", 3..=5) => Some(export_set(vals)),
         ("LTRIM", 1) => Some(ltrim(&vals[0])),
@@ -141,12 +145,13 @@ fn locate3(vals: &[Datum]) -> Result<Datum, EvalError> {
 
 /// `FORMAT(x, d, locale)`, ported from `builtinFormatWithLocaleSig` in
 /// `pkg/expression/builtin_string.go`.  A `NULL` locale uses TiDB's `en_US`
-/// fallback; the accompanying unknown-locale warning cannot be represented
-/// without the missing statement context.
-fn format_with_locale(vals: &[Datum]) -> Result<Datum, EvalError> {
+/// fallback; the accompanying unknown-locale warning is still unraised, even
+/// though `ctx` now reaches here -- nothing has read Go's locale-registry
+/// miss into this port yet.
+fn format_with_locale(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     match coerce_str(&vals[2])? {
-        Some(locale) => format_num_locale(vals, &locale),
-        None => format_num_locale(vals, "en_US"),
+        Some(locale) => format_num_locale(vals, &locale, ctx),
+        None => format_num_locale(vals, "en_US", ctx),
     }
 }
 
@@ -243,7 +248,7 @@ mod tests {
     }
 
     fn call(name: &str, vals: &[Datum]) -> Datum {
-        dispatch(name, vals)
+        dispatch(name, vals, &crate::NoColumns)
             .expect("string2 name/arity should dispatch")
             .expect("Go-derived vector should evaluate")
     }
@@ -279,7 +284,7 @@ mod tests {
             call("TRANSLATE", &[string("x"), string("y"), Datum::Null]),
             Datum::Null
         );
-        assert!(dispatch("TRANSLATE", &[string("x"), string("y")]).is_none());
+        assert!(dispatch("TRANSLATE", &[string("x"), string("y")], &crate::NoColumns).is_none());
     }
 
     #[test]
@@ -456,7 +461,7 @@ mod tests {
             (string(""), Datum::Int(1), Some("0.0")),
             (Datum::Int(1), string(""), Some("1")),
         ] {
-            let result = format_num(&[number, precision]).unwrap();
+            let result = format_num(&[number, precision], &crate::NoColumns).unwrap();
             let expected = want.map(string).unwrap_or(Datum::Null);
             assert_eq!(result, expected);
         }
@@ -809,7 +814,7 @@ mod tests {
         for name in ["LTRIM", "RTRIM"] {
             assert_eq!(call(name, &[Datum::Null]), Datum::Null);
             assert_eq!(call(name, &[Datum::Int(123)]), string("123"));
-            assert!(dispatch(name, &[]).is_none());
+            assert!(dispatch(name, &[], &crate::NoColumns).is_none());
         }
     }
 

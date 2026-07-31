@@ -17,6 +17,7 @@
 use tidb_ast::{BinaryOp, Expr};
 
 use crate::coerce::{bool_int, truthy_of};
+use crate::eval_in;
 use crate::row::row_compare;
 use crate::string_fn::{
     ascii, bin, bit_count, bit_length, case_convert, char_func, concat, concat_ws, elt, field,
@@ -25,7 +26,6 @@ use crate::string_fn::{
     unhex,
 };
 use crate::time_fn::calendar::{date_add, date_diff, date_format, date_part, from_days, time_part};
-use crate::{eval_binary, eval_in};
 use crate::{BuildContext, Columns, Datum, EvalError, StringLengthFunction};
 
 /// Evaluates a builtin scalar function over its evaluated arguments.
@@ -279,7 +279,7 @@ pub(crate) fn eval_func_values_in(
     if let Some(result) = eval_session_state(name, vals, cols) {
         return Some(result);
     }
-    let result = eval_func_values(name, vals)?;
+    let result = eval_func_values(name, vals, cols)?;
     if name == "JSON_MERGE" && matches!(result, Ok(ref value) if *value != Datum::Null) {
         cols.append_warning(
             1681,
@@ -315,8 +315,12 @@ pub(crate) fn eval_func_values_in(
 /// `COALESCE` is eager here exactly as in `eval_func`'s existing eager path
 /// (Go's `builtinCoalesceSig` evaluates arguments in order over values, not
 /// lazily over unevaluated branches — no guarded-error semantics to protect).
-pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
-    if let Some(result) = crate::math_fn::dispatch_values(name, vals) {
+pub(crate) fn eval_func_values(
+    name: &str,
+    vals: &[Datum],
+    ctx: &dyn Columns,
+) -> Option<Result<Datum, EvalError>> {
+    if let Some(result) = crate::math_fn::dispatch_values(name, vals, ctx) {
         return Some(result);
     }
     let result = match name {
@@ -327,7 +331,7 @@ pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datu
             let (value, list) = vals.split_first().expect("at least two arguments");
             let mut found_null = *value == Datum::Null;
             for item in list {
-                match eval_binary(BinaryOp::Eq, value.clone(), item.clone()) {
+                match crate::ops::eval_binary_in(BinaryOp::Eq, value.clone(), item.clone(), ctx) {
                     Ok(Datum::Int(0)) => {}
                     Ok(Datum::Null) => found_null = true,
                     Ok(_) => return Some(Ok(Datum::Int(1))),
@@ -376,7 +380,7 @@ pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datu
                 )
             };
             let equal = if numeric(&a) && numeric(&b) {
-                match eval_binary(BinaryOp::Eq, a.clone(), b.clone()) {
+                match crate::ops::eval_binary_in(BinaryOp::Eq, a.clone(), b.clone(), ctx) {
                     Ok(v) => v == Datum::Int(1),
                     Err(e) => return Some(Err(e)),
                 }
@@ -416,7 +420,7 @@ pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datu
         "BIN" if vals.len() == 1 => bin(vals),
         "OCT" if vals.len() == 1 => oct(vals),
         "BIT_LENGTH" => bit_length(vals),
-        "FIELD" if vals.len() >= 2 => field(vals),
+        "FIELD" if vals.len() >= 2 => field(vals, ctx),
         "ELT" if vals.len() >= 2 => elt(vals),
         "CONCAT_WS" if vals.len() >= 2 => concat_ws(vals),
         "SUBSTRING_INDEX" if vals.len() == 3 => substring_index(vals),
@@ -429,7 +433,7 @@ pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datu
         "ORD" if vals.len() == 1 => ord(vals),
         "QUOTE" if vals.len() == 1 => quote(vals),
         "BIT_COUNT" if vals.len() == 1 => bit_count(vals),
-        "FORMAT" if vals.len() == 2 => format_num(vals),
+        "FORMAT" if vals.len() == 2 => format_num(vals, ctx),
         "CHAR_FUNC" if !vals.is_empty() => char_func(vals),
         "TO_BASE64" if vals.len() == 1 => to_base64(vals),
         "FROM_BASE64" if vals.len() == 1 => from_base64(vals),
@@ -465,7 +469,7 @@ pub(crate) fn eval_func_values(name: &str, vals: &[Datum]) -> Option<Result<Datu
         // one module with its own `dispatch(name, vals) -> Option<...>`, so
         // parallel agents can add builtins without touching this match.
         // `None` from every family means this entry doesn't know the name.
-        _ => return crate::builtin_ext::dispatch(name, vals),
+        _ => return crate::builtin_ext::dispatch(name, vals, ctx),
     };
     Some(result)
 }
@@ -588,7 +592,7 @@ pub(crate) fn eval_in_list(
     let mut found_null = false;
     for item in list {
         let iv = eval_in(item, cols)?;
-        match eval_binary(BinaryOp::Eq, v.clone(), iv)? {
+        match crate::ops::eval_binary_in(BinaryOp::Eq, v.clone(), iv, cols)? {
             Datum::Int(0) => {}
             Datum::Null => found_null = true,
             _ => return Ok(bool_int(!not)), // a match

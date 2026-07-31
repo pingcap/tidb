@@ -214,8 +214,9 @@ fn math_functions() {
 
 /// Exact scalar result/error vectors from `TestExp` in
 /// `pkg/expression/builtin_math_test.go`. The production test also counts the
-/// ETReal truncation warning for `EXP('tidb')`; this value-only evaluator has
-/// no statement warning channel, but must still return the same numeric value.
+/// ETReal truncation warning for `EXP('tidb')`; `e()` evaluates against
+/// `NoColumns`, whose sink discards, so these rows pin the VALUE and
+/// `warning_sink` in `crate::ops` pins the warning.
 #[test]
 fn exp_matches_go_source_vectors_and_arity() {
     for (sql, want) in [
@@ -267,9 +268,10 @@ fn trig_functions() {
 /// `pkg/expression/builtin_math_test.go` (`TestDegrees` through `TestCot`).
 ///
 /// The Go tests also assert statement warning counts for malformed string
-/// prefixes.  This constant-expression evaluator has no warning channel, so
-/// those rows are still checked for their value while the warning side effect
-/// remains an explicit boundary in the coverage evidence.  Keeping the
+/// prefixes.  Those rows are checked here for their VALUE; the warning they
+/// raise now travels through `Columns::append_warning` and is pinned
+/// separately, since `e()` evaluates against the discarding `NoColumns`
+/// sink.  Keeping the
 /// source rows here (instead of a handful of representative calls) is
 /// important: several of the functions differ only at NULL/domain and
 /// negative-angle boundaries.

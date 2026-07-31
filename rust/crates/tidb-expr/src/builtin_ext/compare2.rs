@@ -25,11 +25,15 @@ use crate::ops::{to_decimal, to_f64};
 use crate::{eval_binary, Datum, EvalError};
 
 /// Dispatches this family's builtins; `None` if `name` isn't one of them.
-pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
+pub(crate) fn dispatch(
+    name: &str,
+    vals: &[Datum],
+    ctx: &dyn crate::Columns,
+) -> Option<Result<Datum, EvalError>> {
     match (name, vals.len()) {
         ("LEAST", _) => Some(extremum(vals, Ordering::Less)),
         ("GREATEST", _) => Some(extremum(vals, Ordering::Greater)),
-        ("INTERVAL", n) if n >= 2 => Some(interval(vals)),
+        ("INTERVAL", n) if n >= 2 => Some(interval(vals, ctx)),
         ("ISNULL", 1) => Some(Ok(Datum::Int(i64::from(matches!(vals[0], Datum::Null))))),
         ("INET_ATON", 1) => Some(inet_aton(&vals[0])),
         ("INET_NTOA", 1) => Some(inet_ntoa(&vals[0])),
@@ -147,7 +151,7 @@ fn extremum_string_value(value: &Datum) -> Result<Vec<u8>, EvalError> {
 /// signature. A NULL target is `-1`; NULL boundaries participate only in the
 /// nullable signature and are skipped. The binary search intentionally keeps
 /// TiDB's documented precondition that non-NULL boundaries are sorted.
-fn interval(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn interval(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     if vals.iter().any(Datum::is_range_sentinel) {
         return Err(EvalError::Unsupported("range sentinel INTERVAL argument"));
     }
@@ -182,7 +186,7 @@ fn interval(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::Int(index as i64));
     }
 
-    let target = interval_real(&vals[0])?;
+    let target = interval_real(&vals[0], ctx)?;
     // Every boundary is converted UP FRONT: a boundary with no ETReal
     // reading is an error in TiDB, and an error cannot leave
     // `partition_point`'s comparator.
@@ -190,7 +194,7 @@ fn interval(vals: &[Datum]) -> Result<Datum, EvalError> {
         .iter()
         .map(|boundary| match boundary {
             Datum::Null => Ok(None),
-            other => interval_real(other).map(Some),
+            other => interval_real(other, ctx).map(Some),
         })
         .collect::<Result<Vec<_>, EvalError>>()?;
     let index = if nullable {
@@ -210,8 +214,8 @@ fn interval(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// that one port instead of keeping a second copy of the numeric-prefix rule
 /// here is what makes an invalid-UTF-8 boundary read its prefix rather than
 /// silently sort as zero.
-fn interval_real(value: &Datum) -> Result<f64, EvalError> {
-    crate::ops::to_f64_with_mysql_string(value)
+fn interval_real(value: &Datum, ctx: &dyn crate::Columns) -> Result<f64, EvalError> {
+    crate::ops::to_f64_with_mysql_string(value, ctx)
 }
 
 /// `INET_ATON(expr)`: decimal dotted IPv4 to an unsigned 32-bit integer,
@@ -444,7 +448,7 @@ mod tests {
     use crate::Decimal;
 
     fn call(name: &str, vals: &[Datum]) -> Datum {
-        dispatch(name, vals)
+        dispatch(name, vals, &crate::NoColumns)
             .expect("name/arity should dispatch to compare2")
             .expect("Go vector should evaluate")
     }
@@ -577,7 +581,9 @@ mod tests {
             assert_eq!(call("INET_ATON", &[arg]), want);
         }
         for invalid in ["", "0.0.0.256", "127,256", "123.2.1.", "127.0.0.1.1"] {
-            assert!(dispatch("INET_ATON", &[s(invalid)]).unwrap().is_err());
+            assert!(dispatch("INET_ATON", &[s(invalid)], &crate::NoColumns)
+                .unwrap()
+                .is_err());
         }
     }
 
@@ -638,7 +644,9 @@ mod tests {
         ];
         for (text, want) in cases {
             match want {
-                Datum::Null => assert!(dispatch("INET6_ATON", &[s(text)]).unwrap().is_err()),
+                Datum::Null => assert!(dispatch("INET6_ATON", &[s(text)], &crate::NoColumns)
+                    .unwrap()
+                    .is_err()),
                 want => assert_eq!(call("INET6_ATON", &[s(text)]), want),
             }
         }

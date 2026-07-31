@@ -19,18 +19,22 @@ use crate::ops::to_f64_with_mysql_string;
 use crate::{Datum, EvalError};
 
 /// Dispatches this family's builtins; `None` if `name` isn't one of them.
-pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
+pub(crate) fn dispatch(
+    name: &str,
+    vals: &[Datum],
+    ctx: &dyn crate::Columns,
+) -> Option<Result<Datum, EvalError>> {
     match (name, vals) {
-        ("FORMAT_BYTES", [value]) => Some(format_bytes(value)),
-        ("FORMAT_NANO_TIME", [value]) => Some(format_nano_time(value)),
+        ("FORMAT_BYTES", [value]) => Some(format_bytes(value, ctx)),
+        ("FORMAT_NANO_TIME", [value]) => Some(format_nano_time(value, ctx)),
         _ => None,
     }
 }
 
 /// `FORMAT_BYTES(value)`, ported from `builtinFormatBytesSig.evalString` and
 /// `GetFormatBytes` in `pkg/expression/builtin_info.go` / `util.go`.
-fn format_bytes(value: &Datum) -> Result<Datum, EvalError> {
-    let Some(value) = real_arg(value)? else {
+fn format_bytes(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    let Some(value) = real_arg(value, ctx)? else {
         return Ok(Datum::Null);
     };
     Ok(Datum::new_string(format_scaled(
@@ -51,8 +55,8 @@ fn format_bytes(value: &Datum) -> Result<Datum, EvalError> {
 /// `GetFormatNanoTime` in `pkg/expression/builtin_info.go` / `util.go`.
 /// Despite the similarly named MySQL documentation function, TiDB's SQL name
 /// is `FORMAT_NANO_TIME` and its input unit is nanoseconds.
-fn format_nano_time(value: &Datum) -> Result<Datum, EvalError> {
-    let Some(value) = real_arg(value)? else {
+fn format_nano_time(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    let Some(value) = real_arg(value, ctx)? else {
         return Ok(Datum::Null);
     };
     Ok(Datum::new_string(format_scaled(
@@ -74,10 +78,10 @@ fn format_nano_time(value: &Datum) -> Result<Datum, EvalError> {
 /// reach the formatter exactly as they do in TiDB; `NULL` alone propagates,
 /// and an argument with no ETReal reading at all (a vector, say) is the
 /// error TiDB raises rather than a formatted `0 bytes`.
-fn real_arg(value: &Datum) -> Result<Option<f64>, EvalError> {
+fn real_arg(value: &Datum, ctx: &dyn crate::Columns) -> Result<Option<f64>, EvalError> {
     match value {
         Datum::Null => Ok(None),
-        _ => to_f64_with_mysql_string(value).map(Some),
+        _ => to_f64_with_mysql_string(value, ctx).map(Some),
     }
 }
 
@@ -128,7 +132,7 @@ mod tests {
     use crate::Datum;
 
     fn call(name: &str, value: Datum) -> Datum {
-        dispatch(name, &[value])
+        dispatch(name, &[value], &crate::NoColumns)
             .expect("name/arity should dispatch")
             .expect("formatting must be total over finite ETReal values")
     }

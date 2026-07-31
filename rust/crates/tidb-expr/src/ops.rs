@@ -141,6 +141,23 @@ pub(crate) fn eval_binary_with_div_precision(
     )
 }
 
+/// [`eval_binary`] for a caller that HAS the statement context, so a
+/// string-versus-number comparison can raise its own 1292.
+///
+/// The nested comparisons in `IN`, `BETWEEN` and `CASE ... WHEN` reach the
+/// same `getBaseCmpType` ETReal coercion as a top-level `=`, and TiDB warns
+/// there too (captured: `SELECT 1 IN ('12abc')` records 1292). Routing them
+/// through [`eval_binary`], whose resolver is `NoColumns`, silently dropped
+/// those warnings.
+pub(crate) fn eval_binary_in(
+    op: BinaryOp,
+    l: Datum,
+    r: Datum,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
+    eval_binary_with_div_precision(op, l, r, ctx.div_precision_increment(), ctx)
+}
+
 /// The collation an evaluation with no expression-level derivation behind it
 /// runs under: `utf8mb4_bin`, this tier's connection collation.
 ///
@@ -343,8 +360,8 @@ pub(crate) fn eval_binary_full(
             }
             return real_compare(
                 op,
-                to_f64_with_mysql_string(&l)?,
-                to_f64_with_mysql_string(&r)?,
+                to_f64_with_mysql_string(&l, ctx)?,
+                to_f64_with_mysql_string(&r, ctx)?,
             );
         }
         return Err(EvalError::Unsupported("string operand"));
@@ -1025,24 +1042,25 @@ pub(crate) fn to_f64(v: Datum) -> f64 {
 /// value for and no `unreachable!` left to be wrong about: whatever
 /// `Datum::to_f64` declines, TiDB declines too, and the caller propagates it.
 ///
-/// The missing-signature gap this audit found is now CLOSED:
-/// `math_fn::{abs, sign, round_or_truncate}` matched a closed list of kinds
-/// and refused the rest, so `ABS('12abc')` was an error where TiDB answers
-/// 12. Each now ends in the `ETReal` signature Go's own per-eval-type
-/// dispatch selects, reached through this coercion.
+/// Both gaps this audit found are now CLOSED.
 ///
-/// One gap remains, outside this function:
-///
+///  * `math_fn::{abs, sign, round_or_truncate}` matched a closed list of
+///    kinds and refused the rest, so `ABS('12abc')` was an error where TiDB
+///    answers 12. Each now ends in the `ETReal` signature Go's own
+///    per-eval-type dispatch selects, reached through this coercion.
 ///  * TiDB raises `1292 Truncated incorrect DOUBLE value: '<text>'` whenever
-///    the prefix is shorter than the operand, and this layer has no warning
-///    channel to raise it on -- `dispatch_values` is deliberately a pure
-///    function of already-evaluated arguments, shared with the chunk-row
-///    bridge, so a warning sink is a separate structural change. The VALUE is
-///    TiDB's in every MATCHES row above.
-pub(crate) fn to_f64_with_mysql_string(v: &Datum) -> Result<f64, EvalError> {
+///    the numeric prefix is shorter than the operand, and this function is
+///    where Go raises it too (`getValidFloatPrefix` calls
+///    `ctx.HandleTruncate` before returning). `ctx` is now threaded here so
+///    the warning is raised ONCE, at the coercion, rather than once per
+///    calling builtin -- see [`raise_truncated_double`].
+pub(crate) fn to_f64_with_mysql_string(
+    v: &Datum,
+    ctx: &dyn crate::context::Columns,
+) -> Result<f64, EvalError> {
     match v {
-        Datum::String(s) => Ok(bytes_to_f64(s.bytes())),
-        Datum::Bytes(s) => Ok(bytes_to_f64(s)),
+        Datum::String(s) => Ok(bytes_to_f64(s.bytes(), ctx)),
+        Datum::Bytes(s) => Ok(bytes_to_f64(s, ctx)),
         Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_) => {
             Ok(to_f64(v.clone()))
         }
@@ -1062,8 +1080,37 @@ pub(crate) fn to_f64_with_mysql_string(v: &Datum) -> Result<f64, EvalError> {
 /// anyway -- so U+FFFD ends the prefix precisely where the raw byte would.
 /// That leaves one implementation of the prefix rule instead of a decode
 /// that can fail and a fallback that has to guess.
-fn bytes_to_f64(bytes: &[u8]) -> f64 {
-    tidb_datatype::str_to_float(&String::from_utf8_lossy(bytes), false).value
+///
+/// `is_function_cast` is TRUE because that is the flag the expression engine
+/// reaches this conversion with: a string operand of a real-typed builtin or
+/// comparison is wrapped in `WrapWithCastAsReal`, and
+/// `builtinCastStringAsRealSig.evalReal` calls `types.StrToFloat(ctx, val,
+/// true)`. The flag changes nothing about the VALUE, only whether the EMPTY
+/// string counts as truncated -- and captured, an empty string raises no
+/// warning at all where `'abc' + 1` raises 1292.
+fn bytes_to_f64(bytes: &[u8], ctx: &dyn crate::context::Columns) -> f64 {
+    let text = String::from_utf8_lossy(bytes);
+    let converted = tidb_datatype::str_to_float(&text, true);
+    if converted.event.is_some() {
+        raise_truncated_double(ctx, text.trim());
+    }
+    converted.value
+}
+
+/// Go `ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", s)` at warning
+/// level: `1292 Truncated incorrect DOUBLE value: '<s>'`.
+///
+/// `s` is the string AFTER `strings.TrimSpace`, because `StrToFloat` trims
+/// before handing the value to `getValidFloatPrefix`, and both of that
+/// function's raise sites name the trimmed form (captured: a padded
+/// `' 12abc '` warns about `'12abc'`, and a padded `' 12 '` does not warn).
+///
+/// Go raises this ONCE PER EVALUATION, so a query with three rows and two
+/// coercing sites records six warnings, not one (captured:
+/// `SELECT ABS(a), a+0 FROM t` over three rows lists all six). Nothing here
+/// deduplicates, for the same reason.
+pub(crate) fn raise_truncated_double(ctx: &dyn crate::context::Columns, text: &str) {
+    ctx.append_warning(1292, &format!("Truncated incorrect DOUBLE value: '{text}'"));
 }
 
 fn real_compare(op: BinaryOp, a: f64, b: f64) -> Result<Datum, EvalError> {
@@ -1279,9 +1326,142 @@ fn null_safe_eq(l: Datum, r: Datum) -> Result<Datum, EvalError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{bytes_to_f64, eval_binary, to_f64_with_mysql_string};
+    use super::{
+        bytes_to_f64, eval_binary, eval_binary_full, to_f64_with_mysql_string,
+        DERIVATION_FREE_COLLATION,
+    };
     use crate::{Datum, Decimal, EvalError};
     use tidb_ast::BinaryOp;
+
+    /// A `Columns` resolver that keeps every warning it is handed, so a test
+    /// can assert the CODE, the exact MESSAGE, and the COUNT.
+    #[derive(Default)]
+    struct WarningLog(std::cell::RefCell<Vec<(u16, String)>>);
+
+    impl crate::Columns for WarningLog {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    impl WarningLog {
+        fn taken(&self) -> Vec<(u16, String)> {
+            self.0.take()
+        }
+    }
+
+    fn truncated(text: &str) -> (u16, String) {
+        (1292, format!("Truncated incorrect DOUBLE value: '{text}'"))
+    }
+
+    /// The 1292 warning Go raises while coercing a string into the ETReal
+    /// domain, which this crate had no channel for until `Columns` was
+    /// threaded into the values-only dispatch.
+    ///
+    /// Every expectation is a `gorun` capture against a real session, read off
+    /// `SHOW WARNINGS`. The three properties that matter are all pinned here,
+    /// because getting the value right while getting any of them wrong still
+    /// diverges on the recorded warning line:
+    ///
+    ///  * the CODE and the exact MESSAGE, including that the quoted text is
+    ///    the TRIMMED operand;
+    ///  * WHICH operands raise it -- a full numeric string, a trailing `.`,
+    ///    a trailing `e`, and the EMPTY string all raise NOTHING, and the
+    ///    empty string is silent only because the engine reaches this
+    ///    coercion with `isFuncCast` set;
+    ///  * the COUNT: one per coercion, never deduplicated, so a two-operand
+    ///    expression over two bad strings raises TWO.
+    #[test]
+    fn string_to_real_coercion_raises_go_truncation_warnings() {
+        let log = WarningLog::default();
+        let s = |text: &str| Datum::new_string(text.to_owned());
+
+        assert_eq!(to_f64_with_mysql_string(&s("12abc"), &log), Ok(12.0));
+        assert_eq!(log.taken(), vec![truncated("12abc")]);
+
+        // The message names the operand AFTER `strings.TrimSpace`, and a
+        // padded but otherwise complete number raises nothing at all.
+        assert_eq!(to_f64_with_mysql_string(&s(" 12abc "), &log), Ok(12.0));
+        assert_eq!(log.taken(), vec![truncated("12abc")]);
+        assert_eq!(to_f64_with_mysql_string(&s(" 12 "), &log), Ok(12.0));
+        assert_eq!(log.taken(), vec![]);
+
+        // Silent rows. `12.` and `1e` are Go's own two "shorter prefix, no
+        // error" returns from `getValidFloatPrefix`, and the empty string is
+        // the `isFuncCast` exemption.
+        for quiet in ["12", "12.5", "12.", "1e", ""] {
+            assert!(to_f64_with_mysql_string(&s(quiet), &log).is_ok());
+            assert_eq!(log.taken(), vec![], "{quiet:?}");
+        }
+
+        // A prefix with no digits at all still reads 0 and still warns, and
+        // an out-of-range exponent saturates to f64::MAX with the SAME
+        // message rather than a distinct overflow one.
+        assert_eq!(to_f64_with_mysql_string(&s("abc"), &log), Ok(0.0));
+        assert_eq!(log.taken(), vec![truncated("abc")]);
+        assert_eq!(to_f64_with_mysql_string(&s("1e400"), &log), Ok(f64::MAX));
+        assert_eq!(log.taken(), vec![truncated("1e400")]);
+
+        // A comparison raises it only when the string actually meets a
+        // NUMBER:  picks ETReal for that pair, while a
+        // string/string comparison stays in the string domain and warns
+        // nothing (captured both ways).
+        assert_eq!(
+            eval_binary_full(
+                BinaryOp::Eq,
+                s("12abc"),
+                Datum::Int(12),
+                4,
+                DERIVATION_FREE_COLLATION,
+                &log,
+            ),
+            Ok(Datum::Int(1))
+        );
+        assert_eq!(log.taken(), vec![truncated("12abc")]);
+        assert_eq!(
+            eval_binary_full(
+                BinaryOp::Eq,
+                s("12abc"),
+                s("3xyz"),
+                4,
+                DERIVATION_FREE_COLLATION,
+                &log,
+            ),
+            Ok(Datum::Int(0))
+        );
+        assert_eq!(log.taken(), vec![]);
+
+        // One warning per coercion, never deduplicated: both arguments of a
+        // two-argument builtin raise their own.
+        assert_eq!(
+            crate::math_fn::dispatch_values("POW", &[s("2abc"), s("3xyz")], &log)
+                .expect("dispatches"),
+            Ok(Datum::Real(8.0))
+        );
+        assert_eq!(log.taken(), vec![truncated("2abc"), truncated("3xyz")]);
+
+        // The same sink serves every family that coerces, not just math:
+        // FIELD, FORMAT, INTERVAL and FORMAT_BYTES each raise their own.
+        assert!(crate::string_fn::field(&[Datum::Int(1), s("12abc")], &log).is_ok());
+        assert_eq!(log.taken(), vec![truncated("12abc")]);
+        assert!(crate::string_fn::format_num(&[s("12abc"), Datum::Int(2)], &log).is_ok());
+        assert_eq!(log.taken(), vec![truncated("12abc")]);
+        assert!(
+            crate::builtin_ext::dispatch("INTERVAL", &[Datum::Int(1), s("12abc")], &log)
+                .expect("dispatches")
+                .is_ok()
+        );
+        assert_eq!(log.taken(), vec![truncated("12abc")]);
+        assert!(
+            crate::builtin_ext::dispatch("FORMAT_BYTES", &[s("12abc")], &log)
+                .expect("dispatches")
+                .is_ok()
+        );
+        assert_eq!(log.taken(), vec![truncated("12abc")]);
+    }
 
     /// `MIN`/`MAX` over a `json` column -- TiDB's own issue-31640 case, whose
     /// recorded answers are `min(a)` = `1` and `max(a)` = `[3, 4]` over
@@ -1421,45 +1601,55 @@ mod tests {
     fn function_callers_reject_the_unclaimed_kinds_too() {
         use tidb_datatype::{Collation, MysqlEnum, VectorFloat32};
         let vector = || Datum::VectorFloat32(VectorFloat32::must_create(vec![1.0, 2.0]));
-        assert!(to_f64_with_mysql_string(&vector()).is_err());
-        assert!(to_f64_with_mysql_string(&Datum::Raw(vec![0x08])).is_err());
+        assert!(to_f64_with_mysql_string(&vector(), &crate::NoColumns).is_err());
+        assert!(to_f64_with_mysql_string(&Datum::Raw(vec![0x08]), &crate::NoColumns).is_err());
         // `Null` and the range sentinels are errors in Go's `ToFloat64` as
         // well, and are no longer an `unreachable!` betting on the caller.
-        assert!(to_f64_with_mysql_string(&Datum::Null).is_err());
-        assert!(to_f64_with_mysql_string(&Datum::MaxValue).is_err());
+        assert!(to_f64_with_mysql_string(&Datum::Null, &crate::NoColumns).is_err());
+        assert!(to_f64_with_mysql_string(&Datum::MaxValue, &crate::NoColumns).is_err());
 
         for name in ["SQRT", "EXP", "LN", "SIN", "CEIL", "FLOOR"] {
             assert!(
-                crate::math_fn::dispatch_values(name, &[vector()])
+                crate::math_fn::dispatch_values(name, &[vector()], &crate::NoColumns)
                     .expect("dispatches")
                     .is_err(),
                 "{name}(vector)"
             );
         }
-        assert!(crate::string_fn::field(&[Datum::Int(1), vector()]).is_err());
-        assert!(crate::string_fn::format_num(&[vector(), Datum::Int(2)]).is_err());
-        assert!(crate::string_fn::format_num(&[Datum::Raw(vec![0x08]), Datum::Int(2)]).is_err());
-        assert!(crate::builtin_ext::dispatch("FORMAT_BYTES", &[vector()])
-            .expect("dispatches")
-            .is_err());
+        assert!(crate::string_fn::field(&[Datum::Int(1), vector()], &crate::NoColumns).is_err());
         assert!(
-            crate::builtin_ext::dispatch("INTERVAL", &[Datum::Int(1), vector()])
+            crate::string_fn::format_num(&[vector(), Datum::Int(2)], &crate::NoColumns).is_err()
+        );
+        assert!(crate::string_fn::format_num(
+            &[Datum::Raw(vec![0x08]), Datum::Int(2)],
+            &crate::NoColumns
+        )
+        .is_err());
+        assert!(
+            crate::builtin_ext::dispatch("FORMAT_BYTES", &[vector()], &crate::NoColumns)
                 .expect("dispatches")
                 .is_err()
         );
+        assert!(crate::builtin_ext::dispatch(
+            "INTERVAL",
+            &[Datum::Int(1), vector()],
+            &crate::NoColumns
+        )
+        .expect("dispatches")
+        .is_err());
 
         // CONTROLS: the kinds that DO convert keep TiDB's value. `'8'` is
         // ordinal 2 of `enum('9','8','7')`, and `gorun` reads it as the
         // ordinal, never as the name -- `SQRT(e)` is `SQRT(2)`.
         let e = || Datum::Enum(MysqlEnum::new("8", 2), Collation::Utf8Mb4Bin);
-        assert_eq!(to_f64_with_mysql_string(&e()), Ok(2.0));
+        assert_eq!(to_f64_with_mysql_string(&e(), &crate::NoColumns), Ok(2.0));
         assert_eq!(
-            crate::math_fn::dispatch_values("SQRT", &[e()]).expect("dispatches"),
+            crate::math_fn::dispatch_values("SQRT", &[e()], &crate::NoColumns).expect("dispatches"),
             Ok(Datum::Real(2.0f64.sqrt()))
         );
         // `FORMAT_BYTES(e)` is `2 bytes`, not `0 bytes`.
         assert_eq!(
-            crate::builtin_ext::dispatch("FORMAT_BYTES", &[e()])
+            crate::builtin_ext::dispatch("FORMAT_BYTES", &[e()], &crate::NoColumns)
                 .expect("dispatches")
                 .map(|value| value.sql_string().unwrap()),
             Ok("2 bytes".to_owned())
@@ -1471,7 +1661,7 @@ mod tests {
         // time part, gives `20,210,101.00`) -- captured, where rendering the
         // text `'2021-01-01'` used to answer `2.00`.
         assert_eq!(
-            crate::string_fn::format_num(&[e(), Datum::Int(2)])
+            crate::string_fn::format_num(&[e(), Datum::Int(2)], &crate::NoColumns)
                 .map(|value| value.sql_string().unwrap()),
             Ok("2.00".to_owned())
         );
@@ -1481,7 +1671,7 @@ mod tests {
                 .value,
         );
         assert_eq!(
-            crate::string_fn::format_num(&[date, Datum::Int(2)])
+            crate::string_fn::format_num(&[date, Datum::Int(2)], &crate::NoColumns)
                 .map(|value| value.sql_string().unwrap()),
             Ok("20,210,101,000,000.00".to_owned())
         );
@@ -1567,20 +1757,24 @@ mod tests {
             ("1e", 1.0),
             ("not a number", 0.0),
         ] {
-            assert_eq!(bytes_to_f64(text.as_bytes()), expected, "{text}");
+            assert_eq!(
+                bytes_to_f64(text.as_bytes(), &crate::NoColumns),
+                expected,
+                "{text}"
+            );
         }
-        assert_eq!(bytes_to_f64(b"1e999"), f64::MAX);
-        assert_eq!(bytes_to_f64(b"-1e999"), -f64::MAX);
+        assert_eq!(bytes_to_f64(b"1e999", &crate::NoColumns), f64::MAX);
+        assert_eq!(bytes_to_f64(b"-1e999", &crate::NoColumns), -f64::MAX);
         // A `binary`/`latin1` payload is not UTF-8, and TiDB still reads its
         // numeric prefix: `SELECT ABS(0x3132FF)` answers 12, captured from a
         // running session. Reading it as 0.0 was a silent wrong answer.
-        assert_eq!(bytes_to_f64(&[b'1', b'2', 0xFF]), 12.0);
-        assert_eq!(bytes_to_f64(&[0xFF]), 0.0);
+        assert_eq!(bytes_to_f64(&[b'1', b'2', 0xFF], &crate::NoColumns), 12.0);
+        assert_eq!(bytes_to_f64(&[0xFF], &crate::NoColumns), 0.0);
         for datum in [
             Datum::Bytes(vec![b'4', 0xFF]),
             Datum::new_string(vec![b'4', 0xFF]),
         ] {
-            assert_eq!(to_f64_with_mysql_string(&datum), Ok(4.0));
+            assert_eq!(to_f64_with_mysql_string(&datum, &crate::NoColumns), Ok(4.0));
         }
         assert_eq!(
             eval_binary(

@@ -822,8 +822,8 @@ fn radix_string_bits_bytes(value: &[u8]) -> u64 {
 ///
 /// The collation-free entry point, for the AST evaluator and any caller with
 /// no derived collation to offer; see [`field_with_collation`].
-pub(crate) fn field(vals: &[Datum]) -> Result<Datum, EvalError> {
-    field_with_collation(vals, crate::ops::DERIVATION_FREE_COLLATION)
+pub(crate) fn field(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    field_with_collation(vals, crate::ops::DERIVATION_FREE_COLLATION, ctx)
 }
 
 /// [`field`] under the collation the expression derivation aggregated over
@@ -838,6 +838,7 @@ pub(crate) fn field(vals: &[Datum]) -> Result<Datum, EvalError> {
 pub(crate) fn field_with_collation(
     vals: &[Datum],
     collation: tidb_datatype::Collation,
+    ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
     if vals[0] == Datum::Null {
         return Ok(Datum::Int(0));
@@ -875,8 +876,8 @@ pub(crate) fn field_with_collation(
                     == Datum::Int(1)
             }
             FieldComparisonMode::Real => {
-                let needle = Datum::Real(to_f64_with_mysql_string(&vals[0])?);
-                let candidate = Datum::Real(to_f64_with_mysql_string(v)?);
+                let needle = Datum::Real(to_f64_with_mysql_string(&vals[0], ctx)?);
+                let candidate = Datum::Real(to_f64_with_mysql_string(v, ctx)?);
                 crate::eval_binary(tidb_ast::BinaryOp::Eq, needle, candidate)? == Datum::Int(1)
             }
         };
@@ -1407,21 +1408,26 @@ fn bit_count_string_bytes(raw: &[u8]) -> u64 {
 
 /// `FORMAT(x, d)`: the two-argument English-locale spelling.  See
 /// [`format_num_locale`] for the shared port of TiDB's `FORMAT` evaluator.
-pub(crate) fn format_num(vals: &[Datum]) -> Result<Datum, EvalError> {
-    format_num_locale(vals, "en_US")
+pub(crate) fn format_num(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    format_num_locale(vals, "en_US", ctx)
 }
 
 /// Shared `FORMAT(x, d[, locale])` result formatter, ported from
 /// `evalNumDecArgsForFormat`, `roundFormatArgs`, and `FormatByLocale` in
 /// `pkg/expression/builtin_string.go` and `pkg/parser/mysql/locale_format.go`.
-/// The locale warning side channel is intentionally absent: this evaluator has
-/// no session statement context, but unknown/`NULL` locales use TiDB's
-/// observable `en_US` fallback exactly.
-pub(crate) fn format_num_locale(vals: &[Datum], locale: &str) -> Result<Datum, EvalError> {
+/// `ctx` is the statement warning sink, which `FORMAT`'s ETReal coercion of a
+/// string argument raises 1292 on. The separate UNKNOWN-LOCALE warning is
+/// still absent; unknown/`NULL` locales use TiDB's observable `en_US`
+/// fallback exactly.
+pub(crate) fn format_num_locale(
+    vals: &[Datum],
+    locale: &str,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
     let [number, precision, ..] = vals else {
         return Err(EvalError::Unsupported("bad FORMAT arguments"));
     };
-    let Some(number) = format_number_text(number)? else {
+    let Some(number) = format_number_text(number, ctx)? else {
         return Ok(Datum::Null);
     };
     let Some(precision) = format_precision(precision)? else {
@@ -1447,7 +1453,10 @@ pub(crate) fn format_num_locale(vals: &[Datum], locale: &str) -> Result<Datum, E
     Ok(Datum::new_string(out))
 }
 
-fn format_number_text(value: &Datum) -> Result<Option<String>, EvalError> {
+fn format_number_text(
+    value: &Datum,
+    ctx: &dyn crate::Columns,
+) -> Result<Option<String>, EvalError> {
     Ok(match value {
         Datum::Null => None,
         Datum::Int(n) => Some(n.to_string()),
@@ -1461,7 +1470,7 @@ fn format_number_text(value: &Datum) -> Result<Option<String>, EvalError> {
         // its ordinal and a `json` string its numeric prefix. Rendering
         // `sql_string()` here instead formatted `'2021-01-01'` -- the text --
         // and answered `2.00`.
-        other => Some(crate::ops::to_f64_with_mysql_string(other)?.to_string()),
+        other => Some(crate::ops::to_f64_with_mysql_string(other, ctx)?.to_string()),
     })
 }
 
@@ -2052,7 +2061,7 @@ mod format_tests {
         } else {
             Decimal::from_literal(number)
         });
-        match format_num(&[n, Datum::Int(precision)]).unwrap() {
+        match format_num(&[n, Datum::Int(precision)], &crate::NoColumns).unwrap() {
             Datum::String(s) => String::from_utf8(s.bytes().to_vec()).unwrap(),
             other => panic!("expected a string, got {other:?}"),
         }

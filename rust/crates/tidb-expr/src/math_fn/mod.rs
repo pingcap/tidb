@@ -41,44 +41,55 @@ pub(crate) fn dispatch(
 ) -> Option<Result<Datum, EvalError>> {
     // RAND is the one arm that needs the argument AST (constant-versus-row
     // generator identity), the session `Columns`, and the per-call
-    // `function_key`; every other math builtin is pure over `vals` and lives
-    // in [`dispatch_values`] so the chunk-row bridge can reuse it.
+    // `function_key`; every other math builtin is a function of `vals` plus
+    // the statement warning sink, and lives in [`dispatch_values`] so the
+    // chunk-row bridge can reuse it.
     if name == "RAND" {
         return Some(eval_rand(args, vals, cols, function_key));
     }
-    dispatch_values(name, vals)
+    dispatch_values(name, vals, cols)
 }
 
 /// The values-only subset of [`dispatch`]: every math builtin whose result is
-/// a pure function of its already-evaluated arguments. Shared by the
+/// a function of its already-evaluated arguments alone. Shared by the
 /// AST-level `eval_func` path and `crate::func::eval_func_values` (the
 /// `ScalarFunction`/chunk-row bridge).
-pub(crate) fn dispatch_values(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
+///
+/// `ctx` is NOT a second source of values -- it is the statement warning sink
+/// (`crate::Columns::append_warning`). The RESULT still depends only on
+/// `vals`; what the context adds is the 1292 truncation warning Go raises
+/// while coercing a string argument into the ETReal domain, which is a side
+/// effect this dispatch used to have no way to produce.
+pub(crate) fn dispatch_values(
+    name: &str,
+    vals: &[Datum],
+    ctx: &dyn Columns,
+) -> Option<Result<Datum, EvalError>> {
     let result = match name {
-        "ABS" => abs(vals),
-        "SIGN" => sign(vals),
-        "CEIL" | "CEILING" => ceil_floor(vals, true),
-        "FLOOR" => ceil_floor(vals, false),
-        "ROUND" => round_or_truncate(vals, true),
-        "TRUNCATE" => round_or_truncate(vals, false),
-        "SQRT" => sqrt(vals),
-        "POW" | "POWER" => pow(vals),
-        "EXP" => exp(vals),
-        "LN" => ln(vals),
-        "LOG" => log(vals),
-        "LOG2" => log2(vals),
-        "LOG10" => log10(vals),
+        "ABS" => abs(vals, ctx),
+        "SIGN" => sign(vals, ctx),
+        "CEIL" | "CEILING" => ceil_floor(vals, true, ctx),
+        "FLOOR" => ceil_floor(vals, false, ctx),
+        "ROUND" => round_or_truncate(vals, true, ctx),
+        "TRUNCATE" => round_or_truncate(vals, false, ctx),
+        "SQRT" => sqrt(vals, ctx),
+        "POW" | "POWER" => pow(vals, ctx),
+        "EXP" => exp(vals, ctx),
+        "LN" => ln(vals, ctx),
+        "LOG" => log(vals, ctx),
+        "LOG2" => log2(vals, ctx),
+        "LOG10" => log10(vals, ctx),
         "PI" => pi(vals),
-        "SIN" => sin(vals),
-        "COS" => cos(vals),
-        "TAN" => tan(vals),
-        "ASIN" => asin(vals),
-        "ACOS" => acos(vals),
-        "ATAN" => atan(vals),
-        "ATAN2" => atan2(vals),
-        "COT" => cot(vals),
-        "RADIANS" => radians(vals),
-        "DEGREES" => degrees(vals),
+        "SIN" => sin(vals, ctx),
+        "COS" => cos(vals, ctx),
+        "TAN" => tan(vals, ctx),
+        "ASIN" => asin(vals, ctx),
+        "ACOS" => acos(vals, ctx),
+        "ATAN" => atan(vals, ctx),
+        "ATAN2" => atan2(vals, ctx),
+        "COT" => cot(vals, ctx),
+        "RADIANS" => radians(vals, ctx),
+        "DEGREES" => degrees(vals, ctx),
         "CONV" if vals.len() == 3 => conv(vals),
         "CRC32" if vals.len() == 1 => crc32(vals),
         _ => return None,
@@ -214,7 +225,7 @@ pub(crate) fn crc32(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// for a `FLOAT` column is the WIDENED double (captured: `ABS(0.1e0::float)`
 /// is `0.10000000149011612`, not `0.1`), which is why `Float32` produces
 /// `Real` here rather than staying `Float32` the way `CEIL` does.
-fn abs(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn abs(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -231,7 +242,7 @@ fn abs(vals: &[Datum]) -> Result<Datum, EvalError> {
         Datum::UInt(value) => Datum::UInt(*value),
         Datum::Decimal(value) => Datum::Decimal(value.abs()),
         Datum::Real(value) => Datum::Real(value.abs()),
-        other => Datum::Real(numeric_arg(other)?.expect("NULL handled above").abs()),
+        other => Datum::Real(numeric_arg(other, ctx)?.expect("NULL handled above").abs()),
     })
 }
 
@@ -239,7 +250,7 @@ fn abs(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// every kind outside `ETInt`/`ETDecimal` reaches `builtinSignSig`'s real
 /// form, so the catch-all is the ETReal signature (captured: `SIGN(b'11')`
 /// is 1, `SIGN(<enum>)` is 1).
-fn sign(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn sign(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -249,7 +260,7 @@ fn sign(vals: &[Datum]) -> Result<Datum, EvalError> {
         Datum::UInt(value) => Datum::Int(i64::from(*value != 0)),
         Datum::Decimal(value) => Datum::Int(value.signum()),
         other => Datum::Int(sign_of_real(
-            numeric_arg(other)?.expect("NULL handled above"),
+            numeric_arg(other, ctx)?.expect("NULL handled above"),
         )),
     })
 }
@@ -258,13 +269,13 @@ fn sign(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// case, for the caller to turn into `Datum::Null`). This is a port of the
 /// `EvalReal` argument coercion used by the signatures in
 /// `pkg/expression/builtin_math.go`: string arguments use MySQL's numeric
-/// prefix rule (so `SQRT('4')` is 2 and `SIN('abc')` is 0, with a warning in
-/// a real session).  This value-only evaluator has no warning channel, but
-/// must preserve the result value rather than rejecting the expression.
-fn numeric_arg(v: &Datum) -> Result<Option<f64>, EvalError> {
+/// prefix rule (so `SQRT('4')` is 2 and `SIN('abc')` is 0). `ctx` carries the
+/// statement warning sink that the string case raises 1292 on; every other
+/// kind converts exactly and raises nothing.
+fn numeric_arg(v: &Datum, ctx: &dyn Columns) -> Result<Option<f64>, EvalError> {
     match v {
         Datum::Null => Ok(None),
-        Datum::String(_) | Datum::Bytes(_) => Ok(Some(to_f64_with_mysql_string(v)?)),
+        Datum::String(_) | Datum::Bytes(_) => Ok(Some(to_f64_with_mysql_string(v, ctx)?)),
         Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) => {
             Ok(Some(to_f64(v.clone())))
         }
@@ -288,11 +299,11 @@ fn checked_ln(x: f64) -> Datum {
     }
 }
 
-fn sqrt(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn sqrt(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    Ok(match numeric_arg(v)? {
+    Ok(match numeric_arg(v, ctx)? {
         // MySQL's own domain check: NULL for a negative argument, not an
         // error (the OPPOSITE convention from POW/EXP's NaN-is-an-error
         // rule below).
@@ -302,11 +313,11 @@ fn sqrt(vals: &[Datum]) -> Result<Datum, EvalError> {
     })
 }
 
-fn ln(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn ln(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    Ok(match numeric_arg(v)? {
+    Ok(match numeric_arg(v, ctx)? {
         Some(x) => checked_ln(x),
         None => Datum::Null,
     })
@@ -314,11 +325,11 @@ fn ln(vals: &[Datum]) -> Result<Datum, EvalError> {
 
 /// `LOG(x)` (1 argument, natural log — identical to `LN`) or `LOG(base,
 /// x)` (2 arguments, log base `base` of `x`).
-fn log(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn log(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     match vals {
-        [_] => ln(vals),
+        [_] => ln(vals, ctx),
         [b, x] => {
-            let (Some(base), Some(x)) = (numeric_arg(b)?, numeric_arg(x)?) else {
+            let (Some(base), Some(x)) = (numeric_arg(b, ctx)?, numeric_arg(x, ctx)?) else {
                 return Ok(Datum::Null);
             };
             Ok(if base <= 0.0 || base == 1.0 || x <= 0.0 {
@@ -331,43 +342,43 @@ fn log(vals: &[Datum]) -> Result<Datum, EvalError> {
     }
 }
 
-fn log2(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn log2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    Ok(match numeric_arg(v)? {
+    Ok(match numeric_arg(v, ctx)? {
         Some(x) if x <= 0.0 => Datum::Null,
         Some(x) => Datum::Real(x.log2()),
         None => Datum::Null,
     })
 }
 
-fn log10(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn log10(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    Ok(match numeric_arg(v)? {
+    Ok(match numeric_arg(v, ctx)? {
         Some(x) if x <= 0.0 => Datum::Null,
         Some(x) => Datum::Real(x.log10()),
         None => Datum::Null,
     })
 }
 
-fn pow(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn pow(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [base, exp] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    let (Some(b), Some(e)) = (numeric_arg(base)?, numeric_arg(exp)?) else {
+    let (Some(b), Some(e)) = (numeric_arg(base, ctx)?, numeric_arg(exp, ctx)?) else {
         return Ok(Datum::Null);
     };
     finite_float(b.powf(e))
 }
 
-fn exp(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn exp(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    match numeric_arg(v)? {
+    match numeric_arg(v, ctx)? {
         Some(x) => finite_float(x.exp()),
         None => Ok(Datum::Null),
     }
@@ -384,38 +395,42 @@ fn pi(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// The shape shared by every unary trig/`RADIANS`/`DEGREES` function with
 /// NO explicit MySQL domain check (unlike `ASIN`/`ACOS` below): `NULL` if
 /// the argument is `NULL`, else `f(x)` wrapped through `finite_float`.
-fn unary_finite(vals: &[Datum], f: impl FnOnce(f64) -> f64) -> Result<Datum, EvalError> {
+fn unary_finite(
+    vals: &[Datum],
+    ctx: &dyn Columns,
+    f: impl FnOnce(f64) -> f64,
+) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    match numeric_arg(v)? {
+    match numeric_arg(v, ctx)? {
         Some(x) => finite_float(f(x)),
         None => Ok(Datum::Null),
     }
 }
 
-fn sin(vals: &[Datum]) -> Result<Datum, EvalError> {
-    unary_finite(vals, f64::sin)
+fn sin(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    unary_finite(vals, ctx, f64::sin)
 }
 
-fn cos(vals: &[Datum]) -> Result<Datum, EvalError> {
-    unary_finite(vals, f64::cos)
+fn cos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    unary_finite(vals, ctx, f64::cos)
 }
 
-fn tan(vals: &[Datum]) -> Result<Datum, EvalError> {
-    unary_finite(vals, f64::tan)
+fn tan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    unary_finite(vals, ctx, f64::tan)
 }
 
-fn cot(vals: &[Datum]) -> Result<Datum, EvalError> {
-    unary_finite(vals, |x| 1.0 / x.tan())
+fn cot(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    unary_finite(vals, ctx, |x| 1.0 / x.tan())
 }
 
-fn radians(vals: &[Datum]) -> Result<Datum, EvalError> {
-    unary_finite(vals, f64::to_radians)
+fn radians(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    unary_finite(vals, ctx, f64::to_radians)
 }
 
-fn degrees(vals: &[Datum]) -> Result<Datum, EvalError> {
-    unary_finite(vals, f64::to_degrees)
+fn degrees(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    unary_finite(vals, ctx, f64::to_degrees)
 }
 
 /// `NULL` if `x` isn't in `[-1, 1]` (MySQL's own domain check for
@@ -428,21 +443,21 @@ fn asin_acos_domain(x: f64, f: impl FnOnce(f64) -> f64) -> Datum {
     }
 }
 
-fn asin(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn asin(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    Ok(match numeric_arg(v)? {
+    Ok(match numeric_arg(v, ctx)? {
         Some(x) => asin_acos_domain(x, f64::asin),
         None => Datum::Null,
     })
 }
 
-fn acos(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn acos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    Ok(match numeric_arg(v)? {
+    Ok(match numeric_arg(v, ctx)? {
         Some(x) => asin_acos_domain(x, f64::acos),
         None => Datum::Null,
     })
@@ -450,19 +465,19 @@ fn acos(vals: &[Datum]) -> Result<Datum, EvalError> {
 
 /// `ATAN(x)` (1 argument) or `ATAN(y, x)` (2 arguments, exactly `ATAN2(y,
 /// x)` — same argument order, confirmed via `goeval`, not assumed).
-fn atan(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn atan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     match vals {
-        [_] => unary_finite(vals, f64::atan),
-        [_, _] => atan2(vals),
+        [_] => unary_finite(vals, ctx, f64::atan),
+        [_, _] => atan2(vals, ctx),
         _ => Err(EvalError::Unsupported("bad function arity")),
     }
 }
 
-fn atan2(vals: &[Datum]) -> Result<Datum, EvalError> {
+fn atan2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [y, x] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
-    let (Some(y), Some(x)) = (numeric_arg(y)?, numeric_arg(x)?) else {
+    let (Some(y), Some(x)) = (numeric_arg(y, ctx)?, numeric_arg(x, ctx)?) else {
         return Ok(Datum::Null);
     };
     finite_float(y.atan2(x))
@@ -579,7 +594,7 @@ fn is_constant_expr(expr: &Expr) -> bool {
 /// `Float`
 /// stays `Float` — the OPPOSITE convention from `Decimal`'s own
 /// int-collapsing rule, also confirmed via `goeval`, not assumed.
-fn ceil_floor(vals: &[Datum], ceiling: bool) -> Result<Datum, EvalError> {
+fn ceil_floor(vals: &[Datum], ceiling: bool, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -616,7 +631,7 @@ fn ceil_floor(vals: &[Datum], ceiling: bool) -> Result<Datum, EvalError> {
         // addition to the numeric-prefix coercion: CEIL('1.23') is 2.0,
         // unlike CEIL(Decimal('1.23')) which has a DECIMAL signature.
         Datum::String(_) | Datum::Bytes(_) => {
-            let f = to_f64_with_mysql_string(v)?;
+            let f = to_f64_with_mysql_string(v, ctx)?;
             Datum::Real(if ceiling { f.ceil() } else { f.floor() })
         }
         Datum::MinNotNull | Datum::MaxValue => {
@@ -664,7 +679,7 @@ fn sign_of_real(value: f64) -> i64 {
 ///   (matching the bitwise-conversion precedent), not a "more correct"
 ///   decimal-aware rounding, since the reference implementation is
 ///   deliberately this simple and occasionally imprecise.
-fn round_or_truncate(vals: &[Datum], round: bool) -> Result<Datum, EvalError> {
+fn round_or_truncate(vals: &[Datum], round: bool, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     if vals.iter().any(Datum::is_range_sentinel) {
         return Err(EvalError::Unsupported(
             "range sentinel ROUND/TRUNCATE argument",
@@ -749,7 +764,7 @@ fn round_or_truncate(vals: &[Datum], round: bool) -> Result<Datum, EvalError> {
         // through the shared numeric-prefix coercion rather than a
         // ROUND-local parse.
         other => {
-            let f = numeric_arg(other)?.expect("NULL guarded above");
+            let f = numeric_arg(other, ctx)?.expect("NULL guarded above");
             Datum::Real(if round {
                 go_round_float(f, d)
             } else {
@@ -953,19 +968,22 @@ mod tests {
     #[test]
     fn real_math_signatures_coerce_mysql_string_prefixes() {
         assert_eq!(
-            sqrt(&[Datum::new_string("4".to_owned())]),
+            sqrt(&[Datum::new_string("4".to_owned())], &crate::NoColumns),
             Ok(Datum::Real(2.0))
         );
         assert_eq!(
-            sin(&[Datum::new_string("not numeric".to_owned())]),
+            sin(
+                &[Datum::new_string("not numeric".to_owned())],
+                &crate::NoColumns
+            ),
             Ok(Datum::Real(0.0))
         );
         assert_eq!(
-            log2(&[Datum::new_string("4abc".to_owned())]),
+            log2(&[Datum::new_string("4abc".to_owned())], &crate::NoColumns),
             Ok(Datum::Real(2.0))
         );
         assert_eq!(
-            log2(&[Datum::new_string("abc".to_owned())]),
+            log2(&[Datum::new_string("abc".to_owned())], &crate::NoColumns),
             Ok(Datum::Null)
         );
     }
@@ -973,7 +991,7 @@ mod tests {
     #[test]
     fn cot_preserves_go_overflow_after_string_coercion() {
         assert_eq!(
-            cot(&[Datum::new_string("tidb".to_owned())]),
+            cot(&[Datum::new_string("tidb".to_owned())], &crate::NoColumns),
             Err(EvalError::FloatOverflow)
         );
     }

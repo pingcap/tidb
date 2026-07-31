@@ -719,8 +719,14 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             // `x BETWEEN lo AND hi` is `x >= lo AND x <= hi`, in three-valued
             // logic; `NOT BETWEEN` negates the result (NULL stays NULL).
             let v = eval_in(expr, cols)?;
-            let ge = eval_binary(tidb_ast::BinaryOp::Ge, v.clone(), eval_in(low, cols)?)?;
-            let le = eval_binary(tidb_ast::BinaryOp::Le, v, eval_in(high, cols)?)?;
+            let ge = crate::ops::eval_binary_in(
+                tidb_ast::BinaryOp::Ge,
+                v.clone(),
+                eval_in(low, cols)?,
+                cols,
+            )?;
+            let le =
+                crate::ops::eval_binary_in(tidb_ast::BinaryOp::Le, v, eval_in(high, cols)?, cols)?;
             Ok(negate_if(logic_and(ge, le)?, *not))
         }
         Expr::Is { expr, target, not } => {
@@ -849,7 +855,9 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
                     let mut taken = None;
                     for (cond, result) in when_clauses {
                         let w = eval_in(cond, cols)?;
-                        if eval_binary(tidb_ast::BinaryOp::Eq, v.clone(), w)? == Datum::Int(1) {
+                        if crate::ops::eval_binary_in(tidb_ast::BinaryOp::Eq, v.clone(), w, cols)?
+                            == Datum::Int(1)
+                        {
                             taken = Some(result);
                             break;
                         }

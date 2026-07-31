@@ -742,7 +742,7 @@ impl ScalarFunction {
                         .iter()
                         .map(|a| a.eval(ctx, row))
                         .collect::<Result<_, _>>()?;
-                    return crate::string_fn::field_with_collation(&vals, collation);
+                    return crate::string_fn::field_with_collation(&vals, collation, ctx);
                 }
                 _ => {}
             }

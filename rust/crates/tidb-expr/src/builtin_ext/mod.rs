@@ -35,13 +35,24 @@ pub(crate) use json::{cast_as_json, cast_as_json_typed, dispatch_typed as json_d
 pub(crate) use string2::find_in_set_with_collation;
 
 /// Tries each family in turn; `None` if no family implements `name`.
-pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
-    string2::dispatch(name, vals)
+///
+/// `ctx` is the statement warning sink (`crate::Columns`). Only the families
+/// that coerce a value into the ETReal domain take it -- `string2` for
+/// `FORMAT`, `info` for `FORMAT_BYTES`/`FORMAT_NANO_TIME`, `compare2` for
+/// `INTERVAL` -- because those are the ones whose coercion can raise 1292.
+/// The rest stay pure over their argument values, which is a fact worth
+/// keeping visible in the signature.
+pub(crate) fn dispatch(
+    name: &str,
+    vals: &[Datum],
+    ctx: &dyn crate::Columns,
+) -> Option<Result<Datum, EvalError>> {
+    string2::dispatch(name, vals, ctx)
         .or_else(|| crypto::dispatch(name, vals))
-        .or_else(|| info::dispatch(name, vals))
+        .or_else(|| info::dispatch(name, vals, ctx))
         .or_else(|| json::dispatch(name, vals))
         .or_else(|| json2::dispatch(name, vals))
         .or_else(|| regexp::dispatch(name, vals))
-        .or_else(|| compare2::dispatch(name, vals))
+        .or_else(|| compare2::dispatch(name, vals, ctx))
         .or_else(|| misc::dispatch(name, vals))
 }
