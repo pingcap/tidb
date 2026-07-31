@@ -43,8 +43,9 @@ use tidb_stats::cmsketch::{CmsSketch, TopN};
 use tidb_stats::histogram::{Histogram, OutOfRangeContext};
 
 use super::pseudo::{
-    pseudo_row_count_by_scalar_ranges, pseudo_row_count_by_signed_int_ranges, PseudoBoundKind,
-    ScalarRange, SignedIntRange,
+    pseudo_row_count_by_scalar_ranges, pseudo_row_count_by_signed_int_ranges,
+    pseudo_row_count_by_unsigned_int_ranges, PseudoBoundKind, ScalarRange, SignedIntRange,
+    UnsignedIntRange,
 };
 use super::row_count_column::RowEstimate;
 use super::uniform::{estimate_uniform_equality, UniformEqualityStats};
@@ -686,15 +687,43 @@ fn datum_int(value: &Datum) -> i64 {
     }
 }
 
+/// Go `types.Datum.GetUint64`, which REINTERPRETS the stored 64-bit value
+/// rather than converting it: a datum holding `-1` reads back as `u64::MAX`.
+/// The unsigned pseudo estimator is fed by that accessor even when the range
+/// came off a signed column, so the reinterpretation is the behavior, not a
+/// rounding of it.
+fn datum_uint(value: &Datum) -> u64 {
+    match value {
+        Datum::Int(v) => *v as u64,
+        Datum::UInt(v) => *v,
+        _ => 0,
+    }
+}
+
 fn pseudo_row_count(ranges: &[ColumnRange], realtime_row_count: i64, pk_is_handle: bool) -> f64 {
     let table_row_count = realtime_row_count as f64;
     if pk_is_handle {
         if ranges.is_empty() {
             return 0.0;
         }
-        // Only the signed branch is reachable here: the source picks it from
-        // the first range's `KindInt64` low bound.
-        if matches!(ranges[0].low, Datum::Int(_)) {
+        // Go `GetRowCountByColumnRanges` dispatches on the FIRST range's low
+        // bound alone, and its `else` is the UNSIGNED estimator -- not the
+        // scalar one. A handle range whose low bound is an infinity (`id < 5`
+        // builds `[-inf,5)`) therefore takes the unsigned branch even on a
+        // signed column, and the reinterpretation of the high bound's bits as
+        // `uint64` is what Go's own numbers show. Captured on
+        // `sbtest1(id bigint primary key, ...)` with no statistics:
+        //
+        //   id < -1   ->  [-inf,-1)   10000.00   low 0, high u64::MAX
+        //   id < 0    ->  [-inf,0)     3333.33   low 0, high 0
+        //   id < 5    ->  [-inf,5)     3333.33   low 0, high 5
+        //
+        // Only the first of those is what a signed reading would produce, and
+        // no scalar reading produces any of them. This branch had been marked
+        // unreachable, which it is only while nothing builds a clustered
+        // handle range at all; it becomes reachable with the first one.
+        let signed_low = matches!(ranges[0].low, Datum::Int(_));
+        if signed_low {
             let signed: Vec<SignedIntRange> = ranges
                 .iter()
                 .map(|range| {
@@ -708,6 +737,18 @@ fn pseudo_row_count(ranges: &[ColumnRange], realtime_row_count: i64, pk_is_handl
                 .collect();
             return pseudo_row_count_by_signed_int_ranges(&signed, table_row_count);
         }
+        let unsigned: Vec<UnsignedIntRange> = ranges
+            .iter()
+            .map(|range| {
+                UnsignedIntRange::new(
+                    datum_uint(&range.low),
+                    datum_uint(&range.high),
+                    bound_kind(&range.low),
+                    bound_kind(&range.high),
+                )
+            })
+            .collect();
+        return pseudo_row_count_by_unsigned_int_ranges(&unsigned, table_row_count);
     }
     let scalar: Vec<ScalarRange> = ranges
         .iter()

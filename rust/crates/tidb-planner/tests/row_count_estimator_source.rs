@@ -909,3 +909,60 @@ fn selectivity_combines_greedy_cover_and_leftover_defaults() {
     );
     assert_close(combined, 1.0 / REALTIME as f64, "one-row floor");
 }
+
+/// Go `GetRowCountByColumnRanges` dispatches a statistics-less clustered
+/// handle on the FIRST range's low bound, and its `else` arm is the UNSIGNED
+/// estimator -- not the scalar one. A handle range whose low bound is an
+/// infinity takes that arm even on a signed column, and `Datum.GetUint64`
+/// reinterprets the high bound's bits rather than converting them.
+///
+/// Each arm below was identified from a `testkit.CreateMockStore` capture of
+/// real TiDB's `EXPLAIN` `estRows` on `sbtest1(id bigint primary key, k
+/// bigint, c char(120), pad char(60), key k_1(k))` with no analyzed
+/// statistics, where the pseudo table row count is 10000:
+///
+/// ```text
+/// id < -1      10000.00   whole domain      id >= 199              3333.33
+/// id < 0        3333.33   low == 0          id between 100 and 199    99.00
+/// id < -100000  3333.33   low == 0
+/// ```
+///
+/// The expectations here are the same arms over this file's own
+/// `REALTIME` row count, so they state the rule rather than one table's size.
+/// `id < -1` is the load-bearing row: only the unsigned arm reaches the
+/// whole-domain answer, because only `GetUint64` turns a high bound of `-1`
+/// into `u64::MAX`.
+#[test]
+fn source_pseudo_handle_ranges_with_an_infinite_low_take_the_unsigned_arm() {
+    let rows = REALTIME as f64;
+    let less = rows / 3.0;
+    let between = rows / 40.0;
+    // `id < -1` -> `[-inf,-1)`. Unsigned: low 0, high (-1 as u64) = u64::MAX,
+    // which is the whole-domain arm and estimates the entire table.
+    let below_minus_one = range_of(Datum::MinNotNull, Datum::Int(-1), false, true);
+    // `id < 0` -> `[-inf,0)`. Unsigned: low 0, high 0 -- the `low == 0` arm,
+    // 10000 / pseudoLessRate. It is NOT the `low == high` point arm: Go tests
+    // the infinite bounds first.
+    let below_zero = range_of(Datum::MinNotNull, Datum::Int(0), false, true);
+    // `id < -100000`: unsigned high is large but not u64::MAX, so the
+    // `low == 0` arm again, and the width clamp cannot bite.
+    let below_big_negative = range_of(Datum::MinNotNull, Datum::Int(-100_000), false, true);
+    // `id >= 199` -> `[199,+inf]`, a real Int64 low, so the SIGNED arm.
+    let from_199 = range_of(Datum::Int(199), Datum::MaxValue, false, false);
+    // `id between 100 and 199`: signed and bounded, so
+    // rows/pseudoBetweenRate, clamped to the range's own width 199 - 100 = 99
+    // -- which does not bite at this table size, but is what produces Go's
+    // captured 99.00 at 10000 rows.
+    let between_100_199 = range_of(Datum::Int(100), Datum::Int(199), false, false);
+
+    for (name, range, want) in [
+        ("id < -1", &below_minus_one, rows),
+        ("id < 0", &below_zero, less),
+        ("id < -100000", &below_big_negative, less),
+        ("id >= 199", &from_199, less),
+        ("id between 100 and 199", &between_100_199, between.min(99.0)),
+    ] {
+        let (est, _, _) = column_estimate(None, std::slice::from_ref(range), true);
+        assert_close(est, want, name);
+    }
+}
