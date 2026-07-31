@@ -430,39 +430,65 @@ fn the_handle_range_corpus_matches_go() {
 
 /// The sysbench WRITE shapes, as the source row of their plan.
 ///
-/// Go plans a write's read from the same predicate as a read's:
-/// `tryUpdatePointPlan`/`tryDeletePointPlan` hand `tryPointGetPlan` an
-/// `ast.SelectStmt` synthesized from the write's own `TableRefs`/`Where`/
-/// `Order`/`Limit`, and the ordinary path plans a `DataSource` whose table
-/// path gets its ranges from `deriveTablePathStats` exactly as a `SELECT`'s
-/// does. This tier reuses the TABLE half of that -- one call into
-/// `tidb_executor::handle_range`, the crate's single range algebra -- so a
-/// bounded write reads a `TableRangeScan` over the handle intervals its
-/// `WHERE` implies instead of the whole table.
+/// Go plans a write's read from the same predicate, with the same FUNCTIONS,
+/// as a read's: `tryUpdatePointPlan`/`tryDeletePointPlan` hand
+/// `tryPointGetPlan` an `ast.SelectStmt` synthesized from the write's own
+/// `TableRefs`/`Where`/`Order`/`Limit`, and only when that declines does the
+/// ordinary path plan a `DataSource` whose table path gets its ranges from
+/// `deriveTablePathStats` exactly as a `SELECT`'s does. This tier reuses BOTH
+/// halves, and in that order: `tidb_executor::driver::access::try_point_get`
+/// -- the same function a `SELECT` reaches -- then
+/// `tidb_executor::handle_range`, the crate's single range algebra. So a
+/// write whose `WHERE` pins a whole key reads `Point_Get`, a write the ranger
+/// bounds reads `TableRangeScan`, and anything else still reads the table.
 ///
-/// The remaining divergence from Go is the NODE NAME for a range that is a
-/// single point: Go replaces the whole read with `Point_Get`, this tier keeps
-/// the scan and prints `TableRangeScan range:[500,500]`. Both read exactly one
-/// record, which is what `writes_read_only_the_records_inside_their_handle_range`
-/// asserts; `tidb_executor::explain`'s divergence 8 records the naming gap.
+/// The remaining divergence from Go is that no INDEX path is offered to a
+/// write, so a `WHERE` on a secondary index still scans; see
+/// `tidb_executor::explain`'s divergence 8.
 #[test]
 fn the_sysbench_write_shapes_read_a_handle_range() {
     let mut session = sbtest1();
     for (sql, operator, est_rows, info) in [
         (
             "UPDATE sbtest1 SET k = k + 1 WHERE id = 500",
-            "TableRangeScan",
+            "Point_Get",
             "1.00",
-            "range:[500,500]",
+            "handle:500",
         ),
         (
             "UPDATE sbtest1 SET c = 'x' WHERE id = 500",
+            "Point_Get",
+            "1.00",
+            "handle:500",
+        ),
+        (
+            "DELETE FROM sbtest1 WHERE id = 500",
+            "Point_Get",
+            "1.00",
+            "handle:500",
+        ),
+        // The point plan is decided from equalities alone (Go's
+        // `getNameValuePairs` accepts `AND` of `column = constant` and
+        // nothing else), so a range that is a single point by any OTHER
+        // spelling is still a range -- in Go as much as here.
+        (
+            "UPDATE sbtest1 SET c = 'x' WHERE id BETWEEN 500 AND 500",
+            "TableRangeScan",
+            "1.00",
+            "range:[500,500]",
+        ),
+        // `ORDER BY`, and a `LIMIT` that can remove the row, are Go's own
+        // refusals in `tryPointGetPlan`; the write falls back to the ranger.
+        // (A write's `LIMIT` is a row count with no offset -- the grammar
+        // admits nothing else -- so `count == 0` is the whole of that half.)
+        (
+            "UPDATE sbtest1 SET c = 'x' WHERE id = 500 ORDER BY k",
             "TableRangeScan",
             "1.00",
             "range:[500,500]",
         ),
         (
-            "DELETE FROM sbtest1 WHERE id = 500",
+            "UPDATE sbtest1 SET c = 'x' WHERE id = 500 LIMIT 0",
             "TableRangeScan",
             "1.00",
             "range:[500,500]",

@@ -266,6 +266,7 @@ impl MemTableStorage {
 
 impl TableStorage for MemTableStorage {
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        note_storage_op(|ops| ops.gets += 1);
         Getter::get(&mut self.inner, key, GetOptions::default())
             .map(|entry| entry.value.clone())
             .map_err(StorageError::from)
@@ -284,6 +285,7 @@ impl TableStorage for MemTableStorage {
         start: Option<&Key>,
         upper_bound: Option<&Key>,
     ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        note_storage_op(|ops| ops.scans += 1);
         Retriever::iter(&mut self.inner, start, upper_bound)
             .map(|iterator| Box::new(iterator) as Box<dyn StorageIterator>)
             .map_err(StorageError::from)
@@ -300,6 +302,61 @@ impl TableStorage for MemTableStorage {
     fn clone_box(&self) -> Box<dyn TableStorage> {
         Box::new(self.clone())
     }
+}
+
+/// The reads a statement issued at the storage seam, by KIND.
+///
+/// The two kinds are the two TiKV request kinds [`TableStorage`]'s doc names:
+/// `get` is Go `kv.Retriever.Get`, which a real backend sends as `kv_get`,
+/// and `iter` is Go `kv.Retriever.Iter`, sent as `kv_scan`. A statement that
+/// reads one known row should send the first and never the second, and the
+/// difference is not visible in row counts -- a scan over a one-key range
+/// returns exactly one row too.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StorageOps {
+    /// Key lookups (`kv_get`).
+    pub gets: usize,
+    /// Iterators OPENED (`kv_scan`). Counted per iterator rather than per
+    /// entry stepped, because that is what a request is.
+    pub scans: usize,
+}
+
+thread_local! {
+    /// Live only while a [`capture_storage_ops`] call is on this thread's
+    /// stack, exactly as `capture_decoded_column_ids`' probe is.
+    static STORAGE_PROBE: std::cell::Cell<Option<StorageOps>> = const {
+        std::cell::Cell::new(None)
+    };
+}
+
+/// Runs `f` while counting the in-process backend's reads by kind, and
+/// returns those counts alongside `f`'s value.
+///
+/// This is the instrument that makes an access path's REQUEST SHAPE
+/// checkable. `EXPLAIN` states the plan and `actRows` states how many rows
+/// came back, and neither separates "looked one row up by key" from "scanned
+/// a range that happens to hold one row" -- both print one row. Only the
+/// request kind does, and it is the difference the point plan exists for.
+///
+/// Capture is per-thread and does not nest: an inner call takes the counts
+/// with it and leaves the outer one empty.
+pub fn capture_storage_ops<R>(f: impl FnOnce() -> R) -> (R, StorageOps) {
+    STORAGE_PROBE.with(|probe| probe.set(Some(StorageOps::default())));
+    let value = f();
+    let ops = STORAGE_PROBE
+        .with(std::cell::Cell::take)
+        .unwrap_or_default();
+    (value, ops)
+}
+
+/// Records one read, when a capture is active.
+fn note_storage_op(add: impl FnOnce(&mut StorageOps)) {
+    STORAGE_PROBE.with(|probe| {
+        if let Some(mut ops) = probe.take() {
+            add(&mut ops);
+            probe.set(Some(ops));
+        }
+    });
 }
 
 #[cfg(test)]

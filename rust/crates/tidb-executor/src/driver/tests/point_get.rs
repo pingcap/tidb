@@ -230,7 +230,12 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
         let QueryStmt::Select(select) = &**query else {
             panic!("not a select")
         };
-        try_point_get(select, table, &columns).unwrap()
+        try_point_get(
+            &crate::driver::access::PointPlanStmt::of_select(select),
+            table,
+            &columns,
+        )
+        .unwrap()
     };
 
     // Accepted: the handle, and a whole unique index.

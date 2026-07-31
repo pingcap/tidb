@@ -81,25 +81,28 @@
 //!    driver really does build all three, in that order. Because the access
 //!    path already priced those conditions, the selection does not reduce the
 //!    estimate again (see `PlanTrace::selection`).
-//! 8. **`UPDATE`/`DELETE` show `TableRangeScan` where Go shows `Point_Get`,
-//!    and never show an `IndexRangeScan`.** Go's planner finds the same
-//!    access paths for a write as for a `SELECT`
-//!    (`tryUpdatePointPlan`/`tryDeletePointPlan` run `tryPointGetPlan` over a
-//!    `SelectStmt` synthesized from the write's own clauses). This tier's
-//!    write drivers ([`crate::driver::run_update_in`],
-//!    [`crate::driver::run_delete_in`]) take the TABLE half of that: the
-//!    `WHERE`'s handle intervals from [`crate::handle_range`] -- the same
-//!    builder and the same ranges the read side uses -- narrow which records
-//!    the write fetches, so a bounded write records `TableRangeScan` (+
-//!    `Selection` for the `WHERE`) instead of `TableFullScan`. Two gaps
-//!    remain. Where the range is a single point Go REPLACES the read with
-//!    `Point_Get`, while this tier keeps the scan and prints
-//!    `TableRangeScan range:[500,500]`; both read exactly one record, and the
-//!    difference is the node name. And no index path is offered to a write at
-//!    all, so a `WHERE` on a secondary index still scans -- Go would read the
-//!    index. The recorder IS those driver functions, so what is printed and
-//!    what is read cannot drift apart: the records a write reads are pinned
-//!    by `actRows` in `tidb_session::tests_sysbench_access`.
+//! 8. **`UPDATE`/`DELETE` never show an `IndexRangeScan`.** Go's planner
+//!    finds the same access paths for a write as for a `SELECT`, through the
+//!    same functions: `tryUpdatePointPlan`/`tryDeletePointPlan` run
+//!    `tryPointGetPlan` over a `SelectStmt` synthesized from the write's own
+//!    clauses, and the ordinary path then costs the table and index paths.
+//!    This tier's write drivers ([`crate::driver::run_update_in`],
+//!    [`crate::driver::run_delete_in`]) take the KEY and TABLE halves of
+//!    that, in Go's order, through `driver::access::write_read_path`: a
+//!    `WHERE` that pins a whole key records `Point_Get`, one the ranger bounds records
+//!    `TableRangeScan`, and anything else stays `TableFullScan`. Both
+//!    narrowed forms keep the `Selection` above them, for divergence 7's
+//!    reason.
+//!
+//!    The gap left is the INDEX path: none is offered to a write, so a
+//!    `WHERE` on a non-unique secondary index still scans the table where Go
+//!    would read the index. (A write whose `WHERE` pins a whole UNIQUE index
+//!    does get the point plan, because `try_point_get` looks that key up
+//!    exactly as it does for a read.) The recorder IS those driver
+//!    functions, so what is printed and what is read cannot drift apart: the
+//!    records a write reads are pinned by `actRows`, and the REQUEST KIND it
+//!    reads them with by [`crate::storage::capture_storage_ops`], both in
+//!    `tidb_session::tests_sysbench_access`.
 //!
 //! # Shapes EXPLAIN refuses
 //!

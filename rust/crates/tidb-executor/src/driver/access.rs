@@ -98,7 +98,7 @@ pub(crate) fn commit_fast_path_source(
     // An index range scan, when no point get applies: the ranges replace the
     // full scan with the rows the index covers, and the WHERE stays above to
     // apply the conditions the ranges did not consume.
-    if try_point_get(select, &table, &columns)?.is_none() {
+    if try_point_get(&PointPlanStmt::of_select(select), &table, &columns)?.is_none() {
         match choose_index_range_path(select, catalog, scope, &table, &columns) {
             // A table path the ranger narrowed. The source already installed
             // by `build_from` IS the right executor -- a `TableRangeScan` is
@@ -138,7 +138,7 @@ pub(crate) fn commit_fast_path_source(
             None => {}
         }
     }
-    if let Some(handle) = try_point_get(select, &table, &columns)? {
+    if let Some(handle) = try_point_get(&PointPlanStmt::of_select(select), &table, &columns)? {
         // A `None` handle is a WHERE that pins a handle no row can have: the
         // plan is a point get over an empty handle list.
         let exec = HandleSourceExec::new(
@@ -556,26 +556,82 @@ pub(crate) fn single_table_trace_estimate(
     )
 }
 
+/// How a single-table `UPDATE`/`DELETE` FETCHES the records it then filters.
+///
+/// Both arms narrow only which records are fetched. The write's own per-row
+/// `WHERE` evaluation is unchanged and still decides which rows the statement
+/// acts on, so the affected row set is the full scan's either way -- see
+/// [`write_read_path`].
+pub(crate) enum WriteReadPath {
+    /// Go's `Point_Get`: one record, read by key. `None` is a key no row can
+    /// carry, which Go also plans as a `Point_Get` that reads nothing.
+    Point(Option<TableHandle>),
+    /// Go's `TableRangeScan`: the handle intervals the `WHERE` implies, and
+    /// the estimate `EXPLAIN` prints for them.
+    Ranges(Vec<IndexRange>, crate::access_cost::ScanEstimate),
+}
+
+/// The read a single-table `UPDATE`/`DELETE` performs to find its target
+/// rows; `None` when nothing narrows it and the write reads the whole table.
+///
+/// Go plans a write's read from the same predicate, with the same functions,
+/// as a read's. `tryUpdatePointPlan`/`tryDeletePointPlan`
+/// (`pkg/planner/core/point_get_plan.go`) synthesize an `ast.SelectStmt` out
+/// of the write's `TableRefs`/`Where`/`Order`/`Limit` and hand it to
+/// `tryPointGetPlan` -- the SAME function a `SELECT` reaches through
+/// `TryFastPlan` -- and only when that declines does the ordinary path plan a
+/// `DataSource` whose table path gets its ranges from `deriveTablePathStats`
+/// exactly as a `SELECT`'s does. This function is that order, and it calls
+/// the same two builders the read side calls: [`try_point_get`] and
+/// [`crate::handle_range`], the crate's single range algebra.
+///
+/// The point arm is what makes `WHERE id = 500` one key lookup instead of a
+/// scan over the degenerate range `[500,500]`. A single-key range still costs
+/// a range scan against storage; a key lookup does not, and that difference
+/// is the whole reason Go replaces the read rather than narrowing it.
+///
+/// Neither arm may change the answer. A point plan is decided ONLY from
+/// equalities that pin a whole key ([`try_point_get`] is Go's
+/// `getNameValuePairs` rule: `AND` of `column = constant`, nothing else), the
+/// key's constant is moved into the column's domain first or the plan is
+/// abandoned ([`super::point_get_key`]), and the `WHERE` is still evaluated
+/// per row above the fetch -- so an extra conjunct the key did not pin still
+/// filters, and a key naming a row that does not exist simply reads nothing.
+pub(crate) fn write_read_path(
+    catalog: &Catalog,
+    database: &str,
+    name: &str,
+    stmt: &PointPlanStmt<'_>,
+) -> Result<Option<WriteReadPath>, DriverError> {
+    let Some(TableEntry::Kv(table)) = catalog.get_in(database, name) else {
+        return Ok(None);
+    };
+    // Go's order: the fast plan first, the table path only when it declines.
+    // The column list is the table's own, because `try_point_get` reads it at
+    // the offsets `pk_handle_offset`/`KvIndex::column_offsets` name, and those
+    // are offsets into `KvTable::columns`.
+    let columns: Vec<(String, FieldType)> = table
+        .columns
+        .iter()
+        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .collect();
+    if let Some(handle) = try_point_get(stmt, table, &columns)? {
+        return Ok(Some(WriteReadPath::Point(handle)));
+    }
+    Ok(
+        write_handle_ranges(catalog, database, name, stmt.where_clause)
+            .map(|(ranges, estimate)| WriteReadPath::Ranges(ranges, estimate)),
+    )
+}
+
 /// The handle ranges a single-table `UPDATE`/`DELETE` reads through, and the
 /// estimate `EXPLAIN` prints for that read; `None` when the `WHERE` narrows
 /// the clustered integer handle by nothing and the write reads the whole
 /// table.
 ///
-/// Go plans a write's read from the same predicate, with the same builder, as
-/// a read's: `tryUpdatePointPlan`/`tryDeletePointPlan`
-/// (`pkg/planner/core/point_get_plan.go`) synthesize an `ast.SelectStmt` out
-/// of the write's `TableRefs`/`Where`/`Order`/`Limit` and hand it to
-/// `tryPointGetPlan`, and the ordinary path plans a `DataSource` whose table
-/// path gets its ranges from `deriveTablePathStats` exactly as a `SELECT`'s
-/// does. This is the table half of that on this tier -- one call into
-/// [`crate::handle_range`], the crate's single range algebra, which is also
-/// what the read side's [`choose_index_range_path`] builds table ranges with.
-///
-/// Ranges narrow WHICH RECORDS ARE FETCHED and nothing else. The write's own
-/// per-row `WHERE` evaluation is unchanged and still decides which rows the
-/// statement acts on, so the affected row set is the full scan's, by
-/// construction.
-pub(crate) fn write_handle_ranges(
+/// This is the table-path half of [`write_read_path`]; see its doc for the
+/// order the two halves run in and why neither can change the answer.
+fn write_handle_ranges(
     catalog: &Catalog,
     database: &str,
     name: &str,
@@ -1082,9 +1138,59 @@ fn name_value_pairs(expr: &tidb_ast::Expr, pairs: &mut Vec<NameValuePair>) -> bo
     }
 }
 
+/// The clauses [`try_point_get`] decides a point plan from.
+///
+/// This exists because Go decides a WRITE's point plan from the SAME
+/// function as a read's: `tryUpdatePointPlan`/`tryDeletePointPlan`
+/// (`pkg/planner/core/point_get_plan.go`) build an `ast.SelectStmt` out of
+/// the write's own `TableRefs`/`Where`/`Order`/`Limit` and hand it to
+/// `tryPointGetPlan`. This struct IS that synthesis, expressed as the field
+/// copy Go performs rather than as a second point-plan builder -- there is
+/// one rule here and one implementation of it, and a write cannot drift from
+/// a read about which statements are point plans.
+pub(crate) struct PointPlanStmt<'a> {
+    where_clause: Option<&'a tidb_ast::Expr>,
+    order_by: &'a [tidb_ast::OrderItem],
+    limit: Option<&'a tidb_ast::Limit>,
+    /// Go's synthesized statement carries no select list, so it has neither
+    /// of these; only a real `SELECT` can.
+    having: Option<&'a tidb_ast::Expr>,
+    group_by: &'a [tidb_ast::GroupByItem],
+}
+
+impl<'a> PointPlanStmt<'a> {
+    /// A `SELECT`'s own clauses.
+    pub(crate) fn of_select(select: &'a tidb_ast::SelectStmt) -> Self {
+        PointPlanStmt {
+            where_clause: select.where_clause.as_ref(),
+            order_by: &select.order_by,
+            limit: select.limit.as_ref(),
+            having: select.having.as_ref(),
+            group_by: &select.group_by,
+        }
+    }
+
+    /// Go's synthesized `ast.SelectStmt` for a single-table write: the three
+    /// clauses `tryUpdatePointPlan`/`tryDeletePointPlan` copy across, and
+    /// nothing else.
+    pub(crate) fn of_write(
+        where_clause: Option<&'a tidb_ast::Expr>,
+        order_by: &'a [tidb_ast::OrderItem],
+        limit: Option<&'a tidb_ast::Limit>,
+    ) -> Self {
+        PointPlanStmt {
+            where_clause,
+            order_by,
+            limit,
+            having: None,
+            group_by: &[],
+        }
+    }
+}
+
 /// The row a point get reads, when the statement qualifies for one.
 ///
-/// Go `TryFastPlan`/`tryPointGetPlan`: a single-table `SELECT` with no
+/// Go `TryFastPlan`/`tryPointGetPlan`: a single-table statement with no
 /// `HAVING` and no `ORDER BY`, whose `WHERE` is a conjunction of equalities
 /// that pins either the handle or every column of a unique index, reads one
 /// row directly instead of scanning. `LIMIT` is allowed only when it cannot
@@ -1093,14 +1199,14 @@ fn name_value_pairs(expr: &tidb_ast::Expr, pairs: &mut Vec<NameValuePair>) -> bo
 /// Returns `Ok(None)` when the statement does not qualify, so the caller
 /// falls back to the ordinary scan.
 pub(crate) fn try_point_get(
-    select: &tidb_ast::SelectStmt,
+    select: &PointPlanStmt<'_>,
     table: &KvTable,
     columns: &[(String, FieldType)],
 ) -> Result<Option<Option<TableHandle>>, DriverError> {
     if select.having.is_some() || !select.order_by.is_empty() || !select.group_by.is_empty() {
         return Ok(None);
     }
-    if let Some(limit) = &select.limit {
+    if let Some(limit) = select.limit {
         let count = eval_limit_bound(&limit.count)?;
         let offset = match &limit.offset {
             Some(expr) => eval_limit_bound(expr)?,
@@ -1110,7 +1216,7 @@ pub(crate) fn try_point_get(
             return Ok(None);
         }
     }
-    let Some(where_clause) = &select.where_clause else {
+    let Some(where_clause) = select.where_clause else {
         return Ok(None);
     };
     let mut pairs = Vec::new();

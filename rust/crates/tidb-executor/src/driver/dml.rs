@@ -1226,11 +1226,20 @@ pub(crate) fn run_update_traced(
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
     let row_limit = dml_row_limit(&update.limit)?;
-    // The records this write FETCHES, narrowed to what the `WHERE` implies
-    // about the clustered handle; see `access::write_handle_ranges` for why
-    // that cannot change which rows the statement acts on.
-    let handle_ranges =
-        super::access::write_handle_ranges(catalog, &database, &name, update.where_clause.as_ref());
+    // The records this write FETCHES: one key when the `WHERE` pins a whole
+    // key, otherwise the handle intervals it implies. See
+    // `access::write_read_path` for the Go functions this mirrors and for why
+    // neither narrowing can change which rows the statement acts on.
+    let read_path = super::access::write_read_path(
+        catalog,
+        &database,
+        &name,
+        &super::access::PointPlanStmt::of_write(
+            update.where_clause.as_ref(),
+            &update.order_by,
+            update.limit.as_ref(),
+        ),
+    )?;
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
             trace,
@@ -1242,7 +1251,7 @@ pub(crate) fn run_update_traced(
             },
             &column_list,
             &update.where_clause,
-            handle_ranges.as_ref(),
+            read_path.as_ref(),
             current_db,
         );
         trace.write("Update", true);
@@ -1299,11 +1308,7 @@ pub(crate) fn run_update_traced(
             }
         }
         TableEntry::Kv(kv) => {
-            let mut rows = kv
-                .scan_rows_with_handles_in(
-                    handle_ranges.as_ref().map(|(ranges, _)| ranges.as_slice()),
-                )
-                .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
+            let mut rows = fetch_write_rows(kv, read_path.as_ref())?;
             order_rows_for_dml(
                 &mut rows,
                 &update.order_by,
@@ -1576,10 +1581,18 @@ pub(crate) fn run_delete_traced(
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
     let row_limit = dml_row_limit(&delete.limit)?;
-    // As in UPDATE: the handle intervals the `WHERE` implies are the records
-    // this write fetches.
-    let handle_ranges =
-        super::access::write_handle_ranges(catalog, &database, &name, delete.where_clause.as_ref());
+    // As in UPDATE: the key or the handle intervals the `WHERE` implies are
+    // the records this write fetches.
+    let read_path = super::access::write_read_path(
+        catalog,
+        &database,
+        &name,
+        &super::access::PointPlanStmt::of_write(
+            delete.where_clause.as_ref(),
+            &delete.order_by,
+            delete.limit.as_ref(),
+        ),
+    )?;
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
             trace,
@@ -1591,7 +1604,7 @@ pub(crate) fn run_delete_traced(
             },
             &column_list,
             &delete.where_clause,
-            handle_ranges.as_ref(),
+            read_path.as_ref(),
             current_db,
         );
         trace.write("Delete", true);
@@ -1624,11 +1637,7 @@ pub(crate) fn run_delete_traced(
             mem.rows = kept;
         }
         TableEntry::Kv(kv) => {
-            let mut rows = kv
-                .scan_rows_with_handles_in(
-                    handle_ranges.as_ref().map(|(ranges, _)| ranges.as_slice()),
-                )
-                .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
+            let mut rows = fetch_write_rows(kv, read_path.as_ref())?;
             order_rows_for_dml(
                 &mut rows,
                 &delete.order_by,
@@ -1708,10 +1717,44 @@ pub(crate) fn run_delete_traced(
     Ok(deleted)
 }
 
+/// Fetches the records a single-table write will filter, through the read
+/// path chosen for it.
+///
+/// One function for `UPDATE` and `DELETE` both, because the two statements
+/// differ in what they do with a record and not in how they find one -- and
+/// because a second copy of this dispatch is exactly how a write path comes
+/// to read a different record set than the plan it printed.
+///
+/// A point get reads ONE key. `get_row_by_handle` is the same read
+/// `HandleSourceExec` performs for a `SELECT`'s `Point_Get`, and it answers
+/// `None` for a key no record carries -- Go's point get that finds nothing.
+fn fetch_write_rows(
+    kv: &mut crate::kv_table::KvTable,
+    read_path: Option<&super::access::WriteReadPath>,
+) -> Result<Vec<(crate::kv_table::TableHandle, Vec<Datum>)>, DriverError> {
+    let decode_failed = |e| DriverError::Parse(format!("row decode failed: {e:?}"));
+    match read_path {
+        Some(super::access::WriteReadPath::Point(handle)) => {
+            let Some(handle) = handle else {
+                return Ok(Vec::new());
+            };
+            Ok(kv
+                .get_row_by_handle(handle)
+                .map_err(decode_failed)?
+                .map(|row| vec![(handle.clone(), row)])
+                .unwrap_or_default())
+        }
+        Some(super::access::WriteReadPath::Ranges(ranges, _)) => kv
+            .scan_rows_with_handles_in(Some(ranges))
+            .map_err(decode_failed),
+        None => kv.scan_rows_with_handles_in(None).map_err(decode_failed),
+    }
+}
+
 /// Records the read plan a single-table write performs to find its target
-/// rows: the table scan the write really runs -- narrowed to a
-/// `TableRangeScan` when the `WHERE` bounded the clustered handle -- with a
-/// `Selection` above it for the `WHERE` (`explain`'s divergence 8).
+/// rows: the read `access::write_read_path` chose -- a `Point_Get`, a
+/// `TableRangeScan`, or the full scan neither narrowed -- with a `Selection`
+/// above it for the `WHERE` (`explain`'s divergences 7 and 8).
 ///
 /// The table a single-table write reads, as the statement names it.
 struct DmlTarget<'a> {
@@ -1729,10 +1772,7 @@ fn trace_dml_source(
     target: DmlTarget<'_>,
     columns: &[(String, FieldType)],
     where_clause: &Option<tidb_ast::Expr>,
-    handle_ranges: Option<&(
-        Vec<crate::kv_table::IndexRange>,
-        crate::access_cost::ScanEstimate,
-    )>,
+    read_path: Option<&super::access::WriteReadPath>,
     current_db: &str,
 ) {
     let DmlTarget {
@@ -1750,11 +1790,18 @@ fn trace_dml_source(
         where_clause.as_ref(),
     );
     trace.table_full_scan(&visible, estimate);
-    // The rename the read side performs for the same narrowing: the scan the
-    // write runs IS the one just recorded, reading only its ranges, so the
-    // node is renamed rather than replaced.
-    if let Some((ranges, range_estimate)) = handle_ranges {
-        trace.table_range_scan(&visible, ranges, *range_estimate);
+    // The same two rewrites the read side performs, from the same chooser: a
+    // range scan RENAMES the scan just recorded, because the write really
+    // does run that scan over only those ranges; a point get REPLACES it,
+    // because the write reads by key and runs no scan at all.
+    match read_path {
+        Some(super::access::WriteReadPath::Ranges(ranges, range_estimate)) => {
+            trace.table_range_scan(&visible, ranges, *range_estimate);
+        }
+        Some(super::access::WriteReadPath::Point(handle)) => {
+            trace.point_get(&visible, handle.as_ref());
+        }
+        None => {}
     }
     let Some(predicate) = where_clause else {
         return;
