@@ -169,7 +169,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 		}
 
 		// Update config with assume role credentials
-		cfg.Credentials = assumeRoleProvider
+		cfg.Credentials = aws.NewCredentialsCache(assumeRoleProvider)
 	}
 
 	if opts.AccessRecording != nil {
