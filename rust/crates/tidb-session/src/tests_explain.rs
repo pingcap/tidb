@@ -308,6 +308,12 @@ fn explain_analyze_update_executes() {
 
 /// `EXPLAIN ANALYZE <delete>` really deletes -- same real read-then-write
 /// shape as [`explain_analyze_update_executes`], over `Delete_N`.
+///
+/// Its `WHERE` bounds the PRIMARY KEY, so unlike the `UPDATE` above (whose
+/// `WHERE c = 200` names no handle and still reads all four rows) the read is
+/// a `TableRangeScan` that reads the ONE record in `[2,2]`. The corpus for
+/// that narrowing is `tidb_session::tests_sysbench_access`; what this test
+/// adds is that the row it read is still the row it deleted.
 #[test]
 fn explain_analyze_delete_executes() {
     let mut session = Session::new();
@@ -324,8 +330,9 @@ fn explain_analyze_delete_executes() {
     assert_eq!(rows[0][2], "0");
     assert_eq!(rows[1][0], "└─Selection_2");
     assert_eq!(rows[1][2], "1");
-    assert_eq!(rows[2][0], "  └─TableFullScan_1");
-    assert_eq!(rows[2][2], "3");
+    assert_eq!(rows[2][0], "  └─TableRangeScan_1");
+    // One record read, not the three a full scan would have read.
+    assert_eq!(rows[2][2], "1");
 
     assert_eq!(
         row_text(session.run("SELECT a FROM t ORDER BY a")),
@@ -448,11 +455,13 @@ fn explain_insert_plans_without_writing() {
 
 /// `EXPLAIN UPDATE`/`EXPLAIN DELETE`: the write's plan is `Update_N`/
 /// `Delete_N` over the same read the write drivers actually build to
-/// find the target rows. Divergence 8 (`explain` module doc): those
-/// drivers always scan the whole table and filter row-by-row, with no
-/// point-get/index fast path, so the recorder always shows
-/// `TableFullScan` + `Selection` -- even for a primary-key equality,
-/// where Go's own planner would print `Point_Get`.
+/// find the target rows. A primary-key equality bounds the clustered
+/// handle, so that read is a `TableRangeScan` over `[1,1]` -- the same
+/// ranges, from the same builder, the read side narrows a `SELECT` with.
+/// Divergence 8 (`explain` module doc) is what is left of the gap: Go
+/// REPLACES the whole read with `Point_Get` for this shape, where this
+/// tier keeps the scan and its `Selection` above it. Both read one
+/// record.
 #[test]
 fn explain_update_and_delete_plan_without_writing() {
     let mut session = Session::new();
@@ -473,17 +482,20 @@ fn explain_update_and_delete_plan_without_writing() {
             ],
             vec![
                 "└─Selection_2".to_owned(),
-                "10.00".to_owned(),
+                // The access path already priced this condition, so the
+                // Selection does not reduce the estimate a second time --
+                // the same rule the read side's point get follows.
+                "1.00".to_owned(),
                 "root".to_owned(),
                 String::new(),
                 "eq(test.t.a, 1)".to_owned(),
             ],
             vec![
-                "  └─TableFullScan_1".to_owned(),
-                "10000.00".to_owned(),
+                "  └─TableRangeScan_1".to_owned(),
+                "1.00".to_owned(),
                 "root".to_owned(),
                 "table:t".to_owned(),
-                "keep order:false, stats:pseudo".to_owned(),
+                "range:[1,1], keep order:false, stats:pseudo".to_owned(),
             ],
         ]
     );
@@ -499,17 +511,17 @@ fn explain_update_and_delete_plan_without_writing() {
             ],
             vec![
                 "└─Selection_2".to_owned(),
-                "10.00".to_owned(),
+                "1.00".to_owned(),
                 "root".to_owned(),
                 String::new(),
                 "eq(test.t.a, 1)".to_owned(),
             ],
             vec![
-                "  └─TableFullScan_1".to_owned(),
-                "10000.00".to_owned(),
+                "  └─TableRangeScan_1".to_owned(),
+                "1.00".to_owned(),
                 "root".to_owned(),
                 "table:t".to_owned(),
-                "keep order:false, stats:pseudo".to_owned(),
+                "range:[1,1], keep order:false, stats:pseudo".to_owned(),
             ],
         ]
     );
