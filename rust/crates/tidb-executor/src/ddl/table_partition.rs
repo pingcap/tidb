@@ -128,8 +128,8 @@ pub fn build_table_partitioning(
 
     let (expr_text, built, dependencies) = build_partition_expression(expr, names, types)?;
     // Go `checkPartitionFuncType`: the partition expression must evaluate to
-    // an integer, reported against the COLUMN whose type it is (1659).
-    check_partition_expression_type(expr, &dependencies, names, types)?;
+    // an integer.
+    check_partition_expression_type(expr, names, types)?;
 
     let definitions = build_hash_partition_definitions(create, method.count, allocate_id)?;
     check_partition_name_unique(&definitions)?;
@@ -314,42 +314,73 @@ fn check_partition_expression_allowed(expr: &Expr) -> Result<(), DriverError> {
 
 /// Go `checkPartitionFuncType`: the expression must evaluate to an integer.
 ///
-/// Go builds the expression and asks its `EvalType()`; the same question is
-/// answered here from the columns it reads, because the only forms the
-/// whitelist admits are a bare column, an arithmetic tree over columns, and
-/// a function whose result type is fixed. Go names the offending COLUMN in
-/// 1659 (`Field 'a' is of a not allowed type for this type of
-/// partitioning`), which is why the check is written per dependency.
+/// Go builds the expression and asks its `EvalType()`, and WHICH error it
+/// then reports depends on the shape of the expression, not on which column
+/// is at fault:
+///
+/// * a bare COLUMN of a non-integer type is `ErrNotAllowedTypeInPartition`
+///   (1659), naming the column -- Go reaches that arm only when the built
+///   expression IS an `expression.Column`. Captured:
+///   `partition by hash(a)` over a `double a` is
+///   ``Field 'a' is of a not allowed type for this type of partitioning``;
+/// * anything else whose result type is not integral is
+///   `ErrPartitionFuncNotAllowed` (1491), naming the CLAUSE rather than a
+///   column: `The PARTITION function returns the wrong type`.
+///
+/// So the question a whitelisted expression has to answer is its own result
+/// type, not its columns' -- `hash(year(d))` over a DATE column is ACCEPTED,
+/// because `YEAR` returns an integer. Reading the columns instead would
+/// reject the single most common date-partitioning form there is.
 fn check_partition_expression_type(
     expr: &Expr,
-    dependencies: &[usize],
     names: &[String],
     types: &[FieldType],
 ) -> Result<(), DriverError> {
     // A bare column reference reports the name AS WRITTEN, which a qualified
     // `t.a` shortens to `a` exactly as Go's `col2.Name.Name.L` does.
     if let Expr::Column(path) = unwrap_parentheses(expr) {
-        let offset = dependencies
-            .first()
-            .copied()
-            .ok_or(DriverError::PartitionWrongExprInFunc)?;
-        if !is_integer_type(&types[offset]) {
-            let name = path
-                .last()
-                .cloned()
-                .unwrap_or_else(|| names[offset].clone());
-            return Err(DriverError::PartitionFieldTypeNotAllowed(name));
+        if partition_expr_is_integral(expr, names, types) {
+            return Ok(());
         }
+        let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
+        return Err(DriverError::PartitionFieldTypeNotAllowed(name));
+    }
+    if partition_expr_is_integral(expr, names, types) {
         return Ok(());
     }
-    for offset in dependencies {
-        if !is_integer_type(&types[*offset]) {
-            return Err(DriverError::PartitionFieldTypeNotAllowed(
-                names[*offset].clone(),
-            ));
+    Err(DriverError::PartitionFuncWrongType)
+}
+
+/// Whether a whitelisted partition expression evaluates to an INTEGER, which
+/// is Go's `e.GetType().EvalType() == types.ETInt`.
+///
+/// Only the forms [`check_partition_expression_allowed`] admits reach here.
+/// Every function on Go's `AllowedPartitionFuncMap` returns an integer, `DIV`
+/// is integer division whatever its operands are, and the remaining
+/// arithmetic is integral exactly when both operands are.
+fn partition_expr_is_integral(expr: &Expr, names: &[String], types: &[FieldType]) -> bool {
+    match expr {
+        Expr::Column(path) => path
+            .last()
+            .and_then(|name| {
+                names
+                    .iter()
+                    .position(|candidate| candidate.eq_ignore_ascii_case(name))
+            })
+            .is_some_and(|offset| is_integer_type(&types[offset])),
+        Expr::Paren(inner) => partition_expr_is_integral(inner, names, types),
+        Expr::Unary(_, inner) => partition_expr_is_integral(inner, names, types),
+        Expr::Binary(tidb_ast::BinaryOp::IntDiv, _, _) => true,
+        Expr::Binary(_, left, right) => {
+            partition_expr_is_integral(left, names, types)
+                && partition_expr_is_integral(right, names, types)
         }
+        // Reachable only for a whitelisted name, all of which return an
+        // integer.
+        Expr::Func { .. } => true,
+        Expr::Int(_) | Expr::Bool(_) | Expr::Hex(_) | Expr::Bit(_) => true,
+        _ => false,
     }
-    Ok(())
 }
 
 /// The parenthesised expression's subject, since `(a)` partitions on `a`.

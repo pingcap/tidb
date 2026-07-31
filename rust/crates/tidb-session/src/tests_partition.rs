@@ -289,6 +289,39 @@ fn a_unique_key_over_the_partition_column_still_collides() {
     session.run("ADMIN CHECK TABLE h").expect("admin check");
 }
 
+/// The unique-key rule reaches `ADD INDEX`, not just `CREATE TABLE`.
+///
+/// Go runs it in `checkCreateGlobalIndex` (`pkg/ddl/executor.go`), which
+/// raises the same 8264 naming the INDEX for a unique index on a partitioned
+/// table that does not cover the partitioning columns. Without it, a table
+/// created legally could grow an index that breaks the argument this tier's
+/// table-id index keying rests on.
+#[test]
+fn adding_a_unique_index_off_the_partition_column_is_refused_too() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE h (a int, b int) PARTITION BY HASH(a) PARTITIONS 4")
+        .unwrap();
+    let rendered = session
+        .run("ALTER TABLE h ADD UNIQUE KEY ub (b)")
+        .expect_err("a unique index off the partition column needs GLOBAL")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 8264);
+    assert_eq!(
+        rendered.message,
+        "Global Index is needed for index 'ub', since the unique index is not including all \
+         partitioning columns, and GLOBAL is not given as IndexOption"
+    );
+    // The same index over the partitioning column is fine, and so is a
+    // NON-unique index over any column.
+    session
+        .run("ALTER TABLE h ADD UNIQUE KEY ua (a)")
+        .expect("a unique index on the partitioning column is allowed");
+    session
+        .run("ALTER TABLE h ADD KEY kb (b)")
+        .expect("a non-unique index is unrestricted");
+}
+
 /// The three methods still without routing are REFUSED, and the refusal names
 /// the method. The `GO_*` text each row carries is what this must answer
 /// instead once that method lands.

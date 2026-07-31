@@ -241,6 +241,10 @@ pub enum DriverError {
     /// expression reads no column at all. See
     /// [`crate::ddl::table_partition`].
     PartitionWrongExprInFunc,
+    /// Go `dbterror.ErrPartitionFuncNotAllowed` (1491): the partition
+    /// expression does not evaluate to an integer. Reported against the
+    /// CLAUSE, unlike the bare-column case, which is 1659 against the column.
+    PartitionFuncWrongType,
     /// Go `dbterror.ErrTooManyPartitions` (1499).
     PartitionTooMany,
     /// Go `ast.ErrSubpartition` (1500): `SUBPARTITION BY` under a method
@@ -1759,6 +1763,11 @@ impl DriverError {
             "Constant, random or timezone-dependent expressions in (sub)partitioning function are \
              not allowed"
                 .to_owned(),
+        ),
+        DriverError::PartitionFuncWrongType => MysqlError::new(
+            1491,
+            *b"HY000",
+            "The PARTITION function returns the wrong type".to_owned(),
         ),
         DriverError::PartitionTooMany => MysqlError::new(
             1499,
