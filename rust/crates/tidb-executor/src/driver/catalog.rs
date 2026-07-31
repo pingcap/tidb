@@ -436,6 +436,13 @@ impl Catalog {
 
     /// Publishes one table's loaded statistics, which the access-path choice
     /// and `EXPLAIN`'s `estRows` then read instead of the pseudo constants.
+    ///
+    /// Two publishers reach here, and they must agree: the cluster session
+    /// loads `mysql.stats_*` rows a Go `ANALYZE` wrote
+    /// (`tidb_server::cluster_session`), and an in-process `ANALYZE TABLE`
+    /// computes them here ([`crate::analyze::kv::analyze_kv_table`]). Both
+    /// build the histograms through [`crate::analyze`], so a table's estimates
+    /// do not depend on which storage it sits on.
     pub fn set_table_statistics(
         &mut self,
         table_id: i64,

@@ -212,9 +212,17 @@ impl Session {
                 StoredStateChange::GlobalVars
             }
             // `ANALYZE TABLE` writes `mysql.stats_*`, which every node in the
-            // cluster reads. Running it against this process's own loaded
-            // statistics would answer OK to a client whose table's histograms
-            // did not move anywhere.
+            // cluster reads. A front end whose tables live in the cluster must
+            // route it to a node that can write them; answering it from this
+            // process's own catalog would tell the client its histograms moved
+            // when no other node would ever see them.
+            //
+            // This says nothing about an IN-PROCESS session, whose catalog is
+            // the whole world: there `crate::analyze_arm` runs the statement
+            // and publishes the result, because there is no other node to tell.
+            // The two are not in tension -- this classification answers "would
+            // this change state outside the process", and in-process the answer
+            // is no.
             Stmt::Admin(admin)
                 if matches!(
                     admin.as_ref(),
