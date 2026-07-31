@@ -163,8 +163,8 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             // nothing here can read a session fact that this default lacks.
             table
                 .create_index(index, &StmtContext::default())
-                .map_err(|error| format!("{error:?}"))?;
-        } else if !table.drop_index(&name).map_err(|e| format!("{e:?}"))? {
+                .map_err(backfill_failure)?;
+        } else if !table.drop_index(&name).map_err(backfill_failure)? {
             // The plan found the index on the stored table, so the loader
             // dropping it can only mean the two disagree about what the table
             // has -- which must not end as a silent no-op.
@@ -174,5 +174,21 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             ));
         }
         Ok(())
+    }
+}
+
+/// Renders a failed walk in the words the failure has, not as a Debug dump.
+///
+/// The one a user actually meets is the duplicate: `CREATE UNIQUE INDEX` over
+/// rows that already collide is Go's 1062 naming `table.index`, and the
+/// statement leaves the table WITHOUT the index -- which is exactly what
+/// happens here, because the whole change is one transaction that does not
+/// commit.
+fn backfill_failure(error: tidb_executor::kv_table::KvTableError) -> String {
+    match error {
+        tidb_executor::kv_table::KvTableError::DuplicateEntry { value, key } => {
+            format!("Duplicate entry '{value}' for key '{key}'")
+        }
+        other => format!("{other:?}"),
     }
 }
