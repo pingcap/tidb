@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -180,30 +179,6 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	require.Zero(t, task.adaptiveLimitReservation)
 	require.Equal(t, uint64(32), controller.Snapshot().LookupHandles)
 	require.Equal(t, uint64(1), controller.Snapshot().LookupRows)
-	require.Equal(t, 2, controller.SuggestedScanConcurrency(15))
-
-	scanLimiter := newAdaptiveCoprRequestLimiter(4, 1)
-	require.Equal(t, 4, scanLimiter.rateLimit.GetCapacity())
-	require.False(t, scanLimiter.rateLimit.GetToken(nil))
-	secondToken := make(chan bool, 1)
-	go func() {
-		secondToken <- !scanLimiter.rateLimit.GetToken(nil)
-	}()
-	select {
-	case <-secondToken:
-		require.Fail(t, "second cop request must wait at initial concurrency one")
-	case <-time.After(20 * time.Millisecond):
-	}
-	scanLimiter.growTo(2)
-	select {
-	case acquired := <-secondToken:
-		require.True(t, acquired)
-	case <-time.After(time.Second):
-		require.Fail(t, "growing scan concurrency did not release a request token")
-	}
-	scanLimiter.rateLimit.PutToken()
-	scanLimiter.rateLimit.PutToken()
-	scanLimiter.release()
 
 	pendingTracker := memory.NewTracker(-1, -1)
 	worker := &indexWorker{adaptiveLimitController: controller, batchSize: 2, memTracker: pendingTracker}

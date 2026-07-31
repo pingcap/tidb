@@ -16,7 +16,7 @@
     - [Lookup Handle Admission](#lookup-handle-admission)
     - [Runtime Feedback](#runtime-feedback)
     - [Window Adjustment](#window-adjustment)
-    - [Batch Size and DistSQL Concurrency](#batch-size-and-distsql-concurrency)
+    - [Batch Size and DistSQL Behavior](#batch-size-and-distsql-behavior)
     - [Stop and Cleanup](#stop-and-cleanup)
     - [Eligibility](#eligibility)
     - [Correctness and Concurrency Invariants](#correctness-and-concurrency-invariants)
@@ -333,7 +333,7 @@ zero-output input reaches the current window, then doubles the window up to its
 configured maximum. This guarantees progress without jumping directly to the
 maximum after one empty task.
 
-### Batch Size and DistSQL Concurrency
+### Batch Size and DistSQL Behavior
 
 Initial windows are derived from LIMIT demand and existing session settings:
 
@@ -353,20 +353,15 @@ maxLookupWindow =
     tidb_index_lookup_concurrency
 ```
 
-The current lookup window also suggests:
+The current lookup window suggests the next lookup task batch size, bounded by
+`tidb_index_lookup_size`.
 
-- the next lookup task batch size, bounded by `tidb_index_lookup_size`;
-- DistSQL scan concurrency, bounded by the user's DistSQL concurrency.
-
-The DistSQL request retains the user-configured worker ceiling, while a shared
-limiter releases only the currently justified number of request tokens. As the
-lookup window grows, the limiter can release more tokens within the same
-long-lived `SelectResult`.
-
-Released tokens are not taken back during the same `SelectResult`. Therefore,
-effective request concurrency can increase but does not currently decrease.
-The limiter controls concurrent request dispatch, not the total number of RPCs
-and not the number of raw keys scanned inside one RPC.
+The initial implementation does not change DistSQL scan concurrency.
+`tidb_distsql_scan_concurrency` and the existing RequestBuilder heuristics keep
+their original behavior. Lookup yield estimates how many handles should enter
+future table lookup tasks, but it is not a reliable signal for choosing RPC
+parallelism. Keeping these controls separate avoids serializing a productive
+multi-Region scan merely because its lookup window has not grown.
 
 ### Stop and Cleanup
 
@@ -454,6 +449,8 @@ OFF. It does not affect plan selection and does not introduce persistent
 profile state.
 
 Existing batch and concurrency variables are unchanged and remain upper bounds.
+In particular, enabling this feature does not override or reduce the existing
+DistSQL request concurrency.
 
 ### Observability
 
@@ -485,15 +482,14 @@ unit tests, but they are not included in the compact plan output.
 The current implementation can bound:
 
 - the next batch of outer rows admitted by IndexLookUpJoin;
-- handles admitted into future table lookup tasks;
-- concurrent dispatch within an already created DistSQL result, subject to the
-  monotonic limiter.
+- handles admitted into future table lookup tasks.
 
 It cannot hard-bound:
 
 - outer rows already read or being read;
 - table lookup tasks already dispatched;
 - coprocessor RPCs already sent or in flight;
+- concurrent coprocessor request dispatch;
 - raw keys, bytes, or execution time consumed inside one TiKV request;
 - the number of workers already created for a DistSQL request.
 
@@ -502,8 +498,8 @@ Most importantly:
 > A lookup handle window is not a TiKV raw scan budget.
 
 A TiKV request may process many raw keys before returning a small number of
-handles. The current design reduces multi-request concurrency and TiDB
-pipeline amplification, but it cannot guarantee a maximum
+handles. The current design reduces TiDB pipeline and table-lookup
+amplification, but it cannot guarantee a maximum
 `processed_keys`, `IndexRangeScan actRows`, or number of scanned bytes for one
 request.
 
@@ -511,10 +507,9 @@ Additional limitations are:
 
 - only one keep-order IndexLookUpJoin outer path is supported;
 - the lookup window floor can admit one initial batch near the LIMIT tail;
-- DistSQL request concurrency can grow but cannot shrink in one SelectResult;
-- the limiter does not enforce a strict ordered-task frontier;
-- runtime stats do not yet include initial/current/peak concurrency, final
-  windows, or a reason why a plan was not eligible.
+- DistSQL request concurrency and ordered request dispatch are unchanged;
+- runtime stats do not yet include final windows or a reason why a plan was
+  not eligible.
 
 ### Compatibility
 
@@ -553,7 +548,7 @@ Controller unit tests cover:
 - cumulative and recent yield estimates;
 - one-to-many Join output paired with completed outer rows;
 - outer and lookup reservation accounting;
-- lookup batch size and scan concurrency suggestions;
+- lookup batch size suggestions;
 - Stop, context cancellation, blocked-worker wakeup, and Reset;
 - integer saturation and LIMIT edge cases.
 
@@ -624,9 +619,14 @@ One observed comparison was:
 
 | Operator | OFF actRows | ON actRows |
 | --- | ---: | ---: |
-| outer IndexRangeScan | 260,896 | 9,184 |
+| outer IndexRangeScan | 210,752 | 9,184 |
 | Selection | 104,542 | 1,400 |
 | TableRowIDScan | 149,344 | 2,000 |
+
+Both paths reported a maximum effective DistSQL concurrency of one in this
+single-TiKV setup. This confirms that enabling the feature does not change the
+observed request concurrency for this topology, but it is not evidence for
+multi-Region concurrency behavior.
 
 This is manual E2E evidence, not a CI guarantee and not proof of a hard
 per-request scan bound. Acceptance must prioritize result correctness and
@@ -661,7 +661,8 @@ Risks include:
   capacity;
 - recent samples may be biased if task completion order does not match the
   intended ordered consumption contract;
-- the current limiter can over-retain concurrency after selectivity improves.
+- unchanged DistSQL concurrency can still read ahead inside requests before
+  TiDB-side admission stops.
 
 The default-OFF gate limits rollout risk. Performance evaluation must compare
 latency, throughput, and RU in addition to scan counters.
@@ -698,17 +699,19 @@ query executes.
 ### Always Reduce DistSQL Concurrency to One
 
 This bounds concurrent prefetch but can substantially regress multi-Region
-latency and throughput. The proposed design starts from LIMIT-derived demand
-and increases justified concurrency while preserving the user's configured
-ceiling.
+latency and throughput. The initial implementation therefore leaves DistSQL
+concurrency unchanged and limits downstream row and handle admission instead.
+Any future adaptive RPC concurrency control needs an independent, validated
+latency or starvation signal.
 
 ### Consumer-Starvation-Based Growth
 
 Growing concurrency whenever the result queue is temporarily empty confuses
 normal pipeline gaps with genuine starvation. During system jitter, this can
 create the same positive feedback that the feature is intended to avoid.
-The current design grows only from consumed row progress and drained
-zero-output phases.
+The current design does not adapt DistSQL concurrency. Consumed row progress
+and drained zero-output phases change only logical admission windows and lookup
+task sizes.
 
 ### Request-Level Scan Budget
 
@@ -731,7 +734,7 @@ Potential extensions, in increasing implementation complexity, are:
 5. IndexMerge and partition-level budget distribution;
 6. MPP, Union, and multi-child budget allocation;
 7. strict ordered-task frontier admission;
-8. concurrency decrease based on reliable queue and latency signals;
+8. adaptive DistSQL concurrency based on reliable queue and latency signals;
 9. request-level raw scan budgets in TiKV;
 10. statement and cluster metrics for windows, waits, concurrency, and
     eligibility reasons.
@@ -750,10 +753,10 @@ ObserveStageProgress(stage, inputRows, outputRows)
 
 The initial implementation intentionally leaves these questions open:
 
-- What signal can safely reduce effective DistSQL concurrency after it has
-  grown without causing oscillation or head-of-line stalls?
+- What signal can safely adjust effective DistSQL concurrency without causing
+  oscillation or head-of-line stalls?
 - Should ordered dispatch enforce a strict task frontier rather than only a
-  shared concurrency limit?
+  row-admission window?
 - Should the lookup batch efficiency floor be separated from the logical
   admission window?
 - Which metrics and eligibility skip reasons should be exposed before the

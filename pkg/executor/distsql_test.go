@@ -263,14 +263,21 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 		key idx_join_key(join_key))`)
 	outerValues := make([]string, 0, 128)
 	for i := 1; i <= 128; i++ {
-		outerValues = append(outerValues, fmt.Sprintf("(%d,%d,%d,1,'payload_%d')", i, i, i, i))
+		filterCol := 0
+		if i == 1 || i == 3 || i == 6 || i == 9 || i == 12 || i%16 == 0 {
+			filterCol = 1
+		}
+		outerValues = append(outerValues, fmt.Sprintf("(%d,%d,%d,%d,'payload_%d')", i, i, i, filterCol, i))
 	}
 	tk.MustExec("insert into adaptive_outer values " + strings.Join(outerValues, ","))
-	innerValues := make([]string, 0, 64)
+	innerValues := make([]string, 0, 80)
 	for i := 1; i <= 64; i++ {
 		innerValues = append(innerValues, fmt.Sprintf("(%d,1,%d)", i, i))
 	}
 	innerValues = append(innerValues, "(65,3,3)", "(66,6,6)", "(67,9,9)", "(68,12,12)")
+	for i := 16; i <= 128; i += 16 {
+		innerValues = append(innerValues, fmt.Sprintf("(%d,%d,%d)", 1000+i, i, i))
+	}
 	tk.MustExec("insert into adaptive_inner values " + strings.Join(innerValues, ","))
 	tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
 	tk.MustExec("set tidb_index_join_batch_size = 32")
@@ -299,19 +306,16 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 	budgetSQL := `select /*+ inl_join(i) */ o.payload, i.v
 		from adaptive_outer o use index(idx_order_key)
 		join adaptive_inner i use index(idx_join_key) on o.join_key = i.join_key
-		where o.order_key between 1 and 128 and o.filter_col > 0
+		where o.order_key between 1 and 128 and o.filter_col >= 0
 		order by o.order_key limit 4`
-	var adaptiveRequestConcurrency atomic.Int64
-	var adaptiveRequestLimit atomic.Int64
+	var adaptiveRequestRateLimitSeen atomic.Bool
 	budgetCtx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		if req.CoprRequestRateLimit != nil {
-			adaptiveRequestConcurrency.Store(int64(req.Concurrency))
-			adaptiveRequestLimit.Store(int64(req.CoprRequestRateLimit.GetCapacity()))
+			adaptiveRequestRateLimitSeen.Store(true)
 		}
 	})
 	budgetAnalyze := fmt.Sprint(tk.MustQueryWithContext(budgetCtx, "explain analyze "+budgetSQL).Rows())
-	require.Greater(t, adaptiveRequestConcurrency.Load(), int64(1))
-	require.Equal(t, adaptiveRequestLimit.Load(), adaptiveRequestConcurrency.Load())
+	require.False(t, adaptiveRequestRateLimitSeen.Load())
 	statsStart := strings.Index(budgetAnalyze, "adaptive:{outer:")
 	require.NotEqual(t, -1, statsStart)
 	var outerFetched, outerConsumed, lookupHandles, lookupRows, outerOutstanding, lookupOutstanding uint64
@@ -325,6 +329,30 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 	require.LessOrEqual(t, lookupHandles, uint64(4))
 	require.LessOrEqual(t, outerConsumed, outerFetched)
 	require.LessOrEqual(t, lookupRows, lookupHandles)
+	lowSelectivitySQL := `select /*+ inl_join(i) */ o.order_key, i.v
+		from adaptive_outer o use index(idx_order_key)
+		join adaptive_inner i use index(idx_join_key) on o.join_key = i.join_key
+		where o.order_key between 13 and 128 and o.filter_col = 1
+		order by o.order_key limit 4`
+	lowSelectivityPlan := fmt.Sprint(tk.MustQuery("explain " + lowSelectivitySQL).Rows())
+	require.Contains(t, lowSelectivityPlan, "IndexLookUp")
+	require.Contains(t, lowSelectivityPlan, "Selection")
+	require.Contains(t, lowSelectivityPlan, "TableRowIDScan")
+	lowSelectivityOnRows := tk.MustQuery(lowSelectivitySQL).Rows()
+	require.Equal(t, testkit.Rows("16 16", "32 32", "48 48", "64 64"), lowSelectivityOnRows)
+	lowSelectivityAnalyze := fmt.Sprint(tk.MustQuery("explain analyze " + lowSelectivitySQL).Rows())
+	statsStart = strings.Index(lowSelectivityAnalyze, "adaptive:{outer:")
+	require.NotEqual(t, -1, statsStart)
+	_, err = fmt.Sscanf(
+		lowSelectivityAnalyze[statsStart:],
+		"adaptive:{outer:%d/%d, lookup:%d/%d, outstanding:%d/%d}",
+		&outerFetched, &outerConsumed, &lookupHandles, &lookupRows, &outerOutstanding, &lookupOutstanding,
+	)
+	require.NoError(t, err)
+	require.Greater(t, lookupHandles, lookupRows)
+	require.GreaterOrEqual(t, lookupRows, uint64(4))
+	require.LessOrEqual(t, outerConsumed, outerFetched)
+	require.LessOrEqual(t, lookupRows, lookupHandles)
 	orderedSQL := `select /*+ inl_join(i) */ o.order_key, i.v
 		from adaptive_outer o use index(idx_order_key)
 		join adaptive_inner i use index(idx_join_key) on o.join_key = i.join_key
@@ -336,6 +364,7 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 	tk.MustExec("set tidb_enable_adaptive_limit_scan = off")
 	offRows := tk.MustQuery(sql).Sort().Rows()
 	require.Equal(t, onRows, offRows)
+	require.Equal(t, lowSelectivityOnRows, tk.MustQuery(lowSelectivitySQL).Rows())
 	require.Equal(t, orderedOnRows, tk.MustQuery(orderedSQL).Rows())
 	require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+sql).Rows()), "adaptive:{")
 }

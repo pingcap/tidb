@@ -304,13 +304,12 @@ func TestAdaptiveLimitControllerStopInterruptsReservation(t *testing.T) {
 	require.Equal(t, uint64(fetched+pending), pendingController.Snapshot().OuterOutstandingAtStop)
 }
 
-func TestAdaptiveLimitControllerBoundsLookupAndScanAdmission(t *testing.T) {
+func TestAdaptiveLimitControllerBoundsLookupAdmission(t *testing.T) {
 	controller := NewAdaptiveLimitController(1000, 32, 100000, 32, 100000)
 
 	reserved, ok := reserveLookupForTest(t, controller, 1000)
 	require.True(t, ok)
 	require.Equal(t, 32, reserved)
-	require.Equal(t, 1, controller.SuggestedScanConcurrency(15))
 
 	controller.CompleteLookup(reserved, reserved, 1)
 	reserved, ok = reserveOuterForTest(t, controller, 32)
@@ -324,7 +323,6 @@ func TestAdaptiveLimitControllerBoundsLookupAndScanAdmission(t *testing.T) {
 	require.Equal(t, uint64(1), snapshot.LookupRows)
 	batchSize := controller.SuggestedBatchSize(1000)
 	require.Equal(t, 64, batchSize)
-	require.Equal(t, 2, controller.SuggestedScanConcurrency(15))
 
 	reserved, ok = reserveLookupForTest(t, controller, 1000)
 	require.True(t, ok)
@@ -344,7 +342,6 @@ func TestAdaptiveLimitControllerBoundsLookupAndScanAdmission(t *testing.T) {
 		require.True(t, ok)
 		phaseController.CompleteLookup(reserved, reserved, 0)
 		require.Equal(t, expected, phaseController.Snapshot().LookupWindow)
-		require.Equal(t, int(expected/32), phaseController.SuggestedScanConcurrency(15))
 	}
 	recentInput, recentOutput := phaseController.recentLookupYield.totals()
 	require.Zero(t, recentInput)

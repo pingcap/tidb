@@ -338,26 +338,6 @@ func (c *AdaptiveLimitController) AbortLookup(handles int) {
 	c.mu.Unlock()
 }
 
-// SuggestedScanConcurrency returns the scan concurrency justified by the
-// current lookup window. The caller's configured value remains the hard
-// ceiling. The initial lookup window represents one unit of scan concurrency;
-// unlike the task batch size, it stays stable as the controller adapts.
-func (c *AdaptiveLimitController) SuggestedScanConcurrency(ceiling int) int {
-	if ceiling < 1 {
-		return 1
-	}
-	c.mu.Lock()
-	if c.stopped {
-		c.mu.Unlock()
-		return 0
-	}
-	window := c.lookupWindow
-	initialWindow := c.initialLookupWindow
-	c.mu.Unlock()
-	concurrency := divideAndRoundUp(window, initialWindow)
-	return min(max(int(min(concurrency, uint64(ceiling))), 1), ceiling)
-}
-
 // SuggestedBatchSize returns the lookup-handle window bounded by the caller's
 // configured batch ceiling.
 func (c *AdaptiveLimitController) SuggestedBatchSize(ceiling int) int {
