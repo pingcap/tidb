@@ -219,3 +219,46 @@ fn the_substituted_zero_has_the_columns_own_type() {
         [["", "0000-00-00", "0.00", "0"]]
     );
 }
+
+/// The SECOND caller of `GetZeroValue`, and the case that proves the two
+/// belong together: `ALTER TABLE ... ADD COLUMN ... NOT NULL` with no
+/// DEFAULT. Go fills the value already-written rows read back through
+/// `GetColOriginDefaultValueWithoutStrictSQLMode`, which lands on the same
+/// zero -- so those rows are NOT NULL-holding, and an ordinary UPDATE of one
+/// does not trip the check the tests above install.
+///
+/// Captured from TiDB over `q1(id INT PRIMARY KEY, c INT)` holding `1|2` and
+/// `2|2`: after adding `cc SET('a','b','c','d') NOT NULL`, `dd INT NOT NULL`
+/// and `ee VARCHAR(4) NOT NULL`, every pre-existing row reads
+/// `1 3 '' 0 ''`, and `UPDATE q1 SET c=3 WHERE id=1` in between is accepted.
+#[test]
+fn a_not_null_column_added_by_alter_backfills_the_type_zero_not_null() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE q1 (id INT PRIMARY KEY, c INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO q1 (id,c) VALUES (1,2),(2,2)")
+        .unwrap();
+    session
+        .run("ALTER TABLE q1 ADD COLUMN cc SET('a','b','c','d') NOT NULL")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id,c,cc FROM q1 ORDER BY id"),
+        [["1", "2", ""], ["2", "2", ""]]
+    );
+
+    // The UPDATE is the point: under the default STRICT mode a backfilled
+    // NULL here would now be 1048 rather than a stored row.
+    session.run("UPDATE q1 SET c=3 WHERE id=1").unwrap();
+    session
+        .run("ALTER TABLE q1 ADD COLUMN dd INT NOT NULL")
+        .unwrap();
+    session
+        .run("ALTER TABLE q1 ADD COLUMN ee VARCHAR(4) NOT NULL")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id,c,cc,dd,ee FROM q1 ORDER BY id"),
+        [["1", "3", "", "0", ""], ["2", "2", "", "0", ""]]
+    );
+}

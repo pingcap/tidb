@@ -630,6 +630,7 @@ fn add_column_action(
         .clone()
         .map(crate::column_default::ColumnDefault::Value);
     let id = table.next_column_id();
+    let field_type_for_origin = field_type.clone();
     table.add_column(
         index,
         KvColumn {
@@ -641,7 +642,17 @@ fn add_column_action(
             generated: None,
             default_value: stored_default,
             // Rows written before this column existed read back the default.
-            origin_default: default_value,
+            // A NOT NULL column with NO default reads back the TYPE's zero
+            // instead of NULL: Go fills the backfill value through
+            // `GetColOriginDefaultValueWithoutStrictSQLMode`, whose
+            // `getColDefaultValueFromNil` takes the non-strict arm by
+            // construction and returns `GetZeroValue`. Captured: after
+            // `ALTER TABLE q1 ADD COLUMN cc SET('a','b','c','d') NOT NULL`
+            // the pre-existing rows read `''`, and `dd INT NOT NULL` reads
+            // `0` -- not NULL, which is why an ordinary UPDATE of such a row
+            // does not trip the NOT NULL check.
+            origin_default: default_value
+                .or_else(|| not_null.then(|| crate::bad_null::zero_value(&field_type_for_origin))),
         },
     );
     Ok(())
