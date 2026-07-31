@@ -717,60 +717,6 @@ func (p *LogicalJoin) ExtractFD() *funcdep.FDSet {
 
 // GetBaseLogicalPlan inherits the BaseLogicalPlan.LogicalPlan.<23th> implementation.
 
-// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
-func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	innerTable := p.Children()[0]
-	outerTable := p.Children()[1]
-	switchChild := false
-
-	if p.JoinType == base.LeftOuterJoin {
-		innerTable, outerTable = outerTable, innerTable
-		switchChild = true
-	}
-
-	// First, simplify this join
-	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
-		canBeSimplified := false
-		for _, expr := range predicates {
-			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr)
-			if isOk {
-				canBeSimplified = true
-				break
-			}
-		}
-		if canBeSimplified {
-			p.JoinType = base.InnerJoin
-		}
-	}
-
-	// Next simplify join children
-
-	combinedCond := mergeOnClausePredicates(p, predicates)
-	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
-		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
-	} else if p.JoinType == base.InnerJoin || p.JoinType == base.SemiJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
-		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else if p.JoinType == base.AntiSemiJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
-		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else {
-		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
-		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
-	}
-
-	if switchChild {
-		p.SetChild(0, outerTable)
-		p.SetChild(1, innerTable)
-	} else {
-		p.SetChild(0, innerTable)
-		p.SetChild(1, outerTable)
-	}
-
-	return p
-}
-
 // GetJoinChildStatsAndSchema gets the stats and schema of join children.
 func (p *LogicalJoin) GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
 	stats1, schema1 = p.Children()[1].StatsInfo(), p.Children()[1].Schema()
@@ -1974,19 +1920,6 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression, vai
 		innerTableSchema, p.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive, vaildExprFunc)
 	p.AttachOnConds(joinConds)
 	return predicates
-}
-
-func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression) []expression.Expression {
-	combinedCond := make([]expression.Expression, 0,
-		len(p.LeftConditions)+len(p.RightConditions)+
-			len(p.EqualConditions)+len(p.OtherConditions)+
-			len(predicates))
-	combinedCond = append(combinedCond, p.LeftConditions...)
-	combinedCond = append(combinedCond, p.RightConditions...)
-	combinedCond = append(combinedCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
-	combinedCond = append(combinedCond, p.OtherConditions...)
-	combinedCond = append(combinedCond, predicates...)
-	return combinedCond
 }
 
 // SemiJoinRewrite rewrites semi join to inner join with aggregation.

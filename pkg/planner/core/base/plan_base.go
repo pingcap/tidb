@@ -254,9 +254,6 @@ type LogicalPlan interface {
 	// GetBaseLogicalPlan return the baseLogicalPlan inside each logical plan.
 	GetBaseLogicalPlan() LogicalPlan
 
-	// ConvertOuterToInnerJoin converts outer joins if the matching rows are filtered.
-	ConvertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
-
 	// SetPlanIDsHash set sub operator tree's ids hash64
 	SetPlanIDsHash(uint64)
 
