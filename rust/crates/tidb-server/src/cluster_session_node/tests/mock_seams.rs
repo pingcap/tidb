@@ -150,6 +150,21 @@ impl ClusterDdl for MockDdl {
                     None => return Err(format!("Unknown table '{schema}.{table}'")),
                 }
             }
+            // An index change is the one catalog change whose correctness is
+            // not finished by the metadata: it also owes the existing rows
+            // their entries, and this mock has no rows to walk. Modelling only
+            // the metadata half would make a test PASS on exactly the shape
+            // that returns wrong rows in production, so it is refused here and
+            // exercised where the rows are real -- `plan_ddl`'s own tests for
+            // the write set, and `run-sysbench-ladder.sh`'s `ADMIN CHECK
+            // TABLE` against a Go server for the entries.
+            DdlStatement::CreateIndex { .. } | DdlStatement::DropIndex { .. } => {
+                return Err(
+                    "the mock catalog writer holds no rows, so it cannot model an index \
+                     change's backfill"
+                        .to_owned(),
+                )
+            }
         }
         let schema_version = next.schema_version;
         // The real writer refreshes the node's catalog inline, before it

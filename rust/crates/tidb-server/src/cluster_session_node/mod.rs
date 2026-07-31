@@ -57,12 +57,20 @@
 //!
 //! # DDL: the one stored-schema change this node performs
 //!
-//! `CREATE TABLE`, `DROP TABLE`, `CREATE DATABASE` and `DROP DATABASE` are not
-//! run by the session driver against its own in-memory catalog -- that copy is
-//! a *read* of the cluster's schema, so changing it alone would be a silently
-//! wrong answer. They are routed to the [`ClusterDdl`] seam, which publishes
-//! the meta-key mutations through the same optimistic 2PC the DML path uses
-//! ([`tidb_exec::real_tikv_ddl`]), and a Go TiDB then sees the object.
+//! `CREATE TABLE`, `DROP TABLE`, `CREATE DATABASE`, `DROP DATABASE`,
+//! `CREATE INDEX` and `DROP INDEX` are not run by the session driver against
+//! its own in-memory catalog -- that copy is a *read* of the cluster's schema,
+//! so changing it alone would be a silently wrong answer. They are routed to
+//! the [`ClusterDdl`] seam, which publishes the meta-key mutations through the
+//! same optimistic 2PC the DML path uses ([`tidb_exec::real_tikv_ddl`]), and a
+//! Go TiDB then sees the object.
+//!
+//! An index change publishes a second thing in that same transaction: the
+//! entries the rows the table ALREADY holds owe it. They are staged by the very
+//! `KvTable` call an `INSERT` maintains an index with, over this seam's own
+//! storage -- see [`RealClusterDdl`]'s backfiller -- because an index that
+//! exists and holds nothing loses rows from every query routed through it,
+//! with no error anywhere.
 //!
 //! Two catalogs have to catch up afterwards, and they do it at different
 //! moments for different reasons:
@@ -96,7 +104,9 @@
 //! # What this mode refuses, and why
 //!
 //! * Every stored-schema change the cluster DDL path cannot express: `ALTER`,
-//!   `TRUNCATE`, `RENAME`, `CREATE VIEW`/`INDEX`/`SEQUENCE`, and the
+//!   `TRUNCATE`, `RENAME`, `CREATE VIEW`/`SEQUENCE`, the index shapes whose
+//!   entries this node would not go on to maintain (prefix, expression,
+//!   partial, `GLOBAL`, `FULLTEXT`/`SPATIAL`/`VECTOR`), and the
 //!   `CREATE TABLE` clauses [`tidb_exec::table_info_build`] refuses (foreign
 //!   keys, partitions, ...). Each is refused with its own reason rather than a
 //!   generic unsupported error.

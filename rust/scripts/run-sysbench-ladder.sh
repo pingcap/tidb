@@ -459,7 +459,6 @@ hand_stmt "create-table-no-auto-inc" "CREATE TABLE ${SYSBENCH_DB}.sbtest1(
   c CHAR(120) DEFAULT '' NOT NULL,
   pad CHAR(60) DEFAULT '' NOT NULL,
   PRIMARY KEY (id))"
-hand_stmt "create-index-k_1" "CREATE INDEX k_1 ON ${SYSBENCH_DB}.sbtest1(k)"
 
 # oltp_common.lua's bulk insert: one multi-row VALUES list of (id, k, c, pad).
 BULK_VALUES=$(awk -v rows="${TABLE_SIZE}" 'BEGIN {
@@ -471,6 +470,48 @@ BULK_VALUES=$(awk -v rows="${TABLE_SIZE}" 'BEGIN {
 }')
 hand_stmt "bulk-insert-${TABLE_SIZE}-rows" \
   "INSERT INTO ${SYSBENCH_DB}.sbtest1 (id, k, c, pad) VALUES ${BULK_VALUES}"
+
+# oltp_common.lua:238 creates the secondary index AFTER the load, so the rows
+# it must index already exist. That ordering is the whole test: an index this
+# node published without walking them would exist, be EMPTY, and silently lose
+# every row from any query the planner routed through it.
+hand_stmt "create-index-k_1" "CREATE INDEX k_1 ON ${SYSBENCH_DB}.sbtest1(k)"
+
+# The decisive check, and not our own arithmetic: a real Go tidb-server on the
+# same TiKV verifies every index entry against every row. This is what ADMIN
+# CHECK TABLE exists for, and a backfill that missed rows fails it.
+go_admin_check() {
+  local label=$1 output
+  output=$("${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" \
+    -uroot "${MYSQL_PLUGIN_ARGS[@]}" -N -B -e \
+    "ADMIN CHECK TABLE ${SYSBENCH_DB}.sbtest1" 2>&1)
+  if [[ $? -eq 0 ]]; then
+    hand_pass=$((hand_pass + 1))
+    note "OK   ${label}: Go accepts the index against the rows"
+  else
+    hand_fail=$((hand_fail + 1))
+    note "FAIL ${label}: ${output//$'\n'/ | }"
+  fi
+}
+# Go's domain picks the new schema version up on its own lease tick.
+sleep 3
+go_admin_check "go-admin-check-table-after-create-index"
+
+# The same rows through the new index and around it. `USE INDEX` and
+# `IGNORE INDEX` disagree exactly when the index is missing entries -- the one
+# comparison that catches a partial backfill from the SQL side, and the one
+# that caught a real bug in the generated-column unit.
+INDEXED=$(rust_sql -N -B -e \
+  "SELECT COUNT(*), SUM(id) FROM ${SYSBENCH_DB}.sbtest1 USE INDEX (k_1) WHERE k BETWEEN 1 AND ${TABLE_SIZE}" 2>&1)
+SCANNED=$(rust_sql -N -B -e \
+  "SELECT COUNT(*), SUM(id) FROM ${SYSBENCH_DB}.sbtest1 IGNORE INDEX (k_1) WHERE k BETWEEN 1 AND ${TABLE_SIZE}" 2>&1)
+if [[ "${INDEXED}" == "${SCANNED}" ]]; then
+  hand_pass=$((hand_pass + 1))
+  note "OK   index-vs-table-scan-agree: ${INDEXED//$'\t'/ }"
+else
+  hand_fail=$((hand_fail + 1))
+  note "FAIL index-vs-table-scan-agree: USE INDEX ${INDEXED//$'\t'/ } vs IGNORE INDEX ${SCANNED//$'\t'/ }"
+fi
 
 hand_stmt "count-star" "SELECT COUNT(*) FROM ${SYSBENCH_DB}.sbtest1"
 hand_stmt "checksum" \
@@ -504,6 +545,14 @@ hand_stmt "post-txn-checksum" \
 note "go post-txn: $("${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" \
   -uroot "${MYSQL_PLUGIN_ARGS[@]}" -N -B -e \
   "SELECT COUNT(*), SUM(id), SUM(k) FROM ${SYSBENCH_DB}.sbtest1" 2>&1)"
+# Dropping the index must take its entries with it: a stale entry under an id
+# a later index could carry reads as a row that is not there. Go's own checker
+# is again the oracle -- it walks the table's indexes as the catalog now
+# declares them.
+hand_stmt "drop-index-k_1" "DROP INDEX k_1 ON ${SYSBENCH_DB}.sbtest1"
+sleep 3
+go_admin_check "go-admin-check-table-after-drop-index"
+
 note "rung 7 totals: ${hand_pass} accepted, ${hand_fail} refused"
 
 note "sysbench ladder finished; artifacts under ${OUT_DIR}"

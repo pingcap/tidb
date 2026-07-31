@@ -6,12 +6,16 @@ node.**
 
 The connection blocker is gone: the node now serves inbound TLS on the MySQL
 port, so its capabilities read `CLIENT_SSL=yes` and MariaDB Connector/C stops
-refusing it. `prepare` gets past the connect, past `CREATE TABLE`, and through
-all 1,000 inserts; the first statement it still cannot get is `CREATE INDEX`.
+refusing it. `CREATE INDEX` and `DROP INDEX` are catalog changes this node
+performs, backfill included, verified by Go's own `ADMIN CHECK TABLE`.
+`AUTO_INCREMENT` is refused honestly at `CREATE` (blocker 3) instead of
+producing a table the node could not see.
 
-What remains is a DDL surface question, not a connectivity one: `CREATE INDEX`
-is refused (blocker 2) and `AUTO_INCREMENT` is refused at `CREATE TABLE`
-(blocker 3). Both are named below and neither prevents a number.
+**Every rung result below was measured with exactly one of blockers 1 and 2
+fixed, because the two fixes were built in parallel and each ladder run
+predates the other's landing. The combined tree has NOT been measured. Until a
+run on the merged tip replaces these rows, read each one as evidence about its
+own fix, not as the current end-to-end state.**
 
 Measured on 2026-08-01, `hparser-integration` + this unit, release build,
 macOS arm64, against a `tiup playground v8.5.6` cluster (1 PD, 1 TiKV, 1 Go
@@ -32,11 +36,11 @@ port is still reachable).
 | 2. Stock MySQL client handshake, auth, `SELECT 1` | OK, `mysql_native_password` |
 | 2b. TLS accept control | OK both ways: `--ssl-mode=DISABLED` and `--ssl-mode=REQUIRED` each return `SELECT 1` |
 | 3. `CREATE DATABASE sbtest` through the Rust node | OK |
-| 3b. Capability probe | `rust: 0x00158a08 CLIENT_SSL=yes`, `go: 0x0015aeaf CLIENT_SSL=yes` |
-| 4. `sysbench oltp_read_only ... prepare` | `--auto-inc=on` FAILs at `CREATE TABLE` (blocker 3); `--auto-inc=off` connects, creates the table, inserts all 1,000 rows, then **FAILs at `CREATE INDEX` (blocker 2)** |
-| 5. Dataset correctness | skipped — the ladder only checks a dataset it saw `prepare` finish |
-| 6. `oltp_point_select` / `read_only` / `write_only` / `read_write`, both `--db-ps-mode=disable` and default | **all eight ran** against the table rung 4 left behind |
-| 7. sysbench's own statements driven by hand | 16 accepted, 4 refused (the 3 `AUTO_INCREMENT` cases and `CREATE INDEX`) |
+| 3b. Capability probe | `rust: 0x00158a08 CLIENT_SSL=yes`, `go: 0x0015aeaf CLIENT_SSL=yes` (TLS run) |
+| 4. `sysbench oltp_read_only ... prepare` | TLS run: `--auto-inc=off` connects, creates the table, inserts all 1,000 rows, then FAILs at `CREATE INDEX`. Index run (pre-TLS): FAIL at connect |
+| 5. Dataset correctness | skipped in both runs — the ladder only checks a dataset it saw `prepare` finish |
+| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | TLS run: **all eight ran** against the table rung 4 left behind. Index run: all FAIL at connect |
+| 7. sysbench's own statements driven by hand | TLS run 16/4; index run **21 accepted, 3 refused** (was 17/3), the 3 being `AUTO_INCREMENT` |
 
 ### Throughput, `--threads=1 --time=10`, no secondary index
 
@@ -112,26 +116,56 @@ not. `--no-auto-tls` restores a plaintext-only port.
 The port is not TLS-only: rung 2b checks both directions, and the stock MySQL
 client connects under `--ssl-mode=DISABLED` and under `--ssl-mode=REQUIRED`.
 Client-certificate authentication (`ssl-ca`, `REQUIRE X509`) is still not
-served.
+served, and `RequireSecureTransport` is still not consulted by the connection
+path — a pre-existing gap, named here rather than papered over.
 
-## Blocker 2 (now the first failure): `CREATE INDEX` is refused
+## Blocker 2 (FIXED): `CREATE INDEX` runs, backfill and all
 
-This is where `prepare` stops today. `oltp_common.lua:238` runs
-`CREATE INDEX k_1 ON sbtest1(k)` during `prepare`, after the table and all
-1,000 rows are already in.
-The node answers:
+**Update, measured 2026-08-01 on `hparser-integration` at `ed62cf95f5`.**
+`CREATE INDEX` and `DROP INDEX` are catalog changes this node performs. The
+statement `oltp_common.lua:238` issues now succeeds against a table that
+already holds its rows, which is the case that matters — sysbench creates the
+secondary index AFTER `prepare` has loaded the table, so the backfill is the
+load-bearing part and not an optimization.
 
-```
-ERROR 1105 (HY000): this node changes the cluster's catalog for CREATE TABLE,
-DROP TABLE, CREATE DATABASE and DROP DATABASE only; run this statement on a
-TiDB server
-```
+Rung 7 was reordered to match sysbench (load first, index second) and now ends
+with a real oracle rather than our own arithmetic:
 
-sysbench can be told to skip it (`--create-secondary=off`), but then
-`oltp_read_only`'s range and `SUM(k)` queries lose the index they exist to
-exercise, and the benchmark stops measuring what it is for. Note the node does
-maintain secondary indexes it was configured with (`--read-table`'s trailing
-index section), so this is a DDL-surface gap, not a storage gap.
+| Check | Result |
+| --- | --- |
+| `CREATE INDEX k_1 ON sbtest1(k)` over 1,000 loaded rows | OK |
+| `ADMIN CHECK TABLE sbtest1` **on the Go tidb-server** | OK — Go verifies every entry against every row |
+| `USE INDEX (k_1)` vs `IGNORE INDEX (k_1)`, `COUNT(*), SUM(id)` | `1000 500500` both ways |
+| `DROP INDEX k_1` | OK |
+| `ADMIN CHECK TABLE` after the drop | OK — no stale entry left behind |
+
+Rung 7 totals moved from 17 accepted / 3 refused to **21 accepted / 3
+refused**; the three refusals are all blocker 3 (`AUTO_INCREMENT`).
+
+`--create-secondary=off` is no longer needed, so `oltp_read_only`'s range and
+`SUM(k)` queries keep the index they exist to exercise.
+
+Two things this deliberately does not do, both stated in
+`tidb_exec::cluster_ddl`'s module doc:
+
+* Go's `delete only` -> `write only` -> `reorg` -> `public` ladder is not
+  ported. The index and every entry the existing rows owe it become visible at
+  ONE commit, so a row another writer commits between the DDL transaction's
+  `start_ts` and its commit is indexed by neither the scan nor that writer.
+  This widens the node's existing single-writer assumption from "no concurrent
+  DDL" to "no concurrent WRITE to the table being indexed", and unlike the DDL
+  half it is not enforced by a write conflict.
+* Index shapes whose entries this node would not go on to maintain — prefix,
+  expression, partial, `GLOBAL`, `FULLTEXT`/`SPATIAL`/`VECTOR` — are refused at
+  admission, before a timestamp is spent. Publishing one would write a
+  `TableInfo` this node's own catalog loader then drops, so the table would
+  vanish from the connection that indexed it.
+
+Worth recording: on this machine the **Go** control run could not create the
+index at all (`error 8256: Check ingest environment failed: no enough space in
+/tmp/tidb/tmp_ddl-45000`), while the Rust node could. Go's add-index goes
+through the ingest/lightning path and needs that temp directory; this node's
+backfill writes entries through the ordinary 2PC and needs no local disk.
 
 ## Blocker 3 (FIXED as a refusal): `AUTO_INCREMENT` is now refused at CREATE
 
@@ -216,13 +250,15 @@ integer-to-integer.
 
 1. ~~Inbound MySQL-port TLS~~ — done; `CLIENT_SSL` is advertised because it is
    served.
-2. `CREATE INDEX` in the DDL surface, so `prepare` runs to completion. This is
-   what currently makes the rung-6 numbers non-comparable: without the
-   secondary index, `oltp_read_only` scans where it should seek. It is also
-   what gates rung 5's Rust-vs-Go checksum comparison, since the ladder only
-   checks a dataset whose `prepare` succeeded.
-3. `--auto-inc=off` remains the documented configuration; serving the clause
-   needs the persistent allocator unit described under blocker 3.
+2. ~~`CREATE INDEX` in the DDL surface, so `prepare` runs unmodified.~~ Done —
+   see blocker 2 above, verified by Go's own `ADMIN CHECK TABLE`.
+3. `--auto-inc=off` remains the documented configuration: the create/serve
+   mismatch is resolved as a refusal, and serving the clause needs the
+   persistent allocator unit described under blocker 3.
+4. **A ladder run on a tree carrying both fix 1 and fix 2.** Neither run above
+   had the other's fix, so nothing here yet shows `prepare` completing — which
+   is also what gates rung 5's Rust-vs-Go checksum and what makes the rung-6
+   numbers comparable, since they were taken with no secondary index.
 
 With `--create-secondary=off` a number is available today, and the table above
 is it.
@@ -232,6 +268,11 @@ is it.
 The Go control rung fails, but on the Go side and for a local reason:
 `CREATE INDEX` returns `error 8256: Check ingest environment failed: no enough
 space in /tmp/tidb/tmp_ddl-<port>`. That is this machine's disk, not a TiDB or
-Rust defect — it reproduced again on 2026-08-01. A Go-side baseline to compare
-the rung-6 numbers against will need space freed for the playground's DDL temp
-directory.
+Rust defect; it reproduced on both 2026-08-01 runs. A Go-side baseline to
+compare the rung-6 numbers against will need space freed for the playground's
+DDL temp directory.
+
+In the same run, Go could not create the index and the Rust node could — not a
+correctness claim about either, just a difference in where the work stages:
+Go's add-index reorg goes through that local temp directory, while this node's
+backfill writes its entries through the ordinary 2PC and needs no local disk.
