@@ -504,7 +504,7 @@ PARTITION BY LIST (`a`)
  PARTITION `pa` VALUES IN (45,23,15),
  PARTITION `p2` VALUES IN (24,63))
 alter table t modify a varchar(20);
-Error 8200 (HY000): Unsupported modify column: this column has primary key flag
+Error 8200 (HY000): Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions
 drop table t;
 create table t (a int, b varchar(55), c int) partition by list (abs(a))
 (partition p0 values in (-1,0,1),

@@ -161,7 +161,10 @@ func TestModifyColumn(t *testing.T) {
 	for _, tt := range tests {
 		colA := colDefStrToColInfo(t, tt.origin, ctx)
 		colB := colDefStrToColInfo(t, tt.to, ctx)
-		err := checkModifyTypes(colA, colB, false)
+		tblInfo := &model.TableInfo{
+			Columns: []*model.ColumnInfo{colA},
+		}
+		err := checkModifyTypes(tblInfo, colA, colB, false)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
 		} else {

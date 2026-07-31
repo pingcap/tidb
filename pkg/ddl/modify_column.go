@@ -262,7 +262,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		// Previously, the second DDL will be submitted successfully (VARCHAR(255) utf8 -> VARCHAR(100) utf8 is OK)
 		// but fail during execution, since the columnID has changed. However, as we now may reuse the old column,
 		// we must check the type again here as utf8mb4->utf8 is an invalid change.
-		if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
+		if err = checkModifyTypes(tblInfo, oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -303,7 +303,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
+	if err = checkModifyTypes(tblInfo, oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -338,9 +338,9 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column"))
 	}
-	if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
+	if mysql.HasPriKeyFlag(oldCol.GetFlag()) && tblInfo.HasClusteredIndex() {
 		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify column in primary key")
+		return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify column in clustered primary key")
 	}
 
 	if job.SchemaState == model.StateNone {
@@ -1677,7 +1677,7 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(col.ColumnInfo, newCol.ColumnInfo, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
+	if err = checkModifyTypes(t.Meta(), col.ColumnInfo, newCol.ColumnInfo, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		return nil, errors.Trace(err)
 	}
 	mayNeedChangeColData := !noReorgDataStrict(t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
@@ -2010,8 +2010,9 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 
 // checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
 // or change by reorg. It returns error if the two types are incompatible and correlated change are not
-// supported. However, even the two types can be change, if the "origin" type contains primary key, error will be returned.
-func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool) error {
+// supported. However, even the two types can be changed, an error will be returned if the "origin" column is part of a
+// clustered primary key because changing it requires rewriting the row handle.
+func checkModifyTypes(tbInfo *model.TableInfo, from, to *model.ColumnInfo, needRewriteCollationData bool) error {
 	fromFt := &from.FieldType
 	toFt := &to.FieldType
 	canReorg, err := types.CheckModifyTypeCompatible(fromFt, toFt)
@@ -2019,7 +2020,7 @@ func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool)
 		if !canReorg {
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(err.Error()))
 		}
-		if mysql.HasPriKeyFlag(fromFt.GetFlag()) {
+		if mysql.HasPriKeyFlag(fromFt.GetFlag()) && tbInfo.HasClusteredIndex() {
 			msg := "this column has primary key flag"
 			return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}

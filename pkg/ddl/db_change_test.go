@@ -1105,7 +1105,7 @@ func TestParallelAlterModifyColumnAndAddPK(t *testing.T) {
 	sql2 := "ALTER TABLE t MODIFY COLUMN b tinyint;"
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
-		require.EqualError(t, err2, "[ddl:8200]Unsupported modify column: this column has primary key flag")
+		require.NoError(t, err2)
 		tk.MustExec("select * from t")
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
