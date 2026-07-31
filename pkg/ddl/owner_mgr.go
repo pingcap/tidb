@@ -80,7 +80,8 @@ func (om *ownerManager) Start(ctx context.Context, store kv.Storage) error {
 	if config.GetGlobalConfig().Store != config.StoreTypeTiKV {
 		return nil
 	}
-	cli, err := storepkg.NewEtcdCli(store)
+	cli, err := storepkg.NewEtcdCli(store,
+		storepkg.WithEtcdHealthChecker(storepkg.DDLOwnerEtcdClientPurpose))
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -72,6 +72,9 @@ var (
 	ConfigStatus                    *prometheus.GaugeVec
 	TiFlashQueryTotalCounter        *prometheus.CounterVec
 	TiFlashFailedMPPStoreState      *prometheus.GaugeVec
+	EtcdClientEndpointState         *prometheus.GaugeVec
+	EtcdClientEndpointLatency       *prometheus.HistogramVec
+	EtcdClientActiveEndpoints       *prometheus.GaugeVec
 	PDAPIExecutionHistogram         *prometheus.HistogramVec
 	PDAPIRequestCounter             *prometheus.CounterVec
 	CPUProfileCounter               prometheus.Counter
@@ -397,6 +400,31 @@ func InitServerMetrics() {
 			Name:      "tiflash_failed_store",
 			Help:      "Statues of failed tiflash mpp store,-1 means detector heartbeat,0 means reachable,1 means abnormal.",
 		}, []string{LblAddress})
+
+	EtcdClientEndpointState = metricscommon.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "etcd_client_endpoint_state",
+			Help:      "Whether an etcd endpoint health probe succeeded.",
+		}, []string{"purpose", "endpoint"})
+
+	EtcdClientEndpointLatency = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "etcd_client_endpoint_latency_seconds",
+			Help:      "Bucketed histogram of etcd endpoint health probe latency.",
+			Buckets:   []float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+		}, []string{"purpose", "endpoint"})
+
+	EtcdClientActiveEndpoints = metricscommon.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "etcd_client_active_endpoints",
+			Help:      "Number of etcd endpoints selected by the health checker.",
+		}, []string{"purpose"})
 
 	PDAPIExecutionHistogram = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{

@@ -17,6 +17,7 @@ package store
 import (
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -25,13 +26,46 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/keepalive"
 )
+
+const defaultEtcdAutoSyncInterval = 30 * time.Second
+
+// EtcdClientPurpose identifies a bounded class of etcd clients in logs and metrics.
+type EtcdClientPurpose string
+
+const (
+	// DomainEtcdClientPurpose identifies the keyspace-prefixed Domain client.
+	DomainEtcdClientPurpose EtcdClientPurpose = "domain"
+	// DomainUnprefixedEtcdClientPurpose identifies the unprefixed Domain client.
+	DomainUnprefixedEtcdClientPurpose EtcdClientPurpose = "domain-unprefixed"
+	// DDLOwnerEtcdClientPurpose identifies the client used to campaign for DDL owner.
+	DDLOwnerEtcdClientPurpose EtcdClientPurpose = "ddl-owner"
+	// DDLBootstrapEtcdClientPurpose identifies the client used for the bootstrap and upgrade lock.
+	DDLBootstrapEtcdClientPurpose EtcdClientPurpose = "ddl-bootstrap"
+)
+
+type etcdClientOptions struct {
+	enableHealthChecker bool
+	purpose             EtcdClientPurpose
+}
+
+// EtcdClientOption configures an etcd client created by this package.
+type EtcdClientOption func(*etcdClientOptions)
+
+// WithEtcdHealthChecker enables endpoint health checking for the given client purpose.
+func WithEtcdHealthChecker(purpose EtcdClientPurpose) EtcdClientOption {
+	return func(options *etcdClientOptions) {
+		options.enableHealthChecker = true
+		options.purpose = purpose
+	}
+}
 
 // NewEtcdCli creates a new clientv3.Client from store if the store support it.
 // the returned client will have the same keyspace the store, and it might be nil.
 // TODO currently uni-store/mock-tikv/tikv all implements EtcdBackend while they don't support actually.
 // refactor this part.
-func NewEtcdCli(store kv.Storage) (*clientv3.Client, error) {
+func NewEtcdCli(store kv.Storage, opts ...EtcdClientOption) (*clientv3.Client, error) {
 	etcdStore, addrs, err := GetEtcdAddrs(store)
 	if err != nil {
 		return nil, err
@@ -39,7 +73,7 @@ func NewEtcdCli(store kv.Storage) (*clientv3.Client, error) {
 	if len(addrs) == 0 {
 		return nil, nil
 	}
-	cli, err := NewEtcdCliWithAddrs(addrs, etcdStore)
+	cli, err := NewEtcdCliWithAddrs(addrs, etcdStore, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -63,24 +97,33 @@ func GetEtcdAddrs(store kv.Storage) (kv.EtcdBackend, []string, error) {
 }
 
 // NewEtcdCliWithAddrs creates a new clientv3.Client with specified addrs and etcd backend.
-func NewEtcdCliWithAddrs(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
+func NewEtcdCliWithAddrs(addrs []string, ebd kv.EtcdBackend, opts ...EtcdClientOption) (*clientv3.Client, error) {
+	options := etcdClientOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
 	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
 	backoffCfg := backoff.DefaultConfig
 	backoffCfg.MaxDelay = 3 * time.Second
-	dialKeepAliveTime := time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
-	clientCfg := clientv3.Config{
-		LogConfig: &etcdLogCfg,
-		Endpoints: addrs,
+	autoSyncInterval := defaultEtcdAutoSyncInterval
+	if options.enableHealthChecker {
 		// Endpoint membership and health are synchronized by etcdHealthChecker.
-		AutoSyncInterval:     0,
-		DialTimeout:          5 * time.Second,
-		DialKeepAliveTime:    dialKeepAliveTime,
-		DialKeepAliveTimeout: cfg.TiKVClient.GetGrpcKeepAliveTimeout(),
+		autoSyncInterval = 0
+	}
+	clientCfg := clientv3.Config{
+		LogConfig:        &etcdLogCfg,
+		Endpoints:        addrs,
+		AutoSyncInterval: autoSyncInterval,
+		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
 			grpc.WithConnectParams(grpc.ConnectParams{
 				Backoff: backoffCfg,
+			}),
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
+				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
 			}),
 		},
 		TLS: ebd.TLSConfig(),
@@ -90,10 +133,12 @@ func NewEtcdCliWithAddrs(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, 
 		return nil, err
 	}
 
-	checkerInterval := dialKeepAliveTime
-	if checkerInterval <= 0 {
-		checkerInterval = defaultEtcdHealthCheckInterval
+	if options.enableHealthChecker {
+		checkerInterval := defaultEtcdHealthCheckInterval
+		failpoint.Inject("fastEtcdHealthCheck", func() {
+			checkerInterval = 100 * time.Millisecond
+		})
+		initEtcdHealthChecker(checkerInterval, clientCfg, cli, options.purpose)
 	}
-	initEtcdHealthChecker(checkerInterval, clientCfg, cli)
 	return cli, nil
 }

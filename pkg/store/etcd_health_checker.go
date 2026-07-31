@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
@@ -64,6 +66,10 @@ type etcdHealthChecker struct {
 	tickerInterval time.Duration
 	clientConfig   clientv3.Config
 	loops          sync.WaitGroup
+	purpose        EtcdClientPurpose
+
+	membershipMu      sync.RWMutex
+	membershipVersion uint64
 
 	// endpoint(string) -> *healthyEtcdClient
 	healthyClients sync.Map
@@ -73,11 +79,17 @@ type etcdHealthChecker struct {
 	client *clientv3.Client
 }
 
-func initEtcdHealthChecker(tickerInterval time.Duration, clientConfig clientv3.Config, client *clientv3.Client) *etcdHealthChecker {
+func initEtcdHealthChecker(
+	tickerInterval time.Duration,
+	clientConfig clientv3.Config,
+	client *clientv3.Client,
+	purpose EtcdClientPurpose,
+) *etcdHealthChecker {
 	checker := &etcdHealthChecker{
 		tickerInterval: tickerInterval,
 		clientConfig:   clientConfig,
 		client:         client,
+		purpose:        purpose,
 	}
 	ctx := client.Ctx()
 	checker.loops.Add(2)
@@ -104,7 +116,8 @@ func (checker *etcdHealthChecker) syncer(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			logutil.BgLogger().Info("etcd client is closed, exit the endpoint syncer")
+			logutil.BgLogger().Info("etcd client is closed, exit the endpoint syncer",
+				zap.String("purpose", string(checker.purpose)))
 			return
 		case <-ticker.C:
 			checker.update(ctx)
@@ -119,27 +132,37 @@ func (checker *etcdHealthChecker) inspector(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			logutil.BgLogger().Info("etcd client is closed, exit the health inspector")
+			logutil.BgLogger().Info("etcd client is closed, exit the health inspector",
+				zap.String("purpose", string(checker.purpose)))
 			return
 		case <-ticker.C:
-			lastEndpoints, pickedEndpoints, changed := checker.patrol(ctx)
-			if len(pickedEndpoints) == 0 {
+			patrol := checker.patrol(ctx)
+			if !patrol.valid {
+				continue
+			}
+			metrics.EtcdClientActiveEndpoints.WithLabelValues(string(checker.purpose)).Set(float64(len(patrol.pickedEndpoints)))
+			if len(patrol.pickedEndpoints) == 0 {
 				// Resetting closes the existing sub-connections and avoids waiting for
 				// gRPC's exponential reconnect backoff when every endpoint is down.
 				if time.Since(lastAvailable) > etcdServerDisconnectedTimeout {
-					logutil.BgLogger().Info("no available etcd endpoint, reset endpoints",
-						zap.Strings("last-endpoints", lastEndpoints))
-					resetEtcdClientEndpoints(checker.client, lastEndpoints...)
+					if checker.resetGuardedClientEndpoints(patrol.membershipVersion, patrol.lastEndpoints) {
+						logutil.BgLogger().Info("no available etcd endpoint, reset endpoints",
+							zap.Strings("last-endpoints", patrol.lastEndpoints),
+							zap.String("purpose", string(checker.purpose)))
+					}
 				}
 				continue
 			}
-			if changed {
-				checker.client.SetEndpoints(pickedEndpoints...)
+			if patrol.changed {
+				if !checker.setGuardedClientEndpoints(patrol.membershipVersion, patrol.pickedEndpoints) {
+					continue
+				}
 				logutil.BgLogger().Info("update etcd endpoints",
-					zap.Int("last-endpoint-count", len(lastEndpoints)),
-					zap.Int("endpoint-count", len(pickedEndpoints)),
-					zap.Strings("last-endpoints", lastEndpoints),
-					zap.Strings("endpoints", checker.client.Endpoints()))
+					zap.Int("last-endpoint-count", len(patrol.lastEndpoints)),
+					zap.Int("endpoint-count", len(patrol.pickedEndpoints)),
+					zap.Strings("last-endpoints", patrol.lastEndpoints),
+					zap.Strings("endpoints", checker.client.Endpoints()),
+					zap.String("purpose", string(checker.purpose)))
 			}
 			lastAvailable = time.Now()
 		}
@@ -147,10 +170,13 @@ func (checker *etcdHealthChecker) inspector(ctx context.Context) {
 }
 
 func (checker *etcdHealthChecker) close() {
+	checker.membershipMu.Lock()
+	defer checker.membershipMu.Unlock()
 	checker.healthyClients.Range(func(key, _ any) bool {
-		checker.removeClient(key.(string))
+		checker.removeClientLocked(key.(string))
 		return true
 	})
+	metrics.EtcdClientActiveEndpoints.WithLabelValues(string(checker.purpose)).Set(0)
 }
 
 func resetEtcdClientEndpoints(client *clientv3.Client, endpoints ...string) {
@@ -168,9 +194,24 @@ type etcdHealthProbeClient struct {
 	client   *healthyEtcdClient
 }
 
-func (checker *etcdHealthChecker) patrol(ctx context.Context) (lastEndpoints, pickedEndpoints []string, changed bool) {
-	clients := checker.snapshotClients()
+type etcdEndpointHealthResult struct {
+	endpoint string
+	took     time.Duration
+	healthy  bool
+}
+
+type etcdHealthPatrolResult struct {
+	lastEndpoints     []string
+	pickedEndpoints   []string
+	changed           bool
+	membershipVersion uint64
+	valid             bool
+}
+
+func (checker *etcdHealthChecker) patrol(ctx context.Context) etcdHealthPatrolResult {
+	clients, membershipVersion := checker.snapshotClients()
 	probeCh := make(chan etcdHealthProbe, len(clients))
+	healthResultCh := make(chan etcdEndpointHealthResult, len(clients))
 	var wg sync.WaitGroup
 	for _, probeClient := range clients {
 		wg.Add(1)
@@ -179,13 +220,18 @@ func (checker *etcdHealthChecker) patrol(ctx context.Context) (lastEndpoints, pi
 			endpoint := probeClient.endpoint
 			healthyClient := probeClient.client
 			start := time.Now()
-			if !isEtcdEndpointHealthy(ctx, healthyClient.Client) {
-				logutil.BgLogger().Warn("etcd endpoint is unhealthy",
-					zap.String("endpoint", endpoint),
-					zap.Duration("took", time.Since(start)))
+			healthy := isEtcdEndpointHealthy(ctx, healthyClient.Client)
+			took := time.Since(start)
+			healthResultCh <- etcdEndpointHealthResult{endpoint: endpoint, took: took, healthy: healthy}
+			if !healthy {
+				if ctx.Err() == nil {
+					logutil.BgLogger().Warn("etcd endpoint is unhealthy",
+						zap.String("endpoint", endpoint),
+						zap.Duration("took", took),
+						zap.String("purpose", string(checker.purpose)))
+				}
 				return
 			}
-			took := time.Since(start)
 			if checker.loadClient(endpoint) != healthyClient {
 				return
 			}
@@ -195,18 +241,44 @@ func (checker *etcdHealthChecker) patrol(ctx context.Context) (lastEndpoints, pi
 	}
 	wg.Wait()
 	close(probeCh)
-
-	lastEndpoints = checker.client.Endpoints()
-	pickedEndpoints = checker.pickEndpoints(probeCh)
-	if len(pickedEndpoints) > 0 {
-		checker.updateEvictedEndpoints(lastEndpoints, pickedEndpoints)
-		pickedEndpoints = checker.filterEvictedEndpoints(pickedEndpoints)
+	close(healthResultCh)
+	if ctx.Err() != nil {
+		return etcdHealthPatrolResult{}
 	}
-	return lastEndpoints, pickedEndpoints, !equivalentStringSlices(lastEndpoints, pickedEndpoints)
+
+	checker.membershipMu.RLock()
+	defer checker.membershipMu.RUnlock()
+	patrol := etcdHealthPatrolResult{
+		lastEndpoints:     checker.client.Endpoints(),
+		membershipVersion: membershipVersion,
+	}
+	if checker.membershipVersion != membershipVersion {
+		return patrol
+	}
+	patrol.valid = true
+	for result := range healthResultCh {
+		metrics.EtcdClientEndpointLatency.WithLabelValues(string(checker.purpose), result.endpoint).Observe(result.took.Seconds())
+		state := 0.0
+		if result.healthy {
+			state = 1
+		}
+		metrics.EtcdClientEndpointState.WithLabelValues(string(checker.purpose), result.endpoint).Set(state)
+	}
+	patrol.pickedEndpoints = checker.pickEndpoints(probeCh)
+	if len(patrol.pickedEndpoints) > 0 {
+		checker.updateEvictedEndpoints(patrol.lastEndpoints, patrol.pickedEndpoints)
+		patrol.pickedEndpoints = checker.filterEvictedEndpoints(patrol.pickedEndpoints)
+	}
+	patrol.changed = !equivalentStringSlices(patrol.lastEndpoints, patrol.pickedEndpoints)
+	return patrol
 }
 
 func isEtcdEndpointHealthy(ctx context.Context, client *clientv3.Client) bool {
-	ctx, cancel := context.WithTimeout(clientv3.WithRequireLeader(ctx), etcdHealthCheckTimeout)
+	timeout := etcdHealthCheckTimeout
+	failpoint.Inject("fastEtcdHealthCheck", func() {
+		timeout = 500 * time.Millisecond
+	})
+	ctx, cancel := context.WithTimeout(clientv3.WithRequireLeader(ctx), timeout)
 	defer cancel()
 	_, err := client.Get(ctx, "health")
 	// Permission denied proves that the request reached consensus, which is enough
@@ -256,7 +328,8 @@ func (checker *etcdHealthChecker) updateEvictedEndpoints(lastEndpoints, pickedEn
 			checker.evictedEndpoints.Store(endpoint, 0)
 			logutil.BgLogger().Info("reset evicted etcd endpoint picked count",
 				zap.String("endpoint", endpoint),
-				zap.Int("previous-count", pickedCount))
+				zap.Int("previous-count", pickedCount),
+				zap.String("purpose", string(checker.purpose)))
 		}
 		return true
 	})
@@ -269,7 +342,9 @@ func (checker *etcdHealthChecker) updateEvictedEndpoints(lastEndpoints, pickedEn
 			continue
 		}
 		checker.evictedEndpoints.Store(endpoint, 0)
-		logutil.BgLogger().Info("evict etcd endpoint", zap.String("endpoint", endpoint))
+		logutil.BgLogger().Info("evict etcd endpoint",
+			zap.String("endpoint", endpoint),
+			zap.String("purpose", string(checker.purpose)))
 	}
 
 	for _, endpoint := range pickedEndpoints {
@@ -279,7 +354,8 @@ func (checker *etcdHealthChecker) updateEvictedEndpoints(lastEndpoints, pickedEn
 			logutil.BgLogger().Info("evicted etcd endpoint picked again",
 				zap.String("endpoint", endpoint),
 				zap.Int("picked-count", pickedCount),
-				zap.Int("picked-count-threshold", etcdEndpointPickedThreshold))
+				zap.Int("picked-count-threshold", etcdEndpointPickedThreshold),
+				zap.String("purpose", string(checker.purpose)))
 		}
 	}
 }
@@ -295,13 +371,15 @@ func (checker *etcdHealthChecker) filterEvictedEndpoints(endpoints []string) []s
 			checker.evictedEndpoints.Delete(endpoint)
 			logutil.BgLogger().Info("add evicted etcd endpoint back",
 				zap.String("endpoint", endpoint),
-				zap.Int("picked-count", pickedCount))
+				zap.Int("picked-count", pickedCount),
+				zap.String("purpose", string(checker.purpose)))
 		}
 		pickedEndpoints = append(pickedEndpoints, endpoint)
 	}
 	if len(pickedEndpoints) == 0 {
 		logutil.BgLogger().Warn("all etcd endpoints are evicted, use the picked endpoints",
-			zap.Strings("endpoints", endpoints))
+			zap.Strings("endpoints", endpoints),
+			zap.String("purpose", string(checker.purpose)))
 		return endpoints
 	}
 	return pickedEndpoints
@@ -310,10 +388,16 @@ func (checker *etcdHealthChecker) filterEvictedEndpoints(endpoints []string) []s
 func (checker *etcdHealthChecker) update(ctx context.Context) {
 	endpoints := checker.syncURLs(ctx)
 	if len(endpoints) == 0 {
-		logutil.BgLogger().Warn("no available etcd endpoint returned by the cluster")
+		if ctx.Err() != nil {
+			return
+		}
+		logutil.BgLogger().Warn("no available etcd endpoint returned by the cluster",
+			zap.String("purpose", string(checker.purpose)))
 		return
 	}
 
+	checker.membershipMu.Lock()
+	defer checker.membershipMu.Unlock()
 	endpointSet := make(map[string]struct{}, len(endpoints))
 	for _, endpoint := range endpoints {
 		endpointSet[endpoint] = struct{}{}
@@ -321,21 +405,23 @@ func (checker *etcdHealthChecker) update(ctx context.Context) {
 	for endpoint := range endpointSet {
 		client := checker.loadClient(endpoint)
 		if client == nil {
-			checker.initClient(endpoint)
+			checker.initClientLocked(endpoint)
 			continue
 		}
 		sinceLastHealth := time.Since(client.lastHealth())
 		if sinceLastHealth > etcdServerOfflineTimeout {
 			logutil.BgLogger().Info("etcd server might be offline, remove health probe client",
 				zap.String("endpoint", endpoint),
-				zap.Duration("since-last-health", sinceLastHealth))
-			checker.removeClient(endpoint)
+				zap.Duration("since-last-health", sinceLastHealth),
+				zap.String("purpose", string(checker.purpose)))
+			checker.removeClientLocked(endpoint)
 			continue
 		}
 		if sinceLastHealth > etcdServerDisconnectedTimeout {
 			logutil.BgLogger().Info("etcd server might be disconnected, reconnect health probe client",
 				zap.String("endpoint", endpoint),
-				zap.Duration("since-last-health", sinceLastHealth))
+				zap.Duration("since-last-health", sinceLastHealth),
+				zap.String("purpose", string(checker.purpose)))
 			resetEtcdClientEndpoints(client.Client, endpoint)
 		}
 	}
@@ -343,14 +429,18 @@ func (checker *etcdHealthChecker) update(ctx context.Context) {
 	checker.healthyClients.Range(func(key, _ any) bool {
 		endpoint := key.(string)
 		if _, exists := endpointSet[endpoint]; !exists {
-			logutil.BgLogger().Info("remove stale etcd health probe client", zap.String("endpoint", endpoint))
-			checker.removeClient(endpoint)
+			logutil.BgLogger().Info("remove stale etcd health probe client",
+				zap.String("endpoint", endpoint),
+				zap.String("purpose", string(checker.purpose)))
+			checker.removeClientLocked(endpoint)
 		}
 		return true
 	})
 }
 
-func (checker *etcdHealthChecker) snapshotClients() []etcdHealthProbeClient {
+func (checker *etcdHealthChecker) snapshotClients() ([]etcdHealthProbeClient, uint64) {
+	checker.membershipMu.RLock()
+	defer checker.membershipMu.RUnlock()
 	clients := make([]etcdHealthProbeClient, 0)
 	checker.healthyClients.Range(func(key, value any) bool {
 		clients = append(clients, etcdHealthProbeClient{
@@ -359,7 +449,7 @@ func (checker *etcdHealthChecker) snapshotClients() []etcdHealthProbeClient {
 		})
 		return true
 	})
-	return clients
+	return clients, checker.membershipVersion
 }
 
 func (checker *etcdHealthChecker) loadClient(endpoint string) *healthyEtcdClient {
@@ -370,7 +460,7 @@ func (checker *etcdHealthChecker) loadClient(endpoint string) *healthyEtcdClient
 	return client.(*healthyEtcdClient)
 }
 
-func (checker *etcdHealthChecker) initClient(endpoint string) {
+func (checker *etcdHealthChecker) initClientLocked(endpoint string) {
 	clientConfig := checker.clientConfig
 	clientConfig.Endpoints = []string{endpoint}
 	clientConfig.AutoSyncInterval = 0
@@ -378,30 +468,66 @@ func (checker *etcdHealthChecker) initClient(endpoint string) {
 	if err != nil {
 		logutil.BgLogger().Error("failed to create etcd health probe client",
 			zap.String("endpoint", endpoint),
+			zap.String("purpose", string(checker.purpose)),
 			zap.Error(err))
 		return
 	}
 	checker.healthyClients.Store(endpoint, newHealthyEtcdClient(client, time.Now()))
+	checker.membershipVersion++
 }
 
 func (checker *etcdHealthChecker) removeClient(endpoint string) {
+	checker.membershipMu.Lock()
+	defer checker.membershipMu.Unlock()
+	checker.removeClientLocked(endpoint)
+}
+
+func (checker *etcdHealthChecker) removeClientLocked(endpoint string) {
 	client, ok := checker.healthyClients.LoadAndDelete(endpoint)
 	if ok {
+		checker.membershipVersion++
+		metrics.EtcdClientEndpointState.WithLabelValues(string(checker.purpose), endpoint).Set(0)
 		if err := client.(*healthyEtcdClient).Close(); err != nil {
 			logutil.BgLogger().Warn("failed to close etcd health probe client",
 				zap.String("endpoint", endpoint),
+				zap.String("purpose", string(checker.purpose)),
 				zap.Error(err))
 		}
 	}
 	checker.evictedEndpoints.Delete(endpoint)
 }
 
+func (checker *etcdHealthChecker) setGuardedClientEndpoints(membershipVersion uint64, endpoints []string) bool {
+	checker.membershipMu.RLock()
+	defer checker.membershipMu.RUnlock()
+	if checker.membershipVersion != membershipVersion {
+		return false
+	}
+	checker.client.SetEndpoints(endpoints...)
+	return true
+}
+
+func (checker *etcdHealthChecker) resetGuardedClientEndpoints(membershipVersion uint64, endpoints []string) bool {
+	checker.membershipMu.RLock()
+	defer checker.membershipMu.RUnlock()
+	if checker.membershipVersion != membershipVersion {
+		return false
+	}
+	resetEtcdClientEndpoints(checker.client, endpoints...)
+	return true
+}
+
 func (checker *etcdHealthChecker) syncURLs(ctx context.Context) []string {
-	ctx, cancel := context.WithTimeout(clientv3.WithRequireLeader(ctx), etcdHealthCheckTimeout)
+	requestCtx, cancel := context.WithTimeout(clientv3.WithRequireLeader(ctx), etcdHealthCheckTimeout)
 	defer cancel()
-	response, err := clientv3.RetryClusterClient(checker.client).MemberList(ctx, &etcdserverpb.MemberListRequest{Linearizable: false})
+	response, err := clientv3.RetryClusterClient(checker.client).MemberList(requestCtx, &etcdserverpb.MemberListRequest{Linearizable: false})
 	if err != nil {
-		logutil.BgLogger().Warn("failed to list etcd members", zap.Error(err))
+		if ctx.Err() != nil {
+			return nil
+		}
+		logutil.BgLogger().Warn("failed to list etcd members",
+			zap.String("purpose", string(checker.purpose)),
+			zap.Error(err))
 		return nil
 	}
 

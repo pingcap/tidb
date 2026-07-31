@@ -657,7 +657,8 @@ func (do *Domain) Init(
 		return errors.Trace(err)
 	}
 	if len(addrs) > 0 {
-		cli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore)
+		cli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore,
+			kvstore.WithEtcdHealthChecker(kvstore.DomainEtcdClientPurpose))
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
@@ -667,7 +668,8 @@ func (do *Domain) Init(
 
 		do.autoidClient = autoid.NewClientDiscover(cli)
 
-		unprefixedEtcdCli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore)
+		unprefixedEtcdCli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore,
+			kvstore.WithEtcdHealthChecker(kvstore.DomainUnprefixedEtcdClientPurpose))
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
