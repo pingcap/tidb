@@ -390,6 +390,27 @@ fn selected_rows(
 type UpdateOnce = BTreeMap<(usize, RowId), bool>;
 
 /// Runs a multi-table `UPDATE`, returning MySQL's affected-row count.
+/// Accounts the JOINED rows a multi-table write holds, against
+/// `tidb_mem_quota_query`.
+///
+/// Go `DeleteExec.composeTblRowMap` prices exactly this row -- the joined one,
+/// `types.EstimatedMemUsage(joinedRow, 1)` -- because a multi-table write's
+/// working set is the join output, not any one table's rows.
+/// `deleteMultiTablesByChunk`/`updateRows` consume it as the chunks arrive;
+/// here the join is already materialized, so it is one pass over what is
+/// held, and it runs before any table is touched.
+fn account_joined_rows(
+    rows: &[SourceRow],
+    label: i64,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let accountant = ctx.statement_memory().write_accountant(label);
+    for (_, values) in rows {
+        accountant.account_row(values).map_err(DriverError::from)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn run_multi_update(
     update: &tidb_ast::UpdateStmt,
     from: &tidb_ast::Join,
@@ -408,6 +429,8 @@ pub(crate) fn run_multi_update(
         &update.limit,
         ctx,
     )?;
+
+    account_joined_rows(&rows, crate::mem_quota::label::UPDATE, ctx)?;
 
     let mut once: UpdateOnce = BTreeMap::new();
     let mut changed_rows = 0u64;
@@ -531,6 +554,7 @@ pub(crate) fn run_multi_delete(
     let mut source = build_multi_source(from, catalog, current_db, ctx)?;
     let target_slots = resolve_delete_targets(targets, &source)?;
     let rows = selected_rows(&mut source, &delete.where_clause, &[], &None, ctx)?;
+    account_joined_rows(&rows, crate::mem_quota::label::DELETE, ctx)?;
 
     // Go's `tblRowMap` is keyed by TABLE ID, so a row reachable through
     // several join paths -- or named twice in the target list -- is removed
