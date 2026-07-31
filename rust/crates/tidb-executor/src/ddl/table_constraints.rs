@@ -191,12 +191,13 @@ pub(crate) fn table_indexes(
                 tidb_ast::IndexPart::Column {
                     name, prefix_len, ..
                 } => {
-                    if prefix_len.is_some() {
-                        return Err(DriverError::Unsupported(
-                            "a prefix-length index is not supported yet",
-                        ));
-                    }
-                    offsets.push(offset_of(name)?);
+                    let offset = offset_of(name)?;
+                    crate::ddl::index_prefix::check_key_part(
+                        &column_types[offset],
+                        name,
+                        *prefix_len,
+                    )?;
+                    offsets.push(offset);
                 }
                 // The hidden columns are appended after the declared ones, in
                 // the order they were built, so this part's offset is where
@@ -519,6 +520,7 @@ pub(crate) fn is_int_column(column: &ColumnInfo) -> bool {
 /// table never claims a constraint it does not enforce.
 pub(crate) fn primary_key_column(
     create: &tidb_ast::CreateTableStmt,
+    columns: &[ColumnInfo],
 ) -> Result<Option<Vec<String>>, DriverError> {
     let mut found: Option<Vec<String>> = None;
     for def in &create.columns {
@@ -570,11 +572,17 @@ pub(crate) fn primary_key_column(
                     "an expression primary key is not supported yet",
                 ));
             };
-            if prefix_len.is_some() {
-                return Err(DriverError::Unsupported(
-                    "a prefix-length primary key is not supported yet",
-                ));
-            }
+            // Go `checkIndexColumn` reaches a primary key's key parts too,
+            // so an illegal length here is the same error it would be on any
+            // other index rather than a refusal of its own.
+            let field_type = columns
+                .iter()
+                .find(|column| column.name.original().eq_ignore_ascii_case(name))
+                .map(|column| &column.field_type)
+                .ok_or(DriverError::Unsupported(
+                    "the primary key names a column the table does not define",
+                ))?;
+            crate::ddl::index_prefix::check_key_part(field_type, name, *prefix_len)?;
             names.push(name.clone());
         }
         found = Some(names);

@@ -134,6 +134,7 @@ mod alter_metadata;
 mod alter_table;
 pub mod column_field_type;
 mod column_types;
+pub mod index_prefix;
 mod indexes;
 mod table_constraints;
 mod table_lifecycle;
@@ -393,7 +394,7 @@ pub fn run_create_table_in(
         auto_increment_offset = Some(i);
     }
 
-    let primary_key = primary_key_column(create)?;
+    let primary_key = primary_key_column(create, &columns)?;
     let pk_offsets: Vec<usize> = match &primary_key {
         Some(names) => {
             let mut offsets = Vec::with_capacity(names.len());

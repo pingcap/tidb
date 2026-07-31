@@ -86,6 +86,21 @@ pub enum DriverError {
     },
     /// Go `ErrBlobKeyWithoutLength` (1170).
     BlobKeyWithoutLength(String),
+    /// Go `ErrWrongSubKey` / `dbterror.ErrIncorrectPrefixKey` (1089): an
+    /// index key part declared a length on a type that cannot carry one, or
+    /// one longer than the column. Go's message names neither.
+    IncorrectPrefixKey,
+    /// Go `ErrKeyPart0` (1391): an index key part declared a zero length.
+    KeyPart0(String),
+    /// Go `ErrTooLongKey` (1071): an index key part is longer than
+    /// `MaxIndexLength`. Both numbers are BYTES.
+    TooLongKey {
+        /// The key part's length in bytes, already multiplied by the
+        /// charset's maximum bytes per character.
+        length: i64,
+        /// The maximum a key part may reach.
+        max: i64,
+    },
     /// Go `ErrJSONUsedAsKey` (3152): a JSON column in an index.
     JsonUsedInKey(String),
     /// Go `ErrBlobCantHaveDefault` (1101): a JSON column's default.
@@ -1259,6 +1274,28 @@ impl DriverError {
             1170,
             *b"42000",
             format!("BLOB/TEXT column '{column}' used in key specification without a key length"),
+        ),
+        // Go: "Incorrect prefix key; ...". The message names nothing, which
+        // is why the variant carries nothing.
+        DriverError::IncorrectPrefixKey => MysqlError::new(
+            1089,
+            *b"HY000",
+            "Incorrect prefix key; the used key part isn't a string, the used length is longer \
+             than the key part, or the storage engine doesn't support unique prefix keys"
+                .to_owned(),
+        ),
+        // Go: "Key part '%-.192s' length cannot be 0".
+        DriverError::KeyPart0(column) => MysqlError::new(
+            1391,
+            *b"HY000",
+            format!("Key part '{column}' length cannot be 0"),
+        ),
+        // Go: "Specified key was too long (%d bytes); max key length is %d
+        // bytes".
+        DriverError::TooLongKey { length, max } => MysqlError::new(
+            1071,
+            *b"42000",
+            format!("Specified key was too long ({length} bytes); max key length is {max} bytes"),
         ),
         // Go: "JSON column '%-.192s' cannot be used in key specification."
         DriverError::JsonUsedInKey(column) => MysqlError::new(

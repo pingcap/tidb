@@ -205,18 +205,17 @@ pub(crate) fn add_index_to_table(
             tidb_ast::IndexPart::Column {
                 name, prefix_len, ..
             } => {
-                if prefix_len.is_some() {
-                    return Err(DriverError::Unsupported(
-                        "a prefix-length index is not supported yet",
-                    ));
-                }
-                offsets.push(
-                    table
-                        .columns
-                        .iter()
-                        .position(|candidate| candidate.name.eq_ignore_ascii_case(name))
-                        .ok_or_else(|| DriverError::UnknownColumnInAlter(name.clone()))?,
-                );
+                let offset = table
+                    .columns
+                    .iter()
+                    .position(|candidate| candidate.name.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| DriverError::UnknownColumnInAlter(name.clone()))?;
+                crate::ddl::index_prefix::check_key_part(
+                    &table.columns[offset].field_type,
+                    name,
+                    *prefix_len,
+                )?;
+                offsets.push(offset);
             }
             tidb_ast::IndexPart::Expr { .. } => {
                 let (_, column) = built.next().expect("one hidden column per expression part");

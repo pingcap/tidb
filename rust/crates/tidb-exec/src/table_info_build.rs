@@ -134,6 +134,54 @@ impl DdlAdmissionError {
             code: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
         }
     }
+
+    /// Builds a refusal that carries one of Go's own error numbers, for the
+    /// statements TiDB itself rejects rather than the ones this node merely
+    /// declines to serve.
+    pub fn with_code(code: u16, reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            code,
+        }
+    }
+}
+
+/// The length this builder stores for one index key part, validated against
+/// the column by the rule set shared with the executor tier.
+///
+/// Before this existed, the builder stored whatever length was written, so
+/// `key idx(a(3))` on an INTEGER produced an `IndexInfo` carrying a 3-byte
+/// prefix on a type that has none -- metadata real TiDB refuses with 1089,
+/// and which the executor tier refused too. See
+/// `tidb_executor::ddl::index_prefix` for why the rules are shared while the
+/// lowering is not.
+fn prefix_length(
+    field_type: &tidb_datatype::FieldType,
+    column: &str,
+    part: &KeyPart,
+) -> Refusal<i64> {
+    use tidb_executor::ddl::index_prefix::{stored_index_length, PrefixError};
+
+    let declared = (part.prefix_len != UNSPECIFIED_LENGTH).then_some(part.prefix_len);
+    stored_index_length(field_type, column, declared, true).map_err(|error| match error {
+        PrefixError::IncorrectPrefixKey => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrWrongSubKey,
+            "Incorrect prefix key; the used key part isn't a string, the used length is longer \
+             than the key part, or the storage engine doesn't support unique prefix keys",
+        ),
+        PrefixError::BlobKeyWithoutLength(column) => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrBlobKeyWithoutLength,
+            format!("BLOB/TEXT column '{column}' used in key specification without a key length"),
+        ),
+        PrefixError::KeyPart0(column) => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrKeyPart0,
+            format!("Key part '{column}' length cannot be 0"),
+        ),
+        PrefixError::TooLongKey { length, max } => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrTooLongKey,
+            format!("Specified key was too long ({length} bytes); max key length is {max} bytes"),
+        ),
+    })
 }
 
 /// The MySQL error number for a refusal that has no Go code of its own.
@@ -804,15 +852,14 @@ fn build_table(
                     part.name
                 )));
             };
-            // Go `buildIndexColumns`: a prefix that covers the whole CHAR is
-            // stored as no prefix at all.
-            let mut length = part.prefix_len;
-            if length != UNSPECIFIED_LENGTH
-                && column.field_type.code().is_type_char()
-                && length == column.field_type.flen()
-            {
-                length = UNSPECIFIED_LENGTH;
-            }
+            // Go `checkIndexColumn` plus `buildIndexColumns`' normalization,
+            // shared with the executor tier so the two builders cannot
+            // disagree about which lengths are legal. This builder MODELS a
+            // prefix -- `IndexColumn.length` is exactly what Go stores -- so
+            // unlike the executor tier it keeps a legal one rather than
+            // deferring; what it must not do is store an ILLEGAL one, which
+            // is what it did before this call existed.
+            let length = prefix_length(&column.field_type, column.name.original(), part)?;
             index_columns.push(IndexColumn {
                 name: column.name.clone(),
                 offset: column.offset,
