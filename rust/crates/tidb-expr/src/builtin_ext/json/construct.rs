@@ -27,7 +27,7 @@
 use serde_json::Value as Json;
 
 use super::text::format_json;
-use super::value::{json_argument, json_sql_string, StringArgument};
+use super::value::{json_argument, json_sql_string, parse_json, StringArgument};
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 use tidb_datatype::FieldType;

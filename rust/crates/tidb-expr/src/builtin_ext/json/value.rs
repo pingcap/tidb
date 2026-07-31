@@ -25,7 +25,7 @@
 use serde_json::{Number, Value as Json};
 
 use super::text::format_json;
-use crate::{Datum, EvalError};
+use crate::{Datum, EvalError, JsonError};
 use tidb_datatype::FieldType;
 
 /// Whether `value` is a genuine BINARY-charset payload given its source

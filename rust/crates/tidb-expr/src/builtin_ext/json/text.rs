@@ -44,7 +44,7 @@ pub(super) fn json_pretty(value: &Datum) -> Result<Datum, EvalError> {
     Ok(Datum::new_string(format_json_pretty(&document, 0)))
 }
 
-pub(super) fn format_json_pretty(value: &Json, level: usize) -> String {
+fn format_json_pretty(value: &Json, level: usize) -> String {
     let indent = |level: usize| "  ".repeat(level);
     match value {
         Json::Null | Json::Bool(_) | Json::Number(_) | Json::String(_) => format_json(value),
@@ -92,7 +92,7 @@ pub(super) fn format_json_pretty(value: &Json, level: usize) -> String {
 /// TiDB's `BinaryJSON.MarshalJSON` text form: arrays/objects have spaces,
 /// object keys are sorted by UTF-8 bytes, and parsed floating JSON numbers
 /// use `marshalFloat64To`'s `DOUBLE` representation (not their input lexeme).
-fn format_json(value: &Json) -> String {
+pub(super) fn format_json(value: &Json) -> String {
     match value {
         Json::Null => "null".to_string(),
         Json::Bool(boolean) => boolean.to_string(),
