@@ -1025,13 +1025,14 @@ pub(crate) fn to_f64(v: Datum) -> f64 {
 /// value for and no `unreachable!` left to be wrong about: whatever
 /// `Datum::to_f64` declines, TiDB declines too, and the caller propagates it.
 ///
-/// Two gaps this audit found and did NOT close, both outside this function:
+/// The missing-signature gap this audit found is now CLOSED:
+/// `math_fn::{abs, sign, round_or_truncate}` matched a closed list of kinds
+/// and refused the rest, so `ABS('12abc')` was an error where TiDB answers
+/// 12. Each now ends in the `ETReal` signature Go's own per-eval-type
+/// dispatch selects, reached through this coercion.
 ///
-///  * `math_fn::abs` has arms for `Int`/`UInt`/`Decimal`/`Real` only and
-///    never reaches this coercion, so `ABS('12abc')` and `ABS(<enum>)` are
-///    errors here where TiDB answers 12 and the ordinal. That is a missing
-///    signature, not a wrong answer, so it is reported rather than patched
-///    into an unrelated change.
+/// One gap remains, outside this function:
+///
 ///  * TiDB raises `1292 Truncated incorrect DOUBLE value: '<text>'` whenever
 ///    the prefix is shorter than the operand, and this layer has no warning
 ///    channel to raise it on -- `dispatch_values` is deliberately a pure

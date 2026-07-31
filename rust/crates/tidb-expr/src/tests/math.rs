@@ -134,6 +134,45 @@ fn sign_matches_go_source_table() {
     }
 }
 
+/// The `ETReal` signature every math builtin selects for an argument that is
+/// neither integer nor decimal. `ABS`/`SIGN`/`ROUND`/`TRUNCATE` used to match
+/// on a closed list of Datum kinds and REFUSE the rest, so `ABS('12abc')` was
+/// an evaluation error where TiDB answers 12. Go dispatches on the argument's
+/// EVAL TYPE instead, and everything outside `ETInt`/`ETDecimal` — string,
+/// enum, set, temporal, `FLOAT` — is `ETReal`.
+///
+/// Every row is a `goeval`/`gorun` capture, including the ones that show the
+/// result TYPE is real and not the argument's: `ABS` of a `FLOAT` column is
+/// the widened double `0.10000000149011612` (captured via `gorun`, not
+/// expressible here), and `ROUND('12.6abc')` is `FLOAT:13`, not an integer.
+///
+/// Two kinds are deliberately NOT rows, because their VALUE here is
+/// decided by an older representation boundary rather than by the signature
+/// this test pins. A bit/hex literal is raw `Datum::Bytes`
+/// (`crate::binary_literal`), so `ABS(b'11')` reads the byte as text (0), not
+/// as the integer 3. A date is its canonical STRING, so
+/// `ABS(CAST('2021-01-01' AS DATE))` takes the numeric prefix (2021), not
+/// TiDB's 20210101 -- the same answer `SQRT` of that date already gave before
+/// this change, since it always had the catch-all these functions now share.
+#[test]
+fn real_signature_covers_non_numeric_argument_kinds() {
+    for (expr, want) in [
+        ("abs('12abc')", "FLOAT:12"),
+        ("abs('12.5abc')", "FLOAT:12.5"),
+        ("abs('-3abc')", "FLOAT:3"),
+        ("abs('abc')", "FLOAT:0"),
+        ("abs('')", "FLOAT:0"),
+        ("sign('')", "INT:0"),
+        ("round('12.6abc')", "FLOAT:13"),
+        ("round('12.6abc', 0)", "FLOAT:13"),
+        ("round('abc')", "FLOAT:0"),
+        ("truncate('12.68abc', 1)", "FLOAT:12.6"),
+        ("truncate('abc', 2)", "FLOAT:0"),
+    ] {
+        assert_eq!(e(expr), want, "{expr}");
+    }
+}
+
 #[test]
 fn math_functions() {
     assert_eq!(e("sqrt(4)"), "FLOAT:2");

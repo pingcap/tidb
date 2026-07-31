@@ -205,39 +205,53 @@ pub(crate) fn crc32(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(Datum::UInt(u64::from(!crc)))
 }
 
+/// `ABS(x)`. `absFunctionClass.getFunction` picks the signature from the
+/// argument's EVAL TYPE, not from a fixed list of kinds: `ETInt`, `ETDecimal`
+/// and `ETReal` each get their own sig, and EVERY remaining kind — string,
+/// enum, set, bit, temporal, json, `FLOAT` — evaluates as `ETReal` and lands
+/// on `builtinAbsRealSig`. So the last arm is a genuine signature, not a
+/// fallback: `ABS('12abc')` is 12, `ABS(<enum>)` its ordinal, and `ABS(f)`
+/// for a `FLOAT` column is the WIDENED double (captured: `ABS(0.1e0::float)`
+/// is `0.10000000149011612`, not `0.1`), which is why `Float32` produces
+/// `Real` here rather than staying `Float32` the way `CEIL` does.
 fn abs(vals: &[Datum]) -> Result<Datum, EvalError> {
-    match vals {
-        [Datum::Null] => Ok(Datum::Null),
+    let [v] = vals else {
+        return Err(EvalError::Unsupported("bad function arity"));
+    };
+    Ok(match v {
+        Datum::Null => Datum::Null,
         // `builtinAbsIntSig` returns TiDB's BIGINT overflow error for the
         // one signed value that cannot be represented by its positive
         // counterpart.  Do not use `wrapping_abs`: that would silently turn
         // ABS(MININT) back into MININT and diverge from the source contract.
-        [Datum::Int(value)] => value
+        Datum::Int(value) => value
             .checked_abs()
             .map(Datum::Int)
-            .ok_or(EvalError::IntOverflow),
-        [Datum::UInt(value)] => Ok(Datum::UInt(*value)),
-        [Datum::Decimal(value)] => Ok(Datum::Decimal(value.abs())),
-        [Datum::Real(value)] => Ok(Datum::Real(value.abs())),
-        _ => Err(EvalError::Unsupported("bad function arity")),
-    }
+            .ok_or(EvalError::IntOverflow)?,
+        Datum::UInt(value) => Datum::UInt(*value),
+        Datum::Decimal(value) => Datum::Decimal(value.abs()),
+        Datum::Real(value) => Datum::Real(value.abs()),
+        other => Datum::Real(numeric_arg(other)?.expect("NULL handled above").abs()),
+    })
 }
 
+/// `SIGN(x)`. Like [`abs`], `signFunctionClass` selects per eval type and
+/// every kind outside `ETInt`/`ETDecimal` reaches `builtinSignSig`'s real
+/// form, so the catch-all is the ETReal signature (captured: `SIGN(b'11')`
+/// is 1, `SIGN(<enum>)` is 1).
 fn sign(vals: &[Datum]) -> Result<Datum, EvalError> {
-    match vals {
-        [Datum::Null] => Ok(Datum::Null),
-        [Datum::Int(value)] => Ok(Datum::Int(value.signum())),
-        [Datum::UInt(value)] => Ok(Datum::Int(i64::from(*value != 0))),
-        [Datum::Decimal(value)] => Ok(Datum::Int(value.signum())),
-        [Datum::Real(value)] => Ok(Datum::Int(sign_of_real(*value))),
-        // `signFunctionClass` selects ETReal for strings. Preserve MySQL's
-        // numeric-prefix coercion even though this compact evaluator has no
-        // warning channel.
-        [Datum::String(_)] => Ok(Datum::Int(sign_of_real(to_f64_with_mysql_string(
-            &vals[0],
-        )?))),
-        _ => Err(EvalError::Unsupported("bad function arity")),
-    }
+    let [v] = vals else {
+        return Err(EvalError::Unsupported("bad function arity"));
+    };
+    Ok(match v {
+        Datum::Null => Datum::Null,
+        Datum::Int(value) => Datum::Int(value.signum()),
+        Datum::UInt(value) => Datum::Int(i64::from(*value != 0)),
+        Datum::Decimal(value) => Datum::Int(value.signum()),
+        other => Datum::Int(sign_of_real(
+            numeric_arg(other)?.expect("NULL handled above"),
+        )),
+    })
 }
 
 /// Coerces one function argument to `f64`: `NULL` propagates (the `Ok(None)`
@@ -725,15 +739,17 @@ fn round_or_truncate(vals: &[Datum], round: bool) -> Result<Datum, EvalError> {
         } else {
             go_truncate_float(*f, d)
         }),
-        Datum::String(_) | Datum::Bytes(_) => {
-            return Err(EvalError::Unsupported("string operand"));
-        }
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded above"),
+        // Every remaining kind — string, enum, set, bit, temporal, json,
+        // `FLOAT`'s widened form — is `ETReal` to
+        // `roundFunctionClass`/`truncateFunctionClass`, so it rounds as a
+        // double and REPORTS as one (captured: `ROUND('12.6abc')` is
+        // `FLOAT:13`, `TRUNCATE('12.68abc', 1)` is `FLOAT:12.6`). Strings
+        // used to be refused here; they are an ordinary signature, reached
+        // through the shared numeric-prefix coercion rather than a
+        // ROUND-local parse.
         other => {
-            let f = other
-                .to_f64()
-                .map_err(|_| EvalError::Unsupported("numeric operand conversion"))?
-                .value;
+            let f = numeric_arg(other)?.expect("NULL guarded above");
             Datum::Real(if round {
                 go_round_float(f, d)
             } else {
