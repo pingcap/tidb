@@ -1019,7 +1019,21 @@ fn build_aggregation(
             Schema::new(vec![]),
         ),
     };
-    if let Some(predicate) = &select.where_clause {
+    // Predicate push-down, exactly as the plain path does it: offer the scan
+    // the conjuncts it can apply itself and keep only the residual in a
+    // `Selection`. Go pushes a `Selection` through to the `DataSource` in
+    // `rule_predicate_push_down`, which runs on the logical plan whether or
+    // not an `Aggregation` sits above it -- and the aggregate shapes are
+    // exactly the ones that most need it, because they drag every source row
+    // across the seam and then return one row.
+    let executed_where = super::access::negotiate_scan_filter(
+        select,
+        resolver.scope,
+        &mut source,
+        ctx,
+        trace.as_deref_mut(),
+    );
+    if let Some(predicate) = &executed_where {
         let pred = rewrite_expr_resolved(predicate, resolver)
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
         source = Box::new(SelectionExec::new(
@@ -1028,6 +1042,12 @@ fn build_aggregation(
             source,
             ctx.clone(),
         ));
+    }
+    // The `Selection` is RECORDED whenever the statement wrote a `WHERE`,
+    // whether or not an executor survived above the scan: Go prints one
+    // `Selection` for both halves, and this tier prints no `cop[tikv]` task
+    // to distinguish them.
+    if select.where_clause.is_some() {
         if let Some(trace) = trace.as_deref_mut() {
             if let Some(written) = &traced_select.where_clause {
                 trace.selection(

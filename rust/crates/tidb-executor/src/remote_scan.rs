@@ -204,7 +204,7 @@ mod tests {
     use crate::driver::{run_select_on, Catalog};
     use crate::kv_table::{KvColumn, KvTable, TableHandle};
     use crate::predicate_pushdown::{ScanComparisonOp, ScanPredicate};
-    use crate::storage::{MemTableStorage, TableStorage};
+    use crate::storage::{capture_storage_ops, MemTableStorage, TableStorage};
 
     /// The committed half of a cluster read, shared by the snapshot the
     /// session reads through and by the coprocessor below it.
@@ -251,6 +251,15 @@ mod tests {
         returned: Arc<AtomicU64>,
         /// Rows the coprocessor read before its own filter.
         scanned: Arc<AtomicU64>,
+        /// Whether this backend evaluates the requested conjuncts at all.
+        ///
+        /// Turning it off is the MUTATION PROBE
+        /// (`neutering_the_lowering_is_still_correct_and_the_receipt_notices`):
+        /// a backend is allowed to lower none of the predicate, and the answer
+        /// must be unchanged because the caller re-applies every conjunct. So
+        /// the value assertions stay green and only the receipt moves, which
+        /// is precisely why value assertions alone cannot see a lost pushdown.
+        lower_predicates: std::sync::atomic::AtomicBool,
     }
 
     impl PushdownScanner for FakeCoprocessor {
@@ -305,10 +314,11 @@ mod tests {
             let mut rows = Vec::new();
             while let Some((handle, mut row)) = cursor.next_row().unwrap() {
                 self.scanned.fetch_add(1, Ordering::Relaxed);
-                if !request
-                    .predicates
-                    .iter()
-                    .all(|predicate| admits(predicate, &row) == Some(true))
+                if self.lower_predicates.load(Ordering::Relaxed)
+                    && !request
+                        .predicates
+                        .iter()
+                        .all(|predicate| admits(predicate, &row) == Some(true))
                 {
                     continue;
                 }
@@ -452,6 +462,7 @@ mod tests {
         snapshot: Arc<Mutex<MockSnapshot>>,
         returned: Arc<AtomicU64>,
         scanned: Arc<AtomicU64>,
+        scanner: Arc<FakeCoprocessor>,
     }
 
     /// A cluster-backed `t(a, b)` whose scans go through the coprocessor.
@@ -478,9 +489,10 @@ mod tests {
             returned: Arc::clone(&returned),
             scanned: Arc::clone(&scanned),
             pk_handle_offset,
+            lower_predicates: std::sync::atomic::AtomicBool::new(true),
         });
         let storage = ClusterTableStorage::new(buffer.clone(), handle)
-            .with_remote_scanner(scanner as Arc<dyn PushdownScanner>);
+            .with_remote_scanner(Arc::clone(&scanner) as Arc<dyn PushdownScanner>);
         let mut table = KvTable::with_storage(91, columns, Box::new(storage));
         if let Some(offset) = pk_handle_offset {
             table.set_pk_handle_offset(offset);
@@ -491,6 +503,7 @@ mod tests {
             snapshot,
             returned,
             scanned,
+            scanner,
         }
     }
 
@@ -720,6 +733,172 @@ mod tests {
                 vec![Datum::Int(5)]
             ],
             "the cap is enforced on the merged stream, not on the snapshot's prefix"
+        );
+    }
+
+    /// A relation with the shapes an aggregate can get wrong: a NULL in the
+    /// summed column, and a value no predicate below admits.
+    fn aggregate_fixture() -> Fixture {
+        let mut fixture = fixture();
+        for a in 1..=100 {
+            // `b` is NULL for the three rows a `WHERE a > 97` keeps, plus one
+            // it rejects, so COUNT(*), COUNT(b) and SUM(b) all differ.
+            let b = if a > 96 {
+                Datum::Null
+            } else {
+                Datum::Int(a * 10)
+            };
+            fixture
+                .table
+                .insert_row(&[Datum::Int(a), b], &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.returned.store(0, Ordering::Relaxed);
+        fixture
+    }
+
+    /// One statement's answer and the rows its coprocessor scans sent.
+    fn run_counting(
+        sql: &str,
+        catalog: &Catalog,
+        ctx: &crate::StmtContext,
+    ) -> (Vec<Vec<Datum>>, u64) {
+        let (rows, ops) = capture_storage_ops(|| run_select_on(sql, catalog, ctx).unwrap());
+        (rows, ops.cop_rows)
+    }
+
+    /// An aggregate over a filtered table must not forfeit the pushed
+    /// predicate.
+    ///
+    /// The aggregate pipeline returned from the driver BEFORE the predicate
+    /// was ever offered to the scan, so `SELECT COUNT(*) ... WHERE a > 97`
+    /// dragged all hundred rows across the network to return one -- while the
+    /// identical `SELECT a ... WHERE a > 97` sent three. Nothing about the
+    /// ANSWER differed, which is why only the receipt could see it. Go pushes
+    /// the `Selection` into the `DataSource` in `rule_predicate_push_down`
+    /// whether or not an `Aggregation` sits above it.
+    #[test]
+    fn an_aggregate_does_not_forfeit_the_pushed_predicate() {
+        let fixture = aggregate_fixture();
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+
+        // The control: the same predicate WITHOUT an aggregate has always
+        // narrowed the wire, so a difference below is the aggregate's doing
+        // and not the predicate's pushability.
+        let (rows, wire) = run_counting("SELECT a FROM t WHERE a > 97", &catalog, &ctx);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(wire, 3);
+
+        let (rows, wire) = run_counting(
+            "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE a > 97",
+            &catalog,
+            &ctx,
+        );
+        assert_eq!(
+            rows,
+            vec![vec![Datum::Int(3), Datum::Int(0), Datum::Null]],
+            "COUNT(*) counts the NULL rows COUNT(b) skips, and a SUM over no \
+             non-NULL value is NULL rather than zero"
+        );
+        assert_eq!(wire, 3, "and only those three rows crossed the network");
+
+        let (rows, wire) = run_counting(
+            "SELECT a, COUNT(*) FROM t WHERE a > 97 GROUP BY a ORDER BY a",
+            &catalog,
+            &ctx,
+        );
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Int(98), Datum::Int(1)],
+                vec![Datum::Int(99), Datum::Int(1)],
+                vec![Datum::Int(100), Datum::Int(1)],
+            ]
+        );
+        assert_eq!(wire, 3, "GROUP BY does not forfeit it either");
+    }
+
+    /// The values a filtered aggregate must still produce, over the group the
+    /// predicate leaves EMPTY and over the NULLs it keeps.
+    #[test]
+    fn a_pushed_predicate_does_not_move_an_aggregate_value() {
+        let fixture = aggregate_fixture();
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+
+        // An empty input: SUM is NULL, COUNT is 0 -- and AVG is NULL, which is
+        // what makes it something other than SUM/COUNT.
+        let (rows, wire) = run_counting(
+            "SELECT SUM(b), COUNT(*), COUNT(b), AVG(b) FROM t WHERE a > 1000",
+            &catalog,
+            &ctx,
+        );
+        assert_eq!(
+            rows,
+            vec![vec![Datum::Null, Datum::Int(0), Datum::Int(0), Datum::Null]]
+        );
+        assert_eq!(wire, 0, "a predicate that admits no row sends no row back");
+
+        // The NULLs the predicate KEEPS, counted the two different ways.
+        let (rows, wire) = run_counting(
+            "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE b IS NULL",
+            &catalog,
+            &ctx,
+        );
+        assert_eq!(rows, vec![vec![Datum::Int(4), Datum::Int(0), Datum::Null]]);
+        assert_eq!(wire, 4, "IS NULL is lowered, so only the NULL rows crossed");
+
+        // And the whole relation, as the reference the narrowed answers must
+        // agree with.
+        let (rows, wire) = run_counting("SELECT COUNT(*), COUNT(b), SUM(b) FROM t", &catalog, &ctx);
+        assert_eq!(
+            rows,
+            vec![vec![
+                Datum::Int(100),
+                Datum::Int(96),
+                // MySQL's `SUM` over an integer column is DECIMAL, not
+                // integer, and it keeps the argument's scale -- so the type is
+                // pinned here alongside the value.
+                Datum::Decimal(tidb_datatype::Decimal::from_literal("46560")),
+            ]],
+            "the sum of 10..960 by tens, over the 96 non-NULL rows"
+        );
+        assert_eq!(
+            wire, 100,
+            "an unfiltered aggregate still drags the relation: the AGGREGATE \
+             is not pushed down, only the predicate below it"
+        );
+    }
+
+    /// MUTATION PROBE, with its control. A backend that lowers NONE of the
+    /// predicate is still exactly correct -- the caller re-applies every
+    /// conjunct -- so the value assertions stay green while the wire count
+    /// jumps back to the relation. That asymmetry is the reason the receipt
+    /// has to exist: value tests structurally cannot see a lost pushdown.
+    #[test]
+    fn neutering_the_lowering_is_still_correct_and_the_receipt_notices() {
+        let fixture = aggregate_fixture();
+        let scanner = Arc::clone(&fixture.scanner);
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        let sql = "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE a > 97";
+
+        let (lowered, lowered_wire) = run_counting(sql, &catalog, &ctx);
+        assert_eq!(lowered_wire, 3);
+
+        scanner
+            .lower_predicates
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        let (neutered, neutered_wire) = run_counting(sql, &catalog, &ctx);
+        assert_eq!(
+            neutered, lowered,
+            "a backend that lowered nothing answers identically"
+        );
+        assert_eq!(
+            neutered_wire, 100,
+            "but the receipt sees the relation cross the network"
         );
     }
 
