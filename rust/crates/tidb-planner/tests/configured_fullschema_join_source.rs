@@ -239,3 +239,54 @@ fn using_requires_one_existing_key_on_each_physical_input() {
         ))
     );
 }
+
+/// Every ON-condition shape this classifier declines rather than guessing at.
+/// All nine are reachable from `ConfiguredJoinPlan::lower`, so a new variant is
+/// a join we started refusing and a removed variant is one we started admitting;
+/// both directions have to be argued for here.
+///
+/// `UnsupportedJoinCondition` carries payloads, so the variant names are read at
+/// brace depth zero inside the enum body rather than by the flat line scan the
+/// unit-only refusal enums can use.
+#[test]
+fn join_condition_refusal_set_is_pinned_in_both_directions() {
+    let source = include_str!("../src/join_condition.rs");
+    let body = source
+        .split_once("pub enum UnsupportedJoinCondition {")
+        .expect("the refusal enum")
+        .1;
+    let mut variants = Vec::new();
+    let mut depth = 0usize;
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if depth == 0 {
+            if trimmed == "}" {
+                break;
+            }
+            if let Some(name) = trimmed.split(['{', '(', ',']).next().map(str::trim) {
+                if !name.is_empty() && name.starts_with(char::is_uppercase) {
+                    variants.push(name);
+                }
+            }
+        }
+        depth += line.matches('{').count();
+        depth = depth.saturating_sub(line.matches('}').count());
+    }
+    assert_eq!(
+        variants,
+        [
+            "Compound",
+            "Function",
+            "Aggregate",
+            "NonColumnOperand",
+            "SameSide",
+            "InvalidColumnPath",
+            "UnknownColumn",
+            "AmbiguousColumn",
+            "Other",
+        ],
+        "the configured join condition boundary changed shape: a new variant \
+         needs a rejection test in this file proving the refusal fires, and a \
+         removed variant needs the acceptance path that replaced it"
+    );
+}
