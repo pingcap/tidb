@@ -128,9 +128,19 @@ pub(crate) fn substring(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.contains(&Datum::Null) {
         return Ok(Datum::Null);
     }
+    // Go builds every `substring` signature through
+    // `newBaseBuiltinFuncWithTp(..., types.ETInt, ...)` for the position and
+    // length arguments, so a non-integer argument is CAST to an integer before
+    // `evalString` runs -- exactly the coercion `LEFT`/`RIGHT` already use here.
+    // Matching only `Datum::Int` refused `SUBSTRING('hello', '2')` (Go: `ello`)
+    // and every other argument Go silently casts.
     let (str, pos, length) = match vals {
-        [str, Datum::Int(pos)] => (str, *pos, None),
-        [str, Datum::Int(pos), Datum::Int(length)] => (str, *pos, Some(*length)),
+        [str, pos] => (str, crate::cast::to_i64_signed(pos), None),
+        [str, pos, length] => (
+            str,
+            crate::cast::to_i64_signed(pos),
+            Some(crate::cast::to_i64_signed(length)),
+        ),
         _ => return Err(EvalError::Unsupported("bad SUBSTRING arguments")),
     };
     let Some(units) = StrUnits::of(str)? else {
