@@ -252,23 +252,130 @@ fn truncate_restarts_the_counter() {
     );
 }
 
-/// REFUSED, not approximated: Go's `@@auto_increment_increment` /
-/// `@@auto_increment_offset` make the ids an arithmetic progression (captured
-/// 2, 5, 8 for increment 3 offset 2). This allocator hands out consecutive
-/// ids only, so an insert into a table with an auto column FAILS while either
-/// variable is off its default rather than answering the wrong ids. A table
-/// with no auto column is unaffected.
+/// SUPPORTED (this pin used to record the REFUSAL): `@@auto_increment_increment`
+/// and `@@auto_increment_offset` put the ids on the `offset + k * increment`
+/// progression, and it is the exact SEQUENCE that is pinned, not merely that
+/// the insert succeeds.
+///
+/// Captured from TiDB on `INT AUTO_INCREMENT`: increment 3 offset 1 gives
+/// `1, 4, 7`; increment 3 offset 2 gives `2, 5, 8`; increment 5 offset 3
+/// across three separate statements gives `3, 8, 13`; increment 6 offset 6
+/// gives `6, 12, 18` and reports `LAST_INSERT_ID() = 6`.
 #[test]
-fn a_non_default_auto_increment_step_is_refused_rather_than_ignored() {
+fn the_step_and_offset_put_the_ids_on_an_arithmetic_progression() {
+    for (increment, offset, expected) in [
+        (3, 1, ["1", "4", "7"]),
+        (3, 2, ["2", "5", "8"]),
+        (6, 6, ["6", "12", "18"]),
+    ] {
+        let mut session = table(None);
+        session
+            .run(&format!("SET @@auto_increment_increment = {increment}"))
+            .unwrap();
+        session
+            .run(&format!("SET @@auto_increment_offset = {offset}"))
+            .unwrap();
+        session.run("INSERT INTO ai (v) VALUES (1),(2),(3)").unwrap();
+        assert_eq!(
+            rows(&mut session, "SELECT id FROM ai ORDER BY id"),
+            expected.map(|id| vec![id.to_owned()]),
+            "increment {increment} offset {offset}"
+        );
+        assert_eq!(one(&mut session, "SELECT LAST_INSERT_ID()"), expected[0]);
+    }
+}
+
+/// The progression is re-seeked from the CURRENT base on every allocation,
+/// which is what an explicit id in the middle exposes: it rebases the counter
+/// off the grid and the next id snaps back ONTO the grid rather than simply
+/// adding the increment.
+///
+/// Captured with increment 7 offset 4: `4, 11`, then an explicit `30`, then
+/// `32, 39`. `32` is the discriminating value -- `30 + 7` would be `37` and
+/// "next multiple of 7" would be `35`, while Go's seek gives
+/// `((30 + 7 - 4) / 7) * 7 + 4 = 4 * 7 + 4 = 32`.
+#[test]
+fn an_explicit_id_off_the_grid_snaps_the_next_allocation_back_onto_it() {
     let mut session = table(None);
+    session.run("SET @@auto_increment_increment = 7").unwrap();
+    session.run("SET @@auto_increment_offset = 4").unwrap();
+    session.run("INSERT INTO ai (v) VALUES (1),(2)").unwrap();
+    session.run("INSERT INTO ai (id, v) VALUES (30, 3)").unwrap();
+    session.run("INSERT INTO ai (v) VALUES (4),(5)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id FROM ai ORDER BY id"),
+        [["4"], ["11"], ["30"], ["32"], ["39"]]
+    );
+}
+
+/// MySQL's documented oddity, which TiDB follows: an offset GREATER than the
+/// increment is IGNORED -- replaced by 1, not reduced modulo the increment.
+///
+/// Captured: increment 2 offset 7 gives `1, 3, 5` (not `7, 9, 11`, and not
+/// `1, 3, 5` by coincidence -- `7 mod 2 = 1` would agree here, which is why
+/// the second case uses increment 6 offset 20, where a modulo reading would
+/// give `2, 8, 14` and TiDB gives `1, 7, 13`).
+#[test]
+fn an_offset_greater_than_the_increment_is_ignored() {
+    for (increment, offset, expected) in [(2, 7, ["1", "3", "5"]), (6, 20, ["1", "7", "13"])] {
+        let mut session = table(None);
+        session
+            .run(&format!("SET @@auto_increment_increment = {increment}"))
+            .unwrap();
+        session
+            .run(&format!("SET @@auto_increment_offset = {offset}"))
+            .unwrap();
+        session.run("INSERT INTO ai (v) VALUES (1),(2),(3)").unwrap();
+        assert_eq!(
+            rows(&mut session, "SELECT id FROM ai ORDER BY id"),
+            expected.map(|id| vec![id.to_owned()]),
+            "increment {increment} offset {offset}"
+        );
+    }
+}
+
+/// The step arithmetic runs BEFORE the column-width cast, so a stepped
+/// allocation reaches a narrow column's ceiling in fewer rows and is REFUSED
+/// there rather than clamped onto it.
+///
+/// Captured on `TINYINT AUTO_INCREMENT` with increment 100: `1`, then `101`,
+/// then `[types:1690]constant 201 overflows tinyint` -- 201 is the stepped
+/// candidate, which only exists if the progression is computed first. A
+/// clamp-first ordering would have answered `127`.
+#[test]
+fn a_stepped_id_that_overflows_the_column_is_refused_by_the_column_bound() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE narrow (id TINYINT AUTO_INCREMENT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("SET @@auto_increment_increment = 100").unwrap();
+    session.run("INSERT INTO narrow (v) VALUES (1)").unwrap();
+    session.run("INSERT INTO narrow (v) VALUES (2)").unwrap();
+    let refused = session.run("INSERT INTO narrow (v) VALUES (3)");
+    assert!(
+        format!("{:?}", refused.err()).contains("201"),
+        "the refused value must be the stepped candidate 201, not the clamp 127"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT id FROM narrow ORDER BY id"),
+        [["1"], ["101"]]
+    );
+}
+
+/// A step does not lift the allocator's own exhaustion rule: at the end of the
+/// signed domain the answer is still `[autoid:1467]`, captured on a `BIGINT`
+/// rebased to `9223372036854775806` with increment 3.
+#[test]
+fn a_step_does_not_lift_the_allocators_exhaustion_rule() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE big (id BIGINT AUTO_INCREMENT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO big (id, v) VALUES (9223372036854775806, 1)")
+        .unwrap();
     session.run("SET @@auto_increment_increment = 3").unwrap();
-    assert!(session.run("INSERT INTO ai (v) VALUES (1)").is_err());
-    session.run("SET @@auto_increment_increment = 1").unwrap();
-    session.run("SET @@auto_increment_offset = 2").unwrap();
-    assert!(session.run("INSERT INTO ai (v) VALUES (1)").is_err());
-    session.run("SET @@auto_increment_offset = 1").unwrap();
-    session.run("INSERT INTO ai (v) VALUES (1)").unwrap();
-    assert_eq!(one(&mut session, "SELECT id FROM ai"), "1");
+    assert!(session.run("INSERT INTO big (v) VALUES (2)").is_err());
 }
 
 /// REFUSED: `FORCE AUTO_INCREMENT`, the TiDB extension that lets the counter
