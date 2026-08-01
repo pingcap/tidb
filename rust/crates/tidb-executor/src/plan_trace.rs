@@ -585,6 +585,7 @@ impl PlanTrace {
         join: &tidb_ast::Join,
         scope: &FromScope,
         current_db: &str,
+        pushed: &[&tidb_ast::Expr],
         equal_mask: &[bool],
         build_is_left: bool,
     ) -> Result<(), ()> {
@@ -601,10 +602,15 @@ impl PlanTrace {
         // conjuncts printed under `equal:[...]` are exactly the ones the hash
         // table indexes and `other cond:` is exactly the residue it still
         // evaluates per candidate pair.
+        // `pushed` are the `WHERE` conjuncts `driver::predicate_push_down`
+        // moved INTO this join, appended in that order by `build_join`; Go
+        // prints them here too, because after its own pushdown they are
+        // conditions of the join and no longer of the Selection above it.
         let mut conjuncts = Vec::new();
         if let Some(expr) = &join.on {
             collect_and(expr, &mut conjuncts);
         }
+        conjuncts.extend_from_slice(pushed);
         if conjuncts.len() != equal_mask.len() {
             return Err(());
         }

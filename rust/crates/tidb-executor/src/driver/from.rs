@@ -244,6 +244,7 @@ pub(crate) fn build_from(
     current_db: &str,
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
+    offered: crate::driver::predicate_push_down::Offered<'_>,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
     match node {
         JoinNode::Table(table_ref) => {
@@ -327,7 +328,7 @@ pub(crate) fn build_from(
         }
         JoinNode::Join(join) => {
             // A nested join builds full width: see `build_join`'s `prune`.
-            build_join(join, catalog, current_db, ctx, trace, None)
+            build_join(join, catalog, current_db, ctx, trace, None, offered)
         }
         JoinNode::Derived {
             subquery,
@@ -945,6 +946,7 @@ pub(crate) fn build_join(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
     prune: Option<&tidb_ast::SelectStmt>,
+    offered: crate::driver::predicate_push_down::Offered<'_>,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
     // `FROM a, b` parses as the single-relation wrapper AROUND the real join,
     // while `FROM a JOIN b ON ...` is the join node itself. Unwrapping here
@@ -952,11 +954,17 @@ pub(crate) fn build_join(
     // otherwise the comma form would drop it and silently never prune.
     if join.right.is_none() && join.on.is_none() && join.using.is_empty() && !join.natural {
         if let JoinNode::Join(inner) = &join.left {
-            return build_join(inner, catalog, current_db, ctx, trace, prune);
+            return build_join(inner, catalog, current_db, ctx, trace, prune, offered);
         }
     }
-    let (mut left_exec, left_scope) =
-        build_from(&join.left, catalog, current_db, ctx, trace.as_deref_mut())?;
+    let (mut left_exec, left_scope) = build_from(
+        &join.left,
+        catalog,
+        current_db,
+        ctx,
+        trace.as_deref_mut(),
+        offered,
+    )?;
     let Some(right_node) = &join.right else {
         // The single-table wrapper the parser always produces.
         return Ok((left_exec, left_scope));
@@ -985,8 +993,14 @@ pub(crate) fn build_join(
         );
     }
     let coalescing = join.natural || !join.using.is_empty();
-    let (mut right_exec, right_scope) =
-        build_from(right_node, catalog, current_db, ctx, trace.as_deref_mut())?;
+    let (mut right_exec, right_scope) = build_from(
+        right_node,
+        catalog,
+        current_db,
+        ctx,
+        trace.as_deref_mut(),
+        offered,
+    )?;
 
     // The joined scope: the right tables' columns follow the left's.
     let mut left_width = left_scope.width();
@@ -1090,6 +1104,23 @@ pub(crate) fn build_join(
         None => Vec::new(),
     };
     conditions.append(&mut coalesced_conditions);
+    // The `WHERE` equalities this join is the lowest node able to evaluate.
+    // Inner joins only, and never a coalesced one, whose scope addresses
+    // columns by row offset rather than by name. Each pushed conjunct STAYS
+    // in `WHERE`, so it can only narrow the pairs the filter above would
+    // have narrowed anyway -- see `driver::predicate_push_down`.
+    let pushed: Vec<&tidb_ast::Expr> = if join.tp == tidb_ast::JoinType::Cross && !coalescing {
+        crate::driver::predicate_push_down::spanning_conjuncts(offered, &scope, left_width)
+    } else {
+        Vec::new()
+    };
+    for conjunct in &pushed {
+        let resolver = ScopeResolver { scope: &scope };
+        conditions.push(
+            rewrite_expr_resolved(conjunct, &resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+        );
+    }
     let kind = match join.tp {
         tidb_ast::JoinType::Cross => JoinKind::Inner,
         tidb_ast::JoinType::Left => JoinKind::Left,
@@ -1116,7 +1147,14 @@ pub(crate) fn build_join(
             // has none -- its equalities are synthesized here.
             trace.refuse("NATURAL and USING joins are not printed yet");
         } else if trace
-            .join(join, &scope, current_db, &split.equal_mask, build_is_left)
+            .join(
+                join,
+                &scope,
+                current_db,
+                &pushed,
+                &split.equal_mask,
+                build_is_left,
+            )
             .is_err()
         {
             trace.refuse("this join's plan is not supported yet");

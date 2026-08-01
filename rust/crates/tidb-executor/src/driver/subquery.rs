@@ -150,7 +150,7 @@ fn collect_correlated_columns(
 ) {
     let inner = match &select.from {
         None => FromScope::default(),
-        Some(join) => match build_join(join, catalog, current_db, ctx, None, None) {
+        Some(join) => match build_join(join, catalog, current_db, ctx, None, None, &[]) {
             Ok((_, scope)) => scope,
             // An unresolvable inner FROM is reported by the inner run itself.
             Err(_) => FromScope::default(),
@@ -665,7 +665,7 @@ pub(crate) fn select_outer_scope(
 ) -> FromScope {
     match &select.from {
         None => FromScope::default(),
-        Some(join) => match build_join(join, catalog, current_db, ctx, None, None) {
+        Some(join) => match build_join(join, catalog, current_db, ctx, None, None, &[]) {
             Ok((_, scope)) => scope,
             Err(_) => FromScope::default(),
         },

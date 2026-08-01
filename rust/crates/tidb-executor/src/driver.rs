@@ -96,6 +96,7 @@ mod multi_dml;
 mod only_full_group_by;
 mod params;
 mod point_get_key;
+mod predicate_push_down;
 mod recursive_cte;
 mod set_opr;
 mod subquery;
@@ -310,6 +311,11 @@ pub(crate) fn run_select_traced(
             (None, FromScope::default())
         }
         Some(join) => {
+            // Go's `rule_predicate_push_down`: the `WHERE` equalities are
+            // offered to the joins below, so a comma join does not have to
+            // build the cross product the filter would then throw away. See
+            // `driver::predicate_push_down`.
+            let offered = predicate_push_down::offered_conjuncts(select.where_clause.as_ref());
             let (exec, scope) = build_join(
                 join,
                 catalog,
@@ -317,6 +323,7 @@ pub(crate) fn run_select_traced(
                 ctx,
                 trace.as_deref_mut(),
                 Some(select),
+                &offered,
             )?;
             (Some(exec), scope)
         }
