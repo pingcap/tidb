@@ -620,10 +620,20 @@ impl KvTable {
     /// An explicit `0` always allocates here. `NO_AUTO_VALUE_ON_ZERO`, under
     /// which Go keeps the zero, is REFUSED by the INSERT path rather than
     /// silently ignored (`StmtContext::auto_increment_zero_is_explicit`).
+    ///
+    /// `reuse` is Go's `RetryInfo` arm (`insert_common.go:969-980`): a
+    /// statement being RUN AGAIN after a write conflict is handed the id its
+    /// losing attempt already assigned to this row, so `LAST_INSERT_ID()` and
+    /// the stored row still agree. It enters HERE rather than at the call site
+    /// so the reused id goes through the same domain check and the same
+    /// column-typed placement an allocated one does -- a reused id that no
+    /// longer fits its column must fail the way a fresh one would, not slip
+    /// past untested.
     pub fn apply_auto_increment(
         &mut self,
         row: &mut [Datum],
         step: (u64, u64),
+        reuse: Option<u64>,
     ) -> Result<Option<i64>, AutoIdError> {
         let Some(offset) = self.auto_increment_offset else {
             return Ok(None);
@@ -640,7 +650,13 @@ impl KvTable {
             return Ok(None);
         }
         let (increment, step_offset) = auto_id::increment_and_offset(step.0, step.1);
-        let allocated = self.auto_id.alloc(increment, step_offset)?;
+        // A replay does not draw from the counter at all: the id it is
+        // rewriting was already drawn, and drawing again is exactly the gap
+        // that moves `LAST_INSERT_ID()` off the row it names.
+        let allocated = match reuse {
+            Some(id) => id,
+            None => self.auto_id.alloc(increment, step_offset)?,
+        };
         self.check_auto_increment_fits(offset, allocated)?;
         // The allocated id skips the per-column cast the written values went
         // through, so it is placed in the column's own domain here.
@@ -2079,10 +2095,10 @@ mod tests {
         ] {
             let mut table = auto_increment_table(unsigned);
             let mut row = [explicit];
-            assert_eq!(table.apply_auto_increment(&mut row, (1, 1)), Ok(None));
+            assert_eq!(table.apply_auto_increment(&mut row, (1, 1), None), Ok(None));
             let mut row = [Datum::Null];
             assert_eq!(
-                table.apply_auto_increment(&mut row, (1, 1)),
+                table.apply_auto_increment(&mut row, (1, 1), None),
                 Err(AutoIdError::Exhausted),
                 "unsigned={unsigned}"
             );
@@ -2097,9 +2113,9 @@ mod tests {
     fn an_unsigned_explicit_id_rebases_in_the_unsigned_domain() {
         let mut table = auto_increment_table(true);
         let mut row = [Datum::UInt(1 << 63)];
-        assert_eq!(table.apply_auto_increment(&mut row, (1, 1)), Ok(None));
+        assert_eq!(table.apply_auto_increment(&mut row, (1, 1), None), Ok(None));
         let mut row = [Datum::Null];
-        table.apply_auto_increment(&mut row, (1, 1)).unwrap();
+        table.apply_auto_increment(&mut row, (1, 1), None).unwrap();
         assert_eq!(row[0], Datum::UInt((1 << 63) + 1));
     }
 
@@ -2110,9 +2126,9 @@ mod tests {
     fn a_signed_explicit_id_below_the_counter_does_not_move_it() {
         let mut table = auto_increment_table(false);
         let mut row = [Datum::Int(-5)];
-        assert_eq!(table.apply_auto_increment(&mut row, (1, 1)), Ok(None));
+        assert_eq!(table.apply_auto_increment(&mut row, (1, 1), None), Ok(None));
         let mut row = [Datum::Null];
-        table.apply_auto_increment(&mut row, (1, 1)).unwrap();
+        table.apply_auto_increment(&mut row, (1, 1), None).unwrap();
         assert_eq!(row[0], Datum::Int(1));
     }
 }

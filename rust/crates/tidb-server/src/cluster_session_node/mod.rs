@@ -606,22 +606,35 @@ impl ClusterServerSession {
         self.begin_if_autocommit_off()?;
         let savepoint = self.buffer.staged();
         let mut retried: u32 = 0;
-        loop {
+        let outcome = loop {
             match self.attempt_statement(shape, savepoint.clone(), &mut run) {
-                Ok(value) => return Ok(value),
+                Ok(value) => break Ok(value),
                 Err(error) => {
                     if !self.may_retry_autocommit_statement(&error, retried) {
-                        return Err(error);
+                        break Err(error);
                     }
                     retried += 1;
                     back_off(retried);
+                    // The ids the losing attempt assigned carry into the
+                    // replay -- Go's `RetryInfo.ResetOffset`
+                    // (`pkg/session/session.go:1197`). The IDS cross between
+                    // attempts; the timestamp must not, which is why this
+                    // rewinds a list and touches nothing about the snapshot.
+                    self.session.retry_auto_ids().borrow_mut().begin_attempt();
                     // Go's replay calls `RebuildPlan` per attempt
                     // (`pkg/session/session.go:1207`), so a schema that moved
                     // under the conflict is picked up before the next try.
                     self.rebuild_catalog_if_stale();
                 }
             }
-        }
+        };
+        // Go's `cleanRetryInfo` (`pkg/session/session.go:329-336`, deferred
+        // from `doCommitWithRetry`): the ids belong to the statement that is
+        // now over, however it ended. The next statement's rows are not these
+        // rows, and reusing an id across statements would write the same id
+        // twice.
+        self.session.retry_auto_ids().borrow_mut().clean();
+        outcome
     }
 
     /// Runs one attempt of [`Self::with_statement`]'s lifecycle.

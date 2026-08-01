@@ -137,6 +137,13 @@ pub struct Session {
     /// [`tidb_executor::StmtContext`] the statement builds, so an allocating
     /// INSERT and `LAST_INSERT_ID(expr)` write one place, not two.
     published_last_insert_id: Rc<Cell<Option<u64>>>,
+    /// Go `SessionVars.RetryInfo`'s auto-increment half: the ids the statement
+    /// running now has assigned, kept across a write-conflict replay so the
+    /// replay writes the ids the losing attempt picked. It lives on the
+    /// session because the retry loop is above the statement -- each attempt
+    /// builds its own `StmtContext`, and this is the one thing that has to
+    /// cross between them. See `tidb_executor::stmt_context::RetryAutoIds`.
+    retry_auto_ids: Rc<RefCell<tidb_executor::stmt_context::RetryAutoIds>>,
     /// The session's non-prepared plan cache
     /// (`tidb_enable_non_prepared_plan_cache`). See
     /// [`non_prepared_plan_cache`] for what it does and does not store.
@@ -230,6 +237,7 @@ impl Default for Session {
             prev_row_count: 0,
             statement_kind: StatementKind::Other,
             published_last_insert_id: Rc::default(),
+            retry_auto_ids: Rc::default(),
             non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
             found_in_plan_cache: false,
             prev_found_in_plan_cache: false,
@@ -361,6 +369,15 @@ impl Session {
     #[must_use]
     pub fn last_insert_id(&self) -> u64 {
         self.last_insert_id
+    }
+
+    /// The auto-increment ids the running statement has assigned, which a
+    /// caller that RUNS THE STATEMENT AGAIN rewinds between attempts and
+    /// clears when the statement is finally over. See
+    /// `tidb_executor::stmt_context::RetryAutoIds`.
+    #[must_use]
+    pub fn retry_auto_ids(&self) -> &Rc<RefCell<tidb_executor::stmt_context::RetryAutoIds>> {
+        &self.retry_auto_ids
     }
 
     /// The id the last statement allocated, which the OK packet reports and

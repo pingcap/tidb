@@ -30,6 +30,71 @@ use crate::mem_quota::{OomAction, StatementMemory};
 /// buffer once per converted value, unbounded.
 pub const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 
+/// Go `variable.RetryInfo`'s `autoIncrementIDs`
+/// (`pkg/sessionctx/variable/session.go:110-117`): the AUTO_INCREMENT ids a
+/// statement assigned, kept so that a statement RUN AGAIN after a write
+/// conflict writes the ids it already picked instead of fresh ones.
+///
+/// The gap a fresh allocation would leave is not the problem -- TiDB leaves
+/// auto-increment gaps of its own and they are legal. `LAST_INSERT_ID()` is:
+/// a client that inserts a row and then reads `LAST_INSERT_ID()` to key a
+/// child row would be handed a value naming a row that was never written,
+/// silently, and only under contention.
+///
+/// Go carries ONE list plus a cursor it rewinds per attempt
+/// (`pkg/session/session.go:1197`), consuming from the front and appending
+/// whatever it had to allocate beyond the end
+/// (`pkg/executor/insert_common.go:968-1021`). Two lists say the same thing
+/// without the flag Go needs to tell "record" from "replay" apart -- and
+/// without Go's one incoherent case, where a replay that assigns FEWER ids
+/// than the attempt before leaves a stale id stranded mid-list and shifts
+/// every later row's id on the attempt after that.
+#[derive(Debug, Default)]
+pub struct RetryAutoIds {
+    /// What the previous attempt assigned, in order, and how much of it this
+    /// attempt has taken back. Empty on a statement's first attempt, which is
+    /// what makes "reuse if there is one" the whole rule.
+    previous: Vec<u64>,
+    taken: usize,
+    /// What this attempt has assigned so far, reused and freshly allocated
+    /// alike. It becomes `previous` if there is another attempt.
+    current: Vec<u64>,
+}
+
+impl RetryAutoIds {
+    /// Go's `RetryInfo.ResetOffset` (`pkg/session/session.go:1197`), called
+    /// once per replay pass: the attempt that is starting inherits the ids the
+    /// attempt that just failed assigned.
+    pub fn begin_attempt(&mut self) {
+        self.previous = std::mem::take(&mut self.current);
+        self.taken = 0;
+    }
+
+    /// Go's `RetryInfo.Clean`, called when the statement is over however it
+    /// ended. Ids must never outlive their statement: the next statement's
+    /// rows are not these rows.
+    pub fn clean(&mut self) {
+        self.previous.clear();
+        self.current.clear();
+        self.taken = 0;
+    }
+
+    /// Go's `GetCurrAutoIncrementID`: the id the previous attempt gave the
+    /// next row, if it got that far. `None` means allocate -- which covers
+    /// both the first attempt and a replay that needs MORE ids than the
+    /// attempt before it did.
+    pub fn reuse(&mut self) -> Option<u64> {
+        let id = self.previous.get(self.taken).copied()?;
+        self.taken += 1;
+        Some(id)
+    }
+
+    /// Go's `AddAutoIncrementID`: records the id a row was actually given.
+    pub fn record(&mut self, id: u64) {
+        self.current.push(id);
+    }
+}
+
 /// Go `stmtctx.StatementContext`, in the part evaluation actually reads: the
 /// warning buffer and the error levels that decide whether a tolerable
 /// condition warns or fails the statement.
@@ -110,6 +175,13 @@ pub struct StmtContext {
     /// Go `StmtCtx.InsertID`: the explicit value a row gave the
     /// `AUTO_INCREMENT` column, which the OK packet falls back to.
     given_insert_id: Rc<Cell<u64>>,
+    /// The ids a previous attempt at this same statement already assigned; see
+    /// [`RetryAutoIds`]. It is a session-lived handle rather than statement
+    /// state because the retry loop that rewinds it sits ABOVE the statement:
+    /// each attempt builds its own context, and the ids are the one thing that
+    /// must cross between them. Timestamps must not -- a replay re-reads at a
+    /// new one, which is what keeps the lost update closed.
+    retry_auto_ids: Rc<RefCell<RetryAutoIds>>,
     /// Go `table.getIncrementAndOffset`'s inputs: `@@auto_increment_increment`
     /// and `@@auto_increment_offset`, which put the allocated ids on an
     /// arithmetic progression. See [`StmtContext::auto_increment_step`].
@@ -275,6 +347,7 @@ impl StmtContext {
             prev_last_insert_id: 0,
             prev_row_count: 0,
             given_insert_id: Rc::default(),
+            retry_auto_ids: Rc::default(),
             auto_increment_step: (1, 1),
             auto_increment_zero_is_explicit: false,
             only_full_group_by: false,
@@ -613,6 +686,29 @@ impl StmtContext {
     pub fn with_last_insert_id_channel(mut self, channel: Rc<Cell<Option<u64>>>) -> Self {
         self.last_insert_id = channel;
         self
+    }
+
+    /// Attaches the session's own [`RetryAutoIds`], so that a statement the
+    /// node runs a second time can take back the ids the first run assigned.
+    /// A context without one never reuses and never records, which is the
+    /// right behaviour for every caller that cannot retry at all.
+    #[must_use]
+    pub fn with_retry_auto_ids(mut self, channel: Rc<RefCell<RetryAutoIds>>) -> Self {
+        self.retry_auto_ids = channel;
+        self
+    }
+
+    /// The id a previous attempt at this statement gave the next
+    /// AUTO_INCREMENT row, or `None` if there was no previous attempt or it
+    /// did not reach this row. See [`RetryAutoIds::reuse`].
+    pub fn reuse_auto_increment_id(&self) -> Option<u64> {
+        self.retry_auto_ids.borrow_mut().reuse()
+    }
+
+    /// Records the id a row was given, reused or freshly allocated, so a
+    /// replay of this statement writes the same one.
+    pub fn record_auto_increment_id(&self, id: u64) {
+        self.retry_auto_ids.borrow_mut().record(id);
     }
 
     /// Attaches what the PRECEDING statement published: Go's

@@ -28,6 +28,18 @@ pub(super) const ABC_HASH: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
 pub(super) const SALT: [u8; 20] = [7; 20];
 /// Go `mysql.PriKeyFlag`.
 pub(super) const PRI_KEY_FLAG: u32 = 1 << 1;
+/// Go `mysql.AutoIncrementFlag`.
+pub(super) const AUTO_INCREMENT_FLAG: u32 = 1 << 9;
+
+/// A `BIGINT AUTO_INCREMENT PRIMARY KEY` column: the one shape whose written
+/// value the server, not the client, decides.
+pub(super) fn auto_increment_column(id: i64, offset: i32, name: &str) -> ModelColumnInfo {
+    let mut field_type = FieldType::new(FieldTypeCode::LongLong);
+    field_type.add_flags(PRI_KEY_FLAG | AUTO_INCREMENT_FLAG);
+    let mut column = ModelColumnInfo::new(id, name, field_type);
+    column.offset = offset;
+    column
+}
 
 pub(super) fn column(id: i64, offset: i32, name: &str, primary: bool) -> ModelColumnInfo {
     let mut field_type = FieldType::new(FieldTypeCode::LongLong);
@@ -121,6 +133,18 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
         state: SchemaState::PUBLIC,
         ..TableInfo::default()
     };
+    // `app.ai(id BIGINT AUTO_INCREMENT PRIMARY KEY, v BIGINT)`: the one table
+    // whose primary key the SERVER picks, so a statement that runs twice can
+    // write a different row the second time without the client's SQL changing
+    // a character. That is what the auto-increment retry cases need.
+    let ai = TableInfo {
+        id: 106,
+        name: CiString::new("ai"),
+        columns: vec![auto_increment_column(1, 0, "id"), column(2, 1, "v", false)],
+        pk_is_handle: true,
+        state: SchemaState::PUBLIC,
+        ..TableInfo::default()
+    };
     let pending = TableInfo {
         id: 103,
         name: CiString::new("t_pending"),
@@ -136,7 +160,7 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
                 name: CiString::new("app"),
                 ..DBInfo::default()
             },
-            tables: vec![t, g, pending, acct, hnd],
+            tables: vec![t, g, pending, acct, hnd, ai],
         }],
     }
 }

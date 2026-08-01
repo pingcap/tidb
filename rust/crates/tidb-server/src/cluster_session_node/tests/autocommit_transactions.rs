@@ -530,6 +530,79 @@ fn an_insert_reads_for_its_uniqueness_check_and_publishes_at_that_read() {
     );
 }
 
+/// The auto-increment half of the replay, and the one place where "run the
+/// statement again" is not the same as "run the statement once".
+///
+/// Go REUSES the ids the losing attempt already allocated. The losing attempt
+/// records every id it assigned in `RetryInfo`
+/// (`pkg/sessionctx/variable/session.go:136-139`), the replay resets the
+/// cursor once per pass (`pkg/session/session.go:1197`), and the INSERT
+/// executor takes the recorded id back out instead of allocating
+/// (`pkg/executor/insert_common.go:968-980`).
+///
+/// The gap is not the point -- TiDB leaves auto-increment gaps of its own and
+/// they are legal. `LAST_INSERT_ID()` is. A client inserts a row, reads
+/// `LAST_INSERT_ID()`, and uses it as the foreign key of a child row; if a
+/// retry moved the id underneath it, the value names a row that was never
+/// written. That is silent wrong data, it appears only under contention, and
+/// a row count cannot see it -- so this asserts the id BY VALUE, from both the
+/// row that was stored and the function the client would call.
+#[test]
+fn a_conflicted_insert_replays_with_the_ids_the_losing_attempt_allocated() {
+    let (mut session, cluster) = open_session();
+    session
+        .execute_write("INSERT INTO ai (v) VALUES (10)")
+        .expect("seed takes id 1");
+
+    // The upsert is what makes the race reachable at all: an id nobody has
+    // handed out yet cannot collide, so a statement that ONLY allocates never
+    // conflicts on its own row. A statement that touches an existing row and
+    // allocates in the same breath does, and that is the shape -- a mixed
+    // batch of known and new keys -- a client actually writes.
+    cluster.race_next_read.store(true, Ordering::Release);
+    session
+        .execute_write(
+            "INSERT INTO ai (id, v) VALUES (1, 11), (NULL, 20) \
+             ON DUPLICATE KEY UPDATE v = 11",
+        )
+        .expect("a conflicted autocommit insert is retried, not refused");
+
+    assert_eq!(
+        rows(&mut session, "SELECT id FROM ai WHERE v = 20"),
+        vec![vec![Datum::Int(2)]],
+        "the replay must write the id the losing attempt allocated, not a \
+         fresh one"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT LAST_INSERT_ID()"),
+        vec![vec![Datum::UInt(2)]],
+        "and LAST_INSERT_ID() must name the row that was actually written"
+    );
+}
+
+/// The no-race control for the case above.
+///
+/// Without it, an id that never advanced at all would look like the fix.
+#[test]
+fn an_uncontended_insert_still_advances_the_auto_increment() {
+    let (mut session, _cluster) = open_session();
+    session
+        .execute_write("INSERT INTO ai (v) VALUES (10)")
+        .expect("first");
+    session
+        .execute_write("INSERT INTO ai (v) VALUES (20)")
+        .expect("second");
+    assert_eq!(
+        rows(&mut session, "SELECT id FROM ai ORDER BY id"),
+        vec![vec![Datum::Int(1)], vec![Datum::Int(2)]],
+        "two uncontended inserts take two consecutive ids"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT LAST_INSERT_ID()"),
+        vec![vec![Datum::UInt(2)]]
+    );
+}
+
 /// The retry's backoff schedule is Go's, and the cap is what keeps a budget
 /// that never wins from turning into a long stall.
 #[test]
