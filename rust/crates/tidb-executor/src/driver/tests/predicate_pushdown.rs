@@ -44,8 +44,11 @@ fn the_scan_takes_comparisons_against_constants_and_nothing_else() {
             panic!("a select");
         };
         let where_clause = statement.where_clause.clone().expect("a where clause");
-        let (pushed, residual) =
-            split_scan_predicates(&where_clause, &ScopeResolver { scope: &scope });
+        let (pushed, residual) = split_scan_predicates(
+            &where_clause,
+            &ScopeResolver { scope: &scope },
+            &crate::StmtContext::default(),
+        );
         (
             pushed
                 .predicates()
@@ -126,8 +129,11 @@ fn the_scan_takes_the_composed_predicates_tikv_evaluates() {
             panic!("a select");
         };
         let where_clause = statement.where_clause.clone().expect("a where clause");
-        let (pushed, residual) =
-            split_scan_predicates(&where_clause, &ScopeResolver { scope: &scope });
+        let (pushed, residual) = split_scan_predicates(
+            &where_clause,
+            &ScopeResolver { scope: &scope },
+            &crate::StmtContext::default(),
+        );
         (pushed.predicates().to_vec(), residual)
     };
 

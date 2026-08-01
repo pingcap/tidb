@@ -825,7 +825,11 @@ mod tests_push_down_verdict {
         };
         let where_clause = select.where_clause.clone()?;
         let scope = scope();
-        let (pushed, _) = split_scan_predicates(&where_clause, &ScopeResolver { scope: &scope });
+        let (pushed, _) = split_scan_predicates(
+            &where_clause,
+            &ScopeResolver { scope: &scope },
+            &crate::StmtContext::default(),
+        );
         Some(!pushed.is_empty())
     }
 
@@ -841,7 +845,11 @@ mod tests_push_down_verdict {
         };
         let where_clause = select.where_clause.clone()?;
         let scope = scope();
-        let (pushed, _) = split_scan_predicates(&where_clause, &ScopeResolver { scope: &scope });
+        let (pushed, _) = split_scan_predicates(
+            &where_clause,
+            &ScopeResolver { scope: &scope },
+            &crate::StmtContext::default(),
+        );
         match pushed.predicates() {
             [super::ScanPredicate::Builtin(call)] => Some(call.clone()),
             _ => None,
