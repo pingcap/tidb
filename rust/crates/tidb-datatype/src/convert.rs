@@ -595,24 +595,43 @@ pub fn valid_integer_prefix(
     Ok(Converted::exact(value))
 }
 
+/// `getValidIntPrefix`'s `isFuncCast` arm, byte for byte.
+///
+/// Go advances the valid length ONLY on a digit, so a leading `+`/`-` that no
+/// digit follows leaves the length at zero and the prefix becomes `"0"` -- the
+/// sign is never the accepted prefix on its own. Returns the prefix and
+/// whether the scan consumed the whole input, which is the `validLen == 0 ||
+/// validLen != len(str)` condition Go hands to `Context.HandleTruncate`.
+fn function_cast_integer_prefix(input: &str) -> (String, bool) {
+    let mut valid_len = 0;
+    for (index, byte) in input.bytes().enumerate() {
+        if matches!(byte, b'+' | b'-') && index == 0 {
+            continue;
+        }
+        if byte.is_ascii_digit() {
+            valid_len = index + 1;
+            continue;
+        }
+        break;
+    }
+    let consumed_all = valid_len != 0 && valid_len == input.len();
+    let prefix = if valid_len == 0 {
+        "0".to_owned()
+    } else {
+        input[..valid_len].to_owned()
+    };
+    (prefix, consumed_all)
+}
+
 /// `StrToInt`, preserving the best-effort value and truncation/overflow event.
 pub fn str_to_int(input: &str, is_function_cast: bool) -> Converted<i64> {
     let input = input.trim();
     let float = valid_float_prefix(input, is_function_cast);
+    let mut function_cast_consumed_all = true;
     let integer = if is_function_cast {
-        let valid = input
-            .bytes()
-            .enumerate()
-            .take_while(|(index, byte)| {
-                byte.is_ascii_digit() || (*index == 0 && matches!(*byte, b'+' | b'-'))
-            })
-            .map(|(_, byte)| byte as char)
-            .collect::<String>();
-        if valid.is_empty() {
-            "0".to_owned()
-        } else {
-            valid
-        }
+        let (prefix, consumed_all) = function_cast_integer_prefix(input);
+        function_cast_consumed_all = consumed_all;
+        prefix
     } else {
         match float_string_to_integer_string(float.value(), input) {
             Ok(value) => value,
@@ -631,7 +650,7 @@ pub fn str_to_int(input: &str, is_function_cast: bool) -> Converted<i64> {
         }
     };
     match integer.parse::<i64>() {
-        Ok(value) if float.truncated() || (is_function_cast && integer.len() != input.len()) => {
+        Ok(value) if float.truncated() || (is_function_cast && !function_cast_consumed_all) => {
             Converted::truncated(value)
         }
         Ok(value) => Converted::exact(value),
@@ -656,20 +675,11 @@ pub fn str_to_int(input: &str, is_function_cast: bool) -> Converted<i64> {
 pub fn str_to_uint(input: &str, is_function_cast: bool) -> Converted<u64> {
     let input = input.trim();
     let float = valid_float_prefix(input, is_function_cast);
+    let mut function_cast_consumed_all = true;
     let integer = if is_function_cast {
-        let valid = input
-            .bytes()
-            .enumerate()
-            .take_while(|(index, byte)| {
-                byte.is_ascii_digit() || (*index == 0 && matches!(*byte, b'+' | b'-'))
-            })
-            .map(|(_, byte)| byte as char)
-            .collect::<String>();
-        if valid.is_empty() {
-            "0".to_owned()
-        } else {
-            valid
-        }
+        let (prefix, consumed_all) = function_cast_integer_prefix(input);
+        function_cast_consumed_all = consumed_all;
+        prefix
     } else {
         match float_string_to_integer_string(float.value(), input) {
             Ok(value) => value,
@@ -699,7 +709,7 @@ pub fn str_to_uint(input: &str, is_function_cast: bool) -> Converted<u64> {
         };
     }
     match unsigned.parse::<u64>() {
-        Ok(value) if float.truncated() || (is_function_cast && integer.len() != input.len()) => {
+        Ok(value) if float.truncated() || (is_function_cast && !function_cast_consumed_all) => {
             Converted::truncated(value)
         }
         Ok(value) => Converted::exact(value),
@@ -1413,6 +1423,61 @@ mod tests {
                 "{input}"
             );
         }
+    }
+
+    /// `getValidIntPrefix`'s `isFuncCast` arm (`CAST(<string> AS
+    /// SIGNED/UNSIGNED)`): the scan advances the valid length only on a DIGIT,
+    /// so an operand whose accepted prefix is a bare sign has prefix `"0"`,
+    /// value `0`, and a truncation event -- not a parse failure saturating to
+    /// an `i64`/`u64` endpoint.
+    #[test]
+    fn function_cast_integer_prefix_needs_a_digit() {
+        for (input, expected, truncated) in [
+            ("-", 0, true),
+            ("+", 0, true),
+            ("-abc", 0, true),
+            ("+-1", 0, true),
+            ("", 0, true),
+            ("12abc", 12, true),
+            ("12", 12, false),
+            ("-12", -12, false),
+            ("  12  ", 12, false),
+        ] {
+            let actual = str_to_int(input, true);
+            assert_eq!(actual.value, expected, "{input:?}");
+            assert_eq!(
+                actual.event == Some(ScalarConversionEvent::Truncated),
+                truncated,
+                "{input:?}"
+            );
+        }
+
+        for (input, expected, truncated) in [
+            ("-", 0, true),
+            ("+", 0, true),
+            ("+abc", 0, true),
+            ("", 0, true),
+            ("12abc", 12, true),
+            ("12", 12, false),
+            ("-000", 0, false),
+        ] {
+            let actual = str_to_uint(input, true);
+            assert_eq!(actual.value, expected, "{input:?}");
+            assert_eq!(
+                actual.event == Some(ScalarConversionEvent::Truncated),
+                truncated,
+                "{input:?}"
+            );
+        }
+
+        // Go `StrToUint`: only `-000*` is a valid unsigned negative, every
+        // other negative prefix is `ErrOverflow` with value zero.
+        let negative = str_to_uint("-12", true);
+        assert_eq!(negative.value, 0);
+        assert!(matches!(
+            negative.event,
+            Some(ScalarConversionEvent::Overflow(_))
+        ));
     }
 
     #[test]
