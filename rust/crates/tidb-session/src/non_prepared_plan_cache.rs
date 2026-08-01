@@ -109,22 +109,34 @@
 //!   evicted, merely unusable for that call.
 //!
 //! Both checks are reached only when the optimizer chose a Batch/PointGet,
-//! which needs the IN-list columns to cover a unique key. Captured against
-//! `gorun` with the SAME statements and only the schema changed:
+//! so the refusal is a property of the PLAN, not of the statement text.
+//! Captured against `gorun` with the SAME statements and only the schema
+//! changed, and again with a scalar IN-list:
 //!
 //! ```text
-//! create table t1 (a int, b int, primary key(a, b));  -- Batch_Point_Get -> duplicate list MISSES
-//! create table t1 (a int, b int, key(a, b));          -- IndexReader     -> duplicate list HITS
+//! create table t1 (a int, b int, primary key(a, b));
+//!   (a, b) in ((2, 2), (2, 2), (2, 2))  -- Batch_Point_Get -> MISS
+//! create table t1 (a int, b int, key(a, b));
+//!   (a, b) in ((2, 2), (2, 2), (2, 2))  -- IndexReader     -> HIT
+//! create table t  (a int, b int, key(b));
+//!   a in (2, 2, 2)                      -- HIT
+//! create table u  (a int primary key, b int);
+//!   a in (2, 2, 2)                      -- HIT
 //! ```
 //!
-//! So keying on the list's ARITY, as this tier does, is Go's behavior for
-//! every non-point-get plan; an AST-level "duplicates never share a key"
-//! rule would have been an invention, and would have broken the `key(a, b)`
-//! case that Go caches. The divergence is confined to a duplicated IN-list
-//! whose columns cover a unique key, it costs a spurious `1` from
-//! `@@last_plan_from_cache`, and it cannot be closed honestly until this
-//! tier has an access path to inspect. Both directions are pinned by tests
-//! below so neither half can drift silently.
+//! So the rule is NOT "a duplicated IN-list is uncacheable". TiDB caches a
+//! duplicated list in three of those four shapes, including over a primary
+//! key; only the row-constructor form over a clustered composite primary key
+//! reaches the point-get valve. Keying on the list's ARITY, as this tier
+//! does, is TiDB's behavior everywhere else, and an AST-level "duplicates
+//! never share a key" rule would have been an invention that broke the three
+//! captured hits. Those are pinned by tests below, in both directions.
+//!
+//! The one divergent shape is also the one this tier cannot execute at all:
+//! `ROW(a, b) IN (ROW(...), ...)` is rejected by the expression rewriter
+//! before any plan exists, so no wrong rows can be returned through it today.
+//! Closing it honestly needs an access path to inspect, which this key-only
+//! tier does not have.
 
 use std::collections::VecDeque;
 

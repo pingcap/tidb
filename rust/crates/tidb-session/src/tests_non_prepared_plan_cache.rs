@@ -502,3 +502,163 @@ fn mutation_probe_a_shared_key_across_two_statements_that_must_not_share_one_is_
     // line above evidence rather than a tautology.
     assert_eq!(strip_kinds(&int_key), strip_kinds(&other_int_key));
 }
+
+// ---------------------------------------------------------------------------
+// The IN-list, both directions.
+// ---------------------------------------------------------------------------
+//
+// Every expectation below is the `rust/difftests/gorun` capture of the same
+// statements over `t (a int, b int, key(b))`:
+//
+//     select a from t where a in (1, 2);     -- 0
+//     select a from t where a in (2, 3);     -- 1
+//     select a from t where a in (1, 2, 3);  -- 0
+//     select a from t where a in (1, 2);     -- 1
+//     select a from t where a in (2, 2, 2);  -- 1
+
+/// Two IN-lists of the same LENGTH differing only in their values share an
+/// entry, and each call keeps its own rows.
+///
+/// This is the direction a "a duplicated list must never share a key" rule
+/// would break, so it is pinned first.
+#[test]
+fn in_lists_of_the_same_length_share_an_entry_and_keep_their_own_rows() {
+    let mut session = cache_session();
+
+    assert_eq!(
+        rows(&mut session, "select a from t where a in (1, 2)"),
+        [["1"], ["2"]]
+    );
+    assert_eq!(hit(&mut session), "0", "the first run has nothing to hit");
+
+    assert_eq!(
+        rows(&mut session, "select a from t where a in (2, 3)"),
+        [["2"], ["3"]],
+        "the rows must be the SECOND list's rows, not the first's"
+    );
+    assert_eq!(hit(&mut session), "1");
+}
+
+/// Two IN-lists of DIFFERENT lengths must not share an entry: they restore to
+/// a different number of `?`s, so the parameterized SQL differs and so does
+/// the key. Without this the shorter list would be answered by the plan built
+/// for the longer one -- and the two entries must both stay reachable, which
+/// the return to the two-element list pins.
+#[test]
+fn in_lists_of_different_lengths_do_not_share_an_entry() {
+    let mut session = cache_session();
+
+    assert_eq!(
+        rows(&mut session, "select a from t where a in (1, 2)"),
+        [["1"], ["2"]]
+    );
+    assert_eq!(hit(&mut session), "0");
+
+    assert_eq!(
+        rows(&mut session, "select a from t where a in (1, 2, 3)"),
+        [["1"], ["2"], ["3"]],
+        "the longer list must return ITS rows"
+    );
+    assert_eq!(
+        hit(&mut session),
+        "0",
+        "a different arity is a different parameterized SQL, so a different key"
+    );
+
+    assert_eq!(
+        rows(&mut session, "select a from t where a in (2, 3)"),
+        [["2"], ["3"]],
+        "and back to the two-element shape, whose own entry survived"
+    );
+    assert_eq!(hit(&mut session), "1");
+}
+
+/// A duplicated IN-list hits, which is what TiDB does here: with `key(b)` no
+/// Batch/PointGet is chosen over `a`, so neither of the two point-get safety
+/// checks quoted in [`crate::non_prepared_plan_cache`]'s module doc is
+/// reached. Captured: `select a from t where a in (2, 2, 2)` reports
+/// `@@last_plan_from_cache = 1` after the three-element list ran.
+#[test]
+fn a_duplicated_in_list_hits_and_still_returns_its_own_rows() {
+    let mut session = cache_session();
+
+    assert_eq!(
+        rows(&mut session, "select a from t where a in (1, 2, 3)"),
+        [["1"], ["2"], ["3"]]
+    );
+    assert_eq!(hit(&mut session), "0");
+
+    assert_eq!(
+        rows(&mut session, "select a from t where a in (2, 2, 2)"),
+        [["2"]],
+        "the duplicated list must return ITS single row, not the three the \
+         cached shape was built for"
+    );
+    assert_eq!(hit(&mut session), "1");
+}
+
+/// The arity half of the mutation probe: a key that recorded only "an IN-list
+/// is here" -- collapsing both the placeholder run in the restored SQL and the
+/// parameter-kind run -- puts a two- and a three-element list on one entry,
+/// while the control pair, two lists of the same length, is correct to share
+/// and shares either way.
+#[test]
+fn mutation_probe_two_in_lists_of_different_lengths_forced_onto_one_key_is_caught() {
+    use crate::non_prepared_plan_cache::cache_key;
+    use tidb_ast::Stmt;
+
+    let mut session = cache_session();
+    let parse = |session: &mut Session, sql: &str| -> Stmt { session.parse(sql).expect("parse") };
+
+    let two = parse(&mut session, "select a from t where a in (1, 2)");
+    let three = parse(&mut session, "select a from t where a in (1, 2, 3)");
+    let other_two = parse(&mut session, "select a from t where a in (2, 3)");
+
+    let catalog = session.shared_catalog();
+    let catalog = catalog.lock().expect("catalog");
+
+    let two_key = cache_key(&two, &catalog, "test", true).expect("admitted");
+    let three_key = cache_key(&three, &catalog, "test", true).expect("admitted");
+    let other_two_key = cache_key(&other_two, &catalog, "test", true).expect("admitted");
+
+    // CONTROL: two lists of the same length differing only in values are
+    // correct to share, and do.
+    assert_eq!(
+        two_key, other_two_key,
+        "control: the same list length with different values shares a key"
+    );
+
+    // PROBE: a two- and a three-element list must NOT share.
+    assert_ne!(
+        two_key, three_key,
+        "IN-lists of different lengths must not share an entry"
+    );
+
+    // The mutation: squash every run of a repeated character, which erases
+    // both `?, ?, ?` in the SQL and the per-parameter kind tags -- exactly
+    // what a key blind to an IN-list's length would carry.
+    let squash_runs = |key: &str| -> String {
+        // First the kind tags, a run of one character per parameter.
+        let mut out = String::with_capacity(key.len());
+        for ch in key.chars() {
+            if out.ends_with(ch) {
+                continue;
+            }
+            out.push(ch);
+        }
+        // Then the placeholder list itself, `?,?,?` -> `?`.
+        while out.contains("?,?") {
+            out = out.replace("?,?", "?");
+        }
+        out
+    };
+    assert_eq!(
+        squash_runs(&two_key),
+        squash_runs(&three_key),
+        "the REPEATED placeholder and kind tag are the only things keeping \
+         these apart, so squashing the runs is a real mutation, not a no-op"
+    );
+    // And the control survives the same mutation, which is what makes the
+    // line above evidence rather than a tautology.
+    assert_eq!(squash_runs(&two_key), squash_runs(&other_two_key));
+}
