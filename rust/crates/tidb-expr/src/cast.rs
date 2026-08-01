@@ -43,8 +43,14 @@ pub(crate) fn eval_cast(
         return Err(EvalError::Unsupported("range sentinel cast operand"));
     }
     match cast_type {
-        CastType::Signed => Ok(Datum::Int(to_i64_signed(&v))),
-        CastType::Unsigned => Ok(Datum::UInt(to_u64_unsigned(&v))),
+        CastType::Signed => {
+            report_int_truncation(&v, ctx)?;
+            Ok(Datum::Int(to_i64_signed(&v)))
+        }
+        CastType::Unsigned => {
+            report_int_truncation(&v, ctx)?;
+            Ok(Datum::UInt(to_u64_unsigned(&v)))
+        }
         CastType::Char { len, .. } => {
             let text = datum_sql_string(&v)?;
             Ok(Datum::new_string(match len {
@@ -184,6 +190,57 @@ fn real_to_u64_saturating(f: f64) -> u64 {
 /// replicate that, saturating to `i64::MAX` instead — a principled,
 /// documented divergence for a value nobody writes intentionally, not an
 /// oversight).
+/// Go `types.getValidIntPrefix`'s `isFuncCast` arm, reporting ONLY whether
+/// the scan consumed the whole string. Go scans BYTES and advances the valid
+/// length only on a digit, so a lone sign leaves length zero:
+/// `[+-]?` at offset 0 is skipped without counting, every following ASCII
+/// digit sets the length to `i + 1`, and the first other byte stops the scan.
+///
+/// Returned separately from [`str_int_prefix`] because the two answers have
+/// different lifetimes in Go too: the prefix VALUE is returned to the caller
+/// unconditionally, while the truncation event goes through
+/// `Context.HandleTruncate` and may be discarded, warned, or raised.
+fn int_prefix_consumed_all(s: &str) -> bool {
+    // Go `StrToInt`/`StrToUint` trim BOTH ends before scanning, so trailing
+    // space is not a truncation; `CAST('  12  ' AS SIGNED)` is exact.
+    let trimmed = s.trim();
+    let mut valid_len = 0;
+    for (i, byte) in trimmed.bytes().enumerate() {
+        if (byte == b'+' || byte == b'-') && i == 0 {
+            continue;
+        }
+        if byte.is_ascii_digit() {
+            valid_len = i + 1;
+            continue;
+        }
+        break;
+    }
+    valid_len != 0 && valid_len == trimmed.len()
+}
+
+/// Applies the statement's truncation level when `CAST(<string> AS
+/// SIGNED/UNSIGNED)` did not consume the whole operand, which is the point
+/// Go's `getValidIntPrefix` calls `Context.HandleTruncate`.
+///
+/// Only a string-valued operand reaches Go's `builtinCastStringAsIntSig`;
+/// numeric and temporal sources have their own signatures and their own
+/// (overflow-shaped, not truncation-shaped) diagnostics, so they are left
+/// alone here rather than given a warning TiDB does not emit.
+fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Result<(), EvalError> {
+    let text = match v {
+        Datum::String(value) => value.as_utf8().ok(),
+        Datum::Bytes(value) => std::str::from_utf8(value).ok(),
+        _ => None,
+    };
+    match text {
+        Some(text) if !int_prefix_consumed_all(text) => ctx.handle_truncate(&format!(
+            "Truncated incorrect INTEGER value: '{}'",
+            text.trim()
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn str_int_prefix(s: &str) -> i64 {
     let s = s.trim_start();
     let (negative, rest) = match s.strip_prefix('-') {

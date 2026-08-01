@@ -51,6 +51,12 @@ pub enum EvalError {
     Sequence(SequenceEvalError),
     /// Go `ErrDivisionByZero` (1365) raised at error level.
     DivisionByZero,
+    /// Go `types.ErrTruncatedWrongVal` (1292) raised at error level, carrying
+    /// the already-formatted message body. A SELECT never reaches this arm --
+    /// `ResetContextOfStmt` gives it `WithTruncateAsWarning(true)` with no
+    /// mode input -- but a strict `INSERT` does, so the condition needs an
+    /// error spelling as well as a warning one.
+    TruncatedWrongValue(String),
     /// A `json`-class error that carries its own MySQL error code.
     Json(JsonError),
     /// Go `collate.ErrIllegalMix2Collation`/`ErrIllegalMix3Collation` (1267):
@@ -87,6 +93,7 @@ impl EvalError {
             EvalError::CollationCharsetMismatch { .. } => Some(1253),
             EvalError::UnknownCollation(_) => Some(1273),
             EvalError::DivisionByZero => Some(1365),
+            EvalError::TruncatedWrongValue(_) => Some(1292),
             EvalError::Sequence(error) => Some(error.code()),
             _ => None,
         }
@@ -104,6 +111,7 @@ impl EvalError {
             )),
             EvalError::UnknownCollation(name) => Some(format!("Unknown collation: '{name}'")),
             EvalError::DivisionByZero => Some("Division by 0".to_owned()),
+            EvalError::TruncatedWrongValue(message) => Some(message.clone()),
             EvalError::Sequence(error) => Some(error.message()),
             _ => None,
         }
@@ -351,6 +359,37 @@ pub trait Columns {
     /// strict mode fails the statement.
     fn division_by_zero_level(&self) -> ErrorLevel {
         ErrorLevel::Warn
+    }
+
+    /// Go `types.Flags`'s truncation bits, collapsed to the three outcomes
+    /// `types.Context.HandleTruncate` picks between: `IgnoreTruncateErr`
+    /// discards, `TruncateAsWarning` warns, and neither fails the statement.
+    ///
+    /// `ResetContextOfStmt`'s `*ast.SelectStmt` arm sets
+    /// `WithTruncateAsWarning(true)` with NO mode input, so a read warns in
+    /// every SQL mode; `util.GetTypeFlagsForInsert` uses
+    /// `!strictSQLMode || ignoreErr`, so the same condition fails a strict
+    /// write. A resolver with no statement answers the read behaviour, which
+    /// is Go's own zero value for a fresh `StmtCtx`.
+    fn truncate_level(&self) -> ErrorLevel {
+        ErrorLevel::Warn
+    }
+
+    /// Go `types.Context.HandleTruncate`: applies this statement's level to a
+    /// value that lost information during conversion. The best-effort value
+    /// the caller already computed stands either way -- Go returns the
+    /// scanned prefix from `getValidIntPrefix` before this is consulted -- so
+    /// only whether the statement survives, and whether the client is told,
+    /// differ.
+    fn handle_truncate(&self, message: &str) -> Result<(), EvalError> {
+        match self.truncate_level() {
+            ErrorLevel::Ignore => Ok(()),
+            ErrorLevel::Warn => {
+                self.append_warning(1292, message);
+                Ok(())
+            }
+            ErrorLevel::Error => Err(EvalError::TruncatedWrongValue(message.to_owned())),
+        }
     }
 
     /// Records a statement warning, which Go appends to `StmtCtx.warnings`.

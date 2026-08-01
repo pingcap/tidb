@@ -39,13 +39,18 @@ pub const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 /// so every executor in a plan writes into the one buffer the statement
 /// reports at the end.
 ///
-/// DEFERRED (documented): the rest of `StatementContext` -- the other error
-/// groups (truncation, bad NULL, no default), the statement-scoped clock, the
+/// DEFERRED (documented): the rest of `StatementContext` -- the remaining
+/// error groups (bad NULL, no default), the statement-scoped clock, the
 /// resource tracker and the runtime stats.
 #[derive(Clone, Default)]
 pub struct StmtContext {
     warnings: Rc<RefCell<Vec<(u16, String)>>>,
     division_by_zero: ErrorLevel,
+    /// Go's truncation flags (`IgnoreTruncateErr` / `TruncateAsWarning`)
+    /// collapsed to the level `types.Context.HandleTruncate` acts on. It is
+    /// NOT derivable from `strict`: a SELECT warns in every mode, while a
+    /// strict write fails, and both statement classes build this struct.
+    truncate: ErrorLevel,
     strict: bool,
     /// Go `SessionVars.SQLMode`'s three temporal bits; see
     /// [`crate::zero_date`]. They ride the context rather than being derived
@@ -243,15 +248,16 @@ impl StmtContext {
     /// Builds a context whose division-by-zero handling and strict flag are
     /// already resolved: the ONE place a [`StmtContext`] is built.
     ///
-    /// The query and DML constructors differ in exactly these two fields and
+    /// The query and DML constructors differ in exactly these three fields and
     /// agreed on the other twenty-three by having been written out twice. A
     /// field added to the struct now has one place it must be named, so the two
     /// statement classes cannot silently drift apart -- which they would, in the
     /// direction of whichever literal was edited.
-    fn new(division_by_zero: ErrorLevel, strict: bool) -> Self {
+    fn new(division_by_zero: ErrorLevel, truncate: ErrorLevel, strict: bool) -> Self {
         Self {
             warnings: Rc::default(),
             division_by_zero,
+            truncate,
             strict,
             date_modes: crate::zero_date::DateModes::default(),
             current_db: None,
@@ -323,10 +329,13 @@ impl StmtContext {
             .map_err(|e| crate::DriverError::Parse(format!("{e:?}")))
     }
 
-    /// A context for a query, where Go always warns on a zero divisor.
+    /// A context for a query, where Go always warns on a zero divisor and
+    /// always warns on a truncating conversion -- `ResetContextOfStmt`'s
+    /// `*ast.SelectStmt` arm writes `WithTruncateAsWarning(true)` as a
+    /// literal, with no SQL mode input, so no mode can make a read fail.
     #[must_use]
     pub fn for_query() -> Self {
-        Self::new(ErrorLevel::Warn, true)
+        Self::new(ErrorLevel::Warn, ErrorLevel::Warn, true)
     }
 
     /// Sets the session's `default_week_format` and `div_precision_increment`.
@@ -484,6 +493,12 @@ impl StmtContext {
     /// from the SQL mode: without `ERROR_FOR_DIVISION_BY_ZERO` the condition
     /// is ignored entirely, a non-strict mode warns, and the default strict
     /// mode fails the statement.
+    ///
+    /// Truncation follows `util.GetTypeFlagsForInsert`'s
+    /// `WithTruncateAsWarning(!strictSQLMode || ignoreErr)`: a strict write
+    /// fails on a value that lost information, a permissive one warns. That
+    /// is the one place this differs from [`Self::for_query`], and the reason
+    /// the level is carried rather than decided at the conversion site.
     #[must_use]
     pub fn for_dml(error_for_division_by_zero: bool, strict: bool) -> Self {
         let level = if !error_for_division_by_zero {
@@ -493,7 +508,12 @@ impl StmtContext {
         } else {
             ErrorLevel::Warn
         };
-        Self::new(level, strict)
+        let truncate = if strict {
+            ErrorLevel::Error
+        } else {
+            ErrorLevel::Warn
+        };
+        Self::new(level, truncate, strict)
     }
 
     /// Whether the statement runs under a strict SQL mode, which decides
@@ -759,6 +779,10 @@ impl Columns for StmtContext {
 
     fn division_by_zero_level(&self) -> ErrorLevel {
         self.division_by_zero
+    }
+
+    fn truncate_level(&self) -> ErrorLevel {
+        self.truncate
     }
 
     fn append_warning(&self, code: u16, message: &str) {

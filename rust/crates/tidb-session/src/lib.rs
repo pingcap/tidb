@@ -492,6 +492,8 @@ mod tests_auto_increment;
 #[cfg(test)]
 mod tests_bad_null;
 #[cfg(test)]
+mod tests_cast_int_truncation;
+#[cfg(test)]
 mod tests_charset;
 #[cfg(test)]
 mod tests_coalesced_joins;
