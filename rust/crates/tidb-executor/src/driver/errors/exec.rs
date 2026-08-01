@@ -74,10 +74,14 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         // The `json` and sequence classes carry TiDB's own code (3140
         // malformed document, 3143 malformed path, 4135 exhausted sequence,
         // ...), which applications branch on, and render their own message.
-        EvalError::Json(json) => MysqlError::new(json.code(), *b"HY000", json.message()),
-        EvalError::Sequence(sequence) => {
-            MysqlError::new(sequence.code(), *b"HY000", sequence.message())
-        }
+        // Both arms carry a code chosen at run time, so no single literal
+        // SQLSTATE can be right for all of them: the JSON codes split across
+        // 22032 (3140, 3146, 3158), 42000 (3143, 3149, 3153, 3154, 3165) and
+        // HY000 (3150, 3064), and a sequence failure is either 4135 (HY000)
+        // or 1146 (42S02). Deriving it from the code is the only answer that
+        // holds for every one.
+        EvalError::Json(json) => MysqlError::coded(json.code(), json.message()),
+        EvalError::Sequence(sequence) => MysqlError::coded(sequence.code(), sequence.message()),
         // The collation class is how a user learns a query needs an explicit
         // `COLLATE`. The operand list is formatted where the tie is detected,
         // so for the two mix errors the payload IS the message.
@@ -92,16 +96,15 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             *b"HY000",
             format!("Unknown collation: '{name}'"),
         ),
-        EvalError::CollationCharsetMismatch { collation, charset } => MysqlError::new(
+        EvalError::CollationCharsetMismatch { collation, charset } => MysqlError::coded(
             ER_COLLATION_CHARSET_MISMATCH,
-            *b"HY000",
             format!("COLLATION '{collation}' is not valid for CHARACTER SET '{charset}'"),
         ),
         EvalError::DivisionByZero => {
-            MysqlError::new(ER_DIVISION_BY_ZERO, *b"HY000", "Division by 0".to_owned())
+            MysqlError::coded(ER_DIVISION_BY_ZERO, "Division by 0".to_owned())
         }
         EvalError::TruncatedWrongValue(message) => {
-            MysqlError::new(ER_TRUNCATED_WRONG_VALUE, *b"HY000", message)
+            MysqlError::coded(ER_TRUNCATED_WRONG_VALUE, message)
         }
         // CAPTURED from TiDB: `select 9223372036854775807 + 1` is
         // `1690 / 22003 / BIGINT value is out of range in '(9223372036854775807 + 1)'`,
@@ -195,7 +198,7 @@ mod tests {
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::DivisionByZero)),
-            MysqlError::new(1365, *b"HY000", "Division by 0")
+            MysqlError::new(1365, *b"22012", "Division by 0")
         );
     }
 

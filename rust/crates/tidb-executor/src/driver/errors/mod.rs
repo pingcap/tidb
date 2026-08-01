@@ -76,6 +76,21 @@ impl MysqlError {
         }
     }
 
+    /// The SQLSTATE a code carries, rather than one supplied beside it.
+    ///
+    /// Go never writes the two down together: `NewErr` looks the code up in
+    /// `MySQLState` and falls back to `HY000`
+    /// (`pkg/parser/mysql/error.go:40-57`). Spelling the state out at the
+    /// raise site is what lets a code and its state disagree -- `1365` was
+    /// reaching clients as `HY000` where TiDB sends `22012` -- and a derived
+    /// state cannot drift. Every entry in the table is five bytes, so this is
+    /// total.
+    fn coded(code: u16, message: impl Into<String>) -> Self {
+        let mut state = [0u8; 5];
+        state.copy_from_slice(tidb_error::mysql::mysql_state(code).as_bytes());
+        Self::new(code, state, message)
+    }
+
     /// Go's catch-all `ER_UNKNOWN_ERROR` (1105), whose SQLSTATE is HY000.
     fn unknown(message: impl Into<String>) -> Self {
         Self::new(1105, *b"HY000", message)
@@ -781,10 +796,9 @@ impl DriverError {
             *b"HY000",
             format!("`{role}`@`{role_host}` is not granted to {user}@{host}"),
         ),
-        // Go `ErrCantCreateUserWithGrant` (1410).
-        DriverError::GrantToUnknownUser => MysqlError::new(
+        // Go `ErrCantCreateUserWithGrant` (1410), SQLSTATE 42000.
+        DriverError::GrantToUnknownUser => MysqlError::coded(
             1410,
-            *b"HY000",
             "You are not allowed to create a user with GRANT".to_owned(),
         ),
         // Go `ErrDynamicPrivilegeNotRegistered` (3929).
