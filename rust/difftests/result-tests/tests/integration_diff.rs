@@ -846,7 +846,7 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // UTC put a row real TiDB stores in `p7` into `p9` -- five compared
     // statements' worth of wrong ANSWERS, which is exactly the trade this
     // refusal declines to make.
-    const KNOWN_DIVERGENCES: usize = 51;
+    const KNOWN_DIVERGENCES: usize = 50;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

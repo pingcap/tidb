@@ -411,7 +411,7 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// `NONCLUSTERED`, and the `AUTO_INCREMENT=505488` counter is not printed at
 /// all. Both belong to the clustered-index and auto-increment surfaces, not
 /// to partitioning.
-const KNOWN_CATALOG_DIVERGENCES: usize = 112;
+const KNOWN_CATALOG_DIVERGENCES: usize = 105;
 
 /// The floor on catalog reads that MATCH TiDB's recording exactly. See
 /// [`KNOWN_CATALOG_DIVERGENCES`] for why a divergence ceiling alone is not a
@@ -433,7 +433,7 @@ const KNOWN_CATALOG_DIVERGENCES: usize = 112;
 /// 106 -> 107: RANGE partitioning is built, so `executor/show`'s `thash2`
 /// definition reads back and matches. See [`KNOWN_CATALOG_DIVERGENCES`] for
 /// the second newly-measurable read, which does not.
-const MATCHED_FLOOR: usize = 107;
+const MATCHED_FLOOR: usize = 114;
 
 /// A fingerprint over the TEXT of every carried divergence, and the reason it
 /// exists is a hole this gate was CAUGHT having on its first day.
@@ -457,13 +457,16 @@ const MATCHED_FLOOR: usize = 107;
 /// `TABLE_SCHEMA = 'mysql'` counts named on [`KNOWN_CATALOG_DIVERGENCES`]
 /// LEFT the set. Nothing else in it changed text -- the before/after lists
 /// were diffed line for line, and those seven entries are the whole diff.
-/// 15_209_155_495_828_413_401 -> 16_061_795_834_336_541_714 for the one
-/// divergence RANGE partitioning ADDED to the set (`SHOW CREATE TABLE log`;
-/// see [`KNOWN_CATALOG_DIVERGENCES`]). Nothing already in the set changed
-/// text: the HASH clause this file already carried
-/// (`executor/show`'s `thash`, which prints `PARTITIONS 2` where TiDB prints
-/// a commented definition list) is produced by the same untouched branch.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 16_061_795_834_336_541_714;
+/// 15_209_155_495_828_413_401 -> 4_674_120_825_973_024_879, and the value is
+/// the COMPOSITION of two units that landed together rather than either one's
+/// own number. The `mysql` schema removed seven `TABLE_SCHEMA = 'mysql'`
+/// counts from the set; RANGE partitioning added one (`SHOW CREATE TABLE
+/// log`). Neither unit's separately-measured fingerprint (5_541_979_227_473_374_610
+/// and 16_061_795_834_336_541_714) is correct on the merged tree, which is
+/// exactly what this constant exists to catch: the count moved 111 -> 105 and
+/// the SET moved differently again, so a count-only gate would have accepted
+/// either stale value.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 4_674_120_825_973_024_879;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.
