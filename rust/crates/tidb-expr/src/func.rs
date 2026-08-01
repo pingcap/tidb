@@ -554,6 +554,41 @@ fn mysql_integer_prefix(value: &str) -> i64 {
 /// `(a,b) IN ((1,2),(3,4))`, and a resolved subquery's own captured
 /// rows — see `tidb-exec`'s own `Database::in_subquery_rows` — always
 /// produce `Expr::Row` list items here, never a mix).
+///
+/// EVERY list item is evaluated and compared, even after a match is
+/// found: the boolean answer is settled by the first match, but the
+/// evaluation of the remaining items is OBSERVABLE and so cannot be
+/// skipped. Our string-versus-number coercion lives inside the
+/// comparison (`crate::ops::eval_binary_in`), so skipping a comparison
+/// skips its `1292 Truncated incorrect DOUBLE value` warning and any
+/// error it would raise.
+///
+/// Go settles this the same way, in the vectorized `in` that real
+/// execution uses (`pkg/expression/builtin_other_vec_generated.go`,
+/// `builtinInRealSig.vecEvalInt`):
+///
+/// ```text
+/// for j := 0; j < len(args); j++ {
+///     if err := args[j].VecEvalReal(ctx, input, buf1); err != nil {
+///         return err
+///     }
+///     ...
+///     for i := 0; i < n; i++ {
+///         if r64s[i] != 0 {
+///             continue
+///         }
+/// ```
+///
+/// `args[j].VecEvalReal` -- which IS the coercion, because
+/// `newBaseBuiltinFuncWithTp` wrapped every arg in `cast(... as double)`
+/// at build time (`pkg/expression/builtin.go`, `WrapWithCastAsReal`) --
+/// runs for every arg unconditionally; `if r64s[i] != 0 { continue }`
+/// skips only the COMPARISON for an already-matched row, never the
+/// evaluation. An error from a later arg is returned even for rows that
+/// already matched. The scalar `builtinInRealSig.evalInt`
+/// (`pkg/expression/builtin_other.go`) does `return 1, false, nil` from
+/// inside its loop, but that path is the non-vectorized fallback; the
+/// warning count a client observes comes from the vectorized one.
 pub(crate) fn eval_in_list(
     expr: &Expr,
     list: &[Expr],
@@ -566,6 +601,7 @@ pub(crate) fn eval_in_list(
             .map(|e| eval_in(e, cols))
             .collect::<Result<_, _>>()?;
         let mut found_null = false;
+        let mut found_match = false;
         for item in list {
             let Expr::Row(right_items) = item else {
                 return Err(EvalError::Unsupported(
@@ -579,30 +615,42 @@ pub(crate) fn eval_in_list(
             match row_compare(BinaryOp::Eq, &lv, &rv)? {
                 Datum::Int(0) => {}
                 Datum::Null => found_null = true,
-                _ => return Ok(bool_int(!not)), // a match
+                _ => found_match = true,
             }
         }
-        return Ok(if found_null {
-            Datum::Null
-        } else {
-            bool_int(not)
-        });
+        return Ok(in_result(found_match, found_null, not));
     }
     let v = eval_in(expr, cols)?;
     let mut found_null = false;
+    let mut found_match = false;
     for item in list {
         let iv = eval_in(item, cols)?;
         match crate::ops::eval_binary_in(BinaryOp::Eq, v.clone(), iv, cols)? {
             Datum::Int(0) => {}
             Datum::Null => found_null = true,
-            _ => return Ok(bool_int(!not)), // a match
+            _ => found_match = true,
         }
     }
-    Ok(if found_null {
+    Ok(in_result(found_match, found_null, not))
+}
+
+/// The three-valued answer of an `IN` whose whole list has been compared:
+/// a match anywhere is TRUE and outranks a NULL, no match with a NULL is
+/// NULL, no match with no NULL is FALSE. `NOT` negates TRUE/FALSE and
+/// leaves NULL alone.
+///
+/// Match-outranks-NULL is what the short-circuiting form produced too --
+/// it returned TRUE from inside the loop even when an earlier item had
+/// already set `found_null` -- so folding the whole list changes WHICH
+/// items get evaluated, never the boolean this returns.
+fn in_result(found_match: bool, found_null: bool, not: bool) -> Datum {
+    if found_match {
+        bool_int(!not)
+    } else if found_null {
         Datum::Null
     } else {
         bool_int(not) // no match, no NULL: FALSE for IN, TRUE for NOT IN
-    })
+    }
 }
 
 /// Negates a three-valued boolean when `neg` is set; NULL stays NULL. Called
