@@ -1,6 +1,8 @@
 # The warning channel: three stacks, not one fragmented channel
 
 Measured at `e48b552bd0`. This is a measurement record, not a refactor plan.
+Sites named below were the state at that commit; the four commits that follow
+it changed Stack A as recorded in "What was unified".
 
 ## Verdict: DO NOT COLLAPSE
 
@@ -24,6 +26,15 @@ with zero production callers.
 | `tidb-session/src/warnings.rs:98` `warning_output` | **publisher**, renders `SHOW WARNINGS` / `SHOW ERRORS` / `SHOW COUNT(*) WARNINGS` |
 | `tidb-session/src/variables.rs:380` `warn_truncated_var` | direct push into the session buffer |
 | `tidb-session/src/variables.rs:314` `warn_removed_feature_var` | direct push into the session buffer |
+| `tidb-session/src/lib.rs:475` (in `run_with_columns`) | files a FAILED statement's own error as an `Error` row |
+| `tidb-session/src/noop.rs:86,129` | the two `tidb_enable_noop_functions` 1235 arms |
+| `tidb-session/src/account.rs:1042` | 3929, an unregistered dynamic privilege |
+| `tidb-session/src/dispatch.rs:550,559` | discarded `CHECK` (1105) and `LINEAR HASH` (8200) |
+
+The brief listed nine sites across four crates. The count is right and the
+distribution is wrong: **seven of the appending sites are in `tidb-session`
+alone**, and `lib.rs:475` -- the one that decides a failed statement leaves its
+own error behind -- was not on the list at all.
 
 `drain_eval_warnings` is called from six dispatch arms
 (`tidb-session/src/dispatch.rs:263,372,385,395,429,443`) and
@@ -89,14 +100,73 @@ tests. This is the same shape as the seven earlier "present but unwired" cases,
 including `Validated{truncated}` — the precursor that forced
 `warn_truncated_var` into existence.
 
-## What a correct unification would be, and why it is not this unit
+## What was unified, and what was deliberately left alone
 
-Collapsing the sinks is the wrong axis. The sinks have genuinely different
-roles — accumulator, publisher, borrowed view, transport decoder, detach-shared
-`Arc` — and they live in crates with no dependency edge between them.
+**Unified:** the seven `tidb-session` sites, behind `Session::append_warning`
+(`warnings.rs`). That is the door the three queued units (#150, #153, #154)
+would otherwise have become the eighth, ninth and tenth caller of. The pure
+move landed on its own; the rule it enabled — Go's `MaxUint16` retention
+limit — landed in the commit after it with tests on both buffers.
 
-The axis that would actually pay is the one Go centralizes: give the live path
-(Stack A) the `TruncateAsWarning`-style decision, so a conversion that is an
-error under strict mode and a warning otherwise is decided in one place rather
-than at each call site. That is a **behaviour-bearing** change and belongs in
-its own unit with a capture, not in a refactor commit.
+**Left separate, deliberately:** Stack B and Stack C. Their pieces are a
+mutable sink, a no-op sink, a borrowed read-only view, a per-statement status
+owner, a detach-shared `Arc` sink, and a transport decoder. Those are six
+roles, not six copies, and no dependency edge exists to merge them across.
+Collapsing them is `#122`'s five-classifier mistake with a wider blast radius.
+
+**Left separate, reluctantly:** `MAX_WARNING_COUNT` now exists twice —
+`tidb-executor` for the live path, `tidb-exec` for the bounded one. The
+session cannot see `tidb-exec`, so this is the honest spelling until the two
+stacks are on one dependency edge.
+
+## The axis that would pay next
+
+Go's design works because the *decision* is centralized, not just the storage:
+`TypeFlags.TruncateAsWarning` decides error-vs-warning once. The live path has
+no such decision point — `ConversionContext::handle_truncate` is it, and it is
+dead. Wiring it is **behaviour-bearing** and needs a capture, so it is its own
+unit.
+
+## Bugs the audit found
+
+1. **Fixed** — `reports_warnings` decided warning-buffer inheritance by
+   sniffing the raw SQL for `SHOW ... WARNINGS`/`ERRORS`. Both are UNRESERVED
+   keywords, so `SHOW CREATE TABLE warnings` and `SHOW COLUMNS FROM warnings`
+   took the inherit branch and the next `SHOW WARNINGS` reported a statement
+   two back. Go decides on the parsed node (`ResetContextOfStmt`). The module
+   doc justified the sniff by the cost of a second parse — stale since the
+   parse-once refactor put the node one line below.
+2. **Fixed** — `ShowSessionStates` was missing from the inheriting set that Go
+   spells with exactly three entries. Unreachable today (`SHOW SESSION_STATES`
+   is refused) but a silent trap for whoever admits it.
+3. **Fixed** — no retention limit on either live buffer, where the
+   source-faithful port has had Go's `MaxUint16` since it was written. A
+   non-strict bulk write allocated one `String` per converted value, unbounded.
+4. **Open, own unit** — the wire never reports a warning count.
+   `ResultSetOptions.warnings` is the literal `0` at every construction site in
+   `tidb-server/src/mysql_connection.rs` (`461`, `684`, `1414`, `1435`,
+   `1582`), and `OkPacket::default()` supplies `0` for the rest. Go sends
+   `cc.ctx.WarningCount()` in both `writeOK` (`pkg/server/conn.go:1692`) and
+   `writeEOF` (`:1779`). `SHOW WARNINGS` works over the wire because it is a
+   result set; the *count* channel that the `mysql` CLI prints and JDBC uses to
+   decide whether to build a `SQLWarning` chain is dead.
+5. **Open, own unit** — the live `WarningLevel` has two variants (`Warning`,
+   `Error`). Go and both bounded stacks have three. Nothing on the live path
+   can produce a `Note`, and `drain_eval_warnings` stamps `Warning` on
+   everything the executor recorded, since the accumulator carries no level.
+
+## Mutation probe
+
+Neutering the single live route — `drain_eval_warnings`'s body, keeping
+`take_warnings()` so the accumulator still drains — fails **19** of
+`tidb-session`'s 730 tests, and every one is a warning observation. The first
+failure is `tests_zero_date::empty_sql_mode_warns_and_stores_the_zero_date`,
+panicking `left: []` against the expected `1292` entry *before* it reaches its
+stored-value assertion. The remaining **710 pass**, including every
+stored-value test that does not also assert warnings.
+
+That is the asymmetry the route is supposed to have: cutting it stops warnings
+reaching the client and leaves the stored values correct. Control, in the
+other direction: the `reports_warnings` fix's regression test fails on the
+`SHOW CREATE TABLE warnings` probe (`left: 1, right: 0`) with the old
+string-sniff decision restored, and passes with the parsed-node one.
