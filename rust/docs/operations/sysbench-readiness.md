@@ -280,6 +280,55 @@ which is exactly why the Go-vs-Go row is exact. The comment's claim that this is
 "exactly as Go's implicit per-statement transaction does" is the part that is
 not true: Go does not re-timestamp between the read and the write.
 
+#### The Go source, quoted — the premise holds
+
+The claim above was checked against the Go before any Rust was touched, because
+a premise that is wrong here would change the whole shape of the fix. It is
+right. For an optimistic (autocommit) statement the **read** timestamp is
+literally the transaction's `start_ts`:
+
+```go
+// pkg/sessiontxn/isolation/optimistic.go:45-46
+p.getStmtReadTSFunc = p.getTxnStartTS
+p.getStmtForUpdateTSFunc = p.getTxnStartTS
+```
+
+```go
+// pkg/sessiontxn/isolation/base.go:268-274
+func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
+	txn, err := p.ActivateTxn()
+	...
+	return txn.StartTS(), nil
+}
+```
+
+Note that `GetStmtForUpdateTS` — the timestamp an `UPDATE`/`DELETE`/`INSERT`
+reads its rows at — is the *same function* under optimistic isolation. There is
+no second allocation between the read and the write. `ActivateTxn`
+(`base.go:283`) returns the already-activated `p.txn` if there is one, so the
+whole statement sees a single activation.
+
+And the **prewrite** goes out under that same number, unchanged:
+
+```go
+// client-go v2.0.8-0.20260708122311-01bd8f99f4da txnkv/transaction/2pc.go:471-474
+committer := &twoPhaseCommitter{
+	store:   txn.store,
+	txn:     txn,
+	startTS: txn.StartTS(),
+```
+
+```go
+// .../txnkv/transaction/prewrite.go:174
+StartVersion: c.startTS,
+```
+
+So Go allocates exactly **one** timestamp for an autocommit DML statement's read
+*and* its prewrite; the only other timestamp it spends is the `commit_ts` after
+prewrite succeeds. That is why TiKV's `commit_ts > start_ts` conflict check is
+sufficient for Go and insufficient for us: our prewrite carries a `start_ts` the
+read never saw. **Premise confirmed, not falsified.**
+
 This is a **pre-existing, unfixed data-loss bug in the autocommit write path**,
 reproducible on both sides of task #165 and independent of it. Reproduction:
 `scripts/run-sysbench-ladder.sh`'s cluster plus two concurrent sessions each
