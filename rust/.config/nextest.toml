@@ -1,0 +1,32 @@
+# Nextest's LEAK report means: the test's stdout/stderr pipe was still open
+# `leak-timeout` after the test process exited. A pipe that NEVER closes is a
+# real leak -- a spawned child or a helper thread outliving the test -- and it
+# must stay red. A pipe that closes LATE is not, and the 100ms default calls
+# 0-3 of `difftest`'s tests leaky on this workspace whenever ~24 test processes
+# are spawned at once:
+#
+#   --test-threads=1          5 runs, 0 leaky
+#   --test-threads=2          3 runs, 0 leaky
+#   7 of the 24, full threads 5 runs, 0 leaky
+#   all 24, full threads      6 runs, 8 leaky reports across 4 of them
+#   all 24, leak-timeout 5s   4 runs, 0 leaky
+#
+# The leak follows the COMPLETION SLOT, not the test: the names rotate run to
+# run over tests that do nothing but read files, and any one of them run alone
+# 10 times is never leaky. No test here holds anything open -- the pipes just
+# take longer than 100ms to close under a 24-way spawn.
+#
+# 2s is more than twice the longest test in this crate and costs nothing on a
+# healthy run: nextest waits out this timeout only for a pipe that is STILL
+# open at exit. A genuinely leaked child holds the pipe forever, so it is still
+# reported, 2s later.
+#
+# This is a REPORTING threshold, not a suppression. If LEAK appears with this
+# file in place, something really is outliving a test. Probed: a test that
+# spawns `sleep 30` is reported LEAK 2s later, with this file in place. That
+# probe also showed WHY the names rotate -- the one leaked child dragged THREE
+# innocent siblings into the report with it, because a process spawned
+# alongside them inherits their pipes. The report names the slot; it does not
+# name the culprit.
+[profile.default]
+leak-timeout = "2s"
