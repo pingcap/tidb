@@ -88,6 +88,57 @@
 //! not exist. Accepting HASH and RANGE gives that back for those tables,
 //! which is the point of this direction.
 //!
+//! # What folds at DDL time, and what therefore needs the session's context
+//!
+//! [`run_create_table_in`] RE-PARSES the statement text the session already
+//! parsed, and it settles two things by EVALUATING an expression: a column
+//! `DEFAULT` and a RANGE partition bound. Both take the session's
+//! [`crate::StmtContext`], because a folded value can read `@@time_zone`.
+//!
+//! The rest of this statement's `CREATE`-time features were AUDITED against
+//! real TiDB for the same hole, by issuing one `CREATE TABLE` from two
+//! sessions differing only in `@@time_zone` and reading the stored definition
+//! back. The audit is recorded here so the next reader does not redo it:
+//!
+//! * **Partition bounds -- AFFECTED.** `VALUES LESS THAN
+//!   (UNIX_TIMESTAMP('2020-01-03 15:10:00'))` stores `1578064200` under
+//!   `+00:00` and `1578035400` under `+08:00`. This is the case the threading
+//!   exists for.
+//! * **Expression `DEFAULT`s -- NOT affected.** A temporal literal default is
+//!   stored VERBATIM in both zones (`ts timestamp default '2020-01-01
+//!   00:00:00'` reads back identically under `+00:00` and `+08:00`), and a
+//!   FUNCTION-CALL default takes Go's whitelist route (3770) rather than the
+//!   folder, so no zone-reading function can reach the fold at all. The
+//!   context is passed to that fold anyway, because it is the same
+//!   `EvalSimpleAst` Go passes its own `BuildContext` to.
+//! * **Generated columns and expression indexes -- NOT affected, structurally.**
+//!   Go's `checkIllegalFn4Generated` rejects every name in
+//!   `expression.IllegalFunctions4GeneratedColumns`, and `UNIX_TIMESTAMP` is
+//!   ON that list, as are `NOW`/`CURDATE`/`CURTIME` and the rest of the clock.
+//!   Captured: `create table g (a timestamp, b bigint as (unix_timestamp(a)))`
+//!   is an ERROR in both zones, stored and virtual alike, and the same
+//!   expression in `key idx((...))` likewise. A zone-dependent generated
+//!   expression cannot exist, so there is nothing to fold wrongly.
+//! * **`CHECK` constraints -- NOT affected.** They are DISCARDED at DDL time
+//!   under the stock `tidb_enable_check_constraint = OFF`; see
+//!   [`run_create_table_in`].
+//! * **`tidb_exec::table_info_build`, the OTHER builder -- NOT affected.** It
+//!   refuses `PARTITION BY` outright and its `set_default_value` accepts only
+//!   a LITERAL or `CURRENT_TIMESTAMP`, never folding an expression, so it has
+//!   no DDL-time evaluation to give a zone to.
+//!
+//! One zone-dependent DDL-time behaviour the audit DID find and this unit
+//! does NOT fix, recorded so it is not lost: TIMESTAMP `DEFAULT` RANGE
+//! validation. `ts timestamp default '1970-01-01 00:30:00'` is accepted under
+//! `+00:00` and `-08:00` but is an ERROR under `+08:00` (it falls below the
+//! epoch once converted), and `'2038-01-19 03:14:07'` is the mirror image --
+//! accepted under `+00:00`/`+08:00`, an error under `-08:00`. The stored
+//! VALUE is the literal either way; it is the ACCEPTANCE that moves. This
+//! node applies no epoch-range check to a TIMESTAMP default in any zone, so
+//! it accepts both, which is a wrong-ACCEPT rather than a wrong-value and
+//! belongs to the TIMESTAMP storage seam that also owns the reading-session
+//! rendering divergence pinned in `integration_diff`.
+//!
 //! # Where a resolved collation is, and is NOT, consulted
 //!
 //! DDL-time resolution is complete: every string column carries its real
