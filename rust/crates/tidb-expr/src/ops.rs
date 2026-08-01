@@ -705,13 +705,27 @@ fn decimal_binary(
         Lt => bool_int(a < b),
         Ne => bool_int(a != b),
         Div => unreachable!("handled above"),
-        IntDiv => match a.div_rem(&b) {
-            Some((q, _)) => Datum::Int(q),
-            None => {
+        // `div_rem` answers `None` for two unrelated conditions: a zero divisor
+        // and a quotient too wide for `i64`. Go
+        // (`builtinArithmeticIntDivideDecimalSig.evalInt`,
+        // `builtin_arithmetic.go:926`) keeps them apart — a zero divisor comes
+        // back from `DecimalDiv` as `ErrDivByZero` and goes to the
+        // division-by-zero handler, while an out-of-`BIGINT` quotient is caught
+        // later by `ToInt`/`ToUint` and raised as an unconditional
+        // `ErrOverflow`, never downgraded to a warning. Testing the divisor
+        // here is what lets the remaining `None` mean overflow and only
+        // overflow.
+        IntDiv => {
+            if b.is_zero() {
                 ctx.handle_division_by_zero()?;
                 Datum::Null
+            } else {
+                match a.div_rem(&b) {
+                    Some((q, _)) => Datum::Int(q),
+                    None => return Err(EvalError::IntOverflow),
+                }
             }
-        },
+        }
         Mod => match a.rem_mysql(&b) {
             Some(r) => Datum::Decimal(r),
             None => {
