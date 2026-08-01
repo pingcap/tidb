@@ -136,7 +136,14 @@ impl Session {
     /// `SET` forms stay unsupported.
     pub fn apply_set(&mut self, sql: &str) -> Result<Option<()>, DriverError> {
         let stmt = self.parse(sql)?;
-        let Stmt::Session(session_stmt) = &stmt else {
+        self.apply_set_stmt(&stmt)
+    }
+
+    /// [`Self::apply_set`] over a statement this session already parsed. The
+    /// text form parses and delegates here; the `SET` family is recognized in
+    /// exactly one place either way.
+    pub(crate) fn apply_set_stmt(&mut self, stmt: &Stmt) -> Result<Option<()>, DriverError> {
+        let Stmt::Session(session_stmt) = stmt else {
             return Ok(None);
         };
         match &**session_stmt {

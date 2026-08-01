@@ -73,6 +73,17 @@ impl Session {
     /// see the `Stmt::Ddl` arm below.
     pub fn apply_schema_statement(&mut self, sql: &str) -> Result<Option<StmtOutput>, DriverError> {
         let stmt = self.parse(sql)?;
+        self.apply_schema_stmt(&stmt)
+    }
+
+    /// [`Self::apply_schema_statement`] over a statement this session already
+    /// parsed, so a caller holding the parse does not pay for a second one.
+    /// The text form is the wrapper above; the two share this body, so there
+    /// is one answer to "is this a schema statement", not two.
+    pub(crate) fn apply_schema_stmt(
+        &mut self,
+        stmt: &Stmt,
+    ) -> Result<Option<StmtOutput>, DriverError> {
         if matches!(stmt, Stmt::Ddl(_)) {
             // Go commits the open transaction before running any DDL
             // (`session.ExecuteStmt`, which calls `sessiontxn`'s
@@ -92,7 +103,7 @@ impl Session {
             // rather than on a copy about to be discarded.
             self.commit()?;
         }
-        match &stmt {
+        match stmt {
             Stmt::Session(session_stmt) => match &**session_stmt {
                 SessionStmt::Use(name) => {
                     self.use_database(name)?;
@@ -260,8 +271,15 @@ impl Session {
         if !reports_warnings(sql) {
             self.warnings.clear();
         }
+        // One parse serves every door below. `sql_mode` is what decides how a
+        // statement lexes, and nothing between here and execution changes it
+        // -- the `SET` that could is itself one of these doors, and it returns
+        // before the next statement is read -- so re-parsing the same text
+        // under the same mode could only ever produce the same tree. The four
+        // parses this replaces cost ~6 us of a ~13.5 us `SELECT 1`.
+        let mut stmt = self.parse(sql)?;
         // USE / CREATE DATABASE / DROP DATABASE / SHOW DATABASES / SHOW TABLES.
-        if let Some(output) = self.apply_schema_statement(sql)? {
+        if let Some(output) = self.apply_schema_stmt(&stmt)? {
             return Ok(output);
         }
         // BEGIN / COMMIT / ROLLBACK and SET both have their own entry points
@@ -269,13 +287,12 @@ impl Session {
         // a status flag. Routing them here too makes `run` the single door
         // every statement can go through, which is what a client expects of
         // one connection.
-        if self.control_transaction(sql)?.is_some() {
+        if self.control_transaction_stmt(&stmt)?.is_some() {
             return Ok(StmtOutput::Affected(0));
         }
-        if self.apply_set(sql)?.is_some() {
+        if self.apply_set_stmt(&stmt)?.is_some() {
             return Ok(StmtOutput::Affected(0));
         }
-        let mut stmt = self.parse(sql)?;
         // SQL-level prepared statements are answered before variable binding,
         // because a `USING` entry is a variable whose VALUE this statement
         // must read itself (Go's `usingParam.Eval`) rather than one to

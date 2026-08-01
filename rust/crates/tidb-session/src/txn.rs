@@ -197,7 +197,17 @@ impl Session {
     /// `ROLLBACK` with no open transaction are no-ops, as in MySQL.
     pub fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, DriverError> {
         let stmt = self.parse(sql)?;
-        let Stmt::Session(session_stmt) = &stmt else {
+        self.control_transaction_stmt(&stmt)
+    }
+
+    /// [`Self::control_transaction`] over a statement this session already
+    /// parsed. The text form parses and delegates here, so both callers ask
+    /// the same question of the same code.
+    pub(crate) fn control_transaction_stmt(
+        &mut self,
+        stmt: &Stmt,
+    ) -> Result<Option<bool>, DriverError> {
+        let Stmt::Session(session_stmt) = stmt else {
             return Ok(None);
         };
         match &**session_stmt {
