@@ -337,6 +337,114 @@ fn an_unsigned_id_above_the_signed_maximum_rebases_the_allocator() {
     );
 }
 
+/// An auto id must fit the COLUMN, not just the counter: the id AT a narrow
+/// type's maximum is written, and the next one is refused with `1690`.
+///
+/// Captured through `gorun` on `CREATE TABLE t(id <type> PRIMARY KEY
+/// AUTO_INCREMENT, n INT)` seeded one below each type's maximum: every width
+/// and both signednesses accept the id that equals the maximum and refuse the
+/// one past it, with the refused row absent from the table afterwards. The
+/// error is Go's `types.overflow` from `setDatumAutoIDAndCast`, `[types:1690]
+/// constant <id> overflows <type>`, and NOT the allocator's `1467` -- ids
+/// remain in the 64-bit domain the allocator counts in, this column just
+/// cannot hold them.
+///
+/// BOTH directions are pinned on purpose. A bound that fires one id early
+/// turns working inserts into errors, which is worse than the missing check
+/// it replaces, and only the at-maximum half of each pair can see that.
+#[test]
+fn an_auto_id_past_the_column_type_is_refused_while_the_maximum_is_accepted() {
+    // (type, one below the maximum, the maximum, the id past it)
+    let widths = [
+        ("TINYINT", "126", "127", "128", "tinyint"),
+        ("TINYINT UNSIGNED", "254", "255", "256", "tinyint"),
+        ("SMALLINT", "32766", "32767", "32768", "smallint"),
+        ("SMALLINT UNSIGNED", "65534", "65535", "65536", "smallint"),
+        ("MEDIUMINT", "8388606", "8388607", "8388608", "mediumint"),
+        (
+            "MEDIUMINT UNSIGNED",
+            "16777214",
+            "16777215",
+            "16777216",
+            "mediumint",
+        ),
+        ("INT", "2147483646", "2147483647", "2147483648", "int"),
+        (
+            "INT UNSIGNED",
+            "4294967294",
+            "4294967295",
+            "4294967296",
+            "int",
+        ),
+    ];
+    for (column_type, seed, maximum, past, type_name) in widths {
+        let mut session = Session::new();
+        session
+            .run(&format!(
+                "CREATE TABLE t (id {column_type} AUTO_INCREMENT PRIMARY KEY, n INT)"
+            ))
+            .unwrap();
+        session
+            .run(&format!("INSERT INTO t VALUES ({seed}, 1)"))
+            .unwrap();
+        // The id AT the maximum is a plain accepted insert.
+        session.run("INSERT INTO t (n) VALUES (2)").unwrap();
+        assert_eq!(
+            rows(&mut session, "SELECT id FROM t ORDER BY id"),
+            [[seed], [maximum]],
+            "{column_type}: the id at the type maximum must be written"
+        );
+        // The next one does not fit the column.
+        let error = session
+            .run("INSERT INTO t (n) VALUES (3)")
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1690, "{column_type}");
+        assert_eq!(
+            error.message,
+            format!("constant {past} overflows {type_name}"),
+            "{column_type}"
+        );
+        // A refused allocation writes nothing.
+        assert_eq!(
+            rows(&mut session, "SELECT id FROM t ORDER BY id"),
+            [[seed], [maximum]],
+            "{column_type}: the refused row must be absent"
+        );
+    }
+}
+
+/// The unsigned case whose maximum is above `i64::MAX`: a `BIGINT UNSIGNED`
+/// column reaches ids no signed intermediate can express, so the column bound
+/// must be read as a 64-bit PATTERN or it truncates and refuses ids the
+/// column holds.
+///
+/// Captured: seeded at `18446744073709551613`, the next insert takes
+/// `18446744073709551614` and the one after is refused. At this width the
+/// column bound IS the domain end, so the refusal comes from the allocator's
+/// own rule (`1467`, one id below `u64::MAX`) and never from the cast --
+/// which is exactly what says the cast did not fire early here.
+#[test]
+fn a_bigint_unsigned_column_keeps_its_ids_above_the_signed_maximum() {
+    let mut session = table(None);
+    session
+        .run("INSERT INTO ai VALUES (18446744073709551613, 1)")
+        .unwrap();
+    session.run("INSERT INTO ai (v) VALUES (2)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM ai ORDER BY id"),
+        [
+            ["18446744073709551613", "1"],
+            ["18446744073709551614", "2"]
+        ]
+    );
+    let error = session
+        .run("INSERT INTO ai (v) VALUES (3)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1467);
+}
+
 /// REFUSED, not silently ignored: under `NO_AUTO_VALUE_ON_ZERO` Go STORES an
 /// explicit `0` (captured: the row is `0` and the next insert gets `1`), while
 /// this tier allocates over it. Writing a different row than Go writes is
