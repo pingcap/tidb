@@ -193,3 +193,84 @@ fn an_unsigned_cast_warns_on_the_same_strings() {
         assert_eq!(warnings(&session), expected, "{sql}");
     }
 }
+
+/// The OTHER half of the trap, measured rather than assumed: the same cast
+/// inside a WRITE is the one place Go's level reads the SQL mode, so a
+/// strict `INSERT` must fail where the SELECT above must not.
+///
+/// Captured from a run of this port, after the fix:
+///
+/// ```text
+/// INSERT INTO t VALUES (CAST('x' AS SIGNED))
+///   STRICT_TRANS_TABLES  Err  SHOW WARNINGS: Error   1292 ...  rows []
+///   sql_mode=''          Ok   SHOW WARNINGS: Warning 1292 ...  rows [0]
+/// ```
+///
+/// The strict row is `Error`-level, not a second stray warning: a statement
+/// that fails records its own error in the same buffer, which is what MySQL
+/// shows for a failed statement and is pre-existing machinery here.
+#[test]
+fn a_strict_write_fails_on_the_same_cast_a_read_only_warns_about() {
+    let mut strict = Session::new();
+    strict.run("SET sql_mode='STRICT_TRANS_TABLES'").unwrap();
+    strict.run("CREATE TABLE t (a INT)").unwrap();
+    assert!(strict
+        .run("INSERT INTO t VALUES (CAST('x' AS SIGNED))")
+        .is_err());
+    assert_eq!(
+        warnings(&strict),
+        [(1292, "Truncated incorrect INTEGER value: 'x'".to_owned())]
+    );
+    assert_eq!(strict.warnings()[0].level, crate::WarningLevel::Error);
+    // The row never landed, so the refusal is real rather than cosmetic.
+    assert_eq!(
+        row_text(strict.run("SELECT a FROM t")),
+        Vec::<Vec<String>>::new()
+    );
+
+    let mut permissive = Session::new();
+    permissive.run("SET sql_mode=''").unwrap();
+    permissive.run("CREATE TABLE t (a INT)").unwrap();
+    assert!(permissive
+        .run("INSERT INTO t VALUES (CAST('x' AS SIGNED))")
+        .is_ok());
+    assert_eq!(
+        warnings(&permissive),
+        [(1292, "Truncated incorrect INTEGER value: 'x'".to_owned())]
+    );
+    assert_eq!(permissive.warnings()[0].level, crate::WarningLevel::Warning);
+    // The best-effort prefix is what Go stores, so the row IS there as 0.
+    assert_eq!(row_text(permissive.run("SELECT a FROM t")), [["0"]]);
+}
+
+/// One warning per evaluation on the write path too -- a two-row permissive
+/// INSERT leaves two, and the strict one stops at the first bad row rather
+/// than pre-scanning every value.
+#[test]
+fn the_write_path_warns_once_per_evaluated_value() {
+    let mut permissive = Session::new();
+    permissive.run("SET sql_mode=''").unwrap();
+    permissive.run("CREATE TABLE t (a INT)").unwrap();
+    permissive
+        .run("INSERT INTO t VALUES (CAST('y' AS SIGNED)),(CAST('z' AS SIGNED))")
+        .unwrap();
+    assert_eq!(
+        warnings(&permissive),
+        [
+            (1292, "Truncated incorrect INTEGER value: 'y'".to_owned()),
+            (1292, "Truncated incorrect INTEGER value: 'z'".to_owned()),
+        ]
+    );
+
+    let mut strict = Session::new();
+    strict.run("SET sql_mode='STRICT_TRANS_TABLES'").unwrap();
+    strict.run("CREATE TABLE t (a INT)").unwrap();
+    assert!(strict
+        .run("INSERT INTO t VALUES (CAST('y' AS SIGNED)),(CAST('z' AS SIGNED))")
+        .is_err());
+    assert_eq!(
+        warnings(&strict),
+        [(1292, "Truncated incorrect INTEGER value: 'y'".to_owned())],
+        "the second value is never reached, so it must not be reported"
+    );
+}
