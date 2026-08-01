@@ -95,7 +95,10 @@ impl Pd for MockPd {
                 let mut state = self.state.lock().unwrap();
                 let count = request.count;
                 state.requests.push(request);
-                state.replies.pop_front().or_else(|| state.auto_reply(count))
+                state
+                    .replies
+                    .pop_front()
+                    .or_else(|| state.auto_reply(count))
             };
             match reply {
                 Some(TsoReply::Response(response)) => {
@@ -124,7 +127,10 @@ impl Pd for MockPd {
                     let mut state = state.lock().unwrap();
                     let count = request.count;
                     state.requests.push(request);
-                    state.replies.pop_front().or_else(|| state.auto_reply(count))
+                    state
+                        .replies
+                        .pop_front()
+                        .or_else(|| state.auto_reply(count))
                 };
                 match reply {
                     Some(TsoReply::Response(response)) => {
@@ -455,7 +461,11 @@ fn concurrent_waiters_never_share_a_timestamp() {
     let total = all.len();
     all.sort_unstable();
     all.dedup();
-    assert_eq!(all.len(), total, "batched waiters received duplicate timestamps");
+    assert_eq!(
+        all.len(),
+        total,
+        "batched waiters received duplicate timestamps"
+    );
     // Each thread sees its own calls strictly increasing.
     for thread in &collected {
         assert!(
@@ -465,6 +475,9 @@ fn concurrent_waiters_never_share_a_timestamp() {
     }
     // Batching actually happened: fewer PD requests than timestamps served.
     let requests = server.state.lock().unwrap().requests.len();
-    assert!(requests < total, "no batching occurred: {requests} requests for {total} timestamps");
+    assert!(
+        requests < total,
+        "no batching occurred: {requests} requests for {total} timestamps"
+    );
     client.shutdown().unwrap();
 }

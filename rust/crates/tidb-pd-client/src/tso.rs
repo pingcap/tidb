@@ -73,11 +73,6 @@ fn add_logical(logical: i64, count: i64, suffix_bits: u32) -> i64 {
 }
 
 impl TimestampParts {
-    #[cfg(test)]
-    pub(crate) fn new(physical: i64, logical: i64) -> Self {
-        Self { physical, logical }
-    }
-
     fn from_response(
         endpoint: &str,
         expected_cluster_id: u64,

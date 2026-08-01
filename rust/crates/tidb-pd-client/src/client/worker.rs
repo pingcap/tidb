@@ -35,6 +35,14 @@ use crate::tso::{
 ///
 /// Go boundary: `pd/client`'s `defaultMaxTSOBatchSize` in `tso_client.go`.
 const MAX_TSO_BATCH_SIZE: usize = 10000;
+
+/// What one batched PD Tso round trip must satisfy: the earliest waiter's
+/// deadline, and how many waiters share the reply.
+#[derive(Clone, Copy)]
+pub(super) struct TsoBatchSpec {
+    pub(super) deadline: Instant,
+    pub(super) count: u32,
+}
 use crate::{PdClientError, PdMemberSet};
 
 use super::failover::{
@@ -316,11 +324,13 @@ pub(super) fn run_worker(
                         timeout,
                         shutdown: &shutdown,
                     },
-                    batch_deadline,
+                    TsoBatchSpec {
+                        deadline: batch_deadline,
+                        count,
+                    },
                     &state,
                     &mut tso_stream,
                     &mut last_timestamp,
-                    count,
                 );
                 for (index, (_, reply)) in waiters.into_iter().enumerate() {
                     let index = u32::try_from(index).expect("TSO batch fits u32");
@@ -354,12 +364,12 @@ pub(super) fn get_timestamps_with_retry(
     runtime: &tokio::runtime::Runtime,
     clients: &mut PdChannelCache,
     control: RpcControl<'_>,
-    deadline: Instant,
+    spec: TsoBatchSpec,
     state: &Arc<RwLock<PdSharedState>>,
     stream: &mut Option<RetainedTsoStream>,
     last_timestamp: &mut Option<TimestampParts>,
-    count: u32,
 ) -> Result<TsoBatch, PdClientError> {
+    let TsoBatchSpec { deadline, count } = spec;
     let mut last_error = None;
     for attempt in 0..MAX_TSO_RETRIES {
         let snapshot = state.read().expect("PD state lock poisoned").clone();
