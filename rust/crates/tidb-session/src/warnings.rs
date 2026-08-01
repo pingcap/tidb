@@ -54,12 +54,22 @@ pub struct SqlWarning {
 
 /// A warning's `Level` column, which Go fills from
 /// `StmtCtx.warnings[i].Level`.
+///
+/// The three variants are Go's three: `contextutil.WarnLevelWarning`,
+/// `WarnLevelError` and `WarnLevelNote` (`pkg/util/context/warn.go`), reached
+/// through `StmtCtx.AppendWarning` / `AppendError` / `AppendNote`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WarningLevel {
     /// The statement continued.
     Warning,
     /// The statement failed; Go records its error in the same buffer.
     Error,
+    /// The statement asked for something to be skipped and it was: Go's
+    /// `AppendNote`, which every `IF EXISTS` / `IF NOT EXISTS` suppression
+    /// files the error it swallowed under. Captured from `gorun`:
+    /// `drop table if exists nosuch` leaves
+    /// `Note | 1051 | Unknown table 'test.nosuch'`.
+    Note,
 }
 
 impl WarningLevel {
@@ -69,6 +79,7 @@ impl WarningLevel {
         match self {
             WarningLevel::Warning => "Warning",
             WarningLevel::Error => "Error",
+            WarningLevel::Note => "Note",
         }
     }
 }
@@ -118,6 +129,18 @@ impl Session {
             code,
             message,
         });
+    }
+
+    /// Files the error an `IF EXISTS` / `IF NOT EXISTS` clause swallowed as
+    /// Go's `Note`.
+    ///
+    /// Go writes it that way too: `dropTableObject` hands
+    /// `StmtCtx.AppendNote` the very `ErrBadTable` it would otherwise have
+    /// returned (`pkg/ddl/executor.go`), so the note's code and text are the
+    /// suppressed error's, never a second string that can drift from it.
+    pub(crate) fn append_suppressed(&mut self, error: DriverError) {
+        let reported = error.to_mysql_error();
+        self.append_warning(WarningLevel::Note, reported.code, reported.message);
     }
 
     pub(crate) fn warning_output(&self, count_only: bool, errors_only: bool) -> StmtOutput {

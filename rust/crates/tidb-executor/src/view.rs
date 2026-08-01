@@ -111,13 +111,19 @@ pub fn run_create_view_in(
 }
 
 /// Drops views, refusing to touch a base table of the same name.
+///
+/// Returns the names that were not there. `IF EXISTS` does not discard them:
+/// Go files one `Note 1051` per missing name, the same `ErrBadTable` it would
+/// have raised (`pkg/ddl/executor.go`). Without `IF EXISTS` the whole list
+/// becomes the error's text -- captured from `gorun`, `drop view nvA, nvB` is
+/// `Unknown table 'test.nvA,test.nvB'` -- and the return is empty.
 pub fn run_drop_view_in(
     if_exists: bool,
     names: &[Vec<String>],
     catalog: &mut Catalog,
     current_db: &str,
-) -> Result<(), DriverError> {
-    let mut missing: Option<String> = None;
+) -> Result<Vec<String>, DriverError> {
+    let mut missing = Vec::new();
     for path in names {
         let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
         let (database, name) = (database.to_owned(), name.to_owned());
@@ -133,17 +139,15 @@ pub fn run_drop_view_in(
             Some(_) => {
                 catalog.drop_table_in(&database, &name);
             }
-            None => {
-                if missing.is_none() {
-                    missing = Some(format!("{database}.{name}"));
-                }
-            }
+            None => missing.push(format!("{database}.{name}")),
         }
     }
-    match missing {
-        Some(name) if !if_exists => Err(DriverError::Schema(SchemaErrorKind::BadTable(name))),
-        _ => Ok(()),
+    if !if_exists && !missing.is_empty() {
+        return Err(DriverError::Schema(SchemaErrorKind::BadTable(
+            missing.join(","),
+        )));
     }
+    Ok(missing)
 }
 
 /// One `FROM` table of a view body, after qualification.

@@ -20,7 +20,7 @@
 //! [`run_truncate_table_in`], which empties the
 //! rows and index entries and restarts the auto-increment counter while
 //! keeping the definition; and [`run_drop_table_in`], which drops the names
-//! it finds and errors on the first it does not, so a partial list still
+//! it finds and reports the ones it does not, so a partial list still
 //! removes tables. Each function's doc records the captured TiDB error code.
 //!
 //! Mirrors Go `pkg/ddl/table.go` (`RenameTable`, `TruncateTable`,
@@ -204,10 +204,16 @@ pub fn run_truncate_table_in(
 
 /// Runs a `DROP TABLE`, removing every named table that exists.
 ///
-/// Go drops the tables it finds and reports `ErrBadTable` for the first name
-/// it does not, rather than validating the whole list first: captured from
-/// TiDB, `drop table d1, nosuch` removes `d1` AND errors. `IF EXISTS`
-/// suppresses the error, leaving the drops it did perform.
+/// Go drops the tables it finds and reports `ErrBadTable` for the names it
+/// does not, rather than validating the whole list first: captured from TiDB,
+/// `drop table d1, nosuch` removes `d1` AND errors.
+///
+/// Returns the names that were not there, which is not bookkeeping: under
+/// `IF EXISTS` Go does not discard the error, it files it as a `Note` per
+/// missing name (`pkg/ddl/executor.go` hands `StmtCtx.AppendNote` the same
+/// `ErrBadTable`), so the caller needs the list rather than a bare `Ok`.
+/// Without `IF EXISTS` the list becomes the error's own text and the return
+/// is empty.
 ///
 /// DEFERRED (documented): `TEMPORARY` tables, which this executor never
 /// models, are rejected rather than silently dropping a permanent table of
@@ -221,7 +227,7 @@ pub fn run_drop_table_in(
     // to the session and another here.
     sql_mode: tidb_parser::SqlMode,
     foreign_key_checks: bool,
-) -> Result<(), DriverError> {
+) -> Result<Vec<String>, DriverError> {
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let drop = match &stmt {
@@ -258,7 +264,7 @@ pub fn run_drop_table_in(
         crate::foreign_key::check_drop_tables(catalog, &dropping)?;
     }
 
-    let mut missing: Option<String> = None;
+    let mut missing = Vec::new();
     for path in &drop.names {
         let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
         let (database, name) = (database.to_owned(), name.to_owned());
@@ -266,15 +272,19 @@ pub fn run_drop_table_in(
         // rather than dropping the view (Go's own captured behaviour).
         let dropped =
             !catalog.is_view_in(&database, &name) && catalog.drop_table_in(&database, &name);
-        if !dropped && missing.is_none() {
-            // Go reports the first missing name, after the drops it performed.
-            missing = Some(format!("{database}.{name}"));
+        if !dropped {
+            missing.push(format!("{database}.{name}"));
         }
     }
-    match missing {
-        Some(name) if !drop.if_exists => {
-            Err(DriverError::Schema(crate::SchemaErrorKind::BadTable(name)))
-        }
-        _ => Ok(()),
+    if !drop.if_exists && !missing.is_empty() {
+        // Go accumulates the names it could not drop and reports them as ONE
+        // `ErrBadTable` after the drops it did perform, so the message holds
+        // the whole list: `drop table nosuchA, nosuchB` is captured from
+        // `gorun` as `Unknown table 'test.nosuchA,test.nosuchB'`, not as the
+        // first name alone.
+        return Err(DriverError::Schema(crate::SchemaErrorKind::BadTable(
+            missing.join(","),
+        )));
     }
+    Ok(missing)
 }

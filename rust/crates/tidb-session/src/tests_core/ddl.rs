@@ -1004,3 +1004,111 @@ fn creating_in_an_unknown_schema_creates_nothing() {
         StmtResult::Rows(vec![vec![Datum::Int(7)]])
     );
 }
+
+/// `IF EXISTS` / `IF NOT EXISTS` do not silence the object that was not
+/// there -- they DEMOTE it, and Go's third warning level is where it lands.
+///
+/// Every expectation below is a `gorun` capture against a real TiDB session,
+/// taken because the integration replay cannot see any of this: it compares
+/// warnings on 28 of 4,906 statements, and `drop table if exists` is in none
+/// of the 28 while being in nearly every recorded file. Before this test the
+/// engine answered all of them with an EMPTY buffer, and there was no `Note`
+/// level to answer them with.
+///
+/// The multi-name cases are here because they constrain the shape: Go reports
+/// EVERY missing name, one note each, and when there is no `IF EXISTS` it
+/// joins the same list into ONE error -- `Unknown table 'test.a,test.b'`, not
+/// the first name alone.
+#[test]
+fn if_exists_demotes_the_error_it_swallowed_to_a_note() {
+    let mut session = Session::new();
+    let seen = |session: &Session| -> Vec<String> {
+        session
+            .warnings()
+            .iter()
+            .map(|w| format!("{}|{}|{}", w.level.as_str(), w.code, w.message))
+            .collect()
+    };
+
+    // `drop table if exists nosuch` ->
+    // `Note | 1051 | Unknown table 'test.nosuch'`.
+    session.run("DROP TABLE IF EXISTS nosuch").unwrap();
+    assert_eq!(seen(&session), ["Note|1051|Unknown table 'test.nosuch'"]);
+    // The wire count is the OTHER channel a client reads, and it is the only
+    // one a driver sees without asking a second statement.
+    assert_eq!(session.wire_warning_count(), 1);
+
+    // ONE note per missing name, not one per statement.
+    session
+        .run("DROP TABLE IF EXISTS nosuchA, nosuchB")
+        .unwrap();
+    assert_eq!(
+        seen(&session),
+        [
+            "Note|1051|Unknown table 'test.nosuchA'",
+            "Note|1051|Unknown table 'test.nosuchB'"
+        ]
+    );
+    assert_eq!(session.wire_warning_count(), 2);
+
+    // Without IF EXISTS the same list is ONE error carrying every name.
+    assert_eq!(
+        session
+            .run("DROP TABLE nosuchA, nosuchB")
+            .unwrap_err()
+            .to_mysql_error()
+            .message,
+        "Unknown table 'test.nosuchA,test.nosuchB'"
+    );
+
+    // A name that WAS there leaves no note; the drop still happened.
+    session.run("CREATE TABLE tt(a int)").unwrap();
+    session.run("DROP TABLE IF EXISTS tt, nosuch2").unwrap();
+    assert_eq!(seen(&session), ["Note|1051|Unknown table 'test.nosuch2'"]);
+
+    // `create table if not exists tt` over an existing table ->
+    // `Note | 1050 | Table 'test.tt' already exists`.
+    session.run("CREATE TABLE tt(a int)").unwrap();
+    session.run("CREATE TABLE IF NOT EXISTS tt(a int)").unwrap();
+    assert_eq!(seen(&session), ["Note|1050|Table 'test.tt' already exists"]);
+    // The one that DID create the table says nothing.
+    session.run("CREATE TABLE tt2(a int)").unwrap();
+    assert!(seen(&session).is_empty());
+
+    // `create database if not exists test` ->
+    // `Note | 1007 | Can't create database 'test'; database exists`.
+    session.run("CREATE DATABASE IF NOT EXISTS test").unwrap();
+    assert_eq!(
+        seen(&session),
+        ["Note|1007|Can't create database 'test'; database exists"]
+    );
+
+    // A view that is not there is the same 1051 as a table that is not there.
+    session.run("DROP VIEW IF EXISTS nvA, nvB").unwrap();
+    assert_eq!(
+        seen(&session),
+        [
+            "Note|1051|Unknown table 'test.nvA'",
+            "Note|1051|Unknown table 'test.nvB'"
+        ]
+    );
+
+    // `DROP DATABASE IF EXISTS` is the exception and it is not an oversight:
+    // captured from `gorun`, TiDB leaves the warning buffer EMPTY there, so
+    // adding a note for symmetry would be the divergence.
+    session.run("DROP DATABASE IF EXISTS nodb").unwrap();
+    assert!(seen(&session).is_empty());
+    assert_eq!(session.wire_warning_count(), 0);
+}
+
+/// The `Level` column reads `Note`, through the same `SHOW WARNINGS` a client
+/// runs -- the channel the wire count above cannot show.
+#[test]
+fn show_warnings_prints_the_note_level() {
+    let mut session = Session::new();
+    session.run("DROP TABLE IF EXISTS nosuch").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [["Note", "1051", "Unknown table 'test.nosuch'"]]
+    );
+}

@@ -126,11 +126,17 @@ impl Session {
                     }
                     let created =
                         self.with_catalog_mut(|catalog| Ok(catalog.create_database(name)))?;
-                    // Go raises ErrDBCreateExists unless IF NOT EXISTS.
-                    if !created && !*if_not_exists {
-                        return Err(DriverError::Schema(SchemaErrorKind::DatabaseExists(
-                            name.clone(),
-                        )));
+                    // Go raises ErrDBCreateExists unless IF NOT EXISTS, and
+                    // under IF NOT EXISTS files that same error as a note:
+                    // `Note | 1007 | Can't create database 'test'; database
+                    // exists`, captured from `gorun`.
+                    if !created {
+                        let existing =
+                            DriverError::Schema(SchemaErrorKind::DatabaseExists(name.clone()));
+                        if !*if_not_exists {
+                            return Err(existing);
+                        }
+                        self.append_suppressed(existing);
                     }
                     Ok(Some(StmtOutput::Affected(0)))
                 }
@@ -497,17 +503,26 @@ impl Session {
                 DdlStmt::DropTable(_) => {
                     let current_db = self.current_db.clone();
                     let foreign_key_checks = self.foreign_key_checks();
-                    self.with_catalog_mut(|catalog| {
+                    let missing = self.with_catalog_mut(|catalog| {
                         tidb_executor::run_drop_table_in(
                             sql,
                             catalog,
                             &current_db,
                             sql_mode,
                             foreign_key_checks,
-                        )?;
-                        // MySQL answers DDL with a zero affected-row count.
-                        Ok(StmtOutput::Affected(0))
-                    })
+                        )
+                    })?;
+                    // `IF EXISTS` does not silence the missing names, it
+                    // demotes them: Go files one `Note 1051` per name it could
+                    // not drop. Captured from `gorun`,
+                    // `drop table if exists nosuchA, nosuchB` leaves TWO.
+                    for name in missing {
+                        self.append_suppressed(DriverError::Schema(SchemaErrorKind::BadTable(
+                            name,
+                        )));
+                    }
+                    // MySQL answers DDL with a zero affected-row count.
+                    Ok(StmtOutput::Affected(0))
                 }
                 DdlStmt::CreateTable(create) => {
                     let current_db = self.current_db.clone();
@@ -538,6 +553,17 @@ impl Session {
                             &ctx,
                         )?))
                     });
+                    // `Done(false)` is `IF NOT EXISTS` finding the table
+                    // already there. Go does not pass over that silently: it
+                    // files the `ErrTableExists` it did not raise as a note --
+                    // `Note | 1050 | Table 'test.tt' already exists`, captured
+                    // from `gorun`.
+                    if let Ok(StmtOutput::Done(false)) = &done {
+                        let (database, name) = self.split_table_path(&create.name)?;
+                        self.append_suppressed(DriverError::Schema(SchemaErrorKind::TableExists(
+                            format!("{database}.{name}"),
+                        )));
+                    }
                     if done.is_ok() {
                         for _ in 0..discarded_checks {
                             self.append_warning(
@@ -596,10 +622,17 @@ impl Session {
                 DdlStmt::DropView { if_exists, names } => {
                     let current_db = self.current_db.clone();
                     let (if_exists, names) = (*if_exists, names.clone());
-                    self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_view_in(if_exists, &names, catalog, &current_db)?;
-                        Ok(StmtOutput::Affected(0))
-                    })
+                    let missing = self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_drop_view_in(if_exists, &names, catalog, &current_db)
+                    })?;
+                    // Same demotion as `DROP TABLE IF EXISTS`, same code:
+                    // a view that was not there is `Note 1051`.
+                    for name in missing {
+                        self.append_suppressed(DriverError::Schema(SchemaErrorKind::BadTable(
+                            name,
+                        )));
+                    }
+                    Ok(StmtOutput::Affected(0))
                 }
                 other => Err(DriverError::UnsupportedKind(format!(
                     "this DDL statement kind ({}) is not supported yet",

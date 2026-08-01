@@ -90,7 +90,10 @@ impl Session {
     }
 
     /// Resolves a written table path against the current database.
-    fn split_table_path(&self, path: &[String]) -> Result<(String, String), DriverError> {
+    pub(crate) fn split_table_path(
+        &self,
+        path: &[String],
+    ) -> Result<(String, String), DriverError> {
         match path {
             [name] => Ok((self.require_current_database()?.to_owned(), name.clone())),
             [database, name] => Ok((database.clone(), name.clone())),
