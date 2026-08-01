@@ -453,7 +453,10 @@ pub(super) static ENTRIES: [SysVarDef; 49] = [
         allow_auto_value: false,
         min_value: 0,
         max_value: 0,
-        possible_values: &["table", "global"],
+        // Go `sysvar.go`: `[]string{ScatterOff, ScatterTable, ScatterGlobal}`,
+        // and `ScatterOff` is the EMPTY STRING -- which is also this
+        // variable's default.
+        possible_values: &["", "table", "global"],
         auto_convert_negative_bool: false,
     },
     SysVarDef {

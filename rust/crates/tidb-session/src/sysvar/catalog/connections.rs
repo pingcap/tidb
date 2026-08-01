@@ -406,6 +406,12 @@ pub(super) static ENTRIES: [SysVarDef; 34] = [
         min_value: 0,
         max_value: 0,
         possible_values: &[
+            // Go's `tikvcliutil.ExplicitTypeList` opens with
+            // `ExplicitTypeEmpty` (""), and `checkEnumSystemVar` matches BY
+            // POSITION as well as by name -- so dropping it would both refuse
+            // `SET @@tidb_request_source_type = ''` and shift every ordinal,
+            // making `= 0` mean `lightning` instead of "no explicit source".
+            "",
             "lightning",
             "br",
             "dumpling",
