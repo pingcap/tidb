@@ -142,8 +142,8 @@ pub struct Session {
     /// replay writes the ids the losing attempt picked. It lives on the
     /// session because the retry loop is above the statement -- each attempt
     /// builds its own `StmtContext`, and this is the one thing that has to
-    /// cross between them. See `tidb_executor::stmt_context::RetryAutoIds`.
-    retry_auto_ids: Rc<RefCell<tidb_executor::stmt_context::RetryAutoIds>>,
+    /// cross between them. See `tidb_executor::RetryAutoIds`.
+    retry_auto_ids: Rc<RefCell<tidb_executor::RetryAutoIds>>,
     /// The session's non-prepared plan cache
     /// (`tidb_enable_non_prepared_plan_cache`). See
     /// [`non_prepared_plan_cache`] for what it does and does not store.
@@ -374,9 +374,9 @@ impl Session {
     /// The auto-increment ids the running statement has assigned, which a
     /// caller that RUNS THE STATEMENT AGAIN rewinds between attempts and
     /// clears when the statement is finally over. See
-    /// `tidb_executor::stmt_context::RetryAutoIds`.
+    /// `tidb_executor::RetryAutoIds`.
     #[must_use]
-    pub fn retry_auto_ids(&self) -> &Rc<RefCell<tidb_executor::stmt_context::RetryAutoIds>> {
+    pub fn retry_auto_ids(&self) -> &Rc<RefCell<tidb_executor::RetryAutoIds>> {
         &self.retry_auto_ids
     }
 
