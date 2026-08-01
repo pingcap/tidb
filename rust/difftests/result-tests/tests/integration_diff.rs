@@ -282,6 +282,62 @@ fn topics_are_listed_once_each() {
     assert_topics_are_unique();
 }
 
+/// How far the warning comparison actually reaches, stated as a number instead
+/// of assumed.
+///
+/// [`compare`] asks `SHOW WARNINGS` for a statement ONLY when `stmt.warnings`
+/// is set, and that flag comes from the `--enable_warnings` directive in the
+/// `.test` script -- not from anything this engine or TiDB did. Every other
+/// statement is compared on its rows alone, so a warning TiDB raises and this
+/// tier does not (or the reverse) leaves the rows identical and the replay
+/// calls it a match.
+///
+/// That is not a hypothesis. This test parses the onboarded scripts with the
+/// replay's own reader and counts the statements the gate can see: 28 of 4,906
+/// -- 0.6%. The blind spot is the other 4,878, and it is the reason a fix that
+/// added three real `CAST` truncation warnings moved neither ratchet.
+///
+/// The number is pinned so that widening or narrowing the warning gate is a
+/// visible edit rather than a silent one. Raising the covered count is
+/// progress; the total moving means TOPICS changed and both figures should be
+/// re-read, not patched.
+#[test]
+fn warning_comparison_covers_only_enable_warnings_statements() {
+    let dir = integrationtest_dir();
+    let mut covered = 0;
+    let mut total = 0;
+    let mut per_topic = Vec::new();
+    for (topic, _why) in TOPICS {
+        let script = fs::read_to_string(dir.join(format!("t/{topic}.test")))
+            .unwrap_or_else(|e| panic!("read t/{topic}.test: {e}"));
+        let items = parse_test(&script).unwrap_or_else(|e| panic!("parse t/{topic}.test: {e}"));
+        let stmts: Vec<&Stmt> = items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Stmt(stmt) => Some(stmt),
+                _ => None,
+            })
+            .collect();
+        let warned = stmts.iter().filter(|stmt| stmt.warnings).count();
+        covered += warned;
+        total += stmts.len();
+        if warned > 0 {
+            per_topic.push(format!("{topic}: {warned} of {}", stmts.len()));
+        }
+    }
+    eprintln!(
+        "warning gate reaches {covered} of {total} statements across {} topics\n  {}",
+        TOPICS.len(),
+        per_topic.join("\n  ")
+    );
+    assert_eq!(
+        (covered, total),
+        (28, 4906),
+        "the warning gate's reach changed; re-read what it now covers rather \
+         than updating this number to match"
+    );
+}
+
 /// Why one statement did not produce a comparable outcome. Every skip lands in
 /// exactly one of these, and the totals are printed on every run: a driver
 /// that reports what it skipped is worth more than one that reports a big
