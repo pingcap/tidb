@@ -80,6 +80,10 @@ message FieldType {
 enum ExprType {
   Null = 0;
   Int64 = 1;
+  // Go `constantToPBExpr`'s `KindString`/`KindBinaryLiteral` arm: the raw
+  // bytes as `Val`, with no codec around them. `Bytes` (6, `KindBytes`) is
+  // deliberately absent -- no leaf this path builds is that kind.
+  String = 5;
   ColumnRef = 201;
   ScalarFunc = 10000;
 }
@@ -94,6 +98,16 @@ enum ScalarFuncSig {
   GEInt = 130;
   EQInt = 140;
   NEInt = 150;
+  // The same six operators over an `ETString` argument pair. Go's
+  // `getCmpFunction` picks these whenever `GetAccurateCmpType` answers
+  // `ETString`; which collator TiKV then uses is carried by the comparison
+  // node's OWN field type, not by the operands'.
+  LTString = 103;
+  LEString = 113;
+  GTString = 123;
+  GEString = 133;
+  EQString = 143;
+  NEString = 153;
   // The op group: the logical composition and negation of a boolean-integer
   // predicate, and `IS NULL` over an integer argument.
   LogicalOr = 3102;

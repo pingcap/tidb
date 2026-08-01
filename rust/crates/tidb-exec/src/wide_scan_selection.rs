@@ -75,7 +75,8 @@ use tidb_datatype::Datum;
 use tidb_executor::predicate_pushdown::{ScanComparison, ScanComparisonOp, ScanPredicate};
 use tidb_expr::pb_predicate::{
     int_comparison_to_pb, int_field_type, int_in_to_pb, int_is_null_to_pb, is_int_family_type,
-    is_unsigned, logical_not_to_pb, logical_or_to_pb, IntPbOperand, PbPredicateError,
+    is_string_family_type, is_unsigned, logical_not_to_pb, logical_or_to_pb,
+    string_comparison_to_pb, IntPbOperand, PbPredicateError, StringPbOperand,
 };
 use tidb_planner::tikv_scan_spec::ScanColumnInfo;
 use tidb_proto::tipb::Expr;
@@ -250,6 +251,15 @@ fn comparison_to_pb(
     columns: &[ScanColumnInfo],
 ) -> Result<Expr, WideScanSelectionError> {
     let offset = comparison.column_offset;
+    let column = columns.get(offset as usize).ok_or(
+        WideScanSelectionError::ColumnOffsetOutOfRange {
+            offset,
+            width: columns.len(),
+        },
+    )?;
+    if is_string_family_type(column.tp) {
+        return string_comparison(comparison, column);
+    }
     let flags = column_flags(offset, columns)?;
     let column = int_column_operand(offset, columns)?;
     let constant = int_literal_operand(offset, flags, &comparison.literal)?;
@@ -261,6 +271,53 @@ fn comparison_to_pb(
         (constant, column)
     };
     Ok(int_comparison_to_pb(
+        comparison_op(comparison.op),
+        lhs,
+        rhs,
+    )?)
+}
+
+/// A character-string column compared with a string constant.
+///
+/// The comparison's collation is derived by the expression owner from the two
+/// operands, and it is the column's own -- the very collation the scan
+/// descriptor already told the region to read this column with, since both are
+/// recovered from that one protocol id. A comparison whose collation cannot be
+/// derived that way is refused, not guessed: a wrong collator makes the region
+/// drop a row the query selects, and the local filter cannot put back a row
+/// that never crossed the wire.
+fn string_comparison(
+    comparison: &ScanComparison,
+    column: &ScanColumnInfo,
+) -> Result<Expr, WideScanSelectionError> {
+    let offset = comparison.column_offset;
+    let Datum::Bytes(literal) = &comparison.literal else {
+        return Err(WideScanSelectionError::UnsupportedLiteral { offset });
+    };
+    // The scan descriptor states the collation as the PROTOCOL id and states
+    // no charset at all; both are recovered from that one id, exactly as the
+    // builtin path does, so the operand and the column the coprocessor was
+    // told to read cannot disagree about which collator applies.
+    let collation = tidb_datatype::proto_to_collation(column.collation);
+    let charset = tidb_datatype::get_collation_by_name(&collation)
+        .map(|row| row.charset_name)
+        .map_err(|_| WideScanSelectionError::UnsupportedColumnType { offset })?;
+    let column_operand = StringPbOperand::Column {
+        offset: offset as usize,
+        mysql_type: column.tp,
+        flags: u32::try_from(column.flag)
+            .map_err(|_| WideScanSelectionError::UnsupportedColumnType { offset })?,
+        flen: column.column_len,
+        charset,
+        collation,
+    };
+    let constant = StringPbOperand::Literal(literal.clone());
+    let (lhs, rhs) = if comparison.column_on_left {
+        (column_operand, constant)
+    } else {
+        (constant, column_operand)
+    };
+    Ok(string_comparison_to_pb(
         comparison_op(comparison.op),
         lhs,
         rhs,

@@ -53,7 +53,10 @@ const BINARY_FLAG: u32 = 1 << 7;
 const IS_BOOLEAN_FLAG: u32 = 1 << 19;
 const BINARY_COLLATION_PROTO_ID: i32 = -63;
 const BINARY_CHARSET: &str = "binary";
+const UTF8MB4_CHARSET: &str = "utf8mb4";
 const BIGINT_COLUMN_LENGTH: i32 = 20;
+const MYSQL_TYPE_VAR_STRING: i32 = 253;
+const UNSPECIFIED_LENGTH: i32 = -1;
 
 /// One already-resolved operand of an integer-domain TiKV predicate.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -88,12 +91,62 @@ pub fn bigint_column_field_type(flags: u32) -> FieldType {
     int_field_type(MYSQL_TYPE_LONGLONG, flags, BIGINT_COLUMN_LENGTH, 0)
 }
 
+/// Whether a column's declared MySQL type is a character-string family whose
+/// comparison this lowering speaks.
+///
+/// `VARCHAR`, `VAR_STRING`, `CHAR` and the four blob/text widths: the families
+/// whose Go `EvalType()` is `ETString` and whose TiPB leaf needs nothing
+/// beyond the seven fields `ToPBFieldType` copies. `ENUM` and `SET` also
+/// evaluate as `ETString` and are deliberately absent -- their leaf needs the
+/// `elems` list on the wire and Go gates them behind `IsPushDownEnabled` --
+/// as are `BIT` and `JSON`, for the same reason `columnToPBExpr` refuses them.
+#[must_use]
+pub const fn is_string_family_type(mysql_type: i32) -> bool {
+    // MYSQL_TYPE_TINY_BLOB, MEDIUM_BLOB, LONG_BLOB, BLOB, VAR_STRING, STRING,
+    // and VARCHAR.
+    matches!(mysql_type, 249 | 250 | 251 | 252 | 253 | 254 | 15)
+}
+
+/// One already-resolved operand of a string comparison.
+///
+/// The two spellings are not interchangeable: which side is the column is what
+/// decides the comparison's collation, so the distinction is carried in the
+/// type rather than recovered from a field type later.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StringPbOperand {
+    /// A scan output column, with the charset and collation the scan
+    /// descriptor declares for it. Its collation is `Coercibility` IMPLICIT,
+    /// which is what makes it win the derivation against a literal.
+    Column {
+        /// Zero-based DAG-basic column offset, not a catalog column ID.
+        offset: usize,
+        /// The column's MySQL type byte.
+        mysql_type: i32,
+        /// The column's flags.
+        flags: u32,
+        /// The column's declared display width.
+        flen: i32,
+        /// The column's charset name (`utf8mb4`, `binary`).
+        charset: String,
+        /// The column's collation NAME -- what TiKV compares its values with.
+        collation: String,
+    },
+    /// A string literal, carrying the connection charset and collation Go's
+    /// parser gives one. Its collation is `Coercibility` COERCIBLE and so
+    /// never wins a derivation against a column's.
+    Literal(Vec<u8>),
+}
+
 /// Why a typed predicate cannot enter the bounded TiKV expression path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PbPredicateError {
     /// The operator needs a scalar signature outside the six ordinary
     /// integer comparisons admitted by this boundary.
     UnsupportedOperator(BinaryOp),
+    /// A string comparison whose collation this lowering will not derive: not
+    /// exactly one column against one literal, or a column in a charset whose
+    /// repertoire rules Go's `inferCollation` applies and this does not.
+    UnderivableStringCollation,
     /// TiPB encodes a DAG-basic column offset with Go's signed integer codec.
     ColumnOffsetOutOfRange(usize),
     /// `IN` needs at least one list element, and `OR` at least one branch.
@@ -115,6 +168,9 @@ impl fmt::Display for PbPredicateError {
             Self::EmptyOperandList => {
                 formatter.write_str("a TiKV IN list and an OR chain each need an operand")
             }
+            Self::UnderivableStringCollation => formatter.write_str(
+                "a string comparison whose collation this lowering does not derive",
+            ),
         }
     }
 }
@@ -135,6 +191,171 @@ pub fn int_comparison_to_pb(
         signature,
         vec![operand_to_pb(left)?, operand_to_pb(right)?],
     ))
+}
+
+/// Lowers one source-ordered string comparison into exact TiPB.
+///
+/// # Which collation TiKV uses, and why it is on the parent node
+///
+/// A string comparison is only defined together with a collator, and TiKV
+/// reads that collator from the *comparison node's own* field type -- not
+/// from either operand's. Go writes it there in `scalarFuncToPBExpr`:
+/// `tp := *expr.RetType; tp.SetCollate(str1)` with `str1` the second half of
+/// `expr.CharsetAndCollation()`, which for a comparison is the collation
+/// `CheckAndDeriveCollationFromExprs` derived from the two arguments. The
+/// return type stays `BIGINT(1)`; only its collation is overwritten. So the
+/// node this builds carries the derived collation even though it returns an
+/// integer, and getting that field wrong is a silently wrong answer computed
+/// at the region rather than an error.
+///
+/// # The derivation this performs, and the one it refuses
+///
+/// Go's `inferCollation` aggregates coercibility over all arguments. This
+/// lowering implements exactly the one case where that aggregation has a
+/// single answer needing no repertoire reasoning: **one column against one
+/// literal**. The column's collation is IMPLICIT (2) and the literal's is
+/// COERCIBLE (3), lower wins, so the result is the column's own collation --
+/// the very collation the scan descriptor already told the region to read
+/// that column with, which is what makes the pushed comparison provably the
+/// comparison the local evaluator would have made.
+///
+/// Everything else is refused rather than approximated: column-versus-column
+/// (needs the full coercibility/repertoire aggregation), literal-versus-
+/// literal (Go folds it at plan time and sends no comparison), and any column
+/// charset other than `utf8mb4` or `binary` (`latin1`, `ascii`, `gbk` reach
+/// `inferCollation`'s repertoire branches, and a literal that does not fit
+/// the column's repertoire changes the derived answer).
+pub fn string_comparison_to_pb(
+    operator: BinaryOp,
+    left: StringPbOperand,
+    right: StringPbOperand,
+) -> Result<Expr, PbPredicateError> {
+    let signature = string_comparison_signature(operator)?;
+    let collation = derived_string_collation(&left, &right)?;
+    let children = vec![string_operand_to_pb(left)?, string_operand_to_pb(right)?];
+    Ok(Expr {
+        tp: Some(ExprType::ScalarFunc as i32),
+        val: None,
+        children,
+        sig: Some(signature as i32),
+        // Go `newBaseBuiltinFuncWithTp(..., ETInt, ...)` plus `SetFlen(1)`,
+        // with the derived collation written over the return type's own.
+        field_type: Some(FieldType {
+            tp: Some(MYSQL_TYPE_LONGLONG),
+            flag: Some(BINARY_FLAG | IS_BOOLEAN_FLAG),
+            flen: Some(1),
+            decimal: Some(0),
+            collate: Some(tidb_datatype::collation_to_proto(&collation)),
+            charset: Some(BINARY_CHARSET.to_owned()),
+            elems: Vec::new(),
+            array: Some(false),
+        }),
+        has_distinct: Some(false),
+    })
+}
+
+/// The collation the comparison is evaluated with, for the one operand shape
+/// this lowering derives. See [`string_comparison_to_pb`].
+fn derived_string_collation(
+    left: &StringPbOperand,
+    right: &StringPbOperand,
+) -> Result<String, PbPredicateError> {
+    let (charset, collation) = match (left, right) {
+        (
+            StringPbOperand::Column {
+                charset, collation, ..
+            },
+            StringPbOperand::Literal(_),
+        )
+        | (
+            StringPbOperand::Literal(_),
+            StringPbOperand::Column {
+                charset, collation, ..
+            },
+        ) => (charset.as_str(), collation.clone()),
+        _ => return Err(PbPredicateError::UnderivableStringCollation),
+    };
+    if charset != UTF8MB4_CHARSET && charset != BINARY_CHARSET {
+        return Err(PbPredicateError::UnderivableStringCollation);
+    }
+    Ok(collation)
+}
+
+fn string_operand_to_pb(operand: StringPbOperand) -> Result<Expr, PbPredicateError> {
+    let (tp, value, field_type) = match operand {
+        StringPbOperand::Column {
+            offset,
+            mysql_type,
+            flags,
+            flen,
+            charset,
+            collation,
+        } => {
+            let index = i64::try_from(offset)
+                .map_err(|_| PbPredicateError::ColumnOffsetOutOfRange(offset))?;
+            (
+                ExprType::ColumnRef,
+                encode_signed(index),
+                FieldType {
+                    tp: Some(mysql_type),
+                    flag: Some(flags),
+                    flen: Some(flen),
+                    decimal: Some(0),
+                    collate: Some(tidb_datatype::collation_to_proto(&collation)),
+                    charset: Some(charset),
+                    elems: Vec::new(),
+                    array: Some(false),
+                },
+            )
+        }
+        // Go `constantToPBExpr`'s `KindString` arm: `tipb.ExprType_String`
+        // with the raw bytes as `Val` -- no codec, unlike the integer leaf --
+        // and the constant's own field type, which for a parsed literal is
+        // the connection charset and collation.
+        StringPbOperand::Literal(bytes) => {
+            let (charset, collation) = crate::collation_derive::connection_charset_info();
+            let flen = i32::try_from(bytes.len()).unwrap_or(UNSPECIFIED_LENGTH);
+            (
+                ExprType::String,
+                bytes,
+                FieldType {
+                    tp: Some(MYSQL_TYPE_VAR_STRING),
+                    flag: Some(NOT_NULL_FLAG),
+                    flen: Some(flen),
+                    decimal: Some(UNSPECIFIED_LENGTH),
+                    collate: Some(tidb_datatype::collation_to_proto(collation)),
+                    charset: Some(charset.to_owned()),
+                    elems: Vec::new(),
+                    array: Some(false),
+                },
+            )
+        }
+    };
+    Ok(Expr {
+        tp: Some(tp as i32),
+        val: Some(value),
+        children: Vec::new(),
+        sig: Some(ScalarFuncSig::Unspecified as i32),
+        field_type: Some(field_type),
+        has_distinct: Some(false),
+    })
+}
+
+/// Go `generateCmpSigs`' `types.ETString` arm.
+fn string_comparison_signature(operator: BinaryOp) -> Result<ScalarFuncSig, PbPredicateError> {
+    Ok(match operator {
+        BinaryOp::Lt => ScalarFuncSig::LtString,
+        BinaryOp::Le => ScalarFuncSig::LeString,
+        BinaryOp::Gt => ScalarFuncSig::GtString,
+        BinaryOp::Ge => ScalarFuncSig::GeString,
+        BinaryOp::Eq => ScalarFuncSig::EqString,
+        BinaryOp::Ne => ScalarFuncSig::NeString,
+        // `NullEQ` has a `NullEQString` signature Go pushes, but the
+        // description this lowering reads never carries `<=>`: a NULL-safe
+        // comparison is not the "column versus non-NULL constant" shape the
+        // scan filter splits out.
+        _ => return Err(PbPredicateError::UnsupportedOperator(operator)),
+    })
 }
 
 /// Lowers `column IS NULL` (Go `ScalarFuncSig_IntIsNull`).
