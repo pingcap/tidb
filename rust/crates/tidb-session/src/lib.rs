@@ -92,6 +92,10 @@ pub struct Session {
     /// The warnings the last statement produced, which Go keeps in
     /// `StmtCtx.warnings` and `SHOW WARNINGS` reads.
     warnings: Vec<SqlWarning>,
+    /// Go `StatementContext.InShowWarning`: set for exactly the statements
+    /// that inherit the buffer, and the reason `WarningCount()` reports 0 for
+    /// them. See [`Session::wire_warning_count`].
+    in_show_warning: bool,
     /// Go `SessionVars.User` in its two spellings: the matched grant
     /// identity `CURRENT_USER()` reports and the login identity `USER()`
     /// reports. Empty until a front end authenticates one.
@@ -215,6 +219,7 @@ impl Default for Session {
             txn: None,
             vars: SessionVars::new(),
             warnings: Vec::new(),
+            in_show_warning: false,
             current_user: None,
             login_user: None,
             active_roles: Vec::new(),
@@ -273,10 +278,8 @@ pub(crate) use classify::{statement_kind_of, StatementKind};
 pub use classify::{StmtKind, StoredStateChange};
 pub(crate) use txn::Transaction;
 pub(crate) use variables::datum_text;
-pub(crate) use warnings::{
-    reports_warnings, CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE,
-};
 pub use warnings::{SqlWarning, WarningLevel};
+pub(crate) use warnings::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 pub mod privilege;
 pub mod process;
 mod process_arm;

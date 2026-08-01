@@ -215,6 +215,13 @@ impl QuerySessionFactory for PipelineSessionFactory {
 }
 
 impl QuerySession for PipelineServerSession {
+    /// The count Go's `writeOkWith`/`writeEOF` read off `ctx.WarningCount()`.
+    /// It is the same buffer `SHOW WARNINGS` reports, so both channels agree
+    /// on both what warned and how many.
+    fn warning_count(&self) -> u16 {
+        self.session.wire_warning_count()
+    }
+
     /// The handshake's initial database and `COM_INIT_DB`, which Go serves
     /// with one `useDB` each.
     fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
@@ -239,7 +246,16 @@ impl QuerySession for PipelineServerSession {
         // They remain two questions with two answers; only the lexing is
         // shared, and the session still owns it so the `sql_mode` in force is
         // the session's own.
-        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
+        //
+        // This is the front end's statement boundary, and it must be the
+        // session's own: the `SET` arm below answers without ever reaching
+        // `Session::run`, so a boundary that lived only there would leave a
+        // `SET` appending its warnings to the PREVIOUS statement's buffer --
+        // and reporting that statement's count on the wire.
+        let stmt = self
+            .session
+            .parse_at_statement_boundary(sql)
+            .map_err(map_error)?;
         if self
             .session
             .apply_set_stmt(&stmt)

@@ -26,7 +26,7 @@ use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
 use crate::{infoschema, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel};
-use crate::{reports_warnings, CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
+use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 
 /// Names the AST variant behind a refused statement, for a "not supported
 /// yet" message that says WHAT it refused instead of just that it did.
@@ -263,23 +263,18 @@ impl Session {
     }
 
     pub(crate) fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
-        // Go gives every statement a fresh `StatementContext`, so what
-        // `SHOW WARNINGS` reports always belongs to the statement before it --
-        // and hands that previous buffer back to the statements that report
-        // it (`ResetContextOfStmt` -> `sc.SetWarnings`). Taking the buffer
-        // before the parse keeps a statement that fails to parse clearing it,
-        // which is what Go's failed parse does by never reaching the copy.
-        let previous_warnings = std::mem::take(&mut self.warnings);
         // One parse serves every door below. `sql_mode` is what decides how a
         // statement lexes, and nothing between here and execution changes it
         // -- the `SET` that could is itself one of these doors, and it returns
         // before the next statement is read -- so re-parsing the same text
         // under the same mode could only ever produce the same tree. The four
         // parses this replaces cost ~6 us of a ~13.5 us `SELECT 1`.
-        let mut stmt = self.parse(sql)?;
-        if reports_warnings(&stmt) {
-            self.warnings = previous_warnings;
-        }
+        //
+        // It is also the statement boundary: Go gives every statement a fresh
+        // `StatementContext`, so what `SHOW WARNINGS` reports always belongs
+        // to the statement before it, and the OK/EOF packet's warning count
+        // starts over here too.
+        let mut stmt = self.parse_at_statement_boundary(sql)?;
         // The non-prepared plan cache reads the SAME parse every door below
         // uses. It only decides whether this statement's plan would already
         // have been there; it never replaces the planning that follows.

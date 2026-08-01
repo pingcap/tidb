@@ -22,7 +22,7 @@
 use tidb_ast::{AdminStmt, ShowInspectionKind, Stmt};
 use tidb_datatype::{Datum, FieldType};
 
-use crate::{Session, StmtOutput};
+use crate::{DriverError, Session, StmtOutput};
 
 /// Go `ddl.errCheckConstraintIsOff` is built with `errors.NewNoStackError`, so
 /// it carries no MySQL code of its own and `AppendWarning` files it under
@@ -174,5 +174,48 @@ impl Session {
     #[must_use]
     pub fn warnings(&self) -> &[SqlWarning] {
         &self.warnings
+    }
+
+    /// Parses one statement at a statement boundary, giving it the fresh
+    /// warning state Go's `ResetContextOfStmt` builds.
+    ///
+    /// Every front-end door that starts a statement comes through here, so the
+    /// buffer `SHOW WARNINGS` reports and the count the OK/EOF packet carries
+    /// have exactly one lifetime. Calling it twice for the same statement is
+    /// what a front end that parses before dispatching does, and it lands on
+    /// the same state both times: the inherit hands back precisely what the
+    /// take removed.
+    ///
+    /// Taking the buffer before the parse keeps a statement that fails to
+    /// parse clearing it, which is what Go's failed parse does by never
+    /// reaching the copy.
+    pub fn parse_at_statement_boundary(&mut self, sql: &str) -> Result<Stmt, DriverError> {
+        let previous = std::mem::take(&mut self.warnings);
+        let stmt = self.parse(sql)?;
+        self.in_show_warning = reports_warnings(&stmt);
+        if self.in_show_warning {
+            self.warnings = previous;
+        }
+        Ok(stmt)
+    }
+
+    /// The warning count the OK/EOF packet carries, which Go reads through
+    /// `TiDBContext.WarningCount` in `writeOkWith` and `writeEOF`.
+    ///
+    /// This is the second channel `SHOW WARNINGS` does not cover: a driver
+    /// learns a statement warned only from this field. It is NOT simply the
+    /// buffer's length, because Go's `StatementContext.WarningCount` returns 0
+    /// while `InShowWarning` is set (`pkg/sessionctx/stmtctx/stmtctx.go`) --
+    /// the same three statements that inherit the buffer to REPORT it send a
+    /// zero count, so a client is never told that the rows it is reading are
+    /// themselves warnings.
+    #[must_use]
+    pub fn wire_warning_count(&self) -> u16 {
+        if self.in_show_warning {
+            return 0;
+        }
+        // `append_warning` holds the buffer at Go's `uint16` ceiling, so this
+        // cannot lose a count that was actually retained.
+        u16::try_from(self.warnings.len()).unwrap_or(u16::MAX)
     }
 }

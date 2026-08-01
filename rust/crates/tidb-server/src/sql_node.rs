@@ -604,6 +604,19 @@ pub trait QuerySession {
         Ok(None)
     }
 
+    /// The warning count the OK/EOF packet carries for the statement that just
+    /// finished (Go `TiDBContext.WarningCount`, read by `writeOkWith` and
+    /// `writeEOF` in `pkg/server/conn.go`).
+    ///
+    /// This is a second, independent channel from `SHOW WARNINGS`: a driver
+    /// learns that a statement warned only from this field. It is the same
+    /// buffer `SHOW WARNINGS` reports, so it follows the same per-statement
+    /// lifetime -- fresh per statement, inherited only by the statements that
+    /// report the buffer. Sessions with no warning buffer report none.
+    fn warning_count(&self) -> u16 {
+        0
+    }
+
     /// Selects this session's current schema (Go `clientConn.useDB`).
     ///
     /// The handshake's initial database and `COM_INIT_DB` are the same
