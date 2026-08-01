@@ -1173,8 +1173,11 @@ pub(crate) fn single_table_name(
     table_ref: &tidb_ast::TableRef,
     current_db: &str,
 ) -> Result<(String, String), DriverError> {
-    // As in `build_from`: a partition restriction that changes WHICH ROWS the
-    // statement touches may not be dropped on the floor.
+    // A READ restricted to partitions is honoured (`restricted_to_partitions`),
+    // but a WRITE's is a different narrowing: it decides which rows are
+    // MODIFIED, and this path hands the caller a table NAME rather than the
+    // handle the restriction would live on. Ignoring it would update or
+    // delete rows the statement excluded, so it is refused.
     if !table_ref.partitions.is_empty() {
         return Err(DriverError::Unsupported(
             "UPDATE/DELETE ... PARTITION (...) is not supported yet",

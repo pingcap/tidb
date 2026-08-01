@@ -348,10 +348,11 @@ impl KvTable {
     /// How many rows each partition holds, in definition order, or an empty
     /// vector for an unpartitioned table.
     ///
-    /// This is what Go reports as `information_schema.partitions.TABLE_ROWS`,
-    /// and it is the only way to SEE where a row was routed while
-    /// `SELECT ... PARTITION (...)` is still refused -- so it is also what
-    /// pins the routing against the answers captured from real TiDB.
+    /// This is what Go reports as `information_schema.partitions.TABLE_ROWS`.
+    /// It sees where a row was routed WITHOUT going through the read path, so
+    /// it and `SELECT ... PARTITION (p)` pin the routing against real TiDB's
+    /// captured answers independently -- a router and a selection that were
+    /// wrong the same way would still disagree with one of the two.
     ///
     /// # Errors
     ///
