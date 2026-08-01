@@ -114,10 +114,14 @@ comment describes the route as a "conservative dependency route" — which is
 true of the dependency analysis and false of the pushdown decision it is
 named for.
 
-Recommended fix (not applied — it is an API change, not a one-liner): give
-`PredicateRoute` a construction that cannot be built without a join type and
-an ON/WHERE origin, so the join-type-blind route is unrepresentable rather
-than merely undocumented. Applying a partial gate here without the caller that
+Applied here: a type-level warning on `PredicateRoute` and on
+`partition_predicates` naming the two missing inputs, the Go switch, and the
+query above. Doc-only — the behaviour is unchanged.
+
+Recommended real fix (**not applied** — it is an API change, not a one-liner):
+give `PredicateRoute` a construction that cannot be built without a join type
+and an ON/WHERE origin, so the join-type-blind route is unrepresentable rather
+than merely documented. Applying a partial gate without the caller that
 consumes it would be guessing at the contract.
 
 ### F2 — RANK 3: the null-rejection outer→inner conversion does not exist
@@ -301,6 +305,15 @@ that as a u64 is an expression-crate question, not a planner one.
 
 ---
 
+### 2.7 Loose projection elimination — `projection_elimination.rs:83-90`
+
+`can_eliminate_loose` is `!proj4_expand && all exprs are Column`, which is
+`canProjectionBeEliminatedLoose`
+(`pkg/planner/core/rule_eliminate_projection.go:32-48`) statement for
+statement, `Proj4Expand` guard included. Not live (no caller supplies a
+`LogicalProjectionShape`), so it cannot prune a column an aggregate or
+`ORDER BY` needs.
+
 ## 3. Rules not implemented at all — performance gaps, not correctness
 
 Grep-verified absent from `rust/crates` (only the sysvar *names* exist):
@@ -360,20 +373,20 @@ elimination not reached; 6 (constant propagation) settled; 7 (max/min, TopN,
 LIMIT) LIMIT fully, max/min and TopN settled as non-live.**
 
 Counts: **3 findings** (1 latent wrong-rows, 1 rank-3 absence, 1 cost),
-**6 verified-equal live rules**, **8 rules absent with a stated
-rows-unchanged argument**.
+**7 verified-equal rules**, **8 rules absent with a stated rows-unchanged
+argument**.
 
 Explicitly **not** verified:
 
 * Nothing was executed. No query in this document was run on either side.
   Every "returns" is derived from reading the two implementations.
-* `projection_elimination.rs`, `eliminate_empty_selection.rs`,
+* The module docs of `eliminate_empty_selection.rs`,
   `eliminate_unionall_dual_item.rs`, `push_down_sequence.rs`,
-  `resolve_grouping_expand.rs`, `derive_topn_from_window.rs`,
-  `join_reorder_projection_inline.rs` were not read. They are in the same
-  "leaf transcreation, no live caller" class as §0, but that was inferred from
-  the file sizes and the module docs of their neighbours, not confirmed
-  file by file.
+  `resolve_grouping_expand.rs`, `derive_topn_from_window.rs` and
+  `join_reorder_projection_inline.rs` were read and all six declare the same
+  "caller-owned plan adapter, optimizer integration external" contract as §0,
+  but their bodies were not diffed against Go line by line.
+  `projection_elimination.rs` was (§2.7).
 * `split_scan_predicates` (the single-table scan-filter split feeding
   `negotiate_scan_filter`) was not audited; it is `exec-u2-pushdown`'s
   surface. This audit only established that it cannot run across a join
@@ -391,7 +404,7 @@ Explicitly **not** verified:
 1. Decide `predicate_partition.rs`'s fate (F1): either delete it as dead code
    or give it a join-type-carrying API before anything wires it up. Deleting
    is the smaller diff and removes the hazard entirely.
-2. Read the seven unexamined `tidb-planner` rule modules against their Go
+2. Diff the six unexamined `tidb-planner` rule modules against their Go
    wrappers to confirm the §0 classification file by file.
 3. Count Go's warning-emission sites for `WHERE <int col> = <string literal>`
    to close the 4-vs-2 gap; §4 rules out the constant propagator but does not

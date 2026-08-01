@@ -30,11 +30,39 @@ use crate::join_condition::{JoinSchema, JoinSide};
 use crate::residual_condition::{ResidualLeafKind, ResidualPredicate};
 
 /// A conservative candidate route for one predicate.
+///
+/// # This is a DEPENDENCY answer, never a pushdown authorization
+///
+/// A route says which child *could* evaluate the predicate. It does NOT say
+/// the predicate may be moved there, because it is derived without the two
+/// facts Go's `LogicalJoin.PredicatePushDown`
+/// (`pkg/planner/core/operator/logicalop/logical_join.go:171`) switches on:
+/// the JOIN TYPE, and whether the predicate came from `ON` or from `WHERE`.
+///
+/// For a `LeftOuterJoin` Go extracts `WHERE` predicates with
+/// `extractOnCondition(predicates, true, false)` -- derive LEFT only -- and
+/// returns the right-side ones back upward rather than pushing them; the `ON`
+/// condition is pushed RIGHT only. `RightOuterJoin` is the mirror.
+/// `AntiSemiJoin` pushes left only and additionally refuses to derive
+/// `is not null`. `LeftOuterSemiJoin`/`AntiLeftOuterSemiJoin` disable
+/// `OtherConditions` simplification entirely (pingcap/tidb#9051).
+///
+/// Acting on a [`Self::RightPushdown`] under a left outer join turns that join
+/// into an inner one and returns extra rows with no error:
+/// `SELECT * FROM t1 LEFT JOIN t2 ON t1.b = t2.b WHERE t2.a IS NULL` binds
+/// only to the right child, so pushing it into `t2` empties `t2`, null-extends
+/// every `t1` row, and answers with all of `t1` instead of the unmatched rows.
+///
+/// A caller that moves a predicate MUST therefore combine this route with the
+/// join type and the predicate's `ON`/`WHERE` origin.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PredicateRoute {
-    /// The predicate references only the left child.
+    /// The predicate references only the left child. Movable there only for
+    /// the join types Go allows a left push for -- see the type-level warning.
     LeftPushdown,
-    /// The predicate references only the right child.
+    /// The predicate references only the right child. Movable there only for
+    /// the join types Go allows a right push for -- see the type-level
+    /// warning; a `WHERE` predicate under a `LeftOuterJoin` is not one.
     RightPushdown,
     /// The predicate references both children and remains at the join seam.
     JoinResidual,
@@ -132,6 +160,10 @@ impl PredicatePartitionPlan {
 }
 
 /// Binds and routes predicates without executing or rewriting them.
+///
+/// The returned routes are dependency answers only. See [`PredicateRoute`]
+/// for the join-type and `ON`/`WHERE` gate a caller must apply before moving
+/// any predicate; this function has neither input and so cannot apply it.
 pub fn partition_predicates<I>(
     expressions: I,
     schema: &JoinSchema,
