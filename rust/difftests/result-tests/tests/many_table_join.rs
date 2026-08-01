@@ -46,6 +46,29 @@
 //! debug build overflows at exactly 21 tables and the process aborts -- which
 //! is the crash the survey originally reported for this topic, and it is
 //! independent of how long the statement takes.
+//!
+//! # The budget assertion is load-bearing, measured
+//!
+//! Neutering the rule -- `if false && join.tp == ...` in `build_join`, run
+//! and reverted -- takes the 21-table statement from 0.17s for this whole
+//! file to 45.9s for the one test, and
+//! [`twenty_one_tables_finish_within_budget_with_tidb_s_answer`] FAILS on the
+//! budget. Its control, [`pushdown_returns_the_control_plan_s_rows`], still
+//! passes under the same mutation, which is the point: the rows never
+//! depended on the rule.
+//!
+//! # What this does NOT fix, named
+//!
+//! `executor/jointest/join` still does not replay to the end, and the cause
+//! has MOVED rather than remained. It is now
+//! `desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6` near the
+//! end of the script -- a six-way self cross join with no `WHERE` at all,
+//! over a table the script has just doubled eight times. That statement is
+//! SUPPOSED to blow up: the script sets `tidb_mem_oom_action = 'CANCEL'` and
+//! expects `--error 8175`, so Go cancels it on the memory quota. This tier
+//! does not enforce a query memory quota on that path, so it runs the
+//! cartesian until the OS kills the process. That is a memory-accounting
+//! gap, not a join-planning one, and nothing in this file addresses it.
 
 use std::time::{Duration, Instant};
 
