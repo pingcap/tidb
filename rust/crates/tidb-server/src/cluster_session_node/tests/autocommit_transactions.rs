@@ -371,25 +371,78 @@ fn a_savepoint_under_autocommit_on_records_nothing() {
 ///
 /// So the assertion is not "the update fails". It is that the update **cannot
 /// silently succeed**: publishing at the read's timestamp turns the race into
-/// the 9007 the client is told about.
+/// something the loser cannot mistake for success.
+///
+/// What the loser then does is the retry, and this asserts BOTH halves at
+/// once. The statement succeeds -- Go's client never sees a 9007 for a single
+/// autocommit statement -- and it can only have succeeded by re-reading: the
+/// mock refuses any publication whose `start_ts` predates the racing commit,
+/// exactly as TiKV does, so a replay that resubmitted the staged buffer at the
+/// original read's timestamp would be refused here rather than pass. The
+/// second read transaction is counted to say the re-read happened rather than
+/// inferring it.
 #[test]
-fn an_autocommit_update_cannot_overwrite_a_commit_made_after_its_read() {
+fn an_autocommit_update_that_loses_the_race_is_retried_at_a_new_read() {
     let (mut session, cluster) = open_session();
     session
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
+    let opened_before = cluster.opened.load(Ordering::Acquire);
 
     cluster.race_next_read.store(true, Ordering::Release);
+    session
+        .execute_write("UPDATE t SET v = v + 5 WHERE id = 1")
+        .expect("a conflicted autocommit statement is retried, not refused");
+
+    assert_eq!(
+        cluster.opened.load(Ordering::Acquire),
+        opened_before + 2,
+        "the losing attempt and the replay each opened their own read"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1"),
+        vec![vec![Datum::Int(15)]],
+        "the replay recomputed from what it re-read"
+    );
+}
+
+/// The bound on that retry, which is the other half of the contract clients
+/// depend on.
+///
+/// Go's replay budget is `@@tidb_retry_limit` and running out of it returns
+/// the last commit error (`pkg/session/session.go:1272-1278`), so a conflict
+/// that outlives the budget still reaches the client as 9007. A race that
+/// never clears is the only way to reach that line: it pins that the node does
+/// not spin forever, and pins the budget itself as behaviour rather than as a
+/// constant nothing reads.
+#[test]
+fn a_race_that_never_clears_exhausts_the_budget_and_reports_the_conflict() {
+    let (mut session, cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+    let opened_before = cluster.opened.load(Ordering::Acquire);
+
+    cluster.race_every_read.store(true, Ordering::Release);
     let error = session
         .execute_write("UPDATE t SET v = v + 5 WHERE id = 1")
-        .expect_err(
-            "a statement that read before another session's commit must not publish over it \
-             in silence",
-        );
+        .expect_err("a conflict the budget cannot outlast must reach the client");
+    cluster.race_every_read.store(false, Ordering::Release);
+
     assert_eq!(
         error.code, ERR_WRITE_CONFLICT,
-        "the race must reach the client as a write conflict: {}",
+        "the exhausted retry reports the conflict itself: {}",
         error.message
+    );
+    assert_eq!(
+        cluster.opened.load(Ordering::Acquire),
+        opened_before + 1 + AUTOCOMMIT_RETRY_LIMIT as usize,
+        "one attempt plus the whole replay budget, and not one more"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1"),
+        vec![vec![Datum::Int(10)]],
+        "a refused statement wrote nothing"
     );
 }
 
@@ -431,10 +484,23 @@ fn a_non_point_predicate_is_covered_by_the_same_timestamp() {
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
 
+    // The ranged shape reads through `scan`, and reaches the same publication
+    // and therefore the same retry: it too must recompute from a re-read
+    // rather than publish over the race.
     cluster.race_next_read.store(true, Ordering::Release);
+    session
+        .execute_write("UPDATE t SET v = v + 5 WHERE v > 0")
+        .expect("the ranged shape is retried like the point one");
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1"),
+        vec![vec![Datum::Int(15)]]
+    );
+
+    cluster.race_every_read.store(true, Ordering::Release);
     let error = session
         .execute_write("UPDATE t SET v = v + 5 WHERE v > 0")
-        .expect_err("the ranged shape must not publish over the race either");
+        .expect_err("the ranged shape must not publish over a race it cannot outlast either");
+    cluster.race_every_read.store(false, Ordering::Release);
     assert_eq!(error.code, ERR_WRITE_CONFLICT, "{}", error.message);
 }
 
@@ -462,4 +528,51 @@ fn an_insert_reads_for_its_uniqueness_check_and_publishes_at_that_read() {
         rows(&mut session, "SELECT v FROM t WHERE id = 2"),
         vec![vec![Datum::Int(20)]]
     );
+}
+
+/// The retry's backoff schedule is Go's, and the cap is what keeps a budget
+/// that never wins from turning into a long stall.
+#[test]
+fn the_backoff_schedule_doubles_and_then_caps() {
+    assert_eq!(
+        back_off_upper_ms(1),
+        2,
+        "the first sleep is drawn from [0,2)"
+    );
+    assert_eq!(back_off_upper_ms(2), 4);
+    assert_eq!(back_off_upper_ms(6), 64);
+    for attempts in 7..=AUTOCOMMIT_RETRY_LIMIT {
+        assert_eq!(
+            back_off_upper_ms(attempts),
+            RETRY_BACK_OFF_CAP_MS,
+            "attempt {attempts} must be capped, not shifted off the end"
+        );
+    }
+}
+
+/// The jitter must actually vary, and this test exists because a version that
+/// did not shipped and was caught on a real cluster.
+///
+/// Reading `SystemTime`'s nanosecond field as the jitter source looks uniform
+/// and is not: this machine's clock advances in 1000ns steps, so `nanos % 2`,
+/// `% 4` and `% 8` are identically zero and the first three backoffs never
+/// slept at all. Two sessions colliding on one key then spun in lockstep, and
+/// two of 300 statements burned the whole budget rather than none. A degenerate
+/// draw is invisible in every assertion except this one.
+#[test]
+fn the_backoff_jitter_is_not_degenerate_at_the_small_bounds() {
+    for upper in [2_u32, 4, 8, 16] {
+        let mut seen = [false; 16];
+        for _ in 0..4096 {
+            let draw = jitter_below(upper);
+            assert!(draw < upper, "a draw must stay below its bound");
+            seen[draw as usize] = true;
+        }
+        for (value, hit) in seen.iter().take(upper as usize).enumerate() {
+            assert!(
+                *hit,
+                "jitter below {upper} never produced {value}, so the sleep is not uniform"
+            );
+        }
+    }
 }

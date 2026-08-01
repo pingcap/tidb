@@ -59,6 +59,15 @@ pub(super) struct MockCluster {
     /// publishes. Nothing a test can do from SQL alone lands inside a single
     /// statement.
     pub(super) race_next_read: AtomicBool,
+    /// Not one-shot: EVERY autocommit read snapshot is followed by another
+    /// session's commit, so no replay can ever win.
+    ///
+    /// This is the only way to reach the exhaustion contract. An autocommit
+    /// statement now retries a write conflict, so a one-shot race proves the
+    /// retry and this proves its BOUND -- that the budget runs out and the
+    /// client is told, rather than the node spinning forever against a key it
+    /// will never get.
+    pub(super) race_every_read: AtomicBool,
 }
 
 impl MockCluster {
@@ -73,11 +82,13 @@ impl MockCluster {
     /// Commits, as some other session, a new value for whatever single row the
     /// store already holds, at a timestamp of its own.
     ///
-    /// The bytes are deliberately not a decodable row: nothing reads this
-    /// value, and the only question asked of it is whether the statement that
-    /// read before it is allowed to overwrite it unnoticed.
+    /// The bytes are the row's OWN, re-committed unchanged: what makes this a
+    /// race is the new `commit_ts` on the key, not a new value. It has to stay
+    /// a decodable row because a statement that retries the conflict READS it
+    /// on its next attempt -- an undecodable value would end the replay with a
+    /// decode error and hide whether the retry worked.
     pub(super) fn commit_from_another_session(self: &Arc<Self>) {
-        let Some((key, mut value)) = self
+        let Some((key, value)) = self
             .committed
             .lock()
             .expect("committed")
@@ -87,7 +98,6 @@ impl MockCluster {
         else {
             return;
         };
-        value.push(0xff);
         let start_ts = self.timestamp();
         let outcome = self.publish(vec![(Key::from(key), Some(value))], start_ts);
         assert!(
@@ -210,7 +220,9 @@ impl ClusterTransactions for MockTransactions {
         // commit -- so the race lands inside the statement.
         let data = self.0.snapshot();
         let start_ts = self.0.timestamp();
-        if self.0.race_next_read.swap(false, Ordering::AcqRel) {
+        if self.0.race_every_read.load(Ordering::Acquire)
+            || self.0.race_next_read.swap(false, Ordering::AcqRel)
+        {
             self.0.commit_from_another_session();
         }
         Ok(Box::new(MockSnapshot {

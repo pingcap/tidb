@@ -368,8 +368,9 @@ refuses **zero** of its 300 statements under the same contention: Go's autocommi
 statement retries the conflict internally, so its client never sees it
 (`@@tidb_retry_limit` was `10` on the measured cluster). So the *loss* is closed
 and the remaining divergence is an error surface: **we refuse where Go retries**.
-That is a correctness improvement with a visible cost, and the retry is the next
-piece of work, not part of this one.
+That was a correctness improvement with a visible cost. The two sections below
+close that cost: what Go's retry actually is, read from the source, and the
+measurement that took our refusals to zero with both controls still exact.
 
 #### What Go's internal retry actually is, read from the source
 
@@ -494,6 +495,70 @@ top of every attempt (`pkg/session/session.go:1194`) and re-executes
 `st.Exec(ctx)` (`session.go:1241`) — a NEW transaction, a NEW start timestamp,
 the statement's rows re-read. It does not resubmit the old buffer at the old
 `start_ts`; doing that would be the lost update again.
+
+#### The retry landed, and the refusals went to zero — offset 43000
+
+**2026-08-02 on `hparser-integration` at `dadd01344c` + the jitter fix, port
+offset 43000, ONE `tiup playground v9.0.0-beta.2.pre-nightly` per run,
+release `--cluster-session` build passed in via `LOST_UPDATE_RUST_SERVER`.**
+Same harness, same 300 statements per side, now also timed. Three runs: the
+`before` column is the same tree with the retry backed out (the parent commit's
+`cluster_session_node/mod.rs`), so the only difference is the retry.
+
+| Scenario | Before (refuse on conflict) | After (retry, run 1) | After (run 2) |
+| --- | --- | --- | --- |
+| **control** Go vs Go (method control) | PASS 3600 = 3600, **0 refused**, 0.9 ms/stmt | PASS 3600 = 3600, **0 refused**, 0.8 | PASS 3600 = 3600, **0 refused**, 0.9 |
+| **control** Rust alone, uncontended (no-race control) | PASS 1500 = 1500, 0 refused, 0.7 ms/stmt | PASS 1500 = 1500, 0 refused, 0.7 | PASS 1500 = 1500, 0 refused, 0.6 |
+| Rust vs Go, point predicate | PASS 2920 = 2920, **136 refused**, 0.8 | PASS 3600 = 3600, **0 refused**, 1.2 | PASS 3600 = 3600, **0 refused**, 1.2 |
+| Rust vs Rust, point predicate | PASS 2177 = 2177, **118 + 119 refused**, 0.8 | PASS 3600 = 3600, **0 refused**, 1.2 | PASS 3600 = 3600, **0 refused**, 1.4 |
+| Rust vs Go, ranged predicate | PASS 2915 = 2915, **137 refused**, 0.9 | PASS 3595 = 3595, **1 refused**, 1.2 | PASS 3600 = 3600, **0 refused**, 1.1 |
+
+Every total is exact in every column, and BOTH controls stay exact — which is
+the point of keeping them: a retry that reached zero refusals by republishing a
+stale buffer at the old `start_ts` would show here as a `LOST` row, because a
+lost update is precisely a statement that succeeds without its increment. Zero
+refusals AND the exact arithmetic is the claim. The ranged variant moves with
+the point one, so the retry is no more scoped to the point-get shape than the
+timestamp fix was.
+
+The single refusal in run 1 is **not** a write conflict: it is the task #168
+`pessimistic lock type 5 is outside bounded recovery` (1105) below, which no
+retry of ours covers. Across all 1,500 statements of both runs, **zero 9007s
+reached a client.**
+
+**The cost, measured.** A retry is re-execution, and it shows up as latency, not
+as anything else:
+
+* uncontended Rust: **0.6-0.7 ms/statement** (the no-race floor);
+* contended Rust before the retry: **0.8-0.9 ms/statement**, but with 45% of
+  statements failing *fast* — a refusal is cheap, which is exactly why the
+  before column looks inexpensive and is not;
+* contended Rust with the retry: **1.2-1.4 ms/statement**.
+
+So matching Go's error surface costs about **+0.4 ms per contended statement**
+against the refusing build, and **+0.5-0.6 ms** against the uncontended floor —
+roughly a 70% latency increase on statements that are colliding, and nothing at
+all on statements that are not. Go's own contended control runs 0.8-0.9
+ms/statement, so we are within a factor of ~1.5 of Go under the same
+contention while now refusing the same number of statements it does: zero.
+
+**What bounds a retry that never makes progress.** Two things, both Go's. The
+count: `AUTOCOMMIT_RETRY_LIMIT` is 10, and a conflict that outlives it is
+reported as the 9007 it always was —
+`a_race_that_never_clears_exhausts_the_budget_and_reports_the_conflict` pins
+that the node opens exactly `1 + 10` reads and then gives up. And the time: the
+backoff is capped at 100 ms, so the worst case is ~0.6 s of sleeping rather than
+an unbounded spin.
+
+**The bug inside the fix, which only the cluster found.** The first retry build
+still refused 2 of 300 on the contended point scenario. The cause was the
+jitter: `SystemTime`'s nanosecond field advances in 1000ns steps on this
+machine, so `subsec_nanos() % upper` is *identically zero* for `upper` of 2, 4
+and 8 — the first three backoffs, which are the ones that matter. Two colliding
+sessions slept zero and stayed in lockstep. Replacing the clock reading with a
+per-thread `xorshift64*` took the refusals to 0. Both halves are now pinned by
+`the_backoff_jitter_is_not_degenerate_at_the_small_bounds`, which no amount of
+reasoning about "full jitter" would have caught — the code looked right.
 
 #### The rarer refusal, task #168: a real pessimistic lock, not a misdecode
 

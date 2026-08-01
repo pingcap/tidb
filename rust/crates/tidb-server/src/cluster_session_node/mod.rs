@@ -155,6 +155,7 @@
 //! [`StatementSnapshot`]: tidb_exec::cluster_table_storage::StatementSnapshot
 //! [`SessionTransaction`]: tidb_exec::cluster_table_storage::SessionTransaction
 
+use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -227,16 +228,57 @@ const RETRY_BACK_OFF_CAP_MS: u32 = 100;
 /// a statement that loses all ten races sleeps a capped amount rather than
 /// hammering the conflicting key.
 fn back_off(attempts: u32) {
-    let upper = RETRY_BACK_OFF_BASE_MS
+    std::thread::sleep(Duration::from_millis(u64::from(jitter_below(
+        back_off_upper_ms(attempts),
+    ))));
+}
+
+/// The exclusive upper bound, in milliseconds, of attempt `attempts`'s sleep:
+/// Go's `min(retryBackOffCap, retryBackOffBase * 2^attempts)`.
+fn back_off_upper_ms(attempts: u32) -> u32 {
+    RETRY_BACK_OFF_BASE_MS
         .checked_shl(attempts)
         .unwrap_or(u32::MAX)
-        .min(RETRY_BACK_OFF_CAP_MS);
-    // The clock's nanosecond field is the jitter source, so no random-number
-    // dependency is pulled in for a sleep length.
-    let jitter = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.subsec_nanos());
-    std::thread::sleep(Duration::from_millis(u64::from(jitter % upper)));
+        .min(RETRY_BACK_OFF_CAP_MS)
+}
+
+/// A uniform draw from `[0, upper)`, the jitter half of [`back_off`].
+///
+/// This is a real generator rather than a clock reading, and the difference is
+/// measured rather than stylistic: this machine's `SystemTime` advances in
+/// 1000ns steps, so `subsec_nanos() % upper` is IDENTICALLY ZERO for every
+/// `upper` that divides 1000 -- which is the first three backoffs, `2`, `4`
+/// and `8` ms, exactly the ones that matter when two sessions are colliding on
+/// one key. Two conflicting connections would then both spin with no sleep and
+/// stay in lockstep. Seeding once per connection thread is what makes two
+/// racing sessions draw different sleeps at all.
+///
+/// The generator is `xorshift64*`; a backoff length needs decorrelation, not
+/// cryptographic quality, and this keeps the node free of a random-number
+/// dependency.
+fn jitter_below(upper: u32) -> u32 {
+    thread_local! {
+        static STATE: Cell<u64> = const { Cell::new(0) };
+    }
+    STATE.with(|state| {
+        let mut x = state.get();
+        if x == 0 {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos() as u64);
+            // The thread-local's own address separates two connections that
+            // seeded within the same clock tick.
+            x = nanos ^ (state as *const Cell<u64> as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            if x == 0 {
+                x = 0x9E37_79B9_7F4A_7C15;
+            }
+        }
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        state.set(x);
+        u32::try_from((x.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) % u64::from(upper)).unwrap_or(0)
+    })
 }
 
 mod boot;
