@@ -31,6 +31,22 @@ EXPECTED_DOCTESTS=2
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# A DEDICATED BUILD DIRECTORY, DELIBERATELY OVERRIDING THE CALLER'S.
+#
+# `cargo test --doc` and `cargo nextest run` do not share artifacts: pointed
+# at one directory they invalidate each other every run and then serialize on
+# its build lock. Measured on this workspace, checking the same two doctests:
+#
+#     shared with the nextest gate    203-330s wall, 19% CPU  (waiting)
+#     dedicated, cold                  24s wall, 437% CPU
+#     dedicated, warm                   2.8s wall
+#
+# So the isolation is not a tidiness preference -- it is the difference
+# between a gate that costs seconds and one that dominates the whole run.
+# It is set here rather than left to callers because the failure is silent:
+# a caller that forgets simply gets a slow gate and no explanation.
+export CARGO_TARGET_DIR="${PWD}/target/doctest-gate"
+
 log="$(mktemp -t tidb-doctests)"
 trap 'rm -f "$log"' EXIT
 
