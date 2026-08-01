@@ -37,8 +37,9 @@ go_test(
     srcs = ["sqlembed_test.go"],
     embed = [":inference"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 9,
     deps = [
+        "//pkg/config",
         "//pkg/sessionctx/vardef",
         "@com_github_stretchr_testify//require",
     ],

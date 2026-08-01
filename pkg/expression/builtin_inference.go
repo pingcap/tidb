@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
-	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/inference/domainadaptor"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -38,7 +37,7 @@ type embedTextFunctionClass struct {
 
 type builtinEmbedTextSig struct {
 	baseBuiltinFunc
-	expropt.SessionVarsPropReader
+	expropt.SessionContextPropReader
 }
 
 // Clone implements builtinFunc.Clone.
@@ -71,8 +70,8 @@ func (b *builtinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) 
 		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT is only supported in starter deployment mode")
 	}
 
-	sessionEvalCtx, ok := unwrapSessionEvalContext(ctx)
-	if !ok {
+	sctx, err := b.GetSessionContext(ctx)
+	if err != nil || sctx == nil {
 		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT requires session context")
 	}
 	model, isNull, err := b.args[0].EvalString(ctx, row)
@@ -88,7 +87,6 @@ func (b *builtinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) 
 		return types.ZeroVectorFloat32, false, err
 	}
 
-	sctx := sessionEvalCtx.Sctx()
 	embedFn := domainadaptor.GetEmbedFn(sctx)
 	if embedFn == nil {
 		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT requires an initialized Domain embedding runtime")
@@ -144,13 +142,5 @@ func evalEmbedTextOptions(ctx EvalContext, row chunk.Row, args []Expression) (ma
 
 // RequiredOptionalEvalProps implements RequiredOptionalEvalProps.
 func (b *builtinEmbedTextSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
-func unwrapSessionEvalContext(ctx EvalContext) (*sessionexpr.EvalContext, bool) {
-	if assertionCtx, ok := ctx.(*assertionEvalContext); ok {
-		ctx = assertionCtx.EvalContext
-	}
-	sessionEvalCtx, ok := ctx.(*sessionexpr.EvalContext)
-	return sessionEvalCtx, ok
+	return b.SessionContextPropReader.RequiredOptionalEvalProps()
 }

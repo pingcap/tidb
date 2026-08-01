@@ -55,6 +55,22 @@ func TestEmbedTextBuiltin(t *testing.T) {
 		require.False(t, isNull)
 		require.Equal(t, tc.want, vec.String())
 	}
+
+	// EMBED_TEXT obtains its session context through optional properties, so an
+	// EvalContext wrapper must not make the session/domain runtime unavailable.
+	wrappedCtx := struct{ EvalContext }{EvalContext: ctx.GetExprCtx().GetEvalCtx()}
+	fn, err := NewFunction(
+		ctx,
+		ast.EmbedText,
+		types.NewFieldType(mysql.TypeTiDBVectorFloat32),
+		stringConst("mock/json"),
+		stringConst("[1,2,3]"),
+	)
+	require.NoError(t, err)
+	vec, isNull, err := fn.EvalVectorFloat32(wrappedCtx, chunk.Row{})
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Equal(t, "[1,2,3]", vec.String())
 }
 
 func TestEmbedTextBuiltinNullAndErrors(t *testing.T) {

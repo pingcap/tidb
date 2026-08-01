@@ -23,6 +23,7 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
@@ -107,6 +108,17 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 			}
 			verifyProvider = func(ctx exprctx.EvalContext, val exprctx.OptionalEvalPropProvider) {
 				require.Same(t, vars, assertReaderFuncValue(t, ctx, r.GetSessionVars))
+			}
+		case exprctx.OptPropSessionContext:
+			p = SessionContextPropProvider(func() sessionctx.Context { return nil })
+			r := SessionContextPropReader{}
+			reader = r
+			verifyNoProvider = func(ctx exprctx.EvalContext) {
+				assertReaderFuncReturnErr(t, ctx, r.GetSessionContext)
+			}
+			verifyProvider = func(ctx exprctx.EvalContext, val exprctx.OptionalEvalPropProvider) {
+				require.Nil(t, val.(SessionContextPropProvider)())
+				require.Nil(t, assertReaderFuncValue(t, ctx, r.GetSessionContext))
 			}
 		case exprctx.OptPropInfoSchema:
 			type mockIsType struct {

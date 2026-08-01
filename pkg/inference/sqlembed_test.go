@@ -18,11 +18,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
@@ -105,6 +108,63 @@ func TestEmbedFnProvidersAndErrors(t *testing.T) {
 		require.ErrorContains(t, err, "vector cannot have more than 16383 dimensions")
 	}
 	require.Equal(t, int64(2), oversized.calls.Load(), "invalid vectors must not be cached")
+}
+
+func TestHostedEmbeddingConfigHelpers(t *testing.T) {
+	cfg := config.GetGlobalConfig()
+	originalClusterID := cfg.AutoScalerClusterID
+	originalAPIKeyPath := cfg.HostedEmbedding.APIKeyPath
+	t.Cleanup(func() {
+		cfg.AutoScalerClusterID = originalClusterID
+		cfg.HostedEmbedding.APIKeyPath = originalAPIKeyPath
+	})
+
+	t.Run("billing ID", func(t *testing.T) {
+		cfg.AutoScalerClusterID = ""
+		require.Empty(t, hostedEmbeddingBillingID())
+
+		cfg.AutoScalerClusterID = "cluster-123"
+		require.Equal(t, "cluster_cluster-123", hostedEmbeddingBillingID())
+	})
+
+	t.Run("API key path", func(t *testing.T) {
+		cfg.HostedEmbedding.APIKeyPath = ""
+		require.Empty(t, getHostedEmbeddingAPIKey())
+
+		apiKeyPath := filepath.Join(t.TempDir(), "api-key")
+		require.NoError(t, os.WriteFile(apiKeyPath, []byte("  test-api-key\n"), 0o600))
+		cfg.HostedEmbedding.APIKeyPath = apiKeyPath
+		require.Equal(t, "test-api-key", getHostedEmbeddingAPIKey())
+
+		cfg.HostedEmbedding.APIKeyPath = filepath.Join(t.TempDir(), "missing-api-key")
+		require.Empty(t, getHostedEmbeddingAPIKey())
+	})
+}
+
+func TestContextWithCancelCheck(t *testing.T) {
+	t.Run("nil callback", func(t *testing.T) {
+		ctx, cancel := contextWithCancelCheck(context.Background(), nil)
+		cancel()
+		require.ErrorIs(t, ctx.Err(), context.Canceled)
+	})
+
+	t.Run("already canceled", func(t *testing.T) {
+		ctx, cancel := contextWithCancelCheck(context.Background(), func() bool { return true })
+		defer cancel()
+		require.ErrorIs(t, ctx.Err(), context.Canceled)
+	})
+
+	t.Run("polls callback", func(t *testing.T) {
+		var shouldCancel atomic.Bool
+		ctx, cancel := contextWithCancelCheck(context.Background(), shouldCancel.Load)
+		defer cancel()
+		require.NoError(t, ctx.Err())
+
+		shouldCancel.Store(true)
+		require.Eventually(t, func() bool {
+			return errors.Is(ctx.Err(), context.Canceled)
+		}, 2*embedCancelCheckInterval+time.Second, 10*time.Millisecond)
+	})
 }
 
 func TestEmbedFnCacheIsolationAndInvalidation(t *testing.T) {
