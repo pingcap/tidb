@@ -571,6 +571,42 @@ fn bounded_path_refusal_set_is_pinned_against_new_features() {
     );
 }
 
+/// The same boundary, predicate half. The guard above pins which statement
+/// shapes the bounded path admits; this one pins which `WHERE` shapes its
+/// signed-`BIGINT` Selection contract admits. Widening the predicate contract
+/// widens what runs against real TiKV just as surely as adding a clause does,
+/// so it gets the same both-directions treatment rather than riding along on
+/// the feature guard.
+#[test]
+fn bounded_path_predicate_refusal_set_is_pinned_against_new_shapes() {
+    let source = include_str!("../src/read_only_scan/errors.rs");
+    let variants: Vec<&str> = source
+        .split_once("pub enum UnsupportedReadOnlyPredicate {")
+        .expect("the predicate refusal enum")
+        .1
+        .split_once('}')
+        .expect("the enum body")
+        .0
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.ends_with(',') && !line.starts_with("//"))
+        .map(|line| line.trim_end_matches(','))
+        .collect();
+    assert_eq!(
+        variants,
+        [
+            "BooleanOperator",
+            "ComparisonOperator",
+            "Operand",
+            "ColumnIntegerPair",
+            "IntegerOutOfRange",
+        ],
+        "the bounded Selection contract changed shape: a new variant needs a \
+         rejection test proving the refusal fires, and a removed variant means \
+         the bounded path now pushes down a predicate shape it used to decline"
+    );
+}
+
 /// A nullable column drops `NOT_NULL_FLAG` from both the coprocessor scan
 /// descriptor and the projected column, while the clustered handle -- which
 /// *is* the record key -- can never be marked nullable.
