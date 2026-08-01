@@ -237,6 +237,15 @@ const TOPICS: &[(&str, &str)] = &[
          raising 8175. It is the only onboarded topic that gates the memory \
          quota on the READ path",
     ),
+    (
+        "sessionctx/setvar",
+        "the largest ZERO-divergence topic in the suite: 709 statements over the \
+         system-variable surface -- what each variable accepts, what it refuses, \
+         what it reads back, and what a SET_VAR hint does to a statement. Its \
+         last two divergences were the non-prepared plan cache's own \
+         `@@last_plan_from_cache`, which is why onboarding it belongs to that \
+         unit: without this entry nothing gates the cache against regressing",
+    ),
 ];
 
 /// A topic listed twice is replayed twice, and every statement it compares is
