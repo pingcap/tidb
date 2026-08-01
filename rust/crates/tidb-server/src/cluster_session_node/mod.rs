@@ -473,6 +473,7 @@ impl ClusterServerSession {
         run: impl FnOnce(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         self.rebuild_catalog_if_stale();
+        self.begin_if_autocommit_off()?;
         let savepoint = self.buffer.staged();
         let snapshot = match self.explicit.as_ref() {
             Some(transaction) => transaction.snapshot(),
@@ -489,6 +490,7 @@ impl ClusterServerSession {
         match outcome {
             Ok(value) => {
                 finished?;
+                self.commit_if_session_left_transaction()?;
                 self.flush_if_autocommit()?;
                 Ok(value)
             }
@@ -522,6 +524,51 @@ impl ClusterServerSession {
             .unbind();
         drop(bound);
         Ok(())
+    }
+
+    /// Opens the transaction `autocommit = 0` implies, for the statement about
+    /// to run.
+    ///
+    /// `SET autocommit = 0` is the third door onto this connection's
+    /// transaction state, and the only one that carries no keyword: there is no
+    /// `BEGIN` for [`classify_transaction_control`] to route on, just a
+    /// variable the driver session turns OFF. So the variable IS the routing
+    /// question, and asking the session for it -- rather than tracking a copy
+    /// here -- is what keeps the two halves from disagreeing the way they did
+    /// when a prepared `BEGIN` flipped one and not the other.
+    ///
+    /// The timing is Go's, not MySQL's `START TRANSACTION`: the `SET` itself
+    /// takes no timestamp, and the transaction begins at the first statement
+    /// that reads or writes data (captured). DDL, account and `SET GLOBAL`
+    /// statements never reach here -- each commits the open transaction first,
+    /// as Go does -- so none of them opens one either.
+    fn begin_if_autocommit_off(&mut self) -> Result<(), SqlQueryError> {
+        if self.explicit.is_some() || self.session.is_autocommit() {
+            return Ok(());
+        }
+        self.explicit = Some(self.transactions.begin().map_err(SqlQueryError::unknown)?);
+        Ok(())
+    }
+
+    /// Publishes the transaction a statement ended from the INSIDE.
+    ///
+    /// One statement does that: `SET autocommit = 1`, whose Go `SetSession`
+    /// closure ends the ongoing transaction on the OFF->ON transition, so the
+    /// statement's own finish commits it (captured: the row is durable
+    /// immediately, and a `ROLLBACK` after it has nothing left to discard).
+    /// The driver session applies that rule and clears its own transaction; the
+    /// node hears about it only by asking, because no keyword went past
+    /// [`Self::control_transaction`].
+    ///
+    /// The check is on the STATE rather than on the transition, so any future
+    /// statement the session ends a transaction from is covered by the same
+    /// line: an `explicit` the session no longer believes in is always one to
+    /// publish.
+    fn commit_if_session_left_transaction(&mut self) -> Result<(), SqlQueryError> {
+        if self.explicit.is_none() || self.session.in_transaction() {
+            return Ok(());
+        }
+        self.commit_explicit()
     }
 
     /// Publishes the buffer when the session is not inside `BEGIN`.
@@ -854,6 +901,11 @@ impl QuerySession for ClusterServerSession {
             StatementRoute::Ordinary => {}
         }
         if self.session.apply_set(sql).map_err(map_error)?.is_some() {
+            // A `SET` takes no snapshot, so it does not go through
+            // `with_statement` -- but `SET autocommit = 1` ends the open
+            // transaction from the inside, and that has to be published here
+            // too or the write waits for a statement that may never come.
+            self.commit_if_session_left_transaction()?;
             return Ok(Some(WriteOutcome {
                 affected_rows: 0,
                 last_insert_id: 0,

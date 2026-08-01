@@ -123,7 +123,14 @@ impl Drop for CatalogStage<'_> {
 impl Session {
     /// Go `SessionVars.IsAutocommit()`: whether each statement stands on its
     /// own, or joins a transaction the session keeps open for it.
-    pub(crate) fn is_autocommit(&self) -> bool {
+    ///
+    /// Public because a front end over cluster storage has to open the same
+    /// transaction this session will: `SET autocommit = 0` opens one with no
+    /// `BEGIN` keyword for anyone to route on, so the variable itself is the
+    /// only thing there is to ask, and asking the session keeps it the ONE
+    /// answer rather than a second copy that can disagree.
+    #[must_use]
+    pub fn is_autocommit(&self) -> bool {
         self.vars.get_system("autocommit").as_deref() != Ok("OFF")
     }
 
