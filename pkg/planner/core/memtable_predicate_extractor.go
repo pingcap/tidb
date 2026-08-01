@@ -389,9 +389,9 @@ func (helper *extractHelper) extractLikePatternCol(
 		// e.g:
 		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
 		if fn.FuncName.L == ast.LogicOr && !toLower {
-			canBuildPattern, pattern = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+			canBuildPattern, pattern = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		} else {
-			canBuildPattern, pattern = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+			canBuildPattern, pattern = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		}
 		if canBuildPattern && toLower {
 			pattern = strings.ToLower(pattern)
@@ -411,6 +411,7 @@ func (helper extractHelper) extractOrLikePattern(
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 	needLike2Regexp bool,
+	toLower bool,
 ) (
 	ok bool,
 	pattern string,
@@ -427,7 +428,7 @@ func (helper extractHelper) extractOrLikePattern(
 			return false, ""
 		}
 
-		ok, partPattern := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+		ok, partPattern := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		if !ok {
 			return false, ""
 		}
@@ -436,12 +437,17 @@ func (helper extractHelper) extractOrLikePattern(
 	return true, strings.Join(patternBuilder, "|")
 }
 
+// extractLikePattern builds the pushed-down pattern for a single predicate.
+// toLower reports whether the caller folds case on both the pattern and the
+// scanned value; it decides whether a case-insensitive ILIKE can be represented
+// by the pattern at all.
 func (helper extractHelper) extractLikePattern(
 	ctx base.PlanContext,
 	fn *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 	needLike2Regexp bool,
+	toLower bool,
 ) (
 	ok bool,
 	pattern string,
@@ -459,6 +465,16 @@ func (helper extractHelper) extractLikePattern(
 	case ast.EQ:
 		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
 	case ast.Like, ast.Ilike:
+		// ILIKE matches case-insensitively, but the pattern built below is
+		// case-sensitive. Callers that fold case (toLower) lower both the
+		// pattern and the scanned value, so it stays equivalent there; callers
+		// that do not -- the cluster log path sends the pattern verbatim in
+		// SearchLogRequest.Patterns and drops this predicate -- would filter out
+		// rows differing only in case, e.g. an "ERROR" line for
+		// `message ILIKE '%error%'`. Leave ILIKE to be rechecked instead.
+		if fn.FuncName.L == ast.Ilike && !toLower {
+			return false, ""
+		}
 		// The pushed-down pattern must honour the LIKE ESCAPE so it does not
 		// diverge from the original predicate (issue #69653). The escape has to
 		// be resolvable at plan time: for a constant escape (including the

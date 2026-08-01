@@ -540,6 +540,36 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			instances: set.NewStringSet(),
 			level:     set.NewStringSet("debug", "error"),
 		},
+		{
+			// ILIKE is case-insensitive, but the pattern pushed down here is
+			// matched case-sensitively by the remote log search and replaces the
+			// predicate, so consuming it would drop rows that differ only in
+			// case (an "ERROR" line for '%error%'). Keep it as a scalar recheck.
+			sql:       "select * from information_schema.cluster_log where message ilike '%error%'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+		},
+		{
+			// Same for an ILIKE carrying a non-default ESCAPE.
+			sql:       "select * from information_schema.cluster_log where message ilike '%error#%%' escape '#'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+		},
+		{
+			// A DNF mixing ILIKE cannot be pushed down either: the combined
+			// pattern would silently lose the case-insensitive branch.
+			sql:       "select * from information_schema.cluster_log where (message ilike '%pd%' or message like '%tikv%')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+		},
+		{
+			// A case-sensitive LIKE still pushes down, honouring a custom ESCAPE
+			// so the pattern matches the predicate ('#%' is a literal '%').
+			sql:       "select * from information_schema.cluster_log where message like '%a#%b%' escape '#'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"^.*a%b.*$"},
+		},
 	}
 	for _, ca := range cases {
 		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
