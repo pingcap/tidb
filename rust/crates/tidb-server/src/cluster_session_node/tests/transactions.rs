@@ -327,21 +327,21 @@ fn a_failed_statement_leaves_no_bytes_of_its_own_in_the_mutation_buffer() {
     );
 }
 
-/// The two counters a failed statement moves are rolled back differently,
-/// and the difference is deliberate.
+/// A failed statement does NOT give back the `_tidb_rowid` handles it
+/// consumed, for the same reason it does not give back an AUTO_INCREMENT id:
+/// Go allocates both from one counter that lives outside transaction
+/// semantics.
 ///
-/// `KvTable::next_handle` -- the `_tidb_rowid` counter of a table with no
-/// primary key -- is a plain field of the table, so the catalog image the
-/// session restores DOES take it back: the row after a failed statement
-/// reuses the handle that statement consumed. `AutoIdAllocator` is a
-/// SHARED cell the image keeps pointing at, so an AUTO_INCREMENT burn
-/// survives instead, which is Go's rule and which
-/// `tidb_session`'s `tests_statement_rollback` pins in process. Only the
-/// first counter is in play below, because `hnd` carries no AUTO_INCREMENT
-/// column -- [`crate::cluster_session`]'s `cluster_table` installs an
-/// allocator only for a table that has one.
+/// Captured through `gorun` on `CREATE TABLE hnd (v INT UNIQUE KEY)` --
+/// the statements below verbatim: after `(20), (10)` fails on the unique
+/// index the next row lands on `_tidb_rowid` 4, not 2, because the failed
+/// statement burned 2 and 3 before it stopped.
+///
+/// The catalog image the session restores takes the ROWS back, which is
+/// what the surviving `SELECT` asserts; the counter it allocated from is a
+/// shared cell the image keeps pointing at, so the burn stays.
 #[test]
-fn a_failed_statement_gives_back_the_row_handle_it_consumed() {
+fn a_failed_statement_burns_the_row_handles_it_consumed() {
     let (mut session, cluster) = open_session();
     session.control_transaction("BEGIN").expect("begin");
     session
@@ -349,8 +349,8 @@ fn a_failed_statement_gives_back_the_row_handle_it_consumed() {
         .expect("first insert");
     assert_eq!(staged_handles(&session, 105), vec![1]);
 
-    // Row `20` stages at handle 2; row `10` then duplicates the unique
-    // index and ends the statement.
+    // Row `20` stages at handle 2 and row `10` takes handle 3 before it
+    // duplicates the unique index and ends the statement.
     assert!(session
         .execute_write("INSERT INTO hnd (v) VALUES (20), (10)")
         .is_err());
@@ -359,8 +359,8 @@ fn a_failed_statement_gives_back_the_row_handle_it_consumed() {
     session
         .execute_write("INSERT INTO hnd (v) VALUES (30)")
         .expect("third insert");
-    // Handle 2, not 3: the counter came back with the catalog image.
-    assert_eq!(staged_handles(&session, 105), vec![1, 2]);
+    // Handle 4: the two the failed statement consumed are gone for good.
+    assert_eq!(staged_handles(&session, 105), vec![1, 4]);
 
     session.control_transaction("COMMIT").expect("commit");
     assert_eq!(
