@@ -435,9 +435,12 @@ fn resolve_local_datetime<TZ: TimeZone>(
 ) -> Result<DateTime<TZ>, TimeConversionError> {
     match timezone.from_local_datetime(&naive) {
         LocalResult::Single(value) => Ok(value),
-        // Go's time package resolves a repeated wall-clock time to the later
-        // occurrence used by TiDB's source tests.
-        LocalResult::Ambiguous(_, later) => Ok(later),
+        // A wall-clock time the fall-back repeats has TWO instants, and which
+        // one Go picks is neither "the earlier" nor "the later" -- see
+        // [`resolve_repeated_local_datetime`].
+        LocalResult::Ambiguous(_, later) => {
+            Ok(resolve_repeated_local_datetime(timezone, naive).unwrap_or(later))
+        }
         LocalResult::None if !adjust_gap => Err(TimeConversionError::NonexistentLocalTime),
         LocalResult::None => {
             let transition_search = naive.with_nanosecond(0).expect("zero nanosecond is valid");
@@ -445,13 +448,100 @@ fn resolve_local_datetime<TZ: TimeZone>(
                 let candidate = transition_search + ChronoDuration::seconds(seconds);
                 match timezone.from_local_datetime(&candidate) {
                     LocalResult::Single(value) => return Ok(value),
-                    LocalResult::Ambiguous(_, later) => return Ok(later),
+                    LocalResult::Ambiguous(_, later) => {
+                        return Ok(
+                            resolve_repeated_local_datetime(timezone, candidate).unwrap_or(later)
+                        )
+                    }
                     LocalResult::None => {}
                 }
             }
             Err(TimeConversionError::TransitionOutOfRange)
         }
     }
+}
+
+/// The instant Go's `time.Date` picks for a wall-clock time the daylight-saving
+/// fall-back REPEATS.
+///
+/// The two candidates are real instants an hour apart, and Go picks neither
+/// "the earlier" nor "the later" as a rule -- captured from TiDB, the same
+/// question answers differently in two zones:
+///
+/// ```text
+/// SET time_zone='America/Los_Angeles'; INSERT ... '2021-11-07 01:30:00'
+///   read at +00:00 -> 2021-11-07 08:30:00     the EARLIER instant (PDT, -7)
+/// SET time_zone='Europe/London';       INSERT ... '2021-10-31 01:30:00'
+///   read at +00:00 -> 2021-10-31 01:30:00     the LATER instant (GMT, +0)
+/// ```
+///
+/// The rule that produces both is `time.Date` itself (Go `src/time/time.go`):
+/// it reads the wall clock AS IF it were already UTC, looks up the offset in
+/// force at that instant, subtracts it, and only re-looks-up when the result
+/// lands outside the zone period it started in.
+///
+/// ```go
+/// unix := ...                                  // the local clock read as UTC
+/// _, offset, start, end, _ := loc.lookup(unix)
+/// if offset != 0 {
+///     switch utc := unix - int64(offset); {
+///     case utc < start: _, offset, _, _, _ = loc.lookup(start - 1)
+///     case utc >= end:  _, offset, _, _, _ = loc.lookup(end)
+///     }
+///     unix -= int64(offset)
+/// }
+/// ```
+///
+/// London takes the `offset != 0` guard's false branch -- the offset in force
+/// at `2021-10-31 01:30 UTC` is GMT's zero -- and keeps the wall clock as the
+/// instant, which is the later of the two. Los Angeles is eight hours behind,
+/// so reading `2021-11-07 01:30` as UTC lands well before the 09:00 UTC
+/// transition, and the still-in-force PDT offset gives the earlier instant.
+///
+/// `None` when the instant is outside the representable range; the caller
+/// falls back to `chrono`'s later candidate rather than failing a conversion
+/// over a value that has two valid answers.
+fn resolve_repeated_local_datetime<TZ: TimeZone>(
+    timezone: &TZ,
+    naive: NaiveDateTime,
+) -> Option<DateTime<TZ>> {
+    let offset_at = |seconds: i64| -> Option<i64> {
+        let instant = DateTime::from_timestamp(seconds, 0)?;
+        Some(i64::from(
+            chrono::Offset::fix(&timezone.offset_from_utc_datetime(&instant.naive_utc()))
+                .local_minus_utc(),
+        ))
+    };
+    let unix = naive.and_utc().timestamp();
+    let mut offset = offset_at(unix)?;
+    if offset != 0 {
+        let utc = unix - offset;
+        // Go compares `utc` against the bounds of the period `unix` sits in.
+        // The two are at most one zone offset apart, so a bound can only fall
+        // BETWEEN them -- and if none does, `utc` is inside the period and Go
+        // keeps the offset it already has.
+        let (low, high) = if utc < unix { (utc, unix) } else { (unix, utc) };
+        if offset_at(low)? != offset_at(high)? {
+            // The first instant of the later of the two periods, which is
+            // Go's `start` when it lies above `utc` and its `end` when below.
+            let (mut before, mut after) = (low, high);
+            while after - before > 1 {
+                let middle = before + (after - before) / 2;
+                if offset_at(middle)? == offset_at(high)? {
+                    after = middle;
+                } else {
+                    before = middle;
+                }
+            }
+            offset = if utc < unix {
+                offset_at(after - 1)?
+            } else {
+                offset_at(after)?
+            };
+        }
+    }
+    let instant = DateTime::from_timestamp(unix - offset, naive.nanosecond())?;
+    Some(instant.with_timezone(timezone))
 }
 
 /// Units accepted by MySQL `TIMESTAMPDIFF`.
