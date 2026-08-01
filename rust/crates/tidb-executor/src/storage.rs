@@ -306,12 +306,22 @@ impl TableStorage for MemTableStorage {
 
 /// The reads a statement issued at the storage seam, by KIND.
 ///
-/// The two kinds are the two TiKV request kinds [`TableStorage`]'s doc names:
-/// `get` is Go `kv.Retriever.Get`, which a real backend sends as `kv_get`,
-/// and `iter` is Go `kv.Retriever.Iter`, sent as `kv_scan`. A statement that
-/// reads one known row should send the first and never the second, and the
-/// difference is not visible in row counts -- a scan over a one-key range
-/// returns exactly one row too.
+/// The first two kinds are the two key/value request kinds
+/// [`TableStorage`]'s doc names: `get` is Go `kv.Retriever.Get`, which a real
+/// backend sends as `kv_get`, and `iter` is Go `kv.Retriever.Iter`, sent as
+/// `kv_scan`. A statement that reads one known row should send the first and
+/// never the second, and the difference is not visible in row counts -- a
+/// scan over a one-key range returns exactly one row too.
+///
+/// The last two are the third request kind, the coprocessor
+/// ([`TableStorage::open_remote_scan`], Go's `distsql` `coprocessor`
+/// request). They are the WIRE RECEIPT: `cop_rows` is how many rows the
+/// region actually sent, so a scan whose predicate, cap or aggregate was
+/// evaluated at the region reports fewer of them than the table holds, and
+/// one that was not reports the relation. Nothing else distinguishes the two
+/// -- `EXPLAIN` in this tier prints `root` for every operator (see
+/// [`crate::explain`]), and `actRows` counts what the operator emitted, not
+/// what crossed the network.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StorageOps {
     /// Key lookups (`kv_get`).
@@ -319,6 +329,15 @@ pub struct StorageOps {
     /// Iterators OPENED (`kv_scan`). Counted per iterator rather than per
     /// entry stepped, because that is what a request is.
     pub scans: usize,
+    /// Coprocessor scans OPENED, counted per request like `scans`. Zero means
+    /// no request reached a region at all: either the backend has no
+    /// coprocessor, or it refused this request shape and the byte-level
+    /// cursor served the read.
+    pub cop_scans: usize,
+    /// Rows a coprocessor sent back across the network, summed over those
+    /// scans. Counted per ROW rather than per request because that is the
+    /// quantity pushdown exists to shrink.
+    pub cop_rows: u64,
 }
 
 thread_local! {
@@ -350,7 +369,7 @@ pub fn capture_storage_ops<R>(f: impl FnOnce() -> R) -> (R, StorageOps) {
 }
 
 /// Records one read, when a capture is active.
-fn note_storage_op(add: impl FnOnce(&mut StorageOps)) {
+pub(crate) fn note_storage_op(add: impl FnOnce(&mut StorageOps)) {
     STORAGE_PROBE.with(|probe| {
         if let Some(mut ops) = probe.take() {
             add(&mut ops);

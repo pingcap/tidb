@@ -268,6 +268,11 @@ impl KvTable {
             return Ok(None);
         };
         let scan = scan.map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        // One request reached a region. Counted here rather than at the
+        // storage seam so a backend that REFUSED the shape (and returned an
+        // `Unsupported` the caller turned into a byte-level cursor) is not
+        // recorded as a coprocessor read.
+        crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
         let decoder = self.row_decoder_projected(Some(keep));
         let mut staged = Vec::with_capacity(scan.staged.len());
         for (key, value) in scan.staged {
@@ -285,6 +290,7 @@ impl KvTable {
             width: keep.len(),
             handle_index,
             table_id: self.table_id,
+            noted_rows: 0,
         }))
     }
 
@@ -704,6 +710,10 @@ pub struct RemoteRowCursor {
     /// Where the handle sits in a remote row.
     handle_index: usize,
     table_id: i64,
+    /// How much of [`PushdownRowStream::rows_returned`] has already been
+    /// reported to the storage probe, so each row is counted once. See
+    /// [`note_wire_rows`].
+    noted_rows: u64,
 }
 
 impl RemoteRowCursor {
@@ -713,16 +723,34 @@ impl RemoteRowCursor {
         self.stream.rows_returned()
     }
 
+    /// Reports rows received since the last report to
+    /// [`crate::storage::capture_storage_ops`]'s probe.
+    ///
+    /// The stream's own counter is the authority on what crossed the network
+    /// -- a batching transport may already hold rows this cursor has not
+    /// pulled -- so the probe takes its DELTA rather than counting pulls. The
+    /// drop below takes the last delta, which is how an early-stopping
+    /// `LIMIT` still reports the batch it abandoned.
+    fn note_wire_rows(&mut self) {
+        let returned = self.stream.rows_returned();
+        let fresh = returned.saturating_sub(self.noted_rows);
+        self.noted_rows = returned;
+        if fresh > 0 {
+            crate::storage::note_storage_op(|ops| ops.cop_rows += fresh);
+        }
+    }
+
     /// The next remote row, as its record key and its projected columns.
     fn next_remote(&mut self) -> Result<Option<KeyedRow>, KvTableError> {
         if self.pending_remote.is_some() {
             return Ok(self.pending_remote.clone());
         }
-        let Some(mut row) = self
+        let next = self
             .stream
             .next_row()
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?
-        else {
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        self.note_wire_rows();
+        let Some(mut row) = next else {
             return Ok(None);
         };
         let handle = match row.get(self.handle_index) {
@@ -790,6 +818,7 @@ impl Drop for RemoteRowCursor {
     /// An abandoned cursor (an early-stopping `LIMIT`) must still release the
     /// request, which a drained stream's explicit `close` would have done.
     fn drop(&mut self) {
+        self.note_wire_rows();
         self.stream.close();
     }
 }
