@@ -1808,3 +1808,159 @@ fn prepared_transaction_control_answers_like_the_text_protocol() {
     drop(client);
     assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
 }
+
+/// Sends one COM_QUERY expected to answer with an OK packet and returns the
+/// packet's warning count -- the field Go fills from `ctx.WarningCount()` in
+/// `writeOkWith`.
+///
+/// OK payload: header, length-encoded affected_rows, length-encoded
+/// last_insert_id, status flags, warning count.
+fn run_write_warning_count(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    sql: &str,
+) -> u16 {
+    let mut command = vec![COM_QUERY];
+    command.extend_from_slice(sql.as_bytes());
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let packet = reader.read_packet().unwrap();
+    assert_eq!(
+        packet[0], 0x00,
+        "a write answers with an OK packet: {packet:?}"
+    );
+    assert!(packet[1] < 0xfb, "test writes report small counts");
+    assert!(packet[2] < 0xfb, "test ids are small");
+    u16::from_le_bytes([packet[5], packet[6]])
+}
+
+/// Sends one COM_QUERY result set and returns `(rows, terminal warning
+/// count)`. Under deprecate-EOF the terminal packet is an OK packet with an
+/// EOF header, so its warning count sits where an OK packet's does.
+fn run_query_warning_count(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    sql: &str,
+) -> (Vec<Vec<String>>, u16) {
+    let mut command = vec![COM_QUERY];
+    command.extend_from_slice(sql.as_bytes());
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+
+    let first = reader.read_packet().unwrap();
+    assert_ne!(first[0], 0xff, "query errored: {first:?}");
+    let column_count = usize::from(first[0]);
+    for _ in 0..column_count {
+        reader.read_packet().unwrap();
+    }
+    let mut rows = Vec::new();
+    loop {
+        let packet = reader.read_packet().unwrap();
+        if packet[0] == 0xfe && packet.len() < 9 + 4 {
+            return (rows, u16::from_le_bytes([packet[5], packet[6]]));
+        }
+        let mut remaining = packet.as_slice();
+        let mut row = Vec::new();
+        for _ in 0..column_count {
+            row.push(read_text_value(&mut remaining));
+        }
+        rows.push(row);
+    }
+}
+
+/// The OK/EOF packet's warning count is the ONLY way a driver learns that a
+/// statement warned: `SHOW WARNINGS` is a separate query a client has to know
+/// to send, while JDBC's `SQLWarning` chain, the `mysql` client's
+/// `1 warning` line, and every connector's `warning_count` all come from this
+/// field.
+///
+/// Three things are pinned here, and a `SHOW WARNINGS` assertion can prove
+/// none of them:
+///
+///  * a statement that warns reports its count (Go `writeOkWith` reading
+///    `ctx.WarningCount()`);
+///  * `SHOW WARNINGS` reports the warning as a ROW and a count of ZERO, which
+///    is Go's `StatementContext.WarningCount` returning 0 while
+///    `InShowWarning` is set -- the count deliberately does NOT inherit the
+///    buffer the rows do;
+///  * the NEXT statement reports 0. A count read from the wrong buffer, or
+///    after that buffer reset, is wrong for the FOLLOWING statement rather
+///    than obviously broken, so only the sequence pins it.
+///
+/// `SET @@group_concat_max_len=1` is Go's `checkUInt64SystemVar` clamping to
+/// the minimum and warning 1292 about the value as written. It also answers
+/// through the front end's own `SET` door rather than `Session::run`, which is
+/// exactly where a per-statement count goes stale.
+#[test]
+fn the_ok_packet_reports_the_statements_warning_count() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let store = users();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &store,
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader);
+
+    // A statement with no warnings reports none.
+    assert_eq!(
+        run_write_warning_count(&mut client, &mut reader, "CREATE TABLE t (a BIGINT)"),
+        0
+    );
+    // A statement with one warning reports it on the wire.
+    assert_eq!(
+        run_write_warning_count(&mut client, &mut reader, "SET @@group_concat_max_len=1"),
+        1,
+        "the OK packet must carry the warning count, or no driver ever sees it"
+    );
+    // The buffer still holds it -- the channel this bug hid behind.
+    let (rows, show_warnings_count) =
+        run_query_warning_count(&mut client, &mut reader, "SHOW WARNINGS");
+    assert_eq!(
+        rows,
+        vec![vec![
+            "Warning".to_owned(),
+            "1292".to_owned(),
+            "Truncated incorrect group_concat_max_len value: '1'".to_owned(),
+        ]]
+    );
+    assert_eq!(
+        show_warnings_count, 0,
+        "Go reports 0 while InShowWarning is set, however many rows it returns"
+    );
+    // And the next statement starts over. This is the ordering the bug hides
+    // in: a count taken from the previous statement's buffer looks plausible.
+    let (rows, count) = run_query_warning_count(&mut client, &mut reader, "SELECT 1");
+    assert_eq!(rows, vec![vec!["1".to_owned()]]);
+    assert_eq!(count, 0, "a statement that did not warn reports 0");
+    // Two warning statements in a row report their OWN counts, not a running
+    // total: the second is 1, not 2.
+    assert_eq!(
+        run_write_warning_count(&mut client, &mut reader, "SET @@group_concat_max_len=1"),
+        1
+    );
+    assert_eq!(
+        run_write_warning_count(&mut client, &mut reader, "SET @@group_concat_max_len=1"),
+        1,
+        "the buffer resets per statement, so the count does not accumulate"
+    );
+
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+}

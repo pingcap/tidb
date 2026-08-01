@@ -892,6 +892,12 @@ impl ClusterServerSession {
 }
 
 impl QuerySession for ClusterServerSession {
+    /// The OK/EOF packet's warning count, read off the same buffer
+    /// `SHOW WARNINGS` reports (Go `ctx.WarningCount()`).
+    fn warning_count(&self) -> u16 {
+        self.session.wire_warning_count()
+    }
+
     /// Maps `BEGIN`/`COMMIT`/`ROLLBACK` onto the connection's buffer.
     ///
     /// The driver session owns the *state* (so `in_transaction` and the
@@ -1065,12 +1071,13 @@ impl QuerySession for ClusterServerSession {
             session.run_with_params(&sql, &params).map_err(map_error)
         })?;
         Ok(match output {
-            StmtOutput::Rows { columns, rows } => GeneralExecuteOutcome::Rows(QueryResult::new(
-                Box::new(MaterializedResultSetSource::new(
+            StmtOutput::Rows { columns, rows } => GeneralExecuteOutcome::Rows(
+                QueryResult::new(Box::new(MaterializedResultSetSource::new(
                     crate::pipeline_session::select_columns(&columns),
                     rows,
-                )),
-            )),
+                )))
+                .with_warning_count(self.session.wire_warning_count()),
+            ),
             StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: count,
                 last_insert_id: self.session.statement_insert_id(),
@@ -1128,7 +1135,10 @@ impl QuerySession for ClusterServerSession {
                 StmtOutput::Done(_) => crate::pipeline_session::affected_rows_source(0),
             })
         })?;
-        Ok(QueryResult::new(Box::new(source)))
+        Ok(
+            QueryResult::new(Box::new(source))
+                .with_warning_count(self.session.wire_warning_count()),
+        )
     }
 }
 

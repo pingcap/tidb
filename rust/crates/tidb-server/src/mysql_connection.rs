@@ -677,8 +677,17 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             });
         }
     }
-    write_ok(&mut output, response_sequence, protocol_41)?;
+    write_ok(
+        &mut output,
+        response_sequence,
+        engine.warning_count(),
+        protocol_41,
+    )?;
 
+    // The connection-lifetime half of the options: capabilities negotiated at
+    // handshake and the default status. Everything per-statement -- the status
+    // flags a cursor changes, and the warning count Go reads afresh at every
+    // `writeOkWith`/`writeEOF` -- is layered on at each use below.
     let options = ResultSetOptions {
         status_flags: SERVER_STATUS_AUTOCOMMIT,
         warnings: 0,
@@ -745,7 +754,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     exit: ConnectionExit::Quit,
                 });
             }
-            Command::Ping => write_ok(&mut output, 1, protocol_41)?,
+            Command::Ping => write_ok(&mut output, 1, engine.warning_count(), protocol_41)?,
             Command::Query(bytes) => {
                 commands.text_query_commands += 1;
                 // `decode_command` has already trimmed exactly one terminal
@@ -770,7 +779,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // result set; every other statement runs as an ordinary query.
                 match engine.control_transaction(sql) {
                     Ok(Some(in_transaction)) => {
-                        write_transaction_control_ok(&mut output, 1, in_transaction, protocol_41)?;
+                        write_transaction_control_ok(
+                            &mut output,
+                            1,
+                            in_transaction,
+                            engine.warning_count(),
+                            protocol_41,
+                        )?;
                         queries += 1;
                         continue;
                     }
@@ -790,6 +805,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             1,
                             outcome.affected_rows,
                             outcome.last_insert_id,
+                            engine.warning_count(),
                             protocol_41,
                         )?;
                         queries += 1;
@@ -809,11 +825,15 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     }
                 };
                 let write_result = {
+                    let statement_options = ResultSetOptions {
+                        warnings: result.warning_count(),
+                        ..options
+                    };
                     let mut sink = TcpResultSetSink::new(&mut output, 1);
                     write_connection_result_set_to_sink(
                         result.source(),
                         &mut sink,
-                        options,
+                        statement_options,
                         RESULT_BATCH_SIZE,
                     )
                 };
@@ -1008,6 +1028,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     &mut output,
                                     1,
                                     in_transaction,
+                                    engine.warning_count(),
                                     protocol_41,
                                 )?;
                                 queries += 1;
@@ -1054,11 +1075,15 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 }
                             };
                         let write_result = {
+                            let statement_options = ResultSetOptions {
+                                warnings: result.warning_count(),
+                                ..options
+                            };
                             let mut sink = TcpResultSetSink::new(&mut output, 1);
                             write_connection_binary_result_set_to_sink(
                                 result.source(),
                                 &mut sink,
-                                options,
+                                statement_options,
                                 RESULT_BATCH_SIZE,
                             )
                         };
@@ -1089,6 +1114,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         // status advertises the open cursor; the rows travel
                         // later through COM_STMT_FETCH.
                         if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
+                            let mut write_outcome = None;
                             match engine.execute_general(&general, &values) {
                                 Ok(GeneralExecuteOutcome::Rows(mut result)) => {
                                     let columns = match result.source().columns() {
@@ -1119,10 +1145,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                             continue;
                                         }
                                     };
+                                    let warnings = result.warning_count();
                                     drop(result);
                                     let cursor_options = ResultSetOptions {
                                         status_flags: options.status_flags
                                             | SERVER_STATUS_CURSOR_EXISTS,
+                                        warnings,
                                         ..options
                                     };
                                     let mut stream = match tidb_protocol::BinaryResultSetStream::new(
@@ -1176,34 +1204,46 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     queries += 1;
                                     commands.stmt_execute_successes += 1;
                                 }
+                                // Go clears the cursor bit when the statement
+                                // produced no result set and answers a plain
+                                // OK. The answer is written after the match
+                                // because its warning count is read off the
+                                // session, whose borrow the result arm holds
+                                // for as long as the match scrutinee lives.
                                 Ok(GeneralExecuteOutcome::Write(outcome)) => {
-                                    // Go clears the cursor bit when the
-                                    // statement produced no result set and
-                                    // answers a plain OK.
-                                    write_affected_rows_ok(
-                                        &mut output,
-                                        1,
-                                        outcome.affected_rows,
-                                        outcome.last_insert_id,
-                                        protocol_41,
-                                    )?;
-                                    queries += 1;
-                                    commands.stmt_execute_successes += 1;
+                                    write_outcome = Some(outcome);
                                 }
                                 Err(error) => {
                                     write_query_error(&mut output, &error, protocol_41)?;
                                 }
                             }
+                            if let Some(outcome) = write_outcome {
+                                write_affected_rows_ok(
+                                    &mut output,
+                                    1,
+                                    outcome.affected_rows,
+                                    outcome.last_insert_id,
+                                    engine.warning_count(),
+                                    protocol_41,
+                                )?;
+                                queries += 1;
+                                commands.stmt_execute_successes += 1;
+                            }
                             continue;
                         }
+                        let mut write_outcome = None;
                         match engine.execute_general(&general, &values) {
                             Ok(GeneralExecuteOutcome::Rows(mut result)) => {
                                 let write_result = {
+                                    let statement_options = ResultSetOptions {
+                                        warnings: result.warning_count(),
+                                        ..options
+                                    };
                                     let mut sink = TcpResultSetSink::new(&mut output, 1);
                                     write_connection_binary_result_set_to_sink(
                                         result.source(),
                                         &mut sink,
-                                        options,
+                                        statement_options,
                                         RESULT_BATCH_SIZE,
                                     )
                                 };
@@ -1229,20 +1269,27 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     }
                                 }
                             }
+                            // Answered after the match: see the cursor arm
+                            // above for why the session cannot be read while
+                            // the scrutinee is alive.
                             Ok(GeneralExecuteOutcome::Write(outcome)) => {
-                                write_affected_rows_ok(
-                                    &mut output,
-                                    1,
-                                    outcome.affected_rows,
-                                    outcome.last_insert_id,
-                                    protocol_41,
-                                )?;
-                                queries += 1;
-                                commands.stmt_execute_successes += 1;
+                                write_outcome = Some(outcome);
                             }
                             Err(error) => {
                                 write_query_error(&mut output, &error, protocol_41)?;
                             }
+                        }
+                        if let Some(outcome) = write_outcome {
+                            write_affected_rows_ok(
+                                &mut output,
+                                1,
+                                outcome.affected_rows,
+                                outcome.last_insert_id,
+                                engine.warning_count(),
+                                protocol_41,
+                            )?;
+                            queries += 1;
+                            commands.stmt_execute_successes += 1;
                         }
                     }
                     PreparedStatement::Write(write) => {
@@ -1258,6 +1305,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     1,
                                     outcome.affected_rows,
                                     outcome.last_insert_id,
+                                    engine.warning_count(),
                                     protocol_41,
                                 )?;
                                 queries += 1;
@@ -1282,7 +1330,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // The payload is the same four-byte statement id the
                     // close command carries.
                     Ok(statement_id) if prepared.reset(statement_id) => {
-                        write_affected_rows_ok(&mut output, 1, 0, 0, protocol_41)?;
+                        // COM_STMT_RESET runs no statement, so like Go's
+                        // `writeOK` here it reports the buffer as it stands.
+                        write_affected_rows_ok(
+                            &mut output,
+                            1,
+                            0,
+                            0,
+                            engine.warning_count(),
+                            protocol_41,
+                        )?;
                     }
                     Ok(statement_id) => {
                         write_unknown_statement(&mut output, statement_id, protocol_41)?;
@@ -1355,6 +1412,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     &batch,
                     ResultSetOptions {
                         status_flags: status,
+                        // COM_STMT_FETCH runs no statement of its own, so this
+                        // is still the execute's count -- which is what Go's
+                        // `writeEOF` reads here too.
+                        warnings: engine.warning_count(),
                         ..options
                     },
                 ) {
@@ -1381,7 +1442,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             Command::InitDb(name) => {
                 let name = String::from_utf8_lossy(&name).into_owned();
                 match engine.select_database(&name) {
-                    Ok(()) => write_ok(&mut output, 1, protocol_41)?,
+                    Ok(()) => write_ok(&mut output, 1, engine.warning_count(), protocol_41)?,
                     Err(error) => write_query_error(&mut output, &error, protocol_41)?,
                 }
             }
@@ -1406,12 +1467,14 @@ fn write_affected_rows_ok(
     sequence: u8,
     affected_rows: u64,
     last_insert_id: u64,
+    warnings: u16,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
     let payload = encode_ok_packet(&OkPacket {
         affected_rows,
         last_insert_id,
         status_flags: SERVER_STATUS_AUTOCOMMIT,
+        warnings,
         protocol_41,
         ..OkPacket::default()
     });
@@ -1424,6 +1487,7 @@ fn write_transaction_control_ok(
     output: &mut ClientStream,
     sequence: u8,
     in_transaction: bool,
+    warnings: u16,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
     let mut status_flags = SERVER_STATUS_AUTOCOMMIT;
@@ -1433,6 +1497,7 @@ fn write_transaction_control_ok(
     let payload = encode_ok_packet(&OkPacket {
         affected_rows: 0,
         status_flags,
+        warnings,
         protocol_41,
         ..OkPacket::default()
     });
@@ -1573,13 +1638,20 @@ fn write_unknown_statement(
     )
 }
 
+/// Writes the bare OK packet Go answers `COM_PING` and `COM_INIT_DB` with.
+///
+/// Neither command runs a statement, so neither resets the warning buffer and
+/// both report the count the preceding statement left -- Go's `writeOK` reads
+/// `ctx.WarningCount()` at that moment just the same.
 fn write_ok(
     output: &mut ClientStream,
     sequence: u8,
+    warnings: u16,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
     let payload = encode_ok_packet(&OkPacket {
         status_flags: SERVER_STATUS_AUTOCOMMIT,
+        warnings,
         protocol_41,
         ..OkPacket::default()
     });

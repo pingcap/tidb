@@ -267,6 +267,15 @@ impl SqlQueryError {
 /// A lazy query result owned by one worker-local session.
 pub struct QueryResult<'a> {
     source: BoxedResultSetSource<'a>,
+    /// The count the result set's EOF packets carry (Go `writeEOF` reading
+    /// `ctx.WarningCount()`).
+    ///
+    /// Go re-reads the session at each `writeEOF`; here the result holds the
+    /// session's mutable borrow for as long as it is being written, so the
+    /// session hands the count over with the result. A session that produces
+    /// its rows eagerly -- which is every session that has a warning buffer
+    /// today -- has already finished warning by then, so the two agree.
+    warnings: u16,
 }
 
 /// One connection-owned, typed prepared point-read definition.
@@ -452,7 +461,21 @@ impl<'a> QueryResult<'a> {
     pub fn new(source: Box<dyn ResultSetSource + 'a>) -> Self {
         Self {
             source: BoxedResultSetSource { inner: source },
+            warnings: 0,
         }
+    }
+
+    /// Attaches the warning count this statement's EOF packets carry.
+    #[must_use]
+    pub fn with_warning_count(mut self, warnings: u16) -> Self {
+        self.warnings = warnings;
+        self
+    }
+
+    /// The warning count for the EOF packets that frame this result set.
+    #[must_use]
+    pub fn warning_count(&self) -> u16 {
+        self.warnings
     }
 
     /// Returns the sole mutable result-set owner.

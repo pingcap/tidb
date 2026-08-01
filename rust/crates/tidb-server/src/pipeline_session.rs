@@ -330,11 +330,13 @@ impl QuerySession for PipelineServerSession {
             .run_with_params(statement.sql(), &params)
             .map_err(map_error)?;
         Ok(match output {
-            StmtOutput::Rows { columns, rows } => {
-                GeneralExecuteOutcome::Rows(QueryResult::new(Box::new(
-                    MaterializedResultSetSource::new(select_columns(&columns), rows),
+            StmtOutput::Rows { columns, rows } => GeneralExecuteOutcome::Rows(
+                QueryResult::new(Box::new(MaterializedResultSetSource::new(
+                    select_columns(&columns),
+                    rows,
                 )))
-            }
+                .with_warning_count(self.session.wire_warning_count()),
+            ),
             StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: count,
                 last_insert_id: self.session.statement_insert_id(),
@@ -358,7 +360,12 @@ impl QuerySession for PipelineServerSession {
             StmtOutput::Affected(count) => affected_rows_source(count),
             StmtOutput::Done(_) => affected_rows_source(0),
         };
-        Ok(QueryResult::new(Box::new(source)))
+        // The rows are already materialized, so the buffer this reads is the
+        // finished statement's -- the same one Go's terminal `writeEOF` reads.
+        Ok(
+            QueryResult::new(Box::new(source))
+                .with_warning_count(self.session.wire_warning_count()),
+        )
     }
 }
 
