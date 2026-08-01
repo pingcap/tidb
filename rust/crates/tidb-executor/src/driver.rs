@@ -333,6 +333,7 @@ pub(crate) fn run_select_traced(
         &scope,
         &mut from_source,
         trace.as_deref_mut(),
+        &ctx.session_zone(),
     )?;
     // Column pruning: over a single base-table scan the fast paths left
     // alone, narrow the scan -- and with it the scope -- to the columns the

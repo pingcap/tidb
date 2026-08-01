@@ -56,7 +56,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::FieldType;
+use tidb_datatype::{FieldType, SessionTimeZone};
 use tidb_expr::schema::Schema;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
@@ -94,18 +94,27 @@ pub struct HandleSourceExec {
     cursor: usize,
     /// Rows produced so far, which the trace reads as this node's `actRows`.
     produced: Rc<Cell<u64>>,
+    /// The session `time_zone` a stored `TIMESTAMP` is read back into,
+    /// captured where the statement's context is (`Executor` has none).
+    zone: SessionTimeZone,
 }
 
 impl HandleSourceExec {
     /// Builds a source over `handles`, in the order the plan lists them.
     #[must_use]
-    pub fn new(meta: ExecutorMeta, table: KvTable, handles: Vec<TableHandle>) -> Self {
+    pub fn new(
+        meta: ExecutorMeta,
+        table: KvTable,
+        handles: Vec<TableHandle>,
+        zone: SessionTimeZone,
+    ) -> Self {
         HandleSourceExec {
             meta,
             table,
             handles,
             cursor: 0,
             produced: Rc::new(Cell::new(0)),
+            zone,
         }
     }
 
@@ -135,7 +144,7 @@ impl Executor for HandleSourceExec {
             // plan is right, the row is simply absent.
             let row = self
                 .table
-                .get_row_by_handle(handle)
+                .get_row_by_handle(handle, &self.zone)
                 .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
             if let Some(row) = row {
                 for (c, value) in visible_of(&self.table, &row).iter().enumerate() {
@@ -214,12 +223,21 @@ pub struct IndexRangeSourceExec {
     filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// A pushed row cap (`offset + count`); see [`Executor::accept_scan_limit`].
     limit: Option<u64>,
+    /// The session `time_zone` the index probe and the row are encoded and
+    /// decoded in; see [`HandleSourceExec`].
+    zone: SessionTimeZone,
 }
 
 impl IndexRangeSourceExec {
     /// Builds a source over `ranges` of the index `index_id`.
     #[must_use]
-    pub fn new(meta: ExecutorMeta, table: KvTable, index_id: i64, ranges: Vec<IndexRange>) -> Self {
+    pub fn new(
+        meta: ExecutorMeta,
+        table: KvTable,
+        index_id: i64,
+        ranges: Vec<IndexRange>,
+        zone: SessionTimeZone,
+    ) -> Self {
         IndexRangeSourceExec {
             meta,
             table,
@@ -231,6 +249,7 @@ impl IndexRangeSourceExec {
             scanned: Rc::new(Cell::new(0)),
             filter: None,
             limit: None,
+            zone,
         }
     }
 
@@ -259,7 +278,7 @@ impl IndexRangeSourceExec {
             self.next_range += 1;
             self.cursor = Some(
                 self.table
-                    .index_range_cursor(self.index_id, &range)
+                    .index_range_cursor(self.index_id, &range, &self.zone)
                     .map_err(|_| ExecError::Unsupported("index range is not scannable"))?,
             );
         }
@@ -291,7 +310,7 @@ impl Executor for IndexRangeSourceExec {
             };
             let row = self
                 .table
-                .get_row_by_handle(&handle)
+                .get_row_by_handle(&handle, &self.zone)
                 .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
             // An index entry whose row is gone is not a row: the same
             // `if let Some(row)` the materializing path had.
@@ -592,7 +611,8 @@ mod tests {
             1,
             1024,
         );
-        let mut scan = crate::kv_table::TableScanExec::new(meta, table);
+        let mut scan =
+            crate::kv_table::TableScanExec::new(meta, table, tidb_datatype::SessionTimeZone::utc());
         scan.open().unwrap();
         let mut req = scan.new_chunk();
         scan.next(&mut req).unwrap();

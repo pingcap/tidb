@@ -304,6 +304,7 @@ pub(crate) fn build_from(
                 TableEntry::Kv(kv) => Box::new(TableScanExec::new(
                     ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
                     restricted_to_partitions(kv, &table_ref.partitions, name)?,
+                    ctx.session_zone(),
                 )),
                 // Handled above, before the columns were taken.
                 TableEntry::View(_) | TableEntry::Sequence(_) => {

@@ -172,7 +172,10 @@ impl IndexBackfiller for KvTableIndexBackfiller {
             table
                 .create_index(index, &StmtContext::default())
                 .map_err(backfill_failure)?;
-        } else if !table.drop_index(&name).map_err(backfill_failure)? {
+        } else if !table
+            .drop_index(&name, &StmtContext::default().session_zone())
+            .map_err(backfill_failure)?
+        {
             // The plan found the index on the stored table, so the loader
             // dropping it can only mean the two disagree about what the table
             // has -- which must not end as a silent no-op.

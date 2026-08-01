@@ -181,14 +181,22 @@ fn a_unique_index_entry_points_at_its_row() {
         .id;
     assert_eq!(
         table
-            .lookup_unique(index_id, &[Datum::Bytes(b"abc".to_vec())])
+            .lookup_unique(
+                index_id,
+                &[Datum::Bytes(b"abc".to_vec())],
+                &tidb_datatype::SessionTimeZone::utc()
+            )
             .unwrap(),
         Some(TableHandle::Int(7)),
         "the entry carries the row's handle"
     );
     assert_eq!(
         table
-            .lookup_unique(index_id, &[Datum::Bytes(b"nope".to_vec())])
+            .lookup_unique(
+                index_id,
+                &[Datum::Bytes(b"nope".to_vec())],
+                &tidb_datatype::SessionTimeZone::utc()
+            )
             .unwrap(),
         None
     );

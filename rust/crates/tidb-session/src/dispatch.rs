@@ -475,8 +475,12 @@ impl Session {
                 }
                 DdlStmt::DropIndex(_) => {
                     let current_db = self.current_db.clone();
+                    // `DROP INDEX` REBUILDS each entry's key to delete it, so
+                    // it needs the session's `@@time_zone` for the same reason
+                    // writing the entry did.
+                    let ctx = self.statement_context(true);
                     self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_index_in(sql, catalog, &current_db, sql_mode)?;
+                        tidb_executor::run_drop_index_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
                     })
                 }

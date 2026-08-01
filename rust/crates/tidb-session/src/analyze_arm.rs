@@ -91,6 +91,7 @@ impl Session {
     ) -> Result<(), DriverError> {
         let schema = statement.schema.clone();
         let name = statement.table.clone();
+        let zone = self.statement_context(false).session_zone();
         self.with_catalog_mut(|catalog| {
             let table_id = match catalog.table_in(&schema, &name) {
                 Some(TableEntry::Kv(kv)) => kv.table_id,
@@ -120,7 +121,7 @@ impl Session {
                 // changed in between is not reachable from one statement.
                 return Err(DriverError::CatalogPoisoned);
             };
-            let statistics = analyze_kv_table(table, options, realtime_count)
+            let statistics = analyze_kv_table(table, options, realtime_count, &zone)
                 .map_err(|error| DriverError::UnsupportedKind(error.to_string()))?;
             catalog.set_table_statistics(table_id, Arc::new(statistics));
             Ok(())

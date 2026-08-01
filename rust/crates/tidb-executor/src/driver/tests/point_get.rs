@@ -234,6 +234,7 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
             &crate::driver::access::PointPlanStmt::of_select(select),
             table,
             &columns,
+            &tidb_datatype::SessionTimeZone::utc(),
         )
         .unwrap()
     };
@@ -394,7 +395,13 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         let QueryStmt::Select(select) = &**query else {
             panic!("not a select")
         };
-        try_batch_point_get(select, table, &columns).unwrap()
+        try_batch_point_get(
+            select,
+            table,
+            &columns,
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
+        .unwrap()
     };
 
     assert_eq!(

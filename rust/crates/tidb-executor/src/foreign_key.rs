@@ -160,9 +160,14 @@ fn key_at(row: &[Datum], offsets: &[usize]) -> Option<Vec<Datum>> {
 
 /// Reads every row of a table, or `None` when the name does not resolve to a
 /// byte-backed table (a view, a matrix table, a dropped parent).
-fn scan(catalog: &mut Catalog, database: &str, table: &str) -> Option<Vec<Vec<Datum>>> {
+fn scan(
+    catalog: &mut Catalog,
+    database: &str,
+    table: &str,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<Vec<Vec<Datum>>> {
     match catalog.get_mut_for_foreign_key(database, table)? {
-        TableEntry::Kv(kv) => kv.scan_rows().ok(),
+        TableEntry::Kv(kv) => kv.scan_rows(zone).ok(),
         _ => None,
     }
 }
@@ -227,6 +232,7 @@ pub(crate) fn check_child_rows(
     database: &str,
     table: &str,
     rows: &[Vec<Datum>],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<Option<DriverError>>, DriverError> {
     let mut verdicts = vec![None; rows.len()];
     let (keys, columns) = declared(catalog, database, table);
@@ -256,8 +262,12 @@ pub(crate) fn check_child_rows(
             // at CREATE TABLE time); Go has nothing to check against either.
             continue;
         };
-        let Some(parent_rows) = scan(catalog, &foreign_key.ref_schema, &foreign_key.ref_table)
-        else {
+        let Some(parent_rows) = scan(
+            catalog,
+            &foreign_key.ref_schema,
+            &foreign_key.ref_table,
+            zone,
+        ) else {
             continue;
         };
         for parent in &parent_rows {
@@ -298,15 +308,21 @@ pub(crate) fn require_existing_rows(
     database: &str,
     table: &str,
     foreign_key: &KvForeignKey,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
     let (_, columns) = declared(catalog, database, table);
     let Some((offsets, _)) = parent_offsets(catalog, foreign_key) else {
         return Ok(());
     };
-    let Some(parent_rows) = scan(catalog, &foreign_key.ref_schema, &foreign_key.ref_table) else {
+    let Some(parent_rows) = scan(
+        catalog,
+        &foreign_key.ref_schema,
+        &foreign_key.ref_table,
+        zone,
+    ) else {
         return Ok(());
     };
-    let Some(rows) = scan(catalog, database, table) else {
+    let Some(rows) = scan(catalog, database, table, zone) else {
         return Ok(());
     };
     for row in &rows {
@@ -338,8 +354,9 @@ pub(crate) fn require_child_rows(
     database: &str,
     table: &str,
     rows: &[Vec<Datum>],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
-    match check_child_rows(catalog, database, table, rows)?
+    match check_child_rows(catalog, database, table, rows, zone)?
         .into_iter()
         .flatten()
         .next()
@@ -439,7 +456,7 @@ fn cascade_at_depth(
             continue;
         }
         let (_, child_columns) = declared(catalog, &child_db, &child_table);
-        let Some(child_rows) = scan(catalog, &child_db, &child_table) else {
+        let Some(child_rows) = scan(catalog, &child_db, &child_table, &ctx.session_zone()) else {
             continue;
         };
         let mut affected: Vec<(usize, Option<Vec<Datum>>)> = Vec::new();
@@ -485,7 +502,7 @@ fn cascade_at_depth(
     }
 
     for (child_db, child_table, foreign_key, action, deleting, affected) in plans {
-        let Some(child_rows) = scan(catalog, &child_db, &child_table) else {
+        let Some(child_rows) = scan(catalog, &child_db, &child_table, &ctx.session_zone()) else {
             continue;
         };
         match action {
@@ -500,7 +517,13 @@ fn cascade_at_depth(
                 let nested: Vec<ParentChange<'_>> =
                     doomed.iter().map(|row| ParentChange::Delete(row)).collect();
                 cascade_at_depth(catalog, &child_db, &child_table, &nested, depth + 1, ctx)?;
-                delete_rows(catalog, &child_db, &child_table, &doomed)?;
+                delete_rows(
+                    catalog,
+                    &child_db,
+                    &child_table,
+                    &doomed,
+                    &ctx.session_zone(),
+                )?;
             }
             FkAction::Cascade | FkAction::SetNull => {
                 // ON UPDATE CASCADE repoints the referencing columns; SET
@@ -538,18 +561,19 @@ fn delete_rows(
     database: &str,
     table: &str,
     rows: &[Vec<Datum>],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
     let Some(TableEntry::Kv(kv)) = catalog.get_mut_for_foreign_key(database, table) else {
         return Ok(());
     };
     let stored = kv
-        .scan_rows_with_handles()
+        .scan_rows_with_handles(zone)
         .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
     let mut remaining: Vec<&Vec<Datum>> = rows.iter().collect();
     for (handle, row) in stored {
         if let Some(position) = remaining.iter().position(|wanted| ***wanted == row[..]) {
             remaining.swap_remove(position);
-            kv.delete_row(&handle)
+            kv.delete_row(&handle, zone)
                 .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
         }
     }
@@ -568,7 +592,7 @@ fn rewrite_rows(
         return Ok(());
     };
     let stored = kv
-        .scan_rows_with_handles()
+        .scan_rows_with_handles(&ctx.session_zone())
         .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?;
     let mut remaining: Vec<&(Vec<Datum>, Vec<Datum>)> = rewrites.iter().collect();
     for (handle, row) in stored {

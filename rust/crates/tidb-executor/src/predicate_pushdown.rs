@@ -416,7 +416,9 @@ mod tests {
                 &tidb_expr::NoColumns,
             )
             .unwrap();
-        table.delete_row(&committed_low).unwrap();
+        table
+            .delete_row(&committed_low, &tidb_datatype::SessionTimeZone::utc())
+            .unwrap();
         assert!(!buffer.is_empty(), "the writes are staged, not committed");
 
         let mut catalog = Catalog::default();

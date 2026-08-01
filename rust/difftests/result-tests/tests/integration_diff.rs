@@ -849,17 +849,24 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //   after:  51 divergences of 2556 compared (2505 matched)
     //
     // 17 statements that used to be named OutOfDomain skips are now really
-    // compared, 16 of them matching. The one that does not is
+    // compared, 16 of them matching. The one that did not was
     // `SELECT * FROM timezone_test PARTITION (p5)` read back from a UTC
-    // session after a Shanghai session inserted the row: TiDB reports
-    // `2020-01-03 07:16:59` and this node `2020-01-03 15:16:59`. That is the
-    // TIMESTAMP STORAGE seam -- Go stores a `timestamp` converted to UTC and
-    // renders it in the READING session's zone, this node stores the written
-    // text -- and it has nothing to do with partitioning. The row itself is
-    // routed to the same partition on both sides, which is what the bound
-    // fold decides. Raising the ceiling by one to expose a real, differently
-    // owned bug beats a refusal that hid seventeen statements.
-    const KNOWN_DIVERGENCES: usize = 51;
+    // session after a Shanghai session inserted the row: TiDB reported
+    // `2020-01-03 07:16:59` and this node `2020-01-03 15:16:59`.
+    //
+    // # 51 -> 50: TIMESTAMP is stored in UTC
+    //
+    // That was the TIMESTAMP STORAGE seam, and it is closed. A `TIMESTAMP`
+    // is converted to UTC on the way into the row bytes and back into the
+    // READING session's `time_zone` on the way out, which is the whole
+    // meaning of the type; `DATETIME` and `DATE` still store the written
+    // wall-clock text, which is the whole meaning of THOSE. The seam is
+    // `tidb_tablecodec::flatten_datum`/`unflatten_datum`, mirroring Go
+    // `pkg/tablecodec/tablecodec.go`'s `flatten`/`unflatten`, and what
+    // changed is that the session's zone now reaches them instead of a
+    // hardcoded `None`. See `timezone_storage` in `tidb-session` for the
+    // captured cross-session round trips, DST boundaries included.
+    const KNOWN_DIVERGENCES: usize = 50;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

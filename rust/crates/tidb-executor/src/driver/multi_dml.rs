@@ -196,7 +196,9 @@ fn build_multi_node(
     ctx: &crate::StmtContext,
 ) -> Result<MultiSource, DriverError> {
     match node {
-        tidb_ast::JoinNode::Table(table_ref) => scan_base_table(table_ref, catalog, current_db),
+        tidb_ast::JoinNode::Table(table_ref) => {
+            scan_base_table(table_ref, catalog, current_db, &ctx.session_zone())
+        }
         tidb_ast::JoinNode::Join(join) => build_multi_source(join, catalog, current_db, ctx),
         // A derived table's rows have no base-table identity to write back
         // to, so there is nothing to approximate here.
@@ -211,6 +213,7 @@ fn scan_base_table(
     table_ref: &tidb_ast::TableRef,
     catalog: &Catalog,
     current_db: &str,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<MultiSource, DriverError> {
     let (database, name) = split_table_path(&table_ref.name, current_db)?;
     let entry = catalog
@@ -226,7 +229,7 @@ fn scan_base_table(
             .collect(),
         TableEntry::Kv(kv) => kv
             .clone()
-            .scan_rows_with_handles()
+            .scan_rows_with_handles(zone)
             .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?
             .into_iter()
             .map(|(handle, row)| (vec![Some(RowId::Kv(handle))], row))
@@ -580,9 +583,10 @@ pub(crate) fn run_multi_delete(
             (TableEntry::Mem(mem), RowId::Mem(index)) => {
                 mem.rows.remove(*index);
             }
-            (TableEntry::Kv(kv), RowId::Kv(handle)) => kv
-                .delete_row(handle)
-                .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?,
+            (TableEntry::Kv(kv), RowId::Kv(handle)) => {
+                kv.delete_row(handle, &ctx.session_zone())
+                    .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?
+            }
             _ => {
                 return Err(DriverError::Unsupported(
                     "table storage changed during a multi-table write",

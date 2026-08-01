@@ -310,7 +310,9 @@ mod tests {
                         .expect("a requested column belongs to the table")
                 })
                 .collect();
-            let mut cursor = table.row_cursor_projected(Some(&keep), None).unwrap();
+            let mut cursor = table
+                .row_cursor_projected(Some(&keep), None, &tidb_datatype::SessionTimeZone::utc())
+                .unwrap();
             let mut rows = Vec::new();
             while let Some((handle, mut row)) = cursor.next_row().unwrap() {
                 self.scanned.fetch_add(1, Ordering::Relaxed);
@@ -672,7 +674,10 @@ mod tests {
                 &tidb_expr::NoColumns,
             )
             .unwrap();
-        fixture.table.delete_row(&committed_low).unwrap();
+        fixture
+            .table
+            .delete_row(&committed_low, &tidb_datatype::SessionTimeZone::utc())
+            .unwrap();
         assert!(!fixture.buffer.is_empty(), "the writes are staged");
 
         let catalog = catalog_of(fixture.table);
@@ -720,8 +725,14 @@ mod tests {
         commit(&fixture.buffer, &fixture.snapshot);
         // A cap of three applied at the coprocessor would have returned rows
         // 1..3, of which only one survives the overlay.
-        fixture.table.delete_row(&TableHandle::Int(1)).unwrap();
-        fixture.table.delete_row(&TableHandle::Int(2)).unwrap();
+        fixture
+            .table
+            .delete_row(&TableHandle::Int(1), &tidb_datatype::SessionTimeZone::utc())
+            .unwrap();
+        fixture
+            .table
+            .delete_row(&TableHandle::Int(2), &tidb_datatype::SessionTimeZone::utc())
+            .unwrap();
 
         let catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();

@@ -16,7 +16,9 @@
 
 use std::collections::BTreeMap;
 
-use chrono_tz::UTC;
+/// Go `time.UTC`, the zone these source tests encode and decode in.
+const UTC: tidb_datatype::SessionTimeZone =
+    tidb_datatype::SessionTimeZone::Named(chrono_tz::UTC);
 use tidb_tablecodec::table_key::{
     cut_index_prefix, cut_row_key_prefix, decode_index_id, decode_index_key, decode_key_head,
     decode_meta_key, decode_record_key, decode_row_key, encode_index_seek_key, encode_meta_key,

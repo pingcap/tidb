@@ -67,9 +67,10 @@ pub fn analyze_kv_table(
     table: &mut KvTable,
     options: &AnalyzeOptions,
     realtime_count: Option<i64>,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<TableStatistics, AnalyzeError> {
     let plan = kv_analyze_plan(table)?;
-    let rows = table.scan_rows().map_err(|error| {
+    let rows = table.scan_rows(zone).map_err(|error| {
         AnalyzeError::Unsupported(format!(
             "this node could not read `{}` to analyze it: {error:?}",
             table.name

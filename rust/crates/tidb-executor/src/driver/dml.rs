@@ -475,7 +475,13 @@ pub(crate) fn run_insert_traced(
     // why the table's own borrow is released for it: the check reads the
     // PARENT tables, which the statement never named.
     let fk_verdicts = if ctx.foreign_key_checks() {
-        crate::foreign_key::check_child_rows(catalog, &database, &table_name, &new_rows)?
+        crate::foreign_key::check_child_rows(
+            catalog,
+            &database,
+            &table_name,
+            &new_rows,
+            &ctx.session_zone(),
+        )?
     } else {
         vec![None; new_rows.len()]
     };
@@ -513,7 +519,7 @@ pub(crate) fn run_insert_traced(
             continue;
         }
         let conflicts = target(catalog, &database, &table_name)
-            .conflicting_handles(row)
+            .conflicting_handles(row, &ctx.session_zone())
             .map_err(|e| DriverError::Parse(format!("conflict lookup failed: {e:?}")))?;
         if !conflicts.is_empty() {
             if insert.replace {
@@ -527,7 +533,7 @@ pub(crate) fn run_insert_traced(
                 let mut unchanged = false;
                 for handle in &conflicts {
                     let existing = target(catalog, &database, &table_name)
-                        .get_row_by_handle(handle)
+                        .get_row_by_handle(handle, &ctx.session_zone())
                         .map_err(|e| DriverError::Parse(format!("row read failed: {e:?}")))?;
                     if existing.as_deref() == Some(row) {
                         inserted += 1;
@@ -554,7 +560,7 @@ pub(crate) fn run_insert_traced(
                     // count is one per deleted row plus one for the inserted
                     // row.
                     target(catalog, &database, &table_name)
-                        .delete_row(handle)
+                        .delete_row(handle, &ctx.session_zone())
                         .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
                     inserted += 1;
                 }
@@ -573,7 +579,7 @@ pub(crate) fn run_insert_traced(
                 continue;
             } else if insert.ignore {
                 let reported = target(catalog, &database, &table_name)
-                    .duplicate_entry_error(row)
+                    .duplicate_entry_error(row, &ctx.session_zone())
                     .map_err(|e| DriverError::Parse(format!("conflict lookup failed: {e:?}")))?;
                 if let crate::kv_table::KvTableError::DuplicateEntry { value, key } = reported {
                     let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
@@ -942,7 +948,7 @@ pub(crate) fn apply_on_duplicate(
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
     let Some(existing) = table
-        .get_row_by_handle(handle)
+        .get_row_by_handle(handle, &ctx.session_zone())
         .map_err(|e| DriverError::Parse(format!("row read failed: {e:?}")))?
     else {
         return Ok(0);
@@ -1153,6 +1159,7 @@ pub(crate) fn run_update_traced(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
 ) -> Result<u64, DriverError> {
+    let zone = ctx.session_zone();
     // A `RETURNING` clause is parsed and silently ignored, matching Go: the
     // planner and executor never read `UpdateStmt.Returning`.
     if update.ignore {
@@ -1246,6 +1253,7 @@ pub(crate) fn run_update_traced(
             &update.order_by,
             update.limit.as_ref(),
         ),
+        &ctx.session_zone(),
     )?;
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
@@ -1315,7 +1323,7 @@ pub(crate) fn run_update_traced(
             }
         }
         TableEntry::Kv(kv) => {
-            let mut rows = fetch_write_rows(kv, read_path.as_ref())?;
+            let mut rows = fetch_write_rows(kv, read_path.as_ref(), &zone)?;
             order_rows_for_dml(
                 &mut rows,
                 &update.order_by,
@@ -1383,7 +1391,7 @@ pub(crate) fn run_update_traced(
                 .iter()
                 .map(|(_, _, new_row)| new_row.clone())
                 .collect();
-            crate::foreign_key::require_child_rows(catalog, &database, &name, &new_rows)?;
+            crate::foreign_key::require_child_rows(catalog, &database, &name, &new_rows, &zone)?;
             let changes: Vec<crate::foreign_key::ParentChange<'_>> = rewrites
                 .iter()
                 .map(
@@ -1543,6 +1551,7 @@ pub(crate) fn run_delete_traced(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
 ) -> Result<u64, DriverError> {
+    let zone = ctx.session_zone();
     // `DELETE IGNORE` differs from a plain `DELETE` only in what it does with
     // a referential violation: Go downgrades it from a statement error to a
     // per-row skip with a warning. `QUICK` is an index-maintenance hint with
@@ -1599,6 +1608,7 @@ pub(crate) fn run_delete_traced(
             &delete.order_by,
             delete.limit.as_ref(),
         ),
+        &ctx.session_zone(),
     )?;
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
@@ -1644,7 +1654,7 @@ pub(crate) fn run_delete_traced(
             mem.rows = kept;
         }
         TableEntry::Kv(kv) => {
-            let mut rows = fetch_write_rows(kv, read_path.as_ref())?;
+            let mut rows = fetch_write_rows(kv, read_path.as_ref(), &zone)?;
             order_rows_for_dml(
                 &mut rows,
                 &delete.order_by,
@@ -1711,7 +1721,7 @@ pub(crate) fn run_delete_traced(
             unreachable!("only a byte-backed table stages deletions")
         };
         for (handle, _) in &doomed {
-            kv.delete_row(handle)
+            kv.delete_row(handle, &zone)
                 .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
             deleted += 1;
         }
@@ -1738,6 +1748,7 @@ pub(crate) fn run_delete_traced(
 fn fetch_write_rows(
     kv: &mut crate::kv_table::KvTable,
     read_path: Option<&super::access::WriteReadPath>,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<(crate::kv_table::TableHandle, Vec<Datum>)>, DriverError> {
     let decode_failed = |e| DriverError::Parse(format!("row decode failed: {e:?}"));
     match read_path {
@@ -1746,15 +1757,17 @@ fn fetch_write_rows(
                 return Ok(Vec::new());
             };
             Ok(kv
-                .get_row_by_handle(handle)
+                .get_row_by_handle(handle, zone)
                 .map_err(decode_failed)?
                 .map(|row| vec![(handle.clone(), row)])
                 .unwrap_or_default())
         }
         Some(super::access::WriteReadPath::Ranges(ranges, _)) => kv
-            .scan_rows_with_handles_in(Some(ranges))
+            .scan_rows_with_handles_in(Some(ranges), zone)
             .map_err(decode_failed),
-        None => kv.scan_rows_with_handles_in(None).map_err(decode_failed),
+        None => kv
+            .scan_rows_with_handles_in(None, zone)
+            .map_err(decode_failed),
     }
 }
 

@@ -69,6 +69,7 @@ pub(crate) fn commit_fast_path_source(
     scope: &FromScope,
     from_source: &mut Option<Box<dyn Executor>>,
     mut trace: Option<&mut PlanTrace>,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Option<IndexAccessOrder>, DriverError> {
     let mut index_order: Option<IndexAccessOrder> = None;
     let Some(table) = single_kv_table(&select.from, catalog, current_db) else {
@@ -88,7 +89,7 @@ pub(crate) fn commit_fast_path_source(
         }
     }
     // Go tries the batch point get before the single one.
-    if let Some(handles) = try_batch_point_get(select, &table, &columns)? {
+    if let Some(handles) = try_batch_point_get(select, &table, &columns, zone)? {
         let exec = HandleSourceExec::new(
             ExecutorMeta::new(
                 Schema::new(source_schema_columns(&columns)),
@@ -98,6 +99,7 @@ pub(crate) fn commit_fast_path_source(
             ),
             table.clone(),
             handles.clone(),
+            zone.clone(),
         );
         if let Some(trace) = trace.as_deref_mut() {
             trace.batch_point_get(source_table_name(scope, &table.name), &handles);
@@ -110,7 +112,7 @@ pub(crate) fn commit_fast_path_source(
     // An index range scan, when no point get applies: the ranges replace the
     // full scan with the rows the index covers, and the WHERE stays above to
     // apply the conditions the ranges did not consume.
-    if try_point_get(&PointPlanStmt::of_select(select), &table, &columns)?.is_none() {
+    if try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone)?.is_none() {
         match choose_index_range_path(select, catalog, scope, &table, &columns) {
             // A table path the ranger narrowed. The source already installed
             // by `build_from` IS the right executor -- a `TableRangeScan` is
@@ -145,12 +147,14 @@ pub(crate) fn commit_fast_path_source(
                     from_source,
                     trace.as_deref_mut(),
                     &mut index_order,
+                    zone,
                 );
             }
             None => {}
         }
     }
-    if let Some(handle) = try_point_get(&PointPlanStmt::of_select(select), &table, &columns)? {
+    if let Some(handle) = try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone)?
+    {
         // A `None` handle is a WHERE that pins a handle no row can have: the
         // plan is a point get over an empty handle list.
         let exec = HandleSourceExec::new(
@@ -162,6 +166,7 @@ pub(crate) fn commit_fast_path_source(
             ),
             table.clone(),
             handle.clone().into_iter().collect(),
+            zone.clone(),
         );
         if let Some(trace) = trace {
             trace.point_get(source_table_name(scope, &table.name), handle.as_ref());
@@ -188,6 +193,7 @@ fn commit_index_range_source(
     from_source: &mut Option<Box<dyn Executor>>,
     trace: Option<&mut PlanTrace>,
     index_order: &mut Option<IndexAccessOrder>,
+    zone: &tidb_datatype::SessionTimeZone,
 ) {
     let exec = IndexRangeSourceExec::new(
         ExecutorMeta::new(
@@ -199,6 +205,7 @@ fn commit_index_range_source(
         table.clone(),
         index_id,
         ranges.clone(),
+        zone.clone(),
     );
     let index = table
         .indexes()
@@ -658,6 +665,7 @@ pub(crate) fn write_read_path(
     database: &str,
     name: &str,
     stmt: &PointPlanStmt<'_>,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Option<WriteReadPath>, DriverError> {
     let Some(TableEntry::Kv(table)) = catalog.get_in(database, name) else {
         return Ok(None);
@@ -671,7 +679,7 @@ pub(crate) fn write_read_path(
         .iter()
         .map(|column| (column.name.clone(), column.field_type.clone()))
         .collect();
-    if let Some(handle) = try_point_get(stmt, table, &columns)? {
+    if let Some(handle) = try_point_get(stmt, table, &columns, zone)? {
         return Ok(Some(WriteReadPath::Point(handle)));
     }
     Ok(
@@ -1026,6 +1034,7 @@ pub(crate) fn try_batch_point_get(
     select: &tidb_ast::SelectStmt,
     table: &KvTable,
     columns: &[(String, FieldType)],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Option<Vec<TableHandle>>, DriverError> {
     if select.having.is_some()
         || !select.order_by.is_empty()
@@ -1117,7 +1126,7 @@ pub(crate) fn try_batch_point_get(
         let mut handles = Vec::new();
         for value in &values {
             if let Some(handle) = table
-                .lookup_unique(index.id, std::slice::from_ref(value))
+                .lookup_unique(index.id, std::slice::from_ref(value), zone)
                 .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?
             {
                 handles.push(handle);
@@ -1267,6 +1276,7 @@ pub(crate) fn try_point_get(
     select: &PointPlanStmt<'_>,
     table: &KvTable,
     columns: &[(String, FieldType)],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Option<Option<TableHandle>>, DriverError> {
     if select.having.is_some() || !select.order_by.is_empty() || !select.group_by.is_empty() {
         return Ok(None);
@@ -1343,7 +1353,7 @@ pub(crate) fn try_point_get(
             continue;
         }
         let handle = table
-            .lookup_unique(index.id, &values)
+            .lookup_unique(index.id, &values, zone)
             .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?;
         return Ok(Some(handle));
     }

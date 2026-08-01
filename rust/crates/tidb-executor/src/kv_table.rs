@@ -37,6 +37,7 @@
 //! backend still needs.
 
 mod auto_id;
+mod index_entries;
 mod table_meta;
 mod table_scan;
 
@@ -87,13 +88,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use table_meta::NOT_NULL_FLAG;
 use table_scan::fill_handle_columns;
-use tidb_codec::table_key::{
-    encode_index_seek_key, encode_row_key_with_handle, get_table_handle_key_range,
-};
-use tidb_datatype::{Datum, FieldType};
+use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
+use tidb_datatype::{Datum, FieldType, SessionTimeZone};
+
+use index_entries::{duplicate_value_text, index_entry_handle};
 use tidb_tablecodec::{
-    cut_index_key, decode_handle_in_index_value, decode_table_row_to_map,
-    encode_handle_in_unique_index_value, encode_table_row,
+    decode_table_row_to_map, encode_handle_in_unique_index_value, encode_table_row,
 };
 use tidb_txnkv::Key;
 
@@ -754,14 +754,18 @@ impl KvTable {
     }
 
     /// The handle a row's values produce.
-    fn handle_of_row(&mut self, row: &[Datum]) -> Result<TableHandle, KvTableError> {
+    fn handle_of_row(
+        &mut self,
+        row: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<TableHandle, KvTableError> {
         if !self.common_handle_offsets.is_empty() {
             let values: Vec<Datum> = self
                 .common_handle_offsets
                 .iter()
                 .map(|offset| row.get(*offset).cloned().unwrap_or(Datum::Null))
                 .collect();
-            let encoded = tidb_codec::encode_key(&values)
+            let encoded = tidb_codec::encode_key_in_timezone(zone, &values)
                 .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
             return Ok(TableHandle::Common(encoded));
         }
@@ -785,7 +789,11 @@ impl KvTable {
     }
 
     /// The row value bytes, omitting the columns the handle already carries.
-    fn encode_row_value(&self, row: &[Datum]) -> Result<Vec<u8>, KvTableError> {
+    fn encode_row_value(
+        &self,
+        row: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<u8>, KvTableError> {
         let skip = self.handle_column_offsets();
         let mut ids = Vec::with_capacity(self.columns.len());
         let mut values = Vec::with_capacity(self.columns.len());
@@ -800,7 +808,7 @@ impl KvTable {
             ids.push(column.id);
             values.push(row.get(offset).cloned().unwrap_or(Datum::Null));
         }
-        encode_table_row(None, &values, &ids, true, None)
+        encode_table_row(Some(zone), &values, &ids, true, None)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))
     }
 
@@ -810,6 +818,7 @@ impl KvTable {
         &self,
         row: &mut [Datum],
         handle: &TableHandle,
+        zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
         fill_handle_columns(
             &self.columns,
@@ -817,6 +826,7 @@ impl KvTable {
             &self.common_handle_offsets,
             row,
             handle,
+            zone,
         )
     }
 
@@ -854,6 +864,7 @@ impl KvTable {
         index: KvIndex,
         ctx: &impl tidb_expr::Columns,
     ) -> Result<(), KvTableError> {
+        let zone = ctx.time_zone();
         if self
             .indexes
             .iter()
@@ -869,13 +880,13 @@ impl KvTable {
         // `ERROR_FOR_DIVISION_BY_ZERO` instead of quietly indexing a NULL.
         // Recomputation is idempotent, so this changes no value that the
         // read level already agreed on.
-        let mut rows = self.scan_rows_with_handles()?;
+        let mut rows = self.scan_rows_with_handles(&zone)?;
         for (_, row) in &mut rows {
             self.fill_virtual_columns_in(row, ctx)?;
         }
         let mut written = Vec::new();
         for (handle, row) in &rows {
-            let (key, distinct) = self.index_key(&index, row, handle)?;
+            let (key, distinct) = self.index_key(&index, row, handle, &zone)?;
             let key = Key::from_bytes(key);
             if distinct && self.store.get(&key).is_ok() {
                 // Undo the entries this backfill already wrote, so a rejected
@@ -913,7 +924,7 @@ impl KvTable {
     }
 
     /// Drops an index and every entry it owns, reporting whether it existed.
-    pub fn drop_index(&mut self, name: &str) -> Result<bool, KvTableError> {
+    pub fn drop_index(&mut self, name: &str, zone: &SessionTimeZone) -> Result<bool, KvTableError> {
         let Some(position) = self
             .indexes
             .iter()
@@ -922,9 +933,9 @@ impl KvTable {
             return Ok(false);
         };
         let index = self.indexes.remove(position);
-        let rows = self.scan_rows_with_handles()?;
+        let rows = self.scan_rows_with_handles(zone)?;
         for (handle, row) in &rows {
-            let (key, _) = self.index_key(&index, row, handle)?;
+            let (key, _) = self.index_key(&index, row, handle, zone)?;
             self.store
                 .delete(Key::from_bytes(key))
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -1059,6 +1070,7 @@ impl KvTable {
         offset: usize,
         new_column: KvColumn,
         new_position: Option<usize>,
+        zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
         // Rewriting the rows here reads them back through the scan and writes
         // them under a key built from the table id, which for a partitioned
@@ -1074,7 +1086,7 @@ impl KvTable {
         }
         let target = new_column.field_type.clone();
         let not_null = target.flags() & NOT_NULL_FLAG != 0;
-        let rows = self.scan_rows_with_handles()?;
+        let rows = self.scan_rows_with_handles(zone)?;
         let mut converted_rows = Vec::with_capacity(rows.len());
         for (row_number, (handle, row)) in rows.into_iter().enumerate() {
             let mut row = row;
@@ -1135,12 +1147,12 @@ impl KvTable {
         // again; the handles and index ids are unchanged.
         self.store.clear();
         for (handle, row) in &converted_rows {
-            let value = self.encode_row_value(row)?;
+            let value = self.encode_row_value(row, zone)?;
             let key = Key::from_bytes(encode_row_key_with_handle(
                 self.table_id,
                 &handle.record_handle(),
             ));
-            self.write_index_entries(row, handle)?;
+            self.write_index_entries(row, handle, zone)?;
             self.store
                 .set(key, value)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -1188,11 +1200,15 @@ impl KvTable {
     /// error), which is why a single REPLACE can delete more than one row --
     /// captured: replacing a row that duplicates one row's primary key and
     /// another row's unique key deletes BOTH.
-    pub fn conflicting_handles(&mut self, row: &[Datum]) -> Result<Vec<TableHandle>, KvTableError> {
+    pub fn conflicting_handles(
+        &mut self,
+        row: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<TableHandle>, KvTableError> {
         let mut found: Vec<TableHandle> = Vec::new();
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         if clustered {
-            let handle = self.handle_of_row(row)?;
+            let handle = self.handle_of_row(row, zone)?;
             if self.row_exists(&handle)? {
                 found.push(handle);
             }
@@ -1203,7 +1219,7 @@ impl KvTable {
             }
             // A distinct entry's key does not carry the handle, so the
             // candidate handle below is only a placeholder for the key build.
-            let (key, distinct) = self.index_key(&index, row, &TableHandle::Int(0))?;
+            let (key, distinct) = self.index_key(&index, row, &TableHandle::Int(0), zone)?;
             if !distinct {
                 continue;
             }
@@ -1232,10 +1248,14 @@ impl KvTable {
 
     /// The duplicate-entry error a conflicting row would raise, which names
     /// the key it collided on the way Go's `ErrDupEntry` does.
-    pub fn duplicate_entry_error(&mut self, row: &[Datum]) -> Result<KvTableError, KvTableError> {
+    pub fn duplicate_entry_error(
+        &mut self,
+        row: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<KvTableError, KvTableError> {
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         if clustered {
-            let handle = self.handle_of_row(row)?;
+            let handle = self.handle_of_row(row, zone)?;
             if self.row_exists(&handle)? {
                 return Ok(KvTableError::DuplicateEntry {
                     value: clustered_key_text(self, row),
@@ -1247,7 +1267,7 @@ impl KvTable {
             if !index.unique {
                 continue;
             }
-            let (key, distinct) = self.index_key(&index, row, &TableHandle::Int(0))?;
+            let (key, distinct) = self.index_key(&index, row, &TableHandle::Int(0), zone)?;
             if distinct && self.store.get(&Key::from_bytes(key)).is_ok() {
                 return Ok(KvTableError::DuplicateEntry {
                     value: duplicate_value_text(&self.index_values(&index, row)),
@@ -1357,6 +1377,7 @@ impl KvTable {
         row: &[Datum],
         ctx: &impl tidb_expr::Columns,
     ) -> Result<TableHandle, KvTableError> {
+        let zone = ctx.time_zone();
         // The generated columns are recomputed HERE, at the one place every
         // row reaches, so the stored bytes, the row handle and the index
         // entries all see the same computed values and no caller can write a
@@ -1370,9 +1391,9 @@ impl KvTable {
         } else {
             row
         };
-        let value = self.encode_row_value(row)?;
+        let value = self.encode_row_value(row, &zone)?;
         // Go `addRecord`: a clustered key IS the handle, so a repeat collides.
-        let handle = self.handle_of_row(row)?;
+        let handle = self.handle_of_row(row, &zone)?;
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         if clustered && self.row_exists(&handle)? {
             return Err(KvTableError::DuplicateEntry {
@@ -1386,7 +1407,7 @@ impl KvTable {
         ));
         // Go writes the row first, then its index entries; a duplicate on a
         // unique index aborts the statement.
-        self.write_index_entries(row, &handle)?;
+        self.write_index_entries(row, &handle, &zone)?;
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -1410,8 +1431,9 @@ impl KvTable {
         index: &KvIndex,
         row: &[Datum],
         handle: &TableHandle,
+        zone: &SessionTimeZone,
     ) -> Result<(Vec<u8>, bool), KvTableError> {
-        self.index_key(index, row, handle)
+        self.index_key(index, row, handle, zone)
     }
 
     /// Every stored entry of one index, as `(entry key, the handle it names)`.
@@ -1475,182 +1497,22 @@ impl KvTable {
         self.delete_raw_key_for_test(key.as_bytes())
     }
 
-    /// The values one index entry is built from: the indexed columns of
-    /// `row`, each CUT to its key part's declared prefix (Go
-    /// `tablecodec.TruncateIndexValues`, which `GenIndexKey` calls first).
-    ///
-    /// This is the only place the cut happens, which is what makes the key a
-    /// write stores and the key a read seeks the same key by construction --
-    /// and what makes a UNIQUE prefix index enforce uniqueness ON THE PREFIX,
-    /// because two rows sharing it produce one key. Captured from real TiDB:
-    /// with `unique key uidx(a(3))` holding `'abcdef'`, inserting `'abcxyz'`
-    /// is rejected.
-    pub(crate) fn index_values(&self, index: &KvIndex, row: &[Datum]) -> Vec<Datum> {
-        index
-            .column_offsets
-            .iter()
-            .enumerate()
-            .map(|(position, offset)| {
-                let mut value = row.get(*offset).cloned().unwrap_or(Datum::Null);
-                if let Some(column) = self.columns.get(*offset) {
-                    crate::index_prefix_cut::cut_index_value(
-                        &mut value,
-                        index.prefix_length(position),
-                        &column.field_type,
-                    );
-                }
-                value
-            })
-            .collect()
-    }
-
-    /// Go `GenIndexKey`: the entry key for one index over `row`, plus Go's
-    /// `distinct` flag.
-    ///
-    /// `distinct` is true only for a unique index whose indexed values are all
-    /// non-NULL -- MySQL lets a unique index hold any number of NULLs, so a
-    /// NULL-bearing entry is stored the non-distinct way (handle appended to
-    /// the key) and never collides.
-    pub(crate) fn index_key(
-        &self,
-        index: &KvIndex,
-        row: &[Datum],
-        handle: &TableHandle,
-    ) -> Result<(Vec<u8>, bool), KvTableError> {
-        let values = self.index_values(index, row);
-        let distinct = index.unique && !values.contains(&Datum::Null);
-        let mut encoded =
-            tidb_codec::encode_key(&values).map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-        if !distinct {
-            // Go appends the handle so non-distinct entries stay unique.
-            match handle {
-                TableHandle::Int(value) => encoded.extend_from_slice(
-                    &tidb_codec::encode_key(&[Datum::Int(*value)])
-                        .map_err(|e| KvTableError::Encode(format!("{e:?}")))?,
-                ),
-                TableHandle::Common(bytes) => encoded.extend_from_slice(bytes),
-            }
-        }
-        Ok((
-            encode_index_seek_key(self.table_id, index.id, &encoded),
-            distinct,
-        ))
-    }
-
-    /// Writes every index entry for `row`, rejecting a duplicate on a unique
-    /// index as Go's `index.Create` does with `ErrKeyExists`.
-    fn write_index_entries(
-        &mut self,
-        row: &[Datum],
-        handle: &TableHandle,
-    ) -> Result<(), KvTableError> {
-        let indexes = self.indexes.clone();
-        for index in &indexes {
-            let (key, distinct) = self.index_key(index, row, handle)?;
-            let key = Key::from_bytes(key);
-            if distinct {
-                if self.store.get(&key).is_ok() {
-                    return Err(KvTableError::DuplicateEntry {
-                        value: duplicate_value_text(&self.index_values(index, row)),
-                        key: self.qualified_key(&index.name),
-                    });
-                }
-                // A distinct entry carries the handle as its value, which is
-                // what makes a unique-index lookup a point read.
-                let value = match handle {
-                    TableHandle::Int(value) => encode_handle_in_unique_index_value(
-                        &tidb_txnkv::IntHandle::new(*value).into(),
-                        false,
-                    ),
-                    // Go stores the encoded common handle as the entry value.
-                    TableHandle::Common(bytes) => {
-                        let common = tidb_txnkv::CommonHandle::new(bytes.clone())
-                            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-                        encode_handle_in_unique_index_value(&common.into(), false)
-                    }
-                };
-                self.store
-                    .set(key, value)
-                    .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-            } else {
-                // Go stores a single version byte for a non-distinct entry.
-                self.store
-                    .set(key, vec![b'0'])
-                    .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Removes every index entry for `row`.
-    fn delete_index_entries(
-        &mut self,
-        row: &[Datum],
-        handle: &TableHandle,
-    ) -> Result<(), KvTableError> {
-        let indexes = self.indexes.clone();
-        for index in &indexes {
-            let (key, _) = self.index_key(index, row, handle)?;
-            self.store
-                .delete(Key::from_bytes(key))
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        }
-        Ok(())
-    }
-
-    /// Looks a row handle up through a unique index, the point-get Go plans as
-    /// `PointGetPlan` on a unique key. `None` when no entry matches.
-    pub fn lookup_unique(
-        &mut self,
-        index_id: i64,
-        values: &[Datum],
-    ) -> Result<Option<TableHandle>, KvTableError> {
-        let Some(index) = self
-            .indexes
-            .iter()
-            .find(|index| index.id == index_id)
-            .cloned()
-        else {
-            return Err(KvTableError::Decode("no such index".to_owned()));
-        };
-        if !index.unique || values.contains(&Datum::Null) {
-            // Only a distinct entry stores the handle in its value.
-            return Ok(None);
-        }
-        // A prefix index's entry is filed under a CUT value, so finding one
-        // does not prove the row matches: `'abcxyz'` and `'abcdef'` share the
-        // key of `uidx(a(3))`. Go declines the plan outright
-        // (`point_get_plan.go`'s `idxInfo.HasPrefixIndex()`); declining the
-        // LOOKUP as well means no caller can reach a wrong row through this
-        // door even if a future planner forgets the rule.
-        if index.has_prefix() {
-            return Ok(None);
-        }
-        let encoded =
-            tidb_codec::encode_key(values).map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-        let key = Key::from_bytes(encode_index_seek_key(self.table_id, index.id, &encoded));
-        match self.store.get(&key) {
-            Ok(entry) => {
-                let handle = decode_handle_in_index_value(&entry)
-                    .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-                Ok(Some(convert_handle(&handle)))
-            }
-            Err(StorageError::NotFound) => Ok(None),
-            Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
-        }
-    }
-
     /// The row stored under `handle`, decoded, or `None` when absent -- the
     /// single read a point-get plan performs.
     pub fn get_row_by_handle(
         &mut self,
         handle: &TableHandle,
+        zone: &SessionTimeZone,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
-        self.read_row(handle)
+        self.read_row(handle, zone)
     }
 
     /// The row stored under `handle`, decoded, or `None` when absent.
-    fn read_row(&mut self, handle: &TableHandle) -> Result<Option<Vec<Datum>>, KvTableError> {
+    fn read_row(
+        &mut self,
+        handle: &TableHandle,
+        zone: &SessionTimeZone,
+    ) -> Result<Option<Vec<Datum>>, KvTableError> {
         let Some((_, entry)) = self.stored_record(handle)? else {
             return Ok(None);
         };
@@ -1659,7 +1521,7 @@ impl KvTable {
             .iter()
             .map(|c| (c.id, c.field_type.clone()))
             .collect();
-        let mut decoded = decode_table_row_to_map(&entry, &column_types, None)
+        let mut decoded = decode_table_row_to_map(&entry, &column_types, Some(zone))
             .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
         let mut row: Vec<Datum> = self
             .columns
@@ -1672,7 +1534,7 @@ impl KvTable {
             .collect();
         // The handle columns are not in the value; Go reads them from the
         // handle itself.
-        self.fill_handle_columns(&mut row, handle)?;
+        self.fill_handle_columns(&mut row, handle, zone)?;
         // Nor is a VIRTUAL generated column, whose value is its expression.
         self.fill_virtual_columns(&mut row)?;
         Ok(Some(row))
@@ -1697,6 +1559,7 @@ impl KvTable {
         row: &[Datum],
         ctx: &impl tidb_expr::Columns,
     ) -> Result<(), KvTableError> {
+        let zone = ctx.time_zone();
         // Recomputed, never carried over: an UPDATE that changes a dependency
         // must not leave a STORED generated column holding the value computed
         // from the old dependency.
@@ -1750,7 +1613,7 @@ impl KvTable {
         // that the row's values do not determine.
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         let new_handle = if clustered {
-            self.handle_of_row(row)?
+            self.handle_of_row(row, &zone)?
         } else {
             handle.clone()
         };
@@ -1768,21 +1631,21 @@ impl KvTable {
         // AT the handle, so a moved row needs them rewritten even when the
         // indexed values did not change.
         if !self.indexes.is_empty() {
-            let old = self.read_row(handle)?;
+            let old = self.read_row(handle, &zone)?;
             if let Some(old) = &old {
-                self.delete_index_entries(old, handle)?;
+                self.delete_index_entries(old, handle, &zone)?;
             }
-            if let Err(error) = self.write_index_entries(row, &new_handle) {
+            if let Err(error) = self.write_index_entries(row, &new_handle, &zone) {
                 // Restore the entries the failed update removed, so a rejected
                 // statement leaves the index as it found it.
                 if let Some(old) = &old {
-                    self.write_index_entries(old, handle)?;
+                    self.write_index_entries(old, handle, &zone)?;
                 }
                 return Err(error);
             }
         }
         // The handle columns stay out of the value, as on insert.
-        let value = self.encode_row_value(row)?;
+        let value = self.encode_row_value(row, &zone)?;
         // An update can move the row TWICE over: onto a new handle, and --
         // when the update changes a partitioning column -- into a different
         // partition. Both are the same move, because both change the record
@@ -1804,10 +1667,14 @@ impl KvTable {
     }
 
     /// Removes the row stored under `handle`.
-    pub fn delete_row(&mut self, handle: &TableHandle) -> Result<(), KvTableError> {
+    pub fn delete_row(
+        &mut self,
+        handle: &TableHandle,
+        zone: &SessionTimeZone,
+    ) -> Result<(), KvTableError> {
         if !self.indexes.is_empty() {
-            if let Some(row) = self.read_row(handle)? {
-                self.delete_index_entries(&row, handle)?;
+            if let Some(row) = self.read_row(handle, zone)? {
+                self.delete_index_entries(&row, handle, zone)?;
             }
         }
         let Some(key) = self.stored_record_key(handle)? else {
@@ -1837,52 +1704,6 @@ fn clustered_key_text(table: &KvTable, row: &[Datum]) -> String {
         .join("-")
 }
 
-/// The row handle an index entry names.
-///
-/// A distinct entry keeps the handle in its value; a non-distinct entry keeps
-/// it appended to its key, which is the same split Go's index reader makes.
-fn convert_handle(handle: &tidb_txnkv::Handle) -> TableHandle {
-    match handle.int_value() {
-        Some(value) => TableHandle::Int(value),
-        None => TableHandle::Common(handle.clone().encoded()),
-    }
-}
-
-fn index_entry_handle(
-    index: &KvIndex,
-    key: &[u8],
-    value: &[u8],
-    common: bool,
-) -> Result<TableHandle, KvTableError> {
-    if index.unique {
-        // Only a distinct entry stores the handle in the value; a unique index
-        // holding NULLs writes non-distinct entries too, so fall through when
-        // the value is the non-distinct marker.
-        if value != *b"0" {
-            let handle = decode_handle_in_index_value(value)
-                .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-            return Ok(convert_handle(&handle));
-        }
-    }
-    // The handle is appended to the key after the indexed values.
-    let (_, rest) = cut_index_key(key, index.column_offsets.len())
-        .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-    if common {
-        return Ok(TableHandle::Common(rest.to_vec()));
-    }
-    let (_, handle) =
-        tidb_codec::decode_one(rest).map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-    match handle {
-        Datum::Int(value) => Ok(TableHandle::Int(value)),
-        Datum::UInt(value) => Ok(TableHandle::Int(value as i64)),
-        other => Err(KvTableError::Decode(format!(
-            "an index key ended with {other:?} rather than a handle"
-        ))),
-    }
-}
-
-/// The value MySQL prints in a duplicate-key error: the indexed values joined
-/// by `-`, as Go's `ErrKeyExists` formats them.
 /// How Go reports a value the modified column cannot hold.
 ///
 /// A string that is not a number going into a numeric column is
@@ -1912,7 +1733,7 @@ fn convert_failure(column: &str, target: &FieldType, value: &Datum) -> KvTableEr
 }
 
 /// A datum as MySQL prints it inside an error message.
-fn datum_text(value: &Datum) -> String {
+pub(in crate::kv_table) fn datum_text(value: &Datum) -> String {
     match value {
         Datum::Int(value) => value.to_string(),
         Datum::UInt(value) => value.to_string(),
@@ -1921,16 +1742,6 @@ fn datum_text(value: &Datum) -> String {
         Datum::Real(value) => value.to_string(),
         other => format!("{other:?}"),
     }
-}
-
-/// The `Duplicate entry '...'` value MySQL prints, from the values the ENTRY
-/// holds.
-///
-/// Go builds it the same way -- `tables.go`'s `TruncateIndexValues` then
-/// `genIndexKeyStrs` -- so a unique prefix index reports the CUT value:
-/// `'abc'`, not the `'abcxyz'` that was offered.
-fn duplicate_value_text(values: &[Datum]) -> String {
-    values.iter().map(datum_text).collect::<Vec<_>>().join("-")
 }
 
 #[cfg(test)]
@@ -1997,7 +1808,7 @@ mod tests {
             );
         }
         let scanned: Vec<TableHandle> = t
-            .scan_rows_with_handles()
+            .scan_rows_with_handles(&tidb_datatype::SessionTimeZone::utc())
             .unwrap()
             .into_iter()
             .map(|(handle, _)| handle)
@@ -2011,14 +1822,17 @@ mod tests {
             &tidb_expr::NoColumns,
         )
         .unwrap();
-        let rows = t.scan_rows_with_handles().unwrap();
+        let rows = t
+            .scan_rows_with_handles(&tidb_datatype::SessionTimeZone::utc())
+            .unwrap();
         assert_eq!(rows.len(), 3, "update replaced in place, it did not append");
         assert_eq!(rows[1].0, handles[1]);
         assert_eq!(rows[1].1[0], Datum::Int(99));
 
-        t.delete_row(&handles[0]).unwrap();
+        t.delete_row(&handles[0], &tidb_datatype::SessionTimeZone::utc())
+            .unwrap();
         let after: Vec<TableHandle> = t
-            .scan_rows_with_handles()
+            .scan_rows_with_handles(&tidb_datatype::SessionTimeZone::utc())
             .unwrap()
             .into_iter()
             .map(|(handle, _)| handle)
@@ -2045,14 +1859,20 @@ mod tests {
             )
             .unwrap();
 
-        let rows = t.scan_rows().unwrap();
+        let rows = t.scan_rows(&tidb_datatype::SessionTimeZone::utc()).unwrap();
         assert_eq!(
             rows.len(),
             3,
             "every handle including the largest is scanned"
         );
         assert_eq!(rows[2][0], Datum::Int(2));
-        assert_eq!(neighbour.scan_rows().unwrap().len(), 1);
+        assert_eq!(
+            neighbour
+                .scan_rows(&tidb_datatype::SessionTimeZone::utc())
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -2066,7 +1886,7 @@ mod tests {
             .unwrap();
         assert_eq!(t.len(), 2);
 
-        let rows = t.scan_rows().unwrap();
+        let rows = t.scan_rows(&tidb_datatype::SessionTimeZone::utc()).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0][0], Datum::Int(7));
         assert_eq!(rows[1][0], Datum::Int(8));
@@ -2093,7 +1913,11 @@ mod tests {
             c.index = i as i64;
             out_cols.push(c);
         }
-        let mut scan = TableScanExec::new(ExecutorMeta::new(Schema::new(out_cols), 0, 4, 1024), t);
+        let mut scan = TableScanExec::new(
+            ExecutorMeta::new(Schema::new(out_cols), 0, 4, 1024),
+            t,
+            tidb_datatype::SessionTimeZone::utc(),
+        );
         scan.open().unwrap();
         let mut req = scan.new_chunk();
         scan.next(&mut req).unwrap();

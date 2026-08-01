@@ -160,6 +160,7 @@ fn index_entries(
 pub fn check_table(
     table: &mut KvTable,
     only_index: Option<&str>,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<usize, AdminCheckError> {
     let indexes = table.index_list_for_check();
     let selected: Vec<_> = match only_index {
@@ -178,7 +179,7 @@ pub fn check_table(
     };
 
     let rows = table
-        .scan_rows_with_handles()
+        .scan_rows_with_handles(zone)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
     let table_count = rows.len() as i64;
 
@@ -204,7 +205,7 @@ pub fn check_table(
         let mut expected: BTreeMap<Vec<u8>, (TableHandle, Vec<Datum>)> = BTreeMap::new();
         for (handle, row) in &rows {
             let (key, _) = table
-                .index_key_for_check(index, row, handle)
+                .index_key_for_check(index, row, handle, zone)
                 .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
             expected.insert(key, (handle.clone(), row.clone()));
         }
@@ -292,6 +293,7 @@ pub fn check_index_ranges(
     table: &mut KvTable,
     index_name: &str,
     ranges: &[tidb_ast::AdminCheckHandleRange],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(Vec<String>, Vec<Vec<Datum>>), AdminCheckError> {
     let index = table
         .index_list_for_check()
@@ -310,13 +312,13 @@ pub fn check_index_ranges(
     columns.push("extra_handle".to_owned());
 
     let rows = table
-        .scan_rows_with_handles()
+        .scan_rows_with_handles(zone)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
     let by_handle: BTreeMap<Vec<u8>, (TableHandle, Vec<Datum>)> = rows
         .iter()
         .map(|(handle, row)| {
             let (key, _) = table
-                .index_key_for_check(&index, row, handle)
+                .index_key_for_check(&index, row, handle, zone)
                 .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
             Ok((key, (handle.clone(), row.clone())))
         })

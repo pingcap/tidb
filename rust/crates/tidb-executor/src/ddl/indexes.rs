@@ -304,13 +304,14 @@ pub fn run_drop_index_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
-    // The session's scanner `sql_mode`: this entry RE-PARSES text the session
-    // already parsed, so without it a double-quoted name would mean one thing
-    // to the session and another here.
-    sql_mode: tidb_parser::SqlMode,
+    // The session's own statement context: this entry RE-PARSES text the
+    // session already parsed, so without it a double-quoted name would mean
+    // one thing to the session and another here -- and dropping an index
+    // over a `TIMESTAMP` column has to REBUILD each entry's key to delete
+    // it, which is encoded in the session's `time_zone`.
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
-        .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+    let stmt = ctx.parse(sql)?;
     let Stmt::Ddl(ddl) = &stmt else {
         return Err(DriverError::Unsupported(
             "only DROP INDEX is supported here",
@@ -323,7 +324,14 @@ pub fn run_drop_index_in(
     };
     let (database, table_name) = crate::driver::split_table_path_pub(&drop.table, current_db)?;
     let (database, table_name) = (database.to_owned(), table_name.to_owned());
-    drop_index_from_table(catalog, &database, &table_name, &drop.name, drop.if_exists)
+    drop_index_from_table(
+        catalog,
+        &database,
+        &table_name,
+        &drop.name,
+        drop.if_exists,
+        &ctx.session_zone(),
+    )
 }
 
 /// Removes one index, shared by `DROP INDEX` and `ALTER TABLE ... DROP INDEX`.
@@ -333,6 +341,7 @@ pub(crate) fn drop_index_from_table(
     table_name: &str,
     index_name: &str,
     if_exists: bool,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
     // Go `ddl.checkIndexNeededInForeignKey`, before anything is removed: an
     // index a live constraint relies on is 1553, on either side.
@@ -363,7 +372,7 @@ pub(crate) fn drop_index_from_table(
         })
         .unwrap_or_default();
     let dropped = table
-        .drop_index(index_name)
+        .drop_index(index_name, zone)
         .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;
     if !dropped && !if_exists {
         return Err(DriverError::UnknownIndex(index_name.to_owned()));

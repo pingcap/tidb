@@ -16,7 +16,6 @@
 
 use std::collections::BTreeMap;
 
-use chrono_tz::UTC;
 use tidb_codec::{
     append_datum_for_checksum, calculate_raw_checksum, decode_one, decode_row_to_datums,
     decode_row_to_map,
@@ -43,13 +42,14 @@ fn column(id: i64, code: FieldTypeCode) -> ColumnInfo {
 }
 
 fn round_trip(ids: &[i64], values: &[Datum], columns: &[ColumnInfo]) -> Vec<Datum> {
+    let utc = tidb_datatype::SessionTimeZone::utc();
     let mut encoded = Vec::new();
-    encode_row(Some(&UTC), ids, values, &mut encoded).unwrap();
+    encode_row(Some(&utc), ids, values, &mut encoded).unwrap();
     decode_row_to_datums(
         &encoded,
         columns,
         &DecodeRowOptions {
-            timezone: Some(&UTC),
+            timezone: Some(&utc),
             ..DecodeRowOptions::default()
         },
     )

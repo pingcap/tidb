@@ -145,6 +145,7 @@ pub fn run_alter_table_in(
                     if_exists: *if_exists,
                     allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
                 },
+                &ctx.session_zone(),
             )?,
             tidb_ast::AlterTableAction::ChangeColumn {
                 if_exists,
@@ -166,12 +167,20 @@ pub fn run_alter_table_in(
                         if_exists: *if_exists,
                         allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
                     },
+                    &ctx.session_zone(),
                 )?;
             }
             tidb_ast::AlterTableAction::DropColumn {
                 if_exists,
                 name: column_name,
-            } => drop_column_action(catalog, &database, &name, column_name, *if_exists)?,
+            } => drop_column_action(
+                catalog,
+                &database,
+                &name,
+                column_name,
+                *if_exists,
+                &ctx.session_zone(),
+            )?,
             tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
                 let unique = matches!(
                     index.kind,
@@ -244,7 +253,14 @@ pub fn run_alter_table_in(
                 if_exists,
                 name: index_name,
             } => {
-                drop_index_from_table(catalog, &database, &name, index_name, *if_exists)?;
+                drop_index_from_table(
+                    catalog,
+                    &database,
+                    &name,
+                    index_name,
+                    *if_exists,
+                    &ctx.session_zone(),
+                )?;
             }
             tidb_ast::AlterTableAction::AddForeignKey(definition) => {
                 add_foreign_key_action(catalog, &database, &name, definition, ctx)?;
@@ -389,7 +405,13 @@ fn add_foreign_key_action(
         // rejected `ADD FOREIGN KEY` leaves neither the constraint nor the
         // index it would have created. Checking first reaches that state
         // without staging anything to undo.
-        crate::foreign_key::require_existing_rows(catalog, database, name, &foreign_key)?;
+        crate::foreign_key::require_existing_rows(
+            catalog,
+            database,
+            name,
+            &foreign_key,
+            &ctx.session_zone(),
+        )?;
     }
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::Unsupported(
@@ -784,6 +806,7 @@ struct ModifyColumnRequest<'a> {
 fn modify_column_action(
     catalog: &mut Catalog,
     request: &ModifyColumnRequest<'_>,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
     let &ModifyColumnRequest {
         database,
@@ -988,7 +1011,7 @@ fn modify_column_action(
         table.clear_auto_increment_offset();
     }
     table
-        .modify_column(offset, column, new_position)
+        .modify_column(offset, column, new_position, zone)
         .map_err(|e| match e {
             crate::kv_table::KvTableError::TruncatedIncorrectValue { kind, value } => {
                 DriverError::TruncatedIncorrectValue { kind, value }
@@ -1120,6 +1143,7 @@ fn drop_column_action(
     table_name: &str,
     column_name: &str,
     if_exists: bool,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::Unsupported(
@@ -1171,7 +1195,7 @@ fn drop_column_action(
         .collect();
     for index_name in covering {
         table
-            .drop_index(&index_name)
+            .drop_index(&index_name, zone)
             .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;
     }
     table.drop_column(offset);

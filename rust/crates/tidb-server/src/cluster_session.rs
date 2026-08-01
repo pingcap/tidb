@@ -1072,7 +1072,7 @@ mod tests {
             .expect("a backfill that allocates nothing needs no allocator");
         assert!(
             walked
-                .drop_index("vi")
+                .drop_index("vi", &tidb_datatype::SessionTimeZone::utc())
                 .expect("the removal walk also allocates nothing"),
             "the index it just created is the one it removes"
         );

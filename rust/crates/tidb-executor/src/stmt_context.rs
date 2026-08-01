@@ -496,6 +496,15 @@ impl StmtContext {
         self.strict
     }
 
+    /// The statement's `time_zone`: Go's `SessionVars.Location()`, which
+    /// `types.Context` carries and the storage codecs convert `TIMESTAMP`
+    /// values with. Inherent so the storage seam can ask for it without
+    /// pulling the whole [`tidb_expr::Columns`] trait into scope.
+    #[must_use]
+    pub fn session_zone(&self) -> tidb_expr::SessionTimeZone {
+        <Self as tidb_expr::Columns>::time_zone(self)
+    }
+
     /// Attaches `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` and `ALLOW_INVALID_DATES`.
     #[must_use]
     pub fn with_date_modes(mut self, date_modes: crate::zero_date::DateModes) -> Self {
