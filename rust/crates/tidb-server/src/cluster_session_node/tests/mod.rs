@@ -9,6 +9,7 @@ mod mock_seams;
 mod node_fixture;
 
 mod accounts;
+mod autocommit_transactions;
 mod prepared_transactions;
 mod schema_changes;
 mod statistics;
