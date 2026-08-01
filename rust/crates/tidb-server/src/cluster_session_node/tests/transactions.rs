@@ -501,3 +501,91 @@ fn a_refused_publication_drops_the_staged_writes() {
         vec![vec![Datum::Int(2)]]
     );
 }
+
+/// The autocommit timestamp belongs to the statement's first READ, not to the
+/// binding that precedes planning: a statement that reads no cluster row
+/// spends nothing.
+///
+/// This is what deferring the bind buys. The eager open charged a timestamp
+/// before the statement was planned, which is also why a plan-shape timestamp
+/// policy could never be consulted here -- the timestamp was already spent by
+/// the time a plan existed.
+#[test]
+fn a_statement_that_reads_no_cluster_row_spends_no_timestamp() {
+    let (mut session, cluster) = open_session();
+    let opened_before = cluster.opened.load(Ordering::Acquire);
+    assert_eq!(rows(&mut session, "SELECT 1").len(), 1);
+    assert_eq!(
+        cluster.opened.load(Ordering::Acquire),
+        opened_before,
+        "a statement that touched no table opened a read transaction"
+    );
+    assert_eq!(cluster.live.load(Ordering::Acquire), 0);
+
+    // The control, in the other direction: a statement that DOES read a table
+    // still opens exactly one.
+    let opened_before = cluster.opened.load(Ordering::Acquire);
+    let _ = rows(&mut session, "SELECT id FROM t");
+    assert_eq!(cluster.opened.load(Ordering::Acquire), opened_before + 1);
+    assert_eq!(cluster.live.load(Ordering::Acquire), 0);
+}
+
+/// Deferring the open must not turn one statement into several snapshots:
+/// every read of a statement that reads more than once goes through the one
+/// transaction its first read opened.
+///
+/// A per-read open would be a silent wrong answer -- two halves of one
+/// statement reading at two timestamps -- and it would still look like a
+/// saving in any counter that watches only single-read statements.
+#[test]
+fn every_read_of_one_statement_shares_the_transaction_the_first_read_opened() {
+    let (mut session, cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20)")
+        .expect("seed");
+
+    let opened_before = cluster.opened.load(Ordering::Acquire);
+    let joined = rows(
+        &mut session,
+        "SELECT a.id FROM t AS a JOIN t AS b ON a.id = b.id ORDER BY a.id",
+    );
+    assert_eq!(joined.len(), 2);
+    assert_eq!(
+        cluster.opened.load(Ordering::Acquire),
+        opened_before + 1,
+        "a statement reading two relations opened more than one snapshot"
+    );
+    assert_eq!(cluster.live.load(Ordering::Acquire), 0);
+}
+
+/// The in-transaction direction, restated against the deferred bind: inside
+/// `BEGIN` a statement reads through the transaction's own handle, so the
+/// deferral cannot reach it and cannot hand a statement a newer timestamp
+/// than the one `BEGIN` took. Repeatable read survives the change.
+#[test]
+fn deferral_does_not_reach_a_statement_inside_a_transaction() {
+    let (mut session, cluster) = open_session();
+    let mut writer = open_session_on(&cluster);
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+
+    session.control_transaction("BEGIN").expect("begin");
+    assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 1);
+    writer
+        .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
+        .expect("a racing commit lands after BEGIN");
+    // Counted after the writer's own autocommit statement, so what follows
+    // measures only the reader's in-transaction statement.
+    let autocommit_snapshots = cluster.opened.load(Ordering::Acquire);
+    // Still one row: the transaction reads at the timestamp BEGIN took.
+    assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 1);
+    assert_eq!(
+        cluster.opened.load(Ordering::Acquire),
+        autocommit_snapshots,
+        "a statement inside BEGIN opened an autocommit snapshot of its own"
+    );
+    session.control_transaction("COMMIT").expect("commit");
+    // Outside the transaction the same connection sees the racing row.
+    assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 2);
+}
