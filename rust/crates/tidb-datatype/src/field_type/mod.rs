@@ -916,15 +916,25 @@ impl FieldType {
         if !use_new_collate || !self.is_character_string() {
             return false;
         }
-        self.code().is_type_varchar()
-            || !matches!(
-                self.collation,
-                Collation::Binary
-                    | Collation::AsciiBin
-                    | Collation::Latin1Bin
-                    | Collation::Utf8Bin
-                    | Collation::Utf8Mb4Bin
-            )
+        // Go's trailing `ft.GetCollate() != "utf8mb4_0900_bin"` guard, which
+        // overrides the VARCHAR exemption below: this collation NEVER carries
+        // restored data, whatever the SQL type.
+        if matches!(self.collation, Collation::Utf8Mb40900Bin) {
+            return false;
+        }
+        // `collate.IsBinCollation`, whose membership is the same list as
+        // `crate::collation::is_bin_collation` -- `utf8mb4_0900_bin` included,
+        // `gbk_bin` excluded because its sort key transcodes the data.
+        let bin_collation = matches!(
+            self.collation,
+            Collation::Binary
+                | Collation::AsciiBin
+                | Collation::Latin1Bin
+                | Collation::Utf8Bin
+                | Collation::Utf8Mb4Bin
+                | Collation::Utf8Mb40900Bin
+        );
+        !bin_collation || self.code().is_type_varchar()
     }
 
     /// Mirrors `FieldType.SetFlenUnderLimit`.
@@ -1890,6 +1900,15 @@ mod tests {
             (FieldTypeCode::VarString, Collation::Utf8Mb4UnicodeCi, true),
             (FieldTypeCode::String, Collation::Utf8Bin, false),
             (FieldTypeCode::VarString, Collation::Utf8Bin, true),
+            // Go `NeedRestoredDataWithCollate` ends with an explicit
+            // `ft.GetCollate() != "utf8mb4_0900_bin"` guard that OVERRIDES the
+            // VARCHAR exemption, so this collation never carries restored
+            // data. Both rows below are storage-format decisions: emitting
+            // restored data Go does not emit makes the index and row bytes
+            // mutually undecodable.
+            (FieldTypeCode::String, Collation::Utf8Mb40900Bin, false),
+            (FieldTypeCode::VarString, Collation::Utf8Mb40900Bin, false),
+            (FieldTypeCode::Varchar, Collation::Utf8Mb40900Bin, false),
         ];
         for (code, collation, expected) in rows {
             let field_type = FieldType::new(code).with_collation(collation);
