@@ -64,9 +64,19 @@ pub fn estimate_uniform_equality(stats: UniformEqualityStats) -> RowEstimate {
         // Sampling can leave a positive histogram NDV with no loaded bucket
         // rows. With no modifications, the source uses one less than the
         // smallest TopN value as the conservative estimate.
+        //
+        // `row_count_index.go:374` spells that as
+        // `max(float64(topN.MinCount()-1), 1)`, and `TopN.MinCount()` returns
+        // `uint64` (`cmsketch.go:573`), so the subtraction is UNSIGNED and
+        // wraps. An empty or zero-minimum TopN -- which is exactly the shape
+        // that reaches this branch, since it needs an empty histogram -- makes
+        // Go return `float64(math.MaxUint64)` (~1.8e19), not a small number.
+        // Computing this in `f64` instead would yield 1 and understate the
+        // estimate by nineteen orders of magnitude, so the wrap is reproduced.
         if hist_ndv > 0.0 && stats.modify_count == 0 {
             let min_topn = stats.topn_min_count.unwrap_or(0.0);
-            return RowEstimate::default_est(go_max(min_topn - 1.0, 1.0));
+            let min_topn_minus_one = (min_topn as u64).wrapping_sub(1) as f64;
+            return RowEstimate::default_est(go_max(min_topn_minus_one, 1.0));
         }
 
         // An empty histogram has no non-NULL count; derive it from the
