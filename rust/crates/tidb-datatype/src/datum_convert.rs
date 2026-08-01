@@ -29,7 +29,7 @@ use crate::{
     parse_time_from_decimal, parse_time_from_num, str_to_duration, truncate_float, BinaryJSON,
     BinaryLiteral, BinaryLiteralWidth, Charset, Collation, ConversionFlags, Converted, CoreTime,
     Datum, DatumValueError, Decimal, DurationOrTime, FieldType, FieldTypeCode, MySqlDuration,
-    ScalarConversionError, ScalarConversionEvent, Time, TimeType, VectorFloat32,
+    ScalarConversionError, ScalarConversionEvent, SessionTimeZone, Time, TimeType, VectorFloat32,
     UNSPECIFIED_LENGTH,
 };
 
@@ -47,10 +47,33 @@ impl Datum {
     ///
     /// This is the pure value/event half of Go `Datum.ConvertTo`. Callers own
     /// statement warning/error policy and consume [`Converted::event`].
+    ///
+    /// Go's `Datum.ConvertTo` takes a `types.Context`, which carries a
+    /// LOCATION beside the flags, and hands it to `ParseTime`. This overload
+    /// keeps the zone-free callers unchanged by supplying UTC; a caller that
+    /// owns a session zone must use [`Datum::convert_to_in`], because a
+    /// `TIMESTAMP` target is range-checked in that zone.
     pub fn convert_to(
         &self,
         target: &FieldType,
         flags: ConversionFlags,
+    ) -> Result<Converted<Self>, DatumValueError> {
+        self.convert_to_in(target, flags, &SessionTimeZone::utc())
+    }
+
+    /// Go `Datum.ConvertTo(ctx, target)` with the statement's own
+    /// `ctx.Location()`.
+    ///
+    /// The zone is not decoration: Go's `checkTimestampType` converts a
+    /// `TIMESTAMP` out of `ctx.Location()` into UTC before comparing it
+    /// against `MinTimestamp`/`MaxTimestamp`, so which literals a
+    /// `TIMESTAMP` column admits MOVES with the session zone -- on the write
+    /// path and on the DDL `DEFAULT` path alike.
+    pub fn convert_to_in(
+        &self,
+        target: &FieldType,
+        flags: ConversionFlags,
+        zone: &SessionTimeZone,
     ) -> Result<Converted<Self>, DatumValueError> {
         if self.is_null() || matches!(target.code(), FieldTypeCode::Null) {
             return Ok(exact(Self::Null));
@@ -102,7 +125,7 @@ impl Datum {
             }
             FieldTypeCode::NewDecimal => self.convert_to_decimal_target(target),
             FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
-                self.convert_to_time_target(target, flags)
+                self.convert_to_time_target(target, flags, zone)
             }
             FieldTypeCode::Duration => self.convert_to_duration_target(target),
             FieldTypeCode::Year => self.convert_to_year(flags),
@@ -359,6 +382,7 @@ impl Datum {
         &self,
         target: &FieldType,
         flags: ConversionFlags,
+        zone: &SessionTimeZone,
     ) -> Result<Converted<Self>, DatumValueError> {
         let kind = match target.code() {
             FieldTypeCode::Date => TimeType::Date,
@@ -380,16 +404,21 @@ impl Datum {
         let time = match self {
             Self::Time(value) => {
                 let (converted, adjusted) = value
-                    .convert_kind(kind, zero_in_date, invalid_date, &Utc)
+                    .convert_kind(kind, zero_in_date, invalid_date, zone)
                     .map_err(wrong_value)?;
                 if adjusted {
                     event = Some(ScalarConversionEvent::Truncated);
                 }
-                converted.round_frac(fsp, &Utc).map_err(wrong_value)?
+                converted.round_frac(fsp, zone).map_err(wrong_value)?
             }
             Self::Duration(value) => value
-                .convert_to_time(Utc::now(), kind, zero_in_date, invalid_date)
-                .and_then(|time| time.round_frac(fsp, &Utc))
+                .convert_to_time(
+                    Utc::now().with_timezone(zone),
+                    kind,
+                    zero_in_date,
+                    invalid_date,
+                )
+                .and_then(|time| time.round_frac(fsp, zone))
                 .map_err(wrong_value)?,
             Self::String(value) => {
                 parse_time(
@@ -399,7 +428,7 @@ impl Datum {
                     false,
                     zero_in_date,
                     invalid_date,
-                    &Utc,
+                    zone,
                 )
                 .map_err(wrong_value)?
                 .time
@@ -412,26 +441,26 @@ impl Datum {
                     false,
                     zero_in_date,
                     invalid_date,
-                    &Utc,
+                    zone,
                 )
                 .map_err(wrong_value)?
                 .time
             }
             Self::Int(value) => {
-                parse_time_from_num(*value, kind, fsp, zero_in_date, invalid_date, &Utc)
+                parse_time_from_num(*value, kind, fsp, zero_in_date, invalid_date, zone)
                     .map_err(wrong_value)?
                     .time
             }
             Self::UInt(value) if *value <= i64::MAX as u64 => {
-                parse_time_from_num(*value as i64, kind, fsp, zero_in_date, invalid_date, &Utc)
+                parse_time_from_num(*value as i64, kind, fsp, zero_in_date, invalid_date, zone)
                     .map_err(wrong_value)?
                     .time
             }
             Self::Decimal(value) => {
-                let mut time = parse_time_from_decimal(value, zero_in_date, invalid_date, &Utc)
+                let mut time = parse_time_from_decimal(value, zero_in_date, invalid_date, zone)
                     .map_err(wrong_value)?;
                 time.set_kind(kind);
-                time.round_frac(fsp, &Utc).map_err(wrong_value)?
+                time.round_frac(fsp, zone).map_err(wrong_value)?
             }
             Self::Json(value) => {
                 parse_time(
@@ -441,7 +470,7 @@ impl Datum {
                     false,
                     zero_in_date,
                     invalid_date,
-                    &Utc,
+                    zone,
                 )
                 .map_err(wrong_value)?
                 .time
