@@ -435,11 +435,7 @@ fn a_non_point_predicate_is_covered_by_the_same_timestamp() {
     let error = session
         .execute_write("UPDATE t SET v = v + 5 WHERE v > 0")
         .expect_err("the ranged shape must not publish over the race either");
-    assert_eq!(
-        error.code, ERR_WRITE_CONFLICT,
-        "{}",
-        error.message
-    );
+    assert_eq!(error.code, ERR_WRITE_CONFLICT, "{}", error.message);
 }
 
 /// An `INSERT ... VALUES` DOES read: the duplicate-key check is a read, so the

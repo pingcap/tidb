@@ -180,7 +180,11 @@ impl RealOptimisticTransactionOpener {
                     .to_owned(),
             ));
         }
-        self.open_at(Some(start_ts), planned_mutation_count, planned_aggregate_bytes)
+        self.open_at(
+            Some(start_ts),
+            planned_mutation_count,
+            planned_aggregate_bytes,
+        )
     }
 
     /// Opens a transaction that may only read.

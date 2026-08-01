@@ -76,8 +76,7 @@ pub trait ClusterTransactions: Send + Sync {
     ///
     /// The error is the client-visible one, because a publication TiKV refused
     /// has a code of its own: a lost race is 9007, not a generic failure.
-    fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>)
-        -> Result<(), SqlQueryError>;
+    fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>) -> Result<(), SqlQueryError>;
 
     /// Opens the one transaction an explicit `BEGIN` holds until `COMMIT` or
     /// `ROLLBACK`.
@@ -106,24 +105,6 @@ pub trait OpenClusterTransaction: Send {
     fn rollback(self: Box<Self>) -> Result<(), String>;
 }
 
-/// One autocommit statement's read snapshot, opened at its FIRST read rather
-/// than when the statement starts.
-///
-/// The session driver binds a statement's snapshot before the statement is
-/// planned, because the slot has to be in place before the executor exists.
-/// Opening the real read transaction there spends one PD timestamp
-/// unconditionally -- including for statements that read no cluster row at all
-/// (`SET`, a constant `SELECT`, a statement served entirely from the staged
-/// buffer), and before any plan exists for a timestamp policy to look at.
-/// Deferring the open to the first `get`/`scan` keeps the binding order
-/// exactly as it was while making the timestamp the property of a read, which
-/// is the only thing that needs one.
-///
-/// The deferral changes no read's timestamp: the first read still opens a
-/// fresh transaction, so it is the same "latest committed at the moment the
-/// statement reads" the eager open gave, only moved later inside the same
-/// statement. Nothing between the two points reads through the slot -- the
-/// statement's own execution is what does.
 /// The timestamp one autocommit statement is at: written by the statement's
 /// first read, read back by the statement's publication.
 ///
@@ -154,6 +135,24 @@ impl StatementReadTs {
     }
 }
 
+/// One autocommit statement's read snapshot, opened at its FIRST read rather
+/// than when the statement starts.
+///
+/// The session driver binds a statement's snapshot before the statement is
+/// planned, because the slot has to be in place before the executor exists.
+/// Opening the real read transaction there spends one PD timestamp
+/// unconditionally -- including for statements that read no cluster row at all
+/// (`SET`, a constant `SELECT`, a statement served entirely from the staged
+/// buffer), and before any plan exists for a timestamp policy to look at.
+/// Deferring the open to the first `get`/`scan` keeps the binding order
+/// exactly as it was while making the timestamp the property of a read, which
+/// is the only thing that needs one.
+///
+/// The deferral changes no read's timestamp: the first read still opens a
+/// fresh transaction, so it is the same "latest committed at the moment the
+/// statement reads" the eager open gave, only moved later inside the same
+/// statement. Nothing between the two points reads through the slot -- the
+/// statement's own execution is what does.
 struct DeferredSnapshot {
     transactions: Arc<dyn ClusterTransactions>,
     /// Where the open publishes the statement's timestamp, so the publication
@@ -324,11 +323,7 @@ impl ClusterTransactions for RealClusterTransactions {
             .map_err(|error| error.to_string())
     }
 
-    fn commit(
-        &self,
-        buffer: &MutationBuffer,
-        read_ts: Option<u64>,
-    ) -> Result<(), SqlQueryError> {
+    fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>) -> Result<(), SqlQueryError> {
         commit_staged_buffer(&self.opener, buffer, read_ts, self.timeout)
             .map(|_| ())
             .map_err(sql_error)
