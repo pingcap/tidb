@@ -686,10 +686,26 @@ impl ScalarFunction {
         // aggregated over ALL of them -- so `ci_col IN ('A')` folds case just
         // like `ci_col = 'A'`. Three-valued: a match is 1, no match with a
         // NULL anywhere is NULL, otherwise 0.
+        //
+        // EVERY list item is compared, even once a match has settled the
+        // answer. The comparison is where this tier's string-versus-number
+        // coercion happens, so a skipped comparison is a skipped
+        // `1292 Truncated incorrect DOUBLE value` -- and a skipped error.
+        // Go's vectorized `in`, which is the one real execution runs
+        // (`pkg/expression/builtin_other_vec_generated.go`,
+        // `builtinInRealSig.vecEvalInt`), evaluates `args[j]` -- the
+        // build-time `cast(... as double)` wrapper that IS its coercion --
+        // for every `j` unconditionally, propagates its error with
+        // `return err`, and skips only the comparison of an already-matched
+        // row (`if r64s[i] != 0 { continue }`). The scalar
+        // `builtinInRealSig.evalInt` does `return 1, false, nil` from inside
+        // its loop, but that is the non-vectorized fallback; the warnings a
+        // client sees are the vectorized path's.
         if name == "in" && self.args.len() >= 2 {
             let collation = self.derived_collation();
             let value = self.args[0].eval(ctx, row)?;
             let mut found_null = value.is_null();
+            let mut found_match = false;
             for item in &self.args[1..] {
                 let item = item.eval(ctx, row)?;
                 match crate::ops::eval_binary_full(
@@ -702,10 +718,12 @@ impl ScalarFunction {
                 )? {
                     Datum::Int(0) => {}
                     Datum::Null => found_null = true,
-                    _ => return Ok(Datum::Int(1)),
+                    _ => found_match = true,
                 }
             }
-            return Ok(if found_null {
+            return Ok(if found_match {
+                Datum::Int(1)
+            } else if found_null {
                 Datum::Null
             } else {
                 Datum::Int(0)
