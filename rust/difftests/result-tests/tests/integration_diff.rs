@@ -228,6 +228,15 @@ const TOPICS: &[(&str, &str)] = &[
          on purpose (see `view_column_description` in `tidb_session::show`) \
          and only a recording can hold both halves in place at once",
     ),
+    (
+        "executor/jointest/join",
+        "the suite's join topic, and the largest single block of newly \
+         MEASURABLE statements onboarded here: 793 compared where the topic \
+         previously could not be replayed at all, because its \
+         `tidb_mem_quota_query = 1 << 18` cross join ran forever instead of \
+         raising 8175. It is the only onboarded topic that gates the memory \
+         quota on the READ path",
+    ),
 ];
 
 /// A topic listed twice is replayed twice, and every statement it compares is
@@ -911,7 +920,49 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //   50 divergences of 2389 compared (2339 matched) over 3334 statements
     //
     // where it used to read 2556 / 2506 / 3550.
-    const KNOWN_DIVERGENCES: usize = 50;
+    // # 50 -> 62: `executor/jointest/join` becomes measurable at all
+    //
+    // The topic could not be replayed before: its
+    // `set @@tidb_mem_quota_query = 1 << 18` followed by
+    // `desc analyze select * from t t1, .., t t6` is DELIBERATELY a runaway
+    // cross join expecting `--error 8175`, and this engine's join accounted
+    // none of its materialization, so the replay ran until the OS killed it.
+    // Timed before and after the fix in `executor::join`: over 2 minutes with
+    // no end in sight, then 140ms.
+    //
+    //   before: 50 divergences, this topic contributing 0 of 0 compared
+    //   after:  62 divergences, this topic contributing 12 of 793 compared
+    //
+    // So 793 statements moved from unmeasurable to measured and 781 of them
+    // MATCH. Every one of the 12 is named below; none is a regression in an
+    // already-onboarded topic, and none is in the memory accounting itself.
+    //
+    // 3 -- the RECORDER, not this engine. `select (select /*+ INL_JOIN(x2) */
+    //      ...)` and its INL_HASH/INL_MERGE twins: TiDB's own recording drops
+    //      the `*/` from the derived column NAME (`/*+ INL_JOIN(x2)  x2.a`).
+    //      The row values match; only the recorded label differs, and this
+    //      engine prints the statement text as written.
+    // 4 -- `NATURAL`/`USING` star expansion across THREE tables:
+    //      `t1 join t2 using (a) right join t3`, `(t1 join t2 using (a)) join
+    //      (t3 join t4 using (a))`, and `t1,t2 natural left/right join t3`.
+    //      The coalescing is applied per join node here, so a third table
+    //      either keeps a column TiDB coalesced away or drops one TiDB kept.
+    //      Same class as `driver::from`'s stated per-node `coalesced` seam.
+    // 2 -- a correlated scalar subquery over an EMPTY outer row set:
+    //      `select count(1), (select count(1) from t2 where t2.a > t1.a) from
+    //      t1 where t1.a = 100` -- TiDB reports the correlated column NULL,
+    //      this engine reports 0. The aggregate is right; what is wrong is
+    //      that a scalar subquery with no outer row must be NULL, not the
+    //      aggregate's own empty-set identity.
+    // 2 -- prepared-statement column LABELS: `execute stmt1 using @a` names
+    //      the column `m1.a / 2` where TiDB names it `a / 2`. Values match.
+    // 1 -- an ACCESS PATH: `t1 left outer join t2 on t1.a=t2.a and t1.a!=3`
+    //      gives TiDB `TableRangeScan range:[-inf,3), (3,+inf]` and this
+    //      engine a `TableFullScan`. A `!=` is not turned into its two ranges
+    //      yet -- the ranger seam, not the join.
+    //
+    // 3 + 4 + 2 + 2 + 1 = 12.
+    const KNOWN_DIVERGENCES: usize = 62;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
@@ -1021,9 +1072,17 @@ fn replay_one_topic_from_env() {
 /// per table added, which is the cross product and is order-independent).
 /// The cause was a comma join whose equalities were all in `WHERE`, so no
 /// join node had an `ON` to hash on -- see `driver::predicate_push_down` and
-/// the `many_table_join` tests. The topic's remaining obstacle is its DEBUG
+/// the `many_table_join` tests. The topic's next obstacle was its DEBUG
 /// stack overflow at 21 tables, which `on_deep_stack` covers here and the
 /// survey's child processes do not.
+///
+/// It had a THIRD non-termination after that one, and it is also fixed: the
+/// script sets `tidb_mem_quota_query = 1 << 18` and then runs a six-way self
+/// cross join under `--error 8175` -- a statement TiDB is expected to CANCEL.
+/// This engine's join accounted none of its materialization, so it ran until
+/// the OS killed it (timed here: past 2 minutes with no end, against 140ms
+/// after). `executor::join` now consumes against the statement's budget, and
+/// the topic is ONBOARDED in `TOPICS` rather than merely survivable.
 ///
 /// # Out-of-domain refusal causes, ranked
 ///
