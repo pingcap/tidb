@@ -104,8 +104,12 @@ pub fn decode_command(payload: &[u8]) -> Result<Command, CommandError> {
     let Some((&code, command_payload)) = payload.split_first() else {
         return Err(CommandError::EmptyPayload);
     };
+    // Go's `clientConn.dispatch` trims exactly one trailing NUL for BOTH
+    // COM_QUERY (issue 1989) and COM_STMT_PREPARE (issue 39132); clients that
+    // send a NUL-terminated statement must reach the parser identically on
+    // either command (`pkg/server/conn.go:1543-1546,1571-1574`).
     let command_payload = match code {
-        COM_QUERY => command_payload
+        COM_QUERY | COM_STMT_PREPARE => command_payload
             .strip_suffix(&[0])
             .unwrap_or(command_payload),
         _ => command_payload,
@@ -147,6 +151,16 @@ mod tests {
         assert_eq!(
             decode_command(&[0x02, b't', b'e', b's', b't']),
             Ok(Command::InitDb(b"test".to_vec()))
+        );
+        // Issue 39132: COM_STMT_PREPARE shares COM_QUERY's trailing-NUL trim.
+        assert_eq!(
+            decode_command(&[0x16, b's', b'e', b'l', 0]),
+            Ok(Command::StmtPrepare(b"sel".to_vec()))
+        );
+        // A NUL is only trimmed for the two commands Go trims it for.
+        assert_eq!(
+            decode_command(&[0x02, b'd', b'b', 0]),
+            Ok(Command::InitDb(b"db\0".to_vec()))
         );
         assert_eq!(decode_command(&[0x0e]), Ok(Command::Ping));
         assert_eq!(decode_command(&[0x01]), Ok(Command::Quit));

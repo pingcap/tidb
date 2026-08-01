@@ -112,6 +112,10 @@ const SERVER_CAPABILITIES: u32 = CLIENT_PROTOCOL_41
     | CLIENT_DEPRECATE_EOF;
 const ER_ACCESS_DENIED_ERROR: u16 = 1045;
 const ER_UNKNOWN_COM_ERROR: u16 = 1047;
+/// SQLSTATE `08S01` for [`ER_UNKNOWN_COM_ERROR`]. Go resolves every ERR
+/// packet's state through `mysql.MySQLState` (`pkg/parser/mysql/state.go`),
+/// which maps `ErrUnknownCom` to `08S01`, not the `HY000` default.
+const ER_UNKNOWN_COM_ERROR_STATE: [u8; 5] = *b"08S01";
 /// Go's `mysql.ErrAccountHasBeenLocked` (`pkg/errno/errcode.go`): the login
 /// errno an `ACCOUNT LOCK`'d (or ROLE) account gets, distinct from the
 /// generic access-denied a bad password or unknown user gets.
@@ -738,7 +742,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     &mut output,
                     1,
                     ER_UNKNOWN_COM_ERROR,
-                    *b"HY000",
+                    ER_UNKNOWN_COM_ERROR_STATE,
                     error.to_string(),
                     protocol_41,
                 )?;
@@ -1453,7 +1457,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 &mut output,
                 1,
                 ER_UNKNOWN_COM_ERROR,
-                *b"HY000",
+                ER_UNKNOWN_COM_ERROR_STATE,
                 "command is not supported by the read-only Rust SQL node",
                 protocol_41,
             )?,
