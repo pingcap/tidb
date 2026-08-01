@@ -246,7 +246,7 @@ use tidb_model::table_info::TableInfo;
 /// which columns" and "handle columns recorded on a non-clustered table"
 /// unrepresentable, which is exactly the shape the `NONCLUSTERED` bug had.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TableHandle {
+pub(crate) enum HandleKind {
     /// No clustered primary key: the table gets an implicit `_tidb_rowid`
     /// handle, and a primary key, if declared, is an ordinary unique index.
     RowId,
@@ -258,7 +258,7 @@ pub(crate) enum TableHandle {
     CommonHandle(Vec<usize>),
 }
 
-impl TableHandle {
+impl HandleKind {
     /// Go `ShouldBuildClusteredIndex` plus the `isSingleIntPK` split that
     /// follows it in `BuildTableInfo` (`pkg/ddl/create_table.go`).
     ///
@@ -659,7 +659,7 @@ pub fn run_create_table_in(
     // below -- the stored `TableInfo`, the row encoder's handle columns, the
     // index builder, the foreign-key cover test, the partition builder --
     // reads this value rather than re-deriving the rule.
-    let handle = TableHandle::decide(
+    let handle = HandleKind::decide(
         clustered_index_mode,
         primary_key.as_ref().and_then(|declared| declared.storage),
         &pk_offsets,
@@ -802,9 +802,9 @@ pub fn run_create_table_in(
     table.set_name(name);
     table.set_charset(table_charset);
     match &handle {
-        TableHandle::RowId => {}
-        TableHandle::IntHandle(offset) => table.set_pk_handle_offset(*offset),
-        TableHandle::CommonHandle(offsets) => table.set_common_handle_offsets(offsets.clone()),
+        HandleKind::RowId => {}
+        HandleKind::IntHandle(offset) => table.set_pk_handle_offset(*offset),
+        HandleKind::CommonHandle(offsets) => table.set_common_handle_offsets(offsets.clone()),
     }
     let clustered = handle.is_clustered();
     if let Some(offset) = auto_increment_offset {

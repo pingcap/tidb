@@ -136,9 +136,15 @@ fn unsupported_constraints_are_rejected() {
     }
 }
 
-/// A non-integer primary key is not a handle -- Go only sets PKIsHandle
-/// for a single integer column -- so the table keeps allocating row ids
-/// and enforces the key through a unique index instead.
+/// A non-integer primary key never sets `PKIsHandle` -- Go reserves that for
+/// a single integer column -- so the key value does not address the row
+/// directly, and a repeat is caught on the way in either way.
+///
+/// Under this tier's stock `@@tidb_enable_clustered_index = ON` the key is a
+/// clustered COMMON handle rather than a `_tidb_rowid` table with a unique
+/// index; `clustered_common_handle` below pins that layout, and
+/// `the_clustered_index_mode_decides_the_handle` pins when each applies.
+/// What this test asserts holds for both.
 #[test]
 fn a_non_integer_primary_key_is_enforced_by_its_index() {
     let mut catalog = Catalog::default();
@@ -473,9 +479,10 @@ fn has_primary_index(catalog: &Catalog, name: &str) -> bool {
 /// is deprecated, and `vardef.DefTiDBEnableClusteredIndex` is
 /// `ClusteredIndexDefModeOn`.
 ///
-/// UNRUN on this machine: nothing compiled here can be executed today (see
-/// the module note in `ddl.rs`'s `TableHandle`). The expectations are read
-/// off the Go source cited above, not off a run.
+/// UNRUN when written: no freshly compiled binary could be executed on the
+/// machine this landed from, so every expectation below is read off the Go
+/// source cited above rather than off a run. They are ordinary tests and the
+/// next runnable gate executes them with everything else.
 #[test]
 fn the_clustered_index_mode_decides_the_handle() {
     use tidb_vardef::modes::ClusteredIndexDefMode as Mode;
@@ -566,7 +573,7 @@ fn the_clustered_index_mode_decides_the_handle() {
 /// ast.PrimaryKeyTypeClustered` for ANY explicit clause, without consulting
 /// the mode or the column type (`pkg/ddl/create_table.go:1765`).
 ///
-/// UNRUN on this machine.
+/// UNRUN when written; see `the_clustered_index_mode_decides_the_handle`.
 #[test]
 fn an_explicit_clause_overrides_the_variable() {
     use tidb_vardef::modes::ClusteredIndexDefMode as Mode;
@@ -629,7 +636,7 @@ fn an_explicit_clause_overrides_the_variable() {
 /// (`pkg/util/dbterror/ddl_terror.go:383`) -- for the keyword on any
 /// constraint that is not the primary key. It is a REFUSAL, not a warning.
 ///
-/// UNRUN on this machine.
+/// UNRUN when written; see `the_clustered_index_mode_decides_the_handle`.
 #[test]
 fn the_keyword_is_refused_on_a_secondary_key() {
     use tidb_vardef::modes::ClusteredIndexDefMode as Mode;
