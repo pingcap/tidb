@@ -437,3 +437,68 @@ fn a_failed_create_index_leaves_no_orphan_hidden_column() {
     );
     session.run("INSERT INTO u VALUES ('cd')").unwrap();
 }
+
+/// CAPTURED from TiDB: with `INDEX idx((a+b))`, dropping either column the
+/// expression reads is 3837 `Column 'a' has an expression index dependency
+/// and cannot be dropped or renamed`.
+///
+/// Before this check the drop SUCCEEDED, leaving the index's hidden generated
+/// column reading a column that no longer existed -- so the regression this
+/// guards is a corrupt table, not a missing message.
+#[test]
+fn a_column_an_expression_index_reads_cannot_be_dropped() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE fi (a INT, b INT, INDEX idx((a+b)))")
+        .unwrap();
+    for column in ["a", "b"] {
+        let error = session
+            .run(&format!("ALTER TABLE fi DROP COLUMN {column}"))
+            .expect_err("the drop must be refused")
+            .to_mysql_error();
+        assert_eq!(error.code, 3837);
+        assert_eq!(
+            error.message,
+            format!(
+                "Column '{column}' has an expression index dependency and cannot be dropped or \
+                 renamed"
+            )
+        );
+    }
+    // A column the expression does NOT read still drops.
+    session
+        .run("CREATE TABLE fi2 (a INT, b INT, c INT, INDEX idx((a+b)))")
+        .unwrap();
+    session.run("ALTER TABLE fi2 DROP COLUMN c").unwrap();
+}
+
+/// CAPTURED from TiDB: a rename orphans the hidden column exactly as a drop
+/// does, and reports the same 3837 -- but only AFTER the same-name early
+/// return, `_tidb_rowid` (1166) and the duplicate name (1060), which is the
+/// order the three probes below assert.
+#[test]
+fn a_column_an_expression_index_reads_cannot_be_renamed() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE fr (a INT, b INT, INDEX idx((a+b)))")
+        .unwrap();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE fr RENAME COLUMN a TO z"),
+        Some(3837)
+    );
+    // Renaming a column to its own name is a no-op before any check.
+    session.run("ALTER TABLE fr RENAME COLUMN a TO a").unwrap();
+    // The duplicate-name and `_tidb_rowid` checks are captured as running
+    // FIRST, so they keep their codes even on a depended-on column.
+    assert_eq!(
+        code(&mut session, "ALTER TABLE fr RENAME COLUMN a TO b"),
+        Some(1060)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE fr RENAME COLUMN a TO _tidb_rowid"
+        ),
+        Some(1166)
+    );
+}

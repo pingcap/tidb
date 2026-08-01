@@ -1193,6 +1193,15 @@ fn drop_column_action(
             table: table_name.to_owned(),
         });
     }
+    // CAPTURED from TiDB: with `index idx((a+b))`, `drop column a` is 3837
+    // `Column 'a' has an expression index dependency and cannot be dropped or
+    // renamed`. Without this the drop succeeded and left the index's hidden
+    // generated column reading a column that no longer exists.
+    if table.expression_index_depends_on(offset) {
+        return Err(DriverError::DependentByFunctionalIndex(
+            column_name.to_owned(),
+        ));
+    }
     // Captured: dropping an integer primary key is TiDB's 8200.
     if table.pk_handle_offset() == Some(offset) {
         return Err(DriverError::UnsupportedDropIntegerPrimaryKey);

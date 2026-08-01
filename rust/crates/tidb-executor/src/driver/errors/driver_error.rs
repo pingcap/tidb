@@ -20,7 +20,19 @@ use crate::executor::ExecError;
 pub enum DriverError {
     /// The SQL failed to parse.
     Parse(String),
-    /// The statement is not a supported `FROM`-less `SELECT`.
+    /// The general refusal: this tier does not implement what the statement
+    /// asked for, and the carried text says which part.
+    ///
+    /// It is raised from every layer -- an `EXPLAIN` format name, a catalog
+    /// object kind, an unported `ALTER TABLE` action, an operator with no
+    /// executor -- and is by far the most-constructed variant here. The
+    /// doc it replaces said "not a supported `FROM`-less `SELECT`", which
+    /// described the driver when a `FROM` clause was the frontier; it has not
+    /// been true for any of the hundreds of sites since.
+    ///
+    /// Everything it refuses reaches the client as Go's catch-all 1105, so
+    /// the carried text IS the whole diagnostic. Say what was refused, not
+    /// that something was.
     Unsupported(&'static str),
     /// Like [`Self::Unsupported`], but the message names the specific
     /// statement/AST kind the refusal saw -- built at the refusal site from
@@ -577,11 +589,6 @@ pub enum DriverError {
     /// Go's plain `DELETE` refusal for a sequence. Captured:
     /// `delete from s1` reports `delete sequence s1 is not supported now`.
     DeleteSequenceUnsupported(String),
-    /// Go `table.ErrSequenceHasRunOut` (4135): `NEXTVAL` has nothing left and
-    /// the sequence does not `CYCLE`. The string is the qualified name.
-    /// Captured: `Sequence 'test.s4' has run out`. NOTE this is a DIFFERENT
-    /// error from the auto-increment allocator's 1467.
-    SequenceHasRunOut(String),
     /// Go `plannererrors.ErrNonUpdatableTable` (1288), which is what an
     /// `UPDATE` through a view reports.
     TableNotUpdatable(String),

@@ -99,6 +99,15 @@ pub(crate) fn rename_column_action(
     {
         return Err(DriverError::DuplicateColumnName(to.to_owned()));
     }
+    // CAPTURED from TiDB: with `index idx((a+b))`, `rename column a to z` is
+    // the same 3837 a drop is -- the index's hidden generated column reads the
+    // column, so a rename orphans it exactly as a drop does. It is checked
+    // LAST of the three, after the same-name early return (so
+    // `rename column a to a` still succeeds), after `_tidb_rowid` (1166) and
+    // after the duplicate name (1060) -- captured in that order.
+    if table.expression_index_depends_on(offset) {
+        return Err(DriverError::DependentByFunctionalIndex(from.to_owned()));
+    }
     table.columns[offset].name = to.to_owned();
     Ok(())
 }

@@ -1058,6 +1058,21 @@ impl KvTable {
         offset >= self.visible_column_count()
     }
 
+    /// Whether an expression index reads the column at `offset`.
+    ///
+    /// An expression index is stored as a HIDDEN generated column plus an
+    /// index over it, so the index's dependence on a user column is that
+    /// hidden column's dependence. Dropping or renaming the user column would
+    /// leave the generation expression reading a column that is gone, which is
+    /// why Go refuses both with `ErrDependentByFunctionalIndex` (3837).
+    #[must_use]
+    pub fn expression_index_depends_on(&self, offset: usize) -> bool {
+        self.columns[self.visible_column_count()..]
+            .iter()
+            .filter_map(|column| column.generated.as_ref())
+            .any(|generated| generated.dependencies.contains(&offset))
+    }
+
     /// Appends a hidden column -- the one an expression index key part is
     /// rewritten into -- and returns its offset.
     ///

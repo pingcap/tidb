@@ -6,8 +6,23 @@ it. A refusal nothing pins can silently turn into an acceptance. This document i
 the measurement of which of those promises are actually held to.
 
 Scope: the ten dedicated refusal enums, 78 variants total, as of the census run.
-`DriverError`'s six `Unsupported*` variants are a different shape (they share an
-error enum with non-refusal variants) and are out of scope here.
+
+**What this census does NOT cover, stated plainly.** Every number below — the 78,
+the 51 pinned, and above all the *16 unreachable* — is a count inside those ten
+enums only. It is not the port's unreachable-refusal total, and reading it as one
+is the mistake this paragraph exists to prevent. `DriverError`, the driver's own
+156-variant error enum, was never surveyed by the original run: not its six
+`Unsupported*` variants and not the 150 others, several of which are refusals in
+everything but the name (`CannotDropColumnWithCompositeIndex`,
+`UnsupportedDropIntegerPrimaryKey`, `UnsafeFunctionInExpressionIndex`, ...). Two
+`DriverError` variants with no producer at all were found later, by a reader
+passing through `to_mysql_error` rather than by this census, and neither was in
+the 16.
+
+`DriverError` has since had a producer sweep of its own — see below — but the
+method there is the cheap one (does a production path construct it?), not this
+document's full reachable/pinned analysis. Treat the two as separate
+measurements.
 
 ## Method
 
@@ -134,3 +149,39 @@ did not get a set guard. Both are small, both already have per-variant
 behavioural pins covering four of their five variants, and neither sits on a
 tier boundary where a widening changes what reaches storage. They are the
 cheapest remaining pins if that judgement turns out to be wrong.
+
+## `DriverError`: the producer sweep the census above never ran
+
+`DriverError` is the driver's single failure type, and `to_mysql_error` renders
+all 156 of its variants with NO wildcard arm — which is the only reason the two
+findings below were visible at all. A variant nothing constructs still has a
+rendering arm, so it reads exactly like a live one.
+
+Two variants had a rendering arm and no producer anywhere in the workspace, and
+they turned out to be opposite cases. Telling them apart is the whole point of
+doing this by reading rather than by counting:
+
+- `SequenceHasRunOut` was **dead**: a duplicate. Sequence exhaustion is
+  implemented and does reach the client as 4135, through
+  `EvalError::Sequence(SequenceEvalError::RunOut)` raised in `StmtContext`. The
+  driver variant was a second spelling of an error the eval path already owned.
+  Deleted.
+- `DependentByFunctionalIndex` was a **missing feature**, and deleting it would
+  have hidden a data-integrity bug. An expression index is stored as a hidden
+  generated column plus an index over it; `ALTER TABLE ... DROP COLUMN` and
+  `RENAME COLUMN` had no check for that dependence, so both SUCCEEDED and left
+  the hidden column's expression reading a column that was gone. TiDB refuses
+  both with 3837. The check was wired in (`KvTable::expression_index_depends_on`)
+  and pinned by two tests in `tests_expression_indexes.rs`.
+
+After those two, a mechanical producer sweep over all 156 variants — stripping
+`#[cfg(test)]` regions and test files, and discounting `to_mysql_error`'s own
+consuming arms — finds **no variant without a production producer**. The three
+that look producerless to a grep (`MemoryExceedForQuery`, `JsonDocumentNullKey`,
+`InvalidJsonCharset`) are built by `From<ExecError>` in the same module as their
+rendering arms.
+
+Not measured here: whether each `DriverError` refusal is *pinned*, in this
+document's sense of a test that would fail if the refusal flipped to an
+acceptance. That is the analysis the ten enums above got and `DriverError` has
+not.

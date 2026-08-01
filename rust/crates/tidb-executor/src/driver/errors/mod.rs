@@ -22,6 +22,7 @@
 use crate::executor::ExecError;
 
 mod driver_error;
+mod exec;
 mod schema;
 mod txn;
 mod var;
@@ -110,44 +111,8 @@ impl DriverError {
         ),
         DriverError::Unsupported(message) => MysqlError::unknown(message),
         DriverError::UnsupportedKind(message) => MysqlError::unknown(message),
-        // The `json` error class carries TiDB's own code (3140 malformed
-        // document, 3143 malformed path, ...), which applications branch on.
-        // Every other eval error is still a porting boundary, not SQL-visible
-        // behavior, so it stays the generic unknown-error code.
-        // Every eval error that carries a MySQL code of its own reports it:
-        // the `json` class (3140 malformed document, 3143 malformed path, ...),
-        // which applications branch on, and the collation class (1267/1271
-        // illegal mix, 1253 collation/charset mismatch, 1273 unknown
-        // collation), which is how a user learns a query needs an explicit
-        // `COLLATE`. Every other eval error is still a porting boundary, not
-        // SQL-visible behavior, so it stays the generic unknown-error code.
-        DriverError::Exec(ExecError::Eval(ref error))
-            if error.mysql_code().is_some() =>
-        {
-            MysqlError::new(
-                error.mysql_code().unwrap_or_default(),
-                *b"HY000",
-                error.mysql_message().unwrap_or_default(),
-            )
-        }
-        // CAPTURED from TiDB (mock store, `pkg/executor` testkit) -- what the
-        // three overflow eval errors below actually send, none of which is the
-        // generic unknown-error code this arm gives them:
-        //
-        //   select 9223372036854775807 + 1
-        //     1690 / 22003 / BIGINT value is out of range in '(9223372036854775807 + 1)'
-        //   select 18446744073709551615 + 1
-        //     1690 / 22003 / BIGINT UNSIGNED value is out of range in '(18446744073709551615 + 1)'
-        //   select 1e308 * 10
-        //     1690 / 22003 / DOUBLE value is out of range in '(1e+308 * 10)'
-        //   select exp(1000)
-        //     1690 / 22003 / DOUBLE value is out of range in 'exp(1000)'
-        //   select <65-digit> * <65-digit>
-        //     1690 / 22003 / DECIMAL value is out of range in '(<65-digit> * <65-digit>)'
-        //
-        // The trailing `in '<expr>'` is the statement's rendered expression,
-        // which no `EvalError` carries.
-        DriverError::Exec(error) => MysqlError::unknown(format!("{error:?}")),
+        // Every execution and evaluation failure, one arm each, in `exec`.
+        DriverError::Exec(error) => exec::to_mysql_error(error),
         DriverError::Txn(crate::TxnErrorKind::WriteConflict) => {
             MysqlError::new(
                 ER_WRITE_CONFLICT,
@@ -566,11 +531,6 @@ impl DriverError {
                 format!("Sequence '{name}' values are conflicting"),
             )
         }
-        DriverError::SequenceHasRunOut(name) => MysqlError::new(
-            4135,
-            *b"HY000",
-            format!("Sequence '{name}' has run out"),
-        ),
         // Go: "'%-.192s.%-.192s' is not %s".
         DriverError::Schema(crate::SchemaErrorKind::WrongObject { name, expected }) => {
             MysqlError::new(1347, *b"HY000", format!("'{name}' is not {expected}"))
