@@ -235,7 +235,12 @@ fn string_compare(op: ScanComparisonOp, literal: &[u8], column_on_left: bool) ->
         column_offset: 0,
         column_type: FieldType::new(FieldTypeCode::Varchar),
         op,
-        literal: Datum::Bytes(literal.to_vec()),
+        // A parsed SQL string literal is Go's `KindString`, which is the kind
+        // `constantToPBExpr` sends as `ExprType_String`.
+        literal: Datum::String(tidb_datatype::StringDatum::new(
+            literal.to_vec(),
+            tidb_datatype::Collation::Utf8Mb4Bin,
+        )),
         column_on_left,
     })
 }

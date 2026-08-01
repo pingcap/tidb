@@ -303,9 +303,14 @@ fn string_comparison(
     column: &ScanColumnInfo,
 ) -> Result<Expr, WideScanSelectionError> {
     let offset = comparison.column_offset;
-    let Datum::Bytes(literal) = &comparison.literal else {
+    // Only a character string. Go's `constantToPBExpr` splits `KindString`
+    // (`ExprType_String`) from `KindBytes` (`ExprType_Bytes`), and only the
+    // former is a leaf this path builds; a `Datum::Bytes` constant is refused
+    // rather than sent under the other kind's tag.
+    let Datum::String(literal) = &comparison.literal else {
         return Err(WideScanSelectionError::UnsupportedLiteral { offset });
     };
+    let literal = literal.bytes();
     // The scan descriptor states the collation as the PROTOCOL id and states
     // no charset at all; both are recovered from that one id, exactly as the
     // builtin path does, so the operand and the column the coprocessor was
@@ -323,7 +328,7 @@ fn string_comparison(
         charset,
         collation,
     };
-    let constant = StringPbOperand::Literal(literal.clone());
+    let constant = StringPbOperand::Literal(literal.to_vec());
     let (lhs, rhs) = if comparison.column_on_left {
         (column_operand, constant)
     } else {
