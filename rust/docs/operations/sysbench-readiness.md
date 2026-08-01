@@ -371,6 +371,130 @@ and the remaining divergence is an error surface: **we refuse where Go retries**
 That is a correctness improvement with a visible cost, and the retry is the next
 piece of work, not part of this one.
 
+#### What Go's internal retry actually is, read from the source
+
+The retry Go performs is the **optimistic commit retry**, and every number in it
+is in the Go, not inferred.
+
+**Which mode an autocommit `UPDATE` is even in.** `@@tidb_txn_mode` defaults to
+`pessimistic` (`pkg/sessionctx/vardef/tidb_vars.go:1557`), which would send the
+statement down `handlePessimisticDML`. It does not, because autocommit DML is
+carved back out to optimistic unless a config says otherwise:
+
+```go
+// pkg/session/session.go:4926-4939
+if s.sessionVars.TxnMode != ast.Pessimistic { return ast.Optimistic }
+if !s.sessionVars.IsAutocommit()           { return s.sessionVars.TxnMode }
+if stmt != nil && s.shouldUsePessimisticAutoCommit(stmt) { return ast.Pessimistic }
+return ast.Optimistic
+```
+
+```go
+// pkg/session/session.go:4944-4946
+// Check if pessimistic-auto-commit is enabled globally
+if !config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+	return false
+```
+
+and `PessimisticAutoCommit` defaults to **false** on the classic kernel
+(`pkg/config/config.go:1024-1032`) — which is exactly what the measured cluster
+reported. So the contended autocommit `UPDATE` is an **optimistic** transaction,
+and the pessimistic statement-retry path (`pkg/executor/adapter.go:1399-1436`,
+bounded by `config.PessimisticTxn.MaxRetryCount` = **256**, exhausting with the
+non-9007 `errors.New("pessimistic lock retry limit reached")`) is **not** the
+mechanism here. Conflating the two would have produced the wrong fix.
+
+**Where the conflict is caught.**
+
+```go
+// pkg/session/session.go:867-883
+commitRetryLimit := s.sessionVars.RetryLimit
+if !s.sessionVars.TxnCtx.CouldRetry {
+	commitRetryLimit = 0
+}
+...
+if s.isTxnRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 && !isPessimistic && !isPipelined {
+	...
+	txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit.Load())
+	maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
+	err = s.retry(ctx, uint(maxRetryCount))
+```
+
+`isTxnRetryableError` is `kv.IsTxnRetryableError` (`pkg/session/session.go:1123`),
+and that admits the write conflict by name:
+
+```go
+// pkg/kv/error.go:85
+if ErrTxnRetryable.Equal(err) || ErrWriteConflict.Equal(err) || ErrWriteConflictInTiDB.Equal(err) {
+```
+
+**The limit.** `@@tidb_retry_limit`, default **10**
+(`pkg/sessionctx/vardef/tidb_vars.go:1527`), scaled DOWN by transaction size:
+`maxRetryCount = 10 - 9 * (txnSize / TxnTotalSizeLimit)`, with
+`TxnTotalSizeLimit` = 100 MiB (`pkg/config/config.go:65`). A one-row `UPDATE` is
+~0 of that, so **10** attempts after the first.
+
+**The backoff.** `kv.BackOff(retryCnt)` (`pkg/session/session.go:1284`):
+
+```go
+// pkg/kv/txn.go:191-197
+func BackOff(attempts uint) int {
+	upper := int(math.Min(float64(retryBackOffCap), float64(retryBackOffBase)*math.Pow(2.0, float64(attempts))))
+	sleep := time.Duration(rand.Intn(upper)) * time.Millisecond
+```
+
+with `retryBackOffBase = 1`, `retryBackOffCap = 100` (`pkg/kv/txn.go:182-186`).
+The comments say "microsecond" and the code multiplies by `time.Millisecond`;
+the CODE is the contract. So: uniform random in `[0, min(100, 2^n))`
+**milliseconds**, exponential with full jitter, first sleep drawn from `[0,2)ms`
+because `retryCnt` is incremented before the sleep.
+
+**Exhaustion is bounded and reports the conflict.** It is not an unbounded loop:
+
+```go
+// pkg/session/session.go:1272-1279
+retryCnt++
+if retryCnt >= maxCnt {
+	logutil.Logger(ctx).Warn("sql", ..., zap.Uint("retry reached max count", retryCnt))
+	metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax).Inc()
+	return err
+}
+```
+
+`err` there is the last commit error, i.e. the client still gets **9007** after
+11 total attempts. A non-retryable error returns immediately
+(`session.go:1264-1270`). So the contract we must match is *bounded retry, then
+the same refusal we give today* — not "never refuses".
+
+**The `tidb_disable_txn_auto_retry` trap, answered.** That variable defaults to
+`true` (`pkg/sessionctx/vardef/tidb_vars.go:1528`), and Go still retries here,
+because the autocommit case returns **before** the variable is ever consulted:
+
+```go
+// pkg/sessiontxn/isolation/optimistic.go:80-103
+if sessVars.RetryLimit == 0 { return false }
+if sessVars.SnapshotTS != 0 { return false }
+// If the session is not InTxn, it is an auto-committed transaction.
+// The auto-committed transaction could always retry.
+if !sessVars.InTxn() { return true }
+if sessVars.InRestrictedSQL { return true }
+// If the retry is enabled, the transaction could retry.
+if !sessVars.DisableTxnAutoRetry { return true }
+return false
+```
+
+`tidb_disable_txn_auto_retry` governs **multi-statement** transactions only — the
+case where replaying history at a new timestamp can silently change what the
+user's earlier statements read. A single autocommit statement has no history to
+falsify, so it is retried unconditionally. Two different mechanisms; only the
+`!InTxn()` line is ours to port.
+
+**And the retry re-reads.** `s.retry` calls `s.PrepareTxnCtx(ctx, nil)` at the
+top of every attempt (`pkg/session/session.go:1194`) and re-executes
+`st.Exec(ctx)` (`session.go:1241`) — a NEW transaction, a NEW start timestamp,
+the statement's rows re-read. It does not resubmit the old buffer at the old
+`start_ts`; doing that would be the lost update again.
+
 #### The rarer refusal, task #168: a real pessimistic lock, not a misdecode
 
 `ERROR 1105 ... invalid Prewrite lock observation: pessimistic lock type 5 is
