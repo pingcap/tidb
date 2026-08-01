@@ -186,6 +186,48 @@ fn start_server() -> (String, tokio::sync::oneshot::Sender<()>) {
     panic!("mock PD did not accept connections");
 }
 
+/// Drives the same loopback PD over one raw tonic TSO stream from the calling
+/// thread's own runtime, with no worker-thread hop and no retry wrapper. This
+/// is the gRPC-over-loopback floor the client architecture is layered on.
+fn direct(endpoint: &str, calls: usize) -> Duration {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async move {
+        let mut client = pdpb::pd_client::PdClient::connect(endpoint.to_owned())
+            .await
+            .unwrap();
+        let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let request = pdpb::TsoRequest {
+            header: Some(pdpb::RequestHeader {
+                cluster_id: CLUSTER_ID,
+                ..pdpb::RequestHeader::default()
+            }),
+            count: 1,
+            dc_location: String::new(),
+        };
+        requests.send(request.clone()).await.unwrap();
+        let mut responses = client
+            .tso(ReceiverStream::new(receiver))
+            .await
+            .unwrap()
+            .into_inner();
+        responses.message().await.unwrap().unwrap();
+        for _ in 0..200 {
+            requests.send(request.clone()).await.unwrap();
+            responses.message().await.unwrap().unwrap();
+        }
+        let start = Instant::now();
+        for _ in 0..calls {
+            requests.send(request.clone()).await.unwrap();
+            responses.message().await.unwrap().unwrap();
+        }
+        start.elapsed()
+    })
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let calls: usize = args
@@ -198,6 +240,14 @@ fn main() {
         .unwrap_or(1);
 
     let (endpoint, shutdown) = start_server();
+    if args.next().as_deref() == Some("direct") {
+        let elapsed = direct(&endpoint, calls);
+        #[allow(clippy::cast_precision_loss)]
+        let per_call = elapsed.as_secs_f64() * 1e6 / calls as f64;
+        println!("direct calls={calls} elapsed={elapsed:?} per_call={per_call:.3}us");
+        let _ = shutdown.send(());
+        return;
+    }
     let client = Arc::new(PdClient::connect(&endpoint, Duration::from_secs(5)).unwrap());
 
     // Warm the stream and the channel caches.
