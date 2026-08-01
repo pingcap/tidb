@@ -530,6 +530,14 @@ fn compare(
 ///   `blob` holding `'gO'` and `'W'` DIVERGES IN THE OTHER DIRECTION: TiDB
 ///   raises FOUR (`'W'`, `'W'`, `'gO'`, `'gO'`), this engine only the two for
 ///   `'gO'`. It is the one place in the 18 where TiDB says more than we do.
+///   FIXED: `IN` no longer stops its probe at the first match, because the
+///   coercion the remaining values would run is observable -- see
+///   `tidb_session::tests_in_list_full_evaluation`. The COUNT should now be
+///   four here. The ORDER should still differ: TiDB's `'W'`, `'W'`, `'gO'`,
+///   `'gO'` is the vectorized loop's args-outer/rows-inner grouping, while
+///   this engine evaluates row-at-a-time and interleaves the values. Nothing
+///   in this suite compares warning order, so the survey line is where that
+///   residual is visible.
 ///
 /// It is OFF by default, and that is not tidiness. Turning it on moved the
 /// divergence count from 64 to 66: the two `select @@last_plan_from_cache`

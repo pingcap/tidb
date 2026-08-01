@@ -75,6 +75,30 @@
 //! `buildHashMapForConstArgs` (:212-262) also evaluates every `ConstStrict`
 //! element unconditionally, because a hash set has to be fully populated.
 //! Both of Go's eager paths agree: evaluate everything.
+//!
+//! # The ordering that identifies the mechanism
+//!
+//! The survey banked TiDB's four in the order `'W'`, `'W'`, `'gO'`, `'gO'`
+//! (`rust/difftests/result-tests/tests/integration_diff.rs`,
+//! `survey_unwatched_warning`). All of one value, then all of the other, is
+//! args-outer/rows-inner -- exactly the vectorized loop above. A row-at-a-time
+//! probe would interleave them. So the four are not the scalar `evalInt`
+//! being run twice; they are one vectorized call over a two-row batch with a
+//! two-element list, and the scalar path's `return 1` never entered into it.
+//!
+//! # What else the same shortcut swallowed
+//!
+//! The warning is where this became visible, not the extent of it. The
+//! comparison this tier skipped is `tidb_expr::ops::eval_binary_full`, which
+//! can also return `EvalError::UnsupportedOperandPair` (a `Raw` or
+//! `VectorFloat32` operand, `ops.rs`:273) and
+//! `EvalError::Unsupported` (a JSON operand under a non-comparison operator,
+//! :228; a string operand no numeric rule claims, :367) -- statement ERRORS,
+//! not warnings. A list item that raised one of those after an earlier item
+//! matched used to be skipped entirely, so a statement that must fail
+//! returned rows instead. Go returns that error from the vectorized loop
+//! (`if err := args[j].VecEvalReal(...); err != nil { return err }`) for the
+//! whole batch, matched rows included.
 
 use super::Session;
 use crate::tests_support::row_text;
@@ -101,8 +125,18 @@ fn warning_texts(session: &Session) -> Vec<String> {
         .collect()
 }
 
-/// The reported statement: four warnings, one per (outer row, list value)
-/// pair, because `'W'` is coerced even after `'gO'` has already matched.
+/// The reported statement: four warnings, two per value, because `'W'` is
+/// coerced even after `'gO'` has already matched.
+///
+/// ORDER IS DELIBERATELY NOT ASSERTED. The survey recorded TiDB's four as
+/// `'W'`, `'W'`, `'gO'`, `'gO'` -- all of one value, then all of the other.
+/// That grouping is the vectorized loop's shape, args outer and rows inner
+/// (`for j := range args { ... for i := 0; i < n; i++ {`), and it is the
+/// strongest evidence that the vectorized `in` is what produced the four: a
+/// row-at-a-time nested loop would interleave them. This engine evaluates
+/// row-at-a-time, so it emits the values interleaved. Matching TiDB's ORDER
+/// would take a vectorized `in`, which is a different change; matching its
+/// COUNT is what the missing coercions were.
 ///
 /// UNRUN: written on a machine that cannot execute a freshly built binary.
 #[test]
@@ -114,16 +148,17 @@ fn in_subquery_probe_coerces_every_value_not_just_up_to_the_match() {
         vec![vec!["674F".to_owned()], vec!["57".to_owned()]],
         "{sql}"
     );
-    let texts = warning_texts(&session);
+    let mut texts = warning_texts(&session);
+    texts.sort();
     assert_eq!(
         texts,
         vec![
-            "1292 Truncated incorrect DOUBLE value: 'gO'".to_owned(),
+            "1292 Truncated incorrect DOUBLE value: 'W'".to_owned(),
             "1292 Truncated incorrect DOUBLE value: 'W'".to_owned(),
             "1292 Truncated incorrect DOUBLE value: 'gO'".to_owned(),
-            "1292 Truncated incorrect DOUBLE value: 'W'".to_owned(),
+            "1292 Truncated incorrect DOUBLE value: 'gO'".to_owned(),
         ],
-        "TiDB records four; two means the probe stopped at the first match"
+        "TiDB records four, two per value; two means the probe stopped at the first match"
     );
     // The second channel. `SHOW WARNINGS` and the OK/EOF count are genuinely
     // independent here -- a fix validated through one alone is how a warning
@@ -135,7 +170,8 @@ fn in_subquery_probe_coerces_every_value_not_just_up_to_the_match() {
     );
 }
 
-/// `SHOW WARNINGS` is the other channel, read as rows.
+/// `SHOW WARNINGS` is the other channel, read as rows: four rows, two per
+/// value, order not asserted for the reason above.
 ///
 /// UNRUN.
 #[test]
@@ -143,13 +179,15 @@ fn in_subquery_probe_show_warnings_lists_all_four() {
     let mut session = blob_session();
     let sql = "select hex(t0.c1) from t0 where 0 in (select t0.c1 from t0)";
     let _ = session.run(sql);
+    let mut rows = row_text(session.run("show warnings"));
+    rows.sort();
     assert_eq!(
-        row_text(session.run("show warnings")),
+        rows,
         vec![
             vec![
                 "Warning".to_owned(),
                 "1292".to_owned(),
-                "Truncated incorrect DOUBLE value: 'gO'".to_owned()
+                "Truncated incorrect DOUBLE value: 'W'".to_owned()
             ],
             vec![
                 "Warning".to_owned(),
@@ -164,7 +202,7 @@ fn in_subquery_probe_show_warnings_lists_all_four() {
             vec![
                 "Warning".to_owned(),
                 "1292".to_owned(),
-                "Truncated incorrect DOUBLE value: 'W'".to_owned()
+                "Truncated incorrect DOUBLE value: 'gO'".to_owned()
             ],
         ]
     );
