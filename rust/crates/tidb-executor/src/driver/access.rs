@@ -317,7 +317,7 @@ pub(crate) fn negotiate_scan_filter(
 ) -> Option<tidb_ast::Expr> {
     match (&select.where_clause, scope.tables.len()) {
         (Some(predicate), 1) => {
-            let (pushed, residual) = split_scan_predicates(predicate, &scope_resolver(scope));
+            let (pushed, residual) = split_scan_predicates(predicate, &scope_resolver(scope), ctx);
             let accepted = !pushed.is_empty()
                 && source
                     .table_access()
@@ -730,6 +730,7 @@ fn write_handle_ranges(
 pub(crate) fn split_scan_predicates(
     where_clause: &tidb_ast::Expr,
     resolver: &impl ColumnResolver,
+    ctx: &crate::StmtContext,
 ) -> (PushedScanFilter, Option<tidb_ast::Expr>) {
     let mut conjuncts = Vec::new();
     collect_conjuncts(where_clause, &mut conjuncts);
@@ -738,7 +739,14 @@ pub(crate) fn split_scan_predicates(
     let mut residual: Vec<&tidb_ast::Expr> = Vec::new();
     for conjunct in conjuncts {
         match scan_predicate(conjunct, resolver).and_then(|predicate| {
-            Some((predicate, rewrite_expr_resolved(conjunct, resolver).ok()?))
+            let mut filter = rewrite_expr_resolved(conjunct, resolver).ok()?;
+            // Go `refineArgs`: `int column <cmp> non-int constant` folds the
+            // constant into the column's type ONCE here, so the filter this
+            // scan runs on every row compares int to int. Without it the
+            // string is re-coerced per row -- the same work, and the same
+            // 1292 truncation, once for each row scanned.
+            tidb_expr::builtin_compare::refine_comparisons(&mut filter, ctx);
+            Some((predicate, filter))
         }) {
             Some((predicate, filter)) => {
                 predicates.push(predicate);

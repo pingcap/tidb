@@ -519,9 +519,9 @@ mod tests_collation;
 #[cfg(test)]
 mod tests_column_defaults;
 #[cfg(test)]
-mod tests_compare_refinement;
-#[cfg(test)]
 mod tests_column_prune;
+#[cfg(test)]
+mod tests_compare_refinement;
 #[cfg(test)]
 mod tests_core;
 #[cfg(test)]

@@ -49,6 +49,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tidb_ast::{JoinNode, QueryStmt, SelectField, SelectFieldList, Stmt};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_expr::builtin_compare::refine_comparisons;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver, NoResolver};
@@ -537,8 +538,9 @@ pub(crate) fn run_select_traced(
         predicate_resolver = ScopeResolver {
             scope: &predicate_scope,
         };
-        let pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
+        let mut pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        refine_comparisons(&mut pred, ctx);
         source = Box::new(SelectionExec::new(
             ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
             vec![pred],
@@ -700,8 +702,9 @@ pub(crate) fn run_select_traced(
     for (field, name) in &projected {
         match field {
             SelectField::Expr { expr, .. } => {
-                let rewritten = rewrite_expr_resolved(expr, &resolver)
+                let mut rewritten = rewrite_expr_resolved(expr, &resolver)
                     .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                refine_comparisons(&mut rewritten, ctx);
                 exprs.push(rewritten);
                 names.push(name.clone().unwrap_or_default());
             }
@@ -782,9 +785,10 @@ pub(crate) fn run_select_traced(
         let mut by_items = Vec::with_capacity(select.order_by.len());
         for item in &select.order_by {
             let resolved = substitute_output_aliases(&item.expr, &projected_fields, true)?;
-            let expr = rewrite_expr_resolved(&resolved, &resolver).map_err(|e| {
+            let mut expr = rewrite_expr_resolved(&resolved, &resolver).map_err(|e| {
                 order_by_column_error(&resolved).unwrap_or(DriverError::Exec(ExecError::Eval(e)))
             })?;
+            refine_comparisons(&mut expr, ctx);
             by_items.push(SortByItem {
                 expr,
                 desc: item.desc,
