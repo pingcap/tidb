@@ -15,8 +15,9 @@
 //! The statements that move or remove a whole table: `RENAME TABLE`,
 //! `TRUNCATE TABLE` and `DROP TABLE`.
 //!
-//! Inside: [`run_rename_table_in`], which relocates each pair in written
-//! order and may cross schemas; [`run_truncate_table_in`], which empties the
+//! Inside: [`run_rename_table_in`], which validates every pair in written
+//! order and then moves them all or none, and may cross schemas;
+//! [`run_truncate_table_in`], which empties the
 //! rows and index entries and restarts the auto-increment counter while
 //! keeping the definition; and [`run_drop_table_in`], which drops the names
 //! it finds and errors on the first it does not, so a partial list still
@@ -29,11 +30,14 @@
 
 use super::{Catalog, DdlStmt, DriverError, Stmt};
 
-/// Runs a `RENAME TABLE`, moving each pair in written order.
+/// Runs a `RENAME TABLE`, validating each pair in written order and then
+/// moving them all or none.
 ///
-/// Captured from TiDB: renaming onto a name that already exists is 1050, and
-/// renaming a table that does not exist is 1146. A rename may move the table
-/// to another schema, since both sides carry a full path.
+/// Captured from TiDB: renaming onto a name that already exists is 1050
+/// (which is also what renaming a table ONTO ITSELF reports), renaming a
+/// table that does not exist is 1146, and naming a destination schema that
+/// does not exist is 1025 with the source left in place. A rename may move
+/// the table to another schema, since both sides carry a full path.
 pub fn run_rename_table_in(
     sql: &str,
     catalog: &mut Catalog,
@@ -69,18 +73,36 @@ pub fn run_rename_table_in(
         }
     };
 
+    // Every pair is checked before ANY pair is moved. Go builds the same
+    // separation in `ExtractTblInfos`, which validates each pair against a
+    // `tables` overlay of the renames staged so far and only then runs the
+    // DDL job; captured, `RENAME TABLE c TO c2, nope TO q` leaves `c` named
+    // `c` -- the first pair is not applied. Staging is also why a chain like
+    // `a TO tmp, b TO a` succeeds: `a` is free by the time pair two is read.
+    let mut staged: Vec<Rename> = Vec::new();
     for (from, to) in &pairs {
         let (from_db, from_name) = crate::driver::split_table_path_pub(from, current_db)?;
-        let (from_db, from_name) = (from_db.to_owned(), from_name.to_owned());
+        let (from_db, from_name) = (from_db.to_lowercase(), from_name.to_lowercase());
         let (to_db, to_name) = crate::driver::split_table_path_pub(to, current_db)?;
-        let (to_db, to_name) = (to_db.to_owned(), to_name.to_owned());
+        let (to_db, to_name) = (to_db.to_lowercase(), to_name.to_lowercase());
 
-        if catalog.table_in(&from_db, &from_name).is_none() {
+        if !staged_table_exists(catalog, &staged, &from_db, &from_name) {
             return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
                 format!("{from_db}.{from_name}"),
             )));
         }
-        if catalog.table_in(&to_db, &to_name).is_some() {
+        // Go checks the destination SCHEMA before the destination table, and
+        // reports a missing one as 1025 rather than moving anything.
+        if !catalog.has_database(&to_db) {
+            return Err(DriverError::Schema(
+                crate::SchemaErrorKind::RenameTargetDatabaseMissing {
+                    from: format!("{from_db}.{from_name}"),
+                    to: format!("{to_db}.{to_name}"),
+                    database: to_db,
+                },
+            ));
+        }
+        if staged_table_exists(catalog, &staged, &to_db, &to_name) {
             return Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(
                 format!("{to_db}.{to_name}"),
             )));
@@ -92,9 +114,55 @@ pub fn run_rename_table_in(
                 "renaming a table involved in a FOREIGN KEY is not supported yet",
             ));
         }
-        catalog.rename_table(&from_db, &from_name, &to_db, &to_name);
+        staged.push(Rename {
+            from_db,
+            from_name,
+            to_db,
+            to_name,
+        });
+    }
+
+    for rename in &staged {
+        catalog.rename_table(
+            &rename.from_db,
+            &rename.from_name,
+            &rename.to_db,
+            &rename.to_name,
+        );
     }
     Ok(())
+}
+
+/// One validated pair, held back until every pair of the statement has passed.
+/// All four names are lowercased, which is how the catalog keys them.
+struct Rename {
+    from_db: String,
+    from_name: String,
+    to_db: String,
+    to_name: String,
+}
+
+/// Whether `database`.`name` would exist once `staged` had been applied.
+///
+/// Replaying the staged pairs in order is what makes the last word win: a
+/// name vacated by an earlier pair reads as free, and one occupied by an
+/// earlier pair reads as taken.
+fn staged_table_exists(
+    catalog: &Catalog,
+    staged: &[Rename],
+    database: &str,
+    name: &str,
+) -> bool {
+    let mut exists = catalog.table_in(database, name).is_some();
+    for rename in staged {
+        if rename.from_db == database && rename.from_name == name {
+            exists = false;
+        }
+        if rename.to_db == database && rename.to_name == name {
+            exists = true;
+        }
+    }
+    exists
 }
 
 /// Runs a `TRUNCATE TABLE`, emptying it while keeping its definition.

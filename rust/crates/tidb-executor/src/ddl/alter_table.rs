@@ -221,6 +221,18 @@ pub fn run_alter_table_in(
             tidb_ast::AlterTableAction::RenameTable { new_name } => {
                 let (to_db, to_name) = crate::driver::split_table_path_pub(new_name, current_db)?;
                 let (to_db, to_name) = (to_db.to_owned(), to_name.to_owned());
+                // Go checks the destination SCHEMA before the destination
+                // table, and reports a missing one as 1025 with the source
+                // left in place.
+                if !catalog.has_database(&to_db) {
+                    return Err(DriverError::Schema(
+                        crate::SchemaErrorKind::RenameTargetDatabaseMissing {
+                            from: format!("{database}.{name}"),
+                            to: format!("{to_db}.{to_name}"),
+                            database: to_db,
+                        },
+                    ));
+                }
                 if catalog.table_in(&to_db, &to_name).is_some() {
                     return Err(DriverError::Schema(crate::SchemaErrorKind::TableExists(
                         format!("{to_db}.{to_name}"),

@@ -845,6 +845,18 @@ pub enum SchemaErrorKind {
     /// `[schema:4139] Unknown SEQUENCE: 'test.nosuch'` -- a different code and
     /// wording from both 1146 and `DROP TABLE`'s 1051.
     UnknownSequence(String),
+    /// Go `dbterror.ErrErrorOnRename` (1025): a rename named a destination
+    /// schema that does not exist. Go raises it from `ddl.ExtractTblInfos`
+    /// only after the source has resolved, and leaves the source table in
+    /// place -- the statement moves nothing at all.
+    RenameTargetDatabaseMissing {
+        /// The source as `db.table`, Go's first message argument.
+        from: String,
+        /// The destination as `db.table`, Go's second message argument.
+        to: String,
+        /// The destination schema, named in the nested reason.
+        database: String,
+    },
     /// Go `ddl.ErrSequenceInvalidData` (4136): the option values cannot
     /// describe a sequence. Captured for `increment by 0`, `cache 0`,
     /// `minvalue 10 maxvalue 5` and `start with 1 minvalue 5`, each reporting
@@ -1387,6 +1399,19 @@ impl DriverError {
         DriverError::Schema(crate::SchemaErrorKind::UnknownTable(name)) => {
             MysqlError::new(1146, *b"42S02", format!("Table '{name}' doesn't exist"))
         }
+        // Go: "Error on rename of '%-.210s' to '%-.210s' (errno: %d - %s)",
+        // whose nested errno is the fixed 168 `ExtractTblInfos` passes.
+        DriverError::Schema(crate::SchemaErrorKind::RenameTargetDatabaseMissing {
+            from,
+            to,
+            database,
+        }) => MysqlError::new(
+            1025,
+            *b"HY000",
+            format!(
+                "Error on rename of '{from}' to '{to}' (errno: 168 - Database `{database}` doesn't exist)"
+            ),
+        ),
         DriverError::Schema(crate::SchemaErrorKind::UnknownSequence(name)) => {
             MysqlError::new(4139, *b"HY000", format!("Unknown SEQUENCE: '{name}'"))
         }

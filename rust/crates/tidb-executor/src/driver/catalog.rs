@@ -373,7 +373,15 @@ impl Catalog {
     }
 
     /// Moves a table to a new schema and name, which is what RENAME does.
-    /// Returns `false` when the source does not exist.
+    /// Returns `false`, having changed nothing, when the source table or the
+    /// destination schema does not exist.
+    ///
+    /// The destination schema is checked BEFORE the source is taken out, so
+    /// "source removed with nowhere to put it" is not a state this function
+    /// can produce and does not need undoing. Both preconditions are also
+    /// checked by the caller, which is where the MySQL error text comes from;
+    /// re-checking here is what keeps the catalog's own invariant -- a table
+    /// is in exactly one schema -- independent of any caller remembering to.
     pub fn rename_table(
         &mut self,
         from_database: &str,
@@ -382,6 +390,10 @@ impl Catalog {
         to_name: &str,
     ) -> bool {
         self.version += 1;
+        let to_key = to_database.to_lowercase();
+        if !self.databases.contains_key(&to_key) {
+            return false;
+        }
         let Some(source) = self
             .databases
             .get_mut(&from_database.to_lowercase())
@@ -394,9 +406,13 @@ impl Catalog {
         if let TableEntry::Kv(table) = &mut source {
             table.set_name(to_name);
         }
-        if let Some(database) = self.databases.get_mut(&to_database.to_lowercase()) {
-            database.tables.insert(to_name.to_lowercase(), source);
-        }
+        // Infallible: the key was present at the top of this function and
+        // nothing between here and there can remove a schema.
+        self.databases
+            .get_mut(&to_key)
+            .expect("destination schema was checked above")
+            .tables
+            .insert(to_name.to_lowercase(), source);
         true
     }
 

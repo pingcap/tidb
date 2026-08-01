@@ -678,6 +678,82 @@ fn rename_table() {
     }
 }
 
+/// A rename that cannot be carried out MOVES NOTHING.
+///
+/// Captured with `difftests/gorun`: after `rename table d1.src to
+/// nosuchdb.t`, `select * from d1.src` still returns both rows and `show
+/// tables` still lists `src`. Every assertion below therefore reads the
+/// SOURCE back rather than only checking that an error came out -- an
+/// error-only assertion cannot tell a rename that refused from a rename that
+/// destroyed the table and then reported failure.
+#[test]
+fn a_refused_rename_leaves_the_source_table_readable() {
+    let mut session = Session::new();
+    session.run("CREATE DATABASE d1").unwrap();
+    session.run("USE d1").unwrap();
+    session.run("CREATE TABLE src (a BIGINT)").unwrap();
+    session.run("INSERT INTO src VALUES (1), (2)").unwrap();
+
+    let rows = StmtResult::Rows(vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]);
+
+    // Captured: 1025, and `d1.src` survives with both rows.
+    assert!(matches!(
+        session.run("RENAME TABLE d1.src TO nosuchdb.t"),
+        Err(DriverError::Schema(
+            SchemaErrorKind::RenameTargetDatabaseMissing { .. }
+        ))
+    ));
+    assert_eq!(session.run("SELECT a FROM d1.src").unwrap(), rows);
+
+    // `ALTER TABLE ... RENAME TO` is the same operation and the same refusal.
+    assert!(matches!(
+        session.run("ALTER TABLE d1.src RENAME TO nosuchdb.t"),
+        Err(DriverError::Schema(
+            SchemaErrorKind::RenameTargetDatabaseMissing { .. }
+        ))
+    ));
+    assert_eq!(session.run("SELECT a FROM d1.src").unwrap(), rows);
+
+    // Captured: renaming a table onto ITSELF is refused as 1050, and the
+    // table is still there afterwards.
+    assert!(matches!(
+        session.run("RENAME TABLE d1.src TO d1.src"),
+        Err(DriverError::Schema(SchemaErrorKind::TableExists(_)))
+    ));
+    assert_eq!(session.run("SELECT a FROM d1.src").unwrap(), rows);
+
+    // Captured: a multi-pair rename is ALL OR NOTHING. `d1.src TO d1.moved`
+    // would succeed on its own, but the second pair fails, so `src` keeps
+    // its name and `moved` never appears.
+    assert!(session
+        .run("RENAME TABLE d1.src TO d1.moved, d1.nope TO d1.q")
+        .is_err());
+    assert_eq!(session.run("SELECT a FROM d1.src").unwrap(), rows);
+    assert!(session.run("SELECT a FROM d1.moved").is_err());
+
+    // The same for a second pair that names a missing SCHEMA rather than a
+    // missing table -- the destructive shape this test exists for.
+    assert!(matches!(
+        session.run("RENAME TABLE d1.src TO d1.moved, d1.src TO nosuchdb.q"),
+        Err(DriverError::Schema(SchemaErrorKind::UnknownTable(_)))
+    ));
+    assert_eq!(session.run("SELECT a FROM d1.src").unwrap(), rows);
+
+    // The success path still works, including across schemas, and staging
+    // does not break a chain whose later pair reuses a name freed earlier.
+    session.run("CREATE DATABASE d2").unwrap();
+    session.run("CREATE TABLE d1.other (a BIGINT)").unwrap();
+    session.run("INSERT INTO d1.other VALUES (7)").unwrap();
+    session
+        .run("RENAME TABLE d1.src TO d2.src, d1.other TO d1.src")
+        .unwrap();
+    assert_eq!(session.run("SELECT a FROM d2.src").unwrap(), rows);
+    assert_eq!(
+        session.run("SELECT a FROM d1.src").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(7)]])
+    );
+}
+
 /// Go `getDefaultValue` + `checkDefaultValue`: a written DEFAULT is
 /// normalized and checked against the column's own type at DDL time,
 /// checked against captured TiDB output.
