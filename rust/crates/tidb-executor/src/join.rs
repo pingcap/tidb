@@ -80,6 +80,28 @@
 //!
 //! Still deferred relative to Go's `HashJoinExec`: the parallel build/probe
 //! worker pipeline, spill-to-disk, and the semi/anti/outer-apply variants.
+//!
+//! # Recon: what materialization is accounted, and what is not
+//!
+//! Every datum this module holds is materialized by [`JoinExec::drain`] --
+//! both the hash build side and, on the nested-loop fallback, both sides.
+//! Nothing here consumed against the statement's memory budget, even though
+//! [`crate::StatementMemory`] (quota + `tidb_mem_oom_action` + the 8175 that
+//! [`crate::mem_quota::memory_exceed_for_query`] raises) already exists and
+//! [`crate::sort::SortExec`] already uses exactly the wiring this needs:
+//! `memory.operator_tracker(meta.id())` at construction, `tracker.consume(..)`
+//! after each fetch, `memory.check()?` right after. So the gap is one
+//! unattached call site, not missing machinery.
+//!
+//! It matters because a cross join is the one plan whose materialization is
+//! not bounded by an input: `t t1, .., t t6` over a 256-row `t` drains the
+//! 5-way join underneath the top one, which is 256^5 rows in one `Vec`. Go
+//! cancels that on `tidb_mem_quota_query` (the corpus sets `1 << 18`, and
+//! `--error 8175`); unaccounted it runs until the OS kills the process, which
+//! is why `executor/jointest/join` HANGS instead of diverging.
+//!
+//! The check must therefore fire INSIDE the drain loop, per chunk -- not
+//! after it -- because after the loop there is nothing left to save.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_join::{row_key, BuildTable, EquiKey, KeyError};
