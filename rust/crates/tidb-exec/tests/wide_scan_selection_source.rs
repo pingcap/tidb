@@ -219,6 +219,46 @@ fn the_wide_lowering_refuses_what_go_would_have_refined_or_cannot_compare_as_an_
     );
 }
 
+/// What a *string* comparison does today, measured rather than assumed.
+///
+/// The scan descriptor already carries a character-string column faithfully:
+/// `tidb_exec::cop_scan::scan_column` copies the MySQL type, the declared
+/// `flen` and the rewritten collation id for the `VARCHAR`/`CHAR`/blob family
+/// (Go `util.ColumnToProto`). So the column can be *read* at the region.
+///
+/// What does not travel is the comparison over it: this lowering speaks the
+/// integer signature family only, so `column_flags` refuses a non-integer `tp`
+/// before a constant is even looked at, `accepts` answers `false`, and the
+/// conjunct stays in the caller's own filter with the whole relation crossing
+/// the wire.
+///
+/// This pin is the BEFORE half of the string-pushdown work. When a string
+/// comparison lowers, these assertions flip to the lowered form rather than
+/// being deleted.
+#[test]
+fn a_string_comparison_does_not_reach_the_coprocessor_today() {
+    let mut text_column = column_of(MYSQL_TYPE_VARCHAR, 0);
+    // `utf8mb4_bin`, as the rewritten protocol id a scan descriptor states.
+    text_column.collation = -46;
+    let text = vec![text_column];
+    let compare = ScanPredicate::Compare(ScanComparison {
+        column_offset: 0,
+        column_type: FieldType::new(FieldTypeCode::Varchar),
+        op: ScanComparisonOp::Eq,
+        literal: Datum::Bytes(b"a\xc3\xa9b".to_vec()),
+        column_on_left: true,
+    });
+    assert!(
+        !accepts(&compare, &text),
+        "a string comparison is refused, so nothing about it is sent"
+    );
+    assert_eq!(
+        wide_scan_selection_conditions(&[compare], &text),
+        Err(WideScanSelectionError::UnsupportedColumnType { offset: 0 }),
+        "the refusal is the column's type, not the constant"
+    );
+}
+
 /// `IS NULL`, `IS NOT NULL`, `IN`, `NOT IN`, `OR` and `NOT`, each lowered to
 /// the signature Go sends for it. `IS NOT NULL` and `NOT IN` have no
 /// signature of their own: Go's rewriter spells them as `UnaryNot` over the
