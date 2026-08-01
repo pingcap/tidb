@@ -530,6 +530,8 @@ mod tests_json;
 mod tests_mem_quota;
 mod tests_multi_table_dml;
 #[cfg(test)]
+mod tests_non_prepared_plan_cache;
+#[cfg(test)]
 mod tests_partition;
 #[cfg(test)]
 mod tests_prepared_statements;
