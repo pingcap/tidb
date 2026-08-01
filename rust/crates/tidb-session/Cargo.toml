@@ -17,6 +17,7 @@ tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }
 sha1 = { workspace = true }
 sha2 = { workspace = true }
 

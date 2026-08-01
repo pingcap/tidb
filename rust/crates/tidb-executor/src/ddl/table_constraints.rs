@@ -69,7 +69,7 @@ pub(crate) const PRI_KEY_FLAG: u32 = 1 << 1;
 pub(crate) fn table_indexes(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],
-    pk_is_handle: bool,
+    clustered: bool,
 ) -> Result<(Vec<KvIndex>, Vec<HiddenIndexColumn>), DriverError> {
     let column_names: Vec<String> = columns
         .iter()
@@ -165,8 +165,20 @@ pub(crate) fn table_indexes(
         let tidb_ast::TableConstraint::Index(index) = constraint else {
             continue;
         };
+        // Go `BuildTableInfo` (`pkg/ddl/create_table.go`): `CLUSTERED` or
+        // `NONCLUSTERED` written on anything but the primary key is
+        // `ErrUnsupportedClusteredSecondaryKey`, whose whole message is the
+        // string below. It is checked here, where every non-primary index
+        // constraint passes, so no key class can quietly accept the keyword.
+        if index.options.primary_key_storage.is_some()
+            && index.kind != tidb_ast::IndexConstraintKind::PrimaryKey
+        {
+            return Err(DriverError::unsupported(
+                "CLUSTERED/NONCLUSTERED keyword is only supported for primary key",
+            ));
+        }
         match index.kind {
-            tidb_ast::IndexConstraintKind::PrimaryKey if pk_is_handle => continue,
+            tidb_ast::IndexConstraintKind::PrimaryKey if clustered => continue,
             tidb_ast::IndexConstraintKind::PrimaryKey
             | tidb_ast::IndexConstraintKind::Unique
             | tidb_ast::IndexConstraintKind::UniqueKey
@@ -285,7 +297,7 @@ pub(crate) fn table_indexes(
                     tidb_ast::InlineKeyKind::Primary { .. } => {
                         let offset = offset_of(&def.name)?;
                         reserved.push(anonymous_index_name(&indexes, &reserved, &def.name));
-                        if !pk_is_handle {
+                        if !clustered {
                             push(
                                 &mut indexes,
                                 "PRIMARY".to_owned(),
@@ -587,19 +599,22 @@ pub(crate) fn is_int_column(column: &ColumnInfo) -> bool {
 pub(crate) fn primary_key_column(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],
-) -> Result<Option<Vec<String>>, DriverError> {
-    let mut found: Option<Vec<String>> = None;
+) -> Result<Option<PrimaryKeyDecl>, DriverError> {
+    let mut found: Option<PrimaryKeyDecl> = None;
     for def in &create.columns {
         for option in &def.options {
             if let tidb_ast::ColumnOption::InlineKey(key) = option {
                 match key.kind {
-                    tidb_ast::InlineKeyKind::Primary { .. } => {
+                    tidb_ast::InlineKeyKind::Primary { storage } => {
                         if found.is_some() {
                             return Err(DriverError::unsupported(
                                 "a table may define only one primary key",
                             ));
                         }
-                        found = Some(vec![def.name.clone()]);
+                        found = Some(PrimaryKeyDecl {
+                            columns: vec![def.name.clone()],
+                            storage,
+                        });
                     }
                     // A unique key is collected by `table_indexes`.
                     tidb_ast::InlineKeyKind::Unique => {}
@@ -661,7 +676,25 @@ pub(crate) fn primary_key_column(
             }
             names.push(name.clone());
         }
-        found = Some(names);
+        found = Some(PrimaryKeyDecl {
+            columns: names,
+            storage: index.options.primary_key_storage,
+        });
     }
     Ok(found)
+}
+
+/// The primary key exactly as the source declares it: its key columns, in
+/// order, and the storage layout the statement asked for.
+///
+/// The layout travels WITH the columns because the two are read together
+/// exactly once, by [`crate::ddl::TableHandle::decide`]. Keeping them apart
+/// is what let `NONCLUSTERED` be parsed and then dropped on the floor.
+pub(crate) struct PrimaryKeyDecl {
+    /// The key columns in declaration order.
+    pub(crate) columns: Vec<String>,
+    /// Go `ast.IndexOption.PrimaryKeyTp`: an explicit `CLUSTERED` or
+    /// `NONCLUSTERED`, or `None` for Go's `PrimaryKeyTypeDefault`, which
+    /// defers to `@@tidb_enable_clustered_index`.
+    pub(crate) storage: Option<tidb_ast::PrimaryKeyStorage>,
 }

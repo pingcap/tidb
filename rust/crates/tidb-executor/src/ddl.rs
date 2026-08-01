@@ -236,6 +236,101 @@ use tidb_datatype::FieldTypeCode;
 use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
 
+/// The row-handle layout a table is built with, decided ONCE per
+/// `CREATE TABLE` and then read by everything downstream.
+///
+/// This is deliberately a single value rather than a pair of booleans. Go
+/// carries `TableInfo.PKIsHandle` and `TableInfo.IsCommonHandle` separately
+/// and every reader has to know that at most one of them is ever true; here
+/// that invariant is the type. It also makes "clustered, but nobody recorded
+/// which columns" and "handle columns recorded on a non-clustered table"
+/// unrepresentable, which is exactly the shape the `NONCLUSTERED` bug had.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TableHandle {
+    /// No clustered primary key: the table gets an implicit `_tidb_rowid`
+    /// handle, and a primary key, if declared, is an ordinary unique index.
+    RowId,
+    /// Go `TableInfo.PKIsHandle`: a single integer primary key column whose
+    /// value IS the row handle. The table stores no separate index for it.
+    IntHandle(usize),
+    /// Go `TableInfo.IsCommonHandle` (with `CommonHandleVersion = 1`): the
+    /// primary key's columns, in key order, datum-encode into the row key.
+    CommonHandle(Vec<usize>),
+}
+
+impl TableHandle {
+    /// Go `ShouldBuildClusteredIndex` plus the `isSingleIntPK` split that
+    /// follows it in `BuildTableInfo` (`pkg/ddl/create_table.go`).
+    ///
+    /// The three inputs are exactly Go's: the session's
+    /// `@@tidb_enable_clustered_index`, the statement's explicit
+    /// `CLUSTERED`/`NONCLUSTERED` clause, and whether the key is a single
+    /// integer column. An explicit clause WINS over the variable in both
+    /// directions -- that is the whole point of writing it -- and Go performs
+    /// no type-eligibility check on it at all: `NONCLUSTERED` on an integer
+    /// key is honoured, and `CLUSTERED` on a string or composite key is
+    /// honoured as a COMMON handle rather than being refused or downgraded.
+    ///
+    /// With no clause, Go's `ClusteredIndexDefModeIntOnly` additionally
+    /// consults the `alter-primary-key` config, which defaults to false and
+    /// is not modelled here; with it false the mode reduces to
+    /// "clustered only for a single integer key", which is what this returns.
+    fn decide(
+        mode: tidb_vardef::modes::ClusteredIndexDefMode,
+        storage: Option<tidb_ast::PrimaryKeyStorage>,
+        pk_offsets: &[usize],
+        columns: &[ColumnInfo],
+    ) -> Self {
+        if pk_offsets.is_empty() {
+            return Self::RowId;
+        }
+        let single_int = pk_offsets.len() == 1 && is_int_column(&columns[pk_offsets[0]]);
+        let clustered = match storage {
+            Some(tidb_ast::PrimaryKeyStorage::Clustered) => true,
+            Some(tidb_ast::PrimaryKeyStorage::NonClustered) => false,
+            None => match mode {
+                tidb_vardef::modes::ClusteredIndexDefMode::ON => true,
+                tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY => single_int,
+                // Go's `default:` arm, which `ClusteredIndexDefModeOff` and
+                // any unknown integer both take.
+                _ => false,
+            },
+        };
+        if !clustered {
+            Self::RowId
+        } else if single_int {
+            Self::IntHandle(pk_offsets[0])
+        } else {
+            Self::CommonHandle(pk_offsets.to_vec())
+        }
+    }
+
+    /// Go `TableInfo.PKIsHandle`.
+    fn pk_is_handle(&self) -> bool {
+        matches!(self, Self::IntHandle(_))
+    }
+
+    /// Go `TableInfo.IsCommonHandle`.
+    fn is_common_handle(&self) -> bool {
+        matches!(self, Self::CommonHandle(_))
+    }
+
+    /// Go `TableInfo.HasClusteredIndex`.
+    fn is_clustered(&self) -> bool {
+        !matches!(self, Self::RowId)
+    }
+
+    /// The columns, in key order, whose values ARE the row key. Empty when
+    /// the handle is the implicit `_tidb_rowid`.
+    fn offsets(&self) -> &[usize] {
+        match self {
+            Self::RowId => &[],
+            Self::IntHandle(offset) => std::slice::from_ref(offset),
+            Self::CommonHandle(offsets) => offsets.as_slice(),
+        }
+    }
+}
+
 /// The `AUTO_INCREMENT [=] n` table option's value, if the list carries one.
 ///
 /// Go reads the same option at CREATE (seeding the allocator) and at ALTER
@@ -278,6 +373,11 @@ pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, Dri
         tidb_parser::SqlMode::default(),
         true,
         false,
+        // Go `DefTiDBEnableClusteredIndex = ClusteredIndexDefModeOn`
+        // (`pkg/sessionctx/vardef/tidb_vars.go`), which is also the sysvar's
+        // registered default value in `sysvar.go`. A stock session clusters
+        // every primary key it can, not only integer ones.
+        tidb_vardef::modes::ClusteredIndexDefMode(tidb_vardef::defaults::DEF_TIDB_ENABLE_CLUSTERED_INDEX),
         // A default `StmtContext` is a context with no session behind it: UTC,
         // which is what a stock session has. The tests that call this entry
         // never set a zone; the session's own path passes its real context.
@@ -345,6 +445,11 @@ pub fn run_create_table_in(
     sql_mode: tidb_parser::SqlMode,
     foreign_key_checks: bool,
     enable_check_constraint: bool,
+    // The session's `@@tidb_enable_clustered_index`. Go reads it off
+    // `SessionVars` in `metabuild.go` and hands it to `BuildTableInfo`; it
+    // decides the table's ROW ENCODING and HANDLE SEMANTICS, not a plan, so
+    // it has to be the session's own value and never a default assumed here.
+    clustered_index_mode: tidb_vardef::modes::ClusteredIndexDefMode,
     // The SESSION's evaluation context. This entry re-parses text the session
     // already parsed, and it also FOLDS constants -- a column `DEFAULT` and a
     // RANGE partition bound -- so without it those folds run under a context
@@ -497,9 +602,9 @@ pub fn run_create_table_in(
 
     let primary_key = primary_key_column(create, &columns)?;
     let pk_offsets: Vec<usize> = match &primary_key {
-        Some(names) => {
-            let mut offsets = Vec::with_capacity(names.len());
-            for name in names {
+        Some(declared) => {
+            let mut offsets = Vec::with_capacity(declared.columns.len());
+            for name in &declared.columns {
                 offsets.push(
                     columns
                         .iter()
@@ -513,23 +618,16 @@ pub fn run_create_table_in(
         }
         None => Vec::new(),
     };
-    let pk_offset = if pk_offsets.len() == 1 {
-        Some(pk_offsets[0])
-    } else {
-        None
-    };
-    // Go `isSingleIntPK` + `ShouldBuildClusteredIndex`: a single-column
-    // integer primary key becomes the row handle rather than a separate
-    // index, which is what `TableInfo.PKIsHandle` records.
-    let pk_is_handle = pk_offset.is_some_and(|offset| is_int_column(&columns[offset]));
-    // Go `ShouldBuildClusteredIndex` under the default clustered-index mode:
-    // a primary key that is not a single integer column becomes a clustered
-    // COMMON handle, whose encoding is the row key.
-    let common_handle_offsets: Vec<usize> = if pk_is_handle || pk_offsets.is_empty() {
-        Vec::new()
-    } else {
-        pk_offsets.clone()
-    };
+    // The ONE place this table's storage layout is decided. Every reader
+    // below -- the stored `TableInfo`, the row encoder's handle columns, the
+    // index builder, the foreign-key cover test, the partition builder --
+    // reads this value rather than re-deriving the rule.
+    let handle = TableHandle::decide(
+        clustered_index_mode,
+        primary_key.as_ref().and_then(|declared| declared.storage),
+        &pk_offsets,
+        &columns,
+    );
     for offset in &pk_offsets {
         // Go `checkIndexColumn` reaches a primary key too, and a clustered
         // primary key never becomes an entry in `table_indexes` (its
@@ -611,7 +709,11 @@ pub fn run_create_table_in(
         id: catalog.allocate_table_id(),
         name: CiString::new(name),
         columns,
-        pk_is_handle,
+        pk_is_handle: handle.pk_is_handle(),
+        is_common_handle: handle.is_common_handle(),
+        // Go sets `CommonHandleVersion = 1` alongside `IsCommonHandle`; the
+        // two are one fact, so they are written from one value.
+        common_handle_version: u16::from(handle.is_common_handle()),
         ..TableInfo::default()
     };
 
@@ -662,14 +764,12 @@ pub fn run_create_table_in(
     let mut table = table;
     table.set_name(name);
     table.set_charset(table_charset);
-    if pk_is_handle {
-        if let Some(offset) = pk_offset {
-            table.set_pk_handle_offset(offset);
-        }
-    } else if !common_handle_offsets.is_empty() {
-        table.set_common_handle_offsets(common_handle_offsets.clone());
+    match &handle {
+        TableHandle::RowId => {}
+        TableHandle::IntHandle(offset) => table.set_pk_handle_offset(*offset),
+        TableHandle::CommonHandle(offsets) => table.set_common_handle_offsets(offsets.clone()),
     }
-    let clustered = pk_is_handle || !common_handle_offsets.is_empty();
+    let clustered = handle.is_clustered();
     if let Some(offset) = auto_increment_offset {
         table.set_auto_increment_offset(offset);
         // Go `handleAutoIncID`: CREATE seeds the allocator only when the
@@ -748,12 +848,7 @@ pub fn run_create_table_in(
                             .is_some_and(|column| length >= column.field_type.flen())
                 })
         };
-        let clustered: &[usize] = if pk_is_handle {
-            pk_offsets.as_slice()
-        } else {
-            common_handle_offsets.as_slice()
-        };
-        if !covered(clustered) && !table.indexes().iter().any(covered_index) {
+        if !covered(handle.offsets()) && !table.indexes().iter().any(covered_index) {
             let id = table.next_index_id();
             table.add_index(KvIndex {
                 id,
@@ -777,17 +872,12 @@ pub fn run_create_table_in(
     // from the same counter the table's own id came from -- as ONE ascending
     // block right after it, which is what lets a scan cover the whole
     // relation with a single key range.
-    let handle_offsets: &[usize] = if pk_is_handle {
-        pk_offsets.as_slice()
-    } else {
-        common_handle_offsets.as_slice()
-    };
     if let Some(partition) = table_partition::build_table_partitioning(
         create,
         &column_names,
         &column_types,
         table.indexes(),
-        handle_offsets,
+        handle.offsets(),
         &mut || catalog.allocate_table_id(),
         ctx,
     )? {

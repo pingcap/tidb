@@ -528,6 +528,11 @@ impl Session {
                     let current_db = self.current_db.clone();
                     let foreign_key_checks = self.foreign_key_checks();
                     let enable_check_constraint = self.enable_check_constraint();
+                    // `@@tidb_enable_clustered_index` decides whether a
+                    // declared primary key becomes the ROW HANDLE or an
+                    // ordinary unique index, so it has to be read from this
+                    // session before the table is built.
+                    let clustered_index_mode = self.clustered_index_mode();
                     // The session's own evaluation context, which carries
                     // `@@time_zone`: `CREATE TABLE` folds a column `DEFAULT`
                     // and a RANGE partition bound at DDL time, and both can
@@ -550,6 +555,7 @@ impl Session {
                             sql_mode,
                             foreign_key_checks,
                             enable_check_constraint,
+                            clustered_index_mode,
                             &ctx,
                         )?))
                     });

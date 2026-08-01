@@ -24,6 +24,7 @@ tidb-stats = { path = "../tidb-stats" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
 [lints]

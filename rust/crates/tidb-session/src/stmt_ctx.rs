@@ -349,6 +349,26 @@ impl Session {
         )
     }
 
+    /// Go `SessionVars.EnableClusteredIndex`, fed to `BuildTableInfo` through
+    /// `metabuild.WithClusteredIndexDefMode` (`pkg/ddl/metabuild.go`).
+    ///
+    /// The variable is `SESSION | GLOBAL` and an ENUM of `OFF`/`ON`/`INT_ONLY`
+    /// -- not a boolean -- so it is read with the session's own value and
+    /// converted by Go's own `TiDBOptEnableClustered`, which maps anything
+    /// that is neither `ON` nor `OFF` (including an unreadable value) onto
+    /// `INT_ONLY`. The registered default is `ON`.
+    pub(crate) fn clustered_index_mode(&self) -> tidb_vardef::modes::ClusteredIndexDefMode {
+        // `check_enum` stores the canonical `OFF`/`ON`/`INT_ONLY` spelling
+        // whatever the user typed, so this compares against it exactly as Go
+        // does rather than re-normalizing here.
+        match self.vars.get_system("tidb_enable_clustered_index") {
+            Ok(value) => tidb_vardef::modes::tidb_opt_enable_clustered(&value),
+            Err(_) => {
+                tidb_vardef::modes::ClusteredIndexDefMode(tidb_vardef::defaults::DEF_TIDB_ENABLE_CLUSTERED_INDEX)
+            }
+        }
+    }
+
     /// Go `SessionVars.AutoIncrementIncrement` / `AutoIncrementOffset`, which
     /// put an allocated id on the `offset + k * increment` progression.
     ///
