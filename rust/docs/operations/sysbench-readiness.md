@@ -135,6 +135,123 @@ deterministic 1,000-row load reproduced the banked figures exactly —
 `1000 500500 506087 1 1000` after load and `1000 500500 505171` after the
 write/txn statements, agreeing with Go both times.
 
+### TSO per statement, all four workloads, both ps modes (task #139)
+
+**2026-08-01 on `hparser-integration` at `707fccdf00`, port offset 43700, ONE
+`tiup playground v9.0.0-beta.2.pre-nightly` cluster.** Both engines measured
+inside that single run, ten seconds each, `--threads=1 --table-size=1000`.
+Artifacts: `tso-collation-20344-1785589896`. Every line below is keyed to
+offset 43700; nothing here comes from any other run.
+
+**Method, and why no Rust source changed.** A TSO counter *inside* the node was
+not needed: PD already exports one. `PdClient::get_timestamp`
+(`crates/tidb-pd-client/src/client/mod.rs:348`) sends exactly one message on
+PD's `Tso` bidi stream per call — no batching, no cache, one worker round trip
+— so PD's own
+`grpc_server_msg_received_total{grpc_method="Tso",grpc_service="pdpb.PD"}`
+counts them one for one. Scraping `/metrics` before and after each ten-second
+window and dividing by sysbench's reported query count gives TSO per statement
+directly, with the Go server on the same PD as its own control.
+
+| Workload | ps mode | Rust µs/stmt | Go µs/stmt | Rust excess | **Rust TSO/stmt** | Go TSO/stmt |
+| --- | --- | --- | --- | --- | --- | --- |
+| `oltp_point_select` | disable | 254.25 | 130.52 | **123.73 µs** | **1.005** | 0.002 |
+| `oltp_point_select` | auto | 252.33 | 122.16 | **130.17 µs** | **1.004** | 0.002 |
+| `oltp_read_only` | disable | 420.38 | 180.41 | 239.97 µs | 0.070 | 0.066 |
+| `oltp_read_only` | auto | 307.84 | 142.81 | 165.03 µs | 0.068 | 0.065 |
+| `oltp_write_only` | disable | 328.10 | 176.75 | 151.35 µs | 0.172 | 0.336 |
+| `oltp_write_only` | auto | 315.07 | 181.32 | 133.75 µs | 0.172 | 0.337 |
+| `oltp_read_write` | disable | 431.66 | 248.93 | 182.73 µs | 0.059 | 0.104 |
+| `oltp_read_write` | auto | 594.35 | 238.08 | 356.27 µs | 0.060 | 0.104 |
+
+**Yes: `oltp_point_select` really does take one TSO per statement, in both ps
+modes.** The read path was written that way and does not hide it —
+`execute_lowered_plan_with_cancellation`
+(`crates/tidb-exec/src/real_tikv_read.rs:1241-1245`) calls
+`timestamp_source.current_ts()` unconditionally for every non-contradiction
+plan, and in `--cluster-session` that source is `PdTimestampSource`, a direct
+`PdClient::get_timestamp`. Go's 0.002 is the contrast already confirmed in
+source: `optimizeWithMaxTS` (`pkg/sessiontxn/isolation/optimistic.go:109-148`)
+returns `MaxUint64` without activating the transaction when
+`IsPointGetWithPKOrUniqueKeyByAutoCommit` holds, which is exactly this
+workload's shape. **Go issues essentially zero TSO RPCs for `oltp_point_select`
+and the Rust node issues one per statement.**
+
+**This settles which of the two circulating numbers describes the statement.**
+The Rust node's whole-statement cost on `oltp_point_select` is **254.25 µs
+against Go's 130.52 µs in the same run — an excess of ~124 µs, not ~6 µs.** Note
+the arithmetic that explains the confusion: the trajectory pair "Rust 124.29 vs
+Go 118.27" puts a number that matches this run's *excess* (123.73 µs) beside a
+number that is Go's *total*. Go's per-statement total is the fixed point on this
+machine (117.40 / 118.18 / 118.27 / 130.52 / 122.16 µs across runs), and no
+Rust total has ever landed near it. **The ~6 µs reading is not a whole-statement
+figure and should not be quoted as one.** The cluster-free
+`PdClient::get_timestamp` measurement (38.5 µs against a zero-latency mock PD)
+is the number that is consistent with what was measured here: one such call is
+charged to every `oltp_point_select` statement and a real PD costs more than
+the mock.
+
+**The other three workloads do not pay it per statement**, and that is not an
+elision — it is the explicit transaction: each `BEGIN` pins one snapshot and
+every statement inside it reads at that snapshot via
+`execute_plan_at_snapshot`. `oltp_read_only` is 14 statements per transaction
+and reads 0.070 (Go 0.066); `oltp_read_write` is 20 and reads 0.059 (Go 0.104).
+The binary-prepared regression recorded in the task #117 section below
+(16.11 TSO/txn) remains fixed: binary and text agree to three decimals on
+every workload here. On the two write workloads Rust now takes **half** the
+timestamps Go does (0.172 vs 0.336), because Go takes a second one to commit.
+
+**What this does to the performance picture.** The per-statement excess on the
+lightest workload is ~124 µs and one real PD round trip is inside it. That is a
+single identified, removable item — Go's own `MaxUint64` shortcut for
+autocommit point gets is the fix, not a micro-optimisation — and it is
+plan-gated in Go exactly where this node would gate it. The task #117 finding
+that ~61% of the point-select excess is a floor charged before the statement
+touches a table still stands and is the larger term; the TSO round trip lives
+in the remaining marginal term.
+
+### String comparison pushdown against a REAL TiKV collator (task #137)
+
+**Same run, same cluster, offset 43700.** Table `colltest.coll` (id 125) holds
+the unit's own fixtures as two columns over the same bytes — `s` under
+`utf8mb4_general_ci`, `b` under `utf8mb4_bin` — rows `(1,'A') (2,'a')
+(3,'aéb') (4,'B')`, with the Go server confirming `hex(s) = 61C3A962` for the
+accented row. Rows are compared against the Go `tidb-server` on the same TiKV;
+the wire counts come from `cluster-session-smoke --cop` as a second process,
+because a served node reports no coprocessor counters.
+
+**Every case the in-repo fake predicted is what real TiKV produced. The rust
+and Go row sets are identical in all six.**
+
+| Statement | ids returned (Rust = Go) | rows across the wire | fake predicted |
+| --- | --- | --- | --- |
+| `s = 'a'` (`general_ci`) | **1, 2** | **2** of 4 | 2 |
+| `b = 'a'` (`bin`) | **2** | **1** of 4 | 1 |
+| `s = 'A'` (`general_ci`) | 1, 2 | 2 of 4 | — |
+| `s < 'azb'` (`general_ci`) | **1, 2, 3** | 3 of 4 | 3, ids 1/2/3 |
+| `b < 'azb'` (`bin`) | **1, 2, 4** | 3 of 4 | 3, ids 1/2/4 |
+| `s = 'aeb'` (`general_ci`) | **3** | 1 of 4 | é weighs as e |
+
+Every request carried `TableScan(table 125, 2 columns) | Selection(1
+conditions)` and `served 1, refused 0` — the comparison travelled in all six
+cases, none fell back to a local filter.
+
+The three assertions this was built to make:
+
+* **`'A' = 'a'` is TRUE under `general_ci` and FALSE under `utf8mb4_bin`**, at
+  the region: 2 rows on the wire versus 1, from the same four bytes.
+* **`s < 'azb'` returns three rows under both collations and NOT the same
+  three** — `1,2,3` versus `1,2,4`. The count is identical, so only the ids
+  separate them, and they separate correctly.
+* **`é` weighs as `e`**: `s = 'aeb'` selects the accented row under
+  `general_ci`, and it is the region that decided so (1 row crossed the wire,
+  not 4).
+
+**Nothing disagreed with the fake.** The risk this run existed to close —
+our collator table diverging from TiKV's own, which a fake sharing our table
+could never catch — did not materialise on these fixtures: the rows TiKV chose
+to send are the rows Go's engine independently selects.
+
 ### Throughput, `--threads=1 --time=10`, **secondary index present**
 
 **Current ladder measurement: 2026-08-01 on `hparser-integration` at
