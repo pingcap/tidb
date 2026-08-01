@@ -799,3 +799,121 @@ fn an_auto_increment_option_above_i64_max_seeds_create_but_rebases_alter() {
     session.run("INSERT INTO sgn VALUES ()").unwrap();
     assert_eq!(one(&mut session, "SELECT id FROM sgn"), "1");
 }
+
+/// An out-of-range step or offset is CLAMPED into `[1, 65535]` and reported
+/// with `1292 Truncated incorrect <name> value: '<original>'` -- the same
+/// channel every other clamped sysvar uses (`Session::warn_truncated_var`).
+///
+/// The pairing is what this pins: the WARNING names the value exactly as
+/// typed, while the value that LANDS is the clamp. The clamp itself is
+/// load-bearing beyond parity -- a step of 0 would divide by zero in the
+/// allocator's seek, so the floor is 1 and never 0.
+///
+/// The NAME comes from the REGISTRY, not from the statement: the first two
+/// rows spell the variable in upper and mixed case and TiDB still reports it
+/// lower case. Captured through `gorun`:
+///
+/// ```text
+/// SET @@AUTO_INCREMENT_INCREMENT = 0
+///   Warning|1292|Truncated incorrect auto_increment_increment value: '0'      -> 1
+/// SET @@Auto_Increment_Offset = 0
+///   Warning|1292|Truncated incorrect auto_increment_offset value: '0'         -> 1
+/// set auto_increment_increment = 70000
+///   Warning|1292|Truncated incorrect auto_increment_increment value: '70000'  -> 65535
+/// set auto_increment_offset = 70000
+///   Warning|1292|Truncated incorrect auto_increment_offset value: '70000'     -> 65535
+/// ```
+///
+/// The `65536` and negative rows are the ones
+/// `tests/integrationtest/r/executor/autoid.result` records verbatim.
+#[test]
+fn an_out_of_range_step_warns_1292_and_stores_the_clamp() {
+    for (set, name, stored, original) in [
+        (
+            "SET @@AUTO_INCREMENT_INCREMENT = 0",
+            "auto_increment_increment",
+            "1",
+            "0",
+        ),
+        (
+            "SET @@Auto_Increment_Offset = 0",
+            "auto_increment_offset",
+            "1",
+            "0",
+        ),
+        (
+            "set auto_increment_increment = 70000",
+            "auto_increment_increment",
+            "65535",
+            "70000",
+        ),
+        (
+            "set auto_increment_offset = 70000",
+            "auto_increment_offset",
+            "65535",
+            "70000",
+        ),
+        (
+            "set auto_increment_increment = 65536",
+            "auto_increment_increment",
+            "65535",
+            "65536",
+        ),
+        (
+            "set auto_increment_offset = 65536",
+            "auto_increment_offset",
+            "65535",
+            "65536",
+        ),
+        (
+            "set auto_increment_increment = -2",
+            "auto_increment_increment",
+            "1",
+            "-2",
+        ),
+        (
+            "set auto_increment_offset = -1",
+            "auto_increment_offset",
+            "1",
+            "-1",
+        ),
+    ] {
+        let mut session = Session::new();
+        session.run(set).unwrap();
+        assert_eq!(
+            rows(&mut session, "SHOW WARNINGS"),
+            [[
+                "Warning".to_owned(),
+                "1292".to_owned(),
+                format!("Truncated incorrect {name} value: '{original}'"),
+            ]],
+            "warning for `{set}`"
+        );
+        assert_eq!(
+            one(&mut session, &format!("select @@{name}")),
+            stored,
+            "stored value for `{set}`"
+        );
+    }
+}
+
+/// The clamp is what the ALLOCATOR then reads, so a step of 0 allocates on the
+/// `1 + k * 1` grid rather than dividing by zero.
+///
+/// Captured through `gorun` after `set @@auto_increment_increment = 0` and
+/// `set @@auto_increment_offset = 0`: both read back `1`, three inserts give
+/// `1, 2, 3`, and `LAST_INSERT_ID()` is `1`.
+#[test]
+fn a_clamped_step_allocates_from_the_clamp_rather_than_dividing_by_zero() {
+    let mut session = table(None);
+    session.run("SET @@auto_increment_increment = 0").unwrap();
+    session.run("SET @@auto_increment_offset = 0").unwrap();
+    session
+        .run("INSERT INTO ai (v) VALUES (1),(2),(3)")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id FROM ai ORDER BY id"),
+        [["1"], ["2"], ["3"]]
+    );
+    assert_eq!(one(&mut session, "SELECT LAST_INSERT_ID()"), "1");
+}
