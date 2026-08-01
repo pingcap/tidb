@@ -839,14 +839,27 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // which is why 5 statements are named as new while the total moves by
     // one.
     //
-    // A `VALUES LESS THAN (UNIX_TIMESTAMP('...'))` bound is REFUSED rather
-    // than folded: `run_create_table_in` re-parses without a `StmtContext`,
-    // so it has no session `time_zone`, and the captured recording shows the
-    // same bound differing by hours between two sessions. Folding it under
-    // UTC put a row real TiDB stores in `p7` into `p9` -- five compared
-    // statements' worth of wrong ANSWERS, which is exactly the trade this
-    // refusal declines to make.
-    const KNOWN_DIVERGENCES: usize = 50;
+    // A `VALUES LESS THAN (UNIX_TIMESTAMP('...'))` bound is now FOLDED under
+    // the session's own `time_zone`: `run_create_table_in` carries the
+    // session's `StmtContext` through the re-parse. That was the last thing
+    // keeping the `timezone_test` block refused, and unrefusing it is why
+    // this count moves UP by one while the suite gets strictly stronger:
+    //
+    //   before: 50 divergences of 2539 compared (2489 matched)
+    //   after:  51 divergences of 2556 compared (2505 matched)
+    //
+    // 17 statements that used to be named OutOfDomain skips are now really
+    // compared, 16 of them matching. The one that does not is
+    // `SELECT * FROM timezone_test PARTITION (p5)` read back from a UTC
+    // session after a Shanghai session inserted the row: TiDB reports
+    // `2020-01-03 07:16:59` and this node `2020-01-03 15:16:59`. That is the
+    // TIMESTAMP STORAGE seam -- Go stores a `timestamp` converted to UTC and
+    // renders it in the READING session's zone, this node stores the written
+    // text -- and it has nothing to do with partitioning. The row itself is
+    // routed to the same partition on both sides, which is what the bound
+    // fold decides. Raising the ceiling by one to expose a real, differently
+    // owned bug beats a refusal that hid seventeen statements.
+    const KNOWN_DIVERGENCES: usize = 51;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
