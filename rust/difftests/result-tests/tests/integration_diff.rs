@@ -501,6 +501,36 @@ fn compare(
 /// `tidb_max_chunk_size` clamp. None of the 18 is checked against TiDB by
 /// anything in this suite.
 ///
+/// Every one of the 18 has since been put to `gorun` -- a real TiDB session --
+/// and the answers are banked here, because the suite still cannot ask them:
+///
+/// * The seven `set` sites AGREE exactly, text and level:
+///   `set [global] tidb_enable_table_partition=off` ->
+///   `Warning 1105 tidb_enable_table_partition is always turned on. ...`;
+///   `set [global] tidb_enable_list_partition=on|1` ->
+///   `Warning 1681 tidb_enable_list_partition is deprecated ...`;
+///   `set @@session.tidb_enable_fast_analyze=1` ->
+///   `Warning 1105 the fast analyze feature has already been removed ...`;
+///   `set @@tidb_max_chunk_size=2` ->
+///   `Warning 1292 Truncated incorrect tidb_max_chunk_size value: '2'`.
+///   They are `Warning`, not `Note`: Go reaches them through
+///   `StmtCtx.AppendWarning` (`pkg/sessionctx/variable/sysvar.go`), and
+///   `AppendNote` -- the third level this engine cannot represent -- is never
+///   on that path.
+/// * The two varchar sites AGREE: `select * from t where a > 0` over
+///   `('aaa'),('bbbb'),('ccc'),('dfg'),('kkkk'),('10')` raises five
+///   `Warning 1292 Truncated incorrect DOUBLE value` in both, one per row that
+///   does not parse, and none for `'10'`.
+/// * The three `a > '10ab'` sites DIVERGE ON COUNT. TiDB raises the truncation
+///   TWICE, the same two for `t`, `trange` and `thash` alike, because the
+///   string is folded against the int column ONCE while the comparison is
+///   refined -- it never reaches a row. This engine raises it PER ROW SCANNED:
+///   11, 5 and 11. Same text, same level, wrong multiplicity.
+/// * `select hex(t0.c1) from t0 where 0 in (select t0.c1 from t0)` over a
+///   `blob` holding `'gO'` and `'W'` DIVERGES IN THE OTHER DIRECTION: TiDB
+///   raises FOUR (`'W'`, `'W'`, `'gO'`, `'gO'`), this engine only the two for
+///   `'gO'`. It is the one place in the 18 where TiDB says more than we do.
+///
 /// It is OFF by default, and that is not tidiness. Turning it on moved the
 /// divergence count from 64 to 66: the two `select @@last_plan_from_cache`
 /// statements in `sessionctx/setvar` answered 0 instead of 1, because the
