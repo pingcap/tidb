@@ -41,6 +41,26 @@ struct State {
     requests: Vec<pdpb::TsoRequest>,
     stream_opens: usize,
     withhold_headers_until_request: bool,
+    /// Instrument extension for batching: when set, the mock answers any
+    /// request whose scripted reply is exhausted by allocating `count`
+    /// consecutive timestamps and reporting the LAST one, exactly as PD does.
+    auto_batch_physical: Option<i64>,
+}
+
+impl State {
+    fn auto_reply(&mut self, count: u32) -> Option<TsoReply> {
+        let physical = self.auto_batch_physical.as_mut()?;
+        *physical += 1;
+        Some(TsoReply::Response(pdpb::TsoResponse {
+            header: Some(header()),
+            count,
+            timestamp: Some(pdpb::Timestamp {
+                physical: *physical,
+                logical: i64::from(count),
+                suffix_bits: 0,
+            }),
+        }))
+    }
 }
 
 #[derive(Clone)]
@@ -73,8 +93,9 @@ impl Pd for MockPd {
             };
             let reply = {
                 let mut state = self.state.lock().unwrap();
+                let count = request.count;
                 state.requests.push(request);
-                state.replies.pop_front()
+                state.replies.pop_front().or_else(|| state.auto_reply(count))
             };
             match reply {
                 Some(TsoReply::Response(response)) => {
@@ -101,8 +122,9 @@ impl Pd for MockPd {
                 };
                 let reply = {
                     let mut state = state.lock().unwrap();
+                    let count = request.count;
                     state.requests.push(request);
-                    state.replies.pop_front()
+                    state.replies.pop_front().or_else(|| state.auto_reply(count))
                 };
                 match reply {
                     Some(TsoReply::Response(response)) => {
@@ -207,6 +229,12 @@ impl Server {
         Self::start_with_header_behavior(replies, false)
     }
 
+    fn start_auto_batching() -> Self {
+        let server = Self::start_with_header_behavior([], false);
+        server.state.lock().unwrap().auto_batch_physical = Some(0);
+        server
+    }
+
     fn start_after_first_request(replies: impl IntoIterator<Item = TsoReply>) -> Self {
         Self::start_with_header_behavior(replies, true)
     }
@@ -223,6 +251,7 @@ impl Server {
             requests: Vec::new(),
             stream_opens: 0,
             withhold_headers_until_request,
+            auto_batch_physical: None,
         }));
         let service = MockPd {
             state: Arc::clone(&state),
@@ -391,4 +420,51 @@ fn configured_timeout_bounds_the_whole_timestamp_request() {
     )]);
     let client = PdClient::connect(&server.address, Duration::from_millis(100)).unwrap();
     assert_eq!(client.get_timestamp().unwrap_err().kind(), "timeout");
+}
+
+/// THE PIN: batching shares one round trip, never one timestamp. Every waiter
+/// must come away with its own value, and the batch's own values must be
+/// strictly increasing — a wrong range split (Go `tsoutil.AddLogical`) is
+/// invisible to any throughput measurement but visible here.
+#[test]
+fn concurrent_waiters_never_share_a_timestamp() {
+    const THREADS: usize = 16;
+    const PER_THREAD: usize = 200;
+
+    let server = Server::start_auto_batching();
+    let client = PdClient::connect(&server.address, Duration::from_secs(10)).unwrap();
+    let collected = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let client = client.clone();
+                scope.spawn(move || {
+                    (0..PER_THREAD)
+                        .map(|_| client.get_timestamp().unwrap())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+
+    let mut all: Vec<u64> = collected.iter().flatten().copied().collect();
+    assert_eq!(all.len(), THREADS * PER_THREAD);
+    let total = all.len();
+    all.sort_unstable();
+    all.dedup();
+    assert_eq!(all.len(), total, "batched waiters received duplicate timestamps");
+    // Each thread sees its own calls strictly increasing.
+    for thread in &collected {
+        assert!(
+            thread.windows(2).all(|pair| pair[0] < pair[1]),
+            "timestamps went backwards within one caller"
+        );
+    }
+    // Batching actually happened: fewer PD requests than timestamps served.
+    let requests = server.state.lock().unwrap().requests.len();
+    assert!(requests < total, "no batching occurred: {requests} requests for {total} timestamps");
+    client.shutdown().unwrap();
 }
