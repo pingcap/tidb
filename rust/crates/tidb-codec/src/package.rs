@@ -179,7 +179,10 @@ pub fn encode_hash_datum(
             | FieldTypeCode::Year,
             Datum::Int(value),
         ) => (
-            if *value < 0 {
+            // Go only demotes to the signed tag for a *signed* column: an
+            // unsigned column whose chunk word is negative still hashes as
+            // `uvarintFlag`.
+            if *value < 0 && !field_type.has_flag(FieldTypeFlags::UNSIGNED) {
                 VARINT_FLAG
             } else {
                 UVARINT_FLAG

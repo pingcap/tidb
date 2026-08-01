@@ -35,6 +35,11 @@ const RECORD_PREFIX: &[u8] = b"_r";
 const INDEX_PREFIX: &[u8] = b"_i";
 const ID_LEN: usize = 8;
 const PREFIX_LEN: usize = 1 + ID_LEN + 2;
+/// Go `kv.NewCommonHandle` zero-pads any shorter encoding to this length, and
+/// `CommonHandle.Encoded()` hands the padded form to every key builder. A
+/// record key therefore always reaches [`RECORD_ROW_KEY_LEN`], which is what
+/// Go `DecodeRowKey` requires before it will look at the handle at all.
+const MIN_COMMON_HANDLE_LEN: usize = 9;
 /// Encoded byte length of a table record key with an integer handle.
 pub const RECORD_ROW_KEY_LEN: usize = PREFIX_LEN + ID_LEN;
 /// Encoded byte length of `t{table_id}`, used as the table split key.
@@ -208,6 +213,11 @@ impl RecordHandle {
                 let mut columns = Vec::new();
                 let mut remaining = encoded.as_slice();
                 while !remaining.is_empty() {
+                    // Same stop rule as Go `kv.NewCommonHandle`: the padding
+                    // bytes are not columns.
+                    if remaining[0] == 0 {
+                        break;
+                    }
                     let (column, tail) =
                         crate::cut_one(remaining).map_err(|_| TableKeyError::InvalidRecordKey)?;
                     columns.push(column.to_vec());
@@ -492,6 +502,12 @@ pub fn truncate_to_row_key_len(key: &[u8]) -> &[u8] {
 
 fn validate_common_handle(mut encoded: &[u8]) -> Result<(), TableKeyError> {
     while !encoded.is_empty() {
+        // A zero byte at a datum boundary is Go's zero padding, not a NULL
+        // column: `kv.NewCommonHandle` stops there instead of decoding it, and
+        // a clustered handle column is never NULL, so the two never collide.
+        if encoded[0] == 0 {
+            break;
+        }
         let (remain, _) = decode_one(encoded).map_err(|_| TableKeyError::InvalidRecordKey)?;
         encoded = remain;
     }
@@ -505,7 +521,13 @@ fn encode_handle(handle: &RecordHandle) -> Vec<u8> {
             encode_int(&mut encoded, *value);
             encoded
         }
-        RecordHandle::Common(encoded) => encoded.clone(),
+        RecordHandle::Common(encoded) => {
+            let mut encoded = encoded.clone();
+            if encoded.len() < MIN_COMMON_HANDLE_LEN {
+                encoded.resize(MIN_COMMON_HANDLE_LEN, 0);
+            }
+            encoded
+        }
         RecordHandle::Partition { handle, .. } => encode_handle(handle),
     }
 }
