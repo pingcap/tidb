@@ -22,8 +22,11 @@
 //! ```
 //! use tidb_meta::{key, value};
 //!
-//! // Read m + EncodeBytes("DBs") + 'h' + EncodeBytes("DB:3") from the snapshot,
-//! // then decode the stored DBInfo JSON.
+//! // Read m + EncodeBytes("DBs") + EncodeUint('h') + EncodeBytes("DB:3") from
+//! // the snapshot, then decode the stored DBInfo JSON. The type flag is an
+//! // EIGHT-BYTE big-endian uint, not the single byte it reads as -- Go writes
+//! // it with codec.EncodeUint (pkg/structure/type.go:89-95), and a one-byte
+//! // flag here would build a key no TiDB node can find.
 //! let raw_key = key::database_kv_key(3);
 //! let stored = br#"{"id":3,"db_name":{"O":"test","L":"test"},"state":5}"#;
 //! let db = value::parse_db_info(stored).unwrap();
