@@ -154,7 +154,7 @@ fn configured_table() -> ConfiguredTable {
     )
 }
 
-fn session(
+fn new_session(
     timestamps: CountingTimestampSource,
     state: &Rc<TransportState>,
 ) -> RealTiKvReadSession<CapturingTransport, CountingTimestampSource> {
@@ -177,7 +177,7 @@ fn plan(sql: &str) -> ReadOnlyScanPlan {
 fn autocommit_point_get_on_the_primary_key_takes_no_timestamp() {
     let timestamps = CountingTimestampSource::new([]);
     let state = Rc::new(TransportState::default());
-    let mut session = session(timestamps.clone(), &state);
+    let mut session = new_session(timestamps.clone(), &state);
 
     let query = session
         .execute("SELECT balance FROM accounts WHERE id = 7")
@@ -198,7 +198,7 @@ fn autocommit_point_get_on_the_primary_key_takes_no_timestamp() {
 fn point_handle_with_a_residual_selection_keeps_the_shortcut() {
     let timestamps = CountingTimestampSource::new([]);
     let state = Rc::new(TransportState::default());
-    let mut session = session(timestamps.clone(), &state);
+    let mut session = new_session(timestamps.clone(), &state);
 
     let query = session
         .execute("SELECT id FROM accounts WHERE id = 7 AND balance > 10")
@@ -220,7 +220,7 @@ fn point_handle_with_a_residual_selection_keeps_the_shortcut() {
 fn a_multi_range_plan_still_takes_a_timestamp() {
     let timestamps = CountingTimestampSource::new([501]);
     let state = Rc::new(TransportState::default());
-    let mut session = session(timestamps.clone(), &state);
+    let mut session = new_session(timestamps.clone(), &state);
 
     let query = session
         .execute("SELECT id FROM accounts WHERE id != 0")
@@ -237,7 +237,7 @@ fn a_multi_range_plan_still_takes_a_timestamp() {
 fn a_range_scan_still_takes_a_timestamp() {
     let timestamps = CountingTimestampSource::new([601, 602]);
     let state = Rc::new(TransportState::default());
-    let mut session = session(timestamps.clone(), &state);
+    let mut session = new_session(timestamps.clone(), &state);
 
     let bounded = session
         .execute("SELECT id FROM accounts WHERE id >= 7 AND id <= 8")
@@ -257,7 +257,7 @@ fn a_range_scan_still_takes_a_timestamp() {
 fn a_point_predicate_on_a_non_handle_column_still_takes_a_timestamp() {
     let timestamps = CountingTimestampSource::new([701]);
     let state = Rc::new(TransportState::default());
-    let mut session = session(timestamps.clone(), &state);
+    let mut session = new_session(timestamps.clone(), &state);
 
     let query = session
         .execute("SELECT id FROM accounts WHERE balance = 7")
@@ -277,7 +277,7 @@ fn a_point_predicate_on_a_non_handle_column_still_takes_a_timestamp() {
 fn the_same_point_get_inside_a_transaction_reads_at_the_transaction_snapshot() {
     let timestamps = CountingTimestampSource::new([]);
     let state = Rc::new(TransportState::default());
-    let mut session = session(timestamps.clone(), &state);
+    let mut session = new_session(timestamps.clone(), &state);
 
     // One timestamp acquired for the transaction, then reused by every
     // statement in it, exactly as the session's explicit-transaction path does.
@@ -324,6 +324,84 @@ fn a_stale_read_never_produces_a_plan_that_could_take_the_shortcut() {
         format!("{error}").to_lowercase().contains("stale"),
         "unexpected refusal: {error}"
     );
+}
+
+/// Resolves what a read at `start_ts` sees, the way TiKV's MVCC reader does:
+/// the newest version whose `commit_ts` is at or below `start_ts`.
+///
+/// This is a MODEL of TiKV, not TiKV. It exists so the visibility consequence
+/// of `MaxUint64` is stated executably rather than only asserted in prose.
+/// Confirming that a real TiKV agrees needs a cluster run; the transport at
+/// this tier stores no versions.
+fn visible_at(versions: &[(u64, &'static str)], start_ts: u64) -> Option<&'static str> {
+    versions
+        .iter()
+        .filter(|(commit_ts, _)| *commit_ts <= start_ts)
+        .max_by_key(|(commit_ts, _)| *commit_ts)
+        .map(|(_, value)| *value)
+}
+
+/// The concurrency meaning of `MaxUint64`, which is what makes it both the
+/// win and the hazard.
+///
+/// A row another session commits BETWEEN two autocommit point reads must
+/// become visible to the second one — that is exactly what reading the latest
+/// committed version buys. The same pair of reads inside one transaction must
+/// NOT see it, because they share one pinned `start_ts`. An implementation
+/// that took the shortcut unconditionally would pass the first half and
+/// silently break the second.
+#[test]
+fn a_concurrent_commit_is_visible_between_autocommit_reads_but_not_inside_a_transaction() {
+    let timestamps = CountingTimestampSource::new([]);
+    let state = Rc::new(TransportState::default());
+    let mut session = new_session(timestamps.clone(), &state);
+
+    // Another session commits `after` at commit_ts 1000, between the reads.
+    let versions = [(100_u64, "before"), (1000_u64, "after")];
+
+    let first = session
+        .execute("SELECT balance FROM accounts WHERE id = 7")
+        .unwrap();
+    let second = session
+        .execute("SELECT balance FROM accounts WHERE id = 7")
+        .unwrap();
+    let autocommit_reads = state.start_timestamps.borrow().clone();
+    assert_eq!(
+        autocommit_reads,
+        [MAX_TS_POINT_GET_SNAPSHOT, MAX_TS_POINT_GET_SNAPSHOT]
+    );
+    assert_eq!(first.snapshot_ts(), Some(MAX_TS_POINT_GET_SNAPSHOT));
+    assert_eq!(second.snapshot_ts(), Some(MAX_TS_POINT_GET_SNAPSHOT));
+    assert_eq!(
+        visible_at(&versions, autocommit_reads[1]),
+        Some("after"),
+        "an autocommit point read must observe a commit that landed before it"
+    );
+
+    // The same pair inside one transaction, whose start_ts predates the commit.
+    let state = Rc::new(TransportState::default());
+    let mut in_transaction = new_session(timestamps.clone(), &state);
+    let transaction_start_ts = 500;
+    for _ in 0..2 {
+        in_transaction
+            .execute_plan_at_snapshot(
+                plan("SELECT balance FROM accounts WHERE id = 7"),
+                transaction_start_ts,
+                std::sync::Arc::new(CancelHandle::default()),
+            )
+            .unwrap();
+    }
+    let transaction_reads = state.start_timestamps.borrow().clone();
+    assert_eq!(
+        transaction_reads,
+        [transaction_start_ts, transaction_start_ts]
+    );
+    assert_eq!(
+        visible_at(&versions, transaction_reads[1]),
+        Some("before"),
+        "a read inside a transaction must NOT observe a later commit"
+    );
+    assert_eq!(timestamps.calls(), 0);
 }
 
 /// The plan-shape predicate on its own, so a future caller that reuses it
