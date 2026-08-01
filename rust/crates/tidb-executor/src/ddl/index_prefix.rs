@@ -31,7 +31,9 @@
 //! module was extracted to close: the `TableInfo` builder validated NOTHING
 //! and stored whatever length was written, so
 //!
-//!     create table t (a int, key idx(a(3)))
+//! ```sql
+//! create table t (a int, key idx(a(3)))
+//! ```
 //!
 //! built an `IndexInfo` carrying a 3-byte prefix on an INTEGER -- metadata
 //! real TiDB refuses outright with 1089 -- while the executor tier refused the

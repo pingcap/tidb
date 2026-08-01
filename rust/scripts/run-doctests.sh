@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-EXPECTED_DOCTESTS=3
+EXPECTED_DOCTESTS=2
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
