@@ -23,6 +23,13 @@ use tidb_expr::{Columns, ErrorLevel, MysqlRng};
 
 use crate::mem_quota::{OomAction, StatementMemory};
 
+/// How many warnings one statement retains. Go's `StaticWarnHandler` stops
+/// appending at `math.MaxUint16` (`pkg/util/context/warn.go`), because the
+/// count it publishes is a `uint16` and a statement that produced more could
+/// not report them anyway. Without the limit a non-strict bulk write grows the
+/// buffer once per converted value, unbounded.
+pub const MAX_WARNING_COUNT: usize = u16::MAX as usize;
+
 /// Go `stmtctx.StatementContext`, in the part evaluation actually reads: the
 /// warning buffer and the error levels that decide whether a tolerable
 /// condition warns or fails the statement.
@@ -755,7 +762,11 @@ impl Columns for StmtContext {
     }
 
     fn append_warning(&self, code: u16, message: &str) {
-        self.warnings.borrow_mut().push((code, message.to_owned()));
+        let mut warnings = self.warnings.borrow_mut();
+        if warnings.len() >= MAX_WARNING_COUNT {
+            return;
+        }
+        warnings.push((code, message.to_owned()));
     }
 
     /// The same three mode bits the WRITE path reads from
@@ -816,6 +827,23 @@ mod tests {
     #[test]
     fn connection_id_absent_by_default() {
         assert_eq!(StmtContext::for_query().connection_id(), None);
+    }
+
+    /// Go's `StaticWarnHandler` stops appending at `math.MaxUint16`, so a
+    /// non-strict bulk write that converts millions of values retains the
+    /// first 65,535 rather than one entry per value.
+    #[test]
+    fn the_warning_buffer_stops_at_the_source_retention_limit() {
+        let ctx = StmtContext::for_query();
+        for index in 0..MAX_WARNING_COUNT + 16 {
+            ctx.append_warning_parts(1292, &format!("value {index}"));
+        }
+        let warnings = ctx.take_warnings();
+        assert_eq!(warnings.len(), MAX_WARNING_COUNT);
+        // The entries kept are the FIRST ones: Go appends until the limit and
+        // then drops, rather than evicting the oldest.
+        assert_eq!(warnings[0].1, "value 0");
+        assert_eq!(warnings[MAX_WARNING_COUNT - 1].1, "value 65534");
     }
 
     #[test]

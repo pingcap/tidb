@@ -105,7 +105,14 @@ impl Session {
     /// (`pkg/util/context/warn.go`). Keeping one door here is what lets a rule
     /// that belongs to the buffer -- its retention limit, its ordering --
     /// live in one place rather than at each caller.
+    ///
+    /// That rule is Go's retention limit: `StaticWarnHandler` stops appending
+    /// once the buffer holds [`tidb_executor::MAX_WARNING_COUNT`] entries,
+    /// since the count it publishes is a `uint16`.
     pub(crate) fn append_warning(&mut self, level: WarningLevel, code: u16, message: String) {
+        if self.warnings.len() >= tidb_executor::MAX_WARNING_COUNT {
+            return;
+        }
         self.warnings.push(SqlWarning {
             level,
             code,

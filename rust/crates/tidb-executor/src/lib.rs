@@ -125,7 +125,7 @@ pub use predicate_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp,
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
-pub use stmt_context::{SequenceSnapshot, StmtContext};
+pub use stmt_context::{SequenceSnapshot, StmtContext, MAX_WARNING_COUNT};
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
 pub use tidb_expr::{

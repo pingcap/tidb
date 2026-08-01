@@ -660,6 +660,25 @@ fn prepared_statement_parameters() {
     }
 }
 
+/// Go's one warning sink stops appending at `math.MaxUint16`
+/// (`StaticWarnHandler.appendWarningWithLevel`), because the count it
+/// publishes is a `uint16`. The session buffer is that sink here, so the limit
+/// belongs on its one door rather than at each of the seven callers.
+#[test]
+fn the_session_warning_buffer_stops_at_the_source_retention_limit() {
+    let mut session = Session::new();
+    for index in 0..tidb_executor::MAX_WARNING_COUNT + 16 {
+        session.append_warning(WarningLevel::Warning, 1292, format!("value {index}"));
+    }
+    assert_eq!(session.warnings().len(), tidb_executor::MAX_WARNING_COUNT);
+    // The FIRST entries survive: Go appends until the limit and then drops.
+    assert_eq!(session.warnings()[0].message, "value 0");
+    assert_eq!(
+        session.warnings()[tidb_executor::MAX_WARNING_COUNT - 1].message,
+        "value 65534"
+    );
+}
+
 /// Whether a statement inherits the previous statement's warning buffer is a
 /// decision Go makes on the PARSED node: `ResetContextOfStmt` switches on
 /// `*ast.ShowStmt` and copies the outgoing context's entries forward only for
