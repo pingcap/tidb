@@ -120,7 +120,14 @@ impl Collator {
 
     /// Whether the source implementation can use the raw input as its key.
     pub const fn can_use_raw_mem_as_key(self) -> bool {
-        matches!(self, Self::DerivedBinary | Self::New(Collation::Binary))
+        // Go asks `*binCollator` (binary) or `*derivedBinCollator`, and
+        // utf8mb4_0900_bin is registered as a `derivedBinCollator`.
+        matches!(
+            self,
+            Self::DerivedBinary
+                | Self::New(Collation::Binary)
+                | Self::New(Collation::Utf8Mb40900Bin)
+        )
     }
 }
 
@@ -521,16 +528,15 @@ impl Collation {
     /// Compiles this collation's wildcard matcher.
     pub fn pattern(self, pattern: &str, escape: u8) -> WildcardPattern {
         match self {
-            Self::Binary | Self::GbkBin | Self::Gb18030Bin => {
-                WildcardPattern::binary(pattern, escape)
-            }
+            Self::Binary | Self::Gb18030Bin => WildcardPattern::binary(pattern, escape),
+            // `gbkBinPattern` embeds `derivedBinPattern`, so gbk_bin matches by
+            // rune; only `gb18030BinPattern` embeds the byte-wise `binPattern`.
             Self::AsciiBin
             | Self::Latin1Bin
             | Self::Utf8Bin
             | Self::Utf8Mb4Bin
-            | Self::Utf8Mb40900Bin => {
-                WildcardPattern::unicode(pattern, escape, PatternMatcher::Exact)
-            }
+            | Self::Utf8Mb40900Bin
+            | Self::GbkBin => WildcardPattern::unicode(pattern, escape, PatternMatcher::Exact),
             Self::Utf8GeneralCi | Self::Utf8Mb4GeneralCi => {
                 WildcardPattern::unicode(pattern, escape, PatternMatcher::GeneralCi)
             }
@@ -555,10 +561,8 @@ impl Collation {
     /// Compares arbitrary Go-string bytes using TiDB's source semantics.
     pub fn compare(self, left: &[u8], right: &[u8]) -> Ordering {
         match self {
-            Self::Binary | Self::AsciiBin | Self::Latin1Bin | Self::Utf8Mb40900Bin => {
-                left.cmp(right)
-            }
-            Self::Utf8Bin | Self::Utf8Mb4Bin => {
+            Self::Binary | Self::Utf8Mb40900Bin => left.cmp(right),
+            Self::AsciiBin | Self::Latin1Bin | Self::Utf8Bin | Self::Utf8Mb4Bin => {
                 trim_trailing_spaces(left).cmp(trim_trailing_spaces(right))
             }
             Self::GbkBin => encoded_binary_compare(Encoding::Gbk, left, right),
@@ -577,10 +581,10 @@ impl Collation {
     /// Returns TiDB's sort key for arbitrary Go-string bytes.
     pub fn key(self, value: &[u8]) -> Vec<u8> {
         match self {
-            Self::Binary | Self::AsciiBin | Self::Latin1Bin | Self::Utf8Mb40900Bin => {
-                value.to_vec()
+            Self::Binary | Self::Utf8Mb40900Bin => value.to_vec(),
+            Self::AsciiBin | Self::Latin1Bin | Self::Utf8Bin | Self::Utf8Mb4Bin => {
+                trim_trailing_spaces(value).to_vec()
             }
-            Self::Utf8Bin | Self::Utf8Mb4Bin => trim_trailing_spaces(value).to_vec(),
             Self::GbkBin => encoded_binary_key(Encoding::Gbk, value, true),
             Self::Gb18030Bin => encoded_binary_key(Encoding::Gb18030, value, true),
             Self::Utf8GeneralCi | Self::Utf8Mb4GeneralCi => general_ci_key(value, true),
