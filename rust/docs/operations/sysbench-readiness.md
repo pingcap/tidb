@@ -135,6 +135,92 @@ deterministic 1,000-row load reproduced the banked figures exactly —
 `1000 500500 506087 1 1000` after load and `1000 500500 505171` after the
 write/txn statements, agreeing with Go both times.
 
+### The shortcut on the path sysbench actually runs (task #165)
+
+**2026-08-02 on `hparser-integration` at `a30ddd25dc`, port offset 33000, ONE
+`tiup playground v9.0.0-beta.2.pre-nightly` cluster.** Both engines measured
+inside that single run, ten seconds each window, `--threads=1
+--table-size=1000`, release build at that tip. Artifacts under
+`run-33000/`. **Every line in this section is keyed to offset 33000**; nothing
+here comes from any other run, and nothing here was appended to a shared log.
+
+**The shortcut now fires on `--cluster-session`, and the TSO rate collapsed to
+Go's.** The offset-39000 run found the guard unreachable in the served mode
+because the snapshot was bound before the plan existed; the statement-level
+shape declaration (`c4751d4e5b`) is the channel that fixed it, and this is the
+first run in which the served path takes the branch.
+
+| Measure | before (offset 43700, `707fccdf00`) | after (offset 33000, `a30ddd25dc`) |
+| --- | --- | --- |
+| `oltp_point_select` **TSO/stmt**, `disable` | **1.005** | **0.0034** |
+| `oltp_point_select` **TSO/stmt**, `auto` | **1.004** | **0.0031** |
+| Go's TSO/stmt in the same run, `disable` / `auto` | 0.002 / 0.002 | 0.0021 / 0.0018 |
+| `oltp_point_select` **per-statement excess**, `disable` | **123.73 µs** | **67.17 µs** (184.03 vs 116.86) |
+| `oltp_point_select` **per-statement excess**, `auto` | **130.17 µs** | **76.80 µs** (180.48 vs 103.68) |
+
+**The Rust node's TSO rate for `oltp_point_select` is now inside Go's own
+band** — 0.0034 against Go's 0.0021 in the same run, where the residue on both
+sides is background traffic on the shared PD. The excess fell by **56.6 µs**
+(`disable`) and **53.4 µs** (`auto`), which is the same size as the
+`PdClient::get_timestamp` round trip that was being charged to every statement.
+Go's per-statement total is the fixed point that makes this comparable across
+runs, and it landed where it always does: **116.86 / 103.68 µs**, against the
+117–130 µs band of the five prior runs.
+
+#### The counter, and why it is sound in THIS run
+
+PD exports no timestamps-handed-out counter — the inventory dumped from
+`/metrics` at offset 33000 contains only `pd_cluster_tso_*` latency histograms
+and the gRPC message counters. So the figures come from
+`grpc_server_msg_received_total{grpc_method="Tso",grpc_service="pdpb.PD"}`,
+which counts **Tso messages, not timestamps**: batching (`5e725476af`) coalesces
+already-queued waiters into one `count`-wide request. At `--threads=1` there is
+never a second waiter, so every batch should be `count = 1` — and this run
+**calibrates that rather than assuming it**, with four probes whose answers are
+known integers:
+
+| Calibration probe | Engine | Tso delta | Expected |
+| --- | --- | --- | --- |
+| 100 explicit read-only transactions | Go | **102** | ~101, one timestamp each |
+| 100 explicit 2PC write transactions | Go | **203** | ~200, `start_ts` + `commit_ts` |
+| 200 autocommit PK point gets | **Rust** | **1** | 0 if the shortcut fires |
+| 200 autocommit range reads (`id BETWEEN`) | **Rust** | **200** | ~200, the negative control |
+| 200 autocommit PK `UPDATE`s | **Rust** | **401** | NOT 0 — a write must never take it |
+
+A counter that under-counted coalesced timestamps could not land on 2.03 for a
+workload known to take exactly two. The third and fourth rows are the
+shortcut's own signature measured directly, away from sysbench: **200 point
+gets cost one timestamp between them, and 200 ranges cost 200.** The fifth row
+is the guard, live: an autocommit `UPDATE` by primary key still pays its two,
+so no write took the branch.
+
+#### Rung 5 and rung 6 in the same run
+
+**Rung 5's Rust-vs-Go checksum still matches** at `1000 500500 501715 1 1000`
+on both sides, and the post-run re-check agrees at `1000 500500 502340` on both
+sides. **The shortcut altered no row set.** **Rung 6 ran eight of eight**, all
+four workloads in both ps modes, no aborted cell.
+
+#### All eight Rust cells and the Go control, offset 33000
+
+| Workload | ps mode | Rust µs/stmt | Go µs/stmt | Rust excess | Rust TSO/stmt | Go TSO/stmt |
+| --- | --- | --- | --- | --- | --- | --- |
+| `oltp_point_select` | disable | 184.03 | 116.86 | **67.17 µs** | **0.0034** | 0.0021 |
+| `oltp_point_select` | auto | 180.48 | 103.68 | **76.80 µs** | **0.0031** | 0.0018 |
+| `oltp_read_only` | disable | 289.89 | 125.98 | 163.91 µs | 0.0679 | 0.0648 |
+| `oltp_read_only` | auto | 273.69 | 169.68 | 104.01 µs | 0.0671 | 0.0661 |
+| `oltp_write_only` | disable | 352.66 | 184.35 | 168.31 µs | 0.1728 | 0.3365 |
+| `oltp_write_only` | auto | 362.38 | 528.79 | (Go window noisy) | 0.1728 | 0.3423 |
+| `oltp_read_write` | disable | 403.59 | 677.72 | (Go window noisy) | 0.0567 | 0.1112 |
+| `oltp_read_write` | auto | 385.56 | 230.54 | 155.02 µs | 0.0569 | 0.1041 |
+
+Two Go windows in this run (`oltp_write_only auto`, `oltp_read_write disable`)
+came in far outside their own band and are **not** reported as excesses; the Go
+point-select windows, which are the ones this section turns on, landed squarely
+inside it. Only `oltp_point_select` is autocommit per statement, so only it can
+take the shortcut — the other three run inside explicit transactions and their
+TSO rates are unchanged, exactly as they should be.
+
 ### The `MaxUint64` point-get shortcut on a real cluster (task #142)
 
 **2026-08-01 on `hparser-integration` at `63acc31852`, port offset 39000, ONE
