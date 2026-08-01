@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/inference",
-        "//pkg/sessionctx",
         "//pkg/util/intest",
     ],
 )

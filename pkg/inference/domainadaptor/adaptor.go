@@ -18,9 +18,12 @@ package domainadaptor
 
 import (
 	"github.com/pingcap/tidb/pkg/inference"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
+
+type domainContext interface {
+	GetDomain() any
+}
 
 type domainProxy interface {
 	GetEmbedFn() *inference.EmbedFn
@@ -28,7 +31,7 @@ type domainProxy interface {
 
 // GetEmbedFn returns the Domain-owned embedding function associated with sctx.
 // Unit tests without a Domain use a test-only process-wide fallback.
-func GetEmbedFn(sctx sessionctx.Context) *inference.EmbedFn {
+func GetEmbedFn(sctx domainContext) *inference.EmbedFn {
 	if sctx != nil {
 		if proxy, ok := sctx.GetDomain().(domainProxy); ok {
 			if embedFn := proxy.GetEmbedFn(); embedFn != nil {

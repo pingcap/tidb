@@ -15,21 +15,32 @@
 package expropt
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var _ exprctx.OptionalEvalPropProvider = SessionContextPropProvider(nil)
 var _ RequireOptionalEvalProps = SessionContextPropReader{}
 
+// SessionContext provides the session APIs needed to evaluate EMBED_TEXT.
+// Keeping this interface narrow prevents this low-level package from depending
+// on the full sessionctx.Context and creating a dependency cycle.
+type SessionContext interface {
+	GetTraceCtx() context.Context
+	GetSessionVars() *variable.SessionVars
+	GetDomain() any
+}
+
 // SessionContextPropProvider provides the current session context.
-type SessionContextPropProvider func() sessionctx.Context
+type SessionContextPropProvider func() SessionContext
 
 // NewSessionContextPropProvider creates a provider for the current session context.
-func NewSessionContextPropProvider(sctx sessionctx.Context) SessionContextPropProvider {
+func NewSessionContextPropProvider(sctx SessionContext) SessionContextPropProvider {
 	intest.AssertNotNil(sctx)
-	return func() sessionctx.Context {
+	return func() SessionContext {
 		return sctx
 	}
 }
@@ -48,7 +59,7 @@ func (SessionContextPropReader) RequiredOptionalEvalProps() exprctx.OptionalEval
 }
 
 // GetSessionContext returns the current session context.
-func (SessionContextPropReader) GetSessionContext(ctx exprctx.EvalContext) (sessionctx.Context, error) {
+func (SessionContextPropReader) GetSessionContext(ctx exprctx.EvalContext) (SessionContext, error) {
 	p, err := getPropProvider[SessionContextPropProvider](ctx, exprctx.OptPropSessionContext)
 	if err != nil {
 		return nil, err

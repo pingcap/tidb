@@ -23,7 +23,6 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
@@ -110,7 +109,7 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 				require.Same(t, vars, assertReaderFuncValue(t, ctx, r.GetSessionVars))
 			}
 		case exprctx.OptPropSessionContext:
-			p = SessionContextPropProvider(func() sessionctx.Context { return nil })
+			p = SessionContextPropProvider(func() SessionContext { return nil })
 			r := SessionContextPropReader{}
 			reader = r
 			verifyNoProvider = func(ctx exprctx.EvalContext) {
