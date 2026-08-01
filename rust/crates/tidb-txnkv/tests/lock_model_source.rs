@@ -149,3 +149,27 @@ fn a_blocked_locking_statement_admits_pessimistic_locks_a_read_would_refuse() {
         Err(LockAdmissionError::MissingIdentity)
     );
 }
+
+/// The prewrite gate names the protocol it dispatches to, and the refusal it
+/// re-imposes when the pessimistic half is not enabled is the exact string a
+/// live cluster already produced: `pessimistic lock type 5 is outside bounded
+/// recovery`. Changing that wording would orphan the recorded evidence.
+#[test]
+fn the_prewrite_gate_names_each_protocol_and_reproduces_the_recorded_refusal() {
+    let mut pessimistic = optimistic(b"s", b"p", 11);
+    pessimistic.lock_type = 5;
+    let admitted = decode_blocking_lock_observation(&pessimistic).unwrap();
+    assert_eq!(admitted[0].protocol_name(), "pessimistic");
+
+    let admitted = decode_blocking_lock_observation(&optimistic(b"s", b"p", 11)).unwrap();
+    assert_eq!(admitted[0].protocol_name(), "optimistic");
+
+    assert_eq!(
+        LockAdmissionError::Pessimistic(5).to_string(),
+        "pessimistic lock type 5 is outside bounded recovery"
+    );
+    assert_eq!(
+        decode_lock_observation(&pessimistic).unwrap_err().to_string(),
+        LockAdmissionError::Pessimistic(5).to_string()
+    );
+}

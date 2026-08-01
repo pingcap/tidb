@@ -47,6 +47,25 @@ use super::{
 /// that would only report "alive". TiKV's own default wait is one second.
 pub const SKIP_RESOLVE_THRESHOLD_MS: u64 = 300;
 
+/// Whether an optimistic prewrite may clean a pessimistic lock it collides with.
+///
+/// Off by default, and the default is the whole point. A Go tidb-server sharing
+/// the cluster leaves pessimistic locks that client-go resolves and we today
+/// refuse, so refusing is a real availability gap — but resolving one
+/// incorrectly rolls back another transaction's work, which is strictly worse
+/// than refusing. The protocol below is byte-shaped after client-go and reviewed,
+/// yet it has never executed against a real TiKV from the prewrite path, so it
+/// stays behind `TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY` until a cluster run
+/// proves it. Read once per process: a mid-run flip would make two prewrites in
+/// the same transaction disagree about the protocol.
+#[must_use]
+pub fn pessimistic_prewrite_recovery_enabled() -> bool {
+    static ENABLED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+        std::env::var_os("TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY").is_some()
+    });
+    *ENABLED
+}
+
 /// Resolves every lock blocking one pessimistic locking attempt.
 ///
 /// Returns [`LockRecoveryResult::Alive`] when at least one owner is still

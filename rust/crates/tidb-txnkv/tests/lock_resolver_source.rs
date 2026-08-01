@@ -623,6 +623,7 @@ fn blocking_pessimistic(key: &[u8], refreshed_ms: u64) -> BlockingLock {
     assert_eq!(blocker.key(), key);
     assert_eq!(blocker.txn_id(), 1_000 << 18);
     assert!(matches!(blocker, BlockingLock::Pessimistic(_)));
+    assert_eq!(blocker.protocol_name(), "pessimistic");
     blocker
 }
 
@@ -1068,4 +1069,20 @@ fn a_live_async_commit_primary_is_waited_for_rather_than_recovered() {
     );
     assert!(recorded.borrow().secondary_checks.is_empty());
     assert!(recorded.borrow().resolves.is_empty());
+}
+
+/// An optimistic prewrite that meets a Go tidb-server's pessimistic lock must
+/// keep refusing until the resolve is proven on a real cluster.
+///
+/// The resolver below is complete and exercised by every test above, but it has
+/// never run against TiKV from the prewrite path, and a wrong resolve rolls
+/// back another transaction's work. So the default answer stays the refusal,
+/// and only `TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY` in the process
+/// environment opens the resolving path.
+#[test]
+fn prewrite_pessimistic_recovery_is_off_unless_the_environment_opts_in() {
+    assert_eq!(
+        lock::pessimistic_prewrite_recovery_enabled(),
+        std::env::var_os("TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY").is_some()
+    );
 }

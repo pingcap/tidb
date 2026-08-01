@@ -111,6 +111,15 @@ impl BlockingLock {
         }
     }
 
+    /// Names the cleanup protocol this lock belongs to, for diagnostics.
+    #[must_use]
+    pub const fn protocol_name(&self) -> &'static str {
+        match self {
+            Self::Optimistic(_) => "optimistic",
+            Self::Pessimistic(_) => "pessimistic",
+        }
+    }
+
     /// Milliseconds since the owner last refreshed the lock, zero if unknown.
     ///
     /// Only a pessimistic lock reports this; TiKV sets it when it wakes a
