@@ -470,8 +470,51 @@ fn compare(
             None => Ok(kind),
             Some(detail) => Err(Some(detail)),
         },
+        (Ok(kind), None) => {
+            survey_unwatched_warning(session, stmt);
+            Ok(kind)
+        }
         (outcome, _) => outcome,
     }
+}
+
+/// Records that a statement OUTSIDE the warning gate raised a warning here.
+///
+/// The gate reaches 28 of 4,906 statements
+/// ([`warning_comparison_covers_only_enable_warnings_statements`]); for the
+/// rest the replay compares rows only, so a warning is invisible either way.
+/// This measures one half of that blind spot -- what THIS engine raises where
+/// nothing is checked. `INTEGRATION_SURVEY_UNWATCHED_WARNINGS=1` printed 18
+/// such statements: five deprecated-sysvar notices, eleven `Truncated
+/// incorrect DOUBLE value` from string-vs-number comparisons, and a
+/// `tidb_max_chunk_size` clamp. None of the 18 is checked against TiDB by
+/// anything in this suite.
+///
+/// It is OFF by default, and that is not tidiness. Turning it on moved the
+/// divergence count from 64 to 66: the two `select @@last_plan_from_cache`
+/// statements in `sessionctx/setvar` answered 0 instead of 1, because the
+/// extra `SHOW WARNINGS` ran between the prepared statement and the read and
+/// became the last plan. So `SHOW WARNINGS` is NOT the observationally neutral
+/// probe [`warning_difference`] calls it -- it is neutral only for the 28
+/// statements it happens to be asked on today. Widening the gate has to read
+/// the warning count off the wire instead, and that is a change to the shared
+/// reader, not a line in this survey.
+fn survey_unwatched_warning(session: &mut Session, stmt: &Stmt) {
+    if std::env::var_os("INTEGRATION_SURVEY_UNWATCHED_WARNINGS").is_none() {
+        return;
+    }
+    let Ok(StmtOutput::Rows { rows, .. }) = session.run_with_columns("SHOW WARNINGS") else {
+        return;
+    };
+    if rows.is_empty() {
+        return;
+    }
+    let texts = rows
+        .iter()
+        .map(|row| row.iter().map(cell).collect::<Vec<_>>().join("\t"))
+        .collect::<Vec<_>>()
+        .join(" / ");
+    eprintln!("UNWATCHED WARNING: {} -> {texts}", stmt.sql);
 }
 
 /// Reports how this session's warnings differ from the recorded ones, or
