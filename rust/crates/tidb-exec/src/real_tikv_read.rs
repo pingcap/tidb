@@ -86,6 +86,15 @@ pub fn prepare_configured_point_read(
     lower_prepared_point_read(&select, catalog)
 }
 
+/// The snapshot an autocommit point get reads at instead of a real timestamp.
+///
+/// Go writes this as `math.MaxUint64` in
+/// `pkg/sessiontxn/isolation/optimistic.go`'s `GetStmtReadTS`. TiKV resolves a
+/// read at this version to the latest committed value of each key, which is
+/// deliberately NOT snapshot-isolated: it is correct only for a statement that
+/// reads exactly one row and then ends, which is what the guard establishes.
+pub const MAX_TS_POINT_GET_SNAPSHOT: u64 = u64::MAX;
+
 /// Concrete retained production transport used by the first SQL node.
 pub type ProductionReadTransport =
     DirectUnaryQueryTransport<TonicCoprocessorClient, PdRegionLoader>;
@@ -1239,10 +1248,27 @@ where
         if plan.is_contradiction() {
             return self.execute_plan(plan, None, cancellation);
         }
-        let snapshot_ts = self
-            .timestamp_source
-            .current_ts()
-            .map_err(RealTiKvReadError::Query)?;
+        // Go's `OptimisticTxnContextProvider.AdviseOptimizeWithPlan` skips
+        // activating the transaction and reads at `math.MaxUint64` — the
+        // latest committed version — for an autocommit point get, because a
+        // single-statement transaction reading one row has no second read to
+        // stay consistent with. `MaxUint64` ignores snapshot isolation, so it
+        // is sound ONLY under Go's whole guard conjunction; see
+        // `ReadOnlyScanPlan::is_point_get_on_handle` for the plan-shape half
+        // and the conditions the caller owns.
+        //
+        // This entry point is reached only with no transaction open (the
+        // session routes an open transaction to `execute_plan_at_snapshot`
+        // with its pinned `start_ts`), which is exactly Go's `IsAutoCommitTxn`
+        // — autocommit set, and not `InTxn`. `SET autocommit = 0` opens a
+        // transaction for the statement, so it takes the other branch.
+        let snapshot_ts = if plan.is_point_get_on_handle() {
+            MAX_TS_POINT_GET_SNAPSHOT
+        } else {
+            self.timestamp_source
+                .current_ts()
+                .map_err(RealTiKvReadError::Query)?
+        };
         self.execute_plan_at_snapshot(plan, snapshot_ts, cancellation)
     }
 
