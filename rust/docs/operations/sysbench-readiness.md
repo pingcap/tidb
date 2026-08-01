@@ -177,6 +177,63 @@ tested in its own crate; it simply does not reach the served mode.** Making it
 pay requires deferring the autocommit snapshot bind until after planning, which
 is a session-driver change, not an executor one.
 
+#### Does real TiKV honour `version = u64::MAX`? Yes — offset 40000
+
+**Second run, 2026-08-01 at `63acc31852`, port offset 40000, its own
+`tiup playground v9.0.0-beta.2.pre-nightly`.** Artifacts:
+`maxts-bound-89696-1785592702`. The offset-39000 run could not answer this: its
+node runs `--cluster-session`, which never sends `MaxUint64` at all, so its
+checks exercised the per-statement-timestamp path and prove nothing about the
+shortcut. This run starts a **second Rust node bound with `--load-table
+sbtest.sbtest1`**, which is the mode `execute_lowered_plan_with_cancellation`
+serves, and puts every question to it.
+
+The dataset had to be built by hand rather than by `sysbench prepare`: the
+bound node refuses `sysbench`'s own `id INTEGER` handle — *"column `id` is the
+row handle but has type INT, not signed BIGINT"* — so the table carries
+sysbench's exact shape with a `BIGINT` handle and is loaded by the Go server on
+the same TiKV.
+
+**Rows: yes, and they match Go's exactly.** Nine PK point gets served at
+`MaxUint64` — ids 1, 2, 7, 8, 250, 500, 999, 1000, and the absent 5000 —
+returned byte-identical `(id, k, c, pad)` tuples to the Go `tidb-server` on the
+same TiKV, and the absent id returned the empty set on both. TiKV neither
+rejected nor truncated the version, and there was no silent empty result.
+
+**The two visibility questions, which were pinned locally only against a model
+of TiKV's MVCC reader, both hold against the real one:**
+
+| Question | Result |
+| --- | --- |
+| A row another session commits **between** two autocommit point reads must become visible | **PASS.** `id=7` read `c-7`, Go committed `MAXTS-VISIBILITY-MARK-1`, the next autocommit read returned the mark |
+| The same pair **inside one transaction** must NOT see it | **PASS.** `id=8` read `c-8` inside `BEGIN`, Go committed `MAXTS-VISIBILITY-MARK-2`, the second read inside the same transaction still returned `c-8` |
+| …and after that transaction ends, a fresh autocommit read does see it | **PASS.** Returned `MAXTS-VISIBILITY-MARK-2`, agreeing with Go |
+
+**Nothing disagreed with the local model.** `MaxUint64` means "latest committed
+version" on real TiKV exactly as the in-repo model of the MVCC reader said, and
+routing an open transaction away from the shortcut is what keeps the second row
+of that table true.
+
+**The TSO signature of the shortcut, measured three ways on one node:**
+
+| Probe | Statements | Tso delta | Reading |
+| --- | --- | --- | --- |
+| autocommit PK point gets | 200 (200 rows) | **0** | the shortcut fires and costs no timestamp at all |
+| autocommit ranges (`id BETWEEN`) | 200 (800 rows) | **215** | the control: a non-point autocommit read still pays one each |
+| PK point gets inside explicit transactions | 100 (100 rows) | **101** | one per transaction, as isolation requires |
+
+The middle and bottom rows are also a second, independent calibration of the
+PD counter after TSO batching: 100 transactions read 101, and 200 single-read
+statements read 215.
+
+**What this does and does not buy.** On the bound node the point-get timestamp
+is gone — not reduced, zero. But `sysbench` cannot be pointed at that node at
+all (`error 1049: Unknown database 'sbtest'`; a `--load-table` node serves one
+table and no database namespace), so **no sysbench throughput figure exists for
+the path where the shortcut fires**, and the path sysbench does run is
+unchanged. The Go control in the same run measured 135.07 µs (`disable`) and
+120.01 µs (`auto`) per statement at 0.002 TSO, consistent with every prior run.
+
 #### TSO per statement, both engines, offset 39000
 
 | Workload | ps mode | Rust µs/stmt | Go µs/stmt | Rust excess | Rust TSO/stmt | Go TSO/stmt | Rust TSO/txn | Go TSO/txn |
@@ -1473,7 +1530,14 @@ integer-to-integer.
     **Closed.**
 14. **Autocommit point reads could skip the timestamp entirely,** as Go does
     via `IsPointGetWithPKOrUniqueKeyByAutoCommit` and a `MaxUint64` start ts.
-    Rust takes 1.00 TSO per point select where Go takes 0.002. Bounded by the
+    ~~Rust takes 1.00 TSO per point select where Go takes 0.002.~~ **Partly
+    landed and still open, 2026-08-01 at `63acc31852`:** the shortcut works and
+    is correct on a real cluster where it is wired — a `--load-table` node
+    takes **0** timestamps for 200 autocommit point gets, returns Go's exact
+    rows, and keeps both visibility rules — but `--cluster-session`, the mode
+    every sysbench run uses, binds its statement snapshot before planning and
+    so still takes **1.005** per point select. See "The `MaxUint64` point-get
+    shortcut on a real cluster (task #142)". Bounded by the
     arithmetic in task #117 to at most ~39% of that workload's gap, so it ranks
     below item 12.
 
