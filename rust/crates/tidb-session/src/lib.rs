@@ -531,6 +531,8 @@ mod tests_support;
 #[cfg(test)]
 mod tests_sysbench_access;
 #[cfg(test)]
+mod tests_system_schemas;
+#[cfg(test)]
 mod tests_user_vars;
 #[cfg(test)]
 mod tests_views;

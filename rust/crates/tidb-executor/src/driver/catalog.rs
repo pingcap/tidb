@@ -66,6 +66,10 @@ pub(crate) fn split_table_path<'a>(
 /// a connection with no explicit database lands there.
 pub const DEFAULT_DATABASE: &str = "test";
 
+/// Go `metadef.SystemDB`: the schema TiDB's bootstrap creates its own tables
+/// in. Spelled lower case, which is the name Go stores and reports.
+pub const SYSTEM_DATABASE: &str = "mysql";
+
 /// One schema: Go `model.DBInfo`, reduced to the name and its tables.
 ///
 /// NOT MODELLED (documented): the schema's charset, collation, placement
@@ -100,17 +104,47 @@ pub struct Catalog {
 }
 
 impl Default for Catalog {
-    /// A catalog holding only `test`, as a freshly bootstrapped TiDB does.
+    /// A catalog holding `test`, `INFORMATION_SCHEMA` and `mysql`, the three
+    /// schemas a freshly bootstrapped TiDB exposes that this tier can name.
     ///
     /// `INFORMATION_SCHEMA` is present because its tables are implemented
     /// (see `tidb-session`'s `infoschema`), and holds no stored tables of its
     /// own -- its rows are computed at query time.
     ///
-    /// DIVERGENCE (documented): real TiDB also exposes `mysql`,
-    /// `performance_schema`, `sys` and `metrics_schema`. Those are system
-    /// schemas whose tables this seed does not implement, and listing them
-    /// empty would claim more than is true, so they stay absent until their
-    /// contents are ported.
+    /// `mysql` is present as an OBJECT with no tables, and the distinction is
+    /// the whole point. Go's `pkg/session/bootstrap.go` creates it with 61
+    /// tables holding real rows (captured: `use mysql; show tables;` lists
+    /// `user`, `db`, `tidb`, the `stats_*` family and the rest; `select
+    /// count(*) from mysql.user` answers 1). This tier serves NONE of them,
+    /// and an absent table is exactly how it says so: `mysql.user` answers
+    /// `Table 'mysql.user' doesn't exist` (1146), the same refusal the
+    /// cluster tier's `SkippedTable` produces for a table it cannot back.
+    /// What the object buys is that `USE mysql` SUCCEEDS, and that matters
+    /// out of proportion to the statement it is: a failed `USE` leaves the
+    /// session pointed at the previous schema (captured -- Go does the same
+    /// on a genuinely unknown name), so every later unqualified name resolved
+    /// somewhere else entirely. One refused statement was silently
+    /// re-answering all the statements behind it.
+    ///
+    /// DIVERGENCE (documented): enumerating `mysql` reports it EMPTY --
+    /// `show tables` after `use mysql` returns no rows where Go returns 61,
+    /// and `information_schema.tables` likewise. That is the honest shape of
+    /// "the object exists and its contents are not ported": naming a table
+    /// refuses, only counting them under-reports.
+    ///
+    /// DIVERGENCE (documented): `performance_schema`, `sys` and
+    /// `metrics_schema` stay absent. Unlike `mysql` they gate no measured
+    /// statement in the corpus -- nothing `USE`s them and nothing connects
+    /// with them -- so seeding them would buy nothing and under-report more.
+    ///
+    /// DIVERGENCE (documented): `DROP DATABASE mysql` is accepted here and
+    /// removes the object; Go refuses it with
+    /// `[ddl:8267]Drop 'mysql' database is forbidden` (captured). The guard
+    /// belongs in the statement arm that calls [`Catalog::drop_database`],
+    /// which this unit does not own. `information_schema` has the same hole
+    /// today, so this is a pre-existing gap widened by one name rather than a
+    /// new class; it is pinned by
+    /// `tidb_session`'s `dropping_the_mysql_schema_is_not_refused_yet`.
     fn default() -> Self {
         let mut databases = HashMap::new();
         databases.insert(
@@ -124,6 +158,13 @@ impl Default for Catalog {
             "information_schema".to_owned(),
             Database {
                 name: "INFORMATION_SCHEMA".to_owned(),
+                tables: HashMap::new(),
+            },
+        );
+        databases.insert(
+            SYSTEM_DATABASE.to_owned(),
+            Database {
+                name: SYSTEM_DATABASE.to_owned(),
                 tables: HashMap::new(),
             },
         );

@@ -31,8 +31,12 @@
 //! `DATA_LENGTH` and friends are 0 and `CREATE_TIME` is NULL rather than a
 //! fabricated timestamp; `REFERENTIAL_CONSTRAINTS` always has zero rows,
 //! since this tier has no foreign keys; the other `information_schema`
-//! tables; and the `mysql`, `performance_schema`, `sys` and `metrics_schema`
-//! databases, whose contents are separate tiers.
+//! tables; and the contents of `mysql`, which is a real schema OBJECT in the
+//! catalog (see `Catalog::default`) holding none of its 61 bootstrap tables,
+//! so `SCHEMATA` lists it as TiDB does while `TABLES` reports it empty and
+//! naming one of its tables refuses with 1146. The `performance_schema`,
+//! `sys` and `metrics_schema` databases are absent entirely; their contents
+//! are separate tiers.
 
 use tidb_datatype::{
     Datum, FieldType, FieldTypeCode, STRICT_INTEGER_DISPLAY_WIDTH, UNSPECIFIED_LENGTH,

@@ -11,8 +11,9 @@ use crate::*;
 ///
 /// NOT PORTED from that Go test (documented): every `charset`/`collate`
 /// database option and its `SHOW CREATE DATABASE` output, which need the
-/// charset tier; the `drop database mysql` rejection, which needs the
-/// system schemas; and the privilege/role cases.
+/// charset tier; the `drop database mysql` rejection, which is pinned as a
+/// divergence in `tests_system_schemas` now that the `mysql` schema exists;
+/// and the privilege/role cases.
 #[test]
 fn create_drop_database() {
     let mut session = Session::new();
