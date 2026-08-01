@@ -67,8 +67,15 @@ impl Parser {
         } else if self.is_kw("LIKE") || self.is_kw("ILIKE") {
             let ilike = self.is_kw("ILIKE");
             self.bump();
-            // The pattern is a bit_expr (tighter than predicates).
-            let pattern = self.parse_expr(prec::BIT_OR)?;
+            // The pattern is a `SimpleExpr`, NOT a `bit_expr` — the source
+            // production is `BitExpr LikeOrNotOp SimpleExpr
+            // LikeEscapeOpt`, and `pkg/parser/expr_parser.go`'s
+            // `parseLikeExpr` renders that as `parseExpression(precUnary)`
+            // with the note "precUnary excludes all binary arithmetic/
+            // bitwise operators". So a binary operator after the pattern
+            // applies to the WHOLE predicate: `'a' LIKE 'a' + 0` is
+            // `('a' LIKE 'a') + 0`, not `'a' LIKE ('a' + 0)`.
+            let pattern = self.parse_expr(prec::UNARY)?;
             let escape = self.parse_opt_escape_clause()?;
             Ok(Expr::Like {
                 expr: Box::new(left),
@@ -79,10 +86,11 @@ impl Parser {
             })
         } else if self.is_kw("REGEXP") || self.is_kw("RLIKE") {
             self.bump();
-            // Same `bit_expr` pattern precedence as `LIKE` above,
-            // confirmed via `godump restore`: `a REGEXP 'x' | 'y'` binds
-            // `|` into the pattern operand, not the whole predicate.
-            let pattern = self.parse_expr(prec::BIT_OR)?;
+            // Same `SimpleExpr` pattern precedence as `LIKE` above:
+            // `pkg/parser/expr_parser.go`'s `parseRegexpExpr` is
+            // `parseExpression(precUnary)` under the note "yacc: BitExpr
+            // RegexpOrNotOp SimpleExpr — pattern is SimpleExpr".
+            let pattern = self.parse_expr(prec::UNARY)?;
             Ok(Expr::Regexp {
                 expr: Box::new(left),
                 pattern: Box::new(pattern),
