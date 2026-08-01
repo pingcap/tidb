@@ -130,6 +130,10 @@ pub struct Stmt {
     /// `--sorted_result` preceded this statement: the recorder sorted the row
     /// lines before writing them, so a comparison must sort too.
     pub sorted: bool,
+    /// `--enable_warnings` was in effect: the recorder APPENDED this
+    /// statement's `SHOW WARNINGS` to its rows. See [`split_warnings`] --
+    /// this does not make the output uncomparable, it makes it two blocks.
+    pub warnings: bool,
     /// Why this statement's recorded output is not directly comparable, if it
     /// is not: the name of the mysqltest feature that rewrote or extended it.
     /// Empty means directly comparable.
@@ -159,11 +163,6 @@ const ONE_SHOT_BLOCKERS: &[(&str, &str)] = &[
 /// the reason the output they cover is not directly comparable. Modes are
 /// tracked independently: `--disable_warnings` must not clear `--enable_info`.
 const MODE_BLOCKERS: &[(&str, &str, &str)] = &[
-    (
-        "enable_warnings",
-        "disable_warnings",
-        "recorded SHOW WARNINGS block",
-    ),
     (
         "enable_info",
         "disable_info",
@@ -210,6 +209,7 @@ pub fn parse_test(text: &str) -> Result<Vec<Item>, String> {
     let mut modes = [false; MODE_BLOCKERS.len()];
     let mut expect_error = false;
     let mut sorted = false;
+    let mut warnings = false;
     let mut buffer: Vec<&str> = Vec::new();
 
     for raw in text.lines() {
@@ -233,6 +233,8 @@ pub fn parse_test(text: &str) -> Result<Vec<Item>, String> {
             match name {
                 "error" => expect_error = true,
                 "sorted_result" => sorted = true,
+                "enable_warnings" => warnings = true,
+                "disable_warnings" => warnings = false,
                 "echo" => items.push(Item::Echo(rest.to_owned())),
                 _ => {
                     if let Some((_, reason)) = ONE_SHOT_BLOCKERS.iter().find(|(d, _)| *d == name) {
@@ -287,6 +289,7 @@ pub fn parse_test(text: &str) -> Result<Vec<Item>, String> {
             sql: buffer.join("\n"),
             expect_error,
             sorted,
+            warnings,
             blocker: pending.take().or_else(|| {
                 modes
                     .iter()
@@ -360,6 +363,34 @@ pub fn align<'a>(items: &'a [Item], result: &str) -> Result<Vec<(&'a Item, Vec<S
     Ok(out)
 }
 
+/// The header mysqltest writes before an appended `SHOW WARNINGS` block.
+pub const WARNINGS_HEADER: &str = "Level\tCode\tMessage";
+
+/// Splits a statement's recorded block into its own output and the
+/// `SHOW WARNINGS` block `--enable_warnings` appended to it.
+///
+/// Under `--enable_warnings` mysqltest does not REWRITE a statement's output:
+/// after writing the rows it runs `SHOW WARNINGS` and appends that result set
+/// verbatim -- header line included -- and appends nothing at all when the
+/// statement warned about nothing. So the recording stays fully comparable as
+/// long as the two halves are told apart, which the header line does.
+///
+/// Returned as `(rows, warnings)` where `warnings` is `None` when the recorder
+/// appended no block, i.e. the statement produced NO warnings. That is an
+/// assertion in its own right -- an engine that warns where TiDB did not
+/// diverges -- so it must not be confused with an empty block, which cannot
+/// occur: the header is written whenever anything is.
+///
+/// Only called for a statement whose `warnings` flag is set. Outside that mode
+/// a row reading `Level\tCode\tMessage` is ordinary data, and splitting on it
+/// would cut a result set in half.
+pub fn split_warnings(recorded: &[String]) -> (&[String], Option<&[String]>) {
+    match recorded.iter().position(|l| l.trim() == WARNINGS_HEADER) {
+        Some(at) => (&recorded[..at], Some(&recorded[at + 1..])),
+        None => (recorded, None),
+    }
+}
+
 fn matches_at(lines: &[&str], at: usize, echo: &[&str]) -> bool {
     at + echo.len() <= lines.len()
         && lines[at..at + echo.len()]
@@ -397,8 +428,7 @@ mod tests {
 
     #[test]
     fn sticky_directive_marks_every_statement_it_covers() {
-        let items =
-            parse_test("--enable_warnings\nselect 1;\n--disable_warnings\nselect 2;\n").unwrap();
+        let items = parse_test("--enable_info\nselect 1;\n--disable_info\nselect 2;\n").unwrap();
         let blockers: Vec<_> = items
             .iter()
             .map(|i| match i {
@@ -406,7 +436,60 @@ mod tests {
                 Item::Echo(_) | Item::Connection(_) => None,
             })
             .collect();
-        assert_eq!(blockers, vec![Some("recorded SHOW WARNINGS block"), None]);
+        assert_eq!(
+            blockers,
+            vec![Some("recorded affected-rows info line"), None]
+        );
+    }
+
+    #[test]
+    fn enable_warnings_is_a_split_not_a_blocker() {
+        let items =
+            parse_test("--enable_warnings\nselect 1;\n--disable_warnings\nselect 2;\n").unwrap();
+        let flags: Vec<_> = items
+            .iter()
+            .map(|i| match i {
+                Item::Stmt(s) => (s.warnings, s.blocker),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(flags, vec![(true, None), (false, None)]);
+    }
+
+    #[test]
+    fn a_recorded_warnings_block_is_split_off_from_the_rows() {
+        // Shaped after `executor/issues.result`: rows, then the header, then
+        // the warning lines.
+        let block: Vec<String> = [
+            "cast(a as time)",
+            "NULL",
+            "Level\tCode\tMessage",
+            "Warning\t1292\tTruncated incorrect time value",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        let (rows, warnings) = split_warnings(&block);
+        assert_eq!(rows, &block[..2]);
+        assert_eq!(warnings, Some(&block[3..]));
+
+        // MUTATION PROBE: a recording whose warning text differs from the
+        // engine's must be visible AS A WARNING difference, not swallowed
+        // into the rows.
+        let mutated: Vec<String> = block[..3]
+            .iter()
+            .cloned()
+            .chain(["Warning\t1292\tsomething else".to_owned()])
+            .collect();
+        let (mutated_rows, mutated_warnings) = split_warnings(&mutated);
+        assert_eq!(mutated_rows, rows, "the rows half is unaffected");
+        assert_ne!(mutated_warnings, warnings);
+
+        // CONTROL: a statement that warned about nothing has no header, so
+        // the whole block stays the rows and `None` records the ABSENCE --
+        // an engine that warns here diverges.
+        let quiet: Vec<String> = block[..2].to_vec();
+        assert_eq!(split_warnings(&quiet), (&quiet[..], None));
     }
 
     #[test]
