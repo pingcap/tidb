@@ -81,36 +81,46 @@
 //! Still deferred relative to Go's `HashJoinExec`: the parallel build/probe
 //! worker pipeline, spill-to-disk, and the semi/anti/outer-apply variants.
 //!
-//! # Recon: what materialization is accounted, and what is not
+//! # Memory accounting (`tidb_mem_quota_query`)
 //!
-//! Every datum this module holds is materialized by [`JoinExec::drain`] --
-//! both the hash build side and, on the nested-loop fallback, both sides.
-//! Nothing here consumed against the statement's memory budget, even though
-//! [`crate::StatementMemory`] (quota + `tidb_mem_oom_action` + the 8175 that
-//! [`crate::mem_quota::memory_exceed_for_query`] raises) already exists and
-//! [`crate::sort::SortExec`] already uses exactly the wiring this needs:
-//! `memory.operator_tracker(meta.id())` at construction, `tracker.consume(..)`
-//! after each fetch, `memory.check()?` right after. So the gap is one
-//! unattached call site, not missing machinery.
+//! A cross join is the one plan whose materialization is bounded by nothing:
+//! `t t1, .., t t6` over a doubled `t` drains the 5-way join underneath the
+//! top one, which is |t|^5 rows held at once. Go cancels that on
+//! `tidb_mem_quota_query` with errno 8175 (`executor/jointest/join` sets the
+//! quota to `1 << 18` and asserts `--error 8175`); unaccounted, this port ran
+//! until the OS killed the process, so the corpus HUNG instead of diverging.
 //!
-//! It matters because a cross join is the one plan whose materialization is
-//! not bounded by an input: `t t1, .., t t6` over a 256-row `t` drains the
-//! 5-way join underneath the top one, which is 256^5 rows in one `Vec`. Go
-//! cancels that on `tidb_mem_quota_query` (the corpus sets `1 << 18`, and
-//! `--error 8175`); unaccounted it runs until the OS kills the process, which
-//! is why `executor/jointest/join` HANGS instead of diverging.
+//! Two call sites now consume against [`crate::mem_quota::StatementMemory`],
+//! each followed immediately by `check()`, exactly as
+//! [`crate::sort::SortExec::fetch_and_sort`] does:
 //!
-//! The check must therefore fire INSIDE the drain loop, per chunk -- not
-//! after it -- because after the loop there is nothing left to save.
+//! - [`JoinExec::drain`], per chunk, for every side it materializes -- the
+//!   hash build side, and both sides on the nested-loop fallback.
+//! - [`JoinExec::next_nested`], per outer row, for the OUTPUT it accumulates,
+//!   because that path emits the whole result into one `req` in a single
+//!   call. This is where a cross join actually explodes: its inputs are
+//!   small and its output is their product.
+//!
+//! The hash path's output is deliberately NOT accounted. It fills `req` per
+//! probe chunk and the caller drains it between calls, so nothing
+//! accumulates; charging a streamed result would cancel legal queries. Go
+//! draws the same line -- `hashJoinExec` tracks its `rowContainer` build
+//! side, not the rows it hands back.
+//!
+//! The check fires INSIDE both loops, never after: after the loop there is
+//! nothing left to save.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_join::{row_key, BuildTable, EquiKey, KeyError};
+use crate::mem_quota::StatementMemory;
 use std::cell::Cell;
+use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
+use tidb_util::memory::Tracker;
 
 /// Which side, if any, keeps rows that match nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,11 +162,20 @@ pub struct JoinExec<C: Columns> {
     /// the hash table exists to remove, so it is the number a scaling test
     /// asserts on directly instead of timing the machine.
     condition_evals: Cell<u64>,
+    /// The statement's budget, polled right after every `consume` below.
+    memory: StatementMemory,
+    /// This operator's accountant, hanging off the statement tracker.
+    tracker: Arc<Tracker>,
 }
 
 impl<C: Columns> JoinExec<C> {
     /// Builds a join of `left` and `right` filtered by `conditions` (the `ON`
     /// clause, empty for a Cartesian product).
+    ///
+    /// `memory` is the statement's budget, required rather than optional for
+    /// the same reason `SortExec::new` requires it: a cross join is the one
+    /// plan whose materialization is bounded by nothing, so a call site that
+    /// could omit the budget could reintroduce the unbounded drain.
     #[must_use]
     pub fn new(
         meta: ExecutorMeta,
@@ -165,8 +184,10 @@ impl<C: Columns> JoinExec<C> {
         left: Box<dyn Executor>,
         right: Box<dyn Executor>,
         ctx: C,
+        memory: StatementMemory,
     ) -> Self {
         let keys = crate::hash_join::split_equi(&conditions, left.ret_field_types().len()).keys;
+        let tracker = memory.operator_tracker(meta.id());
         JoinExec {
             meta,
             kind,
@@ -178,6 +199,8 @@ impl<C: Columns> JoinExec<C> {
             emitted: false,
             hash: None,
             condition_evals: Cell::new(0),
+            memory,
+            tracker,
         }
     }
 
@@ -211,8 +234,18 @@ impl<C: Columns> JoinExec<C> {
         self.kind != JoinKind::Right
     }
 
-    /// Drains a child into rows of `Datum`s.
-    fn drain(child: &mut dyn Executor) -> Result<Vec<Vec<Datum>>, ExecError> {
+    /// Drains a child into rows of `Datum`s, accounting each chunk's worth
+    /// against the statement's budget as it lands.
+    ///
+    /// Mirrors `SortExec::fetch_and_sort`: consume, then `check()`, INSIDE
+    /// the loop. What is counted is what this `Vec` retains -- the datum rows
+    /// -- not the chunk the child filled, because the chunk is reused and the
+    /// rows are what the process actually holds.
+    fn drain(
+        child: &mut dyn Executor,
+        tracker: &Arc<Tracker>,
+        memory: &StatementMemory,
+    ) -> Result<Vec<Vec<Datum>>, ExecError> {
         let types: Vec<FieldType> = child.ret_field_types().to_vec();
         let mut chunk = child.new_chunk();
         let mut rows = Vec::new();
@@ -222,9 +255,14 @@ impl<C: Columns> JoinExec<C> {
             if n == 0 {
                 break;
             }
+            let mut bytes = 0i64;
             for r in 0..n {
-                rows.push(datum_row(&chunk, r, &types));
+                let row = datum_row(&chunk, r, &types);
+                bytes += row_bytes(&row);
+                rows.push(row);
             }
+            tracker.consume(bytes);
+            memory.check()?;
         }
         Ok(rows)
     }
@@ -311,15 +349,33 @@ impl<C: Columns> JoinExec<C> {
         if self.emitted {
             return Ok(());
         }
-        let left_rows = Self::drain(self.left.as_mut())?;
-        let right_rows = Self::drain(self.right.as_mut())?;
+        let tracker = Arc::clone(&self.tracker);
+        let memory = self.memory.clone();
+        let left_rows = Self::drain(self.left.as_mut(), &tracker, &memory)?;
+        let right_rows = Self::drain(self.right.as_mut(), &tracker, &memory)?;
         let (outer, inner) = if self.outer_is_left() {
             (&left_rows, &right_rows)
         } else {
             (&right_rows, &left_rows)
         };
+        // The OUTPUT is accounted here and only here. This path emits the
+        // whole result into one `req` in a single call, so that chunk is
+        // live all at once and is the cross join's real cost -- |outer| *
+        // |inner| rows, bounded by nothing. The hash path deliberately does
+        // NOT account its output: it fills `req` per probe chunk and the
+        // caller drains it between calls, so nothing accumulates, and
+        // charging a streamed result would cancel legal queries. Go draws
+        // the same line -- `hashJoinExec` tracks its `rowContainer` build
+        // side, not the rows it hands back.
         for outer_row in outer {
+            let before_rows = req.num_rows();
+            let before_bytes = req.memory_usage();
             self.emit_outer_row(req, outer_row, inner.iter().cloned())?;
+            let produced = i64::try_from(req.num_rows() - before_rows).unwrap_or(i64::MAX);
+            let grew = (req.memory_usage() - before_bytes).max(0);
+            self.tracker
+                .consume(grew + tidb_chunk::row::ROW_SIZE * produced);
+            self.memory.check()?;
         }
         self.emitted = true;
         Ok(())
@@ -350,10 +406,12 @@ impl<C: Columns> JoinExec<C> {
             return Ok(());
         }
         let build_is_left = !self.outer_is_left();
+        let tracker = Arc::clone(&self.tracker);
+        let memory = self.memory.clone();
         let build_rows = if build_is_left {
-            Self::drain(self.left.as_mut())?
+            Self::drain(self.left.as_mut(), &tracker, &memory)?
         } else {
-            Self::drain(self.right.as_mut())?
+            Self::drain(self.right.as_mut(), &tracker, &memory)?
         };
         let probe_chunk = if build_is_left {
             self.right.new_chunk()
@@ -430,6 +488,16 @@ impl<C: Columns> JoinExec<C> {
                 .probe_row += 1;
         }
     }
+}
+
+/// What one materialized row costs: the `Vec` header plus each datum's own
+/// estimate, which is Go `Datum.MemUsage` summed the same way.
+fn row_bytes(row: &[Datum]) -> i64 {
+    let mut bytes = i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
+    for datum in row {
+        bytes += i64::try_from(datum.estimated_mem_usage()).unwrap_or(i64::MAX);
+    }
+    bytes
 }
 
 /// One chunk row as owned `Datum`s.
@@ -609,6 +677,7 @@ mod tests {
             Box::new(RowSource::new(left, width)),
             Box::new(RowSource::new(right, width)),
             NoColumns,
+            StatementMemory::default(),
         )
     }
 

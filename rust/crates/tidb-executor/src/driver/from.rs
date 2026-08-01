@@ -1140,6 +1140,7 @@ pub(crate) fn build_join(
         left_exec,
         right_exec,
         ctx.clone(),
+        ctx.statement_memory(),
     ));
     if let Some(trace) = trace.as_deref_mut() {
         if coalescing {
