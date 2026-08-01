@@ -119,6 +119,25 @@ pub(super) fn build_range_bounds(
 /// the field as the literal text `NULL` -- which reads oddly and is exactly
 /// what real TiDB prints.
 fn fold_range_bound(expr: &Expr, partition: &str, unsigned: bool) -> Result<i64, DriverError> {
+    // A bound whose VALUE depends on the session `time_zone` cannot be folded
+    // here: `run_create_table_in` re-parses the statement without a
+    // `StmtContext`, so this folder has UTC and the session may not.
+    //
+    // The consequence of guessing is not a cosmetic one. Captured from
+    // `tests/integrationtest/t/table/partition.test`: the bounds of
+    // `VALUES LESS THAN (UNIX_TIMESTAMP('2020-01-03 15:10:00'))` differ by
+    // hours between two sessions, and a row real TiDB puts in `p7` lands in
+    // `p9` here -- a routing this node would then answer every read from,
+    // wrongly and without an error. So the table is REFUSED until the
+    // session's zone reaches this path.
+    if expression_reads_the_session_time_zone(expr) {
+        return Err(DriverError::UnsupportedKind(
+            "a VALUES LESS THAN bound that depends on the session time_zone is not supported by \
+             this node: the CREATE TABLE path folds constants without the session's zone, and a \
+             bound folded under the wrong zone puts rows in the wrong partition"
+                .to_owned(),
+        ));
+    }
     let rewritten =
         tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
             .map_err(|_| DriverError::PartitionValuesNotInt(partition.to_owned()))?;
@@ -139,6 +158,29 @@ fn fold_range_bound(expr: &Expr, partition: &str, unsigned: bool) -> Result<i64,
         Datum::UInt(value) => Ok(value as i64),
         Datum::Null => Err(DriverError::PartitionFieldTypeNotAllowed("NULL".to_owned())),
         _ => Err(DriverError::PartitionValuesNotInt(partition.to_owned())),
+    }
+}
+
+/// Whether folding `expr` would read the session `time_zone`.
+///
+/// Of the functions Go's `AllowedPartitionFuncMap` admits, `UNIX_TIMESTAMP`
+/// is the one that converts a LOCAL datetime to an absolute epoch, so its
+/// value moves with the zone; the rest read their argument's own calendar
+/// fields. A clock reading (`NOW`, `CURRENT_TIMESTAMP`) is not on the map at
+/// all and is already 1564.
+fn expression_reads_the_session_time_zone(expr: &Expr) -> bool {
+    match expr {
+        Expr::Func { name, args, .. } => {
+            name.eq_ignore_ascii_case("unix_timestamp")
+                || args.iter().any(expression_reads_the_session_time_zone)
+        }
+        Expr::Paren(inner) => expression_reads_the_session_time_zone(inner),
+        Expr::Unary(_, inner) => expression_reads_the_session_time_zone(inner),
+        Expr::Binary(_, left, right) => {
+            expression_reads_the_session_time_zone(left)
+                || expression_reads_the_session_time_zone(right)
+        }
+        _ => false,
     }
 }
 

@@ -802,7 +802,51 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // mysql;` and one `connect (conn1,...,mysql)` -- and that connect is the
     // expensive one, since it left `statistics/lock_table_stats` UNALIGNED,
     // i.e. never compared at all.
-    const KNOWN_DIVERGENCES: usize = 49;
+    // # 50 -> 51: RANGE partitioning became measurable
+    //
+    // `CREATE TABLE ... PARTITION BY RANGE` used to be REFUSED, so every
+    // statement against a range-partitioned table was out of domain. RANGE is
+    // built, routed and pruned now, and `SELECT ... PARTITION (p)` is
+    // answered for every method, which moved 192 statements into the compared
+    // set (2346 -> 2538) and 191 of them into the matched set. Three topics
+    // carry almost all of it: `table/partition` 53 -> 99 matched,
+    // `executor/partition/partition_with_expression` 167 -> 268, and
+    // `planner/core/partition_pruner` 199 -> 221.
+    //
+    // Net ONE new divergence, and the whole newly-measurable set is two
+    // classes, neither about a row a partitioned read returns:
+    //
+    // 1. EXPLAIN does not name the partitions (4 statements). Go's
+    //    `PartitionProcessor` REWRITES the plan into one `DataSource` per
+    //    surviving partition under a union, so its access property reads
+    //    `TableFullScan table:t2, partition:p1 + ... partition:p2` and its
+    //    point plan reads `Batch_Point_Get table:t, partition:p1,P2`. This
+    //    node prunes INSIDE one scan (`KvTable::read_partitions`), so the
+    //    node count and the `partition:` cell differ while the rows do not.
+    //    The two `a = 2 and a = 3` rows are the same class from the other
+    //    side: Go plans a `TableDual` and reads no table at all, while this
+    //    node keeps a scan whose pruned range set is empty -- it reads zero
+    //    records, which `range_pruning_reads_only_the_partitions_that_can_match`
+    //    pins by `actRows`.
+    //
+    // 2. `select hex(b) from tb` (1 statement), which is a BIT-column
+    //    rendering bug -- `hex()` keeps two leading zero bytes TiDB drops --
+    //    and has nothing to do with partitioning. It became visible only
+    //    because `tb`'s partitioned `CREATE TABLE` now succeeds.
+    //
+    // Two of the divergences the older set carried are GONE for the same
+    // reason (`table/partition` 2 -> 1, and the `timezone_test` block below),
+    // which is why 5 statements are named as new while the total moves by
+    // one.
+    //
+    // A `VALUES LESS THAN (UNIX_TIMESTAMP('...'))` bound is REFUSED rather
+    // than folded: `run_create_table_in` re-parses without a `StmtContext`,
+    // so it has no session `time_zone`, and the captured recording shows the
+    // same bound differing by hours between two sessions. Folding it under
+    // UTC put a row real TiDB stores in `p7` into `p9` -- five compared
+    // statements' worth of wrong ANSWERS, which is exactly the trade this
+    // refusal declines to make.
+    const KNOWN_DIVERGENCES: usize = 51;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
