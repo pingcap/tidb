@@ -275,7 +275,9 @@ fn the_step_and_offset_put_the_ids_on_an_arithmetic_progression() {
         session
             .run(&format!("SET @@auto_increment_offset = {offset}"))
             .unwrap();
-        session.run("INSERT INTO ai (v) VALUES (1),(2),(3)").unwrap();
+        session
+            .run("INSERT INTO ai (v) VALUES (1),(2),(3)")
+            .unwrap();
         assert_eq!(
             rows(&mut session, "SELECT id FROM ai ORDER BY id"),
             expected.map(|id| vec![id.to_owned()]),
@@ -300,7 +302,9 @@ fn an_explicit_id_off_the_grid_snaps_the_next_allocation_back_onto_it() {
     session.run("SET @@auto_increment_increment = 7").unwrap();
     session.run("SET @@auto_increment_offset = 4").unwrap();
     session.run("INSERT INTO ai (v) VALUES (1),(2)").unwrap();
-    session.run("INSERT INTO ai (id, v) VALUES (30, 3)").unwrap();
+    session
+        .run("INSERT INTO ai (id, v) VALUES (30, 3)")
+        .unwrap();
     session.run("INSERT INTO ai (v) VALUES (4),(5)").unwrap();
     assert_eq!(
         rows(&mut session, "SELECT id FROM ai ORDER BY id"),
@@ -325,7 +329,9 @@ fn an_offset_greater_than_the_increment_is_ignored() {
         session
             .run(&format!("SET @@auto_increment_offset = {offset}"))
             .unwrap();
-        session.run("INSERT INTO ai (v) VALUES (1),(2),(3)").unwrap();
+        session
+            .run("INSERT INTO ai (v) VALUES (1),(2),(3)")
+            .unwrap();
         assert_eq!(
             rows(&mut session, "SELECT id FROM ai ORDER BY id"),
             expected.map(|id| vec![id.to_owned()]),

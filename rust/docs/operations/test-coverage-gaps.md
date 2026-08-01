@@ -287,13 +287,18 @@ inventory reports that turns out not to be one, or not to be one at this tier.
   back transaction burning its ids). None of them carries a Go test's name, so
   the row is a NAME-level false negative end to end. Do not "close" this
   package by porting names onto tests that already exist.
-- **`auto_increment_increment`/`auto_increment_offset` are refused, not
-  discarded.** `TestSignedAutoid`'s increment/offset half (`CalcNeededBatchSize`,
-  `SeekToFirstAutoIDSigned`) does not apply: `StmtContext::auto_increment_step_is_default`
-  refuses an insert into an auto-increment table when either variable is off 1,
-  and `tests_auto_increment.rs:262` pins that refusal. This is the good shape --
-  a value the engine cannot honour is rejected rather than accepted and ignored --
-  and it means the arithmetic those Go helpers test has no counterpart to test.
+- **`auto_increment_increment`/`auto_increment_offset` are SUPPORTED.**
+  (Superseded: this row used to record them as REFUSED, and said the arithmetic
+  in `TestSignedAutoid`'s increment/offset half had no counterpart. It does now.)
+  `auto_id::seek_to_first` is Go's `SeekToFirstAutoIDSigned`/`UnSigned`, and
+  `auto_id::increment_and_offset` is `table.getIncrementAndOffset`'s clamp --
+  an offset greater than the increment is replaced by 1. The refusal pin was
+  FLIPPED rather than deleted: `tests_auto_increment.rs` now pins the exact id
+  sequences in both domains, an explicit id snapping back onto the grid, the
+  offset-greater-than-increment clamp, and the two refusals a step still meets
+  (the column-width bound `1690`, and the allocator's own `1467`). Go's
+  `CalcNeededBatchSize` has no separate counterpart because this tier allocates
+  one id per row: its `n == 1` case IS the seek.
 - **`pkg/meta/autoid`'s `autoid_service_test.go` (3 tests) is not this tier.**
   `TestAllocCanceledRPCReturnsQuickly`, `TestRebaseCanceledRPCReturnsQuickly`
   and `TestBackoffCtxAware` test the separate autoid *service* RPC client. This

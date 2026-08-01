@@ -443,9 +443,9 @@ pub(crate) fn run_insert_traced(
                 // be reached is NOT that, and saying 1467 for it would report
                 // a table that has run out of ids when the ids are all still
                 // there.
-                let allocated = kv.apply_auto_increment(&mut new_rows[*index], ctx.auto_increment_step())
-                    .map_err(
-                    |error| match error {
+                let allocated = kv
+                    .apply_auto_increment(&mut new_rows[*index], ctx.auto_increment_step())
+                    .map_err(|error| match error {
                         AutoIdError::Exhausted => DriverError::AutoincReadFailed,
                         // An id that does not fit the COLUMN is not a full
                         // domain: Go casts the allocated id and reports the
@@ -454,8 +454,7 @@ pub(crate) fn run_insert_traced(
                             DriverError::ConstantOverflows { value, type_name }
                         }
                         AutoIdError::Store(detail) => DriverError::AutoIdUnavailable(detail.0),
-                    },
-                )?;
+                    })?;
                 if let Some(allocated) = allocated {
                     // Go keeps the FIRST allocated id of the statement.
                     if first_allocated.is_none() {
