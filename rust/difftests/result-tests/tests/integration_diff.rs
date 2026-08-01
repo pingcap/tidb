@@ -1023,6 +1023,11 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
 ///   `executor/issues`            474 statements,   346 matched,  25 diverged
 ///   `executor/autoid`            458 statements,   356 matched,  68 diverged
 ///
+/// (`executor/autoid` has since moved to 380 matched, 20 diverged: the
+/// allocator now bounds an id by the COLUMN's type as Go's
+/// `setDatumAutoIDAndCast` does, which removed 24 inserts this engine
+/// accepted that TiDB refuses and the 24 selects that showed the extra row.)
+///
 /// They are ALIGNED, not onboarded: onboarding is what puts a topic on the
 /// gate, and each would carry a divergence list that has to be classified
 /// first. They are now visible to [`survey_unonboarded_topics`] like any other

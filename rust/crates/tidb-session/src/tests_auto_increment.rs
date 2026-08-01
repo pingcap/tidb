@@ -433,10 +433,7 @@ fn a_bigint_unsigned_column_keeps_its_ids_above_the_signed_maximum() {
     session.run("INSERT INTO ai (v) VALUES (2)").unwrap();
     assert_eq!(
         rows(&mut session, "SELECT id, v FROM ai ORDER BY id"),
-        [
-            ["18446744073709551613", "1"],
-            ["18446744073709551614", "2"]
-        ]
+        [["18446744073709551613", "1"], ["18446744073709551614", "2"]]
     );
     let error = session
         .run("INSERT INTO ai (v) VALUES (3)")
