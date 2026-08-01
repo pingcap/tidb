@@ -117,14 +117,6 @@ const TOPICS: &[(&str, &str)] = &[
         "correlated and uncorrelated subqueries in every clause",
     ),
     (
-        "table/cache",
-        "cached tables: every statement of the topic compares, and none diverges",
-    ),
-    (
-        "session/variable",
-        "session and global variable reads and writes, row results throughout",
-    ),
-    (
         "session/user_variables",
         "every statement compares: user variables end to end, nothing skipped",
     ),
@@ -237,6 +229,40 @@ const TOPICS: &[(&str, &str)] = &[
          and only a recording can hold both halves in place at once",
     ),
 ];
+
+/// A topic listed twice is replayed twice, and every statement it compares is
+/// counted twice in the headline totals -- which is exactly what happened when
+/// `session/variable` and `table/cache` were each onboarded a second time by a
+/// later unit that did not notice the first entry. The ratchet never lied (a
+/// duplicated topic contributes its divergences twice, so the count still only
+/// moves when real behaviour moves), but the compared/matched figures did, and
+/// a number that overstates what was proved is the one number this driver may
+/// not get wrong. Checked before the replay so the run stops rather than
+/// reporting an inflated total.
+fn assert_topics_are_unique() {
+    let mut seen = BTreeMap::new();
+    for (topic, _why) in TOPICS {
+        *seen.entry(*topic).or_insert(0usize) += 1;
+    }
+    let dupes: Vec<_> = seen
+        .iter()
+        .filter(|(_, n)| **n > 1)
+        .map(|(t, n)| format!("{t} ({n}x)"))
+        .collect();
+    assert!(
+        dupes.is_empty(),
+        "TOPICS lists {} topic(s) more than once: {}. Each is replayed once per \
+         entry and counted once per replay, inflating the compared and matched \
+         totals. Remove the extra entry.",
+        dupes.len(),
+        dupes.join(", ")
+    );
+}
+
+#[test]
+fn topics_are_listed_once_each() {
+    assert_topics_are_unique();
+}
 
 /// Why one statement did not produce a comparable outcome. Every skip lands in
 /// exactly one of these, and the totals are printed on every run: a driver
@@ -525,6 +551,8 @@ fn run_topic_on_this_stack(topic: &str) -> Result<TopicReport, String> {
 
 #[test]
 fn integrationtest_replay_matches_recorded_tidb_output() {
+    assert_topics_are_unique();
+
     let mut total = TopicReport::default();
     let mut per_topic = Vec::new();
     for (topic, _why) in TOPICS {
@@ -867,6 +895,22 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // zone now reaches them instead of a hardcoded `None`. See
     // `tests_timezone_storage` in `tidb-session` for the captured
     // cross-session round trips, DST boundaries included.
+    //
+    // # A note on the compared/matched figures quoted above
+    //
+    // Every figure in the narrative above was read off a run whose TOPICS
+    // list held `session/variable` and `table/cache` TWICE, so each of those
+    // topics was replayed and counted twice: the totals are inflated by 167
+    // matched and 216 statements. The list is de-duplicated now and
+    // `assert_topics_are_unique` keeps it that way. The DELTAS above are all
+    // still exact -- a duplicated topic inflates both sides of a difference
+    // equally -- and so is this ratchet, because both duplicated topics sat
+    // at zero divergences. Only the absolute totals were wrong. Corrected,
+    // the run this constant was last measured on is
+    //
+    //   50 divergences of 2389 compared (2339 matched) over 3334 statements
+    //
+    // where it used to read 2556 / 2506 / 3550.
     const KNOWN_DIVERGENCES: usize = 50;
 
     assert!(
@@ -1112,6 +1156,16 @@ fn survey_unonboarded_topics() {
     topics.sort();
 
     for topic in &topics {
+        // A topic already on the gate is not a candidate, and printing it as
+        // one is how `session/variable` and `table/cache` each got onboarded
+        // twice: the second unit read this survey's output, saw a topic that
+        // replayed clean, and added it. Naming the onboarded ones here is the
+        // guard at the point where the mistake was actually made --
+        // `assert_topics_are_unique` is the backstop behind it.
+        if TOPICS.iter().any(|(onboarded, _)| onboarded == topic) {
+            eprintln!("ONBOARDED  {topic}");
+            continue;
+        }
         match replay_in_child(topic) {
             Ok(()) => {}
             Err(status) => eprintln!("{status}  {topic}"),
