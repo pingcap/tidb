@@ -67,7 +67,7 @@ use std::path::PathBuf;
 
 use integration_plan_property::{access_property, plan_statement, PlanStatement};
 use mysqltest_connections::Connections;
-use mysqltest_script::{align, parse_test, Item, Stmt};
+use mysqltest_script::{align, parse_test, split_warnings, Item, Stmt};
 use tidb_datatype::Datum;
 use tidb_session::{Session, StmtOutput};
 
@@ -391,6 +391,73 @@ fn render_rows(columns: &[(String, tidb_datatype::FieldType)], rows: &[Vec<Datum
 /// divergence to report, and `Err(None)` when the statement was skipped (its
 /// class already recorded).
 fn compare(
+    session: &mut Session,
+    stmt: &Stmt,
+    recorded: &[String],
+    report: &mut TopicReport,
+) -> Result<MatchKind, Option<String>> {
+    // `--enable_warnings` appended this statement's `SHOW WARNINGS` to its own
+    // output rather than rewriting it, so the block is two blocks. Comparing
+    // the halves separately is what makes these statements comparable at all,
+    // and it puts the warning texts themselves under the gate.
+    let (rows, warnings) = if stmt.warnings {
+        let (rows, warnings) = split_warnings(recorded);
+        (rows, Some(warnings))
+    } else {
+        (recorded, None)
+    };
+    match (compare_output(session, stmt, rows, report), warnings) {
+        // Only a statement that was actually COMPARED gets its warnings
+        // compared: a skip means this tier never produced the outcome the
+        // warnings would belong to.
+        (Ok(kind), Some(want)) => match warning_difference(session, want) {
+            None => Ok(kind),
+            Some(detail) => Err(Some(detail)),
+        },
+        (outcome, _) => outcome,
+    }
+}
+
+/// Reports how this session's warnings differ from the recorded ones, or
+/// `None` when they agree.
+///
+/// `want` is `None` when the recorder appended no block at all, which says the
+/// statement warned about NOTHING -- an assertion in its own right, so it is
+/// read as the empty list rather than waived.
+///
+/// `SHOW WARNINGS` does not consume what it reports and the buffer is reset by
+/// the next statement anyway, so asking here is observationally neutral -- it
+/// is also exactly what mysqltest itself did to produce the recording.
+fn warning_difference(session: &mut Session, want: Option<&[String]>) -> Option<String> {
+    let ours = match session.run_with_columns("SHOW WARNINGS") {
+        Ok(StmtOutput::Rows { columns: _, rows }) => rows
+            .iter()
+            .map(|row| row.iter().map(cell).collect::<Vec<_>>().join("\t"))
+            .collect::<Vec<String>>(),
+        _ => return Some("  rust: SHOW WARNINGS answered with no result set".to_owned()),
+    };
+    let want = want.unwrap_or(&[]);
+    if ours == want {
+        return None;
+    }
+    Some(format!(
+        "  tidb warnings: {}\n  rust warnings: {}",
+        if want.is_empty() {
+            "<none>".to_owned()
+        } else {
+            want.join(" / ")
+        },
+        if ours.is_empty() {
+            "<none>".to_owned()
+        } else {
+            ours.join(" / ")
+        }
+    ))
+}
+
+/// Compares one statement's own output -- rows or rejection -- against the
+/// recorded block, with any appended warnings block already removed.
+fn compare_output(
     session: &mut Session,
     stmt: &Stmt,
     recorded: &[String],
@@ -971,7 +1038,32 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //      yet -- the ranger seam, not the join.
     //
     // 3 + 4 + 2 + 2 + 1 = 12.
-    const KNOWN_DIVERGENCES: usize = 62;
+    //
+    // The last 11 arrived with the `--enable_warnings` split, which turned 28
+    // statements that had been dismissed as "recorded SHOW WARNINGS block"
+    // into 23 compared statements and 5 OutOfDomain skips: compared rose
+    // 3891 -> 3914 and matched rose 3829 -> 3841, so every one of these was
+    // previously UNMEASURED, not previously passing. They are:
+    //
+    // 10 -- a MISSING WARNING. The value this engine stores is already right
+    //       (`select @@x` after each of these matches), but the warning that
+    //       says it was adjusted is not raised:
+    //         * 9 x `Warning 1292 Truncated incorrect <var> value: '<v>'`, for
+    //           a `SET` whose value is clamped or refused
+    //           (`tidb_memory_usage_alarm_ratio`,
+    //           `tidb_memory_usage_alarm_keep_record_num`,
+    //           `tidb_session_alias`, `group_concat_max_len`). Go raises it in
+    //           the sysvar validation path; this tier clamps silently.
+    //         * 1 x `Warning 1815 hint INDEX_LOOKUP_PUSHDOWN is inapplicable,
+    //           the global index in partition table is not supported` -- an
+    //           unusable hint is dropped here without reporting that it was.
+    //
+    //  1 -- a COLUMN NAME: `SELECT * FROM (select null) v NATURAL LEFT JOIN
+    //       (select null) v1` is headed `NULL` by TiDB and `null` here. The
+    //       script wrote `null` in lower case, so this is not an echo of the
+    //       source text: TiDB names a bare NULL literal's column `NULL`
+    //       regardless, and this tier derives the name in lower case.
+    const KNOWN_DIVERGENCES: usize = 73;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

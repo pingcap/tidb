@@ -96,7 +96,7 @@ use std::fs;
 
 use integration_plan_property::plan_statement;
 use mysqltest_connections::Connections;
-use mysqltest_script::{align, parse_test, Item, Stmt};
+use mysqltest_script::{align, parse_test, split_warnings, Item, Stmt};
 use tidb_datatype::Datum;
 use tidb_session::{Session, StmtOutput};
 
@@ -306,6 +306,15 @@ fn compare_catalog(
             .or_default() += 1;
         return;
     }
+    // `--enable_warnings` APPENDED a `SHOW WARNINGS` block to this read's
+    // rows; it did not rewrite them. Drop that half so the rows compare. The
+    // warning texts themselves are gated by `integration_diff`, whose unit is
+    // the statement; this tier's unit is the catalog read's rows.
+    let recorded = if stmt.warnings {
+        split_warnings(recorded).0
+    } else {
+        recorded
+    };
     let recorded_error = stmt.expect_error
         || recorded
             .first()
