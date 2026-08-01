@@ -21,9 +21,12 @@ documents. What follows is the part that predicts where the next one is.
 | Catalog model JSON (`pkg/meta/model`) | [audits/catalog-model-json-parity.md](audits/catalog-model-json-parity.md) | 8 findings; **no field dropped on round trip; 82 `ActionType` ordinals equal** |
 | Two-phase commit (client-go) | [two-phase-commit-vs-client-go.md](two-phase-commit-vs-client-go.md) | 9 findings, 3 class-1; **14 behaviours equal** |
 | Builtin expressions (`pkg/expression`) | [expr-builtin-divergence-inventory.md](expr-builtin-divergence-inventory.md) | 7 findings; ~40 verified equal |
+| Chunk + stats | [chunk-and-stats-divergence.md](chunk-and-stats-divergence.md) | 8 findings; **chunk has no rank-1, 21 areas equal** |
+| Planner row-changing rules | [planner-row-changing-rule-audit.md](planner-row-changing-rule-audit.md) | **no live wrong-rows divergence**; the rule modules are not on the query path |
+| JSON binary format | [json-binary-divergence-audit.md](json-binary-divergence-audit.md) | 8 findings, 1 rank-1; 27 areas equal |
 
-Chunk+stats, charset/collation, JSON, planner rules, DDL and the parser were
-dispatched in the same sweep and have not reported yet.
+Charset/collation, DDL and the parser were dispatched in the same sweep and have
+not reported yet.
 
 ## Seven shapes, and they recur
 
@@ -90,9 +93,17 @@ the warning channel is the other unwired one. That is worse than the bug.
 
 Two decimals — a faithful `MyDecimal` port and a digit‑string reimplementation —
 and `Datum::Decimal` holds the **reimplementation**; eight of ten decimal
-findings are against it. Two `STR_TO_DATE`s, where the expression copy never
-calls the other. Previously: two `CREATE TABLE` builders (unified), and two
-string‑to‑int scanners where the second had no diagnostic channel at all.
+findings are against it. Two JSONs — `BinaryJSON` on the persisted path, and
+~4,300 lines over `serde_json::Value` in `tidb-expr` which is what the live SQL
+builtins evaluate; `JSON_TYPE` answers from `is_u64()` and never from a type
+code, which is why one side already asserted `UNSIGNED INTEGER` while the other
+disagreed. Two `STR_TO_DATE`s, where the expression copy never calls the other.
+Previously: two `CREATE TABLE` builders (unified), and two string‑to‑int
+scanners where the second had no diagnostic channel at all.
+
+The two copies **disagree in opposite directions on the same question**, which
+is how the JSON u64 bug stayed invisible: a test asserted the right answer
+against the copy that was right.
 
 **A reimplementation diverges wherever Go's behaviour is arbitrary rather than
 principled** — and MySQL compatibility is mostly arbitrary. Any claim that
