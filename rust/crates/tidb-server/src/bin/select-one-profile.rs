@@ -198,8 +198,9 @@ fn session_stages(iterations: usize) {
     let mut session = Session::new();
     for _ in 0..iterations / 10 {
         let _ = session.control_transaction(SQL);
-        let _ = session.apply_set(SQL);
-        let _ = session.statement_kind(SQL);
+        let stmt = session.parse_statement(SQL).unwrap();
+        let _ = session.apply_set_stmt(&stmt);
+        let _ = Session::statement_kind_parsed(&stmt);
         let _ = session.run_with_columns(SQL).unwrap();
     }
     let mut control = Vec::with_capacity(iterations);
@@ -213,11 +214,14 @@ fn session_stages(iterations: usize) {
         let start = Instant::now();
         session.control_transaction(SQL).unwrap();
         control.push(start.elapsed().as_nanos());
+        // What `PipelineServerSession::execute_write` really does: one parse,
+        // then both of its questions asked of that tree.
         let start = Instant::now();
-        session.apply_set(SQL).unwrap();
+        let stmt = session.parse_statement(SQL).unwrap();
+        session.apply_set_stmt(&stmt).unwrap();
         set.push(start.elapsed().as_nanos());
         let start = Instant::now();
-        session.statement_kind(SQL).unwrap();
+        let _ = Session::statement_kind_parsed(&stmt);
         kind.push(start.elapsed().as_nanos());
         let start = Instant::now();
         session.run_with_columns(SQL).unwrap();
@@ -230,8 +234,8 @@ fn session_stages(iterations: usize) {
         stored.push(start.elapsed().as_nanos());
     }
     report("session.control_transaction (parse)", control);
-    report("session.apply_set (parse)", set);
-    report("session.statement_kind (parse)", kind);
+    report("session.execute_write pre-pass (one parse)", set);
+    report("session.statement_kind (off that parse)", kind);
     report("session.run_with_columns (parse+plan+exec)", run);
     report("[pipeline] four stages together", whole);
     report("(cluster only) stored_state_change (parse)", stored);
