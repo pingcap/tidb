@@ -43,11 +43,22 @@
 //!
 //! 1. **No `cop[tikv]` task, no `TableReader`.** Go pushes scans, selections,
 //!    limits and the first aggregate phase into a coprocessor task under a
-//!    `TableReader_N` root operator. This tier reads rows in-process through
-//!    [`crate::kv_table::KvTable`]; there is no coprocessor and no
-//!    `TableReader` executor. Every row therefore reports task `root`, and
-//!    the scan appears directly under its parent. Printing `cop[tikv]` would
-//!    describe an executor that does not exist here.
+//!    `TableReader_N` root operator. This tier has no `TableReader`
+//!    executor: the pipeline is one tree of root executors, and the scan
+//!    appears directly under its parent, so every row reports task `root`.
+//!
+//!    What that no longer means is "nothing is pushed down". Against a
+//!    cluster backend the scan's PREDICATE, row cap, column projection and
+//!    handle ranges do reach the region -- [`crate::remote_scan`] is the
+//!    seam, `tidb_exec::cop_scan` the production coprocessor request -- so
+//!    the task column and the wire have come apart: a `Selection` printed as
+//!    `root` may well have been evaluated at TiKV. The aggregate's first
+//!    phase is the one thing Go pushes that this tier genuinely does not.
+//!    Because the display cannot state the difference, the receipt is
+//!    [`crate::storage::StorageOps`]'s `cop_scans`/`cop_rows`, which is what
+//!    the pushdown tests assert on. Making the plan print `cop[tikv]` is a
+//!    separate change with its own plan-text ratchet accounting, not a
+//!    side effect of a pushdown fix.
 //! 2. **`Sort` + `Limit`, never `TopN`.** Go's optimizer merges `ORDER BY` +
 //!    `LIMIT` into one `TopN`. The driver builds a
 //!    [`crate::sort::SortExec`] and a [`crate::limit::LimitExec`], so the
