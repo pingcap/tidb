@@ -273,11 +273,18 @@ fi
 note "OK: Rust node listening on 127.0.0.1:${RUST_SQL_PORT}"
 
 # One side of a race: `STATEMENTS` blind increments, each its own autocommit
-# statement, sent down one connection. Retries are NOT performed -- a retry
-# would hide exactly the failure being measured, because a lost update reports
-# success. Statements that the server refuses are counted and subtracted from
-# the expected total, so a run in which the fix converts silent loss into a
-# reported 9007 still has an exact oracle.
+# statement, sent down one connection. The CLIENT never retries -- a client
+# retry would hide exactly the failure being measured, because a lost update
+# reports success. Statements that the server refuses are counted and
+# subtracted from the expected total, so a run in which the fix converts silent
+# loss into a reported 9007 still has an exact oracle.
+#
+# A SERVER-side retry does not weaken that oracle, and this is the whole reason
+# the totals are still checked after the retry landed: a retried statement's
+# failed attempts published nothing, so a statement that finally succeeds still
+# contributes its step exactly once. A retry that reached zero refusals by
+# publishing at a stale timestamp would show up here as a LOST row, not as a
+# pass -- which is what makes "0 refused AND exact total" a real claim.
 run_side() {
   local engine=$1 step_value=$2 predicate=$3 label=$4
   local sql_file="${OUT_DIR}/${label}.sql" out="${OUT_DIR}/${label}.out"
@@ -303,6 +310,19 @@ read_v() {
   fi
 }
 
+# Wall-clock milliseconds. A retry is re-execution, so the cost of matching
+# Go's zero refusals is time, and time is only visible if the harness measures
+# it: the uncontended control is the no-retry baseline every contended row is
+# read against.
+now_ms() {
+  local ms
+  ms=$(perl -MTime::HiRes=time -e 'printf "%d\n", time() * 1000' 2>/dev/null) || ms=
+  if [[ -z "${ms}" ]]; then
+    ms=$(( $(date +%s) * 1000 ))
+  fi
+  printf '%s\n' "${ms}"
+}
+
 RESULTS=()
 FAILED=0
 
@@ -315,6 +335,8 @@ scenario() {
   go_sql -D "${DB}" -e 'DELETE FROM lu; INSERT INTO lu (id, v) VALUES (1, 0)' >/dev/null
   local errors_a errors_b=0 expected
   local out_a="${OUT_DIR}/${name// /_}-a.count"
+  local started
+  started=$(now_ms)
   if [[ "${sides}" == 2 ]]; then
     ( run_side "${engine_a}" 5 "${predicate}" "${name// /_}-a" >"${out_a}" ) &
     local pid_a=$!
@@ -326,6 +348,11 @@ scenario() {
     errors_a=$(run_side "${engine_a}" 5 "${predicate}" "${name// /_}-a")
     expected=$(( (STATEMENTS - errors_a) * 5 ))
   fi
+  local elapsed_ms per_stmt
+  elapsed_ms=$(( $(now_ms) - started ))
+  # Per statement of ONE side: both sides run the same count concurrently, so
+  # the elapsed wall clock is the slower side's per-statement latency.
+  per_stmt=$(awk -v ms="${elapsed_ms}" -v n="${STATEMENTS}" 'BEGIN { printf "%.1f", ms / n }')
   local actual
   actual=$(read_v go | tr -d '[:space:]')
   local verdict=PASS
@@ -333,8 +360,8 @@ scenario() {
     verdict=LOST
     FAILED=$((FAILED + 1))
   fi
-  note "${verdict}: ${name} -> ${actual} (expected ${expected}); refused: a=${errors_a} b=${errors_b}"
-  RESULTS+=("${verdict}|${name}|${actual}|${expected}|${errors_a}|${errors_b}")
+  note "${verdict}: ${name} -> ${actual} (expected ${expected}); refused: a=${errors_a} b=${errors_b}; ${elapsed_ms}ms total, ${per_stmt}ms/statement"
+  RESULTS+=("${verdict}|${name}|${actual}|${expected}|${errors_a}|${errors_b}|${per_stmt}")
 }
 
 scenario "control Go vs Go (method control)"      go   go   'id = 1'  2
@@ -354,10 +381,12 @@ grep -h 'outside bounded recovery' "${OUT_DIR}"/*.out 2>/dev/null | sort -u \
   | head -5 | tee -a "${CHECK_LOG}"
 
 step "summary"
-printf '%-46s %-6s %-8s %-8s\n' "scenario" "result" "actual" "expected" | tee -a "${CHECK_LOG}"
+printf '%-46s %-6s %-8s %-8s %-8s %-8s %-10s\n' \
+  "scenario" "result" "actual" "expected" "ref_a" "ref_b" "ms/stmt" | tee -a "${CHECK_LOG}"
 for row in "${RESULTS[@]}"; do
-  IFS='|' read -r verdict name actual expected _ _ <<<"${row}"
-  printf '%-46s %-6s %-8s %-8s\n' "${name}" "${verdict}" "${actual}" "${expected}" \
+  IFS='|' read -r verdict name actual expected refused_a refused_b per_stmt <<<"${row}"
+  printf '%-46s %-6s %-8s %-8s %-8s %-8s %-10s\n' \
+    "${name}" "${verdict}" "${actual}" "${expected}" "${refused_a}" "${refused_b}" "${per_stmt}" \
     | tee -a "${CHECK_LOG}"
 done
 

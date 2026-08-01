@@ -156,7 +156,7 @@
 //! [`SessionTransaction`]: tidb_exec::cluster_table_storage::SessionTransaction
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
@@ -190,6 +190,54 @@ const CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Go `errno.ErrTableaccessDenied`.
 const ER_TABLEACCESS_DENIED_ERROR: u16 = 1142;
+
+/// Go `kv.ErrWriteConflict`, the one cause an autocommit statement is replayed
+/// for.
+const ERR_WRITE_CONFLICT: u16 = tidb_exec::pessimistic_lock_error::ERR_WRITE_CONFLICT;
+
+/// How many times an autocommit statement that lost the race is run again
+/// before the conflict reaches the client.
+///
+/// This is `@@tidb_retry_limit`'s default, `DefTiDBRetryLimit = 10`
+/// (`pkg/sessionctx/vardef/tidb_vars.go:1527`). Go scales it DOWN by
+/// transaction size --
+/// `maxRetryCount = limit - (limit-1) * txnSize/TxnTotalSizeLimit`
+/// (`pkg/session/session.go:881-882`), with `TxnTotalSizeLimit` 100 MiB
+/// (`pkg/config/config.go:65`) -- so a statement anywhere near this seam's
+/// size gets the full 10. The bound is the contract: Go does NOT retry
+/// forever, and after the last attempt it returns the last commit error
+/// (`pkg/session/session.go:1272-1278`), so the client still sees 9007. A
+/// conflict that outlives the budget is still reported, exactly as before.
+const AUTOCOMMIT_RETRY_LIMIT: u32 = 10;
+
+/// Go `kv.retryBackOffBase`, in milliseconds (`pkg/kv/txn.go:182-183`; the
+/// comment there says microsecond and the code multiplies by
+/// `time.Millisecond` -- the code is the contract).
+const RETRY_BACK_OFF_BASE_MS: u32 = 1;
+
+/// Go `kv.retryBackOffCap`, in milliseconds (`pkg/kv/txn.go:184-185`).
+const RETRY_BACK_OFF_CAP_MS: u32 = 100;
+
+/// Go `kv.BackOff` (`pkg/kv/txn.go:191-197`): exponential backoff with full
+/// jitter, sleeping a uniform draw from `[0, min(cap, base * 2^attempts))`
+/// milliseconds. `attempts` counts from 1, as Go's does -- it increments
+/// `retryCnt` before the sleep -- so the first wait is drawn from `[0, 2)ms`.
+///
+/// This is also what bounds a spinning retry in time as well as in count: even
+/// a statement that loses all ten races sleeps a capped amount rather than
+/// hammering the conflicting key.
+fn back_off(attempts: u32) {
+    let upper = RETRY_BACK_OFF_BASE_MS
+        .checked_shl(attempts)
+        .unwrap_or(u32::MAX)
+        .min(RETRY_BACK_OFF_CAP_MS);
+    // The clock's nanosecond field is the jitter source, so no random-number
+    // dependency is pulled in for a sleep length.
+    let jitter = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.subsec_nanos());
+    std::thread::sleep(Duration::from_millis(u64::from(jitter % upper)));
+}
 
 mod boot;
 mod ddl;
@@ -497,14 +545,50 @@ impl ClusterServerSession {
     /// per-statement transaction -- opened at the statement's first read, so
     /// binding costs nothing and the timestamp is spent only by a statement
     /// that actually reads a cluster row.
+    ///
+    /// An autocommit statement that loses the race is RUN AGAIN rather than
+    /// refused, up to [`AUTOCOMMIT_RETRY_LIMIT`] times: see
+    /// [`Self::may_retry_autocommit_statement`]. The loop is around the whole
+    /// attempt and not around the publication, which is what makes the retry
+    /// re-read -- each attempt builds its own [`transactions::StatementReadTs`]
+    /// and its own deferred snapshot, so the replay reads at a new timestamp
+    /// and publishes at that same new one. Retrying only the publication would
+    /// resubmit the old buffer at the old `start_ts` and be the lost update
+    /// again.
     fn with_statement<T>(
         &mut self,
         shape: StatementReadShape,
-        run: impl FnOnce(&mut Session) -> Result<T, SqlQueryError>,
+        mut run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         self.rebuild_catalog_if_stale();
         self.begin_if_autocommit_off()?;
         let savepoint = self.buffer.staged();
+        let mut retried: u32 = 0;
+        loop {
+            match self.attempt_statement(shape, savepoint.clone(), &mut run) {
+                Ok(value) => return Ok(value),
+                Err(error) => {
+                    if !self.may_retry_autocommit_statement(&error, retried) {
+                        return Err(error);
+                    }
+                    retried += 1;
+                    back_off(retried);
+                    // Go's replay calls `RebuildPlan` per attempt
+                    // (`pkg/session/session.go:1207`), so a schema that moved
+                    // under the conflict is picked up before the next try.
+                    self.rebuild_catalog_if_stale();
+                }
+            }
+        }
+    }
+
+    /// Runs one attempt of [`Self::with_statement`]'s lifecycle.
+    fn attempt_statement<T>(
+        &mut self,
+        shape: StatementReadShape,
+        savepoint: BufferImage,
+        run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
+    ) -> Result<T, SqlQueryError> {
         // The statement's own timestamp, filled in by its first read and read
         // back by its publication after the read handle is gone. Autocommit
         // publishes THERE, not at a fresh one: see `StatementReadTs`.
@@ -543,6 +627,29 @@ impl ClusterServerSession {
                 Err(error)
             }
         }
+    }
+
+    /// Whether the statement that just failed is one Go would have retried
+    /// internally instead of reporting.
+    ///
+    /// This is `isOptimisticTxnRetryable`
+    /// (`pkg/sessiontxn/isolation/optimistic.go:66-104`) reduced to the only
+    /// arm this node can reach. Go's `!sessVars.InTxn()` early return is the
+    /// whole reason `tidb_disable_txn_auto_retry` -- which defaults to `true`
+    /// (`pkg/sessionctx/vardef/tidb_vars.go:1528`) -- does not stop this:
+    /// that variable is consulted eleven lines LATER, and only a
+    /// multi-statement transaction ever gets there. A single autocommit
+    /// statement has no earlier statements whose reads a replay could
+    /// falsify, so it is retried unconditionally. Inside `BEGIN` we refuse,
+    /// which is Go with the default variable.
+    ///
+    /// The error test is Go's `kv.IsTxnRetryableError` (`pkg/kv/error.go:85`)
+    /// narrowed to the code that reaches this seam: only a write conflict.
+    fn may_retry_autocommit_statement(&self, error: &SqlQueryError, retried: u32) -> bool {
+        error.code == ERR_WRITE_CONFLICT
+            && retried < AUTOCOMMIT_RETRY_LIMIT
+            && self.explicit.is_none()
+            && !self.session.in_transaction()
     }
 
     /// Tells the just-bound snapshot what shape the statement's whole read is,
