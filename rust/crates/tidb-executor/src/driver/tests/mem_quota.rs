@@ -179,3 +179,74 @@ fn log_lets_an_over_quota_write_finish() {
         3
     );
 }
+
+// ---------------------------------------------------------------------------
+// The READ path: a runaway cross join, and the control that keeps the quota
+// honest.
+//
+// `tests/integrationtest/t/executor/jointest/join.test` sets
+// `tidb_mem_quota_query = 1 << 18` and runs `desc analyze select * from t t1,
+// t t2, .., t t6` expecting `--error 8175`. Both tests below use THAT quota
+// rather than a token 1, because the whole risk of this accounting is a quota
+// that fires too eagerly: an over-counting join would turn ordinary queries
+// into errors, which is worse than the hang it replaced. The two tests differ
+// only in the SIZE of the join, never in the budget.
+// ---------------------------------------------------------------------------
+
+/// The corpus's own quota: `1 << 18` bytes, CANCEL.
+fn corpus_quota() -> crate::StmtContext {
+    crate::StmtContext::for_query().with_mem_quota(1 << 18, OomAction::Cancel)
+}
+
+/// `n` rows of `(i, i * 10)` in a fresh `t`.
+fn table_of(n: i64) -> Catalog {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
+    let values: Vec<String> = (0..n).map(|i| format!("({i}, {})", i * 10)).collect();
+    run_insert_on(
+        &format!("INSERT INTO t VALUES {}", values.join(", ")),
+        &mut catalog,
+        &permitting(),
+    )
+    .unwrap();
+    catalog
+}
+
+/// PIN 1 (the bug): a cross join whose output is its inputs' product must
+/// CANCEL with 8175 rather than run until the OS kills the process. 48^3 is
+/// 110k output rows, far past `1 << 18` bytes, while the three inputs
+/// together are 144 rows -- so nothing but the OUTPUT accounting can stop it.
+#[test]
+fn a_runaway_cross_join_is_cancelled_not_run_to_exhaustion() {
+    let catalog = table_of(48);
+    let error = run_select_on(
+        "SELECT t1.a FROM t t1, t t2, t t3",
+        &catalog,
+        &corpus_quota(),
+    )
+    .unwrap_err();
+    assert!(is_memory_exceeded(&error), "expected 8175, got {error:?}");
+}
+
+/// PIN 2 (the control, and the reason pin 1 means anything): under the SAME
+/// `1 << 18` quota, ordinary joins over the same table must still answer.
+/// Without this, an accounting that cancelled everything would read as a fix.
+#[test]
+fn ordinary_joins_are_unaffected_by_the_same_quota() {
+    let catalog = table_of(48);
+
+    // An equi-join: 48 rows out, and its build side is materialized.
+    let hashed = run_select_on(
+        "SELECT t1.a FROM t t1 JOIN t t2 ON t1.a = t2.a",
+        &catalog,
+        &corpus_quota(),
+    )
+    .expect("a 48-row equi-join is nowhere near 256KiB");
+    assert_eq!(hashed.len(), 48);
+
+    // And a cross join that is merely large-but-legal: 2304 rows, the same
+    // shape as the runaway one and on the same nested-loop path.
+    let crossed = run_select_on("SELECT t1.a FROM t t1, t t2", &catalog, &corpus_quota())
+        .expect("a 2304-row cross join fits and must not be cancelled");
+    assert_eq!(crossed.len(), 48 * 48);
+}

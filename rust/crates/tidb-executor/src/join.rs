@@ -98,8 +98,16 @@
 //!   hash build side, and both sides on the nested-loop fallback.
 //! - [`JoinExec::next_nested`], per outer row, for the OUTPUT it accumulates,
 //!   because that path emits the whole result into one `req` in a single
-//!   call. This is where a cross join actually explodes: its inputs are
-//!   small and its output is their product.
+//!   call.
+//!
+//! In a CHAIN of comma joins the two sites overlap, and measurably so: a
+//! mutation probe that neutered either one alone still cancelled
+//! `t t1, t t2, t t3`, and only neutering BOTH let it run to completion. The
+//! reason is that an intermediate join's entire result is what its parent's
+//! `drain` pulls, so at every level but one the drain site sees the
+//! explosion first. The output site is what covers the level the drain site
+//! cannot: the TOPMOST join, whose result no parent drains. Neither site is
+//! redundant, and neither is the whole story on its own.
 //!
 //! The hash path's output is deliberately NOT accounted. It fills `req` per
 //! probe chunk and the caller drains it between calls, so nothing
