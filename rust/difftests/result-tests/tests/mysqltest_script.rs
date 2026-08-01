@@ -176,6 +176,29 @@ const MODE_BLOCKERS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// Drops a `#` comment that follows the statement terminator on the same line.
+///
+/// The `#` must be OUTSIDE a string or identifier quote and the text before it
+/// must end with `;`, so `select 'a # b';` and `select 1; # note` are told
+/// apart by the same scan rather than by a special case. A `#` that opens a
+/// comment before any terminator (a whole-line comment) is handled by the
+/// caller and never reaches here.
+fn strip_trailing_comment(line: &str) -> &str {
+    let mut quote: Option<char> = None;
+    for (at, ch) in line.char_indices() {
+        match (quote, ch) {
+            (Some(open), c) if c == open => quote = None,
+            (Some(_), _) => {}
+            (None, '\'' | '"' | '`') => quote = Some(ch),
+            (None, '#') if line[..at].trim_end().ends_with(';') => {
+                return line[..at].trim_end();
+            }
+            (None, _) => {}
+        }
+    }
+    line
+}
+
 /// Parses a `.test` script into the items that produce recorded output.
 ///
 /// Fails on a directive this reader does not model rather than guessing: an
@@ -240,8 +263,24 @@ pub fn parse_test(text: &str) -> Result<Vec<Item>, String> {
                 continue;
             }
         }
+        // A `#` comment after the terminator belongs to the SCRIPT, not the
+        // statement: the recorder echoes `insert into t values(1);` for
+        // `insert into t values(1); # why`. Dropping it here is what makes the
+        // line terminate at all -- left in place the line does not end with
+        // `;`, so every following line (directives included) is swallowed into
+        // the same statement.
+        let line = strip_trailing_comment(line);
+        let trimmed = line.trim();
         buffer.push(line);
         if !trimmed.ends_with(';') {
+            continue;
+        }
+        // An EMPTY statement -- a line that is nothing but the terminator --
+        // is a script artifact the recorder writes nothing for, so it produces
+        // no item. Any pending directive stays pending: the recorder likewise
+        // carries it to the next statement that actually runs.
+        if buffer.iter().all(|l| l.trim().trim_matches(';').is_empty()) {
+            buffer.clear();
             continue;
         }
         items.push(Item::Stmt(Stmt {
@@ -416,6 +455,45 @@ mod tests {
         );
         assert!(parse_connection_cmd("connect (conn1, localhost)").is_err());
         assert!(parse_connection_cmd("connection").is_err());
+    }
+
+    #[test]
+    fn comment_after_the_terminator_is_dropped_and_does_not_extend_the_statement() {
+        let items = parse_test(
+            "insert into t values(1); # the maximum\n--error 1467\ninsert into t values();\n",
+        )
+        .unwrap();
+        let sql: Vec<_> = items
+            .iter()
+            .map(|i| match i {
+                Item::Stmt(s) => (s.sql.as_str(), s.expect_error),
+                _ => unreachable!(),
+            })
+            .collect();
+        // Without the strip, the `--error` line lands INSIDE the first
+        // statement and the second statement never gets its directive.
+        assert_eq!(
+            sql,
+            vec![
+                ("insert into t values(1);", false),
+                ("insert into t values();", true)
+            ]
+        );
+        // A `#` inside a quoted string is data, not a comment.
+        assert_eq!(strip_trailing_comment("select 'a; # b';"), "select 'a; # b';");
+        // A `#` before any terminator does not end a statement either.
+        assert_eq!(strip_trailing_comment("select 1 # x"), "select 1 # x");
+    }
+
+    #[test]
+    fn a_bare_terminator_produces_no_item_and_keeps_a_pending_directive() {
+        let items = parse_test("insert into t values (1);\n;\n--sorted_result\n;\nselect a;\n")
+            .unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(matches!(&items[1], Item::Stmt(s) if s.sql == "select a;" && s.sorted));
+        // And the recording, which writes nothing for either bare `;`, aligns.
+        let aligned = align(&items, "insert into t values (1);\nselect a;\na\n1\n").unwrap();
+        assert_eq!(aligned[1].1, vec!["a", "1"]);
     }
 
     #[test]
