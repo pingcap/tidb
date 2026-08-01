@@ -494,6 +494,17 @@ impl Session {
                 {
                     return Ok(Expr::Int(self.last_insert_id.to_string()));
                 }
+                // `@@last_plan_from_cache` is Go's `PrevFoundInPlanCache`
+                // read (`sysvar.go`'s GetSession hook), not a stored value --
+                // the variable table's entry is only the type and the
+                // read-only flag.
+                if *scope != Some(tidb_ast::SysVarScope::Global)
+                    && name.eq_ignore_ascii_case("last_plan_from_cache")
+                {
+                    return Ok(Expr::Int(
+                        i32::from(self.last_plan_from_cache()).to_string(),
+                    ));
+                }
                 // `@@global.x` reads the shared table live; every other
                 // scope (unqualified, `@@session.x`, `@@instance.x`) reads
                 // this session's own copy.

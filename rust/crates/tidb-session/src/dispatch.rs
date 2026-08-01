@@ -278,6 +278,10 @@ impl Session {
         // under the same mode could only ever produce the same tree. The four
         // parses this replaces cost ~6 us of a ~13.5 us `SELECT 1`.
         let mut stmt = self.parse(sql)?;
+        // The non-prepared plan cache reads the SAME parse every door below
+        // uses. It only decides whether this statement's plan would already
+        // have been there; it never replaces the planning that follows.
+        self.probe_non_prepared_plan_cache(&stmt);
         // USE / CREATE DATABASE / DROP DATABASE / SHOW DATABASES / SHOW TABLES.
         if let Some(output) = self.apply_schema_stmt(&stmt)? {
             return Ok(output);

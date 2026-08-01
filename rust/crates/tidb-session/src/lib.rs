@@ -133,6 +133,18 @@ pub struct Session {
     /// [`tidb_executor::StmtContext`] the statement builds, so an allocating
     /// INSERT and `LAST_INSERT_ID(expr)` write one place, not two.
     published_last_insert_id: Rc<Cell<Option<u64>>>,
+    /// The session's non-prepared plan cache
+    /// (`tidb_enable_non_prepared_plan_cache`). See
+    /// [`non_prepared_plan_cache`] for what it does and does not store.
+    non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache,
+    /// Go `SessionVars.FoundInPlanCache`: whether the statement RUNNING now
+    /// found its plan in the cache. Reset for every statement.
+    found_in_plan_cache: bool,
+    /// Go `SessionVars.PrevFoundInPlanCache`, which is what
+    /// `@@last_plan_from_cache` reads -- the PRECEDING statement's value,
+    /// promoted at the statement boundary, since the reading `SELECT` is
+    /// itself never cacheable and would otherwise always answer 0.
+    prev_found_in_plan_cache: bool,
     /// Go `SessionVars.userVars`: this session's user variables, keyed
     /// lowercased, each holding a TYPED value (`SetUserVarVal` stores a
     /// `types.Datum`, which is why `SET @i = 5` and `SET @s = '5'` differ).
@@ -213,6 +225,9 @@ impl Default for Session {
             prev_row_count: 0,
             statement_kind: StatementKind::Other,
             published_last_insert_id: Rc::default(),
+            non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
+            found_in_plan_cache: false,
+            prev_found_in_plan_cache: false,
             user_vars: Rc::default(),
             sequence_last_values: Rc::default(),
             current_db: DEFAULT_DATABASE.to_owned(),
@@ -247,6 +262,7 @@ mod dispatch;
 mod explain_arm;
 mod identity;
 pub mod infoschema;
+mod non_prepared_plan_cache;
 mod noop;
 mod prepared_statements;
 mod stmt_ctx;
@@ -436,6 +452,11 @@ impl Session {
         // the promotion happens at the boundary, once, for every statement.
         self.statement_kind = StatementKind::Other;
         self.published_last_insert_id.set(None);
+        // Go promotes `FoundInPlanCache` into `PrevFoundInPlanCache` in
+        // `ResetContextOfStmt`, at the same boundary as the other `Prev*`
+        // fields above -- which is why `select @@last_plan_from_cache`
+        // reports the PRECEDING statement rather than itself.
+        self.prev_found_in_plan_cache = std::mem::take(&mut self.found_in_plan_cache);
         let result = self.execute_statement(sql);
         // Go `ExecStmt` puts a `SET_VAR` hint's variables back when the
         // statement finishes, from the restore list the optimizer built --

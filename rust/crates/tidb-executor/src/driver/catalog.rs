@@ -281,6 +281,15 @@ impl TableEntry {
         }
     }
 
+    /// The table's `(name, type)` pairs in schema order, for callers outside
+    /// this crate that must resolve a written column name to its TYPE — the
+    /// non-prepared plan cache's filter-column rule, which refuses a filter
+    /// over a JSON, `ENUM`, `SET` or `BIT` column.
+    #[must_use]
+    pub fn column_types(&self) -> Vec<(String, FieldType)> {
+        self.column_list()
+    }
+
     /// The table's column names in schema order, for the callers outside
     /// this crate that resolve a written column name against the table
     /// (`GRANT SELECT (a) ON db.t`).
