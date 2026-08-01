@@ -135,6 +135,84 @@ deterministic 1,000-row load reproduced the banked figures exactly —
 `1000 500500 506087 1 1000` after load and `1000 500500 505171` after the
 write/txn statements, agreeing with Go both times.
 
+### The `MaxUint64` point-get shortcut on a real cluster (task #142)
+
+**2026-08-01 on `hparser-integration` at `63acc31852`, port offset 39000, ONE
+`tiup playground v9.0.0-beta.2.pre-nightly` cluster.** Both engines measured
+inside that single run, ten seconds each window, `--threads=1
+--table-size=1000`, release build rebuilt at that tip. Artifacts:
+`maxts-pointget-39775-1785592241`. Every line in this section is keyed to
+offset 39000; nothing here comes from any other run.
+
+**Headline, stated first because it is the disappointing one: the excess did
+NOT fall, and the TSO rate did not fall either.** `oltp_point_select` still
+costs the Rust node **1.005 TSO per statement** (`--db-ps-mode=disable`) and
+**1.004** (`auto`), against Go's 0.002 in the same run — identical to the
+pre-change figures. The per-statement excess is **126.12 µs** (259.83 vs
+133.71) and **127.62 µs** (245.30 vs 117.68), against **123.73 / 130.17 µs**
+before the change. Within this machine's run-to-run spread, nothing moved.
+
+**Root cause: the shortcut is not on the path sysbench runs.**
+`MAX_TS_POINT_GET_SNAPSHOT` is consulted in
+`RealTiKvReader::execute_lowered_plan_with_cancellation`
+(`crates/tidb-exec/src/real_tikv_read.rs:1265-1273`), reached from
+`real_tikv_node`'s `execute_read`. The node the ladder and every sysbench run
+start is `--cluster-session`, a different session driver:
+`ClusterServerSession::run_statement`
+(`crates/tidb-server/src/cluster_session_node/mod.rs:495-500`) binds a snapshot
+**before the statement is planned** —
+
+```rust
+let snapshot = match self.explicit.as_ref() {
+    Some(transaction) => transaction.snapshot(),
+    None => self.transactions.open_snapshot(),
+};
+```
+
+— and `open_snapshot` (`cluster_session_node/transactions.rs:104`) opens a
+`StatementSnapshot`, which takes a timestamp unconditionally. At that point the
+plan shape the guard tests does not exist yet, so no autocommit point get in
+`--cluster-session` can ever reach the shortcut. **The change is real and
+tested in its own crate; it simply does not reach the served mode.** Making it
+pay requires deferring the autocommit snapshot bind until after planning, which
+is a session-driver change, not an executor one.
+
+#### TSO per statement, both engines, offset 39000
+
+| Workload | ps mode | Rust µs/stmt | Go µs/stmt | Rust excess | Rust TSO/stmt | Go TSO/stmt | Rust TSO/txn | Go TSO/txn |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `oltp_point_select` | disable | 259.83 | 133.71 | **126.12 µs** | **1.005** | 0.002 | 1.005 | 0.002 |
+| `oltp_point_select` | auto | 245.30 | 117.68 | **127.62 µs** | **1.004** | 0.002 | 1.004 | 0.002 |
+| `oltp_read_only` | disable | 310.19 | 189.05 | 121.14 µs | 0.068 | 0.066 | 1.084 | 1.058 |
+| `oltp_read_only` | auto | 315.66 | 201.14 | 114.52 µs | 0.068 | 0.066 | 1.088 | 1.058 |
+| `oltp_write_only` | disable | 321.78 | 214.53 | 107.25 µs | 0.172 | 0.337 | 1.033 | 2.021 |
+| `oltp_write_only` | auto | 1262.83 | 542.59 | 720.24 µs | 0.187 | 0.343 | 1.120 | 2.058 |
+| `oltp_read_write` | disable | 364.46 | 262.94 | 101.52 µs | 0.058 | 0.105 | 1.154 | 2.094 |
+| `oltp_read_write` | auto | 360.01 | 299.38 | 60.63 µs | 0.056 | 0.106 | 1.125 | 2.110 |
+
+**Which counter, and why it is sound after TSO batching.** The figures come
+from PD's own
+`grpc_server_msg_received_total{grpc_method="Tso",grpc_service="pdpb.PD"}`,
+scraped before and after each ten-second window. Batching (`5e725476af`)
+coalesces waiters **already queued on the worker channel** into one `count`-wide
+request, so that counter is no longer one-for-one with timestamps *in general*
+— but at `--threads=1` there is never a second waiter to coalesce, so every
+batch is `count = 1`. **That is not assumed here; the run calibrates it.** The
+`TSO/txn` columns are the calibration: an explicit read-only transaction takes
+exactly one timestamp and reads **1.03–1.09**; Go's 2PC write transaction takes
+exactly two and reads **2.021 / 2.058 / 2.094 / 2.110**. A counter that
+under-counted coalesced timestamps could not land on 2.00 for a workload known
+to take two. The residue above the integer is background traffic on the shared
+PD (GC, the idle engine's own ticks), which is why the point-select rows read
+1.005 rather than 1.000.
+
+**A calibration probe in this run's script was void and is not reported.** Two
+extra probes (100 scripted transactions, 200 scripted autocommit point gets)
+generated their SQL through a shell-quoted Python one-liner in which `%%`
+reached Python literally; the statements never ran and both printed a delta of
+2, which is background noise and not a measurement. The `TSO/txn` calibration
+above is independent of them and stands.
+
 ### TSO per statement, all four workloads, both ps modes (task #139)
 
 **2026-08-01 on `hparser-integration` at `707fccdf00`, port offset 43700, ONE
