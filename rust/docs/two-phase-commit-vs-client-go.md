@@ -326,7 +326,12 @@ point of the exercise as much as the divergences are.
   && !isAsyncCommit` → `doActionOnBatches(primaryBatch)`, then `forgetPrimary()`).
   Ours `commit.rs:390-437`: `commit_primary`, then `secondary_keys` computed by
   excluding the primary batch's keys, then `commit_secondaries`. No path can
-  publish a secondary Commit before the primary's verdict.
+  publish a secondary Commit before the primary's verdict. Go's `firstIsPrimary`
+  guard can only be false when the mutation set does not contain the primary at
+  all (`2pc.go:2230-2241` `setPrimary`), which happens only on the internal
+  re-split retry `commit.go:170` issues for a non-primary batch — and that call
+  passes `actionCommit{retry: true}`, which suppresses the secondary spawn too.
+  Our secondary-loop regroup (`commit.rs:789-807`) is the same manoeuvre.
 - **V2. The primary batch's other keys ride with the primary.** Both sides commit
   the whole region batch containing the primary in the primary round and exclude
   exactly that set from the secondary round (`2pc.go:1048` `forgetPrimary` /
@@ -370,14 +375,17 @@ point of the exercise as much as the divergences are.
   response.min_commit_ts)` (`commit.rs:96,261`), and fails loudly after
   `MAX_LOCK_ATTEMPTS` if PD will not produce one. **Stronger than client-go**,
   in the safe direction.
-- **V10. TTL derivation from transaction size.** client-go `2pc.go:804-823`:
-  `ttlFactor = 6000`, `defaultLockTTL = 3000`, `ttl = 6000 * sqrt(sizeInMiB)`
-  above a threshold, floored at `defaultLockTTL`, plus the elapsed time since the
-  transaction started. Ours `coordinator/mod.rs:421-436`: identical factor,
-  identical default, identical `sqrt(MiB)` formula, `SIZE_THRESHOLD_BYTES =
-  16 * 1024` matching Go's threshold, clamped to `[3000, 20000]`, plus
-  `opened_at.elapsed()`. Go clamps the upper bound elsewhere via
-  `MaxTxnTTL`; the ceiling of `ManagedLockTTL = 20000` is the same number.
+- **V10. TTL derivation from transaction size.** client-go `2pc.go:812-833`
+  (`txnLockTTL`): `ttlFactor = 6000`, `defaultLockTTL = 3000`,
+  `ttl = 6000 * sqrt(sizeInMiB)` once `txnSize >= kv.TxnCommitBatchSize` (default
+  `DefTxnCommitBatchSize = 16 * 1024`, `kv/store_vars.go:47`), clamped to
+  `[defaultLockTTL, ManagedLockTTL]`, plus the elapsed time since the transaction
+  started. Ours `coordinator/mod.rs:421-436`: identical factor, identical
+  default, identical `sqrt(MiB)` formula, `SIZE_THRESHOLD_BYTES = 16 * 1024`,
+  the same `[3000, 20000]` clamp, plus `opened_at.elapsed()`. Numerically equal
+  at Go's defaults; ours hard-codes what Go leaves tunable, and note that in Go
+  the *same* `TxnCommitBatchSize` knob also drives the batch splitting we do not
+  do (D9) — the two uses are decoupled here.
 - **V11. Heartbeat interval and lifetime.** client-go `2pc.go:1303-1304`: ticker
   at `ManagedLockTTL / 2`. Ours `coordinator/opener.rs:302-308`:
   `MANAGED_LOCK_TTL_MS / 2`, with the same rationale in the comment.
@@ -429,10 +437,22 @@ Checked and equal:
 - **The 1PC/non-1PC cross-check.** client-go `2pc.go:1938-1941` `Fatal`s if a
   non-1PC transaction came back with a 1PC commit ts. Ours `prewrite.rs:322-329`
   returns `InvalidResponse` for the same condition. Same refusal, softer landing.
-- **Async-commit admission.** `prewrite.rs:63-69`: `<= 256` keys
+- **Async-commit admission limits.** `prewrite.rs:63-69`: `<= 256` keys
   (`ASYNC_COMMIT_KEYS_LIMIT`) and `<= 4 KiB` of total key bytes
-  (`ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT`), matching client-go's
-  `checkAsyncCommit` limits (`2pc.go:1551`).
+  (`ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT`). client-go `2pc.go:1566-1580`
+  (`checkAsyncCommit`) reads the same two limits from configuration, whose
+  defaults are `KeysLimit: 256` and `TotalKeySizeLimit: 4 * 1024`
+  (`config/client.go:203-204`). Numerically equal at Go's defaults.
+- **Async-commit admission refusals we do not have, and why each is vacuous
+  here.** `checkAsyncCommit` and `checkOnePC` (`2pc.go:1551-1600`) additionally
+  refuse when the transaction holds shared locks, when its scope is not
+  `GlobalTxnScope`, when `commitTSUpperBoundCheck` is set (TiDB's cached tables),
+  or when binlog must be written. None of shared locks, local transaction scope,
+  cached tables, or binlog exists in this repository, so each refusal has nothing
+  to guard. This is worth recording rather than assuming: whichever of those
+  features arrives first must re-impose its refusal in
+  `attempted_protocol` (`prewrite.rs:58-89`), and the `commitTSUpperBoundCheck`
+  one is the same hook D5 says is missing.
 - **The secondary-lock list.** `prewrite.rs:79-87` collects every key except the
   primary, and `prewrite.rs:133-140` attaches it **only** to the batch containing
   the primary. That is client-go's `asyncSecondaries` (`2pc.go:790-801`) plus
