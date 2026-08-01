@@ -872,6 +872,51 @@ mod tests {
         );
     }
 
+    /// The receipt must not be BLIND on the cluster backend: a point get
+    /// through it is one key lookup, no scan and no coprocessor request.
+    ///
+    /// Only the in-process backend used to be counted, so every cluster read
+    /// reported zero of everything -- a probe that answers "no reads" for a
+    /// statement that read a row is worse than none, because a test that
+    /// pins an access path against it passes for the wrong reason.
+    #[test]
+    fn a_cluster_point_get_is_one_key_lookup_and_no_coprocessor_request() {
+        let mut fixture = clustered_fixture();
+        for a in 1..=100 {
+            fixture
+                .table
+                .insert_row(&[Datum::Int(a), Datum::Int(a * 10)], &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+
+        let (rows, ops) =
+            capture_storage_ops(|| run_select_on("SELECT b FROM t WHERE a = 5", &catalog, &ctx));
+        assert_eq!(rows.unwrap(), vec![vec![Datum::Int(50)]]);
+        assert_eq!(
+            ops,
+            crate::storage::StorageOps {
+                gets: 1,
+                scans: 0,
+                cop_scans: 0,
+                cop_rows: 0,
+            },
+            "the handle is known, so the plan reads the one key and opens \
+             neither an iterator nor a coprocessor scan"
+        );
+
+        // Control: the same table read as a RANGE does send a coprocessor
+        // request, so the zeros above are the point plan's and not a probe
+        // that cannot see this backend at all.
+        let (_, ops) = capture_storage_ops(|| {
+            run_select_on("SELECT b FROM t WHERE a BETWEEN 5 AND 7", &catalog, &ctx)
+        });
+        assert_eq!(ops.gets, 0);
+        assert_eq!((ops.cop_scans, ops.cop_rows), (1, 3));
+    }
+
     /// MUTATION PROBE, with its control. A backend that lowers NONE of the
     /// predicate is still exactly correct -- the caller re-applies every
     /// conjunct -- so the value assertions stay green while the wire count

@@ -363,6 +363,12 @@ impl ClusterTableStorage {
 impl TableStorage for ClusterTableStorage {
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
         self.check_usable()?;
+        // Counted at the SEAM, as the in-process backend counts it, so the
+        // two backends report the same request shape for the same plan and a
+        // test can pin an access path against either. A key the session's own
+        // buffer answers is still one `get` here, because the shape the count
+        // describes is the plan's, not the transport's.
+        crate::storage::note_storage_op(|ops| ops.gets += 1);
         match self.buffer.get(key) {
             Some(Some(value)) => Ok(value),
             Some(None) => Err(StorageError::NotFound),
@@ -393,6 +399,7 @@ impl TableStorage for ClusterTableStorage {
                 "cluster storage requires a bounded scan range".to_owned(),
             ));
         };
+        crate::storage::note_storage_op(|ops| ops.scans += 1);
         let staged = self.buffer.range(start, end);
         Ok(Box::new(MergedIterator::open(
             Arc::clone(&self.snapshot),
