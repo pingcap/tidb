@@ -21,8 +21,10 @@
 //!
 //! Write-result representation: `COM_QUERY` writes answer with a real OK
 //! packet carrying their affected-row count, through the [`QuerySession`]
-//! `execute_write` hook. The statement kind is decided by parsing alone
-//! ([`tidb_session::Session::statement_kind`]) so a write runs exactly once.
+//! `execute_write` hook. The statement kind is decided before execution
+//! ([`tidb_session::Session::statement_kind`]) so a write runs exactly once --
+//! from the parse for every statement but `EXECUTE`, whose shape is that of
+//! the statement it names.
 //!
 //! Catalog sharing: every session a [`PipelineSessionFactory`] opens shares
 //! one `Arc<Mutex<Catalog>>`, as TiDB's sessions read the domain-owned
@@ -249,7 +251,7 @@ impl QuerySession for PipelineServerSession {
                 last_insert_id: 0,
             }));
         }
-        if Session::statement_kind_parsed(&stmt) != StmtKind::Write {
+        if self.session.statement_kind_parsed(&stmt) != StmtKind::Write {
             return Ok(None);
         }
         let affected_rows = match self.session.run(sql).map_err(map_error)? {
@@ -684,6 +686,34 @@ mod tests {
         assert_eq!(session.control_transaction("BEGIN").unwrap(), Some(true));
         assert_eq!(session.control_transaction("COMMIT").unwrap(), Some(false));
         assert_eq!(session.control_transaction("SELECT 1").unwrap(), None);
+    }
+
+    /// A SQL-level `EXECUTE` of a prepared SELECT answers with ROWS, and the
+    /// front end has to frame it as one.
+    ///
+    /// Found while sharing the parse across the pre-passes: `statement_kind`
+    /// classifies every `Stmt::Session` as `Write` -- true of `USE`, `SET` and
+    /// the transaction controls, but `EXECUTE` is a `Stmt::Session` whose
+    /// answer is whatever the PREPARED statement answers. `execute_write`
+    /// therefore claimed it, ran it, got rows back, and reported the internal
+    /// "a write statement unexpectedly produced rows" instead of the result
+    /// set. The shape of an `EXECUTE` is not decidable from its own parse, so
+    /// the write path must not claim it.
+    #[test]
+    fn a_sql_level_execute_of_a_select_answers_with_rows() {
+        let mut session = open_session();
+        session
+            .execute_write("PREPARE p FROM 'SELECT 1'")
+            .expect("prepare answers with an OK packet");
+        assert!(
+            session
+                .execute_write("EXECUTE p")
+                .expect("execute")
+                .is_none(),
+            "EXECUTE must fall through to the result-set path"
+        );
+        let mut result = session.execute("EXECUTE p").expect("execute answers rows");
+        assert_eq!(result.source().columns().expect("columns").len(), 1);
     }
 
     /// Connections do not share a catalog (documented deferral): a table made

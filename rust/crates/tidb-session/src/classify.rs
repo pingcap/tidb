@@ -12,14 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! What a statement is, decided by parsing alone: the shape of its answer, the
-//! persistent state outside this process it would change, and the class
+//! What a statement is, decided without running it: the shape of its answer,
+//! the persistent state outside this process it would change, and the class
 //! `ROW_COUNT()` distinguishes.
 //!
 //! None of these run the statement. A front end has to know the answer's shape
 //! before executing (running twice would duplicate a write), and a front end
 //! whose catalog or account table is a READ of somebody else's stored state has
 //! to know that before answering OK to a change that went nowhere.
+//!
+//! The parse decides all three, with one exception this file owns: `EXECUTE p`
+//! answers with whatever `p` answers, so the answer shape comes from the
+//! statement this session prepared under that name. It is still decided before
+//! execution -- it is just not decided by the `EXECUTE`'s own tree.
+//!
+//! These are separate questions and stay separate. The answer shape and the
+//! stored state a statement changes are independent: `GRANT` is `Write`-shaped
+//! and rewrites stored accounts, `INSERT` is `Write`-shaped and changes nothing
+//! stored outside this process.
 
 use tidb_ast::{DmlStmt, Stmt};
 use tidb_executor::DriverError;
@@ -128,7 +138,7 @@ impl Session {
     /// agree.
     pub fn statement_kind(&self, sql: &str) -> Result<StmtKind, DriverError> {
         let stmt = self.parse(sql)?;
-        Ok(Self::statement_kind_parsed(&stmt))
+        Ok(self.statement_kind_parsed(&stmt))
     }
 
     /// [`Self::statement_kind`] over a statement a front end already parsed.
@@ -140,8 +150,27 @@ impl Session {
     /// `INSERT` is `Write`-shaped and changes nothing stored outside this
     /// process, and `SELECT` is `Query`-shaped and changes nothing.
     #[must_use]
-    pub fn statement_kind_parsed(stmt: &Stmt) -> StmtKind {
+    pub fn statement_kind_parsed(&self, stmt: &Stmt) -> StmtKind {
         match stmt {
+            // `EXECUTE p` answers with whatever `p` answers, so its shape is
+            // not in its own parse -- it is in the statement this session
+            // prepared under that name. Reading the `EXECUTE` keyword alone
+            // and calling it a write is what made a text-protocol
+            // `PREPARE p FROM 'SELECT 1'; EXECUTE p` run the SELECT down the
+            // write path and report 1105 "a write statement unexpectedly
+            // produced rows" instead of the row.
+            //
+            // A name this session does not hold has no shape to resolve; it
+            // classifies as a query so the 8111 the execution raises reaches
+            // the client through the ordinary path rather than being
+            // reshaped into an internal error.
+            Stmt::Session(session) => match &**session {
+                tidb_ast::SessionStmt::Execute { name, .. } => self
+                    .prepared_statement_sql(name)
+                    .and_then(|sql| self.parse(sql).ok())
+                    .map_or(StmtKind::Query, |inner| self.statement_kind_parsed(&inner)),
+                _ => StmtKind::Write,
+            },
             // `KILL` is the one admin statement that answers with an OK
             // packet rather than a result set, as it does in Go.
             Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Kill(_)) => {
@@ -151,7 +180,7 @@ impl Session {
             Stmt::Query(_) | Stmt::Admin(_) => StmtKind::Query,
             // `USE`, `SET` and the transaction controls answer with an OK
             // packet, the same shape a write uses.
-            Stmt::Dml(_) | Stmt::Ddl(_) | Stmt::Session(_) => StmtKind::Write,
+            Stmt::Dml(_) | Stmt::Ddl(_) => StmtKind::Write,
         }
     }
 

@@ -110,6 +110,18 @@ pub(crate) struct PreparedStatement {
 pub(crate) type PreparedStore = HashMap<String, PreparedStatement>;
 
 impl Session {
+    /// The text a prepared name holds, if this session holds that name.
+    ///
+    /// `EXECUTE` is the one statement whose answer SHAPE is not in its own
+    /// parse -- it is whatever the prepared statement answers -- so
+    /// [`Session::statement_kind_parsed`] resolves the name through here
+    /// rather than guessing from the `EXECUTE` keyword.
+    pub(crate) fn prepared_statement_sql(&self, name: &str) -> Option<&str> {
+        self.prepared_statements
+            .get(name)
+            .map(|prepared| prepared.sql.as_str())
+    }
+
     /// Go `PrepareExec.Next`: parses the statement text and stores it under
     /// `name`, replacing whatever that name held before.
     ///

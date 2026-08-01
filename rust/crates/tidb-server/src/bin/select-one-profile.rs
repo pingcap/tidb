@@ -200,7 +200,7 @@ fn session_stages(iterations: usize) {
         let _ = session.control_transaction(SQL);
         let stmt = session.parse_statement(SQL).unwrap();
         let _ = session.apply_set_stmt(&stmt);
-        let _ = Session::statement_kind_parsed(&stmt);
+        let _ = session.statement_kind_parsed(&stmt);
         let _ = session.run_with_columns(SQL).unwrap();
     }
     let mut control = Vec::with_capacity(iterations);
@@ -221,7 +221,7 @@ fn session_stages(iterations: usize) {
         session.apply_set_stmt(&stmt).unwrap();
         set.push(start.elapsed().as_nanos());
         let start = Instant::now();
-        let _ = Session::statement_kind_parsed(&stmt);
+        let _ = session.statement_kind_parsed(&stmt);
         kind.push(start.elapsed().as_nanos());
         let start = Instant::now();
         session.run_with_columns(SQL).unwrap();
