@@ -107,7 +107,12 @@ pub(crate) fn build_handle_ranges<'a>(
 ) -> Option<IndexRanges<'a>> {
     let column = handle_column(table)?;
     let built = crate::index_range::detach_cond_and_build_range_for_index(
-        &[(column.name.clone(), column.field_type.clone())],
+        // The clustered handle stores the whole column: a row identifier has
+        // no declared prefix to cut to.
+        &[crate::index_range::RangeColumn::whole(
+            column.name.clone(),
+            column.field_type.clone(),
+        )],
         where_clause,
     )?;
     Some(built)

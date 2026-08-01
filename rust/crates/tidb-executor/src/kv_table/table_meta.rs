@@ -26,6 +26,7 @@
 //! operations that read and write these -- encode, decode, index maintenance,
 //! scan -- stay in the parent module.
 
+use crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
 use tidb_codec::table_key::RecordHandle;
 use tidb_datatype::{Charset, Collation, Datum, FieldType};
 
@@ -119,11 +120,97 @@ pub struct KvIndex {
     pub unique: bool,
     /// The indexed columns' offsets in the row, in index order.
     pub column_offsets: Vec<usize>,
+    /// Go `IndexColumn.Length`, one per entry of `column_offsets`:
+    /// [`crate::ddl::index_prefix::UNSPECIFIED_LENGTH`] for a key part that
+    /// stores the whole column, and the declared prefix otherwise.
+    ///
+    /// A prefix key part changes what the index MEANS, not just how large it
+    /// is: the entry holds `'abc'` where the row holds `'abcdef'`, so the
+    /// index no longer covers that column ([`KvIndex::covers`]), no longer
+    /// orders by it ([`KvIndex::ordered_column_offsets`]), and can no longer
+    /// answer a point get ([`KvIndex::has_prefix`]).
+    pub prefix_lengths: Vec<i64>,
     /// Go `!IndexInfo.Invisible`. An invisible index is maintained by every
     /// write and reported by `SHOW INDEX` exactly like any other, and is only
     /// hidden from the *planner*: it never becomes an access path, and naming
     /// it in `USE INDEX`/`FORCE INDEX` is Go's 1176 "Key ... doesn't exist".
     pub visible: bool,
+}
+
+impl KvIndex {
+    /// The prefix declared on the key part at `position`, or
+    /// [`UNSPECIFIED_LENGTH`] when the key part stores the whole column.
+    ///
+    /// A missing entry reads as "whole column", so an index built before this
+    /// field existed cannot be mistaken for a prefix one.
+    #[must_use]
+    pub fn prefix_length(&self, position: usize) -> i64 {
+        self.prefix_lengths
+            .get(position)
+            .copied()
+            .unwrap_or(UNSPECIFIED_LENGTH)
+    }
+
+    /// Go `IndexInfo.HasPrefixIndex`: any key part stores less than its whole
+    /// column.
+    ///
+    /// Go consults this to REFUSE a plan shape outright -- `PointGetPlan`
+    /// declines such an index (`pkg/planner/core/point_get_plan.go`), because
+    /// an entry found by a prefix does not prove the row matches.
+    #[must_use]
+    pub fn has_prefix(&self) -> bool {
+        self.prefix_lengths
+            .iter()
+            .any(|length| *length != UNSPECIFIED_LENGTH)
+    }
+
+    /// The leading key parts whose order is the COLUMN's order, which is the
+    /// only order an index scan can hand to an `ORDER BY`.
+    ///
+    /// Go reaches the same answer from the other side: `matchIndicesProp`
+    /// (`pkg/planner/core/operator/logicalop/logical_index_scan.go`) rejects
+    /// the property as soon as one sort item lands on a key part with a
+    /// declared length. Cutting the list here rather than testing each item
+    /// makes that unrepresentable: entries beyond the cut never reach a
+    /// comparison at all. Captured from real TiDB: `select a from t order by
+    /// a` over `key idx(a(3))` plans `Sort` over `TableFullScan`, not an
+    /// ordered index read.
+    #[must_use]
+    pub fn ordered_column_offsets(&self) -> &[usize] {
+        let ordered = self
+            .prefix_lengths
+            .iter()
+            .take_while(|length| **length == UNSPECIFIED_LENGTH)
+            .count()
+            .min(self.column_offsets.len());
+        // An index with no recorded lengths stores every column whole.
+        if self.prefix_lengths.is_empty() {
+            return &self.column_offsets;
+        }
+        &self.column_offsets[..ordered]
+    }
+
+    /// Whether this index stores enough of the column at `offset` to ANSWER a
+    /// read of it, which is Go's `isIndexColsCoveringCol`
+    /// (`pkg/planner/core/operator/logicalop/logical_datasource.go`): the key
+    /// part must have no declared length, or a length that already reaches
+    /// the column's own `Flen`.
+    ///
+    /// `column_flen` is the indexed column's `FieldType::flen`. A key part
+    /// that stores less than that holds a CUT value, and answering from it
+    /// returns `'abc'` where the row holds `'abcdef'`.
+    #[must_use]
+    pub fn covers(&self, offset: usize, column_flen: i64) -> bool {
+        self.column_offsets
+            .iter()
+            .enumerate()
+            .any(|(position, indexed)| {
+                *indexed == offset && {
+                    let length = self.prefix_length(position);
+                    length == UNSPECIFIED_LENGTH || length == column_flen
+                }
+            })
+    }
 }
 
 /// What a parent-side mutation does to the rows that reference it: Go's

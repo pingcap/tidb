@@ -34,14 +34,14 @@
 //! composes with predicate push-down without any condition being applied
 //! twice in a way that changes the result.
 //!
-//! A prefix index is NOT one of these. Go cuts each stored key to the prefix
-//! length, so an uncut range over it is a SUBSET, not a superset: `KEY (s(4))`
-//! stores `'alph'` for `'alphabet'`, and seeking `["alphabet","alphabet"]`
-//! finds nothing at all -- rows go missing with no residual predicate able to
-//! bring them back. No prefix length reaches this crate's `KvIndex`, so a
-//! prefix index never gets here: [`crate::kv_table::KvTable`] is only built
-//! for tables without one (the cluster loader refuses such a table outright,
-//! and `CREATE TABLE` refuses the index).
+//! A prefix index is the one shape where an UNCUT range would be a SUBSET
+//! rather than a superset, and so the one shape the residual predicate could
+//! not rescue: `KEY (s(4))` stores `'alph'` for `'alphabet'`, and seeking
+//! `["alphabet","alphabet"]` finds nothing at all -- the rows go missing.
+//! That is why [`RangeColumn`] carries the key part's declared length and
+//! every endpoint built on it goes through [`cut_prefix_for_points`], Go's
+//! `cutPrefixForPoints`, before it becomes a range. Cutting turns the range
+//! back into a superset, which the residual predicate then filters.
 //!
 //! DEFERRED (documented, each a superset --- the residual predicate still
 //! filters, so the answer stays correct):
@@ -53,12 +53,43 @@
 //!   * collation sort keys (`convertToSortKey`) and `handleUnsignedCol`'s
 //!     signedness clamping.
 
+use crate::index_prefix_cut::{cut_datum_by_prefix_len, reaches_prefix_len, UNSPECIFIED_LENGTH};
 use crate::kv_table::IndexRange;
 use std::cmp::Ordering;
 use tidb_ast::{BinaryOp, Expr, IsTarget};
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, NoResolver};
+
+/// One index key part as the ranger sees it: the column it names, its type,
+/// and how much of it the index actually stores.
+///
+/// Go passes the same three separately -- `path.IdxCols[i]`, its `RetType`,
+/// and `path.IdxColLens[i]`. Keeping them together makes the length
+/// impossible to forget at a call site, which is what a range that silently
+/// missed rows would look like.
+#[derive(Clone, Debug)]
+pub(crate) struct RangeColumn {
+    /// The column's name, as the `WHERE` refers to it.
+    pub name: String,
+    /// The column's type, which every endpoint is converted into.
+    pub field_type: FieldType,
+    /// Go `IndexColumn.Length`: [`UNSPECIFIED_LENGTH`] for a key part that
+    /// stores the whole column.
+    pub prefix_len: i64,
+}
+
+impl RangeColumn {
+    /// A key part that stores the whole column -- an ordinary index, and the
+    /// clustered handle, which has no length to declare.
+    pub(crate) fn whole(name: String, field_type: FieldType) -> Self {
+        Self {
+            name,
+            field_type,
+            prefix_len: UNSPECIFIED_LENGTH,
+        }
+    }
+}
 
 /// Go `ranger.point`: one endpoint of one interval on one column.
 #[derive(Clone, Debug, PartialEq)]
@@ -558,7 +589,12 @@ fn points_from_not_in(list: &[Expr]) -> Option<Vec<Point>> {
 /// Go `builder.newBuildFromPatternLike`: the literal prefix before the first
 /// wildcard bounds the scan below, and that prefix's `PrefixNext` bounds it
 /// above.
-fn points_from_like(pattern: &str, escape: u8, collation: tidb_datatype::Collation) -> Vec<Point> {
+fn points_from_like(
+    pattern: &str,
+    escape: u8,
+    collation: tidb_datatype::Collation,
+    column: &RangeColumn,
+) -> Vec<Point> {
     let string = |bytes: Vec<u8>| Datum::new_collation_string(bytes, collation);
     if pattern.is_empty() {
         let empty = string(Vec::new());
@@ -593,18 +629,59 @@ fn points_from_like(pattern: &str, escape: u8, collation: tidb_datatype::Collati
         let value = string(low);
         return vec![Point::start(value.clone(), false), Point::end(value, false)];
     }
-    let high = prefix_next(low.clone());
-    vec![
-        Point::start(string(low), false),
-        Point::end(string(high), true),
-    ]
+    // Go cuts the START point before deriving the upper bound from it
+    // (`newBuildFromPatternLike`'s case 4-2 calls `cutPrefixForPoints` on the
+    // start alone, then takes `PrefixNext` of the CUT value). Deriving the
+    // bound first and cutting both would collapse `LIKE 'abcd%'` on
+    // `KEY (a(3))` onto the empty `["abc","abc")`; Go prints `["abc","abd")`.
+    let mut start = Point::start(string(low), false);
+    cut_prefix_for_points(std::slice::from_mut(&mut start), column);
+    let low = match &start.value {
+        Datum::String(text) => text.bytes().to_vec(),
+        Datum::Bytes(bytes) => bytes.clone(),
+        _ => Vec::new(),
+    };
+    let high = prefix_next(low);
+    vec![start, Point::end(string(high), true)]
+}
+
+/// Go `cutPrefixForPoints`: cuts every endpoint to the key part's declared
+/// prefix, and drops the exclusiveness of any endpoint the cut made
+/// ambiguous.
+///
+/// Two cases lose exclusiveness, and Go spells out why:
+///   * the endpoint was actually CUT, so it no longer names one value but
+///     every value behind that prefix;
+///   * a START endpoint whose value already REACHES the prefix length --
+///     `s > 'abc'` on `KEY (s(3))` must still read the `'abc'` entries,
+///     because `'abcdef'` is filed under exactly that key.
+///
+/// The result is a superset of the qualifying rows, which the residual
+/// `WHERE` above the scan then filters back down.
+fn cut_prefix_for_points(points: &mut [Point], column: &RangeColumn) {
+    if column.prefix_len == UNSPECIFIED_LENGTH {
+        return;
+    }
+    for point in points.iter_mut() {
+        let cut = cut_datum_by_prefix_len(&mut point.value, column.prefix_len, &column.field_type);
+        if cut
+            || (point.start
+                && reaches_prefix_len(&point.value, column.prefix_len, &column.field_type))
+        {
+            point.excl = false;
+        }
+    }
 }
 
 /// Go `builder.build` for one condition against one index column: the
 /// condition's endpoints on that column, or `None` when the condition is not
 /// an access condition for it.
-fn points_for_condition(condition: &Expr, column: &str) -> Option<ColumnPoints> {
-    let column_points = points_on_column(condition, column)?;
+///
+/// Go cuts a prefix key part at the tail of every `build` arm; doing it once
+/// here, on the way out, is the same cut with one place to get it right.
+fn points_for_condition(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoints> {
+    let mut column_points = points_on_column(condition, column)?;
+    cut_prefix_for_points(&mut column_points.points, column);
     // Go's `conditionChecker` rejects a condition that bounds nothing --- a
     // LIKE with no literal prefix, an IS NOT NULL --- and `points.go` signals
     // the same by returning the full range. A range spanning the whole index
@@ -618,13 +695,14 @@ fn points_for_condition(condition: &Expr, column: &str) -> Option<ColumnPoints> 
 
 /// The raw endpoints one condition puts on one column, before the
 /// bounds-nothing check above.
-fn points_on_column(condition: &Expr, column: &str) -> Option<ColumnPoints> {
+fn points_on_column(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoints> {
+    let name = column.name.as_str();
     match condition {
-        Expr::Paren(inner) => points_for_condition(inner, column),
+        Expr::Paren(inner) => points_on_column(inner, column),
         Expr::Binary(op, lhs, rhs) => {
-            let (op, value) = if is_column(lhs, column) {
+            let (op, value) = if is_column(lhs, name) {
                 (*op, constant_value(rhs)?)
-            } else if is_column(rhs, column) {
+            } else if is_column(rhs, name) {
                 (flip(*op)?, constant_value(lhs)?)
             } else {
                 return None;
@@ -636,7 +714,7 @@ fn points_on_column(condition: &Expr, column: &str) -> Option<ColumnPoints> {
             })
         }
         Expr::In { expr, list, not } => {
-            if !is_column(expr, column) {
+            if !is_column(expr, name) {
                 return None;
             }
             let points = if *not {
@@ -657,7 +735,7 @@ fn points_on_column(condition: &Expr, column: &str) -> Option<ColumnPoints> {
             high,
             not,
         } => {
-            if !is_column(expr, column) {
+            if !is_column(expr, name) {
                 return None;
             }
             let low = constant_value(low)?;
@@ -686,7 +764,7 @@ fn points_on_column(condition: &Expr, column: &str) -> Option<ColumnPoints> {
             escape,
         } => {
             // Go reports NOT LIKE and ILIKE as unsupported for ranges.
-            if *not || *ilike || !is_column(expr, column) {
+            if *not || *ilike || !is_column(expr, name) {
                 return None;
             }
             // The pattern's own collation carries over to the bounds, so the
@@ -699,7 +777,7 @@ fn points_on_column(condition: &Expr, column: &str) -> Option<ColumnPoints> {
             };
             let pattern = String::from_utf8(bytes).ok()?;
             Some(ColumnPoints {
-                points: points_from_like(&pattern, escape.unwrap_or(b'\\'), collation),
+                points: points_from_like(&pattern, escape.unwrap_or(b'\\'), collation, column),
                 eq_or_in: false,
             })
         }
@@ -708,7 +786,7 @@ fn points_on_column(condition: &Expr, column: &str) -> Option<ColumnPoints> {
             target: IsTarget::Null,
             not,
         } => {
-            if !is_column(expr, column) {
+            if !is_column(expr, name) {
                 return None;
             }
             let points = if *not {
@@ -762,23 +840,20 @@ pub(crate) struct IndexRanges<'a> {
 /// equalities and `IN`s pin the leading index columns one at a time, then
 /// every remaining condition on the next column is intersected into one
 /// spanning interval.
-fn build_cnf_ranges<'a>(
-    index_columns: &[(String, FieldType)],
-    conditions: &[&'a Expr],
-) -> IndexRanges<'a> {
+fn build_cnf_ranges<'a>(index_columns: &[RangeColumn], conditions: &[&'a Expr]) -> IndexRanges<'a> {
     let mut consumed = vec![false; conditions.len()];
     let mut eq_in_points: Vec<Vec<Point>> = Vec::new();
     let mut access_count = 0;
 
     // Go `ExtractEqAndInCondition`: walk the index columns in order and stop
     // at the first one with no equality or IN.
-    for (name, _) in index_columns {
+    for key_part in index_columns {
         let mut points: Option<Vec<Point>> = None;
         for (i, condition) in conditions.iter().enumerate() {
             if consumed[i] {
                 continue;
             }
-            let Some(column) = points_for_condition(condition, name) else {
+            let Some(column) = points_for_condition(condition, key_part) else {
                 continue;
             };
             if !column.eq_or_in {
@@ -802,12 +877,12 @@ fn build_cnf_ranges<'a>(
     // takes every remaining access condition, intersected together.
     let mut tail: Option<Vec<Point>> = None;
     if eq_in_count < index_columns.len() {
-        let name = &index_columns[eq_in_count].0;
+        let key_part = &index_columns[eq_in_count];
         for (i, condition) in conditions.iter().enumerate() {
             if consumed[i] {
                 continue;
             }
-            let Some(column) = points_for_condition(condition, name) else {
+            let Some(column) = points_for_condition(condition, key_part) else {
                 continue;
             };
             tail = Some(intersection(
@@ -823,10 +898,10 @@ fn build_cnf_ranges<'a>(
     // column's own type first, which is where unsigned narrowing and overflow
     // clamping happen.
     for (i, points) in eq_in_points.iter_mut().enumerate() {
-        convert_points_in_place(points, &index_columns[i].1);
+        convert_points_in_place(points, &index_columns[i].field_type);
     }
     if let Some(tail) = tail.as_mut() {
-        convert_points_in_place(tail, &index_columns[eq_in_count].1);
+        convert_points_in_place(tail, &index_columns[eq_in_count].field_type);
     }
 
     let mut ranges: Vec<IndexRange> = Vec::new();
@@ -846,6 +921,17 @@ fn build_cnf_ranges<'a>(
             append_points_to_ranges(&ranges, &tail)
         };
         column_count += 1;
+    }
+    // Go `detachCNFCondAndBuildRangeForIndex`: `if hasPrefix(d.lengths) {
+    // ranges = UnionRanges(...) }`. Cutting can map two distinct points onto
+    // one -- `a IN ('abcdef', 'abcxyz')` over `KEY (a(3))` becomes `["abc",
+    // "abc"]` twice -- and Go prints ONE range for it. Only the prefix case
+    // unions, so an ordinary index's range list is untouched.
+    if index_columns
+        .iter()
+        .any(|column| column.prefix_len != UNSPECIFIED_LENGTH)
+    {
+        ranges = union_ranges(ranges, true);
     }
     IndexRanges {
         ranges,
@@ -904,7 +990,7 @@ fn is_or(expr: &Expr) -> bool {
 /// merging ranges that only touch --- which is what turns `a = 1 OR a = 2`
 /// into `[1,2]`.
 fn build_dnf_ranges<'a>(
-    index_columns: &[(String, FieldType)],
+    index_columns: &[RangeColumn],
     disjunct: &'a Expr,
 ) -> Option<IndexRanges<'a>> {
     let mut branches = Vec::new();
@@ -968,7 +1054,7 @@ fn build_dnf_ranges<'a>(
 /// range scan is no better than a full scan. `Some` with an empty range list
 /// means the conditions are contradictory and no row qualifies.
 pub(crate) fn detach_cond_and_build_range_for_index<'a>(
-    index_columns: &[(String, FieldType)],
+    index_columns: &[RangeColumn],
     where_clause: &'a Expr,
 ) -> Option<IndexRanges<'a>> {
     let mut conjuncts = Vec::new();
@@ -998,7 +1084,7 @@ mod tests {
         ranges.iter().map(range_text).collect::<Vec<_>>().join(", ")
     }
 
-    fn columns(names: &[&str]) -> Vec<(String, FieldType)> {
+    fn columns(names: &[&str]) -> Vec<RangeColumn> {
         names
             .iter()
             // The corpus table is `t(a int, b int, c int, s varchar(255))`;
@@ -1010,14 +1096,13 @@ mod tests {
                 } else {
                     tidb_datatype::FieldTypeCode::LongLong
                 };
-                ((*name).to_owned(), FieldType::new(code))
+                RangeColumn::whole((*name).to_owned(), FieldType::new(code))
             })
             .collect()
     }
 
     fn derive(index: &[&str], where_sql: &str) -> String {
-        let typed: Vec<(String, FieldType)> = columns(index);
-        derive_with_columns(&typed, where_sql)
+        derive_with_columns(&columns(index), where_sql)
     }
 
     /// [`derive`] with the index columns' real field types supplied, which is
@@ -1025,14 +1110,29 @@ mod tests {
     /// converts every range endpoint to the indexed column's type before
     /// building, and that conversion is the whole subject of those rows.
     fn derive_typed(index: &[(&str, FieldType)], where_sql: &str) -> String {
-        let typed: Vec<(String, FieldType)> = index
+        let typed: Vec<RangeColumn> = index
             .iter()
-            .map(|(name, ft)| ((*name).to_owned(), ft.clone()))
+            .map(|(name, ft)| RangeColumn::whole((*name).to_owned(), ft.clone()))
             .collect();
         derive_with_columns(&typed, where_sql)
     }
 
-    fn derive_with_columns(index: &[(String, FieldType)], where_sql: &str) -> String {
+    /// [`derive`] over key parts that declare a PREFIX length, which is what
+    /// the prefix corpus needs: Go cuts every endpoint to that length before
+    /// building the range.
+    fn derive_prefixed(index: &[(&str, FieldType, i64)], where_sql: &str) -> String {
+        let typed: Vec<RangeColumn> = index
+            .iter()
+            .map(|(name, ft, prefix_len)| RangeColumn {
+                name: (*name).to_owned(),
+                field_type: ft.clone(),
+                prefix_len: *prefix_len,
+            })
+            .collect();
+        derive_with_columns(&typed, where_sql)
+    }
+
+    fn derive_with_columns(index: &[RangeColumn], where_sql: &str) -> String {
         let sql = format!("SELECT * FROM t WHERE {where_sql}");
         let stmt = tidb_parser::parse(&sql).expect("the corpus SQL parses");
         let tidb_ast::Stmt::Query(query) = &stmt else {
@@ -1396,13 +1496,14 @@ mod tests {
     ///
     /// with `tidb_opt_prefix_index_single_scan = 1`.
     ///
-    /// Prefix indexes are refused at catalog load in this engine, and
-    /// `detach_cond_and_build_range_for_index` takes no per-column prefix
-    /// length, so these rows cannot run against today's API. They are recorded
-    /// with Go's answers so they become the acceptance spec for the eventual
-    /// prefix-index unit; the ranges Go prints here are prefix-length
-    /// independent (they are NULL/not-NULL boundaries and one equality), so
-    /// the expectations stay valid once a length parameter exists.
+    /// The declared `(2)` reaches the builder now, and 4 of these 10 rows
+    /// pass. The other 6 diverge for a reason that has nothing to do with the
+    /// prefix: this crate does not turn `IS NOT NULL` (or an `isnull(...)`
+    /// call) into an ACCESS condition at all -- `points_for_condition` drops
+    /// any condition whose points span the full range -- so Go's
+    /// `[-inf,+inf]` and `[NULL,+inf]` come back as "no range". That is the
+    /// same gap the module doc lists, and closing it is a different unit, so
+    /// the row set stays recorded rather than half-asserted.
     const GO_PREFIX_INDEX_RANGE: &[(&[&str], &str, &str)] = &[
         (&["a"], "a is null", "[NULL,NULL]"),
         // accessConds is empty here: Go detaches nothing and falls back to the
@@ -1427,15 +1528,15 @@ mod tests {
     ];
 
     #[test]
-    #[ignore = "prefix indexes are refused at catalog load and the range API takes no prefix length; Go's answers below are the spec for that unit"]
+    #[ignore = "6 of 10 rows need IS NOT NULL as an access condition, which this crate does not build; Go's answers are recorded above as that unit's spec"]
     fn prefix_index_ranges_match_go() {
         let mut mismatches = Vec::new();
         for (index, where_sql, expected) in GO_PREFIX_INDEX_RANGE {
-            let cols: Vec<(&str, FieldType)> = index
+            let cols: Vec<(&str, FieldType, i64)> = index
                 .iter()
-                .map(|name| (*name, ft(tidb_datatype::FieldTypeCode::VarString)))
+                .map(|name| (*name, ft(tidb_datatype::FieldTypeCode::VarString), 2))
                 .collect();
-            let got = derive_typed(&cols, where_sql);
+            let got = derive_prefixed(&cols, where_sql);
             if got != *expected {
                 mismatches.push(format!("  {where_sql:<40} go={expected:<28} rust={got}"));
             }
@@ -1447,5 +1548,95 @@ mod tests {
             GO_PREFIX_INDEX_RANGE.len(),
             mismatches.join("\n")
         );
+    }
+
+    /// The endpoint CUT itself, which `GO_PREFIX_INDEX_RANGE` does not
+    /// exercise: its rows are all NULL boundaries and one two-character
+    /// equality, so none of them is long enough to be cut.
+    ///
+    /// The `range:` cells are captured from real TiDB's `EXPLAIN` over
+    /// `t(a varchar(20), b int, key idx(a(3)))`; the rows that are full
+    /// scans there (Go's cost model declines the double read) were captured
+    /// with the index forced, since range DERIVATION is what is measured.
+    ///
+    /// Every one of these is a SUPERSET of the qualifying rows, which is the
+    /// property that makes the residual `WHERE` above the scan sufficient. An
+    /// uncut `["abcdef","abcdef"]` would be a subset and would lose rows.
+    const GO_PREFIX_CUT_RANGE: &[(&str, &str)] = &[
+        // Cut to the prefix; a point stays a point.
+        ("a = 'abcdef'", "[\"abc\",\"abc\"]"),
+        // Shorter than the prefix: nothing to cut, and the point is exact.
+        ("a = 'ab'", "[\"ab\",\"ab\"]"),
+        // Cut START endpoints lose their exclusiveness, so `> 'abcdef'` still
+        // reads the `'abc'` entries that stand for it.
+        ("a > 'abcdef'", "[\"abc\",+inf]"),
+        ("a >= 'abcdef'", "[\"abc\",+inf]"),
+        // A value that REACHES the prefix without being cut loses it too.
+        ("a > 'abc'", "[\"abc\",+inf]"),
+        // An END endpoint that was cut becomes inclusive.
+        ("a < 'abcdef'", "[-inf,\"abc\"]"),
+        ("a <= 'abcdef'", "[-inf,\"abc\"]"),
+        // A value shorter than the prefix keeps its exclusiveness on both
+        // sides: no entry hides behind it.
+        ("a > 'ab'", "(\"ab\",+inf]"),
+        ("a < 'ab'", "[-inf,\"ab\")"),
+        // An IN list cuts each point, and two values sharing the prefix
+        // collapse onto one range.
+        (
+            "a in ('abcdef', 'zzz')",
+            "[\"abc\",\"abc\"], [\"zzz\",\"zzz\"]",
+        ),
+        ("a in ('abcdef', 'abcxyz')", "[\"abc\",\"abc\"]"),
+        // A LIKE whose literal prefix outruns the key part is cut the same
+        // way, and the derived upper bound goes with it.
+        ("a like 'abcd%'", "[\"abc\",\"abd\")"),
+        ("a like 'ab%'", "[\"ab\",\"ac\")"),
+    ];
+
+    #[test]
+    fn a_cut_endpoint_widens_the_range_it_bounds() {
+        let mut mismatches = Vec::new();
+        for (where_sql, expected) in GO_PREFIX_CUT_RANGE {
+            let got = derive_prefixed(
+                &[("a", ft(tidb_datatype::FieldTypeCode::VarString), 3)],
+                where_sql,
+            );
+            if got != *expected {
+                mismatches.push(format!("  {where_sql:<30} want={expected:<32} got={got}"));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "{} of {} rows diverge:\n{}",
+            mismatches.len(),
+            GO_PREFIX_CUT_RANGE.len(),
+            mismatches.join("\n")
+        );
+    }
+
+    /// The control for the row above: the SAME conditions over a key part
+    /// with no declared length keep their exclusiveness and their whole
+    /// values. Without this, a cut applied unconditionally would pass the
+    /// corpus above and quietly widen every ordinary index range.
+    #[test]
+    fn a_whole_key_part_is_never_cut() {
+        for (where_sql, expected) in [
+            ("a = 'abcdef'", "[\"abcdef\",\"abcdef\"]"),
+            ("a > 'abcdef'", "(\"abcdef\",+inf]"),
+            ("a < 'abcdef'", "[-inf,\"abcdef\")"),
+            (
+                "a in ('abcdef', 'abcxyz')",
+                "[\"abcdef\",\"abcdef\"], [\"abcxyz\",\"abcxyz\"]",
+            ),
+        ] {
+            assert_eq!(
+                derive_typed(
+                    &[("a", ft(tidb_datatype::FieldTypeCode::VarString))],
+                    where_sql
+                ),
+                expected,
+                "{where_sql}"
+            );
+        }
     }
 }

@@ -405,12 +405,14 @@ pub(crate) fn kv_index(
     columns: &[&tidb_model::column::ColumnInfo],
 ) -> Result<KvIndex, String> {
     // A prefix index (`KEY idx(s(4))`) stores each column value CUT to the
-    // prefix, and nothing on either side of this seam cuts: the key
-    // builder encodes whole column values, so a read would seek a key that
-    // is not there (missing rows, silently) and a write would store an
-    // entry Go cannot find. The whole table is refused, and reported,
-    // rather than half-supported -- the same answer the ANALYZE path and
-    // the `CREATE TABLE` path already give a prefix index.
+    // prefix. The IN-PROCESS engine now cuts on both sides of that -- see
+    // `tidb_executor::index_prefix_cut` -- but this seam does not reach it:
+    // the cluster write path encodes entries through
+    // `tidb_codec::generate_index_key` and the cluster read path builds key
+    // ranges in `tidb_distsql::request_builder`, neither of which cuts. An
+    // index WRITTEN under one mapping and READ under another is the exact
+    // silent wrong answer this tier keeps hunting, so the whole table is
+    // refused and reported rather than half-supported.
     if index.has_prefix_index() {
         return Err(format!(
             "its index {} is a prefix index, whose entries are each column value cut to \
@@ -437,6 +439,11 @@ pub(crate) fn kv_index(
         name: index.name.original().to_owned(),
         unique: index.unique,
         column_offsets: offsets,
+        prefix_lengths: index
+            .columns
+            .iter()
+            .map(|column| i64::from(column.length))
+            .collect(),
         visible: !index.invisible,
     })
 }

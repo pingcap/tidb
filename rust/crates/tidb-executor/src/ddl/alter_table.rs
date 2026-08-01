@@ -389,19 +389,33 @@ fn add_foreign_key_action(
     // clustered handle included; otherwise TiDB adds one named after the
     // constraint. The index a DROPPED constraint left behind counts, which is
     // why re-adding a constraint over the same columns adds no second key.
+    // Go `IsIndexPrefixCovered`: a key part that stores only a PREFIX of its
+    // column cannot answer the constraint's lookup, so it earns no exemption.
     let covered = |offsets: &[usize]| offsets.starts_with(&foreign_key.cols);
-    if !covered(&clustered)
-        && !table
-            .indexes()
-            .iter()
-            .any(|index| covered(&index.column_offsets))
-    {
+    let column_flens: Vec<i64> = table
+        .columns
+        .iter()
+        .map(|column| column.field_type.flen())
+        .collect();
+    let covered_index = |index: &super::KvIndex| {
+        covered(&index.column_offsets)
+            && foreign_key.cols.iter().enumerate().all(|(position, at)| {
+                let length = index.prefix_length(position);
+                length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
+                    || column_flens.get(*at).is_some_and(|flen| length >= *flen)
+            })
+    };
+    if !covered(&clustered) && !table.indexes().iter().any(covered_index) {
         let id = table.next_index_id();
         table.add_index(super::KvIndex {
             id,
             name: foreign_key.name.clone(),
             unique: false,
             column_offsets: foreign_key.cols.clone(),
+            prefix_lengths: vec![
+                crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                foreign_key.cols.len()
+            ],
             visible: true,
         });
     }
@@ -899,21 +913,26 @@ fn modify_column_action(
             "this column has primary key flag",
         ));
     }
-    // Go `ErrBlobKeyWithoutLength`: an index cannot cover a full BLOB/TEXT.
-    let blob_type = matches!(
-        field_type.code(),
-        tidb_datatype::FieldTypeCode::Blob
-            | tidb_datatype::FieldTypeCode::TinyBlob
-            | tidb_datatype::FieldTypeCode::MediumBlob
-            | tidb_datatype::FieldTypeCode::LongBlob
-    );
-    if blob_type
-        && table
-            .indexes()
-            .iter()
-            .any(|index| index.column_offsets.contains(&offset))
-    {
-        return Err(DriverError::BlobKeyWithoutLength(def.name.clone()));
+    // Go `checkIndexInModifiableColumns` (`pkg/ddl/modify_column.go`): every
+    // key part over this column is re-validated against the NEW type, under
+    // the length that key part will survive with -- which is Go's
+    // `UpdateIndexCol` rule, applied by `KvTable::modify_column` itself.
+    //
+    // This subsumes the `ErrBlobKeyWithoutLength` refusal it replaces: a key
+    // part with no surviving prefix over a new BLOB/TEXT column is exactly
+    // Go's 1170. A key part that KEEPS a prefix is legal over the same type,
+    // which is why the check has to ask about the length rather than about
+    // the type alone.
+    for index in table.indexes() {
+        for (position, at) in index.column_offsets.iter().enumerate() {
+            if *at != offset {
+                continue;
+            }
+            let length = index.prefix_length(position);
+            let surviving = (field_type.code().is_type_prefixable() && field_type.flen() > length)
+                .then_some(length);
+            crate::ddl::index_prefix::key_part_length(&field_type, &def.name, surviving)?;
+        }
     }
 
     let new_position = match position {

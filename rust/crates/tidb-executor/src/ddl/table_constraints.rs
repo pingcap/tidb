@@ -58,9 +58,14 @@ pub(crate) const PRI_KEY_FLAG: u32 = 1 << 1;
 /// structure, see [`crate::expression_index`]. Those columns come back
 /// alongside the indexes because the caller is what owns the column vector.
 ///
-/// DEFERRED (documented): FULLTEXT, VECTOR and COLUMNAR indexes, prefix
-/// lengths and index options, all rejected rather than silently created as a
-/// plain index.
+/// A key part's declared LENGTH (`KEY idx (a(3))`) is stored on the index and
+/// honoured by the encoding and the read path -- see
+/// [`crate::ddl::index_prefix`]. A length on a clustered PRIMARY KEY is still
+/// refused, for the reason
+/// [`crate::ddl::index_prefix::clustered_prefix_unsupported`] gives.
+///
+/// DEFERRED (documented): FULLTEXT, VECTOR and COLUMNAR indexes and index
+/// options, all rejected rather than silently created as a plain index.
 pub(crate) fn table_indexes(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],
@@ -95,6 +100,7 @@ pub(crate) fn table_indexes(
         name: String,
         unique: bool,
         offsets: Vec<usize>,
+        prefix_lengths: Vec<i64>,
         visible: bool,
     ) {
         indexes.push(KvIndex {
@@ -102,6 +108,7 @@ pub(crate) fn table_indexes(
             name,
             unique,
             column_offsets: offsets,
+            prefix_lengths,
             visible,
         });
     }
@@ -208,17 +215,18 @@ pub(crate) fn table_indexes(
             &column_types,
         )?;
         let mut offsets = Vec::with_capacity(index.parts.len());
+        let mut prefix_lengths = Vec::with_capacity(index.parts.len());
         for (position, part) in index.parts.iter().enumerate() {
             match part {
                 tidb_ast::IndexPart::Column {
                     name, prefix_len, ..
                 } => {
                     let offset = offset_of(name)?;
-                    crate::ddl::index_prefix::check_key_part(
+                    prefix_lengths.push(crate::ddl::index_prefix::key_part_length(
                         &column_types[offset],
                         name,
                         *prefix_len,
-                    )?;
+                    )?);
                     offsets.push(offset);
                 }
                 // The hidden columns are appended after the declared ones, in
@@ -230,6 +238,9 @@ pub(crate) fn table_indexes(
                         .position(|(at, _)| *at == position)
                         .expect("every expression part builds a hidden column");
                     offsets.push(columns.len() + hidden.len() + index_in_built);
+                    // An expression key part has no declared length: Go's
+                    // parser has nowhere to write one on `KEY ((a + 1))`.
+                    prefix_lengths.push(crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
                 }
             }
         }
@@ -239,6 +250,7 @@ pub(crate) fn table_indexes(
             name,
             unique,
             offsets,
+            prefix_lengths,
             is_visible(&index.options),
         );
     }
@@ -255,7 +267,14 @@ pub(crate) fn table_indexes(
                     tidb_ast::InlineKeyKind::Unique => {
                         let offset = offset_of(&def.name)?;
                         let name = anonymous_index_name(&indexes, &reserved, &def.name);
-                        push(&mut indexes, name, true, vec![offset], true);
+                        push(
+                            &mut indexes,
+                            name,
+                            true,
+                            vec![offset],
+                            vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                            true,
+                        );
                     }
                     // A primary key that is not the row handle still needs an
                     // index to enforce its uniqueness. Either way it CONSUMES
@@ -267,7 +286,14 @@ pub(crate) fn table_indexes(
                         let offset = offset_of(&def.name)?;
                         reserved.push(anonymous_index_name(&indexes, &reserved, &def.name));
                         if !pk_is_handle {
-                            push(&mut indexes, "PRIMARY".to_owned(), true, vec![offset], true);
+                            push(
+                                &mut indexes,
+                                "PRIMARY".to_owned(),
+                                true,
+                                vec![offset],
+                                vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                                true,
+                            );
                         }
                     }
                 }
@@ -622,7 +648,17 @@ pub(crate) fn primary_key_column(
                 .ok_or(DriverError::Unsupported(
                     "the primary key names a column the table does not define",
                 ))?;
-            crate::ddl::index_prefix::check_key_part(field_type, name, *prefix_len)?;
+            // A clustered primary key whose handle is a CUT value is a
+            // different problem from a cut secondary-index entry: there is no
+            // row to go back to for the whole value. See
+            // `index_prefix::clustered_prefix_unsupported`.
+            if crate::ddl::index_prefix::key_part_length(field_type, name, *prefix_len)?
+                != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
+            {
+                return Err(DriverError::Unsupported(
+                    crate::ddl::index_prefix::clustered_prefix_unsupported(),
+                ));
+            }
             names.push(name.clone());
         }
         found = Some(names);

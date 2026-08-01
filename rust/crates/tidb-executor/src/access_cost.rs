@@ -539,15 +539,21 @@ pub(crate) fn enumerate_paths(
         // the hidden column an expression index was rewritten into is a
         // column of the table that no query can see, so the scope has no
         // entry at its offset.
-        let index_columns: Vec<(String, FieldType)> = index
+        let index_columns: Vec<crate::index_range::RangeColumn> = index
             .column_offsets
             .iter()
-            .filter_map(|offset| {
-                columns.get(*offset).cloned().or_else(|| {
+            .enumerate()
+            .filter_map(|(position, offset)| {
+                let (name, field_type) = columns.get(*offset).cloned().or_else(|| {
                     table
                         .columns
                         .get(*offset)
                         .map(|column| (column.name.clone(), column.field_type.clone()))
+                })?;
+                Some(crate::index_range::RangeColumn {
+                    name,
+                    field_type,
+                    prefix_len: index.prefix_length(position),
                 })
             })
             .collect();
@@ -865,7 +871,7 @@ fn index_path(
     // reader stops at the cap; `estimated` is still what EXPLAIN prints for
     // the scan, because the cop-side `Limit` is its own operator there.
     let rows = match limit {
-        Some(limit) if (limit.satisfied_by)(&index.column_offsets, ranges.len() == 1) => {
+        Some(limit) if (limit.satisfied_by)(index.ordered_column_offsets(), ranges.len() == 1) => {
             estimated.min(limit.cap)
         }
         _ => estimated,
@@ -938,9 +944,21 @@ fn index_path(
 ///
 /// An integer primary key is stored in every index entry as its handle, so a
 /// path over such a table covers the handle column too.
+///
+/// A PREFIX key part does not count: its entry holds `'abc'` where the row
+/// holds `'abcdef'`, so answering from it is the truncation this feature
+/// exists to avoid. Go says the same in `isIndexColsCoveringCol`
+/// (`pkg/planner/core/operator/logicalop/logical_datasource.go`), which
+/// accepts a key part only when its length is unspecified or already reaches
+/// the column's `Flen`. Captured: `explain select a from t where a =
+/// 'abcdef'` over `key idx(a(3))` is an `IndexLookUp`, not an `IndexReader`.
 fn is_covering(index: &KvIndex, table: &KvTable, needed_columns: &[usize]) -> bool {
     needed_columns.iter().all(|offset| {
-        index.column_offsets.contains(offset) || table.pk_handle_offset() == Some(*offset)
+        let flen = table
+            .columns
+            .get(*offset)
+            .map_or(-1, |column| column.field_type.flen());
+        index.covers(*offset, flen) || table.pk_handle_offset() == Some(*offset)
     })
 }
 
@@ -1167,7 +1185,12 @@ fn column_ranges(
     };
     let column = table.columns.get(offset)?;
     let built = crate::index_range::detach_cond_and_build_range_for_index(
-        &[(column.name.clone(), column.field_type.clone())],
+        // A per-column range for the risk model, over the COLUMN itself: no
+        // index and therefore no declared length is in play here.
+        &[crate::index_range::RangeColumn::whole(
+            column.name.clone(),
+            column.field_type.clone(),
+        )],
         conjunct,
     )?;
     let ranges = built
@@ -1228,6 +1251,47 @@ mod tests {
         }
     }
 
+    /// Go `isIndexColsCoveringCol`: a key part that stores only a PREFIX of
+    /// its column cannot answer a read of that column, so a path over it is
+    /// never a single scan.
+    ///
+    /// Pinned here rather than through rows on purpose. `IndexRangeSourceExec`
+    /// looks the row up unconditionally today -- the double-read test in
+    /// `crate::access_path` pins exactly that -- so a wrong answer here costs
+    /// an unnecessary lookup rather than a truncated value, and would cost the
+    /// truncated value the day a covering-only reader lands. This assertion is
+    /// what would go red then, so the rule cannot be lost in the meantime.
+    #[test]
+    fn a_prefix_key_part_never_covers_its_column() {
+        let mut column = KvColumn {
+            name: "s".to_owned(),
+            id: 1,
+            field_type: FieldType::new(FieldTypeCode::Varchar),
+            default_value: None,
+            origin_default: None,
+            generated: None,
+        };
+        column.field_type.set_flen(20);
+        let table = KvTable::with_storage(78, vec![column], Box::new(MemTableStorage::new()));
+        let index = |prefix_len: i64| KvIndex {
+            id: 1,
+            name: "idx".to_owned(),
+            unique: false,
+            column_offsets: vec![0],
+            prefix_lengths: vec![prefix_len],
+            visible: true,
+        };
+        assert!(!is_covering(&index(3), &table, &[0]));
+        // No declared length, or one that already reaches the column's own
+        // width, holds the whole value -- both of which Go accepts.
+        assert!(is_covering(
+            &index(crate::ddl::index_prefix::UNSPECIFIED_LENGTH),
+            &table,
+            &[0]
+        ));
+        assert!(is_covering(&index(20), &table, &[0]));
+    }
+
     /// `t(a, b, c)` with a non-unique index on `b`, the shape
     /// [`crate::access_path`]'s tests use.
     fn table_with_index() -> KvTable {
@@ -1247,6 +1311,7 @@ mod tests {
                     name: "ib".to_owned(),
                     unique: false,
                     column_offsets: vec![1],
+                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                     visible: true,
                 },
                 &tidb_expr::NoColumns,

@@ -42,11 +42,15 @@
 //! # What this module does NOT decide
 //!
 //! It answers only what happens at CREATE time. A prefix length that is
-//! ACCEPTED here still has to be honoured by the index encoding and by every
-//! read-path decision that assumes an index entry holds the whole column
-//! value, and this tier does not yet do that -- see [`prefix_unsupported`],
-//! which is the single refusal both tiers raise for the forms TiDB accepts and
-//! we cannot yet serve.
+//! ACCEPTED here still has to be honoured by the index encoding
+//! ([`crate::index_prefix_cut`]) and by every read-path decision that would
+//! otherwise assume an index entry holds the whole column value
+//! ([`crate::kv_table::KvIndex::covers`],
+//! [`crate::kv_table::KvIndex::ordered_column_offsets`],
+//! [`crate::kv_table::KvIndex::has_prefix`], and the ranger's endpoint
+//! cutting). Those exist now for SECONDARY indexes; a prefix on a clustered
+//! PRIMARY KEY is a different problem and stays refused, see
+//! [`clustered_prefix_unsupported`].
 
 use tidb_datatype::FieldType;
 
@@ -171,28 +175,26 @@ fn charset_max_bytes(field_type: &FieldType) -> i64 {
     }
 }
 
-/// Validates one key part the way the runnable path reports it: Go's own
-/// error for a form TiDB rejects, and [`prefix_unsupported`] for a real
-/// prefix it would accept.
+/// Validates one key part the way the runnable path reports it, and hands
+/// back the length TiDB STORES for it.
 ///
-/// This is [`stored_index_length`] plus the decision this tier makes about
-/// what it can then SERVE, which is why it returns nothing on success -- the
-/// only length it can store is "no prefix".
+/// This is [`stored_index_length`] with Go's errors mapped onto the driver's,
+/// so an illegal length reaches the client as TiDB's own code rather than as
+/// a refusal of this tier's own.
 ///
 /// # Errors
 ///
-/// The Go error for an illegal length, or the deferral for a legal one.
-pub fn check_key_part(
+/// The Go error for an illegal length.
+pub fn key_part_length(
     field_type: &FieldType,
     column: &str,
     declared: Option<i64>,
-) -> Result<(), crate::DriverError> {
+) -> Result<i64, crate::DriverError> {
     // Strict mode is not threaded to this tier's DDL yet, and the strict
     // reading is the one that refuses rather than silently truncating a key,
     // so it is the safe default until it is.
     match stored_index_length(field_type, column, declared, true) {
-        Ok(UNSPECIFIED_LENGTH) => Ok(()),
-        Ok(_) => Err(crate::DriverError::Unsupported(prefix_unsupported())),
+        Ok(length) => Ok(length),
         Err(PrefixError::IncorrectPrefixKey) => Err(crate::DriverError::IncorrectPrefixKey),
         Err(PrefixError::BlobKeyWithoutLength(column)) => {
             Err(crate::DriverError::BlobKeyWithoutLength(column))
@@ -204,23 +206,25 @@ pub fn check_key_part(
     }
 }
 
-/// The single refusal both tiers raise for a prefix TiDB would ACCEPT.
+/// The one prefix form still refused, and why it is a DIFFERENT problem from
+/// the secondary-index prefix this module now admits.
 ///
-/// Storing a prefix length is only half the feature. The index entry must be
-/// encoded from the CUT value, and -- the half that returns wrong rows rather
-/// than merely missing an optimization -- every read-path decision that treats
-/// an index entry as holding the whole column value must stop doing so for
-/// that column. `select a from t where a = 'abcdef'` over `key idx(a(3))`
-/// must still fetch the row: answering it from the index alone returns
-/// `'abc'`. Captured from real TiDB, which returns `'abcdef'`.
+/// A prefix on a SECONDARY index cuts the entry, and every read that needs
+/// the whole value goes back to the row for it -- which is what
+/// [`crate::index_prefix_cut`], [`crate::kv_table::KvIndex::covers`] and
+/// [`crate::kv_table::KvIndex::ordered_column_offsets`] between them arrange.
 ///
-/// Until that path exists, an accepted prefix index would be a table whose
-/// reads are silently wrong, so both tiers refuse to build one. The forms
-/// TiDB ITSELF rejects are reported before this, with Go's own codes, by
-/// [`stored_index_length`].
+/// A prefix on a CLUSTERED PRIMARY KEY cuts the ROW IDENTIFIER: captured from
+/// real TiDB, `create table p (a varchar(20), primary key (a(3)))` prints
+/// `/*T![clustered_index] CLUSTERED */` and then rejects `'abcxyz'` after
+/// `'abcdef'` -- two distinct rows are two distinct handles only if the cut
+/// values differ. There is no row to go back to when the handle itself is
+/// lossy, so this is not the same fix, and admitting it on the strength of
+/// the secondary-index work would be the silent-wrong-answer shape all over
+/// again.
 #[must_use]
-pub fn prefix_unsupported() -> &'static str {
-    "a prefix-length index is not supported yet"
+pub fn clustered_prefix_unsupported() -> &'static str {
+    "a prefix-length primary key is not supported yet"
 }
 
 #[cfg(test)]

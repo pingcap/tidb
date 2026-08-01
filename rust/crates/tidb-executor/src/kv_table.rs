@@ -843,7 +843,7 @@ impl KvTable {
                     let _ = self.store.delete(key);
                 }
                 return Err(KvTableError::DuplicateEntry {
-                    value: duplicate_value_text(&index, row),
+                    value: duplicate_value_text(&self.index_values(&index, row)),
                     key: self.qualified_key(&index.name),
                 });
             }
@@ -1060,6 +1060,28 @@ impl KvTable {
         }
 
         self.columns[offset] = new_column;
+        // Go `ddl.UpdateIndexCol` (`pkg/ddl/column.go`), run as part of the
+        // same column change: a key part over this column keeps its declared
+        // prefix only while the new type is still prefixable AND wider than
+        // the prefix. Doing it here, before the entries below are rebuilt,
+        // is what keeps the stored entries and the recorded lengths one
+        // answer -- a caller that updated the metadata separately could
+        // leave cut entries under a key part that no longer declares a cut.
+        // Captured: `char(255) unique index idx(a(2))` modified to `float`
+        // prints `UNIQUE KEY idx (a)`, and `char(250) idx(a(10))` modified to
+        // `char(9)` does too.
+        let field_type = self.columns[offset].field_type.clone();
+        for index in &mut self.indexes {
+            for (position, at) in index.column_offsets.iter().enumerate() {
+                if *at != offset {
+                    continue;
+                }
+                let length = index.prefix_lengths[position];
+                if !field_type.code().is_type_prefixable() || field_type.flen() <= length {
+                    index.prefix_lengths[position] = crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                }
+            }
+        }
         if let Some(position) = new_position.filter(|position| *position != offset) {
             self.move_column(offset, position);
             for (_, row) in &mut converted_rows {
@@ -1187,7 +1209,7 @@ impl KvTable {
             let (key, distinct) = self.index_key(&index, row, &TableHandle::Int(0))?;
             if distinct && self.store.get(&Key::from_bytes(key)).is_ok() {
                 return Ok(KvTableError::DuplicateEntry {
-                    value: duplicate_value_text(&index, row),
+                    value: duplicate_value_text(&self.index_values(&index, row)),
                     key: self.qualified_key(&index.name),
                 });
             }
@@ -1412,6 +1434,35 @@ impl KvTable {
         self.delete_raw_key_for_test(key.as_bytes())
     }
 
+    /// The values one index entry is built from: the indexed columns of
+    /// `row`, each CUT to its key part's declared prefix (Go
+    /// `tablecodec.TruncateIndexValues`, which `GenIndexKey` calls first).
+    ///
+    /// This is the only place the cut happens, which is what makes the key a
+    /// write stores and the key a read seeks the same key by construction --
+    /// and what makes a UNIQUE prefix index enforce uniqueness ON THE PREFIX,
+    /// because two rows sharing it produce one key. Captured from real TiDB:
+    /// with `unique key uidx(a(3))` holding `'abcdef'`, inserting `'abcxyz'`
+    /// is rejected.
+    pub(crate) fn index_values(&self, index: &KvIndex, row: &[Datum]) -> Vec<Datum> {
+        index
+            .column_offsets
+            .iter()
+            .enumerate()
+            .map(|(position, offset)| {
+                let mut value = row.get(*offset).cloned().unwrap_or(Datum::Null);
+                if let Some(column) = self.columns.get(*offset) {
+                    crate::index_prefix_cut::cut_index_value(
+                        &mut value,
+                        index.prefix_length(position),
+                        &column.field_type,
+                    );
+                }
+                value
+            })
+            .collect()
+    }
+
     /// Go `GenIndexKey`: the entry key for one index over `row`, plus Go's
     /// `distinct` flag.
     ///
@@ -1425,11 +1476,7 @@ impl KvTable {
         row: &[Datum],
         handle: &TableHandle,
     ) -> Result<(Vec<u8>, bool), KvTableError> {
-        let values: Vec<Datum> = index
-            .column_offsets
-            .iter()
-            .map(|offset| row.get(*offset).cloned().unwrap_or(Datum::Null))
-            .collect();
+        let values = self.index_values(index, row);
         let distinct = index.unique && !values.contains(&Datum::Null);
         let mut encoded =
             tidb_codec::encode_key(&values).map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
@@ -1463,7 +1510,7 @@ impl KvTable {
             if distinct {
                 if self.store.get(&key).is_ok() {
                     return Err(KvTableError::DuplicateEntry {
-                        value: duplicate_value_text(index, row),
+                        value: duplicate_value_text(&self.index_values(index, row)),
                         key: self.qualified_key(&index.name),
                     });
                 }
@@ -1527,6 +1574,15 @@ impl KvTable {
         };
         if !index.unique || values.contains(&Datum::Null) {
             // Only a distinct entry stores the handle in its value.
+            return Ok(None);
+        }
+        // A prefix index's entry is filed under a CUT value, so finding one
+        // does not prove the row matches: `'abcxyz'` and `'abcdef'` share the
+        // key of `uidx(a(3))`. Go declines the plan outright
+        // (`point_get_plan.go`'s `idxInfo.HasPrefixIndex()`); declining the
+        // LOOKUP as well means no caller can reach a wrong row through this
+        // door even if a future planner forgets the rule.
+        if index.has_prefix() {
             return Ok(None);
         }
         let encoded =
@@ -1826,20 +1882,14 @@ fn datum_text(value: &Datum) -> String {
     }
 }
 
-fn duplicate_value_text(index: &KvIndex, row: &[Datum]) -> String {
-    index
-        .column_offsets
-        .iter()
-        .map(|offset| match row.get(*offset) {
-            Some(Datum::Int(value)) => value.to_string(),
-            Some(Datum::UInt(value)) => value.to_string(),
-            Some(Datum::Bytes(bytes)) => String::from_utf8_lossy(bytes).into_owned(),
-            Some(Datum::String(text)) => String::from_utf8_lossy(text.bytes()).into_owned(),
-            Some(other) => format!("{other:?}"),
-            None => String::new(),
-        })
-        .collect::<Vec<_>>()
-        .join("-")
+/// The `Duplicate entry '...'` value MySQL prints, from the values the ENTRY
+/// holds.
+///
+/// Go builds it the same way -- `tables.go`'s `TruncateIndexValues` then
+/// `genIndexKeyStrs` -- so a unique prefix index reports the CUT value:
+/// `'abc'`, not the `'abcxyz'` that was offered.
+fn duplicate_value_text(values: &[Datum]) -> String {
+    values.iter().map(datum_text).collect::<Vec<_>>().join("-")
 }
 
 #[cfg(test)]

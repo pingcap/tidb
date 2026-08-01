@@ -498,6 +498,7 @@ mod tests {
                         name: "ib".to_owned(),
                         unique: false,
                         column_offsets: vec![1],
+                        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                         visible: true,
                     },
                     &tidb_expr::NoColumns,

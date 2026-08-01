@@ -638,24 +638,41 @@ pub fn run_create_table_in(
         // already has those columns as a PREFIX. Captured: a child whose FK
         // column is its primary key, and one with `KEY kk (pid, k)`, get no
         // extra index, while one with `KEY kk (k, pid)` does.
+        // Go `IsIndexPrefixCovered` (`pkg/meta/model/index.go`) additionally
+        // requires each covering key part to store the WHOLE column: an
+        // entry holding `'abc'` for `'abcdef'` cannot answer "does a parent
+        // row with this value exist", so a prefix index earns the child no
+        // exemption and TiDB adds the constraint's own index beside it.
         let covered = |offsets: &[usize]| offsets.starts_with(&foreign_key.cols);
+        let covered_index = |index: &KvIndex| {
+            covered(&index.column_offsets)
+                && foreign_key.cols.iter().enumerate().all(|(position, at)| {
+                    let length = index.prefix_length(position);
+                    length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
+                        || info
+                            .columns
+                            .get(*at)
+                            .is_some_and(|column| length >= column.field_type.flen())
+                })
+        };
         let clustered: &[usize] = if pk_is_handle {
             pk_offsets.as_slice()
         } else {
             common_handle_offsets.as_slice()
         };
-        if !covered(clustered)
-            && !table
-                .indexes()
-                .iter()
-                .any(|index| covered(&index.column_offsets))
-        {
+        if !covered(clustered) && !table.indexes().iter().any(covered_index) {
             let id = table.next_index_id();
             table.add_index(KvIndex {
                 id,
                 name: foreign_key.name.clone(),
                 unique: false,
                 column_offsets: foreign_key.cols.clone(),
+                // Go's auto-created foreign-key index names whole columns:
+                // an `FKInfo` has no per-column length to carry.
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    foreign_key.cols.len()
+                ],
                 visible: true,
             });
         }

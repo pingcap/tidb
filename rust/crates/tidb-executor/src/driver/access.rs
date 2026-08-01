@@ -194,7 +194,9 @@ fn commit_index_range_source(
         .find(|index| index.id == index_id)
         .expect("the chosen path names an index of this table");
     *index_order = Some(IndexAccessOrder {
-        column_offsets: index.column_offsets.clone(),
+        // Only the key parts that store a WHOLE column carry the column's own
+        // order; see `KvIndex::ordered_column_offsets`.
+        column_offsets: index.ordered_column_offsets().to_vec(),
         single_range: ranges.len() == 1,
     });
     if let Some(trace) = trace {
@@ -1034,6 +1036,15 @@ pub(crate) fn try_batch_point_get(
         if !index.unique || index.column_offsets.len() != 1 {
             continue;
         }
+        // Go `point_get_plan.go` declines an index with `HasPrefixIndex()`:
+        // an entry found by a CUT value does not prove the row matches, and a
+        // point get has no residual predicate to catch that. Skipping the
+        // index here is load-bearing, not defensive -- `lookup_unique` fails
+        // closed with `None`, which this loop would otherwise read as "no
+        // such row" and answer zero rows for a row that exists.
+        if index.has_prefix() {
+            continue;
+        }
         if !columns[index.column_offsets[0]]
             .0
             .eq_ignore_ascii_case(name)
@@ -1251,6 +1262,15 @@ pub(crate) fn try_point_get(
     let mut table = table.clone();
     for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
         if !index.unique {
+            continue;
+        }
+        // Go `point_get_plan.go` declines an index with `HasPrefixIndex()`:
+        // an entry found by a CUT value does not prove the row matches, and a
+        // point get has no residual predicate to catch that. Skipping the
+        // index here is load-bearing, not defensive -- `lookup_unique` fails
+        // closed with `None`, which this loop would otherwise read as "no
+        // such row" and answer zero rows for a row that exists.
+        if index.has_prefix() {
             continue;
         }
         let mut values = Vec::with_capacity(index.column_offsets.len());

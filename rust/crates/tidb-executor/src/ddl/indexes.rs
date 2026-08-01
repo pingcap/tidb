@@ -198,6 +198,7 @@ pub(crate) fn add_index_to_table(
         }
     }
     let mut offsets = Vec::with_capacity(parts.len());
+    let mut prefix_lengths = Vec::with_capacity(parts.len());
     let mut built = hidden.into_iter();
     let mut pending = Vec::new();
     for part in parts {
@@ -210,16 +211,17 @@ pub(crate) fn add_index_to_table(
                     .iter()
                     .position(|candidate| candidate.name.eq_ignore_ascii_case(name))
                     .ok_or_else(|| DriverError::UnknownColumnInAlter(name.clone()))?;
-                crate::ddl::index_prefix::check_key_part(
+                prefix_lengths.push(crate::ddl::index_prefix::key_part_length(
                     &table.columns[offset].field_type,
                     name,
                     *prefix_len,
-                )?;
+                )?);
                 offsets.push(offset);
             }
             tidb_ast::IndexPart::Expr { .. } => {
                 let (_, column) = built.next().expect("one hidden column per expression part");
                 offsets.push(table.columns.len() + pending.len());
+                prefix_lengths.push(crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
                 pending.push(column);
             }
         }
@@ -261,6 +263,7 @@ pub(crate) fn add_index_to_table(
                 name: index_name.to_owned(),
                 unique,
                 column_offsets: offsets,
+                prefix_lengths,
                 visible,
             },
             ctx,

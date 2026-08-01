@@ -107,14 +107,18 @@ fn show_create_view_text(view: &tidb_executor::ViewDef) -> String {
     out
 }
 
-/// How one index key part prints: a visible column by name, and a hidden
-/// column as the parenthesized expression it was built from.
+/// How one index key part prints: a visible column by name, a hidden column
+/// as the parenthesized expression it was built from, and a declared PREFIX
+/// as the `(n)` after the name.
 ///
 /// Captured from Go: `create index idx on t((a+1))` prints
 /// ``KEY `idx` ((`a` + 1))``, and a mixed index `index idxe ((a+1), a)`
 /// prints ``KEY `idxe` ((`a` + 1),`a`)`` -- the hidden column's own name is
-/// never printed anywhere.
-fn index_part_text(table: &tidb_executor::KvTable, offset: usize) -> String {
+/// never printed anywhere. Captured for the prefix:
+/// `create table t (a char(255), b int, unique key idx(a(2), b))` prints
+/// ``UNIQUE KEY `idx` (`a`(2),`b`)``, and a prefix covering the whole column
+/// prints no `(n)` at all because the DDL stored none.
+fn index_part_text(table: &tidb_executor::KvTable, offset: usize, prefix_length: i64) -> String {
     let column = &table.columns[offset];
     match column
         .generated
@@ -122,7 +126,10 @@ fn index_part_text(table: &tidb_executor::KvTable, offset: usize) -> String {
         .filter(|_| table.is_hidden(offset))
     {
         Some(generated) => format!("({})", generated.expr_text),
-        None => escape_name(&column.name),
+        None if prefix_length == tidb_executor::ddl::index_prefix::UNSPECIFIED_LENGTH => {
+            escape_name(&column.name)
+        }
+        None => format!("{}({prefix_length})", escape_name(&column.name)),
     }
 }
 
@@ -238,7 +245,10 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
         let columns = index
             .column_offsets
             .iter()
-            .map(|offset| index_part_text(table, *offset))
+            .enumerate()
+            .map(|(position, offset)| {
+                index_part_text(table, *offset, index.prefix_length(position))
+            })
             .collect::<Vec<_>>()
             .join(",");
         if index.name.eq_ignore_ascii_case("PRIMARY") {

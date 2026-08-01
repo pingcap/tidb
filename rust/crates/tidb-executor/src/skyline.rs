@@ -58,9 +58,8 @@
 //! LIVE:
 //!
 //! * `accessResult` -- [`compare_col_sets`] over
-//!   [`Candidate::access_columns`]. Exact: this tier has no prefix indexes,
-//!   so every `Col2Len` value is `types.UnspecifiedLength` and Go's
-//!   `compareLength` is constant zero, which collapses `Col2Len` to a set.
+//!   [`Candidate::access_columns`], with Go's `compareLength` DROPPED; see
+//!   [`ColSet`] for what that costs and why it is never a wrong answer.
 //! * `scanResult` -- [`compare_index_back`] over `single_scan` (Go
 //!   `IsSingleScan`, this crate's `is_covering`) then
 //!   [`Candidate::index_columns`].
@@ -155,14 +154,22 @@
 
 use std::collections::BTreeSet;
 
-/// The column offsets one condition list constrains, Go's `util.Col2Len`
-/// with every value at `types.UnspecifiedLength`.
+/// The column offsets one condition list constrains: Go's `util.Col2Len`
+/// with the LENGTH half dropped.
 ///
 /// Go keys the map by `Column.UniqueID` and stores each column's index prefix
-/// length. This tier declares no prefix index, so every length is
-/// `UnspecifiedLength`, `compareLength` is constant 0, and the map degenerates
-/// to a set of columns -- which is what is stored, rather than a map whose
-/// values could never differ.
+/// length, and `CompareCol2Len` prefers the candidate whose lengths are
+/// longer (`compareLength`). Prefix indexes exist in this tier now, so those
+/// lengths are no longer all `UnspecifiedLength` and the collapse is a real
+/// approximation rather than an identity.
+///
+/// NOT MODELLED (documented), and bounded: it can only make two candidates
+/// that constrain the SAME columns with DIFFERENT prefix lengths look
+/// equally good, so one of them survives pruning where Go would have pruned
+/// it. Both are still correct access paths -- every range this crate builds
+/// over a prefix key part is a superset the residual `WHERE` filters, and the
+/// row lookup supplies the whole value either way -- so the cost of the gap
+/// is a scan that reads more entries than Go's, never a different answer.
 pub(crate) type ColSet = BTreeSet<usize>;
 
 /// Go `util.CompareCol2Len`, with the length comparison collapsed (see
