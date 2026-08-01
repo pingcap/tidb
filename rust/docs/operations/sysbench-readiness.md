@@ -9,6 +9,40 @@ The answer is now about speed, not capability. **Update 2026-08-01
 (`8eacf363e5`): the clustered-primary-key range extraction landed and
 `oltp_read_only` went from 11.70 to 89.15 tps, 7.6x, on the same table shape.**
 
+**Update 2026-08-01, `cfd6f963a9`: the transaction seam's three unverified
+changes are now verified against a real cluster, and all three hold.** Ladder
+at port offset 38000, controlled A/B and TSO scrape at port offset 37000,
+snapshot-semantics probe at port offset 36000 — all three on `tiup playground
+v9.0.0-beta.2.pre-nightly`. Taking the correctness-sensitive ones first:
+
+* **The pinned thread pool does not leak a snapshot between statements.**
+  This is the check the cluster-free unit could not make, because
+  `RealOptimisticTransactionOpener` needs a live `PdClient`. Two consecutive
+  AUTOCOMMIT statements on one connection do NOT share a timestamp — a row a
+  second connection committed between them appears, as it must; two statements
+  inside one explicit transaction DO share one — the same racing row is
+  correctly invisible. Both facts hold over the text protocol and again over
+  prepared statements, six checks, zero failures. **Rung 5's Rust-vs-Go
+  checksum still matches** at `1000 500500 501715 1 1000`, and the post-run
+  re-check at `1000 500500 504083` agrees on both sides, so the seam change
+  altered no row set. See "Snapshot semantics under the pinned thread pool".
+* **The prepared `BEGIN` fix is confirmed on the instrument that exposed it.**
+  Binary-prepared `oltp_read_only` took **16.11 TSO per transaction** before;
+  it now takes **1.07**, against 1.08 for text. `oltp_write_only` 7.04 -> 1.04
+  and `oltp_read_write` 21.15 -> 1.12, each landing on its own text rate. A
+  prepared `ROLLBACK` now discards its buffer rather than publishing it.
+* **The ~17.5 µs/statement did move throughput, by about the predicted
+  amount — and the standing is not redrawn.** Every within-run Rust-vs-Go
+  ratio improved, `oltp_point_select` text 2.24x -> 2.05x and `oltp_write_only`
+  text 2.43x -> 1.95x, but no workload moved by enough to change what the
+  remaining gap is made of. The honest measure is below, and it is deliberately
+  not the raw tps.
+
+Rung 6 stayed **eight of eight** with `ignored errors: 0` in every log, and
+rung 7 stayed **24 accepted, 0 refused**, both Go `ADMIN CHECK TABLE` oracles
+included. Prefix-index reads (`2ca4dc2dcd`) also landed since the last run and
+changed no rung's behaviour.
+
 **Update 2026-08-01, `de899c65d1`, ladder at port offset 45000: the error 2014
 regression is GONE and rung 6 ran EIGHT of eight.** `oltp_read_only` binary
 prepared measured 178.82 tps and `oltp_read_write` binary prepared 52.44 tps,
@@ -90,9 +124,9 @@ port is still reachable).
 | 3b. Capability probe | `rust: 0x00158a08 CLIENT_SSL=yes`, `go: 0x0015aeaf CLIENT_SSL=yes` — unchanged from the TLS run |
 | 3c. Go control: `sysbench prepare` against the Go `tidb-server` | **FAIL again on the `v8.5.6` playground the ladder starts**: `error 8256 ... no enough space in /tmp/tidb/tmp_ddl-47000` at `CREATE INDEX`. Cleared out-of-band by a newer playground — a full Go baseline now exists, see "The Go control rung" below |
 | 4. `sysbench oltp_read_only ... prepare` | **OK on the FIRST attempt, `--auto-inc=on`** — sysbench's own default schema. Table created, 1,000 rows inserted, secondary index created, all unmodified |
-| 5. Dataset correctness, Rust vs Go on the same TiKV | **OK, and identical again at `dd97293671`, offset 42000, with the write path on `Point_Get`:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, and the post-run re-check `1000 500500 503191` on both sides. **The write-path change altered no row set** — this is the gate a write-path change has to clear, and it cleared it. Earlier, at `de899c65d1`: Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000` — the same figures as the range-fix run. Neither the range fix nor the binary-protocol fix altered a row set. The post-run re-check also agreed, `1000 500500 502334` on both sides |
-| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | **EIGHT of eight again, 2026-08-01 at `dd97293671`, offset 42000**, `ignored errors: 0` in all eight logs and no `FAIL` cell: the `error 2014` fix is still holding after the write-path change. Also eight of eight at `de899c65d1`, offset 45000, secondary index present, `ignored errors: 0` in every log; and six of eight at `8eacf363e5`, where the two binary-prepared cells aborted with error 2014 — see "Regression found by this run, and closed") |
-| 7. sysbench's own statements driven by hand | **24 accepted, 0 refused** — unchanged at `dd97293671`, offset 42000, and at `de899c65d1` before it (was 21/3, and 16/4 before that). Includes both `ADMIN CHECK TABLE`s on the Go server, and `USE INDEX` vs `IGNORE INDEX` agreeing at `1000 500500` |
+| 5. Dataset correctness, Rust vs Go on the same TiKV | **OK, and identical again at `cfd6f963a9`, offset 38000, with the pinned thread pool and the prepared-`BEGIN` fix in the seam:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, post-run re-check `1000 500500 504083` on both sides. **The transaction-seam changes altered no row set.** Earlier, at `dd97293671`, offset 42000, with the write path on `Point_Get`:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, and the post-run re-check `1000 500500 503191` on both sides. **The write-path change altered no row set** — this is the gate a write-path change has to clear, and it cleared it. Earlier, at `de899c65d1`: Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000` — the same figures as the range-fix run. Neither the range fix nor the binary-protocol fix altered a row set. The post-run re-check also agreed, `1000 500500 502334` on both sides |
+| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | **EIGHT of eight again, 2026-08-01 at `cfd6f963a9`, offset 38000**, `ignored errors: 0` in all eight logs, secondary index present, both `--db-ps-mode` settings: the `error 2014` fix is still holding after the transaction-seam changes. Also eight of eight at `dd97293671`, offset 42000, `ignored errors: 0` in all eight logs and no `FAIL` cell: the `error 2014` fix is still holding after the write-path change. Also eight of eight at `de899c65d1`, offset 45000, secondary index present, `ignored errors: 0` in every log; and six of eight at `8eacf363e5`, where the two binary-prepared cells aborted with error 2014 — see "Regression found by this run, and closed") |
+| 7. sysbench's own statements driven by hand | **24 accepted, 0 refused** — unchanged at `cfd6f963a9`, offset 38000, with prefix-index reads also landed, and at `dd97293671`, offset 42000, and at `de899c65d1` before it (was 21/3, and 16/4 before that). Includes both `ADMIN CHECK TABLE`s on the Go server, and `USE INDEX` vs `IGNORE INDEX` agreeing at `1000 500500` |
 
 Rung 5 is the row that had never been produced: the ladder gates it on a
 `prepare` that returned success, and no prior run had one. `SUM(k)` differs
@@ -258,6 +292,102 @@ cluster.**
 Still one thread, a 1,000-row table, and a laptop also running the cluster it
 queries, so read the absolute values with that in mind.
 
+### Snapshot semantics under the pinned thread pool (task #124)
+
+**2026-08-01, `cfd6f963a9`, port offset 36000** (the text legs also ran at
+offset 37000 inside the A/B run, with the same answers), one `tiup playground
+v9.0.0-beta.2.pre-nightly` cluster.
+
+The pinned thread pool replaced one OS thread per autocommit statement with a
+parked worker borrowed from a pool. The failure that change could introduce is
+a **parked worker carrying a transaction, and therefore a timestamp, from one
+statement into the next** — which is a silent wrong answer, not a slow one, and
+which no single-connection test can see. It only shows as a row another
+connection committed in between going missing.
+
+So the probe uses two connections: one reader whose consecutive statements are
+the ones that would share a worker, and one writer committing a row between
+them.
+
+| Check | Required | Observed |
+| --- | --- | --- |
+| Two AUTOCOMMIT statements, text — racing row must APPEAR | 11 | 11 OK |
+| Two statements in one explicit transaction, text — racing row must NOT appear | 11 | 11 OK |
+| First statement after `COMMIT` — racing row must appear | 12 | 12 OK |
+| Two AUTOCOMMIT statements, prepared — racing row must APPEAR | 13 | 13 OK |
+| Two statements in one prepared `BEGIN`, prepared — racing row must NOT appear | 13 | 13 OK |
+| A prepared `ROLLBACK` must discard its buffer | 0 rows | 0 rows OK |
+
+Six checks, zero failures. The first and fourth are the pool's own gate: they
+fail exactly when a worker carries a snapshot forward. The second and fifth are
+the converse — a pool that took a fresh timestamp for *every* statement would
+pass the first and fail these.
+
+One note on the probe rather than the node: a `COM_STMT_EXECUTE` for a
+zero-parameter statement ends after the iteration count, with no null bitmap
+and no new-params-bound flag. The first version of this probe appended the flag
+anyway and **the node correctly rejected it** with `1210 prepared-statement
+packet has 1 trailing bytes`. That is the server being right and the probe
+being wrong; it is recorded because a lenient server would have accepted it.
+
+### The controlled A/B at `cfd6f963a9`: all four workloads, both ps modes (task #124)
+
+**2026-08-01, port offset 37000, ONE `tiup playground
+v9.0.0-beta.2.pre-nightly` cluster** (the same version as the offset-43000 and
+offset-44000 runs it is compared against), both engines inside the one run,
+`--threads=1 --table-size=1000`, ten seconds per window, `ignored errors: 0` in
+all sixteen. Artifacts: the `ab-37000` set. Every line here is keyed to offset
+37000 and to that single run.
+
+| Workload | Rust text | Go text | Go faster by | prior (43000) | Rust binary | Go binary | Go faster by | prior (43000) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `oltp_point_select` | 4,122.75 qps | 8,455.57 qps | **2.05x** | 2.24x | 4,288.64 qps | 9,482.25 qps | **2.21x** | 2.27x |
+| `oltp_read_only` | 223.64 tps | 436.78 tps | 1.95x | 2.02x | 232.86 tps | 510.76 tps | 2.19x | 2.81x |
+| `oltp_write_only` | 568.92 tps | 1,110.67 tps | 1.95x | 2.43x | 429.29 tps | 1,193.62 tps | 2.78x | 3.03x |
+| `oltp_read_write` | 140.95 tps | 241.25 tps | 1.71x | 1.74x | 144.69 tps | 301.60 tps | 2.08x | 2.36x |
+
+**Every cell improved.** Read the binary column with the prepared-`BEGIN` fix
+in mind, though: those improvements are not the thread pool's, they are the
+removal of a per-statement PD round trip. **The text column is the one that
+isolates the pool**, because text-mode transaction control was never broken.
+
+Treat `oltp_read_only` as noise unless it moves by more than Go's own spread —
+Go's `oltp_read_only` text has now measured 249.45, 430.44 and 436.78 tps
+across runs. `oltp_write_only` text also has a wide own-spread: the identical
+code measured 2.00x at offset 44000 and 2.43x at offset 43000, so today's 1.95x
+is only just outside that band and should not be read as a 20% win.
+
+### Did the 17.5 µs move tps? Yes, by about the predicted amount (task #124)
+
+The prediction was falsifiable and it is worth stating why the raw tps is the
+wrong instrument for it: cross-run absolutes on this machine are not
+comparable, and the same read code has measured 89.15 and 219.91 tps in
+consecutive runs.
+
+**Go's own per-statement time is the fixed point that makes the comparison
+work.** Across three runs on this machine `oltp_point_select` text has cost Go
+117.40, 118.18 and 118.27 µs per statement — under 1% spread. So the Rust
+node's *excess over Go in the same run* is a stable instrument where its raw
+tps is not:
+
+| Run | Rust µs/stmt | Go µs/stmt | Excess |
+| --- | --- | --- | --- |
+| `dd97293671`, offset 43000 | 263.32 | 117.40 | 145.92 |
+| `28eebaffa1`, offset 44000 | 251.18 | 118.18 | 133.00 |
+| **`cfd6f963a9`, offset 37000** | **242.56** | **118.27** | **124.29** |
+
+The excess fell by **8.70 µs** against the nearer prior run and **21.63 µs**
+against the farther one. The cluster-free measurement predicted **17.32 µs**
+(27.57 -> 10.25 per statement), and the prediction sits inside that bracket.
+**The floor reduction reached the wire.**
+
+What it did *not* do is redraw the standing. `oltp_point_select` remains the
+worst shape in the table at 2.05x, and 124 µs of excess per statement remains
+after the largest identified piece of the floor was removed. The per-statement
+floor was real and it was worth removing; it was not the whole of the gap. The
+next measurement is where the remaining ~124 µs goes, which has still not been
+profiled inside the node.
+
 ### The controlled A/B at `dd97293671`: all four workloads, both ps modes
 
 **2026-08-01, port offset 43000, ONE `tiup playground
@@ -419,6 +549,26 @@ timestamp per statement instead of per transaction.** In text mode Rust takes
 | `oltp_read_only` (14 stmt/txn) | 1.08 | **16.11** | 1.04 | 212.95 | 173.31 |
 | `oltp_write_only` (6 stmt/txn) | 1.04 | **7.04** | 2.02 | 435.81 | 376.41 |
 | `oltp_read_write` (20 stmt/txn) | 1.13 | **21.15** | 2.06 | 140.51 | 118.39 |
+
+**Superseded 2026-08-01 at `cfd6f963a9`, port offset 37000** (same PD
+`pd_server_handle_tso_duration_seconds_count` scrape, before and after each
+ten-second window, one `v9.0.0-beta.2.pre-nightly` cluster). The table above
+records the defect; this one records the fix, and **the binary column has
+collapsed onto the text column on all three workloads**:
+
+| Workload | Rust TSO/txn, text | Rust TSO/txn, binary | was, binary | Go TSO/txn, text |
+| --- | --- | --- | --- | --- |
+| `oltp_read_only` (14 stmt/txn) | 1.0782 | **1.0739** | 16.11 | 1.0435 |
+| `oltp_write_only` (6 stmt/txn) | 1.0315 | **1.0408** | 7.04 | 2.0152 |
+| `oltp_read_write` (20 stmt/txn) | 1.1496 | **1.1222** | 21.15 | 2.0721 |
+
+A prepared transaction now takes one timestamp for the whole transaction, as
+the text arm always did. The throughput pattern this explained has reversed
+with it: binary prepared is now **faster** than text on `oltp_point_select`
+(4,288.64 vs 4,122.75 qps), `oltp_read_only` (232.86 vs 223.64 tps) and
+`oltp_read_write` (144.69 vs 140.95 tps). It remains slower on
+`oltp_write_only` (429.29 vs 568.92 tps), which the TSO rate no longer explains
+and which is not yet accounted for.
 
 This is the mechanism behind a pattern visible in every table in this document
 and never explained: **binary prepared is consistently slower than text on the
@@ -1099,6 +1249,16 @@ integer-to-integer.
     nothing, and unlike the access-path work its fix lifts all four workloads.
     Where the 86 µs goes inside the Rust node has not yet been profiled; that
     is the next measurement, not the next guess.
+    **Partly addressed 2026-08-01 at `cfd6f963a9`, and still open.** The
+    largest identified piece of the floor — one OS thread spawned and joined
+    per statement, 27.57 µs cluster-free — was replaced by a parked worker at
+    10.25 µs, and **the saving reached the wire**: `oltp_point_select` text
+    excess over Go fell from 133.00 to 124.29 µs per statement in a run where
+    Go's own per-statement time was unchanged (118.18 -> 118.27 µs). That is
+    the predicted 17.32 µs within run-to-run bracket. But **124 µs of excess
+    per statement remains**, `oltp_point_select` is still the worst shape at
+    2.05x, and where *that* goes is still unprofiled. This item stays open, and
+    it stays the largest one.
 13. ~~**Binary-prepared execution takes a TSO per statement, not per
     transaction**~~ (16.11 per `oltp_read_only` transaction against 1.08 in
     text mode) — **diagnosed and fixed, task #120.** The "correctness-adjacent"
@@ -1109,8 +1269,13 @@ integer-to-integer.
     repeatable read and no conflict detection, with a prepared `ROLLBACK`
     publishing the buffer it was asked to discard. Transaction control is now
     routed the way the text arm routes it; see
-    `cluster_session_node::tests::prepared_transactions`. The TSO rate itself
-    has not been re-measured on a cluster since the fix.
+    `cluster_session_node::tests::prepared_transactions`. ~~The TSO rate itself
+    has not been re-measured on a cluster since the fix.~~ **Re-measured
+    2026-08-01 at `cfd6f963a9`, port offset 37000: 16.11 -> 1.07, 7.04 -> 1.04,
+    21.15 -> 1.12, each landing on its own text rate.** The repeatable-read and
+    rollback semantics were checked on the same cluster over the prepared
+    protocol and hold; see "Snapshot semantics under the pinned thread pool".
+    **Closed.**
 14. **Autocommit point reads could skip the timestamp entirely,** as Go does
     via `IsPointGetWithPKOrUniqueKeyByAutoCommit` and a `MaxUint64` start ts.
     Rust takes 1.00 TSO per point select where Go takes 0.002. Bounded by the
