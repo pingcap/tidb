@@ -1039,31 +1039,32 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // 3 + 4 + 2 + 2 + 1 = 12.
     //
-    // The last 11 arrived with the `--enable_warnings` split, which turned 28
+    // The last 2 arrived with the `--enable_warnings` split, which turned 28
     // statements that had been dismissed as "recorded SHOW WARNINGS block"
     // into 23 compared statements and 5 OutOfDomain skips: compared rose
     // 3891 -> 3914 and matched rose 3829 -> 3841, so every one of these was
     // previously UNMEASURED, not previously passing. They are:
     //
-    // 10 -- a MISSING WARNING. The value this engine stores is already right
-    //       (`select @@x` after each of these matches), but the warning that
-    //       says it was adjusted is not raised:
-    //         * 9 x `Warning 1292 Truncated incorrect <var> value: '<v>'`, for
-    //           a `SET` whose value is clamped or refused
-    //           (`tidb_memory_usage_alarm_ratio`,
-    //           `tidb_memory_usage_alarm_keep_record_num`,
-    //           `tidb_session_alias`, `group_concat_max_len`). Go raises it in
-    //           the sysvar validation path; this tier clamps silently.
-    //         * 1 x `Warning 1815 hint INDEX_LOOKUP_PUSHDOWN is inapplicable,
-    //           the global index in partition table is not supported` -- an
-    //           unusable hint is dropped here without reporting that it was.
+    // 1 -- a MISSING WARNING: `Warning 1815 hint INDEX_LOOKUP_PUSHDOWN is
+    //      inapplicable, the global index in partition table is not
+    //      supported` -- an unusable hint is dropped here without reporting
+    //      that it was. This is the planner's hint-applicability report, a
+    //      different mechanism from the sysvar warnings below.
+    //
+    //      The nine sysvar `Warning 1292 Truncated incorrect <var> value:
+    //      '<v>'` cases that stood beside it are FIXED: the validator had
+    //      always computed the clamp AND a `truncated` flag, and only the
+    //      flag was being discarded on the way to the statement. See
+    //      `Session::warn_truncated_var`.
     //
     //  1 -- a COLUMN NAME: `SELECT * FROM (select null) v NATURAL LEFT JOIN
     //       (select null) v1` is headed `NULL` by TiDB and `null` here. The
     //       script wrote `null` in lower case, so this is not an echo of the
     //       source text: TiDB names a bare NULL literal's column `NULL`
     //       regardless, and this tier derives the name in lower case.
-    const KNOWN_DIVERGENCES: usize = 73;
+    // 73 - 9 = 64: the nine sysvar 1292 warnings above are now raised, and
+    // `session/variable` diverges nowhere.
+    const KNOWN_DIVERGENCES: usize = 64;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

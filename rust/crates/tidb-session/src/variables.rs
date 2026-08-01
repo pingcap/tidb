@@ -249,15 +249,23 @@ impl Session {
         self.check_read_only_noop(&assignment.name, &value, is_global)?;
         self.warn_removed_feature_var(&assignment.name, &value);
         if is_global {
-            return self
+            let truncated = self
                 .vars
-                .set_global(&assignment.name, value)
-                .map_err(var_error);
+                .set_global(&assignment.name, value.clone())
+                .map_err(var_error)?;
+            if truncated {
+                self.warn_truncated_var(&assignment.name, &value);
+            }
+            return Ok(());
         }
         let was_autocommit = self.is_autocommit();
-        self.vars
-            .set_system(&assignment.name, value)
+        let truncated = self
+            .vars
+            .set_system(&assignment.name, value.clone())
             .map_err(var_error)?;
+        if truncated {
+            self.warn_truncated_var(&assignment.name, &value);
+        }
         self.seed_rand_from_sysvar(&assignment.name)?;
         // Go `sysvar.go`'s `AutoCommit.SetSession`: turning autocommit back
         // ON ends the ongoing transaction ("Implicitly commit the possible
@@ -352,6 +360,30 @@ impl Session {
             level: crate::warnings::WarningLevel::Warning,
             code,
             message: message.to_owned(),
+        });
+    }
+
+    /// Go `ErrTruncatedWrongValue` (1292) for a system variable whose
+    /// assignment was clamped rather than refused.
+    ///
+    /// Every clamping site in Go -- `checkUInt64SystemVar`,
+    /// `checkInt64SystemVar`, `checkFloatSystemVar`, `checkDurationSystemVar`
+    /// in `variable.go`, and the per-variable `Validation` closures such as
+    /// `tidb_session_alias`'s -- reports the SAME pair: the variable's
+    /// registry name, and the value as ORIGINALLY assigned, not the clamped
+    /// one that got stored. So `set @@group_concat_max_len=1` stores 4 and
+    /// names `1` in the warning.
+    ///
+    /// The name comes from the registry rather than from the statement, since
+    /// Go passes `sv.Name`: `SET @@GROUP_CONCAT_MAX_LEN=1` still warns about
+    /// `group_concat_max_len`.
+    fn warn_truncated_var(&mut self, name: &str, original: &str) {
+        let reported = sysvar::get_sys_var(name)
+            .map_or_else(|| name.to_ascii_lowercase(), |def| def.name.to_owned());
+        self.warnings.push(crate::warnings::SqlWarning {
+            level: crate::warnings::WarningLevel::Warning,
+            code: 1292,
+            message: format!("Truncated incorrect {reported} value: '{original}'"),
         });
     }
 

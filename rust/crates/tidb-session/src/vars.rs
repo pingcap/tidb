@@ -80,7 +80,10 @@ impl GlobalSysvars {
 
     /// Validates and writes a global value, visible to every session that
     /// reads `@@global.name` or opens AFTER this call.
-    pub fn set(&self, name: &str, value: String) -> Result<(), VarError> {
+    ///
+    /// Answers whether Go's validation clamped the value, which the caller
+    /// turns into `ErrTruncatedWrongValue` (1292) on the statement.
+    pub fn set(&self, name: &str, value: String) -> Result<bool, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
         if def.is_read_only() {
@@ -109,7 +112,7 @@ impl GlobalSysvars {
             values.insert(other.to_owned(), validated.value.clone());
         }
         values.insert(key, validated.value);
-        Ok(())
+        Ok(validated.truncated)
     }
 
     /// Restores the registry default (`SET GLOBAL x = DEFAULT`).
@@ -322,7 +325,13 @@ impl SessionVars {
     /// A read-only variable is Go's `ErrIncorrectGlobalLocalVar`. A
     /// GLOBAL-only variable is Go's `ErrGlobalVariable` (1229): `SET
     /// SESSION`/plain `SET` cannot touch it, only `SET GLOBAL` can.
-    pub fn set_system(&mut self, name: &str, value: String) -> Result<(), VarError> {
+    ///
+    /// Answers whether the value was clamped: Go's clamping checks
+    /// (`checkUInt64SystemVar` and friends, plus the per-variable `Validation`
+    /// closures modelled in [`sysvar`]) do not fail the statement, they append
+    /// `ErrTruncatedWrongValue` (1292) to it, so the caller with the statement
+    /// context in hand is the one that can report it.
+    pub fn set_system(&mut self, name: &str, value: String) -> Result<bool, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
         if def.is_read_only() {
@@ -354,13 +363,13 @@ impl SessionVars {
                 .insert(other.to_owned(), validated.value.clone());
         }
         self.systems.insert(key, validated.value);
-        Ok(())
+        Ok(validated.truncated)
     }
 
     /// `SET GLOBAL name = value`: writes only the shared table, never this
     /// session's own `@@name`. Go's `ErrLocalVariable` (1228) when the
     /// variable is SESSION-only, so there is no global copy to set.
-    pub fn set_global(&mut self, name: &str, value: String) -> Result<(), VarError> {
+    pub fn set_global(&mut self, name: &str, value: String) -> Result<bool, VarError> {
         self.globals.set(name, value)
     }
 

@@ -27,7 +27,13 @@
 //! Go's `TypeFlag` zero value and its explicit `TypeStr` both fall through
 //! the validation switch to the string case, so both map to [`VarType::Str`].
 //!
-//! NOT MODELLED (documented): the per-variable `Validation`, `SetSession` and
+//! A clamp is not a refusal: every check that narrows a value instead of
+//! rejecting it records [`Validated::truncated`], and the `SET` path turns
+//! that into Go's `ErrTruncatedWrongValue` (1292) naming the ORIGINAL text
+//! (see `Session::warn_truncated_var`).
+//!
+//! NOT MODELLED (documented): the per-variable `Validation` closures other
+//! than those [`SysVarDef::run_validation`] names, and the `SetSession` and
 //! `GetSession` closures Go attaches to many entries (charset name checks,
 //! isolation-level checks, autocommit's implicit commit, and every variable
 //! whose read is computed rather than stored); `ScopeInstance` behaving
