@@ -267,14 +267,6 @@ pub(crate) fn run_insert_traced(
             unreachable!("INSERT through a view or sequence is refused above")
         }
     };
-    // REFUSED, not approximated: the allocator hands out consecutive ids, so
-    // a session that asked for a different step would be answered with the
-    // wrong ids rather than none.
-    if auto_increment_offset.is_some() && !ctx.auto_increment_step_is_default() {
-        return Err(DriverError::Unsupported(
-            "@@auto_increment_increment / @@auto_increment_offset other than 1 is not supported yet",
-        ));
-    }
     // REFUSED for the same reason: under `NO_AUTO_VALUE_ON_ZERO` Go STORES an
     // explicit zero, while this tier allocates over it. Allocating anyway
     // would write a different row than Go writes, which is worse than an
@@ -451,7 +443,8 @@ pub(crate) fn run_insert_traced(
                 // be reached is NOT that, and saying 1467 for it would report
                 // a table that has run out of ids when the ids are all still
                 // there.
-                let allocated = kv.apply_auto_increment(&mut new_rows[*index]).map_err(
+                let allocated = kv.apply_auto_increment(&mut new_rows[*index], ctx.auto_increment_step())
+                    .map_err(
                     |error| match error {
                         AutoIdError::Exhausted => DriverError::AutoincReadFailed,
                         // An id that does not fit the COLUMN is not a full

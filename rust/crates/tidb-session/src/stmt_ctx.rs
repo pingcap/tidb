@@ -281,6 +281,7 @@ impl Session {
                 .with_sql_mode(scanner_sql_mode_of(&mode))
                 .with_clock(clock, zone);
         }
+        let (increment, offset) = self.auto_increment_step();
         tidb_executor::StmtContext::for_dml(
             has("ERROR_FOR_DIVISION_BY_ZERO"),
             has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
@@ -300,7 +301,7 @@ impl Session {
         .with_sequences(self.sequence_snapshot())
         .with_clock(clock, zone)
         .with_sql_mode(scanner_sql_mode_of(&mode))
-        .with_auto_increment_step_default(self.auto_increment_step_is_default())
+        .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
         .with_foreign_key_checks(self.foreign_key_checks())
         .with_allow_remove_auto_inc(self.allow_remove_auto_inc())
@@ -346,14 +347,25 @@ impl Session {
         )
     }
 
-    /// Whether `@@auto_increment_increment` and `@@auto_increment_offset` are
-    /// both at their default of 1, which is the only step the allocator can
-    /// answer; an insert into a table with an auto column is refused when
-    /// they are not.
-    fn auto_increment_step_is_default(&self) -> bool {
-        ["auto_increment_increment", "auto_increment_offset"]
-            .iter()
-            .all(|name| self.vars.get_system(name).as_deref() == Ok("1"))
+    /// Go `SessionVars.AutoIncrementIncrement` / `AutoIncrementOffset`, which
+    /// put an allocated id on the `offset + k * increment` progression.
+    ///
+    /// Both are `TypeUnsigned` sysvars validated into `[1, 65535]`, so an
+    /// unreadable or out-of-range value falls back to the default of 1 --
+    /// never to 0, which would divide by zero in the seek.
+    pub(crate) fn auto_increment_step(&self) -> (u64, u64) {
+        let read = |name: &str| {
+            self.vars
+                .get_system(name)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| (1..=65535).contains(value))
+                .unwrap_or(1)
+        };
+        (
+            read("auto_increment_increment"),
+            read("auto_increment_offset"),
+        )
     }
 
     /// Go `ResetContextOfStmt`'s `Prev*` promotion, run at the statement

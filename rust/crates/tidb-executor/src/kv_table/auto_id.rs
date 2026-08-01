@@ -201,6 +201,61 @@ pub const fn headroom(last: u64, unsigned: bool) -> u128 {
     }
 }
 
+/// Go `table.getIncrementAndOffset`: resolves `@@auto_increment_increment`
+/// and `@@auto_increment_offset` into the pair the allocator seeks with.
+///
+/// MySQL's documented oddity, which TiDB follows verbatim -- "when the value
+/// of auto_increment_offset is greater than that of auto_increment_increment,
+/// the value of auto_increment_offset is ignored" -- is the whole of it.
+/// Captured from TiDB: `increment = 2, offset = 7` hands out `1, 3, 5`, NOT
+/// `7, 9, 11`, so the offset really is replaced by 1 rather than reduced
+/// modulo the increment. `increment = 6, offset = 6` is not greater, so it
+/// stands and yields `6, 12, 18`.
+#[must_use]
+pub const fn increment_and_offset(increment: u64, offset: u64) -> (u64, u64) {
+    if offset > increment {
+        (increment, 1)
+    } else {
+        (increment, offset)
+    }
+}
+
+/// Go `SeekToFirstAutoIDSigned` / `SeekToFirstAutoIDUnSigned`: the first id
+/// at or after `base + 1` that lies on the `offset + k * increment`
+/// progression.
+///
+/// ```text
+/// nr := (base + increment - offset) / increment
+/// nr = nr*increment + offset
+/// ```
+///
+/// Go's integer division truncates toward zero and so does Rust's, which is
+/// what makes a base BELOW the offset land on the offset itself rather than
+/// one step under it. The id is computed in the column's own domain, so an
+/// unsigned progression past `i64::MAX` stays on its grid.
+///
+/// Note this is the ONLY place the step arithmetic lives, and it runs BEFORE
+/// the column-width cast in `KvTable::check_auto_increment_fits`. Captured
+/// from TiDB: a `TINYINT AUTO_INCREMENT` under `increment = 100` hands out
+/// `1`, then `101`, and then fails with `[types:1690]constant 201 overflows
+/// tinyint` -- the stepped candidate is produced first and the column bound
+/// judges it, so a wider step reaches the column's ceiling in fewer rows
+/// rather than being clamped onto it.
+#[must_use]
+pub fn seek_to_first(base: u64, increment: u64, offset: u64, unsigned: bool) -> u64 {
+    if unsigned {
+        let nr = base
+            .wrapping_add(increment)
+            .wrapping_sub(offset)
+            .wrapping_div(increment);
+        nr.wrapping_mul(increment).wrapping_add(offset)
+    } else {
+        let (base, increment, offset) = (base as i64, increment as i64, offset as i64);
+        let nr = base.wrapping_add(increment).wrapping_sub(offset) / increment;
+        nr.wrapping_mul(increment).wrapping_add(offset) as u64
+    }
+}
+
 /// True when `value` ranks after `other` in the column's domain.
 #[must_use]
 pub const fn exceeds(value: u64, other: u64, unsigned: bool) -> bool {
@@ -313,25 +368,36 @@ impl AutoIdAllocator {
     /// own guard on the ALTER path, not a rule; refusing one id earlier is the
     /// safe side of it, since the id at the very end of the domain is one this
     /// allocator then never issues twice.
-    pub(crate) fn alloc(&self) -> Result<u64, AutoIdError> {
+    /// `increment` and `offset` are `@@auto_increment_increment` and
+    /// `@@auto_increment_offset` as the caller already resolved them (see
+    /// [`increment_and_offset`]); the default `1, 1` reduces the seek to
+    /// `base + 1`, so the stepped and the ordinary case are the same code.
+    pub(crate) fn alloc(&self, increment: u64, offset: u64) -> Result<u64, AutoIdError> {
         let mut cache = self.cache.lock().expect("auto id cache poisoned");
-        if !exceeds(cache.end, cache.base, self.unsigned) {
-            if headroom(cache.base, self.unsigned) <= 1 {
-                return Err(AutoIdError::Exhausted);
-            }
-            // The cached range is spent: reserve the next one from the store,
-            // which is also where a peer node's allocations become visible.
-            let (base, end) = self
-                .store
-                .reserve(self.step, self.unsigned)
-                .map_err(AutoIdError::Store)?;
-            *cache = AutoIdRange { base, end };
-        }
-        if headroom(cache.base, self.unsigned) <= 1 {
+        let mut target = seek_to_first(cache.base, increment, offset, self.unsigned);
+        if headroom(cache.base, self.unsigned) <= u128::from(target.wrapping_sub(cache.base)) {
             return Err(AutoIdError::Exhausted);
         }
-        cache.base = cache.base.wrapping_add(1);
-        Ok(cache.base)
+        if exceeds(target, cache.end, self.unsigned) {
+            // The cached range cannot answer the seek: reserve the next one
+            // from the store, which is also where a peer node's allocations
+            // become visible. Go re-seeks from the NEW base rather than
+            // carrying the old target across (`alloc4Signed`: "CalcNeededBatchSize
+            // calculates the total batch size needed on global base"), because
+            // the store may have moved the counter further than this node knew.
+            let needed = self.step.max(target.wrapping_sub(cache.base));
+            let (base, end) = self
+                .store
+                .reserve(needed, self.unsigned)
+                .map_err(AutoIdError::Store)?;
+            *cache = AutoIdRange { base, end };
+            target = seek_to_first(base, increment, offset, self.unsigned);
+            if headroom(base, self.unsigned) <= u128::from(target.wrapping_sub(base)) {
+                return Err(AutoIdError::Exhausted);
+            }
+        }
+        cache.base = target;
+        Ok(target)
     }
 
     /// The id the next allocation will return, as a pattern. Meaningful only

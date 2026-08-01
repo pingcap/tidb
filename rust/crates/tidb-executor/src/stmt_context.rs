@@ -98,10 +98,10 @@ pub struct StmtContext {
     /// Go `StmtCtx.InsertID`: the explicit value a row gave the
     /// `AUTO_INCREMENT` column, which the OK packet falls back to.
     given_insert_id: Rc<Cell<u64>>,
-    /// Whether `@@auto_increment_increment`/`@@auto_increment_offset` are at
-    /// their defaults of 1. A statement that would have to honour a different
-    /// step is refused; see [`StmtContext::auto_increment_step_is_default`].
-    auto_increment_step_is_default: bool,
+    /// Go `table.getIncrementAndOffset`'s inputs: `@@auto_increment_increment`
+    /// and `@@auto_increment_offset`, which put the allocated ids on an
+    /// arithmetic progression. See [`StmtContext::auto_increment_step`].
+    auto_increment_step: (u64, u64),
     /// Go `SessionVars.SQLMode.HasNoAutoValueOnZeroMode()`: whether an
     /// explicit `0` in an AUTO_INCREMENT column is a value rather than a
     /// request for the next id. A statement that would have to honour it is
@@ -262,7 +262,7 @@ impl StmtContext {
             prev_last_insert_id: 0,
             prev_row_count: 0,
             given_insert_id: Rc::default(),
-            auto_increment_step_is_default: true,
+            auto_increment_step: (1, 1),
             auto_increment_zero_is_explicit: false,
             only_full_group_by: false,
             default_week_format: 0,
@@ -622,11 +622,10 @@ impl StmtContext {
         self.given_insert_id.get()
     }
 
-    /// Declares whether `@@auto_increment_increment` and
-    /// `@@auto_increment_offset` are both 1.
+    /// Declares `@@auto_increment_increment` and `@@auto_increment_offset`.
     #[must_use]
-    pub fn with_auto_increment_step_default(mut self, is_default: bool) -> Self {
-        self.auto_increment_step_is_default = is_default;
+    pub fn with_auto_increment_step(mut self, increment: u64, offset: u64) -> Self {
+        self.auto_increment_step = (increment, offset);
         self
     }
 
@@ -648,14 +647,13 @@ impl StmtContext {
         self.auto_increment_zero_is_explicit
     }
 
-    /// Whether the session's auto-increment step and offset are both 1.
-    ///
-    /// The allocator here hands out consecutive ids only, so a statement that
-    /// would have to honour a different step is REFUSED rather than answered
-    /// with the wrong ids.
+    /// `@@auto_increment_increment` and `@@auto_increment_offset` as the
+    /// session set them, BEFORE Go's `getIncrementAndOffset` clamp -- the
+    /// allocator applies that clamp itself so the raw pair is what a caller
+    /// reading the session's state sees.
     #[must_use]
-    pub fn auto_increment_step_is_default(&self) -> bool {
-        self.auto_increment_step_is_default
+    pub fn auto_increment_step(&self) -> (u64, u64) {
+        self.auto_increment_step
     }
 
     /// The warnings evaluation recorded, in the order they were raised.

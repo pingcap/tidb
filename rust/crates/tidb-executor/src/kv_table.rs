@@ -620,7 +620,11 @@ impl KvTable {
     /// An explicit `0` always allocates here. `NO_AUTO_VALUE_ON_ZERO`, under
     /// which Go keeps the zero, is REFUSED by the INSERT path rather than
     /// silently ignored (`StmtContext::auto_increment_zero_is_explicit`).
-    pub fn apply_auto_increment(&mut self, row: &mut [Datum]) -> Result<Option<i64>, AutoIdError> {
+    pub fn apply_auto_increment(
+        &mut self,
+        row: &mut [Datum],
+        step: (u64, u64),
+    ) -> Result<Option<i64>, AutoIdError> {
         let Some(offset) = self.auto_increment_offset else {
             return Ok(None);
         };
@@ -635,7 +639,8 @@ impl KvTable {
             self.auto_id.rebase(current).map_err(AutoIdError::Store)?;
             return Ok(None);
         }
-        let allocated = self.auto_id.alloc()?;
+        let (increment, step_offset) = auto_id::increment_and_offset(step.0, step.1);
+        let allocated = self.auto_id.alloc(increment, step_offset)?;
         self.check_auto_increment_fits(offset, allocated)?;
         // The allocated id skips the per-column cast the written values went
         // through, so it is placed in the column's own domain here.
@@ -2037,10 +2042,10 @@ mod tests {
         ] {
             let mut table = auto_increment_table(unsigned);
             let mut row = [explicit];
-            assert_eq!(table.apply_auto_increment(&mut row), Ok(None));
+            assert_eq!(table.apply_auto_increment(&mut row, (1, 1)), Ok(None));
             let mut row = [Datum::Null];
             assert_eq!(
-                table.apply_auto_increment(&mut row),
+                table.apply_auto_increment(&mut row, (1, 1)),
                 Err(AutoIdError::Exhausted),
                 "unsigned={unsigned}"
             );
@@ -2055,9 +2060,9 @@ mod tests {
     fn an_unsigned_explicit_id_rebases_in_the_unsigned_domain() {
         let mut table = auto_increment_table(true);
         let mut row = [Datum::UInt(1 << 63)];
-        assert_eq!(table.apply_auto_increment(&mut row), Ok(None));
+        assert_eq!(table.apply_auto_increment(&mut row, (1, 1)), Ok(None));
         let mut row = [Datum::Null];
-        table.apply_auto_increment(&mut row).unwrap();
+        table.apply_auto_increment(&mut row, (1, 1)).unwrap();
         assert_eq!(row[0], Datum::UInt((1 << 63) + 1));
     }
 
@@ -2068,9 +2073,9 @@ mod tests {
     fn a_signed_explicit_id_below_the_counter_does_not_move_it() {
         let mut table = auto_increment_table(false);
         let mut row = [Datum::Int(-5)];
-        assert_eq!(table.apply_auto_increment(&mut row), Ok(None));
+        assert_eq!(table.apply_auto_increment(&mut row, (1, 1)), Ok(None));
         let mut row = [Datum::Null];
-        table.apply_auto_increment(&mut row).unwrap();
+        table.apply_auto_increment(&mut row, (1, 1)).unwrap();
         assert_eq!(row[0], Datum::Int(1));
     }
 }
