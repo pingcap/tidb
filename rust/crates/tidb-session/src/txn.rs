@@ -203,10 +203,7 @@ impl Session {
     /// [`Self::control_transaction`] over a statement this session already
     /// parsed. The text form parses and delegates here, so both callers ask
     /// the same question of the same code.
-    pub(crate) fn control_transaction_stmt(
-        &mut self,
-        stmt: &Stmt,
-    ) -> Result<Option<bool>, DriverError> {
+    pub fn control_transaction_stmt(&mut self, stmt: &Stmt) -> Result<Option<bool>, DriverError> {
         let Stmt::Session(session_stmt) = stmt else {
             return Ok(None);
         };

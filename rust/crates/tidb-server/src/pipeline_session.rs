@@ -232,13 +232,24 @@ impl QuerySession for PipelineServerSession {
     /// A `SET` statement answers the same way, which is what a connecting
     /// client expects for `SET NAMES` and friends.
     fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
-        if self.session.apply_set(sql).map_err(map_error)?.is_some() {
+        // Both questions below are answered off ONE parse: whether this is a
+        // `SET` to apply, and -- if it is not -- what shape its answer takes.
+        // They remain two questions with two answers; only the lexing is
+        // shared, and the session still owns it so the `sql_mode` in force is
+        // the session's own.
+        let stmt = self.session.parse_statement(sql).map_err(map_error)?;
+        if self
+            .session
+            .apply_set_stmt(&stmt)
+            .map_err(map_error)?
+            .is_some()
+        {
             return Ok(Some(WriteOutcome {
                 affected_rows: 0,
                 last_insert_id: 0,
             }));
         }
-        if self.session.statement_kind(sql).map_err(map_error)? != StmtKind::Write {
+        if Session::statement_kind_parsed(&stmt) != StmtKind::Write {
             return Ok(None);
         }
         let affected_rows = match self.session.run(sql).map_err(map_error)? {

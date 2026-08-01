@@ -142,7 +142,7 @@ impl Session {
     /// [`Self::apply_set`] over a statement this session already parsed. The
     /// text form parses and delegates here; the `SET` family is recognized in
     /// exactly one place either way.
-    pub(crate) fn apply_set_stmt(&mut self, stmt: &Stmt) -> Result<Option<()>, DriverError> {
+    pub fn apply_set_stmt(&mut self, stmt: &Stmt) -> Result<Option<()>, DriverError> {
         let Stmt::Session(session_stmt) = stmt else {
             return Ok(None);
         };

@@ -179,6 +179,15 @@ impl Session {
     /// right now. Go's `session.ParseSQL` is the same single door; every
     /// session-tier parse goes through here so no call site decides on its own
     /// that a scanner flag does not apply to it.
+    /// [`Self::parse`] for a front end outside this crate, so a caller that
+    /// asks this session several parse-only questions about one statement can
+    /// pay for the parse once and hand the tree to each. The `sql_mode` used
+    /// is this session's, which is the whole point: a front end must not lex
+    /// with a mode of its own.
+    pub fn parse_statement(&self, sql: &str) -> Result<tidb_ast::Stmt, DriverError> {
+        self.parse(sql)
+    }
+
     pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, DriverError> {
         tidb_parser::parse_with_sql_mode(sql, self.scanner_sql_mode())
             .map_err(|e| DriverError::Parse(format!("{e:?}")))

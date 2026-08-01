@@ -128,7 +128,20 @@ impl Session {
     /// agree.
     pub fn statement_kind(&self, sql: &str) -> Result<StmtKind, DriverError> {
         let stmt = self.parse(sql)?;
-        Ok(match &stmt {
+        Ok(Self::statement_kind_parsed(&stmt))
+    }
+
+    /// [`Self::statement_kind`] over a statement a front end already parsed.
+    ///
+    /// This answers only what SHAPE the answer takes.
+    /// [`Self::stored_state_change_parsed`] asks a different question of the
+    /// same statement, and the two stay apart because neither answer implies
+    /// the other: `GRANT` is `Write`-shaped AND changes stored accounts,
+    /// `INSERT` is `Write`-shaped and changes nothing stored outside this
+    /// process, and `SELECT` is `Query`-shaped and changes nothing.
+    #[must_use]
+    pub fn statement_kind_parsed(stmt: &Stmt) -> StmtKind {
+        match stmt {
             // `KILL` is the one admin statement that answers with an OK
             // packet rather than a result set, as it does in Go.
             Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Kill(_)) => {
@@ -139,7 +152,7 @@ impl Session {
             // `USE`, `SET` and the transaction controls answer with an OK
             // packet, the same shape a write uses.
             Stmt::Dml(_) | Stmt::Ddl(_) | Stmt::Session(_) => StmtKind::Write,
-        })
+        }
     }
 
     /// Which persistent state `sql` would change: the stored schema (Go's
@@ -160,7 +173,15 @@ impl Session {
         sql: &str,
     ) -> Result<StoredStateChange, DriverError> {
         let stmt = self.parse(sql)?;
-        Ok(match &stmt {
+        Ok(Self::stored_state_change_parsed(&stmt))
+    }
+
+    /// [`Self::statement_stored_state_change`] over a statement a front end
+    /// already parsed. See [`Self::statement_kind_parsed`] for why this stays
+    /// a separate question rather than folding into the answer shape.
+    #[must_use]
+    pub fn stored_state_change_parsed(stmt: &Stmt) -> StoredStateChange {
+        match stmt {
             // The account statements the parser builds as DDL nodes, because
             // Go's `ast.DDLNode` covers them too: they write `mysql.user` and
             // the role edges, never the catalog.
@@ -235,6 +256,6 @@ impl Session {
             Stmt::Admin(_) | Stmt::Session(_) | Stmt::Query(_) | Stmt::Dml(_) => {
                 StoredStateChange::None
             }
-        })
+        }
     }
 }
