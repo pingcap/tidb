@@ -508,6 +508,11 @@ impl Session {
                     let current_db = self.current_db.clone();
                     let foreign_key_checks = self.foreign_key_checks();
                     let enable_check_constraint = self.enable_check_constraint();
+                    // The session's own evaluation context, which carries
+                    // `@@time_zone`: `CREATE TABLE` folds a column `DEFAULT`
+                    // and a RANGE partition bound at DDL time, and both can
+                    // read the zone.
+                    let ctx = self.statement_context(false);
                     // Go `pkg/ddl/create_table.go` and `add_column.go` warn
                     // once per CHECK constraint they discard, before the
                     // table is built; the constraint itself never reaches
@@ -525,6 +530,7 @@ impl Session {
                             sql_mode,
                             foreign_key_checks,
                             enable_check_constraint,
+                            &ctx,
                         )?))
                     });
                     if done.is_ok() {

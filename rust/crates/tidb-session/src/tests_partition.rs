@@ -371,6 +371,86 @@ fn a_range_bound_is_folded_at_create_time() {
     );
 }
 
+/// A DDL-time constant fold reads the SESSION's `time_zone`, not UTC.
+///
+/// Captured from real TiDB (`gorun`), the SAME `CREATE TABLE` issued from two
+/// sessions and read back with `SHOW CREATE TABLE`:
+///
+/// ```text
+/// set time_zone = '+00:00'  ->  (PARTITION `p0` VALUES LESS THAN (1578064200),
+/// set time_zone = '+08:00'  ->  (PARTITION `p0` VALUES LESS THAN (1578035400),
+/// ```
+///
+/// -- 28800 seconds apart, exactly the offset. This bound was REFUSED
+/// outright until the session's context reached `run_create_table_in`,
+/// because that entry re-parses the statement and folding under a fixed UTC
+/// settles the bound to the other session's integer: a row real TiDB routes
+/// to one partition lands in another, and every later pruned read answers
+/// from it wrongly, with no error at all.
+#[test]
+fn a_range_bound_folds_under_the_sessions_time_zone() {
+    let bound = |zone: &str| {
+        let mut session = Session::new();
+        session
+            .apply_set(&format!("SET time_zone = '{zone}'"))
+            .unwrap();
+        session
+            .run(
+                "CREATE TABLE p (a int, t timestamp) PARTITION BY RANGE (UNIX_TIMESTAMP(t)) (\
+                 PARTITION p0 VALUES LESS THAN (UNIX_TIMESTAMP('2020-01-03 15:10:00')), \
+                 PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+            )
+            .expect("a time_zone-dependent bound is folded, not refused");
+        show_create(&mut session, "p")
+    };
+
+    assert!(
+        bound("+00:00").ends_with(
+            "\nPARTITION BY RANGE (UNIX_TIMESTAMP(`t`))\n(PARTITION `p0` VALUES LESS THAN \
+             (1578064200),\n PARTITION `p1` VALUES LESS THAN (MAXVALUE))"
+        ),
+        "got {}",
+        bound("+00:00")
+    );
+    assert!(
+        bound("+08:00").ends_with(
+            "\nPARTITION BY RANGE (UNIX_TIMESTAMP(`t`))\n(PARTITION `p0` VALUES LESS THAN \
+             (1578035400),\n PARTITION `p1` VALUES LESS THAN (MAXVALUE))"
+        ),
+        "got {}",
+        bound("+08:00")
+    );
+}
+
+/// The CONTROL for the fold above: a bound that reads no zone is the same
+/// integer in every session (captured, both zones: `LESS THAN (15)`), so a
+/// mutation that neuters the threading has to fail the zone test while
+/// leaving this one passing.
+#[test]
+fn a_zone_independent_range_bound_is_the_same_in_every_session() {
+    for zone in ["+00:00", "+08:00"] {
+        let mut session = Session::new();
+        session
+            .apply_set(&format!("SET time_zone = '{zone}'"))
+            .unwrap();
+        session
+            .run(
+                "CREATE TABLE q (a int) PARTITION BY RANGE (a) (\
+                 PARTITION q0 VALUES LESS THAN (10 + 5), \
+                 PARTITION q1 VALUES LESS THAN (MAXVALUE))",
+            )
+            .unwrap();
+        let created = show_create(&mut session, "q");
+        assert!(
+            created.ends_with(
+                "\nPARTITION BY RANGE (`a`)\n(PARTITION `q0` VALUES LESS THAN (15),\n PARTITION \
+                 `q1` VALUES LESS THAN (MAXVALUE))"
+            ),
+            "under {zone} got {created}"
+        );
+    }
+}
+
 /// Every RANGE routing this unit captured from real TiDB, BY VALUE, with the
 /// boundary rows that decide `VALUES LESS THAN`'s exclusivity.
 ///

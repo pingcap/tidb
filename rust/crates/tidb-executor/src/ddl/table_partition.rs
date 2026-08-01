@@ -100,6 +100,10 @@ pub fn build_table_partitioning(
     indexes: &[KvIndex],
     handle_offsets: &[usize],
     allocate_id: &mut dyn FnMut() -> i64,
+    // The SESSION's context: a RANGE bound is FOLDED here, and its value can
+    // depend on the session `time_zone`. Go threads its `BuildContext` down
+    // the same path (`buildTablePartitionInfo` -> `checkPartitionValuesIsInt`).
+    ctx: &crate::StmtContext,
 ) -> Result<Option<PartitionSpec>, DriverError> {
     let Some(partitioning) = &create.partitioning else {
         return Ok(None);
@@ -165,6 +169,7 @@ pub fn build_table_partitioning(
                 names,
                 types,
                 &dependencies,
+                ctx,
             )?;
             let definitions = build_named_partition_definitions(create, allocate_id);
             (

@@ -217,6 +217,10 @@ pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, Dri
         tidb_parser::SqlMode::default(),
         true,
         false,
+        // A default `StmtContext` is a context with no session behind it: UTC,
+        // which is what a stock session has. The tests that call this entry
+        // never set a zone; the session's own path passes its real context.
+        &crate::StmtContext::default(),
     )
 }
 
@@ -280,6 +284,13 @@ pub fn run_create_table_in(
     sql_mode: tidb_parser::SqlMode,
     foreign_key_checks: bool,
     enable_check_constraint: bool,
+    // The SESSION's evaluation context. This entry re-parses text the session
+    // already parsed, and it also FOLDS constants -- a column `DEFAULT` and a
+    // RANGE partition bound -- so without it those folds run under a context
+    // that is not the session's and a `time_zone`-dependent bound is settled
+    // to the wrong integer. Go passes its `expression.BuildContext` from the
+    // statement into `BuildTableInfo` for the same reason.
+    ctx: &crate::StmtContext,
 ) -> Result<bool, DriverError> {
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
@@ -485,13 +496,11 @@ pub fn run_create_table_in(
                         // is what settles `DEFAULT (1 + 1)` to 2.
                         let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
                         dual.set_num_virtual_rows(1);
-                        rewritten
-                            .eval(&tidb_expr::NoColumns, dual.get_row(0))
-                            .map_err(|_| {
-                                crate::column_default::DefaultError::Unsupported(
-                                    "a DEFAULT this node cannot evaluate",
-                                )
-                            })
+                        rewritten.eval(ctx, dual.get_row(0)).map_err(|_| {
+                            crate::column_default::DefaultError::Unsupported(
+                                "a DEFAULT this node cannot evaluate",
+                            )
+                        })
                     })
                     .map_err(|error| column_default_error(error, &def.name))?;
                     // Go normalizes and checks a SETTLED default against the
@@ -700,6 +709,7 @@ pub fn run_create_table_in(
         table.indexes(),
         handle_offsets,
         &mut || catalog.allocate_table_id(),
+        ctx,
     )? {
         table.set_partition(partition);
     }

@@ -61,6 +61,7 @@ pub(super) fn build_range_bounds(
     names: &[String],
     types: &[FieldType],
     dependencies: &[usize],
+    ctx: &crate::StmtContext,
 ) -> Result<(Vec<RangeBound>, bool), DriverError> {
     // Go `buildPartitionDefinitionsInfo`: a RANGE table with no definitions
     // is 1492, checked before any bound is read.
@@ -99,7 +100,7 @@ pub(super) fn build_range_bounds(
                 RangeBound::MaxValue
             }
             PartitionValue::Expr(expr) => {
-                RangeBound::Value(fold_range_bound(expr, &definition.name, unsigned)?)
+                RangeBound::Value(fold_range_bound(expr, &definition.name, unsigned, ctx)?)
             }
             PartitionValue::Default | PartitionValue::Tuple(_) => {
                 return Err(DriverError::PartitionValuesNotInt(definition.name.clone()))
@@ -118,33 +119,30 @@ pub(super) fn build_range_bounds(
 /// `1.5`) is 1697 naming the PARTITION, while a `NULL` bound is 1659 naming
 /// the field as the literal text `NULL` -- which reads oddly and is exactly
 /// what real TiDB prints.
-fn fold_range_bound(expr: &Expr, partition: &str, unsigned: bool) -> Result<i64, DriverError> {
-    // A bound whose VALUE depends on the session `time_zone` cannot be folded
-    // here: `run_create_table_in` re-parses the statement without a
-    // `StmtContext`, so this folder has UTC and the session may not.
+fn fold_range_bound(
+    expr: &Expr,
+    partition: &str,
+    unsigned: bool,
+    ctx: &crate::StmtContext,
+) -> Result<i64, DriverError> {
+    // The fold reads `ctx`, which is the SESSION's, because a bound's VALUE
+    // can depend on the session `time_zone` -- Go threads its own
+    // `expression.BuildContext` from the statement down to
+    // `checkPartitionValuesIsInt`'s `EvalSimpleAst` for exactly this reason.
     //
-    // The consequence of guessing is not a cosmetic one. Captured from
-    // `tests/integrationtest/t/table/partition.test`: the bounds of
-    // `VALUES LESS THAN (UNIX_TIMESTAMP('2020-01-03 15:10:00'))` differ by
-    // hours between two sessions, and a row real TiDB puts in `p7` lands in
-    // `p9` here -- a routing this node would then answer every read from,
-    // wrongly and without an error. So the table is REFUSED until the
-    // session's zone reaches this path.
-    if expression_reads_the_session_time_zone(expr) {
-        return Err(DriverError::UnsupportedKind(
-            "a VALUES LESS THAN bound that depends on the session time_zone is not supported by \
-             this node: the CREATE TABLE path folds constants without the session's zone, and a \
-             bound folded under the wrong zone puts rows in the wrong partition"
-                .to_owned(),
-        ));
-    }
+    // Captured from real TiDB, the same statement in two sessions:
+    // `VALUES LESS THAN (UNIX_TIMESTAMP('2020-01-03 15:10:00'))` stores
+    // `1578064200` under `+00:00` and `1578035400` under `+08:00`. Folding
+    // under a fixed UTC instead put a row real TiDB routes to `p7` into `p9`
+    // -- a wrong answer with no error -- which is why this bound was refused
+    // outright until the context reached here.
     let rewritten =
         tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
             .map_err(|_| DriverError::PartitionValuesNotInt(partition.to_owned()))?;
     let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
     dual.set_num_virtual_rows(1);
     let value = rewritten
-        .eval(&tidb_expr::NoColumns, dual.get_row(0))
+        .eval(ctx, dual.get_row(0))
         .map_err(|_| DriverError::PartitionValuesNotInt(partition.to_owned()))?;
     match value {
         Datum::Int(value) => {
@@ -158,29 +156,6 @@ fn fold_range_bound(expr: &Expr, partition: &str, unsigned: bool) -> Result<i64,
         Datum::UInt(value) => Ok(value as i64),
         Datum::Null => Err(DriverError::PartitionFieldTypeNotAllowed("NULL".to_owned())),
         _ => Err(DriverError::PartitionValuesNotInt(partition.to_owned())),
-    }
-}
-
-/// Whether folding `expr` would read the session `time_zone`.
-///
-/// Of the functions Go's `AllowedPartitionFuncMap` admits, `UNIX_TIMESTAMP`
-/// is the one that converts a LOCAL datetime to an absolute epoch, so its
-/// value moves with the zone; the rest read their argument's own calendar
-/// fields. A clock reading (`NOW`, `CURRENT_TIMESTAMP`) is not on the map at
-/// all and is already 1564.
-fn expression_reads_the_session_time_zone(expr: &Expr) -> bool {
-    match expr {
-        Expr::Func { name, args, .. } => {
-            name.eq_ignore_ascii_case("unix_timestamp")
-                || args.iter().any(expression_reads_the_session_time_zone)
-        }
-        Expr::Paren(inner) => expression_reads_the_session_time_zone(inner),
-        Expr::Unary(_, inner) => expression_reads_the_session_time_zone(inner),
-        Expr::Binary(_, left, right) => {
-            expression_reads_the_session_time_zone(left)
-                || expression_reads_the_session_time_zone(right)
-        }
-        _ => false,
     }
 }
 
