@@ -18,12 +18,14 @@ documents. What follows is the part that predicts where the next one is.
 | Sysvars / stmtctx | [architecture/sysvar-and-stmtctx-divergence.md](architecture/sysvar-and-stmtctx-divergence.md) | 14 findings; **948/948 names, 0 declarative divergences** |
 | Error catalogue (`pkg/errno`) | [error-code-parity.md](error-code-parity.md) | 15 findings; **1166 codes + 1164 messages + 244 SQLSTATEs equal** |
 | Coprocessor (`pkg/distsql`, `ToPB`) | [distsql-coprocessor-parity.md](distsql-coprocessor-parity.md) | 6 findings; **all 52 `ScalarFuncSig` numbers equal** |
+| Catalog model JSON (`pkg/meta/model`) | [audits/catalog-model-json-parity.md](audits/catalog-model-json-parity.md) | 8 findings; **no field dropped on round trip; 82 `ActionType` ordinals equal** |
+| Two-phase commit (client-go) | [two-phase-commit-vs-client-go.md](two-phase-commit-vs-client-go.md) | 9 findings, 3 class-1; **14 behaviours equal** |
+| Builtin expressions (`pkg/expression`) | [expr-builtin-divergence-inventory.md](expr-builtin-divergence-inventory.md) | 7 findings; ~40 verified equal |
 
-Catalog model JSON, error catalogue, coprocessor pushdown, builtin expressions,
-2PC, chunk+stats, charset/collation, JSON, planner rules, DDL and the parser
-were dispatched in the same sweep.
+Chunk+stats, charset/collation, JSON, planner rules, DDL and the parser were
+dispatched in the same sweep and have not reported yet.
 
-## Six shapes, and they recur
+## Seven shapes, and they recur
 
 ### 1. An instrument that cannot fail for the bug it exists to catch
 
@@ -119,6 +121,20 @@ per-statement transaction does". Go takes **one** timestamp; the comment sat on
 top of silent data loss. The meta‑key doc described an eight‑byte type flag as a
 single byte. Both were confident and wrong in the crate whose correctness they
 described.
+
+### 7. Go decides at build time; we re-decide at run time
+
+Go picks a builtin *signature* when the expression is built, from the argument
+`FieldType`s. `tidb-expr` infers the result type from `FieldType`s but then
+**evaluates by re-dispatching on the runtime `Datum` kind**. Four findings in the
+builtin audit are that one shape: Go's choice depends on something the `Datum`
+does not carry — the `UnsignedFlag` on a decimal, a declared digit width versus
+the actual one, a collation's binary-ness.
+
+The tell that it is structural rather than incidental: **the float path already
+captures signedness this way and the decimal path does not**, so the Rust is
+inconsistent with itself. Anywhere a `FieldType` fact decides Go's answer and the
+`Datum` cannot express it, expect a divergence.
 
 ## What the sweep also proved equal
 
