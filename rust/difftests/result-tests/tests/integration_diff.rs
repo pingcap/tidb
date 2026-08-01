@@ -993,6 +993,92 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     );
 }
 
+/// Lists every topic this reader cannot ALIGN, with the cause for each.
+///
+/// An unaligned topic is worse than a refused one. A refused statement is
+/// counted in a named [`SkipClass`] and appears in every total this driver
+/// prints; a topic that does not align is not compared, not refused, and not
+/// counted -- it is simply ABSENT from every number the survey reports, and
+/// nothing in a green run points at it. That is the same shape as the
+/// instrument bugs this ring has already found, so the inventory is kept as a
+/// standing tool rather than being rediscovered each time.
+///
+/// This is cheap on purpose: it reads the two files and runs `parse_test` +
+/// `align`, which is where alignment is decided, so it does not need to
+/// execute a single statement and finishes in under a second over all topics.
+///
+/// ```sh
+/// cargo test -p difftest-result-tests --test integration_diff -- \
+///   --ignored --nocapture survey_unaligned
+/// ```
+#[test]
+#[ignore = "inventory tool: lists every topic the reader cannot align, with its cause"]
+fn survey_unaligned_topics() {
+    let dir = integrationtest_dir();
+    let mut unaligned = 0usize;
+    let mut aligned = 0usize;
+    for topic in all_topics() {
+        let script = match fs::read_to_string(dir.join(format!("t/{topic}.test"))) {
+            Ok(text) => text,
+            Err(e) => {
+                unaligned += 1;
+                eprintln!("UNALIGNED  {topic}: read .test: {e}");
+                continue;
+            }
+        };
+        let recorded = match fs::read_to_string(dir.join(format!("r/{topic}.result"))) {
+            Ok(text) => text,
+            Err(e) => {
+                unaligned += 1;
+                eprintln!("UNALIGNED  {topic}: read .result: {e}");
+                continue;
+            }
+        };
+        match parse_test(&script).and_then(|items| {
+            let count = items.len();
+            align(&items, &recorded).map(|_| count)
+        }) {
+            Ok(count) => {
+                aligned += 1;
+                if std::env::var_os("INTEGRATION_SHOW_ALIGNED").is_some() {
+                    eprintln!("aligned    {topic}: {count} items");
+                }
+            }
+            Err(reason) => {
+                unaligned += 1;
+                eprintln!("UNALIGNED  {topic}: {reason}");
+            }
+        }
+    }
+    eprintln!("{aligned} topics align, {unaligned} do not");
+}
+
+/// Every topic in the suite, as `t/<topic>.test` relative paths without the
+/// extension.
+fn all_topics() -> Vec<String> {
+    let root = integrationtest_dir().join("t");
+    let mut topics = Vec::new();
+    let mut stack = vec![root.clone()];
+    while let Some(at) = stack.pop() {
+        for entry in fs::read_dir(&at).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "test") {
+                topics.push(
+                    path.strip_prefix(&root)
+                        .unwrap()
+                        .with_extension("")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+    }
+    topics.sort();
+    topics
+}
+
 /// Replays the single topic named by `INTEGRATION_TOPIC`, printing one status
 /// line. This is the survey's child process (see
 /// [`survey_unonboarded_topics`]) and also the way to look at one topic by
