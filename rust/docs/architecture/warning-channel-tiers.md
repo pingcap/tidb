@@ -142,14 +142,27 @@ unit.
 3. **Fixed** — no retention limit on either live buffer, where the
    source-faithful port has had Go's `MaxUint16` since it was written. A
    non-strict bulk write allocated one `String` per converted value, unbounded.
-4. **Open, own unit** — the wire never reports a warning count.
-   `ResultSetOptions.warnings` is the literal `0` at every construction site in
-   `tidb-server/src/mysql_connection.rs` (`461`, `684`, `1414`, `1435`,
-   `1582`), and `OkPacket::default()` supplies `0` for the rest. Go sends
-   `cc.ctx.WarningCount()` in both `writeOK` (`pkg/server/conn.go:1692`) and
-   `writeEOF` (`:1779`). `SHOW WARNINGS` works over the wire because it is a
-   result set; the *count* channel that the `mysql` CLI prints and JDBC uses to
-   decide whether to build a `SQLWarning` chain is dead.
+4. **Fixed** — the wire never reported a warning count.
+   `ResultSetOptions.warnings` and `OkPacket::default()` supplied the literal
+   `0` at every construction site in `tidb-server/src/mysql_connection.rs`,
+   while Go sends `cc.ctx.WarningCount()` in both `writeOK`
+   (`pkg/server/conn.go:1692`) and `writeEOF` (`:1779`). `SHOW WARNINGS` works
+   over the wire because it is a result set, so the *count* channel that the
+   `mysql` CLI prints and JDBC uses to decide whether to build a `SQLWarning`
+   chain was dead while every warning looked correct.
+   `Session::wire_warning_count` publishes it; each packet reads it where Go
+   reads it. Two source facts came out of the fix:
+   `StatementContext.WarningCount` returns 0 while `InShowWarning` is set
+   (`stmtctx.go:1153`), and `ResetContextOfStmt` sets that flag on exactly the
+   three statements that INHERIT the buffer — so the count does NOT follow the
+   buffer, and `SHOW WARNINGS` sends 0 however many rows it returns. And the
+   buffer's per-statement lifetime did not hold on the wire at all:
+   `PipelineServerSession::execute_write` answered a `SET` without ever
+   reaching `Session::run`, so `SET` appended to the PREVIOUS statement's
+   buffer. `parse_at_statement_boundary` is now the one door both take.
+   Pinned by `the_ok_packet_reports_the_statements_warning_count`
+   (`tidb-server/tests/pipeline_mysql_client_source.rs`), which reads the field
+   off the packet — no `SHOW WARNINGS` assertion can see it.
 5. **Open, own unit** — the live `WarningLevel` has two variants (`Warning`,
    `Error`). Go and both bounded stacks have three. Nothing on the live path
    can produce a `Note`, and `drain_eval_warnings` stamps `Warning` on
@@ -170,3 +183,17 @@ reaching the client and leaves the stored values correct. Control, in the
 other direction: the `reports_warnings` fix's regression test fails on the
 `SHOW CREATE TABLE warnings` probe (`left: 1, right: 0`) with the old
 string-sniff decision restored, and passes with the parsed-node one.
+
+The count channel has its own probe, and it demonstrates why the whole warning
+surface being validated through `SHOW WARNINGS` hid this for so long:
+
+* Neuter `Session::wire_warning_count` to `0`. The wire pin fails
+  (`left: 0, right: 1`) and **every `SHOW WARNINGS` test still passes** —
+  `tidb-session`'s `show_warnings` and all four `warning` tests. One channel
+  cannot substitute for the other, which is exactly how a dead field survived
+  nine warnings landing and being verified against TiDB's own recording.
+* Neuter the statement boundary — put `parse_statement` back in
+  `PipelineServerSession::execute_write` — and the wire pin fails on the
+  *fourth* statement instead (`left: 2, right: 1`): two `SET`s in a row report
+  a running total. A single-statement assertion passes right through it, which
+  is why the pin runs statements in sequence.
