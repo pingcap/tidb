@@ -87,6 +87,25 @@ were mapped ahead of the code that would stand at them. Pinning them would pin
 nothing — the guard would assert that a function nobody calls still returns what
 it always returned.
 
+### Nine of the sixteen name a capability the crate has since grown
+
+`UnsupportedCapability`, `ChannelIterUnsupported` and the two unreachable
+`ResponseChannelUnsupported` variants decline raw tipb responses, chunk decoding
+and TiKV transport. `tidb-distsql` now contains `chunk_decode` (raw tipb
+`SelectResponse` and `Chunk`) and `transport`, and `response_channel` decodes
+through both before handing rows to `ChannelIter`. The client itself lives in
+`tidb-txnkv` and is exercised against a real cluster.
+
+This is the closest thing the census found to a stale refusal, with one
+important difference: because the variants are unreachable, no query is being
+wrongly refused. What was stale was the prose. Three module docs still described
+a workspace with no chunk decoder, no protobuf transport and no TiKV client, and
+told a reader that feeding a raw tipb response to these leaves would produce a
+loud refusal. It would not — there is no such path. Those claims are corrected
+in `select_iter.rs` and `channel_iter.rs`; `transport.rs` carries the same stale
+sentence about the rewrite having "no TiKV client, protobuf transport, or region
+router" and is left to whoever owns that seam.
+
 ## What this changes about pinning
 
 Set guards belong on the enums that are live, where a new variant is a real

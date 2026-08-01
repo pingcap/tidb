@@ -18,9 +18,15 @@
 //! intermediate (or final) channel, skips empty chunks, and returns rows with
 //! the channel index attached.  This leaf preserves that state machine over
 //! already-owned rows.  It deliberately does not depend on tipb, TiDB's
-//! chunk decoder, or a TiKV response channel; those boundaries are represented
-//! by explicit [`ChannelIterError::Unsupported`] values instead of a partial
-//! decoder.
+//! chunk decoder, or a TiKV response channel.
+//!
+//! The [`ChannelIterError::Unsupported`] values name those boundaries but no
+//! longer stand at one: `chunk_decode` in this crate now owns tipb
+//! `SelectResponse` and `Chunk` decoding, and `response_channel` decodes before
+//! it hands rows to this iterator.  Nothing constructs an `Unsupported` value,
+//! so a caller must not read these names as a refusal that will fire -- they
+//! are a record of what this leaf declined to invent, kept until the layering
+//! above it settles.
 
 use std::collections::VecDeque;
 use std::error::Error;

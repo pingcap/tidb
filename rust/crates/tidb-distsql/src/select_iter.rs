@@ -15,11 +15,17 @@
 //! Dependency-closed DistSQL row iteration.
 //!
 //! The Go `SelectResultIter` combines rows from one coprocessor response's
-//! intermediate channels and final channel.  This leaf keeps the part that is
-//! useful before a TiKV client exists: an owned row, a source iterator, and
-//! the source-shaped serial composition used by callers that have several
+//! intermediate channels and final channel.  This leaf keeps the part that
+//! needs no TiKV client: an owned row, a source iterator, and the
+//! source-shaped serial composition used by callers that have several
 //! already-decoded result streams.  It intentionally does not define packet,
 //! chunk, protobuf, or transport types.
+//!
+//! Those owners have since landed elsewhere -- `chunk_decode` and `transport`
+//! in this crate, the client in `tidb-txnkv` -- and the live read path routes
+//! around this leaf rather than through it.  [`UnsupportedCapability`] is
+//! therefore a record of what this iterator declined to invent, not a refusal
+//! anything can still raise.
 //!
 //! `None` is the Rust equivalent of Go's zero-valued `SelectResultRow` whose
 //! `IsEmpty()` method reports that the iterator is drained.  Returning an
