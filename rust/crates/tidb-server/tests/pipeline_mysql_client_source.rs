@@ -1959,6 +1959,18 @@ fn the_ok_packet_reports_the_statements_warning_count() {
         1,
         "the buffer resets per statement, so the count does not accumulate"
     );
+    // Two warnings in ONE statement report 2, so the field carries a count and
+    // not a flag. Captured from TiDB over a mock-backed session:
+    // `set @@group_concat_max_len=1, @@tidb_session_alias='abc  '` ->
+    // `WarningCount() == 2`.
+    assert_eq!(
+        run_write_warning_count(
+            &mut client,
+            &mut reader,
+            "SET @@group_concat_max_len=1, @@tidb_session_alias='abc  '",
+        ),
+        2
+    );
 
     write_packet(&mut client, 0, &[0x01]);
     drop(client);

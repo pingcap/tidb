@@ -184,6 +184,29 @@ other direction: the `reports_warnings` fix's regression test fails on the
 `SHOW CREATE TABLE warnings` probe (`left: 1, right: 0`) with the old
 string-sniff decision restored, and passes with the parsed-node one.
 
+### The capture the count channel was fixed against
+
+TiDB itself, over a mock-backed session (`session.BootstrapSession` on
+`mockstore` — no cluster), reading
+`GetSessionVars().StmtCtx.WarningCount()` after each statement. That is the
+value verbatim: `TiDBContext.WarningCount` (`driver_tidb.go:278`) is one line
+returning it, and `writeOkWith`/`writeEOF` send exactly that.
+
+| statement | wire count | buffer |
+| --- | --- | --- |
+| `create table t (a bigint)` | 0 | 0 |
+| `set @@group_concat_max_len=1` | 1 | 1 |
+| `show warnings` | **0** | 1 |
+| `select 1` | 0 | 0 |
+| `set @@group_concat_max_len=1` (twice in a row) | 1, then 1 | 1, 1 |
+| `set @@group_concat_max_len=1, @@tidb_session_alias='abc  '` | 2 | 2 |
+| `show count(*) warnings` | **0** | 2 |
+
+Two rows carry the whole fix. `show warnings` reports a count of 0 with a
+non-empty buffer — the count does not inherit what the rows do. And two
+identical `SET`s report 1 each rather than 1 then 2 — the per-statement
+lifetime, which the front end's `SET` door did not have.
+
 The count channel has its own probe, and it demonstrates why the whole warning
 surface being validated through `SHOW WARNINGS` hid this for so long:
 
