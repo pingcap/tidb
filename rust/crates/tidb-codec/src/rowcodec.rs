@@ -23,11 +23,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use chrono::Utc;
-use chrono_tz::Tz;
 use crc32fast::Hasher;
 use tidb_datatype::{
     deserialize_vector_float32, parse_enum_value, parse_set_value, BinaryJSON, BinaryLiteral,
-    BinaryLiteralWidth, Datum, FieldType, FieldTypeCode, MySqlDuration, Time, TimeType,
+    BinaryLiteralWidth, Datum, FieldType, FieldTypeCode, MySqlDuration, SessionTimeZone, Time,
+    TimeType,
 };
 
 use crate::{
@@ -114,7 +114,7 @@ pub struct RowData {
 
 impl RowData {
     /// Encodes all columns in ID order.
-    pub fn encode(&mut self, timezone: Option<&Tz>) -> Result<&[u8], RowPackageError> {
+    pub fn encode(&mut self, timezone: Option<&SessionTimeZone>) -> Result<&[u8], RowPackageError> {
         self.columns.sort_by_key(|column| column.id);
         self.data.clear();
         for column in &self.columns {
@@ -129,7 +129,7 @@ impl RowData {
     }
 
     /// Calculates the same incremental IEEE CRC32 as Go `RowData.Checksum`.
-    pub fn checksum(&mut self, timezone: Option<&Tz>) -> Result<u32, RowPackageError> {
+    pub fn checksum(&mut self, timezone: Option<&SessionTimeZone>) -> Result<u32, RowPackageError> {
         self.columns.sort_by_key(|column| column.id);
         let mut hasher = Hasher::new();
         for column in &self.columns {
@@ -173,7 +173,7 @@ pub struct DecodeRowOptions<'a> {
     /// Commit timestamp value; zero produces SQL NULL.
     pub commit_ts: u64,
     /// Session timezone for timestamp restoration.
-    pub timezone: Option<&'a Tz>,
+    pub timezone: Option<&'a SessionTimeZone>,
 }
 
 /// Errors returned by the complete rowcodec boundary.
@@ -246,7 +246,7 @@ impl From<CodecError> for RowPackageError {
 
 /// Encodes a typed new-format row without a checksum.
 pub fn encode_row(
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     column_ids: &[i64],
     values: &[Datum],
     buffer: &mut Vec<u8>,
@@ -263,7 +263,7 @@ pub fn encode_row(
 /// Converts tablecodec's old alternating `column ID, datum` row into the new
 /// row format. An already-new row is copied unchanged.
 pub fn encode_row_from_old(
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     old_row: &[u8],
     buffer: &mut Vec<u8>,
 ) -> Result<(), RowPackageError> {
@@ -290,7 +290,7 @@ pub fn encode_row_from_old(
 
 /// Encodes a typed new-format row and applies the requested checksum policy.
 pub fn encode_row_with_checksum(
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     column_ids: &[i64],
     values: &[Datum],
     checksum: &RowChecksumPolicy,
@@ -328,7 +328,7 @@ pub fn encode_row_with_checksum(
 }
 
 fn encode_value_datum(
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     datum: &Datum,
 ) -> Result<Option<Vec<u8>>, RowPackageError> {
     let mut output = Vec::new();
@@ -379,7 +379,7 @@ fn encode_value_datum(
 pub fn decode_row_to_map(
     row_data: &[u8],
     columns: &[ColumnInfo],
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
 ) -> Result<BTreeMap<i64, Datum>, RowPackageError> {
     let (decoder, remainder) = RowDecoder::parse(row_data)?;
     if !remainder.is_empty() {
@@ -473,7 +473,7 @@ pub fn decode_row_to_datums(
 /// it with the encoded handle, preserving the v8.3 compatibility branch.
 pub fn calculate_raw_checksum(
     row_data: &[u8],
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     column_ids: &[i64],
     values: &[Datum],
     key: &[u8],
@@ -637,7 +637,7 @@ fn decode_handle_column(
     column: &ColumnInfo,
     handle_column_ids: &[i64],
     handle: Option<&Handle>,
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
 ) -> Result<Option<Datum>, RowPackageError> {
     let Some(handle) = handle else {
         return Ok(None);
@@ -673,7 +673,7 @@ fn decode_handle_column(
 fn decode_column_datum(
     bytes: &[u8],
     field_type: &FieldType,
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
 ) -> Result<Datum, RowPackageError> {
     let code = field_type.code();
     Ok(match code {
@@ -797,7 +797,7 @@ fn binary_literal_to_uint(value: &BinaryLiteral) -> u64 {
 
 /// Encodes one datum for TiCDC-compatible column-level row checksums.
 pub fn append_datum_for_checksum(
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     buffer: &mut Vec<u8>,
     datum: &Datum,
     field_type: FieldTypeCode,

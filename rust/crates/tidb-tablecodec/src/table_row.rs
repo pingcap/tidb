@@ -18,10 +18,10 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use chrono::Utc;
-use chrono_tz::Tz;
+
 use tidb_datatype::{
     parse_enum_value, parse_set_value, BinaryLiteralIntOutcome, Collation, Datum, FieldType,
-    FieldTypeCode, MySqlDuration, MysqlEnum, Time, TimeType,
+    FieldTypeCode, MySqlDuration, MysqlEnum, SessionTimeZone, Time, TimeType,
 };
 
 use tidb_codec::{
@@ -87,7 +87,10 @@ impl From<RowPackageError> for TableRowError {
 }
 
 /// Converts one typed SQL datum to tablecodec's persisted scalar form.
-pub fn flatten_datum(timezone: Option<&Tz>, datum: &Datum) -> Result<Datum, TableRowError> {
+pub fn flatten_datum(
+    timezone: Option<&SessionTimeZone>,
+    datum: &Datum,
+) -> Result<Datum, TableRowError> {
     Ok(match datum {
         Datum::Time(value) => {
             let mut value = *value;
@@ -124,7 +127,7 @@ pub fn flatten_datum(timezone: Option<&Tz>, datum: &Datum) -> Result<Datum, Tabl
 pub fn unflatten_datum(
     datum: Datum,
     field_type: &FieldType,
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
 ) -> Result<Datum, TableRowError> {
     if datum.is_null() {
         return Ok(datum);
@@ -210,7 +213,10 @@ pub fn unflatten_datum(
 }
 
 /// Encodes one flattened datum as an old codec value.
-pub fn encode_table_value(timezone: Option<&Tz>, datum: &Datum) -> Result<Vec<u8>, TableRowError> {
+pub fn encode_table_value(
+    timezone: Option<&SessionTimeZone>,
+    datum: &Datum,
+) -> Result<Vec<u8>, TableRowError> {
     let flattened = flatten_datum(timezone, datum)?;
     match timezone {
         Some(timezone) => Ok(encode_value_in_timezone(timezone, &[flattened])?),
@@ -221,7 +227,7 @@ pub fn encode_table_value(timezone: Option<&Tz>, datum: &Datum) -> Result<Vec<u8
 /// Encodes a row through either the new rowcodec format or the legacy
 /// alternating `column ID, value` format.
 pub fn encode_table_row(
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     row: &[Datum],
     column_ids: &[i64],
     new_format: bool,
@@ -248,7 +254,7 @@ pub fn encode_table_row(
 
 /// Encodes the legacy alternating `column ID, value` row layout.
 pub fn encode_old_table_row(
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     row: &[Datum],
     column_ids: &[i64],
 ) -> Result<Vec<u8>, TableRowError> {
@@ -276,7 +282,7 @@ pub fn encode_old_table_row(
 pub fn decode_column_value(
     data: &[u8],
     field_type: &FieldType,
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
 ) -> Result<Datum, TableRowError> {
     let (_, datum) = decode_one(data)?;
     unflatten_datum(datum, field_type, timezone)
@@ -286,7 +292,7 @@ pub fn decode_column_value(
 pub fn decode_column_value_into(
     data: &[u8],
     field_type: &FieldType,
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     output: &mut Datum,
 ) -> Result<(), TableRowError> {
     *output = decode_column_value(data, field_type, timezone)?;
@@ -297,7 +303,7 @@ pub fn decode_column_value_into(
 pub fn decode_table_row_to_map(
     bytes: &[u8],
     columns: &BTreeMap<i64, FieldType>,
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
 ) -> Result<BTreeMap<i64, Datum>, TableRowError> {
     let mut result = BTreeMap::new();
     decode_table_row_into_map(bytes, columns, timezone, &mut result)?;
@@ -311,7 +317,7 @@ pub fn decode_table_row_to_map(
 pub fn decode_table_row_into_map(
     bytes: &[u8],
     columns: &BTreeMap<i64, FieldType>,
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     result: &mut BTreeMap<i64, Datum>,
 ) -> Result<(), TableRowError> {
     if bytes.is_empty() || bytes == [NIL_FLAG] {
@@ -357,7 +363,7 @@ pub fn decode_handle_to_datum_map(
     handle: Option<&Handle>,
     handle_column_ids: &[i64],
     columns: &BTreeMap<i64, FieldType>,
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     row: &mut BTreeMap<i64, Datum>,
 ) -> Result<(), TableRowError> {
     let Some(handle) = handle else {
@@ -440,7 +446,7 @@ pub fn cut_table_row(
 pub fn unflatten_datums(
     datums: &mut [Datum],
     field_types: &[FieldType],
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
 ) -> Result<(), TableRowError> {
     if datums.len() != field_types.len() {
         return Err(TableRowError::ColumnCountMismatch {

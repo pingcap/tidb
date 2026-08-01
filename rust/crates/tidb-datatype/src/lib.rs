@@ -56,6 +56,7 @@ mod numeric_helper;
 mod overflow;
 mod packed_time;
 mod parser_types_errors;
+mod session_time_zone;
 mod source_string;
 mod str_to_date;
 mod time_parse;
@@ -231,6 +232,7 @@ pub use parser_types_errors::{
     ERR_WRONG_FIELD_SPEC, ERR_WRONG_VALUE, ERR_WRONG_VALUE_2, ERR_WRONG_VALUE_FOR_TYPE,
     TIMESTAMP_STR, TIME_STR,
 };
+pub use session_time_zone::{SessionTimeZone, SessionTimeZoneOffset};
 pub use source_string::{HackedStr, PlainStr, SourceString};
 pub use str_to_date::get_format_type;
 pub use time_parse::{

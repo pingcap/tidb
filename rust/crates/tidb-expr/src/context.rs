@@ -284,20 +284,12 @@ pub enum ErrorLevel {
     Error,
 }
 
-/// The session `time_zone` surfaced through [`Columns::time_zone`]: a fixed
-/// offset (`time.FixedZone`) or a named IANA zone.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SessionTimeZone {
-    /// A fixed offset east of UTC with its display name.
-    Fixed {
-        /// The zone's display name.
-        name: String,
-        /// Seconds east of UTC.
-        offset_secs: i32,
-    },
-    /// A named IANA zone.
-    Named(chrono_tz::Tz),
-}
+/// The session `time_zone` surfaced through [`Columns::time_zone`].
+///
+/// The type itself lives in `tidb-datatype` because the storage codecs need
+/// it and sit below this crate, exactly as Go's `tablecodec` sits below
+/// `sessionctx`; see [`tidb_datatype::SessionTimeZone`].
+pub use tidb_datatype::SessionTimeZone;
 
 /// Resolves column and session state during evaluation.
 pub trait Columns {

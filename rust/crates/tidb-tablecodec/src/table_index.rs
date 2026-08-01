@@ -17,9 +17,9 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 
-use chrono_tz::Tz;
 use tidb_datatype::{
-    is_bin_collation, Charset, Collation, Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH,
+    is_bin_collation, Charset, Collation, Datum, FieldType, FieldTypeCode, SessionTimeZone,
+    UNSPECIFIED_LENGTH,
 };
 use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
 
@@ -678,7 +678,7 @@ pub fn truncate_index_values(
 /// Generates a complete index key and whether its values are distinct.
 pub fn generate_index_key(
     encoder: Encoder,
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     table: &TableInfo,
     index: &IndexInfo,
     physical_table_id: i64,
@@ -725,7 +725,7 @@ pub fn generate_index_key(
 #[allow(clippy::too_many_arguments)]
 pub fn generate_index_value(
     use_new_collation: bool,
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     table: &TableInfo,
     index: &IndexInfo,
     need_restored_data: bool,
@@ -767,7 +767,7 @@ pub fn generate_index_value(
 
 #[allow(clippy::too_many_arguments)]
 fn generate_index_value_v0(
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     table: &TableInfo,
     index: &IndexInfo,
     need_restored_data: bool,
@@ -836,7 +836,7 @@ fn generate_index_value_v0(
 #[allow(clippy::too_many_arguments)]
 fn generate_index_value_v1(
     use_new_collation: bool,
-    timezone: Option<&Tz>,
+    timezone: Option<&SessionTimeZone>,
     table: &TableInfo,
     index: &IndexInfo,
     need_restored_data: bool,
