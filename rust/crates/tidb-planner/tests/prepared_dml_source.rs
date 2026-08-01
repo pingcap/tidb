@@ -826,3 +826,53 @@ fn typed_add_still_refuses_a_char_column() {
         PreparedWritePlanError::UpdateAssignmentShape
     );
 }
+
+/// The configured write boundary refuses each of these DML shapes rather than
+/// approximating it, and the tests above prove seventeen of the twenty actually
+/// fire. This pins the set itself: a new variant is a shape we started refusing
+/// and a removed variant is a shape we started accepting, so either direction
+/// has to be argued for here rather than slipped in.
+#[test]
+fn prepared_write_refusal_set_is_pinned_in_both_directions() {
+    let source = include_str!("../src/prepared_dml.rs");
+    let variants: Vec<&str> = source
+        .split_once("pub enum UnsupportedPreparedWrite {")
+        .expect("the refusal enum")
+        .1
+        .split_once('}')
+        .expect("the enum body")
+        .0
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.ends_with(',') && !line.starts_with("//"))
+        .map(|line| line.trim_end_matches(','))
+        .collect();
+    assert_eq!(
+        variants,
+        [
+            "Replace",
+            "Ignore",
+            "OnDuplicateKey",
+            "SetSyntax",
+            "InsertSelect",
+            "Partition",
+            "Hint",
+            "Returning",
+            "InsertRowAlias",
+            "MissingInsertColumns",
+            "MultiTableUpdate",
+            "TableAlias",
+            "AsOfTimestamp",
+            "OrderBy",
+            "Limit",
+            "MissingWhere",
+            "NonDmlStatement",
+            "MultiTableDelete",
+            "CommonTableExpression",
+            "UnsupportedDmlStatement",
+        ],
+        "the configured write boundary changed shape: a new variant needs a \
+         rejection test in this file proving the refusal fires, and a removed \
+         variant needs the acceptance path that replaced it"
+    );
+}
