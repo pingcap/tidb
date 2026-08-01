@@ -147,12 +147,7 @@ struct Rename {
 /// Replaying the staged pairs in order is what makes the last word win: a
 /// name vacated by an earlier pair reads as free, and one occupied by an
 /// earlier pair reads as taken.
-fn staged_table_exists(
-    catalog: &Catalog,
-    staged: &[Rename],
-    database: &str,
-    name: &str,
-) -> bool {
+fn staged_table_exists(catalog: &Catalog, staged: &[Rename], database: &str, name: &str) -> bool {
     let mut exists = catalog.table_in(database, name).is_some();
     for rename in staged {
         if rename.from_db == database && rename.from_name == name {
