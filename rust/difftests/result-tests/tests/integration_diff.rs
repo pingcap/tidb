@@ -860,12 +860,13 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // is converted to UTC on the way into the row bytes and back into the
     // READING session's `time_zone` on the way out, which is the whole
     // meaning of the type; `DATETIME` and `DATE` still store the written
-    // wall-clock text, which is the whole meaning of THOSE. The seam is
-    // `tidb_tablecodec::flatten_datum`/`unflatten_datum`, mirroring Go
-    // `pkg/tablecodec/tablecodec.go`'s `flatten`/`unflatten`, and what
-    // changed is that the session's zone now reaches them instead of a
-    // hardcoded `None`. See `timezone_storage` in `tidb-session` for the
-    // captured cross-session round trips, DST boundaries included.
+    // wall-clock text, which is the whole meaning of THOSE. The seams are
+    // `tidb_codec::rowcodec`'s column encode/decode for the stored row and
+    // `encode_key_in_timezone` for the index entry -- Go's
+    // `rowcodec`/`codec.EncodeKey` -- and what changed is that the session's
+    // zone now reaches them instead of a hardcoded `None`. See
+    // `tests_timezone_storage` in `tidb-session` for the captured
+    // cross-session round trips, DST boundaries included.
     const KNOWN_DIVERGENCES: usize = 50;
 
     assert!(

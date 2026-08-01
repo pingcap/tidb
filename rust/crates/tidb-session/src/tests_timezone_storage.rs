@@ -20,24 +20,39 @@
 //! because a fix that converts BOTH types is wrong in the other direction
 //! and a `TIMESTAMP`-only test cannot see it.
 //!
-//! The engine half is `tidb_tablecodec::flatten_datum`/`unflatten_datum`,
-//! which mirror Go `pkg/tablecodec/tablecodec.go`'s `flatten` and `unflatten`.
 //! The decision is Go's and it is made ONCE, on the TYPE:
 //!
 //! ```go
-//! // flatten, on the way into the row bytes
+//! // encoding, on the way into the row bytes
 //! if t.Type() == mysql.TypeTimestamp && loc != nil && loc != time.UTC {
 //!     err := t.ConvertTimeZone(loc, time.UTC)
 //! }
-//! // unflatten, on the way out
+//! // decoding, on the way out
 //! if ft.GetType() == mysql.TypeTimestamp && !t.IsZero() {
 //!     err = t.ConvertTimeZone(time.UTC, loc)
 //! }
 //! ```
 //!
-//! Go threads the same `loc` into `codec.EncodeKey` for INDEX entries
-//! (`tablecodec.GenIndexKey(enc, loc, ...)`), so an entry filed by one
-//! session is the entry another seeks; this node does too.
+//! # Which code that is, exactly
+//!
+//! There are THREE places it lives, and naming only the first is how a
+//! mutation probe comes back green against a real bug:
+//!
+//! * the v2 row format, `tidb_codec::rowcodec`'s `encode_column_value` and
+//!   `decode_column_value` (Go `pkg/util/rowcodec/encoder.go` and
+//!   `decoder.go`), which is what a byte-backed table actually stores;
+//! * index keys, `tidb_codec::package::encode_mysql_time` under
+//!   `encode_key_in_timezone` (Go `codec.EncodeKey`, which
+//!   `tablecodec.GenIndexKey(enc, loc, ...)` calls), so the entry one
+//!   session files is the entry another seeks -- without it an index read
+//!   silently returns nothing where a full scan returns the row;
+//! * the v1 row format, `tidb_tablecodec::flatten_datum`/`unflatten_datum`
+//!   (Go `pkg/tablecodec/tablecodec.go`'s `flatten`/`unflatten`), which this
+//!   node does not write but keeps for parity.
+//!
+//! Each of the first two is pinned independently: neutering the row codec
+//! fails nine of the tests below, neutering the key codec fails exactly the
+//! two index ones, and neither probe disturbs the DATETIME assertions.
 //!
 //! # The captures
 //!
@@ -92,8 +107,8 @@
 //!
 //! NULL is NULL in every zone. The all-zero value never reaches storage at
 //! all under the default SQL mode (`tests_zero_date` owns that matrix), so
-//! there is nothing for the conversion to interact with -- and `flatten`
-//! /`unflatten` both guard on `IsZero` anyway, which the round trip of a
+//! there is nothing for the conversion to interact with -- and every codec
+//! above guards the zero value anyway, which the round trip of a
 //! zero-permitting mode pins here.
 //!
 //! `CURRENT_TIMESTAMP` as a `DEFAULT` is EVALUATED rather than stored
@@ -343,7 +358,7 @@ fn the_epoch_boundaries_render_in_the_reading_session() {
 }
 
 /// NULL is NULL in every zone, and a zero `TIMESTAMP` -- the one value
-/// `flatten`/`unflatten` guard with `IsZero` -- is the zero value in every
+/// every codec guards as the zero -- is the zero value in every
 /// zone rather than the zero value shifted by an offset.
 #[test]
 fn null_and_the_zero_timestamp_do_not_move() {
