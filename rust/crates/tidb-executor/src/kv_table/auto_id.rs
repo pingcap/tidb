@@ -115,6 +115,17 @@ impl fmt::Display for AutoIdStoreError {
 pub enum AutoIdError {
     /// Go `autoid.ErrAutoincReadFailed` (1467): the column's domain is full.
     Exhausted,
+    /// Go `types.ErrOverflow` (1690) raised by `setDatumAutoIDAndCast`: the
+    /// allocated id does not fit the COLUMN, which is narrower than the
+    /// 64-bit domain the allocator counts in. Distinct from
+    /// [`Exhausted`](AutoIdError::Exhausted): ids remain, this column just
+    /// cannot hold them.
+    OutOfRange {
+        /// The refused id, printed in the column's own domain.
+        value: String,
+        /// The column type's name, as Go `types.TypeStr` prints it.
+        type_name: String,
+    },
     /// The counter's home could not be reached.
     Store(AutoIdStoreError),
 }

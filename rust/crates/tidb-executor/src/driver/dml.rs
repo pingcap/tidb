@@ -454,6 +454,12 @@ pub(crate) fn run_insert_traced(
                 let allocated = kv.apply_auto_increment(&mut new_rows[*index]).map_err(
                     |error| match error {
                         AutoIdError::Exhausted => DriverError::AutoincReadFailed,
+                        // An id that does not fit the COLUMN is not a full
+                        // domain: Go casts the allocated id and reports the
+                        // cast's own 1690, which names the value and type.
+                        AutoIdError::OutOfRange { value, type_name } => {
+                            DriverError::ConstantOverflows { value, type_name }
+                        }
                         AutoIdError::Store(detail) => DriverError::AutoIdUnavailable(detail.0),
                     },
                 )?;

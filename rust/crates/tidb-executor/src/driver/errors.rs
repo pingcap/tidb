@@ -408,6 +408,14 @@ pub enum DriverError {
         /// The offending row's 1-based position.
         row: usize,
     },
+    /// Go `types.ErrOverflow` (1690) as `types.overflow` phrases it:
+    /// a value that does not fit the target integer type.
+    ConstantOverflows {
+        /// The rejected value, printed in the target's own domain.
+        value: String,
+        /// The type's name, as Go `types.TypeStr` prints it.
+        type_name: String,
+    },
     /// Go `table.ErrTruncatedWrongValueForField` (1366).
     IncorrectValue {
         /// The column type's name, as Go `types.TypeStr` prints it.
@@ -2110,6 +2118,12 @@ impl DriverError {
             1264,
             *b"22003",
             format!("Out of range value for column '{column}' at row {row}"),
+        ),
+        // Go `types.overflow`: "constant %v overflows %s".
+        DriverError::ConstantOverflows { value, type_name } => MysqlError::new(
+            1690,
+            *b"22003",
+            format!("constant {value} overflows {type_name}"),
         ),
         // Go: "Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d".
         DriverError::IncorrectValue {

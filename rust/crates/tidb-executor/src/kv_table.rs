@@ -89,7 +89,10 @@ use std::sync::Arc;
 use table_meta::NOT_NULL_FLAG;
 use table_scan::fill_handle_columns;
 use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
-use tidb_datatype::{Datum, FieldType, SessionTimeZone};
+use tidb_datatype::{
+    integer_signed_upper_bound, integer_unsigned_upper_bound, type_str, Datum, FieldType,
+    FieldTypeCode, SessionTimeZone,
+};
 
 use index_entries::{duplicate_value_text, index_entry_handle};
 use tidb_tablecodec::{
@@ -633,6 +636,7 @@ impl KvTable {
             return Ok(None);
         }
         let allocated = self.auto_id.alloc()?;
+        self.check_auto_increment_fits(offset, allocated)?;
         // The allocated id skips the per-column cast the written values went
         // through, so it is placed in the column's own domain here.
         row[offset] = if self.auto_id.unsigned {
@@ -641,6 +645,63 @@ impl KvTable {
             Datum::Int(allocated as i64)
         };
         Ok(Some(allocated as i64))
+    }
+
+    /// Go `setDatumAutoIDAndCast`: the id the allocator handed out is CAST to
+    /// the column's own type before it is written, so a column narrower than
+    /// `BIGINT` refuses the id that does not fit it.
+    ///
+    /// The allocator counts in the full 64-bit domain -- Go's `autoid`
+    /// package knows only signedness, never the column's width -- so a
+    /// `TINYINT AUTO_INCREMENT` sitting at `127` still gets `128` handed to
+    /// it, and it is this cast that turns that into `[types:1690]constant 128
+    /// overflows tinyint`. Without it the row is written with a value the
+    /// column cannot hold. Captured across every width and both
+    /// signednesses: the id AT the type's maximum is accepted (`127`, `255`,
+    /// `32767`, `65535`, `8388607`, `16777215`, `2147483647`, `4294967295`)
+    /// and the next one is refused.
+    ///
+    /// The bound is carried as a 64-bit PATTERN read in the column's domain,
+    /// which is what keeps `BIGINT UNSIGNED` correct: its maximum is above
+    /// `i64::MAX`, so a bound computed as a signed integer would truncate and
+    /// refuse ids the column holds perfectly well. At `BIGINT` width the
+    /// bound IS the domain end, so this check can never fire there and the
+    /// allocator's own exhaustion rule (`1467`, one id earlier) stays the
+    /// only limit -- the two rules do not overlap.
+    fn check_auto_increment_fits(&self, offset: usize, allocated: u64) -> Result<(), AutoIdError> {
+        let Some(column) = self.columns.get(offset) else {
+            return Ok(());
+        };
+        let code = column.field_type.code();
+        let unsigned = self.auto_id.unsigned;
+        // Go allows AUTO_INCREMENT on FLOAT/DOUBLE too, whose cast is not an
+        // integer range check; only the integer widths are bounded here.
+        let limit = match code {
+            FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong => {
+                if unsigned {
+                    integer_unsigned_upper_bound(code)
+                } else {
+                    integer_signed_upper_bound(code) as u64
+                }
+            }
+            _ => return Ok(()),
+        };
+        if exceeds(allocated, limit, unsigned) {
+            let value = if unsigned {
+                allocated.to_string()
+            } else {
+                (allocated as i64).to_string()
+            };
+            return Err(AutoIdError::OutOfRange {
+                value,
+                type_name: type_str(code).to_owned(),
+            });
+        }
+        Ok(())
     }
 
     /// Go `StmtCtx.InsertID`: the EXPLICIT non-zero value a row gave the
