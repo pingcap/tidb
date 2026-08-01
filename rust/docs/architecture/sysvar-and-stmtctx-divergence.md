@@ -24,7 +24,7 @@ from source alone.
 
 | | |
 | --- | --- |
-| Variables in Go's registry | 948 (516 `defaultSysVars` literal + 10 via `newExecConcurrencySysVar` + 422 `noopSysVars`) |
+| Variables in Go's registry | 948 (515 `defaultSysVars` written as literals + 10 built by `newExecConcurrencySysVar` + 423 `noopSysVars`) |
 | Variables in the Rust catalog | 948 |
 | Name-set difference | **0** — every name matches exactly, and every Rust name is lowercase |
 | Declarative fields compared (scope, type, default, read-only, min, max, allow-auto, auto-convert-negative-bool) across the 938 source-resolvable entries | **0 divergences** |
@@ -276,7 +276,7 @@ difference between them is exactly the "clamp vs refuse" distinction:
 #### F11. `SysVar.IsNoop` is not represented
 
 * Go: `pkg/executor/set.go:146` warns `ErrSettingNoopVariable` ("setting %s has
-  no effect in TiDB", `pkg/errno/errname.go:1060`) on a write to any of the 422
+  no effect in TiDB", `pkg/errno/errname.go:1060`) on a write to any of the 423
   noop variables when `tidb_enable_noop_variables` is OFF; `pkg/executor/show.go:963,988`
   **hides** them from `SHOW VARIABLES` under the same condition.
 * Rust: `SysVarDef` has no `is_noop` field, so neither behaviour can happen.
