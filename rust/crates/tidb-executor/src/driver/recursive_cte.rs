@@ -251,9 +251,16 @@ fn run_fixpoint(
 ///     -> 1|2; 2|2x; 3|2xx      (char(20) leaves room, so it grows)
 /// with recursive t (a,b) AS ( select 1, 2 UNION ALL
 ///   select a+1, 'zz' from t where a < 3 ) select * from t;
-///     -> 1|2; 2|0; 3|0         (a cast that cannot parse gives 0, silently:
-///                               `select cast('zz' as signed)` is 0 too)
+///     -> 1|2; 2|0; 3|0         (a cast that cannot parse gives 0, matching
+///                               `select cast('zz' as signed)`, which is 0)
 /// ```
+///
+/// The VALUE agrees with the explicit cast; the DIAGNOSTIC does not. An
+/// explicit `CAST(<string> AS SIGNED)` now leaves `1292 Truncated incorrect
+/// INTEGER value` (`tidb_expr::cast`), because Go raises it from
+/// `getValidIntPrefix`. This seed-schema coercion is a different function
+/// that never reaches that scan, so it still converts quietly -- a narrower,
+/// named gap than the one that used to be described here as the rule.
 ///
 /// A conversion this port refuses outright leaves the datum alone rather than
 /// inventing a value: that is the pre-existing behaviour, and it is a visible
