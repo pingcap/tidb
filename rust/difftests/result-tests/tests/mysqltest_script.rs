@@ -480,15 +480,18 @@ mod tests {
             ]
         );
         // A `#` inside a quoted string is data, not a comment.
-        assert_eq!(strip_trailing_comment("select 'a; # b';"), "select 'a; # b';");
+        assert_eq!(
+            strip_trailing_comment("select 'a; # b';"),
+            "select 'a; # b';"
+        );
         // A `#` before any terminator does not end a statement either.
         assert_eq!(strip_trailing_comment("select 1 # x"), "select 1 # x");
     }
 
     #[test]
     fn a_bare_terminator_produces_no_item_and_keeps_a_pending_directive() {
-        let items = parse_test("insert into t values (1);\n;\n--sorted_result\n;\nselect a;\n")
-            .unwrap();
+        let items =
+            parse_test("insert into t values (1);\n;\n--sorted_result\n;\nselect a;\n").unwrap();
         assert_eq!(items.len(), 2);
         assert!(matches!(&items[1], Item::Stmt(s) if s.sql == "select a;" && s.sorted));
         // And the recording, which writes nothing for either bare `;`, aligns.

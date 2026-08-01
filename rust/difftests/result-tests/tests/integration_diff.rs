@@ -1011,6 +1011,45 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
 /// cargo test -p difftest-result-tests --test integration_diff -- \
 ///   --ignored --nocapture survey_unaligned
 /// ```
+///
+/// # The inventory, and what is left in it
+///
+/// The first run of this tool found 15 unaligned topics in three groups. The
+/// three whose ECHO did not line up were the reader's own bug and are fixed
+/// (see `mysqltest_script::strip_trailing_comment` and the empty-statement
+/// arm); they were 2,286 statements that no number here had ever counted:
+///
+///   `planner/core/plan_cache`  1,354 statements, 1,128 matched, 117 diverged
+///   `executor/issues`            474 statements,   346 matched,  25 diverged
+///   `executor/autoid`            458 statements,   356 matched,  68 diverged
+///
+/// They are ALIGNED, not onboarded: onboarding is what puts a topic on the
+/// gate, and each would carry a divergence list that has to be classified
+/// first. They are now visible to [`survey_unonboarded_topics`] like any other
+/// candidate, which is the point -- `plan_cache` at 1,128 matched is among the
+/// largest candidates in the suite.
+///
+/// The remaining 12 are NOT the reader's bug, and each is named here so no
+/// later unit has to rediscover that:
+///
+///   8 topics whose `r/*.result` is not valid UTF-8, because the recording
+///     holds deliberately invalid byte sequences -- these are the charset
+///     topics (`executor/charset`, `executor/insert`,
+///     `expression/charset_and_collation`, `new_character_set`,
+///     `new_character_set_builtin`, `planner/core/integration`,
+///     `planner/core/integration_partition`,
+///     `planner/core/tests/prepare/issue`). Reading them means carrying the
+///     recording as BYTES rather than as `String`, which is a real change to
+///     every comparison here, not a parser fix.
+///   4 topics with no `r/*.result` at all: `collation_agg_func`,
+///     `collation_check_use_collation`, `collation_misc`,
+///     `collation_pointget`. Each has TWO recordings instead --
+///     `r/<topic>_disabled.result` and `r/<topic>_enabled.result`, one per
+///     `new_collations_enabled_on_first_bootstrap` setting -- so the topic is
+///     not a single `t`/`r` pair at all. Aligning them means choosing which
+///     recording the replay's own collation configuration corresponds to,
+///     which is a claim about this engine's collation support, not a parser
+///     fix.
 #[test]
 #[ignore = "inventory tool: lists every topic the reader cannot align, with its cause"]
 fn survey_unaligned_topics() {
