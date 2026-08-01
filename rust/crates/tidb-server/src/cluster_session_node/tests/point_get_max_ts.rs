@@ -31,6 +31,7 @@
 
 use super::super::*;
 use super::node_fixture::*;
+use crate::resultset_source::ResultSetSource;
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
 
@@ -82,6 +83,44 @@ fn autocommit_point_get_on_the_primary_key_takes_no_timestamp() {
         answer = rows(&mut session, "SELECT v FROM t WHERE id = 1");
     });
     assert_eq!(answer, vec![vec![Datum::Int(10)]]);
+    assert_eq!(opens, FREE);
+    assert_eq!(node.live.load(Ordering::Acquire), 0);
+}
+
+/// The same statement through PREPARE + EXECUTE with a `?` for the handle,
+/// which is the shape a benchmark driver actually sends.
+///
+/// A `?` is not a value a point get can be planned from, so the shape is
+/// decided from the text the execute-time values were bound INTO -- the same
+/// text the statement then runs. Without this the whole saving would apply
+/// only to the text protocol, which is the protocol nothing measures.
+#[test]
+fn a_prepared_point_get_takes_no_timestamp_either() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, node) = open_session();
+    seed(&mut session);
+    let statement = session
+        .prepare_general("SELECT v FROM t WHERE id = ?")
+        .expect("prepare");
+
+    let mut answer = Vec::new();
+    let opens = opens_of(&node, || {
+        let outcome = session
+            .execute_general(&statement, &[PreparedValue::SignedLongLong(2)])
+            .expect("execute");
+        let GeneralExecuteOutcome::Rows(mut result) = outcome else {
+            panic!("a query must answer with rows");
+        };
+        let source = result.source();
+        while let Ok(batch) = source.next_batch(8) {
+            if batch.is_empty() {
+                break;
+            }
+            answer.extend(batch);
+        }
+    });
+    assert_eq!(answer, vec![vec![Datum::Int(20)]]);
     assert_eq!(opens, FREE);
     assert_eq!(node.live.load(Ordering::Acquire), 0);
 }
