@@ -291,6 +291,42 @@ pub enum DriverError {
     /// index name: a unique index that does not include every partitioning
     /// column, without `GLOBAL`.
     PartitionGlobalIndexNeeded(String),
+    /// Go `ast.ErrPartitionWrongValues` (1480), whose argument names the
+    /// method that OWNS the value clause the definition used: `VALUES LESS
+    /// THAN` outside RANGE, or `VALUES IN` outside LIST.
+    PartitionWrongValues {
+        /// The owning method (`RANGE` or `LIST`).
+        method: &'static str,
+        /// The clause spelling (`VALUES LESS THAN` or `VALUES IN`).
+        clause: &'static str,
+    },
+    /// Go `ast.ErrPartitionMaxvalue` (1481): a `MAXVALUE` bound on any
+    /// partition but the last.
+    PartitionMaxValueNotLast,
+    /// Go `dbterror.ErrRangeNotIncreasing` (1493): `VALUES LESS THAN` bounds
+    /// that do not strictly increase.
+    PartitionRangeNotIncreasing,
+    /// Go `ast.ErrPartitionsMustBeDefined` (1492), carrying the method: a
+    /// RANGE or LIST table with no partition definitions at all.
+    PartitionsMustBeDefined(&'static str),
+    /// Go `dbterror.ErrPartitionConstDomain` (1563): a bound outside the
+    /// partition function's domain, which is a negative bound under an
+    /// unsigned expression.
+    PartitionConstDomain,
+    /// Go `dbterror.ErrValuesIsNotIntType` (1697), carrying the partition
+    /// name: a `VALUES` bound that is not an integer.
+    PartitionValuesNotInt(String),
+    /// Go `table.ErrNoPartitionForGivenValue` (1526), carrying the value as
+    /// Go renders it: a row no partition accepts.
+    NoPartitionForValue(String),
+    /// Go `table.ErrUnknownPartition` (1735), carrying the name and the
+    /// table: `PARTITION (p)` naming a partition the table does not have.
+    UnknownPartition {
+        /// The name as written.
+        partition: String,
+        /// The table it was written against.
+        table: String,
+    },
     /// Go `dbterror.ErrUnsupportedOnGeneratedColumn` (3106), whose argument
     /// names what was attempted.
     UnsupportedOnGeneratedColumn(String),
@@ -1871,6 +1907,46 @@ impl DriverError {
                 "Global Index is needed for index '{index}', since the unique index is not \
                  including all partitioning columns, and GLOBAL is not given as IndexOption"
             ),
+        ),
+        DriverError::PartitionWrongValues { method, clause } => MysqlError::new(
+            1480,
+            *b"HY000",
+            format!("Only {method} PARTITIONING can use {clause} in partition definition"),
+        ),
+        DriverError::PartitionMaxValueNotLast => MysqlError::new(
+            1481,
+            *b"HY000",
+            "MAXVALUE can only be used in last partition definition".to_owned(),
+        ),
+        DriverError::PartitionsMustBeDefined(method) => MysqlError::new(
+            1492,
+            *b"HY000",
+            format!("For {method} partitions each partition must be defined"),
+        ),
+        DriverError::PartitionRangeNotIncreasing => MysqlError::new(
+            1493,
+            *b"HY000",
+            "VALUES LESS THAN value must be strictly increasing for each partition".to_owned(),
+        ),
+        DriverError::NoPartitionForValue(value) => MysqlError::new(
+            1526,
+            *b"HY000",
+            format!("Table has no partition for value {value}"),
+        ),
+        DriverError::PartitionConstDomain => MysqlError::new(
+            1563,
+            *b"HY000",
+            "Partition constant is out of partition function domain".to_owned(),
+        ),
+        DriverError::UnknownPartition { partition, table } => MysqlError::new(
+            1735,
+            *b"HY000",
+            format!("Unknown partition '{partition}' in table '{table}'"),
+        ),
+        DriverError::PartitionValuesNotInt(partition) => MysqlError::new(
+            1697,
+            *b"HY000",
+            format!("VALUES value for partition '{partition}' must have type INT"),
         ),
         // The expression-index refusals, each errno and wording captured from
         // `gorun`. See `crate::expression_index`'s module doc for the script.

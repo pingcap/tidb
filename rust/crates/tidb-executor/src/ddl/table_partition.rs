@@ -24,13 +24,17 @@
 //!
 //! # What is accepted
 //!
-//! HASH only. `PARTITION BY HASH (expr) PARTITIONS n` is routed by
-//! [`crate::partition_routing`], stored as n physical key prefixes, and
-//! printed back by `SHOW CREATE TABLE`. RANGE, LIST and KEY are REFUSED --
-//! this tier can neither route nor prune them, and accepting the clause
-//! would build an ordinary unpartitioned table that answers every
-//! partition-aware query wrongly while reporting success. That refusal is
-//! the same one HASH carried until this unit, kept for the methods still
+//! HASH and RANGE. `PARTITION BY HASH (expr) PARTITIONS n` and
+//! `PARTITION BY RANGE (expr) (PARTITION p VALUES LESS THAN (v), ...)` are
+//! routed by [`crate::partition_routing`], stored as one physical key prefix
+//! per partition, pruned by [`crate::partition_pruning`], and printed back by
+//! `SHOW CREATE TABLE`.
+//!
+//! LIST, KEY, `RANGE COLUMNS` and `LIST COLUMNS` are REFUSED -- this tier can
+//! neither route nor prune them, and accepting the clause would build an
+//! ordinary unpartitioned table that answers every partition-aware query
+//! wrongly while reporting success. That refusal is the same one HASH and
+//! RANGE carried before their routing landed, kept for the methods still
 //! missing rather than deleted wholesale.
 //!
 //! # Why "accept and ignore" is never the answer
@@ -101,7 +105,7 @@ pub fn build_table_partitioning(
         return Ok(None);
     };
     let method = &partitioning.method;
-    if method.kind != PartitionType::Hash {
+    if !matches!(method.kind, PartitionType::Hash | PartitionType::Range) {
         // The method name is Go's own spelling, so the refusal reads like the
         // clause the user wrote rather than like a Rust variant.
         let name = method.kind.sql();
@@ -113,44 +117,105 @@ pub fn build_table_partitioning(
         )));
     }
     // Go `buildTablePartitionInfo`: subpartitioning is only legal under
-    // RANGE/LIST, so HASH with a `SUBPARTITION BY` is 1500.
+    // RANGE/LIST, and Go WARNS rather than errors there. This tier routes no
+    // subpartition either way, so it refuses both: 1500 under HASH, which is
+    // Go's own error, and a loud refusal under RANGE, where accepting the
+    // clause and ignoring the subpartitioning is the discard this module
+    // exists to prevent.
     if partitioning.subpartition.is_some() {
-        return Err(DriverError::PartitionSubpartition);
+        if method.kind == PartitionType::Hash {
+            return Err(DriverError::PartitionSubpartition);
+        }
+        return Err(DriverError::UnsupportedKind(
+            "CREATE TABLE ... PARTITION BY RANGE ... SUBPARTITION BY is not supported by this \
+             node"
+                .to_owned(),
+        ));
     }
 
     let Some(expr) = &method.expr else {
-        // `PARTITION BY HASH` with a column list rather than an expression is
-        // Go's KEY-shaped path, which this tier does not route.
-        return Err(DriverError::UnsupportedKind(
-            "CREATE TABLE ... PARTITION BY HASH COLUMNS is not supported by this node".to_owned(),
-        ));
+        // A column list rather than an expression is Go's KEY-shaped path
+        // (`HASH COLUMNS`) or its `RANGE COLUMNS`/`LIST COLUMNS` tuple
+        // comparison, neither of which this tier routes.
+        let name = method.kind.sql();
+        return Err(DriverError::UnsupportedKind(format!(
+            "CREATE TABLE ... PARTITION BY {name} COLUMNS is not supported by this node"
+        )));
     };
+    // `RANGE ... INTERVAL (...)` GENERATES definitions from a step, which
+    // this tier does not expand; accepting it would build a table with the
+    // wrong partitions rather than none.
+    if method.interval.is_some() {
+        return Err(DriverError::UnsupportedKind(
+            "CREATE TABLE ... PARTITION BY RANGE ... INTERVAL is not supported by this node"
+                .to_owned(),
+        ));
+    }
 
     let (expr_text, built, dependencies) = build_partition_expression(expr, names, types)?;
     // Go `checkPartitionFuncType`: the partition expression must evaluate to
     // an integer.
     check_partition_expression_type(expr, names, types)?;
 
-    let definitions = build_hash_partition_definitions(create, method.count, allocate_id)?;
+    let (kind, definitions) = match method.kind {
+        PartitionType::Range => {
+            let (less_than, unsigned) = super::table_partition_range::build_range_bounds(
+                expr,
+                &partitioning.definitions,
+                names,
+                types,
+                &dependencies,
+            )?;
+            let definitions = build_named_partition_definitions(create, allocate_id);
+            (
+                PartitionKind::Range {
+                    less_than,
+                    unsigned,
+                },
+                definitions,
+            )
+        }
+        _ => (
+            PartitionKind::Hash,
+            build_hash_partition_definitions(create, method.count, allocate_id)?,
+        ),
+    };
     check_partition_name_unique(&definitions)?;
     if definitions.len() as u64 > MAX_PARTITIONS {
         return Err(DriverError::PartitionTooMany);
     }
     // Go `checkNoHashPartitions`, reached through `checkPartitionByHash`
     // AFTER the definitions are built, which is why `PARTITIONS 0` is 1504
-    // rather than a name or type error.
+    // rather than a name or type error. RANGE reaches 1492 earlier instead.
     if definitions.is_empty() {
         return Err(DriverError::PartitionNoParts("partitions"));
     }
     check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependencies)?;
 
     Ok(Some(PartitionSpec {
-        kind: PartitionKind::Hash,
+        kind,
         expr_text,
         expr: built,
         dependencies,
         definitions,
     }))
+}
+
+/// The partitions of a method whose definitions are all WRITTEN, which is
+/// RANGE (and would be LIST): one per source definition, in source order.
+fn build_named_partition_definitions(
+    create: &CreateTableStmt,
+    allocate_id: &mut dyn FnMut() -> i64,
+) -> Vec<PartitionDef> {
+    create.partitioning.as_ref().map_or_else(Vec::new, |p| {
+        p.definitions
+            .iter()
+            .map(|definition| PartitionDef {
+                id: allocate_id(),
+                name: definition.name.clone(),
+            })
+            .collect()
+    })
 }
 
 /// The warning a `LINEAR HASH`/`LINEAR KEY` clause earns, or `None`.

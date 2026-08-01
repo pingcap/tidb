@@ -316,19 +316,43 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
 /// paren's `COLLATE=...`, not the column list. For HASH, Go prints the
 /// partition COUNT rather than the definitions whenever every partition still
 /// carries its default name `p{i}` and no comment or placement policy, which
-/// is the only shape this tier can build; the definition-list form belongs to
-/// the methods it refuses. Captured verbatim:
-/// ``\nPARTITION BY HASH (`a`) PARTITIONS 4``.
+/// is the only HASH shape this tier can build. RANGE always prints the
+/// DEFINITION LIST instead, because its bounds ARE the partitioning. Both
+/// captured verbatim:
+///
+/// ```text
+/// PARTITION BY HASH (`a`) PARTITIONS 4
+/// ```
+///
+/// ```text
+/// PARTITION BY RANGE (`a`)
+/// (PARTITION `p0` VALUES LESS THAN (10),
+///  PARTITION `p1` VALUES LESS THAN (20),
+///  PARTITION `pm` VALUES LESS THAN (MAXVALUE))
+/// ```
 fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
     let Some(partition) = table.partition() else {
         return String::new();
     };
-    format!(
-        "\nPARTITION BY {} ({}) PARTITIONS {}",
+    let head = format!(
+        "\nPARTITION BY {} ({})",
         partition.kind.sql(),
-        partition.expr_text,
-        partition.num()
-    )
+        partition.expr_text
+    );
+    match &partition.kind {
+        tidb_executor::PartitionKind::Hash => format!("{head} PARTITIONS {}", partition.num()),
+        tidb_executor::PartitionKind::Range {
+            less_than,
+            unsigned,
+        } => format!(
+            "{head}{}",
+            tidb_executor::ddl::table_partition_range::range_definitions_text(
+                &partition.definitions,
+                less_than,
+                *unsigned
+            )
+        ),
+    }
 }
 
 /// The `ON DELETE`/`ON UPDATE` spelling `SHOW CREATE TABLE` prints, or

@@ -1,0 +1,311 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! `PARTITION BY RANGE (expr)`: the `VALUES LESS THAN` bounds, folded and
+//! checked.
+//!
+//! Mirrors Go `pkg/ddl/partition.go`'s `buildRangePartitionDefinitions`
+//! together with `checkPartitionValuesIsInt` and the `checkRangePartitionValue`
+//! that `checkPartitionDefinitionConstraints` runs after it. The result is the
+//! bound list [`crate::partition_routing::PartitionKind::Range`] carries, in
+//! definition order.
+//!
+//! # A bound is a VALUE, not an expression
+//!
+//! Go EVALUATES each bound at `CREATE` (`expression.EvalSimpleAst`) and
+//! stores the folded integer, which `SHOW CREATE TABLE` then prints back.
+//! Captured: `VALUES LESS THAN (5+20)` is stored and printed as `25`. So a
+//! bound cannot depend on a row, and the routing compares integers.
+//!
+//! # RANGE COLUMNS is a different method and is NOT here
+//!
+//! `PARTITION BY RANGE COLUMNS (a, b)` compares TUPLES with each column's own
+//! type and collation (Go's `locateRangeColumnPartition` over
+//! `UpperBounds`), not a folded integer. It is refused by
+//! [`super::table_partition`] rather than approximated here.
+
+use tidb_ast::{Expr, PartitionDefinitionClause, PartitionValue};
+use tidb_datatype::{Datum, FieldType};
+
+use crate::partition_routing::RangeBound;
+use crate::DriverError;
+
+/// The exclusive upper bounds of a RANGE table's partitions, in definition
+/// order, and whether they compare as unsigned.
+///
+/// `names`/`types` are the table's own columns and `dependencies` the offsets
+/// the partition expression reads, which decide the comparison's signedness
+/// (Go `isPartExprUnsigned`).
+///
+/// # Errors
+///
+/// The captured `CREATE` rejections for a RANGE table: 1480 (a `VALUES IN`
+/// clause under RANGE), 1481 (`MAXVALUE` before the last partition), 1492 (no
+/// definitions at all), 1493 (bounds that do not strictly increase), 1563 (a
+/// negative bound under an unsigned expression), 1659 (a `NULL` bound) and
+/// 1697 (a bound that is not an integer).
+pub(super) fn build_range_bounds(
+    partition_expr: &Expr,
+    definitions: &[tidb_ast::PartitionDefinition],
+    names: &[String],
+    types: &[FieldType],
+    dependencies: &[usize],
+) -> Result<(Vec<RangeBound>, bool), DriverError> {
+    // Go `buildPartitionDefinitionsInfo`: a RANGE table with no definitions
+    // is 1492, checked before any bound is read.
+    if definitions.is_empty() {
+        return Err(DriverError::PartitionsMustBeDefined("RANGE"));
+    }
+    let unsigned = range_expression_is_unsigned(partition_expr, names, types, dependencies)?;
+
+    let mut bounds = Vec::with_capacity(definitions.len());
+    for (index, definition) in definitions.iter().enumerate() {
+        let values = match &definition.clause {
+            PartitionDefinitionClause::LessThan(values) => values,
+            // Go `PartitionDefinitionClause.Validate`: only RANGE takes
+            // `VALUES LESS THAN`, and only LIST takes `VALUES IN`, so the
+            // wrong clause under RANGE names LIST as the owner.
+            PartitionDefinitionClause::In(_) => {
+                return Err(DriverError::PartitionWrongValues {
+                    method: "LIST",
+                    clause: "VALUES IN",
+                })
+            }
+            _ => return Err(DriverError::PartitionsMustBeDefined("RANGE")),
+        };
+        // RANGE COLUMNS is the only form with more than one bound per
+        // partition, and it is refused before this point.
+        let [value] = values.as_slice() else {
+            return Err(DriverError::PartitionsMustBeDefined("RANGE"));
+        };
+        let bound = match value {
+            PartitionValue::MaxValue => {
+                // Go `checkRangePartitionValue` strips a TRAILING `MAXVALUE`
+                // and then reports 1481 for any other one it meets.
+                if index + 1 != definitions.len() {
+                    return Err(DriverError::PartitionMaxValueNotLast);
+                }
+                RangeBound::MaxValue
+            }
+            PartitionValue::Expr(expr) => {
+                RangeBound::Value(fold_range_bound(expr, &definition.name, unsigned)?)
+            }
+            PartitionValue::Default | PartitionValue::Tuple(_) => {
+                return Err(DriverError::PartitionValuesNotInt(definition.name.clone()))
+            }
+        };
+        bounds.push(bound);
+    }
+    check_strictly_increasing(&bounds, unsigned)?;
+    Ok((bounds, unsigned))
+}
+
+/// Go `checkPartitionValuesIsInt` plus the `EvalSimpleAst` fold: one bound as
+/// the integer Go stores.
+///
+/// The two rejections are captured verbatim: a non-integer bound (`'abc'`,
+/// `1.5`) is 1697 naming the PARTITION, while a `NULL` bound is 1659 naming
+/// the field as the literal text `NULL` -- which reads oddly and is exactly
+/// what real TiDB prints.
+fn fold_range_bound(expr: &Expr, partition: &str, unsigned: bool) -> Result<i64, DriverError> {
+    let rewritten =
+        tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
+            .map_err(|_| DriverError::PartitionValuesNotInt(partition.to_owned()))?;
+    let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    dual.set_num_virtual_rows(1);
+    let value = rewritten
+        .eval(&tidb_expr::NoColumns, dual.get_row(0))
+        .map_err(|_| DriverError::PartitionValuesNotInt(partition.to_owned()))?;
+    match value {
+        Datum::Int(value) => {
+            // Go `checkPartitionValuesIsInt`: a NEGATIVE bound under an
+            // unsigned partition expression is out of the function's domain.
+            if unsigned && value < 0 {
+                return Err(DriverError::PartitionConstDomain);
+            }
+            Ok(value)
+        }
+        Datum::UInt(value) => Ok(value as i64),
+        Datum::Null => Err(DriverError::PartitionFieldTypeNotAllowed("NULL".to_owned())),
+        _ => Err(DriverError::PartitionValuesNotInt(partition.to_owned())),
+    }
+}
+
+/// Go `checkRangePartitionValue`: the bounds must strictly increase, with a
+/// trailing `MAXVALUE` exempt because it is above all of them by definition.
+fn check_strictly_increasing(bounds: &[RangeBound], unsigned: bool) -> Result<(), DriverError> {
+    let mut previous: Option<i64> = None;
+    for bound in bounds {
+        let RangeBound::Value(value) = *bound else {
+            continue;
+        };
+        if let Some(previous) = previous {
+            let increasing = if unsigned {
+                (value as u64) > (previous as u64)
+            } else {
+                value > previous
+            };
+            if !increasing {
+                return Err(DriverError::PartitionRangeNotIncreasing);
+            }
+        }
+        previous = Some(value);
+    }
+    Ok(())
+}
+
+/// Go `isPartExprUnsigned`: whether the partition expression's own result
+/// type is unsigned, which decides how every bound and every routed value
+/// compares.
+///
+/// Go asks the BUILT expression for its flag. This tier answers it for the
+/// one shape whose answer is unambiguous -- a bare column, which is unsigned
+/// exactly when the column is -- and REFUSES an arithmetic expression over an
+/// unsigned column rather than guessing which of MySQL's promotion rules
+/// applies. Guessing would put a row in the wrong partition silently, which
+/// is the failure this whole module exists to prevent.
+fn range_expression_is_unsigned(
+    expr: &Expr,
+    names: &[String],
+    types: &[FieldType],
+    dependencies: &[usize],
+) -> Result<bool, DriverError> {
+    let reads_unsigned = dependencies
+        .iter()
+        .any(|offset| types[*offset].is_unsigned());
+    if !reads_unsigned {
+        return Ok(false);
+    }
+    if let Expr::Column(path) = unwrap_parentheses(expr) {
+        if let Some(offset) = path.last().and_then(|name| {
+            names
+                .iter()
+                .position(|candidate| candidate.eq_ignore_ascii_case(name))
+        }) {
+            return Ok(types[offset].is_unsigned());
+        }
+    }
+    Err(DriverError::UnsupportedKind(
+        "PARTITION BY RANGE over an EXPRESSION of an unsigned column is not supported by this \
+         node: whether the bounds compare as signed or unsigned would decide which partition a \
+         row lands in, and this node will not guess it"
+            .to_owned(),
+    ))
+}
+
+/// The parenthesised expression's subject, since `(a)` partitions on `a`.
+fn unwrap_parentheses(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(inner) => unwrap_parentheses(inner),
+        other => other,
+    }
+}
+
+/// The `SHOW CREATE TABLE` tail Go prints for a RANGE table (Go
+/// `ddl.AppendPartitionInfo`'s definition-list form).
+///
+/// Captured verbatim, including the leading newline, the two-space
+/// continuation indent of one leading space, and `MAXVALUE` inside its own
+/// parentheses:
+///
+/// ```text
+/// PARTITION BY RANGE (`a`)
+/// (PARTITION `p0` VALUES LESS THAN (10),
+///  PARTITION `p1` VALUES LESS THAN (20),
+///  PARTITION `pm` VALUES LESS THAN (MAXVALUE))
+/// ```
+#[must_use]
+pub fn range_definitions_text(
+    definitions: &[crate::partition_routing::PartitionDef],
+    less_than: &[RangeBound],
+    unsigned: bool,
+) -> String {
+    let mut out = String::from("\n(");
+    for (index, definition) in definitions.iter().enumerate() {
+        if index > 0 {
+            out.push_str(",\n ");
+        }
+        let bound = match less_than.get(index) {
+            Some(RangeBound::MaxValue) | None => "MAXVALUE".to_owned(),
+            Some(RangeBound::Value(value)) if unsigned => format!("{}", *value as u64),
+            Some(RangeBound::Value(value)) => format!("{value}"),
+        };
+        out.push_str(&format!(
+            "PARTITION `{}` VALUES LESS THAN ({bound})",
+            definition.name
+        ));
+    }
+    out.push(')');
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The captured `SHOW CREATE TABLE` tail, character for character.
+    #[test]
+    fn the_definition_list_matches_gos_own_spelling() {
+        let definitions = ["p0", "p1", "pm"].map(|name| crate::partition_routing::PartitionDef {
+            id: 0,
+            name: name.to_owned(),
+        });
+        assert_eq!(
+            range_definitions_text(
+                &definitions,
+                &[
+                    RangeBound::Value(10),
+                    RangeBound::Value(20),
+                    RangeBound::MaxValue
+                ],
+                false
+            ),
+            "\n(PARTITION `p0` VALUES LESS THAN (10),\n PARTITION `p1` VALUES LESS THAN (20),\n \
+             PARTITION `pm` VALUES LESS THAN (MAXVALUE))"
+        );
+    }
+
+    /// A trailing `MAXVALUE` is exempt from the increasing rule; one before
+    /// the end never reaches it, because 1481 fires first.
+    #[test]
+    fn only_strictly_increasing_bounds_are_accepted() {
+        assert!(check_strictly_increasing(
+            &[
+                RangeBound::Value(10),
+                RangeBound::Value(20),
+                RangeBound::MaxValue
+            ],
+            false
+        )
+        .is_ok());
+        assert!(
+            check_strictly_increasing(&[RangeBound::Value(10), RangeBound::Value(5)], false)
+                .is_err()
+        );
+        assert!(
+            check_strictly_increasing(&[RangeBound::Value(10), RangeBound::Value(10)], false)
+                .is_err()
+        );
+        // Read as unsigned, the pattern -1 is ABOVE 10 and the same pair is
+        // increasing rather than not.
+        assert!(
+            check_strictly_increasing(&[RangeBound::Value(10), RangeBound::Value(-1)], true)
+                .is_ok()
+        );
+        assert!(
+            check_strictly_increasing(&[RangeBound::Value(10), RangeBound::Value(-1)], false)
+                .is_err()
+        );
+    }
+}

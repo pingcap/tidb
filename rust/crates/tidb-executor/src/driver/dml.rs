@@ -766,6 +766,11 @@ pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverErro
         crate::kv_table::KvTableError::Generation {
             eval: Some(eval), ..
         } => DriverError::Exec(crate::ExecError::Eval(eval)),
+        // A RANGE table with no `MAXVALUE` partition rejects the row rather
+        // than storing it somewhere; 1526 is the code an application sees.
+        crate::kv_table::KvTableError::NoPartitionForValue(value) => {
+            DriverError::NoPartitionForValue(value)
+        }
         other => DriverError::Parse(format!("row encode failed: {other:?}")),
     }
 }

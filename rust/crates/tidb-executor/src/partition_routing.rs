@@ -33,29 +33,59 @@
 //!
 //! # NOT MODELLED here (each refused at DDL, see [`crate::ddl::table_partition`])
 //!
-//! RANGE, LIST and KEY partitioning, subpartitioning, and every `ALTER TABLE
-//! ... PARTITION` action. Only HASH is routed, so only HASH is accepted.
+//! LIST and KEY partitioning, RANGE COLUMNS, subpartitioning, and every
+//! `ALTER TABLE ... PARTITION` action. HASH and RANGE are routed, so those
+//! two are accepted and the rest are refused.
 
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 
+/// One partition's exclusive upper bound under RANGE: Go
+/// `model.PartitionDefinition.LessThan[0]`, already constant-folded to the
+/// integer Go stores.
+///
+/// Captured: `VALUES LESS THAN (5+20)` is stored -- and printed back by
+/// `SHOW CREATE TABLE` -- as `25`, so the bound is a VALUE here and not an
+/// expression.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RangeBound {
+    /// A folded integer bound, read as a 64-bit pattern; whether it compares
+    /// as signed or unsigned is [`PartitionKind::Range`]'s `unsigned`.
+    Value(i64),
+    /// `MAXVALUE`, which only the LAST partition may carry (1481).
+    MaxValue,
+}
+
 /// The partition method a table was created with.
 ///
-/// Go's `ast.PartitionType` has six values; this tier stores the one it can
+/// Go's `ast.PartitionType` has six values; this tier stores the two it can
 /// route. The rest never reach a `PartitionSpec` because DDL refuses them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PartitionKind {
     /// Go `ast.PartitionTypeHash`: `PARTITION BY HASH (expr) PARTITIONS n`.
     Hash,
+    /// Go `ast.PartitionTypeRange` without `COLUMNS`:
+    /// `PARTITION BY RANGE (expr) (PARTITION p VALUES LESS THAN (v), ...)`.
+    Range {
+        /// Go `ForRangePruning.LessThan`/`MaxValue`: each partition's
+        /// EXCLUSIVE upper bound, in definition order and strictly
+        /// increasing (1493). Always the same length as
+        /// [`PartitionSpec::definitions`].
+        less_than: Vec<RangeBound>,
+        /// Whether the partition expression's type is unsigned, which is
+        /// Go's `isPartExprUnsigned` and decides how a bound compares.
+        unsigned: bool,
+    },
 }
 
 impl PartitionKind {
     /// The method's name as `SHOW CREATE TABLE` prints it (Go
     /// `PartitionType.String()`).
     #[must_use]
-    pub const fn sql(self) -> &'static str {
+    pub const fn sql(&self) -> &'static str {
         match self {
             PartitionKind::Hash => "HASH",
+            PartitionKind::Range { .. } => "RANGE",
         }
     }
 }
@@ -157,13 +187,67 @@ impl PartitionSpec {
         types: &[FieldType],
         ctx: &impl tidb_expr::Columns,
     ) -> Result<usize, RoutingError> {
-        match self.kind {
-            PartitionKind::Hash => {
-                let value = crate::generated_column::eval_over_row(&self.expr, types, row, ctx)
-                    .map_err(RoutingError::Eval)?;
-                Ok(hash_partition_index(&value, self.num()))
-            }
+        let value = crate::generated_column::eval_over_row(&self.expr, types, row, ctx)
+            .map_err(RoutingError::Eval)?;
+        match &self.kind {
+            PartitionKind::Hash => Ok(hash_partition_index(&value, self.num())),
+            PartitionKind::Range {
+                less_than,
+                unsigned,
+            } => range_partition_index(&value, less_than, *unsigned),
         }
+    }
+}
+
+/// Go `locateRangePartition`: the ordinal a range-partitioned row lands in.
+///
+/// The rule is `sort.Search` for the FIRST partition whose exclusive upper
+/// bound is strictly greater than the value, with two edges Go states
+/// explicitly and this unit captured:
+///
+/// * NULL goes to the LOWEST partition -- `pos = 0` unconditionally, even
+///   when that partition's bound would exclude any real value. Captured on a
+///   table with no `MAXVALUE` at all: `INSERT ... VALUES (NULL, 1)` succeeds
+///   and `PARTITION (p0)` returns the row.
+/// * a value past the last bound has NO partition, which is
+///   `ErrNoPartitionForGivenValue` (1526) rather than a silent drop.
+///   Captured: `25` into bounds `10, 20` is rejected.
+///
+/// `MAXVALUE` is greater than every value, so it always terminates the
+/// search; 1481 keeps it in the last position, which is why a bound BELOW it
+/// is never skipped.
+fn range_partition_index(
+    value: &Datum,
+    less_than: &[RangeBound],
+    unsigned: bool,
+) -> Result<usize, RoutingError> {
+    let bits = match value {
+        Datum::Int(value) => *value,
+        Datum::UInt(value) => *value as i64,
+        // NULL -- and anything else the expression produced, which DDL's
+        // integer rule (1659/1697) leaves as NULL only -- takes the lowest
+        // partition.
+        _ => return Ok(0),
+    };
+    let found = less_than
+        .iter()
+        .position(|bound| range_bound_exceeds(*bound, bits, unsigned));
+    found.ok_or_else(|| {
+        RoutingError::NoPartitionForValue(if unsigned {
+            format!("{}", bits as u64)
+        } else {
+            format!("{bits}")
+        })
+    })
+}
+
+/// Whether a partition's exclusive upper bound admits `value`, which is Go's
+/// `ranges.Compare(i, ret, unsigned) > 0`.
+fn range_bound_exceeds(bound: RangeBound, value: i64, unsigned: bool) -> bool {
+    match bound {
+        RangeBound::MaxValue => true,
+        RangeBound::Value(bound) if unsigned => (bound as u64) > (value as u64),
+        RangeBound::Value(bound) => bound > value,
     }
 }
 
@@ -229,6 +313,79 @@ mod tests {
         assert_eq!(
             hash_partition_index(&Datum::UInt(9_223_372_036_854_775_809), 4),
             3
+        );
+    }
+
+    /// Every RANGE routing this unit captured from real TiDB, as the rule.
+    ///
+    /// The capture is `partition by range(a) (p0 < 10, p1 < 20, pm <
+    /// MAXVALUE)` over `-1, 5, 9, 10, 19, 20, 100, NULL`, read back one
+    /// partition at a time with `SELECT ... PARTITION (p)`. `9` and `10`
+    /// straddle the first boundary, which is the off-by-one this asserts.
+    #[test]
+    fn range_routing_matches_the_captured_go_answers() {
+        let bounds = [
+            RangeBound::Value(10),
+            RangeBound::Value(20),
+            RangeBound::MaxValue,
+        ];
+        for (value, expected) in [
+            (-1_i64, 0_usize),
+            (5, 0),
+            (9, 0),
+            (10, 1),
+            (19, 1),
+            (20, 2),
+            (100, 2),
+            (i64::MAX, 2),
+        ] {
+            assert_eq!(
+                range_partition_index(&Datum::Int(value), &bounds, false).expect("routed"),
+                expected,
+                "range({value}) over 10/20/MAXVALUE"
+            );
+        }
+        assert_eq!(
+            range_partition_index(&Datum::Null, &bounds, false).expect("routed"),
+            0,
+            "NULL takes the lowest partition"
+        );
+    }
+
+    /// Without `MAXVALUE` a value past the last bound has NO partition, and
+    /// NULL still lands in the lowest one. Both captured: `INSERT (25)` is
+    /// rejected while `INSERT (NULL)` succeeds and reads back from `p0`.
+    #[test]
+    fn a_range_table_without_maxvalue_refuses_the_value_it_cannot_place() {
+        let bounds = [RangeBound::Value(10), RangeBound::Value(20)];
+        assert!(matches!(
+            range_partition_index(&Datum::Int(25), &bounds, false),
+            Err(RoutingError::NoPartitionForValue(ref value)) if value == "25"
+        ));
+        assert_eq!(
+            range_partition_index(&Datum::Null, &bounds, false).expect("routed"),
+            0
+        );
+        assert_eq!(
+            range_partition_index(&Datum::Int(5), &bounds, false).expect("routed"),
+            0
+        );
+    }
+
+    /// An unsigned partition expression compares its bounds as unsigned, so
+    /// a value whose 64-bit pattern is negative is ABOVE every signed bound
+    /// rather than below it.
+    #[test]
+    fn an_unsigned_range_compares_its_bounds_unsigned() {
+        let bounds = [RangeBound::Value(10), RangeBound::MaxValue];
+        assert_eq!(
+            range_partition_index(&Datum::UInt(u64::MAX), &bounds, true).expect("routed"),
+            1
+        );
+        // The same 64-bit pattern read as SIGNED is -1, which is below 10.
+        assert_eq!(
+            range_partition_index(&Datum::UInt(u64::MAX), &bounds, false).expect("routed"),
+            0
         );
     }
 

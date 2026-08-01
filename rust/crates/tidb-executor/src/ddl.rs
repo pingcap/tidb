@@ -64,25 +64,28 @@
 //! copies disagreed: the `TableInfo` builder validated nothing at all. See
 //! that module for the evidence and for what it deliberately does not decide.
 //!
-//! # `PARTITION BY HASH` is REAL here; the other three methods are REFUSED
+//! # `PARTITION BY HASH` and `BY RANGE` are REAL here; the rest are REFUSED
 //!
 //! This builder once skipped `CreateTableStmt::partitioning` entirely, so a
 //! partitioned `CREATE TABLE` SUCCEEDED and produced an UNPARTITIONED table --
 //! a wrong table rather than a missing feature. It then refused every method,
-//! which was honest but empty. It now BUILDS a real HASH partitioning:
-//! [`table_partition::build_table_partitioning`] allocates one physical table
-//! id per partition and validates the clause the way Go does, the rows are
-//! stored under those ids (see [`crate::partition_routing`]), and
-//! `SHOW CREATE TABLE` prints the clause back verbatim.
+//! which was honest but empty. It now BUILDS real HASH and RANGE
+//! partitionings: [`table_partition::build_table_partitioning`] allocates one
+//! physical table id per partition and validates the clause the way Go does,
+//! the rows are stored under those ids (see [`crate::partition_routing`]),
+//! a `WHERE` on the partition expression PRUNES which of them a scan reads
+//! (see [`crate::partition_pruning`]), and `SHOW CREATE TABLE` prints the
+//! clause back verbatim.
 //!
-//! RANGE, LIST and KEY are still refused, because this tier can neither route
-//! a row into one of their partitions nor prune them, and each carries
-//! validation of its own that would start silently passing the moment the
-//! clause was accepted. See [`table_partition`]'s module doc.
+//! LIST, KEY, `RANGE COLUMNS` and `LIST COLUMNS` are still refused, because
+//! this tier can neither route a row into one of their partitions nor prune
+//! them, and each carries validation of its own that would start silently
+//! passing the moment the clause was accepted. See [`table_partition`]'s
+//! module doc.
 //!
 //! Refusing was itself a cascade decision, taken deliberately: it moved
 //! `table not found in catalog` up sharply, because those tables honestly did
-//! not exist. Accepting HASH gives that back for the HASH-partitioned tables,
+//! not exist. Accepting HASH and RANGE gives that back for those tables,
 //! which is the point of this direction.
 //!
 //! # Where a resolved collation is, and is NOT, consulted
@@ -147,6 +150,7 @@ mod indexes;
 mod table_constraints;
 mod table_lifecycle;
 pub mod table_partition;
+pub mod table_partition_range;
 
 pub use alter_table::run_alter_table_in;
 pub use table_partition::linear_partitioning_warning;
