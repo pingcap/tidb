@@ -2,12 +2,14 @@
 //! closes.
 //!
 //! `autocommit = 0` is the third door onto this connection's transaction state,
-//! beside a text `BEGIN` and a prepared one. It carries no `BEGIN` keyword at
-//! all: the driver session turns a variable OFF, and every later statement
-//! joins a transaction the session opens lazily for it. A node that hears only
-//! the keyword therefore leaves `explicit` unopened, every statement reads at
-//! its own fresh timestamp, and a racing writer is never detected -- the same
-//! two-halves-disagreeing shape a prepared `BEGIN` had.
+//! beside a text `BEGIN` and a prepared one, and `SAVEPOINT` -- which under
+//! `autocommit = 0` is itself a transaction opening -- is the fourth. Neither
+//! carries a `BEGIN` keyword: the driver session turns a variable OFF, and
+//! every later statement joins a transaction the session opens lazily for it.
+//! A node that hears only the keyword therefore leaves `explicit` unopened,
+//! every statement reads at its own fresh timestamp, and a racing writer is
+//! never detected -- the same two-halves-disagreeing shape a prepared `BEGIN`
+//! had.
 //!
 //! The contract is a capture, taken 2026-08-01 from a real TiDB over
 //! `mockstore` with two sessions on one store:
@@ -62,6 +64,19 @@
 //! s2 sees 6 -> (none)
 //! s1 ROLLBACK -> OK
 //! s2 sees 6 after rollback -> (none)
+//! == H: SAVEPOINT is what opens the transaction under autocommit = 0 ==
+//! s1 SET autocommit=0 -> OK
+//! s1 SAVEPOINT sp -> OK
+//! s1 insert 1 -> OK
+//! s1 sees 1 -> 10
+//! s1 ROLLBACK TO sp -> OK
+//! s1 sees 1 after -> (none)
+//! s1 COMMIT -> OK
+//! s2 sees 1 -> (none)
+//! == I: control, SAVEPOINT under autocommit = 1 records nothing ==
+//! s1 SET autocommit=1 -> OK
+//! s1 SAVEPOINT sp2 -> OK
+//! s1 ROLLBACK TO sp2 -> ERR: [executor:1305]SAVEPOINT sp2 does not exist
 //! ```
 //!
 //! So `SET autocommit = 0` is a `BEGIN` in every observable respect except the
@@ -69,9 +84,13 @@
 //! first statement that touches data, not at the `SET` itself. `E` is the one
 //! that is not guessable from MySQL alone and had to be measured: turning
 //! autocommit back ON **commits** the open transaction, so the `ROLLBACK` after
-//! it finds nothing to discard and the row stays. `B` is the control that keeps
-//! `A` honest: without it, putting every statement on one snapshot would look
-//! like success.
+//! it finds nothing to discard and the row stays. `H` is the other: the
+//! SAVEPOINT itself starts the transaction, so its image is a real one and the
+//! `ROLLBACK TO` really discards.
+//!
+//! `B` and `I` are the controls that keep the rest honest. Without `B`, putting
+//! every statement on one snapshot would look like success; without `I`,
+//! opening a transaction for every SAVEPOINT would.
 //!
 //! These assert the observable transaction behaviour, not the call graph: a
 //! `start_ts` that is wrong reads the wrong snapshot, which is far worse than a
@@ -259,7 +278,11 @@ fn setting_autocommit_off_inside_a_transaction_leaves_it_running() {
         .execute_write("INSERT INTO t (id, v) VALUES (7, 70)")
         .expect("insert");
     set(&mut session, "SET autocommit = 0");
-    assert_eq!(cluster.rows(), 0, "the BEGIN's transaction is still staging");
+    assert_eq!(
+        cluster.rows(),
+        0,
+        "the BEGIN's transaction is still staging"
+    );
 
     session.control_transaction("ROLLBACK").expect("rollback");
     assert_eq!(cluster.rows(), 0, "and a ROLLBACK still discards it");
@@ -274,4 +297,59 @@ fn setting_autocommit_off_inside_a_transaction_leaves_it_running() {
     session.control_transaction("ROLLBACK").expect("rollback");
     assert_eq!(cluster.rows(), 0);
     assert_eq!(cluster.publications.load(Ordering::Acquire), 0);
+}
+
+/// Go capture `== H ==`: under `autocommit = 0` the SAVEPOINT is the statement
+/// that opens the transaction, so the image it takes is a real one and the
+/// `ROLLBACK TO` really discards. A node that opened its transaction only at
+/// the first DATA statement would take no image here, the `ROLLBACK TO` would
+/// find none, and the COMMIT would publish the very rows it was asked to drop.
+#[test]
+fn a_savepoint_under_autocommit_off_opens_the_transaction_it_marks() {
+    let (mut session, cluster) = open_session();
+    set(&mut session, "SET autocommit = 0");
+    session
+        .control_transaction("SAVEPOINT sp")
+        .expect("savepoint");
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("insert");
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1"),
+        vec![vec![Datum::Int(10)]]
+    );
+
+    session
+        .control_transaction("ROLLBACK TO sp")
+        .expect("rollback to savepoint");
+    assert!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1").is_empty(),
+        "the row staged after the savepoint is gone"
+    );
+    session.control_transaction("COMMIT").expect("commit");
+    assert_eq!(
+        cluster.rows(),
+        0,
+        "and the COMMIT publishes nothing, because nothing survived"
+    );
+}
+
+/// Go capture `== I ==`, the control: in autocommit a `SAVEPOINT` records
+/// nothing and opens nothing, so a later `ROLLBACK TO` reports 1305.
+#[test]
+fn a_savepoint_under_autocommit_on_records_nothing() {
+    let (mut session, cluster) = open_session();
+    session
+        .control_transaction("SAVEPOINT sp2")
+        .expect("a savepoint in autocommit succeeds");
+    assert_eq!(
+        cluster.begun.load(Ordering::Acquire),
+        0,
+        "and opens no transaction"
+    );
+    let error = session
+        .control_transaction("ROLLBACK TO sp2")
+        .err()
+        .expect("the name was never recorded");
+    assert_eq!(error.code, 1305, "{}", error.message);
 }

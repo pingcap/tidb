@@ -50,12 +50,29 @@
 //! writer that raced the transaction is rejected at prewrite as a write
 //! conflict instead of being silently overwritten.
 //!
-//! Which protocol carried the `BEGIN` does not enter into any of that: a
-//! prepared one is routed through [`ClusterServerSession::control_transaction`]
-//! like a text one. It used to be run as an ordinary statement instead, which
-//! flipped the driver session's `in_transaction` flag while leaving `explicit`
-//! unopened -- the two halves of the transaction state disagreeing, so every
-//! statement read at a fresh timestamp and no racing writer was ever detected.
+//! There are FOUR doors onto that state, and the invariant is that they cannot
+//! disagree: `explicit` is open exactly when the driver session says a
+//! transaction is. Each door was a silently-wrong-answer bug until it was
+//! routed, all with the same shape -- the driver's flag flipped, `explicit`
+//! left unopened, so every statement read at a fresh timestamp and no racing
+//! writer was ever detected.
+//!
+//! * A text `BEGIN`/`COMMIT`/`ROLLBACK`, through
+//!   [`ClusterServerSession::control_transaction`].
+//! * A prepared one. It used to be run as an ordinary statement instead; it is
+//!   now classified at PREPARE and routed to the same place, so which protocol
+//!   carried it does not enter into any of this.
+//! * `SET autocommit = 0`, which carries no keyword at all -- see
+//!   [`ClusterServerSession::begin_if_autocommit_off`] for why the variable
+//!   itself is the routing question, and
+//!   [`ClusterServerSession::commit_if_session_left_transaction`] for the
+//!   statement that ends the transaction from the inside.
+//! * `SAVEPOINT`, which under `autocommit = 0` is Go's `Txn(true)` and so is
+//!   itself a transaction opening ([`ClusterServerSession::apply_savepoint`]).
+//!
+//! None of them tracks transaction state here. Each asks the driver session,
+//! which owns the rules; a second copy that could drift is the bug all four
+//! were.
 //!
 //! Writes never touch the slot: they stage into the connection's
 //! [`MutationBuffer`], which outlives the statement. A failed statement is
@@ -623,13 +640,22 @@ impl ClusterServerSession {
     /// top; `ROLLBACK TO` puts the named image back and drops the savepoints
     /// above it, keeping the named one so it can be rolled back to again;
     /// `RELEASE` drops the named one and those above it, touching no bytes.
-    fn apply_savepoint(&mut self, control: &TransactionControl) {
+    fn apply_savepoint(&mut self, control: &TransactionControl) -> Result<(), SqlQueryError> {
         match control {
             TransactionControl::Savepoint(name) => {
-                // Outside an explicit transaction the session recorded
-                // nothing, so neither does this.
+                // Go's `executeSavepoint` calls `Txn(true)`, so with autocommit
+                // OFF the SAVEPOINT is what ACTIVATES the pending transaction:
+                // the session just opened its own here, and this must open the
+                // node's, or the image below would be taken over a buffer whose
+                // transaction has not started (captured: under autocommit = 0,
+                // `SAVEPOINT sp; INSERT; ROLLBACK TO sp` leaves the row gone and
+                // the COMMIT publishes nothing).
+                self.begin_if_autocommit_off()?;
+                // In autocommit the statement succeeds while recording nothing,
+                // exactly as the session's does -- which is what leaves a later
+                // `ROLLBACK TO` to report 1305 (captured).
                 if self.explicit.is_none() {
-                    return;
+                    return Ok(());
                 }
                 let name = name.to_lowercase();
                 let image = self.buffer.staged();
@@ -651,6 +677,7 @@ impl ClusterServerSession {
             }
             _ => {}
         }
+        Ok(())
     }
 
     /// Drops the explicit transaction without publishing anything, along with
@@ -884,7 +911,7 @@ impl QuerySession for ClusterServerSession {
                 control @ (TransactionControl::Savepoint(_)
                 | TransactionControl::RollbackToSavepoint(_)
                 | TransactionControl::ReleaseSavepoint(_)),
-            ) => self.apply_savepoint(&control),
+            ) => self.apply_savepoint(&control)?,
             Some(TransactionControl::Unsupported(_)) | None => {}
         }
         Ok(Some(in_transaction))
