@@ -14,6 +14,20 @@
 
 //! Narrow SQL-to-TiKV scan/Selection lowering for the read-only node.
 //!
+//! # Bounded path — closed to new features
+//!
+//! This lowering serves only the `--read-table` / `--load-table` node modes,
+//! which exist as scripted real-TiKV wire proofs. The deployed tier is
+//! `--cluster-session`, which lowers through the real planner and executor and
+//! never touches this module. A read feature added here reaches no benchmark
+//! and no deployment; see `rust/docs/architecture/read-tier-boundary.md` for
+//! the measurement and the four tasks that landed in this tier by mistake.
+//!
+//! New read capability belongs in the `cluster_session` tier. The
+//! [`UnsupportedReadOnlyFeature`] variant set is pinned by
+//! `tests/read_only_scan_source.rs` so growth here fails a test rather than
+//! passing review.
+//!
 //! This boundary intentionally accepts exactly one configured,
 //! non-partitioned table with signed `BIGINT` columns and exactly one clustered
 //! primary key. It

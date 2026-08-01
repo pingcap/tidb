@@ -14,6 +14,17 @@
 
 //! First deployable read-only SQL-to-real-TiKV execution path.
 //!
+//! # Bounded path — closed to new features
+//!
+//! Despite the name, this is not the deployed read tier. It serves only the
+//! `--read-table` / `--load-table` node modes, which exist as scripted
+//! real-TiKV wire proofs; `--cluster-session` is what is deployed and what
+//! every sysbench run measures, and it reaches none of this module. New read
+//! capability belongs at the cluster seam
+//! (`tidb-executor::cluster_storage` / `remote_scan`); this path may consume
+//! it afterwards, never the reverse. See
+//! `rust/docs/architecture/read-tier-boundary.md`.
+//!
 //! This module composes existing source-shaped owners. SQL admission and
 //! physical scan selection stay in `tidb-planner`; DAG construction stays in
 //! [`crate::dag_request`]; ranges and request metadata stay in

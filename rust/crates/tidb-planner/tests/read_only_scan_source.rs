@@ -519,6 +519,58 @@ fn a_locking_read_this_node_cannot_honor_fails_closed() {
     }
 }
 
+/// Pins the tier boundary: this lowering is a bounded real-TiKV proof path,
+/// and new read capability belongs in the `--cluster-session` tier instead.
+///
+/// A feature added here either admits a shape currently refused (removing a
+/// variant) or refuses a new one (adding a variant), so pinning the exact
+/// refusal set turns the boundary into a test failure rather than a review
+/// judgement. See `rust/docs/architecture/read-tier-boundary.md`.
+#[test]
+fn bounded_path_refusal_set_is_pinned_against_new_features() {
+    let source = include_str!("../src/read_only_scan/errors.rs");
+    let variants: Vec<&str> = source
+        .split_once("pub enum UnsupportedReadOnlyFeature {")
+        .expect("the refusal enum")
+        .1
+        .split_once('}')
+        .expect("the enum body")
+        .0
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.ends_with(',') && !line.starts_with("//"))
+        .map(|line| line.trim_end_matches(','))
+        .collect();
+    assert_eq!(
+        variants,
+        [
+            "WriteOrNonQueryStatement",
+            "SetOperation",
+            "QueryForm",
+            "CommonTableExpression",
+            "SelectModifier",
+            "MissingTable",
+            "Join",
+            "Grouping",
+            "Window",
+            "Ordering",
+            "Limit",
+            "LockingRead",
+            "IntoOutfile",
+            "Partition",
+            "StaleRead",
+            "IndexHint",
+            "TableSample",
+            "Wildcard",
+            "Aggregate",
+            "Subquery",
+            "ProjectionExpression",
+        ],
+        "ReadOnlyScanPlan is a bounded proof path closed to new read features; \
+         add the capability to the --cluster-session tier instead"
+    );
+}
+
 /// A nullable column drops `NOT_NULL_FLAG` from both the coprocessor scan
 /// descriptor and the projected column, while the clustered handle -- which
 /// *is* the record key -- can never be marked nullable.
