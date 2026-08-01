@@ -43,7 +43,9 @@ fn every_doc_example_is_still_checked() {
         .join("rust")
         .join("scripts")
         .join("run-doctests.sh");
-    let output = Command::new(&script).output().expect("run the doctest gate");
+    let output = Command::new(&script)
+        .output()
+        .expect("run the doctest gate");
     assert!(
         output.status.success(),
         "{}{}",
