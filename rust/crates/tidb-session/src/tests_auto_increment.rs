@@ -435,8 +435,8 @@ fn the_signed_allocator_reports_1467_instead_of_overflowing() {
 /// split -- reading the explicit id as an `i64` made the rebase see a value the
 /// counter was already past, so the next insert took a LOW id on top of rows
 /// that already existed. (The allocator's behavior at the unsigned domain's own
-/// end is covered in `tidb-executor`'s `kv_table` tests, because a literal
-/// above `i64::MAX` is not yet expressible in this tier's SQL.)
+/// end is pinned by
+/// [`the_unsigned_allocator_reports_1467_at_the_domain_end`] below.)
 #[test]
 fn an_unsigned_id_above_the_signed_maximum_rebases_the_allocator() {
     let mut session = table(None);
@@ -925,4 +925,49 @@ fn a_clamped_step_allocates_from_the_clamp_rather_than_dividing_by_zero() {
         [["1"], ["2"], ["3"]]
     );
     assert_eq!(one(&mut session, "SELECT LAST_INSERT_ID()"), "1");
+}
+
+/// The unsigned twin of
+/// [`the_signed_allocator_reports_1467_instead_of_overflowing`]: the id AT the
+/// unsigned domain's end is allocated and STORED, and only the one past it is
+/// refused with `1467`.
+///
+/// Captured through `gorun` on the standard capture table seeded with an
+/// explicit `18446744073709551613`: the next insert is accepted and lands on
+/// `18446744073709551614`, the one after that fails, and `count(*)` stays at
+/// `2` -- the refused row is absent. The code is Go's
+/// `errno.ErrAutoincReadFailed` (`1467`), read off `MustGetErrCode` in a
+/// `testkit` capture of the same four statements, NOT `1690`: at `BIGINT`
+/// width the column bound IS the domain end, so the type clamp in
+/// `KvTable::check_auto_increment_fits` can never fire and the allocator's own
+/// exhaustion rule is the only limit here.
+///
+/// BOTH directions are pinned because the bound is one comparison and either
+/// way of getting it wrong is invisible from the other side: dropping it lets
+/// the counter wrap and re-issue an id that already exists, while firing one
+/// id early turns the working `18446744073709551614` insert into an error.
+/// The bound has to be carried as a 64-bit PATTERN compared through
+/// `exceeds(.., unsigned)` -- computed in `i64` it truncates at `i64::MAX` and
+/// refuses ids this column holds perfectly well.
+#[test]
+fn the_unsigned_allocator_reports_1467_at_the_domain_end() {
+    let mut session = table(None);
+    session
+        .run("INSERT INTO ai VALUES (18446744073709551613, 1)")
+        .unwrap();
+    session.run("INSERT INTO ai (v) VALUES (2)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM ai ORDER BY id"),
+        [["18446744073709551613", "1"], ["18446744073709551614", "2"]]
+    );
+    let error = session
+        .run("INSERT INTO ai (v) VALUES (3)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1467);
+    assert_eq!(
+        error.message,
+        "Failed to read auto-increment value from storage engine"
+    );
+    assert_eq!(one(&mut session, "SELECT count(*) FROM ai"), "2");
 }
