@@ -75,6 +75,18 @@ pub(crate) fn commit_fast_path_source(
         return Ok(None);
     };
     let columns = scope.column_list();
+    // Go's `PartitionProcessor` prunes before any access path is costed, and
+    // so does this: an offer refused leaves the source reading every
+    // partition, which is a superset and still every row the statement
+    // admits.
+    if let Some(ids) = pruned_partition_ids(select, &table) {
+        if let Some(access) = from_source
+            .as_mut()
+            .and_then(|source| source.table_access())
+        {
+            access.accept_partition_pruning(&ids);
+        }
+    }
     // Go tries the batch point get before the single one.
     if let Some(handles) = try_batch_point_get(select, &table, &columns)? {
         let exec = HandleSourceExec::new(
@@ -423,6 +435,48 @@ pub(crate) fn choose_index_range_path(
         // `build_from` already installed is the answer, unchanged.
         (None, None) => None,
     }
+}
+
+/// The partitions a single-table `SELECT`'s `WHERE` proves it has to read,
+/// or `None` when nothing narrows them.
+///
+/// The ranges come from the crate's ONE range builder
+/// ([`crate::index_range::detach_cond_and_build_range_for_index`]), asked for
+/// the partition expression's column exactly as it would be asked for a
+/// single-column index on it. That reuse is the point: Go prunes with the
+/// same `ranger` machinery it builds index ranges with, and a second range
+/// implementation here would be a second answer to disagree with.
+///
+/// Pruning is declined -- reading everything -- in three cases, each a
+/// SUPERSET and so never a wrong answer:
+///
+/// * a table with no partitioning, or a HASH one (see
+///   [`crate::partition_pruning`]);
+/// * a partition expression that is not a bare COLUMN. Go prunes `year(a)`
+///   through `MakePartitionByFnCol`'s monotonicity analysis, which this tier
+///   does not port; a monotonicity claim that is wrong drops a partition
+///   holding matching rows;
+/// * a `SELECT` with no `WHERE`, which constrains nothing.
+fn pruned_partition_ids(select: &tidb_ast::SelectStmt, table: &KvTable) -> Option<Vec<i64>> {
+    let partition = table.partition()?;
+    let where_clause = select.where_clause.as_ref()?;
+    // A bare column is the one partition expression whose own value a range
+    // over a column IS.
+    let [offset] = partition.dependencies.as_slice() else {
+        return None;
+    };
+    let column = table.columns.get(*offset)?;
+    if partition.expr_text != format!("`{}`", column.name) {
+        return None;
+    }
+    let built = crate::index_range::detach_cond_and_build_range_for_index(
+        &[crate::index_range::RangeColumn::whole(
+            column.name.clone(),
+            column.field_type.clone(),
+        )],
+        where_clause,
+    )?;
+    crate::partition_pruning::pruned_ids(partition, &built.ranges)
 }
 
 /// How `EXPLAIN` names one key part of an index.

@@ -12,25 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `CREATE TABLE ... PARTITION BY HASH` is REAL; the other three methods are
-//! refused, and the refusal is still a tripwire.
+//! `CREATE TABLE ... PARTITION BY HASH` and `BY RANGE` are REAL; the other
+//! methods are refused, and the refusal is still a tripwire.
 //!
 //! This node stores a `PartitionSpec` (Go `model.PartitionInfo`; see
 //! `tidb_executor::partition_routing`), routes each row into one of N
-//! physical key prefixes exactly as Go's `locatePartition` does, and prints
-//! the clause back through `SHOW CREATE TABLE`. What it still has no answer
-//! for is RANGE/LIST/KEY routing and partition PRUNING
-//! (`pkg/planner/core/rule_partition_processor.go`), so those methods -- and
-//! `SELECT ... PARTITION (p0)` for every method -- are refused rather than
-//! answered wrongly.
+//! physical key prefixes exactly as Go's `locatePartition` does, PRUNES which
+//! of them a `WHERE` reads (`tidb_executor::partition_pruning`, Go
+//! `pkg/planner/core/rule/rule_partition_processor.go`), answers
+//! `... PARTITION (p)` from the named partitions alone, and prints the clause
+//! back through `SHOW CREATE TABLE`. What it still has no answer for is
+//! LIST, KEY, `RANGE COLUMNS` and `LIST COLUMNS` routing, so those methods
+//! are refused rather than answered wrongly.
 //!
 //! # The captures these tests are written against
 //!
 //! Every `GO_*` constant below is real TiDB's own `SHOW CREATE TABLE` text,
-//! and every routing answer in [`hash_routing_matches_real_tidb`] is the
-//! partition real TiDB put that row in, both captured through a mock-store
-//! session. The HASH rows are asserted as EQUALITY; the other three are still
-//! asserted as refusals, and become equalities when their routing lands.
+//! and every routing answer in [`hash_routing_matches_real_tidb`] and
+//! [`range_routing_matches_real_tidb`] is the partition real TiDB put that
+//! row in, both captured through a mock-store session. The HASH and RANGE
+//! rows are asserted as EQUALITY; the rest are still asserted as refusals,
+//! and become equalities when their routing lands.
 
 #![cfg(test)]
 
@@ -54,6 +56,14 @@ const GO_RANGE: &str = "CREATE TABLE `r1` (\n  `a` int DEFAULT NULL,\n  `b` int 
 
 /// Go's `SHOW CREATE TABLE l1` for a two-way LIST table.
 const GO_LIST: &str = "CREATE TABLE `l1` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY LIST (`a`)\n(PARTITION `p0` VALUES IN (1,2,3),\n PARTITION `p1` VALUES IN (4,5,6))";
+
+/// Go's `SHOW CREATE TABLE rc1` for a two-column `RANGE COLUMNS` table.
+/// Note that Go prints `COLUMNS(` with NO space and the bounds with no space
+/// after the comma -- a different spelling from the expression form.
+const GO_RANGE_COLUMNS: &str = "CREATE TABLE `rc1` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE COLUMNS(`a`,`b`)\n(PARTITION `p0` VALUES LESS THAN (10,10),\n PARTITION `p1` VALUES LESS THAN (MAXVALUE,MAXVALUE))";
+
+/// Go's `SHOW CREATE TABLE lc1` for a two-column `LIST COLUMNS` table.
+const GO_LIST_COLUMNS: &str = "CREATE TABLE `lc1` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY LIST COLUMNS(`a`,`b`)\n(PARTITION `p0` VALUES IN ((1,1),(2,2)))";
 
 /// Go's `SHOW CREATE TABLE k1` for `partition by key(a) partitions 3`.
 const GO_KEY: &str = "CREATE TABLE `k1` (\n  `a` int NOT NULL,\n  `b` int DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY KEY (`a`) PARTITIONS 3";
@@ -322,17 +332,245 @@ fn adding_a_unique_index_off_the_partition_column_is_refused_too() {
         .expect("a non-unique index is unrestricted");
 }
 
-/// The three methods still without routing are REFUSED, and the refusal names
+/// A RANGE-partitioned `CREATE TABLE` succeeds and `SHOW CREATE TABLE`
+/// restores Go's own text verbatim, definition list and all.
+#[test]
+fn range_partitioning_round_trips_gos_show_create_table() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE r1 (a int, b int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN \
+             (10), PARTITION p1 VALUES LESS THAN (20), PARTITION pm VALUES LESS THAN MAXVALUE)",
+        )
+        .expect("a RANGE-partitioned CREATE TABLE is accepted");
+    assert_eq!(show_create(&mut session, "r1"), GO_RANGE);
+}
+
+/// A `VALUES LESS THAN` bound is EVALUATED at `CREATE` and stored as the
+/// folded integer, which is what `SHOW CREATE TABLE` prints back.
+///
+/// Captured: `VALUES LESS THAN (5+20)` comes back as `(25)`. A node that
+/// stored the expression text would print `5+20` and, worse, would have to
+/// re-evaluate it per routed row.
+#[test]
+fn a_range_bound_is_folded_at_create_time() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE e19 (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN (5+20))",
+        )
+        .expect("a constant bound expression is folded");
+    assert!(
+        show_create(&mut session, "e19").ends_with(
+            "\nPARTITION BY RANGE (`a`)\n(PARTITION `p0` VALUES LESS THAN (10),\n PARTITION `p1` \
+             VALUES LESS THAN (25))"
+        ),
+        "got {}",
+        show_create(&mut session, "e19")
+    );
+}
+
+/// Every RANGE routing this unit captured from real TiDB, BY VALUE, with the
+/// boundary rows that decide `VALUES LESS THAN`'s exclusivity.
+///
+/// The capture is `range(a) (p0 < 10, p1 < 20, pm < MAXVALUE)` over
+/// `5,9,10,19,20,100,-1,NULL`, read back through `SELECT ... PARTITION (p)`.
+/// `9` and `10` straddle the first bound and `19`/`20` the second; a router
+/// off by one on either would move exactly those rows and answer every later
+/// pruned read wrongly, with no error at all.
+#[test]
+fn range_routing_matches_real_tidb() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE r1 (a int, b int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN \
+             (10), PARTITION p1 VALUES LESS THAN (20), PARTITION pm VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO r1 VALUES (5,1),(9,2),(10,3),(19,4),(20,5),(100,6),(-1,7),(NULL,8)")
+        .unwrap();
+    // Captured: p0 holds NULL,-1,5,9; p1 holds 10,19; pm holds 20,100.
+    assert_eq!(
+        partition_counts(&mut session, "r1"),
+        vec![
+            ("p0".to_owned(), 4),
+            ("p1".to_owned(), 2),
+            ("pm".to_owned(), 2),
+        ]
+    );
+    // Captured verbatim, NULL first because `ORDER BY a` sorts it below
+    // every value.
+    for (partition, rows) in [
+        ("p0", vec!["NULL", "-1", "5", "9"]),
+        ("p1", vec!["10", "19"]),
+        ("pm", vec!["20", "100"]),
+    ] {
+        assert_eq!(
+            tests_support::row_text(session.run(&format!(
+                "SELECT a FROM r1 PARTITION ({partition}) ORDER BY a"
+            )))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect::<Vec<_>>(),
+            rows.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>(),
+            "the rows real TiDB put in {partition}"
+        );
+    }
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT count(*) FROM r1")),
+        vec![vec!["8".to_owned()]],
+        "the scan must span every partition"
+    );
+    session.run("ADMIN CHECK TABLE r1").expect("admin check");
+}
+
+/// Without a `MAXVALUE` partition a row above the last bound is REFUSED with
+/// 1526, while NULL still lands in the lowest partition.
+///
+/// Both captured on `range(a) (p0 < 10, p1 < 20)`: `INSERT (25,1)` fails and
+/// `INSERT (NULL,1)` succeeds, with `PARTITION (p0)` then returning NULL.
+#[test]
+fn a_range_table_without_maxvalue_refuses_the_row_it_cannot_place() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE r2 (a int, b int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN \
+             (10), PARTITION p1 VALUES LESS THAN (20))",
+        )
+        .unwrap();
+    session.run("INSERT INTO r2 VALUES (5,1)").unwrap();
+    let rendered = session
+        .run("INSERT INTO r2 VALUES (25,1)")
+        .expect_err("no partition accepts 25")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 1526);
+    assert_eq!(rendered.message, "Table has no partition for value 25");
+    session.run("INSERT INTO r2 VALUES (NULL,1)").unwrap();
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT a FROM r2 PARTITION (p0) ORDER BY a"))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect::<Vec<_>>(),
+        vec!["NULL".to_owned(), "5".to_owned()]
+    );
+}
+
+/// A RANGE table partitioned on an EXPRESSION routes by the expression's
+/// value, not the column's.
+///
+/// Captured on `range(a+1) (p0 < 10, p1 < 20)`: `8` is in `p0` while `9` and
+/// `10` are in `p1`, so the boundary sits at `a = 9`, one below where a node
+/// reading the bare column would put it.
+#[test]
+fn a_range_expression_routes_by_its_own_value() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE r3 (a int) PARTITION BY RANGE(a+1) (PARTITION p0 VALUES LESS THAN (10), \
+             PARTITION p1 VALUES LESS THAN (20))",
+        )
+        .unwrap();
+    session.run("INSERT INTO r3 VALUES (8),(9),(10)").unwrap();
+    assert_eq!(
+        partition_counts(&mut session, "r3"),
+        vec![("p0".to_owned(), 1), ("p1".to_owned(), 2)]
+    );
+    assert!(show_create(&mut session, "r3").contains("PARTITION BY RANGE ((`a`+1))"));
+}
+
+/// The RECORDS a pruned read actually touches, from `EXPLAIN ANALYZE`'s
+/// `actRows` -- the receipt no plan assertion can give.
+///
+/// A plan may name a table scan and still walk every partition underneath:
+/// the `WHERE` above would filter the surplus, the answer would be right, and
+/// every assertion about the printed tree would pass while the read that
+/// pruning exists to avoid still happened. `actRows` on the source counts
+/// rows READ before any filter, so it is the one number that tells a pruned
+/// read from an unpruned one.
+///
+/// The table holds three rows per partition, so an unpruned read of any of
+/// these reports 9.
+#[test]
+fn range_pruning_reads_only_the_partitions_that_can_match() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE r (a int, b int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN \
+             (10), PARTITION p1 VALUES LESS THAN (20), PARTITION pm VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO r VALUES (1,1),(5,5),(9,9),(10,10),(15,15),(19,19),(20,20),(25,25),(99,99)")
+        .unwrap();
+    // (predicate, records the scan must read, rows the statement returns)
+    for (predicate, read, returned) in [
+        // One partition each, with the BOUNDARY values on both sides: `9`
+        // and `10` differ by one and must land in different partitions, so a
+        // pruner off by one reads the wrong three records here.
+        ("a < 10", "3", "3"),
+        ("a = 9", "3", "1"),
+        ("a = 10", "3", "1"),
+        ("a >= 20", "3", "3"),
+        // Two partitions: the predicate straddles the first boundary.
+        ("a >= 9 AND a <= 10", "6", "2"),
+        // All three.
+        ("a > 0", "9", "9"),
+        // No partition can hold it, and the scan reads NOTHING -- the one
+        // direction that must never become "everything".
+        ("a >= 10 AND a < 10", "0", "0"),
+        // A predicate on a NON-partitioning column prunes nothing.
+        ("b = 15", "9", "1"),
+    ] {
+        let rows = tests_support::row_text(session.run(&format!(
+            "EXPLAIN ANALYZE SELECT b FROM r WHERE {predicate}"
+        )));
+        let scan = rows.last().expect("a plan has a source row");
+        assert_eq!(
+            scan[2], read,
+            "records read changed for `{predicate}` (source: {})",
+            scan[0]
+        );
+        assert_eq!(
+            rows[0][2], returned,
+            "rows returned changed for `{predicate}`"
+        );
+    }
+}
+
+/// An UPDATE that moves a row across a RANGE boundary moves its storage too,
+/// and leaves no copy behind.
+#[test]
+fn an_update_across_a_range_boundary_moves_the_row() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE r (a int primary key, b int) PARTITION BY RANGE(a) (PARTITION p0 VALUES \
+             LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))",
+        )
+        .unwrap();
+    session.run("INSERT INTO r VALUES (9, 1)").unwrap();
+    assert_eq!(sole_holder(&mut session, "r"), "p0");
+    session.run("UPDATE r SET a = 10").unwrap();
+    assert_eq!(
+        sole_holder(&mut session, "r"),
+        "p1",
+        "the row must have moved, exactly once"
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT a, b FROM r")),
+        vec![vec!["10".to_owned(), "1".to_owned()]]
+    );
+    session.run("ADMIN CHECK TABLE r").expect("admin check");
+}
+
+/// The methods still without routing are REFUSED, and the refusal names
 /// the method. The `GO_*` text each row carries is what this must answer
 /// instead once that method lands.
 #[test]
-fn range_list_and_key_partitioning_are_still_refused() {
+fn list_key_and_columns_partitioning_are_still_refused() {
     for (sql, table, go) in [
-        (
-            "CREATE TABLE r1 (a int, b int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20), PARTITION pm VALUES LESS THAN MAXVALUE)",
-            "r1",
-            GO_RANGE,
-        ),
         (
             "CREATE TABLE l1 (a int, b int) PARTITION BY LIST(a) (PARTITION p0 VALUES IN (1,2,3), PARTITION p1 VALUES IN (4,5,6))",
             "l1",
@@ -342,6 +580,16 @@ fn range_list_and_key_partitioning_are_still_refused() {
             "CREATE TABLE k1 (a int PRIMARY KEY, b int) PARTITION BY KEY(a) PARTITIONS 3",
             "k1",
             GO_KEY,
+        ),
+        (
+            "CREATE TABLE rc1 (a int, b int) PARTITION BY RANGE COLUMNS (a, b) (PARTITION p0 VALUES LESS THAN (10, 10), PARTITION p1 VALUES LESS THAN (MAXVALUE, MAXVALUE))",
+            "rc1",
+            GO_RANGE_COLUMNS,
+        ),
+        (
+            "CREATE TABLE lc1 (a int, b int) PARTITION BY LIST COLUMNS (a, b) (PARTITION p0 VALUES IN ((1,1),(2,2)))",
+            "lc1",
+            GO_LIST_COLUMNS,
         ),
     ] {
         let mut session = Session::new();
@@ -381,14 +629,16 @@ fn an_unpartitioned_create_table_is_untouched() {
 /// rejects each one under, and whether the RULE behind it is ported.
 ///
 /// A `true` row is checked as errno EQUALITY. A `false` row is only checked
-/// for rejection: it is refused by the method gate rather than by the rule,
-/// and its errno becomes an assertion when that method lands.
+/// for rejection: it is refused, but by something OTHER than the rule -- the
+/// method gate for a method still without routing, or the parser -- and its
+/// errno becomes an assertion when the rule itself is what refuses it. Each
+/// `false` row carries a comment saying which.
 const GO_REJECTED: &[(&str, u16, &str, bool)] = &[
     (
         "CREATE TABLE e1 (a varchar(10)) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10))",
         1659,
         "Field 'a' is of a not allowed type for this type of partitioning",
-        false,
+        true,
     ),
     (
         "CREATE TABLE e14 (a double) PARTITION BY HASH(a) PARTITIONS 2",
@@ -400,7 +650,7 @@ const GO_REJECTED: &[(&str, u16, &str, bool)] = &[
         "CREATE TABLE e2 (a int) PARTITION BY RANGE(b) (PARTITION p0 VALUES LESS THAN (10))",
         1054,
         "Unknown column 'b' in 'partition function'",
-        false,
+        true,
     ),
     (
         "CREATE TABLE e2h (a int) PARTITION BY HASH(b) PARTITIONS 2",
@@ -412,7 +662,7 @@ const GO_REJECTED: &[(&str, u16, &str, bool)] = &[
         "CREATE TABLE e3 (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (5))",
         1493,
         "VALUES LESS THAN value must be strictly increasing for each partition",
-        false,
+        true,
     ),
     (
         "CREATE TABLE e4 (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p0 VALUES LESS THAN (20))",
@@ -439,6 +689,12 @@ const GO_REJECTED: &[(&str, u16, &str, bool)] = &[
         true,
     ),
     (
+        // Refused, but by the PARSER (1064) rather than by the DDL rule: this
+        // node's grammar requires a definition list after `PARTITION BY
+        // RANGE`, where Go's admits the empty one and rejects it at build
+        // time with 1492. `build_range_bounds` raises the real 1492 for every
+        // shape that does reach it, and this row becomes an errno equality
+        // when the grammar accepts the statement Go accepts.
         "CREATE TABLE e7 (a int) PARTITION BY RANGE(a)",
         1492,
         "For RANGE partitions each partition must be defined",
@@ -460,6 +716,63 @@ const GO_REJECTED: &[(&str, u16, &str, bool)] = &[
         "CREATE TABLE e11 (a int UNIQUE KEY, b int) PARTITION BY HASH(b) PARTITIONS 2",
         8264,
         "Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption",
+        true,
+    ),
+    // The RANGE rules this unit captured and ported with the routing. Each
+    // one is a statement that would have started SILENTLY SUCCEEDING the
+    // moment `PARTITION BY RANGE` was accepted without it.
+    (
+        // Refused by the PARSER (1064), which pairs each method with its own
+        // value clause before the DDL builder sees the statement; Go's
+        // grammar accepts the pair and `PartitionDefinitionClause.Validate`
+        // rejects it with 1480. `build_range_bounds` raises the real 1480
+        // for it, so this row becomes an errno equality if the grammar is
+        // ever loosened to Go's.
+        "CREATE TABLE e9 (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES IN (1))",
+        1480,
+        "Only LIST PARTITIONING can use VALUES IN in partition definition",
+        false,
+    ),
+    (
+        "CREATE TABLE e12 (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN MAXVALUE, PARTITION p1 VALUES LESS THAN (20))",
+        1481,
+        "MAXVALUE can only be used in last partition definition",
+        true,
+    ),
+    (
+        "CREATE TABLE e13 (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN ('abc'))",
+        1697,
+        "VALUES value for partition 'p0' must have type INT",
+        true,
+    ),
+    (
+        "CREATE TABLE e16 (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (1.5))",
+        1697,
+        "VALUES value for partition 'p0' must have type INT",
+        true,
+    ),
+    (
+        "CREATE TABLE e15 (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (NULL))",
+        1659,
+        "Field 'NULL' is of a not allowed type for this type of partitioning",
+        true,
+    ),
+    (
+        "CREATE TABLE e17 (a int UNIQUE KEY, b int) PARTITION BY RANGE(b) (PARTITION p0 VALUES LESS THAN (10))",
+        8264,
+        "Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption",
+        true,
+    ),
+    (
+        "CREATE TABLE e18 (a int) PARTITION BY RANGE(rand()) (PARTITION p0 VALUES LESS THAN (10))",
+        1564,
+        "This partition function is not allowed",
+        true,
+    ),
+    (
+        "CREATE TABLE e3b (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (10))",
+        1493,
+        "VALUES LESS THAN value must be strictly increasing for each partition",
         true,
     ),
 ];
@@ -503,28 +816,83 @@ fn the_ported_rejections_carry_tidbs_own_errno() {
 fn if_not_exists_does_not_suppress_the_validation() {
     let mut session = Session::new();
     assert!(session
-        .run("CREATE TABLE IF NOT EXISTS ine (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10))")
+        .run("CREATE TABLE IF NOT EXISTS ine (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (5))")
         .is_err());
     session
         .run("CREATE TABLE IF NOT EXISTS ine (a int) PARTITION BY HASH(a) PARTITIONS 2")
         .expect("a HASH clause is built under IF NOT EXISTS too");
 }
 
-/// `SELECT ... PARTITION (p0)` is REFUSED rather than answered with the whole
-/// table, which is what ignoring the clause would do.
+/// `SELECT ... PARTITION (p)` reads THOSE partitions and no others, for every
+/// method that has routing, and a name the table does not have is 1735.
+///
+/// This is the third way a partitioned table can answer wrongly: ignoring the
+/// clause returns MORE rows than were asked for, with no error. The
+/// assertions are therefore row-set assertions -- `p0` of a hash table over
+/// `1,2,4` holds `4` alone, and the whole table holds three rows.
 #[test]
-fn a_partition_selection_is_refused_rather_than_ignored() {
+fn a_partition_selection_reads_only_those_partitions() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE h (a int, b int) PARTITION BY HASH(a) PARTITIONS 4")
+        .unwrap();
+    session
+        .run("INSERT INTO h VALUES (1,1),(2,2),(4,4)")
+        .unwrap();
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT a FROM h PARTITION (p0) ORDER BY a")),
+        vec![vec!["4".to_owned()]]
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT a FROM h PARTITION (p0, p1) ORDER BY a")),
+        vec![vec!["1".to_owned()], vec!["4".to_owned()]]
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT count(*) FROM h")),
+        vec![vec!["3".to_owned()]],
+        "the unrestricted read still spans the whole table"
+    );
+    // Captured: `Unknown partition 'nosuch' in table 'ok1'`.
+    let rendered = session
+        .run("SELECT a FROM h PARTITION (nosuch)")
+        .expect_err("an unknown partition is an error")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 1735);
+    assert_eq!(rendered.message, "Unknown partition 'nosuch' in table 'h'");
+    // An UNPARTITIONED table has no name to resolve, so the same 1735.
+    session.run("CREATE TABLE q (a int)").unwrap();
+    assert_eq!(
+        session
+            .run("SELECT a FROM q PARTITION (p0)")
+            .expect_err("no partition of an unpartitioned table")
+            .to_mysql_error()
+            .code,
+        1735
+    );
+}
+
+/// `UPDATE`/`DELETE`/`INSERT ... PARTITION (p)` are still REFUSED.
+///
+/// Each of them RESTRICTS WHICH ROWS the statement writes, and none of the
+/// three narrowings is the read narrowing above: `INSERT ... PARTITION (p)`
+/// is 1526 when the row routes elsewhere rather than a restriction at all.
+/// Answering them by ignoring the clause would modify rows the statement
+/// excluded, so they refuse until the write path honours them.
+#[test]
+fn a_write_restricted_to_partitions_is_refused_rather_than_ignored() {
     let mut session = Session::new();
     session
         .run("CREATE TABLE h (a int, b int) PARTITION BY HASH(a) PARTITIONS 4")
         .unwrap();
     session.run("INSERT INTO h VALUES (1,1),(2,2)").unwrap();
-    assert!(
-        session.run("SELECT * FROM h PARTITION (p0)").is_err(),
-        "a partition selection must not silently read the whole table"
-    );
     assert!(session.run("DELETE FROM h PARTITION (p0)").is_err());
+    assert!(session.run("UPDATE h PARTITION (p0) SET b = 9").is_err());
     assert!(session
         .run("INSERT INTO h PARTITION (p0) VALUES (4, 4)")
         .is_err());
+    // Nothing was modified by any of them.
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT count(*) FROM h")),
+        vec![vec!["2".to_owned()]]
+    );
 }

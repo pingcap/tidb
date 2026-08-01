@@ -250,16 +250,6 @@ pub(crate) fn build_from(
             // A `db.t` reference resolves in that schema; a bare `t` resolves
             // in the session's current one (Go's name resolution).
             let (database, name) = split_table_path(&table_ref.name, current_db)?;
-            // `FROM t PARTITION (p0)` names the partitions the read is
-            // restricted to. Ignoring it would answer with the WHOLE table
-            // while reporting success, which is the exact silent-wrong-answer
-            // shape partitioning is being built to avoid, so it is refused
-            // until the scan can honour it.
-            if !table_ref.partitions.is_empty() {
-                return Err(DriverError::Unsupported(
-                    "SELECT ... PARTITION (...) is not supported yet",
-                ));
-            }
             let entry = catalog
                 .get_in(database, name)
                 .ok_or(DriverError::Unsupported("table not found in catalog"))?;
@@ -313,7 +303,7 @@ pub(crate) fn build_from(
                 )),
                 TableEntry::Kv(kv) => Box::new(TableScanExec::new(
                     ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
-                    kv.clone(),
+                    restricted_to_partitions(kv, &table_ref.partitions, name)?,
                 )),
                 // Handled above, before the columns were taken.
                 TableEntry::View(_) | TableEntry::Sequence(_) => {
@@ -1132,6 +1122,42 @@ pub(crate) fn build_join(
         }
     }
     Ok((meter(exec, trace), scope))
+}
+
+/// `kv` with any `PARTITION (p, ...)` restriction on the reference applied,
+/// or `kv` unchanged when the reference wrote none.
+///
+/// Go resolves the clause in `PartitionProcessor` and keeps only the named
+/// partitions' `DataSource`s; here the same narrowing is one call on the
+/// table handle (see `KvTable::restrict_read_to_partitions`), so every read
+/// path honours it without a partition branch of its own.
+///
+/// # Errors
+///
+/// 1735 for a name the table does not have -- captured:
+/// `Unknown partition 'nosuch' in table 'ok1'`. A `PARTITION (...)` on an
+/// UNPARTITIONED table takes the same error in Go, and does here too, because
+/// no name can resolve against a table with no partitions.
+pub(crate) fn restricted_to_partitions(
+    kv: &crate::KvTable,
+    partitions: &[String],
+    table: &str,
+) -> Result<crate::KvTable, DriverError> {
+    if partitions.is_empty() {
+        return Ok(kv.clone());
+    }
+    let unknown = |partition: &str| DriverError::UnknownPartition {
+        partition: partition.to_owned(),
+        table: table.to_owned(),
+    };
+    let Some(spec) = kv.partition() else {
+        return Err(unknown(&partitions[0]));
+    };
+    let ids = crate::partition_pruning::ids_for_selected_partitions(spec, partitions)
+        .map_err(|name| unknown(&name))?;
+    let mut restricted = kv.clone();
+    restricted.restrict_read_to_partitions(&ids);
+    Ok(restricted)
 }
 
 /// Meters `exec` for the node the trace just recorded, when there is one.

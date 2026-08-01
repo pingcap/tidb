@@ -90,11 +90,18 @@ pub fn ids_for_selected_partitions(
 /// over the partition expression must read, or `None` when nothing can be
 /// pruned.
 ///
-/// `ranges` are the [`IndexRange`] intervals the caller built for the
+/// `ranges` are the [`IndexRange`] intervals the RANGER built for the
 /// partition expression's OWN value -- the same intervals a single-column
-/// index on it would take. `None` back means "read everything", which is
-/// what an unprunable table, an unprunable predicate, or a method without
-/// pruning all reduce to.
+/// index on it would take, and the caller must pass the ranger's output
+/// rather than a list it assembled. `None` back means "read everything",
+/// which is what an unprunable table and a method without pruning reduce to;
+/// an unprunable PREDICATE never reaches here, because the ranger answers
+/// `None` for it one level up.
+///
+/// An EMPTY `ranges` is therefore the ranger's contradictory `WHERE` -- the
+/// same reading [`crate::table_access::TableAccess::accept_handle_ranges`]
+/// gives it -- and prunes every partition away. Reading it as "no
+/// restriction" instead would turn `a >= 10 AND a < 10` into a full scan.
 ///
 /// # The NULL partition is never pruned away by a range
 ///
@@ -114,12 +121,6 @@ pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64
     else {
         return None;
     };
-    // An empty range list is "no restriction was expressed", not "no row
-    // qualifies": the caller passes what it could build, and building
-    // nothing must not empty the scan.
-    if ranges.is_empty() {
-        return None;
-    }
     let mut kept = Vec::with_capacity(spec.definitions.len());
     for (index, definition) in spec.definitions.iter().enumerate() {
         let low = if index == 0 {
@@ -330,12 +331,13 @@ mod tests {
         }
     }
 
-    /// Nothing the caller could not express prunes anything: no ranges, and a
-    /// non-integer endpoint, both read the whole table.
+    /// An endpoint this tier cannot compare against a bound prunes nothing
+    /// and reads the whole table, while the ranger's own EMPTY range list is
+    /// the contradictory `WHERE` and prunes everything away.
     #[test]
     fn an_inexpressible_restriction_prunes_nothing() {
         let spec = range_table();
-        assert_eq!(pruned_ids(&spec, &[]), None);
+        assert_eq!(pruned_ids(&spec, &[]), Some(Vec::new()));
         assert_eq!(
             pruned_ids(
                 &spec,

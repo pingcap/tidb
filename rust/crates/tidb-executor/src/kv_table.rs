@@ -158,6 +158,21 @@ pub struct KvTable {
     /// this field once and then has no cases left. See
     /// [`crate::partition_routing`].
     partition: Option<Box<crate::partition_routing::PartitionSpec>>,
+    /// The physical ids a READ of this table may touch, when something has
+    /// narrowed them: `PARTITION (p)` naming them explicitly, or pruning
+    /// proving the rest cannot match. `None` is "every partition", which is
+    /// also what an unpartitioned table always has.
+    ///
+    /// It lives on the table handle rather than beside the scan because
+    /// EVERY read path -- the row cursor, the handle-range scan, the point
+    /// get's partition probe -- already asks the table which ids its rows
+    /// are under, so narrowing that one answer narrows all of them at once.
+    /// A path that grew its own copy of the id list is exactly how a pruned
+    /// read and an unpruned one come to disagree.
+    ///
+    /// Writes ignore it: a row's partition is a function of the ROW (Go's
+    /// `locatePartition`), never of the statement's restriction.
+    read_partitions: Option<Vec<i64>>,
 }
 
 /// A failure while encoding or decoding table bytes.
@@ -267,6 +282,7 @@ impl KvTable {
             foreign_keys: Vec::new(),
             max_foreign_key_id: 0,
             partition: None,
+            read_partitions: None,
         }
     }
 
@@ -393,16 +409,40 @@ impl KvTable {
             })
     }
 
-    /// Every physical table id this table's rows can live under, ascending.
+    /// Every physical table id a READ of this table has to touch, ascending.
     ///
     /// A read that has only a HANDLE cannot route -- the partition is a
     /// function of the ROW -- so it probes these in turn. For an ordinary
     /// table that is the single-element list holding the table id, which is
-    /// why the probe needs no unpartitioned special case.
-    fn record_physical_ids(&self) -> Vec<i64> {
+    /// why the probe needs no unpartitioned special case. When something has
+    /// narrowed the read (`PARTITION (p)`, pruning) it is that narrower list;
+    /// see [`KvTable::read_partitions`].
+    pub(crate) fn record_physical_ids(&self) -> Vec<i64> {
+        if let Some(ids) = &self.read_partitions {
+            return ids.clone();
+        }
         self.partition
             .as_ref()
             .map_or_else(|| vec![self.table_id], |p| p.physical_ids())
+    }
+
+    /// Restricts every READ of this handle to `ids`, which must be physical
+    /// partition ids of this table in ascending order.
+    ///
+    /// Narrowing is CUMULATIVE: a second call intersects with the first, so
+    /// `SELECT ... FROM t PARTITION (p1) WHERE a < 10` reads neither more
+    /// than `p1` nor more than the predicate admits, whichever order the two
+    /// restrictions arrive in.
+    pub fn restrict_read_to_partitions(&mut self, ids: &[i64]) {
+        let narrowed = match &self.read_partitions {
+            Some(existing) => existing
+                .iter()
+                .copied()
+                .filter(|id| ids.contains(id))
+                .collect(),
+            None => ids.to_vec(),
+        };
+        self.read_partitions = Some(narrowed);
     }
 
     /// The stored record for `handle` -- its key AND its bytes -- found by

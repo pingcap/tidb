@@ -147,28 +147,32 @@ impl KvTable {
     fn record_key_ranges(&self, handle_ranges: Option<&[IndexRange]>) -> Vec<(Key, Key)> {
         handle_ranges
             .and_then(|ranges| crate::handle_range::record_key_ranges(self, ranges))
-            .unwrap_or_else(|| vec![self.record_key_range()])
+            .unwrap_or_else(|| self.record_key_range())
     }
 
-    /// The record range this table's rows live in, as the storage seam's
-    /// half-open `[start, end)`.
-    fn record_key_range(&self) -> (Key, Key) {
-        // A partitioned table's rows live under its PARTITIONS' ids, which
-        // `CREATE TABLE` allocates as one contiguous ascending block, so the
-        // whole relation is still ONE range: from the first partition's low
-        // key to the last one's high key. Nothing else can fall inside it --
-        // the block is allocated together, and this table's own index entries
-        // sit under the (smaller) table id, below the block entirely.
-        let ids = self
-            .partition()
-            .map_or_else(|| vec![self.table_id], |p| p.physical_ids());
-        let (low, _) = get_table_handle_key_range(*ids.first().unwrap_or(&self.table_id));
-        let (_, high) = get_table_handle_key_range(*ids.last().unwrap_or(&self.table_id));
-        // `get_table_handle_key_range` returns an inclusive upper bound, while
-        // the seam's is exclusive, so the range runs to the key just past it.
-        let mut upper = high;
-        upper.push(0);
-        (Key::from_bytes(low), Key::from_bytes(upper))
+    /// The record ranges this table's rows live in, as the storage seam's
+    /// half-open `[start, end)` pairs in ascending key order.
+    ///
+    /// One range PER physical id it reads. An unpartitioned table and a
+    /// whole-table scan of a partitioned one both give a contiguous block --
+    /// `CREATE TABLE` allocates the partition ids together, and this table's
+    /// index entries sit under the (smaller) table id, below the block
+    /// entirely -- but a PRUNED or explicitly SELECTED read gives a set with
+    /// holes in it, and the holes are the whole point: a single spanning
+    /// range would read the partitions pruning just proved cannot match.
+    fn record_key_range(&self) -> Vec<(Key, Key)> {
+        self.record_physical_ids()
+            .into_iter()
+            .map(|id| {
+                let (low, high) = get_table_handle_key_range(id);
+                // `get_table_handle_key_range` returns an inclusive upper
+                // bound, while the seam's is exclusive, so the range runs to
+                // the key just past it.
+                let mut upper = high;
+                upper.push(0);
+                (Key::from_bytes(low), Key::from_bytes(upper))
+            })
+            .collect()
     }
 
     /// A cursor that reads this table's rows through the backend's
@@ -1068,6 +1072,16 @@ impl crate::table_access::TableAccess for TableScanExec {
     /// for correctness.
     fn accept_handle_ranges(&mut self, ranges: &[IndexRange]) -> bool {
         self.handle_ranges = Some(ranges.to_vec());
+        true
+    }
+
+    /// The scan reads the named partitions and no others: the restriction
+    /// goes onto the table handle, which is where every one of this scan's
+    /// key ranges -- whole-relation and handle-narrowed alike -- gets its id
+    /// list from. Narrowing is cumulative, so a `PARTITION (p)` restriction
+    /// already on the handle survives this.
+    fn accept_partition_pruning(&mut self, ids: &[i64]) -> bool {
+        self.table.restrict_read_to_partitions(ids);
         true
     }
 

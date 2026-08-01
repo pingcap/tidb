@@ -217,9 +217,7 @@ pub(crate) fn handle_range_row_count(
 /// the whole record range -- reading a superset is always correct, because
 /// the `WHERE` above the source filters every row it returns.
 pub(crate) fn record_key_ranges(table: &KvTable, ranges: &[IndexRange]) -> Option<Vec<(Key, Key)>> {
-    let ids = table
-        .partition()
-        .map_or_else(|| vec![table.table_id], |p| p.physical_ids());
+    let ids = table.record_physical_ids();
     let mut handle_ranges = Vec::with_capacity(ranges.len());
     for range in ranges {
         let (low, high, low_exclusive, high_exclusive) = to_table_range(range);

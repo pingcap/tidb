@@ -151,6 +151,24 @@ pub trait TableAccess {
         false
     }
 
+    /// Offers this source the PARTITIONS a `WHERE` proved it has to read, as
+    /// Go's `PartitionProcessor` keeps only the surviving partitions'
+    /// `DataSource`s under its union.
+    ///
+    /// Like [`TableAccess::accept_handle_ranges`] this takes over no
+    /// evaluation: the `WHERE` stays above, so accepting only means the
+    /// source stops READING partitions that cannot hold a matching row.
+    /// Reading a SUPERSET is always allowed; reading less than `ids` is what
+    /// silently loses rows, so a source that cannot restrict itself exactly
+    /// leaves the default `false`.
+    ///
+    /// `ids` are physical partition ids of this source's own table, ascending
+    /// (see [`crate::partition_pruning`]).
+    fn accept_partition_pruning(&mut self, ids: &[i64]) -> bool {
+        let _ = ids;
+        false
+    }
+
     /// Offers this source the chance to emit only the columns at `keep`
     /// (offsets into its current output row, ascending and unique), as Go's
     /// column pruning narrows a `DataSource`'s schema.
