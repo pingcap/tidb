@@ -329,14 +329,71 @@ prewrite succeeds. That is why TiKV's `commit_ts > start_ts` conflict check is
 sufficient for Go and insufficient for us: our prewrite carries a `start_ts` the
 read never saw. **Premise confirmed, not falsified.**
 
-This is a **pre-existing, unfixed data-loss bug in the autocommit write path**,
-reproducible on both sides of task #165 and independent of it. Reproduction:
-`scripts/run-sysbench-ladder.sh`'s cluster plus two concurrent sessions each
-running `UPDATE t SET v = v + N WHERE id = 1` several hundred times against one
-row; the row ends short by hundreds of increments with zero errors reported.
-A second, rarer refusal surfaced in the same window and is also unexplained:
+This was a **pre-existing data-loss bug in the autocommit write path**,
+reproducible on both sides of task #165 and independent of it. It is **fixed**;
+the measurement that fixed it is below.
+
+#### Fixed, and measured on a real cluster — offset 43000
+
+**2026-08-02 on `hparser-integration`, port offset 43000, ONE
+`tiup playground v9.0.0-beta.2.pre-nightly` per run, `--cluster-session`
+release build.** Harness: `rust/scripts/run-lost-update-check.sh`. Two sessions,
+one row, `UPDATE lu SET v = v + 5` and `+ 7` run 300 times each, blind, so the
+arithmetic is the oracle. Statements the server *refused* are counted and
+subtracted, because a refusal wrote nothing — that is what makes the total exact
+whether or not the fix reports conflicts.
+
+Two runs on the same harness at the same offset, differing only in one line of
+`commit_staged_buffer` — whether the publication takes a fresh PD timestamp or
+the statement's own read timestamp:
+
+| Scenario | Before (fresh write ts) | After (publish at the read ts) |
+| --- | --- | --- |
+| **control** Go vs Go (method control) | **PASS 3600 = 3600**, 0 refused | **PASS 3600 = 3600**, 0 refused |
+| **control** Rust alone, uncontended (no-race control) | **PASS 1500 = 1500** | **PASS 1500 = 1500** |
+| Rust vs Go, point predicate | **LOST 2487 of 3600**, 0 refused | **PASS 2850 = 2850**, 150 refused |
+| Rust vs Rust, point predicate | **LOST 1669 of 3595**, 1 refused | **PASS 2154 = 2154**, 117 + 123 refused |
+| Rust vs Go, ranged predicate | **LOST 2410 of 3600**, 0 refused | **PASS 2875 = 2875**, 145 refused |
+
+The before column reproduces the original figures (2538 / 1926 / 2498) within
+run-to-run spread, so the harness does see the bug; the after column reaches the
+exact total in every scenario, with **both controls still exact**. The ranged
+predicate — one `statement_read_shape` refuses outright — moves with the rest,
+so the fix is not scoped to the point-get shape.
+
+**What changed in kind, and it is not free.** Before, a statement that lost the
+race reported success and silently discarded another session's commit. After, it
+reports `[kv:9007] Write conflict` and writes nothing. Note the Go control
+refuses **zero** of its 300 statements under the same contention: Go's autocommit
+statement retries the conflict internally, so its client never sees it
+(`@@tidb_retry_limit` was `10` on the measured cluster). So the *loss* is closed
+and the remaining divergence is an error surface: **we refuse where Go retries**.
+That is a correctness improvement with a visible cost, and the retry is the next
+piece of work, not part of this one.
+
+#### The rarer refusal, task #168: a real pessimistic lock, not a misdecode
+
 `ERROR 1105 ... invalid Prewrite lock observation: pessimistic lock type 5 is
-outside bounded recovery`, once or twice per 300 statements.
+outside bounded recovery` appeared 3 times across 1,500 statements in the fixed
+run. **The decoder is not wrong.** `crates/tidb-txnkv/src/lock/model.rs:19-26`
+maps `Put=0, Del=1, Lock=2, Insert=4, PessimisticLock=5, CheckNotExists=6`,
+which is byte-for-byte kvproto's `Op` enum
+(`kvproto@v0.0.0-20251104104744/pkg/kvrpcpb/kvrpcpb.pb.go:290-319`). No
+off-by-one, no wrong base: a `5` is a `PessimisticLock` and we read it as one.
+
+So a real pessimistic lock is being met, and the run says whose. Every one of
+the three occurrences is on the **Rust** side of a **Rust vs Go** race; there are
+zero in Rust-vs-Rust, zero in Go-vs-Go, and zero uncontended. Nothing on the
+`--cluster-session` path takes a pessimistic lock — `begin_pessimistic` has one
+caller, `MultiStatementTransaction`, which that node never constructs — so the
+lock is the Go server's, on the one row both sides write. (The measured cluster
+reports `@@tidb_txn_mode = pessimistic` with
+`pessimistic-txn.pessimistic-auto-commit = false`, so *which* Go path takes it is
+still open.)
+
+What is settled: this is not a decoding bug, and the gap is that an optimistic
+prewrite of ours cannot resolve a pessimistic lock it meets, where client-go
+would. The message is left in place.
 
 ### The `MaxUint64` point-get shortcut on a real cluster (task #142)
 

@@ -41,14 +41,25 @@ if ! command -v tiup >/dev/null 2>&1; then
   exit 1
 fi
 
+# MySQL client 8.0.34+ deprecated and 9.x ships `mysql_native_password` only as
+# a loadable client plugin. Both servers here offer that plugin, so point the
+# client at whichever directory actually has it; without this the readiness
+# probe never connects and the run reports a cluster that is in fact up.
 MYSQL_PLUGIN_ARGS=()
-MYSQL_BIN_DIR=$(cd "$(dirname "$(command -v "${MYSQL_CLIENT}")")" && pwd)
-for candidate in "${MYSQL_BIN_DIR}/../lib/plugin" "${MYSQL_BIN_DIR}/../lib/mysql/plugin"; do
-  if [[ -f "${candidate}/mysql_native_password.so" ]]; then
-    MYSQL_PLUGIN_ARGS=(--plugin-dir="${candidate}")
-    break
-  fi
-done
+if [[ -n "${LOST_UPDATE_MYSQL_PLUGIN_DIR:-}" ]]; then
+  MYSQL_PLUGIN_ARGS=(--plugin-dir="${LOST_UPDATE_MYSQL_PLUGIN_DIR}")
+else
+  MYSQL_BIN_DIR=$(cd "$(dirname "$(command -v "${MYSQL_CLIENT}")")" && pwd)
+  for candidate in \
+    "${MYSQL_BIN_DIR}/../opt/mysql-client/lib/plugin" \
+    /opt/homebrew/opt/mysql-client/lib/plugin \
+    /usr/local/opt/mysql-client/lib/plugin; do
+    if [[ -f "${candidate}/mysql_native_password.so" ]]; then
+      MYSQL_PLUGIN_ARGS=(--plugin-dir="${candidate}")
+      break
+    fi
+  done
+fi
 
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 CLUSTER_VERSION=${LOST_UPDATE_CLUSTER_VERSION:-v9.0.0-beta.2.pre-nightly}
@@ -206,7 +217,7 @@ for _ in $(seq 1 300); do
   fi
   if curl -sf --max-time 2 "http://${PD_ADDR}/pd/api/v1/members" >/dev/null 2>&1 \
     && "${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" -uroot \
-      --connect-timeout=2 "${MYSQL_PLUGIN_ARGS[@]}" -Nse 'select 1' >/dev/null 2>&1; then
+      --connect-timeout=2 ${MYSQL_PLUGIN_ARGS[@]+"${MYSQL_PLUGIN_ARGS[@]}"} -Nse 'select 1' >/dev/null 2>&1; then
     cluster_ready=true
     break
   fi
@@ -214,18 +225,21 @@ for _ in $(seq 1 300); do
 done
 if [[ "${cluster_ready}" != true ]]; then
   note "FAIL: cluster never became ready; see ${PLAYGROUND_LOG}"
+  note "last PD probe: $(curl -s --max-time 2 "http://${PD_ADDR}/pd/api/v1/members" 2>&1 | head -c 200)"
+  note "last SQL probe: $("${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" -uroot \
+    --connect-timeout=2 ${MYSQL_PLUGIN_ARGS[@]+"${MYSQL_PLUGIN_ARGS[@]}"} -Nse 'select 1' 2>&1 | head -c 300)"
   exit 1
 fi
 note "OK: PD ${PD_ADDR}, Go TiDB 127.0.0.1:${GO_SQL_PORT}"
 
 go_sql() {
   "${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" -uroot \
-    --connect-timeout=5 "${MYSQL_PLUGIN_ARGS[@]}" "$@" 2>&1
+    --connect-timeout=5 ${MYSQL_PLUGIN_ARGS[@]+"${MYSQL_PLUGIN_ARGS[@]}"} "$@" 2>&1
 }
 rust_sql() {
   "${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${RUST_SQL_PORT}" \
     -u"${AUTH_USER}" -p"${AUTH_PASSWORD}" --connect-timeout=5 \
-    "${MYSQL_PLUGIN_ARGS[@]}" "$@" 2>&1
+    ${MYSQL_PLUGIN_ARGS[@]+"${MYSQL_PLUGIN_ARGS[@]}"} "$@" 2>&1
 }
 
 go_sql -e "DROP DATABASE IF EXISTS ${DB}; CREATE DATABASE ${DB};" >/dev/null
@@ -330,6 +344,9 @@ scenario "Rust vs Rust, point predicate"          rust rust 'id = 1'  2
 scenario "Rust vs Go, ranged predicate"           rust go   'id >= 1' 2
 
 step "task #168: pessimistic lock type on the optimistic path"
+note "Go @@tidb_txn_mode: $(go_sql -N -B -e 'SELECT @@tidb_txn_mode' | tr -d '\r')"
+note "Go pessimistic-auto-commit: $(go_sql -N -B -e "SELECT \`value\` FROM information_schema.cluster_config WHERE \`key\` = 'pessimistic-txn.pessimistic-auto-commit'" | tr -d '\r' | tr '\n' ' ')"
+note "Go tidb_retry_limit / tidb_disable_txn_auto_retry: $(go_sql -N -B -e 'SELECT @@tidb_retry_limit, @@tidb_disable_txn_auto_retry' | tr -d '\r')"
 LOCK_TYPE_HITS=$(grep -c 'outside bounded recovery' "${OUT_DIR}"/*.out 2>/dev/null \
   | awk -F: '{ total += $2 } END { print total + 0 }')
 note "'outside bounded recovery' occurrences across every side: ${LOCK_TYPE_HITS}"
