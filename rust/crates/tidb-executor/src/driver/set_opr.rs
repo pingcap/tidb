@@ -90,7 +90,7 @@ pub fn run_set_opr_stmt(
     }
     let (first_columns, _) = terms
         .first()
-        .ok_or(DriverError::Unsupported("an empty set operation"))?;
+        .ok_or(DriverError::unsupported("an empty set operation"))?;
 
     // The merged type per output column. Names come from the FIRST term (Go
     // takes the union's schema names from it); only the TYPES are merged.
@@ -111,7 +111,7 @@ pub fn run_set_opr_stmt(
     let mut accumulated = term_iter.next().map(|(_, rows)| rows).unwrap_or_default();
     for (term, (_, term_rows)) in stmt.terms.iter().skip(1).zip(term_iter) {
         let Some(op) = term.op else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "a set-operation term after the first needs an operator",
             ));
         };
@@ -315,7 +315,7 @@ pub(crate) fn row_key(row: &[Datum]) -> Result<Vec<u8>, DriverError> {
         key.extend_from_slice(
             &value
                 .to_hash_key()
-                .map_err(|_| DriverError::Unsupported("this datum kind cannot be deduplicated"))?,
+                .map_err(|_| DriverError::unsupported("this datum kind cannot be deduplicated"))?,
         );
         key.push(0xff);
     }
@@ -356,11 +356,11 @@ pub(crate) fn sort_rows_by_output(
             tidb_ast::Expr::Column(path) => {
                 let name = path
                     .last()
-                    .ok_or(DriverError::Unsupported("empty ORDER BY column"))?;
+                    .ok_or(DriverError::unsupported("empty ORDER BY column"))?;
                 columns
                     .iter()
                     .position(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
-                    .ok_or(DriverError::Unsupported(
+                    .ok_or(DriverError::unsupported(
                         "a set operation's ORDER BY must name an output column",
                     ))?
             }
@@ -368,14 +368,14 @@ pub(crate) fn sort_rows_by_output(
             tidb_ast::Expr::Int(text) => {
                 let position: usize = text
                     .parse()
-                    .map_err(|_| DriverError::Unsupported("bad ORDER BY position"))?;
+                    .map_err(|_| DriverError::unsupported("bad ORDER BY position"))?;
                 if position == 0 || position > columns.len() {
-                    return Err(DriverError::Unsupported("ORDER BY position out of range"));
+                    return Err(DriverError::unsupported("ORDER BY position out of range"));
                 }
                 position - 1
             }
             _ => {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "a set operation's ORDER BY must name an output column",
                 ))
             }

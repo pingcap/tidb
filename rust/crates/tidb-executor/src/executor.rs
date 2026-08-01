@@ -15,6 +15,8 @@
 //! `pkg/executor/internal/exec`: the [`Executor`] trait and the [`ExecutorMeta`]
 //! shared base state.
 
+use std::borrow::Cow;
+
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
 use tidb_expr::schema::Schema;
@@ -27,7 +29,12 @@ pub enum ExecError {
     /// An expression failed to evaluate.
     Eval(EvalError),
     /// An operator or feature is not yet ported.
-    Unsupported(&'static str),
+    ///
+    /// [`Cow`] for the same reason [`crate::DriverError::Unsupported`] is:
+    /// most reasons are fixed text, but one built per call is the same
+    /// refusal and reaches the client as the same 1105 message. Build one
+    /// with [`ExecError::unsupported`].
+    Unsupported(Cow<'static, str>),
     /// Go `ErrSubqueryMoreThan1Row` (1242), raised by the max-one-row check a
     /// scalar subquery's plan carries. It is an executor error because it is
     /// only known per outer row, once the inner query has run.
@@ -53,6 +60,15 @@ pub enum ExecError {
         /// rather than being hard-coded at the wire boundary).
         charset: String,
     },
+}
+
+impl ExecError {
+    /// [`ExecError::Unsupported`] from either a fixed reason or one built per
+    /// call.
+    #[must_use]
+    pub fn unsupported(reason: impl Into<Cow<'static, str>>) -> Self {
+        ExecError::Unsupported(reason.into())
+    }
 }
 
 impl From<EvalError> for ExecError {

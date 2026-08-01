@@ -963,7 +963,7 @@ impl TableScanExec {
             (None, Some(cursor)) => cursor.next_row(),
             (None, None) => return Ok(None),
         }
-        .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
+        .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
         match next {
             Some((_, row)) => Ok(Some(row)),
             None => {
@@ -995,7 +995,7 @@ impl Executor for TableScanExec {
                 self.handle_ranges.as_deref(),
                 &self.zone,
             )
-            .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
+            .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
         if self.remote.is_some() {
             return Ok(());
         }
@@ -1010,7 +1010,7 @@ impl Executor for TableScanExec {
         self.cursor = Some(
             self.table
                 .row_cursor_projected(projection, handle_ranges.as_deref(), &self.zone)
-                .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?,
+                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?,
         );
         Ok(())
     }

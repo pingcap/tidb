@@ -45,7 +45,7 @@ fn table_of<'a>(
 ) -> Result<&'a mut crate::kv_table::KvTable, DriverError> {
     match catalog.table_mut_in(database, name) {
         Some(crate::TableEntry::Kv(table)) => Ok(table),
-        Some(_) => Err(DriverError::Unsupported(
+        Some(_) => Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
         )),
         None => Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
@@ -247,7 +247,7 @@ pub(crate) fn alter_column_default_action(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
     let Some(expr) = default_value else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "ALTER COLUMN ... DROP DEFAULT is not supported yet: it sets Go's \
              NoDefaultValueFlag, which this tier does not model",
         ));
@@ -256,7 +256,7 @@ pub(crate) fn alter_column_default_action(
         tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
             .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
     let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "an expression DEFAULT is not supported yet",
         ));
     };

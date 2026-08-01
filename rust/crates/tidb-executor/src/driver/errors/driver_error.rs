@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::borrow::Cow;
+
 use super::{SchemaErrorKind, TxnErrorKind, VarErrorKind};
 use crate::executor::ExecError;
 
@@ -33,12 +35,15 @@ pub enum DriverError {
     /// Everything it refuses reaches the client as Go's catch-all 1105, so
     /// the carried text IS the whole diagnostic. Say what was refused, not
     /// that something was.
-    Unsupported(&'static str),
-    /// Like [`Self::Unsupported`], but the message names the specific
-    /// statement/AST kind the refusal saw -- built at the refusal site from
-    /// the parsed statement's own variant name, so the same top-level
-    /// "not supported yet" wording stays diagnostic instead of generic.
-    UnsupportedKind(String),
+    ///
+    /// [`Cow`] rather than `&'static str` because a refusal that names the
+    /// AST kind it saw builds its text per call. That used to be a SECOND
+    /// variant, `UnsupportedKind(String)`, which rendered byte for byte
+    /// identically on adjacent lines of `to_mysql_error` -- nothing on the
+    /// wire could tell the two apart, and the only difference was who owned
+    /// the bytes. Build one with [`DriverError::unsupported`], which takes
+    /// either.
+    Unsupported(Cow<'static, str>),
     /// Rewriting an expression or executing failed.
     Exec(ExecError),
     /// The shared catalog is unusable because a statement panicked while
@@ -813,4 +818,16 @@ pub enum DriverError {
         /// The table named in the `REVOKE`, as written.
         table: String,
     },
+}
+
+impl DriverError {
+    /// [`DriverError::Unsupported`] from either a fixed reason or one built
+    /// per call.
+    ///
+    /// Both spellings render identically on the wire, so this is the one
+    /// constructor; the borrow stays borrowed and the owned string is moved.
+    #[must_use]
+    pub fn unsupported(reason: impl Into<Cow<'static, str>>) -> Self {
+        DriverError::Unsupported(reason.into())
+    }
 }

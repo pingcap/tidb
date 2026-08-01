@@ -29,6 +29,8 @@
 //! aggregation, so the select field records where it reads from
 //! ([`OutputSlot`]) instead of being rewritten in place.
 
+use std::borrow::Cow;
+
 use super::*;
 /// The type of the column an Apply appends for a correlated scalar subquery.
 ///
@@ -57,11 +59,17 @@ pub(crate) fn subquery_result_type(
 
 /// A short description of a driver error, for the executor-level error the
 /// apply callback must return.
-pub(crate) fn driver_error_text(error: &DriverError) -> &'static str {
+///
+/// Borrowed when the reason is fixed text, owned when the refusal built it per
+/// call -- so a refusal that names what it saw keeps saying so here instead of
+/// being flattened to the generic phrase.
+pub(crate) fn driver_error_text(error: &DriverError) -> Cow<'static, str> {
     match error {
-        DriverError::SubqueryReturnsMoreThanOneRow => "Subquery returns more than 1 row",
-        DriverError::Unsupported(text) => text,
-        _ => "the correlated subquery failed",
+        DriverError::SubqueryReturnsMoreThanOneRow => {
+            Cow::Borrowed("Subquery returns more than 1 row")
+        }
+        DriverError::Unsupported(text) => text.clone(),
+        _ => Cow::Borrowed("the correlated subquery failed"),
     }
 }
 
@@ -378,11 +386,11 @@ pub(crate) fn run_correlated_subquery(
                 let name = path.last()?;
                 resolver.resolve(std::slice::from_ref(name))
             })
-            .ok_or(DriverError::Unsupported("unresolved correlated column"))?;
+            .ok_or(DriverError::unsupported("unresolved correlated column"))?;
         let value = outer_values
             .get(index)
             .cloned()
-            .ok_or(DriverError::Unsupported("correlated column out of range"))?;
+            .ok_or(DriverError::unsupported("correlated column out of range"))?;
         bindings.push((path.clone(), value));
     }
 
@@ -395,7 +403,7 @@ pub(crate) fn run_correlated_subquery(
             0 => Ok(Datum::Null),
             1 => {
                 let [value] = rows[0].as_slice() else {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "a scalar subquery selecting several columns is not supported yet",
                     ));
                 };
@@ -434,7 +442,7 @@ fn subquery_value_list(
     let mut list = Vec::with_capacity(rows.len());
     for row in rows {
         let [value] = row.as_slice() else {
-            return Err(DriverError::Unsupported(several_columns));
+            return Err(DriverError::unsupported(several_columns));
         };
         list.push(datum_to_literal(value)?);
     }
@@ -532,7 +540,7 @@ pub(crate) fn extract_correlated_subquery(
             subquery: query, ..
         } => {
             let tidb_ast::QueryStmt::Select(select) = &**query else {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "set-operation subqueries are not supported yet",
                 ));
             };
@@ -543,7 +551,7 @@ pub(crate) fn extract_correlated_subquery(
                 return Ok(expr.clone());
             }
             if found.is_some() {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "more than one correlated subquery in an expression is not supported yet",
                 ));
             }
@@ -573,7 +581,7 @@ pub(crate) fn extract_correlated_subquery(
                 return Ok(expr.clone());
             }
             if found.is_some() || expr_has_subquery(lhs) {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "more than one correlated subquery in an expression is not supported yet",
                 ));
             }
@@ -600,7 +608,7 @@ pub(crate) fn extract_correlated_subquery(
                 return Ok(expr.clone());
             }
             if found.is_some() || expr_has_subquery(left) {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "more than one correlated subquery in an expression is not supported yet",
                 ));
             }
@@ -648,7 +656,7 @@ pub(crate) fn extract_correlated_subquery(
 fn subquery_select(query: &tidb_ast::QueryStmt) -> Result<&tidb_ast::SelectStmt, DriverError> {
     match query {
         tidb_ast::QueryStmt::Select(select) => Ok(select),
-        _ => Err(DriverError::Unsupported(
+        _ => Err(DriverError::unsupported(
             "set-operation subqueries are not supported yet",
         )),
     }
@@ -852,7 +860,7 @@ fn fold_subqueries(
                 1 => {
                     let row = &rows[0];
                     let [value] = row.as_slice() else {
-                        return Err(DriverError::Unsupported(
+                        return Err(DriverError::unsupported(
                             "a scalar subquery selecting several columns is not supported yet",
                         ));
                     };
@@ -1007,7 +1015,7 @@ fn run_subquery(
     ctx: &crate::StmtContext,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     let tidb_ast::QueryStmt::Select(_) = query else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "set-operation subqueries are not supported yet",
         ));
     };

@@ -176,7 +176,7 @@ fn build_multi_source(
     ctx: &crate::StmtContext,
 ) -> Result<MultiSource, DriverError> {
     if join.natural || !join.using.is_empty() {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "a NATURAL or USING join is not supported in multi-table DML",
         ));
     }
@@ -202,7 +202,7 @@ fn build_multi_node(
         tidb_ast::JoinNode::Join(join) => build_multi_source(join, catalog, current_db, ctx),
         // A derived table's rows have no base-table identity to write back
         // to, so there is nothing to approximate here.
-        tidb_ast::JoinNode::Derived { .. } => Err(DriverError::Unsupported(
+        tidb_ast::JoinNode::Derived { .. } => Err(DriverError::unsupported(
             "a derived table is not supported in multi-table DML",
         )),
     }
@@ -218,7 +218,7 @@ fn scan_base_table(
     let (database, name) = split_table_path(&table_ref.name, current_db)?;
     let entry = catalog
         .get_in(database, name)
-        .ok_or(DriverError::Unsupported("table not found in catalog"))?;
+        .ok_or(DriverError::unsupported("table not found in catalog"))?;
     let columns = entry.column_list();
     let rows: Vec<SourceRow> = match entry {
         TableEntry::Mem(mem) => mem
@@ -237,13 +237,13 @@ fn scan_base_table(
         // A view is not a row source a write can identify rows in, whether
         // or not it is one of the targets.
         TableEntry::View(_) => {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "a view is not supported in multi-table DML",
             ))
         }
         // A sequence has no rows to identify either.
         TableEntry::Sequence(_) => {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "a sequence is not supported in multi-table DML",
             ))
         }
@@ -509,7 +509,7 @@ fn resolve_assignments(
         })?;
         let slot = source
             .table_of_column(offset)
-            .ok_or(DriverError::Unsupported("SET column outside the join"))?;
+            .ok_or(DriverError::unsupported("SET column outside the join"))?;
         resolved.push(MultiAssignment {
             slot,
             column: offset - source.tables[slot].offset,
@@ -529,7 +529,7 @@ fn write_row(
 ) -> Result<(), DriverError> {
     let entry = catalog
         .get_mut_in(&table.database, &table.name)
-        .ok_or(DriverError::Unsupported("unknown table"))?;
+        .ok_or(DriverError::unsupported("unknown table"))?;
     match (entry, id) {
         (TableEntry::Mem(mem), RowId::Mem(index)) => {
             mem.rows[*index] = row.to_vec();
@@ -539,7 +539,7 @@ fn write_row(
             kv.update_row(handle, row, ctx).map_err(kv_write_error)
         }
         // The identity was read off this very entry a moment ago.
-        _ => Err(DriverError::Unsupported(
+        _ => Err(DriverError::unsupported(
             "table storage changed during a multi-table write",
         )),
     }
@@ -578,7 +578,7 @@ pub(crate) fn run_multi_delete(
     for (database, name, id) in doomed.into_iter().rev() {
         let entry = catalog
             .get_mut_in(&database, &name)
-            .ok_or(DriverError::Unsupported("unknown table"))?;
+            .ok_or(DriverError::unsupported("unknown table"))?;
         match (entry, &id) {
             (TableEntry::Mem(mem), RowId::Mem(index)) => {
                 mem.rows.remove(*index);
@@ -588,7 +588,7 @@ pub(crate) fn run_multi_delete(
                     .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?
             }
             _ => {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "table storage changed during a multi-table write",
                 ))
             }

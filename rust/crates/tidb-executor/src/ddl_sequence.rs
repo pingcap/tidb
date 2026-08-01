@@ -190,7 +190,7 @@ pub fn run_create_sequence_in(
     // value, and this tier stores neither, so any option at all is refused
     // rather than silently dropped.
     if !create.table_options.is_empty() {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "a table option on CREATE SEQUENCE is not supported yet",
         ));
     }

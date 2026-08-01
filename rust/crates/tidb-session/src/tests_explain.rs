@@ -604,13 +604,11 @@ fn explain_refuses_what_it_cannot_plan() {
     // only a set-operation query is refused.
     assert!(matches!(
         session.run("EXPLAIN ANALYZE (SELECT a FROM t) UNION (SELECT a FROM t)"),
-        Err(DriverError::Unsupported(
-            "EXPLAIN ANALYZE of a set operation is not supported yet"
-        ))
+        Err(DriverError::Unsupported(reason)) if reason == "EXPLAIN ANALYZE of a set operation is not supported yet"
     ));
     assert!(matches!(
         session.run("EXPLAIN FORMAT = 'bogus' SELECT * FROM t"),
-        Err(DriverError::Unsupported("unknown EXPLAIN format name"))
+        Err(DriverError::Unsupported(reason)) if reason == "unknown EXPLAIN format name"
     ));
 }
 

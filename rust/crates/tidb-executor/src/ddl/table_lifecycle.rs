@@ -50,7 +50,7 @@ pub fn run_rename_table_in(
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let Stmt::Ddl(ddl) = &stmt else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "only RENAME TABLE is supported here",
         ));
     };
@@ -67,7 +67,7 @@ pub fn run_rename_table_in(
             pairs
         }
         _ => {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "only RENAME TABLE is supported here",
             ))
         }
@@ -110,7 +110,7 @@ pub fn run_rename_table_in(
         // A foreign key names the referenced table, so moving one side would
         // leave the constraint pointing at a name that no longer resolves.
         if crate::foreign_key::participates(catalog, &from_db, &from_name) {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "renaming a table involved in a FOREIGN KEY is not supported yet",
             ));
         }
@@ -177,12 +177,12 @@ pub fn run_truncate_table_in(
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
     let Stmt::Ddl(ddl) = &stmt else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "only TRUNCATE TABLE is supported here",
         ));
     };
     let DdlStmt::TruncateTable(truncate) = &**ddl else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "only TRUNCATE TABLE is supported here",
         ));
     };
@@ -234,19 +234,19 @@ pub fn run_drop_table_in(
         Stmt::Ddl(ddl) => match &**ddl {
             DdlStmt::DropTable(drop) => drop,
             _ => {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "only DROP TABLE is supported here",
                 ))
             }
         },
         _ => {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "only DROP TABLE is supported here",
             ))
         }
     };
     if drop.temporary != tidb_ast::DropTemporary::None {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "temporary tables are not supported yet",
         ));
     }

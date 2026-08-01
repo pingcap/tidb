@@ -253,7 +253,7 @@ pub(crate) fn build_from(
             let (database, name) = split_table_path(&table_ref.name, current_db)?;
             let entry = catalog
                 .get_in(database, name)
-                .ok_or(DriverError::Unsupported("table not found in catalog"))?;
+                .ok_or(DriverError::unsupported("table not found in catalog"))?;
             // A table alias replaces the name for qualification, as in Go.
             let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
             // Every base-table read starts as a whole-table scan; the fast
@@ -282,7 +282,7 @@ pub(crate) fn build_from(
             // what matters is that the read fails rather than reporting a
             // zero-column row source.
             if entry.is_sequence() {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "a sequence is not a row source; read it with NEXTVAL",
                 ));
             }
@@ -657,19 +657,19 @@ pub(crate) fn build_lateral_join(
         for path in &correlated_paths {
             let (index, _, _) = resolver
                 .resolve(path)
-                .ok_or(ExecError::Unsupported("unresolved correlated column"))?;
+                .ok_or(ExecError::unsupported("unresolved correlated column"))?;
             let value = values
                 .get(index)
                 .cloned()
-                .ok_or(ExecError::Unsupported("correlated column out of range"))?;
+                .ok_or(ExecError::unsupported("correlated column out of range"))?;
             bindings.push((path.clone(), value));
         }
         let bound = bind_subquery_columns_query(&subquery, &bindings)
-            .map_err(|e| ExecError::Unsupported(driver_error_text(&e)))?;
+            .map_err(|e| ExecError::unsupported(driver_error_text(&e)))?;
         let (_, rows) =
             run_query_stmt(&bound, &inner_catalog, &inner_db, &inner_ctx).map_err(|e| match e {
                 DriverError::Exec(exec) => exec,
-                other => ExecError::Unsupported(driver_error_text(&other)),
+                other => ExecError::unsupported(driver_error_text(&other)),
             })?;
         Ok(rows)
     });
@@ -1045,7 +1045,7 @@ pub(crate) fn build_join(
                 scope.qualified_path(pair.visible),
                 scope.qualified_path(pair.redundant),
             ) else {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "a coalesced join column has no table to name it",
                 ));
             };
@@ -1219,7 +1219,7 @@ pub(crate) fn single_table_name(
     // handle the restriction would live on. Ignoring it would update or
     // delete rows the statement excluded, so it is refused.
     if !table_ref.partitions.is_empty() {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "UPDATE/DELETE ... PARTITION (...) is not supported yet",
         ));
     }

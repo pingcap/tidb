@@ -85,7 +85,7 @@ pub(crate) fn table_indexes(
         let offset = columns
             .iter()
             .position(|col| col.name.original().eq_ignore_ascii_case(name))
-            .ok_or(DriverError::Unsupported(
+            .ok_or(DriverError::unsupported(
                 "an index names a column the table does not define",
             ))?;
         if columns[offset].field_type.code() == FieldTypeCode::Json {
@@ -174,7 +174,7 @@ pub(crate) fn table_indexes(
             | tidb_ast::IndexConstraintKind::Key
             | tidb_ast::IndexConstraintKind::Index => {}
             _ => {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "FULLTEXT, VECTOR and COLUMNAR indexes are not supported yet",
                 ))
             }
@@ -204,7 +204,7 @@ pub(crate) fn table_indexes(
                     Some(tidb_ast::IndexPart::Expr { .. }) => {
                         anonymous_index_name(&indexes, &reserved, "expression_index")
                     }
-                    None => return Err(DriverError::Unsupported("an index names no column")),
+                    None => return Err(DriverError::unsupported("an index names no column")),
                 },
             },
         };
@@ -390,7 +390,7 @@ pub(crate) fn build_foreign_key(
 ) -> Result<KvForeignKey, DriverError> {
     {
         if definition.reference.match_type == tidb_ast::ForeignKeyMatch::Partial {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "MATCH PARTIAL is not supported yet",
             ));
         }
@@ -399,20 +399,20 @@ pub(crate) fn build_foreign_key(
             let offset = columns
                 .iter()
                 .position(|column| column.name.eq_ignore_ascii_case(&name))
-                .ok_or(DriverError::Unsupported(
+                .ok_or(DriverError::unsupported(
                     "a foreign key names a column the table does not define",
                 ))?;
             cols.push(offset);
         }
         let Some(path) = &definition.reference.table else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "a foreign key needs a referenced table",
             ));
         };
         let (ref_schema, ref_table) = match path.as_slice() {
             [name] => (database.to_owned(), name.clone()),
             [schema, name] => (schema.clone(), name.clone()),
-            _ => return Err(DriverError::Unsupported("empty referenced table name")),
+            _ => return Err(DriverError::unsupported("empty referenced table name")),
         };
         let ref_cols = match &definition.reference.parts {
             Some(parts) => index_part_names(parts)?,
@@ -450,7 +450,7 @@ pub(crate) fn build_foreign_key(
             // behind the switch, because it is the parent lookup that reaches
             // it at all.
             let crate::TableEntry::Kv(parent) = parent else {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "a foreign key may not reference a view",
                 ));
             };
@@ -595,7 +595,7 @@ pub(crate) fn primary_key_column(
                 match key.kind {
                     tidb_ast::InlineKeyKind::Primary { .. } => {
                         if found.is_some() {
-                            return Err(DriverError::Unsupported(
+                            return Err(DriverError::unsupported(
                                 "a table may define only one primary key",
                             ));
                         }
@@ -624,7 +624,7 @@ pub(crate) fn primary_key_column(
             continue;
         }
         if found.is_some() {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "a table may define only one primary key",
             ));
         }
@@ -634,7 +634,7 @@ pub(crate) fn primary_key_column(
                 name, prefix_len, ..
             } = part
             else {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "an expression primary key is not supported yet",
                 ));
             };
@@ -645,7 +645,7 @@ pub(crate) fn primary_key_column(
                 .iter()
                 .find(|column| column.name.original().eq_ignore_ascii_case(name))
                 .map(|column| &column.field_type)
-                .ok_or(DriverError::Unsupported(
+                .ok_or(DriverError::unsupported(
                     "the primary key names a column the table does not define",
                 ))?;
             // A clustered primary key whose handle is a CUT value is a
@@ -655,7 +655,7 @@ pub(crate) fn primary_key_column(
             if crate::ddl::index_prefix::key_part_length(field_type, name, *prefix_len)?
                 != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
             {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     crate::ddl::index_prefix::clustered_prefix_unsupported(),
                 ));
             }

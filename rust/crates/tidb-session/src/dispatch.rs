@@ -120,7 +120,7 @@ impl Session {
                     options,
                 } => {
                     if !options.is_empty() {
-                        return Err(DriverError::Unsupported(
+                        return Err(DriverError::unsupported(
                             "database charset and collation options are not supported yet",
                         ));
                     }
@@ -227,7 +227,7 @@ impl Session {
             return Ok(None);
         }
         if join.right.is_some() {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "joining an information_schema table is not supported yet",
             ));
         }
@@ -446,7 +446,7 @@ impl Session {
                     self.drain_eval_warnings(&ctx);
                     output
                 }
-                other => Err(DriverError::UnsupportedKind(format!(
+                other => Err(DriverError::unsupported(format!(
                     "this DML statement kind ({}) is not supported yet",
                     variant_name(other)
                 ))),
@@ -634,16 +634,16 @@ impl Session {
                     }
                     Ok(StmtOutput::Affected(0))
                 }
-                other => Err(DriverError::UnsupportedKind(format!(
+                other => Err(DriverError::unsupported(format!(
                     "this DDL statement kind ({}) is not supported yet",
                     variant_name(other)
                 ))),
             },
-            Stmt::Admin(admin) => Err(DriverError::UnsupportedKind(format!(
+            Stmt::Admin(admin) => Err(DriverError::unsupported(format!(
                 "this statement kind (ADMIN {}) is not supported yet",
                 variant_name(&**admin)
             ))),
-            Stmt::Session(session) => Err(DriverError::UnsupportedKind(format!(
+            Stmt::Session(session) => Err(DriverError::unsupported(format!(
                 "this statement kind ({}) is not supported yet",
                 variant_name(&**session)
             ))),
@@ -671,7 +671,7 @@ impl Session {
             tidb_ast::QueryStmt::SetOpr(_) => false,
         };
         if into_outfile {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "SELECT ... INTO OUTFILE is not supported yet",
             ));
         }

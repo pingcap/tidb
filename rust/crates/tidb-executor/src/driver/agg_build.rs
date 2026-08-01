@@ -266,7 +266,7 @@ pub(crate) fn agg_kind_and_type(
             (AggKind::ApproxPercentile(ranks.then_some(percent)), ret)
         }
         _ => {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "this aggregate function is deferred",
             ))
         }
@@ -637,7 +637,7 @@ pub(crate) fn build_agg_func(
         // the rows are joined; the first argument rides `arg` and the rest
         // ride `extra_args`.
         let Some((first, rest)) = args.split_first() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "GROUP_CONCAT requires at least one argument",
             ));
         };
@@ -679,14 +679,14 @@ pub(crate) fn build_agg_func(
         args,
     } = expr
     else {
-        return Err(DriverError::Unsupported("not an aggregate function"));
+        return Err(DriverError::unsupported("not an aggregate function"));
     };
     // `COUNT(DISTINCT a, b, ...)` is the one non-GROUP_CONCAT aggregate the
     // parser lets through with more than one argument (`parse_aggregate`
     // rejects a bare `COUNT(a, b)` and every multi-argument `SUM`/`AVG`/etc.
     // at parse time), so only COUNT needs an `extra_args`-carrying path here.
     let Some((first, rest)) = args.split_first() else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "multi-argument aggregates are deferred",
         ));
     };
@@ -696,7 +696,7 @@ pub(crate) fn build_agg_func(
             "COUNT" | "JSON_OBJECTAGG" | "APPROX_COUNT_DISTINCT" | "APPROX_PERCENTILE"
         )
     {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "multi-argument aggregates are deferred",
         ));
     }
@@ -708,7 +708,7 @@ pub(crate) fn build_agg_func(
     // value). That per-row Apply is not built here; refuse precisely rather
     // than let the per-row rewriter reject it with its generic message.
     if expr_has_subquery(first) || rest.iter().any(expr_has_subquery) {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "a subquery inside an aggregate function's argument is not supported yet",
         ));
     }

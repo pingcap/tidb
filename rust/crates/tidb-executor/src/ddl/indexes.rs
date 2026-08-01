@@ -43,12 +43,12 @@ pub fn run_create_index_in(
 ) -> Result<(), DriverError> {
     let stmt = ctx.parse(sql)?;
     let Stmt::Ddl(ddl) = &stmt else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "only CREATE INDEX is supported here",
         ));
     };
     let DdlStmt::CreateIndex(create) = &**ddl else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "only CREATE INDEX is supported here",
         ));
     };
@@ -58,7 +58,7 @@ pub fn run_create_index_in(
         tidb_ast::IndexKind::Ordinary => false,
         tidb_ast::IndexKind::Unique => true,
         _ => {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "SPATIAL, FULLTEXT, VECTOR and COLUMNAR indexes are not supported yet",
             ))
         }
@@ -103,7 +103,7 @@ pub(crate) fn is_visible(options: &tidb_ast::IndexOptions) -> bool {
 /// dropped.
 pub(crate) fn reject_partial_index(options: &tidb_ast::IndexOptions) -> Result<(), DriverError> {
     if options.condition.is_some() {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "a partial index (KEY ... WHERE) is not supported yet",
         ));
     }
@@ -119,12 +119,12 @@ pub(crate) fn index_part_names(parts: &[tidb_ast::IndexPart]) -> Result<Vec<Stri
             name, prefix_len, ..
         } = part
         else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "an expression index is not supported yet",
             ));
         };
         if prefix_len.is_some() {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "a prefix-length index is not supported yet",
             ));
         }
@@ -313,12 +313,12 @@ pub fn run_drop_index_in(
 ) -> Result<(), DriverError> {
     let stmt = ctx.parse(sql)?;
     let Stmt::Ddl(ddl) = &stmt else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "only DROP INDEX is supported here",
         ));
     };
     let DdlStmt::DropIndex(drop) = &**ddl else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "only DROP INDEX is supported here",
         ));
     };

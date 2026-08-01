@@ -40,7 +40,7 @@ impl Session {
                             self.connection_id.unwrap_or(0)
                         }
                         tidb_ast::KillTarget::Expr(_) => {
-                            return Err(DriverError::Unsupported(
+                            return Err(DriverError::unsupported(
                                 "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead",
                             ))
                         }

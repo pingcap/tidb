@@ -303,7 +303,7 @@ impl Executor for HandleSourceExec {
             let row = self
                 .table
                 .get_row_by_handle(handle, &self.zone)
-                .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
+                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
             if let Some(row) = row {
                 for (c, value) in visible_of(&self.table, &row).iter().enumerate() {
                     req.append_datum(c, value);
@@ -424,7 +424,7 @@ impl IndexRangeSourceExec {
             if let Some(cursor) = self.cursor.as_mut() {
                 let handle = cursor
                     .next_handle()
-                    .map_err(|_| ExecError::Unsupported("index bytes failed to decode"))?;
+                    .map_err(|_| ExecError::unsupported("index bytes failed to decode"))?;
                 if let Some(handle) = handle {
                     return Ok(Some(handle));
                 }
@@ -437,7 +437,7 @@ impl IndexRangeSourceExec {
             self.cursor = Some(
                 self.table
                     .index_range_cursor(self.index_id, &range, &self.zone)
-                    .map_err(|_| ExecError::Unsupported("index range is not scannable"))?,
+                    .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
             );
         }
     }
@@ -469,7 +469,7 @@ impl Executor for IndexRangeSourceExec {
             let row = self
                 .table
                 .get_row_by_handle(&handle, &self.zone)
-                .map_err(|_| ExecError::Unsupported("table bytes failed to decode"))?;
+                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
             // An index entry whose row is gone is not a row: the same
             // `if let Some(row)` the materializing path had.
             if let Some(row) = row {

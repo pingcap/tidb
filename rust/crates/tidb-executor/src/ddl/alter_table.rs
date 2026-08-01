@@ -64,13 +64,13 @@ pub fn run_alter_table_in(
         Stmt::Ddl(ddl) => match &**ddl {
             DdlStmt::AlterTable(alter) => alter,
             _ => {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "only ALTER TABLE is supported here",
                 ))
             }
         },
         _ => {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "only ALTER TABLE is supported here",
             ))
         }
@@ -102,7 +102,7 @@ pub fn run_alter_table_in(
                     | tidb_ast::AlterTableAction::RenameColumn(_)
             )
         {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "changing the columns or name of a table involved in a FOREIGN KEY is not supported yet",
             ));
         }
@@ -123,7 +123,7 @@ pub fn run_alter_table_in(
                 ..
             } => {
                 if !constraints.is_empty() {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "adding constraints with ALTER TABLE is not supported yet",
                     ));
                 }
@@ -163,7 +163,7 @@ pub fn run_alter_table_in(
             } => {
                 let old = old_name
                     .last()
-                    .ok_or(DriverError::Unsupported("empty CHANGE COLUMN name"))?;
+                    .ok_or(DriverError::unsupported("empty CHANGE COLUMN name"))?;
                 modify_column_action(
                     catalog,
                     &ModifyColumnRequest {
@@ -203,7 +203,7 @@ pub fn run_alter_table_in(
                     | tidb_ast::IndexConstraintKind::UniqueKey
                     | tidb_ast::IndexConstraintKind::UniqueIndex => {}
                     _ => {
-                        return Err(DriverError::Unsupported(
+                        return Err(DriverError::unsupported(
                             "this index kind is not supported yet",
                         ))
                     }
@@ -313,7 +313,7 @@ pub fn run_alter_table_in(
                 let column = alter
                     .name
                     .last()
-                    .ok_or(DriverError::Unsupported("empty ALTER COLUMN name"))?;
+                    .ok_or(DriverError::unsupported("empty ALTER COLUMN name"))?;
                 super::alter_metadata::alter_column_default_action(
                     catalog,
                     &database,
@@ -324,7 +324,7 @@ pub fn run_alter_table_in(
                 )?;
             }
             _ => {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "this ALTER TABLE action is not supported yet",
                 ))
             }
@@ -365,7 +365,7 @@ fn add_foreign_key_action(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, name) else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
         ));
     };
@@ -401,7 +401,7 @@ fn add_foreign_key_action(
         ctx.foreign_key_checks(),
     )?;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
         ));
     };
@@ -423,7 +423,7 @@ fn add_foreign_key_action(
         )?;
     }
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
         ));
     };
@@ -482,7 +482,7 @@ fn drop_foreign_key_action(
     fk_name: &str,
 ) -> Result<(), DriverError> {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "ALTER TABLE ... DROP FOREIGN KEY needs a storage-backed table",
         ));
     };
@@ -505,20 +505,20 @@ fn set_table_options_action(
 ) -> Result<(), DriverError> {
     let seed = auto_increment_option(options)?;
     if options.len() != usize::from(seed.is_some()) {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "this ALTER TABLE table option is not supported yet",
         ));
     }
     let Some(seed) = seed else { return Ok(()) };
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "ALTER TABLE ... AUTO_INCREMENT needs a storage-backed table",
         ));
     };
     if table.auto_increment_offset().is_none() {
         // Go `ErrInvalidAutoRandom`-adjacent path: without an auto column
         // there is no allocator to rebase.
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "ALTER TABLE ... AUTO_INCREMENT needs an AUTO_INCREMENT column",
         ));
     }
@@ -843,7 +843,7 @@ fn modify_column_action(
                 )
                 .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
                 let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "an expression DEFAULT is not supported yet",
                     ));
                 };
@@ -860,7 +860,7 @@ fn modify_column_action(
             // is in hand.
             | tidb_ast::ColumnOption::AutoIncrement => {}
             _ => {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "this column option is not supported in ALTER TABLE MODIFY COLUMN",
                 ))
             }
@@ -876,7 +876,7 @@ fn modify_column_action(
         .any(|option| matches!(option, tidb_ast::ColumnOption::AutoIncrement));
 
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
@@ -1068,7 +1068,7 @@ fn add_column_action(
                 )
                 .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
                 let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "an expression DEFAULT is not supported yet",
                     ));
                 };
@@ -1081,7 +1081,7 @@ fn add_column_action(
             tidb_ast::ColumnOption::NotNull => {}
             tidb_ast::ColumnOption::Null => {}
             _ => {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "this column option is not supported in ALTER TABLE ADD COLUMN",
                 ))
             }
@@ -1093,7 +1093,7 @@ fn add_column_action(
         .any(|option| matches!(option, tidb_ast::ColumnOption::NotNull));
 
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
@@ -1172,7 +1172,7 @@ fn drop_column_action(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
         ));
     };
@@ -1207,7 +1207,7 @@ fn drop_column_action(
         return Err(DriverError::UnsupportedDropIntegerPrimaryKey);
     }
     if table.common_handle_offsets().contains(&offset) {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "dropping a clustered primary key column is not supported yet",
         ));
     }

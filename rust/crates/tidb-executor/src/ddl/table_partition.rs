@@ -91,8 +91,8 @@ const MAX_PARTITIONS: u64 = 8192;
 /// # Errors
 ///
 /// The captured `CREATE` rejections -- 1054, 1486, 1500, 1503, 1504, 1517,
-/// 1564, 1659, 8264 -- plus [`DriverError::UnsupportedKind`] for a method
-/// this tier does not route.
+/// 1564, 1659, 8264 -- plus [`DriverError::Unsupported`] naming the method,
+/// for one this tier does not route.
 pub fn build_table_partitioning(
     create: &CreateTableStmt,
     names: &[String],
@@ -113,7 +113,7 @@ pub fn build_table_partitioning(
         // The method name is Go's own spelling, so the refusal reads like the
         // clause the user wrote rather than like a Rust variant.
         let name = method.kind.sql();
-        return Err(DriverError::UnsupportedKind(format!(
+        return Err(DriverError::unsupported(format!(
             "CREATE TABLE ... PARTITION BY {name} is not supported by this node: \
              it can neither route a row to one of those partitions nor prune \
              them, so accepting the clause would build an ordinary \
@@ -130,7 +130,7 @@ pub fn build_table_partitioning(
         if method.kind == PartitionType::Hash {
             return Err(DriverError::PartitionSubpartition);
         }
-        return Err(DriverError::UnsupportedKind(
+        return Err(DriverError::unsupported(
             "CREATE TABLE ... PARTITION BY RANGE ... SUBPARTITION BY is not supported by this \
              node"
                 .to_owned(),
@@ -142,7 +142,7 @@ pub fn build_table_partitioning(
         // (`HASH COLUMNS`) or its `RANGE COLUMNS`/`LIST COLUMNS` tuple
         // comparison, neither of which this tier routes.
         let name = method.kind.sql();
-        return Err(DriverError::UnsupportedKind(format!(
+        return Err(DriverError::unsupported(format!(
             "CREATE TABLE ... PARTITION BY {name} COLUMNS is not supported by this node"
         )));
     };
@@ -150,7 +150,7 @@ pub fn build_table_partitioning(
     // this tier does not expand; accepting it would build a table with the
     // wrong partitions rather than none.
     if method.interval.is_some() {
-        return Err(DriverError::UnsupportedKind(
+        return Err(DriverError::unsupported(
             "CREATE TABLE ... PARTITION BY RANGE ... INTERVAL is not supported by this node"
                 .to_owned(),
         ));
@@ -279,7 +279,7 @@ fn build_partition_expression(
                 column: name,
                 clause: "partition function".to_owned(),
             },
-            None => DriverError::UnsupportedKind(
+            None => DriverError::unsupported(
                 "this partition expression is not supported yet".to_owned(),
             ),
         })?;

@@ -1044,7 +1044,7 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
         ));
     }
     if *ignore_nulls || *from_last {
-        return Err(DriverError::Unsupported(SLICE_MESSAGE));
+        return Err(DriverError::unsupported(SLICE_MESSAGE));
     }
     // A ranking function takes no arguments; Go's parser already enforces
     // that, so a stray one here is out of this slice.
@@ -1052,7 +1052,7 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
         if args.is_empty() {
             Ok(kind)
         } else {
-            Err(DriverError::Unsupported(SLICE_MESSAGE))
+            Err(DriverError::unsupported(SLICE_MESSAGE))
         }
     };
     let upper = name.to_uppercase();
@@ -1080,7 +1080,7 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
             // `COUNT(*)` reaches here as `COUNT(1)`, so one argument is the
             // only shape; `COUNT(DISTINCT a, b)` already failed on `distinct`.
             let [arg] = args.as_slice() else {
-                return Err(DriverError::Unsupported(SLICE_MESSAGE));
+                return Err(DriverError::unsupported(SLICE_MESSAGE));
             };
             WindowKind::Agg {
                 name: upper.clone(),
@@ -1091,7 +1091,7 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
         // `JSON_OBJECTAGG`'s arity) and the variadic one.
         "JSON_OBJECTAGG" | "APPROX_PERCENTILE" | "APPROX_COUNT_DISTINCT" => {
             if args.is_empty() {
-                return Err(DriverError::Unsupported(SLICE_MESSAGE));
+                return Err(DriverError::unsupported(SLICE_MESSAGE));
             }
             WindowKind::Agg {
                 name: upper.clone(),
@@ -1108,7 +1108,7 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
                     Some(BucketCount::Positive(n)) => (arg, Pick::Nth(n)),
                     _ => return Err(DriverError::WrongArguments("nth_value")),
                 },
-                _ => return Err(DriverError::Unsupported(SLICE_MESSAGE)),
+                _ => return Err(DriverError::unsupported(SLICE_MESSAGE)),
             };
             WindowKind::Value {
                 arg: arg.clone(),
@@ -1118,7 +1118,7 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
         "LAG" | "LEAD" => {
             let (arg, rest) = args
                 .split_first()
-                .ok_or(DriverError::Unsupported(SLICE_MESSAGE))?;
+                .ok_or(DriverError::unsupported(SLICE_MESSAGE))?;
             // Go's `NewWindowFuncDesc` requires a non-negative integer
             // constant offset; the parser has already rejected a negative
             // one. UNLIKE `NTILE`/`NTH_VALUE`, Go's OWN grammar restricts
@@ -1145,7 +1145,7 @@ fn build_call(node: Expr, select: &SelectStmt) -> Result<WindowCall, DriverError
                 default: rest.get(1).cloned(),
             }
         }
-        _ => return Err(DriverError::Unsupported(SLICE_MESSAGE)),
+        _ => return Err(DriverError::unsupported(SLICE_MESSAGE)),
     };
     let spec = resolve_over(over, &select.windows)?;
     let frame = build_frame(&spec)?;

@@ -935,7 +935,7 @@ impl Session {
         let (database, table_name) = match table_path {
             [name] => (database.to_owned(), name.clone()),
             [db, name] => (db.clone(), name.clone()),
-            _ => return Err(DriverError::Unsupported("empty table name")),
+            _ => return Err(DriverError::unsupported("empty table name")),
         };
         let ctx = self.statement_context(false);
         let rows = self.with_catalog_mut(|catalog| {
@@ -960,7 +960,7 @@ impl Session {
                     .collect::<Vec<_>>());
             }
             let tidb_executor::TableEntry::Kv(table) = entry else {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "SHOW COLUMNS needs a storage-backed table",
                 ));
             };
@@ -1024,7 +1024,7 @@ impl Session {
             tidb_ast::AdminStmt::RevokeRole(revoke) => Ok(Some(self.revoke_role_stmt(revoke)?)),
             tidb_ast::AdminStmt::ShowDatabases(show) => {
                 if show.filter.is_some() {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "SHOW DATABASES filters are not supported yet",
                     ));
                 }
@@ -1052,7 +1052,7 @@ impl Session {
                         Some(text.clone())
                     }
                     Some(tidb_ast::ShowTableStatusFilter::Like(_)) => {
-                        return Err(DriverError::Unsupported(
+                        return Err(DriverError::unsupported(
                             "SHOW TABLE STATUS LIKE takes a string pattern",
                         ))
                     }
@@ -1130,7 +1130,7 @@ impl Session {
             // NO (no partitioned global indexes).
             tidb_ast::AdminStmt::ShowIndex(show) => {
                 if show.filter.is_some() {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "SHOW INDEX filters are not supported yet",
                     ));
                 }
@@ -1138,7 +1138,7 @@ impl Session {
                 let (database, table_name) = match show.table.as_slice() {
                     [table] => (current, table.clone()),
                     [database, table] => (database.clone(), table.clone()),
-                    _ => return Err(DriverError::Unsupported("empty table name")),
+                    _ => return Err(DriverError::unsupported("empty table name")),
                 };
                 let rows = self.with_catalog_mut(|catalog| {
                     let Some(entry) = catalog.table_in(&database, &table_name) else {
@@ -1147,7 +1147,7 @@ impl Session {
                         ))));
                     };
                     let tidb_executor::TableEntry::Kv(table) = entry else {
-                        return Err(DriverError::Unsupported(
+                        return Err(DriverError::unsupported(
                             "SHOW INDEX needs a storage-backed table",
                         ));
                     };
@@ -1177,7 +1177,7 @@ impl Session {
                 let pattern = match &show.like {
                     Some(tidb_ast::Expr::String(text)) => Some(text.clone()),
                     Some(_) => {
-                        return Err(DriverError::Unsupported(
+                        return Err(DriverError::unsupported(
                             "SHOW VARIABLES LIKE takes a string pattern",
                         ))
                     }
@@ -1247,7 +1247,7 @@ impl Session {
                         Some(text.clone())
                     }
                     Some(tidb_ast::ShowStatusFilter::Like(_)) => {
-                        return Err(DriverError::Unsupported(
+                        return Err(DriverError::unsupported(
                             "SHOW STATUS LIKE takes a string pattern",
                         ))
                     }
@@ -1309,12 +1309,12 @@ impl Session {
                         Some(text.clone())
                     }
                     Some(tidb_ast::ShowCharsetFilter::Like(_)) => {
-                        return Err(DriverError::Unsupported(
+                        return Err(DriverError::unsupported(
                             "SHOW CHARSET LIKE takes a string pattern",
                         ))
                     }
                     Some(tidb_ast::ShowCharsetFilter::Where(_)) => {
-                        return Err(DriverError::Unsupported(
+                        return Err(DriverError::unsupported(
                             "SHOW CHARSET WHERE is not supported yet",
                         ))
                     }
@@ -1363,7 +1363,7 @@ impl Session {
             // wired up for it yet.
             tidb_ast::AdminStmt::ShowEngines(show) => {
                 if show.filter.is_some() {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "SHOW ENGINES filters are not supported yet",
                     ));
                 }
@@ -1408,12 +1408,12 @@ impl Session {
                         Some(text.clone())
                     }
                     Some(tidb_ast::ShowCollationFilter::Like(_)) => {
-                        return Err(DriverError::Unsupported(
+                        return Err(DriverError::unsupported(
                             "SHOW COLLATION LIKE takes a string pattern",
                         ))
                     }
                     Some(tidb_ast::ShowCollationFilter::Where(_)) => {
-                        return Err(DriverError::Unsupported(
+                        return Err(DriverError::unsupported(
                             "SHOW COLLATION WHERE is not supported yet",
                         ))
                     }
@@ -1479,7 +1479,7 @@ impl Session {
             // optional filter Go's shared SHOW grammar accepts here.
             tidb_ast::AdminStmt::ShowWarnings(show) => {
                 if show.filter.is_some() {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "SHOW WARNINGS filters are not supported yet",
                     ));
                 }
@@ -1487,7 +1487,7 @@ impl Session {
             }
             tidb_ast::AdminStmt::ShowErrors(show) => {
                 if show.filter.is_some() {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "SHOW ERRORS filters are not supported yet",
                     ));
                 }
@@ -1500,7 +1500,7 @@ impl Session {
                     return Ok(None);
                 }
                 if show.filter.is_some() || show.database.is_some() {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "SHOW PROCESSLIST filters are not supported yet",
                     ));
                 }
@@ -1530,7 +1530,7 @@ impl Session {
                 let (database, table_name) = match name.as_slice() {
                     [table] => (current, table.clone()),
                     [database, table] => (database.clone(), table.clone()),
-                    _ => return Err(DriverError::Unsupported("empty table name")),
+                    _ => return Err(DriverError::unsupported("empty table name")),
                 };
                 // A view answers either spelling with the same row, which
                 // is Go's own behaviour; only `SHOW CREATE VIEW` on a base
@@ -1561,7 +1561,7 @@ impl Session {
                             false,
                             false,
                         )),
-                        tidb_executor::TableEntry::Mem(_) => Err(DriverError::Unsupported(
+                        tidb_executor::TableEntry::Mem(_) => Err(DriverError::unsupported(
                             "SHOW CREATE TABLE needs a storage-backed table",
                         )),
                     }
@@ -1608,7 +1608,7 @@ impl Session {
             // Go `fetchShowColumns`.
             tidb_ast::AdminStmt::ShowColumns(show) => {
                 if show.filter.is_some() || show.extended {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "SHOW EXTENDED COLUMNS and column filters are not supported yet",
                     ));
                 }
@@ -1635,7 +1635,7 @@ impl Session {
             }
             tidb_ast::AdminStmt::ShowTables(show) => {
                 if show.filter.is_some() {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "SHOW TABLES filters are not supported yet",
                     ));
                 }

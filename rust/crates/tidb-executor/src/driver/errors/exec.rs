@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn a_porting_boundary_reports_its_reason_and_no_rust_syntax() {
         for error in [
-            ExecError::Unsupported("a hash join over three inputs"),
+            ExecError::unsupported("a hash join over three inputs"),
             ExecError::Eval(EvalError::Unsupported("a window frame in RANGE units")),
             ExecError::Eval(EvalError::UnsupportedOperandPair(
                 DatumKind::Float32,
@@ -223,7 +223,7 @@ mod tests {
             );
         }
         assert_eq!(
-            rendered(ExecError::Unsupported("a hash join over three inputs")).message,
+            rendered(ExecError::unsupported("a hash join over three inputs")).message,
             "a hash join over three inputs"
         );
         assert_eq!(

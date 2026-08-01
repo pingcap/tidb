@@ -523,7 +523,7 @@ fn datum_row(chunk: &Chunk, index: usize, types: &[FieldType]) -> Vec<Datum> {
 /// inconsistency rather than a data condition -- it is reported instead of
 /// guessed at, because a guess here silently drops rows.
 fn key_error(_: KeyError) -> ExecError {
-    ExecError::Unsupported("join key value outside its column's comparison domain")
+    ExecError::unsupported("join key value outside its column's comparison domain")
 }
 
 /// Go's condition truth test (`Datum.ToBool` via `expression.EvalBool`):

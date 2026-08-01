@@ -69,9 +69,9 @@ pub fn run_insert_reporting(
     let insert = match &stmt {
         Stmt::Dml(dml) => match &**dml {
             tidb_ast::DmlStmt::Insert(insert) => insert,
-            _ => return Err(DriverError::Unsupported("only INSERT is supported here")),
+            _ => return Err(DriverError::unsupported("only INSERT is supported here")),
         },
-        _ => return Err(DriverError::Unsupported("only INSERT is supported here")),
+        _ => return Err(DriverError::unsupported("only INSERT is supported here")),
     };
     run_insert_stmt(insert, catalog, current_db, ctx)
 }
@@ -104,7 +104,7 @@ pub(crate) fn run_insert_traced(
     mut trace: Option<&mut PlanTrace>,
 ) -> Result<(u64, Option<i64>), DriverError> {
     if !insert.partitions.is_empty() || (insert.replace && !insert.on_duplicate.is_empty()) {
-        return Err(DriverError::Unsupported("partitions are not supported yet"));
+        return Err(DriverError::unsupported("partitions are not supported yet"));
     }
 
     // `INSERT ... SELECT` runs its source query first, over the catalog as it
@@ -140,7 +140,7 @@ pub(crate) fn run_insert_traced(
     let (database, table_name) = (database.to_owned(), table_name.to_owned());
     let table = catalog
         .get_mut_in(&database, &table_name)
-        .ok_or(DriverError::Unsupported("table not found in catalog"))?;
+        .ok_or(DriverError::unsupported("table not found in catalog"))?;
     // Go refuses a write through a view before planning anything.
     if table.is_view() {
         return Err(DriverError::InsertIntoViewUnsupported(table_name.clone()));
@@ -272,7 +272,7 @@ pub(crate) fn run_insert_traced(
     // would write a different row than Go writes, which is worse than an
     // error the session can see.
     if auto_increment_offset.is_some() && ctx.auto_increment_zero_is_explicit() {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "the NO_AUTO_VALUE_ON_ZERO sql_mode is not supported yet",
         ));
     }
@@ -318,7 +318,7 @@ pub(crate) fn run_insert_traced(
         };
         let arity_is_checked = index > 0 || source_rows.is_some() || names_a_column || width > 0;
         if arity_is_checked && width != expected {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "VALUES arity does not match the column list",
             ));
         }
@@ -836,7 +836,7 @@ pub(crate) fn order_rows_for_dml<H>(
             Some(pos) => {
                 let name = column_names
                     .get(pos)
-                    .ok_or(DriverError::Unsupported("ORDER BY position out of range"))?;
+                    .ok_or(DriverError::unsupported("ORDER BY position out of range"))?;
                 tidb_ast::Expr::Column(vec![name.clone()])
             }
             None => item.expr.clone(),
@@ -892,8 +892,8 @@ pub(crate) fn order_rows_for_dml<H>(
 pub(crate) fn dml_order_by_position(expr: &tidb_ast::Expr) -> Result<Option<usize>, DriverError> {
     if let Some((_, index)) = positional_field_index(expr) {
         return index.map(Some).map_err(|why| match why {
-            PositionalError::Malformed => DriverError::Unsupported("ORDER BY position"),
-            PositionalError::Zero => DriverError::Unsupported("ORDER BY position 0"),
+            PositionalError::Malformed => DriverError::unsupported("ORDER BY position"),
+            PositionalError::Zero => DriverError::unsupported("ORDER BY position 0"),
         });
     }
     // `ORDER BY TRUE` reaches the DML tier as a boolean literal rather than
@@ -901,7 +901,7 @@ pub(crate) fn dml_order_by_position(expr: &tidb_ast::Expr) -> Result<Option<usiz
     match expr {
         tidb_ast::Expr::Bool(b) => usize::from(*b)
             .checked_sub(1)
-            .ok_or(DriverError::Unsupported("ORDER BY position 0"))
+            .ok_or(DriverError::unsupported("ORDER BY position 0"))
             .map(Some),
         _ => Ok(None),
     }
@@ -934,7 +934,7 @@ pub(crate) fn dml_row_limit(limit: &Option<tidb_ast::Limit>) -> Result<Option<u6
         return Ok(None);
     };
     if limit.offset.is_some() {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "an UPDATE/DELETE LIMIT takes no offset",
         ));
     }
@@ -968,7 +968,7 @@ pub(crate) fn apply_on_duplicate(
         let name = assignment
             .col
             .last()
-            .ok_or(DriverError::Unsupported("empty assignment column"))?;
+            .ok_or(DriverError::unsupported("empty assignment column"))?;
         let offset = column_list
             .iter()
             .position(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
@@ -1013,11 +1013,11 @@ pub(crate) fn substitute_values_references(
     Ok(match expr {
         Expr::Func { name, args, .. } if name.eq_ignore_ascii_case("values") => {
             let Some(Expr::Column(path)) = args.first() else {
-                return Err(DriverError::Unsupported("VALUES() takes a column name"));
+                return Err(DriverError::unsupported("VALUES() takes a column name"));
             };
             let name = path
                 .last()
-                .ok_or(DriverError::Unsupported("VALUES() takes a column name"))?;
+                .ok_or(DriverError::unsupported("VALUES() takes a column name"))?;
             let offset = column_list
                 .iter()
                 .position(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
@@ -1131,9 +1131,9 @@ pub fn run_update_in(
     let update = match &stmt {
         Stmt::Dml(dml) => match &**dml {
             tidb_ast::DmlStmt::Update(update) => update,
-            _ => return Err(DriverError::Unsupported("only UPDATE is supported here")),
+            _ => return Err(DriverError::unsupported("only UPDATE is supported here")),
         },
-        _ => return Err(DriverError::Unsupported("only UPDATE is supported here")),
+        _ => return Err(DriverError::unsupported("only UPDATE is supported here")),
     };
     run_update_stmt(update, catalog, current_db, ctx)
 }
@@ -1172,7 +1172,7 @@ pub(crate) fn run_update_traced(
     // A `RETURNING` clause is parsed and silently ignored, matching Go: the
     // planner and executor never read `UpdateStmt.Returning`.
     if update.ignore {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "UPDATE IGNORE is not supported yet",
         ));
     }
@@ -1194,7 +1194,7 @@ pub(crate) fn run_update_traced(
     let (database, name) = single_table_name(table_ref, current_db)?;
     let column_list = catalog
         .get_in(&database, &name)
-        .ok_or(DriverError::Unsupported("unknown table"))?
+        .ok_or(DriverError::unsupported("unknown table"))?
         .column_list();
 
     // An alias REPLACES the table name as the only usable qualifier, in the
@@ -1209,7 +1209,7 @@ pub(crate) fn run_update_traced(
     for assignment in &update.assignments {
         let (offset, _, _) = resolver
             .resolve(&assignment.col)
-            .ok_or(DriverError::Unsupported("unknown column in SET"))?;
+            .ok_or(DriverError::unsupported("unknown column in SET"))?;
         // Go `buildUpdateLists`: assigning to a generated column is 3105
         // unless the assigned value is `DEFAULT`, which means "leave it to
         // the expression" -- the same rule INSERT follows.
@@ -1289,7 +1289,7 @@ pub(crate) fn run_update_traced(
     let mut matched = 0u64;
     let entry = catalog
         .get_mut_in(&database, &name)
-        .ok_or(DriverError::Unsupported("unknown table"))?;
+        .ok_or(DriverError::unsupported("unknown table"))?;
 
     let mut changed = 0u64;
     let mut rewrites: Vec<(crate::kv_table::TableHandle, Vec<Datum>, Vec<Datum>)> = Vec::new();
@@ -1303,7 +1303,7 @@ pub(crate) fn run_update_traced(
         // runs before this match, so reaching here means the SET list was
         // empty, which the parser does not produce.
         TableEntry::Sequence(_) => {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "UPDATE of a sequence is not a statement TiDB accepts",
             ))
         }
@@ -1531,9 +1531,9 @@ pub fn run_delete_in(
     let delete = match &stmt {
         Stmt::Dml(dml) => match &**dml {
             tidb_ast::DmlStmt::Delete(delete) => delete,
-            _ => return Err(DriverError::Unsupported("only DELETE is supported here")),
+            _ => return Err(DriverError::unsupported("only DELETE is supported here")),
         },
-        _ => return Err(DriverError::Unsupported("only DELETE is supported here")),
+        _ => return Err(DriverError::unsupported("only DELETE is supported here")),
     };
     run_delete_stmt(delete, catalog, current_db, ctx)
 }
@@ -1566,7 +1566,7 @@ pub(crate) fn run_delete_traced(
     // per-row skip with a warning. `QUICK` is an index-maintenance hint with
     // no visible behaviour, and is still refused rather than ignored.
     if delete.quick {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "DELETE QUICK is not supported yet",
         ));
     }
@@ -1588,7 +1588,7 @@ pub(crate) fn run_delete_traced(
     let (database, name) = single_table_name(table_ref, current_db)?;
     let column_list = catalog
         .get_in(&database, &name)
-        .ok_or(DriverError::Unsupported("unknown table"))?
+        .ok_or(DriverError::unsupported("unknown table"))?
         .column_list();
     // As in UPDATE: `DELETE FROM u AS y WHERE y.id = 1` resolves and
     // `WHERE u.id = 1` does not.
@@ -1641,7 +1641,7 @@ pub(crate) fn run_delete_traced(
     let scanned;
     let entry = catalog
         .get_mut_in(&database, &name)
-        .ok_or(DriverError::Unsupported("unknown table"))?;
+        .ok_or(DriverError::unsupported("unknown table"))?;
 
     let mut deleted = 0u64;
     let mut doomed: Vec<(crate::kv_table::TableHandle, Vec<Datum>)> = Vec::new();

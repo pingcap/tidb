@@ -297,10 +297,8 @@ fn a_set_operation_derived_table_is_refused_only_as_a_description() {
         session.run("explain select * from (select * from t union all select a,b,c from t) x");
     assert!(
         matches!(
-            refused,
-            Err(DriverError::Unsupported(
-                "a set-operation derived table's plan is not recorded yet"
-            ))
+            &refused,
+            Err(DriverError::Unsupported(reason)) if reason == "a set-operation derived table's plan is not recorded yet"
         ),
         "got {refused:?}"
     );

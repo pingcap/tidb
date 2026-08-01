@@ -42,10 +42,10 @@ impl Session {
         explain: &tidb_ast::ExplainStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
         let Some(format) = tidb_executor::ExplainFormat::parse(&explain.format) else {
-            return Err(DriverError::Unsupported("unknown EXPLAIN format name"));
+            return Err(DriverError::unsupported("unknown EXPLAIN format name"));
         };
         let Some(target) = explain.statement() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "EXPLAIN of a plan digest is not supported yet",
             ));
         };
@@ -60,7 +60,7 @@ impl Session {
             let (columns, rows) = match target {
                 Stmt::Query(query) => {
                     let tidb_ast::QueryStmt::Select(select) = &**query else {
-                        return Err(DriverError::Unsupported(
+                        return Err(DriverError::unsupported(
                             "EXPLAIN ANALYZE of a set operation is not supported yet",
                         ));
                     };
@@ -103,14 +103,14 @@ impl Session {
                         )
                     })?,
                     other => {
-                        return Err(DriverError::UnsupportedKind(format!(
+                        return Err(DriverError::unsupported(format!(
                             "EXPLAIN ANALYZE of {} is not supported yet",
                             crate::dispatch::variant_name(other)
                         )));
                     }
                 },
                 other => {
-                    return Err(DriverError::UnsupportedKind(format!(
+                    return Err(DriverError::unsupported(format!(
                         "EXPLAIN ANALYZE of {} is not supported yet",
                         crate::dispatch::stmt_kind_name(other)
                     )));
@@ -122,7 +122,7 @@ impl Session {
         let (columns, rows) = match target {
             Stmt::Query(query) => {
                 let tidb_ast::QueryStmt::Select(select) = &**query else {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "EXPLAIN of a set operation is not supported yet",
                     ));
                 };
@@ -145,14 +145,14 @@ impl Session {
                     tidb_executor::explain_delete_stmt(delete, catalog, &current_db, &ctx, format)
                 })?,
                 other => {
-                    return Err(DriverError::UnsupportedKind(format!(
+                    return Err(DriverError::unsupported(format!(
                         "EXPLAIN of {} is not supported yet",
                         crate::dispatch::variant_name(other)
                     )));
                 }
             },
             other => {
-                return Err(DriverError::UnsupportedKind(format!(
+                return Err(DriverError::unsupported(format!(
                     "EXPLAIN of {} is not supported yet",
                     crate::dispatch::stmt_kind_name(other)
                 )));

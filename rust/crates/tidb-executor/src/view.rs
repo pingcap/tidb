@@ -279,7 +279,7 @@ fn canonical_select(
                     }
                 }
                 if !matched {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "a qualified wildcard names no table in the view's FROM",
                     ));
                 }
@@ -361,7 +361,7 @@ fn qualify_join_node(
             column_names,
         } => {
             if *lateral || !column_names.is_empty() {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "a LATERAL derived table is not supported yet",
                 ));
             }

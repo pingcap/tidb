@@ -56,7 +56,7 @@ impl Session {
                 let [path] = tables.as_slice() else {
                     // Go's parser accepts the list and its planner then
                     // refuses it; refusing here keeps the same outcome.
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "ADMIN CHECK TABLE checks one table at a time",
                     ));
                 };
@@ -97,7 +97,7 @@ impl Session {
         match path {
             [name] => Ok((self.require_current_database()?.to_owned(), name.clone())),
             [database, name] => Ok((database.clone(), name.clone())),
-            _ => Err(DriverError::Unsupported("empty table name")),
+            _ => Err(DriverError::unsupported("empty table name")),
         }
     }
 
@@ -147,7 +147,7 @@ fn admin_check_table_mut<'a>(
         // A view has no rows of its own and a sequence has no index; a
         // `MemTable` has rows but stores no index entries, so "consistent"
         // would be a statement about nothing.
-        _ => Err(DriverError::Unsupported(
+        _ => Err(DriverError::unsupported(
             "ADMIN CHECK needs a storage-backed table: this table stores no index entries to \
              check its rows against",
         )),
@@ -179,7 +179,7 @@ fn admin_check_error(error: tidb_executor::admin_check::AdminCheckError) -> Driv
             DriverError::UnknownIndex(format!("{index} on {table}"))
         }
         AdminCheckError::NotStored(detail) | AdminCheckError::Decode(detail) => {
-            DriverError::UnsupportedKind(detail)
+            DriverError::unsupported(detail)
         }
     }
 }

@@ -138,7 +138,7 @@ fn a_failed_use_leaves_the_session_on_its_previous_schema() {
 ///   schema is enough to close it.
 /// * `SELECT` refuses with a generic **1105**, because the planner's table
 ///   lookup (`tidb_executor::driver::from`) reports a missing name as
-///   `DriverError::Unsupported("table not found in catalog")` rather than
+///   `DriverError::unsupported("table not found in catalog")` rather than
 ///   1146.
 ///
 /// DIVERGENCE (documented, NOT this unit's): that 1105 is the single largest

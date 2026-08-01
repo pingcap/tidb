@@ -316,7 +316,7 @@ impl AggState {
             if datum != Datum::Null {
                 let key = datum
                     .to_hash_key()
-                    .map_err(|_| ExecError::Unsupported("DISTINCT over this datum kind"))?;
+                    .map_err(|_| ExecError::unsupported("DISTINCT over this datum kind"))?;
                 if !seen.insert(key) {
                     return Ok(());
                 }
@@ -361,7 +361,7 @@ fn group_concat_bytes(value: &Datum) -> Result<Vec<u8>, ExecError> {
         Datum::Real(number) => number.to_string().into_bytes(),
         Datum::Decimal(number) => number.to_string().into_bytes(),
         _ => {
-            return Err(ExecError::Unsupported(
+            return Err(ExecError::unsupported(
                 "GROUP_CONCAT over this datum kind is not yet supported",
             ))
         }
@@ -394,7 +394,7 @@ fn group_concat_bytes(value: &Datum) -> Result<Vec<u8>, ExecError> {
 /// `3` and `3.0` collide) and recurses into arrays/objects so structurally
 /// equal values hash equal.
 pub(crate) fn approx_count_distinct_encode(datum: &Datum) -> Result<Vec<u8>, ExecError> {
-    let unsupported = || ExecError::Unsupported("APPROX_COUNT_DISTINCT over this datum kind");
+    let unsupported = || ExecError::unsupported("APPROX_COUNT_DISTINCT over this datum kind");
     Ok(match datum {
         Datum::Int(value) => value.to_le_bytes().to_vec(),
         // Go's `arg.EvalInt` returns the column's stored int64 bit pattern
@@ -528,7 +528,7 @@ impl Partial {
             // Go appends the converted value for EVERY row, so a NULL input
             // lands in the array as JSON `null` rather than being skipped.
             (Partial::JsonArrayAgg(..), None) => {
-                return Err(ExecError::Unsupported("JSON_ARRAYAGG requires an argument"))
+                return Err(ExecError::unsupported("JSON_ARRAYAGG requires an argument"))
             }
             (Partial::JsonArrayAgg(entries, value_type), Some(input)) => {
                 entries.push(json_value(&input, value_type)?)
@@ -556,7 +556,7 @@ impl Partial {
             // NULL in ANY argument, which the caller has already collapsed to
             // one NULL) never reaches the sketch.
             (Partial::ApproxCountDistinct(_), None) => {
-                return Err(ExecError::Unsupported(
+                return Err(ExecError::unsupported(
                     "APPROX_COUNT_DISTINCT requires an argument",
                 ))
             }
@@ -568,12 +568,12 @@ impl Partial {
                 sketch.insert(&encoded);
             }
             (Partial::ApproxCountDistinct(_), Some(_)) => {
-                return Err(ExecError::Unsupported(
+                return Err(ExecError::unsupported(
                     "APPROX_COUNT_DISTINCT requires a pre-encoded argument tuple",
                 ))
             }
             (Partial::ApproxPercentile { .. }, None) => {
-                return Err(ExecError::Unsupported(
+                return Err(ExecError::unsupported(
                     "APPROX_PERCENTILE requires an argument",
                 ))
             }
@@ -584,7 +584,7 @@ impl Partial {
             (Partial::Count(_), Some(Datum::Null)) => {}
             (Partial::Count(n), Some(_)) => *n += 1,
             (Partial::SumDecimal(_) | Partial::SumReal(_), None) => {
-                return Err(ExecError::Unsupported("SUM requires an argument"))
+                return Err(ExecError::unsupported("SUM requires an argument"))
             }
             (Partial::SumDecimal(_) | Partial::SumReal(_), Some(Datum::Null)) => {}
             (this @ Partial::SumDecimal(None), Some(Datum::Real(v))) => {
@@ -597,7 +597,7 @@ impl Partial {
                     Datum::UInt(v) => Decimal::from_uint(v),
                     Datum::Decimal(d) => d,
                     _ => {
-                        return Err(ExecError::Unsupported(
+                        return Err(ExecError::unsupported(
                             "SUM over this datum kind is not yet supported",
                         ))
                     }
@@ -614,14 +614,14 @@ impl Partial {
                 *acc = Some(acc.unwrap_or(0.0) + v as f64);
             }
             (Partial::SumReal(_), Some(_)) => {
-                return Err(ExecError::Unsupported(
+                return Err(ExecError::unsupported(
                     "SUM over this datum kind is not yet supported",
                 ))
             }
             // Go `builtinGroupConcat`: a NULL input contributes nothing at
             // all, and every other value is stringified before it is joined.
             (Partial::GroupConcat { .. }, None) => {
-                return Err(ExecError::Unsupported("GROUP_CONCAT requires an argument"))
+                return Err(ExecError::unsupported("GROUP_CONCAT requires an argument"))
             }
             (Partial::GroupConcat { .. }, Some(Datum::Null)) => {}
             (Partial::GroupConcat { values, .. }, Some(input)) => {
@@ -633,7 +633,7 @@ impl Partial {
                 }
             }
             (Partial::MaxMin { .. }, None) => {
-                return Err(ExecError::Unsupported("MIN/MAX requires an argument"))
+                return Err(ExecError::unsupported("MIN/MAX requires an argument"))
             }
             (Partial::MaxMin { .. }, Some(Datum::Null)) => {}
             (Partial::MaxMin { value, is_max }, Some(input)) => match value {
@@ -648,7 +648,7 @@ impl Partial {
                 }
             },
             (Partial::AvgDecimal { .. } | Partial::AvgReal { .. }, None) => {
-                return Err(ExecError::Unsupported("AVG requires an argument"))
+                return Err(ExecError::unsupported("AVG requires an argument"))
             }
             (Partial::AvgDecimal { .. } | Partial::AvgReal { .. }, Some(Datum::Null)) => {}
             (this @ Partial::AvgDecimal { .. }, Some(Datum::Real(v))) => {
@@ -665,7 +665,7 @@ impl Partial {
                     Datum::UInt(v) => Decimal::from_uint(v),
                     Datum::Decimal(d) => d,
                     _ => {
-                        return Err(ExecError::Unsupported(
+                        return Err(ExecError::unsupported(
                             "AVG over this datum kind is not yet supported",
                         ))
                     }
@@ -676,7 +676,7 @@ impl Partial {
             // Go's bit functions cast the argument to `UNSIGNED BIGINT` and
             // skip NULL, so an all-NULL group keeps the identity.
             (Partial::Bit { .. }, None) => {
-                return Err(ExecError::Unsupported(
+                return Err(ExecError::unsupported(
                     "BIT_AND/BIT_OR/BIT_XOR requires an argument",
                 ))
             }
@@ -690,7 +690,7 @@ impl Partial {
                 }
             }
             (Partial::Variance { .. }, None) => {
-                return Err(ExecError::Unsupported(
+                return Err(ExecError::unsupported(
                     "the variance/stddev family requires an argument",
                 ))
             }
@@ -710,7 +710,7 @@ impl Partial {
                 let value = input
                     .to_f64()
                     .map_err(|_| {
-                        ExecError::Unsupported("the variance/stddev family over this datum kind")
+                        ExecError::unsupported("the variance/stddev family over this datum kind")
                     })?
                     .value;
                 *count += 1;
@@ -725,7 +725,7 @@ impl Partial {
                     Datum::Real(v) => v,
                     Datum::Int(v) => v as f64,
                     _ => {
-                        return Err(ExecError::Unsupported(
+                        return Err(ExecError::unsupported(
                             "AVG over this datum kind is not yet supported",
                         ))
                     }
@@ -861,7 +861,7 @@ impl Partial {
 fn json_value(value: &Datum, value_type: &FieldType) -> Result<BinaryJSON, ExecError> {
     value
         .to_mysql_json_with_source_type(value_type)
-        .map_err(|_| ExecError::Unsupported("this datum kind is not a JSON value"))
+        .map_err(|_| ExecError::unsupported("this datum kind is not a JSON value"))
 }
 
 /// `JSON_OBJECTAGG`'s member name: Go reads the key argument with
@@ -870,14 +870,14 @@ fn json_value(value: &Datum, value_type: &FieldType) -> Result<BinaryJSON, ExecE
 fn json_object_key(value: &Datum) -> Result<String, ExecError> {
     value
         .sql_string()
-        .map_err(|_| ExecError::Unsupported("this datum kind is not a JSON member name"))
+        .map_err(|_| ExecError::unsupported("this datum kind is not a JSON member name"))
 }
 
 /// Encodes a finished JSON aggregate, Go's `CreateBinaryJSONWithCheck`.
 fn encode_json(value: BinaryJSONValue) -> Result<Datum, ExecError> {
     BinaryJSON::from_typed_value(&value)
         .map(Datum::Json)
-        .map_err(|_| ExecError::Unsupported("this JSON document cannot be encoded"))
+        .map_err(|_| ExecError::unsupported("this JSON document cannot be encoded"))
 }
 
 /// The 64 bits one `BIT_AND`/`BIT_OR`/`BIT_XOR` input contributes: Go casts
@@ -889,7 +889,7 @@ fn datum_bits(value: &Datum) -> Result<u64, ExecError> {
         other => {
             other
                 .to_i64()
-                .map_err(|_| ExecError::Unsupported("BIT_AND/BIT_OR/BIT_XOR over this datum kind"))?
+                .map_err(|_| ExecError::unsupported("BIT_AND/BIT_OR/BIT_XOR over this datum kind"))?
                 .value as u64
         }
     })
@@ -1035,7 +1035,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
                             }
                             if let Some(buf) = &mut tuple_key {
                                 let key = datum.to_hash_key().map_err(|_| {
-                                    ExecError::Unsupported("COUNT over this datum kind")
+                                    ExecError::unsupported("COUNT over this datum kind")
                                 })?;
                                 buf.extend_from_slice(&(key.len() as u64).to_be_bytes());
                                 buf.extend_from_slice(&key);

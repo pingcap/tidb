@@ -46,7 +46,7 @@ fn resolve_pair(
     match (charset, collation) {
         (Some(charset), Some(collation)) => {
             if collation.charset() != charset {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "COLLATE is not valid for the declared CHARACTER SET",
                 ));
             }
@@ -66,12 +66,12 @@ fn resolve_pair(
 
 /// Parses a charset name, rejecting one this tier does not carry.
 fn charset_named(name: &str) -> Result<Charset, DriverError> {
-    Charset::from_name(name).ok_or(DriverError::Unsupported("unknown character set"))
+    Charset::from_name(name).ok_or(DriverError::unsupported("unknown character set"))
 }
 
 /// Parses a collation name, rejecting one this tier does not carry.
 fn collation_named(name: &str) -> Result<Collation, DriverError> {
-    Collation::from_name(name).ok_or(DriverError::Unsupported("unknown collation"))
+    Collation::from_name(name).ok_or(DriverError::unsupported("unknown collation"))
 }
 
 /// The table's own `DEFAULT CHARSET=` / `DEFAULT COLLATE=` options, falling
@@ -145,5 +145,5 @@ pub(crate) fn field_type_of(
         resolved.charset.name(),
         resolved.collation.name(),
     )
-    .map_err(|error| DriverError::UnsupportedKind(error.reason))
+    .map_err(|error| DriverError::unsupported(error.reason))
 }

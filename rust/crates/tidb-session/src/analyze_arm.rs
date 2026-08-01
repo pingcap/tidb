@@ -69,7 +69,7 @@ impl Session {
         admin: &tidb_ast::AdminStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
         let Some(tables) = lower_analyze_admin(admin, &self.current_db)
-            .map_err(|error| DriverError::UnsupportedKind(error.to_string()))?
+            .map_err(|error| DriverError::unsupported(error.to_string()))?
         else {
             return Ok(None);
         };
@@ -100,7 +100,7 @@ impl Session {
                 // sequence; both are "there is nothing here to analyze", and
                 // naming the object is what a caller can act on.
                 Some(_) => {
-                    return Err(DriverError::UnsupportedKind(format!(
+                    return Err(DriverError::unsupported(format!(
                         "`{schema}`.`{name}` is not a table whose rows this node can analyze"
                     )))
                 }
@@ -122,7 +122,7 @@ impl Session {
                 return Err(DriverError::CatalogPoisoned);
             };
             let statistics = analyze_kv_table(table, options, realtime_count, &zone)
-                .map_err(|error| DriverError::UnsupportedKind(error.to_string()))?;
+                .map_err(|error| DriverError::unsupported(error.to_string()))?;
             catalog.set_table_statistics(table_id, Arc::new(statistics));
             Ok(())
         })

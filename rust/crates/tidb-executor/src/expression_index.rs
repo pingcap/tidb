@@ -223,7 +223,7 @@ fn check_admissible(index_name: &str, expr: &Expr) -> Result<(), DriverError> {
         // the whole JSON document under a multi-valued index's name.
         Expr::Cast(cast) => {
             if cast.array {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "a multi-valued index (CAST(... AS ... ARRAY)) is not supported yet",
                 ));
             }
@@ -238,7 +238,7 @@ fn check_admissible(index_name: &str, expr: &Expr) -> Result<(), DriverError> {
         // than guessed at. Go reaches most of them as `FuncCallExpr` and
         // answers 8200, but not all, and an index built on a guess is an
         // index that disagrees with the rows it indexes.
-        _ => Err(DriverError::Unsupported(
+        _ => Err(DriverError::unsupported(
             "this expression form is not supported in an expression index yet",
         )),
     }
@@ -309,7 +309,7 @@ pub fn build_hidden_columns(
                         column: missing,
                         clause: "expression".to_owned(),
                     },
-                    None => DriverError::Unsupported(
+                    None => DriverError::unsupported(
                         "this expression index's expression is not supported yet",
                     ),
                 });
@@ -339,7 +339,7 @@ pub fn build_hidden_columns(
         // index whose key type disagrees with the value it stores reads back
         // the wrong rows and `ADMIN CHECK TABLE` would call it consistent.
         let Some(field_type) = built_expr.static_type().cloned() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "an expression index over an expression with no static type is not supported yet",
             ));
         };

@@ -122,7 +122,7 @@ impl PasswordOrLockOptions {
                 | Option_::ReuseInterval(_)
                 | Option_::ReuseDefault
                 | Option_::RequireCurrentDefault => {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "PASSWORD HISTORY / PASSWORD REUSE INTERVAL / PASSWORD REQUIRE CURRENT are not supported yet",
                     ));
                 }
@@ -205,7 +205,7 @@ impl Session {
             || comment_or_attribute.is_some()
             || resource_group.is_some()
         {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "CREATE USER options beyond the account list are not supported yet",
             ));
         }
@@ -213,14 +213,14 @@ impl Session {
         // so a bad `PASSWORD EXPIRE INTERVAL 0 DAY` creates no account.
         let options = PasswordOrLockOptions::load(password_options)?;
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "CREATE USER requires a server front end with a privilege registry",
             ));
         };
         for spec in users {
             let (auth_string, plugin) = Self::resolve_auth_string_and_plugin(spec.auth.as_ref())?;
             if spec.dual_password.is_some() {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "CREATE USER ... RETAIN CURRENT PASSWORD is not supported yet",
                 ));
             }
@@ -254,7 +254,7 @@ impl Session {
         roles: &[tidb_ast::RoleSpec],
     ) -> Result<StmtOutput, DriverError> {
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "CREATE ROLE requires a server front end with a privilege registry",
             ));
         };
@@ -283,7 +283,7 @@ impl Session {
         grant: &tidb_ast::GrantRoleStmt,
     ) -> Result<StmtOutput, DriverError> {
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "GRANT <role> requires a server front end with a privilege registry",
             ));
         };
@@ -310,7 +310,7 @@ impl Session {
         revoke: &tidb_ast::RevokeRoleStmt,
     ) -> Result<StmtOutput, DriverError> {
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "REVOKE <role> requires a server front end with a privilege registry",
             ));
         };
@@ -351,7 +351,7 @@ impl Session {
         set_role: &tidb_ast::SetRoleStmt,
     ) -> Result<StmtOutput, DriverError> {
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "SET ROLE requires a server front end with a privilege registry",
             ));
         };
@@ -388,7 +388,7 @@ impl Session {
         set_default: &tidb_ast::SetDefaultRoleStmt,
     ) -> Result<StmtOutput, DriverError> {
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "SET DEFAULT ROLE requires a server front end with a privilege registry",
             ));
         };
@@ -415,7 +415,7 @@ impl Session {
         missing: impl Fn(&str, &str) -> DriverError,
     ) -> Result<Vec<privilege::Account>, DriverError> {
         let Some(registry) = &self.privileges else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "roles require a server front end with a privilege registry",
             ));
         };
@@ -441,7 +441,7 @@ impl Session {
         operation: &'static str,
     ) -> Result<Vec<privilege::Account>, DriverError> {
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "roles require a server front end with a privilege registry",
             ));
         };
@@ -547,19 +547,19 @@ impl Session {
             || alter.comment_or_attribute.is_some()
             || alter.resource_group.is_some()
         {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "ALTER USER options beyond IDENTIFIED [WITH] BY / ACCOUNT LOCK|UNLOCK are not supported yet",
             ));
         }
         let options = PasswordOrLockOptions::load(&alter.password_options)?;
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "ALTER USER requires a server front end with a privilege registry",
             ));
         };
         for spec in &alter.users {
             if spec.dual_password.is_some() {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "ALTER USER options beyond IDENTIFIED [WITH] BY / ACCOUNT LOCK|UNLOCK are not supported yet",
                 ));
             }
@@ -593,7 +593,7 @@ impl Session {
                     return Err(DriverError::AlterUserMissing { user, host });
                 }
             } else if options.is_empty() {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "ALTER USER options beyond IDENTIFIED [WITH] BY / password-and-lock options are not supported yet",
                 ));
             } else if !registry.user_exists(&user, &host) && !alter.if_exists {
@@ -645,7 +645,7 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         let (user, host) = self.resolve_account(spec)?;
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "SHOW CREATE USER requires a server front end with a privilege registry",
             ));
         };
@@ -727,12 +727,12 @@ impl Session {
         set_password: &tidb_ast::SetPasswordStmt,
     ) -> Result<StmtOutput, DriverError> {
         if set_password.retain_current_password {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "SET PASSWORD ... RETAIN CURRENT PASSWORD is not supported yet",
             ));
         }
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "SET PASSWORD requires a server front end with a privilege registry",
             ));
         };
@@ -762,7 +762,7 @@ impl Session {
         pairs: &[tidb_ast::RenameUserPair],
     ) -> Result<StmtOutput, DriverError> {
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "RENAME USER requires a server front end with a privilege registry",
             ));
         };
@@ -799,7 +799,7 @@ impl Session {
     /// identity is an in-process one with no front end, which has no account
     /// to name.
     pub(crate) fn own_account(&self) -> Result<(String, String), DriverError> {
-        let (user, host) = self.current_identity().ok_or(DriverError::Unsupported(
+        let (user, host) = self.current_identity().ok_or(DriverError::unsupported(
             "CURRENT_USER requires a session with an authenticated identity",
         ))?;
         Ok((user.to_owned(), host.to_owned()))
@@ -821,7 +821,7 @@ impl Session {
         users: &[tidb_ast::UserSpec],
     ) -> Result<StmtOutput, DriverError> {
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "DROP USER requires a server front end with a privilege registry",
             ));
         };
@@ -871,7 +871,7 @@ impl Session {
         grant: &tidb_ast::GrantStmt,
     ) -> Result<StmtOutput, DriverError> {
         if grant.object_type.is_some() {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "GRANT ... ON FUNCTION/PROCEDURE is not supported yet",
             ));
         }
@@ -881,12 +881,12 @@ impl Session {
             0
         };
         if !grant.tls_options.is_empty() {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "GRANT ... REQUIRE is not supported yet",
             ));
         }
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "GRANT requires a server front end with a privilege registry",
             ));
         };
@@ -983,12 +983,12 @@ impl Session {
         revoke: &tidb_ast::RevokeStmt,
     ) -> Result<StmtOutput, DriverError> {
         if revoke.object_type.is_some() {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "REVOKE ... ON FUNCTION/PROCEDURE is not supported yet",
             ));
         }
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "REVOKE requires a server front end with a privilege registry",
             ));
         };
@@ -1233,7 +1233,7 @@ impl Session {
                 continue;
             }
             if !privilege.columns.is_empty() {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "GRANT/REVOKE with a column list is not supported yet",
                 ));
             }
@@ -1301,7 +1301,7 @@ impl Session {
                 continue;
             }
             if !privilege.columns.is_empty() {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "GRANT/REVOKE with a column list is not supported yet",
                 ));
             }
@@ -1351,7 +1351,7 @@ impl Session {
         let (user, host) = match &show.user {
             None => {
                 let Some((user, host)) = self.current_identity() else {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "SHOW GRANTS requires an authenticated session",
                     ));
                 };
@@ -1359,7 +1359,7 @@ impl Session {
             }
             Some(spec) if spec.current_user => {
                 let Some((user, host)) = self.current_identity() else {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "SHOW GRANTS requires an authenticated session",
                     ));
                 };
@@ -1368,7 +1368,7 @@ impl Session {
             Some(spec) => (spec.user.clone(), spec.host.clone()),
         };
         let Some(registry) = self.privileges.clone() else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "SHOW GRANTS requires a server front end with a privilege registry",
             ));
         };

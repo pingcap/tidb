@@ -174,7 +174,7 @@ pub fn run_select_meta_in(
                 return run_set_opr_stmt(set_opr, catalog, current_db, ctx)
             }
         },
-        _ => return Err(DriverError::Unsupported("only SELECT is supported")),
+        _ => return Err(DriverError::unsupported("only SELECT is supported")),
     };
     run_select_stmt(select, catalog, current_db, ctx)
 }
@@ -520,7 +520,7 @@ pub(crate) fn run_select_traced(
                     DriverError::SubqueryReturnsMoreThanOneRow => {
                         ExecError::SubqueryReturnsMoreThanOneRow
                     }
-                    other => ExecError::Unsupported(driver_error_text(&other)),
+                    other => ExecError::unsupported(driver_error_text(&other)),
                 })
             });
             source = Box::new(crate::apply::ApplyExec::new(
@@ -670,7 +670,7 @@ pub(crate) fn run_select_traced(
                     DriverError::SubqueryReturnsMoreThanOneRow => {
                         ExecError::SubqueryReturnsMoreThanOneRow
                     }
-                    other => ExecError::Unsupported(driver_error_text(&other)),
+                    other => ExecError::unsupported(driver_error_text(&other)),
                 })
             });
             source = Box::new(crate::apply::ApplyExec::new(
@@ -707,7 +707,7 @@ pub(crate) fn run_select_traced(
             }
             SelectField::Wildcard(qualifier) => {
                 if scope.tables.is_empty() {
-                    return Err(DriverError::Unsupported(
+                    return Err(DriverError::unsupported(
                         "`*` is not supported in a FROM-less SELECT",
                     ));
                 }
@@ -733,7 +733,7 @@ pub(crate) fn run_select_traced(
                             .filter(|t| t.name.eq_ignore_ascii_case(q))
                             .collect();
                         if matching.is_empty() {
-                            return Err(DriverError::Unsupported(
+                            return Err(DriverError::unsupported(
                                 "`t.*` qualifier does not match a FROM table",
                             ));
                         }
@@ -922,7 +922,7 @@ pub(crate) fn datum_to_literal(value: &Datum) -> Result<tidb_ast::Expr, DriverEr
             Expr::Hex(hex_digits(literal.as_bytes()))
         }
         _ => {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "this subquery result kind is not supported yet",
             ))
         }
@@ -1012,8 +1012,8 @@ pub(crate) fn eval_limit_bound(expr: &tidb_ast::Expr) -> Result<u64, DriverError
     match expr {
         tidb_ast::Expr::Int(text) => text
             .parse::<u64>()
-            .map_err(|_| DriverError::Unsupported("LIMIT bound must be a non-negative integer")),
-        _ => Err(DriverError::Unsupported(
+            .map_err(|_| DriverError::unsupported("LIMIT bound must be a non-negative integer")),
+        _ => Err(DriverError::unsupported(
             "LIMIT bound must be an integer literal",
         )),
     }

@@ -1606,9 +1606,7 @@ fn a_check_constraint_is_refused_when_the_variable_is_on() {
         .unwrap();
     assert!(matches!(
         session.run("create table ck (a int, check (a > 0))"),
-        Err(DriverError::Unsupported(
-            "CHECK constraints are only modelled with tidb_enable_check_constraint off"
-        ))
+        Err(DriverError::Unsupported(reason)) if reason == "CHECK constraints are only modelled with tidb_enable_check_constraint off"
     ));
     // A table with no CHECK constraint is unaffected by the variable.
     session.run("create table plain (a int)").unwrap();

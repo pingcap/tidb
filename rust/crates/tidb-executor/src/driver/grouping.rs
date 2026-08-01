@@ -215,7 +215,7 @@ pub(crate) fn run_rollup_aggregate(
     let mut group_cols = Vec::with_capacity(group_by.len());
     for expr in group_by {
         let Expression::Column(col) = expr else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "WITH ROLLUP over a non-column GROUP BY expression is not supported yet",
             ));
         };

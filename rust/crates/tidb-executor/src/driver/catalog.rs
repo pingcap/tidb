@@ -57,7 +57,7 @@ pub(crate) fn split_table_path<'a>(
             Ok((current_db, name))
         }
         [database, name] => Ok((database, name)),
-        _ => Err(DriverError::Unsupported("empty table name")),
+        _ => Err(DriverError::unsupported("empty table name")),
     }
 }
 

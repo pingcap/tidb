@@ -493,7 +493,7 @@ fn build_pre_agg_applies(
                 DriverError::SubqueryReturnsMoreThanOneRow => {
                     ExecError::SubqueryReturnsMoreThanOneRow
                 }
-                other => ExecError::Unsupported(driver_error_text(&other)),
+                other => ExecError::unsupported(driver_error_text(&other)),
             })
         });
         source = Box::new(crate::apply::ApplyExec::new(
@@ -592,7 +592,7 @@ fn lower_select_fields(
 ) -> Result<(), DriverError> {
     for (field_index, field) in select.fields.fields().iter().enumerate() {
         let SelectField::Expr { expr, alias } = field else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "`*` is not supported in an aggregate SELECT",
             ));
         };
@@ -715,7 +715,7 @@ fn lower_select_fields(
                 // Go evaluates `GROUPING(a) + 1` over the projection above the
                 // aggregation; this seed has no such projection for select
                 // fields, so only a bare GROUPING() field is supported.
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "GROUPING() nested inside a larger select expression is not supported yet",
                 ));
             }
@@ -1175,7 +1175,7 @@ fn build_apply_chain(
                 DriverError::SubqueryReturnsMoreThanOneRow => {
                     ExecError::SubqueryReturnsMoreThanOneRow
                 }
-                other => ExecError::Unsupported(driver_error_text(&other)),
+                other => ExecError::unsupported(driver_error_text(&other)),
             })
         });
         root = Box::new(crate::apply::ApplyExec::new(

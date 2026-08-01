@@ -213,7 +213,7 @@ fn range_expression_is_unsigned(
             return Ok(types[offset].is_unsigned());
         }
     }
-    Err(DriverError::UnsupportedKind(
+    Err(DriverError::unsupported(
         "PARTITION BY RANGE over an EXPRESSION of an unsigned column is not supported by this \
          node: whether the bounds compare as signed or unsigned would decide which partition a \
          row lands in, and this node will not guess it"

@@ -251,11 +251,11 @@ fn auto_increment_option(options: &[tidb_ast::TableOption]) -> Result<Option<i64
                 // value above `i64::MAX` becomes negative rather than being
                 // rejected -- see `rebase_auto_increment` for what that means.
                 seed = Some(value.parse::<u64>().map_err(|_| {
-                    DriverError::Unsupported("AUTO_INCREMENT= needs an integer value")
+                    DriverError::unsupported("AUTO_INCREMENT= needs an integer value")
                 })? as i64);
             }
             tidb_ast::TableOption::ForceAutoIncrement(_) => {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "FORCE AUTO_INCREMENT is not supported yet",
                 ));
             }
@@ -360,20 +360,20 @@ pub fn run_create_table_in(
         Stmt::Ddl(ddl) => match &**ddl {
             DdlStmt::CreateTable(create) => create,
             _ => {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "only CREATE TABLE is supported here",
                 ))
             }
         },
         _ => {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "only CREATE TABLE is supported here",
             ))
         }
     };
 
     if enable_check_constraint && check_constraint_count(create) > 0 {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "CHECK constraints are only modelled with tidb_enable_check_constraint off",
         ));
     }
@@ -386,12 +386,12 @@ pub fn run_create_table_in(
     // `preprocessor.checkAdminCheckTableGrammar`). Refusing at CREATE keeps
     // the TEMPORARY keyword from being silently dropped.
     if create.temporary != tidb_ast::CreateTableTemporary::None {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "temporary tables are not supported yet",
         ));
     }
     if create.like_table.is_none() && create.columns.is_empty() {
-        return Err(DriverError::Unsupported("a table needs columns"));
+        return Err(DriverError::unsupported("a table needs columns"));
     }
 
     let (database, name) = crate::driver::split_table_path_pub(&create.name, current_db)?;
@@ -504,7 +504,7 @@ pub fn run_create_table_in(
                     columns
                         .iter()
                         .position(|col| col.name.original().eq_ignore_ascii_case(name))
-                        .ok_or(DriverError::Unsupported(
+                        .ok_or(DriverError::unsupported(
                             "the primary key names a column the table does not define",
                         ))?,
                 );
@@ -819,7 +819,7 @@ fn create_like_source<'a>(
         // A matrix-backed fixture table has no stored structure to copy. It
         // only exists in this crate's own tests, so this is unreachable from
         // SQL, but it must not be mistaken for "does not exist".
-        Some(crate::TableEntry::Mem(_)) => Err(DriverError::Unsupported(
+        Some(crate::TableEntry::Mem(_)) => Err(DriverError::unsupported(
             "CREATE TABLE LIKE needs a stored table",
         )),
         None => Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
@@ -838,7 +838,7 @@ fn column_default_error(error: crate::column_default::DefaultError, column: &str
             DriverError::DefaultFunctionNotAllowed(column.to_owned(), function)
         }
         DefaultError::InvalidDefault => DriverError::InvalidDefault(column.to_owned()),
-        DefaultError::Unsupported(reason) => DriverError::Unsupported(reason),
+        DefaultError::Unsupported(reason) => DriverError::unsupported(reason),
     }
 }
 
@@ -854,7 +854,7 @@ fn generated_column_error(error: crate::generated_column::GeneratedDdlError) -> 
         GeneratedDdlError::Unsupported(reason) => {
             DriverError::UnsupportedOnGeneratedColumn(reason.to_owned())
         }
-        GeneratedDdlError::Unbuildable(reason) => DriverError::Unsupported(reason),
+        GeneratedDdlError::Unbuildable(reason) => DriverError::unsupported(reason),
     }
 }
 

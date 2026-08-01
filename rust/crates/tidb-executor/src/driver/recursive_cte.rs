@@ -318,7 +318,7 @@ fn split_blocks(name: &str, set_opr: &SetOprStmt) -> Result<BlockSplit, DriverEr
             ));
         }
         let SetOprTermBody::Select(select) = &term.body else {
-            return Err(DriverError::Unsupported(
+            return Err(DriverError::unsupported(
                 "a parenthesized nested set operation as a WITH RECURSIVE block",
             ));
         };
@@ -343,7 +343,7 @@ fn split_blocks(name: &str, set_opr: &SetOprStmt) -> Result<BlockSplit, DriverEr
             None => op = Some(this_op),
             Some(previous) if previous == this_op => {}
             Some(_) => {
-                return Err(DriverError::Unsupported(
+                return Err(DriverError::unsupported(
                     "WITH RECURSIVE blocks joined by a mix of UNION and UNION ALL",
                 ))
             }

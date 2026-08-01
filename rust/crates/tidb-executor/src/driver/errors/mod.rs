@@ -110,7 +110,6 @@ impl DriverError {
             format!("You have an error in your SQL syntax: {message}"),
         ),
         DriverError::Unsupported(message) => MysqlError::unknown(message),
-        DriverError::UnsupportedKind(message) => MysqlError::unknown(message),
         // Every execution and evaluation failure, one arm each, in `exec`.
         DriverError::Exec(error) => exec::to_mysql_error(error),
         DriverError::Txn(crate::TxnErrorKind::WriteConflict) => {

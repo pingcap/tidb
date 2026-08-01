@@ -195,11 +195,11 @@ impl ExplainFormat {
 /// The plan a finished trace recorded, or the refusal a build site left in it.
 fn recorded(trace: PlanTrace) -> Result<PlanNode, DriverError> {
     if let Some(reason) = trace.refusal() {
-        return Err(DriverError::Unsupported(reason));
+        return Err(DriverError::unsupported(reason));
     }
     trace
         .into_root()
-        .ok_or(DriverError::Unsupported("EXPLAIN recorded no plan"))
+        .ok_or(DriverError::unsupported("EXPLAIN recorded no plan"))
 }
 
 /// A `WITH` clause's CTEs are materialized before the query that reads them is
@@ -207,7 +207,7 @@ fn recorded(trace: PlanTrace) -> Result<PlanNode, DriverError> {
 /// refused this shape, and refuses it before the driver runs anything.
 fn refuse_untraced_select(select: &tidb_ast::SelectStmt) -> Result<(), DriverError> {
     if select.with.is_some() {
-        return Err(DriverError::Unsupported(
+        return Err(DriverError::unsupported(
             "EXPLAIN of a WITH clause is not supported yet",
         ));
     }
