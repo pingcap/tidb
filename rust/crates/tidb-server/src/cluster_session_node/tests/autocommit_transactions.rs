@@ -202,8 +202,7 @@ fn a_transaction_under_autocommit_off_that_lost_the_race_fails_at_commit() {
         .expect("the statement itself succeeds; nothing is published yet");
     let error = loser
         .control_transaction("COMMIT")
-        .err()
-        .expect("a prewrite at the transaction's timestamp must lose to a newer commit");
+        .expect_err("a prewrite at the transaction's timestamp must lose to a newer commit");
     assert_eq!(error.code, ERR_WRITE_CONFLICT, "{}", error.message);
 
     // The winner's row stands.
@@ -349,7 +348,6 @@ fn a_savepoint_under_autocommit_on_records_nothing() {
     );
     let error = session
         .control_transaction("ROLLBACK TO sp2")
-        .err()
-        .expect("the name was never recorded");
+        .expect_err("the name was never recorded");
     assert_eq!(error.code, 1305, "{}", error.message);
 }
