@@ -135,9 +135,19 @@
 //! accepted under `+00:00`/`+08:00`, an error under `-08:00`. The stored
 //! VALUE is the literal either way; it is the ACCEPTANCE that moves. This
 //! node applies no epoch-range check to a TIMESTAMP default in any zone, so
-//! it accepts both, which is a wrong-ACCEPT rather than a wrong-value and
-//! belongs to the TIMESTAMP storage seam that also owns the reading-session
-//! rendering divergence pinned in `integration_diff`.
+//! it accepts both, which is a wrong-ACCEPT rather than a wrong-value.
+//!
+//! It is NOT the storage seam, and the storage fix did not reach it. Storing
+//! a TIMESTAMP in UTC and reading it back in the session's zone is now done
+//! (`tests_timezone_storage` in `tidb-session`), and this still accepts both
+//! defaults in every zone -- because the range check lives one layer up, in
+//! `Datum::convert_to_time_target`, which validates against a hardcoded
+//! `Utc` where Go's `ParseTime(ctx, ...)` validates against
+//! `types.Context.Location()`. The same gap shows on the WRITE path:
+//! `SET time_zone='-08:00'; INSERT ... VALUES ('2038-01-19 03:14:07')` is an
+//! error in TiDB and is accepted here. Closing it means giving the
+//! conversion the statement's zone, which is a separate thread from giving
+//! it to the codecs.
 //!
 //! # Where a resolved collation is, and is NOT, consulted
 //!
