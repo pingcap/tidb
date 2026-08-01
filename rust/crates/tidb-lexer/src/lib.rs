@@ -625,7 +625,12 @@ impl<'a> Lexer<'a> {
                     self.r.inc();
                     self.r.inc_as_long_as(|c| (b'0'..=b'7').contains(&c));
                 }
-                b'x' => {
+                // `0x`/`0X` are BOTH hex-literal prefixes — `pkg/parser/
+                // lexer.go`'s `startWithNumber` tests `ch1 == 'x' || ch1 ==
+                // 'X'` in one arm. This is deliberately NOT symmetric with
+                // the `0b`/`0B` pair just below, where the same function
+                // gives `'B'` its own identifier arm.
+                b'x' | b'X' => {
                     self.r.inc();
                     let p1 = self.r.offset();
                     self.r.inc_as_long_as(is_hex_digit);
@@ -636,10 +641,6 @@ impl<'a> Lexer<'a> {
                     }
                     // Hex literal, unless trailing identifier chars glue on.
                     return self.finish_number(start, TokenKind::HexLit);
-                }
-                b'X' => {
-                    self.r.inc_as_long_as(is_ident_char);
-                    return (TokenKind::Invalid, start, self.r.offset());
                 }
                 b'b' => {
                     self.r.inc();
@@ -793,24 +794,21 @@ impl<'a> Lexer<'a> {
                 if self.r.byte_at(self.r.offset() + 1) == b'!' {
                     self.r.inc(); // T
                     self.r.inc(); // !
-                                  // A TiDB feature comment is executable only when every
-                                  // feature id is known to this parser.  Unknown or
-                                  // malformed ids are ordinary comments, exactly as
-                                  // `tidbfeature.CanParseFeature` makes the Go scanner do.
-                                  // TiDB's empty feature id (`FeatureIDTiDB = ""`) emits
-                                  // `/*T! ... */` without a bracketed id list. Go treats
-                                  // this as an executable comment; only comments that
-                                  // actually start a `[...]` list go through the
-                                  // feature-gate check below.
-                    if self.r.peek() != b'[' {
+                                  // A TiDB feature comment is executable unless a
+                                  // WELL-FORMED feature list names something this parser
+                                  // does not support (`tidbfeature.CanParseFeature`).
+                                  // Both a missing `[` (TiDB's empty feature id,
+                                  // `FeatureIDTiDB = ""`, emits `/*T! ... */` bare) and a
+                                  // MALFORMED list make Go's `scanFeatureIDs` rewind and
+                                  // return a NIL slice, over which `CanParseFeature()` is
+                                  // vacuously true — so both stay executable.
+                    let executable = match self.scan_feature_ids() {
+                        None => true,
+                        Some(ids) => ids.iter().all(|id| supported_feature(id)),
+                    };
+                    if executable {
                         self.in_bang_comment = true;
                         return self.scan();
-                    }
-                    if let Some(ids) = self.scan_feature_ids() {
-                        if ids.iter().all(|id| supported_feature(id)) {
-                            self.in_bang_comment = true;
-                            return self.scan();
-                        }
                     }
                 }
             }
