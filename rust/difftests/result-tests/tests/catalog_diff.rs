@@ -395,7 +395,15 @@ const KNOWN_CATALOG_DIVERGENCES: usize = 111;
 /// The floor on catalog reads that MATCH TiDB's recording exactly. See
 /// [`KNOWN_CATALOG_DIVERGENCES`] for why a divergence ceiling alone is not a
 /// gate.
-const MATCHED_FLOOR: usize = 102;
+///
+/// 102 -> 106: prefix indexes on secondary keys are built rather than
+/// refused, so `ddl/column_type_change`'s four
+/// `TestChangePrefixedIndexColumnToNonPrefixOne` tables exist and their
+/// `SHOW CREATE TABLE` is compared -- and matches, because `SHOW CREATE
+/// TABLE` prints the declared `(n)` and `MODIFY COLUMN` clears it exactly
+/// where Go's `UpdateIndexCol` does. The divergence count and fingerprint
+/// did not move: all four were previously OUT OF DOMAIN, not red.
+const MATCHED_FLOOR: usize = 106;
 
 /// A fingerprint over the TEXT of every carried divergence, and the reason it
 /// exists is a hole this gate was CAUGHT having on its first day.

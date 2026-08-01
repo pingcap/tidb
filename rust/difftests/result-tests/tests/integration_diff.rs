@@ -760,7 +760,30 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // `PlanProperty` matches 71 -> 73); no other topic's count moved, and
     // again no `Rows` count moved anywhere -- the point plan changes which
     // request finds the row, never which row is found.
-    const KNOWN_DIVERGENCES: usize = 49;
+    //
+    // # 49 -> 50: prefix indexes became measurable
+    //
+    // `CREATE TABLE ... INDEX indexIDname (ID(8), name(8))` used to be
+    // REFUSED, so `executor/admin`'s whole `t` block was out of domain.
+    // Prefix indexes on secondary keys are built now, which moved 7
+    // statements into the compared set (2339 -> 2346) and 6 of them into the
+    // matched set (2290 -> 2296) -- `admin check table t` over that very
+    // prefix index among them.
+    //
+    // The 7th is the one new divergence, and it is NOT about prefixes:
+    //
+    //     use mysql;
+    //     admin check table t;   -- tidb: 1146 Table 'mysql.t' doesn't exist
+    //
+    // The in-process catalog has no `mysql` schema, so `USE mysql` fails,
+    // the session's current database stays `executor__admin`, and the
+    // unqualified `t` resolves to the table that was just created there.
+    // Had `USE` taken effect the lookup would have been `mysql.t` and the
+    // answer 1146, which is what makes this a `USE`/bootstrap-schema gap
+    // rather than an admin-check or index one -- the resolution itself
+    // (`Session::split_table_path`) already goes through the current
+    // database.
+    const KNOWN_DIVERGENCES: usize = 50;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
