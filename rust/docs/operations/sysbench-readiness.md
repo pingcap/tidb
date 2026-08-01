@@ -5,7 +5,17 @@ runs `prepare` to completion — `AUTO_INCREMENT` table, 1,000 rows, secondary
 index — and then runs all four `oltp_*` workloads against this node. The
 `--auto-inc=off --create-secondary=off` workarounds are retired.**
 
-The answer is now about speed, not capability. **Update 2026-08-01
+The answer is now about speed, not capability. **Update 2026-08-02
+(`a30ddd25dc`, offset 33000): the `MaxUint64` point-get shortcut now fires on
+the served `--cluster-session` path. `oltp_point_select` fell from 1.005 TSO
+per statement to 0.0034 — Go's own rate in the same run is 0.0021 — and the
+per-statement excess fell from 123.73 µs to 67.17 µs.** The same run also ran
+the check no mock can: a live racing lost-update test. **It fails — but it
+fails identically on a binary built before the shortcut existed, so the loss is
+a pre-existing autocommit-write-path bug and not this change's.** See "The
+shortcut on the path sysbench actually runs (task #165)".
+
+**Update 2026-08-01
 (`8eacf363e5`): the clustered-primary-key range extraction landed and
 `oltp_read_only` went from 11.70 to 89.15 tps, 7.6x, on the same table shape.**
 
@@ -124,8 +134,8 @@ port is still reachable).
 | 3b. Capability probe | `rust: 0x00158a08 CLIENT_SSL=yes`, `go: 0x0015aeaf CLIENT_SSL=yes` — unchanged from the TLS run |
 | 3c. Go control: `sysbench prepare` against the Go `tidb-server` | **FAIL again on the `v8.5.6` playground the ladder starts**: `error 8256 ... no enough space in /tmp/tidb/tmp_ddl-47000` at `CREATE INDEX`. Cleared out-of-band by a newer playground — a full Go baseline now exists, see "The Go control rung" below |
 | 4. `sysbench oltp_read_only ... prepare` | **OK on the FIRST attempt, `--auto-inc=on`** — sysbench's own default schema. Table created, 1,000 rows inserted, secondary index created, all unmodified |
-| 5. Dataset correctness, Rust vs Go on the same TiKV | **OK, and identical again at `cfd6f963a9`, offset 38000, with the pinned thread pool and the prepared-`BEGIN` fix in the seam:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, post-run re-check `1000 500500 504083` on both sides. **The transaction-seam changes altered no row set.** Earlier, at `dd97293671`, offset 42000, with the write path on `Point_Get`:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, and the post-run re-check `1000 500500 503191` on both sides. **The write-path change altered no row set** — this is the gate a write-path change has to clear, and it cleared it. Earlier, at `de899c65d1`: Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000` — the same figures as the range-fix run. Neither the range fix nor the binary-protocol fix altered a row set. The post-run re-check also agreed, `1000 500500 502334` on both sides |
-| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | **EIGHT of eight again, 2026-08-01 at `cfd6f963a9`, offset 38000**, `ignored errors: 0` in all eight logs, secondary index present, both `--db-ps-mode` settings: the `error 2014` fix is still holding after the transaction-seam changes. Also eight of eight at `dd97293671`, offset 42000, `ignored errors: 0` in all eight logs and no `FAIL` cell: the `error 2014` fix is still holding after the write-path change. Also eight of eight at `de899c65d1`, offset 45000, secondary index present, `ignored errors: 0` in every log; and six of eight at `8eacf363e5`, where the two binary-prepared cells aborted with error 2014 — see "Regression found by this run, and closed") |
+| 5. Dataset correctness, Rust vs Go on the same TiKV | **OK, and identical again at `a30ddd25dc`, offset 33000, with the point-get shortcut now firing on the served path:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, post-run re-check `1000 500500 502340` on both sides. **The shortcut altered no row set.** Earlier, at `cfd6f963a9`, offset 38000, with the pinned thread pool and the prepared-`BEGIN` fix in the seam:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, post-run re-check `1000 500500 504083` on both sides. **The transaction-seam changes altered no row set.** Earlier, at `dd97293671`, offset 42000, with the write path on `Point_Get`:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, and the post-run re-check `1000 500500 503191` on both sides. **The write-path change altered no row set** — this is the gate a write-path change has to clear, and it cleared it. Earlier, at `de899c65d1`: Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000` — the same figures as the range-fix run. Neither the range fix nor the binary-protocol fix altered a row set. The post-run re-check also agreed, `1000 500500 502334` on both sides |
+| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | **EIGHT of eight again, 2026-08-02 at `a30ddd25dc`, offset 33000**, no aborted cell, with the point-get shortcut firing. Also eight of eight at `cfd6f963a9`, offset 38000, `ignored errors: 0` in all eight logs, secondary index present, both `--db-ps-mode` settings: the `error 2014` fix is still holding after the transaction-seam changes. Also eight of eight at `dd97293671`, offset 42000, `ignored errors: 0` in all eight logs and no `FAIL` cell: the `error 2014` fix is still holding after the write-path change. Also eight of eight at `de899c65d1`, offset 45000, secondary index present, `ignored errors: 0` in every log; and six of eight at `8eacf363e5`, where the two binary-prepared cells aborted with error 2014 — see "Regression found by this run, and closed") |
 | 7. sysbench's own statements driven by hand | **24 accepted, 0 refused** — unchanged at `cfd6f963a9`, offset 38000, with prefix-index reads also landed, and at `dd97293671`, offset 42000, and at `de899c65d1` before it (was 21/3, and 16/4 before that). Includes both `ADMIN CHECK TABLE`s on the Go server, and `USE INDEX` vs `IGNORE INDEX` agreeing at `1000 500500` |
 
 Rung 5 is the row that had never been produced: the ladder gates it on a
@@ -176,7 +186,7 @@ and the gRPC message counters. So the figures come from
 which counts **Tso messages, not timestamps**: batching (`5e725476af`) coalesces
 already-queued waiters into one `count`-wide request. At `--threads=1` there is
 never a second waiter, so every batch should be `count = 1` — and this run
-**calibrates that rather than assuming it**, with four probes whose answers are
+**calibrates that rather than assuming it**, with five probes whose answers are
 known integers:
 
 | Calibration probe | Engine | Tso delta | Expected |
@@ -220,6 +230,64 @@ point-select windows, which are the ones this section turns on, landed squarely
 inside it. Only `oltp_point_select` is autocommit per statement, so only it can
 take the shortcut — the other three run inside explicit transactions and their
 TSO rates are unchanged, exactly as they should be.
+
+#### The check a mock cannot do: a real lost update — and what it caught
+
+The mock cluster's max-ts snapshot is a clone of the committed store, so it can
+say by counter which branch a statement took but can never show a wrong row.
+Run live against a racing writer, the shape of
+`an_updates_read_before_write_does_not_take_the_shortcut` **loses updates.**
+
+**But it is not this change's loss.** The same experiment on a binary built at
+`60f06c5224` — the commit immediately BEFORE the shape declaration, with no
+`declare_autocommit_point_get` in the tree at all — loses the same amount. The
+attribution matrix, 300 blind `v = v + 5` / `v = v + 7` statements per side on
+one row, arithmetic checked as `100 + 5·accepted + 7·accepted`:
+
+| Variant | after (`a30ddd25dc`, offset 34000) | before (`60f06c5224`, offset 35000) |
+| --- | --- | --- |
+| Go vs Go — the method's own control | **PASS** 3700 = 3700 | **PASS** 3700 = 3700 |
+| Rust vs Go, `WHERE id = 1` | **LOST** 2538 vs 3700, short 1162 | **LOST** 2582 vs 3695, short 1113 |
+| Rust vs Rust | **LOST** 1926 vs 3700, short 1774 | **LOST** 2142 vs 3700, short 1558 |
+| Rust vs Go, `WHERE id = 1 AND v > -1000000` | **LOST** 2498 vs 3695, short 1197 | **LOST** 2461 vs 3700, short 1239 |
+| Rust alone, uncontended | **PASS** 1600 = 1600 | **PASS** 1600 = 1600 |
+
+Four things are settled by that table. The **Go-vs-Go row is exact**, so the
+arithmetic is a valid oracle and not the thing that is wrong. The
+**uncontended row is exact**, so nothing is dropping writes outside a race. The
+**non-point-shape row loses the same amount**, and that predicate is one
+`statement_read_shape` refuses outright — so **the point-get shape is not the
+variable**. And the **before column loses the same amount as the after column**,
+which is the direct answer: **the shortcut did not cause this, and the guard
+that keeps writes off it holds.** The counter agrees with the row: 200
+autocommit PK `UPDATE`s cost 401 timestamps at offset 33000, so no `UPDATE`
+took the branch.
+
+**What does cause it is one line above the autocommit publication, and the code
+already says so.** `commit_staged_buffer`
+(`crates/tidb-exec/src/cluster_table_storage.rs:665-692`) documents itself:
+
+> the statement's own read transaction has already ended, so the publication
+> takes a fresh timestamp
+
+So an autocommit `UPDATE` reads at `T_read` and prewrites under a *different,
+later* `T_write`. TiKV's optimistic conflict check at prewrite is against the
+prewriting transaction's `start_ts`, so a commit landing in the window
+`T_read < commit_ts < T_write` is **not a conflict TiKV can see**, and the value
+computed from the stale read overwrites it with no error. Go's implicit
+per-statement transaction takes **one** timestamp and reads and prewrites at it,
+which is exactly why the Go-vs-Go row is exact. The comment's claim that this is
+"exactly as Go's implicit per-statement transaction does" is the part that is
+not true: Go does not re-timestamp between the read and the write.
+
+This is a **pre-existing, unfixed data-loss bug in the autocommit write path**,
+reproducible on both sides of task #165 and independent of it. Reproduction:
+`scripts/run-sysbench-ladder.sh`'s cluster plus two concurrent sessions each
+running `UPDATE t SET v = v + N WHERE id = 1` several hundred times against one
+row; the row ends short by hundreds of increments with zero errors reported.
+A second, rarer refusal surfaced in the same window and is also unexplained:
+`ERROR 1105 ... invalid Prewrite lock observation: pessimistic lock type 5 is
+outside bounded recovery`, once or twice per 300 statements.
 
 ### The `MaxUint64` point-get shortcut on a real cluster (task #142)
 
