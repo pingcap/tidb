@@ -966,11 +966,20 @@ fn replay_one_topic_from_env() {
 /// `int`, second `varchar`, where Go merges to `varchar` -- so the fix is the
 /// type unification itself, not a cast at the append.
 ///
-/// Two topics no longer abort but do not FINISH the survey's 30s child budget,
-/// and one of those is a finding in its own right: `executor/jointest/join`'s
-/// 21-table join does not finish in 400s either, so its stack overflow was
-/// standing in for an unbounded join-order search. `expression/issues` runs
-/// long and then reaches the `I311` decimal cell above.
+/// One topic no longer aborts but does not FINISH the survey's 30s child
+/// budget: `expression/issues` runs long and then reaches the `I311` decimal
+/// cell above.
+///
+/// `executor/jointest/join` was the second, and it is FIXED. Its 21-table
+/// join did not finish in 400s, which was read here as an unbounded
+/// join-order search; timing the statement at every prefix length disproved
+/// that (there is no join-order search in this engine, and the cost doubled
+/// per table added, which is the cross product and is order-independent).
+/// The cause was a comma join whose equalities were all in `WHERE`, so no
+/// join node had an `ON` to hash on -- see `driver::predicate_push_down` and
+/// the `many_table_join` tests. The topic's remaining obstacle is its DEBUG
+/// stack overflow at 21 tables, which `on_deep_stack` covers here and the
+/// survey's child processes do not.
 ///
 /// # Out-of-domain refusal causes, ranked
 ///

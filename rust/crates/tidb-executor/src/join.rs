@@ -37,6 +37,13 @@
 //! domains -- keeps the nested loop, which materializes both inputs and
 //! compares every pair.
 //!
+//! Which path a join takes is therefore decided before it gets here, by what
+//! is in its condition list -- and for a comma join that is decided by
+//! [`crate::driver::predicate_push_down`], whose whole purpose is to put the
+//! `WHERE` equality where this dispatch can see it. Without it a tree of
+//! comma joins is a tree of nested loops and its cost is the product of every
+//! input's row count.
+//!
 //! The two paths are not two implementations of `ON`. The hash table only
 //! CHOOSES the candidate pairs; each candidate is then handed to the same
 //! [`JoinExec::matches`] the nested loop calls on every pair. So the hash

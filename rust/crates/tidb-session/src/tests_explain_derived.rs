@@ -153,10 +153,19 @@ fn a_derived_table_over_no_table_reaches_table_dual() {
 /// ACCESS AGREES on `table:t`: a full table scan off pseudo statistics, on
 /// both of the join's sides.
 ///
-/// DIVERGENCE, above the leaves and pre-existing: Go turns the `WHERE` into
-/// the join's equal condition and derives `not(isnull(...))`, while this tier
-/// keeps a `CARTESIAN inner join` with the predicate as a `Selection` above
-/// it. Both read the same rows -- asserted here, not inferred.
+/// The JOIN METHOD now agrees: `driver::predicate_push_down` gives the join
+/// the `WHERE` equality, so this reads `inner join, equal:[...]` where it
+/// used to read `CARTESIAN inner join` -- the same hash join off the same
+/// key that Go's capture shows.
+///
+/// DIVERGENCE, above the leaves and narrowed to two things. Go MOVES the
+/// predicate; this tier COPIES it, so the `Selection` stays printed above the
+/// join (it is redundant, which is what makes the copy safe -- see
+/// `driver::predicate_push_down`'s own doc). And Go derives
+/// `not(isnull(...))` on each side and names the columns by their BASE table
+/// (`test.t.a`) after eliminating the derived tables, while this tier names
+/// them by the derived alias (`test.x.a`). Both read the same rows --
+/// asserted here, not inferred.
 #[test]
 fn two_derived_tables_join_without_a_base_table() {
     let mut session = derived_session();
@@ -168,7 +177,7 @@ fn two_derived_tables_join_without_a_base_table() {
         vec![
             "Projection_7|N/A|root||*",
             "└─Selection_6|N/A|root||eq(test.x.a, test.y.b)",
-            "  └─HashJoin_5|N/A|root||CARTESIAN inner join",
+            "  └─HashJoin_5|N/A|root||inner join, equal:[eq(test.x.a, test.y.b)]",
             "    ├─Projection_2(Build)|10000.00|root||*",
             "    │ └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
             "    └─Projection_4(Probe)|10000.00|root||*",
