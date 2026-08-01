@@ -29,6 +29,14 @@ fn show_databases_and_tables() {
 
     // Go's fetchShowDatabases sorts the names, then moves
     // information_schema to the front; the column is "Database".
+    //
+    // `mysql` is in the list because it is a schema the catalog seeds (see
+    // `Catalog::default`), which moves this assertion TOWARD TiDB's own
+    // answer rather than away: captured, `select schema_name from
+    // information_schema.schemata` on a real server returns
+    // `INFORMATION_SCHEMA;METRICS_SCHEMA;PERFORMANCE_SCHEMA;mysql;sys;test`.
+    // The three still missing are a documented divergence on
+    // `Catalog::default`.
     match session.run_with_columns("SHOW DATABASES").unwrap() {
         StmtOutput::Rows { columns, rows } => {
             assert_eq!(columns[0].0, "Database");
@@ -38,6 +46,7 @@ fn show_databases_and_tables() {
                     .collect::<Vec<_>>(),
                 vec![
                     "INFORMATION_SCHEMA".to_owned(),
+                    "mysql".to_owned(),
                     "other".to_owned(),
                     "test".to_owned()
                 ]
