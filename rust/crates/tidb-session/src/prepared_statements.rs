@@ -49,10 +49,18 @@
 //! its planning error surfaces at `EXECUTE` instead. The rejection still
 //! happens; only WHICH statement reports it differs.
 //!
-//! The plan cache is not modelled at all -- there is no cache to hit, so
-//! nothing here can report a hit. Every `.test` case whose recorded output
-//! includes `select @@last_plan_from_cache` is therefore out of reach by
-//! construction, not by omission.
+//! The PREPARED plan cache is not modelled at all -- a prepared statement is
+//! re-planned from its own text on every `EXECUTE`, so no `EXECUTE` here can
+//! report a hit.
+//!
+//! This is NOT true of the session as a whole, and the earlier wording that
+//! said "nothing here can report a hit" was wrong: the non-prepared plan
+//! cache in [`crate::non_prepared_plan_cache`] does report hits, and a
+//! `.test` case that runs a bare `SELECT` twice under
+//! `tidb_enable_non_prepared_plan_cache=1` and then reads
+//! `select @@last_plan_from_cache` is reachable through that tier. Only the
+//! `PREPARE`/`EXECUTE` shape is out of reach, and by construction rather than
+//! by omission.
 //!
 //! # Two divergences this exposed that are NOT the binding's
 //!

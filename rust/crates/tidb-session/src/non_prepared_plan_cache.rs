@@ -67,6 +67,64 @@
 //!   hint survives into the digest), and it is what makes
 //!   `SELECT /*+ SET_VAR(...) */ ...` break the cache in
 //!   `sessionctx/setvar`'s `TestSetVarHintBreakCache`.
+//!
+//! # The one known divergence: a duplicated IN-list over a unique key
+//!
+//! `planner/core/plan_cache`'s `TestIssue44830NonPrep` runs the same
+//! parameterized statement with three different IN-lists and expects a MISS
+//! whenever the list repeats a value:
+//!
+//! ```text
+//! select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (3, 3));  -- 2nd run: hit
+//! select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (2, 2));  -- miss
+//! select * from t1 where 1=1 and (a, b) in ((2, 2), (2, 2), (2, 2));  -- miss
+//! ```
+//!
+//! All three restore to `(a, b) in ((?, ?), (?, ?), (?, ?))`, so this tier
+//! shares one key across all of them and reports a hit for the last two.
+//! It would be easy -- and wrong -- to conclude the key must also carry the
+//! list's duplicate structure. Go's reason is not about keys at all, and it
+//! is CONDITIONAL ON THE PLAN, which is why it cannot be reproduced here.
+//!
+//! Go refuses in two separate places, both of which need an access path:
+//!
+//! * On the way IN, `isSafePointGetPath4PlanCacheScenario2`
+//!   (`planner/core/plan_cache_utils.go`) guards the Batch/PointGet a single
+//!   `IN` predicate produces:
+//!   `return len(path.Ranges) == len(f.GetArgs())-1 // no duplicated values
+//!   in this in-list for safety.`
+//!   A repeated element collapses into fewer ranges than the list has
+//!   elements, the path is declared unsafe, and `find_best_task.go` calls
+//!   `SetSkipPlanCache("Batch/PointGet plans may be over-optimized")` -- so
+//!   the plan never enters the cache. Captured: running the all-duplicate
+//!   statement TWICE still reports `0` the second time.
+//! * On the way OUT, `buildRangesForBatchGet`
+//!   (`planner/core/plan_cache_rebuild.go`) re-derives the ranges for the new
+//!   literals and refuses the cached plan when the count moved:
+//!   `if len(ranges.Ranges) != len(x.IndexValues) || !isSafeRange(...) {
+//!   return errors.New("rebuild to get an unsafe range") }`.
+//!   That is why a duplicated list misses even when a DISTINCT list of the
+//!   same length is already cached under the identical key -- captured, and
+//!   the distinct statement still hits afterwards, so the entry is not
+//!   evicted, merely unusable for that call.
+//!
+//! Both checks are reached only when the optimizer chose a Batch/PointGet,
+//! which needs the IN-list columns to cover a unique key. Captured against
+//! `gorun` with the SAME statements and only the schema changed:
+//!
+//! ```text
+//! create table t1 (a int, b int, primary key(a, b));  -- Batch_Point_Get -> duplicate list MISSES
+//! create table t1 (a int, b int, key(a, b));          -- IndexReader     -> duplicate list HITS
+//! ```
+//!
+//! So keying on the list's ARITY, as this tier does, is Go's behavior for
+//! every non-point-get plan; an AST-level "duplicates never share a key"
+//! rule would have been an invention, and would have broken the `key(a, b)`
+//! case that Go caches. The divergence is confined to a duplicated IN-list
+//! whose columns cover a unique key, it costs a spurious `1` from
+//! `@@last_plan_from_cache`, and it cannot be closed honestly until this
+//! tier has an access path to inspect. Both directions are pinned by tests
+//! below so neither half can drift silently.
 
 use std::collections::VecDeque;
 
