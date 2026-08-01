@@ -1336,6 +1336,52 @@ impl ReadOnlyScanPlan {
         self.handle_ranges.is_empty()
     }
 
+    /// Returns whether this plan is a point get on the clustered handle, in
+    /// the exact sense Go's start-timestamp shortcut requires.
+    ///
+    /// Go's `plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit`
+    /// (`pkg/planner/core/common_plans.go`) decides whether a statement may
+    /// read at `math.MaxUint64` — the latest committed version — instead of
+    /// paying for a timestamp. That is sound only because the predicate is a
+    /// conjunction of narrow conditions; each is stated here with how this
+    /// node satisfies or refuses it.
+    ///
+    /// Conditions Go tests, and the plan-shape part this method owns:
+    ///
+    /// - `PhysicalTableReader` whose scan has exactly one range, that range is
+    ///   a non-nullable point, and its low value has exactly `pkLength`
+    ///   components. Every range here is one clustered signed-`BIGINT` handle,
+    ///   so `pkLength` is 1 and the low value always has one component; a
+    ///   handle is never NULL, so "non-nullable" holds by construction. What
+    ///   remains to test is therefore: exactly one range, and `start == end`.
+    /// - `PhysicalIndexReader` / `PointGetPlan` reading through a secondary
+    ///   unique index. This node lowers no index reader at all, so the shape
+    ///   cannot occur — and the double-read and cache-table refusals Go
+    ///   attaches to it have nothing to refuse.
+    ///
+    /// Conditions this method deliberately does NOT own, because the caller
+    /// owns them structurally — see the call site in
+    /// `tidb-exec`'s `execute_lowered_plan_with_cancellation`:
+    ///
+    /// - `IsAutoCommitTxn`: autocommit set and no open transaction.
+    /// - The provider's own gates: transaction not yet activated,
+    ///   `tidb_snapshot` unset, and not a stale read.
+    ///
+    /// A `SELECT ... FOR UPDATE` is refused here rather than left to the call
+    /// site. Go admits it (`GetStmtForUpdateTS` takes the same shortcut), but
+    /// only inside the optimistic provider's own bookkeeping; this node has no
+    /// counterpart for that, so the safe answer is to keep paying a timestamp.
+    #[must_use]
+    pub fn is_point_get_on_handle(&self) -> bool {
+        if self.lock.is_some() {
+            return false;
+        }
+        match self.handle_ranges.as_slice() {
+            [range] => range.start() == range.end(),
+            _ => false,
+        }
+    }
+
     /// Returns the physical signed-`BIGINT` Selection above the table scan,
     /// when the query has residual non-handle conditions.
     #[must_use]
