@@ -297,6 +297,17 @@ fn topics_are_listed_once_each() {
 /// -- 0.6%. The blind spot is the other 4,878, and it is the reason a fix that
 /// added three real `CAST` truncation warnings moved neither ratchet.
 ///
+/// The blind spot is in the RECORDING, not in this reader, and that is the
+/// part worth knowing before anyone tries to close it. mysqltest writes a
+/// warning into `.result` only under `--enable_warnings` or for an explicit
+/// `show warnings;` (7 more statements, compared as ordinary rows). Everywhere
+/// else TiDB's warnings were never captured: `executor/analyze` records
+/// nothing for `set @@session.tidb_enable_fast_analyze=1` and only shows that
+/// it warns because the script asks on the next line. So there is no reader
+/// change that widens this gate against the recordings we have -- comparing
+/// warnings on the other 4,878 needs TiDB's warnings from somewhere else, a
+/// re-recording or a live server, not a better comparison.
+///
 /// The number is pinned so that widening or narrowing the warning gate is a
 /// visible edit rather than a silent one. Raising the covered count is
 /// progress; the total moving means TOPICS changed and both figures should be
