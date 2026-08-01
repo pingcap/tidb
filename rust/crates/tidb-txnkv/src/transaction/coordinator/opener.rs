@@ -155,8 +155,40 @@ impl RealOptimisticTransactionOpener {
         self.open(0, 0)
     }
 
+    /// Opens a read-only transaction at `u64::MAX` — the latest committed
+    /// version — without asking PD for a timestamp at all.
+    ///
+    /// This is Go's `forcePrepareConstStartTS(math.MaxUint64)`
+    /// (`pkg/sessiontxn/isolation/optimistic.go`), and it carries Go's whole
+    /// soundness condition with it: reading at `MaxUint64` ignores snapshot
+    /// isolation, so it is correct ONLY for a statement that reads exactly one
+    /// row once and has no second read to stay consistent with. Nothing here
+    /// can check that; the caller that DECLARES the shape owns it. This method
+    /// is deliberately not `begin_read_only`'s default and takes no `start_ts`
+    /// argument, so the only timestamp it can produce is the one Go names.
+    ///
+    /// Confirmed against a real cluster: TiKV honours `MaxUint64` as "read the
+    /// latest committed value", and a row committed between two such reads
+    /// becomes visible to the second.
+    pub fn begin_read_only_at_max_ts(
+        &self,
+    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+        self.open_at(Some(u64::MAX), 0, 0)
+    }
+
     fn open(
         &self,
+        planned_mutation_count: usize,
+        planned_aggregate_bytes: usize,
+    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+        self.open_at(None, planned_mutation_count, planned_aggregate_bytes)
+    }
+
+    /// `start_ts` of `None` spends one PD timestamp; `Some` uses the supplied
+    /// one and spends none.
+    fn open_at(
+        &self,
+        start_ts: Option<u64>,
         planned_mutation_count: usize,
         planned_aggregate_bytes: usize,
     ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
@@ -171,10 +203,13 @@ impl RealOptimisticTransactionOpener {
                 region_cache: runtime.cluster_id(),
             });
         }
-        let start_ts = self
-            .pd
-            .get_timestamp()
-            .map_err(|error| OptimisticCoordinatorError::Timestamp(error.to_string()))?;
+        let start_ts = match start_ts {
+            Some(start_ts) => start_ts,
+            None => self
+                .pd
+                .get_timestamp()
+                .map_err(|error| OptimisticCoordinatorError::Timestamp(error.to_string()))?,
+        };
         if start_ts == 0 {
             return Err(OptimisticCoordinatorError::Timestamp(
                 "PD returned zero start timestamp".to_owned(),

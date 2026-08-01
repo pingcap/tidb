@@ -82,7 +82,7 @@ pub(crate) fn default_field_display_name(
 }
 use tidb_expr::schema::Schema;
 
-mod access;
+pub(crate) mod access;
 mod agg_build;
 mod agg_select;
 mod catalog;

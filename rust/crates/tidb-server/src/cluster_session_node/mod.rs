@@ -156,6 +156,7 @@ use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::real_tikv_analyze::prepare_cluster_analyze;
 use tidb_exec::real_tikv_ddl::prepare_cluster_ddl;
 use tidb_exec::stats_watch::SharedStats;
+use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::cluster_storage::{
     BufferImage, ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
@@ -490,6 +491,7 @@ impl ClusterServerSession {
     /// that actually reads a cluster row.
     fn with_statement<T>(
         &mut self,
+        shape: StatementReadShape,
         run: impl FnOnce(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         self.rebuild_catalog_if_stale();
@@ -510,6 +512,7 @@ impl ClusterServerSession {
             // its read transaction open for the rest of the connection.
             drop(stale);
         }
+        self.declare_read_shape(shape);
         let outcome = run(&mut self.session);
         let finished = self.finish_snapshot();
         match outcome {
@@ -526,6 +529,25 @@ impl ClusterServerSession {
                 Err(error)
             }
         }
+    }
+
+    /// Tells the just-bound snapshot what shape the statement's whole read is,
+    /// before the statement runs and therefore before its first read.
+    ///
+    /// This is Go's `AdviseOptimizeWithPlan`, and the position is the point of
+    /// it: after the plan-shape question has been answered and before any
+    /// timestamp has been spent. The declaration reaches only a snapshot that
+    /// can take it -- an explicit transaction's read handle refuses by
+    /// inheriting the trait default, which is `IsAutoCommitTxn`'s `!InTxn`
+    /// half made structural rather than re-asked here.
+    fn declare_read_shape(&self, shape: StatementReadShape) {
+        if shape != StatementReadShape::AutocommitPointGet {
+            return;
+        }
+        self.slot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .declare_autocommit_point_get();
     }
 
     fn bind(&self, snapshot: Box<dyn ClusterSnapshot>) -> Option<Box<dyn ClusterSnapshot>> {
@@ -956,8 +978,12 @@ impl QuerySession for ClusterServerSession {
             return Ok(None);
         }
         let owned = sql.to_owned();
+        // A write declares nothing. Its read-before-write reaches the snapshot
+        // as the same `get` a point-get SELECT issues, which is exactly why the
+        // declaration is made from the statement rather than from the read.
         let affected_rows =
             self.with_statement(
+                StatementReadShape::Unknown,
                 move |session| match session.run(&owned).map_err(map_error)? {
                     StmtResult::Affected(count) => Ok(count),
                     StmtResult::Done(_) => Ok(0),
@@ -1006,7 +1032,9 @@ impl QuerySession for ClusterServerSession {
         // reads the catalog and may read rows, so it takes a snapshot like any
         // other statement.
         let owned = sql.to_owned();
-        let result_columns = self.with_statement(move |session| {
+        // The PREPARE probe runs the statement with every marker NULL, which
+        // is not the statement the client will execute; it declares nothing.
+        let result_columns = self.with_statement(StatementReadShape::Unknown, move |session| {
             let probe: Vec<tidb_datatype::Datum> =
                 std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
             Ok(match session.run_with_params(&owned, &probe) {
@@ -1067,7 +1095,8 @@ impl QuerySession for ClusterServerSession {
         }
         let params = crate::pipeline_session::prepared_parameters(values);
         let sql = statement.sql().to_owned();
-        let output = self.with_statement(move |session| {
+        let shape = self.session.statement_read_shape(&sql, &params);
+        let output = self.with_statement(shape, move |session| {
             session.run_with_params(&sql, &params).map_err(map_error)
         })?;
         Ok(match output {
@@ -1121,10 +1150,11 @@ impl QuerySession for ClusterServerSession {
             StatementRoute::Ordinary => {}
         }
         let owned = sql.to_owned();
+        let shape = self.session.statement_read_shape(sql, &[]);
         // The rows are materialized inside the statement's snapshot, because
         // the snapshot's read transaction ends when the statement does; a lazy
         // source would be reading through a finished transaction.
-        let source = self.with_statement(move |session| {
+        let source = self.with_statement(shape, move |session| {
             let output = session.run_with_columns(&owned).map_err(map_error)?;
             Ok(match output {
                 StmtOutput::Rows { columns, rows } => MaterializedResultSetSource::new(

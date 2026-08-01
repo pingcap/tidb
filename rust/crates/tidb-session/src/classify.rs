@@ -32,6 +32,8 @@
 //! stored outside this process.
 
 use tidb_ast::{DmlStmt, Stmt};
+use tidb_datatype::Datum;
+use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::DriverError;
 
 use crate::Session;
@@ -127,6 +129,47 @@ pub(crate) fn statement_kind_of(stmt: &Stmt) -> StatementKind {
 }
 
 impl Session {
+    /// What this statement's WHOLE read is, decided by parsing alone, so a
+    /// front end that binds a read snapshot can tell it before the statement
+    /// runs -- and therefore before its first read spends a timestamp.
+    ///
+    /// This is the fourth question of this file's set, and it stays separate
+    /// from the other three for the same reason they stay separate from each
+    /// other: a `SELECT` is `Query`-shaped whether or not it is a point get,
+    /// and a point get inside an `UPDATE` is `Write`-shaped while reading the
+    /// very same row by the very same key. Only
+    /// [`tidb_executor::access_path::statement_read_shape`] answers this one,
+    /// and it answers it from the statement's own tree.
+    ///
+    /// `params` are a prepared statement's execute-time values; they are bound
+    /// into the text first, because a `?` is not a value a point get can be
+    /// planned from. Empty for the text protocol. A statement that fails to
+    /// parse or bind declares nothing, which costs a timestamp and never a
+    /// row.
+    #[must_use]
+    pub fn statement_read_shape(&self, sql: &str, params: &[Datum]) -> StatementReadShape {
+        let bound;
+        let sql = if params.is_empty() {
+            sql
+        } else {
+            match tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode()) {
+                Ok(text) => {
+                    bound = text;
+                    &bound
+                }
+                Err(_) => return StatementReadShape::Unknown,
+            }
+        };
+        let Ok(stmt) = self.parse(sql) else {
+            return StatementReadShape::Unknown;
+        };
+        let catalog = self
+            .catalog
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        tidb_executor::access_path::statement_read_shape(&stmt, &catalog, self.current_database())
+    }
+
     /// Classifies a statement by parsing alone (no execution), so a caller can
     /// choose the protocol answer shape before running it.
     ///

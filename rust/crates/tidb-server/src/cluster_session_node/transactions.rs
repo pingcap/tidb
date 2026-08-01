@@ -55,6 +55,14 @@ pub trait ClusterTransactions: Send + Sync {
     /// [`DeferredSnapshot`].
     fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
 
+    /// Opens one autocommit statement's read snapshot at `u64::MAX` -- the
+    /// latest committed version -- spending no PD timestamp.
+    ///
+    /// Reached only from a statement that DECLARED its whole read is one point
+    /// get on the clustered handle; see
+    /// [`ClusterSnapshot::declare_autocommit_point_get`].
+    fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
+
     /// Publishes one autocommit statement's staged writes as its own
     /// transaction, then empties the buffer. An empty buffer publishes nothing.
     ///
@@ -109,24 +117,37 @@ pub trait OpenClusterTransaction: Send {
 /// statement's own execution is what does.
 struct DeferredSnapshot {
     transactions: Arc<dyn ClusterTransactions>,
-    /// `None` until the first read. Behind a `Mutex` because `start_ts` takes
-    /// `&self` and must answer with the timestamp of the same transaction the
-    /// reads use.
-    opened: Mutex<Option<Box<dyn ClusterSnapshot>>>,
+    /// Behind one `Mutex` because `start_ts` takes `&self` and must answer
+    /// with the timestamp of the same transaction the reads use -- and because
+    /// the declaration below must be settled against the open atomically.
+    state: Mutex<DeferredState>,
+}
+
+/// The statement's read transaction, and the shape it was declared with.
+#[derive(Default)]
+struct DeferredState {
+    /// `None` until the first read.
+    opened: Option<Box<dyn ClusterSnapshot>>,
+    /// Whether the statement declared its whole read is one point get on the
+    /// clustered handle, which is what decides WHICH transaction the first
+    /// read opens.
+    ///
+    /// It is a property of the statement, taken once before any read, never of
+    /// a read. Were it re-decided per read, one statement's two reads would
+    /// land on two different latest-committed versions -- and the counters
+    /// would still show a saving. Keeping it beside `opened` under one lock is
+    /// what makes "declared before the first read" checkable rather than
+    /// hoped for.
+    max_ts: bool,
 }
 
 impl fmt::Debug for DeferredSnapshot {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let state = self.state();
         formatter
             .debug_struct("DeferredSnapshot")
-            .field(
-                "opened",
-                &self
-                    .opened
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner())
-                    .is_some(),
-            )
+            .field("opened", &state.opened.is_some())
+            .field("max_ts", &state.max_ts)
             .finish()
     }
 }
@@ -135,28 +156,37 @@ impl DeferredSnapshot {
     fn new(transactions: Arc<dyn ClusterTransactions>) -> Self {
         Self {
             transactions,
-            opened: Mutex::new(None),
+            state: Mutex::new(DeferredState::default()),
         }
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, DeferredState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     /// Runs `use_snapshot` against the statement's read transaction, opening
     /// it first if this is the statement's first read.
+    ///
+    /// The open is where the declaration is spent: a declared statement opens
+    /// at `u64::MAX` and pays no PD timestamp, and every later read of the
+    /// same statement goes through the transaction this one opened -- so a
+    /// statement never splits across two timestamps whichever branch it took.
     fn with_open<T>(
         &self,
         use_snapshot: impl FnOnce(&mut dyn ClusterSnapshot) -> Result<T, StorageError>,
     ) -> Result<T, StorageError> {
-        let mut guard = self
-            .opened
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        if guard.is_none() {
-            *guard = Some(
-                self.transactions
-                    .open_snapshot()
-                    .map_err(StorageError::Backend)?,
-            );
+        let mut guard = self.state();
+        if guard.opened.is_none() {
+            let opened = if guard.max_ts {
+                self.transactions.open_max_ts_snapshot()
+            } else {
+                self.transactions.open_snapshot()
+            };
+            guard.opened = Some(opened.map_err(StorageError::Backend)?);
         }
-        use_snapshot(guard.as_mut().expect("just opened").as_mut())
+        use_snapshot(guard.opened.as_mut().expect("just opened").as_mut())
     }
 }
 
@@ -183,6 +213,23 @@ impl ClusterSnapshot for DeferredSnapshot {
         // error to be reported by the read that follows.
         self.with_open(|snapshot| Ok(snapshot.start_ts()))
             .unwrap_or(0)
+    }
+
+    /// Takes the declaration, but only while the statement still has no read
+    /// transaction.
+    ///
+    /// A statement that has already read has already spent a timestamp, and
+    /// switching now would put its remaining reads on a second snapshot. That
+    /// is Go's `p.txn != nil` refusal in `AdviseOptimizeWithPlan` -- "the
+    /// startTS has already been used" -- and it is checked under the same lock
+    /// the open takes, so there is no window between the two.
+    fn declare_autocommit_point_get(&mut self) -> bool {
+        let mut state = self.state();
+        if state.opened.is_some() {
+            return false;
+        }
+        state.max_ts = true;
+        true
     }
 }
 
@@ -214,6 +261,12 @@ impl RealClusterTransactions {
 impl ClusterTransactions for RealClusterTransactions {
     fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         StatementSnapshot::open(Arc::clone(&self.opener), self.timeout)
+            .map(|snapshot| Box::new(snapshot) as Box<dyn ClusterSnapshot>)
+            .map_err(|error| error.to_string())
+    }
+
+    fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+        StatementSnapshot::open_at_max_ts(Arc::clone(&self.opener), self.timeout)
             .map(|snapshot| Box::new(snapshot) as Box<dyn ClusterSnapshot>)
             .map_err(|error| error.to_string())
     }

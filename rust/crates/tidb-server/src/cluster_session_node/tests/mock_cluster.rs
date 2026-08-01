@@ -38,6 +38,10 @@ pub(super) struct MockCluster {
     /// Autocommit read transactions opened, so "one statement, one
     /// snapshot" stays countable.
     pub(super) opened: AtomicUsize,
+    /// Autocommit read transactions opened at `u64::MAX` -- the ones that
+    /// spent no timestamp. Counted apart from `opened` so a pin can say
+    /// which branch a statement took, not merely that it read once.
+    pub(super) opened_at_max_ts: AtomicUsize,
     /// Explicit transactions opened by `BEGIN`.
     pub(super) begun: AtomicUsize,
     /// Read handles still bound. A statement that leaks one leaves this
@@ -157,6 +161,17 @@ impl ClusterTransactions for MockTransactions {
         self.0.opened.fetch_add(1, Ordering::AcqRel);
         self.0.live.fetch_add(1, Ordering::AcqRel);
         let _ = self.0.timestamp();
+        Ok(Box::new(MockSnapshot {
+            data: self.0.snapshot(),
+            cluster: Arc::clone(&self.0),
+        }))
+    }
+
+    fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+        self.0.opened_at_max_ts.fetch_add(1, Ordering::AcqRel);
+        self.0.live.fetch_add(1, Ordering::AcqRel);
+        // No `timestamp()` call: that absence IS what this branch buys, and
+        // the clock the tests read is what proves it.
         Ok(Box::new(MockSnapshot {
             data: self.0.snapshot(),
             cluster: Arc::clone(&self.0),

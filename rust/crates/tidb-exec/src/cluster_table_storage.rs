@@ -116,6 +116,30 @@ struct TransactionThread {
     start_ts: u64,
 }
 
+/// Which transaction a [`TransactionThread`] opens, and therefore what its
+/// `start_ts` costs.
+///
+/// [`TransactionOpen::ReadOnlyAtMaxTs`] is the only one that spends no PD
+/// timestamp, and it is reachable only from a statement that has DECLARED it
+/// reads one row once; see
+/// [`StatementSnapshot::open_at_max_ts`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TransactionOpen {
+    Writable,
+    ReadOnly,
+    ReadOnlyAtMaxTs,
+}
+
+impl TransactionOpen {
+    const fn writable(writable: bool) -> Self {
+        if writable {
+            TransactionOpen::Writable
+        } else {
+            TransactionOpen::ReadOnly
+        }
+    }
+}
+
 impl TransactionThread {
     /// Opens one transaction on a thread it owns until it ends, spending
     /// exactly one PD timestamp.
@@ -133,6 +157,15 @@ impl TransactionThread {
         writable: bool,
         name: &str,
     ) -> Result<Self, OptimisticCoordinatorError> {
+        Self::open_with(opener, timeout, TransactionOpen::writable(writable), name)
+    }
+
+    fn open_with(
+        opener: &Arc<RealOptimisticTransactionOpener>,
+        timeout: Duration,
+        open: TransactionOpen,
+        name: &str,
+    ) -> Result<Self, OptimisticCoordinatorError> {
         let (requests, incoming) = mpsc::channel::<TransactionRequest>();
         let (opened, opened_reply) = mpsc::channel::<Result<u64, OptimisticCoordinatorError>>();
         let opener = Arc::clone(opener);
@@ -140,10 +173,12 @@ impl TransactionThread {
             .run(
                 name,
                 Box::new(move || {
-                    let begun = if writable {
-                        opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
-                    } else {
-                        opener.begin_read_only()
+                    let begun = match open {
+                        TransactionOpen::Writable => {
+                            opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+                        }
+                        TransactionOpen::ReadOnly => opener.begin_read_only(),
+                        TransactionOpen::ReadOnlyAtMaxTs => opener.begin_read_only_at_max_ts(),
                     };
                     let transaction = match begun {
                         Ok(transaction) => {
@@ -330,6 +365,29 @@ impl StatementSnapshot {
     ) -> Result<Self, OptimisticCoordinatorError> {
         Ok(Self {
             thread: TransactionThread::open(&opener, timeout, false, "cluster-statement-snapshot")?,
+        })
+    }
+
+    /// Opens one read-only transaction at `u64::MAX` on its own thread,
+    /// spending NO PD timestamp.
+    ///
+    /// Reachable only from a statement that declared, before its first read,
+    /// that its whole read is one autocommit point get on the clustered handle
+    /// — Go's `IsPointGetWithPKOrUniqueKeyByAutoCommit` plus
+    /// `AdviseOptimizeWithPlan`. `MaxUint64` ignores snapshot isolation, so a
+    /// statement with a second read would see two different snapshots through
+    /// one handle; the declaration, not this method, is what forbids that.
+    pub fn open_at_max_ts(
+        opener: Arc<RealOptimisticTransactionOpener>,
+        timeout: Duration,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        Ok(Self {
+            thread: TransactionThread::open_with(
+                &opener,
+                timeout,
+                TransactionOpen::ReadOnlyAtMaxTs,
+                "cluster-statement-snapshot-max-ts",
+            )?,
         })
     }
 

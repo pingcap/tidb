@@ -56,11 +56,169 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{FieldType, SessionTimeZone};
+use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_expr::schema::Schema;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::kv_table::{IndexRange, IndexRangeCursor, KvTable, TableHandle};
+
+/// What a statement declares about its whole read, before its first read
+/// happens.
+///
+/// Go's counterpart is the answer `IsPointGetWithPKOrUniqueKeyByAutoCommit`
+/// gives `AdviseOptimizeWithPlan` once per statement, with the statement's
+/// ROOT plan. It is a statement-level fact, not a per-read one, and the
+/// difference is the whole safety argument: `MaxUint64` reads the latest
+/// committed version at the moment of the read, so two reads of one statement
+/// at `MaxUint64` are two different snapshots.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StatementReadShape {
+    /// Nothing is claimed. The snapshot spends a timestamp at its first read,
+    /// which is every statement's answer unless it earned the other one.
+    #[default]
+    Unknown,
+    /// The statement's whole read is one point get on the clustered handle,
+    /// reading one row once, with no second read of any kind.
+    AutocommitPointGet,
+}
+
+/// Whether `stmt` is a statement whose WHOLE read is one point get on the
+/// clustered handle -- the plan-shape half of Go's
+/// `IsPointGetWithPKOrUniqueKeyByAutoCommit`
+/// (`pkg/planner/core/common_plans.go`).
+///
+/// # What this decides, and what it deliberately does not
+///
+/// Go asks the question of the statement's ROOT plan, and its `switch` is what
+/// makes the answer safe: only a `PhysicalProjection` over a reader, a bare
+/// reader, or a `PointGetPlan` qualifies, and everything else falls to
+/// `default: return false`. A `Selection`, `Apply`, `Limit`, `Sort`,
+/// aggregation or join at the root is therefore already a refusal in Go, and
+/// so is every statement that is not a query at all. This function is that
+/// `switch`, expressed over the statement this tier plans from.
+///
+/// The two conditions it owns beyond the shape, both of them refusals Go makes
+/// elsewhere:
+///
+/// * The unique-index arm is REFUSED outright. Go admits `PointGetPlan` on a
+///   unique index only when `IndexInfo == nil || (Primary && IsCommonHandle)`
+///   -- its `noSecondRead` -- because an index point get is a DOUBLE read, and
+///   `MaxUint64` on a double read can pair an index entry with a row from a
+///   different version. This tier's unique-index arm
+///   (`driver::access::try_point_get`) is exactly that double read, and it
+///   READS the index while deciding, which a declaration made before the first
+///   read cannot do anyway. Refusing it is both halves at once.
+/// * `LIMIT` is refused. Go allows `LIMIT n` (`n > 0`, no offset) inside
+///   `tryPointGetPlan`, but evaluating the bound is work this predicate would
+///   have to duplicate to stay read-free, and a refusal costs one timestamp
+///   rather than a wrong row.
+///
+/// The conditions this function does NOT own, because the caller owns them
+/// structurally -- see `ClusterSnapshot::declare_autocommit_point_get`:
+///
+/// * `IsAutoCommitTxn`: autocommit set and no open transaction. The snapshot
+///   an explicit transaction binds refuses the declaration by inheriting the
+///   trait's fail-closed default, so being inside `BEGIN` is not a check here
+///   at all -- there is nothing to declare to.
+/// * "The timestamp is not already spent." The deferred snapshot refuses a
+///   declaration once it has opened, which is Go's `p.txn != nil` arm.
+///
+/// # Why an `UPDATE`'s read-before-write cannot reach this answer
+///
+/// It is not a `Stmt::Query`, so it is refused on the first line -- the same
+/// place Go refuses it, since an `Update` plan is not in Go's `switch` either.
+/// That matters because at the storage seam an `UPDATE`'s read-before-write
+/// and a `SELECT`'s point get are the SAME `get` on the same key: the
+/// difference lives only in the statement, which is why the declaration is
+/// made from the statement and never inferred from a read.
+#[must_use]
+pub fn statement_read_shape(
+    stmt: &tidb_ast::Stmt,
+    catalog: &crate::driver::Catalog,
+    current_db: &str,
+) -> StatementReadShape {
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        return StatementReadShape::Unknown;
+    };
+    // A set operation reads every term, so it is several reads by
+    // construction; Go's root plan for it is a `PhysicalUnionAll`, which its
+    // `switch` refuses.
+    let tidb_ast::QueryStmt::Select(select) = &**query else {
+        return StatementReadShape::Unknown;
+    };
+    if !select_is_bare_point_read(select) {
+        return StatementReadShape::Unknown;
+    }
+    let Some(table) = crate::driver::access::single_kv_table(&select.from, catalog, current_db)
+    else {
+        return StatementReadShape::Unknown;
+    };
+    // A partitioned table's point get routes to a partition, which this
+    // predicate does not resolve; a refusal costs one timestamp.
+    if table.partition().is_some() {
+        return StatementReadShape::Unknown;
+    }
+    let Some(handle_offset) = table.pk_handle_offset() else {
+        return StatementReadShape::Unknown;
+    };
+    let columns: Vec<(String, FieldType)> = table
+        .visible_columns()
+        .iter()
+        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .collect();
+    let Some(where_clause) = select.where_clause.as_ref() else {
+        return StatementReadShape::Unknown;
+    };
+    // The rest is `try_point_get`'s handle arm verbatim, through the same two
+    // helpers, so a statement this predicate accepts is a statement that arm
+    // accepts. It reads nothing: both helpers walk the AST only.
+    let mut pairs = Vec::new();
+    if !crate::driver::access::name_value_pairs(where_clause, &mut pairs) || pairs.len() != 1 {
+        return StatementReadShape::Unknown;
+    }
+    if !crate::driver::access::convert_pairs_to_column_domain(&mut pairs, &columns) {
+        return StatementReadShape::Unknown;
+    }
+    let handle_column = &columns[handle_offset].0;
+    if !pairs[0].column().eq_ignore_ascii_case(handle_column) {
+        return StatementReadShape::Unknown;
+    }
+    match pairs[0].value() {
+        Datum::Int(_) | Datum::UInt(_) => StatementReadShape::AutocommitPointGet,
+        _ => StatementReadShape::Unknown,
+    }
+}
+
+/// Whether the query block carries nothing above the table read: Go's
+/// `switch` admitting only a projection over a reader.
+///
+/// Every clause listed here would put an operator above the reader in Go's
+/// root plan and so land in its `default` arm. The select list is held to
+/// plain column references and wildcards for the same reason -- a scalar
+/// subquery in it is a second read, and an aggregate is a root `HashAgg`.
+fn select_is_bare_point_read(select: &tidb_ast::SelectStmt) -> bool {
+    use tidb_ast::{SelectField, SelectStatementKind};
+
+    select.kind == SelectStatementKind::Select
+        && !select.is_in_braces
+        && select.with.is_none()
+        && select.values.is_empty()
+        && !select.distinct
+        && select.group_by.is_empty()
+        && !select.rollup
+        && select.having.is_none()
+        && select.windows.is_empty()
+        && select.order_by.is_empty()
+        && select.limit.is_none()
+        // `FOR UPDATE` locks the row, which needs a real timestamp to lock at.
+        && select.lock.is_none()
+        && select.into_outfile.is_none()
+        && !select.calc_found_rows
+        && select.fields.fields().iter().all(|field| match field {
+            SelectField::Wildcard(_) => true,
+            SelectField::Expr { expr, .. } => matches!(expr, tidb_ast::Expr::Column(_)),
+        })
+}
 
 /// The prefix of a decoded table row that a source emits.
 ///

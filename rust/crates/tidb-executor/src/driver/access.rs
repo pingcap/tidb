@@ -1142,7 +1142,7 @@ pub(crate) fn try_batch_point_get(
 /// Returns false when any pair names an unknown column or holds a constant
 /// the column cannot represent exactly, which is Go's "no point plan; let the
 /// scan decide" answer.
-fn convert_pairs_to_column_domain(
+pub(crate) fn convert_pairs_to_column_domain(
     pairs: &mut [NameValuePair],
     columns: &[(String, FieldType)],
 ) -> bool {
@@ -1162,9 +1162,22 @@ fn convert_pairs_to_column_domain(
 }
 
 /// One `column = constant` equality from a `WHERE`, Go's `nameValuePair`.
-struct NameValuePair {
+pub(crate) struct NameValuePair {
     column: String,
     value: Datum,
+}
+
+impl NameValuePair {
+    /// The column this equality pinned.
+    pub(crate) fn column(&self) -> &str {
+        &self.column
+    }
+
+    /// The value it pinned the column to, already moved into that column's
+    /// domain by [`convert_pairs_to_column_domain`].
+    pub(crate) const fn value(&self) -> &Datum {
+        &self.value
+    }
 }
 
 /// Go `getNameValuePairs`: flattens a `WHERE` that is a conjunction of
@@ -1175,7 +1188,7 @@ struct NameValuePair {
 /// through `AND`; anything else (an `OR`, a comparison, a function call)
 /// makes the statement ineligible for a point get, which is what returning
 /// `None` means here.
-fn name_value_pairs(expr: &tidb_ast::Expr, pairs: &mut Vec<NameValuePair>) -> bool {
+pub(crate) fn name_value_pairs(expr: &tidb_ast::Expr, pairs: &mut Vec<NameValuePair>) -> bool {
     use tidb_ast::{BinaryOp, Expr};
     match expr {
         Expr::Paren(inner) => name_value_pairs(inner, pairs),
