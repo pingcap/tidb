@@ -30,6 +30,20 @@
 //!    nothing in the mock store: the counter is already millions past `n`, and
 //!    a rebase never moves DOWN. The rule captured -- rebase up only -- is the
 //!    one reproduced; the cached numbers are not.
+//!
+//! A third thing is not reproduced, and it is a real gap rather than a cache
+//! artifact: `tidb_enable_clustered_index=off` and the `NONCLUSTERED`
+//! qualifier are both IGNORED by this tier's DDL, so a single-integer-column
+//! primary key is always the row handle (`ddl.rs`'s `pk_is_handle`). Such a
+//! table therefore never gets the `_tidb_rowid` that would share its
+//! AUTO_INCREMENT counter, and the shared-counter rules pinned below are
+//! reachable only through a table whose AUTO_INCREMENT column is not the
+//! handle. This is what `executor/autoid`'s last carried divergence is: TiDB
+//! refuses `insert into t values()` on a NON-CLUSTERED `bigint unsigned`
+//! rebased to `18446744073709551613` with `1467` (the row's own handle needs
+//! an id too), and this engine, having made that key the handle, still has
+//! room. Honoring the qualifier is a DDL and read-path change, not an
+//! allocator one.
 
 #![cfg(test)]
 
