@@ -13,6 +13,7 @@
 //! behaviour, point gets, range scans, defaults, and set operations.
 
 mod aggregates;
+mod catalog_version;
 mod column_defaults;
 mod create_table_like;
 mod dml;

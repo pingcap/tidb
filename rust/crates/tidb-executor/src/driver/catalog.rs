@@ -88,9 +88,17 @@ struct Database {
 pub struct Catalog {
     databases: HashMap<String, Database>,
     next_table_id: i64,
-    /// Bumped by every mutation, so a transaction can detect that the shared
-    /// catalog moved under it (Go detects the same at commit through TiKV's
-    /// optimistic conflict check on the written keys).
+    /// Bumped by every mutation that actually CHANGED something, so a
+    /// transaction can detect that the shared catalog moved under it (Go
+    /// detects the same at commit through TiKV's optimistic conflict check on
+    /// the written keys).
+    ///
+    /// "Actually changed" is the invariant, not a detail: every mutator used
+    /// to bump on entry and then return `false` for the no-op cases, so a
+    /// `CREATE DATABASE IF NOT EXISTS` over an existing schema, or any DDL
+    /// that failed its precondition, aborted a concurrent transaction at
+    /// commit (`tidb-session`'s `txn.rs` compares this against the version it
+    /// started from). Go advances its schema version per COMPLETED DDL job.
     version: u64,
     /// Loaded statistics by physical table id, Go's `StatsHandle` cache as
     /// the planner sees it.
@@ -385,7 +393,6 @@ impl Catalog {
     /// Creates `database`, reporting whether it was new. Go raises
     /// `ErrDBCreateExists` (1007) unless `IF NOT EXISTS` was written.
     pub fn create_database(&mut self, database: &str) -> bool {
-        self.version += 1;
         let key = database.to_lowercase();
         if self.databases.contains_key(&key) {
             return false;
@@ -397,6 +404,7 @@ impl Catalog {
                 tables: HashMap::new(),
             },
         );
+        self.version += 1;
         true
     }
 
@@ -417,7 +425,6 @@ impl Catalog {
         to_database: &str,
         to_name: &str,
     ) -> bool {
-        self.version += 1;
         let to_key = to_database.to_lowercase();
         if !self.databases.contains_key(&to_key) {
             return false;
@@ -441,23 +448,26 @@ impl Catalog {
             .expect("destination schema was checked above")
             .tables
             .insert(to_name.to_lowercase(), source);
+        self.version += 1;
         true
     }
 
     /// Drops one table, reporting whether it existed.
     pub fn drop_table_in(&mut self, database: &str, name: &str) -> bool {
-        self.version += 1;
-        match self.databases.get_mut(&database.to_lowercase()) {
+        let dropped = match self.databases.get_mut(&database.to_lowercase()) {
             Some(database) => database.tables.remove(&name.to_lowercase()).is_some(),
             None => false,
-        }
+        };
+        self.version += u64::from(dropped);
+        dropped
     }
 
     /// Drops `database` and its tables, reporting whether it existed. Go
     /// raises `ErrDBDropExists` (1008) unless `IF EXISTS` was written.
     pub fn drop_database(&mut self, database: &str) -> bool {
-        self.version += 1;
-        self.databases.remove(&database.to_lowercase()).is_some()
+        let dropped = self.databases.remove(&database.to_lowercase()).is_some();
+        self.version += u64::from(dropped);
+        dropped
     }
 
     /// Resolves a table in `database`.
