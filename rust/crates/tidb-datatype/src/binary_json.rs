@@ -56,6 +56,9 @@ const HEADER_SIZE: usize = 8;
 const KEY_ENTRY_SIZE: usize = 6;
 const VALUE_ENTRY_SIZE: usize = 5;
 const MAX_JSON_DEPTH: usize = 100;
+/// Source `floatEpsilon`: the precision loss tolerated when a JSON double is
+/// compared against a JSON integer.
+const FLOAT_EPSILON: f64 = 1e-8;
 
 /// Source-compatible `type code + value bytes` BinaryJSON representation.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -257,14 +260,13 @@ impl BinaryJSON {
         if text.trim().is_empty() {
             return Err(BinaryJSONError::EmptyDocument);
         }
-        let mut value: Value = serde_json::from_str(text).map_err(|error| {
+        let value: Value = serde_json::from_str(text).map_err(|error| {
             if error.to_string().contains("trailing characters") {
                 BinaryJSONError::TrailingValues
             } else {
                 BinaryJSONError::InvalidText
             }
         })?;
-        normalize_parsed_numbers(&mut value)?;
         Self::from_value(&value)
     }
 
@@ -453,27 +455,6 @@ fn typed_value_to_node(value: &BinaryJSONValue) -> Result<JSONNode, BinaryJSONEr
         BinaryJSONValue::Time(value) => scalar(BinaryJSON::from_time(*value)),
         BinaryJSONValue::Duration(value) => scalar(BinaryJSON::from_duration(*value)),
     }
-}
-
-fn normalize_parsed_numbers(value: &mut Value) -> Result<(), BinaryJSONError> {
-    match value {
-        Value::Number(number) if number.as_u64().is_some_and(|value| value > i64::MAX as u64) => {
-            let value = number.as_u64().ok_or(BinaryJSONError::InvalidText)? as f64;
-            *number = Number::from_f64(value).ok_or(BinaryJSONError::InvalidText)?;
-        }
-        Value::Array(values) => {
-            for value in values {
-                normalize_parsed_numbers(value)?;
-            }
-        }
-        Value::Object(values) => {
-            for value in values.values_mut() {
-                normalize_parsed_numbers(value)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
 }
 
 impl fmt::Display for BinaryJSON {
@@ -870,8 +851,15 @@ fn compare_json_number(left: &Number, right: &Number) -> Ordering {
             }
         }
         (None, Some(left), _, None, Some(right), _) => left.cmp(&right),
+        // Two doubles compare exactly (source `compareFloat64`). The epsilon
+        // below is only for a double against an integer, where the source
+        // widens the integer and accepts the precision loss
+        // (`compareFloat64PrecisionLoss`).
+        (None, None, Some(left), None, None, Some(right)) => {
+            left.partial_cmp(&right).unwrap_or(Ordering::Greater)
+        }
         (_, _, Some(left), _, _, Some(right)) => {
-            if (left - right).abs() < 1e-8 {
+            if (left - right).abs() < FLOAT_EPSILON {
                 Ordering::Equal
             } else {
                 left.partial_cmp(&right).unwrap_or(Ordering::Greater)

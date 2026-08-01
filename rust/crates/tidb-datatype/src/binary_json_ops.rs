@@ -424,7 +424,7 @@ fn extract_value<'a>(
                 for index in selected_indices(selection, values.len()) {
                     extract_value(&values[index], remain, output, seen);
                 }
-            } else if selection_includes_zero(selection, 1) {
+            } else if autowraps_non_array(selection) {
                 extract_value(value, remain, output, seen);
             }
         }
@@ -664,8 +664,20 @@ fn normalize_range_end(index: i64, length: usize) -> usize {
         .max(0) as usize
 }
 
-fn selection_includes_zero(selection: &JSONPathArraySelection, length: usize) -> bool {
-    selected_indices(selection, length).contains(&0)
+/// Whether an array selection applied to a non-array autowraps it, i.e. selects
+/// the value itself as if it were a one-element array.
+///
+/// The source rule is stated on the selection, not on a synthesised one-element
+/// array: `[0]` and `[last]` autowrap, `[0 to <non-negative>]` and `[0 to last]`
+/// autowrap, and `[*]` never does. A range starting past `0`, or ending before
+/// `last`, therefore selects nothing even though it would select index 0 of a
+/// real one-element array.
+fn autowraps_non_array(selection: &JSONPathArraySelection) -> bool {
+    match selection {
+        JSONPathArraySelection::Asterisk => false,
+        JSONPathArraySelection::Index(index) => *index == 0 || *index == -1,
+        JSONPathArraySelection::Range { start, end } => *start == 0 && *end >= -1,
+    }
 }
 
 fn normalize_index(index: i64, length: usize) -> Option<usize> {
