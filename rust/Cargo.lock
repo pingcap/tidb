@@ -1651,6 +1651,7 @@ dependencies = [
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
+ "tidb-vardef",
  "tracing",
 ]
 
@@ -1843,6 +1844,7 @@ dependencies = [
  "tidb-planner",
  "tidb-tablecodec",
  "tidb-util",
+ "tidb-vardef",
 ]
 
 [[package]]

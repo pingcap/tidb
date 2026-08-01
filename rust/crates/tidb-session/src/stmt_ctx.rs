@@ -363,9 +363,9 @@ impl Session {
         // does rather than re-normalizing here.
         match self.vars.get_system("tidb_enable_clustered_index") {
             Ok(value) => tidb_vardef::modes::tidb_opt_enable_clustered(&value),
-            Err(_) => {
-                tidb_vardef::modes::ClusteredIndexDefMode(tidb_vardef::defaults::DEF_TIDB_ENABLE_CLUSTERED_INDEX)
-            }
+            Err(_) => tidb_vardef::modes::ClusteredIndexDefMode(
+                tidb_vardef::defaults::DEF_TIDB_ENABLE_CLUSTERED_INDEX,
+            ),
         }
     }
 

@@ -364,20 +364,13 @@ fn auto_increment_option(options: &[tidb_ast::TableOption]) -> Result<Option<i64
 /// registering a TiKV-byte-backed table in `catalog`. Returns whether a table
 /// was created (`false` only for `IF NOT EXISTS` over an existing name).
 pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, DriverError> {
-    // A stock session has `tidb_enable_check_constraint` OFF, which is the
-    // only mode this tier models; see [`run_create_table_in`].
+    // A stock session, including `tidb_enable_check_constraint` OFF, which is
+    // the only mode this tier models; see [`CreateTableSettings::default`].
     run_create_table_in(
         sql,
         catalog,
         tidb_executor_default_database(),
-        tidb_parser::SqlMode::default(),
-        true,
-        false,
-        // Go `DefTiDBEnableClusteredIndex = ClusteredIndexDefModeOn`
-        // (`pkg/sessionctx/vardef/tidb_vars.go`), which is also the sysvar's
-        // registered default value in `sysvar.go`. A stock session clusters
-        // every primary key it can, not only integer ones.
-        tidb_vardef::modes::ClusteredIndexDefMode(tidb_vardef::defaults::DEF_TIDB_ENABLE_CLUSTERED_INDEX),
+        CreateTableSettings::default(),
         // A default `StmtContext` is a context with no session behind it: UTC,
         // which is what a stock session has. The tests that call this entry
         // never set a zone; the session's own path passes its real context.
@@ -410,6 +403,54 @@ pub fn check_constraint_count(create: &tidb_ast::CreateTableStmt) -> usize {
     table_level + column_level
 }
 
+/// Every session setting `CREATE TABLE` reads, as one named value.
+///
+/// These arrive together because they are one thing -- the state of the
+/// session issuing the statement -- and passing them as loose positional
+/// arguments made two unrelated `bool`s adjacent, where a swapped call site
+/// would compile and quietly build a different table. Naming them also puts
+/// the whole list in one place, so the next setting Go reads here is an
+/// added FIELD, which every construction site must supply, rather than an
+/// added parameter that a caller can be forgiven for defaulting.
+#[derive(Debug, Clone, Copy)]
+pub struct CreateTableSettings {
+    /// The session's scanner `sql_mode`: this entry RE-PARSES text the
+    /// session already parsed, so without it a double-quoted name would mean
+    /// one thing to the session and another here.
+    pub sql_mode: tidb_parser::SqlMode,
+    /// `@@foreign_key_checks`: with it off, Go stores a foreign key as
+    /// written instead of resolving it against the referenced table.
+    pub foreign_key_checks: bool,
+    /// `@@tidb_enable_check_constraint`, GLOBAL-scope and OFF by default;
+    /// see this function's doc for what OFF makes of a `CHECK`.
+    pub enable_check_constraint: bool,
+    /// The session's `@@tidb_enable_clustered_index`. Go reads it off
+    /// `SessionVars` in `metabuild.go` and hands it to `BuildTableInfo`; it
+    /// decides the table's ROW ENCODING and HANDLE SEMANTICS, not a plan, so
+    /// it has to be the session's own value and never a default assumed here.
+    pub clustered_index_mode: tidb_vardef::modes::ClusteredIndexDefMode,
+}
+
+impl Default for CreateTableSettings {
+    /// A stock session: `@@foreign_key_checks` ON,
+    /// `@@tidb_enable_check_constraint` OFF, and
+    /// `@@tidb_enable_clustered_index` at Go's
+    /// `DefTiDBEnableClusteredIndex` = `ClusteredIndexDefModeOn`
+    /// (`pkg/sessionctx/vardef/tidb_vars.go`), which is also the value
+    /// `sysvar.go` registers. A stock session clusters every primary key it
+    /// can, not only integer ones.
+    fn default() -> Self {
+        Self {
+            sql_mode: tidb_parser::SqlMode::default(),
+            foreign_key_checks: true,
+            enable_check_constraint: false,
+            clustered_index_mode: tidb_vardef::modes::ClusteredIndexDefMode(
+                tidb_vardef::defaults::DEF_TIDB_ENABLE_CLUSTERED_INDEX,
+            ),
+        }
+    }
+}
+
 /// The default schema an unqualified `CREATE TABLE` lands in.
 fn tidb_executor_default_database() -> &'static str {
     crate::driver::DEFAULT_DATABASE
@@ -439,17 +480,7 @@ pub fn run_create_table_in(
     sql: &str,
     catalog: &mut Catalog,
     current_db: &str,
-    // The session's scanner `sql_mode`: this entry RE-PARSES text the session
-    // already parsed, so without it a double-quoted name would mean one thing
-    // to the session and another here.
-    sql_mode: tidb_parser::SqlMode,
-    foreign_key_checks: bool,
-    enable_check_constraint: bool,
-    // The session's `@@tidb_enable_clustered_index`. Go reads it off
-    // `SessionVars` in `metabuild.go` and hands it to `BuildTableInfo`; it
-    // decides the table's ROW ENCODING and HANDLE SEMANTICS, not a plan, so
-    // it has to be the session's own value and never a default assumed here.
-    clustered_index_mode: tidb_vardef::modes::ClusteredIndexDefMode,
+    settings: CreateTableSettings,
     // The SESSION's evaluation context. This entry re-parses text the session
     // already parsed, and it also FOLDS constants -- a column `DEFAULT` and a
     // RANGE partition bound -- so without it those folds run under a context
@@ -458,6 +489,12 @@ pub fn run_create_table_in(
     // statement into `BuildTableInfo` for the same reason.
     ctx: &crate::StmtContext,
 ) -> Result<bool, DriverError> {
+    let CreateTableSettings {
+        sql_mode,
+        foreign_key_checks,
+        enable_check_constraint,
+        clustered_index_mode,
+    } = settings;
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
 

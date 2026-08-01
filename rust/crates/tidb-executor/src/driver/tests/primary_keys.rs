@@ -417,3 +417,231 @@ fn a_handle_column_reads_back_in_its_own_type() {
         vec![vec![Datum::UInt(u64::MAX), Datum::Int(5)]]
     );
 }
+
+/// Builds `sql` under one `@@tidb_enable_clustered_index` mode, exactly the
+/// way the session's dispatch path does.
+fn create_with_mode(
+    sql: &str,
+    mode: tidb_vardef::modes::ClusteredIndexDefMode,
+    catalog: &mut Catalog,
+) -> Result<bool, DriverError> {
+    crate::ddl::run_create_table_in(
+        sql,
+        catalog,
+        crate::driver::DEFAULT_DATABASE,
+        crate::CreateTableSettings {
+            clustered_index_mode: mode,
+            ..crate::CreateTableSettings::default()
+        },
+        &crate::StmtContext::default(),
+    )
+}
+
+/// The layout a built table actually has, read back off the catalog entry:
+/// `(pk_is_handle, common handle columns)`.
+fn layout_of(catalog: &Catalog, name: &str) -> (bool, Vec<usize>) {
+    let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_table_for_test(name) else {
+        panic!("{name} was not built as a KV table");
+    };
+    (
+        table.pk_handle_offset().is_some(),
+        table.common_handle_offsets().to_vec(),
+    )
+}
+
+/// Whether the built table carries a `PRIMARY` index -- which is what a
+/// NON-clustered primary key becomes, and what a clustered one never is
+/// (its encoding IS the row key).
+fn has_primary_index(catalog: &Catalog, name: &str) -> bool {
+    let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_table_for_test(name) else {
+        panic!("{name} was not built as a KV table");
+    };
+    table
+        .indexes()
+        .iter()
+        .any(|index| index.name.eq_ignore_ascii_case("PRIMARY"))
+}
+
+/// Go `ShouldBuildClusteredIndex` (`pkg/ddl/create_table.go:1754`) crossed
+/// with the `isSingleIntPK` split that follows it at line 1418, over the
+/// three primary-key shapes and the three modes of
+/// `@@tidb_enable_clustered_index`.
+///
+/// The variable is an ENUM, not a boolean: `ClusteredIndexDefModeIntOnly` is
+/// Go's ZERO value but NOT the registered default -- `sysvar.go:2782`
+/// registers the variable with `Value: vardef.On` and warns that `INT_ONLY`
+/// is deprecated, and `vardef.DefTiDBEnableClusteredIndex` is
+/// `ClusteredIndexDefModeOn`.
+///
+/// UNRUN on this machine: nothing compiled here can be executed today (see
+/// the module note in `ddl.rs`'s `TableHandle`). The expectations are read
+/// off the Go source cited above, not off a run.
+#[test]
+fn the_clustered_index_mode_decides_the_handle() {
+    use tidb_vardef::modes::ClusteredIndexDefMode as Mode;
+    // (mode, DDL, pk_is_handle, common handle columns)
+    let cases: &[(Mode, &str, bool, &[usize])] = &[
+        // ON clusters every primary key it can: an integer one onto the int
+        // handle, a string or composite one onto a common handle.
+        (Mode::ON, "CREATE TABLE m (a BIGINT PRIMARY KEY)", true, &[]),
+        (
+            Mode::ON,
+            "CREATE TABLE m (a VARCHAR(10) PRIMARY KEY)",
+            false,
+            &[0],
+        ),
+        (
+            Mode::ON,
+            "CREATE TABLE m (a BIGINT, b BIGINT, PRIMARY KEY (a, b))",
+            false,
+            &[0, 1],
+        ),
+        // INT_ONLY clusters ONLY the single integer key. This is the mode
+        // whose name is the whole rule.
+        (
+            Mode::INT_ONLY,
+            "CREATE TABLE m (a BIGINT PRIMARY KEY)",
+            true,
+            &[],
+        ),
+        (
+            Mode::INT_ONLY,
+            "CREATE TABLE m (a VARCHAR(10) PRIMARY KEY)",
+            false,
+            &[],
+        ),
+        (
+            Mode::INT_ONLY,
+            "CREATE TABLE m (a BIGINT, b BIGINT, PRIMARY KEY (a, b))",
+            false,
+            &[],
+        ),
+        // OFF clusters nothing: every table gets the implicit `_tidb_rowid`
+        // handle and the primary key is an ordinary unique index.
+        (
+            Mode::OFF,
+            "CREATE TABLE m (a BIGINT PRIMARY KEY)",
+            false,
+            &[],
+        ),
+        (
+            Mode::OFF,
+            "CREATE TABLE m (a VARCHAR(10) PRIMARY KEY)",
+            false,
+            &[],
+        ),
+        (
+            Mode::OFF,
+            "CREATE TABLE m (a BIGINT, b BIGINT, PRIMARY KEY (a, b))",
+            false,
+            &[],
+        ),
+    ];
+    for (mode, ddl, pk_is_handle, common) in cases {
+        let mut catalog = Catalog::default();
+        create_with_mode(ddl, *mode, &mut catalog)
+            .unwrap_or_else(|_| panic!("{ddl} under {mode:?}"));
+        assert_eq!(
+            layout_of(&catalog, "m"),
+            (*pk_is_handle, common.to_vec()),
+            "{ddl} under {mode:?}"
+        );
+        // A clustered key is the row key and has no index; a non-clustered
+        // one is enforced by a `PRIMARY` unique index. Exactly one holds.
+        let clustered = *pk_is_handle || !common.is_empty();
+        assert_eq!(
+            has_primary_index(&catalog, "m"),
+            !clustered,
+            "{ddl} under {mode:?}"
+        );
+    }
+}
+
+/// An explicit `CLUSTERED`/`NONCLUSTERED` clause OVERRIDES the variable in
+/// both directions, and Go applies no type-eligibility test to it: it neither
+/// refuses nor silently downgrades a `CLUSTERED` string or composite key, and
+/// it honours `NONCLUSTERED` on an integer key.
+///
+/// Go `ShouldBuildClusteredIndex` returns `opt.PrimaryKeyTp ==
+/// ast.PrimaryKeyTypeClustered` for ANY explicit clause, without consulting
+/// the mode or the column type (`pkg/ddl/create_table.go:1765`).
+///
+/// UNRUN on this machine.
+#[test]
+fn an_explicit_clause_overrides_the_variable() {
+    use tidb_vardef::modes::ClusteredIndexDefMode as Mode;
+    let cases: &[(Mode, &str, bool, &[usize])] = &[
+        // NONCLUSTERED against a mode that would have clustered.
+        (
+            Mode::ON,
+            "CREATE TABLE m (a BIGINT PRIMARY KEY NONCLUSTERED)",
+            false,
+            &[],
+        ),
+        (
+            Mode::ON,
+            "CREATE TABLE m (a VARCHAR(10), PRIMARY KEY (a) NONCLUSTERED)",
+            false,
+            &[],
+        ),
+        (
+            Mode::INT_ONLY,
+            "CREATE TABLE m (a BIGINT, PRIMARY KEY (a) NONCLUSTERED)",
+            false,
+            &[],
+        ),
+        // CLUSTERED against a mode that would not have clustered -- including
+        // on a string and on a composite key, which become COMMON handles
+        // rather than being refused or downgraded.
+        (
+            Mode::OFF,
+            "CREATE TABLE m (a BIGINT PRIMARY KEY CLUSTERED)",
+            true,
+            &[],
+        ),
+        (
+            Mode::OFF,
+            "CREATE TABLE m (a VARCHAR(10), PRIMARY KEY (a) CLUSTERED)",
+            false,
+            &[0],
+        ),
+        (
+            Mode::INT_ONLY,
+            "CREATE TABLE m (a BIGINT, b VARCHAR(4), PRIMARY KEY (a, b) CLUSTERED)",
+            false,
+            &[0, 1],
+        ),
+    ];
+    for (mode, ddl, pk_is_handle, common) in cases {
+        let mut catalog = Catalog::default();
+        create_with_mode(ddl, *mode, &mut catalog)
+            .unwrap_or_else(|_| panic!("{ddl} under {mode:?}"));
+        assert_eq!(
+            layout_of(&catalog, "m"),
+            (*pk_is_handle, common.to_vec()),
+            "{ddl} under {mode:?}"
+        );
+    }
+}
+
+/// Go `BuildTableInfo` raises `ErrUnsupportedClusteredSecondaryKey` --
+/// "CLUSTERED/NONCLUSTERED keyword is only supported for primary key"
+/// (`pkg/util/dbterror/ddl_terror.go:383`) -- for the keyword on any
+/// constraint that is not the primary key. It is a REFUSAL, not a warning.
+///
+/// UNRUN on this machine.
+#[test]
+fn the_keyword_is_refused_on_a_secondary_key() {
+    use tidb_vardef::modes::ClusteredIndexDefMode as Mode;
+    for ddl in [
+        "CREATE TABLE m (a BIGINT, UNIQUE KEY u (a) CLUSTERED)",
+        "CREATE TABLE m (a BIGINT, UNIQUE KEY u (a) NONCLUSTERED)",
+        "CREATE TABLE m (a BIGINT, KEY k (a) CLUSTERED)",
+    ] {
+        let mut catalog = Catalog::default();
+        assert!(
+            create_with_mode(ddl, Mode::ON, &mut catalog).is_err(),
+            "{ddl} should be refused"
+        );
+    }
+}

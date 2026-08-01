@@ -552,10 +552,12 @@ impl Session {
                             sql,
                             catalog,
                             &current_db,
-                            sql_mode,
-                            foreign_key_checks,
-                            enable_check_constraint,
-                            clustered_index_mode,
+                            tidb_executor::CreateTableSettings {
+                                sql_mode,
+                                foreign_key_checks,
+                                enable_check_constraint,
+                                clustered_index_mode,
+                            },
                             &ctx,
                         )?))
                     });
