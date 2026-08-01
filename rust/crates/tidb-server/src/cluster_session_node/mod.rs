@@ -505,6 +505,10 @@ impl ClusterServerSession {
         self.rebuild_catalog_if_stale();
         self.begin_if_autocommit_off()?;
         let savepoint = self.buffer.staged();
+        // The statement's own timestamp, filled in by its first read and read
+        // back by its publication after the read handle is gone. Autocommit
+        // publishes THERE, not at a fresh one: see `StatementReadTs`.
+        let read_ts = transactions::StatementReadTs::default();
         let snapshot = match self.explicit.as_ref() {
             // The transaction's timestamp is already spent; its per-statement
             // read handle costs nothing, so there is nothing to defer.
@@ -513,7 +517,9 @@ impl ClusterServerSession {
             // not by the binding: a statement that reads no cluster row --
             // and a statement whose plan does not exist yet at this point --
             // must not have paid for one already.
-            None => transactions::deferred_snapshot(Arc::clone(&self.transactions)),
+            None => {
+                transactions::deferred_snapshot(Arc::clone(&self.transactions), read_ts.clone())
+            }
         };
         if let Some(stale) = self.bind(snapshot) {
             // A previous statement that did not unbind would otherwise leave
@@ -527,7 +533,7 @@ impl ClusterServerSession {
             Ok(value) => {
                 finished?;
                 self.commit_if_session_left_transaction()?;
-                self.flush_if_autocommit()?;
+                self.flush_if_autocommit(read_ts.get())?;
                 Ok(value)
             }
             Err(error) => {
@@ -630,18 +636,22 @@ impl ClusterServerSession {
     ///
     /// An empty buffer -- every read statement -- publishes nothing and spends
     /// no timestamp, as a Go COMMIT of a transaction that wrote nothing does.
-    fn flush_if_autocommit(&mut self) -> Result<(), SqlQueryError> {
+    fn flush_if_autocommit(&mut self, read_ts: Option<u64>) -> Result<(), SqlQueryError> {
         if self.explicit.is_some() || self.session.in_transaction() {
             return Ok(());
         }
-        self.commit_autocommit_buffer()
+        self.commit_autocommit_buffer(read_ts)
     }
 
     /// Publishes one autocommit statement's staged writes as its own
-    /// transaction. A failed publication discards them, which is what a failed
-    /// COMMIT does.
-    fn commit_autocommit_buffer(&mut self) -> Result<(), SqlQueryError> {
-        match self.transactions.commit(&self.buffer) {
+    /// transaction, at the timestamp the statement read at. A failed
+    /// publication discards them, which is what a failed COMMIT does.
+    ///
+    /// A publication that lost the race against a commit made after the read is
+    /// now a 9007 the client is told about, where publishing at a fresh
+    /// timestamp made it a silent overwrite.
+    fn commit_autocommit_buffer(&mut self, read_ts: Option<u64>) -> Result<(), SqlQueryError> {
+        match self.transactions.commit(&self.buffer, read_ts) {
             Ok(()) => Ok(()),
             Err(error) => {
                 self.buffer.reset();
@@ -659,7 +669,10 @@ impl ClusterServerSession {
     fn commit_explicit(&mut self) -> Result<(), SqlQueryError> {
         self.savepoints.clear();
         let Some(transaction) = self.explicit.take() else {
-            return self.commit_autocommit_buffer();
+            // No transaction and no statement read: the buffer can only hold
+            // what a previous statement already published, so there is nothing
+            // to publish and no timestamp to publish it at.
+            return self.commit_autocommit_buffer(None);
         };
         match transaction.commit(&self.buffer) {
             Ok(()) => Ok(()),

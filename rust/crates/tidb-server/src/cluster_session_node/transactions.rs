@@ -64,11 +64,20 @@ pub trait ClusterTransactions: Send + Sync {
     fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
 
     /// Publishes one autocommit statement's staged writes as its own
-    /// transaction, then empties the buffer. An empty buffer publishes nothing.
+    /// transaction **at `read_ts`**, then empties the buffer. An empty buffer
+    /// publishes nothing.
+    ///
+    /// `read_ts` is the timestamp the statement's own reads were served at, or
+    /// `None` if the statement read no cluster row and therefore has none. It
+    /// is not an optimisation: publishing a value computed from a read at `T`
+    /// under any timestamp later than `T` puts every commit in between outside
+    /// TiKV's conflict check, which is silent lost-update. See
+    /// [`StatementReadTs`].
     ///
     /// The error is the client-visible one, because a publication TiKV refused
     /// has a code of its own: a lost race is 9007, not a generic failure.
-    fn commit(&self, buffer: &MutationBuffer) -> Result<(), SqlQueryError>;
+    fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>)
+        -> Result<(), SqlQueryError>;
 
     /// Opens the one transaction an explicit `BEGIN` holds until `COMMIT` or
     /// `ROLLBACK`.
@@ -115,8 +124,41 @@ pub trait OpenClusterTransaction: Send {
 /// statement reads" the eager open gave, only moved later inside the same
 /// statement. Nothing between the two points reads through the slot -- the
 /// statement's own execution is what does.
+/// The timestamp one autocommit statement is at: written by the statement's
+/// first read, read back by the statement's publication.
+///
+/// The two halves cannot share the read transaction itself, because the read
+/// handle is unbound and dropped before the publication is decided — that
+/// ordering is what keeps a read transaction from outliving its statement. So
+/// the *number* outlives the handle, and this is where it lives.
+///
+/// `None` after the statement means it never read a cluster row. That is a
+/// real, distinct case, not a missing value: an `INSERT ... VALUES` with no
+/// read has nothing a racing commit could have made stale, so its publication
+/// takes a fresh timestamp and is correct doing so.
+///
+/// A statement that read at the max-ts shortcut records `u64::MAX`, which is
+/// not a timestamp; [`RealOptimisticTransactionOpener::begin_at`] refuses it,
+/// so such a statement fails closed instead of publishing anywhere.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StatementReadTs(Arc<Mutex<Option<u64>>>);
+
+impl StatementReadTs {
+    fn record(&self, start_ts: u64) {
+        *self.0.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(start_ts);
+    }
+
+    /// The timestamp the statement read at, or `None` if it never read.
+    pub(crate) fn get(&self) -> Option<u64> {
+        *self.0.lock().unwrap_or_else(|poison| poison.into_inner())
+    }
+}
+
 struct DeferredSnapshot {
     transactions: Arc<dyn ClusterTransactions>,
+    /// Where the open publishes the statement's timestamp, so the publication
+    /// can find it after this handle is gone.
+    read_ts: StatementReadTs,
     /// Behind one `Mutex` because `start_ts` takes `&self` and must answer
     /// with the timestamp of the same transaction the reads use -- and because
     /// the declaration below must be settled against the open atomically.
@@ -153,9 +195,10 @@ impl fmt::Debug for DeferredSnapshot {
 }
 
 impl DeferredSnapshot {
-    fn new(transactions: Arc<dyn ClusterTransactions>) -> Self {
+    fn new(transactions: Arc<dyn ClusterTransactions>, read_ts: StatementReadTs) -> Self {
         Self {
             transactions,
+            read_ts,
             state: Mutex::new(DeferredState::default()),
         }
     }
@@ -184,7 +227,12 @@ impl DeferredSnapshot {
             } else {
                 self.transactions.open_snapshot()
             };
-            guard.opened = Some(opened.map_err(StorageError::Backend)?);
+            let opened = opened.map_err(StorageError::Backend)?;
+            // Recorded at the open, under the same lock, so the timestamp the
+            // statement publishes at is the one its reads are served at and
+            // cannot be a later transaction's.
+            self.read_ts.record(opened.start_ts());
+            guard.opened = Some(opened);
         }
         use_snapshot(guard.opened.as_mut().expect("just opened").as_mut())
     }
@@ -234,10 +282,15 @@ impl ClusterSnapshot for DeferredSnapshot {
 }
 
 /// Binds one autocommit statement's snapshot without spending a timestamp.
+///
+/// `read_ts` is the statement's, and outlives the returned handle: whatever
+/// timestamp the statement's first read opens at is written there, and the
+/// statement's publication reads it back after this handle has been dropped.
 pub(crate) fn deferred_snapshot(
     transactions: Arc<dyn ClusterTransactions>,
+    read_ts: StatementReadTs,
 ) -> Box<dyn ClusterSnapshot> {
-    Box::new(DeferredSnapshot::new(transactions))
+    Box::new(DeferredSnapshot::new(transactions, read_ts))
 }
 
 /// The production transaction tier: real read-only transactions and the
@@ -271,8 +324,12 @@ impl ClusterTransactions for RealClusterTransactions {
             .map_err(|error| error.to_string())
     }
 
-    fn commit(&self, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {
-        commit_staged_buffer(&self.opener, buffer, self.timeout)
+    fn commit(
+        &self,
+        buffer: &MutationBuffer,
+        read_ts: Option<u64>,
+    ) -> Result<(), SqlQueryError> {
+        commit_staged_buffer(&self.opener, buffer, read_ts, self.timeout)
             .map(|_| ())
             .map_err(sql_error)
     }

@@ -351,3 +351,119 @@ fn a_savepoint_under_autocommit_on_records_nothing() {
         .expect_err("the name was never recorded");
     assert_eq!(error.code, 1305, "{}", error.message);
 }
+
+/// The lost-update regression, and the reason this seam exists at all.
+///
+/// An autocommit `UPDATE` reads at `T`, computes a value from what it saw, and
+/// publishes. If it publishes at a FRESH timestamp instead of `T`, then a
+/// commit that landed in between is outside TiKV's conflict check — the check
+/// compares a key's latest `commit_ts` against the *prewriting* transaction's
+/// `start_ts` — and the stale value overwrites it with no error and no
+/// warning. That was measured live: two sessions each running 300 blind
+/// `v = v + N` statements against one row ended hundreds of increments short
+/// while both reported success.
+///
+/// Go cannot lose it because it spends one timestamp for the whole statement:
+/// `pkg/sessiontxn/isolation/optimistic.go:45-46` points `getStmtReadTSFunc`
+/// and `getStmtForUpdateTSFunc` at `getTxnStartTS` (`base.go:268`), and
+/// client-go's `2pc.go:474` carries that same `txn.StartTS()` into
+/// `prewrite.go:174`'s `StartVersion`.
+///
+/// So the assertion is not "the update fails". It is that the update **cannot
+/// silently succeed**: publishing at the read's timestamp turns the race into
+/// the 9007 the client is told about.
+#[test]
+fn an_autocommit_update_cannot_overwrite_a_commit_made_after_its_read() {
+    let (mut session, cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+
+    cluster.race_next_read.store(true, Ordering::Release);
+    let error = session
+        .execute_write("UPDATE t SET v = v + 5 WHERE id = 1")
+        .expect_err(
+            "a statement that read before another session's commit must not publish over it \
+             in silence",
+        );
+    assert_eq!(
+        error.code, ERR_WRITE_CONFLICT,
+        "the race must reach the client as a write conflict: {}",
+        error.message
+    );
+}
+
+/// The control that keeps the test above honest: with no racing commit, the
+/// same statement publishes at its read's timestamp and succeeds.
+///
+/// Without this, refusing every autocommit write would look like a fix.
+#[test]
+fn an_autocommit_update_with_no_race_still_publishes() {
+    let (mut session, cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+    session
+        .execute_write("UPDATE t SET v = v + 5 WHERE id = 1")
+        .expect("an uncontended update publishes");
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1"),
+        vec![vec![Datum::Int(15)]]
+    );
+    assert_eq!(
+        cluster.publications.load(Ordering::Acquire),
+        2,
+        "the seed and the update, each published once"
+    );
+}
+
+/// The fix is not scoped to the point-get shape, and it is not scoped to
+/// `UPDATE`.
+///
+/// Live, the loss was measured at the same size with a non-point predicate
+/// (2498 of 3700) as with `WHERE id = 1` (2538), so anything that only covered
+/// point gets would not have been a fix. A ranged predicate reads through
+/// `scan` instead of `get`, and reaches the same publication.
+#[test]
+fn a_non_point_predicate_is_covered_by_the_same_timestamp() {
+    let (mut session, cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+
+    cluster.race_next_read.store(true, Ordering::Release);
+    let error = session
+        .execute_write("UPDATE t SET v = v + 5 WHERE v > 0")
+        .expect_err("the ranged shape must not publish over the race either");
+    assert_eq!(
+        error.code, ERR_WRITE_CONFLICT,
+        "{}",
+        error.message
+    );
+}
+
+/// An `INSERT ... VALUES` DOES read: the duplicate-key check is a read, so the
+/// statement has a timestamp and publishes at it.
+///
+/// Worth pinning because the three cases this seam distinguishes are read/write
+/// (publish at the read), never-read (a fresh timestamp is correct), and the
+/// max-ts shortcut (nothing may publish) -- and it would be easy to assume an
+/// INSERT is the middle one. It is not: two sessions inserting the same key
+/// race exactly as two updates do, and the loser must hear about it.
+#[test]
+fn an_insert_reads_for_its_uniqueness_check_and_publishes_at_that_read() {
+    let (mut session, cluster) = open_session();
+    let opened_before = cluster.opened.load(Ordering::Acquire);
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (2, 20)")
+        .expect("an uncontended insert publishes");
+    assert_eq!(
+        cluster.opened.load(Ordering::Acquire),
+        opened_before + 1,
+        "the duplicate-key check is a read, so the statement has a timestamp"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 2"),
+        vec![vec![Datum::Int(20)]]
+    );
+}

@@ -180,7 +180,13 @@ fn run() -> Result<(), String> {
 }
 
 /// The autocommit shape: one read transaction per statement, and a publication
-/// at its own fresh timestamp.
+/// at the EARLIEST timestamp any of those statements read at.
+///
+/// This tool stages every statement and publishes once at the end, so the
+/// buffer can depend on the oldest read in the run; publishing there is what
+/// makes a commit that landed after it a write conflict rather than a silent
+/// overwrite. A run whose statements read nothing has no timestamp and takes a
+/// fresh one.
 fn run_autocommit(
     opener: &Arc<tidb_exec::real_tikv_read::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
@@ -188,17 +194,17 @@ fn run_autocommit(
     arguments: &Arguments,
     cop_scans: Option<&CopScans>,
 ) -> Option<String> {
+    let mut read_ts: Option<u64> = None;
     for sql in &arguments.statements {
-        if let Err(error) =
-            run_statement(opener, buffer, catalog, &arguments.schema, sql, cop_scans)
-        {
-            return Some(error);
+        match run_statement(opener, buffer, catalog, &arguments.schema, sql, cop_scans) {
+            Ok(start_ts) => read_ts = read_ts.min(Some(start_ts)).or(Some(start_ts)),
+            Err(error) => return Some(error),
         }
     }
     if !arguments.commit {
         return None;
     }
-    match commit_staged_buffer(opener, buffer, TIMEOUT) {
+    match commit_staged_buffer(opener, buffer, read_ts, TIMEOUT) {
         Ok(None) => {
             println!("commit: nothing staged");
             None
@@ -296,7 +302,8 @@ fn run_in_transaction(
     Ok(())
 }
 
-/// Runs one statement at its own snapshot, over the session's staged writes.
+/// Runs one statement at its own snapshot, over the session's staged writes,
+/// and answers with the timestamp that snapshot read at.
 fn run_statement(
     opener: &Arc<tidb_exec::real_tikv_read::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
@@ -304,7 +311,7 @@ fn run_statement(
     schema: &str,
     sql: &str,
     cop_scans: Option<&CopScans>,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     let (mut storage, snapshot) = statement_storage(Arc::clone(opener), buffer.clone(), TIMEOUT)
         .map_err(|error| error.to_string())?;
     if let Some(scans) = cop_scans {
@@ -343,5 +350,5 @@ fn run_statement(
         }
         other => println!("[start_ts {start_ts}] {sql} -> {other:?}"),
     }
-    finished
+    finished.map(|()| start_ts)
 }

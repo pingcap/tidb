@@ -144,6 +144,45 @@ impl RealOptimisticTransactionOpener {
         self.open(planned_mutation_count, planned_aggregate_bytes)
     }
 
+    /// Opens a writable transaction at a timestamp that has ALREADY been spent
+    /// — the one the statement's own read is at — spending none of its own.
+    ///
+    /// This is what makes an implicit single-statement transaction a single
+    /// transaction. Go allocates one timestamp for an autocommit DML and uses
+    /// it for both halves: `pkg/sessiontxn/isolation/optimistic.go:45-46` points
+    /// `getStmtReadTSFunc` *and* `getStmtForUpdateTSFunc` at `getTxnStartTS`,
+    /// and client-go's `2pc.go` sets the committer's `startTS: txn.StartTS()`,
+    /// which `prewrite.go` sends as `StartVersion`. Prewriting at a LATER
+    /// timestamp than the read is not a slower version of the same thing: it is
+    /// silent lost-update, because TiKV's conflict check compares a key's
+    /// latest `commit_ts` against the *prewriting* transaction's `start_ts`, so
+    /// a commit landing between the read and a fresh write timestamp is not a
+    /// conflict TiKV can see and the stale value overwrites it with no error.
+    ///
+    /// `u64::MAX` is refused. It is not a timestamp — it is
+    /// [`Self::begin_read_only_at_max_ts`]'s marker for "the latest committed
+    /// version", correct only for a read that never writes. Refusing it here is
+    /// what makes "a max-ts read must not publish" a property of the only
+    /// function that can turn a read timestamp into a write one, rather than a
+    /// comment somewhere upstream.
+    pub fn begin_at(
+        &self,
+        start_ts: u64,
+        planned_mutation_count: usize,
+        planned_aggregate_bytes: usize,
+    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+        validate_plan(planned_mutation_count, planned_aggregate_bytes)
+            .map_err(OptimisticCoordinatorError::Mutations)?;
+        if start_ts == u64::MAX {
+            return Err(OptimisticCoordinatorError::Timestamp(
+                "refusing to publish at the max-ts read marker: u64::MAX is the latest-committed \
+                 read version, not a start timestamp a write may carry"
+                    .to_owned(),
+            ));
+        }
+        self.open_at(Some(start_ts), planned_mutation_count, planned_aggregate_bytes)
+    }
+
     /// Opens a transaction that may only read.
     ///
     /// A read has no mutation plan to validate, and a zero plan is not a

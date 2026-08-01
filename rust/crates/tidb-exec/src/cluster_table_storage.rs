@@ -663,26 +663,42 @@ fn staged_mutations(
 }
 
 /// Publishes every staged write of one autocommit statement as its own
-/// optimistic transaction.
+/// optimistic transaction, **at the timestamp the statement read at**.
 ///
-/// This is the autocommit path only: the statement's own read transaction has
-/// already ended, so the publication takes a fresh timestamp, exactly as Go's
-/// implicit per-statement transaction does. Inside `BEGIN` ... `COMMIT` the
-/// publication goes through [`SessionTransaction::commit`] instead, at the
-/// timestamp `BEGIN` took. An empty buffer commits nothing and consumes no
-/// timestamp.
+/// `read_ts` is the whole correctness content of this function. Go's implicit
+/// per-statement transaction spends ONE timestamp and both reads and prewrites
+/// at it (`pkg/sessiontxn/isolation/optimistic.go:45-46` ->
+/// `base.go:268` -> client-go `2pc.go:474` -> `prewrite.go:174`), which is what
+/// makes TiKV's conflict check — a key's latest `commit_ts` against the
+/// prewriting transaction's `start_ts` — sufficient. Publishing at a fresh,
+/// later timestamp instead makes a commit that landed between the read and the
+/// write invisible to that check, and the value computed from the stale read
+/// overwrites it with no error and no warning. That was a real, measured
+/// lost-update on this path.
+///
+/// `None` means the statement never read a cluster row, so there is no
+/// timestamp to publish at and nothing a racing commit could have invalidated;
+/// a fresh one is then both necessary and correct. It is NOT a fallback for a
+/// statement that did read.
+///
+/// Inside `BEGIN` ... `COMMIT` the publication goes through
+/// [`SessionTransaction::commit`] instead, at the timestamp `BEGIN` took. An
+/// empty buffer commits nothing and consumes no timestamp.
 pub fn commit_staged_buffer(
     opener: &RealOptimisticTransactionOpener,
     buffer: &MutationBuffer,
+    read_ts: Option<u64>,
     timeout: Duration,
 ) -> Result<Option<OptimisticCommitOutcome>, LockSqlError> {
     let (mutations, planned_bytes) = staged_mutations(buffer).map_err(coordinator_sql_error)?;
     if mutations.is_empty() {
         return Ok(None);
     }
-    let transaction = opener
-        .begin(mutations.len(), planned_bytes)
-        .map_err(coordinator_sql_error)?;
+    let transaction = match read_ts {
+        Some(start_ts) => opener.begin_at(start_ts, mutations.len(), planned_bytes),
+        None => opener.begin(mutations.len(), planned_bytes),
+    }
+    .map_err(coordinator_sql_error)?;
     let call = UnaryCallContext::with_timeout(timeout);
     let outcome = transaction
         .commit(mutations, &call)
