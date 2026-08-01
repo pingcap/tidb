@@ -10,6 +10,7 @@ mod node_fixture;
 
 mod accounts;
 mod autocommit_transactions;
+mod point_get_max_ts;
 mod prepared_transactions;
 mod schema_changes;
 mod statistics;
