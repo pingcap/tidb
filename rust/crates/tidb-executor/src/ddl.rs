@@ -584,15 +584,17 @@ pub fn run_create_table_in(
                     // Go normalizes and checks a SETTLED default against the
                     // column's own type at DDL time; a computed one is cast
                     // per row instead, exactly as Go's `CastColumnValue` does.
-                    default_value =
-                        Some(match built {
-                            crate::column_default::ColumnDefault::Value(value) => {
-                                crate::column_default::ColumnDefault::Value(
-                                    normalize_column_default(value, &field_type, &def.name)?,
-                                )
-                            }
-                            computed => computed,
-                        });
+                    default_value = Some(match built {
+                        crate::column_default::ColumnDefault::Value(value) => {
+                            crate::column_default::ColumnDefault::Value(normalize_column_default(
+                                value,
+                                &field_type,
+                                &def.name,
+                                &ctx.session_zone(),
+                            )?)
+                        }
+                        computed => computed,
+                    });
                 }
                 // AUTO_INCREMENT is its own value source, handled below.
                 tidb_ast::ColumnOption::AutoIncrement => {}

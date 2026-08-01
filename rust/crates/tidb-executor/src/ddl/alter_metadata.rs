@@ -235,6 +235,7 @@ pub(crate) fn alter_column_default_action(
     table_name: &str,
     column_name: &str,
     default_value: Option<&tidb_ast::Expr>,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
     let Some(expr) = default_value else {
         return Err(DriverError::Unsupported(
@@ -266,7 +267,8 @@ pub(crate) fn alter_column_default_action(
         });
     };
     let field_type = table.columns[offset].field_type.clone();
-    let normalized = super::alter_table::normalize_column_default(value, &field_type, column_name)?;
+    let normalized =
+        super::alter_table::normalize_column_default(value, &field_type, column_name, zone)?;
     let KvColumn {
         default_value: stored,
         ..

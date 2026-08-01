@@ -109,7 +109,14 @@ pub fn run_alter_table_in(
         match action {
             tidb_ast::AlterTableAction::AddColumn {
                 column, position, ..
-            } => add_column_action(catalog, &database, &name, column, position)?,
+            } => add_column_action(
+                catalog,
+                &database,
+                &name,
+                column,
+                position,
+                &ctx.session_zone(),
+            )?,
             tidb_ast::AlterTableAction::AddColumns {
                 columns,
                 constraints,
@@ -127,6 +134,7 @@ pub fn run_alter_table_in(
                         &name,
                         column,
                         &tidb_ast::ColumnPosition::Default,
+                        &ctx.session_zone(),
                     )?;
                 }
             }
@@ -312,6 +320,7 @@ pub fn run_alter_table_in(
                     &name,
                     column,
                     alter.default_value.as_ref(),
+                    &ctx.session_zone(),
                 )?;
             }
             _ => {
@@ -533,6 +542,12 @@ pub(crate) fn normalize_column_default(
     value: Datum,
     field_type: &FieldType,
     column: &str,
+    // The SESSION's zone. Go's `checkDefaultValue` evaluates the written
+    // default through `table.CastValue` with the statement's own type
+    // context, and a `TIMESTAMP` column's admissible range is a wall-clock
+    // range, so `DEFAULT '2038-01-19 03:14:07'` is accepted at `+00:00` and
+    // refused at `-08:00`.
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Datum, DriverError> {
     // Go `checkColumnDefaultValue`: a JSON column's only legal default is
     // NULL. The default is stored as metadata TEXT, and a JSON document has
@@ -602,7 +617,7 @@ pub(crate) fn normalize_column_default(
     };
     // The check phase: strict conversion of what will be stored.
     let checked = normalized
-        .convert_to(field_type, tidb_datatype::STRICT_FLAGS)
+        .convert_to_in(field_type, tidb_datatype::STRICT_FLAGS, zone)
         .map_err(|_| invalid())?;
     if checked
         .event
@@ -991,7 +1006,12 @@ fn modify_column_action(
     // are refused above, so the settled value and the ORIGIN_DEFAULT existing
     // rows read back are the same value.
     let default_value = match default_value {
-        Some(value) => Some(normalize_column_default(value, &field_type, &def.name)?),
+        Some(value) => Some(normalize_column_default(
+            value,
+            &field_type,
+            &def.name,
+            zone,
+        )?),
         None => None,
     };
     let stored_default = default_value
@@ -1035,6 +1055,7 @@ fn add_column_action(
     table_name: &str,
     def: &ColumnDef,
     position: &tidb_ast::ColumnPosition,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
     let field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
     let mut default_value = None;
@@ -1101,7 +1122,12 @@ fn add_column_action(
     // are refused above, so the settled value and the ORIGIN_DEFAULT existing
     // rows read back are the same value.
     let default_value = match default_value {
-        Some(value) => Some(normalize_column_default(value, &field_type, &def.name)?),
+        Some(value) => Some(normalize_column_default(
+            value,
+            &field_type,
+            &def.name,
+            zone,
+        )?),
         None => None,
     };
     let stored_default = default_value

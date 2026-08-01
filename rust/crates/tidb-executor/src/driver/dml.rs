@@ -640,7 +640,14 @@ pub(crate) fn cast_value_for_column(
         column: column.to_owned(),
         row: row_index + 1,
     };
-    let converted = match value.convert_to(field_type, ctx.write_conversion_flags()) {
+    // Go `table.CastValue` passes `sctx.GetSessionVars().StmtCtx.TypeCtx()`,
+    // whose location is the session's. A TIMESTAMP column's admissible range
+    // is expressed in wall-clock time, so it MOVES with that zone.
+    let converted = match value.convert_to_in(
+        field_type,
+        ctx.write_conversion_flags(),
+        &ctx.session_zone(),
+    ) {
         Ok(converted) => converted,
         // Go returns the value BESIDE the error here, and the temporal seam
         // is the one place the write path needs it: without `NO_ZERO_DATE`

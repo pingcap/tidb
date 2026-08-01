@@ -533,6 +533,8 @@ mod tests_sysbench_access;
 #[cfg(test)]
 mod tests_system_schemas;
 #[cfg(test)]
+mod tests_timestamp_range;
+#[cfg(test)]
 mod tests_timezone_storage;
 #[cfg(test)]
 mod tests_user_vars;
