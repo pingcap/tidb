@@ -127,27 +127,27 @@
 //!   a LITERAL or `CURRENT_TIMESTAMP`, never folding an expression, so it has
 //!   no DDL-time evaluation to give a zone to.
 //!
-//! One zone-dependent DDL-time behaviour the audit DID find and this unit
-//! does NOT fix, recorded so it is not lost: TIMESTAMP `DEFAULT` RANGE
-//! validation. `ts timestamp default '1970-01-01 00:30:00'` is accepted under
-//! `+00:00` and `-08:00` but is an ERROR under `+08:00` (it falls below the
-//! epoch once converted), and `'2038-01-19 03:14:07'` is the mirror image --
-//! accepted under `+00:00`/`+08:00`, an error under `-08:00`. The stored
-//! VALUE is the literal either way; it is the ACCEPTANCE that moves. This
-//! node applies no epoch-range check to a TIMESTAMP default in any zone, so
-//! it accepts both, which is a wrong-ACCEPT rather than a wrong-value.
+//! One zone-dependent DDL-time behaviour the audit found -- TIMESTAMP
+//! `DEFAULT` RANGE validation -- is CLOSED. `ts timestamp default
+//! '1970-01-01 00:30:00'` is accepted under `+00:00` and `-08:00` and is
+//! 1067 under `+08:00` (it falls below the epoch once converted);
+//! `'2038-01-19 03:14:07'` is the mirror image, accepted under
+//! `+00:00`/`+08:00` and 1067 under `-08:00`. The stored VALUE is the
+//! literal either way; it is the ACCEPTANCE that moves, so the bug it was
+//! was a wrong-ACCEPT rather than a wrong-value.
 //!
-//! It is NOT the storage seam, and the storage fix did not reach it. Storing
-//! a TIMESTAMP in UTC and reading it back in the session's zone is now done
-//! (`tests_timezone_storage` in `tidb-session`), and this still accepts both
-//! defaults in every zone -- because the range check lives one layer up, in
-//! `Datum::convert_to_time_target`, which validates against a hardcoded
-//! `Utc` where Go's `ParseTime(ctx, ...)` validates against
-//! `types.Context.Location()`. The same gap shows on the WRITE path:
-//! `SET time_zone='-08:00'; INSERT ... VALUES ('2038-01-19 03:14:07')` is an
-//! error in TiDB and is accepted here. Closing it means giving the
-//! conversion the statement's zone, which is a separate thread from giving
-//! it to the codecs.
+//! It was never the storage seam -- storing a TIMESTAMP in UTC and reading
+//! it back in the reader's zone (`tests_timezone_storage` in `tidb-session`)
+//! left it untouched, because the range check lives one layer up. Go's
+//! `checkTimestampType` converts the literal out of `types.Context.Location()`
+//! into UTC before comparing against `MinTimestamp`/`MaxTimestamp`, and
+//! `Datum::convert_to_time_target` validated against a hardcoded `Utc`. It
+//! now takes the zone: [`normalize_column_default`] passes the statement's
+//! own, as does the write path's `cast_value_for_column`, which had the
+//! identical gap (`SET time_zone='-08:00'; INSERT ... VALUES
+//! ('2038-01-19 03:14:07')` is 1292). `tests_timestamp_range` in
+//! `tidb-session` holds the captures, the DST cases, and the read-side
+//! asymmetry that keeps the bound OFF the read path.
 //!
 //! # Where a resolved collation is, and is NOT, consulted
 //!

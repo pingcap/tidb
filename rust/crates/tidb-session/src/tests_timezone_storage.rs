@@ -122,14 +122,14 @@
 //!   SELECT TIMESTAMPDIFF(HOUR, ts, dt) at +08:00 -> -8
 //! ```
 //!
-//! # Not fixed here
+//! # Not covered here
 //!
-//! TIMESTAMP's epoch-RANGE check is zone-dependent in Go and is not yet;
-//! `SET time_zone='+08:00'; CREATE TABLE t (ts TIMESTAMP DEFAULT
-//! '1970-01-01 00:30:00')` is 1067 in TiDB and is accepted here. That is a
-//! wrong-ACCEPT at the CONVERSION seam (`Datum::convert_to_time_target`
-//! validates against `Utc` rather than the statement's zone), not at the
-//! storage seam this file covers.
+//! TIMESTAMP's epoch-RANGE check is zone-dependent too -- `SET
+//! time_zone='+08:00'; CREATE TABLE t (ts TIMESTAMP DEFAULT '1970-01-01
+//! 00:30:00')` is 1067 in TiDB -- but it is a CONVERSION-seam behaviour
+//! (`Datum::convert_to_time_target`), not a storage one, so it has its own
+//! file: `tests_timestamp_range`. The two seams are independent: neutering
+//! the conversion's zone fails all four tests there and none here.
 
 use super::Session;
 use crate::tests_support::row_text;
