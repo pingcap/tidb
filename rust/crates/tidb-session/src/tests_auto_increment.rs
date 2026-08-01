@@ -809,19 +809,22 @@ fn an_auto_increment_option_above_i64_max_seeds_create_but_rebases_alter() {
 /// load-bearing beyond parity -- a step of 0 would divide by zero in the
 /// allocator's seek, so the floor is 1 and never 0.
 ///
-/// The NAME comes from the REGISTRY, not from the statement: the first two
-/// rows spell the variable in upper and mixed case and TiDB still reports it
-/// lower case. Captured through `gorun`:
+/// The NAME comes from the REGISTRY (Go passes `sv.Name`), not from the
+/// statement, which is why the first two rows spell the variable in upper and
+/// mixed case and still expect it lower case. Those two use the BARE `set
+/// <name> = ...` form deliberately: SET's `@@` leaf is already lower-cased in
+/// the parser (see `parse_atat_system_variable_scope_and_name`), so a `SET
+/// @@AUTO_INCREMENT_INCREMENT` row would pass even if the warning echoed the
+/// statement, and only the bare form separates the two. Captured through
+/// `gorun`:
 ///
 /// ```text
-/// SET @@AUTO_INCREMENT_INCREMENT = 0
+/// set AUTO_INCREMENT_INCREMENT = 0
 ///   Warning|1292|Truncated incorrect auto_increment_increment value: '0'      -> 1
-/// SET @@Auto_Increment_Offset = 0
-///   Warning|1292|Truncated incorrect auto_increment_offset value: '0'         -> 1
+/// set Auto_Increment_Offset = 70000
+///   Warning|1292|Truncated incorrect auto_increment_offset value: '70000'     -> 65535
 /// set auto_increment_increment = 70000
 ///   Warning|1292|Truncated incorrect auto_increment_increment value: '70000'  -> 65535
-/// set auto_increment_offset = 70000
-///   Warning|1292|Truncated incorrect auto_increment_offset value: '70000'     -> 65535
 /// ```
 ///
 /// The `65536` and negative rows are the ones
@@ -830,13 +833,19 @@ fn an_auto_increment_option_above_i64_max_seeds_create_but_rebases_alter() {
 fn an_out_of_range_step_warns_1292_and_stores_the_clamp() {
     for (set, name, stored, original) in [
         (
-            "SET @@AUTO_INCREMENT_INCREMENT = 0",
+            "set AUTO_INCREMENT_INCREMENT = 0",
             "auto_increment_increment",
             "1",
             "0",
         ),
         (
-            "SET @@Auto_Increment_Offset = 0",
+            "set Auto_Increment_Offset = 0",
+            "auto_increment_offset",
+            "1",
+            "0",
+        ),
+        (
+            "SET @@auto_increment_offset = 0",
             "auto_increment_offset",
             "1",
             "0",
