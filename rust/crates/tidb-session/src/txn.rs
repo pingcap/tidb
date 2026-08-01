@@ -400,10 +400,11 @@ impl Session {
     /// must bring such a savepoint with it; this restore alone will not roll
     /// its writes back.
     ///
-    /// What the image DOES undo on either storage is the table state that is
-    /// not bytes: `KvTable::next_handle`, the `_tidb_rowid` counter, is a
-    /// plain field, so a failed statement gives back the handles it consumed.
-    /// `AutoIdAllocator` is deliberately not, per the paragraph below.
+    /// The `_tidb_rowid` a row without a clustered handle gets is NOT undone
+    /// either, and for the same reason: Go allocates it from the very counter
+    /// the AUTO_INCREMENT column uses (`autoid.NewAllocatorsFromTblInfo`
+    /// builds one `RowIDAllocType` allocator for both), so a handle a failed
+    /// statement consumed stays consumed.
     ///
     /// AUTO_INCREMENT deliberately survives the restore: Go allocates ids
     /// outside transaction semantics and never returns a consumed one, and

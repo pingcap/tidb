@@ -971,3 +971,97 @@ fn the_unsigned_allocator_reports_1467_at_the_domain_end() {
     );
     assert_eq!(one(&mut session, "SELECT count(*) FROM ai"), "2");
 }
+
+/// A row with no clustered handle takes its `_tidb_rowid` off the SAME
+/// counter the AUTO_INCREMENT column allocates from, so such a table's ids
+/// are not consecutive.
+///
+/// Go builds ONE `RowIDAllocType` allocator for `hasRowID || (hasAutoIncID &&
+/// !tblInfo.SepAutoInc())` (`autoid.NewAllocatorsFromTblInfo`): unless
+/// `AUTO_ID_CACHE=1` splits them, the column has no allocator of its own and
+/// every row costs TWO ids.
+///
+/// Captured through `gorun` on `CREATE TABLE u (id BIGINT AUTO_INCREMENT
+/// UNIQUE KEY, v INT)`, an AUTO_INCREMENT column that is not the handle:
+/// three SINGLE-row inserts give ids 1, 3, 5, while ONE three-row insert
+/// gives 1, 2, 3 and the next single row gets 7. A statement allocates every
+/// column id while building its rows and every handle while writing them, so
+/// the handles land after the ids of the same statement rather than between
+/// them.
+#[test]
+fn a_row_with_no_clustered_handle_takes_it_from_the_auto_increment_counter() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE s (id BIGINT AUTO_INCREMENT UNIQUE KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO s (v) VALUES (1)").unwrap();
+    session.run("INSERT INTO s (v) VALUES (2)").unwrap();
+    session.run("INSERT INTO s (v) VALUES (3)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id FROM s ORDER BY id"),
+        [["1"], ["3"], ["5"]]
+    );
+
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE s (id BIGINT AUTO_INCREMENT UNIQUE KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO s (v) VALUES (1),(2),(3)").unwrap();
+    session.run("INSERT INTO s (v) VALUES (4)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id FROM s ORDER BY id"),
+        [["1"], ["2"], ["3"], ["7"]]
+    );
+}
+
+/// The domain end on that shared counter, pinned in both directions like its
+/// clustered twin above -- and this is the case that was WRONGLY ACCEPTED
+/// before the handle came from the counter.
+///
+/// Captured through `gorun`, with `MustGetErrCode` for the code: seeded with
+/// an explicit `18446744073709551611` (whose row also burns `...612` for its
+/// handle) the next insert is accepted and lands on `18446744073709551613`,
+/// NOT `...612`; the row after it is refused with `1467` and `count(*)` stays
+/// at `2`. Seeded one higher, at `18446744073709551613`, the very next insert
+/// is already refused -- a row here costs two ids, so this table runs out
+/// while a clustered one of the same type still has a row left.
+#[test]
+fn a_shared_counter_runs_out_one_row_before_a_clustered_one() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE nc (id BIGINT UNSIGNED AUTO_INCREMENT UNIQUE KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO nc VALUES (18446744073709551611, 1)")
+        .unwrap();
+    session.run("INSERT INTO nc (v) VALUES (2)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM nc ORDER BY id"),
+        [["18446744073709551611", "1"], ["18446744073709551613", "2"]]
+    );
+    let error = session
+        .run("INSERT INTO nc (v) VALUES (3)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1467);
+    assert_eq!(one(&mut session, "SELECT count(*) FROM nc"), "2");
+
+    // Seeded where the CLUSTERED table above still had a row left, this one
+    // has none: the explicit row's own handle already took the id.
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE nc (id BIGINT UNSIGNED AUTO_INCREMENT UNIQUE KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO nc VALUES (18446744073709551613, 1)")
+        .unwrap();
+    assert_eq!(
+        session
+            .run("INSERT INTO nc (v) VALUES (2)")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1467
+    );
+    assert_eq!(one(&mut session, "SELECT count(*) FROM nc"), "1");
+}

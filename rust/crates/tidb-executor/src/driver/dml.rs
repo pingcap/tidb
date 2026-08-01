@@ -782,6 +782,10 @@ pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverErro
         crate::kv_table::KvTableError::NoPartitionForValue(value) => {
             DriverError::NoPartitionForValue(value)
         }
+        // The `_tidb_rowid` a non-clustered row needs comes off the same
+        // counter the AUTO_INCREMENT column does, so its exhaustion is the
+        // same 1467 an allocated column value would have reported.
+        crate::kv_table::KvTableError::AutoIdExhausted => DriverError::AutoincReadFailed,
         other => DriverError::Parse(format!("row encode failed: {other:?}")),
     }
 }

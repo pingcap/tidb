@@ -122,9 +122,6 @@ pub struct KvTable {
     /// The byte store, reached through the [`TableStorage`] seam (module
     /// doc), so a TiKV-backed backend replaces it without touching this file.
     store: Box<dyn TableStorage>,
-    /// The next integer row handle (Go `_tidb_rowid` allocation, simplified to
-    /// a monotone counter; the real autoid allocator is a separate unit).
-    next_handle: i64,
     /// Go `TableInfo.PKIsHandle`: the offset of the single integer primary-key
     /// column whose value IS the row handle, when the table has one.
     pk_handle_offset: Option<usize>,
@@ -234,6 +231,9 @@ pub enum KvTableError {
     /// LIST can (captured: `insert into r2 values (20,0)` on a RANGE table
     /// with no `MAXVALUE` partition is `Table has no partition for value 20`).
     NoPartitionForValue(String),
+    /// Go `autoid.ErrAutoincReadFailed` (1467) raised while allocating the
+    /// row's `_tidb_rowid`, which shares the AUTO_INCREMENT counter.
+    AutoIdExhausted,
     /// A stored value failed to decode.
     Decode(String),
     /// The storage layer refused a read or write.
@@ -275,7 +275,6 @@ impl KvTable {
             columns,
             hidden_columns: 0,
             store,
-            next_handle: 1,
             pk_handle_offset: None,
             indexes: Vec::new(),
             common_handle_offsets: Vec::new(),
@@ -304,7 +303,8 @@ impl KvTable {
     /// Deliberately NOT inherited, each matching a line of Go's reset list:
     ///
     /// * the rows and their storage, which are not in `TableInfo` at all;
-    /// * `next_handle` and `auto_id` (Go `tblInfo.AutoIncID = 0`), so the
+    /// * `auto_id` (Go `tblInfo.AutoIncID = 0`), the counter both the
+    ///   AUTO_INCREMENT column and `_tidb_rowid` draw from, so the
     ///   copy's first row is handle 1 however far the source has run;
     /// * `foreign_keys` (Go `tblInfo.ForeignKeys = nil`), and with them
     ///   `max_foreign_key_id`;
@@ -820,6 +820,24 @@ impl KvTable {
     }
 
     /// The handle a row's values produce.
+    ///
+    /// A table with no clustered handle gets Go's `_tidb_rowid`, and that
+    /// counter is not a second one: `autoid.NewAllocatorsFromTblInfo` builds
+    /// ONE `RowIDAllocType` allocator when `hasRowID || (hasAutoIncID &&
+    /// !tblInfo.SepAutoInc())`, and unless `AUTO_ID_CACHE=1` splits them
+    /// (`SepAutoInc`), the AUTO_INCREMENT column has no allocator of its own
+    /// and draws from that same one. Captured through `gorun`: on `CREATE
+    /// TABLE nc (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY NONCLUSTERED,
+    /// v INT)` three single-row inserts give ids 1, 3, 5 with `_tidb_rowid`
+    /// 2, 4, 6, and ONE three-row insert gives ids 1, 2, 3 with `_tidb_rowid`
+    /// 4, 5, 6 -- the statement allocates every column id while building its
+    /// rows and every handle while writing them, which is the order this
+    /// tier's INSERT already has.
+    ///
+    /// The shared counter is also the whole of the domain end here: a
+    /// non-clustered row consumes TWO ids, so such a table runs out one row
+    /// before a clustered one does, and the `1467` it reports is the
+    /// allocator's own rule rather than a second bound.
     fn handle_of_row(
         &mut self,
         row: &[Datum],
@@ -847,9 +865,14 @@ impl KvTable {
                 ))),
             },
             None => {
-                let handle = self.next_handle;
-                self.next_handle += 1;
-                Ok(TableHandle::Int(handle))
+                // Go `AllocHandle`: `_tidb_rowid` comes off the SAME counter
+                // the AUTO_INCREMENT column allocates from -- see this
+                // method's doc for why one counter serves both.
+                let handle = self.auto_id.alloc(1, 1).map_err(|error| match error {
+                    AutoIdError::Store(detail) => KvTableError::Encode(detail.0),
+                    _ => KvTableError::AutoIdExhausted,
+                })?;
+                Ok(TableHandle::Int(handle as i64))
             }
         }
     }
@@ -904,7 +927,6 @@ impl KvTable {
     /// TiDB: after truncating, the next auto-increment insert gets 1 again.
     pub fn truncate(&mut self) -> Result<(), AutoIdStoreError> {
         self.store.clear();
-        self.next_handle = 1;
         self.auto_id.reset()
     }
 
