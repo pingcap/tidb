@@ -390,7 +390,15 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// is indistinguishable from real progress if only the divergence count is
 /// published. So the number of catalog reads MATCHED is pinned too: it may
 /// only rise.
-const KNOWN_CATALOG_DIVERGENCES: usize = 111;
+/// 111 -> 104: the `mysql` schema became a name that exists, so
+/// `infoschema/infoschema`'s `rename table infoschema__infoschema.t1 to
+/// mysql.t1` has somewhere to rename TO. All seven were the same shape --
+/// `SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA =
+/// 'mysql' AND TABLE_NAME = 't1'` answering 0 where TiDB answers 1 -- and
+/// they are genuine parity rather than a fabricated schema: Go really does
+/// accept a user table in `mysql` (captured: `create table mysql.zz(a int)`
+/// succeeds), so those rows exist on both sides now.
+const KNOWN_CATALOG_DIVERGENCES: usize = 104;
 
 /// The floor on catalog reads that MATCH TiDB's recording exactly. See
 /// [`KNOWN_CATALOG_DIVERGENCES`] for why a divergence ceiling alone is not a
@@ -403,7 +411,13 @@ const KNOWN_CATALOG_DIVERGENCES: usize = 111;
 /// TABLE` prints the declared `(n)` and `MODIFY COLUMN` clears it exactly
 /// where Go's `UpdateIndexCol` does. The divergence count and fingerprint
 /// did not move: all four were previously OUT OF DOMAIN, not red.
-const MATCHED_FLOOR: usize = 106;
+///
+/// 106 -> 113: the same `mysql` schema change. Seven catalog reads went from
+/// red to matched, and the floor rises with them -- which is the point of
+/// having a floor at all, since a divergence count that falls while the
+/// matched count falls too is statements going dark, not statements getting
+/// right.
+const MATCHED_FLOOR: usize = 113;
 
 /// A fingerprint over the TEXT of every carried divergence, and the reason it
 /// exists is a hole this gate was CAUGHT having on its first day.
@@ -422,7 +436,12 @@ const MATCHED_FLOOR: usize = 106;
 /// divergence text closes it. The hash is FNV-1a, written out here rather
 /// than taken from `DefaultHasher`, because a gate constant has to mean the
 /// same thing in a future toolchain.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 15_209_155_495_828_413_401;
+///
+/// 15_209_155_495_828_413_401 -> 5_541_979_227_473_374_610: the seven
+/// `TABLE_SCHEMA = 'mysql'` counts named on [`KNOWN_CATALOG_DIVERGENCES`]
+/// LEFT the set. Nothing else in it changed text -- the before/after lists
+/// were diffed line for line, and those seven entries are the whole diff.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 5_541_979_227_473_374_610;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.

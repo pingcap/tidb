@@ -783,7 +783,26 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // rather than an admin-check or index one -- the resolution itself
     // (`Session::split_table_path`) already goes through the current
     // database.
-    const KNOWN_DIVERGENCES: usize = 50;
+    //
+    // # 50 -> 49: the `mysql` schema became a name that exists
+    //
+    // That prediction paid out exactly. `Catalog::default` now seeds `mysql`
+    // as a schema OBJECT with no tables, so `use mysql` succeeds, the
+    // unqualified `t` behind it resolves to `mysql.t`, and `admin check
+    // table t` answers 1146 as TiDB does. One statement moved into the
+    // compared set (2346 -> 2347) and three into the matched set (2296 ->
+    // 2298) -- the divergence itself plus the two statements after it in the
+    // block, which had been checked against `executor__admin`'s tables.
+    //
+    // Nothing else moved: no other topic's counts changed, and the survey's
+    // 283 refusals that NAME a `mysql.*` table are untouched, because they
+    // want the tables' CONTENTS and an empty schema has none. The
+    // measurement that decided the scope: `Schema(UnknownDatabase("mysql"))`
+    // refused 5 statements in the whole 257-topic survey -- four `use
+    // mysql;` and one `connect (conn1,...,mysql)` -- and that connect is the
+    // expensive one, since it left `statistics/lock_table_stats` UNALIGNED,
+    // i.e. never compared at all.
+    const KNOWN_DIVERGENCES: usize = 49;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
