@@ -117,7 +117,10 @@ fn a_batch_point_get_still_takes_a_timestamp() {
 
     let mut answer = Vec::new();
     let opens = opens_of(&node, || {
-        answer = rows(&mut session, "SELECT v FROM t WHERE id IN (1, 2) ORDER BY v");
+        answer = rows(
+            &mut session,
+            "SELECT v FROM t WHERE id IN (1, 2) ORDER BY v",
+        );
     });
     assert_eq!(answer, vec![vec![Datum::Int(10)], vec![Datum::Int(20)]]);
     assert_eq!(opens, PAID);
@@ -222,7 +225,10 @@ fn a_point_get_under_autocommit_zero_takes_no_shortcut() {
             vec![vec![Datum::Int(10)]]
         );
     });
-    assert_eq!(opens.max_ts, 0, "a statement inside a transaction opened at MaxUint64");
+    assert_eq!(
+        opens.max_ts, 0,
+        "a statement inside a transaction opened at MaxUint64"
+    );
     session.control_transaction("COMMIT").expect("commit");
 }
 
@@ -304,10 +310,16 @@ fn the_statement_shape_predicate_matches_the_guard_it_ports() {
     assert!(!takes("SELECT v FROM t WHERE id IN (7, 8)"));
     assert!(!takes("SELECT v FROM t WHERE id = 7 AND v = 1"));
     // A second read of any kind above or beside the point get.
-    assert!(!takes("SELECT v FROM t WHERE id = 7 UNION SELECT v FROM t WHERE id = 8"));
+    assert!(!takes(
+        "SELECT v FROM t WHERE id = 7 UNION SELECT v FROM t WHERE id = 8"
+    ));
     assert!(!takes("SELECT COUNT(*) FROM t WHERE id = 7"));
-    assert!(!takes("SELECT (SELECT v FROM t WHERE id = 8) FROM t WHERE id = 7"));
-    assert!(!takes("SELECT a.v FROM t AS a JOIN t AS b ON a.id = b.id WHERE a.id = 7"));
+    assert!(!takes(
+        "SELECT (SELECT v FROM t WHERE id = 8) FROM t WHERE id = 7"
+    ));
+    assert!(!takes(
+        "SELECT a.v FROM t AS a JOIN t AS b ON a.id = b.id WHERE a.id = 7"
+    ));
     assert!(!takes("WITH c AS (SELECT 1) SELECT v FROM t WHERE id = 7"));
     // Operators Go's switch would find above the reader.
     assert!(!takes("SELECT DISTINCT v FROM t WHERE id = 7"));
@@ -369,7 +381,10 @@ fn an_updates_read_before_write_does_not_take_the_shortcut() {
             .execute_write("DELETE FROM t WHERE id = 1")
             .expect("delete");
     });
-    assert_eq!(opens.max_ts, 0, "a DELETE's read-before-write opened at MaxUint64");
+    assert_eq!(
+        opens.max_ts, 0,
+        "a DELETE's read-before-write opened at MaxUint64"
+    );
 }
 
 /// A point get through a unique SECONDARY index is a double read -- one read

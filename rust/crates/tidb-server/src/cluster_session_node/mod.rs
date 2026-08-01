@@ -42,7 +42,15 @@
 //! *Which* snapshot is the connection's transaction state. Outside `BEGIN` the
 //! connection opens one [`StatementSnapshot`] per statement, at its own
 //! timestamp, and publishes that statement's writes right after: Go's implicit
-//! per-statement transaction. Inside `BEGIN` ... `COMMIT` the connection holds
+//! per-statement transaction. The bind itself costs nothing -- the snapshot is
+//! opened at the statement's FIRST read -- and one statement shape skips the
+//! timestamp entirely: an autocommit point get on the clustered handle, which
+//! [`ClusterServerSession::declare_read_shape`] declares to the bound snapshot
+//! before the statement runs, and which then reads at `u64::MAX`. That
+//! declaration is made from the STATEMENT and never from a read, because a
+//! read alone cannot tell a point-get `SELECT` from an `UPDATE`'s
+//! read-before-write or from one row lookup of a double read. Inside `BEGIN`
+//! ... `COMMIT` the connection holds
 //! one [`SessionTransaction`], every statement reads through it at the single
 //! timestamp `BEGIN` took, and `COMMIT` prewrites the accumulated buffer on
 //! that same transaction. That is Go's one `kv.Transaction` per session: later
@@ -981,17 +989,15 @@ impl QuerySession for ClusterServerSession {
         // A write declares nothing. Its read-before-write reaches the snapshot
         // as the same `get` a point-get SELECT issues, which is exactly why the
         // declaration is made from the statement rather than from the read.
-        let affected_rows =
-            self.with_statement(
-                StatementReadShape::Unknown,
-                move |session| match session.run(&owned).map_err(map_error)? {
-                    StmtResult::Affected(count) => Ok(count),
-                    StmtResult::Done(_) => Ok(0),
-                    StmtResult::Rows(_) => Err(SqlQueryError::unknown(
-                        "a write statement unexpectedly produced rows",
-                    )),
-                },
-            )?;
+        let affected_rows = self.with_statement(StatementReadShape::Unknown, move |session| {
+            match session.run(&owned).map_err(map_error)? {
+                StmtResult::Affected(count) => Ok(count),
+                StmtResult::Done(_) => Ok(0),
+                StmtResult::Rows(_) => Err(SqlQueryError::unknown(
+                    "a write statement unexpectedly produced rows",
+                )),
+            }
+        })?;
         Ok(Some(WriteOutcome {
             affected_rows,
             last_insert_id: self.session.statement_insert_id(),

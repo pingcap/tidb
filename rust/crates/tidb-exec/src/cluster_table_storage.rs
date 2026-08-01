@@ -27,9 +27,15 @@
 //! [`commit_staged_buffer`] as one transaction at the end of the statement.
 //! Each autocommit statement that reads a cluster row therefore gets its own
 //! fresh timestamp, which is what Go's autocommit does too: `BEGIN` is
-//! implicit and ends with the statement. A statement that reads none spends
-//! no timestamp -- the cluster session driver opens this snapshot at the
-//! statement's first read, not when it binds the slot.
+//! implicit and ends with the statement. Two statements spend none. A
+//! statement that reads no cluster row never opens this transaction at all --
+//! the cluster session driver opens it at the statement's first read, not when
+//! it binds the slot. And a statement that DECLARED its whole read is one
+//! point get on the clustered handle opens through
+//! [`StatementSnapshot::open_at_max_ts`] instead, at `u64::MAX`, which is Go's
+//! `AdviseOptimizeWithPlan` shortcut; the declaration is a statement-level
+//! fact and never inferred from a read, because at this seam an `UPDATE`'s
+//! read-before-write is the same `get` on the same key.
 //!
 //! **Explicit `BEGIN` ... `COMMIT`.** [`SessionTransaction`] opens *one*
 //! transaction at `BEGIN` and keeps it open. Every statement in between reads
