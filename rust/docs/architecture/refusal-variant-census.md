@@ -113,3 +113,24 @@ narrowing of what we serve and a removed variant is a real widening. For the
 unreachable enums the set guard would be theatre. Their real defect is not a
 missing test but a missing caller, and the fix is to wire the producer or drop
 the enum, not to freeze the current shape in a test.
+
+Three guards followed from that, joining the existing
+`bounded_path_refusal_set_is_pinned_against_new_features`:
+
+| Enum | Guard | Home |
+| --- | --- | --- |
+| `UnsupportedPreparedWrite` | `prepared_write_refusal_set_is_pinned_in_both_directions` | `tests/prepared_dml_source.rs` |
+| `UnsupportedJoinCondition` | `join_condition_refusal_set_is_pinned_in_both_directions` | `tests/configured_fullschema_join_source.rs` |
+| `UnsupportedReadOnlyPredicate` | `bounded_path_predicate_refusal_set_is_pinned_against_new_shapes` | `tests/read_only_scan_source.rs` |
+
+Each was mutation-probed in both directions: a probe variant added to the enum
+fails the guard naming the addition, and deleting an existing variant fails it
+naming the removal. A guard that only catches additions would let a refusal be
+quietly downgraded to an acceptance, which is the failure this whole exercise
+exists to prevent.
+
+`JoinOutputUnsupported` (3 variants) and `ResidualUnsupported` (2) are live and
+did not get a set guard. Both are small, both already have per-variant
+behavioural pins covering four of their five variants, and neither sits on a
+tier boundary where a widening changes what reaches storage. They are the
+cheapest remaining pins if that judgement turns out to be wrong.
