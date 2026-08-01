@@ -25,9 +25,11 @@
 //! single `start_ts`, and finishes without writes; the statement's writes stay
 //! in the session's [`MutationBuffer`] and are published by
 //! [`commit_staged_buffer`] as one transaction at the end of the statement.
-//! Each autocommit statement therefore gets its own fresh timestamp, which is
-//! what Go's autocommit does too: `BEGIN` is implicit and ends with the
-//! statement.
+//! Each autocommit statement that reads a cluster row therefore gets its own
+//! fresh timestamp, which is what Go's autocommit does too: `BEGIN` is
+//! implicit and ends with the statement. A statement that reads none spends
+//! no timestamp -- the cluster session driver opens this snapshot at the
+//! statement's first read, not when it binds the slot.
 //!
 //! **Explicit `BEGIN` ... `COMMIT`.** [`SessionTransaction`] opens *one*
 //! transaction at `BEGIN` and keeps it open. Every statement in between reads

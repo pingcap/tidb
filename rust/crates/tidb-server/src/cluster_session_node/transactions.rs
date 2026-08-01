@@ -49,6 +49,10 @@ pub(crate) fn sql_error(error: LockSqlError) -> SqlQueryError {
 /// lifecycle against an in-memory committed store.
 pub trait ClusterTransactions: Send + Sync {
     /// Opens one autocommit statement's read snapshot at its own timestamp.
+    ///
+    /// Called at the statement's FIRST read rather than when it binds, so a
+    /// statement that reads no cluster row never reaches here; see
+    /// [`DeferredSnapshot`].
     fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
 
     /// Publishes one autocommit statement's staged writes as its own

@@ -439,7 +439,8 @@ pub struct ClusterServerSession {
     /// tells the connection its statistics moved.
     statistics: Arc<tidb_exec::stats_watch::StatsSnapshot>,
     /// The transaction an explicit `BEGIN` holds open. `None` is autocommit,
-    /// where each statement gets its own timestamp.
+    /// where a statement gets a timestamp of its own at its first read -- and
+    /// none at all if it reads no cluster row.
     explicit: Option<Box<dyn OpenClusterTransaction>>,
     /// The transaction's savepoints, oldest first: for each, the name
     /// lowercased and the buffer image taken when it was declared.
@@ -484,7 +485,9 @@ impl ClusterServerSession {
     /// opened, so it sees exactly what `BEGIN` saw -- repeatable read, and the
     /// timestamp the eventual prewrite will carry. Outside one, autocommit
     /// opens a fresh read transaction per statement, which is Go's implicit
-    /// per-statement transaction.
+    /// per-statement transaction -- opened at the statement's first read, so
+    /// binding costs nothing and the timestamp is spent only by a statement
+    /// that actually reads a cluster row.
     fn with_statement<T>(
         &mut self,
         run: impl FnOnce(&mut Session) -> Result<T, SqlQueryError>,
