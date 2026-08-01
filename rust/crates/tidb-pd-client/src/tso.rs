@@ -33,12 +33,57 @@ pub(crate) struct TimestampParts {
     logical: i64,
 }
 
+/// One PD Tso reply covering `count` consecutive timestamps.
+///
+/// Go boundary: `pd/client`'s `tso_dispatcher.go` -> `processRequests`, which
+/// treats the reply's `(physical, logical)` as the *last* timestamp of the
+/// batch and recovers the first with
+/// `firstLogical = AddLogical(logical, -(count-1), suffixBits)`. Waiter `i`
+/// then receives `(physical, AddLogical(firstLogical, i, suffixBits))`
+/// (`tso_batch_controller.go` -> `finishCollectedRequests`), so every waiter
+/// gets a distinct, increasing timestamp out of a single round trip.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TsoBatch {
+    physical: i64,
+    first_logical: i64,
+    suffix_bits: u32,
+    count: u32,
+}
+
+impl TsoBatch {
+    /// Returns the timestamp handed to the `index`-th waiter of this batch.
+    pub(crate) fn split(&self, index: u32) -> TimestampParts {
+        debug_assert!(index < self.count);
+        TimestampParts {
+            physical: self.physical,
+            logical: add_logical(self.first_logical, i64::from(index), self.suffix_bits),
+        }
+    }
+
+    /// The batch's last timestamp, the one PD actually reported.
+    pub(crate) fn last(&self) -> TimestampParts {
+        self.split(self.count - 1)
+    }
+}
+
+/// Go boundary: `pd/client`'s `tsoutil.AddLogical` — the count is shifted by
+/// the suffix bits PD reserves for its local-TSO allocator suffix.
+fn add_logical(logical: i64, count: i64, suffix_bits: u32) -> i64 {
+    logical + (count << suffix_bits)
+}
+
 impl TimestampParts {
+    #[cfg(test)]
+    pub(crate) fn new(physical: i64, logical: i64) -> Self {
+        Self { physical, logical }
+    }
+
     fn from_response(
         endpoint: &str,
         expected_cluster_id: u64,
         response: pdpb::TsoResponse,
-    ) -> Result<Self, PdClientError> {
+        expected_count: u32,
+    ) -> Result<TsoBatch, PdClientError> {
         let header = response
             .header
             .as_ref()
@@ -57,11 +102,11 @@ impl TimestampParts {
                 actual: header.cluster_id,
             });
         }
-        if response.count != 1 {
+        if response.count != expected_count {
             return Err(invalid_tso(
                 "tso_count_mismatch",
                 format!(
-                    "PD Tso from {endpoint} returned count {}, expected 1",
+                    "PD Tso from {endpoint} returned count {}, expected {expected_count}",
                     response.count
                 ),
             ));
@@ -90,9 +135,27 @@ impl TimestampParts {
                 ),
             ));
         }
-        Ok(Self {
+        // PD reports the batch's LAST timestamp; walk back over the remaining
+        // `count - 1` slots to find the first one this batch owns.
+        let first_logical = add_logical(
+            timestamp.logical,
+            -i64::from(expected_count) + 1,
+            timestamp.suffix_bits,
+        );
+        if first_logical < 0 {
+            return Err(invalid_tso(
+                "invalid_tso_batch_range",
+                format!(
+                    "PD Tso from {endpoint} returned logical {} too small for a batch of {expected_count}",
+                    timestamp.logical
+                ),
+            ));
+        }
+        Ok(TsoBatch {
             physical: timestamp.physical,
-            logical: timestamp.logical,
+            first_logical,
+            suffix_bits: timestamp.suffix_bits,
+            count: expected_count,
         })
     }
 
@@ -151,10 +214,11 @@ impl RetainedTsoStream {
         cluster_id: u64,
         deadline: Instant,
         shutdown: &watch::Receiver<bool>,
-    ) -> Result<(Self, TimestampParts), PdClientError> {
+        count: u32,
+    ) -> Result<(Self, TsoBatch), PdClientError> {
         let timeout = remaining(deadline, endpoint)?;
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
-        let request = tso_request(cluster_id);
+        let request = tso_request(cluster_id, count);
         if *shutdown.borrow() {
             return Err(PdClientError::Closed);
         }
@@ -190,7 +254,7 @@ impl RetainedTsoStream {
             Some(Err(_)) => return Err(timeout_error(endpoint, timeout)),
             None => return Err(PdClientError::Closed),
         };
-        let timestamp = TimestampParts::from_response(endpoint, cluster_id, response)?;
+        let timestamp = TimestampParts::from_response(endpoint, cluster_id, response, count)?;
         Ok((
             Self {
                 endpoint: endpoint.to_owned(),
@@ -211,9 +275,10 @@ impl RetainedTsoStream {
         cluster_id: u64,
         deadline: Instant,
         shutdown: &watch::Receiver<bool>,
-    ) -> Result<TimestampParts, PdClientError> {
+        count: u32,
+    ) -> Result<TsoBatch, PdClientError> {
         let timeout = remaining(deadline, &self.endpoint)?;
-        let request = tso_request(cluster_id);
+        let request = tso_request(cluster_id, count);
         if *shutdown.borrow() {
             return Err(PdClientError::Closed);
         }
@@ -239,7 +304,7 @@ impl RetainedTsoStream {
             Some(Err(_)) => return Err(timeout_error(&self.endpoint, timeout)),
             None => return Err(PdClientError::Closed),
         };
-        TimestampParts::from_response(&self.endpoint, cluster_id, response)
+        TimestampParts::from_response(&self.endpoint, cluster_id, response, count)
     }
 }
 
@@ -250,7 +315,7 @@ async fn shutdown_requested(shutdown: &mut watch::Receiver<bool>) {
     let _ = shutdown.changed().await;
 }
 
-fn tso_request(cluster_id: u64) -> pdpb::TsoRequest {
+fn tso_request(cluster_id: u64, count: u32) -> pdpb::TsoRequest {
     pdpb::TsoRequest {
         header: Some(pdpb::RequestHeader {
             cluster_id,
@@ -258,7 +323,7 @@ fn tso_request(cluster_id: u64) -> pdpb::TsoRequest {
             caller_id: String::new(),
             caller_component: String::new(),
         }),
-        count: 1,
+        count,
         dc_location: String::new(),
     }
 }

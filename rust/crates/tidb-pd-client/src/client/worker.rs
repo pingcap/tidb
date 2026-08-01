@@ -20,6 +20,7 @@
 //! and holds the retained TSO stream (`tso_client.go`) so a timestamp costs one
 //! stream round trip rather than one connection.
 
+use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -27,8 +28,13 @@ use tokio::sync::watch;
 
 use crate::tso::{
     is_retryable_tso_error, remaining as remaining_tso_time, retry_delay, RetainedTsoStream,
-    TimestampParts, MAX_TSO_RETRIES,
+    TimestampParts, TsoBatch, MAX_TSO_RETRIES,
 };
+
+/// Upper bound on waiters merged into one PD Tso round trip.
+///
+/// Go boundary: `pd/client`'s `defaultMaxTSOBatchSize` in `tso_client.go`.
+const MAX_TSO_BATCH_SIZE: usize = 10000;
 use crate::{PdClientError, PdMemberSet};
 
 use super::failover::{
@@ -51,7 +57,16 @@ pub(super) fn run_worker(
 ) {
     let mut tso_stream = None;
     let mut last_timestamp = None;
-    while let Ok(command) = receiver.recv() {
+    // Non-TSO commands displaced while draining the channel for TSO waiters.
+    let mut deferred: VecDeque<WorkerCommand> = VecDeque::new();
+    loop {
+        let command = match deferred.pop_front() {
+            Some(command) => command,
+            None => match receiver.recv() {
+                Ok(command) => command,
+                Err(_) => break,
+            },
+        };
         if *shutdown.borrow() {
             match command {
                 WorkerCommand::RefreshMembers { reply } => {
@@ -275,19 +290,45 @@ pub(super) fn run_worker(
                 let _ = reply.send(result);
             }
             WorkerCommand::GetTimestamp { deadline, reply } => {
-                let result = get_timestamp_with_retry(
+                // Go boundary: `tso_dispatcher.go` -> `tsoBatchController`
+                // collects every waiter already queued and serves them with a
+                // single `count`-wide request.
+                let mut waiters = vec![(deadline, reply)];
+                let mut batch_deadline = deadline;
+                while waiters.len() < MAX_TSO_BATCH_SIZE {
+                    match receiver.try_recv() {
+                        Ok(WorkerCommand::GetTimestamp { deadline, reply }) => {
+                            batch_deadline = batch_deadline.min(deadline);
+                            waiters.push((deadline, reply));
+                        }
+                        Ok(other) => {
+                            deferred.push_back(other);
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let count = u32::try_from(waiters.len()).expect("TSO batch fits u32");
+                let result = get_timestamps_with_retry(
                     &runtime,
                     &mut clients,
                     RpcControl {
                         timeout,
                         shutdown: &shutdown,
                     },
-                    deadline,
+                    batch_deadline,
                     &state,
                     &mut tso_stream,
                     &mut last_timestamp,
+                    count,
                 );
-                let _ = reply.send(result);
+                for (index, (_, reply)) in waiters.into_iter().enumerate() {
+                    let index = u32::try_from(index).expect("TSO batch fits u32");
+                    let one = result
+                        .clone()
+                        .and_then(|batch| batch.split(index).compose());
+                    let _ = reply.send(one);
+                }
             }
             WorkerCommand::GetGcState { keyspace_id, reply } => {
                 let result = get_gc_state_with_failover(
@@ -309,7 +350,7 @@ pub(super) fn run_worker(
     }
 }
 
-pub(super) fn get_timestamp_with_retry(
+pub(super) fn get_timestamps_with_retry(
     runtime: &tokio::runtime::Runtime,
     clients: &mut PdChannelCache,
     control: RpcControl<'_>,
@@ -317,7 +358,8 @@ pub(super) fn get_timestamp_with_retry(
     state: &Arc<RwLock<PdSharedState>>,
     stream: &mut Option<RetainedTsoStream>,
     last_timestamp: &mut Option<TimestampParts>,
-) -> Result<u64, PdClientError> {
+    count: u32,
+) -> Result<TsoBatch, PdClientError> {
     let mut last_error = None;
     for attempt in 0..MAX_TSO_RETRIES {
         let snapshot = state.read().expect("PD state lock poisoned").clone();
@@ -330,7 +372,7 @@ pub(super) fn get_timestamp_with_retry(
         }
 
         let result = (|| {
-            let timestamp = if stream.is_none() {
+            let batch = if stream.is_none() {
                 let client = tonic_client(runtime, clients, &leader)?;
                 let (opened, timestamp) = RetainedTsoStream::open_and_request(
                     runtime,
@@ -339,6 +381,7 @@ pub(super) fn get_timestamp_with_retry(
                     snapshot.members.cluster_id,
                     deadline,
                     control.shutdown,
+                    count,
                 )?;
                 *stream = Some(opened);
                 timestamp
@@ -351,12 +394,14 @@ pub(super) fn get_timestamp_with_retry(
                         snapshot.members.cluster_id,
                         deadline,
                         control.shutdown,
+                        count,
                     )?
             };
-            timestamp.ensure_after(*last_timestamp)?;
-            let composed = timestamp.compose()?;
-            *last_timestamp = Some(timestamp);
-            Ok(composed)
+            // The first timestamp of the batch must still advance past the
+            // last one handed out; the rest advance by construction.
+            batch.split(0).ensure_after(*last_timestamp)?;
+            *last_timestamp = Some(batch.last());
+            Ok(batch)
         })();
 
         match result {

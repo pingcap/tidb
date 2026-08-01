@@ -56,17 +56,21 @@ impl Pd for MockPd {
         let (responses, response_rx) = tokio::sync::mpsc::channel(1);
         let physical = Arc::clone(&self.physical);
         tokio::spawn(async move {
-            while let Some(Ok(_request)) = requests.next().await {
+            while let Some(Ok(request)) = requests.next().await {
+                // Instrument change for batching: answer `count` timestamps in
+                // one reply, reporting the LAST logical of the batch exactly as
+                // PD does, so the client's range split is exercised.
+                let count = request.count.max(1);
                 let next = physical.fetch_add(1, Ordering::Relaxed) + 1;
                 let response = pdpb::TsoResponse {
                     header: Some(pdpb::ResponseHeader {
                         cluster_id: CLUSTER_ID,
                         error: None,
                     }),
-                    count: 1,
+                    count,
                     timestamp: Some(pdpb::Timestamp {
                         physical: next,
-                        logical: 1,
+                        logical: i64::from(count),
                         suffix_bits: 0,
                     }),
                 };
