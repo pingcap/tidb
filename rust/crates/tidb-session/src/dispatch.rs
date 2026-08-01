@@ -265,12 +265,13 @@ impl Session {
     }
 
     pub(crate) fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
-        // Go clears the warning buffer when a statement starts, so what
+        // Go gives every statement a fresh `StatementContext`, so what
         // `SHOW WARNINGS` reports always belongs to the statement before it --
-        // which is why those two statements must not clear it themselves.
-        if !reports_warnings(sql) {
-            self.warnings.clear();
-        }
+        // and hands that previous buffer back to the statements that report
+        // it (`ResetContextOfStmt` -> `sc.SetWarnings`). Taking the buffer
+        // before the parse keeps a statement that fails to parse clearing it,
+        // which is what Go's failed parse does by never reaching the copy.
+        let previous_warnings = std::mem::take(&mut self.warnings);
         // One parse serves every door below. `sql_mode` is what decides how a
         // statement lexes, and nothing between here and execution changes it
         // -- the `SET` that could is itself one of these doors, and it returns
@@ -278,6 +279,9 @@ impl Session {
         // under the same mode could only ever produce the same tree. The four
         // parses this replaces cost ~6 us of a ~13.5 us `SELECT 1`.
         let mut stmt = self.parse(sql)?;
+        if reports_warnings(&stmt) {
+            self.warnings = previous_warnings;
+        }
         // The non-prepared plan cache reads the SAME parse every door below
         // uses. It only decides whether this statement's plan would already
         // have been there; it never replaces the planning that follows.

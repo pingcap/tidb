@@ -16,9 +16,10 @@
 //! `SHOW WARNINGS` / `SHOW ERRORS` report.
 //!
 //! The buffer belongs to the statement before the one running, which is why the
-//! two statements that REPORT it must not clear it -- see
-//! [`reports_warnings`].
+//! statements that REPORT it must be handed the previous statement's entries --
+//! see [`reports_warnings`].
 
+use tidb_ast::{AdminStmt, ShowInspectionKind, Stmt};
 use tidb_datatype::{Datum, FieldType};
 
 use crate::{Session, StmtOutput};
@@ -72,26 +73,28 @@ impl WarningLevel {
     }
 }
 
-/// Whether the statement reports the warning buffer, and so must not clear it
-/// before running. Go decides this on the parsed node; parsing here would mean
-/// parsing the statement twice, so this reads the leading keywords the same
-/// way the dispatcher's own fast paths do.
-pub(crate) fn reports_warnings(sql: &str) -> bool {
-    let mut words = sql
-        .trim_start()
-        .split(|c: char| c.is_whitespace() || c == '(')
-        .filter(|word| !word.is_empty());
-    if !words
-        .next()
-        .is_some_and(|word| word.eq_ignore_ascii_case("SHOW"))
-    {
+/// Whether the statement reports the warning buffer, and so must be handed the
+/// previous statement's entries instead of an empty buffer.
+///
+/// Go decides this on the parsed node: `ResetContextOfStmt` takes an
+/// `ast.StmtNode`, builds a fresh `StatementContext`, and for exactly
+/// `ShowWarnings`, `ShowErrors`, and `ShowSessionStates` copies the outgoing
+/// context's entries into it (`pkg/executor/select.go`, `case *ast.ShowStmt`).
+/// This mirrors that set. `SHOW COUNT(*) WARNINGS` parses to `ShowWarnings`
+/// with `count_only`, so it needs no separate spelling.
+pub(crate) fn reports_warnings(stmt: &Stmt) -> bool {
+    let Stmt::Admin(admin) = stmt else {
         return false;
+    };
+    match &**admin {
+        AdminStmt::ShowWarnings(_) | AdminStmt::ShowErrors(_) => true,
+        // Go lists `ShowSessionStates` beside the other two. `SHOW
+        // SESSION_STATES` is refused by `show.rs` today, so this arm is
+        // source fidelity rather than reachable behaviour; it stays here so
+        // admitting the statement later does not silently drop the buffer.
+        AdminStmt::ShowInspection(show) => show.kind == ShowInspectionKind::SessionStates,
+        _ => false,
     }
-    // `SHOW WARNINGS`, `SHOW ERRORS`, and the `SHOW COUNT(*) WARNINGS` form.
-    words.any(|word| {
-        let word = word.trim_end_matches(';');
-        word.eq_ignore_ascii_case("WARNINGS") || word.eq_ignore_ascii_case("ERRORS")
-    })
 }
 
 impl Session {

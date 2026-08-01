@@ -659,3 +659,64 @@ fn prepared_statement_parameters() {
         Err(error) => assert_eq!(error.to_mysql_error().code, 8112),
     }
 }
+
+/// Whether a statement inherits the previous statement's warning buffer is a
+/// decision Go makes on the PARSED node: `ResetContextOfStmt` switches on
+/// `*ast.ShowStmt` and copies the outgoing context's entries forward only for
+/// `ShowWarnings`, `ShowErrors`, and `ShowSessionStates`
+/// (`pkg/executor/select.go`).
+///
+/// `WARNINGS` and `ERRORS` are UNRESERVED keywords, so `warnings` is a legal
+/// table name. Deciding on the raw SQL text instead of the node therefore let
+/// `SHOW CREATE TABLE warnings` inherit the buffer, and the `SHOW WARNINGS`
+/// after it reported a statement two back.
+#[test]
+fn only_the_parsed_reporting_nodes_inherit_the_warning_buffer() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE warnings (a INT)").unwrap();
+    session
+        .apply_set("SET tidb_enable_noop_functions = 'WARN'")
+        .unwrap();
+
+    let warn_once = |session: &mut Session| {
+        session
+            .run("SELECT a FROM warnings LOCK IN SHARE MODE")
+            .unwrap();
+        assert_eq!(session.warnings().len(), 1);
+    };
+    let reported = |session: &mut Session, sql: &str| match session.run_with_columns(sql).unwrap() {
+        StmtOutput::Rows { rows, .. } => rows.len(),
+        other => panic!("expected rows, got {other:?}"),
+    };
+
+    // The reporting nodes DO inherit it, and keep inheriting it: Go's
+    // `SetWarnings` installs the entries into the fresh context, so the next
+    // `SHOW WARNINGS` copies them forward again.
+    warn_once(&mut session);
+    assert_eq!(reported(&mut session, "SHOW WARNINGS"), 1);
+    assert_eq!(reported(&mut session, "SHOW WARNINGS"), 1);
+
+    // A SHOW that merely NAMES a table called `warnings` or `errors` does not.
+    warn_once(&mut session);
+    session.run("SHOW CREATE TABLE warnings").unwrap();
+    assert_eq!(reported(&mut session, "SHOW WARNINGS"), 0);
+
+    warn_once(&mut session);
+    session.run("SHOW COLUMNS FROM warnings").unwrap();
+    assert_eq!(reported(&mut session, "SHOW WARNINGS"), 0);
+
+    session.run("CREATE TABLE errors (a INT)").unwrap();
+    warn_once(&mut session);
+    session.run("SHOW CREATE TABLE errors").unwrap();
+    assert_eq!(reported(&mut session, "SHOW WARNINGS"), 0);
+
+    // A statement that fails to parse clears the buffer, because a failed
+    // parse never reaches the copy that would carry it forward. What is left
+    // is the failure's OWN entry, which `run_with_columns` files as an
+    // `Error` row -- not the preceding statement's warning.
+    warn_once(&mut session);
+    assert!(session.run("SELCT 1").is_err());
+    assert_eq!(session.warnings().len(), 1);
+    assert_eq!(session.warnings()[0].level, WarningLevel::Error);
+    assert_ne!(session.warnings()[0].code, 1235);
+}
