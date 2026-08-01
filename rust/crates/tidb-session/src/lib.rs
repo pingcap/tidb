@@ -472,11 +472,7 @@ impl Session {
         }
         if let Err(error) = &result {
             let reported = error.clone().to_mysql_error();
-            self.warnings.push(SqlWarning {
-                level: WarningLevel::Error,
-                code: reported.code,
-                message: reported.message,
-            });
+            self.append_warning(WarningLevel::Error, reported.code, reported.message);
         }
         result
     }

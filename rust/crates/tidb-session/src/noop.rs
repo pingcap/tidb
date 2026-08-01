@@ -21,7 +21,7 @@
 //! for the `noop.go` variables -- so both live behind the one
 //! [`Session::noop_funcs_mode`] read here.
 
-use crate::{sysvar, DriverError, Session, SqlWarning, WarningLevel};
+use crate::{sysvar, DriverError, Session, WarningLevel};
 
 /// Go `variable.NoopFuncsMode`: how a clause TiDB only implements as a
 /// no-op is treated.
@@ -83,14 +83,14 @@ impl Session {
             NoopFuncsMode::On => Ok(()),
             NoopFuncsMode::Off => Err(DriverError::FunctionsNoopImpl(clause)),
             NoopFuncsMode::Warn => {
-                self.warnings.push(SqlWarning {
-                    level: WarningLevel::Warning,
-                    code: 1235,
-                    message: format!(
+                self.append_warning(
+                    WarningLevel::Warning,
+                    1235,
+                    format!(
                         "function {clause} has only noop implementation in tidb now, use \
                          tidb_enable_noop_functions to enable these functions"
                     ),
-                });
+                );
                 Ok(())
             }
         }
@@ -126,11 +126,7 @@ impl Session {
             if mode == NoopFuncsMode::Off {
                 return Err(DriverError::FunctionsNoopImpl(clause));
             }
-            self.warnings.push(SqlWarning {
-                level: WarningLevel::Warning,
-                code: 1235,
-                message,
-            });
+            self.append_warning(WarningLevel::Warning, 1235, message);
         }
         Ok(())
     }

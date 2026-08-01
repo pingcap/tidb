@@ -1039,13 +1039,11 @@ impl Session {
                 // `GRANT` raises for it, and the delete still runs
                 // (captured: the statement reports OK with a 3929 warning).
                 for name in unregistered {
-                    self.warnings.push(SqlWarning {
-                        level: WarningLevel::Warning,
-                        code: 3929,
-                        message: format!(
-                            "Dynamic privilege '{name}' is not registered with the server."
-                        ),
-                    });
+                    self.append_warning(
+                        WarningLevel::Warning,
+                        3929,
+                        format!("Dynamic privilege '{name}' is not registered with the server."),
+                    );
                 }
             }
             tidb_ast::GrantLevel::Database(database) => {

@@ -98,6 +98,21 @@ pub(crate) fn reports_warnings(stmt: &Stmt) -> bool {
 }
 
 impl Session {
+    /// The one door onto the statement's warning buffer.
+    ///
+    /// Go has a single sink: every `AppendWarning`/`AppendNote`/`AppendError`
+    /// on `StmtCtx` reaches one `StaticWarnHandler`
+    /// (`pkg/util/context/warn.go`). Keeping one door here is what lets a rule
+    /// that belongs to the buffer -- its retention limit, its ordering --
+    /// live in one place rather than at each caller.
+    pub(crate) fn append_warning(&mut self, level: WarningLevel, code: u16, message: String) {
+        self.warnings.push(SqlWarning {
+            level,
+            code,
+            message,
+        });
+    }
+
     pub(crate) fn warning_output(&self, count_only: bool, errors_only: bool) -> StmtOutput {
         let reported = self
             .warnings
@@ -144,11 +159,7 @@ impl Session {
     /// Moves what evaluation recorded into the statement's warning buffer.
     pub(crate) fn drain_eval_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
         for (code, message) in ctx.take_warnings() {
-            self.warnings.push(SqlWarning {
-                level: WarningLevel::Warning,
-                code,
-                message,
-            });
+            self.append_warning(WarningLevel::Warning, code, message);
         }
     }
 

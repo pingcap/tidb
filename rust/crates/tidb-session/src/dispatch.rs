@@ -25,9 +25,7 @@ use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
-use crate::{
-    infoschema, statement_kind_of, Session, SqlWarning, StatementKind, StmtOutput, WarningLevel,
-};
+use crate::{infoschema, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel};
 use crate::{reports_warnings, CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 
 /// Names the AST variant behind a refused statement, for a "not supported
@@ -547,20 +545,20 @@ impl Session {
                     });
                     if done.is_ok() {
                         for _ in 0..discarded_checks {
-                            self.warnings.push(SqlWarning {
-                                level: WarningLevel::Warning,
-                                code: CHECK_CONSTRAINT_IS_OFF_CODE,
-                                message: CHECK_CONSTRAINT_IS_OFF_MESSAGE.to_owned(),
-                            });
+                            self.append_warning(
+                                WarningLevel::Warning,
+                                CHECK_CONSTRAINT_IS_OFF_CODE,
+                                CHECK_CONSTRAINT_IS_OFF_MESSAGE.to_owned(),
+                            );
                         }
                         // Go accepts `LINEAR HASH` and builds the plain
                         // non-linear table, warning that it did so.
                         if let Some(message) = tidb_executor::linear_partitioning_warning(create) {
-                            self.warnings.push(SqlWarning {
-                                level: WarningLevel::Warning,
-                                code: UNSUPPORTED_CREATE_PARTITION_CODE,
+                            self.append_warning(
+                                WarningLevel::Warning,
+                                UNSUPPORTED_CREATE_PARTITION_CODE,
                                 message,
-                            });
+                            );
                         }
                     }
                     done

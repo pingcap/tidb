@@ -356,11 +356,11 @@ impl Session {
         let Some((code, message)) = warning else {
             return;
         };
-        self.warnings.push(crate::warnings::SqlWarning {
-            level: crate::warnings::WarningLevel::Warning,
+        self.append_warning(
+            crate::warnings::WarningLevel::Warning,
             code,
-            message: message.to_owned(),
-        });
+            message.to_owned(),
+        );
     }
 
     /// Go `ErrTruncatedWrongValue` (1292) for a system variable whose
@@ -380,11 +380,11 @@ impl Session {
     fn warn_truncated_var(&mut self, name: &str, original: &str) {
         let reported = sysvar::get_sys_var(name)
             .map_or_else(|| name.to_ascii_lowercase(), |def| def.name.to_owned());
-        self.warnings.push(crate::warnings::SqlWarning {
-            level: crate::warnings::WarningLevel::Warning,
-            code: 1292,
-            message: format!("Truncated incorrect {reported} value: '{original}'"),
-        });
+        self.append_warning(
+            crate::warnings::WarningLevel::Warning,
+            1292,
+            format!("Truncated incorrect {reported} value: '{original}'"),
+        );
     }
 
     /// Go's `rand_seed1`/`rand_seed2` `SetSession` hooks: the value SET is a
