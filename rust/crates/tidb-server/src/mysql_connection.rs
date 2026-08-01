@@ -855,7 +855,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // column probe and then executed again at EXECUTE, and neither
                 // run would reach `control_transaction` -- so the connection's
                 // transaction never opens and every statement of the
-                // transaction reads at its own fresh timestamp. The predicate
+                // transaction reads as an autocommit statement -- a point get
+                // among them at `MaxUint64`, seeing whatever is committed at
+                // the instant it runs rather than the transaction's snapshot.
+                // The predicate
                 // is the same one the text arm routes on, so a statement takes
                 // the same route whichever protocol carried it.
                 let statement = if classify_transaction_control(sql).is_some() {

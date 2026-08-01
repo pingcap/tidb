@@ -439,7 +439,13 @@ impl RealTiKvServerSession {
     /// so every statement in it observes one consistent snapshot; a
     /// `SELECT ... FOR UPDATE` locks its rows first; and a transaction that has
     /// staged writes reads them back through the union-scan overlay. Outside a
-    /// transaction each read takes its own fresh snapshot exactly as before.
+    /// transaction each read takes its own fresh snapshot — except an
+    /// autocommit point get on the clustered handle, which reads the latest
+    /// committed version at `MaxUint64` and pays for no timestamp at all
+    /// (Go's `AdviseOptimizeWithPlan` shortcut; the guard set is documented on
+    /// `ReadOnlyScanPlan::is_point_get_on_handle`). Routing an open
+    /// transaction to `execute_plan_at_snapshot` here is load-bearing for that
+    /// shortcut's soundness, not merely an optimization.
     fn execute_read<'a>(
         &'a mut self,
         plan: ReadOnlyScanPlan,

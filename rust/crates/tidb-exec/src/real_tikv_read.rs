@@ -1220,8 +1220,10 @@ where
     ///
     /// A session pins this once for an explicit transaction so every read in the
     /// transaction runs at one consistent snapshot via
-    /// [`Self::execute_plan_at_snapshot`], instead of the fresh per-statement
-    /// timestamp [`Self::execute_lowered_plan_with_cancellation`] takes.
+    /// [`Self::execute_plan_at_snapshot`], instead of the per-statement
+    /// snapshot [`Self::execute_lowered_plan_with_cancellation`] chooses —
+    /// which is a fresh PD timestamp for most plans, but `MaxUint64` and no
+    /// timestamp at all for an autocommit point get.
     pub fn acquire_snapshot_ts(&self) -> Result<u64, RealTiKvReadError> {
         self.timestamp_source
             .current_ts()
