@@ -167,13 +167,15 @@ fn the_wide_lowering_refuses_what_go_would_have_refined_or_cannot_compare_as_an_
         wide_scan_selection_conditions(&[], &signed),
         Err(WideScanSelectionError::NoConditions)
     );
-    // A non-integer column: outside the `ETInt` family entirely.
+    // An INTEGER constant against a character-string column: the string path
+    // owns this column, and Go rewrites the constant through
+    // `RefineComparedConstant` rather than sending the comparison as written.
     assert_eq!(
         wide_scan_selection_conditions(
             &[pushed(0, ScanComparisonOp::Eq, Datum::Int(1), true)],
             &text
         ),
-        Err(WideScanSelectionError::UnsupportedColumnType { offset: 0 })
+        Err(WideScanSelectionError::UnsupportedLiteral { offset: 0 })
     );
     // A non-integer constant: Go rewrites it through `RefineComparedConstant`.
     assert_eq!(
@@ -219,43 +221,224 @@ fn the_wide_lowering_refuses_what_go_would_have_refined_or_cannot_compare_as_an_
     );
 }
 
-/// What a *string* comparison does today, measured rather than assumed.
-///
-/// The scan descriptor already carries a character-string column faithfully:
-/// `tidb_exec::cop_scan::scan_column` copies the MySQL type, the declared
-/// `flen` and the rewritten collation id for the `VARCHAR`/`CHAR`/blob family
-/// (Go `util.ColumnToProto`). So the column can be *read* at the region.
-///
-/// What does not travel is the comparison over it: this lowering speaks the
-/// integer signature family only, so `column_flags` refuses a non-integer `tp`
-/// before a constant is even looked at, `accepts` answers `false`, and the
-/// conjunct stays in the caller's own filter with the whole relation crossing
-/// the wire.
-///
-/// This pin is the BEFORE half of the string-pushdown work. When a string
-/// comparison lowers, these assertions flip to the lowered form rather than
-/// being deleted.
-#[test]
-fn a_string_comparison_does_not_reach_the_coprocessor_today() {
-    let mut text_column = column_of(MYSQL_TYPE_VARCHAR, 0);
-    // `utf8mb4_bin`, as the rewritten protocol id a scan descriptor states.
-    text_column.collation = -46;
-    let text = vec![text_column];
-    let compare = ScanPredicate::Compare(ScanComparison {
+/// A `VARCHAR` column in a named collation, as a scan descriptor states it:
+/// the REWRITTEN protocol id, which is what `cop_scan::scan_column` puts there.
+fn string_column(collation: &str) -> ScanColumnInfo {
+    ScanColumnInfo {
+        collation: tidb_datatype::collation_to_proto(collation),
+        ..column_of(MYSQL_TYPE_VARCHAR, 0)
+    }
+}
+
+fn string_compare(op: ScanComparisonOp, literal: &[u8], column_on_left: bool) -> ScanPredicate {
+    ScanPredicate::Compare(ScanComparison {
         column_offset: 0,
         column_type: FieldType::new(FieldTypeCode::Varchar),
-        op: ScanComparisonOp::Eq,
-        literal: Datum::Bytes(b"a\xc3\xa9b".to_vec()),
-        column_on_left: true,
-    });
-    assert!(
-        !accepts(&compare, &text),
-        "a string comparison is refused, so nothing about it is sent"
+        op,
+        literal: Datum::Bytes(literal.to_vec()),
+        column_on_left,
+    })
+}
+
+/// A string comparison travels, as the `*String` signature Go's
+/// `generateCmpSigs` picks for an `ETString` comparison.
+///
+/// The scan descriptor already carried the column itself faithfully -- type,
+/// `flen` and the rewritten collation id (Go `util.ColumnToProto`) -- so what
+/// this adds is the comparison over it. Go pushes all six ordinary comparison
+/// operators to TiKV (`infer_pushdown.go`'s `scalarExprSupportedByTiKV`), and
+/// the constant's bytes travel verbatim with no codec around them:
+/// `constantToPBExpr` sends a `KindString` datum as `ExprType_String` with
+/// `d.GetBytes()`, unlike the integer leaf's `codec.EncodeInt`.
+#[test]
+fn a_string_comparison_lowers_to_the_string_signature_go_resolves() {
+    let text = vec![string_column("utf8mb4_bin")];
+    // A multi-byte value: a byte-length or transcoding error is visible here
+    // and invisible in an ASCII fixture.
+    let literal = "a\u{e9}b".as_bytes();
+    assert_eq!(literal.len(), 4, "the fixture really is multi-byte");
+
+    for (op, expected) in [
+        (ScanComparisonOp::Eq, ScalarFuncSig::EqString),
+        (ScanComparisonOp::Ne, ScalarFuncSig::NeString),
+        (ScanComparisonOp::Lt, ScalarFuncSig::LtString),
+        (ScanComparisonOp::Le, ScalarFuncSig::LeString),
+        (ScanComparisonOp::Gt, ScalarFuncSig::GtString),
+        (ScanComparisonOp::Ge, ScalarFuncSig::GeString),
+    ] {
+        let predicate = string_compare(op, literal, true);
+        assert!(accepts(&predicate, &text), "{op:?} must travel");
+        let condition = wide_scan_selection_conditions(&[predicate], &text)
+            .unwrap()
+            .remove(0);
+        assert_eq!(condition.sig, Some(expected as i32));
+        assert_eq!(
+            condition.children[0].tp,
+            Some(ExprType::ColumnRef as i32),
+            "the column stays on the left, as written"
+        );
+        let constant = &condition.children[1];
+        assert_eq!(constant.tp, Some(ExprType::String as i32));
+        assert_eq!(
+            constant.val.as_deref(),
+            Some(literal),
+            "the constant's bytes travel verbatim, with no codec around them"
+        );
+    }
+
+    // The flipped spelling keeps its operand order, as the integer path does.
+    let flipped = wide_scan_selection_conditions(
+        &[string_compare(ScanComparisonOp::Gt, literal, false)],
+        &text,
+    )
+    .unwrap()
+    .remove(0);
+    assert_eq!(flipped.sig, Some(ScalarFuncSig::GtString as i32));
+    assert_eq!(flipped.children[0].tp, Some(ExprType::String as i32));
+    assert_eq!(flipped.children[1].tp, Some(ExprType::ColumnRef as i32));
+
+    // And it all survives the encoding that actually goes on the wire.
+    let scan = PhysicalTableScanPlan::init(0, 0, TiKvTableScanSpec::new(7, text.clone()));
+    let conditions =
+        wide_scan_selection_conditions(&[string_compare(ScanComparisonOp::Eq, literal, true)], &text)
+            .unwrap();
+    let request = construct_capped_read_only_dag_req_with_conditions(
+        &DagRequestContext::new("UTC", 0, 0, DistSqlEncodeType::Default),
+        TiKvScanPlan::Table(&scan),
+        &conditions,
+        None,
+        &[0],
+    )
+    .unwrap();
+    let decoded = DagRequest::decode(request.encode_to_vec().as_slice()).unwrap();
+    let sent = &decoded.executors[1].selection.as_ref().unwrap().conditions[0];
+    assert_eq!(sent.sig, Some(ScalarFuncSig::EqString as i32));
+    assert_eq!(sent.children[1].val.as_deref(), Some(literal));
+}
+
+/// The collation on the comparison node is the one TiKV compares with, and it
+/// is the column's own.
+///
+/// TiKV reads the collator off the comparison node's OWN field type, not off
+/// either operand's: Go writes it there in `scalarFuncToPBExpr`
+/// (`tp := *expr.RetType; tp.SetCollate(str1)`), leaving the return type
+/// `BIGINT(1)` and overwriting only its collation. A wrong id there is a
+/// silently wrong answer computed at the region, so this asserts the exact id
+/// -- and then asserts what that id MEANS, by asking the same collator table
+/// TiKV mirrors whether `'A' = 'a'`. The case-insensitive and the binary
+/// fixtures must disagree about that, or the fixture could not tell a right
+/// collation from a wrong one.
+#[test]
+fn the_comparison_node_carries_the_columns_collation_and_that_collation_decides_case() {
+    for (name, case_insensitive) in [
+        ("utf8mb4_general_ci", true),
+        ("utf8mb4_unicode_ci", true),
+        ("utf8mb4_bin", false),
+        ("binary", false),
+    ] {
+        let columns = vec![string_column(name)];
+        let condition = wide_scan_selection_conditions(
+            &[string_compare(ScanComparisonOp::Eq, b"a", true)],
+            &columns,
+        )
+        .unwrap()
+        .remove(0);
+        let node_type = condition.field_type.as_ref().unwrap();
+        assert_eq!(
+            node_type.collate,
+            Some(tidb_datatype::collation_to_proto(name)),
+            "{name}: the comparison node carries the column's own collation"
+        );
+        assert_eq!(node_type.tp, Some(MYSQL_TYPE_LONGLONG), "{name}: BIGINT(1)");
+        assert_eq!(node_type.flen, Some(1));
+        // The column leaf agrees with it, so the collator TiKV compares with
+        // and the collation it was told to read the column with are one.
+        assert_eq!(
+            condition.children[0].field_type.as_ref().unwrap().collate,
+            node_type.collate
+        );
+
+        // What that id MEANS, asked of the collator table itself.
+        let collator = tidb_datatype::get_collator_by_id(
+            tidb_datatype::restore_collation_id_if_needed(node_type.collate.unwrap()),
+        );
+        assert_eq!(
+            collator.compare(b"A", b"a") == std::cmp::Ordering::Equal,
+            case_insensitive,
+            "{name}: 'A' = 'a' must be {case_insensitive}"
+        );
+    }
+}
+
+/// The string refusals, each pinned so it flips rather than vanishes when the
+/// gap closes.
+#[test]
+fn the_string_lowering_refuses_every_comparison_whose_collation_it_cannot_derive() {
+    // A charset outside `utf8mb4`/`binary`: Go's `inferCollation` applies
+    // repertoire rules this lowering does not implement, and a literal that
+    // does not fit the column's repertoire changes the derived answer.
+    for name in ["latin1_bin", "ascii_bin", "gbk_bin"] {
+        let refused = wide_scan_selection_conditions(
+            &[string_compare(ScanComparisonOp::Eq, b"a", true)],
+            &[string_column(name)],
+        );
+        assert!(
+            matches!(refused, Err(WideScanSelectionError::Expression(_))),
+            "{name}: an underivable charset is refused, got {refused:?}"
+        );
+    }
+    // A string constant against an INTEGER column stays the integer path's
+    // own refusal, unchanged: Go refines that comparison too.
+    assert_eq!(
+        wide_scan_selection_conditions(
+            &[pushed(
+                0,
+                ScanComparisonOp::Eq,
+                Datum::Bytes(b"x".to_vec()),
+                true
+            )],
+            &[column_of(MYSQL_TYPE_LONGLONG, 0)]
+        ),
+        Err(WideScanSelectionError::UnsupportedLiteral { offset: 0 })
+    );
+    // `ENUM` and `SET` evaluate as `ETString` in Go but are not in this
+    // lowering's string family: their leaf needs the `elems` list on the wire
+    // and Go gates them behind `IsPushDownEnabled`. They stay refused as
+    // non-integer columns.
+    for tp in [247, 248] {
+        assert_eq!(
+            wide_scan_selection_conditions(
+                &[string_compare(ScanComparisonOp::Eq, b"a", true)],
+                &[column_of(tp, 0)]
+            ),
+            Err(WideScanSelectionError::UnsupportedColumnType { offset: 0 }),
+            "tp {tp}: ENUM/SET are refused"
+        );
+    }
+    // `IN` and `IS NULL` over a string column are still the integer path's,
+    // so they stay refused -- the widening here is the comparison only.
+    assert_eq!(
+        wide_scan_selection_conditions(
+            &[ScanPredicate::In {
+                column_offset: 0,
+                column_type: FieldType::new(FieldTypeCode::Varchar),
+                literals: vec![Datum::Bytes(b"a".to_vec())],
+                negated: false,
+            }],
+            &[string_column("utf8mb4_bin")]
+        ),
+        Err(WideScanSelectionError::UnsupportedColumnType { offset: 0 })
     );
     assert_eq!(
-        wide_scan_selection_conditions(&[compare], &text),
-        Err(WideScanSelectionError::UnsupportedColumnType { offset: 0 }),
-        "the refusal is the column's type, not the constant"
+        wide_scan_selection_conditions(
+            &[ScanPredicate::IsNull {
+                column_offset: 0,
+                column_type: FieldType::new(FieldTypeCode::Varchar),
+                negated: false,
+            }],
+            &[string_column("utf8mb4_bin")]
+        ),
+        Err(WideScanSelectionError::UnsupportedColumnType { offset: 0 })
     );
 }
 

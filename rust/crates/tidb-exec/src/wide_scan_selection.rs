@@ -34,6 +34,17 @@
 //! [`tidb_expr::pb_predicate`]), which is what makes the pushed form provably
 //! the same predicate as the local one.
 //!
+//! And one string shape: a `VARCHAR`/`CHAR`/`VAR_STRING`/blob column compared
+//! with a string constant, which Go lowers through the `*String` signature
+//! family. That comparison is only defined together with a collator, and TiKV
+//! reads the collator off the comparison node's own field type; the collation
+//! written there is derived from the operands by
+//! [`tidb_expr::pb_predicate::string_comparison_to_pb`], which performs the
+//! one derivation with a single answer -- a column against a literal, where
+//! the column's collation wins -- and refuses every other shape. `IS NULL`,
+//! `IN` and the composed forms over a string column are still refused: the
+//! widening here is the comparison only.
+//!
 //! Two refusals are deliberate and are not "not implemented yet":
 //!
 //! * **A negative or zero constant against an unsigned column.** Go does not
@@ -251,12 +262,13 @@ fn comparison_to_pb(
     columns: &[ScanColumnInfo],
 ) -> Result<Expr, WideScanSelectionError> {
     let offset = comparison.column_offset;
-    let column = columns.get(offset as usize).ok_or(
-        WideScanSelectionError::ColumnOffsetOutOfRange {
-            offset,
-            width: columns.len(),
-        },
-    )?;
+    let column =
+        columns
+            .get(offset as usize)
+            .ok_or(WideScanSelectionError::ColumnOffsetOutOfRange {
+                offset,
+                width: columns.len(),
+            })?;
     if is_string_family_type(column.tp) {
         return string_comparison(comparison, column);
     }

@@ -168,9 +168,8 @@ impl fmt::Display for PbPredicateError {
             Self::EmptyOperandList => {
                 formatter.write_str("a TiKV IN list and an OR chain each need an operand")
             }
-            Self::UnderivableStringCollation => formatter.write_str(
-                "a string comparison whose collation this lowering does not derive",
-            ),
+            Self::UnderivableStringCollation => formatter
+                .write_str("a string comparison whose collation this lowering does not derive"),
         }
     }
 }
