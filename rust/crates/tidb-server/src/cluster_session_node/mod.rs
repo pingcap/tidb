@@ -493,10 +493,15 @@ impl ClusterServerSession {
         self.begin_if_autocommit_off()?;
         let savepoint = self.buffer.staged();
         let snapshot = match self.explicit.as_ref() {
-            Some(transaction) => transaction.snapshot(),
-            None => self.transactions.open_snapshot(),
-        }
-        .map_err(SqlQueryError::unknown)?;
+            // The transaction's timestamp is already spent; its per-statement
+            // read handle costs nothing, so there is nothing to defer.
+            Some(transaction) => transaction.snapshot().map_err(SqlQueryError::unknown)?,
+            // Autocommit's timestamp is spent by the statement's first read,
+            // not by the binding: a statement that reads no cluster row --
+            // and a statement whose plan does not exist yet at this point --
+            // must not have paid for one already.
+            None => transactions::deferred_snapshot(Arc::clone(&self.transactions)),
+        };
         if let Some(stale) = self.bind(snapshot) {
             // A previous statement that did not unbind would otherwise leave
             // its read transaction open for the rest of the connection.
