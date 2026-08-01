@@ -495,11 +495,21 @@ fn compare(
 /// ([`warning_comparison_covers_only_enable_warnings_statements`]); for the
 /// rest the replay compares rows only, so a warning is invisible either way.
 /// This measures one half of that blind spot -- what THIS engine raises where
-/// nothing is checked. `INTEGRATION_SURVEY_UNWATCHED_WARNINGS=1` printed 18
-/// such statements: five deprecated-sysvar notices, eleven `Truncated
+/// nothing is checked. `INTEGRATION_SURVEY_UNWATCHED_WARNINGS=1` FIRST printed
+/// 18 such statements: five deprecated-sysvar notices, eleven `Truncated
 /// incorrect DOUBLE value` from string-vs-number comparisons, and a
-/// `tidb_max_chunk_size` clamp. None of the 18 is checked against TiDB by
+/// `tidb_max_chunk_size` clamp. None of the 18 was checked against TiDB by
 /// anything in this suite.
+///
+/// THAT 18 IS THE PRE-`Note` NUMBER AND IS KEPT ONLY AS HISTORY. Giving the
+/// session Go's third warning level turned the whole `IF EXISTS` family from
+/// silence into notes, and the survey went to 155 statements -- 216 of the new
+/// lines being `Note 1051`. The rise is the instrument becoming able to see a
+/// class it had no way to represent, not the engine getting noisier: with two
+/// levels there was nowhere to demote a suppressed error to, so Go's notes were
+/// dropped rather than reported. Read a survey count as a measurement OF THE
+/// TREE THAT PRODUCED IT; it moves whenever this engine's diagnostics do, which
+/// is why it is a survey and not a ratchet.
 ///
 /// Every one of the 18 has since been put to `gorun` -- a real TiDB session --
 /// and the answers are banked here, because the suite still cannot ask them:
