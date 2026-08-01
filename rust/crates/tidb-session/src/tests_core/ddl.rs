@@ -927,3 +927,80 @@ fn a_declared_type_without_a_width_normalizes_to_its_default() {
         );
     }
 }
+
+/// Creating an object in a schema that does not exist is Go's 1049, and --
+/// the half an error-only assertion would miss -- it creates NOTHING.
+///
+/// This used to report success and silently discard the table:
+/// `Catalog::register_in` returned `()` and its body was an `if let Some(..)`
+/// over the schema map, so an absent schema dropped the built table on the
+/// floor. `CREATE TABLE nosuchdb.t` answered "Query OK" and the table was
+/// never there.
+///
+/// Captured from real TiDB (`rust/difftests/gorun`, with the error text
+/// printed), against a mock-store session:
+///
+/// ```text
+/// create table nosuchdb.t (a bigint)        ERR [schema:1049]Unknown database 'nosuchdb'
+/// select a from nosuchdb.t                  ERR [schema:1146]Table 'nosuchdb.t' doesn't exist
+/// create view nosuchdb.v as select 1        ERR [schema:1049]Unknown database 'nosuchdb'
+/// create table if not exists nosuchdb.t2 .. ERR [schema:1049]Unknown database 'nosuchdb'
+/// create sequence nosuchdb.s                ERR [schema:1049]Unknown database 'nosuchdb'
+/// create table nosuchdb.c like test.src     ERR [schema:1049]Unknown database 'nosuchdb'
+/// create table nosuchdb.c2 like nosuchsrc.q ERR [schema:1146]Table 'nosuchsrc.q' doesn't exist
+/// ```
+///
+/// The last two are the ordering: a `LIKE` source is resolved BEFORE the
+/// target's schema is looked at, so a missing source wins.
+#[test]
+fn creating_in_an_unknown_schema_creates_nothing() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE src (a BIGINT)").unwrap();
+
+    // IF NOT EXISTS does not soften 1049: it excuses an existing TABLE, not
+    // an absent schema.
+    for statement in [
+        "CREATE TABLE nosuchdb.t (a BIGINT)",
+        "CREATE TABLE IF NOT EXISTS nosuchdb.t (a BIGINT)",
+        "CREATE TABLE nosuchdb.t LIKE test.src",
+        "CREATE VIEW nosuchdb.v AS SELECT 1",
+        "CREATE SEQUENCE nosuchdb.s",
+    ] {
+        let error = session.run(statement).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1049, "{statement}");
+        assert_eq!(error.message, "Unknown database 'nosuchdb'", "{statement}");
+    }
+
+    // A missing LIKE source is reported before the missing target schema.
+    let error = session
+        .run("CREATE TABLE nosuchdb.t LIKE nosuchsrc.q")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1146);
+    assert_eq!(error.message, "Table 'nosuchsrc.q' doesn't exist");
+
+    // Nothing was created. An error-only assertion passes just as happily
+    // when the table WAS built and then discarded, so query it back: the
+    // schema itself must still be absent, and every name in it unreachable.
+    let error = session.run("USE nosuchdb").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 1049);
+    for statement in [
+        "SELECT a FROM nosuchdb.t",
+        "SELECT * FROM nosuchdb.v",
+        "SELECT NEXTVAL(nosuchdb.s)",
+    ] {
+        assert!(session.run(statement).is_err(), "{statement}");
+    }
+
+    // And the same statements work once the schema exists, which pins that
+    // the refusal is about the schema and not about the statement.
+    session.run("CREATE DATABASE nosuchdb").unwrap();
+    session.run("CREATE TABLE nosuchdb.t (a BIGINT)").unwrap();
+    session.run("CREATE VIEW nosuchdb.v AS SELECT 1").unwrap();
+    session.run("CREATE SEQUENCE nosuchdb.s").unwrap();
+    session.run("INSERT INTO nosuchdb.t VALUES (7)").unwrap();
+    assert_eq!(
+        session.run("SELECT a FROM nosuchdb.t").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(7)]])
+    );
+}

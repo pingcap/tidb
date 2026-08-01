@@ -106,7 +106,7 @@ pub fn run_create_view_in(
         // for a view written without one at all.
         check_option: create.check_option.sql().to_owned(),
     };
-    catalog.register_view_in(&database, &name, view);
+    catalog.register_view_in(&database, &name, view)?;
     Ok(())
 }
 

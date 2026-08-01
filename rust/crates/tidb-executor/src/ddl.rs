@@ -418,8 +418,25 @@ pub fn run_create_table_in(
         let mut copy = create_like_source(&source_db, &source_name, catalog)?
             .create_like(id, &mut || ids.next().expect("one id per copied partition"));
         copy.name = name.to_owned();
-        catalog.register_kv_in(&database, name, copy);
+        catalog.register_kv_in(&database, name, copy)?;
         return Ok(true);
+    }
+
+    // Go reports a missing schema (1049) before it looks at the column
+    // definitions: captured, `create table nosuchdb.t (a bigint, primary
+    // key(zzz))` answers `[schema:1049]Unknown database 'nosuchdb'` rather
+    // than complaining about the key. Registration would refuse this anyway
+    // -- that is what makes the table impossible to lose -- but only after
+    // the columns had been built, which is the wrong error.
+    //
+    // The `LIKE` branch above deliberately leaves before this: Go resolves a
+    // LIKE source while preprocessing the statement, so a missing SOURCE wins
+    // over a missing target schema (captured: `create table nosuchdb.c2 like
+    // nosuchsrc.q` is `[schema:1146]Table 'nosuchsrc.q' doesn't exist`).
+    if !catalog.has_database(&database) {
+        return Err(DriverError::Schema(
+            crate::SchemaErrorKind::UnknownDatabase(database),
+        ));
     }
 
     // Build the ColumnInfos (ids 1..n, offsets in definition order).
@@ -764,7 +781,7 @@ pub fn run_create_table_in(
     )? {
         table.set_partition(partition);
     }
-    catalog.register_kv_in(&database, name, table);
+    catalog.register_kv_in(&database, name, table)?;
     Ok(true)
 }
 

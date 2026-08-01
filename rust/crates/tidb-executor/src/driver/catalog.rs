@@ -301,21 +301,49 @@ impl TableEntry {
 
 impl Catalog {
     /// Registers a matrix-backed `table` in the default database.
+    ///
+    /// # Panics
+    /// If `test` has been dropped. Every caller is a fixture or a bootstrap
+    /// step that runs against a freshly [`Default`]ed catalog, where `test`
+    /// exists by construction; a statement-driven create names its schema and
+    /// goes through [`Catalog::register_kv_in`], which reports 1049 instead.
     pub fn register(&mut self, name: &str, table: MemTable) {
-        self.register_in(DEFAULT_DATABASE, name, TableEntry::Mem(table));
+        self.register_in(DEFAULT_DATABASE, name, TableEntry::Mem(table))
+            .expect("the default database exists in a freshly built catalog");
     }
 
     /// Registers a TiKV-format-byte-backed `table` in the default database.
+    ///
+    /// # Panics
+    /// As [`Catalog::register`].
     pub fn register_kv(&mut self, name: &str, table: KvTable) {
-        self.register_in(DEFAULT_DATABASE, name, TableEntry::Kv(table));
+        self.register_in(DEFAULT_DATABASE, name, TableEntry::Kv(table))
+            .expect("the default database exists in a freshly built catalog");
     }
 
-    /// Registers `table` in `database`, which must exist.
-    fn register_in(&mut self, database: &str, name: &str, table: TableEntry) {
+    /// Registers `table` in `database`, or reports Go's 1049 when that schema
+    /// does not exist.
+    ///
+    /// The signature is the whole point: a `TableEntry` can only be handed to
+    /// a schema that was found, so "the table was accepted and dropped on the
+    /// floor" is not a state a caller can reach. It used to return `()` and
+    /// silently do nothing for an absent schema, which made
+    /// `CREATE TABLE nosuchdb.t` answer success and create nothing.
+    fn register_in(
+        &mut self,
+        database: &str,
+        name: &str,
+        table: TableEntry,
+    ) -> Result<(), DriverError> {
+        let schema = self
+            .databases
+            .get_mut(&database.to_lowercase())
+            .ok_or_else(|| {
+                DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database.to_owned()))
+            })?;
+        schema.tables.insert(name.to_lowercase(), table);
         self.version += 1;
-        if let Some(database) = self.databases.get_mut(&database.to_lowercase()) {
-            database.tables.insert(name.to_lowercase(), table);
-        }
+        Ok(())
     }
 
     /// Every database name, sorted, with `information_schema` first when it
@@ -543,24 +571,40 @@ impl Catalog {
     /// Registers a matrix-backed table in `database`, creating the schema
     /// when it does not exist. Used to materialize a virtual table before
     /// running an ordinary plan over it.
+    ///
+    /// # Panics
+    /// Never: the schema is created just above when it is missing.
     pub fn register_mem_in(&mut self, database: &str, name: &str, table: MemTable) {
         let key = database.to_lowercase();
         self.databases.entry(key).or_insert_with(|| Database {
             name: database.to_owned(),
             tables: HashMap::new(),
         });
-        self.register_in(database, name, TableEntry::Mem(table));
+        self.register_in(database, name, TableEntry::Mem(table))
+            .expect("the schema was just created when it was missing");
     }
 
-    /// Registers a TiKV-format-byte-backed table in `database`.
-    pub fn register_kv_in(&mut self, database: &str, name: &str, table: KvTable) {
-        self.register_in(database, name, TableEntry::Kv(table));
+    /// Registers a TiKV-format-byte-backed table in `database`, or reports
+    /// 1049 when that schema does not exist.
+    pub fn register_kv_in(
+        &mut self,
+        database: &str,
+        name: &str,
+        table: KvTable,
+    ) -> Result<(), DriverError> {
+        self.register_in(database, name, TableEntry::Kv(table))
     }
 
     /// Registers a view in `database`, replacing whatever the name held --
-    /// which is what `CREATE OR REPLACE VIEW` means.
-    pub fn register_view_in(&mut self, database: &str, name: &str, view: ViewDef) {
-        self.register_in(database, name, TableEntry::View(view));
+    /// which is what `CREATE OR REPLACE VIEW` means. Reports 1049 when the
+    /// schema does not exist.
+    pub fn register_view_in(
+        &mut self,
+        database: &str,
+        name: &str,
+        view: ViewDef,
+    ) -> Result<(), DriverError> {
+        self.register_in(database, name, TableEntry::View(view))
     }
 
     /// Whether `name` in `database` is a view.
@@ -593,8 +637,13 @@ impl Catalog {
     /// Callers own the name-collision check: Go answers 1050
     /// `Table 'db.name' already exists` for `CREATE SEQUENCE` over ANY
     /// existing name, table or sequence (captured).
-    pub fn register_sequence_in(&mut self, database: &str, name: &str, sequence: SequenceDef) {
-        self.register_in(database, name, TableEntry::Sequence(sequence));
+    pub fn register_sequence_in(
+        &mut self,
+        database: &str,
+        name: &str,
+        sequence: SequenceDef,
+    ) -> Result<(), DriverError> {
+        self.register_in(database, name, TableEntry::Sequence(sequence))
     }
 
     /// The sequence `name` in `database`, or `None` when the name is absent

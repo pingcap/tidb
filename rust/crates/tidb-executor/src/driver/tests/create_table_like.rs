@@ -149,20 +149,22 @@ fn like_does_not_copy_foreign_keys() {
 fn like_a_view_is_wrong_object() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT)", &mut catalog).unwrap();
-    catalog.register_view_in(
-        "test",
-        "v",
-        crate::driver::catalog::ViewDef {
-            name: "v".to_owned(),
-            columns: vec![("a".to_owned(), FieldType::new(FieldTypeCode::LongLong))],
-            select_sql: "SELECT `a` AS `a` FROM `test`.`t`".to_owned(),
-            definer_user: String::new(),
-            definer_host: String::new(),
-            algorithm: "UNDEFINED".to_owned(),
-            security: "DEFINER".to_owned(),
-            check_option: "CASCADED".to_owned(),
-        },
-    );
+    catalog
+        .register_view_in(
+            "test",
+            "v",
+            crate::driver::catalog::ViewDef {
+                name: "v".to_owned(),
+                columns: vec![("a".to_owned(), FieldType::new(FieldTypeCode::LongLong))],
+                select_sql: "SELECT `a` AS `a` FROM `test`.`t`".to_owned(),
+                definer_user: String::new(),
+                definer_host: String::new(),
+                algorithm: "UNDEFINED".to_owned(),
+                security: "DEFINER".to_owned(),
+                check_option: "CASCADED".to_owned(),
+            },
+        )
+        .unwrap();
 
     assert!(matches!(
         crate::run_create_table_on("CREATE TABLE dst LIKE v", &mut catalog),

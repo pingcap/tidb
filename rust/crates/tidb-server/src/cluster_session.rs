@@ -233,7 +233,9 @@ pub fn cluster_session_catalog(
                             Arc::new(planner_statistics(loaded_stats, table)),
                         );
                     }
-                    catalog.register_kv_in(&schema, table.name.original(), kv_table);
+                    catalog
+                        .register_kv_in(&schema, table.name.original(), kv_table)
+                        .expect("the schema was created just above this loop");
                 }
                 Err(reason) => skipped.push(SkippedTable {
                     name: format!("{schema}.{}", table.name.original()),
