@@ -130,6 +130,23 @@ impl DriverError {
                 error.mysql_message().unwrap_or_default(),
             )
         }
+        // CAPTURED from TiDB (mock store, `pkg/executor` testkit) -- what the
+        // three overflow eval errors below actually send, none of which is the
+        // generic unknown-error code this arm gives them:
+        //
+        //   select 9223372036854775807 + 1
+        //     1690 / 22003 / BIGINT value is out of range in '(9223372036854775807 + 1)'
+        //   select 18446744073709551615 + 1
+        //     1690 / 22003 / BIGINT UNSIGNED value is out of range in '(18446744073709551615 + 1)'
+        //   select 1e308 * 10
+        //     1690 / 22003 / DOUBLE value is out of range in '(1e+308 * 10)'
+        //   select exp(1000)
+        //     1690 / 22003 / DOUBLE value is out of range in 'exp(1000)'
+        //   select <65-digit> * <65-digit>
+        //     1690 / 22003 / DECIMAL value is out of range in '(<65-digit> * <65-digit>)'
+        //
+        // The trailing `in '<expr>'` is the statement's rendered expression,
+        // which no `EvalError` carries.
         DriverError::Exec(error) => MysqlError::unknown(format!("{error:?}")),
         DriverError::Txn(crate::TxnErrorKind::WriteConflict) => {
             MysqlError::new(
@@ -1130,6 +1147,10 @@ impl DriverError {
              allow-expression-index in config"
                 .to_owned(),
         ),
+        // CAPTURED from TiDB: `alter table fi add index idx((a+b))` then any of
+        // `drop column a` / `change column a z int` / `rename column a to z`
+        // gives 3837 / HY000 / "Column 'a' has an expression index dependency
+        // and cannot be dropped or renamed" -- the wording below, confirmed.
         DriverError::DependentByFunctionalIndex(column) => MysqlError::new(
             3837,
             *b"HY000",
