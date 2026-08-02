@@ -81,43 +81,6 @@ pub enum EvalError {
     },
 }
 
-impl EvalError {
-    /// The MySQL error code this error reaches the client with, when it has
-    /// one of its own. `None` means the caller's generic mapping applies.
-    #[must_use]
-    pub fn mysql_code(&self) -> Option<u16> {
-        match self {
-            EvalError::Json(json) => Some(json.code()),
-            EvalError::IllegalMixCollation(_) => Some(1267),
-            EvalError::IllegalMixCollationGeneric(_) => Some(1271),
-            EvalError::CollationCharsetMismatch { .. } => Some(1253),
-            EvalError::UnknownCollation(_) => Some(1273),
-            EvalError::DivisionByZero => Some(1365),
-            EvalError::TruncatedWrongValue(_) => Some(1292),
-            EvalError::Sequence(error) => Some(error.code()),
-            _ => None,
-        }
-    }
-
-    /// The message body for an error that carries its own code.
-    #[must_use]
-    pub fn mysql_message(&self) -> Option<String> {
-        match self {
-            EvalError::Json(json) => Some(json.message()),
-            EvalError::IllegalMixCollation(message)
-            | EvalError::IllegalMixCollationGeneric(message) => Some(message.clone()),
-            EvalError::CollationCharsetMismatch { collation, charset } => Some(format!(
-                "COLLATION '{collation}' is not valid for CHARACTER SET '{charset}'"
-            )),
-            EvalError::UnknownCollation(name) => Some(format!("Unknown collation: '{name}'")),
-            EvalError::DivisionByZero => Some("Division by 0".to_owned()),
-            EvalError::TruncatedWrongValue(message) => Some(message.clone()),
-            EvalError::Sequence(error) => Some(error.message()),
-            _ => None,
-        }
-    }
-}
-
 /// Why a sequence builtin failed, with the code and message TiDB reports.
 ///
 /// The two are DIFFERENT error classes in Go, and neither is the auto-id
