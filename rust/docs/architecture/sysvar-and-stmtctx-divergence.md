@@ -80,11 +80,33 @@ from source alone.
   `tidb_stmt_summary_filename`, `tidb_trace_event`.
 * Note that `max_connections` being in this set means a client cannot even read
   `@@global.max_connections`, which some drivers do at connect.
-* **Not fixed here.** The one-line guard relaxation in `set` would let the value
-  land in a table that `get_system` never consults for an instance-scoped
-  variable (`get_system` falls through to the global table only when
-  `!has_session_scope() && has_global_scope()`), producing a stored-but-unread
-  value. The correct shape is a third read path, which needs a test to land.
+* **FIXED.** The audit's warning was the design constraint: relaxing the
+  set-guard alone would have stored a value `get_system` never consults, which
+  is a silent no-op — worse than the loud wrong error. So the TIER came first:
+  `GlobalSysvars` now holds a second map (`instances`) beside `values`, and one
+  private selector `GlobalSysvars::store(def)` picks between them for every
+  read AND every write, so a value cannot be written where no reader looks.
+  * Which map: a variable with GLOBAL scope at all is cluster state (the six
+    `ScopeGlobal|ScopeInstance` entries stay in `values`); the 28 instance-only
+    ones are node-local. `overrides()` — which feeds cluster persistence and
+    the connect-time session seed — still returns `values` alone, so an
+    instance value is never offered to the cluster writer.
+  * Guards relaxed afterwards: `set` admits `has_global_scope() ||
+    has_instance_scope()` (Go `validateScope`), `get_system` falls through to
+    the node-wide tier when `!has_session_scope() && (global || instance)`, and
+    `get_global` answers for an instance-scoped variable because Go's read path
+    does not run `validateScope` (`SELECT @@global.max_connections` works).
+  * Legacy routing: `variables.rs::routes_to_instance_tier` reproduces
+    `set.go:152` — a SESSION/unqualified `SET` on an instance-scoped variable
+    is rewritten to an instance set and warned with `ErrInstanceScope`, whose
+    code is **8142** (`pkg/errno/errcode.go:1063`), not 8154. With
+    `tidb_enable_legacy_instance_scope = OFF` the rewrite is skipped and the
+    write falls through to `set_system`'s `!has_session_scope()` guard, which
+    is Go's 1229. `SET INSTANCE` is accepted directly and warns about nothing.
+  * The warning goes through `Session::append_warning`, the single door that
+    feeds both `SHOW WARNINGS` and the OK packet's `wire_warning_count`.
+  * Pinned in `tests_global_vars.rs`, including the mutation probe that a
+    genuinely SESSION-only variable still refuses `SET GLOBAL` with 1228.
 
 #### F2. `tidb_enable_clustered_index` — accepted, stored, never read
 
@@ -135,6 +157,25 @@ from source alone.
   SET GLOBAL max_allowed_packet = 1025; SELECT @@global.max_allowed_packet;
   ```
   Go: `1024` plus warning 1292. Rust: `1025`, no warning.
+* **Both SET behaviours FIXED.** The 1024-rounding is in
+  `SysVarDef::run_validation`, where the existing `truncated` flag already
+  carries `ErrTruncatedWrongValue` (1292) naming the value as TYPED; the
+  SESSION refusal is `variables.rs::check_max_allowed_packet_scope` →
+  `VarErrorKind::SessionScopeIsReadOnly` → 1621. The refusal cannot be a scope
+  bit: the variable still HAS session scope for READING, and only the write is
+  refused.
+* **The wire READER is NOT fixed, and was misdiagnosed above.**
+  `packet.rs`'s `DEFAULT_MAX_ALLOWED_PACKET` is a correctly-named *default*:
+  `PacketReader` already carries a per-connection `max_allowed_packet` field
+  with `with_max_allowed_packet`/`set_max_allowed_packet`. What is missing is
+  the caller — `tidb-server` (`sql_node.rs:1561`, `node_config.rs:383`,
+  and the long-data buffer bound at `mysql_connection.rs:282`) passes the
+  constant and never re-reads the variable after a `SET GLOBAL`. That is a
+  `tidb-server` change, not a `tidb-protocol` one; recorded here rather than
+  faked.
+* Go's third refusal, `errSetGlobalMaxAllowedPacket` in starter deployments
+  (`deploymode.IsStarter()`), has no deployment mode to key off in this tier
+  and is not modelled.
 
 #### F4. Transaction-retry variables: accepted, stored, never read — and one is stored wrong
 
@@ -186,6 +227,18 @@ from source alone.
   Set tidb_skip_isolation_level_check=1 to skip this error`. Rust: accepted and
   stored — and since nothing downstream reads it, the session silently keeps
   running at snapshot isolation while reporting SERIALIZABLE.
+* **FIXED** in `variables.rs::check_isolation_level`, which is where both
+  halves of Go's closure can reach what they need: the skip switch is read
+  from the session and the downgraded warning is appended to it. The refusal
+  is `VarErrorKind::UnsupportedIsolationLevel` (8048). Go tests the
+  *normalized* value, so the ordinal and lower-case spellings are refused with
+  it; the two accepted levels store and read back unchanged, on both spellings
+  of the variable name. Pinned in `tests_global_vars.rs`.
+* Still open, and deliberately not faked: nothing downstream READS the stored
+  level. `tidb-exec/src/isolation_state.rs` is now reachable from a correct
+  SET, but the executor does not consult it — a `READ-COMMITTED` session still
+  runs at the tier's one isolation. That reader belongs to the transaction
+  seam, not to the variable layer.
 
 ### Rank 2 — validation contract inverted or absent
 
@@ -345,6 +398,17 @@ Nine, each verified by grepping every crate for the literal name and for the
 | `transaction_isolation` / `tx_isolation` | — | none outside the alias pair |
 | `tidb_request_source_type` | — | none |
 | `tidb_scatter_region` | — | none |
+
+Dispositions after this change:
+
+| Variable | Disposition |
+| --- | --- |
+| `transaction_isolation` / `tx_isolation` | SET contract wired (8048 + skip-switch warning). The READER is the transaction seam's; not faked. |
+| `max_allowed_packet` | SET contract wired (1621 + 1024-rounding). The wire reader needs a `tidb-server` change (see F3); the `tidb-protocol` side already takes a per-connection limit. |
+| `tidb_max_chunk_size` / `tidb_init_chunk_size` | The clamp fires; the missing reader is the chunk allocator in `tidb-exec`/`tidb-executor`, outside this seam. Threading it is a one-line read at the allocator once that unit lands — the variable layer has nothing left to add. |
+| `tidb_request_source_type` | No consumer exists in this tier at all: there is no request-source field on the coprocessor request this node builds. Documented, not faked. |
+| `tidb_scatter_region` | No region-scatter path exists (DDL does not pre-split). Its `Validation` (lower-case + refuse outside `''`/`table`/`global`) is still unmodelled: `ValidationError::Refused` carries a `&'static str`, and Go's message interpolates the offending value, so wiring it needs that variant to carry an owned string. Left for the F9 sweep. |
+| `tidb_retry_limit` / `tidb_disable_txn_auto_retry` | Untouched: both need the retry seam (F4), including the inverted `always returns ON` contract. |
 
 Every `tidb-vardef` name constant in the workspace was checked; those five are
 the ones that are *defined and never referenced*, which is a cheap standing

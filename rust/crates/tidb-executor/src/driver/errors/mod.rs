@@ -962,6 +962,24 @@ impl DriverError {
         DriverError::Var(crate::VarErrorKind::ValidationRefused(message)) => {
             MysqlError::new(1105, *b"HY000", message.clone())
         }
+        // Go `ErrUnsupportedIsolationLevel` (8048).
+        DriverError::Var(crate::VarErrorKind::UnsupportedIsolationLevel(level)) => {
+            MysqlError::new(
+                8048,
+                *b"HY000",
+                format!(
+                    "The isolation level '{level}' is not supported. Set \
+                     tidb_skip_isolation_level_check=1 to skip this error"
+                ),
+            )
+        }
+        // Go `ErrReadOnly` (1621): "%s variable '%s' is read-only. Use SET %s
+        // to assign the value".
+        DriverError::Var(crate::VarErrorKind::SessionScopeIsReadOnly(name)) => MysqlError::new(
+            1621,
+            *b"HY000",
+            format!("SESSION variable '{name}' is read-only. Use SET GLOBAL to assign the value"),
+        ),
         DriverError::SubqueryReturnsMoreThanOneRow => MysqlError::new(
             ER_SUBQUERY_NO_1_ROW,
             *b"21000",

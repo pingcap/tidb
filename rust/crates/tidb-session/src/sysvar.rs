@@ -405,6 +405,32 @@ impl SysVarDef {
             }
             return Ok(validated);
         }
+        // Go's `max_allowed_packet` validation (`sysvar.go:2193`): the
+        // accepted value is truncated DOWN to a multiple of 1024, and the
+        // rounding is reported as `ErrTruncatedWrongValue` (1292) -- which is
+        // what the `truncated` flag carries to the statement.
+        //
+        // `MinValue` is 1024, so the type check has already refused anything
+        // below one full multiple; the remainder can never take the value to
+        // zero here.
+        //
+        // NOT MODELLED (needs a coded error this tier's `VarErrorKind` does
+        // not carry): Go additionally REFUSES `SET SESSION max_allowed_packet`
+        // with `ErrReadOnly` (1621, "SESSION variable 'max_allowed_packet' is
+        // read-only. Use SET GLOBAL to assign the value"), and refuses
+        // `SET GLOBAL` in starter deployments.
+        if self.name == "max_allowed_packet" {
+            if let Ok(parsed) = validated.value.parse::<u64>() {
+                let remainder = parsed % 1024;
+                if remainder != 0 {
+                    return Ok(Validated {
+                        value: (parsed - remainder).to_string(),
+                        truncated: true,
+                    });
+                }
+            }
+            return Ok(validated);
+        }
         if self.name != "sql_mode" {
             return Ok(validated);
         }

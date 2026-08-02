@@ -42,4 +42,17 @@ pub enum VarErrorKind {
     /// `tidb_enable_list_partition` set to anything but ON is the case that
     /// exists.
     ValidationRefused(String),
+    /// Go `ErrUnsupportedIsolationLevel` (8048), from `checkIsolationLevel`
+    /// (`pkg/sessionctx/variable/varsutil.go:116`): `SERIALIZABLE` and
+    /// `READ-UNCOMMITTED` are refused unless
+    /// `tidb_skip_isolation_level_check` is ON, which downgrades the same
+    /// error to a warning.
+    UnsupportedIsolationLevel(String),
+    /// Go `ErrReadOnly` (1621), from `max_allowed_packet`'s `Validation`
+    /// (`pkg/sessionctx/variable/sysvar.go:2193`): the variable is settable
+    /// only at GLOBAL scope, even though it HAS session scope for reading.
+    ///
+    /// The three arguments are Go's: the scope that was refused, the
+    /// variable, and the scope to use instead.
+    SessionScopeIsReadOnly(String),
 }
