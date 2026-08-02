@@ -192,6 +192,10 @@ impl OpenTransaction {
     }
 }
 
+/// Budget for the RPCs that end a transaction, matching client-go's
+/// `cleanupMaxBackoff = 20000` — see [`MultiStatementTransaction::transaction_end_call`].
+const TRANSACTION_END_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// One open explicit transaction, owned by exactly one connection.
 pub struct MultiStatementTransaction {
     open: OpenTransaction,
@@ -200,7 +204,12 @@ pub struct MultiStatementTransaction {
     /// the record key the buffer is keyed by.
     table: ConfiguredTable,
     buffer: TransactionMutationBuffer,
-    call: UnaryCallContext,
+    /// Per-statement RPC budget. Stored as a duration, never as an already
+    /// minted [`UnaryCallContext`]: that type carries an absolute deadline, so
+    /// one minted at `BEGIN` would hand every later statement — and the commit
+    /// — whatever was left of the first statement's budget, which for a
+    /// transaction a client held open is nothing.
+    timeout: Duration,
     /// Refreshes the primary lock's TTL for as long as a pessimistic
     /// transaction holds it; `None` until the first lock is taken.
     keep_alive: Option<LockKeepAlive>,
@@ -248,10 +257,43 @@ impl MultiStatementTransaction {
             mode,
             table,
             buffer: TransactionMutationBuffer::new(),
-            call: UnaryCallContext::with_timeout(timeout),
+            timeout,
             keep_alive: None,
             opener: opener.clone(),
         })
+    }
+
+    /// A fresh RPC budget for one statement, starting now.
+    fn statement_call(&self) -> UnaryCallContext {
+        UnaryCallContext::with_timeout(self.timeout)
+    }
+
+    /// A fresh RPC budget for the commit, rollback and cleanup that end the
+    /// transaction, deliberately unrelated to any statement's remaining time.
+    ///
+    /// This is client-go's rule. `twoPhaseCommitter.cleanup` builds its context
+    /// from the store, not from the `ctx` the failing statement handed it:
+    ///
+    /// ```text
+    /// cleanupKeysCtx := context.WithValue(c.store.Ctx(), retry.TxnStartKey, ctx.Value(retry.TxnStartKey))
+    /// ...
+    /// err = c.cleanupMutations(retry.NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+    /// ```
+    ///
+    /// with `cleanupMaxBackoff = 20000`, and `doActionOnGroupMutations` takes
+    /// the same decision for the secondary commits:
+    ///
+    /// ```text
+    /// secondaryBo := retry.NewBackofferWithVars(c.store.Ctx(), CommitSecondaryMaxBackoff, c.txn.vars)
+    /// ```
+    ///
+    /// The statement's `ctx` survives only as the log/trace value carried onto
+    /// the new context; the deadline comes from the store's lifetime. Ending a
+    /// transaction is the store's work, not the last statement's, so a
+    /// transaction a client held open for minutes must still be able to publish
+    /// or roll back.
+    fn transaction_end_call() -> UnaryCallContext {
+        UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT)
     }
 
     /// The snapshot every read in this transaction runs at.
@@ -371,7 +413,7 @@ impl MultiStatementTransaction {
                 self.lock_handles(&handles, ReadLockWait::Blocking)?;
             }
         }
-        let plan = plan_configured_write(self, write, &self.call.clone(), tz_offset_secs)
+        let plan = plan_configured_write(self, write, &self.statement_call(), tz_offset_secs)
             .map_err(|error| TransactionStatementError::write(&error))?;
         match plan {
             ConfiguredWritePlan::Write {
@@ -429,10 +471,10 @@ impl MultiStatementTransaction {
             ReadLockWait::NoWait => LockWaitTime::NoWait,
             ReadLockWait::Seconds(seconds) => LockWaitTime::Timeout(Duration::from_secs(seconds)),
         };
+        let call = self.statement_call();
         let OpenTransaction::Pessimistic(transaction) = &mut self.open else {
             unreachable!("the pessimistic mode check above admits only a pessimistic transaction");
         };
-        let call = self.call.clone();
         let held: BTreeSet<Vec<u8>> = transaction.locked_keys().into_iter().collect();
         let mut attempt = 0;
         let acquired = loop {
@@ -523,7 +565,7 @@ impl MultiStatementTransaction {
     }
 
     fn finish(mut self, publish: bool) -> Result<TransactionEnd, TransactionStatementError> {
-        let call = self.call.clone();
+        let call = Self::transaction_end_call();
         let mutations = if publish {
             std::mem::take(&mut self.buffer).into_mutations()
         } else {
@@ -690,7 +732,10 @@ fn coordinator_error(error: OptimisticCoordinatorError) -> TransactionStatementE
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_commit_outcome, written_handles, TransactionStatementError};
+    use super::{
+        classify_commit_outcome, written_handles, Duration, MultiStatementTransaction,
+        TransactionStatementError, UnaryCallContext, TRANSACTION_END_TIMEOUT,
+    };
     use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, ERR_WRITE_CONFLICT};
     use tidb_planner::prepared_dml::{
         ConfiguredAssignment, ConfiguredPreparedWrite, PreparedBindValue,
@@ -819,5 +864,31 @@ mod tests {
             rows: Vec::new(),
         })
         .is_empty());
+    }
+
+    #[test]
+    fn the_call_that_ends_a_transaction_does_not_spend_the_statement_budget() {
+        // Regression for the held-transaction commit failure: a `BEGIN` used to
+        // mint one `UnaryCallContext` and every later RPC inherited its absolute
+        // deadline, so a transaction held for longer than one statement's budget
+        // reached Prewrite with `timed out after 0ms`. Both budgets must be
+        // minted where they are spent, and the transaction-end budget comes from
+        // the store's lifetime rather than any statement's.
+        let statement = Duration::from_millis(50);
+        let opened = UnaryCallContext::with_timeout(statement);
+        std::thread::sleep(Duration::from_millis(120));
+        assert!(
+            opened.timeout().is_zero(),
+            "a context minted at BEGIN is exhausted once the transaction is held"
+        );
+        assert!(
+            UnaryCallContext::with_timeout(statement).timeout() > Duration::ZERO,
+            "a statement must start its own budget"
+        );
+        assert_eq!(TRANSACTION_END_TIMEOUT, Duration::from_secs(20));
+        assert!(
+            MultiStatementTransaction::transaction_end_call().timeout() > Duration::from_secs(19),
+            "commit, rollback and cleanup take the store's budget, not the statement's"
+        );
     }
 }
