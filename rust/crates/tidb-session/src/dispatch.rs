@@ -391,7 +391,13 @@ impl Session {
             Stmt::Dml(dml) => match &**dml {
                 DmlStmt::Insert(_) => {
                     let current_db = self.current_db.clone();
-                    let ctx = self.statement_context(true);
+                    // Go `ResetContextOfStmt`'s `*ast.InsertStmt` arm. The class
+                    // is what `StmtContext::push_down_flags` turns into the
+                    // statement-kind bit of any coprocessor request this
+                    // statement's read half issues.
+                    let ctx = self
+                        .statement_context(true)
+                        .with_statement_class(tidb_executor::StatementClass::Insert);
                     let result = self.with_staged_catalog(|catalog| {
                         tidb_executor::run_insert_reporting(sql, catalog, &current_db, &ctx)
                     });
@@ -420,7 +426,13 @@ impl Session {
                 }
                 DmlStmt::Update(_) => {
                     let current_db = self.current_db.clone();
-                    let ctx = self.statement_context(true);
+                    // Go `ResetContextOfStmt`'s `*ast.UpdateStmt` arm. The class
+                    // is what `StmtContext::push_down_flags` turns into the
+                    // statement-kind bit of any coprocessor request this
+                    // statement's read half issues.
+                    let ctx = self
+                        .statement_context(true)
+                        .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                     let output = self.with_staged_catalog(|catalog| {
                         Ok(StmtOutput::Affected(tidb_executor::run_update_in(
                             sql,
@@ -434,7 +446,13 @@ impl Session {
                 }
                 DmlStmt::Delete(_) => {
                     let current_db = self.current_db.clone();
-                    let ctx = self.statement_context(true);
+                    // Go `ResetContextOfStmt`'s `*ast.DeleteStmt` arm. The class
+                    // is what `StmtContext::push_down_flags` turns into the
+                    // statement-kind bit of any coprocessor request this
+                    // statement's read half issues.
+                    let ctx = self
+                        .statement_context(true)
+                        .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                     let output = self.with_staged_catalog(|catalog| {
                         Ok(StmtOutput::Affected(tidb_executor::run_delete_in(
                             sql,

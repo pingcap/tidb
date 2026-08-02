@@ -14,7 +14,9 @@
 
 #![allow(missing_docs)]
 
-#[path = "../src/error_context.rs"]
+// The module moved to `tidb-executor`, where the coprocessor request is
+// built; `tidb_exec::error_context` still re-exports it.
+#[path = "../../tidb-executor/src/error_context.rs"]
 mod error_context;
 
 use error_context::{

@@ -324,7 +324,10 @@ mod tests {
                 // Exactly what `tidb_distsql`'s `response_channel` does with
                 // `SelectResponse.warnings`, into whatever collector it was
                 // handed.
-                request.statement.warnings.append_tikv_warning(code, message);
+                request
+                    .statement
+                    .warnings
+                    .append_tikv_warning(code, message);
             }
             if request.ranges.is_empty() {
                 return Err(PushdownScannerError::Backend(StorageError::Backend(
@@ -633,6 +636,14 @@ mod tests {
         // `for_dml(error_for_division_by_zero, strict)` with the INSERT arm's
         // statement class: the read half of `INSERT INTO u SELECT a FROM t`.
         let ctx = crate::StmtContext::for_dml(true, true)
+            // TiDB's default `sql_mode` bits that `GetTypeFlagsForInsert`
+            // reads; without them `IgnoreZeroInDate` is true and the flags
+            // would be 136 rather than 8.
+            .with_date_modes(tidb_datatype::DateModes {
+                no_zero_date: true,
+                no_zero_in_date: true,
+                allow_invalid_dates: false,
+            })
             .with_statement_class(crate::StatementClass::Insert);
         run_select_on("SELECT a FROM t", &catalog, &ctx).unwrap();
 
@@ -672,10 +683,8 @@ mod tests {
             .unwrap();
         commit(&fixture.buffer, &fixture.snapshot);
         let scanner = Arc::clone(&fixture.scanner);
-        *scanner.region_warning.lock().unwrap() = Some((
-            1292,
-            "Truncated incorrect DOUBLE value: '12abc'".to_owned(),
-        ));
+        *scanner.region_warning.lock().unwrap() =
+            Some((1292, "Truncated incorrect DOUBLE value: '12abc'".to_owned()));
 
         let catalog = catalog_of(fixture.table);
         let ctx = crate::StmtContext::for_query();
