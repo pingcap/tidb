@@ -1324,7 +1324,14 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //       regardless, and this tier derives the name in lower case.
     // 73 - 9 = 64: the nine sysvar 1292 warnings above are now raised, and
     // `session/variable` diverges nowhere.
-    const KNOWN_DIVERGENCES: usize = 64;
+    //
+    // 64 - 1 = 63: a TYPED TEMPORAL LITERAL was being lowered into an ordinary
+    // `CAST`, which never fails and carries no fractional precision, so a
+    // `TIMESTAMP 'lit'` this suite compares answered where TiDB refuses and
+    // printed a value a digit short. See `tidb_expr::time_literal`; the whole
+    // class is measured by `tests/integrationtest/t/types/time.test`, which
+    // went from 56 divergences to 6 and is the topic to onboard next.
+    const KNOWN_DIVERGENCES: usize = 63;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
