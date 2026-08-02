@@ -475,7 +475,18 @@ const MATCHED_FLOOR: usize = 114;
 /// exactly what this constant exists to catch: the count moved 111 -> 105 and
 /// the SET moved differently again, so a count-only gate would have accepted
 /// either stale value.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 4_674_120_825_973_024_879;
+///
+/// 4_674_120_825_973_024_879 -> 12_364_006_894_818_275_074: the count stayed
+/// 105 and matched stayed at the floor, but divergence TEXTS inside the red
+/// set improved -- the CREATE TABLE handle-kind fix (NONCLUSTERED honoured)
+/// moved several `SHOW CREATE TABLE` and `tidb_pk_type` reads closer to the
+/// recording without closing them. The clearest single witness is the
+/// partitioned `log` table, which previously diverged on BOTH the clustered
+/// clause and the AUTO_INCREMENT counter and now diverges ONLY on
+/// `AUTO_INCREMENT=505488`. Same statements, still red, redder for fewer
+/// reasons -- the count-blind ratchet could never have seen this, which is
+/// why the fingerprint exists.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 12_364_006_894_818_275_074;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.
