@@ -833,6 +833,12 @@ fn label_of(drawn_name: &str) -> &'static str {
 /// running `EXPLAIN` through the session, so the wiring cannot rot while the
 /// leaves keep passing.
 ///
+/// This is the ONLY guard on these numbers. `difftests`' integration replay
+/// compares a plan through `access_property`, which keeps the operator, the
+/// access object, the range and `stats:pseudo` and drops `estRows` on the
+/// floor -- so its divergence ratchet cannot see an estimate move in either
+/// direction, and did not move when these fifteen numbers were corrected.
+///
 /// The one number that does not match is named at the bottom.
 #[test]
 fn explain_est_rows_on_an_unanalyzed_table() {
