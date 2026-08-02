@@ -513,3 +513,124 @@ fn a_global_max_allowed_packet_is_rounded_down_to_1024() {
         Some("2048".to_owned())
     );
 }
+
+/// A system variable's name is case-insensitive on every surface, and the
+/// name the user WROTE is echoed back in exactly one of them.
+///
+/// This is #157's pin, and #157 turned out to be MIS-PREMISED: the claim was
+/// that a bare `SET` delivers the name un-lowercased. Every surface reachable
+/// from a session was measured against real TiDB with `gorun` and a
+/// throwaway `Fields()` probe, and all of them already agree:
+///
+/// * the stored value -- `SET AUTOCOMMIT=0` is read back by `@@autocommit`;
+/// * the registry LOOKUP -- Go lowercases inside `variable.GetSysVar`
+///   (`variable.go:519`) and at `executor/set.go:91`, and every write path in
+///   [`crate::vars`] lowercases its key before it becomes a map key;
+/// * every message that INTERPOLATES the name, which Go renders lowercased:
+///   1193 unknown, 1238 read-only, 1231 bad value, 1621 session-read-only,
+///   and the 8142 legacy-instance-scope warning;
+/// * the COLUMN HEADER, which is the one surface that echoes the written
+///   case rather than the canonical one -- `SELECT @@Max_Allowed_Packet` is
+///   headed `@@Max_Allowed_Packet` by TiDB, not `@@max_allowed_packet`, and
+///   the qualifier keeps its case too.
+///
+/// Captured (`gorun`, and column names from a throwaway probe over
+/// `ResultSet.Fields()`):
+///
+/// ```text
+/// SET AUTOCOMMIT=0                  ; select @@autocommit  -> RS:0
+/// set @@SQL_MODE='ANSI_QUOTES'      ; select @@sql_mode    -> RS:ANSI_QUOTES
+/// SELECT @@Max_Allowed_Packet                              -> RS:67108864
+/// set NoSuchVar=1     -> ERR, Error|1193|Unknown system variable 'nosuchvar'
+/// set @@Version=1     -> ERR, Error|1238|Variable 'version' is a read only variable
+/// set @@SESSION.MAX_CONNECTIONS=10
+///   -> Warning|8142|modifying max_connections will require SET GLOBAL in a future version of TiDB
+///
+/// COLS: @@Max_Allowed_Packet
+/// COLS: @@max_allowed_packet
+/// COLS: @@SESSION.Sql_Mode
+/// COLS: @@GLOBAL.Max_Connections
+/// COLS: @@AutoCommit | @@sql_MODE
+/// ```
+///
+/// MEASURED NEGATIVE found while probing, a DIFFERENT divergence and not
+/// #157: `set @@Max_Allowed_Packet=100` is `Error|1621|...` in both, but Go
+/// ALSO leaves `Warning|1292|Truncated incorrect max_allowed_packet value:
+/// '100'` because it validates before it checks the session-read-only guard.
+/// This tier checks the guard first and raises no 1292. Not fixed here.
+#[test]
+fn a_sysvar_name_is_case_insensitive_but_the_column_header_keeps_its_case() {
+    let mut session = Session::new();
+
+    // The stored value survives a case change in either direction.
+    session.run("SET AUTOCOMMIT=0").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT @@autocommit")),
+        [["0".to_owned()]]
+    );
+    session.run("set @@SQL_MODE='ANSI_QUOTES'").unwrap();
+    assert_eq!(
+        row_text(session.run("select @@sql_mode")),
+        [["ANSI_QUOTES".to_owned()]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT @@Max_Allowed_Packet")),
+        [["67108864".to_owned()]]
+    );
+
+    // Every message that names the variable names it LOWERCASED, whatever
+    // case the statement wrote.
+    for (sql, message) in [
+        ("set NoSuchVar=1", "Unknown system variable 'nosuchvar'"),
+        ("select @@NoSuchVar", "Unknown system variable 'nosuchvar'"),
+        (
+            "set @@Version=1",
+            "Variable 'version' is a read only variable",
+        ),
+        (
+            "set @@SQL_MODE='NO_SUCH_MODE'",
+            "Variable 'sql_mode' can't be set to the value of 'NO_SUCH_MODE'",
+        ),
+    ] {
+        assert_eq!(
+            session.run(sql).unwrap_err().to_mysql_error().message,
+            message,
+            "{sql}"
+        );
+    }
+    // ... including a WARNING that names it.
+    session.run("set @@SESSION.MAX_CONNECTIONS=10").unwrap();
+    assert_eq!(
+        session
+            .warnings()
+            .iter()
+            .map(|w| (w.code, w.message.clone()))
+            .collect::<Vec<_>>(),
+        vec![(
+            8142,
+            "modifying max_connections will require SET GLOBAL in a future version of TiDB"
+                .to_owned()
+        )]
+    );
+
+    // The COLUMN HEADER is the exception: it echoes what was written, scope
+    // qualifier included.
+    for (sql, header) in [
+        ("SELECT @@Max_Allowed_Packet", "@@Max_Allowed_Packet"),
+        ("SELECT @@max_allowed_packet", "@@max_allowed_packet"),
+        ("SELECT @@SESSION.Sql_Mode", "@@SESSION.Sql_Mode"),
+        (
+            "SELECT @@GLOBAL.Max_Connections",
+            "@@GLOBAL.Max_Connections",
+        ),
+    ] {
+        let StmtOutput::Rows { columns, .. } = session.run_with_columns(sql).unwrap() else {
+            panic!("{sql} is a row set");
+        };
+        assert_eq!(
+            columns.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(),
+            [header],
+            "{sql}"
+        );
+    }
+}
