@@ -476,6 +476,7 @@ fn net_cost(rows: f64, row_size: f64) -> f64 {
 /// decides whether an index path is covering (Go's `isCoveringIndex`): a
 /// covering path lowers to a `PhysicalIndexReader`, a non-covering one to a
 /// `PhysicalIndexLookUpReader` and pays for the double read.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn enumerate_paths(
     table: &KvTable,
     columns: &[(String, FieldType)],

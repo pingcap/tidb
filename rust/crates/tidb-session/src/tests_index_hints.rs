@@ -291,7 +291,10 @@ fn an_empty_use_index_list_forces_the_table_path() {
     // `use index() where a = 2` is `Point_Get ... handle:2`, the same plan
     // the unhinted statement gets.
     assert_eq!(
-        access_objects(&mut session, "EXPLAIN SELECT * FROM t USE INDEX() WHERE a = 2"),
+        access_objects(
+            &mut session,
+            "EXPLAIN SELECT * FROM t USE INDEX() WHERE a = 2"
+        ),
         access_objects(&mut session, "EXPLAIN SELECT * FROM t WHERE a = 2")
     );
     assert_eq!(session.warnings(), &[]);
@@ -314,7 +317,29 @@ fn a_hint_pair_that_leaves_no_index_path_reads_the_table() {
     ));
     assert_eq!(
         row_text(
-            session.run("SELECT count(*) FROM t FORCE INDEX(idx_b) IGNORE INDEX(idx_b) WHERE b = 2")
+            session
+                .run("SELECT count(*) FROM t FORCE INDEX(idx_b) IGNORE INDEX(idx_b) WHERE b = 2")
+        ),
+        vec![vec!["1".to_owned()]]
+    );
+
+    // What comes back is the WHOLE table path, not a bare full scan -- Go
+    // appends `tablePath` itself, so everything that path can still do it
+    // still does. Captured: under this hint pair `where a = 2` is
+    // `Point_Get ... handle:2` and `where a > 3` is
+    // `TableRangeScan ... range:(3,+inf]`, both the unhinted plans.
+    for predicate in ["a = 2", "a > 3"] {
+        let hinted = row_text(session.run(&format!(
+            "EXPLAIN SELECT * FROM t FORCE INDEX(idx_b) IGNORE INDEX(idx_b) WHERE {predicate}"
+        )));
+        let unhinted = row_text(session.run(&format!("EXPLAIN SELECT * FROM t WHERE {predicate}")));
+        assert_eq!(hinted, unhinted, "{predicate}");
+    }
+    // Go's capture is `RS:1`.
+    assert_eq!(
+        row_text(
+            session
+                .run("SELECT count(*) FROM t FORCE INDEX(idx_b) IGNORE INDEX(idx_b) WHERE a = 2")
         ),
         vec![vec!["1".to_owned()]]
     );
@@ -471,7 +496,9 @@ fn an_invisible_index_is_1176_in_a_hint() {
         "idx_b"
     ));
 
-    session.run("ALTER TABLE u ALTER INDEX idx_b INVISIBLE").unwrap();
+    session
+        .run("ALTER TABLE u ALTER INDEX idx_b INVISIBLE")
+        .unwrap();
     let (code, message) = error_of(
         &mut session,
         "EXPLAIN SELECT * FROM u FORCE INDEX(idx_b) WHERE b = 2",
