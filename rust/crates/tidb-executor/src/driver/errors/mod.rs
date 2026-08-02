@@ -1132,6 +1132,22 @@ impl DriverError {
                  renamed"
             ),
         ),
+        // Go `ErrDependentByGeneratedColumn`: the message has a trailing
+        // period, unlike its two siblings here -- that is TiDB's own wording
+        // (`errname` catalog), not a slip.
+        DriverError::DependentByGeneratedColumn(column) => MysqlError::new(
+            3108,
+            *b"HY000",
+            format!("Column '{column}' has a generated column dependency."),
+        ),
+        DriverError::DependentByPartitionFunctional(column) => MysqlError::new(
+            3855,
+            *b"HY000",
+            format!(
+                "Column '{column}' has a partitioning function dependency and cannot be dropped \
+                 or renamed"
+            ),
+        ),
         DriverError::TooLongIdent(ident) => MysqlError::new(
             1059,
             *b"42000",

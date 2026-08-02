@@ -986,6 +986,32 @@ fn column_default_error(error: crate::column_default::DefaultError, column: &str
     }
 }
 
+/// The refusal a piece of name-keyed metadata makes when a DDL would drop or
+/// rename the column it names, in Go's own error for that metadata.
+///
+/// The two spellings of the column name are Go's and are observable: the
+/// generated-column arms report `oldColName.O`, the name AS WRITTEN, while
+/// `checkDropColumnWithPartitionConstraint` passes `colName.L` and so reports
+/// it LOWERCASED (`pkg/ddl/executor.go` `ErrDependentByPartitionFunctional
+/// .GenWithStackByArgs(colName.L)`).
+fn column_dependent_error(
+    dependent: crate::kv_table::ColumnDependent,
+    column: &str,
+) -> DriverError {
+    use crate::kv_table::ColumnDependent;
+    match dependent {
+        ColumnDependent::ExpressionIndex => {
+            DriverError::DependentByFunctionalIndex(column.to_owned())
+        }
+        ColumnDependent::GeneratedColumn => {
+            DriverError::DependentByGeneratedColumn(column.to_owned())
+        }
+        ColumnDependent::Partition => {
+            DriverError::DependentByPartitionFunctional(column.to_lowercase())
+        }
+    }
+}
+
 /// Names a generated-column DDL refusal the way Go's own error does.
 fn generated_column_error(error: crate::generated_column::GeneratedDdlError) -> DriverError {
     use crate::generated_column::GeneratedDdlError;

@@ -83,9 +83,14 @@ pub fn run_alter_table_in(
         )));
     }
 
-    // A constraint addresses its own side by column offset and the other side
-    // by table name, so a layout change or a rename would silently repoint
-    // it. Refused rather than corrupted; see `foreign_key::participates`.
+    // A constraint names its columns and its referenced table, and nothing
+    // here rewrites either, so a DROP COLUMN, a column RENAME or a table
+    // RENAME would leave the constraint naming something that is gone. (An
+    // ADD/MODIFY that only MOVES columns is harmless now that the constraint
+    // resolves its names at every use -- this refusal is wider than the
+    // hazard, deliberately, because Go's answer is to rewrite the `FKInfo`
+    // and until that is ported one refusal is easier to trust than four
+    // rules.) Refused rather than corrupted; see `foreign_key::participates`.
     let participates = crate::foreign_key::participates(catalog, &database, &name);
     for action in &alter.actions {
         if participates
@@ -456,10 +461,7 @@ fn add_foreign_key_action(
             name: foreign_key.name.clone(),
             unique: false,
             column_offsets: fk_offsets.clone(),
-            prefix_lengths: vec![
-                crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                fk_offsets.len()
-            ],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; fk_offsets.len()],
             visible: true,
         });
     }
@@ -897,13 +899,30 @@ fn modify_column_action(
     };
     // A rename onto another column's name is a duplicate, but renaming a
     // column to the name it already has is allowed.
-    if !def.name.eq_ignore_ascii_case(old_name)
-        && table
+    if !def.name.eq_ignore_ascii_case(old_name) {
+        if table
             .columns
             .iter()
             .any(|column| column.name.eq_ignore_ascii_case(&def.name))
-    {
-        return Err(DriverError::DuplicateColumnName(def.name.clone()));
+        {
+            return Err(DriverError::DuplicateColumnName(def.name.clone()));
+        }
+        // Go `getModifiableColumnJob` (`pkg/ddl/modify_column.go`) computes
+        // `checkModifyColumnWithGeneratedColumnsConstraint` unconditionally
+        // but only RAISES it inside this `newColName.L != originalColName.L`
+        // arm: a MODIFY that keeps the name leaves every generated expression
+        // reading a name that still resolves, so only the rename half is a
+        // problem. The partition question is deliberately NOT asked here --
+        // Go's rename-only path asks it, this path does not, and that
+        // asymmetry is Go's (`checkPartitionModifiableColumn` polices the
+        // type instead).
+        if let Some(
+            dependent @ (crate::kv_table::ColumnDependent::ExpressionIndex
+            | crate::kv_table::ColumnDependent::GeneratedColumn),
+        ) = table.column_dependent(offset)
+        {
+            return Err(super::column_dependent_error(dependent, old_name));
+        }
     }
 
     let mut field_type = field_type;
@@ -1194,14 +1213,15 @@ fn drop_column_action(
             table: table_name.to_owned(),
         });
     }
-    // CAPTURED from TiDB: with `index idx((a+b))`, `drop column a` is 3837
-    // `Column 'a' has an expression index dependency and cannot be dropped or
-    // renamed`. Without this the drop succeeded and left the index's hidden
-    // generated column reading a column that no longer exists.
-    if table.expression_index_depends_on(offset) {
-        return Err(DriverError::DependentByFunctionalIndex(
-            column_name.to_owned(),
-        ));
+    // Go `checkIsDroppableColumn` (`pkg/ddl/executor.go`) runs `isDroppableColumn`
+    // and then `checkDropColumnWithPartitionConstraint`, which is the pair
+    // `column_dependent` answers: with `index idx((a+b))`, `drop column a` is
+    // 3837 `Column 'a' has an expression index dependency and cannot be
+    // dropped or renamed` (CAPTURED from TiDB); with `c AS (a+1)` it is 3108;
+    // with `partition by hash(a)` it is 3855. Without this the drop succeeded
+    // and left the expression naming a column that no longer exists.
+    if let Some(dependent) = table.column_dependent(offset) {
+        return Err(super::column_dependent_error(dependent, column_name));
     }
     // Captured: dropping an integer primary key is TiDB's 8200.
     if table.pk_handle_offset() == Some(offset) {

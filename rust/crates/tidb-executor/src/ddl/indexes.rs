@@ -237,11 +237,21 @@ pub(crate) fn add_index_to_table(
     // is sound only while this holds. See `crate::ddl::table_partition`.
     if unique {
         if let Some(partition) = table.partition() {
+            // A name the partition expression reads that no column has is a
+            // catalog bug, not a statement error -- DDL refuses to drop or
+            // rename such a column (3855). It must not fall back to an empty
+            // list here, because `all()` over an empty list is TRUE and the
+            // 8264 refusal below would silently turn into an ACCEPT.
             let partition_offsets = crate::generated_column::dependency_offsets(
                 &table.columns,
                 &partition.dependencies,
             )
-            .unwrap_or_default();
+            .map_err(|missing| {
+                DriverError::Parse(format!(
+                    "partition expression of `{index_name}`'s table reads column `{missing}`, \
+                     which the table does not define"
+                ))
+            })?;
             if !partition_offsets
                 .iter()
                 .all(|offset| offsets.contains(offset))

@@ -209,11 +209,20 @@ fn table_func_deps(
             break;
         }
         if let Some(generation) = crate::generated_column::GeneratedColumnSlot::generation(column) {
-            let dependencies = crate::generated_column::dependency_offsets(
-                &kv.columns,
-                &generation.dependencies,
-            )
-            .unwrap_or_default();
+            // Unresolvable here means a catalog bug (DDL refuses to drop or
+            // rename a column a generated expression reads), and the fallback
+            // -- no functional dependency for this column -- would only cost
+            // an optimization, so it stays. It is asserted rather than
+            // ignored so the bug surfaces in the tier that CAN see it.
+            let resolved =
+                crate::generated_column::dependency_offsets(&kv.columns, &generation.dependencies);
+            debug_assert!(
+                resolved.is_ok(),
+                "generated column `{}` reads `{}`, which the table does not define",
+                kv.columns[offset].name,
+                resolved.as_ref().unwrap_err(),
+            );
+            let dependencies = resolved.unwrap_or_default();
             if !dependencies.is_empty() && in_scope(&dependencies) {
                 deps.generated.push((dependencies, offset));
             }

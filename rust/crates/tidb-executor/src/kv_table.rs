@@ -289,6 +289,25 @@ impl AutoIncrement {
     }
 }
 
+/// The piece of name-keyed metadata that stops a column being dropped or
+/// renamed, as [`KvTable::column_dependent`] reports it.
+///
+/// One value per error code Go raises, because the code is the whole
+/// observable difference: all three refusals say the same thing about the
+/// same column and only the number tells a client which metadata objected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnDependent {
+    /// The hidden generated column an expression index was rewritten into.
+    /// Go `ErrDependentByFunctionalIndex` (3837).
+    ExpressionIndex,
+    /// A visible generated column whose expression reads this one. Go
+    /// `ErrDependentByGeneratedColumn` (3108).
+    GeneratedColumn,
+    /// The partition expression, or the `PARTITION BY ... COLUMNS` list. Go
+    /// `ErrDependentByPartitionFunctional` (3855).
+    Partition,
+}
+
 impl KvTable {
     /// Builds an empty table over the in-process backend.
     #[must_use]
@@ -830,7 +849,7 @@ impl KvTable {
             row.resize(self.columns.len(), Datum::Null);
         }
         crate::generated_column::materialize(&self.columns, row, false, ctx)
-        .map_err(generation_error)
+            .map_err(generation_error)
     }
 
     /// Restores the generated columns a decoded row does not carry: the
@@ -854,7 +873,7 @@ impl KvTable {
         ctx: &impl tidb_expr::Columns,
     ) -> Result<(), KvTableError> {
         crate::generated_column::materialize(&self.columns, row, true, ctx)
-        .map_err(generation_error)
+            .map_err(generation_error)
     }
 
     /// The handle a row's values produce.
@@ -1096,27 +1115,52 @@ impl KvTable {
         offset >= self.visible_column_count()
     }
 
-    /// Whether an expression index reads the column at `offset`.
+    /// What name-keyed metadata reads the column at `offset`, if any.
     ///
-    /// An expression index is stored as a HIDDEN generated column plus an
-    /// index over it, so the index's dependence on a user column is that
-    /// hidden column's dependence. Dropping or renaming the user column would
-    /// leave the generation expression reading a column that is gone, which is
-    /// why Go refuses both with `ErrDependentByFunctionalIndex` (3837).
+    /// Three pieces of a `TableInfo` name a column rather than pointing at it:
+    /// a generated column's expression, the hidden generated column an
+    /// expression index was rewritten into, and the partition expression (or
+    /// its `COLUMNS` list). None of them can survive the column's NAME going
+    /// away, so a DDL that drops or renames the column has to answer for all
+    /// three -- and Go answers by REFUSING, with a different code for each.
+    ///
+    /// Order is Go's, and it is observable: Go's
+    /// `checkModifyColumnWithGeneratedColumnsConstraint` walks `t.Cols()` in
+    /// offset order and the FIRST generated column that names this one
+    /// decides between 3837 and 3108, and only then does
+    /// `checkDropColumnWithPartitionConstraint` get to say 3855. Hidden
+    /// columns are appended after the visible ones, so walking `self.columns`
+    /// is that walk.
     #[must_use]
-    pub fn expression_index_depends_on(&self, offset: usize) -> bool {
-        let Some(name) = self.columns.get(offset).map(|column| column.name.as_str()) else {
-            return false;
+    pub fn column_dependent(&self, offset: usize) -> Option<ColumnDependent> {
+        let name = self
+            .columns
+            .get(offset)
+            .map(|column| column.name.as_str())?;
+        let names_it = |dependencies: &[String]| {
+            dependencies
+                .iter()
+                .any(|dependency| dependency.eq_ignore_ascii_case(name))
         };
-        self.columns[self.visible_column_count()..]
-            .iter()
-            .filter_map(|column| column.generated.as_ref())
-            .any(|generated| {
-                generated
-                    .dependencies
-                    .iter()
-                    .any(|dependency| dependency.eq_ignore_ascii_case(name))
-            })
+        for (other, column) in self.columns.iter().enumerate() {
+            let Some(generated) = column.generated.as_ref() else {
+                continue;
+            };
+            if names_it(&generated.dependencies) {
+                return Some(if self.is_hidden(other) {
+                    ColumnDependent::ExpressionIndex
+                } else {
+                    ColumnDependent::GeneratedColumn
+                });
+            }
+        }
+        if self
+            .partition()
+            .is_some_and(|spec| names_it(&spec.dependencies))
+        {
+            return Some(ColumnDependent::Partition);
+        }
+        None
     }
 
     /// The offsets a foreign key's referencing columns sit at NOW, resolved

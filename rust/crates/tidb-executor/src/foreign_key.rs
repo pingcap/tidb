@@ -119,12 +119,7 @@ fn constraint_text(foreign_key: &KvForeignKey) -> String {
     )
 }
 
-fn violation(
-    side: Side,
-    database: &str,
-    table: &str,
-    foreign_key: &KvForeignKey,
-) -> DriverError {
+fn violation(side: Side, database: &str, table: &str, foreign_key: &KvForeignKey) -> DriverError {
     let name = format!("`{database}`.`{table}`");
     let constraint = constraint_text(foreign_key);
     match side {
@@ -292,12 +287,7 @@ pub(crate) fn check_child_rows(
         }
         for (_, indexes) in &wanted {
             for index in indexes {
-                verdicts[*index] = Some(violation(
-                    Side::Child,
-                    database,
-                    table,
-                    foreign_key,
-                ));
+                verdicts[*index] = Some(violation(Side::Child, database, table, foreign_key));
             }
         }
     }
@@ -352,12 +342,7 @@ pub(crate) fn require_existing_rows(
             .iter()
             .any(|parent| key_at(parent, &offsets).is_some_and(|found| found == key))
         {
-            return Err(violation(
-                Side::Child,
-                database,
-                table,
-                foreign_key,
-            ));
+            return Err(violation(Side::Child, database, table, foreign_key));
         }
     }
     Ok(())

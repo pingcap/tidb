@@ -267,12 +267,13 @@ pub fn materialize<S: GeneratedColumnSlot>(
         if only_virtual && generated.stored {
             continue;
         }
-        let value = eval_over_dependencies(&generated.expr, &generated.dependencies, columns, row, ctx)
-            .map_err(|error| GenerationError {
-                column: columns[offset].column_name().to_owned(),
-                detail: format!("{error:?}"),
-                eval: Some(error),
-            })?;
+        let value =
+            eval_over_dependencies(&generated.expr, &generated.dependencies, columns, row, ctx)
+                .map_err(|error| GenerationError {
+                    column: columns[offset].column_name().to_owned(),
+                    detail: format!("{error:?}"),
+                    eval: Some(error),
+                })?;
         // Go casts the generated value into the column's declared type before
         // it is stored or returned (`table.CastValue`), which is what makes
         // `b INT AS (a / 2)` an integer rather than the decimal the division
@@ -514,7 +515,11 @@ impl<'a> TableColumnResolver<'a> {
     /// expression indexes them. This is what a `GeneratedColumn` or a
     /// `PartitionSpec` stores.
     pub fn dependency_names(&self) -> Vec<String> {
-        self.seen.borrow().iter().map(|(_, name)| name.clone()).collect()
+        self.seen
+            .borrow()
+            .iter()
+            .map(|(_, name)| name.clone())
+            .collect()
     }
 
     /// The first unresolvable name, if any.
@@ -639,8 +644,7 @@ mod tests {
     fn a_chain_of_generated_columns_is_computed_left_to_right() {
         let columns = chain(true);
         let mut row = vec![Datum::Int(1), Datum::Null, Datum::Null];
-        materialize(&columns, &mut row, false, &tidb_expr::NoColumns)
-        .unwrap();
+        materialize(&columns, &mut row, false, &tidb_expr::NoColumns).unwrap();
         assert_eq!(row, vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)]);
     }
 
@@ -651,11 +655,9 @@ mod tests {
     fn materializing_twice_gives_the_same_row() {
         let columns = chain(true);
         let mut row = vec![Datum::Int(4), Datum::Null, Datum::Null];
-        materialize(&columns, &mut row, false, &tidb_expr::NoColumns)
-        .unwrap();
+        materialize(&columns, &mut row, false, &tidb_expr::NoColumns).unwrap();
         let once = row.clone();
-        materialize(&columns, &mut row, false, &tidb_expr::NoColumns)
-        .unwrap();
+        materialize(&columns, &mut row, false, &tidb_expr::NoColumns).unwrap();
         assert_eq!(row, once);
     }
 
@@ -666,8 +668,7 @@ mod tests {
         let columns = chain(true);
         let mut row = vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)];
         row[0] = Datum::Int(10);
-        materialize(&columns, &mut row, false, &tidb_expr::NoColumns)
-        .unwrap();
+        materialize(&columns, &mut row, false, &tidb_expr::NoColumns).unwrap();
         assert_eq!(row, vec![Datum::Int(10), Datum::Int(11), Datum::Int(12)]);
     }
 
@@ -676,8 +677,7 @@ mod tests {
     fn only_virtual_leaves_a_stored_column_as_decoded() {
         let columns = chain(true);
         let mut row = vec![Datum::Int(1), Datum::Int(99), Datum::Int(98)];
-        materialize(&columns, &mut row, true, &tidb_expr::NoColumns)
-        .unwrap();
+        materialize(&columns, &mut row, true, &tidb_expr::NoColumns).unwrap();
         assert_eq!(row, vec![Datum::Int(1), Datum::Int(99), Datum::Int(98)]);
     }
 
@@ -685,8 +685,7 @@ mod tests {
     fn only_virtual_recomputes_a_virtual_column() {
         let columns = chain(false);
         let mut row = vec![Datum::Int(1), Datum::Null, Datum::Null];
-        materialize(&columns, &mut row, true, &tidb_expr::NoColumns)
-        .unwrap();
+        materialize(&columns, &mut row, true, &tidb_expr::NoColumns).unwrap();
         assert_eq!(row, vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)]);
     }
 

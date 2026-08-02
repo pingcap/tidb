@@ -75,13 +75,26 @@ impl KvTable {
                         // Names, resolved against the current column list --
                         // the dependency set is keyed by name so no ALTER can
                         // leave it pointing at a column it never read.
-                        kept.extend(
-                            crate::generated_column::dependency_offsets(
-                                &self.columns,
-                                &generated.dependencies,
-                            )
-                            .unwrap_or_default(),
+                        //
+                        // A name that does NOT resolve is a catalog bug: DDL
+                        // refuses to drop or rename a column a generated
+                        // expression reads (3108/3837), and nothing else can
+                        // unmake a name. There is no error channel on a row
+                        // decoder, and the release fallback -- decode fewer
+                        // columns, so the expression evaluates over holes --
+                        // is exactly the silent wrong answer #202 was about,
+                        // so the bug is asserted where it can be seen.
+                        let resolved = crate::generated_column::dependency_offsets(
+                            &self.columns,
+                            &generated.dependencies,
                         );
+                        debug_assert!(
+                            resolved.is_ok(),
+                            "generated column `{}` reads `{}`, which the table does not define",
+                            self.columns[offset].name,
+                            resolved.as_ref().unwrap_err(),
+                        );
+                        kept.extend(resolved.unwrap_or_default());
                     }
                 }
                 if kept.len() == before {
@@ -629,11 +642,11 @@ impl RowDecoder {
         // divisor warns and the column reads NULL rather than failing the
         // statement -- see `KvTable::fill_virtual_columns`.
         crate::generated_column::materialize(&self.columns, &mut row, true, &tidb_expr::NoColumns)
-        .map_err(|error| KvTableError::Generation {
-            column: error.column,
-            detail: error.detail,
-            eval: error.eval,
-        })?;
+            .map_err(|error| KvTableError::Generation {
+                column: error.column,
+                detail: error.detail,
+                eval: error.eval,
+            })?;
         if let Some(keep) = &self.keep {
             let projected: Vec<Datum> = keep
                 .iter()

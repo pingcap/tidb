@@ -25,8 +25,22 @@
 //! cheap and safe: a name or a flag changes, while every column ID, column
 //! OFFSET and index entry stays exactly where it was. An index addresses its
 //! columns by offset here (`KvIndex::column_offsets`), so renaming a column
-//! cannot invalidate a key, and renaming an index does not touch the entries
+//! cannot invalidate a KEY, and renaming an index does not touch the entries
 //! filed under its id.
+//!
+//! That invariant covers indexes and rows, and it does NOT cover the metadata
+//! that names columns instead of pointing at them -- a generated column's
+//! expression, the hidden generated column behind an expression index, the
+//! partition expression, and a foreign key's `cols`. Renaming a column is
+//! exactly what invalidates those, which is why
+//! [`rename_column_action`] refuses rather than renames whenever
+//! [`crate::kv_table::KvTable::column_dependent`] reports one of the first
+//! three (Go's 3837 / 3108 / 3855). The fourth is refused a step earlier and
+//! more broadly: `ALTER TABLE` on any table participating in a foreign key is
+//! unsupported (`crate::ddl::alter_table`), so no rename reaches an `FKInfo`.
+//! Go instead REWRITES `fk.Cols` on this path
+//! (`pkg/ddl/modify_column.go` `updateFKInfoWhenModifyColumn`), which is the
+//! graduation path for that refusal.
 //!
 //! Mirrors Go `pkg/ddl/executor.go`'s `AlterTable` arms
 //! `ast.AlterTableRenameColumn`, `ast.AlterTableRenameIndex`,
@@ -99,14 +113,21 @@ pub(crate) fn rename_column_action(
     {
         return Err(DriverError::DuplicateColumnName(to.to_owned()));
     }
-    // CAPTURED from TiDB: with `index idx((a+b))`, `rename column a to z` is
-    // the same 3837 a drop is -- the index's hidden generated column reads the
-    // column, so a rename orphans it exactly as a drop does. It is checked
-    // LAST of the three, after the same-name early return (so
-    // `rename column a to a` still succeeds), after `_tidb_rowid` (1166) and
-    // after the duplicate name (1060) -- captured in that order.
-    if table.expression_index_depends_on(offset) {
-        return Err(DriverError::DependentByFunctionalIndex(from.to_owned()));
+    // Go `RenameColumn` (`pkg/ddl/executor.go`) asks the name-keyed metadata
+    // LAST, after the same-name early return (so `rename column a to a` still
+    // succeeds), after `_tidb_rowid` (1166) and after the duplicate name
+    // (1060). Both of its questions are asked here:
+    // `checkModifyColumnWithGeneratedColumnsConstraint` then
+    // `checkDropColumnWithPartitionConstraint`, which is exactly the order
+    // `column_dependent` reports in.
+    //
+    // Nothing below this line rewrites metadata, and that is the point: with
+    // the columns' names keying the generated expressions and the partition
+    // expression, a rename that got through would leave those reading a name
+    // no column has. Go refuses rather than rewriting for the same reason,
+    // and `dependency_offsets` may therefore treat a missing name as a bug.
+    if let Some(dependent) = table.column_dependent(offset) {
+        return Err(super::column_dependent_error(dependent, from));
     }
     table.columns[offset].name = to.to_owned();
     Ok(())

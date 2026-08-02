@@ -269,6 +269,16 @@ pub enum DriverError {
     /// column name: a column an expression index reads cannot be dropped or
     /// renamed.
     DependentByFunctionalIndex(String),
+    /// Go `dbterror.ErrDependentByGeneratedColumn` (3108), carrying the column
+    /// name: a column a VISIBLE generated column reads cannot be dropped or
+    /// renamed. The hidden-column sibling of this is
+    /// [`Self::DependentByFunctionalIndex`], and which of the two a statement
+    /// gets is decided by the first dependent column in offset order.
+    DependentByGeneratedColumn(String),
+    /// Go `dbterror.ErrDependentByPartitionFunctional` (3855), carrying the
+    /// column name: a column the partition expression -- or the
+    /// `PARTITION BY ... COLUMNS` list -- reads cannot be dropped or renamed.
+    DependentByPartitionFunctional(String),
     /// Go `dbterror.ErrTooLongIdent` (1059), carrying the identifier Go names.
     TooLongIdent(String),
     /// Go `dbterror.ErrWrongExprInPartitionFunc` (1486): the partition
