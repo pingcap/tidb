@@ -440,6 +440,31 @@ pub fn find_index_column_by_name<'a>(
 mod tests {
     use super::*;
 
+    // Go's `ast.IndexType` is a plain `int`, and its declaration warns that a
+    // value "may come from a previous version persisted in TableInfo. So you
+    // must keep it compatible when modifying it." An `index_type` this build
+    // has no constant for must therefore survive a decode/encode cycle byte
+    // for byte, not become 0.
+    #[test]
+    fn unknown_index_type_survives_round_trip() {
+        let go = r#"{"id":1,"idx_name":{"O":"i","L":"i"},"tbl_name":{"O":"t","L":"t"},"index_type":9}"#;
+        let idx: IndexInfo = serde_json::from_str(go).unwrap();
+        assert_eq!(idx.tp, IndexType(9));
+        // Go `IndexType.String` returns "" for an unnamed value, so
+        // SHOW CREATE TABLE omits the USING clause rather than inventing one.
+        assert_eq!(idx.tp.sql(), "");
+
+        let encoded = serde_json::to_string(&idx).unwrap();
+        assert!(
+            encoded.contains(r#""index_type":9"#),
+            "index_type collapsed: {encoded}"
+        );
+        // Byte-identical on every further cycle: nothing about the value is
+        // normalized away.
+        let again: IndexInfo = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(serde_json::to_string(&again).unwrap(), encoded);
+    }
+
     #[test]
     fn global_index_v1_flag() {
         let prev = get_global_index_v1_supported();

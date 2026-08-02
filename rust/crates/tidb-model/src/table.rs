@@ -949,6 +949,37 @@ pub const DEFAULT_NEGATIVE_SEQUENCE_MIN_VALUE: i64 = -9_223_372_036_854_775_807;
 mod tests {
     use super::*;
 
+    // The five `TableInfo` sub-struct enums that used to reject an
+    // unrecognised ordinal outright. Go declares all five as plain
+    // `int`/`byte`, so a document written by a newer TiDB decodes there and
+    // must decode here: an unknown `column_choice` may not take out the whole
+    // table. Each value is preserved byte for byte across the cycle.
+    #[test]
+    fn unknown_ast_enum_ordinals_survive_round_trip() {
+        let view = r#"{"view_algorithm":7,"view_definer":{"Username":"root","Hostname":"%","CurrentUser":false,"AuthUsername":"","AuthHostname":"","AuthPlugin":""},"view_security":5,"view_select":"SELECT 1","view_checkoption":9,"view_cols":null}"#;
+        let decoded: ViewInfo = serde_json::from_str(view).unwrap();
+        assert_eq!(decoded.algorithm, ViewAlgorithm(7));
+        assert_eq!(decoded.security, ViewSecurity(5));
+        assert_eq!(decoded.check_option, ViewCheckOption(9));
+        // Go's `String` falls through to these defaults rather than erroring.
+        assert_eq!(decoded.algorithm.sql(), "UNDEFINED");
+        assert_eq!(decoded.security.sql(), "DEFINER");
+        assert_eq!(decoded.check_option.sql(), "CASCADED");
+        assert_eq!(serde_json::to_string(&decoded).unwrap(), view);
+
+        let stats = r#"{"auto_recalc":true,"column_choice":4,"column_list":[],"sample_num":0,"sample_rate":0.0,"buckets":0,"topn":0,"concurrency":0}"#;
+        let decoded: StatsOptions = serde_json::from_str(stats).unwrap();
+        assert_eq!(decoded.column_choice, ColumnChoice(4));
+        assert_eq!(decoded.column_choice.sql(), "DEFAULT");
+        assert_eq!(serde_json::to_string(&decoded).unwrap(), stats);
+
+        let lock = r#"{"Tp":6,"Sessions":null,"State":0,"TS":0}"#;
+        let decoded: TableLockInfo = serde_json::from_str(lock).unwrap();
+        assert_eq!(decoded.tp, TableLockType(6));
+        assert_eq!(decoded.tp.sql(), "");
+        assert_eq!(serde_json::to_string(&decoded).unwrap(), lock);
+    }
+
     #[test]
     fn enum_strings() {
         assert_eq!(TableCacheStatusType::DISABLE.to_string(), "disable");

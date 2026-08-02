@@ -147,9 +147,6 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
         interval: None,
     };
     match kind {
-        PartitionType::NONE => {
-            return Err(parser.err_here("NONE is not a partition method"));
-        }
         PartitionType::HASH => method.expr = Some(parse_partition_expr(parser)?),
         PartitionType::KEY => {
             if parser.is_kw("ALGORITHM") {
@@ -252,6 +249,10 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
                 );
             }
         }
+        // `kind` was just produced from the keyword vocabulary above, so no
+        // other value reaches here; `PartitionTypeNone` in particular is not a
+        // method any source text can spell.
+        _ => return Err(parser.err_here("expected partition method")),
     }
     Ok(method)
 }

@@ -447,6 +447,21 @@ mod tests {
         );
     }
 
+    // Go's `PartitionType` is a plain `int`: any number survives Unmarshal and
+    // Marshal untouched. Collapsing an unnamed value to `PartitionTypeNone`
+    // would relabel this table "not partitioned" while `definitions` and `num`
+    // stay populated -- an internally contradictory TableInfo, written back to
+    // every node in the cluster on the first Rust DDL.
+    #[test]
+    fn unknown_partition_type_survives_round_trip() {
+        let go = r#"{"type":9,"expr":"a","columns":null,"enable":true,"is_empty_columns":false,"definitions":[{"id":1,"name":{"O":"p0","L":"p0"},"less_than":["10"],"in_values":null,"policy_ref_info":null}],"adding_definitions":null,"dropping_definitions":null,"states":null,"num":2,"ddl_state":0}"#;
+        let pi: PartitionInfo = serde_json::from_str(go).unwrap();
+        assert_eq!(pi.partition_type, PartitionType(9));
+        assert_eq!(pi.partition_type.sql(), "");
+        assert_eq!(pi.definitions.len(), 1);
+        assert_eq!(serde_json::to_string(&pi).unwrap(), go);
+    }
+
     #[test]
     fn clear_reorg_and_storage_class() {
         let mut pi = PartitionInfo {
