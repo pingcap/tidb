@@ -634,3 +634,96 @@ fn a_sysvar_name_is_case_insensitive_but_the_column_header_keeps_its_case() {
         );
     }
 }
+
+/// #181: Go's overflow message ends `in '<expr>'`, naming the expression, and
+/// this tier stops at the class. The seam is REPORTED here rather than
+/// half-built, because two separate pieces of plumbing are missing and an
+/// approximation would diverge on both.
+///
+/// # Capture (throwaway probe printing `err.Error()`; `gorun` prints bare ERR)
+///
+/// Schema `t(a bigint, b bigint)`, row `(9223372036854775807, 2)`:
+///
+/// ```text
+/// select 9223372036854775807 + 1
+///   [types:1690]BIGINT value is out of range in '(9223372036854775807 + 1)'
+/// select 9223372036854775807 * 2
+///   [types:1690]BIGINT value is out of range in '(9223372036854775807 * 2)'
+/// select -9223372036854775808 - 1
+///   [types:1690]BIGINT value is out of range in '(-9223372036854775808 - 1)'
+/// select a + b from t
+///   [types:1690]BIGINT value is out of range in '(test.t.a + test.t.b)'
+/// select a + 1 from t
+///   [types:1690]BIGINT value is out of range in '(test.t.a + 1)'
+/// select a+b as x from t          -- the ALIAS is not in the text
+///   [types:1690]BIGINT value is out of range in '(test.t.a + test.t.b)'
+/// select abs(-9223372036854775808)
+///   [types:1690]BIGINT value is out of range in 'abs(-9223372036854775808)'
+/// select 1e308 + 1e308
+///   [types:1690]DOUBLE value is out of range in '(1e+308 + 1e+308)'
+/// ```
+///
+/// # Where the text comes from in Go, and why it cannot be restored here
+///
+/// It is built AT THE SIGNATURE, not from the statement: `builtin_arithmetic.go`
+/// writes `fmt.Sprintf("(%s + %s)", s.args[0].StringWithCtx(...),
+/// s.args[1].StringWithCtx(...))` -- each ARGUMENT's own `Expression.String()`,
+/// after resolution. Two consequences make a hand-written approximation wrong:
+///
+/// * a column renders FULLY QUALIFIED, `test.t.a`, which is resolution output.
+///   This tier's rewritten `tidb_expr::Expr::Column` holds the path AS
+///   WRITTEN (`["a"]`); the resolved `db.table.column` lives in the
+///   executor's `FromScope`, and the `Columns` trait the evaluator holds
+///   exposes no way to ask for it. So the qualifier is not merely unformatted
+///   here -- it is not present at the raising frame at all.
+/// * a literal renders as Go's own formatting of the VALUE, not the source
+///   text: `1e308` in the statement comes back as `1e+308`. An AST restore of
+///   the source diverges even for a constant-only expression, which is the
+///   case that otherwise looks trivially portable.
+///
+/// #74's generated-column `expr_text` is NOT reusable: it is restored with
+/// `WITHOUT_SCHEMA_NAME | WITHOUT_TABLE_NAME | NAME_BACK_QUOTES`, so it
+/// produces `` (`a` + 1) `` -- it strips exactly the qualifiers this message
+/// requires and back-quotes the names it leaves bare.
+///
+/// # The exact insertion point, when the plumbing exists
+///
+/// `tidb_expr::eval_in`'s `Expr::Binary(op, l, r)` arm
+/// (`crates/tidb-expr/src/lib.rs`, the
+/// `eval_binary_with_div_precision(*op, ...)` call): that frame holds the
+/// operator and BOTH argument expressions, which is Go's `s.args`. What it
+/// still needs is a way to render one argument the way Go's
+/// `Expression.String()` does -- which means the resolver must record the
+/// qualified name on the rewritten `Column` node, or `Columns` must be able
+/// to answer it for a path.
+#[test]
+fn an_overflow_names_its_class_but_not_yet_its_expression() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a BIGINT, b BIGINT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (9223372036854775807, 2)")
+        .unwrap();
+
+    for sql in [
+        "SELECT 9223372036854775807 + 1",
+        "SELECT 9223372036854775807 * 2",
+        "SELECT a + b FROM t",
+        "SELECT a + 1 FROM t",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1690, "{sql}");
+        assert_eq!(&error.state, b"22003", "{sql}");
+        // DIVERGENCE (#181): Go appends ` in '<expr>'` here.
+        assert_eq!(error.message, "BIGINT value is out of range", "{sql}");
+    }
+
+    let error = session
+        .run("SELECT 1e308 + 1e308")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1690);
+    // DIVERGENCE (#181): Go says `DOUBLE value is out of range in
+    // '(1e+308 + 1e+308)'` -- note `1e+308`, the VALUE's formatting, not the
+    // `1e308` the statement wrote.
+    assert_eq!(error.message, "DOUBLE value is out of range");
+}
