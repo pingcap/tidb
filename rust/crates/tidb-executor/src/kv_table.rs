@@ -2011,8 +2011,11 @@ mod tests {
             on_delete: FkAction::Restrict,
             on_update: FkAction::Restrict,
         });
-        let key = t.foreign_keys()[0].clone();
-        assert_eq!(t.foreign_key_offsets(&key), Some(vec![1]));
+        // Re-read the constraint from the table on both sides: a clone taken
+        // BEFORE the insert carries its own `cols` and would answer from
+        // those, which is not the question.
+        let offsets = |t: &KvTable| t.foreign_key_offsets(&t.foreign_keys()[0]);
+        assert_eq!(offsets(&t), Some(vec![1]));
         t.add_column(
             0,
             KvColumn {
@@ -2025,7 +2028,7 @@ mod tests {
             },
         );
         assert_eq!(
-            t.foreign_key_offsets(&key),
+            offsets(&t),
             Some(vec![2]),
             "the constraint follows `s`, it does not stay at offset 1"
         );
