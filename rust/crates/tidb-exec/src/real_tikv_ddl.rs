@@ -265,10 +265,6 @@ pub fn commit_cluster_ddl(
         OptimisticCommitOutcome::Undetermined(undetermined) => Err(ClusterDdlError::Undetermined(
             format!("{:?}", undetermined.cause),
         )),
-        other => Err(ClusterDdlError::NotCommitted(format!(
-            "{:?}",
-            other.state()
-        ))),
     }
 }
 

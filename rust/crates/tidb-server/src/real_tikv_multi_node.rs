@@ -1049,6 +1049,20 @@ pub(crate) fn run_bound_multi_node(
     })
 }
 
+/// Maps a configured-write failure to its client answer, keeping the one
+/// failure whose answer is "nobody knows" distinguishable from every failure
+/// that definitely did not commit.
+///
+/// Go's chain: `2pc.go:2062-2069` -> `tikverr.ErrResultUndetermined` ->
+/// `pkg/store/driver/error/error.go:203` -> `terror.ErrResultUndetermined` ->
+/// `pkg/server/conn.go:1288-1291`, which closes the connection.
+fn configured_write_error(error: &ConfiguredWriteError) -> SqlQueryError {
+    match error {
+        ConfiguredWriteError::Undetermined(_) => SqlQueryError::result_undetermined(),
+        other => SqlQueryError::unknown(other.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1145,19 +1159,5 @@ mod tests {
             ordered_query_plan_json(9, 13, receipt, input_required),
             "{\"event\":\"query_ordered_plan\",\"connection_id\":9,\"query_id\":13,\"mode\":\"topn\",\"order_keys\":[{\"full_schema_offset\":4,\"direction\":\"asc\"}],\"limit_offset\":0,\"limit_count\":0,\"limit_end_exclusive\":0,\"capacity\":7,\"input_required\":false}"
         );
-    }
-}
-
-/// Maps a configured-write failure to its client answer, keeping the one
-/// failure whose answer is "nobody knows" distinguishable from every failure
-/// that definitely did not commit.
-///
-/// Go's chain: `2pc.go:2062-2069` -> `tikverr.ErrResultUndetermined` ->
-/// `pkg/store/driver/error/error.go:203` -> `terror.ErrResultUndetermined` ->
-/// `pkg/server/conn.go:1288-1291`, which closes the connection.
-fn configured_write_error(error: &ConfiguredWriteError) -> SqlQueryError {
-    match error {
-        ConfiguredWriteError::Undetermined(_) => SqlQueryError::result_undetermined(),
-        other => SqlQueryError::unknown(other.to_string()),
     }
 }

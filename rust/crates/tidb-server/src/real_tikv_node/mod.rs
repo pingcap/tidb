@@ -1542,6 +1542,20 @@ impl std::error::Error for RunConfiguredNodeError {
     }
 }
 
+/// Maps a configured-write failure to its client answer, keeping the one
+/// failure whose answer is "nobody knows" distinguishable from every failure
+/// that definitely did not commit.
+///
+/// Go's chain: `2pc.go:2062-2069` -> `tikverr.ErrResultUndetermined` ->
+/// `pkg/store/driver/error/error.go:203` -> `terror.ErrResultUndetermined` ->
+/// `pkg/server/conn.go:1288-1291`, which closes the connection.
+fn configured_write_error(error: &ConfiguredWriteError) -> SqlQueryError {
+    match error {
+        ConfiguredWriteError::Undetermined(_) => SqlQueryError::result_undetermined(),
+        other => SqlQueryError::unknown(other.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1708,19 +1722,5 @@ mod tests {
             *events.lock().unwrap(),
             ["factory_drop", "authority_shutdown"]
         );
-    }
-}
-
-/// Maps a configured-write failure to its client answer, keeping the one
-/// failure whose answer is "nobody knows" distinguishable from every failure
-/// that definitely did not commit.
-///
-/// Go's chain: `2pc.go:2062-2069` -> `tikverr.ErrResultUndetermined` ->
-/// `pkg/store/driver/error/error.go:203` -> `terror.ErrResultUndetermined` ->
-/// `pkg/server/conn.go:1288-1291`, which closes the connection.
-fn configured_write_error(error: &ConfiguredWriteError) -> SqlQueryError {
-    match error {
-        ConfiguredWriteError::Undetermined(_) => SqlQueryError::result_undetermined(),
-        other => SqlQueryError::unknown(other.to_string()),
     }
 }
