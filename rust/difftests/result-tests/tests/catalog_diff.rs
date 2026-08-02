@@ -486,7 +486,20 @@ const MATCHED_FLOOR: usize = 114;
 /// `AUTO_INCREMENT=505488`. Same statements, still red, redder for fewer
 /// reasons -- the count-blind ratchet could never have seen this, which is
 /// why the fingerprint exists.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 12_364_006_894_818_275_074;
+/// 12_364_006_894_818_275_074 -> 9_329_879_596_375_632_442: the count stayed
+/// 105, and exactly TWO texts moved -- both `DESC test_gv_ddl` in
+/// `ddl/column_modify`, which lost the column `a` here and no longer does.
+/// `column_modify.test` runs `alter table test_gv_ddl drop column a` and
+/// `alter table test_gv_ddl change column a anew int` over
+/// `test_gv_ddl(a int, b int as (a+8) virtual, c int as (b+2) stored)`, and
+/// the recording answers both with `Error 3108 (HY000): Column 'a' has a
+/// generated column dependency.` This tier accepted them, so `a` really went
+/// away and every later read of that table was short a column. Both are now
+/// refused with that exact error (#202). The two DESCs stay red because `b`
+/// reads back `bigint` with no `VIRTUAL GENERATED` in `Extra` -- a separate,
+/// still-open gap -- so the count could not see this: the fingerprint is the
+/// only gate that could.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 9_329_879_596_375_632_442;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.
