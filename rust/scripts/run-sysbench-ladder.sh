@@ -413,6 +413,86 @@ for workload in oltp_point_select oltp_read_only oltp_write_only oltp_read_write
   done
 done
 
+step "rung 6b: the SAME four workloads against the Go tidb-server on the SAME TiKV"
+# Raw tps is not comparable across runs on this machine -- the same read code
+# has measured 89.15 and 219.91 tps on consecutive runs. What IS comparable is
+# Go's own per-statement time measured in the SAME run against the SAME
+# storage, so the deliverable is the Rust EXCESS over it, not either absolute.
+GO_SYSBENCH_CONN=(
+  --db-driver=mysql
+  --mysql-ssl=off
+  --mysql-host=127.0.0.1
+  --mysql-port="${GO_SQL_PORT}"
+  --mysql-user=root
+  --mysql-db="${SYSBENCH_DB}"
+  --tables=1
+  --table-size="${TABLE_SIZE}"
+)
+GO_SYSBENCH_CONN+=("${AUTO_INC_ARGS[@]+"${AUTO_INC_ARGS[@]}"}")
+if [[ "${prepared}" == true ]]; then
+  for workload in oltp_point_select oltp_read_only oltp_write_only oltp_read_write; do
+    for ps_mode in disable auto; do
+      label="go-${workload}-ps-${ps_mode}"
+      log="${OUT_DIR}/${label}.log"
+      note "--- ${label} ---"
+      if sysbench "${workload}" "${GO_SYSBENCH_CONN[@]}" \
+        --db-ps-mode="${ps_mode}" --threads=1 --time="${RUN_TIME}" \
+        --report-interval=0 run >"${log}" 2>&1; then
+        grep -E "queries:|transactions:|avg:|95th percentile:|total time:" "${log}" \
+          | tee -a "${LADDER_LOG}"
+      else
+        note "FAIL ${label}:"
+        grep -m 5 -E "FATAL|ERROR" "${log}" | tee -a "${LADDER_LOG}"
+      fi
+    done
+  done
+else
+  note "SKIP rung 6b: no dataset"
+fi
+
+step "rung 6c: per-statement time and the Rust excess, within this one run"
+python3 - "${OUT_DIR}" <<'PY' 2>&1 | tee -a "${LADDER_LOG}"
+import pathlib, re, sys
+
+out = pathlib.Path(sys.argv[1])
+
+
+def measure(path):
+    if not path.exists():
+        return None
+    text = path.read_text()
+    queries = re.search(r"queries:\s+(\d+)", text)
+    total = re.search(r"total time:\s+([0-9.]+)s", text)
+    txns = re.search(r"transactions:\s+(\d+)", text)
+    if not queries or not total or int(queries.group(1)) == 0:
+        return None
+    seconds = float(total.group(1))
+    count = int(queries.group(1))
+    return {
+        "us_per_stmt": seconds * 1_000_000 / count,
+        "qps": count / seconds,
+        "tps": (int(txns.group(1)) / seconds) if txns else None,
+    }
+
+
+print("| Workload | ps mode | Rust us/stmt | Go us/stmt | Rust excess | Rust qps | Go qps |")
+print("| --- | --- | --- | --- | --- | --- | --- |")
+for workload in ("oltp_point_select", "oltp_read_only", "oltp_write_only", "oltp_read_write"):
+    for ps_mode in ("disable", "auto"):
+        rust = measure(out / f"{workload}-ps-{ps_mode}.log")
+        go = measure(out / f"go-{workload}-ps-{ps_mode}.log")
+        if rust is None or go is None:
+            # A cell whose window produced no queries is reported as absent
+            # rather than as a number, because an aborted run is a finding.
+            rust_us = "-" if rust is None else f"{rust['us_per_stmt']:.2f}"
+            go_us = "-" if go is None else f"{go['us_per_stmt']:.2f}"
+            print(f"| `{workload}` | {ps_mode} | {rust_us} | {go_us} | (no cell) | - | - |")
+            continue
+        excess = rust["us_per_stmt"] - go["us_per_stmt"]
+        print(f"| `{workload}` | {ps_mode} | {rust['us_per_stmt']:.2f} | {go['us_per_stmt']:.2f} | "
+              f"**{excess:.2f} us** | {rust['qps']:.2f} | {go['qps']:.2f} |")
+PY
+
 step "post-run correctness re-check"
 if [[ "${prepared}" == true ]]; then
   note "rust: $(rust_sql -N -B -e \
