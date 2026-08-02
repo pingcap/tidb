@@ -562,6 +562,7 @@ mod tests {
     use tidb_datatype::FieldTypeCode;
 
     struct Slot {
+        name: String,
         generation: Option<GeneratedColumn>,
         field_type: FieldType,
     }
@@ -572,6 +573,9 @@ mod tests {
         }
         fn column_type(&self) -> &FieldType {
             &self.field_type
+        }
+        fn column_name(&self) -> &str {
+            &self.name
         }
     }
 
@@ -609,19 +613,22 @@ mod tests {
                 expr_text: text.to_owned(),
                 stored,
                 expr: tidb_expr::rewriter::rewrite_expr_resolved(&expr, &resolver).unwrap(),
-                dependencies: resolver.dependencies(),
+                dependencies: resolver.dependency_names(),
             }
         };
         vec![
             Slot {
+                name: "a".to_owned(),
                 generation: None,
                 field_type: int_type(),
             },
             Slot {
+                name: "b".to_owned(),
                 generation: Some(build("a + 1")),
                 field_type: int_type(),
             },
             Slot {
+                name: "c".to_owned(),
                 generation: Some(build("b + 1")),
                 field_type: int_type(),
             },
@@ -632,13 +639,7 @@ mod tests {
     fn a_chain_of_generated_columns_is_computed_left_to_right() {
         let columns = chain(true);
         let mut row = vec![Datum::Int(1), Datum::Null, Datum::Null];
-        materialize(
-            &columns,
-            |i| format!("c{i}"),
-            &mut row,
-            false,
-            &tidb_expr::NoColumns,
-        )
+        materialize(&columns, &mut row, false, &tidb_expr::NoColumns)
         .unwrap();
         assert_eq!(row, vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)]);
     }
@@ -650,22 +651,10 @@ mod tests {
     fn materializing_twice_gives_the_same_row() {
         let columns = chain(true);
         let mut row = vec![Datum::Int(4), Datum::Null, Datum::Null];
-        materialize(
-            &columns,
-            |i| format!("c{i}"),
-            &mut row,
-            false,
-            &tidb_expr::NoColumns,
-        )
+        materialize(&columns, &mut row, false, &tidb_expr::NoColumns)
         .unwrap();
         let once = row.clone();
-        materialize(
-            &columns,
-            |i| format!("c{i}"),
-            &mut row,
-            false,
-            &tidb_expr::NoColumns,
-        )
+        materialize(&columns, &mut row, false, &tidb_expr::NoColumns)
         .unwrap();
         assert_eq!(row, once);
     }
@@ -677,13 +666,7 @@ mod tests {
         let columns = chain(true);
         let mut row = vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)];
         row[0] = Datum::Int(10);
-        materialize(
-            &columns,
-            |i| format!("c{i}"),
-            &mut row,
-            false,
-            &tidb_expr::NoColumns,
-        )
+        materialize(&columns, &mut row, false, &tidb_expr::NoColumns)
         .unwrap();
         assert_eq!(row, vec![Datum::Int(10), Datum::Int(11), Datum::Int(12)]);
     }
@@ -693,13 +676,7 @@ mod tests {
     fn only_virtual_leaves_a_stored_column_as_decoded() {
         let columns = chain(true);
         let mut row = vec![Datum::Int(1), Datum::Int(99), Datum::Int(98)];
-        materialize(
-            &columns,
-            |i| format!("c{i}"),
-            &mut row,
-            true,
-            &tidb_expr::NoColumns,
-        )
+        materialize(&columns, &mut row, true, &tidb_expr::NoColumns)
         .unwrap();
         assert_eq!(row, vec![Datum::Int(1), Datum::Int(99), Datum::Int(98)]);
     }
@@ -708,13 +685,7 @@ mod tests {
     fn only_virtual_recomputes_a_virtual_column() {
         let columns = chain(false);
         let mut row = vec![Datum::Int(1), Datum::Null, Datum::Null];
-        materialize(
-            &columns,
-            |i| format!("c{i}"),
-            &mut row,
-            true,
-            &tidb_expr::NoColumns,
-        )
+        materialize(&columns, &mut row, true, &tidb_expr::NoColumns)
         .unwrap();
         assert_eq!(row, vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)]);
     }

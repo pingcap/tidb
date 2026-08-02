@@ -276,7 +276,7 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
         let columns = foreign_key
             .cols
             .iter()
-            .map(|offset| escape_name(&table.columns[*offset].name))
+            .map(|name| escape_name(name))
             .collect::<Vec<_>>()
             .join(",");
         let referenced = foreign_key

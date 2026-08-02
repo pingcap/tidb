@@ -248,7 +248,7 @@ mod tests {
                     tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                 ),
             ),
-            dependencies: vec![0],
+            dependencies: vec!["a".to_owned()],
             definitions: vec![
                 PartitionDef {
                     id: 101,
