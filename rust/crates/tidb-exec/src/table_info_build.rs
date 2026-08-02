@@ -415,10 +415,17 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
 }
 
 fn index_type_of(options: &IndexOptions) -> Option<IndexType> {
+    // Go `buildIndexInfo` (pkg/ddl/index.go): `if indexOption.Tp ==
+    // ast.IndexTypeInvalid { idxInfo.Tp = ast.IndexTypeBtree } else {
+    // idxInfo.Tp = indexOption.Tp }`. Invalid is the only value Go
+    // special-cases; every other declared type (HASH, RTREE, HYPO, HNSW,
+    // VECTOR, INVERTED, FULLTEXT, or any future/unknown ordinal) is copied
+    // through unchanged. `IndexType` is a value-preserving newtype over the
+    // same ordinals Go persists, so this passthrough is total by
+    // construction -- there is no case here that needs a name.
     options.index_type.map(|declared| match declared {
-        tidb_ast::IndexType::HASH => IndexType::HASH,
-        tidb_ast::IndexType::RTREE => IndexType::RTREE,
-        _ => IndexType::BTREE,
+        IndexType::INVALID => IndexType::BTREE,
+        other => other,
     })
 }
 
