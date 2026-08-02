@@ -1276,3 +1276,164 @@ fn go_round_to_u64_unsigned_cast_vectors() {
         0
     );
 }
+
+/// Go normalizes the sign of a ZERO away on every value-producing path, so
+/// `-0` and `0` are the same object with the same bytes and compare equal.
+///
+/// The audit hypothesis was the opposite -- that Go's explicit `negative bool`
+/// makes `-0.0` and `0.0` byte-distinct, which would be a corruption-tier
+/// divergence from this crate's structurally-unsigned zero. Measured against
+/// `pkg/types` in this tree, it is not: `FromString` ends with
+/// `if allZero { d.negative = false }`, `DecimalNeg` returns early on
+/// `IsZero()` without flipping, and every arithmetic/rounding result that
+/// reaches zero clears the flag itself. Verbatim capture, where `ToBin` is
+/// taken at the value's own `PrecisionAndFrac()`:
+///
+/// ```text
+/// FromString(-0)          String="0"     IsNeg=false prec=1 frac=0 ToBin=80
+/// FromString(0)           String="0"     IsNeg=false prec=1 frac=0 ToBin=80
+/// FromString(-0.0)        String="0.0"   IsNeg=false prec=1 frac=1 ToBin=80
+/// FromString(-0.00)       String="0.00"  IsNeg=false prec=2 frac=2 ToBin=80
+/// FromString(0.00)        String="0.00"  IsNeg=false prec=2 frac=2 ToBin=80
+/// FromString(-0e0)        String="0"     IsNeg=false prec=1 frac=0 ToBin=80
+/// FromFloat64(-0.0)       String="0"     IsNeg=false prec=1 frac=0 ToBin=80
+/// DecimalNeg(0)           String="0"     IsNeg=false prec=1 frac=0 ToBin=80
+/// DecimalNeg(0.00)        String="0.00"  IsNeg=false prec=2 frac=2 ToBin=80
+/// FromInt(0)              String="0"     IsNeg=false prec=1 frac=0 ToBin=80
+/// 5-5                     String="0"     IsNeg=false prec=1 frac=0 ToBin=80
+/// -5 - -5                 String="0"     IsNeg=false prec=1 frac=0 ToBin=80
+/// -5 * 0                  String="0"     IsNeg=false prec=1 frac=0 ToBin=80
+/// -1.5 + 1.5              String="0.0"   IsNeg=false prec=1 frac=1 ToBin=80
+/// Round(-0.4, 0, HalfUp)  String="0"     IsNeg=false prec=1 frac=0 ToBin=80
+/// Trunc(-0.4, 0)          String="0"     IsNeg=false prec=1 frac=0 ToBin=80
+/// Compare(x, y) == 0 for every pair drawn from the zeros above
+/// ```
+///
+/// Both halves matter together: the bytes are identical AND the comparison is
+/// equal, so a future "make negative zero representable" change cannot pass
+/// this test by breaking either one alone.
+#[test]
+fn zero_carries_no_sign_on_every_go_value_path() {
+    // Text and canonical bytes. `0x80` is the sign bit alone: a zero
+    // magnitude with the POSITIVE sign, for every scale Go reported.
+    for (text, rendered, precision, frac) in [
+        ("-0", "0", 1, 0),
+        ("0", "0", 1, 0),
+        ("-0.0", "0.0", 1, 1),
+        ("-0.00", "0.00", 2, 2),
+        ("0.00", "0.00", 2, 2),
+    ] {
+        let value = Decimal::from_literal(text);
+        assert_eq!(value.to_string(), rendered, "String() of {text}");
+        assert!(!value.is_negative(), "sign survived on {text}");
+        let (bin, warning) = value
+            .to_bin(precision, frac)
+            .unwrap_or_else(|error| panic!("ToBin({text}): {error:?}"));
+        assert_eq!(bin, vec![0x80], "ToBin of {text}");
+        assert!(warning.is_none(), "ToBin({text}) warned: {warning:?}");
+    }
+
+    // Sign-flipping and arithmetic that lands on zero.
+    let zero = Decimal::from_literal("0");
+    let five = Decimal::from_literal("5");
+    let minus_five = Decimal::from_literal("-5");
+    let produced: Vec<(&str, Decimal)> = vec![
+        ("DecimalNeg(0)", zero.negate()),
+        ("DecimalNeg(0.00)", Decimal::from_literal("0.00").negate()),
+        ("FromInt(0)", Decimal::from_int(0)),
+        ("FromFloat64(-0.0)", Decimal::from_f64(-0.0).expect("-0.0")),
+        ("5-5", five.sub_mysql(&five).0),
+        ("-5 - -5", minus_five.sub_mysql(&minus_five).0),
+        ("-5 * 0", minus_five.mul_mysql(&zero).0),
+        (
+            "-1.5 + 1.5",
+            Decimal::from_literal("-1.5")
+                .add_mysql(&Decimal::from_literal("1.5"))
+                .0,
+        ),
+        (
+            "Round(-0.4, 0)",
+            Decimal::from_literal("-0.4").round_to_scale(0),
+        ),
+        (
+            "Trunc(-0.4, 0)",
+            Decimal::from_literal("-0.4").truncate_to_scale(0),
+        ),
+    ];
+    for (label, value) in &produced {
+        assert!(value.is_zero(), "{label} is not zero: {value}");
+        assert!(!value.is_negative(), "{label} kept a negative sign");
+        assert!(
+            !value.to_string().starts_with('-'),
+            "{label} rendered a sign: {value}"
+        );
+        let (bin, _) = value
+            .to_bin(1, 0)
+            .unwrap_or_else(|e| panic!("{label}: {e:?}"));
+        assert_eq!(bin, vec![0x80], "ToBin of {label}");
+    }
+
+    // Go's `Compare` returns 0 for every pair of these, including the
+    // literal `-0` against the literal `0`.
+    let mut all: Vec<(&str, Decimal)> = vec![
+        ("-0", Decimal::from_literal("-0")),
+        ("0", zero.clone()),
+        ("-0.00", Decimal::from_literal("-0.00")),
+    ];
+    all.extend(produced);
+    for (left_label, left) in &all {
+        for (right_label, right) in &all {
+            assert_eq!(
+                left.cmp(right),
+                std::cmp::Ordering::Equal,
+                "Compare({left_label}, {right_label})"
+            );
+        }
+    }
+}
+
+/// The one place Go DOES keep a negative zero, and why this crate declines to.
+///
+/// `FromBin` sets `d.negative = mask != 0` straight from the sign bit and only
+/// resets to `zeroMyDecimal` when `digitsInt == 0 && digitsFrac == 0` -- so a
+/// non-canonical payload whose sign bit is CLEAR over an all-zero magnitude
+/// survives as a negative zero whenever `frac > 0`. Verbatim capture:
+///
+/// ```text
+/// FromBin(7f,    prec=1, frac=0) -> String="0"      IsNeg=false  Compare(.,0)= 0
+/// FromBin(80,    prec=1, frac=0) -> String="0"      IsNeg=false  Compare(.,0)= 0
+/// FromBin(7f 00, prec=2, frac=2) -> String="-0.00"  IsNeg=true   Compare(.,0)=-1
+/// ```
+///
+/// That last row is unreachable from TiDB itself: `ToBin` derives its mask
+/// from a `MyDecimal` whose sign is already cleared on every value path (see
+/// [`zero_carries_no_sign_on_every_go_value_path`]), so TiDB never WRITES
+/// `0x7f` for a zero -- only a corrupt or foreign encoder can. Reproducing it
+/// would mean deleting this type's `negative && !is_zero` normalization, which
+/// is what keeps "zero compares and renders unsigned" true by construction for
+/// every arithmetic result rather than op-by-op as Go does. This test pins the
+/// deviation so it stays a known, deliberate one instead of drifting.
+#[test]
+fn from_bin_normalizes_a_non_canonical_negative_zero_that_go_preserves() {
+    // Agreed rows: canonical zero, and the `frac == 0` payload Go itself
+    // normalizes via the `digitsInt == 0 && digitsFrac == 0` reset.
+    for (bin, precision, frac, rendered) in [(vec![0x80_u8], 1, 0, "0"), (vec![0x7f_u8], 1, 0, "0")]
+    {
+        let (value, _, _) = Decimal::from_bin(&bin, precision, frac)
+            .unwrap_or_else(|error| panic!("FromBin({bin:x?}): {error:?}"));
+        assert_eq!(value.to_string(), rendered, "FromBin({bin:x?})");
+        assert!(!value.is_negative(), "FromBin({bin:x?}) kept a sign");
+    }
+
+    // The deviating row. Go yields "-0.00" comparing -1 against zero; this
+    // crate yields "0.00" comparing equal.
+    let (value, _, _) = Decimal::from_bin(&[0x7f, 0x00], 2, 2).expect("FromBin(7f 00)");
+    assert_eq!(value.to_string(), "0.00", "Go renders -0.00 here");
+    assert!(value.is_zero());
+    assert!(!value.is_negative());
+    assert_eq!(
+        value.cmp(&Decimal::from_literal("0.00")),
+        std::cmp::Ordering::Equal,
+        "Go's Compare returns -1 here"
+    );
+}
