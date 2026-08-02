@@ -152,7 +152,10 @@ func negZero() float64 {
 // A common handle shorter than 9 bytes is zero-padded to 9; one already at or
 // above 9 bytes passes through untouched.
 func commonHandlePadding() {
-	short, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(1))
+	// Same short-handle construction as Go's own `TestPaddingHandle`
+	// (pkg/kv/key_test.go): a decimal `1` encodes to fewer than 9 bytes,
+	// while an integer datum always encodes to exactly 9.
+	short, err := codec.EncodeKey(time.UTC, nil, types.NewDecimalDatum(types.NewDecFromInt(1)))
 	if err != nil {
 		panic(err)
 	}
@@ -177,9 +180,9 @@ func commonHandlePadding() {
 	}
 
 	fmt.Printf("common_handle_short_raw=%x\n", short)
-	fmt.Printf("common_handle_short_padded_key=%x\n", tablecodec.EncodeRowKeyWithHandle(42, shortHandle))
+	fmt.Printf("common_handle_short_padded_key=%x\n", []byte(tablecodec.EncodeRowKeyWithHandle(42, shortHandle)))
 	fmt.Printf("common_handle_long_raw=%x\n", long)
-	fmt.Printf("common_handle_long_key=%x\n", tablecodec.EncodeRowKeyWithHandle(42, longHandle))
+	fmt.Printf("common_handle_long_key=%x\n", []byte(tablecodec.EncodeRowKeyWithHandle(42, longHandle)))
 }
 
 // Source: `tablecodec.GenIndexKey` for the key half and the
