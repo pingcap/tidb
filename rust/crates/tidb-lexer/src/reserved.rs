@@ -23,14 +23,36 @@
 //! names, not keyword strings, so each was cross-referenced against
 //! `pkg/parser/misc.go`'s `tokenMap` (string -> token constant) to recover
 //! the keyword spelling; confirmed to be a subset of this crate's own
-//! `keywords::GENERAL_KEYWORDS`. One entry, `DISTINCTROW`, needed adding by
-//! hand: `misc.go` maps BOTH `"DISTINCT"` and `"DISTINCTROW"` to the SAME
-//! `distinct` token constant, so the string-recovery step (keyed by token
-//! constant) only ever surfaces one of the two spellings; `pkg/parser/
-//! keywords.go`'s own `{"DISTINCTROW", true, "reserved"}` entry confirms
-//! `DISTINCTROW`'s reserved status independently.
+//! `keywords::GENERAL_KEYWORDS`.
+//!
+//! `tokenMap` is many-to-one: four token constants each have TWO string
+//! spellings mapping onto them, so a naive "invert the map" derivation keeps
+//! only one spelling per constant and silently drops the other. All four
+//! pairs need BOTH spellings listed here, independently of which one the
+//! derivation script happened to keep:
+//!
+//! - `distinct` <- `"DISTINCT"`, `"DISTINCTROW"`
+//! - `database` <- `"DATABASE"`, `"SCHEMA"`
+//! - `databases` <- `"DATABASES"`, `"SCHEMAS"`
+//! - `decimalType` <- `"DECIMAL"`, `"DEC"`
+//!
+//! Each pair's reserved status is confirmed independently by `pkg/parser/
+//! keywords.go`'s own catalog entries (`{"DISTINCT", true, "reserved"}`,
+//! `{"DISTINCTROW", true, "reserved"}`, `{"DATABASE", true, "reserved"}`,
+//! `{"DATABASES", true, "reserved"}`, `{"DECIMAL", true, "reserved"}`;
+//! `SCHEMA`/`SCHEMAS`/`DEC` aren't in that catalog at all — MySQL's
+//! `information_schema.KEYWORDS` doesn't list them as separate words either
+//! — but `tokenMap` still routes them onto the reserved `database`/
+//! `databases`/`decimalType` constants, so they belong here too).
+//!
+//! This list is hand-maintained (there is no codegen step deriving it from
+//! Go), so nothing mechanically prevents a future shared-token-constant pair
+//! from dropping a spelling the same way. `tests::reserved_keyword_pairs_are_
+//! complete` below pins all four known pairs directly, so at least these
+//! collisions can't silently regress; a genuinely new collision would still
+//! need a human to notice it against `pkg/parser/misc.go`'s `tokenMap`.
 
-/// RESERVED_KEYWORDS: 232 keywords, sorted for binary search. Derived from
+/// RESERVED_KEYWORDS: 236 keywords, sorted for binary search. Derived from
 /// `pkg/parser/reserved_words.go` — see this module's own doc.
 pub static RESERVED_KEYWORDS: &[&str] = &[
     "ADD",
@@ -68,10 +90,13 @@ pub static RESERVED_KEYWORDS: &[&str] = &[
     "CURRENT_TIMESTAMP",
     "CURRENT_USER",
     "CURSOR",
+    "DATABASE",
+    "DATABASES",
     "DAY_HOUR",
     "DAY_MICROSECOND",
     "DAY_MINUTE",
     "DAY_SECOND",
+    "DEC",
     "DECIMAL",
     "DEFAULT",
     "DELAYED",
@@ -79,6 +104,7 @@ pub static RESERVED_KEYWORDS: &[&str] = &[
     "DENSE_RANK",
     "DESC",
     "DESCRIBE",
+    "DISTINCT",
     "DISTINCTROW",
     "DIV",
     "DOUBLE",
@@ -272,4 +298,36 @@ pub static RESERVED_KEYWORDS: &[&str] = &[
 pub fn is_reserved(word: &str) -> bool {
     let upper = word.to_ascii_uppercase();
     RESERVED_KEYWORDS.binary_search(&upper.as_str()).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the four `pkg/parser/misc.go` `tokenMap` collisions this
+    /// module's own doc names: each pair shares one Go token constant, so
+    /// `IsReserved` (and therefore this list) must include BOTH spellings,
+    /// not just whichever one a naive map-inversion happens to keep. This
+    /// is the exact regression that shipped without `DATABASE`/
+    /// `DATABASES`/`DISTINCT` — see `rust/docs/parser-lexer-divergence.md`
+    /// finding #5 (`DEC`/`DECIMAL` is a fourth pair the same finding
+    /// missed, caught by re-running its own machine diff after this fix).
+    #[test]
+    fn reserved_keyword_pairs_are_complete() {
+        for (a, b) in [
+            ("DISTINCT", "DISTINCTROW"),
+            ("DATABASE", "SCHEMA"),
+            ("DATABASES", "SCHEMAS"),
+            ("DECIMAL", "DEC"),
+        ] {
+            assert!(
+                is_reserved(a),
+                "{a} shares a token with {b}, both must be reserved"
+            );
+            assert!(
+                is_reserved(b),
+                "{b} shares a token with {a}, both must be reserved"
+            );
+        }
+    }
 }

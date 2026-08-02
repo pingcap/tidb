@@ -36,9 +36,7 @@ use tidb_ast::{
     IsTarget, MatchModifier, SysVarScope, TrimDirection, UnaryOp, WeightStringType, WindowDef,
     WindowFrame, WindowOver, WindowSpec,
 };
-use tidb_lexer::{
-    canonical_charset, canonical_collation, canonical_legacy_charset, is_reserved, TokenKind,
-};
+use tidb_lexer::{canonical_charset, canonical_collation, canonical_legacy_charset, TokenKind};
 
 use crate::{prec, PResult, Parser};
 
@@ -675,7 +673,7 @@ impl Parser {
                 // non-reserved (confirmed in both `tidb_lexer::reserved`
                 // and `pkg/parser/reserved_words.go`), so — like `TRIM`/
                 // `JSON_SUM_CRC32` — they fall through cleanly to the
-                // shared `_ if !is_reserved(...) => parse_ident_or_func()`
+                // shared `_ if !is_clause_keyword(...) => parse_ident_or_func()`
                 // arm below once guarded, no bespoke fallback needed.
                 "EXTRACT" if self.peek_n(1).kind == TokenKind::Op && self.peek_n(1).text == "(" => {
                     self.parse_extract()
@@ -775,7 +773,7 @@ impl Parser {
                 // FROM t` (no parens) are all valid real SQL, genuinely
                 // rejected here before this fix. `CHAR` alone needs its
                 // own bespoke fallback (not `parse_ident_or_func`, and not
-                // the shared `_ if !is_reserved(...)` arm below) because,
+                // the shared `_ if !is_clause_keyword(...)` arm below) because,
                 // unlike the other five, `CHAR` IS a reserved keyword
                 // (confirmed in both `tidb_lexer::reserved` and real
                 // TiDB's own `pkg/parser/reserved_words.go`) —
@@ -884,7 +882,7 @@ impl Parser {
                 // stringLit { ... } return p.parseIdentOrFuncCall()`) —
                 // otherwise these are non-reserved keywords like any
                 // other, falling through to the SAME generic
-                // `parse_ident_or_func` the `_ if !is_reserved(...)` arm
+                // `parse_ident_or_func` the `_ if !is_clause_keyword(...)` arm
                 // below already uses for a bare column reference (`SELECT
                 // date FROM t`) or a scalar function call (`DATE(expr)`).
                 // See `tidb_ast::CastStyle::DateLiteral`'s own doc for why
@@ -900,44 +898,36 @@ impl Parser {
                     CastStyle::TimestampLiteral,
                     CastType::DateTime { fsp: None },
                 ),
-                // A NON-RESERVED keyword not otherwise recognized above is a
-                // real MySQL/TiDB identifier here — a bare column reference,
-                // or a (possibly user-defined) function call if immediately
-                // followed by `(` — confirmed via `godump restore`: `SELECT
-                // uuid FROM t` parses (`UUID` is a non-reserved keyword),
-                // even though it isn't a recognized aggregate/window/scalar
-                // function name. A genuinely RESERVED keyword (`SELECT`,
-                // `WHERE`, ...) can never validly start an expression this
-                // way, so it stays a `ParseError`.
-                _ if !is_reserved(&t.text) => self.parse_ident_or_func(),
-                // A RESERVED keyword immediately followed by `(` is ALSO a
-                // function call, unless it's one of a small set of
-                // clause-introducing keywords that must never be consumed
-                // as an identifier/function name (`SELECT FROM(1)` can't
-                // mean anything). Read directly from real TiDB's own
-                // hand-written parser (`pkg/parser/
-                // expr_prefix_parser.go`'s `parsePrefixKeywordExpr`, its
-                // own final fallback): `if tok.Tp >= identifier &&
-                // !isReservedClauseKeyword(tok.Tp) { if
-                // p.peekN(1).Tp == '(' { ...function call... } }` — this
-                // rule is NOT gated on the keyword being individually
-                // recognized as a scalar-function name at all (unlike
-                // `is_scalar_kw_func` above, this project's own earlier,
-                // narrower, one-keyword-at-a-time allowlist), which is
-                // exactly why `REPEAT(...)`/`REPLACE(...)` (real MySQL
-                // string functions that happen to share a name with a
-                // reserved keyword, confirmed via `godump restore`) were
-                // genuine `ParseError`s here before this arm existed,
-                // despite plainly parsing in real TiDB. New reserved
-                // keywords that are ALSO real function names should need
-                // NO further individual entries anywhere once they reach
-                // this point — this arm subsumes that whole class of gap.
-                _ if self.peek_n(1).kind == TokenKind::Op
-                    && self.peek_n(1).text == "("
-                    && !is_clause_keyword(&t.text) =>
-                {
-                    self.parse_named_func()
-                }
+                // ANY keyword — reserved or not — that does not introduce a
+                // clause is a real MySQL/TiDB identifier here: a bare column
+                // reference, or a (possibly user-defined) function call if
+                // immediately followed by `(`. Mirrors real TiDB's own
+                // hand-written parser EXACTLY: `pkg/parser/
+                // expr_prefix_parser.go`'s `parsePrefixKeywordExpr`, its own
+                // final fallback — `if tok.Tp >= identifier &&
+                // !isReservedClauseKeyword(tok.Tp) { if p.peekN(1).Tp == '('
+                // { ...function call... } else { ...column ref... } }` — is a
+                // SINGLE check gated only on `isReservedClauseKeyword` (13
+                // keywords: FROM/WHERE/GROUP/ORDER/LIMIT/HAVING/UNION/INTO/
+                // FOR/LOCK/SELECT/SET/ON), never on the much larger
+                // `IsReserved` (233 keywords) used elsewhere for alias/CTE
+                // admission. Confirmed via `godump restore`: `SELECT rows
+                // FROM t` and `SELECT database.table.column` both parse in
+                // real TiDB even though `ROWS`/`DATABASE` are reserved —
+                // gating this arm on `is_reserved` (as a prior revision did)
+                // wrongly rejects ~220 reserved-but-not-clause keywords used
+                // bare, which is why it was reverted (see
+                // `rust/docs/parser-lexer-divergence.md` findings #4/#5).
+                // This single arm subsumes the old two-arm split (a
+                // `!is_reserved` bare-column arm plus a separate
+                // `peek == "(" && !is_clause_keyword` function-call arm):
+                // `parse_ident_or_func` already dispatches to
+                // `parse_named_func` when `(` follows, so the two arms
+                // always agreed on RESERVED-but-not-clause keywords like
+                // `REPEAT(...)`/`REPLACE(...)` (real MySQL string functions
+                // that share a name with a reserved keyword) and only
+                // disagreed on the bare (no-paren) case Go actually allows.
+                _ if !is_clause_keyword(&t.text) => self.parse_ident_or_func(),
                 _ => Err(self.err_here("unsupported keyword in expression")),
             },
             TokenKind::Op => match t.text.as_str() {
