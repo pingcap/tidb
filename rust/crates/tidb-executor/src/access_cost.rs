@@ -130,12 +130,17 @@ use std::collections::BTreeMap;
 
 use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
 use tidb_planner::cardinality::pseudo::{
-    pseudo_row_count_by_index_ranges, IndexRange as PseudoIndexRange, PseudoBoundKind, ScalarRange,
+    pseudo_row_count_by_index_ranges, pseudo_row_count_by_scalar_ranges, pseudo_selectivity,
+    IndexRange as PseudoIndexRange, PseudoBoundKind, PseudoColumn, PseudoFunctionKind, PseudoIndex,
+    PseudoPredicate, ScalarRange,
 };
 use tidb_planner::cardinality::row_count_column::RowEstimate;
 use tidb_planner::cardinality::row_count_estimator::{
     get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, ColumnStats,
     EstimatorOptions, IndexRangeDatums, IndexStats,
+};
+use tidb_planner::selectivity_greedy::{
+    combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
 };
 use tidb_planner::cardinality::row_size::{
     get_index_avg_row_size, get_table_avg_row_size, RowSizeColumn, RowSizeColumnStats,
@@ -1140,7 +1145,7 @@ pub(crate) fn selectivity_of_conjuncts(
     stats: Option<&TableStatistics>,
 ) -> f64 {
     let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
-        return crate::plan_trace::pseudo_selectivity_of_conjuncts(conjuncts);
+        return pseudo_conjunct_selectivity(conjuncts, table, resolver, realtime_row_count(stats));
     };
     let realtime = realtime_row_count(Some(stats));
     if realtime <= 0.0 {
@@ -1168,6 +1173,217 @@ pub(crate) fn selectivity_of_conjuncts(
         };
     }
     total.clamp(0.0, 1.0)
+}
+
+/// `cardinality.Selectivity` for a table with NO loaded histograms -- Go's
+/// `PseudoTable`.
+///
+/// A pseudo table is not a table without statistics as far as `Selectivity`
+/// is concerned: `statistics.PseudoTable` fills a `NewPseudoHistogram` entry
+/// for every public column and index (`pkg/statistics/table.go:1034-1061`), so
+/// `coll.ColNum()` is non-zero and `Selectivity` takes its ORDINARY body --
+/// build one statistics node per column the conditions constrain, greedily
+/// cover the condition mask, multiply, then charge the leftover conditions
+/// their defaults (`selectivity.go:69-73` is the only escape, and it needs
+/// more than 63 conditions).
+///
+/// That is the whole difference from what this function replaced. A minimum
+/// over per-operator rates -- Go's `pseudoSelectivity`, which is only reached
+/// down the `len(exprs) > 63` arm -- says 10.00 rows for `a = 1 and b = 2`
+/// where TiDB prints 1.00, and 3333.33 for `a > 1 and b > 2` where TiDB
+/// prints 1111.11, because a minimum cannot compound. The product,
+/// the one-row floor, and the string-match defaults all live in
+/// [`combine_selectivity`]; the per-column numbers are the pseudo histogram's
+/// own rates through [`pseudo_row_count_by_scalar_ranges`].
+///
+/// `realtime` is `coll.RealtimeCount`: 10000 for a table `mysql.stats_meta`
+/// has never counted, and the real count when it has (which is also the state
+/// that still prints `stats:pseudo`, decided independently in
+/// [`crate::driver::access::full_scan_estimate`] -- this function does not
+/// move that line).
+fn pseudo_conjunct_selectivity(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    realtime: f64,
+) -> f64 {
+    // `coll.RealtimeCount == 0 || len(exprs) == 0` (`selectivity.go:61`).
+    if conjuncts.is_empty() || realtime <= 0.0 {
+        return 1.0;
+    }
+
+    // `selectivity.go:69-73`: past 63 conditions the mask no longer fits an
+    // int64, and the source gives up on nodes entirely.
+    if conjuncts.len() > 63 {
+        let predicates: Vec<PseudoPredicate> = conjuncts
+            .iter()
+            .map(|conjunct| pseudo_predicate(conjunct, table, resolver))
+            .collect();
+        return pseudo_selectivity(
+            &predicates,
+            &pseudo_unique_indexes(table),
+            realtime as i64,
+            crate::plan_trace::SELECTIVITY_FACTOR,
+        );
+    }
+
+    let mut nodes = Vec::with_capacity(conjuncts.len());
+    let mut conditions = Vec::with_capacity(conjuncts.len());
+    for (index, conjunct) in conjuncts.iter().enumerate() {
+        conditions.push(condition_kind(conjunct));
+        let Some((column_id, _collation, ranges)) = column_ranges(conjunct, table, resolver) else {
+            continue;
+        };
+        let scalar: Vec<ScalarRange> = ranges
+            .iter()
+            .map(|range| scalar_range(Some(&range.low), Some(&range.high)))
+            .collect();
+        nodes.push(StatsNode {
+            // Go `getMaskAndSelectivity`: `GetRowCountByColumnRanges(...) /
+            // coll.RealtimeCount`, which for a pseudo histogram is the
+            // equal/less/between rate.
+            selectivity: (pseudo_row_count_by_scalar_ranges(&scalar, realtime) / realtime)
+                .clamp(0.0, 1.0),
+            ..StatsNode::new(StatsNodeType::Column, column_id, 1_i64 << index, 1)
+        });
+    }
+    combine_selectivity(
+        &mut nodes,
+        &conditions,
+        1.0,
+        realtime as i64,
+        SelectivityDefaults::default(),
+    )
+}
+
+/// Which leftover bucket one uncovered condition falls in
+/// (`selectivity.go:238-304`).
+///
+/// The kind is computed for every condition, not just the uncovered ones,
+/// because the mask decides which ones are read; a covered condition's kind
+/// is never consulted.
+fn condition_kind(conjunct: &tidb_ast::Expr) -> ConditionKind {
+    match conjunct {
+        // Go's `NOT LIKE` is `unaryNot(like(...))`, which the source unwraps
+        // before classifying; this AST carries the negation on the node.
+        tidb_ast::Expr::Like { not, .. } | tidb_ast::Expr::Regexp { not, .. } => {
+            if *not {
+                ConditionKind::NegatedStringMatch
+            } else {
+                ConditionKind::StringMatch
+            }
+        }
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => ConditionKind::Disjunction,
+        _ => ConditionKind::Other,
+    }
+}
+
+/// One condition as `pseudoSelectivity` reads it (`pseudo.go:44-67`).
+///
+/// `getConstantColumnID` (`selectivity.go:615`) demands EXACTLY two arguments,
+/// one a column and one a constant, so a multi-value `IN` -- whose argument
+/// list is the column plus every value -- resolves to no column at all and
+/// cannot lower `minFactor`, even though `ast.In` has its own switch arm.
+fn pseudo_predicate(
+    conjunct: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+) -> PseudoPredicate {
+    let (kind, args): (PseudoFunctionKind, [&tidb_ast::Expr; 2]) = match conjunct {
+        tidb_ast::Expr::Binary(op, lhs, rhs) => {
+            let kind = match op {
+                tidb_ast::BinaryOp::Eq | tidb_ast::BinaryOp::NullEq => PseudoFunctionKind::Equality,
+                tidb_ast::BinaryOp::Ge
+                | tidb_ast::BinaryOp::Gt
+                | tidb_ast::BinaryOp::Le
+                | tidb_ast::BinaryOp::Lt => PseudoFunctionKind::Ordering,
+                // Every other scalar function reaches the switch and matches
+                // no arm: it still resolves a column, and still changes
+                // nothing. `ne` is the shape the >63 capture uses.
+                _ => PseudoFunctionKind::Other,
+            };
+            (kind, [lhs.as_ref(), rhs.as_ref()])
+        }
+        tidb_ast::Expr::In { expr, list, not } if !not && list.len() == 1 => {
+            (PseudoFunctionKind::Equality, [expr.as_ref(), &list[0]])
+        }
+        _ => return PseudoPredicate::Unresolved,
+    };
+    let column = match (is_constant_literal(args[0]), is_constant_literal(args[1])) {
+        (false, true) => args[0],
+        (true, false) => args[1],
+        _ => return PseudoPredicate::Unresolved,
+    };
+    let Some(offsets) = crate::column_prune::expr_column_offsets(column, resolver) else {
+        return PseudoPredicate::Unresolved;
+    };
+    let [offset] = offsets[..] else {
+        return PseudoPredicate::Unresolved;
+    };
+    let Some(column) = table.columns.get(offset) else {
+        return PseudoPredicate::Unresolved;
+    };
+    PseudoPredicate::Resolved {
+        kind,
+        // `coll.GetCol(colID)` never returns nil for a public column of a
+        // pseudo table -- `PseudoTable` inserted one histogram per column --
+        // so the source's nil arm is unreachable from here.
+        column: Some(PseudoColumn {
+            lower_name: column.name.to_lowercase(),
+            unique_key_flag: has_unique_key_flag(table, offset),
+        }),
+    }
+}
+
+/// Go `mysql.HasUniKeyFlag` for one column, from the indexes that set it.
+///
+/// `pkg/ddl/index.go:625-628` and `pkg/ddl/create_table.go:1231-1235` agree:
+/// only a UNIQUE index over exactly ONE column gives that column
+/// `UniqueKeyFlag`; the first column of a composite unique index gets
+/// `MultipleKeyFlag` instead, which is why `pseudoSelectivity` has a separate
+/// whole-index check for the composite case. A clustered/handle primary key
+/// carries `PriKeyFlag`, which `HasUniKeyFlag` does not match.
+fn has_unique_key_flag(table: &KvTable, offset: usize) -> bool {
+    table
+        .indexes()
+        .iter()
+        .any(|index| index.unique && index.column_offsets == [offset])
+}
+
+/// The unique indexes `pseudoSelectivity`'s `ForEachIndexImmutable` walk can
+/// return `1/RealtimeCount` from, in the shape its port takes.
+fn pseudo_unique_indexes(table: &KvTable) -> Vec<PseudoIndex> {
+    table
+        .indexes()
+        .iter()
+        .filter(|index| index.unique)
+        .map(|index| PseudoIndex {
+            unique: true,
+            column_lower_names: index
+                .column_offsets
+                .iter()
+                .filter_map(|offset| table.columns.get(*offset))
+                .map(|column| column.name.to_lowercase())
+                .collect(),
+        })
+        .collect()
+}
+
+/// Whether an expression is one of Go's `expression.Constant`s, for
+/// `getConstantColumnID`'s two-argument test.
+fn is_constant_literal(expr: &tidb_ast::Expr) -> bool {
+    matches!(
+        expr,
+        tidb_ast::Expr::Int(_)
+            | tidb_ast::Expr::Decimal(_)
+            | tidb_ast::Expr::Float(_)
+            | tidb_ast::Expr::Hex(_)
+            | tidb_ast::Expr::Bit(_)
+            | tidb_ast::Expr::String(_)
+            | tidb_ast::Expr::RawString(_)
+            | tidb_ast::Expr::Null
+            | tidb_ast::Expr::Bool(_)
+    )
 }
 
 /// One conjunct as single-column ranges over a table column, when it is one.

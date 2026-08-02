@@ -556,11 +556,18 @@ pub(crate) fn full_scan_estimate(
     }
 }
 
-/// `cardinality.Selectivity` for a single base table's `WHERE`, when that
-/// table has loaded statistics; `None` leaves the stats-less rates in force.
+/// `cardinality.Selectivity` for a single base table's `WHERE`.
 ///
 /// This is what makes a `Selection` over a full scan print the estRows Go
-/// prints, instead of the pseudo `0.8`/`1/3`/`1/1000` rates.
+/// prints. `None` means there is no `WHERE` to estimate, and nothing else:
+/// a table with no analyzed histograms is Go's `PseudoTable`, which
+/// `Selectivity` estimates through the SAME body using pseudo histograms
+/// (`pkg/statistics/table.go:1034-1061` fills one per column), so routing it
+/// anywhere else is what made `a = 1 and b = 2` print 10.00 against TiDB's
+/// 1.00. [`crate::access_cost::selectivity`] owns both arms, and the
+/// `stats:pseudo` flag stays where it was decided
+/// ([`full_scan_estimate`]) -- which statistics exist is unchanged here, only
+/// what is computed from them.
 pub(crate) fn stats_selectivity(
     catalog: &Catalog,
     table: &KvTable,
@@ -568,18 +575,12 @@ pub(crate) fn stats_selectivity(
     where_clause: Option<&tidb_ast::Expr>,
 ) -> Option<f64> {
     let predicate = where_clause?;
-    let stats = catalog.table_statistics(table.table_id)?;
-    if stats.pseudo {
-        // A table with a row count but no histograms falls back to the same
-        // pseudo rates an unanalyzed one uses; saying so with `None` keeps
-        // that in one place.
-        return None;
-    }
+    let stats = catalog.table_statistics(table.table_id);
     Some(crate::access_cost::selectivity(
         predicate,
         table,
         &scope_resolver(scope),
-        Some(stats.as_ref()),
+        stats.as_ref().map(AsRef::as_ref),
     ))
 }
 
