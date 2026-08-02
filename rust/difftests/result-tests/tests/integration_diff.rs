@@ -246,6 +246,108 @@ const TOPICS: &[(&str, &str)] = &[
          `@@last_plan_from_cache`, which is why onboarding it belongs to that \
          unit: without this entry nothing gates the cache against regressing",
     ),
+    (
+        "agg_predicate_pushdown",
+        "aggregate predicate pushdown, all 17 statements compared, nothing skipped",
+    ),
+    (
+        "common_collation",
+        "collation over the common built-ins, 14 of 25 compared -- the rest is an \
+         explicit OutOfDomain minority, not the majority",
+    ),
+    (
+        "ddl/ddl_error",
+        "DDL error refusals: half the topic is both engines rejecting the same \
+         statement, which is agreement, not a blind spot",
+    ),
+    (
+        "executor/adapter",
+        "the statement adapter's own row results, 5 of 6 compared",
+    ),
+    (
+        "executor/executor_txn",
+        "transactional executor behavior, 81 of 121 compared with the remainder a \
+         named OutOfDomain minority",
+    ),
+    (
+        "executor/partition/partition_boundaries",
+        "the second-largest ZERO-divergence topic in the suite: 1,035 of 1,035 \
+         statements compared, nothing skipped, over partition boundary reads",
+    ),
+    (
+        "executor/revoke",
+        "REVOKE's row and side-effect results, 43 of 65 compared",
+    ),
+    (
+        "explain-non-select-stmt",
+        "EXPLAIN of non-SELECT statements, 6 of 7 compared",
+    ),
+    (
+        "explain_stats",
+        "EXPLAIN over statistics-driven plans, 8 of 9 compared",
+    ),
+    (
+        "expression/constant_fold",
+        "constant folding, 9 of 16 compared with the remainder a named OutOfDomain \
+         minority",
+    ),
+    (
+        "expression/vitess_hash",
+        "the VITESS_HASH builtin, 9 of 16 compared with the remainder a named \
+         OutOfDomain minority",
+    ),
+    (
+        "globalindex/mem_index_non_unique",
+        "a non-unique GLOBAL index over a HASH-partitioned table, all 36 \
+         statements compared including explicit `partition(p0)` / `partition(p0, \
+         p1)` pruning reads -- checked against the `globalindex/insert` illusion \
+         by hand: these queries require real partition filtering to even return \
+         the right rows, so a silently-unpartitioned table could not have passed",
+    ),
+    (
+        "parser/integration",
+        "parser integration coverage, 6 of 8 compared",
+    ),
+    (
+        "planner/cardinality/trace",
+        "cardinality trace output, all 4 statements compared, nothing skipped",
+    ),
+    (
+        "planner/core/casetest/expression_rewriter",
+        "the expression rewriter's plan and row output, 13 of 21 compared",
+    ),
+    (
+        "planner/core/cbo",
+        "cost-based optimizer row and access-property output, 23 of 31 compared",
+    ),
+    (
+        "planner/core/plan_cost_ver2",
+        "plan cost v2's row and side-effect output, 36 of 74 compared -- the rest \
+         is EXPLAIN FORMAT output this tier's comparator does not read as text, \
+         not an OutOfDomain skip",
+    ),
+    (
+        "planner/core/preprocess",
+        "statement preprocessing refusals, 3 of 6 compared with the rest both \
+         engines rejecting the same statement",
+    ),
+    (
+        "statistics/handle",
+        "the statistics handle's row and side-effect output, 31 of 41 compared",
+    ),
+    (
+        "statistics/integration",
+        "statistics integration coverage, 26 of 27 compared",
+    ),
+    (
+        "statistics/lock_table_stats",
+        "locked-table statistics, 26 of 47 compared with the remainder a named \
+         OutOfDomain minority",
+    ),
+    (
+        "table/tables",
+        "the `table` package's row and side-effect output, 22 of 32 compared",
+    ),
 ];
 
 /// A topic listed twice is replayed twice, and every statement it compares is
@@ -293,8 +395,8 @@ fn topics_are_listed_once_each() {
 /// calls it a match.
 ///
 /// That is not a hypothesis. This test parses the onboarded scripts with the
-/// replay's own reader and counts the statements the gate can see: 28 of 4,906
-/// -- 0.6%. The blind spot is the other 4,878, and it is the reason a fix that
+/// replay's own reader and counts the statements the gate can see: 29 of 6,564
+/// -- 0.4%. The blind spot is the other 6,535, and it is the reason a fix that
 /// added three real `CAST` truncation warnings moved neither ratchet.
 ///
 /// The blind spot is in the RECORDING, not in this reader, and that is the
@@ -343,7 +445,7 @@ fn warning_comparison_covers_only_enable_warnings_statements() {
     );
     assert_eq!(
         (covered, total),
-        (28, 4906),
+        (29, 6564),
         "the warning gate's reach changed; re-read what it now covers rather \
          than updating this number to match"
     );
@@ -1655,5 +1757,21 @@ fn replay_in_child(topic: &str) -> Result<(), String> {
             }
             None => std::thread::sleep(std::time::Duration::from_millis(20)),
         }
+    }
+}
+
+#[test]
+#[ignore = "scratch probe"]
+fn zz_scratch_probe() {
+    let mut s = Session::new();
+    for sql in [
+        "set @@time_zone='+00:00'",
+        "select timestamp '2024-01-01 14.000011'",
+        "select timestamp '2024-01-01 14:00:00.010'",
+        "select timestamp '2024-01-01 14.66'",
+        "select timestamp '2024-01-01'",
+        "select timestamp '2024-01-01 14:00:00+14:01'",
+    ] {
+        eprintln!("SQL {sql} => {:?}", s.run_with_columns(sql));
     }
 }
