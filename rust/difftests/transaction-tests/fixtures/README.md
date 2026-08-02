@@ -48,6 +48,19 @@ GOFLAGS=-p=12 go run ./rust/difftests/transaction-tests/fixtures/generate_number
 GOFLAGS=-p=12 go run ./rust/difftests/transaction-tests/fixtures/generate_decimal_keys.go
 ```
 
+`decimal_column_rows.hex` is the row-v2 bytes TiDB writes for decimals that
+carry a declared `DECIMAL(M, D)` column shape and for decimals that do not.
+`convertToMysqlDecimal` stamps `Datum.Length`/`Datum.Frac` from the target
+`FieldType` and `rowcodec` hands that pair to `codec.EncodeDecimal`, so `11.99`
+in a `DECIMAL(10, 4)` column is a 7-byte payload while the same value with no
+column behind it is 4 bytes. `MyDecimal.PrecisionAndFrac` reports the value's
+natural `(4, 2)` in both cases, which is exactly why no round trip can see the
+difference and why these Go-written bytes are the only proof.
+
+```bash
+GOFLAGS=-p=12 go run ./rust/difftests/transaction-tests/fixtures/generate_decimal_column_rows.go
+```
+
 ## Configured clustered signed-`BIGINT` row fixture
 
 `configured_rows.hex` is the exact pair of bytes TiDB persists for the
