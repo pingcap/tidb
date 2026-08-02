@@ -822,6 +822,141 @@ fn equal_row_count_prefers_topn_over_every_later_source() {
     assert_close(result.est, 22.0, "TopN count is exact");
 }
 
+/// The one branch every other fixture in this file misses: a column whose
+/// statistics row exists and reports a positive NDV, but whose histogram
+/// carries **no rows** and whose TopN is empty, with `ModifyCount = 0`.
+///
+/// Note the exact shape. A histogram with a literally empty bucket list is
+/// *not* the reachable one: `row_count_column.go:95` short-circuits
+///
+/// ```go
+/// if c.Histogram.Bounds.NumRows() == 0 && c.TopN.Num() == 0 { return DefaultRowEst(0) }
+/// ```
+///
+/// before the uniform estimator is ever called, and this port agrees (the
+/// zero-bucket assertion at the end of this test states that). The branch is
+/// reached by bucket *bounds* that loaded with zero counts -- the shape
+/// sampling leaves behind, and the one
+/// `estimateRowCountWithUniformDistribution` calls out.
+///
+/// Every parity fixture above carries a populated histogram, so none of them
+/// reaches `estimateRowCountWithUniformDistribution`'s empty-histogram arm.
+/// That arm is `row_count_index.go:374`:
+///
+/// ```go
+/// return statistics.DefaultRowEst(max(float64(topN.MinCount()-1), 1))
+/// ```
+///
+/// `TopN.MinCount()` returns `uint64` (`cmsketch.go:573`) and returns 0 for an
+/// empty or nil TopN, so `MinCount()-1` is an UNSIGNED subtraction that wraps
+/// to `math.MaxUint64`. Go therefore evaluates `float64(math.MaxUint64)` ~
+/// 1.8446744073709552e19, and `getColumnRowCount`'s closing
+/// `Clamp(1, realtimeRowCount)` turns that into the whole table.
+///
+/// This is the plan-flipping shape: computing the same expression in `f64`
+/// gives `max(0-1, 1) = 1`, which is a point lookup where Go full-scans. The
+/// wrap is deliberate arithmetic, not an accident to correct, so this fixture
+/// pins the wrapped answer.
+#[test]
+fn empty_histogram_with_positive_ndv_estimates_the_whole_table() {
+    let column = ColumnStats {
+        histogram: Histogram {
+            id: 9,
+            ndv: 5,
+            null_count: 0,
+            // Bounds present, counts zero: `NotNullCount()` is the last
+            // bucket's cumulative count, so this histogram holds no rows.
+            buckets: vec![int_bucket(0, 0, 0, 100)],
+            ..Histogram::default()
+        },
+        topn: None,
+        cms: None,
+        stats_ver: 2,
+        unsigned: false,
+    };
+
+    // The raw estimator, before any clamp: Go's wrapped `MaxUint64`.
+    let raw = equal_row_count_on_column(
+        &column,
+        &Datum::Int(42),
+        &key_of(&[Datum::Int(42)]),
+        Collation::Binary,
+        REALTIME,
+        0,
+        EstimatorOptions::default(),
+    );
+    assert_close(
+        raw.est,
+        18446744073709551615.0,
+        "unsigned wrap of topN.MinCount()-1",
+    );
+
+    // Through the column entry point, where the clamp turns it into the whole
+    // table rather than one row.
+    let clamped = get_row_count_by_column_ranges(
+        Some(&column),
+        &[point(42)],
+        Collation::Binary,
+        REALTIME,
+        0,
+        false,
+        EstimatorOptions::default(),
+    );
+    check(
+        "empty_histogram_point",
+        (clamped.est, clamped.min_est, clamped.max_est),
+        (
+            REALTIME as f64,
+            REALTIME as f64,
+            REALTIME as f64,
+        ),
+    );
+
+    // The wrap only fires with no modifications. A non-zero `ModifyCount`
+    // sends the same shape down the out-of-range NDV derivation instead, and
+    // that path does not produce the whole table.
+    let modified = equal_row_count_on_column(
+        &column,
+        &Datum::Int(42),
+        &key_of(&[Datum::Int(42)]),
+        Collation::Binary,
+        REALTIME,
+        MODIFY,
+        EstimatorOptions::default(),
+    );
+    assert!(
+        modified.est < REALTIME as f64,
+        "modify_count != 0 leaves the wrap branch: got {}",
+        modified.est
+    );
+
+    // And the literally-empty histogram never gets that far: the source
+    // short-circuit at `row_count_column.go:95` returns zero.
+    let no_buckets = ColumnStats {
+        histogram: Histogram {
+            id: 9,
+            ndv: 5,
+            null_count: 0,
+            buckets: vec![],
+            ..Histogram::default()
+        },
+        topn: None,
+        cms: None,
+        stats_ver: 2,
+        unsigned: false,
+    };
+    let short_circuit = equal_row_count_on_column(
+        &no_buckets,
+        &Datum::Int(42),
+        &key_of(&[Datum::Int(42)]),
+        Collation::Binary,
+        REALTIME,
+        0,
+        EstimatorOptions::default(),
+    );
+    assert_close(short_circuit.est, 0.0, "no bounds and no TopN short-circuits");
+}
+
 #[test]
 fn selectivity_combines_greedy_cover_and_leftover_defaults() {
     // Two column nodes, one bit each, both fully covered: the result is the
