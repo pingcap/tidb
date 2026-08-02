@@ -822,3 +822,103 @@ fn label_of(drawn_name: &str) -> &'static str {
         "(Probe)"
     }
 }
+
+/// The `estRows` a `Selection` over an UNANALYZED table prints, against the
+/// numbers real TiDB prints for the same statements.
+///
+/// `tidb_planner`'s `selectivity_pseudo_source` pins the same 16 shapes at the
+/// arithmetic's own entry points, from a repo-root `gorun` capture on
+/// `create table t(a int, b int, c varchar(32), d int unique, e int, f int)`
+/// with no `ANALYZE`. This is the LIVE half: the same numbers reached by
+/// running `EXPLAIN` through the session, so the wiring cannot rot while the
+/// leaves keep passing.
+///
+/// The one number that does not match is named at the bottom.
+#[test]
+fn explain_est_rows_on_an_unanalyzed_table() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t(a int, b int, c varchar(32), d int unique, e int, f int)")
+        .unwrap();
+
+    /// The `estRows` of the `Selection` the driver builds over the scan.
+    fn est_rows(session: &mut Session, where_clause: &str) -> String {
+        let rows = row_text(session.run(&format!("EXPLAIN SELECT * FROM t WHERE {where_clause}")));
+        let selection = rows
+            .iter()
+            .find(|row| row[0].contains("Selection"))
+            .unwrap_or_else(|| panic!("no Selection row for {where_clause}"));
+        selection[1].clone()
+    }
+
+    // Every right-hand string below is TiDB's own printed estRows.
+    let pinned = [
+        // One equality is the control: a single node, no combination at all.
+        ("a = 1", "10.00"),
+        // The product, then the one-row floor: 0.001^2 and 0.001^3 both land
+        // under 1/10000, which is why TiDB prints 1.00 for both. A MINIMUM
+        // over the per-operator rates -- what this path used before the
+        // wiring -- prints 10.00 here for every one of the three.
+        ("a = 1 and b = 2", "1.00"),
+        ("a = 1 and b = 2 and e = 3", "1.00"),
+        ("a in (1,2,3)", "30.00"),
+        ("a in (1,2,3) and b in (4,5)", "1.00"),
+        ("a > 1", "3333.33"),
+        // The product loop is the only thing separating 3333.33 from 1111.11.
+        ("a > 1 and b > 2", "1111.11"),
+        ("a between 1 and 5", "250.00"),
+        ("a between 1 and 5 and b between 2 and 9", "6.25"),
+        // A PREFIX `LIKE` builds a bounded range, so it is an ordinary
+        // between-rate node rather than a leftover default.
+        ("c like 'a%'", "250.00"),
+        ("a = 1 and c like 'a%'", "1.00"),
+        // A non-prefix `LIKE` builds no range and takes
+        // `GetStrMatchDefaultSelectivity()` = 0.1, not the general 0.8 factor
+        // (which would print 8000.00 here).
+        ("c like '%a%'", "1000.00"),
+        ("c not like '%a%'", "9000.00"),
+        // The leftover block charges its minimum ONCE for the whole remaining
+        // mask, not once per condition: two of them still print 1000.00.
+        ("c like '%a%' and c like '%b%'", "1000.00"),
+        // No range for either column: one leftover `Other` at 0.8.
+        ("a + b > 1", "8000.00"),
+    ];
+    for (where_clause, expected) in pinned {
+        assert_eq!(est_rows(&mut session, where_clause), expected, "{where_clause}");
+    }
+
+    // Past 63 conditions `Selectivity` abandons the nodes and calls
+    // `pseudoSelectivity` (`selectivity.go:69-73`), whose answer is a MINIMUM
+    // over the per-operator rates.
+    let not_equal: Vec<String> = (0..64).map(|value| format!("a != {value}")).collect();
+    let not_equal = not_equal.join(" and ");
+    // `ne` matches neither switch arm, so `minFactor` never leaves 0.8.
+    assert_eq!(est_rows(&mut session, &not_equal), "8000.00", "64 x a != k");
+    // One ordering predicate drops it to 1/pseudoLessRate. This is the
+    // assertion that PROVES the >63 arm is the one running: the node path
+    // would charge 1/3 for `b > 3` and 0.8 for the leftover 64 and print
+    // 2666.67.
+    assert_eq!(
+        est_rows(&mut session, &format!("{not_equal} and b > 3")),
+        "3333.33",
+        "64 x a != k and b > 3"
+    );
+    // An equality on the UNIQUE column `d`. TiDB prints 1.00 via
+    // `pseudoSelectivity`'s `1/RealtimeCount` shortcut; this tier reaches the
+    // same 1.00 by COSTING the unique index and letting the range scan
+    // consume the condition, so the printed number agrees while the row above
+    // it does not.
+    assert_eq!(
+        est_rows(&mut session, &format!("{not_equal} and d = 7")),
+        "1.00",
+        "64 x a != k and d = 7"
+    );
+
+    // DIVERGENCE. TiDB prints 19.99 -- `sel(A or B) = sel(A) + sel(B) -
+    // sel(A)*sel(B)` (`selectivity.go:331`), the recursive DNF estimate.
+    // `combine_selectivity` documents that recursion as deferred: a
+    // multi-column `OR` builds no column node here, reaches the leftover
+    // block as a `Disjunction`, and takes the 0.8 factor. Pinned as it is so
+    // the gap is visible rather than absent.
+    assert_eq!(est_rows(&mut session, "a = 1 or b = 2"), "8000.00");
+}

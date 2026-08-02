@@ -580,9 +580,16 @@ pub(crate) fn enumerate_paths(
             // An index that does not cover is pruned here exactly as Go
             // prunes it: a full index scan plus a row lookup per entry can
             // never beat the table scan it would have to do anyway.
-            if let Some(candidate) =
-                covering_full_scan_candidate(table, index, needed_columns, limit, stats, realtime)
-            {
+            if let Some(candidate) = covering_full_scan_candidate(
+                table,
+                index,
+                where_clause,
+                needed_columns,
+                resolver,
+                limit,
+                stats,
+                realtime,
+            ) {
                 candidates.push(candidate);
             }
             continue;
@@ -654,10 +661,22 @@ pub(crate) fn enumerate_paths(
 /// `=`/`IN` prefix, a single scan over the full range -- so neither dominates
 /// the other and the choice falls to [`AccessPath::cost`], where the index's
 /// narrower row wins exactly when it is narrower.
+/// No access condition is not the same as no index FILTER. Go's
+/// `deriveIndexPathStats` splits the residual conditions over every index
+/// path, full-range or not, and a condition the index can evaluate on its own
+/// narrows what leaves the cop task. `b LIKE '%'` over `KEY kb(b)` is exactly
+/// that shape: the ranger builds no range, but the index still evaluates the
+/// predicate and returns a tenth of the entries. Costing this path as though
+/// it shipped all 10000 while the table path was costed after its own filter
+/// made a covering index lose to a full table read the moment the filter's
+/// selectivity became Go's -- captured TiDB reads `IndexFullScan` there.
+#[allow(clippy::too_many_arguments)]
 fn covering_full_scan_candidate(
     table: &KvTable,
     index: &KvIndex,
+    where_clause: Option<&tidb_ast::Expr>,
     needed_columns: &[usize],
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     limit: Option<&PushedLimit<'_>>,
     stats: Option<&TableStatistics>,
     realtime: f64,
@@ -665,6 +684,17 @@ fn covering_full_scan_candidate(
     if !is_covering(index, table, needed_columns) {
         return None;
     }
+    // The ranger consumed nothing, so every conjunct is residual.
+    let mut residual = Vec::new();
+    if let Some(where_clause) = where_clause {
+        crate::plan_trace::collect_and(where_clause, &mut residual);
+    }
+    let (index_columns_map, index_filters, table_filter_count) =
+        split_index_filter_conditions(&residual, &full_index_columns(index, table), resolver);
+    let index_filter_count = index_filters.len();
+    let index_filter_selectivity = (!index_filters.is_empty())
+        .then(|| selectivity_of_conjuncts(&index_filters, table, resolver, stats));
+    let source_rows = source_row_count(table, where_clause, resolver, stats, realtime);
     let ranges = vec![IndexRange::full()];
     let path = index_path(
         table,
@@ -674,15 +704,12 @@ fn covering_full_scan_candidate(
         limit,
         stats,
         realtime,
-        // With no access condition there is no index filter either, so the
-        // post-index count is the access count and the source row count is
-        // never consulted.
-        realtime,
-        None,
+        source_rows,
+        index_filter_selectivity,
     );
     Some(Candidate {
         access_columns: ColSet::new(),
-        index_columns: ColSet::new(),
+        index_columns: index_columns_map,
         single_scan: true,
         eq_or_in_count: 0,
         full_range: true,
@@ -693,8 +720,8 @@ fn covering_full_scan_candidate(
         pseudo: stats.is_none_or(|stats| !stats.indexes.contains_key(&index.id)),
         index_width: index.column_offsets.len(),
         empty_range: false,
-        index_filter_count: 0,
-        table_filter_count: 0,
+        index_filter_count,
+        table_filter_count,
         path,
     })
 }
@@ -898,7 +925,13 @@ fn index_path(
         // Go's deterministic tie-breaker between two indexes that cost the
         // same, from the last two digits of the index ID.
         + (index.id % 100) as f64 / 1_000_000.0;
-    let index_net = net_cost(rows, index_row_size);
+    // Go costs a reader's NET transfer at the rows that leave the cop task,
+    // which on the index side is `getCardinality(indexPlan)` -- the top of the
+    // cop plan tree, so the cop-side `Selection` over the index filters when
+    // there is one. That is the same rule [`table_scan_path`] applies with its
+    // own `after_filter`; applying it to only one of the two made an index
+    // that filters look no cheaper to ship than one that does not.
+    let index_net = net_cost(after_index.min(rows), index_row_size);
     let index_side = (index_scan + index_net) / DIST_SQL_SCAN_CONCURRENCY;
 
     let covering = is_covering(index, table, needed_columns);
