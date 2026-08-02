@@ -220,11 +220,25 @@ impl Session {
         if is_global {
             self.require_set_global_privilege()?;
         }
+        // An explicit `SET INSTANCE` is Go's `v.IsInstance`; anything else
+        // unqualified/SESSION reaches the tier only through the legacy
+        // rewrite, which warns.
+        let is_instance = match assignment.scope {
+            tidb_ast::SystemVariableScope::Instance => true,
+            tidb_ast::SystemVariableScope::Session => {
+                self.routes_to_instance_tier(&assignment.name)?
+            }
+            tidb_ast::SystemVariableScope::Global => false,
+        };
+        // The GLOBAL and INSTANCE tiers share one node-wide table keyed by
+        // scope (`GlobalSysvars::store`), so a DEFAULT or a value written
+        // through either lands where the read path looks.
+        let is_node_wide = is_global || is_instance;
         let value = match &assignment.value {
             // Go restores a variable to its registry default by clearing the
             // session (or global) override.
             tidb_ast::SetVariableValue::Default => {
-                if is_global {
+                if is_node_wide {
                     self.vars
                         .reset_global(&assignment.name)
                         .map_err(var_error)?;
@@ -247,12 +261,16 @@ impl Session {
         // Go stores every system variable as a string.
         let value = value.unwrap_or_default();
         self.check_read_only_noop(&assignment.name, &value, is_global)?;
+        self.check_isolation_level(&assignment.name, &value)?;
+        self.check_max_allowed_packet_scope(&assignment.name, is_node_wide)?;
         self.warn_removed_feature_var(&assignment.name, &value);
-        if is_global {
-            let truncated = self
-                .vars
-                .set_global(&assignment.name, value.clone())
-                .map_err(var_error)?;
+        if is_node_wide {
+            let truncated = if is_global {
+                self.vars.set_global(&assignment.name, value.clone())
+            } else {
+                self.vars.set_instance(&assignment.name, value.clone())
+            }
+            .map_err(var_error)?;
             if truncated {
                 self.warn_truncated_var(&assignment.name, &value);
             }
@@ -281,6 +299,156 @@ impl Session {
             self.commit()?;
         }
         Ok(())
+    }
+
+    /// Go `checkIsolationLevel` (`pkg/sessionctx/variable/varsutil.go:116`),
+    /// wired to both spellings at `sysvar.go:2100` (`tx_isolation`) and
+    /// `:2106` (`transaction_isolation`):
+    ///
+    /// ```text
+    /// if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
+    ///     returnErr := ErrUnsupportedIsolationLevel.FastGenByArgs(normalizedValue)
+    ///     if !TiDBOptOn(vars.systems[vardef.TiDBSkipIsolationLevelCheck]) {
+    ///         return normalizedValue, ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
+    ///     }
+    ///     vars.StmtCtx.AppendWarning(returnErr)
+    /// }
+    /// ```
+    ///
+    /// The escape hatch does not change the value: with the check skipped the
+    /// level is STORED and read back, it merely warns. The two accepted
+    /// levels (`READ-COMMITTED`, `REPEATABLE-READ`) pass through untouched.
+    ///
+    /// This lives here rather than in `SysVarDef::run_validation` because
+    /// both halves need the session: the skip switch is read from it, and the
+    /// warning is appended to it.
+    fn check_isolation_level(&mut self, name: &str, value: &str) -> Result<(), DriverError> {
+        if !name.eq_ignore_ascii_case("transaction_isolation")
+            && !name.eq_ignore_ascii_case("tx_isolation")
+        {
+            return Ok(());
+        }
+        // Go tests the NORMALIZED value: the entry is `TypeEnum`, so
+        // `serializable` and the ordinal `3` both arrive here as
+        // `SERIALIZABLE`.
+        let Some(normalized) = sysvar::get_sys_var(name)
+            .and_then(|def| def.normalize_by_type(value, sysvar::SCOPE_SESSION).ok())
+            .map(|validated| validated.value)
+        else {
+            return Ok(());
+        };
+        if normalized != "SERIALIZABLE" && normalized != "READ-UNCOMMITTED" {
+            return Ok(());
+        }
+        let skip = self
+            .vars
+            .get_system("tidb_skip_isolation_level_check")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("ON"));
+        if !skip {
+            return Err(DriverError::Var(
+                tidb_executor::VarErrorKind::UnsupportedIsolationLevel(normalized),
+            ));
+        }
+        self.append_warning(
+            crate::warnings::WarningLevel::Warning,
+            8048,
+            format!(
+                "The isolation level '{normalized}' is not supported. Set \
+                 tidb_skip_isolation_level_check=1 to skip this error"
+            ),
+        );
+        Ok(())
+    }
+
+    /// Go's `max_allowed_packet` `Validation` (`sysvar.go:2193`) refuses a
+    /// SESSION write outright:
+    ///
+    /// ```text
+    /// if scope == vardef.ScopeSession {
+    ///     err := ErrReadOnly.GenWithStackByArgs("SESSION", vardef.MaxAllowedPacket, "GLOBAL")
+    ///     return normalizedValue, err
+    /// }
+    /// ```
+    ///
+    /// The variable still HAS session scope -- `SELECT @@max_allowed_packet`
+    /// answers from the session copy -- so this is a write-side refusal only,
+    /// which is why it cannot be expressed as a scope bit.
+    ///
+    /// Go guards it with `vars.StmtCtx.StmtType == "Set"`, so only a user
+    /// `SET` is refused; the handshake's own seeding is not.
+    ///
+    /// The 1024-rounding half of the same closure is in
+    /// [`sysvar::SysVarDef::run_validation`], where the clamp flag already
+    /// travels to the statement as `ErrTruncatedWrongValue` (1292).
+    fn check_max_allowed_packet_scope(
+        &mut self,
+        name: &str,
+        is_node_wide: bool,
+    ) -> Result<(), DriverError> {
+        if is_node_wide || !name.eq_ignore_ascii_case("max_allowed_packet") {
+            return Ok(());
+        }
+        Err(DriverError::Var(
+            tidb_executor::VarErrorKind::SessionScopeIsReadOnly("max_allowed_packet".to_owned()),
+        ))
+    }
+
+    /// Whether a non-GLOBAL assignment writes the INSTANCE tier, appending
+    /// Go's deprecation warning when it does so through the legacy route.
+    ///
+    /// Go `pkg/executor/set.go:152`:
+    ///
+    /// ```text
+    /// if sysVar.HasInstanceScope() && !v.IsGlobal && sessionVars.EnableLegacyInstanceScope {
+    ///     v.IsInstance = true
+    ///     sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.FastGenByArgs(sysVar.Name))
+    /// }
+    /// ```
+    ///
+    /// `v.IsGlobal` is false for an explicit `SET SESSION` as well as for an
+    /// unqualified `SET`, so both take this route -- the switch is what the
+    /// variable IS, not how the statement spelled the scope. An explicit `SET
+    /// INSTANCE` is Go's `v.IsInstance` and warns about nothing.
+    ///
+    /// With `tidb_enable_legacy_instance_scope = OFF` the route is not taken
+    /// and the assignment falls through to `set_system`, whose
+    /// `!has_session_scope()` guard is Go's `errGlobalVariable` (1229) -- the
+    /// same refusal Go's `validateScope` reaches once the rewrite is skipped.
+    ///
+    /// The warning goes through [`crate::Session::append_warning`], the one
+    /// door that feeds both `SHOW WARNINGS` and the OK packet's
+    /// `wire_warning_count`.
+    fn routes_to_instance_tier(&mut self, name: &str) -> Result<bool, DriverError> {
+        let Some(def) = sysvar::get_sys_var(name) else {
+            return Ok(false);
+        };
+        if !def.has_instance_scope() {
+            return Ok(false);
+        }
+        if !self.legacy_instance_scope_enabled() {
+            return Ok(false);
+        }
+        self.append_warning(
+            crate::warnings::WarningLevel::Warning,
+            // Go `errno.ErrInstanceScope` = 8142
+            // (`pkg/errno/errcode.go:1063`), message at
+            // `pkg/errno/errname.go:1058`.
+            8142,
+            format!(
+                "modifying {} will require SET GLOBAL in a future version of TiDB",
+                def.name
+            ),
+        );
+        Ok(true)
+    }
+
+    /// Go `SessionVars.EnableLegacyInstanceScope`, fed by
+    /// `tidb_enable_legacy_instance_scope` (default ON,
+    /// `vardef.DefEnableLegacyInstanceScope`).
+    fn legacy_instance_scope_enabled(&self) -> bool {
+        self.vars
+            .get_system("tidb_enable_legacy_instance_scope")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("ON"))
     }
 
     /// Go's `tidb_enable_fast_analyze` `Validation` closure (`sysvar.go`): the

@@ -283,3 +283,233 @@ fn a_session_alias_is_cut_to_64_runes_and_trimmed() {
         vec![vec!["abc".to_owned()]]
     );
 }
+
+// ---------------------------------------------------------------------------
+// The INSTANCE tier (Go `vardef.ScopeInstance`, 28 variables).
+// ---------------------------------------------------------------------------
+
+/// Go `validateScope` (`pkg/sessionctx/variable/variable.go:265`) admits
+/// `SET GLOBAL` when `sv.HasGlobalScope() || sv.HasInstanceScope()`, and the
+/// value must be READABLE afterwards -- a set that stores where no reader
+/// looks is a silent no-op, which is worse than the refusal it replaces.
+#[test]
+fn set_global_on_an_instance_variable_succeeds_and_reads_back() {
+    let (mut first, mut second, _globals) = two_sessions_sharing_globals();
+    first.run("SET GLOBAL tidb_general_log = 1").unwrap();
+    // Both spellings of the read, on the setting session and on a peer: the
+    // instance tier is per NODE, so there is no session copy to lag behind.
+    assert_eq!(
+        scalar_text(&mut first, "SELECT @@tidb_general_log"),
+        Some("1".to_owned())
+    );
+    assert_eq!(
+        scalar_text(&mut first, "SELECT @@global.tidb_general_log"),
+        Some("1".to_owned())
+    );
+    assert_eq!(
+        scalar_text(&mut second, "SELECT @@tidb_general_log"),
+        Some("1".to_owned())
+    );
+}
+
+/// `SELECT @@global.max_connections` -- some drivers ask at connect. Go's
+/// read path does not run `validateScope`, so an instance-scoped variable
+/// answers it.
+#[test]
+fn reading_at_global_scope_on_an_instance_variable_answers() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.max_connections"),
+        Some("0".to_owned())
+    );
+    session.run("SET GLOBAL max_connections = 512").unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.max_connections"),
+        Some("512".to_owned())
+    );
+}
+
+/// Go `pkg/executor/set.go:152`: an unqualified `SET` on an instance-scoped
+/// variable is REWRITTEN to an instance set and warned about with
+/// `ErrInstanceScope` (8142), because `DefEnableLegacyInstanceScope = true`.
+/// The value must land in the instance tier, not in a session copy nothing
+/// reads.
+#[test]
+fn an_unqualified_set_on_an_instance_variable_warns_8142_and_lands_in_the_tier() {
+    let (mut session, mut peer, _globals) = two_sessions_sharing_globals();
+    session.run("SET tidb_general_log = 1").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [[
+            "Warning",
+            "8142",
+            "modifying tidb_general_log will require SET GLOBAL in a future version of TiDB"
+        ]]
+    );
+    // Node-wide, so the peer sees it: this is what distinguishes the instance
+    // tier from a session write.
+    assert_eq!(
+        scalar_text(&mut peer, "SELECT @@tidb_general_log"),
+        Some("1".to_owned())
+    );
+}
+
+/// The warning reaches the OK packet's count as well as `SHOW WARNINGS` --
+/// the two channels a driver can learn from.
+#[test]
+fn the_instance_scope_warning_is_counted_on_the_wire() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    session.run("SET tidb_general_log = 1").unwrap();
+    assert_eq!(session.wire_warning_count(), 1);
+}
+
+/// With the legacy rewrite turned OFF, Go's `validateScope` is reached and a
+/// SESSION write to an instance-scoped variable is `errGlobalVariable`
+/// (1229).
+#[test]
+fn without_the_legacy_rewrite_a_session_set_on_an_instance_variable_is_1229() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    session
+        .run("SET tidb_enable_legacy_instance_scope = OFF")
+        .unwrap();
+    let error = session.run("SET tidb_general_log = 1").unwrap_err();
+    assert_eq!(error.to_mysql_error().code, 1229);
+}
+
+/// The guard relaxation must not widen to variables that are genuinely
+/// SESSION-only: `SET GLOBAL` on one is still `ErrLocalVariable` (1228).
+/// This is the mutation probe for the `has_global_scope() ||
+/// has_instance_scope()` condition -- widening it to `true` breaks here.
+#[test]
+fn a_session_only_variable_still_refuses_set_global() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    let error = session.run("SET GLOBAL debug_sync = 'x'").unwrap_err();
+    assert_eq!(error.to_mysql_error().code, 1228);
+}
+
+/// An instance-scoped value is NOT cluster state: it must stay out of the
+/// map that feeds `mysql.GLOBAL_VARIABLES` persistence and the connect-time
+/// session seed. Go writes it to a `vardef` atomic, never a row.
+#[test]
+fn an_instance_value_is_not_offered_as_cluster_state() {
+    let (mut session, _peer, globals) = two_sessions_sharing_globals();
+    session.run("SET GLOBAL tidb_general_log = 1").unwrap();
+    session.run("SET GLOBAL autocommit = OFF").unwrap();
+    let overrides = globals.overrides();
+    assert!(!overrides.contains_key("tidb_general_log"), "{overrides:?}");
+    assert_eq!(overrides.get("autocommit").map(String::as_str), Some("OFF"));
+}
+
+// ---------------------------------------------------------------------------
+// Two of the "accepted, stored, never read" variables get their Go contract.
+// ---------------------------------------------------------------------------
+
+/// Go `checkIsolationLevel` (`varsutil.go:116`): `SERIALIZABLE` is refused
+/// with 8048, on both spellings of the variable.
+#[test]
+fn an_unsupported_isolation_level_is_refused_8048() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    for sql in [
+        "SET SESSION transaction_isolation = 'SERIALIZABLE'",
+        "SET SESSION tx_isolation = 'SERIALIZABLE'",
+        "SET SESSION transaction_isolation = 'READ-UNCOMMITTED'",
+        "SET GLOBAL transaction_isolation = 'SERIALIZABLE'",
+    ] {
+        let error = session.run(sql).unwrap_err();
+        assert_eq!(error.to_mysql_error().code, 8048, "{sql}");
+    }
+    // Refused means NOT stored: the session keeps its old level rather than
+    // reporting a level it is not running at.
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@transaction_isolation"),
+        Some("REPEATABLE-READ".to_owned())
+    );
+}
+
+/// The skip switch downgrades the same error to a warning, and the level is
+/// then stored and read back -- through the alias too.
+#[test]
+fn skipping_the_isolation_check_warns_and_stores() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    session
+        .run("SET tidb_skip_isolation_level_check = 1")
+        .unwrap();
+    session
+        .run("SET SESSION transaction_isolation = 'SERIALIZABLE'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [[
+            "Warning",
+            "8048",
+            "The isolation level 'SERIALIZABLE' is not supported. Set \
+             tidb_skip_isolation_level_check=1 to skip this error"
+        ]]
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@transaction_isolation"),
+        Some("SERIALIZABLE".to_owned())
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@tx_isolation"),
+        Some("SERIALIZABLE".to_owned())
+    );
+}
+
+/// The two ACCEPTED levels are untouched by the new check -- the mutation
+/// probe for widening the refusal beyond Go's two names.
+#[test]
+fn an_accepted_isolation_level_still_stores_and_reads_back() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    session
+        .run("SET SESSION transaction_isolation = 'READ-COMMITTED'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@transaction_isolation"),
+        Some("READ-COMMITTED".to_owned())
+    );
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+}
+
+/// Go's `max_allowed_packet` `Validation`: a SESSION write is `ErrReadOnly`
+/// (1621) even though the variable has session scope for READING.
+#[test]
+fn setting_max_allowed_packet_at_session_scope_is_refused_1621() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    let error = session
+        .run("SET SESSION max_allowed_packet = 1048576")
+        .unwrap_err();
+    assert_eq!(error.to_mysql_error().code, 1621);
+    // The read side is unaffected.
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@max_allowed_packet"),
+        Some("67108864".to_owned())
+    );
+}
+
+/// The accepted GLOBAL value is rounded DOWN to a multiple of 1024, with
+/// `ErrTruncatedWrongValue` (1292) naming the value as TYPED.
+#[test]
+fn a_global_max_allowed_packet_is_rounded_down_to_1024() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    session.run("SET GLOBAL max_allowed_packet = 1025").unwrap();
+    assert_eq!(
+        row_text(session.run("SHOW WARNINGS")),
+        [[
+            "Warning",
+            "1292",
+            "Truncated incorrect max_allowed_packet value: '1025'"
+        ]]
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.max_allowed_packet"),
+        Some("1024".to_owned())
+    );
+    // An exact multiple is stored untouched and says nothing.
+    session.run("SET GLOBAL max_allowed_packet = 2048").unwrap();
+    assert!(row_text(session.run("SHOW WARNINGS")).is_empty());
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@global.max_allowed_packet"),
+        Some("2048".to_owned())
+    );
+}

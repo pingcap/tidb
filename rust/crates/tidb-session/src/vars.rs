@@ -45,7 +45,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::sysvar::{alias_of, get_sys_var, ValidationError, SCOPE_GLOBAL, SCOPE_SESSION};
+use crate::sysvar::{
+    alias_of, get_sys_var, SysVarDef, ValidationError, SCOPE_GLOBAL, SCOPE_INSTANCE, SCOPE_SESSION,
+};
 
 /// The shared GLOBAL-scope value table every session of one
 /// [`crate::Session`] factory holds a clone of. In-memory only: Go persists
@@ -55,6 +57,19 @@ use crate::sysvar::{alias_of, get_sys_var, ValidationError, SCOPE_GLOBAL, SCOPE_
 #[derive(Clone, Debug, Default)]
 pub struct GlobalSysvars {
     values: Arc<Mutex<HashMap<String, String>>>,
+    /// The INSTANCE tier: Go `vardef.ScopeInstance`. A per-node value, held
+    /// beside the global one rather than in it because the two tiers differ
+    /// in exactly one way that matters -- Go persists `ScopeGlobal` to
+    /// `mysql.GLOBAL_VARIABLES` and holds `ScopeInstance` in this process's
+    /// own memory (`SetInstanceSysVar` writes an `atomic` in `vardef`, never
+    /// a row). Keeping them in one map would make [`Self::overrides`] offer
+    /// a node-local value to the cluster writer as if it were cluster state.
+    ///
+    /// 28 entries have this scope alone; the six that carry
+    /// `ScopeGlobal|ScopeInstance` live in `values`, matching Go's
+    /// `setSysVariable`, which sends anything `IsGlobal` to
+    /// `SetGlobalSysVar`.
+    instances: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl GlobalSysvars {
@@ -65,12 +80,28 @@ impl GlobalSysvars {
         Self::default()
     }
 
-    /// Reads a global value, falling back to the registry default.
+    /// The tier a variable's node-wide value lives in. A variable that has
+    /// GLOBAL scope at all is cluster state even when it ALSO has instance
+    /// scope; only the instance-only ones are node-local.
+    ///
+    /// Every read and every write goes through here, so a value can never be
+    /// written to one tier and looked for in the other -- the failure mode
+    /// that makes a `SET` a silent no-op.
+    fn store(&self, def: &'static SysVarDef) -> &Arc<Mutex<HashMap<String, String>>> {
+        if def.has_global_scope() {
+            &self.values
+        } else {
+            &self.instances
+        }
+    }
+
+    /// Reads a node-wide value (GLOBAL or INSTANCE tier), falling back to the
+    /// registry default.
     pub fn get(&self, name: &str) -> Result<String, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
         Ok(self
-            .values
+            .store(def)
             .lock()
             .expect("global sysvar lock poisoned")
             .get(&name.to_ascii_lowercase())
@@ -84,16 +115,38 @@ impl GlobalSysvars {
     /// Answers whether Go's validation clamped the value, which the caller
     /// turns into `ErrTruncatedWrongValue` (1292) on the statement.
     pub fn set(&self, name: &str, value: String) -> Result<bool, VarError> {
+        // Go `validateScope` (`variable.go:265`): `SET GLOBAL` is admitted by
+        // `sv.HasGlobalScope() || sv.HasInstanceScope()`, so `SET GLOBAL
+        // tidb_general_log = 1` is legal and lands in the instance tier.
+        self.write(name, value, SCOPE_GLOBAL)
+    }
+
+    /// `SET INSTANCE name = value`, and the destination Go's legacy routing
+    /// sends an unqualified `SET` on an instance-scoped variable to.
+    ///
+    /// Go `validateScope`: `scope == ScopeInstance && !sv.HasInstanceScope()`
+    /// is `errLocalVariable` (1228), the same error a `SET GLOBAL` on a
+    /// session-only variable gets.
+    pub fn set_instance(&self, name: &str, value: String) -> Result<bool, VarError> {
+        let def = get_sys_var(name)
+            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        if !def.is_read_only() && !def.has_instance_scope() {
+            return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
+        }
+        self.write(name, value, SCOPE_INSTANCE)
+    }
+
+    fn write(&self, name: &str, value: String, scope: u8) -> Result<bool, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
         if def.is_read_only() {
             return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
         }
-        if !def.has_global_scope() {
+        if !def.has_global_scope() && !def.has_instance_scope() {
             return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
         }
         let validated =
-            def.validate_in_scope(&value, SCOPE_GLOBAL)
+            def.validate_in_scope(&value, scope)
                 .map_err(|error| match error {
                     ValidationError::WrongType => {
                         VarError::WrongTypeForVar(name.to_ascii_lowercase())
@@ -107,7 +160,7 @@ impl GlobalSysvars {
                     ValidationError::Refused(message) => VarError::ValidationRefused(message),
                 })?;
         let key = name.to_ascii_lowercase();
-        let mut values = self.values.lock().expect("global sysvar lock poisoned");
+        let mut values = self.store(def).lock().expect("global sysvar lock poisoned");
         if let Some(other) = alias_of(&key) {
             values.insert(other.to_owned(), validated.value.clone());
         }
@@ -122,7 +175,7 @@ impl GlobalSysvars {
         if def.is_read_only() {
             return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
         }
-        self.values
+        self.store(def)
             .lock()
             .expect("global sysvar lock poisoned")
             .remove(&name.to_ascii_lowercase());
@@ -265,7 +318,11 @@ impl SessionVars {
     pub fn get_system(&self, name: &str) -> Result<String, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        if !def.has_session_scope() && def.has_global_scope() {
+        // An INSTANCE-scoped variable has no session copy either, and its
+        // node-wide value is the only one there is: without this arm a
+        // `SET GLOBAL tidb_general_log = 1` would store a value that
+        // `SELECT @@tidb_general_log` never consults.
+        if !def.has_session_scope() && (def.has_global_scope() || def.has_instance_scope()) {
             return self.globals.get(name);
         }
         Ok(self
@@ -312,7 +369,10 @@ impl SessionVars {
     pub fn get_global(&self, name: &str) -> Result<String, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        if !def.has_global_scope() {
+        // Go's read path for `@@global.x` does not run `validateScope`; an
+        // instance-scoped variable answers `SELECT @@global.max_connections`,
+        // which some drivers ask for at connect.
+        if !def.has_global_scope() && !def.has_instance_scope() {
             return Err(VarError::NoGlobalCopy(name.to_ascii_lowercase()));
         }
         self.globals.get(name)
@@ -371,6 +431,12 @@ impl SessionVars {
     /// variable is SESSION-only, so there is no global copy to set.
     pub fn set_global(&mut self, name: &str, value: String) -> Result<bool, VarError> {
         self.globals.set(name, value)
+    }
+
+    /// `SET INSTANCE name = value`: writes the node-local tier, never this
+    /// session's own copy (an instance-scoped variable has none).
+    pub fn set_instance(&mut self, name: &str, value: String) -> Result<bool, VarError> {
+        self.globals.set_instance(name, value)
     }
 
     /// Points this session at a different shared GLOBAL table for one
