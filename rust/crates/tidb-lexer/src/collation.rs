@@ -304,7 +304,7 @@ pub static COLLATION_NAMES: &[&str] = &[
 /// TiDB's Go parser lowercases before lookup and treats the historical
 /// utf8mb3 spellings as aliases of the corresponding utf8 collations.
 pub fn canonical_collation(name: &str) -> Option<&'static str> {
-    let lower = name.to_ascii_lowercase();
+    let lower = crate::ident_case::identifier_to_lower(name);
     let alias = match lower.as_str() {
         "utf8mb3_bin" => "utf8_bin",
         "utf8mb3_general_ci" => "utf8_general_ci",

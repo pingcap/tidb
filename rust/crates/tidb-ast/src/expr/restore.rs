@@ -15,6 +15,7 @@
 //! to, mirroring the `Restore`/`Format` methods Go hangs off its expression
 //! nodes in `pkg/parser/ast/expressions.go`.
 
+use tidb_lexer::identifier_to_lower;
 use super::cast::{restore_cast_type, restore_typed_literal};
 use super::*;
 
@@ -80,13 +81,13 @@ impl Expr {
             }
             Self::Row(_) => panic!("Format is not implemented for row expressions"),
             Self::Func { name, args, .. } => {
-                out.push_str(&name.to_ascii_lowercase());
+                out.push_str(&identifier_to_lower(name));
                 out.push('(');
                 format_expr_list(args, out, ", ");
                 out.push(')');
             }
             Self::GenericFuncCall { name, args, .. } => {
-                out.push_str(&name.to_ascii_lowercase());
+                out.push_str(&identifier_to_lower(name));
                 out.push('(');
                 format_expr_list(args, out, ", ");
                 out.push(')');
@@ -443,7 +444,7 @@ impl Expr {
                 if context.flags().has_keyword_lowercase()
                     || !context.flags().has_keyword_uppercase()
                 {
-                    out.push_str(&name.to_ascii_lowercase());
+                    out.push_str(&identifier_to_lower(name));
                 } else {
                     out.push_str(&name.to_ascii_uppercase());
                 }

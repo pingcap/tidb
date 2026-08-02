@@ -17,6 +17,7 @@
 //! kept here rather than duplicated or hung off any one domain, since none
 //! of these carry domain-specific meaning of their own.
 
+use tidb_lexer::identifier_to_lower;
 use crate::{AdminStmt, QueryStmt, SelectStmt, SetOprStmt, SetOprTermBody, Stmt};
 
 impl Stmt {
@@ -130,7 +131,7 @@ pub fn redact_url(value: &str) -> String {
     let Some((scheme, _)) = value.split_once("://") else {
         return value.to_string();
     };
-    let sensitive_keys: &[&str] = match scheme.to_ascii_lowercase().as_str() {
+    let sensitive_keys: &[&str] = match identifier_to_lower(scheme).as_str() {
         "s3" | "ks3" | "oss" => &["access-key", "secret-access-key", "session-token"],
         "azure" | "azblob" => &["account-key", "encryption-key", "sas-token"],
         _ => return value.to_string(),
@@ -148,7 +149,7 @@ pub fn redact_url(value: &str) -> String {
         .filter(|field| !field.is_empty())
         .map(|field| {
             let (key, value) = field.split_once('=').unwrap_or((field, ""));
-            let normalized = key.to_ascii_lowercase().replace('_', "-");
+            let normalized = identifier_to_lower(key).replace('_', "-");
             let value = if sensitive_keys.contains(&normalized.as_str()) {
                 "xxxxxx"
             } else {

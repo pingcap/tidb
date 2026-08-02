@@ -16,6 +16,7 @@
 //! the sibling modules below.
 
 mod cast;
+use tidb_lexer::identifier_to_lower;
 use cast::restore_cast_type;
 mod op;
 mod restore;
@@ -978,7 +979,7 @@ fn restore_charset_name(out: &mut String, charset: &str, context: &RestoreContex
     if context.flags().has_keyword_uppercase() {
         out.push_str(&charset.to_ascii_uppercase());
     } else if context.flags().has_keyword_lowercase() {
-        out.push_str(&charset.to_ascii_lowercase());
+        out.push_str(&identifier_to_lower(charset));
     } else {
         out.push_str(charset);
     }

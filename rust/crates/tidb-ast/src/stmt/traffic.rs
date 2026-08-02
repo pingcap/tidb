@@ -14,6 +14,7 @@
 
 //! AST and restore contracts translated from `pkg/parser/traffic_parser.go`.
 
+use tidb_lexer::identifier_to_lower;
 use std::collections::HashSet;
 
 use crate::util::{back_quote, escape_string_literal, redact_url};
@@ -239,7 +240,7 @@ pub(crate) fn dedup_stats_objects(objects: &mut Vec<StatsObject>) {
                 break;
             }
             StatsObject::Database(database) => {
-                let database_key = database.to_lowercase();
+                let database_key = identifier_to_lower(database);
                 if !databases.insert(database_key.clone()) {
                     continue;
                 }
@@ -249,27 +250,27 @@ pub(crate) fn dedup_stats_objects(objects: &mut Vec<StatsObject>) {
                         table,
                     } = existing
                     {
-                        if existing_database.to_lowercase() == database_key {
-                            tables.remove(&(database_key.clone(), table.to_lowercase()));
+                        if identifier_to_lower(existing_database) == database_key {
+                            tables.remove(&(database_key.clone(), identifier_to_lower(table)));
                         }
                     }
                 }
                 result.retain(|existing| {
                     !matches!(existing,
                             StatsObject::Table { database: Some(existing_database), .. }
-                                if existing_database.to_lowercase() == database_key)
+                                if identifier_to_lower(existing_database) == database_key)
                 });
                 result.push(object);
             }
             StatsObject::Table { database, table } => {
                 let database_key = database
                     .as_ref()
-                    .map(|name| name.to_lowercase())
+                    .map(|name| identifier_to_lower(name))
                     .unwrap_or_default();
                 if !database_key.is_empty() && databases.contains(&database_key) {
                     continue;
                 }
-                if tables.insert((database_key, table.to_lowercase())) {
+                if tables.insert((database_key, identifier_to_lower(table))) {
                     result.push(object);
                 }
             }

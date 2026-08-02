@@ -14,6 +14,7 @@
 
 //! Shared AST model values transcreated from `pkg/parser/ast/model.go`.
 
+use tidb_lexer::identifier_to_lower;
 use std::hash::{Hash, Hasher};
 
 use serde::de::Deserializer;
@@ -31,7 +32,7 @@ impl CiString {
     /// Constructs both representations using Unicode lowercase conversion.
     pub fn new(value: impl Into<String>) -> Self {
         let original = value.into();
-        let lowercase = original.to_lowercase();
+        let lowercase = identifier_to_lower(&original);
         Self {
             original,
             lowercase,

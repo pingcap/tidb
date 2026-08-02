@@ -14,6 +14,7 @@
 
 //! SQL restore state from `pkg/parser/format/format.go`.
 
+use tidb_lexer::identifier_to_lower;
 use std::convert::Infallible;
 use std::fmt::{self, Write};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, DerefMut, Not};
@@ -471,7 +472,7 @@ impl RestoreContext {
     /// Returns a nested context in which `name` resolves as a CTE table.
     pub fn with_cte(&self, name: &str) -> Self {
         let mut names = self.cte_names.as_ref().clone();
-        names.push(name.to_lowercase());
+        names.push(identifier_to_lower(name));
         Self {
             flags: self.flags,
             default_db: Arc::clone(&self.default_db),
@@ -496,7 +497,7 @@ impl RestoreContext {
             && !self
                 .cte_names
                 .iter()
-                .any(|cte| cte.eq_ignore_ascii_case(name)))
+                .any(|cte| *cte == identifier_to_lower(name)))
         .then_some(self.default_db.as_ref())
     }
 

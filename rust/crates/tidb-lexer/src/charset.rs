@@ -19,7 +19,7 @@ pub static CHARSET_NAMES: &[&str] = &[
 /// recognized charset. `utf8mb3` is normalized to `utf8`, matching
 /// charset.GetCharsetInfo.
 pub fn canonical_charset(name: &str) -> Option<&'static str> {
-    let lower = name.to_ascii_lowercase();
+    let lower = crate::ident_case::identifier_to_lower(name);
     let idx = CHARSET_NAMES.binary_search(&lower.as_str()).ok()?;
     let canon = CHARSET_NAMES[idx];
     Some(if canon == "utf8mb3" { "utf8" } else { canon })
