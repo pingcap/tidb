@@ -1340,6 +1340,37 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // class is measured by `tests/integrationtest/t/util/ranger.test`, whose
     // divergences went from 38 to 31 (the other 7 are in that unonboarded
     // topic).
+    //
+    // Of `util/ranger`'s 31, THREE are row ORDER and they have been chased
+    // twice on a wrong theory, so the answer is written down here. They are
+    // `select * from t`, `... where a < 3`, and `... where a > -1` over
+    // `TestIndexRangeForBit`'s table:
+    //
+    //     CREATE TABLE t (a bit(1), b int) PARTITION BY HASH(a) PARTITIONS 3;
+    //     insert ignore into t values(-1,-1),(0,0),(1,1),(3,3);
+    //
+    // TiDB answers `<0x00>,0 / <0x01>,-1 / <0x01>,1 / <0x01>,3` and this engine
+    // answers the same four rows as `-1 / 0 / 1 / 3`. It is NOT an encoding or
+    // a sort: the VALUES are identical on both sides (the `insert ignore`
+    // clamps -1 and 3 to the bit(1) maximum 0x01 here exactly as in Go, which
+    // is why three rows share a partition), there is no ORDER BY, and both
+    // sides run a `TableFullScan`. The order is the PARTITION scan order --
+    // under `tidb_partition_prune_mode='static'` TiDB emits a PartitionUnion
+    // that reads p0 (a=0) then p1 (a=1), while this engine reads one
+    // unpartitioned table in handle order, which is insert order. The same
+    // cause prints as the eleven `partition:p0 + partition:p1` plan
+    // divergences beside them. All three fall out when HASH partitioning
+    // lands; nothing in the codec or the ranger will move them.
+    //
+    // Two measured negatives from that chase, so neither is repeated: the
+    // `decimal unsigned` index cases at the head of the same file
+    // (`TestIndexRangeForDecimal`, `a in (-1,0)` / `a > -1` / `a <= -1` over
+    // `decimal unsigned` keys) diverge NOWHERE; and a decimal key takes no
+    // signed-vs-unsigned fork in Go at all, since
+    // `codec.go::Encoder::encode` dispatches on datum KIND and
+    // `KindMysqlDecimal` has one arm that never reads `mysql.UnsignedFlag`.
+    // Both facts are pinned to Go's bytes in
+    // `tidb-codec/tests/unsigned_decimal_key_order.rs`.
     const KNOWN_DIVERGENCES: usize = 62;
 
     assert!(
