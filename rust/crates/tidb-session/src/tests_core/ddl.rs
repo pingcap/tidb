@@ -1253,7 +1253,7 @@ fn renaming_a_column_a_generated_column_reads_is_refused() {
     );
 
     // CHANGE COLUMN renames too, and Go raises the same refusal from
-    // `getModifiableColumnJob` -- but only when the name actually changes.
+    // `getModifiableColumnJob`, unwrapped.
     assert_eq!(
         session
             .run("ALTER TABLE rg CHANGE COLUMN b z2 INT")
@@ -1262,9 +1262,19 @@ fn renaming_a_column_a_generated_column_reads_is_refused() {
             .code,
         3108
     );
-    session
-        .run("ALTER TABLE rg MODIFY COLUMN b BIGINT")
-        .unwrap();
+    // A MODIFY that keeps the name is refused too, with the dependency error
+    // WRAPPED in 3106 -- see
+    // `tests_expression_indexes::modifying_a_depended_on_column_is_refused_even_without_a_rename`
+    // for the capture. This line used to assert the MODIFY SUCCEEDED, which is
+    // what left the generated column reading a type that had moved.
+    assert_eq!(
+        session
+            .run("ALTER TABLE rg MODIFY COLUMN b BIGINT")
+            .expect_err("a MODIFY of a depended-on column is refused as well")
+            .to_mysql_error()
+            .code,
+        3106
+    );
 
     // Unaffected columns rename freely, and the expression still computes.
     session.run("ALTER TABLE rg RENAME COLUMN a TO a2").unwrap();

@@ -1012,6 +1012,23 @@ fn column_dependent_error(
     }
 }
 
+/// The same refusal as Go's `err.Error()` renders it: message with the
+/// `[class:code]` prefix in front.
+///
+/// This exists for one caller. Go's MODIFY COLUMN path passes `errG.Error()`
+/// as the ARGUMENT of `ErrUnsupportedOnGeneratedColumn`, so the prefix ends up
+/// inside the 3106 message that reaches the client -- recorded verbatim in
+/// `tests/integrationtest/r/ddl/column_change.result`. Everywhere else the
+/// prefix is a server-log detail the wire never sees, which is why nothing
+/// else in this tier renders one.
+fn column_dependent_error_text(
+    dependent: crate::kv_table::ColumnDependent,
+    column: &str,
+) -> String {
+    let rendered = column_dependent_error(dependent, column).to_mysql_error();
+    format!("[ddl:{}]{}", rendered.code, rendered.message)
+}
+
 /// Names a generated-column DDL refusal the way Go's own error does.
 fn generated_column_error(error: crate::generated_column::GeneratedDdlError) -> DriverError {
     use crate::generated_column::GeneratedDdlError;

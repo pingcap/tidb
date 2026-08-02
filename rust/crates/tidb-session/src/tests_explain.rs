@@ -988,3 +988,97 @@ fn an_empty_index_range_is_a_table_dual_not_a_scan() {
         [["0"]]
     );
 }
+
+/// Open-interval ranges survive a NON-COVERING read, identically to a covering
+/// one.
+///
+/// This is a MEASURED NEGATIVE, kept as a test because the claim it refutes --
+/// "no open-interval range is built for a non-covering read" -- has been chased
+/// twice. It is not true anywhere that could be found. Coveringness is not an
+/// input to range building at all: the pairs below differ only in whether the
+/// projection can be served from the index, and they produce byte-identical
+/// `range:` cells.
+///
+/// The measurement, over `d (a, b, c)` with `KEY ia(a)` and `KEY iab(a,b)`:
+///
+/// ```text
+/// SELECT * FROM d USE INDEX(ia)  WHERE a > 5          range:(5,+inf]      non-covering
+/// SELECT a FROM d USE INDEX(ia)  WHERE a > 5          range:(5,+inf]      covering
+/// SELECT * FROM d USE INDEX(ia)  WHERE a >= 5         range:[5,+inf]
+/// SELECT * FROM d USE INDEX(ia)  WHERE a < 5          range:[-inf,5)
+/// SELECT * FROM d USE INDEX(ia)  WHERE a > 5 AND a < 9  range:(5,9)
+/// SELECT * FROM d USE INDEX(iab) WHERE a = 1 AND b > 5  range:(1 5,1 +inf]  non-covering
+/// SELECT c FROM d USE INDEX(iab) WHERE a = 1 AND b > 5  range:(1 5,1 +inf]  non-covering
+/// SELECT * FROM d USE INDEX(ia)  WHERE a != 5         range:[-inf,5), (5,+inf]
+/// ```
+///
+/// What DOES still fall back to a full scan is a different mechanism, and
+/// naming it here is the point of writing this down: `SELECT * FROM d WHERE
+/// a > 5` with no hint picks a `TableFullScan`, because under pseudo stats the
+/// double read costs more than the scan. That is access-path SELECTION, not
+/// range building -- the range exists and is correct the moment the path is
+/// chosen, as the `USE INDEX` line directly above it shows. The one remaining
+/// `!=` divergence in `util/ranger` is the same kind: a `!=` inside a join
+/// `ON` clause, where the path is never considered, not where the range comes
+/// out empty. The last line above proves `!=` itself lowers to its two open
+/// intervals.
+#[test]
+fn open_interval_ranges_do_not_depend_on_a_read_being_covering() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE d (a INT, b INT, c INT, KEY ia(a), KEY iab(a,b))")
+        .unwrap();
+    let range_of = |session: &mut Session, query: &str| {
+        let rows = row_text(session.run(&format!("EXPLAIN FORMAT = 'brief' {query}")));
+        let leaf = rows.last().expect("a plan has at least one row").clone();
+        (leaf[0].clone(), leaf[4].clone())
+    };
+    for (query, expected) in [
+        (
+            "SELECT * FROM d USE INDEX(ia) WHERE a > 5",
+            "range:(5,+inf]",
+        ),
+        (
+            "SELECT a FROM d USE INDEX(ia) WHERE a > 5",
+            "range:(5,+inf]",
+        ),
+        (
+            "SELECT * FROM d USE INDEX(ia) WHERE a >= 5",
+            "range:[5,+inf]",
+        ),
+        (
+            "SELECT * FROM d USE INDEX(ia) WHERE a < 5",
+            "range:[-inf,5)",
+        ),
+        (
+            "SELECT * FROM d USE INDEX(ia) WHERE a > 5 AND a < 9",
+            "range:(5,9)",
+        ),
+        (
+            "SELECT * FROM d USE INDEX(iab) WHERE a = 1 AND b > 5",
+            "range:(1 5,1 +inf]",
+        ),
+        (
+            "SELECT c FROM d USE INDEX(iab) WHERE a = 1 AND b > 5",
+            "range:(1 5,1 +inf]",
+        ),
+        (
+            "SELECT * FROM d USE INDEX(ia) WHERE a != 5",
+            "range:[-inf,5), (5,+inf]",
+        ),
+    ] {
+        let (operator, info) = range_of(&mut session, query);
+        assert_eq!(operator, "  \u{2514}\u{2500}IndexRangeScan", "{query}");
+        assert!(
+            info.starts_with(expected),
+            "{query} gave {info}, expected it to start with {expected}",
+        );
+    }
+
+    // The control, and the thing that is genuinely different: WITHOUT the
+    // hint, the same predicate takes a full scan on cost grounds. If range
+    // building ever did depend on coveringness, this line would be the only
+    // one above that still passed.
+    let (operator, _) = range_of(&mut session, "SELECT * FROM d WHERE a > 5");
+    assert_eq!(operator, "  \u{2514}\u{2500}TableFullScan");
+}

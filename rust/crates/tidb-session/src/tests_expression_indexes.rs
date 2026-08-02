@@ -502,3 +502,102 @@ fn a_column_an_expression_index_reads_cannot_be_renamed() {
         Some(1166)
     );
 }
+
+/// A MODIFY that keeps the column's NAME is refused too, with 3106.
+///
+/// This tier used to accept it. The rename half of Go's rule was ported and
+/// the other half was not, on the reasoning -- written into the code -- that
+/// "a MODIFY that keeps the name leaves every generated expression reading a
+/// name that still resolves, so only the rename half is a problem". Names are
+/// not the only thing an expression index depends on: it also depends on the
+/// column's TYPE, because the hidden generated column's stored values were
+/// computed from it. Accepting the MODIFY left the index in place over a
+/// column whose type had moved, so a later read used an index whose
+/// expression no longer matched the column.
+///
+/// Go raises `ErrUnsupportedOnGeneratedColumn` (3106) with the inner error's
+/// full `Error()` text -- class prefix included -- as its argument, so the
+/// wire message nests one error inside another. CAPTURED from a mock-backed
+/// TiDB session, and identical in
+/// `tests/integrationtest/r/ddl/column_change.result:12`:
+///
+/// ```text
+/// create table t(a int, b int as (a+1) virtual, c int)
+///   alter table t modify a bigint  -> 3106 '[ddl:3108]Column 'a' has a generated column dependency.' is not supported for generated columns.
+///   alter table t modify a int     -> 3106 (same)
+///   alter table t change a a2 int  -> 3108 Column 'a' has a generated column dependency.
+///   alter table t modify c bigint  -> OK
+/// create table e(a varchar(10), c int, index idx((lower(a))))
+///   alter table e modify a varchar(20) -> 3106 '[ddl:3837]Column 'a' has an expression index dependency and cannot be dropped or renamed' is not supported for generated columns.
+///   alter table e modify a varchar(10) -> 3106 (same)
+///   alter table e change a a2 varchar(10) -> 3837
+///   alter table e modify c bigint  -> OK
+/// ```
+///
+/// Note the second line of each block: the refusal fires even when the type is
+/// UNCHANGED. Go computes the dependency once and never asks what the new type
+/// is, so `modify a int` on an `int` column is refused like any other.
+///
+/// PINNED to refusal. If the expression-index/generated-column rewrite is ever
+/// implemented, these become successes and this test has to be rewritten
+/// deliberately -- it is not a placeholder for a rewrite Go performs, because
+/// Go does not rewrite here any more than it does on RENAME.
+#[test]
+fn modifying_a_depended_on_column_is_refused_even_without_a_rename() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE gm (a INT, b INT AS (a+1) VIRTUAL, c INT)")
+        .unwrap();
+    for statement in [
+        "ALTER TABLE gm MODIFY a BIGINT",
+        // Type unchanged: still refused.
+        "ALTER TABLE gm MODIFY a INT",
+    ] {
+        let error = session
+            .run(statement)
+            .expect_err("the modify must be refused")
+            .to_mysql_error();
+        assert_eq!(error.code, 3106, "{statement}");
+        assert_eq!(
+            error.message,
+            "'[ddl:3108]Column 'a' has a generated column dependency.' is not supported for \
+             generated columns.",
+            "{statement}",
+        );
+    }
+    // The rename half keeps its own code, unwrapped.
+    assert_eq!(
+        code(&mut session, "ALTER TABLE gm CHANGE a a2 INT"),
+        Some(3108)
+    );
+
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE em (a VARCHAR(10), c INT, INDEX idx((LOWER(a))))")
+        .unwrap();
+    for statement in [
+        "ALTER TABLE em MODIFY a VARCHAR(20)",
+        "ALTER TABLE em MODIFY a VARCHAR(10)",
+    ] {
+        let error = session
+            .run(statement)
+            .expect_err("the modify must be refused")
+            .to_mysql_error();
+        assert_eq!(error.code, 3106, "{statement}");
+        assert_eq!(
+            error.message,
+            "'[ddl:3837]Column 'a' has an expression index dependency and cannot be dropped or \
+             renamed' is not supported for generated columns.",
+            "{statement}",
+        );
+    }
+    assert_eq!(
+        code(&mut session, "ALTER TABLE em CHANGE a a2 VARCHAR(10)"),
+        Some(3837)
+    );
+
+    // The control: a column NOTHING depends on still modifies, in both
+    // tables. Without this, refusing every MODIFY would pass the assertions
+    // above.
+    session.run("ALTER TABLE em MODIFY c BIGINT").unwrap();
+}

@@ -974,6 +974,20 @@ fn modify_column_action(
         ctx.append_suppressed(&missing);
         return Ok(());
     };
+    // Go `getModifiableColumnJob` (`pkg/ddl/modify_column.go`) computes
+    // `checkModifyColumnWithGeneratedColumnsConstraint` ONCE and then raises
+    // it in two different shapes -- the rename arm just below, and the 3106
+    // arm further down. The partition question is deliberately NOT asked
+    // here: Go's rename-only path asks it, this path does not, and that
+    // asymmetry is Go's (`checkPartitionModifiableColumn` polices the type
+    // instead).
+    let dependent = match table.column_dependent(offset) {
+        Some(
+            dependent @ (crate::kv_table::ColumnDependent::ExpressionIndex
+            | crate::kv_table::ColumnDependent::GeneratedColumn),
+        ) => Some(dependent),
+        _ => None,
+    };
     // A rename onto another column's name is a duplicate, but renaming a
     // column to the name it already has is allowed.
     if !def.name.eq_ignore_ascii_case(old_name) {
@@ -984,20 +998,10 @@ fn modify_column_action(
         {
             return Err(DriverError::DuplicateColumnName(def.name.clone()));
         }
-        // Go `getModifiableColumnJob` (`pkg/ddl/modify_column.go`) computes
-        // `checkModifyColumnWithGeneratedColumnsConstraint` unconditionally
-        // but only RAISES it inside this `newColName.L != originalColName.L`
-        // arm: a MODIFY that keeps the name leaves every generated expression
-        // reading a name that still resolves, so only the rename half is a
-        // problem. The partition question is deliberately NOT asked here --
-        // Go's rename-only path asks it, this path does not, and that
-        // asymmetry is Go's (`checkPartitionModifiableColumn` polices the
-        // type instead).
-        if let Some(
-            dependent @ (crate::kv_table::ColumnDependent::ExpressionIndex
-            | crate::kv_table::ColumnDependent::GeneratedColumn),
-        ) = table.column_dependent(offset)
-        {
+        // The rename arm raises the dependency error UNWRAPPED: 3108 for a
+        // visible generated column, 3837 for the hidden one an expression
+        // index was rewritten into.
+        if let Some(dependent) = dependent {
             return Err(super::column_dependent_error(dependent, old_name));
         }
     }
@@ -1091,6 +1095,35 @@ fn modify_column_action(
                 .then_some(length);
             crate::ddl::index_prefix::key_part_length(&field_type, &def.name, surviving)?;
         }
+    }
+
+    // The second shape of the dependency error, and the one this tier used to
+    // miss entirely. Go raises it here, after the index checks above and
+    // regardless of whether the name or even the TYPE changed:
+    //
+    //     if errG != nil {
+    //         // https://github.com/pingcap/tidb/issues/24321
+    //         return nil, dbterror.ErrUnsupportedOnGeneratedColumn.
+    //             GenWithStackByArgs(errG.Error())
+    //     }
+    //
+    // The argument is the inner error's FULL `Error()` text, class prefix
+    // included, so the wire message nests one error inside another. That is
+    // not a slip -- it is in the recording verbatim
+    // (`tests/integrationtest/r/ddl/column_change.result:12`):
+    //
+    //     Error 3106 (HY000): '[ddl:3108]Column 'a' has a generated column
+    //     dependency.' is not supported for generated columns.
+    //
+    // Accepting these left the expression index in place over a column whose
+    // TYPE had moved out from under it, so a later read used an index whose
+    // expression no longer matched the column. Refusing is what Go does; it is
+    // not a stand-in for a rewrite Go performs, because Go does not rewrite
+    // for MODIFY any more than it does for RENAME.
+    if let Some(dependent) = dependent {
+        return Err(DriverError::UnsupportedOnGeneratedColumn(
+            super::column_dependent_error_text(dependent, old_name),
+        ));
     }
 
     let new_position = match position {
