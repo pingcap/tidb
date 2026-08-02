@@ -161,6 +161,7 @@ type fakeExternalWorkloadManager struct {
 	registeredTable  int64
 	registerEnabled  bool
 	deletedTable     int64
+	deleteErr        error
 	recycledCreateTS uint64
 	updatedEnable    *bool
 	registerErr      error
@@ -191,7 +192,7 @@ func (m *fakeExternalWorkloadManager) RegisterTTLTask(_ context.Context, tableID
 }
 func (m *fakeExternalWorkloadManager) DeleteTTLTableInfo(_ context.Context, tableID int64) error {
 	m.deletedTable = tableID
-	return nil
+	return m.deleteErr
 }
 func (m *fakeExternalWorkloadManager) RecycleTTLTask(_ context.Context, completedJobCreateTime uint64) error {
 	m.recycledCreateTS = completedJobCreateTime
@@ -226,13 +227,13 @@ func TestExternalWorkloadTTLTableReportsOnlyFromMaster(t *testing.T) {
 	require.Equal(t, int64(123), master.registeredTable)
 	require.False(t, master.registerEnabled)
 
-	dc.deleteTTLTableFromExternalWorkload(context.Background(), tblInfo.ID)
+	require.NoError(t, dc.deleteTTLTableFromExternalWorkload(context.Background(), tblInfo.ID))
 	require.Equal(t, int64(123), master.deletedTable)
 
 	ttlWorker := &fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker}
 	dc = &ddlCtx{extWorkload: ttlWorker}
 	require.NoError(t, dc.registerTTLTableToExternalWorkload(context.Background(), tblInfo))
-	dc.deleteTTLTableFromExternalWorkload(context.Background(), tblInfo.ID)
+	require.NoError(t, dc.deleteTTLTableFromExternalWorkload(context.Background(), tblInfo.ID))
 	require.Equal(t, int64(123), ttlWorker.registeredTable)
 	require.Equal(t, int64(123), ttlWorker.deletedTable)
 }
@@ -258,22 +259,21 @@ func TestExternalWorkloadTTLTableRegisterReturnsError(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 }
 
-func TestExternalWorkloadTTLTableTryRegisterSwallowsError(t *testing.T) {
-	manager := &fakeExternalWorkloadManager{role: config.RoleMaster, registerErr: errors.New("boom")}
+func TestExternalWorkloadTTLTableDeleteReturnsError(t *testing.T) {
+	boom := errors.New("boom")
+	manager := &fakeExternalWorkloadManager{role: config.RoleMaster, deleteErr: boom}
 	dc := &ddlCtx{extWorkload: manager}
-	dc.tryRegisterTTLTableToExternalWorkload(context.Background(), &model.TableInfo{
-		ID:      123,
-		TTLInfo: &model.TTLInfo{Enable: true},
-	})
-	require.Equal(t, int64(123), manager.registeredTable)
+	err := dc.deleteTTLTableFromExternalWorkload(context.Background(), 123)
+	require.ErrorIs(t, err, boom)
+	require.Equal(t, int64(123), manager.deletedTable)
 }
 
 func TestExternalWorkloadTTLTableSyncDeletesDisabledTTL(t *testing.T) {
 	manager := &fakeExternalWorkloadManager{role: config.RoleMaster}
 	dc := &ddlCtx{extWorkload: manager}
-	dc.syncTTLTableToExternalWorkload(context.Background(), &model.TableInfo{
+	require.NoError(t, dc.syncTTLTableToExternalWorkload(context.Background(), &model.TableInfo{
 		ID:      123,
 		TTLInfo: &model.TTLInfo{Enable: false},
-	})
+	}))
 	require.Equal(t, int64(123), manager.deletedTable)
 }

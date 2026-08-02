@@ -249,7 +249,9 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 
-	w.tryRegisterTTLTableToExternalWorkload(jobCtx.ctx, tbInfo)
+	if err := w.registerTTLTableToExternalWorkload(jobCtx.ctx, tbInfo); err != nil {
+		return ver, cancelJobOnExternalTTLWorkloadError(job, err)
+	}
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -295,7 +297,9 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		w.tryRegisterTTLTableToExternalWorkload(jobCtx.ctx, tbInfo)
+		if err := w.registerTTLTableToExternalWorkload(jobCtx.ctx, tbInfo); err != nil {
+			return ver, cancelJobOnExternalTTLWorkloadError(job, err)
+		}
 
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		return ver, nil
@@ -355,8 +359,22 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			return ver, errors.Trace(err)
 		}
 	}
+	registeredTTLTableIDs := make([]int64, 0, len(tableInfos))
 	for i := range tableInfos {
-		w.tryRegisterTTLTableToExternalWorkload(jobCtx.ctx, tableInfos[i])
+		if err := w.registerTTLTableToExternalWorkload(jobCtx.ctx, tableInfos[i]); err != nil {
+			for j := len(registeredTTLTableIDs) - 1; j >= 0; j-- {
+				compensateTableID := registeredTTLTableIDs[j]
+				if compensateErr := w.deleteTTLTableFromExternalWorkload(jobCtx.ctx, compensateTableID); compensateErr != nil {
+					logutil.DDLLogger().Warn("failed to roll back TTL table registration in external workload controller",
+						zap.Int64("tableID", compensateTableID),
+						zap.Error(compensateErr))
+				}
+			}
+			return ver, cancelJobOnExternalTTLWorkloadError(job, err)
+		}
+		if tableInfos[i] != nil && tableInfos[i].TTLInfo != nil && tableInfos[i].TTLInfo.Enable {
+			registeredTTLTableIDs = append(registeredTTLTableIDs, tableInfos[i].ID)
+		}
 	}
 
 	job.State = model.JobStateDone

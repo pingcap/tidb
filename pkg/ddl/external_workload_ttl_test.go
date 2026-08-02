@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -30,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type recordingExternalWorkloadManager struct {
@@ -38,6 +41,8 @@ type recordingExternalWorkloadManager struct {
 	mu               sync.Mutex
 	registeredTables []int64
 	deletedTables    []int64
+	registerErrFn    func(int64) error
+	deleteErrFn      func(int64) error
 }
 
 func (*recordingExternalWorkloadManager) Close() error { return nil }
@@ -69,6 +74,11 @@ func (*recordingExternalWorkloadManager) UpdateGCLifeTime(context.Context, time.
 func (m *recordingExternalWorkloadManager) RegisterTTLTask(_ context.Context, tableID int64, _ bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.registerErrFn != nil {
+		if err := m.registerErrFn(tableID); err != nil {
+			return err
+		}
+	}
 	m.registeredTables = append(m.registeredTables, tableID)
 	return nil
 }
@@ -76,6 +86,11 @@ func (m *recordingExternalWorkloadManager) RegisterTTLTask(_ context.Context, ta
 func (m *recordingExternalWorkloadManager) DeleteTTLTableInfo(_ context.Context, tableID int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.deleteErrFn != nil {
+		if err := m.deleteErrFn(tableID); err != nil {
+			return err
+		}
+	}
 	m.deletedTables = append(m.deletedTables, tableID)
 	return nil
 }
@@ -134,6 +149,22 @@ func createTTLExternalWorkloadTestKit(t *testing.T, mgr *recordingExternalWorklo
 }
 
 func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
+	t.Run("create table registration failure aborts ddl", func(t *testing.T) {
+		mgr := &recordingExternalWorkloadManager{
+			role:          config.RoleMaster,
+			registerErrFn: func(int64) error { return context.DeadlineExceeded },
+		}
+		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
+
+		err := tk.ExecToErr(`create table t(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day`)
+		require.ErrorContains(t, err, context.DeadlineExceeded.Error())
+		tk.MustQuery("show tables like 't'").Check(testkit.Rows())
+		require.Empty(t, mgr.registeredTTLTables())
+	})
+
 	t.Run("create table with foreign key registers ttl", func(t *testing.T) {
 		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
 		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
@@ -167,6 +198,31 @@ func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
 		require.Equal(t, []int64{tbl.Meta().ID}, mgr.deletedTTLTables())
 	})
 
+	t.Run("drop table delete failure aborts ddl", func(t *testing.T) {
+		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
+		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
+
+		tk.MustExec(`create table t(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day`)
+
+		tbl := external.GetTableByName(t, tk, "test", "t")
+		mgr.deleteErrFn = func(tableID int64) error {
+			if tableID == tbl.Meta().ID {
+				return context.DeadlineExceeded
+			}
+			return nil
+		}
+
+		err := tk.ExecToErr("drop table t")
+		require.ErrorContains(t, err, context.DeadlineExceeded.Error())
+
+		currentTbl := external.GetTableByName(t, tk, "test", "t")
+		require.Equal(t, tbl.Meta().ID, currentTbl.Meta().ID)
+		require.Empty(t, mgr.deletedTTLTables())
+	})
+
 	t.Run("truncate table refreshes ttl metadata", func(t *testing.T) {
 		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
 		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
@@ -183,6 +239,65 @@ func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
 		require.NotEqual(t, oldTbl.Meta().ID, newTbl.Meta().ID)
 		require.Equal(t, []int64{oldTbl.Meta().ID}, mgr.deletedTTLTables())
 		require.Equal(t, []int64{oldTbl.Meta().ID, newTbl.Meta().ID}, mgr.registeredTTLTables())
+	})
+
+	t.Run("truncate table register failure restores old ttl registration", func(t *testing.T) {
+		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
+		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
+
+		tk.MustExec(`create table t(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day`)
+
+		oldTbl := external.GetTableByName(t, tk, "test", "t")
+		mgr.registerErrFn = func(tableID int64) error {
+			if tableID != oldTbl.Meta().ID {
+				return context.DeadlineExceeded
+			}
+			return nil
+		}
+
+		err := tk.ExecToErr("truncate table t")
+		require.ErrorContains(t, err, context.DeadlineExceeded.Error())
+
+		currentTbl := external.GetTableByName(t, tk, "test", "t")
+		require.Equal(t, oldTbl.Meta().ID, currentTbl.Meta().ID)
+		require.Equal(t, []int64{oldTbl.Meta().ID}, mgr.deletedTTLTables())
+		require.Equal(t, []int64{oldTbl.Meta().ID, oldTbl.Meta().ID}, mgr.registeredTTLTables())
+	})
+
+	t.Run("truncate table compensation failure logs keyword", func(t *testing.T) {
+		core, recorded := observer.New(zap.WarnLevel)
+		restoreLog := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{Level: zap.NewAtomicLevelAt(zap.InfoLevel)})
+		defer restoreLog()
+
+		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
+		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
+
+		tk.MustExec(`create table t(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day`)
+
+		oldTbl := external.GetTableByName(t, tk, "test", "t")
+		mgr.registerErrFn = func(int64) error { return context.DeadlineExceeded }
+
+		err := tk.ExecToErr("truncate table t")
+		require.ErrorContains(t, err, context.DeadlineExceeded.Error())
+
+		found := false
+		for _, entry := range recorded.All() {
+			if entry.Message != "truncate TTL external workload compensation failed" {
+				continue
+			}
+			fields := entry.ContextMap()
+			require.Equal(t, "truncate_ttl_restore_old_registration_failed", fields["keyword"])
+			require.EqualValues(t, oldTbl.Meta().ID, fields["oldTableID"])
+			found = true
+			break
+		}
+		require.True(t, found)
 	})
 
 	t.Run("ddl syncs ttl metadata from ttl worker role", func(t *testing.T) {

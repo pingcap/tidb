@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/extworkload"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"go.uber.org/zap"
 )
 
 func onTTLInfoRemove(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
@@ -46,7 +44,9 @@ func onTTLInfoRemove(jobCtx *jobContext, job *model.Job) (ver int64, err error) 
 		return ver, errors.Trace(err)
 	}
 	if jobCtx.oldDDLCtx != nil {
-		jobCtx.oldDDLCtx.deleteTTLTableFromExternalWorkload(jobCtx.ctx, tblInfo.ID)
+		if err := jobCtx.oldDDLCtx.deleteTTLTableFromExternalWorkload(jobCtx.ctx, tblInfo.ID); err != nil {
+			return ver, cancelJobOnExternalTTLWorkloadError(job, err)
+		}
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
@@ -96,7 +96,9 @@ func onTTLInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err error) 
 		return ver, errors.Trace(err)
 	}
 	if jobCtx.oldDDLCtx != nil {
-		jobCtx.oldDDLCtx.syncTTLTableToExternalWorkload(jobCtx.ctx, tblInfo)
+		if err := jobCtx.oldDDLCtx.syncTTLTableToExternalWorkload(jobCtx.ctx, tblInfo); err != nil {
+			return ver, cancelJobOnExternalTTLWorkloadError(job, err)
+		}
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
@@ -110,6 +112,14 @@ func (dc *ddlCtx) externalWorkloadManager() (extworkload.Manager, bool) {
 	return manager, extworkload.IsEnabled(manager)
 }
 
+func cancelJobOnExternalTTLWorkloadError(job *model.Job, err error) error {
+	if err == nil {
+		return nil
+	}
+	job.State = model.JobStateCancelled
+	return errors.Trace(err)
+}
+
 func (dc *ddlCtx) registerTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) error {
 	manager, ok := dc.externalWorkloadManager()
 	if !ok || tblInfo == nil || tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
@@ -118,35 +128,22 @@ func (dc *ddlCtx) registerTTLTableToExternalWorkload(ctx context.Context, tblInf
 	return manager.RegisterTTLTask(ctx, tblInfo.ID, vardef.EnableTTLJob.Load())
 }
 
-func (dc *ddlCtx) tryRegisterTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) {
-	if err := dc.registerTTLTableToExternalWorkload(ctx, tblInfo); err != nil {
-		logutil.DDLLogger().Warn("failed to register TTL table to external workload controller",
-			zap.Int64("tableID", tblInfo.ID),
-			zap.Error(err))
-	}
-}
-
-func (dc *ddlCtx) syncTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) {
+func (dc *ddlCtx) syncTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) error {
 	if tblInfo == nil {
-		return
+		return nil
 	}
 	if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
-		dc.deleteTTLTableFromExternalWorkload(ctx, tblInfo.ID)
-		return
+		return dc.deleteTTLTableFromExternalWorkload(ctx, tblInfo.ID)
 	}
-	dc.tryRegisterTTLTableToExternalWorkload(ctx, tblInfo)
+	return dc.registerTTLTableToExternalWorkload(ctx, tblInfo)
 }
 
-func (dc *ddlCtx) deleteTTLTableFromExternalWorkload(ctx context.Context, tableID int64) {
+func (dc *ddlCtx) deleteTTLTableFromExternalWorkload(ctx context.Context, tableID int64) error {
 	manager, ok := dc.externalWorkloadManager()
 	if !ok {
-		return
+		return nil
 	}
-	if err := manager.DeleteTTLTableInfo(ctx, tableID); err != nil {
-		logutil.DDLLogger().Warn("failed to delete TTL table from external workload controller",
-			zap.Int64("tableID", tableID),
-			zap.Error(err))
-	}
+	return manager.DeleteTTLTableInfo(ctx, tableID)
 }
 
 // checkTTLInfoValid checks the TTL settings for a table.
