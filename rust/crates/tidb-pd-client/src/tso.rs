@@ -381,10 +381,36 @@ fn invalid_tso(kind: &'static str, message: String) -> PdClientError {
 /// The suffix-bit arithmetic, pinned against an independently written model of
 /// the Go formula.
 ///
-/// A live playground PD always reports `suffix_bits = 0`, so the shifting path
-/// below is unreachable from any local cluster; these tests are the only guard
-/// that a multi-DC PD (`enable-local-tso = true`, which makes PD's
-/// `CalSuffixBits` return a non-zero width) would still be split correctly.
+/// A default playground PD always reports `suffix_bits = 0`, so the shifting
+/// path below is unreachable from a default local cluster; these tests are the
+/// standing guard for it.
+///
+/// Non-zero `suffix_bits` is reachable, and it reaches the *global* TSO that
+/// TiDB requests — it is not a Local-TSO-only field. In PD (`pkg/tso`,
+/// v8.5.x) `GlobalTSOAllocator.GenerateTSO` ends with
+/// `globalTSOResp.Logical = calibrateLogical(logical, suffixBits)` and
+/// `globalTSOResp.SuffixBits = uint32(suffixBits)`, where
+/// `calibrateLogical(rawLogical, suffixBits) = rawLogical<<suffixBits + suffix`
+/// and `CalSuffixBits(maxSuffix) = ceil(log2(maxSuffix + 1))`. So the wire
+/// `logical` is already post-shift and carries the allocator's suffix in its
+/// low bits; `first_logical` recovered here is post-shift too.
+///
+/// To reproduce on a local cluster, every PD needs
+/// `enable-local-tso = true` plus a `zone` label naming its dc-location
+/// (PD's `ZoneLabel = "zone"`; `Labels` is the `[labels]` toml table):
+///
+/// ```toml
+/// enable-local-tso = true
+/// [labels]
+/// zone = "dc-1"
+/// ```
+///
+/// With one dc-location `maxSuffix = 1`, so `suffix_bits = 1`; two
+/// dc-locations give `2`. PD v8.5.7's `pd-server` still contains the whole
+/// path (`enable-local-tso`, `dc-location`, `CalSuffixBits`); the v9.0 nightly
+/// binary keeps `enable-local-tso`/`GetSuffixBits` but no longer contains any
+/// `dc-location` or `CalSuffixBits` symbol, so pin a v8.5.x PD when running
+/// this against a real cluster.
 #[cfg(test)]
 mod tests {
     use super::{add_logical, TimestampParts, MAX_LOGICAL, PHYSICAL_SHIFT_BITS};
