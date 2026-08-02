@@ -312,6 +312,14 @@ pub(crate) fn run_select_traced(
             (None, FromScope::default())
         }
         Some(join) => {
+            // Go raises `ErrKeyDoesNotExist` (1176) from
+            // `getPossibleAccessPaths`, once per `DataSource` and before any
+            // path is costed -- so a `FORCE INDEX` naming an index no table
+            // has fails the statement whether or not that table is the one
+            // the access-path decision would have narrowed. Doing it here,
+            // over the whole join tree, is what makes it independent of which
+            // table that turns out to be.
+            crate::index_hints::validate_join_index_hints(join, catalog, current_db)?;
             // Go's `rule_predicate_push_down`: the `WHERE` equalities are
             // offered to the joins below, so a comma join does not have to
             // build the cross product the filter would then throw away. See

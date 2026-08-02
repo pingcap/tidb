@@ -76,6 +76,15 @@ pub(crate) fn commit_fast_path_source(
         return Ok(None);
     };
     let columns = scope.column_list();
+    // Go's `getPossibleAccessPaths`: the statement's own `USE`/`FORCE`/
+    // `IGNORE INDEX` decide which paths exist before any of them is costed.
+    // The names were already validated for every table of the `FROM`
+    // (`index_hints::validate_join_index_hints`), so this cannot be the site
+    // that raises 1176.
+    let hints = match single_table_ref(&select.from) {
+        Some(table_ref) => crate::index_hints::table_ref_hints(table_ref, &table)?,
+        None => crate::index_hints::AvailablePaths::unrestricted(),
+    };
     // Go's `PartitionProcessor` prunes before any access path is costed, and
     // so does this: an offer refused leaves the source reading every
     // partition, which is a superset and still every row the statement
@@ -112,8 +121,18 @@ pub(crate) fn commit_fast_path_source(
     // An index range scan, when no point get applies: the ranges replace the
     // full scan with the rows the index covers, and the WHERE stays above to
     // apply the conditions the ranges did not consume.
-    if try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone)?.is_none() {
-        match choose_index_range_path(select, catalog, scope, &table, &columns) {
+    //
+    // A point get over the handle IS the table path taken to its limit, so a
+    // hint that deleted the table path deletes it too -- Go gates it on the
+    // same `indexIsAvailableByHints` (`point_get_plan.go:571`), which is why
+    // `FORCE INDEX(idx_b) WHERE a = 2` reads idx_b instead of the row. The
+    // BATCH point get below is deliberately NOT gated: Go's
+    // `tryWhereIn2BatchPointGet` never consults the hints, and captured TiDB
+    // plans `Batch_Point_Get` for `FORCE INDEX(idx_b) WHERE a IN (2,3)`.
+    if !hints.allows_table()
+        || try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone)?.is_none()
+    {
+        match choose_index_range_path(select, catalog, scope, &table, &columns, &hints) {
             // A table path the ranger narrowed. The source already installed
             // by `build_from` IS the right executor -- a `TableRangeScan` is
             // Go's same `PhysicalTableScan` with ranges -- so this offers it
@@ -153,7 +172,11 @@ pub(crate) fn commit_fast_path_source(
             None => {}
         }
     }
-    if let Some(handle) = try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone)?
+    if let Some(handle) = hints
+        .allows_table()
+        .then(|| try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone))
+        .transpose()?
+        .flatten()
     {
         // A `None` handle is a WHERE that pins a handle no row can have: the
         // plan is a point get over an empty handle list.
@@ -396,6 +419,7 @@ pub(crate) fn choose_index_range_path(
     scope: &FromScope,
     table: &KvTable,
     columns: &[(String, FieldType)],
+    hints: &crate::index_hints::AvailablePaths,
 ) -> Option<ChosenPath> {
     // No `WHERE` at all is not a reason to stop: a covering index is still a
     // candidate, and reading the whole of a narrow index beats reading the
@@ -430,6 +454,7 @@ pub(crate) fn choose_index_range_path(
         &resolver,
         limit.as_ref(),
         stats,
+        hints,
     );
     // Go's `prop.ExpectedCnt != math.MaxFloat64`: a row cap on the required
     // property is what disables Fix45132's row-ratio rule inside pruning.
@@ -1004,11 +1029,12 @@ fn collect_conjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::E
 
 /// The single TiKV-backed table a `FROM` names, when it names exactly one.
 /// A point get applies only to that shape (Go `getSingleTableNameAndAlias`).
-pub(crate) fn single_kv_table(
-    from: &Option<tidb_ast::Join>,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Option<KvTable> {
+/// The one plain table a `FROM` names, when it names exactly one.
+///
+/// Split out of [`single_kv_table`] because the access-path decision needs the
+/// REFERENCE, not just the table it resolves to: the `USE`/`FORCE`/`IGNORE
+/// INDEX` hints that decide which paths exist live on the reference.
+pub(crate) fn single_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_ast::TableRef> {
     let join = from.as_ref()?;
     if join.right.is_some() {
         return None;
@@ -1022,6 +1048,15 @@ pub(crate) fn single_kv_table(
     if !table_ref.partitions.is_empty() {
         return None;
     }
+    Some(table_ref)
+}
+
+pub(crate) fn single_kv_table(
+    from: &Option<tidb_ast::Join>,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<KvTable> {
+    let table_ref = single_table_ref(from)?;
     let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
     match catalog.get_in(database, name)? {
         TableEntry::Kv(kv) => Some(kv.clone()),

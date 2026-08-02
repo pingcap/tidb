@@ -17,30 +17,28 @@
 //!
 //! # The seam these tests pin
 //!
-//! `tidb_ast::TableRef::hints` is produced by the parser and then read by
-//! nobody on the live path. The live access-path decision is
+//! `tidb_ast::TableRef::hints` used to be produced by the parser and read by
+//! nobody on the live path: the access-path decision is
 //! `tidb_executor::driver::access::choose_index_range_path` ->
-//! `tidb_executor::access_cost::choose_access_path` ->
-//! `tidb_executor::skyline::skyline_pruning`, and none of those three ever
-//! sees a hint. So today the session ACCEPTS an index hint and the plan
-//! DISREGARDS it — the accept-and-discard shape.
+//! `tidb_executor::access_cost::enumerate_paths` -> `choose_access_path` ->
+//! `tidb_executor::skyline::skyline_pruning`, and none of those saw a hint,
+//! so the session ACCEPTED an index hint and the plan DISREGARDED it.
 //!
-//! The only readers of `TableRef::hints` anywhere are fail-closed refusals in
-//! narrower tiers that never serve this path:
-//! `tidb_planner::read_only_scan::validate_table_ref`,
-//! `tidb_planner::prepared_dml`, `tidb_planner::configured_relation_tree`, and
-//! `tidb_exec::result_schema_multi`.
+//! `tidb_executor::index_hints` now resolves a table's hints into the set of
+//! paths that still exist, and `enumerate_paths` builds only those --
+//! Go's own placement, where `getPossibleAccessPaths` hands physical
+//! selection an already-restricted `available` and the excluded paths are
+//! never costed at all. Two consequences are load-bearing and are pinned
+//! below rather than left to the reader:
 //!
-//! Closing it is one filter in one place. `choose_index_range_path` already
-//! holds both halves it needs -- the `SelectStmt` and the `FromScope` that
-//! resolves the `TableRef` carrying the hints -- so the filter goes between
-//! its `enumerate_paths` call and its `choose_access_path` call, over the
-//! `Vec<Candidate<AccessPath>>`. That is exactly where Go puts it:
-//! `getPossibleAccessPaths` returns the already-filtered candidate set, and
-//! physical selection never sees the paths a hint excluded. The 1176 ERROR
-//! for a table-level hint naming a missing index has to be raised there too,
-//! before any path is chosen, because Go raises it whether or not the cost
-//! model would have wanted that index.
+//! * the point get over the handle IS the table path, so a hint that deleted
+//!   the table path deletes the point get with it (Go gates it on the same
+//!   `indexIsAvailableByHints`, `point_get_plan.go:571`) -- otherwise
+//!   `FORCE INDEX(idx_b) WHERE a = 2` would still answer from the row;
+//! * 1176 is raised while resolving, before any path is chosen, over every
+//!   table of the `FROM` rather than only the one the fast path narrows,
+//!   because Go raises it per `DataSource` and whether or not the cost model
+//!   would ever have wanted that index.
 //!
 //! # Go's actual rule (`getPossibleAccessPaths`, `pkg/planner/core/planbuilder.go:1320`)
 //!
@@ -116,9 +114,12 @@
 //! `Internal : ` prefix even though `errno.ErrInternal`'s registered
 //! message is `"Internal : %s"`.
 //!
-//! Every assertion below that names a DIVERGENCE is a tripwire: closing the
-//! seam MUST break it, and the Go row it should become is in the comment
-//! immediately above it.
+//! Every assertion below that still names a DIVERGENCE is a tripwire for
+//! #153, the COMMENT-hint spelling, which is deliberately still unreported:
+//! the set of hints that are genuinely inapplicable only becomes well-defined
+//! now that table-level hints bind, and those two tests are what will go red
+//! when it is implemented. They also serve as this file's control -- closing
+//! #179 must not have moved the comment-hint plans or the warning count.
 
 #![cfg(test)]
 
@@ -154,19 +155,26 @@ fn plan_uses_index(session: &mut Session, sql: &str, index: &str) -> bool {
         .any(|object| object.contains(&format!("index:{index}")))
 }
 
-/// `FORCE INDEX` naming a real index must constrain the access path even when
-/// the cost model would rather use the clustered handle.
+/// The code and message a statement failed with.
+fn error_of(session: &mut Session, sql: &str) -> (u16, String) {
+    let error = session.run(sql).unwrap_err().to_mysql_error();
+    (error.code, error.message)
+}
+
+/// `FORCE INDEX` naming a real index constrains the access path even when the
+/// cost model would rather use the clustered handle.
 ///
 /// Go plans `IndexReader -> IndexFullScan on idx_b` with a `Selection` for
-/// `eq(a, 2)` pushed to the coprocessor: the hint wins over a far cheaper
-/// point get. This tier ignores the hint and takes the point get.
+/// `eq(a, 2)` pushed to the coprocessor: the hint deletes the table path, and
+/// with it the point get that path would have become, so a far cheaper plan
+/// is simply not available to choose.
 #[test]
-fn force_index_is_accepted_and_disregarded() {
+fn force_index_constrains_the_access_path() {
     let mut session = hinted_session();
 
-    // Control: with no hint at all, the cost model picks the handle. This is
-    // the same plan the hinted statement below produces, which is exactly how
-    // we know the hint changed nothing.
+    // Control: with no hint at all, the cost model picks the handle. Go's
+    // capture for the unhinted statement is `Point_Get ... handle:2`, so the
+    // hinted plan below differing from this one is the whole point.
     let unhinted = access_objects(&mut session, "EXPLAIN SELECT b FROM t WHERE a = 2");
     assert_eq!(unhinted, vec!["", "", "table:t"]);
     assert!(!plan_uses_index(
@@ -175,36 +183,32 @@ fn force_index_is_accepted_and_disregarded() {
         "idx_b"
     ));
 
-    // DIVERGENCE (#179): Go's plan reads `table:t, index:idx_b(b)`. This tier
-    // produces the byte-identical unhinted plan, so `FORCE INDEX` is inert.
+    // Go reads `table:t, index:idx_b(b)`.
     let hinted = access_objects(
         &mut session,
         "EXPLAIN SELECT b FROM t FORCE INDEX(idx_b) WHERE a = 2",
     );
-    assert_eq!(hinted, unhinted);
-    assert!(!plan_uses_index(
+    assert_ne!(hinted, unhinted);
+    assert!(plan_uses_index(
         &mut session,
         "EXPLAIN SELECT b FROM t FORCE INDEX(idx_b) WHERE a = 2",
         "idx_b"
     ));
 
-    // The rows are right either way -- silently ignoring the hint costs the
-    // plan, not the answer. Go's capture is `RS:2`.
+    // Go's capture is `RS:2`: the plan changed, the answer did not.
     assert_eq!(
         row_text(session.run("SELECT b FROM t FORCE INDEX(idx_b) WHERE a = 2")),
         vec![vec!["2".to_owned()]]
     );
 
-    // And it is silent about it: Go emits nothing here either, so the wire
-    // count agrees for the wrong reason.
+    // Go's `SHOW WARNINGS` is empty here: honouring a hint is silent.
     assert_eq!(session.warnings(), &[]);
     assert_eq!(session.wire_warning_count(), 0);
 }
 
 /// Go treats `USE INDEX` and `FORCE INDEX` identically (planbuilder.go:1513,
-/// "we don't distinguish between FORCE and USE"). Both are equally inert here,
-/// so the equivalence holds vacuously and will keep holding once the seam
-/// closes.
+/// "we don't distinguish between FORCE and USE"), and its two captures for
+/// these statements are byte-identical.
 #[test]
 fn use_index_matches_force_index() {
     let mut session = hinted_session();
@@ -219,32 +223,41 @@ fn use_index_matches_force_index() {
     );
     assert_eq!(forced, used);
 
-    // DIVERGENCE (#179): Go's shared plan is the idx_b IndexReader; this is
-    // the point-get plan instead.
-    assert_eq!(used, vec!["", "", "table:t"]);
+    // Go's shared plan reads `table:t, index:idx_b(b)`, not the handle.
+    assert!(used.iter().any(|object| object.contains("index:idx_b")));
+    assert_eq!(
+        row_text(session.run("SELECT b FROM t USE INDEX(idx_b) WHERE a = 2")),
+        vec![vec!["2".to_owned()]]
+    );
     assert_eq!(session.warnings(), &[]);
+    assert_eq!(session.wire_warning_count(), 0);
 }
 
-/// `IGNORE INDEX` must remove the named index from the candidate set, leaving
-/// the table path. Go's capture is `TableReader -> TableFullScan`.
+/// `IGNORE INDEX` removes the named index from the candidate set, leaving the
+/// table path. Go's capture is `TableReader -> TableFullScan`.
 #[test]
-fn ignore_index_is_accepted_and_disregarded() {
+fn ignore_index_removes_the_named_path() {
     let mut session = hinted_session();
 
     // Control: unhinted, the cost model reaches for idx_b. That is the path
-    // IGNORE INDEX is supposed to take away.
+    // IGNORE INDEX takes away.
     assert!(plan_uses_index(
         &mut session,
         "EXPLAIN SELECT * FROM t WHERE b = 2",
         "idx_b"
     ));
 
-    // DIVERGENCE (#179): Go plans a TableFullScan. This tier still scans
-    // idx_b -- the one index the statement explicitly forbade.
-    assert!(plan_uses_index(
+    // Go plans a TableFullScan.
+    assert!(!plan_uses_index(
         &mut session,
         "EXPLAIN SELECT * FROM t IGNORE INDEX(idx_b) WHERE b = 2",
         "idx_b"
+    ));
+    // The OTHER index is untouched: `IGNORE` removes one path, not indexing.
+    assert!(plan_uses_index(
+        &mut session,
+        "EXPLAIN SELECT * FROM t IGNORE INDEX(idx_b) WHERE c = 2",
+        "idx_c"
     ));
 
     // Go's capture is `RS:1`.
@@ -259,62 +272,105 @@ fn ignore_index_is_accepted_and_disregarded() {
 /// `USE INDEX ()` with an empty list means "use no indexes" and forces the
 /// table path (planbuilder.go:1477, the `IndexNames == nil` branch).
 #[test]
-fn empty_use_index_list_is_accepted_and_disregarded() {
+fn an_empty_use_index_list_forces_the_table_path() {
     let mut session = hinted_session();
 
-    // DIVERGENCE (#179): Go plans a TableFullScan. This tier scans idx_b.
-    assert!(plan_uses_index(
+    // Go plans a TableFullScan.
+    assert!(!plan_uses_index(
         &mut session,
         "EXPLAIN SELECT * FROM t USE INDEX() WHERE b = 2",
         "idx_b"
     ));
+    assert_eq!(
+        row_text(session.run("SELECT count(*) FROM t USE INDEX() WHERE b = 2")),
+        vec![vec!["1".to_owned()]]
+    );
+
+    // The table path is the WHOLE table path, so the point get over the
+    // handle is still reachable through it: Go's capture for
+    // `use index() where a = 2` is `Point_Get ... handle:2`, the same plan
+    // the unhinted statement gets.
+    assert_eq!(
+        access_objects(&mut session, "EXPLAIN SELECT * FROM t USE INDEX() WHERE a = 2"),
+        access_objects(&mut session, "EXPLAIN SELECT * FROM t WHERE a = 2")
+    );
     assert_eq!(session.warnings(), &[]);
+    assert_eq!(session.wire_warning_count(), 0);
 }
 
 /// `FORCE INDEX` plus `IGNORE INDEX` on the same index leaves no usable index
-/// path, and Go falls back to the table path rather than failing to plan.
+/// path, and Go falls back to the table path rather than failing to plan --
+/// "If we have got FORCE or USE index hint but got no available index, we
+/// have to use table scan."
 #[test]
-fn a_hint_pair_that_leaves_no_index_path_is_accepted_and_disregarded() {
+fn a_hint_pair_that_leaves_no_index_path_reads_the_table() {
     let mut session = hinted_session();
 
-    // DIVERGENCE (#179): Go plans a TableFullScan. This tier scans idx_b.
-    assert!(plan_uses_index(
+    // Go plans a TableFullScan.
+    assert!(!plan_uses_index(
         &mut session,
         "EXPLAIN SELECT * FROM t FORCE INDEX(idx_b) IGNORE INDEX(idx_b) WHERE b = 2",
         "idx_b"
     ));
+    assert_eq!(
+        row_text(
+            session.run("SELECT count(*) FROM t FORCE INDEX(idx_b) IGNORE INDEX(idx_b) WHERE b = 2")
+        ),
+        vec![vec!["1".to_owned()]]
+    );
     assert_eq!(session.warnings(), &[]);
+    assert_eq!(session.wire_warning_count(), 0);
 }
 
-/// A table-level hint naming an index that does not exist is a hard error in
-/// Go -- 1176, `Key 'no_such_idx' doesn't exist in table 't'` -- for all three
-/// of FORCE, USE and IGNORE. This tier plans the statement as if the hint were
-/// not there and returns rows.
+/// A table-level hint naming an index that does not exist fails the statement
+/// -- 1176, `Key 'no_such_idx' doesn't exist in table 't'` -- for all three of
+/// FORCE, USE and IGNORE, and before any path is chosen.
 #[test]
-fn a_hint_naming_a_missing_index_is_accepted_and_disregarded() {
+fn a_hint_naming_a_missing_index_is_1176() {
     let mut session = hinted_session();
 
     for keyword in ["FORCE", "USE", "IGNORE"] {
-        let sql = format!("EXPLAIN SELECT * FROM t {keyword} INDEX(no_such_idx) WHERE b = 2");
-
-        // DIVERGENCE (#179): Go fails the statement with
+        // Go: `ERR`, and `SHOW WARNINGS` reports it as
         //   Error | 1176 | Key 'no_such_idx' doesn't exist in table 't'
-        // This tier plans it, and picks idx_b as if unhinted.
-        assert!(
-            plan_uses_index(&mut session, &sql, "idx_b"),
-            "{keyword}: expected the unhinted idx_b plan"
+        let (code, message) = error_of(
+            &mut session,
+            &format!("EXPLAIN SELECT * FROM t {keyword} INDEX(no_such_idx) WHERE b = 2"),
+        );
+        assert_eq!(code, 1176, "{keyword}: {message}");
+        assert_eq!(
+            message, "Key 'no_such_idx' doesn't exist in table 't'",
+            "{keyword}"
         );
 
-        // ...and reports nothing at all about the index it could not find.
-        assert_eq!(session.warnings(), &[], "{keyword}");
-        assert_eq!(session.wire_warning_count(), 0, "{keyword}");
+        // The statement itself fails too, not just its EXPLAIN.
+        let (code, message) = error_of(
+            &mut session,
+            &format!("SELECT count(*) FROM t {keyword} INDEX(no_such_idx) WHERE b = 2"),
+        );
+        assert_eq!(code, 1176, "{keyword}: {message}");
     }
 
-    // The statement even succeeds and returns rows, where Go returns 1176.
+    // Control: the SAME statements naming a real index plan and answer, so
+    // 1176 is about the missing name and not about hints being present.
     assert_eq!(
-        row_text(session.run("SELECT count(*) FROM t FORCE INDEX(no_such_idx) WHERE b = 2")),
+        row_text(session.run("SELECT count(*) FROM t FORCE INDEX(idx_b) WHERE b = 2")),
         vec![vec!["1".to_owned()]]
     );
+
+    // A hint on ANY table of a join is validated, not only the one the
+    // access-path decision would have narrowed. Go raises 1176 for both
+    // spellings; captured.
+    session
+        .run("CREATE TABLE t2 (a BIGINT PRIMARY KEY, b INT)")
+        .unwrap();
+    session.run("INSERT INTO t2 VALUES (1,1),(2,2)").unwrap();
+    for sql in [
+        "SELECT count(*) FROM t FORCE INDEX(no_such_idx) JOIN t2 ON t.a = t2.a",
+        "SELECT count(*) FROM t JOIN t2 FORCE INDEX(no_such_idx) ON t.a = t2.a",
+    ] {
+        let (code, message) = error_of(&mut session, sql);
+        assert_eq!(code, 1176, "{sql}: {message}");
+    }
 }
 
 /// A comment-style optimizer hint naming a table the statement never mentions

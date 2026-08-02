@@ -66,6 +66,7 @@ mod go_quote;
 pub(crate) mod handle_range;
 pub mod hash_agg;
 mod hash_join;
+mod index_hints;
 mod index_prefix_cut;
 mod index_range;
 pub mod join;

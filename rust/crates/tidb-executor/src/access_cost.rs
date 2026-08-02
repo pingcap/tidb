@@ -484,6 +484,7 @@ pub(crate) fn enumerate_paths(
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     limit: Option<&PushedLimit<'_>>,
     stats: Option<&TableStatistics>,
+    hints: &crate::index_hints::AvailablePaths,
 ) -> Vec<Candidate<AccessPath>> {
     let realtime = realtime_row_count(stats);
     let source_rows = source_row_count(table, where_clause, resolver, stats, realtime);
@@ -512,23 +513,29 @@ pub(crate) fn enumerate_paths(
         .and_then(|_| table.pk_handle_offset())
         .into_iter()
         .collect();
-    let mut candidates = vec![Candidate {
-        access_columns: handle_access_columns,
-        index_columns: ColSet::new(),
-        single_scan: true,
-        eq_or_in_count: handle.as_ref().map_or(0, |built| built.eq_or_in_count),
-        full_range: handle_ranges.is_none(),
-        count_after_access: table_scan.estimate.rows,
-        max_count_after_access: table_scan.risk.max,
-        min_count_after_access: table_scan.risk.min,
-        count_after_index: table_scan.risk.after_index,
-        pseudo: is_pseudo(stats),
-        index_width: 0,
-        empty_range: handle_ranges.as_ref().is_some_and(Vec::is_empty),
-        index_filter_count: 0,
-        table_filter_count: 0,
-        path: table_scan,
-    }];
+    // Go's `available`: a `USE`/`FORCE INDEX` that named an index deletes the
+    // table path outright, so the cost model never gets to prefer the scan
+    // (or the point get, which is the same path) over the hinted index.
+    let mut candidates = Vec::new();
+    if hints.allows_table() {
+        candidates.push(Candidate {
+            access_columns: handle_access_columns,
+            index_columns: ColSet::new(),
+            single_scan: true,
+            eq_or_in_count: handle.as_ref().map_or(0, |built| built.eq_or_in_count),
+            full_range: handle_ranges.is_none(),
+            count_after_access: table_scan.estimate.rows,
+            max_count_after_access: table_scan.risk.max,
+            min_count_after_access: table_scan.risk.min,
+            count_after_index: table_scan.risk.after_index,
+            pseudo: is_pseudo(stats),
+            index_width: 0,
+            empty_range: handle_ranges.as_ref().is_some_and(Vec::is_empty),
+            index_filter_count: 0,
+            table_filter_count: 0,
+            path: table_scan,
+        });
+    }
     // Go's `GcSubstituter`, run once per table: an expression an indexed
     // generated column already stores becomes a reference to that column, so
     // the ranger can narrow on it (`WHERE a+1 = 3` over `KEY((a+1))` reads
@@ -540,6 +547,13 @@ pub(crate) fn enumerate_paths(
     let substituted = where_clause.and_then(|clause| substitution.substitute_condition(clause));
     let range_clause = substituted.as_ref().or(where_clause);
     for index in table.plan_indexes() {
+        // Go's restricted `available` and `removeIgnoredPaths`: an index a
+        // `USE`/`FORCE` did not name, or an `IGNORE` did, is not a path.
+        if !hints.allows_index(index.id) {
+            continue;
+        }
+        // Go `path.Forced`, read by `skylinePruning`'s `keepIndex`.
+        let forced = hints.forces_index(index.id);
         // An index key part is named by the TABLE, not by the query's scope:
         // the hidden column an expression index was rewritten into is a
         // column of the table that no query can see, so the scope has no
@@ -580,7 +594,7 @@ pub(crate) fn enumerate_paths(
             // An index that does not cover is pruned here exactly as Go
             // prunes it: a full index scan plus a row lookup per entry can
             // never beat the table scan it would have to do anyway.
-            if let Some(candidate) = covering_full_scan_candidate(
+            if let Some(candidate) = full_scan_candidate(
                 table,
                 index,
                 where_clause,
@@ -589,6 +603,7 @@ pub(crate) fn enumerate_paths(
                 limit,
                 stats,
                 realtime,
+                forced,
             ) {
                 candidates.push(candidate);
             }
@@ -643,13 +658,18 @@ pub(crate) fn enumerate_paths(
     candidates
 }
 
-/// The candidate for reading the WHOLE of a covering index: Go's access path
-/// over `ranger.FullRange()`, kept by `skylinePruning`'s `path.IsSingleScan`
-/// arm even though the ranger produced no access condition for it.
+/// The candidate for reading the WHOLE of an index: Go's access path over
+/// `ranger.FullRange()`, kept by `skylinePruning`'s `path.IsSingleScan` arm
+/// even though the ranger produced no access condition for it.
 ///
 /// `None` when the index does not cover `needed_columns`, because such a path
 /// reads every index entry AND looks up every row, which the table scan
-/// dominates. Go reaches the same answer through `keepIndex`.
+/// dominates. Go reaches the same answer through `keepIndex` -- whose OTHER
+/// arm is `path.Forced`, which is why `forced` overrides the refusal. That
+/// override is not a special case bolted on: it is the only way
+/// `FORCE INDEX(idx_c) WHERE b = 2` can plan at all, since with the table
+/// path deleted by the same hint there would otherwise be no candidate left.
+/// Captured TiDB reads `IndexFullScan(idx_c)` under a `TableRowIDScan` there.
 ///
 /// MEASURED: dropping that refusal changes NO test in this workspace -- the
 /// double read in [`AccessPath::cost`] already makes a non-covering full index
@@ -671,7 +691,7 @@ pub(crate) fn enumerate_paths(
 /// made a covering index lose to a full table read the moment the filter's
 /// selectivity became Go's -- captured TiDB reads `IndexFullScan` there.
 #[allow(clippy::too_many_arguments)]
-fn covering_full_scan_candidate(
+fn full_scan_candidate(
     table: &KvTable,
     index: &KvIndex,
     where_clause: Option<&tidb_ast::Expr>,
@@ -680,8 +700,10 @@ fn covering_full_scan_candidate(
     limit: Option<&PushedLimit<'_>>,
     stats: Option<&TableStatistics>,
     realtime: f64,
+    forced: bool,
 ) -> Option<Candidate<AccessPath>> {
-    if !is_covering(index, table, needed_columns) {
+    let covering = is_covering(index, table, needed_columns);
+    if !covering && !forced {
         return None;
     }
     // The ranger consumed nothing, so every conjunct is residual.
@@ -710,7 +732,7 @@ fn covering_full_scan_candidate(
     Some(Candidate {
         access_columns: ColSet::new(),
         index_columns: index_columns_map,
-        single_scan: true,
+        single_scan: covering,
         eq_or_in_count: 0,
         full_range: true,
         count_after_access: path.estimate.rows,
