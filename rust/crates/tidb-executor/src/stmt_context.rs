@@ -75,6 +75,39 @@ pub const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 /// without Go's one incoherent case, where a replay that assigns FEWER ids
 /// than the attempt before leaves a stale id stranded mid-list and shifts
 /// every later row's id on the attempt after that.
+///
+/// # Which ids go in, and which come back out
+///
+/// Every id a row is given is RECORDED, including one the row supplied
+/// itself; but only a row that needs an id CONSUMES from the cursor. The two
+/// rules are not symmetric and it is tempting to make them so -- both
+/// symmetric readings are wrong, and each is wrong by exactly one id per
+/// explicit id in the batch. Go's `INSERT ... VALUES` arm is
+/// `lazyAdjustAutoIncrementDatum` (`insertRows` sets `lazyFillAutoID`
+/// unconditionally, `insert_common.go:237`); it records in the explicit arm at
+/// `:902` and in the allocating arm at `:946`, but `continue`s past the
+/// explicit arm at `:894-903` without ever reaching the consume loop at
+/// `:909-921`.
+///
+/// Measured on TiDB over `mockstore`, with `mockCommitRetryForAutoIncID`
+/// failing the first commit of an autocommit statement:
+///
+/// ```text
+/// create table t (id int primary key auto_increment, v int)
+///
+/// -- mixed batch: the explicit id is recorded but not consumed, so the
+/// -- NULL row's cursor read returns the EXPLICIT id, not the allocated one
+/// insert into t (v) values (10)                  -> rows=[[1 10]] last_insert_id=1
+/// insert into t (id, v) values (1,11),(NULL,20)
+///   on duplicate key update v = 11               -> rows=[[1 11]] last_insert_id=2
+///
+/// -- control, no explicit id in the batch: exact reuse, no drift
+/// insert into t2 values (NULL,11),(NULL,20)      -> rows=[[1 11] [2 20]] last_insert_id=1
+/// ```
+///
+/// The control is what keeps the rule honest: a port that consumed the cursor
+/// for explicit ids too passes it and still drifts on the mixed batch, and a
+/// port that recorded only allocated ids passes it as well.
 #[derive(Debug, Default)]
 pub struct RetryAutoIds {
     /// What the previous attempt assigned, in order, and how much of it this

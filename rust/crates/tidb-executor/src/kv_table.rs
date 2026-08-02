@@ -250,6 +250,45 @@ fn generation_error(error: crate::generated_column::GenerationError) -> KvTableE
     }
 }
 
+/// Where a row's `AUTO_INCREMENT` value came from.
+///
+/// Go splits the same three ways and treats them differently, so collapsing
+/// any pair loses a rule. `Given` is the arm that `continue`s before the retry
+/// cursor (`insert_common.go:894-903`) and never touches `lastInsertID`;
+/// `Reused` is the consume loop (`insert_common.go:909-921`), which likewise
+/// leaves `lastInsertID` alone so a replay cannot move the value a client
+/// already read; only `Allocated` -- the `AllocBatchAutoIncrementValue` arm --
+/// sets it (`insert_common.go:936-938`).
+///
+/// All three still get RECORDED for the next attempt, which is the one rule
+/// that is uniform, and so the recording is unconditional at the call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoIncrement {
+    /// The table has no `AUTO_INCREMENT` column; nothing was placed.
+    Absent,
+    /// The row supplied its own non-zero id, carried as its 64-bit pattern.
+    /// The counter was rebased past it.
+    Given(u64),
+    /// The id came back from the losing attempt's list rather than the counter.
+    Reused(i64),
+    /// The id was drawn from the counter.
+    Allocated(i64),
+}
+
+impl AutoIncrement {
+    /// The id placed in the row, or `None` when there was no column to place
+    /// one in. Every placed id is recorded for the next attempt, whichever arm
+    /// produced it.
+    #[must_use]
+    pub fn placed(self) -> Option<u64> {
+        match self {
+            Self::Absent => None,
+            Self::Given(id) => Some(id),
+            Self::Reused(id) | Self::Allocated(id) => Some(id.max(0) as u64),
+        }
+    }
+}
+
 impl KvTable {
     /// Builds an empty table over the in-process backend.
     #[must_use]
@@ -621,22 +660,30 @@ impl KvTable {
     /// which Go keeps the zero, is REFUSED by the INSERT path rather than
     /// silently ignored (`StmtContext::auto_increment_zero_is_explicit`).
     ///
-    /// `reuse` is Go's `RetryInfo` arm (`insert_common.go:969-980`): a
-    /// statement being RUN AGAIN after a write conflict is handed the id its
-    /// losing attempt already assigned to this row, so `LAST_INSERT_ID()` and
-    /// the stored row still agree. It enters HERE rather than at the call site
-    /// so the reused id goes through the same domain check and the same
-    /// column-typed placement an allocated one does -- a reused id that no
-    /// longer fits its column must fail the way a fresh one would, not slip
-    /// past untested.
+    /// `reuse` is Go's `RetryInfo` arm: a statement being RUN AGAIN after a
+    /// write conflict is handed the id its losing attempt already assigned to
+    /// this row, so `LAST_INSERT_ID()` and the stored row still agree. It
+    /// enters HERE rather than at the call site so the reused id goes through
+    /// the same domain check and the same column-typed placement an allocated
+    /// one does -- a reused id that no longer fits its column must fail the way
+    /// a fresh one would, not slip past untested.
+    ///
+    /// It is a CLOSURE because the cursor it reads must advance only on the
+    /// rows that actually take an id from it. Go's batch arm
+    /// (`lazyAdjustAutoIncrementDatum`, `insert_common.go:894-903`) hits
+    /// `continue` on an explicitly-supplied id and so never reaches the
+    /// consume loop below it (`insert_common.go:909-921`); a call site that
+    /// drew from the cursor unconditionally shifted every later row's id by
+    /// one per explicit id in the batch. Measured against TiDB -- see the
+    /// receipt on `RetryAutoIds`.
     pub fn apply_auto_increment(
         &mut self,
         row: &mut [Datum],
         step: (u64, u64),
-        reuse: Option<u64>,
-    ) -> Result<Option<i64>, AutoIdError> {
+        reuse: impl FnOnce() -> Option<u64>,
+    ) -> Result<AutoIncrement, AutoIdError> {
         let Some(offset) = self.auto_increment_offset else {
-            return Ok(None);
+            return Ok(AutoIncrement::Absent);
         };
         let current = match row.get(offset) {
             Some(Datum::Int(value)) => *value as u64,
@@ -647,25 +694,29 @@ impl KvTable {
             // Go rebases so the next allocation is past the explicit value,
             // and a value the counter is already past changes nothing.
             self.auto_id.rebase(current).map_err(AutoIdError::Store)?;
-            return Ok(None);
+            return Ok(AutoIncrement::Given(current));
         }
         let (increment, step_offset) = auto_id::increment_and_offset(step.0, step.1);
         // A replay does not draw from the counter at all: the id it is
         // rewriting was already drawn, and drawing again is exactly the gap
         // that moves `LAST_INSERT_ID()` off the row it names.
-        let allocated = match reuse {
-            Some(id) => id,
-            None => self.auto_id.alloc(increment, step_offset)?,
+        let (id, reused) = match reuse() {
+            Some(id) => (id, true),
+            None => (self.auto_id.alloc(increment, step_offset)?, false),
         };
-        self.check_auto_increment_fits(offset, allocated)?;
+        self.check_auto_increment_fits(offset, id)?;
         // The allocated id skips the per-column cast the written values went
         // through, so it is placed in the column's own domain here.
         row[offset] = if self.auto_id.unsigned {
-            Datum::UInt(allocated)
+            Datum::UInt(id)
         } else {
-            Datum::Int(allocated as i64)
+            Datum::Int(id as i64)
         };
-        Ok(Some(allocated as i64))
+        Ok(if reused {
+            AutoIncrement::Reused(id as i64)
+        } else {
+            AutoIncrement::Allocated(id as i64)
+        })
     }
 
     /// Go `setDatumAutoIDAndCast`: the id the allocator handed out is CAST to
@@ -723,22 +774,6 @@ impl KvTable {
             });
         }
         Ok(())
-    }
-
-    /// Go `StmtCtx.InsertID`: the EXPLICIT non-zero value a row gave the
-    /// `AUTO_INCREMENT` column, which is set at the same site Go rebases from
-    /// (`insert_common.go`: `if recordID != 0 { ...; StmtCtx.InsertID = ... }`).
-    /// `None` when the column allocated instead, or when there is no such
-    /// column.
-    #[must_use]
-    pub fn given_auto_increment_value(&self, row: &[Datum]) -> Option<u64> {
-        let offset = self.auto_increment_offset?;
-        let given = match row.get(offset) {
-            Some(Datum::Int(value)) => *value as u64,
-            Some(Datum::UInt(value)) => *value,
-            _ => 0,
-        };
-        (given != 0).then_some(given)
     }
 
     /// Marks the columns whose encoding is the clustered row handle, which Go
@@ -2089,17 +2124,20 @@ mod tests {
     /// not yet expressible in this tier's SQL.
     #[test]
     fn the_allocator_refuses_at_the_end_of_the_columns_domain() {
-        for (unsigned, explicit) in [
-            (false, Datum::Int(i64::MAX)),
-            (true, Datum::UInt(u64::MAX)),
-            (true, Datum::UInt(u64::MAX - 1)),
+        for (unsigned, explicit, pattern) in [
+            (false, Datum::Int(i64::MAX), i64::MAX as u64),
+            (true, Datum::UInt(u64::MAX), u64::MAX),
+            (true, Datum::UInt(u64::MAX - 1), u64::MAX - 1),
         ] {
             let mut table = auto_increment_table(unsigned);
             let mut row = [explicit];
-            assert_eq!(table.apply_auto_increment(&mut row, (1, 1), None), Ok(None));
+            assert_eq!(
+                table.apply_auto_increment(&mut row, (1, 1), || None),
+                Ok(AutoIncrement::Given(pattern))
+            );
             let mut row = [Datum::Null];
             assert_eq!(
-                table.apply_auto_increment(&mut row, (1, 1), None),
+                table.apply_auto_increment(&mut row, (1, 1), || None),
                 Err(AutoIdError::Exhausted),
                 "unsigned={unsigned}"
             );
@@ -2114,9 +2152,14 @@ mod tests {
     fn an_unsigned_explicit_id_rebases_in_the_unsigned_domain() {
         let mut table = auto_increment_table(true);
         let mut row = [Datum::UInt(1 << 63)];
-        assert_eq!(table.apply_auto_increment(&mut row, (1, 1), None), Ok(None));
+        assert_eq!(
+            table.apply_auto_increment(&mut row, (1, 1), || None),
+            Ok(AutoIncrement::Given(1 << 63))
+        );
         let mut row = [Datum::Null];
-        table.apply_auto_increment(&mut row, (1, 1), None).unwrap();
+        table
+            .apply_auto_increment(&mut row, (1, 1), || None)
+            .unwrap();
         assert_eq!(row[0], Datum::UInt((1 << 63) + 1));
     }
 
@@ -2127,9 +2170,14 @@ mod tests {
     fn a_signed_explicit_id_below_the_counter_does_not_move_it() {
         let mut table = auto_increment_table(false);
         let mut row = [Datum::Int(-5)];
-        assert_eq!(table.apply_auto_increment(&mut row, (1, 1), None), Ok(None));
+        assert_eq!(
+            table.apply_auto_increment(&mut row, (1, 1), || None),
+            Ok(AutoIncrement::Given(-5_i64 as u64))
+        );
         let mut row = [Datum::Null];
-        table.apply_auto_increment(&mut row, (1, 1), None).unwrap();
+        table
+            .apply_auto_increment(&mut row, (1, 1), || None)
+            .unwrap();
         assert_eq!(row[0], Datum::Int(1));
     }
 }

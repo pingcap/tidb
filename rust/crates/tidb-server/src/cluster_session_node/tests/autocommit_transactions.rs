@@ -533,20 +533,47 @@ fn an_insert_reads_for_its_uniqueness_check_and_publishes_at_that_read() {
 /// The auto-increment half of the replay, and the one place where "run the
 /// statement again" is not the same as "run the statement once".
 ///
-/// Go REUSES the ids the losing attempt already allocated. The losing attempt
-/// records every id it assigned in `RetryInfo`
-/// (`pkg/sessionctx/variable/session.go:136-139`), the replay resets the
-/// cursor once per pass (`pkg/session/session.go:1197`), and the INSERT
-/// executor takes the recorded id back out instead of allocating
-/// (`pkg/executor/insert_common.go:968-980`).
+/// Go REUSES the ids the losing attempt already allocated rather than drawing
+/// fresh ones. The gap a fresh draw would leave is not the point -- TiDB
+/// leaves auto-increment gaps of its own and they are legal.
+/// `LAST_INSERT_ID()` is: a client inserts a row, reads `LAST_INSERT_ID()`,
+/// and uses it as the foreign key of a child row; if a retry moved the id
+/// underneath it, the value names a row that was never written. That is
+/// silent wrong data, it appears only under contention, and a row count
+/// cannot see it -- so this asserts BY VALUE, from both the stored rows and
+/// the function the client would call.
 ///
-/// The gap is not the point -- TiDB leaves auto-increment gaps of its own and
-/// they are legal. `LAST_INSERT_ID()` is. A client inserts a row, reads
-/// `LAST_INSERT_ID()`, and uses it as the foreign key of a child row; if a
-/// retry moved the id underneath it, the value names a row that was never
-/// written. That is silent wrong data, it appears only under contention, and
-/// a row count cannot see it -- so this asserts the id BY VALUE, from both the
-/// row that was stored and the function the client would call.
+/// The expected values are Go's, hand-derived from the source and then
+/// MEASURED against a real TiDB over `mockstore`, because this batch's shape
+/// makes them counter-intuitive enough that neither method alone was trusted.
+/// `INSERT ... VALUES` always takes Go's LAZY arm (`insertRows` sets
+/// `e.lazyFillAutoID = true` unconditionally, `insert_common.go:237`), and
+/// that arm handles an explicitly-supplied id and a NULL one asymmetrically:
+///
+/// * attempt 1 records BOTH -- the explicit `1` at `insert_common.go:902` and
+///   the allocated `2` at `:946` -- so `RetryInfo`'s list is `[1, 2]`;
+/// * the replay `continue`s past the explicit row at `insert_common.go:894-903`
+///   WITHOUT advancing the cursor, so the NULL row's consume loop
+///   (`insert_common.go:909-921`) reads offset 0 and gets the EXPLICIT id back;
+/// * `lastInsertID` is assigned only in the allocating arm
+///   (`insert_common.go:936-938`), which the replay never reaches, so the
+///   value attempt 1 published survives.
+///
+/// So the NULL row is handed `1`, collides with this same statement's explicit
+/// row, and is redirected into the `ON DUPLICATE KEY UPDATE`: one row remains,
+/// no row is ever given `2`, and `LAST_INSERT_ID()` still says `2`. Measured
+/// on TiDB with `mockCommitRetryForAutoIncID` failing the first commit:
+///
+/// ```text
+/// create table t (id int primary key auto_increment, v int)
+/// insert into t (v) values (10)                  -> rows=[[1 10]] last_insert_id=1
+/// insert into t (id, v) values (1,11),(NULL,20)
+///   on duplicate key update v = 11               -> rows=[[1 11]] last_insert_id=2
+/// ```
+///
+/// A port that consumed the cursor for the explicit row too answered `3` here
+/// -- one id of drift per explicit id in the batch -- which is the exact
+/// `LAST_INSERT_ID()` lie above.
 #[test]
 fn a_conflicted_insert_replays_with_the_ids_the_losing_attempt_allocated() {
     let (mut session, cluster) = open_session();
@@ -568,15 +595,21 @@ fn a_conflicted_insert_replays_with_the_ids_the_losing_attempt_allocated() {
         .expect("a conflicted autocommit insert is retried, not refused");
 
     assert_eq!(
-        rows(&mut session, "SELECT id FROM ai WHERE v = 20"),
-        vec![vec![Datum::Int(2)]],
-        "the replay must write the id the losing attempt allocated, not a \
-         fresh one"
+        rows(&mut session, "SELECT id, v FROM ai ORDER BY id"),
+        vec![vec![Datum::Int(1), Datum::Int(11)]],
+        "the replay must take the id back out of the losing attempt's list, \
+         not allocate a fresh one -- and at offset 0 that list holds the \
+         EXPLICIT id, so the NULL row lands on row 1 and is absorbed by the \
+         ON DUPLICATE KEY UPDATE. A fresh allocation would leave a second row \
+         here (measured on TiDB: rows=[[1 11]])"
     );
     assert_eq!(
         rows(&mut session, "SELECT LAST_INSERT_ID()"),
         vec![vec![Datum::UInt(2)]],
-        "and LAST_INSERT_ID() must name the row that was actually written"
+        "and LAST_INSERT_ID() keeps the LOSING attempt's allocation: Go's \
+         replay reuses without ever reaching the assignment at \
+         insert_common.go:936-938, so the value a client already read cannot \
+         move under it (measured on TiDB: last_insert_id=2)"
     );
 }
 

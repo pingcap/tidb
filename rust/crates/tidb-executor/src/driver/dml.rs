@@ -19,7 +19,7 @@
 //! the `executor` package's `InsertExec` / `UpdateExec` / `DeleteExec`.
 
 use super::*;
-use crate::kv_table::AutoIdError;
+use crate::kv_table::{AutoIdError, AutoIncrement};
 
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
 /// `catalog`, returning the number of inserted rows.
@@ -445,10 +445,13 @@ pub(crate) fn run_insert_traced(
                 // there.
                 // Go's replay hands the row back the id its losing attempt
                 // gave it (`RetryInfo`); outside a replay there is nothing to
-                // hand back and the counter is drawn from as usual.
-                let reuse = ctx.reuse_auto_increment_id();
-                let allocated = kv
-                    .apply_auto_increment(&mut new_rows[*index], ctx.auto_increment_step(), reuse)
+                // hand back and the counter is drawn from as usual. The cursor
+                // is read lazily so that a row carrying its OWN id does not
+                // consume from it -- see `apply_auto_increment`.
+                let outcome = kv
+                    .apply_auto_increment(&mut new_rows[*index], ctx.auto_increment_step(), || {
+                        ctx.reuse_auto_increment_id()
+                    })
                     .map_err(|error| match error {
                         AutoIdError::Exhausted => DriverError::AutoincReadFailed,
                         // An id that does not fit the COLUMN is not a full
@@ -459,19 +462,32 @@ pub(crate) fn run_insert_traced(
                         }
                         AutoIdError::Store(detail) => DriverError::AutoIdUnavailable(detail.0),
                     })?;
-                if let Some(allocated) = allocated {
-                    // Recorded whether it was drawn or handed back, so the
-                    // NEXT attempt replays this attempt's assignment exactly.
-                    ctx.record_auto_increment_id(allocated.max(0) as u64);
-                    // Go keeps the FIRST allocated id of the statement.
-                    if first_allocated.is_none() {
-                        first_allocated = Some(allocated);
+                // Recorded whether it was drawn, handed back, or supplied by
+                // the row, so the NEXT attempt replays this attempt's
+                // assignment exactly. Go records in all three arms
+                // (`insert_common.go:902`, `:946`), and an explicit id left
+                // out of the list is what desynchronised the cursor.
+                if let Some(placed) = outcome.placed() {
+                    ctx.record_auto_increment_id(placed);
+                }
+                match outcome {
+                    AutoIncrement::Given(given) => {
+                        // Go records the explicit value as `StmtCtx.InsertID`,
+                        // and the LAST row's wins; the OK packet falls back to
+                        // it when the statement published nothing.
+                        ctx.record_given_insert_id(given);
                     }
-                } else if let Some(given) = kv.given_auto_increment_value(&new_rows[*index]) {
-                    // Go records the explicit value at the same site, and the
-                    // LAST row's wins; the OK packet falls back to it when the
-                    // statement published nothing.
-                    ctx.record_given_insert_id(given);
+                    // Go keeps the FIRST id the statement ALLOCATED. A reused
+                    // one is deliberately not it: the replay's consume loop
+                    // returns before `lastInsertID` is ever assigned, so the
+                    // value a client read after the losing attempt is the one
+                    // that survives.
+                    AutoIncrement::Allocated(id) if first_allocated.is_none() => {
+                        first_allocated = Some(id);
+                    }
+                    AutoIncrement::Absent
+                    | AutoIncrement::Reused(_)
+                    | AutoIncrement::Allocated(_) => {}
                 }
             }
         }
