@@ -30,9 +30,11 @@
 //! `removeLeadingZeros`/`digitsToWords`/`countLeadingZeroes`) and the raw
 //! 40-byte round-trip, plus `FromString`/`Round`/`Shift` and their helpers
 //! (`digitBounds`, `doMiniLeftShift`, `doMiniRightShift`, `maxDecimal`,
-//! `fixWordCntError`, `strToInt`). DEFERRED (documented): the arithmetic
-//! (add/sub/mul/div), binary `ToBin`/`FromBin` encoding, hashing, and
-//! comparison. (`digitsToWords` uses Go's plain formula; Go's `div9`
+//! `fixWordCntError`, `strToInt`), plus `Compare` (the `to == nil` half of
+//! `doSub`) and the conversion family `ToInt`/`ToUint`/`ToFloat64`/
+//! `FromFloat64`. DEFERRED (documented): the arithmetic (add/sub/mul/div,
+//! and therefore the value-producing half of `doSub`), binary
+//! `ToBin`/`FromBin` encoding, and hashing. (`digitsToWords` uses Go's plain formula; Go's `div9`
 //! lookup table is a performance twin with identical results.)
 
 /// Go `maxWordBufLen`: a `MyDecimal` holds 9 words.
@@ -135,6 +137,68 @@ pub enum DecimalError {
     Overflow,
     /// Go `ErrBadNumber`: the text was not a well-formed number.
     BadNumber,
+}
+
+/// Go `pow10off81[exp+pow10off]`: the exactly-rounded `float64` nearest to
+/// `10^exp`.
+///
+/// Go stores the decimal powers as source literals rather than computing them,
+/// so the value is the correctly-rounded parse of `1e<exp>`; parsing the same
+/// spelling reproduces it exactly, while `powi` on a negative exponent does
+/// not.
+fn pow10(exp: i32) -> f64 {
+    format!("1e{exp}")
+        .parse::<f64>()
+        .expect("decimal power literal is parsable")
+}
+
+/// Go `strconv.FormatFloat(f, 'g', -1, 64)`.
+///
+/// `'g'` with the shortest precision picks scientific notation exactly when
+/// the decimal exponent is below -4 or at least 6 (Go `ftoa`: "if precision
+/// was the shortest possible, use precision 6 for this decision"), and the
+/// digits themselves are the shortest round-tripping ones, which is what
+/// Rust's own float formatting produces.
+fn format_float_g_shortest(f: f64) -> String {
+    if f.is_nan() {
+        return "NaN".to_owned();
+    }
+    if f.is_infinite() {
+        return if f > 0.0 { "+Inf" } else { "-Inf" }.to_owned();
+    }
+    let sign = if f.is_sign_negative() { "-" } else { "" };
+    let magnitude = f.abs();
+    if magnitude == 0.0 {
+        return format!("{sign}0");
+    }
+    let scientific = format!("{magnitude:e}");
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .expect("Rust LowerExp always emits an exponent");
+    let exponent: i32 = exponent.parse().expect("exponent is an integer");
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    // Source: `exp < -4 || exp >= eprec`, with `eprec` pinned to 6 for the
+    // shortest precision.
+    if !(-4..6).contains(&exponent) {
+        return format!(
+            "{sign}{mantissa}e{}{:02}",
+            if exponent < 0 { '-' } else { '+' },
+            exponent.abs()
+        );
+    }
+    let point = exponent + 1;
+    let digit_count = digits.len() as i32;
+    if point <= 0 {
+        format!("{sign}0.{}{digits}", "0".repeat((-point) as usize))
+    } else if point >= digit_count {
+        format!(
+            "{sign}{digits}{}",
+            "0".repeat((point - digit_count) as usize)
+        )
+    } else {
+        let (integral, fraction) = digits.split_at(point as usize);
+        format!("{sign}{integral}.{fraction}")
+    }
 }
 
 /// Go `isSpace` (`helper.go`): only a space or a tab.
@@ -941,6 +1005,219 @@ impl MyDecimal {
         self.negative
     }
 
+    /// Go `ToInt`: the integer part, with the source's clamped value kept on
+    /// overflow.
+    ///
+    /// Both halves of Go's `(int64, error)` are returned: an overflow yields
+    /// the border integer *and* [`DecimalError::Overflow`], and a non-zero
+    /// fraction yields the truncated integer *and* [`DecimalError::Truncated`].
+    #[must_use]
+    pub fn to_int(&self) -> (i64, Option<DecimalError>) {
+        let mut x: i64 = 0;
+        let mut word_idx = 0usize;
+        let mut i = i32::from(self.digits_int);
+        while i > 0 {
+            let y = x;
+            // Source trick: accumulate `-|from|`, because `|i64::MIN|` is one
+            // larger than `i64::MAX`, so -9223372036854775808 still converts.
+            x = x
+                .wrapping_mul(WORD_BASE as i64)
+                .wrapping_sub(i64::from(self.word_buf[word_idx]));
+            word_idx += 1;
+            if y < i64::MIN / (WORD_BASE as i64) || x > y {
+                return if self.negative {
+                    (i64::MIN, Some(DecimalError::Overflow))
+                } else {
+                    (i64::MAX, Some(DecimalError::Overflow))
+                };
+            }
+            i -= DIGITS_PER_WORD;
+        }
+        // Source boundary case: 9223372036854775808.
+        if !self.negative && x == i64::MIN {
+            return (i64::MAX, Some(DecimalError::Overflow));
+        }
+        if !self.negative {
+            x = -x;
+        }
+        let mut i = i32::from(self.digits_frac);
+        while i > 0 {
+            if self.word_buf[word_idx] != 0 {
+                return (x, Some(DecimalError::Truncated));
+            }
+            word_idx += 1;
+            i -= DIGITS_PER_WORD;
+        }
+        (x, None)
+    }
+
+    /// Go `ToUint`: the integer part as unsigned, clamped on overflow.
+    #[must_use]
+    pub fn to_uint(&self) -> (u64, Option<DecimalError>) {
+        if self.negative {
+            return (0, Some(DecimalError::Overflow));
+        }
+        let mut x: u64 = 0;
+        let mut word_idx = 0usize;
+        let mut i = i32::from(self.digits_int);
+        while i > 0 {
+            let y = x;
+            x = x
+                .wrapping_mul(WORD_BASE)
+                .wrapping_add(self.word_buf[word_idx] as u64);
+            word_idx += 1;
+            if y > u64::MAX / WORD_BASE || x < y {
+                return (u64::MAX, Some(DecimalError::Overflow));
+            }
+            i -= DIGITS_PER_WORD;
+        }
+        let mut i = i32::from(self.digits_frac);
+        while i > 0 {
+            if self.word_buf[word_idx] != 0 {
+                return (x, Some(DecimalError::Truncated));
+            }
+            word_idx += 1;
+            i -= DIGITS_PER_WORD;
+        }
+        (x, None)
+    }
+
+    /// Go `FromFloat64`: `strconv.FormatFloat(f, 'g', -1, 64)` fed to
+    /// `FromString`, so the exponent spellings go through the same path.
+    pub fn from_float64(f: f64) -> (MyDecimal, Option<DecimalError>) {
+        MyDecimal::from_string(format_float_g_shortest(f).as_bytes())
+    }
+
+    /// Go `ToFloat64`.
+    ///
+    /// The source keeps two paths: more than 12 significant digits re-parses
+    /// `ToString` through `strconv.ParseFloat` (mapping a failure to
+    /// `ErrOverflow`), and the short path accumulates words against powers of
+    /// ten and then rounds to `resultFrac` decimal places.
+    #[must_use]
+    pub fn to_float64(&self) -> (f64, Option<DecimalError>) {
+        let digits_int = i32::from(self.digits_int);
+        let digits_frac = i32::from(self.digits_frac);
+        if digits_int + digits_frac > 12 {
+            let text = String::from_utf8(self.to_string_bytes())
+                .expect("MyDecimal::to_string_bytes is ASCII");
+            return match text.parse::<f64>() {
+                Ok(value) if value.is_finite() => (value, None),
+                _ => (0.0, Some(DecimalError::Overflow)),
+            };
+        }
+        let words_int = (digits_int - 1) / DIGITS_PER_WORD + 1;
+        let mut word_idx = 0i32;
+        let mut f = 0.0f64;
+        let mut i = 0;
+        while i < digits_int {
+            let x = self.word_buf[word_idx as usize];
+            word_idx += 1;
+            f += f64::from(x) * pow10((words_int - word_idx) * DIGITS_PER_WORD);
+            i += DIGITS_PER_WORD;
+        }
+        let frac_start = word_idx;
+        let mut i = 0;
+        while i < digits_frac {
+            let x = self.word_buf[word_idx as usize];
+            word_idx += 1;
+            f += f64::from(x) * pow10(-DIGITS_PER_WORD * (word_idx - frac_start));
+            i += DIGITS_PER_WORD;
+        }
+        let unit = pow10(i32::from(self.result_frac));
+        f = (f * unit).round() / unit;
+        if self.negative {
+            f = -f;
+        }
+        (f, None)
+    }
+
+    /// Go `Compare`: -1/0/1 against `other`.
+    ///
+    /// Go delegates to `doSub(d, to, nil)`; only that function's `to == nil`
+    /// path is reachable from here, and it is the whole comparison.
+    #[must_use]
+    pub fn compare(&self, other: &MyDecimal) -> std::cmp::Ordering {
+        if self.negative == other.negative {
+            return match self.compare_magnitude(other) {
+                0 => std::cmp::Ordering::Equal,
+                order if order < 0 => std::cmp::Ordering::Less,
+                _ => std::cmp::Ordering::Greater,
+            };
+        }
+        if self.negative {
+            std::cmp::Ordering::Less
+        } else {
+            std::cmp::Ordering::Greater
+        }
+    }
+
+    /// The `to == nil` half of Go `doSub`, for two same-sign decimals.
+    fn compare_magnitude(&self, other: &MyDecimal) -> i32 {
+        let from1 = self;
+        let from2 = other;
+        let mut words_int1 = digits_to_words(i32::from(from1.digits_int));
+        let mut words_frac1 = digits_to_words(i32::from(from1.digits_frac));
+        let mut words_int2 = digits_to_words(i32::from(from2.digits_int));
+        let mut words_frac2 = digits_to_words(i32::from(from2.digits_frac));
+
+        let stop1 = words_int1;
+        let mut idx1 = 0;
+        let stop2 = words_int2;
+        let mut idx2 = 0;
+        if from1.word_buf[idx1 as usize] == 0 {
+            while idx1 < stop1 && from1.word_buf[idx1 as usize] == 0 {
+                idx1 += 1;
+            }
+            words_int1 = stop1 - idx1;
+        }
+        if from2.word_buf[idx2 as usize] == 0 {
+            while idx2 < stop2 && from2.word_buf[idx2 as usize] == 0 {
+                idx2 += 1;
+            }
+            words_int2 = stop2 - idx2;
+        }
+
+        let mut carry = 0;
+        if words_int2 > words_int1 {
+            carry = 1;
+        } else if words_int2 == words_int1 {
+            let mut end1 = stop1 + words_frac1 - 1;
+            let mut end2 = stop2 + words_frac2 - 1;
+            while idx1 <= end1 && from1.word_buf[end1 as usize] == 0 {
+                end1 -= 1;
+            }
+            while idx2 <= end2 && from2.word_buf[end2 as usize] == 0 {
+                end2 -= 1;
+            }
+            words_frac1 = end1 - stop1 + 1;
+            words_frac2 = end2 - stop2 + 1;
+            let _ = (words_frac1, words_frac2);
+            while idx1 <= end1
+                && idx2 <= end2
+                && from1.word_buf[idx1 as usize] == from2.word_buf[idx2 as usize]
+            {
+                idx1 += 1;
+                idx2 += 1;
+            }
+            if idx1 <= end1 {
+                carry = i32::from(
+                    idx2 <= end2 && from2.word_buf[idx2 as usize] > from1.word_buf[idx1 as usize],
+                );
+            } else {
+                if idx2 > end2 {
+                    return 0;
+                }
+                carry = 1;
+            }
+        }
+        if (carry > 0) == from1.negative {
+            1
+        } else {
+            -1
+        }
+    }
+
     /// Go `digitsFrac`: the decimal digits after the point.
     #[must_use]
     pub fn digits_frac(&self) -> i8 {
@@ -1237,5 +1514,206 @@ mod tests {
         assert_eq!(bytes[3], 1);
         let bytes = MyDecimal::from_int(5).to_raw_bytes();
         assert_eq!(bytes[3], 0);
+    }
+
+    fn decimal(text: &str) -> MyDecimal {
+        MyDecimal::from_string(text.as_bytes()).0
+    }
+
+    /// Differential fixture: `(*MyDecimal).ToInt/ToUint/ToFloat64` output
+    /// captured from the Go implementation in this repository.
+    #[test]
+    fn to_int_uint_float_match_go() {
+        type Case = (
+            &'static str,
+            i64,
+            Option<DecimalError>,
+            u64,
+            Option<DecimalError>,
+            f64,
+        );
+        let cases: &[Case] = &[
+            ("0", 0, None, 0, None, 0.0),
+            ("1", 1, None, 1, None, 1.0),
+            ("-1", -1, None, 0, Some(DecimalError::Overflow), -1.0),
+            (
+                "1.1",
+                1,
+                Some(DecimalError::Truncated),
+                1,
+                Some(DecimalError::Truncated),
+                1.1,
+            ),
+            (
+                "-1.1",
+                -1,
+                Some(DecimalError::Truncated),
+                0,
+                Some(DecimalError::Overflow),
+                -1.1,
+            ),
+            (
+                "9223372036854775807",
+                9_223_372_036_854_775_807,
+                None,
+                9_223_372_036_854_775_807,
+                None,
+                9.223_372_036_854_776e18,
+            ),
+            (
+                "9223372036854775808",
+                i64::MAX,
+                Some(DecimalError::Overflow),
+                9_223_372_036_854_775_808,
+                None,
+                9.223_372_036_854_776e18,
+            ),
+            (
+                "-9223372036854775808",
+                i64::MIN,
+                None,
+                0,
+                Some(DecimalError::Overflow),
+                -9.223_372_036_854_776e18,
+            ),
+            (
+                "-9223372036854775809",
+                i64::MIN,
+                Some(DecimalError::Overflow),
+                0,
+                Some(DecimalError::Overflow),
+                -9.223_372_036_854_776e18,
+            ),
+            (
+                "18446744073709551615",
+                i64::MAX,
+                Some(DecimalError::Overflow),
+                u64::MAX,
+                None,
+                1.844_674_407_370_955_2e19,
+            ),
+            (
+                "18446744073709551616",
+                i64::MAX,
+                Some(DecimalError::Overflow),
+                u64::MAX,
+                Some(DecimalError::Overflow),
+                1.844_674_407_370_955_2e19,
+            ),
+            (
+                "123.456",
+                123,
+                Some(DecimalError::Truncated),
+                123,
+                Some(DecimalError::Truncated),
+                123.456,
+            ),
+            (
+                "-123.456",
+                -123,
+                Some(DecimalError::Truncated),
+                0,
+                Some(DecimalError::Overflow),
+                -123.456,
+            ),
+            (
+                "0.5",
+                0,
+                Some(DecimalError::Truncated),
+                0,
+                Some(DecimalError::Truncated),
+                0.5,
+            ),
+            (
+                "99999999999999999999999999999999",
+                i64::MAX,
+                Some(DecimalError::Overflow),
+                u64::MAX,
+                Some(DecimalError::Overflow),
+                1e32,
+            ),
+            (
+                "-99999999999999999999999999999999",
+                i64::MIN,
+                Some(DecimalError::Overflow),
+                0,
+                Some(DecimalError::Overflow),
+                -1e32,
+            ),
+        ];
+        for (input, int, int_err, uint, uint_err, float) in cases {
+            let value = decimal(input);
+            assert_eq!(value.to_int(), (*int, *int_err), "ToInt {input}");
+            assert_eq!(value.to_uint(), (*uint, *uint_err), "ToUint {input}");
+            assert_eq!(value.to_float64(), (*float, None), "ToFloat64 {input}");
+        }
+    }
+
+    /// Differential fixture: `(*MyDecimal).Compare` output captured from the
+    /// Go implementation in this repository.
+    #[test]
+    fn compare_matches_go() {
+        use std::cmp::Ordering;
+        for (left, right, expected) in [
+            ("1", "1", Ordering::Equal),
+            ("1", "2", Ordering::Less),
+            ("2", "1", Ordering::Greater),
+            ("-1", "-2", Ordering::Greater),
+            ("-2", "-1", Ordering::Less),
+            ("-1", "1", Ordering::Less),
+            ("1", "-1", Ordering::Greater),
+            ("0", "-0", Ordering::Equal),
+            ("1.001", "1.0010", Ordering::Equal),
+            ("1.001", "1.002", Ordering::Less),
+            ("0.0000001", "0.00000011", Ordering::Less),
+            ("123456789012345678", "123456789012345679", Ordering::Less),
+            ("-123.456", "-123.4560", Ordering::Equal),
+            ("0", "0.0", Ordering::Equal),
+        ] {
+            assert_eq!(
+                decimal(left).compare(&decimal(right)),
+                expected,
+                "{left} vs {right}"
+            );
+        }
+    }
+
+    /// Differential fixture: `strconv.FormatFloat(f, 'g', -1, 64)` and the
+    /// resulting `(*MyDecimal).FromFloat64(f).String()`, both captured from
+    /// the Go implementation in this repository.
+    #[test]
+    #[allow(clippy::approx_constant, reason = "a Go fixture input, not pi")]
+    fn from_float64_matches_go() {
+        for (input, formatted, expected) in [
+            (0.0, "0", "0"),
+            (1.0, "1", "1"),
+            (-1.0, "-1", "-1"),
+            (0.1, "0.1", "0.1"),
+            (1e-5, "1e-05", "0.00001"),
+            (1e-4, "0.0001", "0.0001"),
+            (123_456.0, "123456", "123456"),
+            (1e6, "1e+06", "1000000"),
+            (1.5e21, "1.5e+21", "1500000000000000000000"),
+            (
+                -3.141_592_653_589_79,
+                "-3.14159265358979",
+                "-3.14159265358979",
+            ),
+            (1e-20, "1e-20", "0.00000000000000000001"),
+            (
+                12_345_678_901_234_567_890.0,
+                "1.2345678901234567e+19",
+                "12345678901234567000",
+            ),
+        ] {
+            assert_eq!(format_float_g_shortest(input), formatted, "{input}");
+            let (value, err) = MyDecimal::from_float64(input);
+            assert_eq!(err, None, "{input}");
+            assert_eq!(
+                String::from_utf8(value.to_string_bytes()).unwrap(),
+                expected,
+                "{input}"
+            );
+        }
     }
 }
