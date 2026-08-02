@@ -65,6 +65,7 @@ pub mod cluster_sysvar_seam;
 mod compressed_command_io;
 mod configured_user_store;
 pub mod connection_resultset;
+mod connection_writers;
 mod distinct_result_set;
 pub mod handshake;
 mod handshake_response;
