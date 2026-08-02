@@ -534,12 +534,20 @@ where
         mutations: Vec<OptimisticMutation>,
         call: &UnaryCallContext,
     ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
-        self.two_pc
-            .set_pessimistic_prewrite(PessimisticPrewritePlan {
-                for_update_ts: self.for_update_ts,
-                locked_keys: self.locked_keys.clone(),
-                for_update_ts_constraints: self.locked_with_conflict.clone(),
-            });
+        // A transaction that never locked anything has no pinned primary and
+        // no locks to verify, so it commits as a plain optimistic transaction.
+        // That is Go's `len(c.primaryKey) == 0` fallback in
+        // `initKeysAndMutations` (`2pc.go:697-698`), not a special case: the
+        // plan exists exactly when a pinned primary exists.
+        if let Some(primary_key) = self.primary_key.clone() {
+            self.two_pc
+                .set_pessimistic_prewrite(PessimisticPrewritePlan {
+                    primary_key,
+                    for_update_ts: self.for_update_ts,
+                    locked_keys: self.locked_keys.clone(),
+                    for_update_ts_constraints: self.locked_with_conflict.clone(),
+                });
+        }
         self.two_pc.commit(mutations, call)
     }
 

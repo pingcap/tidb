@@ -46,6 +46,14 @@ pub enum OptimisticMutationKind {
     /// Delete one catalog meta key. Go `structure.HDel` performs a plain
     /// `txn.Delete` with no assertion, and only for a field it just observed.
     MetaDelete,
+    /// Prewrite a key this transaction locked but never wrote (`Op_Lock`).
+    ///
+    /// Go `twoPhaseCommitter.initKeysAndMutations` (`2pc.go`) emits exactly
+    /// this for every membuffer entry carrying `HasLocked()` and no value
+    /// change. It is what guarantees the pinned pessimistic primary is always
+    /// among the prewritten mutations, so the primary lock — the transaction's
+    /// only recovery entry point — actually exists after prewrite.
+    LockOnly,
 }
 
 /// One immutable encoded-key mutation.
@@ -110,6 +118,15 @@ impl OptimisticMutation {
         Self::new(OptimisticMutationKind::MetaDelete, key.into(), Vec::new())
     }
 
+    /// Creates an `Op_Lock` mutation for a locked-but-unwritten key.
+    ///
+    /// Go `2pc.go` `initKeysAndMutations`: `} else if it.Flags().HasLocked() {
+    /// op = kvrpcpb.Op_Lock }`. Carries no value and no assertion — it exists
+    /// so that prewrite writes a lock on the key, nothing more.
+    pub fn lock_only(key: impl Into<Vec<u8>>) -> Result<Self, MutationSetError> {
+        Self::new(OptimisticMutationKind::LockOnly, key.into(), Vec::new())
+    }
+
     fn new(
         kind: OptimisticMutationKind,
         key: Vec<u8>,
@@ -146,6 +163,7 @@ impl OptimisticMutation {
             OptimisticMutationKind::IndexDelete => (KvrpcOp::Del, KvrpcAssertion::None),
             OptimisticMutationKind::MetaPut => (KvrpcOp::Put, KvrpcAssertion::None),
             OptimisticMutationKind::MetaDelete => (KvrpcOp::Del, KvrpcAssertion::None),
+            OptimisticMutationKind::LockOnly => (KvrpcOp::Lock, KvrpcAssertion::None),
         };
         KvrpcMutation {
             op: op as i32,

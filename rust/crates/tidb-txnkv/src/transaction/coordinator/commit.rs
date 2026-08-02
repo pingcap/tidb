@@ -39,8 +39,8 @@ use super::super::state::{
 };
 use super::{
     classify_key_error, record_attempt, transaction_lock_ttl_ms, OptimisticCoordinatorError,
-    RealOptimisticTransaction, RecoveryPhase, MAX_COMMIT_TS_DRIFT_MS, MAX_LOCK_ATTEMPTS,
-    TSO_LOGICAL_BITS,
+    PessimisticPrewritePlan, RealOptimisticTransaction, RecoveryPhase, MAX_COMMIT_TS_DRIFT_MS,
+    MAX_LOCK_ATTEMPTS, TSO_LOGICAL_BITS,
 };
 
 impl<C, L, T> RealOptimisticTransaction<C, L, T>
@@ -57,6 +57,9 @@ where
     ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
         let mutations =
             validate_and_sort(mutations).map_err(OptimisticCoordinatorError::Mutations)?;
+        let (mutations, primary_key) = self
+            .pin_primary(mutations)
+            .map_err(OptimisticCoordinatorError::Mutations)?;
         let actual_bytes = mutations
             .iter()
             .try_fold(0usize, |size, mutation| {
@@ -83,7 +86,6 @@ where
         self.state
             .transition(CoordinatorState::Prewriting)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-        let primary_key = mutations[0].key().to_vec();
         let mut receipt = OptimisticTransactionReceipt::new(
             self.authority_id,
             self.start_ts,
@@ -442,6 +444,13 @@ where
             receipt,
             secondary_failures,
         }))
+    }
+
+    fn pin_primary(
+        &self,
+        mutations: Vec<OptimisticMutation>,
+    ) -> Result<(Vec<OptimisticMutation>, Vec<u8>), MutationSetError> {
+        pin_primary(self.pessimistic.as_ref(), mutations)
     }
 
     fn commit_timestamp(
@@ -879,6 +888,47 @@ where
     }
 }
 
+/// Decides one commit's primary key and guarantees prewrite will write it.
+///
+/// Go `twoPhaseCommitter.primary()` (`2pc.go:779-787`):
+///
+/// > if len(c.primaryKey) == 0 { return c.mutations.GetKey(0) }
+/// > return c.primaryKey
+///
+/// A pessimistic transaction pinned its primary at the first locking statement,
+/// and every lock it holds — plus the TTL heartbeat refreshing them — already
+/// names that key. Re-deriving the primary from mutation order here would leave
+/// two keys each claiming to be primary: the heartbeat would refresh one while
+/// the other, the real recovery entry point, expired and was resolved as
+/// abandoned. That is a torn transaction, and it is why the plan carries the
+/// pinned key rather than defaulting.
+///
+/// A pinned primary this transaction locked but never wrote is not in the
+/// mutation set, and a primary prewrite never writes is no recovery entry point
+/// at all. Go covers that with an `Op_Lock` mutation (`2pc.go`
+/// `initKeysAndMutations`: `} else if it.Flags().HasLocked() { op =
+/// kvrpcpb.Op_Lock }`) and so do we — which is why nothing downstream needs a
+/// "the primary is missing" branch.
+fn pin_primary(
+    plan: Option<&PessimisticPrewritePlan>,
+    mutations: Vec<OptimisticMutation>,
+) -> Result<(Vec<OptimisticMutation>, Vec<u8>), MutationSetError> {
+    let Some(plan) = plan else {
+        let primary_key = mutations[0].key().to_vec();
+        return Ok((mutations, primary_key));
+    };
+    let primary_key = plan.primary_key.clone();
+    if mutations
+        .iter()
+        .any(|mutation| mutation.key() == primary_key.as_slice())
+    {
+        return Ok((mutations, primary_key));
+    }
+    let mut extended = mutations;
+    extended.push(OptimisticMutation::lock_only(primary_key.clone())?);
+    Ok((validate_and_sort(extended)?, primary_key))
+}
+
 enum PrimaryResult {
     Committed(Vec<Vec<u8>>),
     DefinitiveFailure(TransactionCause),
@@ -914,7 +964,86 @@ fn validate_commit_ts_expired(
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::mutation::OptimisticMutationKind;
     use super::*;
+
+    fn plan(primary: &[u8]) -> PessimisticPrewritePlan {
+        PessimisticPrewritePlan {
+            primary_key: primary.to_vec(),
+            for_update_ts: 7,
+            locked_keys: [primary.to_vec()].into_iter().collect(),
+            for_update_ts_constraints: std::collections::BTreeMap::new(),
+        }
+    }
+
+    fn sorted(keys: &[&[u8]]) -> Vec<OptimisticMutation> {
+        validate_and_sort(
+            keys.iter()
+                .map(|key| OptimisticMutation::put_existing(key.to_vec(), b"v".to_vec()).unwrap())
+                .collect(),
+        )
+        .unwrap()
+    }
+
+    /// Go `2pc.go:779-787`: `if len(c.primaryKey) == 0 { return
+    /// c.mutations.GetKey(0) }; return c.primaryKey`.
+    #[test]
+    fn pinned_pessimistic_primary_survives_mutation_order() {
+        // k5 was locked first, so it is the primary of record even though k3
+        // sorts smaller. This is the torn-transaction case: before the pin was
+        // carried, prewrite named k3 while the heartbeat refreshed k5.
+        let mutations = sorted(&[b"k3", b"k5"]);
+        let (result, primary) = pin_primary(Some(&plan(b"k5")), mutations).unwrap();
+        assert_eq!(primary, b"k5".to_vec());
+        assert_eq!(result.len(), 2, "no Op_Lock is needed when k5 is written");
+        assert!(result.iter().any(|m| m.key() == b"k5"));
+    }
+
+    /// Go `2pc.go:697-698` sets `c.primaryKey` only when it is still empty, so
+    /// a transaction that never locked keeps mutation order as its primary.
+    #[test]
+    fn unpinned_transaction_still_uses_the_smallest_key() {
+        let mutations = sorted(&[b"k3", b"k5"]);
+        let (result, primary) = pin_primary(None, mutations).unwrap();
+        assert_eq!(primary, b"k3".to_vec());
+        assert_eq!(result.len(), 2);
+    }
+
+    /// Go `2pc.go` `initKeysAndMutations`: a locked-but-unwritten key becomes
+    /// an `Op_Lock` mutation, so the primary lock always gets written.
+    #[test]
+    fn primary_locked_but_never_written_is_prewritten_as_op_lock() {
+        // `SELECT ... FOR UPDATE` on k9, then `UPDATE` of k3 only.
+        let mutations = sorted(&[b"k3"]);
+        let (result, primary) = pin_primary(Some(&plan(b"k9")), mutations).unwrap();
+        assert_eq!(primary, b"k9".to_vec());
+        assert_eq!(result.len(), 2);
+        let lock = result
+            .iter()
+            .find(|m| m.key() == b"k9")
+            .expect("the pinned primary must be prewritten");
+        assert_eq!(lock.kind(), OptimisticMutationKind::LockOnly);
+        assert_eq!(lock.to_proto().op, tidb_proto::KvrpcOp::Lock as i32);
+        assert!(lock.value().is_empty());
+        // The added mutation must not break the sorted invariant the region
+        // grouping depends on.
+        assert!(result.windows(2).all(|w| w[0].key() < w[1].key()));
+    }
+
+    /// The whole point of the pin: whatever key the caller's TTL heartbeat
+    /// refreshes is the key prewrite names as `primary_lock`.
+    #[test]
+    fn heartbeat_key_and_prewrite_primary_are_the_same_key() {
+        for heartbeat_key in [b"k1".as_slice(), b"k5", b"k9"] {
+            let (result, primary) =
+                pin_primary(Some(&plan(heartbeat_key)), sorted(&[b"k3", b"k5"])).unwrap();
+            assert_eq!(primary, heartbeat_key.to_vec());
+            assert!(
+                result.iter().any(|m| m.key() == heartbeat_key),
+                "the refreshed key must be prewritten"
+            );
+        }
+    }
 
     #[test]
     fn commit_ts_expired_retry_is_pinned_to_exact_attempt_and_one_hour() {

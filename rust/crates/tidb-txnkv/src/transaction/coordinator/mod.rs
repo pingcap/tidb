@@ -185,6 +185,20 @@ pub struct RealOptimisticTransaction<C, L, T> {
 /// check.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PessimisticPrewritePlan {
+    /// The primary key this transaction pinned at its first locking statement,
+    /// and that every pessimistic lock it holds already names as
+    /// `primary_lock`.
+    ///
+    /// Go `twoPhaseCommitter.primary()` (`2pc.go:779-787`) returns the pinned
+    /// `c.primaryKey` whenever it is set and only falls back to
+    /// `mutations.GetKey(0)` when it is empty; `initKeysAndMutations`
+    /// (`2pc.go:697-698`) sets it *only if still empty*, so mutation order can
+    /// never override a pessimistically chosen primary. One transaction, one
+    /// primary, for its whole life — that invariant is the entire basis of
+    /// lock recovery, and it is why this field is not an `Option`: a plan that
+    /// could carry "no primary" is exactly the default that used to silently
+    /// override the pin.
+    pub(super) primary_key: Vec<u8>,
     /// Latest statement timestamp under which locks were acquired.
     pub(super) for_update_ts: u64,
     /// Exact encoded keys this transaction holds a pessimistic lock on.
