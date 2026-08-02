@@ -321,12 +321,43 @@ impl PlanTrace {
 impl PlanTrace {
     /// A `FROM`-less `SELECT`'s one virtual row.
     pub(crate) fn table_dual(&mut self) {
-        self.push(PlanNode::new(
+        self.push(Self::dual_node(1));
+    }
+
+    /// Go `findBestTask`'s empty-range short-circuit
+    /// (`pkg/planner/core/find_best_task.go`, `if len(path.Ranges) == 0`): a
+    /// path the ranger proved empty is a `PhysicalTableDual` with `rows:0`,
+    /// NOT a scan over an empty range list.
+    ///
+    /// This REPLACES the source the way [`Self::index_range_scan`] does,
+    /// because the decision is made at the same point -- once a candidate
+    /// path has been chosen. Captured from TiDB
+    /// (`tests/integrationtest/r/util/ranger.result`, over
+    /// `t1(a DECIMAL UNSIGNED, KEY(a))`):
+    ///
+    /// ```text
+    /// explain format = 'plan_tree' select * from t1 use index(a) where a < -1;
+    /// TableDual  root    rows:0
+    /// ```
+    ///
+    /// Go additionally discards the operators ABOVE the scan, since the whole
+    /// `DataSource` task becomes the dual; this tier keeps them, so its tree
+    /// still prints the `Selection`/`Projection` over a source that produces
+    /// nothing. That is a printer difference with no row consequence -- the
+    /// rows were already right -- and it is the ACCESS decision, which named
+    /// an index range read that reads no range, that was wrong.
+    pub(crate) fn empty_range_table_dual(&mut self) {
+        self.replace_top(Self::dual_node(0));
+        self.consumed = true;
+    }
+
+    fn dual_node(rows: u32) -> PlanNode {
+        PlanNode::new(
             "TableDual",
-            Some(1.0),
+            Some(f64::from(rows)),
             String::new(),
-            "rows:1".to_owned(),
-        ));
+            format!("rows:{rows}"),
+        )
     }
 
     /// A whole-table read.

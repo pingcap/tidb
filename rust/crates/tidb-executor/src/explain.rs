@@ -114,6 +114,14 @@
 //!    records a write reads are pinned by `actRows`, and the REQUEST KIND it
 //!    reads them with by [`crate::storage::capture_storage_ops`], both in
 //!    `tidb_session::tests_sysbench_access`.
+//! 9. **An empty-range `TableDual` keeps its parents.** Go's `findBestTask`
+//!    returns a `PhysicalTableDual` for a chosen path with no ranges, and
+//!    that dual REPLACES the whole `DataSource` task, so
+//!    `select * from t1 use index(a) where a < -1` over an UNSIGNED key is
+//!    one `TableDual root rows:0` row. Here the dual replaces only the
+//!    SOURCE (`PlanTrace::empty_range_table_dual`), so the plan shows
+//!    `Projection > Selection > TableDual`, for divergence 7's reason and
+//!    with divergence 7's consequence: the rows are the same either way.
 //!
 //! # Shapes EXPLAIN refuses
 //!

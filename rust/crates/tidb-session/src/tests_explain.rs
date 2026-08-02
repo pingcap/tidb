@@ -932,3 +932,59 @@ fn explain_est_rows_on_an_unanalyzed_table() {
     // the gap is visible rather than absent.
     assert_eq!(est_rows(&mut session, "a = 1 or b = 2"), "8000.00");
 }
+
+/// Go `findBestTask`'s empty-range short-circuit: a chosen path whose range
+/// list is EMPTY is a `PhysicalTableDual` with `rows:0`, not a scan printed
+/// with an empty `range:` cell.
+///
+/// The schema is `tests/integrationtest/t/util/ranger.test`'s own, and it is
+/// the UNSIGNED key part that makes the case reachable: `a < -1` over a
+/// SIGNED column is the ordinary range `[-inf,-1)`, so a fixture that dropped
+/// `UNSIGNED` would pass this test for the wrong reason. Recorded by TiDB in
+/// `tests/integrationtest/r/util/ranger.result`:
+///
+/// ```text
+/// explain format = 'plan_tree' select * from t1 use index(a) where a < -1;
+/// TableDual  root    rows:0
+/// ```
+///
+/// DIVERGENCE (`tidb_executor::plan_trace::empty_range_table_dual`): Go
+/// discards the operators above the read too, since the whole `DataSource`
+/// task becomes the dual; this tier keeps the `Selection`/`Projection` over
+/// a source that produces nothing.
+#[test]
+fn an_empty_index_range_is_a_table_dual_not_a_scan() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a DECIMAL UNSIGNED, KEY(a))")
+        .unwrap();
+    session.run("INSERT INTO t1 VALUES (0), (NULL)").unwrap();
+
+    for where_clause in ["a < -1", "a <= -1", "a = -1"] {
+        let rows = row_text(session.run(&format!(
+            "EXPLAIN FORMAT = 'brief' SELECT * FROM t1 USE INDEX(a) WHERE {where_clause}"
+        )));
+        let leaf = rows.last().expect("a plan has at least one row");
+        assert_eq!(leaf[0], "  └─TableDual", "{where_clause}");
+        assert_eq!(leaf[4], "rows:0", "{where_clause}");
+        // The rows were already right and must stay right.
+        assert!(row_text(session.run(&format!(
+            "SELECT * FROM t1 USE INDEX(a) WHERE {where_clause}"
+        )))
+        .is_empty());
+    }
+
+    // The CONTROL: a bound the unsigned domain can satisfy still reads the
+    // index over a real range. A change that promoted every `USE INDEX` path
+    // to a dual would pass the loop above and fail here.
+    let rows = row_text(
+        session.run("EXPLAIN FORMAT = 'brief' SELECT * FROM t1 USE INDEX(a) WHERE a > -1"),
+    );
+    let leaf = rows.last().expect("a plan has at least one row");
+    assert_eq!(leaf[0], "  └─IndexRangeScan");
+    assert_eq!(leaf[4], "range:[0,+inf], keep order:false, stats:pseudo");
+    assert_eq!(
+        row_text(session.run("SELECT * FROM t1 USE INDEX(a) WHERE a > -1")),
+        [["0"]]
+    );
+}

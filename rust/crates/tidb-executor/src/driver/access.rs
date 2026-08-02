@@ -248,6 +248,18 @@ fn commit_index_range_source(
             .map(|offset| index_key_part_name(table, *offset))
             .collect();
         let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
+        // Go's `findBestTask` returns a `PhysicalTableDual` the moment a
+        // chosen path has NO ranges (`find_best_task.go`: `if
+        // len(path.Ranges) == 0`), so a contradictory `WHERE` prints no scan
+        // at all. Reached only through the `USE INDEX` cases in
+        // `tests/integrationtest/t/util/ranger.test`, where an UNSIGNED key
+        // part meets a negative bound.
+        if ranges.is_empty() {
+            trace.empty_range_table_dual();
+            trace.set_scan_act_rows(exec.produced_rows());
+            *from_source = Some(Box::new(exec));
+            return;
+        }
         // A path the ranger narrowed nothing on reads the whole index, which
         // Go names `IndexFullScan` and prints without a `range:`.
         if ranges.len() == 1 && ranges[0].is_full() {

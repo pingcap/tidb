@@ -150,7 +150,11 @@
 //! * the empty-range `TableDual` short-circuit
 //!   (`if len(path.Ranges) == 0 { return []*candidatePath{{path}} }`) is
 //!   ported in [`skyline_pruning`], because a contradictory `WHERE` must not
-//!   let a full scan survive next to a provably empty index range.
+//!   let a full scan survive next to a provably empty index range. Go's
+//!   SECOND half of the same rule -- `findBestTask`'s `if len(path.Ranges)
+//!   == 0` returning a `PhysicalTableDual` for the chosen path -- is
+//!   `crate::plan_trace::PlanTrace::empty_range_table_dual`, which is where
+//!   the PLAN stops printing a scan for a path that reads nothing.
 
 use std::collections::BTreeSet;
 

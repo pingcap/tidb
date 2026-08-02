@@ -1331,7 +1331,16 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // printed a value a digit short. See `tidb_expr::time_literal`; the whole
     // class is measured by `tests/integrationtest/t/types/time.test`, which
     // went from 56 divergences to 6 and is the topic to onboard next.
-    const KNOWN_DIVERGENCES: usize = 63;
+    //
+    // 63 - 1 = 62: a chosen access path with NO ranges was still committed as
+    // an `IndexRangeScan`, printed with an empty `range:` cell, where Go's
+    // `findBestTask` returns a `PhysicalTableDual`. The rows were already
+    // right on both sides, so this was a plan-text divergence only. See
+    // `tidb_executor::plan_trace::PlanTrace::empty_range_table_dual`; the
+    // class is measured by `tests/integrationtest/t/util/ranger.test`, whose
+    // divergences went from 38 to 31 (the other 7 are in that unonboarded
+    // topic).
+    const KNOWN_DIVERGENCES: usize = 62;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
