@@ -488,6 +488,108 @@ fn flip(op: BinaryOp) -> Option<BinaryOp> {
 
 /// Go `builder.buildFromBinOp`, for the comparison operators that reach an
 /// index range.
+/// Go `handleUnsignedCol`: what an UNSIGNED column does with a NEGATIVE
+/// constant.
+///
+/// Every unsigned value is `>= 0`, so the comparison is decided before any
+/// row is read. `> -1`, `>= -1` and `!= -1` are true of every non-NULL value
+/// and collapse to `>= 0`; `= -1`, `< -1` and `<= -1` are true of none, and
+/// `None` here is the empty range Go signals by returning no points -- the
+/// scan becomes a `TableDual`, not a range over `[-inf, 0)`.
+///
+/// The sign test is on the DATUM's own kind, exactly as Go writes it: a
+/// `UInt` datum is never negative, and a decimal is asked its own
+/// `IsNegative` rather than being converted first.
+fn handle_unsigned_col(
+    field_type: &FieldType,
+    value: Datum,
+    op: BinaryOp,
+) -> Option<(Datum, BinaryOp)> {
+    let is_negative = match &value {
+        Datum::Int(v) => *v < 0,
+        Datum::Real(v) | Datum::Float32(v) => *v < 0.0,
+        Datum::Decimal(d) => d.signum() < 0,
+        _ => false,
+    };
+    if !field_type.is_unsigned() || !is_negative {
+        return Some((value, op));
+    }
+    match op {
+        BinaryOp::Gt | BinaryOp::Ge | BinaryOp::Ne => {
+            let zero = match value {
+                Datum::Int(_) => Datum::UInt(0),
+                Datum::Float32(_) => Datum::Float32(0.0),
+                Datum::Real(_) => Datum::Real(0.0),
+                Datum::Decimal(_) => Datum::Decimal(tidb_datatype::Decimal::from_int(0)),
+                other => other,
+            };
+            Some((zero, BinaryOp::Ge))
+        }
+        _ => None,
+    }
+}
+
+/// Go `handleBoundCol`: what a SIGNED column does with a constant past the
+/// far end of its own domain.
+///
+/// A signed integer column can never hold more than `MaxInt64`, so `> that`
+/// is empty and `<= that` is every row: Go saturates the bound to `MaxInt64`
+/// rather than carrying a value the index codec cannot express.
+fn handle_bound_col(
+    field_type: &FieldType,
+    value: Datum,
+    op: BinaryOp,
+) -> Option<(Datum, BinaryOp)> {
+    use tidb_datatype::FieldTypeCode;
+    if field_type.is_unsigned() {
+        return Some((value, op));
+    }
+    match field_type.code() {
+        FieldTypeCode::Tiny
+        | FieldTypeCode::Short
+        | FieldTypeCode::Int24
+        | FieldTypeCode::Long
+        | FieldTypeCode::LongLong => {
+            if matches!(value, Datum::UInt(v) if v > i64::MAX as u64) {
+                return match op {
+                    BinaryOp::Gt | BinaryOp::Ge => None,
+                    BinaryOp::Ne | BinaryOp::Le | BinaryOp::Lt => {
+                        Some((Datum::Int(i64::MAX), BinaryOp::Le))
+                    }
+                    _ => Some((value, op)),
+                };
+            }
+        }
+        FieldTypeCode::Float => {
+            let as_f64 = match &value {
+                Datum::Real(v) | Datum::Float32(v) => Some(*v),
+                _ => None,
+            };
+            if let Some(v) = as_f64 {
+                if v > f64::from(f32::MAX) {
+                    return match op {
+                        BinaryOp::Gt | BinaryOp::Ge => None,
+                        BinaryOp::Ne | BinaryOp::Le | BinaryOp::Lt => {
+                            Some((Datum::Float32(f64::from(f32::MAX)), BinaryOp::Le))
+                        }
+                        _ => Some((value, op)),
+                    };
+                } else if v < -f64::from(f32::MAX) {
+                    return match op {
+                        BinaryOp::Le | BinaryOp::Lt => None,
+                        BinaryOp::Gt | BinaryOp::Ge | BinaryOp::Ne => {
+                            Some((Datum::Float32(-f64::from(f32::MAX)), BinaryOp::Ge))
+                        }
+                        _ => Some((value, op)),
+                    };
+                }
+            }
+        }
+        _ => {}
+    }
+    Some((value, op))
+}
+
 fn points_from_bin_op(op: BinaryOp, value: Datum) -> Option<Vec<Point>> {
     // A NULL constant makes every ordinary comparison unknown, so no row
     // qualifies: Go returns no points at all, an empty range set.
@@ -699,6 +801,35 @@ fn points_on_column(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoin
     let name = column.name.as_str();
     match condition {
         Expr::Paren(inner) => points_on_column(inner, column),
+        // Go `buildFromScalarFunc`'s `ast.LogicAnd` / `ast.LogicOr` arms. A
+        // boolean connective over ONE index column is still a point set on
+        // that column: `b = 1 OR b = 2` is the union of the two, and
+        // `b > 1 AND b < 9` the intersection. Without these arms every such
+        // conjunct fell through to `None` and the whole disjunction became a
+        // filter, so `a = 1 AND (b = 1 OR b = 2) AND c > 1` read `[1,1]`
+        // where Go reads `(1 1 1,1 1 +inf], (1 2 1,1 2 +inf]`.
+        //
+        // Neither side may be dropped: if EITHER side puts no points on this
+        // column the connective says nothing about it, and for an `OR` that
+        // is not merely a lost opportunity but a WRONG range -- keeping only
+        // the side that parsed would exclude rows the other side admits.
+        Expr::Binary(op @ (BinaryOp::LogicAnd | BinaryOp::LogicOr), lhs, rhs) => {
+            let lhs = points_on_column(lhs, column)?;
+            let rhs = points_on_column(rhs, column)?;
+            let points = if matches!(op, BinaryOp::LogicAnd) {
+                intersection(&lhs.points, &rhs.points)
+            } else {
+                union_points(&lhs.points, &rhs.points)
+            };
+            // Go's `equalPredicateCount` only counts a column an `=`/`IN`
+            // pinned to a SINGLE value; a union of two equalities does not
+            // qualify, an intersection still does if both sides did.
+            let eq_or_in = match op {
+                BinaryOp::LogicAnd => lhs.eq_or_in || rhs.eq_or_in,
+                _ => false,
+            };
+            Some(ColumnPoints { points, eq_or_in })
+        }
         Expr::Binary(op, lhs, rhs) => {
             let (op, value) = if is_column(lhs, name) {
                 (*op, constant_value(rhs)?)
@@ -708,6 +839,23 @@ fn points_on_column(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoin
                 return None;
             };
             let eq_or_in = matches!(op, BinaryOp::Eq);
+            // Go `buildFromBinOp` runs both domain fixups BEFORE building any
+            // point, and a `false` from either is Go's `return nil` -- no
+            // points, so no range, so no row. Doing it after the conversion
+            // instead is what left `a < -1` on an UNSIGNED column reading
+            // `[-inf,0)`: the constant converted to 0 and the interval stayed.
+            let Some((value, op)) = handle_unsigned_col(&column.field_type, value, op) else {
+                return Some(ColumnPoints {
+                    points: Vec::new(),
+                    eq_or_in,
+                });
+            };
+            let Some((value, op)) = handle_bound_col(&column.field_type, value, op) else {
+                return Some(ColumnPoints {
+                    points: Vec::new(),
+                    eq_or_in,
+                });
+            };
             Some(ColumnPoints {
                 points: points_from_bin_op(op, value)?,
                 eq_or_in,

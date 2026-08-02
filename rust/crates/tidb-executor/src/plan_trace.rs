@@ -792,20 +792,20 @@ fn handle_text(handle: &TableHandle) -> String {
 /// Go's range notation: a square bracket includes the bound, a parenthesis
 /// excludes it, and an absent bound is an infinity.
 pub(crate) fn range_text(range: &crate::kv_table::IndexRange) -> String {
-    let low = bound_text(&range.low, "-inf");
-    let high = bound_text(&range.high, "+inf");
+    let low = bound_text(&range.low, "-inf", true);
+    let high = bound_text(&range.high, "+inf", false);
     let open = if range.low_exclusive { '(' } else { '[' };
     let close = if range.high_exclusive { ')' } else { ']' };
     format!("{open}{low},{high}{close}")
 }
 
-fn bound_text(values: &[Datum], infinity: &str) -> String {
+fn bound_text(values: &[Datum], infinity: &str, is_left_side: bool) -> String {
     if values.is_empty() {
         return infinity.to_owned();
     }
     values
         .iter()
-        .map(datum_go_text)
+        .map(|value| datum_go_text(value, is_left_side))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -817,13 +817,28 @@ fn bound_text(values: &[Datum], infinity: &str) -> String {
 /// conversion. A BINARY index column's bound is arbitrary octets, so
 /// `from_utf8_lossy` replaced every non-UTF-8 byte with U+FFFD and produced a
 /// range no reader (and no oracle) could match against TiDB's own recording.
-fn datum_go_text(value: &Datum) -> String {
+///
+/// `is_left_side` is Go's own parameter, and it is not cosmetic: the extreme
+/// integers are the SATURATED bound a range on an int column gets when the
+/// other side is open, so `formatDatum` prints `MinInt64` as `-inf` on the
+/// LOW side and `MaxInt64`/`MaxUint64` as `+inf` on the HIGH side -- and
+/// prints them as the plain number on the side where they are a real value
+/// the user wrote.
+///
+/// The final arm is Go's `fmt.Sprintf("%v", d.GetValue())`, which for a
+/// temporal or JSON value is that value's own display text. Rendering it with
+/// Rust's `Debug` instead put `Time(Time { core: {2024 10 19 8 55 32 0}` in
+/// the `range:` cell of every `EXPLAIN` whose index bound was a datetime.
+fn datum_go_text(value: &Datum, is_left_side: bool) -> String {
     match value {
         Datum::Null => "NULL".to_owned(),
         // Go's range printer spells the open-ended bounds this way.
         Datum::MaxValue => "+inf".to_owned(),
         Datum::MinNotNull => "-inf".to_owned(),
+        Datum::Int(i64::MIN) if is_left_side => "-inf".to_owned(),
+        Datum::Int(i64::MAX) if !is_left_side => "+inf".to_owned(),
         Datum::Int(v) => v.to_string(),
+        Datum::UInt(u64::MAX) if !is_left_side => "+inf".to_owned(),
         Datum::UInt(v) => v.to_string(),
         Datum::Real(v) => v.to_string(),
         Datum::Decimal(d) => d.to_string(),
@@ -833,7 +848,14 @@ fn datum_go_text(value: &Datum) -> String {
         // `fmt.Sprintf("\"%v\"", ...)` -- the value's own display, quoted but
         // NOT escaped.
         Datum::BinaryLiteral(b) | Datum::Bit(b) => format!("\"{b}\""),
-        other => format!("{other:?}"),
+        Datum::Json(j) => format!("\"{j}\""),
+        Datum::Enum(e, _) => format!("\"{e}\""),
+        Datum::Set(s, _) => format!("\"{s}\""),
+        // Go's `%v` fallback: the value's own display text.
+        other => other
+            .sql_string()
+            .unwrap_or_else(|_| format!("{other:?}"))
+            .to_owned(),
     }
 }
 
