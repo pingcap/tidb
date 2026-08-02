@@ -39,7 +39,7 @@ use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
 use super::{
     auto_increment_option, Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset,
 };
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 /// Runs an `ALTER TABLE`, applying its actions in source order.
 ///
@@ -805,6 +805,91 @@ fn existing_table_charset(catalog: &Catalog, database: &str, table_name: &str) -
     }
 }
 
+/// Go `checkTypeChangeSupported` (`pkg/types/field_type.go:1569-1603`):
+/// five ORIGIN/TARGET type-pair refusals that are unconditional -- each is a
+/// TiDB `// TODO: ... not support yet, should fix here after supported`, not
+/// a rule about the DATA in any particular row. Reached only when the two
+/// types differ (Go's caller, `CheckModifyTypeCompatible`, only calls this in
+/// its "different type" branch; the same-type precision/elems checks live
+/// beside the caller, not here).
+///
+/// The five arms, transcribed in Go's own order:
+/// 1. `{date/datetime/timestamp, TIME, YEAR, any string type, JSON} -> BIT`.
+/// 2. `{date/datetime/timestamp, TIME, YEAR, DECIMAL, FLOAT, DOUBLE, JSON,
+///    BIT} -> {ENUM, SET}`. Note the asymmetry with rule 3: TIME/YEAR are
+///    origins here but not there, because rule 3's TIME-as-target case is
+///    covered by rule 5 instead for DURATION specifically.
+/// 3. `{ENUM, SET, BIT, DECIMAL, FLOAT, DOUBLE} -> date/datetime/timestamp`.
+///    DURATION and YEAR are deliberately NOT origins of this rule -- rule 5
+///    is what refuses DURATION as a target, and YEAR -> date/datetime/
+///    timestamp is accepted by Go.
+/// 4. TiDB `VECTOR` (`TypeTiDBVectorFloat32`) as EITHER side.
+/// 5. `{ENUM, SET, BIT} -> TIME (DURATION)`.
+///
+/// Everything else this function is asked about is accepted HERE -- the
+/// per-row `convert_to` gate in `KvTable::modify_column` still gets the last
+/// word for any row that will not fit the new type.
+fn check_type_change_supported(origin: &FieldType, to: &FieldType) -> Result<(), DriverError> {
+    let (from_code, to_code) = (origin.code(), to.code());
+    if from_code == to_code {
+        // Go only reaches `checkTypeChangeSupported` from the "different
+        // type" branch of `CheckModifyTypeCompatible`; a same-type MODIFY
+        // (e.g. widening a `decimal`'s precision) is judged by other rules
+        // this tier applies elsewhere, not by this table.
+        return Ok(());
+    }
+
+    let is_time_like_origin = |code: FieldTypeCode| {
+        code.is_type_time()
+            || code == FieldTypeCode::Duration
+            || code == FieldTypeCode::Year
+            || code.is_string()
+            || code == FieldTypeCode::Json
+    };
+    let refused =
+        // Rule 1.
+        (is_time_like_origin(from_code) && to_code == FieldTypeCode::Bit)
+        // Rule 2.
+        || ((from_code.is_type_time()
+            || from_code == FieldTypeCode::Duration
+            || from_code == FieldTypeCode::Year
+            || matches!(
+                from_code,
+                FieldTypeCode::NewDecimal
+                    | FieldTypeCode::Float
+                    | FieldTypeCode::Double
+                    | FieldTypeCode::Json
+                    | FieldTypeCode::Bit
+            ))
+            && matches!(to_code, FieldTypeCode::Enum | FieldTypeCode::Set))
+        // Rule 3.
+        || (matches!(
+            from_code,
+            FieldTypeCode::Enum
+                | FieldTypeCode::Set
+                | FieldTypeCode::Bit
+                | FieldTypeCode::NewDecimal
+                | FieldTypeCode::Float
+                | FieldTypeCode::Double
+        ) && to_code.is_type_time())
+        // Rule 4.
+        || from_code == FieldTypeCode::VectorFloat32
+        || to_code == FieldTypeCode::VectorFloat32
+        // Rule 5.
+        || (matches!(
+            from_code,
+            FieldTypeCode::Enum | FieldTypeCode::Set | FieldTypeCode::Bit
+        ) && to_code == FieldTypeCode::Duration);
+
+    if refused {
+        return Err(DriverError::UnsupportedModifyColumnType {
+            from: origin.compact_str(false),
+            to: to.compact_str(false),
+        });
+    }
+    Ok(())
+}
+
 /// What one `MODIFY COLUMN` / `CHANGE COLUMN` action states, plus the session
 /// facts it is decided against. Grouped because the old column's own
 /// definition is only half the input: the rest is what the STATEMENT says and
@@ -938,6 +1023,17 @@ fn modify_column_action(
     if old_flags & PRI_KEY_FLAG != 0 {
         field_type.add_flags(PRI_KEY_FLAG | NOT_NULL_FLAG);
     }
+    // Go `checkModifyTypes` (`pkg/ddl/modify_column.go:2262`), reached right
+    // after the index-flag copy above and before the AUTO_INCREMENT checks
+    // below -- this is Go's ORDER, not an arbitrary choice: `checkModifyTypes`
+    // calls `types.CheckModifyTypeCompatible`, which for a type-changing
+    // MODIFY calls `checkTypeChangeSupported` (`pkg/types/field_type.go:1569`)
+    // BEFORE any row is read. That location is what makes the refusal fire on
+    // an EMPTY table: the per-row `convert_to` gate in `KvTable::modify_column`
+    // below never runs when there are zero rows, so without this table-level
+    // check every one of Go's five outright refusals would be silently
+    // accepted on an empty table.
+    check_type_change_supported(&table.columns[offset].field_type, &field_type)?;
     // Go, same file: `can't set auto_increment` (8200) for a column that did
     // not have it, and dropping it needs `@@tidb_allow_remove_auto_inc`.
     // Keeping it is the only combination that changes nothing.
@@ -1256,4 +1352,45 @@ fn drop_column_action(
     }
     table.drop_column(offset);
     Ok(())
+}
+
+#[cfg(test)]
+mod type_change_gate_tests {
+    use super::{check_type_change_supported, DriverError};
+    use tidb_datatype::{FieldType, FieldTypeCode};
+
+    /// Rule 4 (`field_type.go:1591-1594`, `TypeTiDBVectorFloat32` on either
+    /// side) exercised directly rather than through SQL: this tier's
+    /// `column_type_code` (`ddl/column_field_type.rs`) does not recognize the
+    /// `VECTOR` type name yet, so no `CREATE TABLE`/`ALTER TABLE` statement
+    /// can build a `FieldType` carrying `FieldTypeCode::VectorFloat32` today
+    /// -- the rule is dead code from the SQL surface's point of view until
+    /// VECTOR column declarations land. Calling the gate directly still
+    /// proves the logic and keeps it mutation-testable in the meantime.
+    #[test]
+    fn vector_type_is_refused_on_either_side() {
+        let vector = FieldType::new(FieldTypeCode::VectorFloat32);
+        let int = FieldType::new(FieldTypeCode::Long);
+
+        assert!(matches!(
+            check_type_change_supported(&vector, &int),
+            Err(DriverError::UnsupportedModifyColumnType { .. })
+        ));
+        assert!(matches!(
+            check_type_change_supported(&int, &vector),
+            Err(DriverError::UnsupportedModifyColumnType { .. })
+        ));
+    }
+
+    /// MUTATION PROBE for all five rules: with the gate neutered (always
+    /// `Ok`), every refusal below would incorrectly succeed. This test
+    /// documents the probe; it is not itself the neutering -- see the SQL
+    /// pins in `tidb-session`'s `tests_alter_column.rs` for the five
+    /// empty-table cases this backs.
+    #[test]
+    fn control_conversion_is_not_refused() {
+        let from = FieldType::new(FieldTypeCode::Long);
+        let to = FieldType::new(FieldTypeCode::LongLong);
+        assert!(check_type_change_supported(&from, &to).is_ok());
+    }
 }

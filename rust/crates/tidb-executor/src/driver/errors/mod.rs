@@ -296,6 +296,17 @@ impl DriverError {
             *b"HY000",
             format!("Unsupported modify column: {reason}"),
         ),
+        // TiDB: "Unsupported modify column: change from original type %v to
+        // %v is currently unsupported yet" (the message's INNER wrap; see the
+        // variant doc for the double-wrap Go's caller adds on top).
+        DriverError::UnsupportedModifyColumnType { from, to } => MysqlError::new(
+            8200,
+            *b"HY000",
+            format!(
+                "Unsupported modify column: change from original type {from} to {to} is \
+                 currently unsupported yet"
+            ),
+        ),
         // Go `ErrSpDoesNotExist`: "%s %s does not exist", which
         // `executeReleaseSavepoint` and the ROLLBACK TO path both fill in
         // with the literal "SAVEPOINT" and the name.

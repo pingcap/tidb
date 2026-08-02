@@ -327,3 +327,143 @@ fn measured_divergences_from_go_test_alter_column() {
         "captured TiDB accepts this and builds one PRIMARY KEY"
     );
 }
+
+/// `checkTypeChangeSupported` (Go `pkg/types/field_type.go:1569-1603`, called
+/// from `CheckModifyTypeCompatible` at `:1515-1518`): five type-pair MODIFYs
+/// Go refuses OUTRIGHT, at statement-build time, before any row is read. The
+/// bug this closes: the only gate this tier had before was the per-row
+/// `convert_to` call in `KvTable::modify_column`, which never runs on zero
+/// rows -- so on an EMPTY table every one of these five refusals used to be
+/// silently ACCEPTED. Each rule below is pinned three ways: refused on an
+/// EMPTY table (the proof the check moved earlier, not just "still errors
+/// somehow"), a same-rule-shaped LEGAL conversion as a control, and refused
+/// on a table that already has an offending ROW (proving the statement was
+/// always going to fail -- the table check just makes it fail before the
+/// scan rather than during it).
+///
+/// MUTATION PROBE: comment out the `check_type_change_supported` call in
+/// `tidb-executor`'s `modify_column_action` (`ddl/alter_table.rs`) and only
+/// the five `*_on_empty_table_is_refused` assertions below flip from `Err`
+/// to `Ok`; the five `_control_conversion_is_accepted` and
+/// `_on_populated_table_is_also_refused` assertions are unaffected, because
+/// the row loop still catches the populated cases and nothing here refuses a
+/// legal conversion.
+///
+/// Captured errno: TiDB 8200 (`ErrUnsupportedDDLOperation`), double-wrapped
+/// as `Unsupported modify column: Unsupported modify column: change from
+/// original type <from> to <to> is currently unsupported yet` -- Go's
+/// `CheckModifyTypeCompatible` (`field_type.go:1515-1518`) builds the INNER
+/// `ErrUnsupportedModifyColumn`, then its caller `checkModifyTypes`
+/// (`pkg/ddl/modify_column.go:2262-2273`) wraps that error's `.Error()` text
+/// in a SECOND `ErrUnsupportedModifyColumn`. This tier's
+/// `DriverError::UnsupportedModifyColumnType` renders only the inner wrap;
+/// the difftest oracle compares REFUSED-vs-ACCEPTED, not this exact text.
+#[test]
+fn modify_column_type_pair_gate_rule_1_time_like_to_bit() {
+    let mut session = Session::new();
+
+    // Rule 1 origin set: date/datetime/timestamp, TIME, YEAR, any string,
+    // JSON. Target: BIT. Using JSON -> BIT here.
+    session.run("CREATE TABLE r1e (a JSON)").unwrap();
+    assert!(matches!(
+        session.run("ALTER TABLE r1e MODIFY COLUMN a BIT(1)"),
+        Err(DriverError::UnsupportedModifyColumnType { .. })
+    ));
+
+    session.run("CREATE TABLE r1c (a INT)").unwrap();
+    assert!(session
+        .run("ALTER TABLE r1c MODIFY COLUMN a BIGINT")
+        .is_ok());
+
+    session.run("CREATE TABLE r1p (a JSON)").unwrap();
+    session
+        .run(r#"INSERT INTO r1p VALUES ('{"x":1}')"#)
+        .unwrap();
+    assert!(matches!(
+        session.run("ALTER TABLE r1p MODIFY COLUMN a BIT(1)"),
+        Err(DriverError::UnsupportedModifyColumnType { .. })
+    ));
+}
+
+#[test]
+fn modify_column_type_pair_gate_rule_2_numeric_and_time_to_enum_set() {
+    let mut session = Session::new();
+
+    // Rule 2 origin set: date/datetime/timestamp, TIME, YEAR, DECIMAL,
+    // FLOAT, DOUBLE, JSON, BIT. Target: ENUM/SET. Using FLOAT -> ENUM here.
+    session.run("CREATE TABLE r2e (a FLOAT)").unwrap();
+    assert!(matches!(
+        session.run("ALTER TABLE r2e MODIFY COLUMN a ENUM('x','y')"),
+        Err(DriverError::UnsupportedModifyColumnType { .. })
+    ));
+
+    session.run("CREATE TABLE r2c (a INT)").unwrap();
+    assert!(session
+        .run("ALTER TABLE r2c MODIFY COLUMN a BIGINT")
+        .is_ok());
+
+    session.run("CREATE TABLE r2p (a FLOAT)").unwrap();
+    session.run("INSERT INTO r2p VALUES (3.14)").unwrap();
+    assert!(matches!(
+        session.run("ALTER TABLE r2p MODIFY COLUMN a ENUM('x','y')"),
+        Err(DriverError::UnsupportedModifyColumnType { .. })
+    ));
+}
+
+#[test]
+fn modify_column_type_pair_gate_rule_3_enum_set_bit_decimal_float_double_to_time() {
+    let mut session = Session::new();
+
+    // Rule 3 origin set: ENUM, SET, BIT, DECIMAL, FLOAT, DOUBLE. Target:
+    // date/datetime/timestamp. Using FLOAT -> DATE here. DURATION is
+    // deliberately NOT a target of this rule (that is rule 5's job), and
+    // YEAR is deliberately NOT an origin of this rule.
+    session.run("CREATE TABLE r3e (a FLOAT)").unwrap();
+    assert!(matches!(
+        session.run("ALTER TABLE r3e MODIFY COLUMN a DATE"),
+        Err(DriverError::UnsupportedModifyColumnType { .. })
+    ));
+
+    session.run("CREATE TABLE r3c (a INT)").unwrap();
+    assert!(session
+        .run("ALTER TABLE r3c MODIFY COLUMN a BIGINT")
+        .is_ok());
+
+    session.run("CREATE TABLE r3p (a FLOAT)").unwrap();
+    session.run("INSERT INTO r3p VALUES (3.14)").unwrap();
+    assert!(matches!(
+        session.run("ALTER TABLE r3p MODIFY COLUMN a DATE"),
+        Err(DriverError::UnsupportedModifyColumnType { .. })
+    ));
+}
+
+/// Rule 4 (`TypeTiDBVectorFloat32` on either side) has no SQL-level pin: this
+/// tier's `column_type_code` does not accept the `VECTOR` type name yet, so
+/// no statement can build a `FieldType` carrying that code in the first
+/// place. It is pinned directly against `check_type_change_supported` in
+/// `tidb-executor`'s `ddl::alter_table::type_change_gate_tests` module
+/// instead (`vector_type_is_refused_on_either_side`).
+#[test]
+fn modify_column_type_pair_gate_rule_5_enum_set_bit_to_duration() {
+    let mut session = Session::new();
+
+    // Rule 5 origin set: ENUM, SET, BIT. Target: TIME (DURATION). Using
+    // BIT -> TIME here.
+    session.run("CREATE TABLE r5e (a BIT(8))").unwrap();
+    assert!(matches!(
+        session.run("ALTER TABLE r5e MODIFY COLUMN a TIME"),
+        Err(DriverError::UnsupportedModifyColumnType { .. })
+    ));
+
+    session.run("CREATE TABLE r5c (a INT)").unwrap();
+    assert!(session
+        .run("ALTER TABLE r5c MODIFY COLUMN a BIGINT")
+        .is_ok());
+
+    session.run("CREATE TABLE r5p (a BIT(8))").unwrap();
+    session.run("INSERT INTO r5p VALUES (b'1')").unwrap();
+    assert!(matches!(
+        session.run("ALTER TABLE r5p MODIFY COLUMN a TIME"),
+        Err(DriverError::UnsupportedModifyColumnType { .. })
+    ));
+}

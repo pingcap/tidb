@@ -88,6 +88,28 @@ pub enum DriverError {
     FunctionsNoopImpl(&'static str),
     /// TiDB `ErrUnsupportedModifyColumn` (8200), carrying Go's reason text.
     UnsupportedModifyColumn(&'static str),
+    /// TiDB `ErrUnsupportedModifyColumn` (8200): Go `checkTypeChangeSupported`
+    /// (`pkg/types/field_type.go:1569-1603`) refuses this ORIGIN/TARGET type
+    /// pair outright, before any row is touched -- so it fires the same way
+    /// on an empty table as on a populated one, unlike the per-row
+    /// `convert_to` gate this refusal sits in front of.
+    ///
+    /// Go reaches this through `types.CheckModifyTypeCompatible`
+    /// (`field_type.go:1515-1518`), then `pkg/ddl/modify_column.go`'s
+    /// `checkModifyTypes` (`:2262-2273`) wraps that error's `.Error()` text in
+    /// a SECOND `ErrUnsupportedModifyColumn`, so the real server's message is
+    /// double-prefixed ("Unsupported modify column: Unsupported modify
+    /// column: change from original type ... to ... is currently unsupported
+    /// yet"). This variant renders the INNER (single) wrap only -- the
+    /// double-wrap is Go's own accident of composition, not a text this tier
+    /// promises to reproduce byte for byte; the errno and REFUSED-vs-ACCEPTED
+    /// outcome are what the difftest oracle compares.
+    UnsupportedModifyColumnType {
+        /// `origin.CompactStr()`.
+        from: String,
+        /// `to.CompactStr()`.
+        to: String,
+    },
     /// Go `ErrBadField` (1054): the column is not in the table.
     UnknownColumnInTable {
         /// The column the statement named.
