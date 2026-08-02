@@ -553,14 +553,8 @@ impl crate::Visitable for TableLockType {
         if visitor.enter(self) {
             return visitor.leave(self);
         }
-        match self {
-            Self::None => {}
-            Self::Read => {}
-            Self::ReadLocal => {}
-            Self::ReadOnly => {}
-            Self::Write => {}
-            Self::WriteLocal => {}
-        }
+        let Self(value) = self;
+        let _ = value;
         visitor.leave(self)
     }
 }
@@ -570,11 +564,8 @@ impl crate::Visitable for ViewAlgorithm {
         if visitor.enter(self) {
             return visitor.leave(self);
         }
-        match self {
-            Self::Undefined => {}
-            Self::Merge => {}
-            Self::Temptable => {}
-        }
+        let Self(value) = self;
+        let _ = value;
         visitor.leave(self)
     }
 }
@@ -584,10 +575,8 @@ impl crate::Visitable for ViewSecurity {
         if visitor.enter(self) {
             return visitor.leave(self);
         }
-        match self {
-            Self::Definer => {}
-            Self::Invoker => {}
-        }
+        let Self(value) = self;
+        let _ = value;
         visitor.leave(self)
     }
 }
@@ -597,10 +586,8 @@ impl crate::Visitable for ViewCheckOption {
         if visitor.enter(self) {
             return visitor.leave(self);
         }
-        match self {
-            Self::Local => {}
-            Self::Cascaded => {}
-        }
+        let Self(value) = self;
+        let _ = value;
         visitor.leave(self)
     }
 }
@@ -610,14 +597,8 @@ impl crate::Visitable for PartitionType {
         if visitor.enter(self) {
             return visitor.leave(self);
         }
-        match self {
-            Self::None => {}
-            Self::Range => {}
-            Self::Hash => {}
-            Self::List => {}
-            Self::Key => {}
-            Self::SystemTime => {}
-        }
+        let Self(value) = self;
+        let _ = value;
         visitor.leave(self)
     }
 }
@@ -654,17 +635,8 @@ impl crate::Visitable for IndexType {
         if visitor.enter(self) {
             return visitor.leave(self);
         }
-        match self {
-            Self::Invalid => {}
-            Self::Btree => {}
-            Self::Hash => {}
-            Self::Rtree => {}
-            Self::Hypo => {}
-            Self::Vector => {}
-            Self::Inverted => {}
-            Self::Hnsw => {}
-            Self::Fulltext => {}
-        }
+        let Self(value) = self;
+        let _ = value;
         visitor.leave(self)
     }
 }
@@ -736,12 +708,8 @@ impl crate::Visitable for ColumnChoice {
         if visitor.enter(self) {
             return visitor.leave(self);
         }
-        match self {
-            Self::Default => {}
-            Self::All => {}
-            Self::Predicate => {}
-            Self::List => {}
-        }
+        let Self(value) = self;
+        let _ = value;
         visitor.leave(self)
     }
 }

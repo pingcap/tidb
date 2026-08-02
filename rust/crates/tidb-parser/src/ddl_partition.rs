@@ -408,7 +408,10 @@ fn validate_definition(
     parser: &Parser,
 ) -> PResult<()> {
     let columns = method.columns.len();
-    match (&method.kind, &definition.clause) {
+    // `PartitionType` is a value-preserving newtype, so its named constants
+    // are ordinary constant patterns: they need the kind by value, not by
+    // reference.
+    match (method.kind, &definition.clause) {
         (PartitionType::HASH | PartitionType::KEY, PartitionDefinitionClause::None) => Ok(()),
         (PartitionType::RANGE, PartitionDefinitionClause::LessThan(values)) => {
             if columns == 0 && values.len() != 1 || columns > 0 && values.len() != columns {

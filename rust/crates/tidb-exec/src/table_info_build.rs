@@ -415,7 +415,7 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
 }
 
 fn index_type_of(options: &IndexOptions) -> Option<IndexType> {
-    options.index_type.as_ref().map(|declared| match declared {
+    options.index_type.map(|declared| match declared {
         tidb_ast::IndexType::HASH => IndexType::HASH,
         tidb_ast::IndexType::RTREE => IndexType::RTREE,
         _ => IndexType::BTREE,
