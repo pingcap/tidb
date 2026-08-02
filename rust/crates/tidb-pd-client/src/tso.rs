@@ -377,3 +377,220 @@ fn timeout_error(endpoint: &str, timeout: Duration) -> PdClientError {
 fn invalid_tso(kind: &'static str, message: String) -> PdClientError {
     PdClientError::InvalidTopology { kind, message }
 }
+
+/// The suffix-bit arithmetic, pinned against an independently written model of
+/// the Go formula.
+///
+/// A live playground PD always reports `suffix_bits = 0`, so the shifting path
+/// below is unreachable from any local cluster; these tests are the only guard
+/// that a multi-DC PD (`enable-local-tso = true`, which makes PD's
+/// `CalSuffixBits` return a non-zero width) would still be split correctly.
+#[cfg(test)]
+mod tests {
+    use super::{add_logical, TimestampParts, MAX_LOGICAL, PHYSICAL_SHIFT_BITS};
+    use tidb_proto::pdpb;
+
+    const CLUSTER_ID: u64 = 7;
+    const SUFFIX_WIDTHS: [u32; 5] = [0, 1, 2, 4, 8];
+
+    fn reply(physical: i64, last_logical: i64, suffix_bits: u32, count: u32) -> pdpb::TsoResponse {
+        pdpb::TsoResponse {
+            header: Some(pdpb::ResponseHeader {
+                cluster_id: CLUSTER_ID,
+                error: None,
+            }),
+            count,
+            timestamp: Some(pdpb::Timestamp {
+                physical,
+                logical: last_logical,
+                suffix_bits,
+            }),
+        }
+    }
+
+    /// Independent model of Go's composition, written from the *last* logical
+    /// PD reports rather than from a recovered first one, so it shares no
+    /// arithmetic with `TsoBatch`.
+    ///
+    /// `pd/client`'s `tsoutil.AddLogical` is
+    /// `logical + count<<suffixBits`; `tso_dispatcher.go` recovers
+    /// `firstLogical := AddLogical(result.logical, -int64(result.count)+1, result.suffixBits)`
+    /// and `tso_batch_controller.go` hands waiter `i`
+    /// `AddLogical(firstLogical, int64(i), suffixBits)`. Substituting one into
+    /// the other, waiter `i` of a `count`-wide batch owns
+    /// `last_logical - ((count - 1 - i) << suffixBits)`.
+    fn go_model_logical(last_logical: i64, suffix_bits: u32, count: u32, index: u32) -> i64 {
+        let steps_back = i64::from(count - 1 - index);
+        last_logical - (steps_back << suffix_bits)
+    }
+
+    /// `client-go`'s `oracle.ComposeTS`: `uint64((physical << 18) + logical)`.
+    fn go_model_compose(physical: i64, logical: i64) -> u64 {
+        #[expect(clippy::cast_sign_loss, reason = "model mirrors Go's int64->uint64")]
+        {
+            ((physical << PHYSICAL_SHIFT_BITS) + logical) as u64
+        }
+    }
+
+    fn batch(physical: i64, last_logical: i64, suffix_bits: u32, count: u32) -> super::TsoBatch {
+        TimestampParts::from_response(
+            "model",
+            CLUSTER_ID,
+            reply(physical, last_logical, suffix_bits, count),
+            count,
+        )
+        .expect("batch fits the logical range")
+    }
+
+    #[test]
+    fn add_logical_is_gos_shift_before_add() {
+        // tsoutil.AddLogical: `return logical + count<<suffixBits`.
+        for suffix_bits in SUFFIX_WIDTHS {
+            for logical in 0..64_i64 {
+                for count in -8..=8_i64 {
+                    assert_eq!(
+                        add_logical(logical, count, suffix_bits),
+                        logical + (count << suffix_bits),
+                        "add_logical({logical}, {count}, {suffix_bits})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Exhaustive over the whole small range: every reachable `(last_logical,
+    /// suffix_bits, count)` triple is split and compared timestamp by
+    /// timestamp against the model.
+    #[test]
+    fn every_batch_split_matches_the_go_model() {
+        const PHYSICAL: i64 = 1_700_000_000_000;
+        let mut checked = 0_u32;
+        for suffix_bits in SUFFIX_WIDTHS {
+            for last_logical in 0..256_i64 {
+                for count in 1..=8_u32 {
+                    let first = go_model_logical(last_logical, suffix_bits, count, 0);
+                    let parsed = TimestampParts::from_response(
+                        "model",
+                        CLUSTER_ID,
+                        reply(PHYSICAL, last_logical, suffix_bits, count),
+                        count,
+                    );
+                    if first < 0 {
+                        // The batch reaches below logical zero; PD cannot have
+                        // produced it and we must refuse rather than wrap.
+                        assert_eq!(
+                            parsed.expect_err("underflowing batch is refused").kind(),
+                            "invalid_tso_batch_range"
+                        );
+                        continue;
+                    }
+                    let batch = parsed.expect("in-range batch parses");
+                    let mut previous: Option<u64> = None;
+                    for index in 0..count {
+                        let parts = batch.split(index);
+                        let expected = go_model_logical(last_logical, suffix_bits, count, index);
+                        assert_eq!(
+                            parts,
+                            TimestampParts {
+                                physical: PHYSICAL,
+                                logical: expected,
+                            },
+                            "split({index}) of last={last_logical} suffix={suffix_bits} count={count}"
+                        );
+                        let composed = parts.compose().expect("composes");
+                        assert_eq!(composed, go_model_compose(PHYSICAL, expected));
+                        // Distinct and strictly monotonic within the batch.
+                        if let Some(previous) = previous {
+                            assert!(
+                                previous < composed,
+                                "batch went backwards at {index} (suffix={suffix_bits})"
+                            );
+                        }
+                        previous = Some(composed);
+                        checked += 1;
+                    }
+                    // The batch's last entry is exactly what PD reported.
+                    assert_eq!(
+                        batch.last(),
+                        TimestampParts {
+                            physical: PHYSICAL,
+                            logical: last_logical,
+                        }
+                    );
+                }
+            }
+        }
+        assert!(checked > 5_000, "the sweep must actually cover the space");
+    }
+
+    /// Regression guard: with `suffix_bits = 0` — the only value any local PD
+    /// has ever returned — the batch is the contiguous run this client has
+    /// always handed out. If this ever changes, every recorded expectation
+    /// built against a playground PD moved with it.
+    #[test]
+    fn suffix_bits_zero_keeps_the_contiguous_range() {
+        for last_logical in 0..256_i64 {
+            for count in 1..=8_u32 {
+                if last_logical < i64::from(count) - 1 {
+                    continue;
+                }
+                let batch = batch(5, last_logical, 0, count);
+                let logicals: Vec<i64> = (0..count).map(|i| batch.split(i).logical).collect();
+                let expected: Vec<i64> =
+                    (last_logical - i64::from(count) + 1..=last_logical).collect();
+                assert_eq!(logicals, expected);
+            }
+        }
+    }
+
+    /// Across suffix widths the batches share exactly one timestamp — the last
+    /// one, which is the value PD itself reported. Anything else coinciding
+    /// would mean two allocators could hand out the same timestamp.
+    #[test]
+    fn only_the_reported_timestamp_coincides_across_suffix_widths() {
+        // Wide enough that the widest suffix (8 bits, 256 per step) still
+        // leaves the batch inside the logical field.
+        const LAST: i64 = 2_000;
+        const COUNT: u32 = 5;
+        for (a_index, a) in SUFFIX_WIDTHS.iter().enumerate() {
+            for b in &SUFFIX_WIDTHS[a_index + 1..] {
+                let left = batch(9, LAST, *a, COUNT);
+                let right = batch(9, LAST, *b, COUNT);
+                for i in 0..COUNT {
+                    for j in 0..COUNT {
+                        let collide = left.split(i) == right.split(j);
+                        let expected = go_model_logical(LAST, *a, COUNT, i)
+                            == go_model_logical(LAST, *b, COUNT, j);
+                        assert_eq!(
+                            collide, expected,
+                            "suffix {a} slot {i} vs suffix {b} slot {j}"
+                        );
+                    }
+                }
+                // Only the final slot is shared.
+                assert_eq!(left.split(COUNT - 1), right.split(COUNT - 1));
+                for i in 0..COUNT - 1 {
+                    assert_ne!(left.split(i), right.split(i));
+                }
+            }
+        }
+    }
+
+    /// A logical part outside PD's 18-bit field is refused before any
+    /// arithmetic runs, so the shift can never carry into the physical part.
+    #[test]
+    fn out_of_range_logical_is_refused_for_every_suffix_width() {
+        for suffix_bits in SUFFIX_WIDTHS {
+            for logical in [-1, MAX_LOGICAL + 1] {
+                let error = TimestampParts::from_response(
+                    "model",
+                    CLUSTER_ID,
+                    reply(5, logical, suffix_bits, 1),
+                    1,
+                )
+                .expect_err("out-of-range logical is refused");
+                assert_eq!(error.kind(), "invalid_tso_logical");
+            }
+        }
+    }
+}
