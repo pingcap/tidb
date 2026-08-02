@@ -13,3 +13,17 @@ translate('mississippi','sp','SP')
 translate(NULL,'a','b')
 translate('x',NULL,'y')
 translate('x','y',NULL)
+## builtinTranslateBinarySig (buildTranslateMap4Binary) -- selected when ANY
+## of the three arguments is a binary string. The map is over BYTES, so a
+## multi-byte character in `from` is three independent entries; invalidByte
+## (256) is the delete sentinel. The result charset follows arg 0 alone.
+translate('中文', cast('中' as binary), 'ab')
+hex(translate(cast('中' as binary), '中', 'x'))
+translate('abc', 'b', cast('X' as binary))
+hex(translate(cast('abc' as binary), cast('ab' as binary), cast('X' as binary)))
+hex(translate(cast('abc' as binary), cast('' as binary), 'xy'))
+translate(cast('abc' as binary), 'abc', 'xy')
+hex(translate(cast('aéb' as binary), cast('é' as binary), 'Z'))
+hex(translate(cast('aabb' as binary), cast('aa' as binary), 'xy'))
+translate(cast(NULL as binary), 'a', 'b')
+hex(translate(cast('abc' as binary), cast('cba' as binary), cast('123' as binary)))
