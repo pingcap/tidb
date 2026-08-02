@@ -487,6 +487,76 @@ fn setting_max_allowed_packet_at_session_scope_is_refused_1621() {
     );
 }
 
+/// The read-only refusal is the LAST of `SysVar.Validate`'s three steps
+/// (`validateScope` -> `ValidateFromType` -> `Validation`), so a value the
+/// type check clamps reports BOTH the 1292 warning and the 1621 error, and a
+/// value the type check REJECTS never reaches the refusal at all.
+///
+/// Captured from TiDB:
+///
+/// ```text
+/// set @@Max_Allowed_Packet=100;
+///   ERROR 1621 SESSION variable 'max_allowed_packet' is read-only. ...
+///   Warning 1292 Truncated incorrect max_allowed_packet value: '100'
+/// set @@max_allowed_packet=1000000000000;   -- same pair, MaxValue side
+/// set @@max_allowed_packet='abc';
+///   ERROR 1232 Incorrect argument type to variable 'max_allowed_packet'
+/// ```
+///
+/// The `Warning`-level rows are read rather than the whole `SHOW WARNINGS`
+/// output: this tier ALSO files the statement's own error as an `Error` row,
+/// which real TiDB does not (measured -- after the same failed `SET`, TiDB's
+/// `SHOW WARNINGS` returns the 1292 row alone). That gap is older and wider
+/// than this seam, so it is named here rather than pinned into this case.
+#[test]
+fn a_refused_session_max_allowed_packet_still_reports_the_truncation() {
+    let (mut session, _peer, _globals) = two_sessions_sharing_globals();
+    let truncations = |session: &mut Session| -> Vec<Vec<String>> {
+        row_text(session.run("SHOW WARNINGS"))
+            .into_iter()
+            .filter(|row| row.first().is_some_and(|level| level == "Warning"))
+            .collect()
+    };
+
+    // Below MinValue (1024): clamped, warned, and then refused.
+    let error = session.run("SET @@Max_Allowed_Packet = 100").unwrap_err();
+    assert_eq!(error.to_mysql_error().code, 1621);
+    assert_eq!(
+        truncations(&mut session),
+        [[
+            "Warning",
+            "1292",
+            "Truncated incorrect max_allowed_packet value: '100'"
+        ]]
+    );
+
+    // Above MaxValue: the same pair from the other side of the range.
+    let error = session
+        .run("SET @@max_allowed_packet = 1000000000000")
+        .unwrap_err();
+    assert_eq!(error.to_mysql_error().code, 1621);
+    assert_eq!(
+        truncations(&mut session),
+        [[
+            "Warning",
+            "1292",
+            "Truncated incorrect max_allowed_packet value: '1000000000000'"
+        ]]
+    );
+
+    // A value the TYPE rejects stops at `ValidateFromType`: 1232, not 1621.
+    // This is the control -- a fix that ran the refusal first, or that
+    // swallowed the type error to reach the refusal, fails exactly here.
+    let error = session.run("SET @@max_allowed_packet = 'abc'").unwrap_err();
+    assert_eq!(error.to_mysql_error().code, 1232);
+
+    // And an IN-RANGE value is still the bare 1621, with nothing to warn
+    // about: the truncation must not be manufactured by the refusal path.
+    let error = session.run("SET @@max_allowed_packet = 2048").unwrap_err();
+    assert_eq!(error.to_mysql_error().code, 1621);
+    assert!(truncations(&mut session).is_empty());
+}
+
 /// The accepted GLOBAL value is rounded DOWN to a multiple of 1024, with
 /// `ErrTruncatedWrongValue` (1292) naming the value as TYPED.
 #[test]

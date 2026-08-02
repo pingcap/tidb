@@ -25,6 +25,7 @@ use tidb_ast::{SessionStmt, Stmt};
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
 
+use crate::vars::validation_var_error;
 use crate::{sysvar, Session, VarError};
 
 /// Go `SysVar.GetNativeValType` (`pkg/sessionctx/variable/variable.go:455`),
@@ -262,7 +263,7 @@ impl Session {
         let value = value.unwrap_or_default();
         self.check_read_only_noop(&assignment.name, &value, is_global)?;
         self.check_isolation_level(&assignment.name, &value)?;
-        self.check_max_allowed_packet_scope(&assignment.name, is_node_wide)?;
+        self.check_max_allowed_packet_scope(&assignment.name, &value, is_node_wide)?;
         self.warn_removed_feature_var(&assignment.name, &value);
         if is_node_wide {
             let truncated = if is_global {
@@ -380,13 +381,43 @@ impl Session {
     /// The 1024-rounding half of the same closure is in
     /// [`sysvar::SysVarDef::run_validation`], where the clamp flag already
     /// travels to the statement as `ErrTruncatedWrongValue` (1292).
+    ///
+    /// # The refusal comes AFTER the type validation, not before
+    ///
+    /// `SysVar.Validate` (`pkg/sessionctx/variable/variable.go:219`) is
+    /// `validateScope` -> `ValidateFromType` -> `Validation`, and the closure
+    /// above is the LAST of the three. `ValidateFromType` has therefore
+    /// already clamped the value into `[MinValue, MaxValue]` and appended its
+    /// own `ErrTruncatedWrongValue` by the time the read-only refusal is
+    /// reached, so the statement reports BOTH. Captured from TiDB:
+    ///
+    /// ```text
+    /// set @@Max_Allowed_Packet=100;
+    ///   ERROR 1621 SESSION variable 'max_allowed_packet' is read-only.
+    ///              Use SET GLOBAL to assign the value
+    ///   Warning 1292 Truncated incorrect max_allowed_packet value: '100'
+    /// set @@max_allowed_packet='abc';
+    ///   ERROR 1232 Incorrect argument type to variable 'max_allowed_packet'
+    /// ```
+    ///
+    /// The second capture is why the type check runs here rather than being
+    /// skipped on the refusal path: a value the TYPE rejects never reaches
+    /// the closure at all, so 1232 outranks 1621.
     fn check_max_allowed_packet_scope(
         &mut self,
         name: &str,
+        value: &str,
         is_node_wide: bool,
     ) -> Result<(), DriverError> {
         if is_node_wide || !name.eq_ignore_ascii_case("max_allowed_packet") {
             return Ok(());
+        }
+        if let Some(def) = sysvar::get_sys_var(name) {
+            match def.normalize_by_type(value, sysvar::SCOPE_SESSION) {
+                Ok(validated) if validated.truncated => self.warn_truncated_var(name, value),
+                Ok(_) => {}
+                Err(error) => return Err(var_error(validation_var_error(name, value, error))),
+            }
         }
         Err(DriverError::Var(
             tidb_executor::VarErrorKind::SessionScopeIsReadOnly("max_allowed_packet".to_owned()),

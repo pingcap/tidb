@@ -49,6 +49,27 @@ use crate::sysvar::{
     alias_of, get_sys_var, SysVarDef, ValidationError, SCOPE_GLOBAL, SCOPE_INSTANCE, SCOPE_SESSION,
 };
 
+/// Names a validation refusal the way the variable error surface reports it:
+/// Go's `ErrWrongTypeForVar` (1232), `ErrWrongValueForVar` (1231) and the
+/// bare `errors.Errorf` a `Validation` closure may raise.
+///
+/// One function rather than one per call site, because the three writers
+/// (SESSION, GLOBAL/INSTANCE, and the read-only refusal in
+/// `Session::check_max_allowed_packet_scope`) must agree: the same rejected
+/// value has to name the same error whichever tier was being written.
+pub(crate) fn validation_var_error(name: &str, value: &str, error: ValidationError) -> VarError {
+    match error {
+        ValidationError::WrongType => VarError::WrongTypeForVar(name.to_ascii_lowercase()),
+        ValidationError::WrongValue => {
+            VarError::WrongValueForVar(name.to_ascii_lowercase(), value.to_owned())
+        }
+        ValidationError::WrongValueOf(part) => {
+            VarError::WrongValueForVar(name.to_ascii_lowercase(), part)
+        }
+        ValidationError::Refused(message) => VarError::ValidationRefused(message),
+    }
+}
+
 /// The shared GLOBAL-scope value table every session of one
 /// [`crate::Session`] factory holds a clone of. In-memory only: Go persists
 /// this tier to `mysql.GLOBAL_VARIABLES`, so a real cluster survives a
@@ -147,16 +168,7 @@ impl GlobalSysvars {
         }
         let validated = def
             .validate_in_scope(&value, scope)
-            .map_err(|error| match error {
-                ValidationError::WrongType => VarError::WrongTypeForVar(name.to_ascii_lowercase()),
-                ValidationError::WrongValue => {
-                    VarError::WrongValueForVar(name.to_ascii_lowercase(), value.clone())
-                }
-                ValidationError::WrongValueOf(part) => {
-                    VarError::WrongValueForVar(name.to_ascii_lowercase(), part)
-                }
-                ValidationError::Refused(message) => VarError::ValidationRefused(message),
-            })?;
+            .map_err(|error| validation_var_error(name, &value, error))?;
         let key = name.to_ascii_lowercase();
         let mut values = self.store(def).lock().expect("global sysvar lock poisoned");
         if let Some(other) = alias_of(&key) {
@@ -398,20 +410,9 @@ impl SessionVars {
         if !def.has_session_scope() {
             return Err(VarError::GlobalOnlyVariable(name.to_ascii_lowercase()));
         }
-        let validated =
-            def.validate_in_scope(&value, SCOPE_SESSION)
-                .map_err(|error| match error {
-                    ValidationError::WrongType => {
-                        VarError::WrongTypeForVar(name.to_ascii_lowercase())
-                    }
-                    ValidationError::WrongValue => {
-                        VarError::WrongValueForVar(name.to_ascii_lowercase(), value.clone())
-                    }
-                    ValidationError::WrongValueOf(part) => {
-                        VarError::WrongValueForVar(name.to_ascii_lowercase(), part)
-                    }
-                    ValidationError::Refused(message) => VarError::ValidationRefused(message),
-                })?;
+        let validated = def
+            .validate_in_scope(&value, SCOPE_SESSION)
+            .map_err(|error| validation_var_error(name, &value, error))?;
         let key = name.to_ascii_lowercase();
         // Go `SetSessionFromHook`: the alias takes the SAME stored value, with
         // its own validation skipped -- `tx_isolation` and
