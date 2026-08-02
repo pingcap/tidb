@@ -6,6 +6,52 @@ it, in order, and why that order.
 The findings are in [go-divergence-sweep.md](go-divergence-sweep.md) and the
 per-surface inventories it links. This document is only the sequencing.
 
+## Read this correction first
+
+The ordering below was written ranked by **consequence**, and that is the wrong
+axis on its own. Reviewed against the full picture, three things were missing,
+and the third changes the order.
+
+**1. It is a bug-fix plan, not a project plan.** The goal is a faithful, running
+TiDB advanced along the deployment ladder. The ladder currently reaches **rung 7
+green** — sysbench runs unmodified, the Rust-vs-Go checksum matches on the same
+TiKV, rung 6 is eight of eight. Nothing below says what advances it to rung 8,
+and a plan that spends a month on correctness without moving the ladder has
+chosen for the reader without telling them.
+
+**2. There is no sizing.** #191 (decide the decimal representation) may be weeks;
+#196 (identifier case) may be an afternoon once the one-line check settles it.
+Ranked by consequence alone, they sit in the same phase. A plan that cannot be
+scheduled is a list.
+
+**3. Consequence is not reachability, and that reorders things.** Every finding
+below was ranked by *how bad it is if hit*. Nothing was ranked by *how often it
+is hit*, and the difference is large:
+
+- **#186 fires on ordinary traffic.** Every JDBC client with
+  `useLocalTransactionState=true` reads a status bit we always set wrong, on
+  every transaction. Silent application-level data loss, today, with no unusual
+  input.
+- **#188 fires on every decimal column** — an ordinary schema choice.
+- **#202 fires on `ALTER TABLE ... ADD COLUMN ... FIRST`** — a common migration.
+- **#189 needs a negative zero with non-zero scale arriving as bytes.** Nearly
+  nobody writes one.
+- **#196 needs a non-ASCII identifier** whose simple and full case mappings
+  differ — Greek final sigma, Turkish dotted I.
+- **JSON u64** needs a literal past `i64::MAX`.
+
+So the honest order is **consequence × reachability**: #186, #188 and #202 are
+the ones costing real users real data right now; #189, #196 and the JSON u64
+case are real bugs that a fixture should pin and that can wait behind them.
+
+**4. Nothing here has been triaged for false positives.** About 170 findings are
+derived from reading two sources, and this project's premises have been
+overturned repeatedly — including twice during this sweep, where a unit
+falsified my account of *which code produced a warning* and of *whether an
+access path was at risk*. Assume a non-zero false-positive rate. **Confirming a
+finding is cheaper than fixing it**, and for several the confirmation is one
+command.
+
 ## The one fact that sets the order
 
 **About 26 fixes landed with nothing executed**, because the machine's disk was
@@ -125,6 +171,25 @@ disease: **a decision made where the information isn't.**
 
 None of these is reachable from the mock. They need the contended harness from
 the lost‑update work.
+
+## Sizing and what runs in parallel
+
+| Item | Rough size | Needs |
+| --- | --- | --- |
+| #186 status flags | small — one seam, three call sites | wire capture to confirm |
+| #187 long data | medium — a buffer with a lifecycle | wire capture |
+| Coprocessor flags + warnings | small — two missing calls | a live query |
+| #188 declared decimal shape | medium, **blocked on #191** | Go byte fixture |
+| #202 name-keyed column refs | large — representation change | fixtures + DDL cases |
+| #191 decimal representation | **large, decide before building** | read why `decimal.rs` exists |
+| #196 identifier case | small **if** the one-line check confirms it | one Go/Rust comparison |
+| #197 unknown enum values | small — the house style already exists | catalog fixture |
+| #203 type-change table | small — transcribe Go's pairs | DDL capture harness |
+| #199 `Selectivity()` | medium | estRows comparison on unanalysed tables |
+| #194 / #195 transactions | medium, **cluster-only** | contended harness |
+
+Phases 2, 3 and 4 are largely independent and can run concurrently — they touch
+different crates. Phase 1's fixtures gate Phase 2 only.
 
 ## What not to do
 
