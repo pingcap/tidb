@@ -551,7 +551,7 @@ impl PartitionMethod {
             out.push_str(" ALGORITHM = ");
             out.push_str(&algorithm.to_string());
         }
-        if self.kind == PartitionType::SystemTime {
+        if self.kind == PartitionType::SYSTEM_TIME {
             if let (Some(expr), Some(unit)) = (&self.expr, &self.unit) {
                 out.push_str(" INTERVAL ");
                 expr.restore_into(out);
@@ -569,7 +569,7 @@ impl PartitionMethod {
             expr.restore_into(out);
             out.push(')');
         } else {
-            if matches!(self.kind, PartitionType::Range | PartitionType::List) {
+            if matches!(self.kind, PartitionType::RANGE | PartitionType::LIST) {
                 out.push_str(" COLUMNS");
             }
             out.push_str(" (");

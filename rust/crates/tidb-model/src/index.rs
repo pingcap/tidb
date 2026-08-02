@@ -100,48 +100,20 @@ fn is_zero_u8(value: &u8) -> bool {
     *value == 0
 }
 
-/// Go `ast.IndexType` is an `int`, so `encoding/json` writes it as a number.
-/// `IndexType` lives in `tidb-ast` without serde impls, so the numeric mapping
-/// is applied per field. The discriminants must match the Go `iota` order in
-/// `pkg/parser/ast/model.go` because they are persisted in `TableInfo`.
-fn index_type_to_i64(tp: IndexType) -> i64 {
-    match tp {
-        IndexType::Invalid => 0,
-        IndexType::Btree => 1,
-        IndexType::Hash => 2,
-        IndexType::Rtree => 3,
-        IndexType::Hypo => 4,
-        IndexType::Vector => 5,
-        IndexType::Inverted => 6,
-        IndexType::Hnsw => 7,
-        IndexType::Fulltext => 8,
-    }
-}
-
-/// Inverse of [`index_type_to_i64`]; an unknown number decodes as `Invalid`,
-/// matching Go's unnamed `IndexType` values falling through `String()`.
-fn index_type_from_i64(value: i64) -> IndexType {
-    match value {
-        1 => IndexType::Btree,
-        2 => IndexType::Hash,
-        3 => IndexType::Rtree,
-        4 => IndexType::Hypo,
-        5 => IndexType::Vector,
-        6 => IndexType::Inverted,
-        7 => IndexType::Hnsw,
-        8 => IndexType::Fulltext,
-        _ => IndexType::Invalid,
-    }
-}
-
+/// Go `ast.IndexType` is an `int`, so `encoding/json` writes it as a number and
+/// accepts any number back. `IndexType` lives in `tidb-ast` without serde
+/// impls, so the conversion is applied per field. It carries the raw integer
+/// through: Go's declaration warns the value "may come from a previous version
+/// persisted in TableInfo", and folding an unnamed value to `INVALID` would
+/// rewrite another version's index type to 0 on the first write here.
 fn serialize_index_type<S: Serializer>(tp: &IndexType, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.serialize_i64(index_type_to_i64(*tp))
+    serializer.serialize_i64(tp.0)
 }
 
 fn deserialize_index_type<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<IndexType, D::Error> {
-    Ok(index_type_from_i64(
+    Ok(IndexType(
         Option::<i64>::deserialize(deserializer)?.unwrap_or_default(),
     ))
 }

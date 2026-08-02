@@ -74,7 +74,7 @@ fn alter_table_repartition_source_rows_restore_and_are_terminal() {
         alter.actions.as_slice(),
         [tidb_ast::AlterTableAction::Partition(
             tidb_ast::AlterPartitionAction::Repartition(partitioning)
-        )] if partitioning.method.kind == tidb_ast::PartitionType::Hash
+        )] if partitioning.method.kind == tidb_ast::PartitionType::HASH
             && matches!(partitioning.method.expr, Some(tidb_ast::Expr::Column(ref name)) if name.as_slice() == ["a"])
     ));
 

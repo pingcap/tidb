@@ -32,11 +32,13 @@ use crate::schema_state::SchemaState;
 /// Serde adapters for the `ast` enums used by these structs.
 ///
 /// Every one of them is an `int`/`byte` in Go with no `MarshalJSON`, so
-/// `encoding/json` writes a bare number. The Rust counterparts in `tidb-ast`
-/// are closed enums without serde impls, so each conversion lives here.
+/// `encoding/json` writes a bare number and accepts any number back. The Rust
+/// counterparts in `tidb-ast` are value-preserving newtypes without serde
+/// impls, so each conversion lives here and, like Go, carries the raw integer
+/// through unchanged rather than rejecting or folding an unnamed value.
 mod ast_enum_serde {
     macro_rules! int_enum_serde {
-        ($module:ident, $ty:ty, { $($variant:path => $value:literal),+ $(,)? }) => {
+        ($module:ident, $ty:ty, $repr:ty) => {
             pub mod $module {
                 use super::super::*;
 
@@ -44,59 +46,26 @@ mod ast_enum_serde {
                     value: &$ty,
                     serializer: S,
                 ) -> Result<S::Ok, S::Error> {
-                    serializer.serialize_i64(match *value { $($variant => $value),+ })
+                    serde::Serialize::serialize(&value.0, serializer)
                 }
 
                 pub fn deserialize<'de, D: serde::Deserializer<'de>>(
                     deserializer: D,
                 ) -> Result<$ty, D::Error> {
-                    let raw = <i64 as serde::Deserialize>::deserialize(deserializer)?;
-                    match raw {
-                        $($value => Ok($variant),)+
-                        other => Err(serde::de::Error::custom(format_args!(
-                            concat!("invalid ", stringify!($ty), " value: {}"),
-                            other
-                        ))),
-                    }
+                    Ok(<$ty>::from(
+                        <Option<$repr> as serde::Deserialize>::deserialize(deserializer)?
+                            .unwrap_or_default(),
+                    ))
                 }
             }
         };
     }
 
-    int_enum_serde!(view_algorithm, ViewAlgorithm, {
-        ViewAlgorithm::Undefined => 0,
-        ViewAlgorithm::Merge => 1,
-        ViewAlgorithm::Temptable => 2,
-    });
-    int_enum_serde!(view_security, ViewSecurity, {
-        ViewSecurity::Definer => 0,
-        ViewSecurity::Invoker => 1,
-    });
-    int_enum_serde!(view_check_option, ViewCheckOption, {
-        ViewCheckOption::Local => 0,
-        ViewCheckOption::Cascaded => 1,
-    });
-    int_enum_serde!(column_choice, ColumnChoice, {
-        ColumnChoice::Default => 0,
-        ColumnChoice::All => 1,
-        ColumnChoice::Predicate => 2,
-        ColumnChoice::List => 3,
-    });
-    int_enum_serde!(table_lock_type, TableLockType, {
-        TableLockType::None => 0,
-        TableLockType::Read => 1,
-        TableLockType::ReadLocal => 2,
-        TableLockType::ReadOnly => 3,
-        TableLockType::Write => 4,
-        TableLockType::WriteLocal => 5,
-    });
-}
-
-/// Go's `ViewCheckOption` zero value is `CheckOptionLocal`, but the Rust enum
-/// in `tidb-ast` defaults to `Cascaded`; a missing JSON key must still decode
-/// to Go's zero value.
-fn view_check_option_zero() -> ViewCheckOption {
-    ViewCheckOption::Local
+    int_enum_serde!(view_algorithm, ViewAlgorithm, i64);
+    int_enum_serde!(view_security, ViewSecurity, i64);
+    int_enum_serde!(view_check_option, ViewCheckOption, i64);
+    int_enum_serde!(column_choice, ColumnChoice, u8);
+    int_enum_serde!(table_lock_type, TableLockType, u8);
 }
 
 /// Serde adapter for `auth.UserIdentity`, which has no `json` tags in Go and
@@ -434,7 +403,7 @@ impl StatsOptions {
     pub fn new() -> Self {
         StatsOptions {
             auto_recalc: true,
-            column_choice: ColumnChoice::Default,
+            column_choice: ColumnChoice::DEFAULT,
             ..Default::default()
         }
     }
@@ -470,7 +439,7 @@ pub struct ViewInfo {
     /// The check option.
     #[serde(
         rename = "view_checkoption",
-        default = "view_check_option_zero",
+        default,
         with = "ast_enum_serde::view_check_option"
     )]
     pub check_option: ViewCheckOption,
@@ -1043,7 +1012,7 @@ mod tests {
 
         let opts = StatsOptions::new();
         assert!(opts.auto_recalc);
-        assert_eq!(opts.column_choice, ColumnChoice::Default);
+        assert_eq!(opts.column_choice, ColumnChoice::DEFAULT);
         assert!(opts.stats_window_settings.is_none());
         // Default (not the constructor) has auto_recalc false.
         assert!(!StatsOptions::default().auto_recalc);
@@ -1116,15 +1085,15 @@ mod tests {
     #[test]
     fn json_tags_match_go() {
         let view = ViewInfo {
-            algorithm: ViewAlgorithm::Merge,
+            algorithm: ViewAlgorithm::MERGE,
             definer: Some(Box::new(UserIdentity {
                 username: "root".to_owned(),
                 hostname: "%".to_owned(),
                 ..Default::default()
             })),
-            security: ViewSecurity::Invoker,
+            security: ViewSecurity::INVOKER,
             select_stmt: "SELECT 1".to_owned(),
-            check_option: ViewCheckOption::Cascaded,
+            check_option: ViewCheckOption::CASCADED,
             cols: vec![CiString::new("A")],
         };
         assert_eq!(
@@ -1175,7 +1144,7 @@ mod tests {
         );
 
         let lock = TableLockInfo {
-            tp: TableLockType::Write,
+            tp: TableLockType::WRITE,
             sessions: vec![SessionInfo {
                 server_id: "s".to_owned(),
                 session_id: 7,
@@ -1271,7 +1240,7 @@ mod tests {
                 repeat_type: WindowRepeatType::DAY,
                 repeat_interval: 2,
             })),
-            column_choice: ColumnChoice::List,
+            column_choice: ColumnChoice::LIST,
             column_list: vec![CiString::new("a")],
             ..StatsOptions::new()
         };

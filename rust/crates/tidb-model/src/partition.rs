@@ -30,48 +30,25 @@ use crate::schema_state::SchemaState;
 
 /// Go marshals `ast.PartitionType` (an `int`) and `ActionType` (a `byte`) as
 /// plain JSON numbers: neither has a `MarshalJSON`. These adapters reproduce
-/// that, since the Rust `PartitionType` is a fieldless enum and `ActionType` a
-/// newtype whose own serde impls are not part of this file's contract.
+/// that, since neither Rust type carries serde impls of its own here.
 mod partition_type_json {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use tidb_ast::PartitionType;
 
-    /// Go's `PartitionType` constants, in declaration order.
-    const fn to_i64(t: PartitionType) -> i64 {
-        match t {
-            PartitionType::None => 0,
-            PartitionType::Range => 1,
-            PartitionType::Hash => 2,
-            PartitionType::List => 3,
-            PartitionType::Key => 4,
-            PartitionType::SystemTime => 5,
-        }
-    }
-
-    /// An out-of-range value decodes as `PartitionTypeNone`, matching Go's
-    /// zero-value handling of a state it has no constant for.
-    const fn from_i64(v: i64) -> PartitionType {
-        match v {
-            1 => PartitionType::Range,
-            2 => PartitionType::Hash,
-            3 => PartitionType::List,
-            4 => PartitionType::Key,
-            5 => PartitionType::SystemTime,
-            _ => PartitionType::None,
-        }
-    }
-
+    /// The raw integer is carried through unchanged. Collapsing an unnamed
+    /// value to `NONE` would relabel a partitioned table "not partitioned"
+    /// while its `definitions` and `num` stay populated.
     pub fn serialize<S: Serializer>(t: &PartitionType, s: S) -> Result<S::Ok, S::Error> {
-        to_i64(*t).serialize(s)
+        t.0.serialize(s)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<PartitionType, D::Error> {
-        Ok(from_i64(Option::<i64>::deserialize(d)?.unwrap_or(0)))
+        Ok(PartitionType(Option::<i64>::deserialize(d)?.unwrap_or(0)))
     }
 
-    /// Go `omitempty` on a `PartitionType`: the zero value is `None`.
+    /// Go `omitempty` on a `PartitionType`: the zero value is `PartitionTypeNone`.
     pub fn is_none(t: &PartitionType) -> bool {
-        matches!(t, PartitionType::None)
+        t.0 == 0
     }
 }
 
@@ -366,7 +343,7 @@ impl PartitionInfo {
     pub fn clear_reorg_intermediate_info(&mut self) {
         self.ddl_action = ActionType::ACTION_NONE;
         self.ddl_state = SchemaState::NONE;
-        self.ddl_type = PartitionType::None;
+        self.ddl_type = PartitionType::NONE;
         self.ddl_expr = String::new();
         self.ddl_columns = Vec::new();
         self.new_table_id = 0;
@@ -451,7 +428,7 @@ mod tests {
     fn partition_info_json_matches_go() {
         let go = r#"{"type":1,"expr":"a","columns":[{"O":"c","L":"c"}],"enable":true,"is_empty_columns":false,"definitions":[{"id":1,"name":{"O":"p0","L":"p0"},"less_than":["10"],"in_values":null,"policy_ref_info":null}],"adding_definitions":null,"dropping_definitions":null,"states":[{"id":1,"state":5}],"num":2,"ddl_state":0,"ddl_changed_index":{"10":false,"2":true}}"#;
         let pi: PartitionInfo = serde_json::from_str(go).unwrap();
-        assert_eq!(pi.partition_type, PartitionType::Range);
+        assert_eq!(pi.partition_type, PartitionType::RANGE);
         assert_eq!(pi.definitions.len(), 1);
         assert_eq!(pi.definitions[0].name.original(), "p0");
         assert!(pi.definitions[0].in_values.is_empty());
@@ -480,7 +457,7 @@ mod tests {
         pi.clear_reorg_intermediate_info();
         assert_eq!(pi.new_table_id, 0);
         assert!(pi.ddl_expr.is_empty());
-        assert_eq!(pi.ddl_type, PartitionType::None);
+        assert_eq!(pi.ddl_type, PartitionType::NONE);
 
         let d = PartitionDefinition {
             storage_class_tier: "STANDARD".into(),

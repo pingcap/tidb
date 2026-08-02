@@ -109,129 +109,149 @@ impl<'de> Deserialize<'de> for CiString {
     }
 }
 
-/// The type of a table lock.
+/// The type of a table lock (Go `ast.TableLockType`, a `byte`).
+///
+/// A value read back from a persisted `TableInfo` may have been written by a
+/// different TiDB version, so the raw byte is kept rather than folded into a
+/// closed set; see the compatibility warning on `ast.IndexType`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum TableLockType {
-    /// No lock mode was supplied.
-    #[default]
-    None,
-    /// Shared read lock.
-    Read,
-    /// Unsupported local read lock.
-    ReadLocal,
-    /// Persistent read-only table state.
-    ReadOnly,
-    /// Exclusive write lock.
-    Write,
-    /// Write lock that permits other readers.
-    WriteLocal,
-}
+pub struct TableLockType(pub u8);
 
 impl TableLockType {
-    /// Returns the canonical source spelling.
+    /// No lock mode was supplied (Go `TableLockNone`).
+    pub const NONE: Self = Self(0);
+    /// Shared read lock (Go `TableLockRead`).
+    pub const READ: Self = Self(1);
+    /// Unsupported local read lock (Go `TableLockReadLocal`).
+    pub const READ_LOCAL: Self = Self(2);
+    /// Persistent read-only table state (Go `TableLockReadOnly`).
+    pub const READ_ONLY: Self = Self(3);
+    /// Exclusive write lock (Go `TableLockWrite`).
+    pub const WRITE: Self = Self(4);
+    /// Write lock that permits other readers (Go `TableLockWriteLocal`).
+    pub const WRITE_LOCAL: Self = Self(5);
+
+    /// Returns the canonical source spelling, empty for an unnamed value
+    /// (Go `TableLockType.String`).
     pub const fn sql(self) -> &'static str {
         match self {
-            Self::None => "NONE",
-            Self::Read => "READ",
-            Self::ReadLocal => "READ LOCAL",
-            Self::ReadOnly => "READ ONLY",
-            Self::Write => "WRITE",
-            Self::WriteLocal => "WRITE LOCAL",
+            Self::NONE => "NONE",
+            Self::READ => "READ",
+            Self::READ_LOCAL => "READ LOCAL",
+            Self::READ_ONLY => "READ ONLY",
+            Self::WRITE => "WRITE",
+            Self::WRITE_LOCAL => "WRITE LOCAL",
+            _ => "",
         }
     }
 }
 
-/// A view's SQL algorithm characteristic.
+/// A view's SQL algorithm characteristic (Go `ast.ViewAlgorithm`, an `int`).
+///
+/// Persisted in `TableInfo.View`, so an unrecognised value is preserved rather
+/// than rejected or collapsed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ViewAlgorithm {
-    /// Unspecified algorithm.
-    #[default]
-    Undefined,
-    /// Merge the view into its outer query.
-    Merge,
-    /// Materialize the view.
-    Temptable,
-}
+pub struct ViewAlgorithm(pub i64);
 
 impl ViewAlgorithm {
-    /// Returns the canonical source spelling.
+    /// Unspecified algorithm (Go `AlgorithmUndefined`).
+    pub const UNDEFINED: Self = Self(0);
+    /// Merge the view into its outer query (Go `AlgorithmMerge`).
+    pub const MERGE: Self = Self(1);
+    /// Materialize the view (Go `AlgorithmTemptable`).
+    pub const TEMPTABLE: Self = Self(2);
+
+    /// Returns the canonical source spelling; an unnamed value reads as
+    /// `UNDEFINED`, matching Go's `default` arm.
     pub const fn sql(self) -> &'static str {
         match self {
-            Self::Undefined => "UNDEFINED",
-            Self::Merge => "MERGE",
-            Self::Temptable => "TEMPTABLE",
+            Self::MERGE => "MERGE",
+            Self::TEMPTABLE => "TEMPTABLE",
+            _ => "UNDEFINED",
         }
     }
 }
 
-/// A view's SQL security characteristic.
+/// A view's SQL security characteristic (Go `ast.ViewSecurity`, an `int`).
+///
+/// Persisted in `TableInfo.View`, so an unrecognised value is preserved.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ViewSecurity {
-    /// Execute with definer privileges.
-    #[default]
-    Definer,
-    /// Execute with invoker privileges.
-    Invoker,
-}
+pub struct ViewSecurity(pub i64);
 
 impl ViewSecurity {
-    /// Returns the canonical source spelling.
+    /// Execute with definer privileges (Go `SecurityDefiner`).
+    pub const DEFINER: Self = Self(0);
+    /// Execute with invoker privileges (Go `SecurityInvoker`).
+    pub const INVOKER: Self = Self(1);
+
+    /// Returns the canonical source spelling; an unnamed value reads as
+    /// `DEFINER`, matching Go's `default` arm.
     pub const fn sql(self) -> &'static str {
         match self {
-            Self::Definer => "DEFINER",
-            Self::Invoker => "INVOKER",
+            Self::INVOKER => "INVOKER",
+            _ => "DEFINER",
         }
     }
 }
 
-/// A view's `WITH CHECK OPTION` scope.
+/// A view's `WITH CHECK OPTION` scope (Go `ast.ViewCheckOption`, an `int`).
+///
+/// Persisted in `TableInfo.View`, so an unrecognised value is preserved.
+/// `Default` is Go's zero value, `LOCAL`; the parser sets `CASCADED`
+/// explicitly when the clause omits a scope, as Go's parser does.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ViewCheckOption {
-    /// Local view conditions only.
-    Local,
-    /// Include underlying view conditions.
-    #[default]
-    Cascaded,
-}
+pub struct ViewCheckOption(pub i64);
 
 impl ViewCheckOption {
-    /// Returns the canonical source spelling.
+    /// Local view conditions only (Go `CheckOptionLocal`).
+    pub const LOCAL: Self = Self(0);
+    /// Include underlying view conditions (Go `CheckOptionCascaded`).
+    pub const CASCADED: Self = Self(1);
+
+    /// Returns the canonical source spelling; an unnamed value reads as
+    /// `CASCADED`, matching Go's `default` arm.
     pub const fn sql(self) -> &'static str {
         match self {
-            Self::Local => "LOCAL",
-            Self::Cascaded => "CASCADED",
+            Self::LOCAL => "LOCAL",
+            _ => "CASCADED",
         }
     }
 }
 
-/// A table partitioning method.
+/// A table partitioning method (Go `ast.PartitionType`, an `int`).
+///
+/// Persisted in `TableInfo.Partition.Type`. Collapsing an unrecognised value
+/// to `NONE` would claim the table is not partitioned while its definitions
+/// stay populated, so the raw value is preserved instead.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum PartitionType {
-    /// A temporary single-partition non-partitioned table.
-    #[default]
-    None,
-    /// Range partitioning.
-    Range,
-    /// Hash partitioning.
-    Hash,
-    /// List partitioning.
-    List,
-    /// Key partitioning.
-    Key,
-    /// MariaDB system-time partitioning.
-    SystemTime,
-}
+pub struct PartitionType(pub i64);
 
 impl PartitionType {
-    /// Returns the canonical source spelling.
+    /// A temporary single-partition non-partitioned table
+    /// (Go `PartitionTypeNone`).
+    pub const NONE: Self = Self(0);
+    /// Range partitioning (Go `PartitionTypeRange`).
+    pub const RANGE: Self = Self(1);
+    /// Hash partitioning (Go `PartitionTypeHash`).
+    pub const HASH: Self = Self(2);
+    /// List partitioning (Go `PartitionTypeList`).
+    pub const LIST: Self = Self(3);
+    /// Key partitioning (Go `PartitionTypeKey`).
+    pub const KEY: Self = Self(4);
+    /// MariaDB system-time partitioning (Go `PartitionTypeSystemTime`).
+    pub const SYSTEM_TIME: Self = Self(5);
+
+    /// Returns the canonical source spelling, empty for an unnamed value
+    /// (Go `PartitionType.String`).
     pub const fn sql(self) -> &'static str {
         match self {
-            Self::None => "NONE",
-            Self::Range => "RANGE",
-            Self::Hash => "HASH",
-            Self::List => "LIST",
-            Self::Key => "KEY",
-            Self::SystemTime => "SYSTEM_TIME",
+            Self::NONE => "NONE",
+            Self::RANGE => "RANGE",
+            Self::HASH => "HASH",
+            Self::LIST => "LIST",
+            Self::KEY => "KEY",
+            Self::SYSTEM_TIME => "SYSTEM_TIME",
+            _ => "",
         }
     }
 }
@@ -278,43 +298,48 @@ impl PrimaryKeyType {
     }
 }
 
-/// An index method.
+/// An index method (Go `ast.IndexType`, an `int`).
+///
+/// Go's declaration carries an explicit warning: the value is also used by
+/// TiFlash and "may come from a previous version persisted in TableInfo. So
+/// you must keep it compatible when modifying it." An unrecognised value is
+/// therefore preserved verbatim across a decode/encode cycle.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum IndexType {
-    /// Invalid source zero value.
-    #[default]
-    Invalid,
-    /// B-tree index.
-    Btree,
-    /// Hash index.
-    Hash,
-    /// R-tree index.
-    Rtree,
-    /// Hypothetical index.
-    Hypo,
-    /// Vector index.
-    Vector,
-    /// Inverted index.
-    Inverted,
-    /// HNSW AST-only vector index.
-    Hnsw,
-    /// Full-text index.
-    Fulltext,
-}
+pub struct IndexType(pub i64);
 
 impl IndexType {
-    /// Returns the source spelling, empty for the invalid value.
+    /// Invalid source zero value (Go `IndexTypeInvalid`).
+    pub const INVALID: Self = Self(0);
+    /// B-tree index (Go `IndexTypeBtree`).
+    pub const BTREE: Self = Self(1);
+    /// Hash index (Go `IndexTypeHash`).
+    pub const HASH: Self = Self(2);
+    /// R-tree index (Go `IndexTypeRtree`).
+    pub const RTREE: Self = Self(3);
+    /// Hypothetical index (Go `IndexTypeHypo`).
+    pub const HYPO: Self = Self(4);
+    /// Vector index (Go `IndexTypeVector`).
+    pub const VECTOR: Self = Self(5);
+    /// Inverted index (Go `IndexTypeInverted`).
+    pub const INVERTED: Self = Self(6);
+    /// HNSW AST-only vector index (Go `IndexTypeHNSW`).
+    pub const HNSW: Self = Self(7);
+    /// Full-text index (Go `IndexTypeFulltext`).
+    pub const FULLTEXT: Self = Self(8);
+
+    /// Returns the source spelling, empty for the invalid value and for any
+    /// unnamed value (Go `IndexType.String`).
     pub const fn sql(self) -> &'static str {
         match self {
-            Self::Invalid => "",
-            Self::Btree => "BTREE",
-            Self::Hash => "HASH",
-            Self::Rtree => "RTREE",
-            Self::Hypo => "HYPO",
-            Self::Vector => "VECTOR",
-            Self::Inverted => "INVERTED",
-            Self::Hnsw => "HNSW",
-            Self::Fulltext => "FULLTEXT",
+            Self::BTREE => "BTREE",
+            Self::HASH => "HASH",
+            Self::RTREE => "RTREE",
+            Self::HYPO => "HYPO",
+            Self::VECTOR => "VECTOR",
+            Self::INVERTED => "INVERTED",
+            Self::HNSW => "HNSW",
+            Self::FULLTEXT => "FULLTEXT",
+            _ => "",
         }
     }
 }
@@ -416,29 +441,77 @@ pub enum RunawayOptionType {
     Watch,
 }
 
-/// Which columns an analyze statement selects.
+/// Which columns an analyze statement selects (Go `ast.ColumnChoice`, a
+/// `byte`).
+///
+/// Persisted in `TableInfo.StatsOptions`, so an unrecognised value is
+/// preserved rather than aborting the whole table's decode.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ColumnChoice {
-    /// Source default.
-    #[default]
-    Default,
-    /// Every column.
-    All,
-    /// Predicate columns.
-    Predicate,
-    /// Explicit list.
-    List,
-}
+pub struct ColumnChoice(pub u8);
 
 impl ColumnChoice {
-    /// Returns the canonical source spelling.
+    /// Source default (Go `DefaultChoice`).
+    pub const DEFAULT: Self = Self(0);
+    /// Every column (Go `AllColumns`).
+    pub const ALL: Self = Self(1);
+    /// Predicate columns (Go `PredicateColumns`).
+    pub const PREDICATE: Self = Self(2);
+    /// Explicit list (Go `ColumnList`).
+    pub const LIST: Self = Self(3);
+
+    /// Returns the canonical source spelling; an unnamed value reads as
+    /// `DEFAULT`, matching Go's `default` arm.
     pub const fn sql(self) -> &'static str {
         match self {
-            Self::Default => "DEFAULT",
-            Self::All => "ALL",
-            Self::Predicate => "PREDICATE",
-            Self::List => "LIST",
+            Self::ALL => "ALL",
+            Self::PREDICATE => "PREDICATE",
+            Self::LIST => "LIST",
+            _ => "DEFAULT",
         }
+    }
+}
+
+/// Raw-value constructors for the persisted catalog enums, used by the
+/// `tidb-model` serde adapters to carry an unnamed value through unchanged.
+impl From<u8> for TableLockType {
+    fn from(value: u8) -> Self {
+        Self(value)
+    }
+}
+
+impl From<i64> for ViewAlgorithm {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<i64> for ViewSecurity {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<i64> for ViewCheckOption {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<i64> for PartitionType {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<i64> for IndexType {
+    fn from(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<u8> for ColumnChoice {
+    fn from(value: u8) -> Self {
+        Self(value)
     }
 }
 
@@ -713,17 +786,17 @@ mod tests {
 
     #[test]
     fn every_source_enum_and_priority_spelling_is_exact() {
-        assert_eq!(TableLockType::ReadOnly.sql(), "READ ONLY");
-        assert_eq!(ViewAlgorithm::Undefined.sql(), "UNDEFINED");
-        assert_eq!(ViewSecurity::Invoker.sql(), "INVOKER");
-        assert_eq!(ViewCheckOption::Local.sql(), "LOCAL");
-        assert_eq!(PartitionType::None.sql(), "NONE");
+        assert_eq!(TableLockType::READ_ONLY.sql(), "READ ONLY");
+        assert_eq!(ViewAlgorithm::UNDEFINED.sql(), "UNDEFINED");
+        assert_eq!(ViewSecurity::INVOKER.sql(), "INVOKER");
+        assert_eq!(ViewCheckOption::LOCAL.sql(), "LOCAL");
+        assert_eq!(PartitionType::NONE.sql(), "NONE");
         assert_eq!(PrimaryKeyType::Default.sql(), "");
-        assert_eq!(IndexType::Invalid.sql(), "");
+        assert_eq!(IndexType::INVALID.sql(), "");
         assert_eq!(ReferentialAction::NoOption.sql(), "");
         assert_eq!(RunawayActionType::None.sql(), "DRYRUN");
         assert_eq!(RunawayWatchType::None.sql(), "NONE");
-        assert_eq!(ColumnChoice::Default.sql(), "DEFAULT");
+        assert_eq!(ColumnChoice::DEFAULT.sql(), "DEFAULT");
         assert_eq!(priority_value_to_name(LOW_PRIORITY_VALUE), "LOW");
         assert_eq!(priority_value_to_name(MEDIUM_PRIORITY_VALUE), "MEDIUM");
         assert_eq!(priority_value_to_name(HIGH_PRIORITY_VALUE), "HIGH");

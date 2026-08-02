@@ -109,7 +109,7 @@ pub fn build_table_partitioning(
         return Ok(None);
     };
     let method = &partitioning.method;
-    if !matches!(method.kind, PartitionType::Hash | PartitionType::Range) {
+    if !matches!(method.kind, PartitionType::HASH | PartitionType::RANGE) {
         // The method name is Go's own spelling, so the refusal reads like the
         // clause the user wrote rather than like a Rust variant.
         let name = method.kind.sql();
@@ -127,7 +127,7 @@ pub fn build_table_partitioning(
     // clause and ignoring the subpartitioning is the discard this module
     // exists to prevent.
     if partitioning.subpartition.is_some() {
-        if method.kind == PartitionType::Hash {
+        if method.kind == PartitionType::HASH {
             return Err(DriverError::PartitionSubpartition);
         }
         return Err(DriverError::unsupported(
@@ -162,7 +162,7 @@ pub fn build_table_partitioning(
     check_partition_expression_type(expr, names, types)?;
 
     let (kind, definitions) = match method.kind {
-        PartitionType::Range => {
+        PartitionType::RANGE => {
             let (less_than, unsigned) = super::table_partition_range::build_range_bounds(
                 expr,
                 &partitioning.definitions,

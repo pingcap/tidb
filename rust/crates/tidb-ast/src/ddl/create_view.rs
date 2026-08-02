@@ -94,7 +94,7 @@ impl CreateViewStmt {
         if self.query_parenthesized {
             out.push(')');
         }
-        if self.check_option == ViewCheckOption::Local {
+        if self.check_option == ViewCheckOption::LOCAL {
             out.push_str(" WITH LOCAL CHECK OPTION");
         }
     }

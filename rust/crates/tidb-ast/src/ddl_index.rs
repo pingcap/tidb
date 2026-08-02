@@ -946,7 +946,7 @@ mod tests {
     fn index_options_restore_in_go_canonical_order() {
         let options = IndexOptions {
             key_block_size: Some(16),
-            index_type: Some(IndexType::Hnsw),
+            index_type: Some(IndexType::HNSW),
             parser_name: Some("ngram`parser".to_string()),
             comment: Some("a'b\\c".to_string()),
             visibility: Some(IndexVisibility::Invisible),
@@ -1005,14 +1005,14 @@ mod tests {
         assert_eq!(IndexKind::Vector.sql(), "VECTOR INDEX");
         assert_eq!(IndexKind::Columnar.sql(), "COLUMNAR INDEX");
 
-        assert_eq!(IndexType::Btree.sql(), "BTREE");
-        assert_eq!(IndexType::Hash.sql(), "HASH");
-        assert_eq!(IndexType::Rtree.sql(), "RTREE");
-        assert_eq!(IndexType::Hypo.sql(), "HYPO");
-        assert_eq!(IndexType::Vector.sql(), "VECTOR");
-        assert_eq!(IndexType::Inverted.sql(), "INVERTED");
-        assert_eq!(IndexType::Hnsw.sql(), "HNSW");
-        assert_eq!(IndexType::Fulltext.sql(), "FULLTEXT");
+        assert_eq!(IndexType::BTREE.sql(), "BTREE");
+        assert_eq!(IndexType::HASH.sql(), "HASH");
+        assert_eq!(IndexType::RTREE.sql(), "RTREE");
+        assert_eq!(IndexType::HYPO.sql(), "HYPO");
+        assert_eq!(IndexType::VECTOR.sql(), "VECTOR");
+        assert_eq!(IndexType::INVERTED.sql(), "INVERTED");
+        assert_eq!(IndexType::HNSW.sql(), "HNSW");
+        assert_eq!(IndexType::FULLTEXT.sql(), "FULLTEXT");
     }
 
     #[test]
@@ -1024,7 +1024,7 @@ mod tests {
             table: vec!["d_n".to_string(), "t_n".to_string()],
             parts: vec![column("ident"), column("ident")],
             options: IndexOptions {
-                index_type: Some(IndexType::Hash),
+                index_type: Some(IndexType::HASH),
                 ..IndexOptions::default()
             },
             online: IndexOnlineDdl::default(),
@@ -1052,7 +1052,7 @@ mod tests {
                 desc: false,
             }],
             options: IndexOptions {
-                index_type: Some(IndexType::Hnsw),
+                index_type: Some(IndexType::HNSW),
                 ..IndexOptions::default()
             },
             online: IndexOnlineDdl::default(),
@@ -1123,7 +1123,7 @@ mod tests {
             parts: vec![column("id")],
             options: IndexOptions {
                 key_block_size: Some(32),
-                index_type: Some(IndexType::Hash),
+                index_type: Some(IndexType::HASH),
                 comment: Some("hello".to_string()),
                 ..IndexOptions::default()
             },
@@ -1233,7 +1233,7 @@ mod tests {
                     is_empty_index: false,
                     parts: vec![column("a")],
                     options: IndexOptions {
-                        index_type: Some(IndexType::Inverted),
+                        index_type: Some(IndexType::INVERTED),
                         comment: Some("a".to_string()),
                         ..IndexOptions::default()
                     },

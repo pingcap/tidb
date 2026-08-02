@@ -100,17 +100,17 @@ impl Parser {
     /// Parses the method vocabulary accepted by Go's `resolveIndexType`.
     fn parse_index_type(&mut self) -> PResult<IndexType> {
         let index_type = if self.is_kw("BTREE") {
-            IndexType::Btree
+            IndexType::BTREE
         } else if self.is_kw("HASH") {
-            IndexType::Hash
+            IndexType::HASH
         } else if self.is_kw("RTREE") {
-            IndexType::Rtree
+            IndexType::RTREE
         } else if self.is_kw("HNSW") {
-            IndexType::Hnsw
+            IndexType::HNSW
         } else if self.is_kw("HYPO") {
-            IndexType::Hypo
+            IndexType::HYPO
         } else if self.is_kw("INVERTED") {
-            IndexType::Inverted
+            IndexType::INVERTED
         } else {
             return Err(self.err_here("expected index type"));
         };

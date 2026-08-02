@@ -117,19 +117,19 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
     };
     let kind = if parser.is_kw("HASH") {
         parser.bump();
-        PartitionType::Hash
+        PartitionType::HASH
     } else if parser.is_kw("KEY") {
         parser.bump();
-        PartitionType::Key
+        PartitionType::KEY
     } else if !subpartition && parser.is_kw("RANGE") {
         parser.bump();
-        PartitionType::Range
+        PartitionType::RANGE
     } else if !subpartition && parser.is_kw("LIST") {
         parser.bump();
-        PartitionType::List
+        PartitionType::LIST
     } else if !subpartition && parser.is_kw("SYSTEM_TIME") {
         parser.bump();
-        PartitionType::SystemTime
+        PartitionType::SYSTEM_TIME
     } else if subpartition {
         return Err(parser.err_here("only HASH/KEY partitions are supported for subpartitions"));
     } else {
@@ -147,11 +147,11 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
         interval: None,
     };
     match kind {
-        PartitionType::None => {
+        PartitionType::NONE => {
             return Err(parser.err_here("NONE is not a partition method"));
         }
-        PartitionType::Hash => method.expr = Some(parse_partition_expr(parser)?),
-        PartitionType::Key => {
+        PartitionType::HASH => method.expr = Some(parse_partition_expr(parser)?),
+        PartitionType::KEY => {
             if parser.is_kw("ALGORITHM") {
                 parser.bump();
                 if parser.is_op("=") || parser.is_op(":=") {
@@ -167,14 +167,14 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
             }
             method.columns = parse_partition_columns(parser, false)?;
         }
-        PartitionType::Range | PartitionType::List => {
+        PartitionType::RANGE | PartitionType::LIST => {
             if parser.is_kw("COLUMNS") || parser.is_kw("FIELDS") {
                 parser.bump();
                 method.columns = parse_partition_columns(parser, true)?;
             } else {
                 method.expr = Some(parse_partition_expr(parser)?);
             }
-            if kind == PartitionType::Range && parser.is_kw("INTERVAL") {
+            if kind == PartitionType::RANGE && parser.is_kw("INTERVAL") {
                 let interval_start = parser.peek().offset;
                 parser.bump();
                 parser.expect_op("(")?;
@@ -233,7 +233,7 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
                 method.interval = Some(interval);
             }
         }
-        PartitionType::SystemTime => {
+        PartitionType::SYSTEM_TIME => {
             if parser.is_kw("INTERVAL") {
                 parser.bump();
                 method.expr = Some(parser.parse_expr(prec::NONE)?);
@@ -356,22 +356,22 @@ fn validate_partitioning(
     match method.kind {
         // An OMITTED `PARTITIONS` means one partition; a WRITTEN zero means
         // zero, and stays zero so DDL can report Go's 1504.
-        PartitionType::Hash | PartitionType::Key if method.count == 0 && !partitions_written => {
+        PartitionType::HASH | PartitionType::KEY if method.count == 0 && !partitions_written => {
             method.count = 1;
         }
-        PartitionType::Range | PartitionType::List
+        PartitionType::RANGE | PartitionType::LIST
             if method.interval.is_none() && definitions.is_empty() =>
         {
             let kind = match method.kind {
-                PartitionType::Range => "RANGE",
-                PartitionType::List => "LIST",
+                PartitionType::RANGE => "RANGE",
+                PartitionType::LIST => "LIST",
                 _ => unreachable!(),
             };
             return Err(parser.err_here(&format!(
                 "[ddl:1492]For {kind} partitions each partition must be defined"
             )));
         }
-        PartitionType::SystemTime if definitions.len() < 2 => {
+        PartitionType::SYSTEM_TIME if definitions.len() < 2 => {
             return Err(parser.err_here("SYSTEM_TIME requires HISTORY and CURRENT partitions"));
         }
         _ => {}
@@ -408,15 +408,15 @@ fn validate_definition(
 ) -> PResult<()> {
     let columns = method.columns.len();
     match (&method.kind, &definition.clause) {
-        (PartitionType::Hash | PartitionType::Key, PartitionDefinitionClause::None) => Ok(()),
-        (PartitionType::Range, PartitionDefinitionClause::LessThan(values)) => {
+        (PartitionType::HASH | PartitionType::KEY, PartitionDefinitionClause::None) => Ok(()),
+        (PartitionType::RANGE, PartitionDefinitionClause::LessThan(values)) => {
             if columns == 0 && values.len() != 1 || columns > 0 && values.len() != columns {
                 Err(parser.err_here("RANGE partition value count does not match columns"))
             } else {
                 Ok(())
             }
         }
-        (PartitionType::List, PartitionDefinitionClause::In(values)) => {
+        (PartitionType::LIST, PartitionDefinitionClause::In(values)) => {
             let mut expected = None;
             for value in values {
                 match value {
@@ -444,8 +444,8 @@ fn validate_definition(
             }
             Ok(())
         }
-        (PartitionType::List, PartitionDefinitionClause::Default) => Ok(()),
-        (PartitionType::SystemTime, PartitionDefinitionClause::History { .. }) => Ok(()),
+        (PartitionType::LIST, PartitionDefinitionClause::Default) => Ok(()),
+        (PartitionType::SYSTEM_TIME, PartitionDefinitionClause::History { .. }) => Ok(()),
         _ => Err(parser.err_here("partition definition clause does not match partition method")),
     }
 }

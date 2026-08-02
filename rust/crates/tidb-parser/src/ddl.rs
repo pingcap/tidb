@@ -432,27 +432,27 @@ impl Parser {
     ///
     /// This intentionally has no `else` error arm after the table path. Go's
     /// `parseTableLock` returns its zero-value lock type when no mode follows,
-    /// and `TableLockType::None` is observable in the restored SQL.
+    /// and `TableLockType::NONE` is observable in the restored SQL.
     fn parse_table_lock(&mut self) -> PResult<TableLock> {
         let table = self.parse_lock_table_path()?;
         let lock_type = if self.is_kw("READ") {
             self.bump();
             if self.is_kw("LOCAL") {
                 self.bump();
-                TableLockType::ReadLocal
+                TableLockType::READ_LOCAL
             } else {
-                TableLockType::Read
+                TableLockType::READ
             }
         } else if self.is_kw("WRITE") {
             self.bump();
             if self.is_kw("LOCAL") {
                 self.bump();
-                TableLockType::WriteLocal
+                TableLockType::WRITE_LOCAL
             } else {
-                TableLockType::Write
+                TableLockType::WRITE
             }
         } else {
-            TableLockType::None
+            TableLockType::NONE
         };
         Ok(TableLock { table, lock_type })
     }
@@ -771,16 +771,16 @@ impl Parser {
             // UNDEFINED default and therefore restores as UNDEFINED.
             if self.is_kw("MERGE") {
                 self.bump();
-                ViewAlgorithm::Merge
+                ViewAlgorithm::MERGE
             } else if self.is_kw("TEMPTABLE") {
                 self.bump();
-                ViewAlgorithm::Temptable
+                ViewAlgorithm::TEMPTABLE
             } else {
                 self.bump();
-                ViewAlgorithm::Undefined
+                ViewAlgorithm::UNDEFINED
             }
         } else {
-            ViewAlgorithm::Undefined
+            ViewAlgorithm::UNDEFINED
         };
         let definer = if self.is_kw("DEFINER") {
             self.bump();
@@ -798,13 +798,13 @@ impl Parser {
             self.expect_kw("SECURITY")?;
             if self.is_kw("INVOKER") {
                 self.bump();
-                ViewSecurity::Invoker
+                ViewSecurity::INVOKER
             } else {
                 self.expect_kw("DEFINER")?;
-                ViewSecurity::Definer
+                ViewSecurity::DEFINER
             }
         } else {
-            ViewSecurity::Definer
+            ViewSecurity::DEFINER
         };
         self.expect_kw("VIEW")?;
         let name = self.parse_name_path()?;
@@ -881,12 +881,12 @@ impl Parser {
             self.expect_kw("CHECK")?;
             self.expect_kw("OPTION")?;
             if local {
-                ViewCheckOption::Local
+                ViewCheckOption::LOCAL
             } else {
-                ViewCheckOption::Cascaded
+                ViewCheckOption::CASCADED
             }
         } else {
-            ViewCheckOption::Cascaded
+            ViewCheckOption::CASCADED
         };
         Ok(CreateViewStmt {
             or_replace,

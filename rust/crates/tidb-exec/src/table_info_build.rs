@@ -416,9 +416,9 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
 
 fn index_type_of(options: &IndexOptions) -> Option<IndexType> {
     options.index_type.as_ref().map(|declared| match declared {
-        tidb_ast::IndexType::Hash => IndexType::Hash,
-        tidb_ast::IndexType::Rtree => IndexType::Rtree,
-        _ => IndexType::Btree,
+        tidb_ast::IndexType::HASH => IndexType::HASH,
+        tidb_ast::IndexType::RTREE => IndexType::RTREE,
+        _ => IndexType::BTREE,
     })
 }
 
@@ -875,7 +875,7 @@ fn build_table(
             columns: index_columns,
             state: SchemaState::PUBLIC,
             comment: constraint.comment.clone(),
-            tp: constraint.index_type.unwrap_or(IndexType::Btree),
+            tp: constraint.index_type.unwrap_or(IndexType::BTREE),
             unique: primary || constraint.kind == ConstraintKind::Unique,
             primary,
             invisible: constraint.invisible,

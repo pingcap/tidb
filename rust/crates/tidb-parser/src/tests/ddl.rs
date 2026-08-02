@@ -119,11 +119,11 @@ fn lock_tables_leaf_grammar_matches_go_ast_restore_contract() {
     assert!(parser.at_eof());
     assert_eq!(locks.len(), 3);
     assert_eq!(locks[0].table, vec!["select"]);
-    assert_eq!(locks[0].lock_type, tidb_ast::TableLockType::ReadLocal);
+    assert_eq!(locks[0].lock_type, tidb_ast::TableLockType::READ_LOCAL);
     assert_eq!(locks[1].table, vec!["app", "t"]);
-    assert_eq!(locks[1].lock_type, tidb_ast::TableLockType::Write);
+    assert_eq!(locks[1].lock_type, tidb_ast::TableLockType::WRITE);
     assert_eq!(locks[2].table, vec!["*", "all_tables"]);
-    assert_eq!(locks[2].lock_type, tidb_ast::TableLockType::None);
+    assert_eq!(locks[2].lock_type, tidb_ast::TableLockType::NONE);
     assert_eq!(
         Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::LockTables(
             Box::new(locks)
@@ -272,11 +272,11 @@ fn create_view_core_grammar_preserves_go_defaults_and_query_shape() {
         CreateView
     );
     assert!(view.or_replace);
-    assert_eq!(view.algorithm, tidb_ast::ViewAlgorithm::Temptable);
+    assert_eq!(view.algorithm, tidb_ast::ViewAlgorithm::TEMPTABLE);
     assert_eq!(view.name, vec!["v"]);
     assert_eq!(view.columns, vec!["c"]);
     assert!(view.query_parenthesized);
-    assert_eq!(view.check_option, tidb_ast::ViewCheckOption::Cascaded);
+    assert_eq!(view.check_option, tidb_ast::ViewCheckOption::CASCADED);
 
     assert_eq!(
         r("create definer = 'root' view v as select 1"),
@@ -299,7 +299,7 @@ fn create_view_core_grammar_preserves_go_defaults_and_query_shape() {
     assert_eq!(view.definer.user, "root");
     assert_eq!(view.definer.host, "localhost");
     assert!(!view.definer.current_user);
-    assert_eq!(view.security, tidb_ast::ViewSecurity::Invoker);
+    assert_eq!(view.security, tidb_ast::ViewSecurity::INVOKER);
 }
 
 #[test]

@@ -338,7 +338,7 @@ fn lower_create_index(
             tp: create
                 .options
                 .index_type
-                .unwrap_or(tidb_ast::IndexType::Btree),
+                .unwrap_or(tidb_ast::IndexType::BTREE),
             unique,
             primary: false,
             invisible: create.options.visibility == Some(tidb_ast::IndexVisibility::Invisible),
