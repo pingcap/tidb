@@ -427,11 +427,31 @@ impl Registry {
 
 fn registry() -> &'static RwLock<Registry> {
     static REGISTRY: OnceLock<RwLock<Registry>> = OnceLock::new();
-    REGISTRY.get_or_init(|| RwLock::new(Registry::source()))
+    REGISTRY.get_or_init(|| {
+        let mut registry = Registry::source();
+        // Go's `CharacterSetInfos` literal names the LEGACY defaults --
+        // `gbk_bin`, `gb18030_bin` -- and `collate.switchDefaultCollation` then
+        // rewrites them the moment the new-collation flag is read, which on a
+        // modern server is at startup and to `true`. Porting only the literal
+        // left this registry permanently in the pre-switch state, so
+        // `get_default_collation("gbk")` answered `gbk_bin` where a live server
+        // answers `gbk_chinese_ci`. Applying the switch here, from the same
+        // flag that `new_collation_enabled()` reads, means there is one
+        // answer instead of a literal and a switch that could disagree.
+        apply_new_collation_defaults(&mut registry, crate::collation::new_collation_enabled());
+        RwLock::new(registry)
+    })
 }
 
 pub(crate) fn set_new_collation_defaults(enabled: bool) {
     let mut guard = registry().write().expect("charset registry lock poisoned");
+    apply_new_collation_defaults(&mut guard, enabled);
+}
+
+/// Source `collate.switchDefaultCollation`: the Chinese charsets' default
+/// collation follows the new-collation flag, and nothing else in the registry
+/// moves with it.
+fn apply_new_collation_defaults(guard: &mut Registry, enabled: bool) {
     for (charset_name, binary, chinese_ci) in [
         ("gbk", "gbk_bin", "gbk_chinese_ci"),
         ("gb18030", "gb18030_bin", "gb18030_chinese_ci"),
@@ -647,7 +667,14 @@ mod tests {
             assert_eq!(valid_charset_and_collation(charset, collation), expected);
         }
         assert_eq!(get_default_collation("utf8").unwrap(), "utf8_bin");
-        assert_eq!(get_default_collation("gbk").unwrap(), "gbk_bin");
+        // A live server answers `gbk_chinese_ci`, not the `gbk_bin` named in
+        // Go's `CharacterSetInfos` literal: `switchDefaultCollation` has
+        // already rewritten it by the time any statement runs.
+        assert_eq!(get_default_collation("gbk").unwrap(), "gbk_chinese_ci");
+        assert_eq!(
+            get_default_collation("gb18030").unwrap(),
+            "gb18030_chinese_ci"
+        );
         assert_eq!(get_charset_info("utf8mb3").unwrap().name, "utf8");
         assert_eq!(
             get_collation_by_name("non_exist").unwrap_err().to_string(),

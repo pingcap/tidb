@@ -21,7 +21,7 @@ use crate::{
     is_bin_collation, is_ci_collation, is_default_collation_for_utf8mb4, is_pad_space_collation,
     new_collation_enabled, proto_to_collation, restore_collation_id_if_needed,
     rewrite_new_collation_id_if_needed, set_new_collation_enabled,
-    substitute_missing_collation_to_default, supported_collations, Collation, Collator,
+    substitute_missing_collation_to_default, supported_collations, Charset, Collation, Collator,
 };
 
 fn signed(ordering: Ordering) -> i8 {
@@ -454,4 +454,73 @@ fn wildcard_patterns_follow_each_source_collator_family() {
 #[should_panic(expected = "utf8mb4_zh_pinyin_tidb_as_cs is not implemented")]
 fn pinyin_stub_preserves_source_panic() {
     let _ = Collation::Utf8Mb4ZhPinyinTiDbAsCs.key(b"value");
+}
+
+/// The `gbk`/`gb18030` default collation has exactly ONE answer.
+///
+/// It had two. `Charset::default_collation` -- the fast const path the
+/// executor uses to fill in a column with no `COLLATE` -- returned
+/// `gbk_chinese_ci`, which is what a live server answers. The charset REGISTRY
+/// behind `get_default_collation` returned `gbk_bin`, because it ported Go's
+/// `CharacterSetInfos` literal and never applied
+/// `collate.switchDefaultCollation`, which on a real server has already run
+/// with the new-collation flag before any statement executes. Captured from a
+/// mock-backed TiDB session:
+///
+/// ```text
+/// show create table t   ... `a` varchar(10) CHARACTER SET gbk COLLATE gbk_chinese_ci ...
+/// show character set like 'gb%'
+///   gb18030 | China National Standard GB18030     | gb18030_chinese_ci | 4
+///   gbk     | Chinese Internal Code Specification | gbk_chinese_ci     | 2
+/// show collation like 'gb%'
+///   gb18030_bin        | gb18030 | 249 |     | Yes | 1 | PAD SPACE
+///   gb18030_chinese_ci | gb18030 | 248 | Yes | Yes | 1 | PAD SPACE
+///   gbk_bin            | gbk     |  87 |     | Yes | 1 | PAD SPACE
+///   gbk_chinese_ci     | gbk     |  28 | Yes | Yes | 1 | PAD SPACE
+/// ```
+///
+/// This asserts the two spellings agree for EVERY charset, not just the two
+/// that diverged, so a future edit to either one cannot reintroduce the split.
+#[test]
+fn the_registry_and_the_const_path_give_one_default_collation_per_charset() {
+    for charset in [
+        Charset::Binary,
+        Charset::Ascii,
+        Charset::Latin1,
+        Charset::Utf8,
+        Charset::Utf8Mb4,
+        Charset::Gbk,
+        Charset::Gb18030,
+    ] {
+        let from_registry = crate::get_default_collation(charset.name())
+            .expect("every Charset variant is a supported charset");
+        assert_eq!(
+            from_registry,
+            charset.default_collation().name(),
+            "{} has two default collations",
+            charset.name(),
+        );
+    }
+
+    // The captured live values, so "they agree" cannot be satisfied by both
+    // being wrong.
+    assert_eq!(
+        crate::get_default_collation("gbk").unwrap(),
+        "gbk_chinese_ci"
+    );
+    assert_eq!(
+        crate::get_default_collation("gb18030").unwrap(),
+        "gb18030_chinese_ci"
+    );
+
+    // `SHOW COLLATION`'s Default column reads the registry's per-collation
+    // flag, which `switchDefaultCollation` moves together with the charset
+    // default. These are the four `like 'gb%'` rows captured above -- note
+    // that Go's raw collation table declares `gbk_bin` as the default and the
+    // switch is what clears it, so an unswitched registry gets these backwards.
+    let is_default = |name: &str| crate::get_collation_by_name(name).unwrap().is_default;
+    assert!(is_default("gbk_chinese_ci"));
+    assert!(!is_default("gbk_bin"));
+    assert!(is_default("gb18030_chinese_ci"));
+    assert!(!is_default("gb18030_bin"));
 }

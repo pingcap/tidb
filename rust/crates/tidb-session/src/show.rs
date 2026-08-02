@@ -699,29 +699,6 @@ fn show_table_status_view_row(name: &str) -> Vec<Datum> {
     row
 }
 
-/// `SHOW CHARSET` rows: `(Charset, Description, Default collation, Maxlen)`,
-/// captured verbatim from mock TiDB's `charset.GetSupportedCharsets`. Order
-/// matches the capture (alphabetical by charset name).
-const SHOW_CHARSET_ROWS: &[(&str, &str, &str, i64)] = &[
-    ("ascii", "US ASCII", "ascii_bin", 1),
-    ("binary", "binary", "binary", 1),
-    (
-        "gb18030",
-        "China National Standard GB18030",
-        "gb18030_chinese_ci",
-        4,
-    ),
-    (
-        "gbk",
-        "Chinese Internal Code Specification",
-        "gbk_chinese_ci",
-        2,
-    ),
-    ("latin1", "Latin1", "latin1_bin", 1),
-    ("utf8", "UTF-8 Unicode", "utf8_bin", 3),
-    ("utf8mb4", "UTF-8 Unicode", "utf8mb4_bin", 4),
-];
-
 /// The collations `SHOW COLLATION` reports, in mock TiDB's own capture order
 /// (alphabetical by collation name). `Utf8Mb4ZhPinyinTiDbAsCs` is
 /// deliberately excluded: it is a reserved stub collation, and Go's own
@@ -746,22 +723,15 @@ const SHOW_COLLATION_ROWS: &[tidb_datatype::Collation] = &[
 
 /// Whether `collation` is the one `SHOW COLLATION` marks `Default`.
 ///
-/// This is NOT the same as [`tidb_datatype::Charset::default_collation`]:
-/// mock TiDB's capture shows `gbk_chinese_ci`/`gb18030_chinese_ci` as the
-/// default for their charsets, not the `_bin` collations that method
-/// returns, so the SHOW COLLATION default is listed explicitly here rather
-/// than derived from it.
+/// Go reads `Collation.IsDefault`, which `switchDefaultCollation` keeps in
+/// step with the owning charset's default collation, so this is exactly
+/// "`collation` is its charset's default" and is derived rather than listed.
+/// An explicit list here was a second place for the `gbk`/`gb18030` default to
+/// be spelled, and it carried a doc claim -- that
+/// [`tidb_datatype::Charset::default_collation`] returns the `_bin`
+/// collations for those charsets -- that was already untrue when read.
 fn is_default_show_collation(collation: tidb_datatype::Collation) -> bool {
-    matches!(
-        collation,
-        tidb_datatype::Collation::AsciiBin
-            | tidb_datatype::Collation::Binary
-            | tidb_datatype::Collation::Gb18030ChineseCi
-            | tidb_datatype::Collation::GbkChineseCi
-            | tidb_datatype::Collation::Latin1Bin
-            | tidb_datatype::Collation::Utf8Bin
-            | tidb_datatype::Collation::Utf8Mb4Bin
-    )
+    collation.charset().default_collation() == collation
 }
 
 /// The `SHOW INDEX` header, with the columns Go reports as numbers marked.
@@ -1324,11 +1294,16 @@ impl Session {
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 let number =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+                // Go's `SHOW CHARSET` is `charset.GetSupportedCharsets`, whose
+                // rows carry whatever default collation
+                // `switchDefaultCollation` last wrote. Reading the registry
+                // here rather than a table copied out of it is what keeps the
+                // `gbk`/`gb18030` default from having a second spelling.
                 let mut rows = Vec::new();
-                for &(name, description, default_collation, maxlen) in SHOW_CHARSET_ROWS {
+                for info in tidb_datatype::get_supported_charsets() {
                     if let Some(pattern) = &pattern {
                         if !tidb_executor::like_match_with_collation(
-                            name,
+                            &info.name,
                             pattern,
                             None,
                             tidb_datatype::Collation::Utf8Mb4Bin,
@@ -1337,10 +1312,10 @@ impl Session {
                         }
                     }
                     rows.push(vec![
-                        Datum::Bytes(name.as_bytes().to_vec()),
-                        Datum::Bytes(description.as_bytes().to_vec()),
-                        Datum::Bytes(default_collation.as_bytes().to_vec()),
-                        Datum::Int(maxlen),
+                        Datum::Bytes(info.name.into_bytes()),
+                        Datum::Bytes(info.description.into_bytes()),
+                        Datum::Bytes(info.default_collation.into_bytes()),
+                        Datum::Int(info.maxlen as i64),
                     ]);
                 }
                 Ok(Some(StmtOutput::Rows {
