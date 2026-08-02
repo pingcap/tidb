@@ -1467,12 +1467,18 @@ mod tests {
                 .as_u64(),
             Some(u64::MAX)
         );
+        // Go parses a number past i64::MAX via strconv.ParseUint and stores it
+        // as JSONTypeCodeUint64 (pkg/types/json_binary.go:894-911), so
+        // JSON_TYPE reports UNSIGNED INTEGER -- the live builtin's ported Go
+        // suite asserts the same (tidb-session tests_json). This test said
+        // DOUBLE because the pre-fix parser rewrote such numbers to f64 before
+        // encoding; that was the divergence, not the contract.
         assert_eq!(
             BinaryJSON::parse("18446744073709551615")
                 .unwrap()
                 .type_name()
                 .unwrap(),
-            "DOUBLE"
+            "UNSIGNED INTEGER"
         );
         assert_eq!(
             BinaryJSON::parse("\"TiDB\"").unwrap().as_string(),

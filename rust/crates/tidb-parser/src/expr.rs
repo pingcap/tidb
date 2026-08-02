@@ -362,6 +362,17 @@ impl Parser {
                 Ok(Expr::Float(f))
             }
             TokenKind::HexLit => {
+                // Go LEXES `0X11` as hexLit (`startWithNumber`, 'x' || 'X' in
+                // one arm) and then FAILS at literal construction: the parser
+                // calls `ast.NewHexLiteral` -> `ParseHexStr`, whose number
+                // form checks `strings.HasPrefix(s, "0x")` -- LOWERCASE ONLY
+                // (test_driver_datum.go:384) -- so `select 0X11` is a
+                // statement error while `select 0x11` and `X'11'` both parse
+                // (parser_test.go:5237,5240). Reproduce the constructor half
+                // here; the quoted `x'..'`/`X'..'` forms accept either case.
+                if t.text.starts_with("0X") {
+                    return Err(self.err_here("invalid hexadecimal format"));
+                }
                 self.bump();
                 Ok(Expr::Hex(normalize_hex(&t.text)))
             }
@@ -448,6 +459,13 @@ impl Parser {
                         }
                     }
                     TokenKind::HexLit => {
+                        // Same constructor rule as the bare-literal arm:
+                        // Go's ParseHexStr accepts only a LOWERCASE `0x`
+                        // number prefix, so `_utf8 0XD0B1` is a statement
+                        // error while `_utf8 0xD0B1` parses.
+                        if self.peek().text.starts_with("0X") {
+                            return Err(self.err_here("invalid hexadecimal format"));
+                        }
                         let token = self.bump();
                         let value = Expr::Hex(normalize_hex(&token.text));
                         if matches!(charset, "binary" | "utf8mb4") {
