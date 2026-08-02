@@ -1109,17 +1109,29 @@ impl Parser {
         Some(path)
     }
 
-    /// Parses an optional `AS name` or bare `name` alias. An alias name
-    /// — whether introduced by `AS` or bare — accepts a string literal,
-    /// a plain identifier, or MOST keywords, the SAME acceptance rule
-    /// either way (read directly from Go's `CanBeImplicitAlias`; confirmed
-    /// by the EXPLAIN corpus's `AS 'PROFIT'` scalar fields). See
-    /// [`Parser::can_be_alias_name`]'s own doc for the exact, curated
-    /// keyword exclusion list this mirrors.
+    /// Parses an optional `AS name` or bare `name` alias. Go uses TWO
+    /// DIFFERENT acceptance rules here, not one (`pkg/parser/
+    /// select_parser.go:452-464`, `parseSelectField`'s own alias
+    /// handling): the explicit `AS name` form checks `IsReserved` (`!=
+    /// identifier && != stringLit && (< identifier || IsReserved(...))`
+    /// is a syntax error) — the SAME 236-keyword gate `tidb_lexer::
+    /// is_reserved` mirrors, used at every other identifier position;
+    /// the BARE (no-`AS`) form checks the separate, much narrower
+    /// `CanBeImplicitAlias` (curated per-keyword exclusion list,
+    /// `select_clauses_parser.go:269`) instead, since an unmarked
+    /// trailing word is ambiguous with the start of the next clause in a
+    /// way `AS` disambiguates. Conflating the two into one shared
+    /// acceptance check (as this function previously did, following its
+    /// own now-corrected but WRONG claim that Go uses "the same rule
+    /// either way") wrongly accepted `SELECT 1 AS database`/`AS dec` —
+    /// both genuine Go syntax errors, confirmed via a direct `pkg/parser`
+    /// probe on this branch — because `is_alias_excluded_keyword` below
+    /// (Go's `CanBeImplicitAlias` mirror) has never listed every reserved
+    /// keyword, only the ones ambiguous as a BARE trailing word.
     fn parse_opt_alias(&mut self) -> PResult<Option<String>> {
         if self.is_kw("AS") {
             self.bump();
-            return Ok(Some(self.parse_alias_name()?));
+            return Ok(Some(self.parse_explicit_alias_name()?));
         }
         if self.can_be_alias_name() {
             return Ok(Some(self.parse_alias_name()?));
@@ -1133,7 +1145,7 @@ impl Parser {
             if self.peek().kind == TokenKind::Str {
                 return Err(self.err_here("table alias must be an identifier"));
             }
-            return Ok(Some(self.parse_alias_name()?));
+            return Ok(Some(self.parse_explicit_alias_name()?));
         }
         if self.peek().kind != TokenKind::Str && self.can_be_alias_name() {
             return Ok(Some(self.parse_alias_name()?));
@@ -1141,28 +1153,58 @@ impl Parser {
         Ok(None)
     }
 
-    /// Reports whether the CURRENT token is eligible as an alias name —
-    /// shared by [`Parser::parse_opt_alias`]'s own `AS name` and bare
-    /// `name` branches, see that function's own doc.
+    /// Reports whether the CURRENT token is eligible as a BARE (no `AS`)
+    /// alias name — mirrors Go's `CanBeImplicitAlias` (see
+    /// [`Parser::parse_opt_alias`]'s own doc for why this is deliberately
+    /// NOT the same gate the explicit `AS name` form uses).
     fn can_be_alias_name(&self) -> bool {
         matches!(self.peek().kind, TokenKind::Ident | TokenKind::Str)
             || (self.peek().kind == TokenKind::Keyword
                 && !is_alias_excluded_keyword(&self.peek().text))
     }
 
-    /// Parses an alias name that MUST be present (the `AS name` form —
-    /// unlike the bare form, `AS` alone with nothing eligible following
-    /// it is a genuine `ParseError`, not a silently-absent alias).
+    /// Reports whether the CURRENT token is eligible as an EXPLICIT `AS
+    /// name` alias — mirrors Go's `IsReserved` check at
+    /// `select_parser.go:455`/`join_parser.go:558` exactly (see
+    /// [`Parser::parse_opt_alias`]'s own doc).
+    fn can_be_explicit_alias_name(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident | TokenKind::Str)
+            || (self.peek().kind == TokenKind::Keyword && !crate::is_reserved(&self.peek().text))
+    }
+
+    /// Parses a BARE alias name that MUST be present — used only where a
+    /// bare name was already confirmed eligible via
+    /// [`Parser::can_be_alias_name`].
     fn parse_alias_name(&mut self) -> PResult<String> {
         if self.can_be_alias_name() {
-            let name = self.bump();
-            Ok(if name.kind == TokenKind::Str {
-                self.decode_string(&name.text)
-            } else {
-                crate::normalize_identifier(name.text)
-            })
+            Ok(self.bump_alias_token())
         } else {
             Err(self.err_here("expected identifier"))
+        }
+    }
+
+    /// Parses an EXPLICIT `AS name` alias name that MUST be present —
+    /// unlike the bare form, `AS` alone with nothing eligible following
+    /// it is a genuine `ParseError`, not a silently-absent alias. See
+    /// [`Parser::parse_opt_alias`]'s own doc for why this uses a
+    /// different (broader) acceptance gate than [`Parser::parse_alias_name`].
+    fn parse_explicit_alias_name(&mut self) -> PResult<String> {
+        if self.can_be_explicit_alias_name() {
+            Ok(self.bump_alias_token())
+        } else {
+            Err(self.err_here("expected identifier"))
+        }
+    }
+
+    /// Consumes the current (already-validated-eligible) token as an
+    /// alias name, decoding a string literal or normalizing an
+    /// identifier/keyword as appropriate.
+    fn bump_alias_token(&mut self) -> String {
+        let name = self.bump();
+        if name.kind == TokenKind::Str {
+            self.decode_string(&name.text)
+        } else {
+            crate::normalize_identifier(name.text)
         }
     }
 }

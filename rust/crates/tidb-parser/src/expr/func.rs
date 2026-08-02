@@ -681,7 +681,41 @@ impl Parser {
         if self.peek_n(1).kind == TokenKind::Op && self.peek_n(1).text == "(" {
             return self.parse_named_func();
         }
-        Ok(Expr::Column(self.parse_name_path()?))
+        Ok(Expr::Column(self.parse_column_ref_path()?))
+    }
+
+    /// Builds a (possibly qualified) column-name path directly from raw
+    /// token text, with NO `is_reserved` check on ANY segment — mirrors
+    /// Go's own `parseColumnRef` (`pkg/parser/expr_parser.go`) exactly:
+    /// `col.Name = ast.NewCIStr(first.Lit)`, then on each `.`-continuation
+    /// `nextTok := p.next()` unconditionally, no reserved-word gate at all.
+    /// This is deliberately NOT `parse_name_path`/`parse_name_or_keyword`
+    /// (which DOES check `is_reserved`, correctly, for the many other
+    /// identifier positions — table names, aliases, DDL names — that use
+    /// Go's own `isIdentLike`/`IsReserved`): those two gates are for
+    /// DIFFERENT Go call sites (see `tidb_lexer::reserved`'s own doc), and
+    /// `parse_ident_or_func`'s only callers already cleared the ONE gate
+    /// that actually applies here (`is_clause_keyword`, or no gate at all
+    /// for a `TokenKind::Ident` token) before reaching this point. Reusing
+    /// `parse_name_path` here was the exact bug behind `SHOW DATABASES
+    /// WHERE Database LIKE '...'` — a real, TiDB-documented query — being
+    /// rejected: `Database` passed the clause-keyword gate correctly, then
+    /// got rejected AGAIN by `parse_name_or_keyword`'s unrelated
+    /// `is_reserved` check, which Go never applies at this point at all.
+    fn parse_column_ref_path(&mut self) -> PResult<Vec<String>> {
+        let mut path = vec![crate::normalize_identifier(self.bump().text)];
+        while self.is_op(".")
+            && matches!(self.peek_n(1).kind, TokenKind::Ident | TokenKind::Keyword)
+        {
+            // Same 3-component cap as `parse_name_path` — real TiDB's own
+            // `ColumnName` AST has at most schema.table.column.
+            if path.len() == 3 {
+                return Err(self.err_here("name path has too many components"));
+            }
+            self.bump(); // '.'
+            path.push(crate::normalize_identifier(self.bump().text));
+        }
+        Ok(path)
     }
 
     /// Parses `name ( arg, ... )` where the current token is the function name.

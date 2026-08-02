@@ -1504,6 +1504,65 @@ fn nonreserved_keyword_as_identifier() {
     assert!(parse("select select from t").is_err());
 }
 
+/// Pins the two-Go-list split behind reserved-keyword identifier
+/// admission — see `tidb_lexer::reserved`'s own doc and
+/// `rust/docs/parser-lexer-divergence.md` finding #4/#5. Go's
+/// `expr_prefix_parser.go` gates a bare expression-position identifier
+/// (including EVERY segment of a qualified `a.b.c` path) on the small
+/// 13-word `isReservedClauseKeyword` ONLY — a fully RESERVED keyword like
+/// `DATABASE`/`ROWS`/`DEC` is still a valid bare column reference there.
+/// `select_parser.go`/`join_parser.go`'s explicit `AS name` alias forms
+/// gate on the much larger `IsReserved` (236 spellings once
+/// `pkg/parser/misc.go`'s `tokenMap` many-to-one collisions are fanned
+/// out) instead. Every assertion here was cross-checked against real
+/// TiDB via a direct `pkg/parser.New().ParseSQL` probe on this branch
+/// (not assumed), and each Go-only spelling collision
+/// (`DATABASE`/`SCHEMA`, `DATABASES`/`SCHEMAS`, `DISTINCT`/
+/// `DISTINCTROW`, `DECIMAL`/`DEC`) is exercised by its NEWLY-reserved
+/// spelling specifically, since that's the one a naive tokenMap
+/// inversion drops.
+#[test]
+fn reserved_keyword_two_list_split() {
+    // Bare expression-position identifier: only the 13 clause keywords
+    // are refused, so DATABASE/DISTINCT/DEC (all fully RESERVED) are
+    // still admitted here — this is the exact query that broke when
+    // DATABASE was first added to the single (then-unsplit) reserved
+    // list: `SHOW DATABASES WHERE Database LIKE ...` is real,
+    // TiDB-documented SQL.
+    assert_eq!(
+        r("show databases where Database like 'test_%'"),
+        "SHOW DATABASES WHERE `Database` LIKE _UTF8MB4'test_%'"
+    );
+    assert_eq!(r("select database from t"), "SELECT `database` FROM `t`");
+    assert_eq!(r("select dec from t"), "SELECT `dec` FROM `t`");
+    // Every segment of a qualified path, not just the first.
+    assert_eq!(
+        r("select database.table.column"),
+        "SELECT `database`.`table`.`column`"
+    );
+
+    // Explicit `AS name` alias: the FULL 236-entry `IsReserved` gate
+    // applies, so all four newly-added spellings are refused here even
+    // though they're fine as bare column references above.
+    assert!(parse("select 1 as database").is_err());
+    assert!(parse("select 1 as distinct").is_err());
+    assert!(parse("select 1 as dec").is_err());
+    assert!(parse("select database from x as database").is_err());
+    // Non-reserved keywords stay valid explicit aliases (mutation-probe
+    // guard: a fix that over-widens the `AS name` refusal to ALL
+    // keywords, not just reserved ones, fails here).
+    assert_eq!(r("select 1 as sum"), "SELECT 1 AS `sum`");
+    assert_eq!(r("select 1 as json"), "SELECT 1 AS `json`");
+
+    // CTE name: same `IsReserved` gate as the explicit alias form.
+    assert!(parse("with database as (select 1) select * from database").is_err());
+    assert!(parse("with distinct as (select 1) select * from distinct").is_err());
+
+    // Backtick-quoting always works, both gates, matching Go exactly.
+    assert_eq!(r("select `database` from t"), "SELECT `database` FROM `t`");
+    assert_eq!(r("select `distinct` from t"), "SELECT `distinct` FROM `t`");
+}
+
 /// `TIMESTAMPADD(unit, interval, datetime_expr)` / `TIMESTAMPDIFF(unit,
 /// expr1, expr2)` / `GET_FORMAT(DATE|TIME|DATETIME|TIMESTAMP,
 /// format_expr)` — see `tidb_ast::Expr::TimestampAdd`'s own doc for why
