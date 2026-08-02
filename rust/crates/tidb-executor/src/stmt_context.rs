@@ -19,9 +19,35 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use tidb_datatype::Datum;
+use tidb_distsql::WarningCollector;
 use tidb_expr::{Columns, ErrorLevel, MysqlRng};
 
+use crate::error_context::{ErrGroup, Level, LevelMap};
 use crate::mem_quota::{OomAction, StatementMemory};
+use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
+
+/// Which of Go's mutually exclusive `StatementContext` statement-kind
+/// booleans this statement sets (`InInsertStmt`, `InUpdateStmt`/
+/// `InDeleteStmt`, `InSelectStmt`, `InLoadDataStmt`).
+///
+/// Go keeps four independent flags and `PushDownFlags` reads them in a fixed
+/// precedence; `ResetContextOfStmt` only ever sets one, so one value says the
+/// same thing without the unreachable combinations.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StatementClass {
+    /// A statement whose `ResetContextOfStmt` arm sets no kind flag -- `SHOW`,
+    /// `SET`, DDL, and the `default` arm.
+    #[default]
+    Other,
+    /// `*ast.InsertStmt`, including `INSERT ... SELECT` and `REPLACE`.
+    Insert,
+    /// `*ast.UpdateStmt` and `*ast.DeleteStmt`, which share one TiKV bit.
+    UpdateOrDelete,
+    /// `*ast.SelectStmt` and `*ast.SetOprStmt`.
+    Select,
+    /// `*ast.LoadDataStmt`.
+    LoadData,
+}
 
 /// How many warnings one statement retains. Go's `StaticWarnHandler` stops
 /// appending at `math.MaxUint16` (`pkg/util/context/warn.go`), because the
@@ -248,6 +274,23 @@ pub struct StmtContext {
     /// The all-false default is TiDB's default `sql_mode` for these flags, so
     /// a context with no session behind it lexes exactly as before.
     sql_mode: tidb_parser::SqlMode,
+    /// Which `ResetContextOfStmt` arm built this context; see
+    /// [`StatementClass`]. It is an INPUT to [`StmtContext::push_down_flags`],
+    /// which is why it rides the context rather than being re-derived at the
+    /// request builder: a coprocessor request built for the read half of
+    /// `INSERT ... SELECT` must say `InInsertStmt`, and only the statement
+    /// knows that.
+    statement_class: StatementClass,
+    /// The warnings TiKV reported for THIS statement's coprocessor requests.
+    ///
+    /// It is an `Arc` sink rather than the `Rc` buffer beside it because a
+    /// coprocessor response is decoded on a scan thread, and it is the
+    /// SESSION'S sink rather than a fresh one because a warning nobody can
+    /// read is not a warning: `SHOW WARNINGS` and the OK packet's count both
+    /// read what [`StmtContext::take_warnings`] hands back. Go reaches the
+    /// same place through `DistSQLContext.WarnHandler`, which is the session's
+    /// `StatementContext` itself.
+    cop_warnings: WarningCollector,
 }
 
 /// The sequence state one statement can see: the allocators it may read and
@@ -359,7 +402,100 @@ impl StmtContext {
             sequences: Rc::default(),
             memory: StatementMemory::default(),
             sql_mode: tidb_parser::SqlMode::default(),
+            statement_class: StatementClass::Other,
+            cop_warnings: WarningCollector::new(),
         }
+    }
+
+    /// Records which `ResetContextOfStmt` arm this statement took; see
+    /// [`StatementClass`].
+    #[must_use]
+    pub fn with_statement_class(mut self, class: StatementClass) -> Self {
+        self.statement_class = class;
+        self
+    }
+
+    /// Which `ResetContextOfStmt` arm built this context.
+    #[must_use]
+    pub const fn statement_class(&self) -> StatementClass {
+        self.statement_class
+    }
+
+    /// The sink a coprocessor request must be given so the warnings TiKV
+    /// reports reach `SHOW WARNINGS` and the OK packet's count.
+    ///
+    /// Cloning shares the handler, not the vector (see [`WarningCollector`]),
+    /// so a scan thread that outlives the request still appends into this
+    /// statement's buffer.
+    #[must_use]
+    pub fn cop_warning_sink(&self) -> WarningCollector {
+        self.cop_warnings.clone()
+    }
+
+    /// Go `StatementContext.PushDownFlags()`: the `DAGRequest.flags` field
+    /// this statement's coprocessor requests must carry.
+    ///
+    /// The literal `0` this replaced is TiKV's STRICTEST branch -- no
+    /// truncation tolerated, no zero-in-date tolerated, division by zero an
+    /// error -- so a `SELECT` that TiDB answers with a 1292 warning made the
+    /// region fail the whole request instead.
+    ///
+    /// The INPUTS are threaded, not the output: the same code answers `482`
+    /// for a plain `SELECT` (Go's `*ast.SelectStmt` arm writes
+    /// `WithTruncateAsWarning(true)` and `WithIgnoreZeroInDate(true)` as
+    /// literals, with no SQL-mode input, so no mode can make a read fail) and
+    /// `8` for a strict `INSERT ... SELECT` under the default `sql_mode`.
+    ///
+    /// NOT MODELLED, and named rather than guessed:
+    /// `StatementContext.InRestrictedSQL` (bit 11), which only internal SQL
+    /// and auto-analyze set, and `INSERT IGNORE`'s `stmt.IgnoreErr`, which
+    /// Go folds into `GetTypeFlagsForInsert` -- an `INSERT IGNORE` therefore
+    /// under-reports tolerance here, which fails a statement Go would have
+    /// warned on rather than the reverse.
+    #[must_use]
+    pub fn push_down_flags(&self) -> u64 {
+        // `push_down_flags` reads exactly three conversion bits, so a default
+        // map with those three written is the whole input rather than an
+        // approximation of one.
+        let type_flags = tidb_datatype::ConversionFlags::default()
+            .with_ignore_truncate_err(self.truncate == ErrorLevel::Ignore)
+            .with_truncate_as_warning(self.truncate == ErrorLevel::Warn)
+            .with_ignore_zero_in_date_err(self.ignore_zero_in_date());
+        let mut err_levels = LevelMap::strict();
+        err_levels[ErrGroup::DividedByZero] = match self.division_by_zero {
+            ErrorLevel::Error => Level::Error,
+            ErrorLevel::Warn => Level::Warn,
+            ErrorLevel::Ignore => Level::Ignore,
+        };
+        push_down_flags(PushDownFlagsInput {
+            type_flags,
+            err_levels,
+            statement_kind: match self.statement_class {
+                StatementClass::Insert => StatementKind::Insert,
+                StatementClass::UpdateOrDelete => StatementKind::UpdateOrDelete,
+                StatementClass::Select => StatementKind::Select,
+                StatementClass::Other | StatementClass::LoadData => StatementKind::None,
+            },
+            in_load_data_stmt: self.statement_class == StatementClass::LoadData,
+            in_restricted_sql: false,
+        })
+    }
+
+    /// Go's `Flags.IgnoreZeroInDate` for this statement.
+    ///
+    /// A `SELECT` gets the literal `true` its `ResetContextOfStmt` arm
+    /// writes; every other class gets `GetTypeFlagsForInsert`'s mode rule,
+    /// which [`crate::zero_date::write_date_flags`] already owns.
+    fn ignore_zero_in_date(&self) -> bool {
+        if self.statement_class == StatementClass::Select {
+            return true;
+        }
+        crate::zero_date::write_date_flags(
+            tidb_datatype::ConversionFlags::default(),
+            self.date_modes,
+            self.strict,
+        )
+        .ignore_zero_in_date_err()
     }
 
     /// Attaches the statement's memory budget, which the session builds from
@@ -409,6 +545,7 @@ impl StmtContext {
     #[must_use]
     pub fn for_query() -> Self {
         Self::new(ErrorLevel::Warn, ErrorLevel::Warn, true)
+            .with_statement_class(StatementClass::Select)
     }
 
     /// Sets the session's `default_week_format` and `div_precision_increment`.
@@ -779,10 +916,34 @@ impl StmtContext {
         self.auto_increment_step
     }
 
-    /// The warnings evaluation recorded, in the order they were raised.
+    /// The warnings evaluation recorded, in the order they were raised,
+    /// followed by the warnings TiKV reported for this statement's
+    /// coprocessor requests.
+    ///
+    /// The two sources are merged HERE rather than at the session, because
+    /// this is the one door the session already comes through
+    /// (`Session::drain_eval_warnings`): a coprocessor warning cannot be lost
+    /// by a drain site that forgot the second buffer, which is exactly how
+    /// TiKV's warnings stayed invisible while `response_channel` appended
+    /// them correctly.
+    ///
+    /// DIVERGENCE: Go interleaves the two by arrival, because a `SelectResult`
+    /// appends into the same handler local evaluation writes to. Here the
+    /// remote ones come last. Only the ORDER differs; both sets are reported,
+    /// with their codes.
     #[must_use]
     pub fn take_warnings(&self) -> Vec<(u16, String)> {
-        std::mem::take(&mut self.warnings.borrow_mut())
+        let mut warnings = std::mem::take(&mut *self.warnings.borrow_mut());
+        for warning in self.cop_warnings.take() {
+            if warnings.len() >= MAX_WARNING_COUNT {
+                break;
+            }
+            // A TiKV warning without a code is one the region could not name;
+            // 1105 (`ErrUnknown`) is what TiDB reports for exactly that.
+            let code = u16::try_from(warning.code.unwrap_or(1105)).unwrap_or(1105);
+            warnings.push((code, warning.message));
+        }
+        warnings
     }
 }
 

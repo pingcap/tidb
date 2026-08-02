@@ -99,6 +99,17 @@ impl WarningCollector {
         self.lock().clone()
     }
 
+    /// Removes and returns every warning collected so far, leaving the shared
+    /// handler in place.
+    ///
+    /// The handler is what a detached request keeps a reference to, so a drain
+    /// must empty the vector rather than replace it: a scan still running
+    /// appends into the same buffer the next drain reads.
+    #[must_use]
+    pub fn take(&self) -> Vec<Warning> {
+        std::mem::take(&mut *self.lock())
+    }
+
     /// Returns the number of currently collected warnings.
     #[must_use]
     pub fn len(&self) -> usize {

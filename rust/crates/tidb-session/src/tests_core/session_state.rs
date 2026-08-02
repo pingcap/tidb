@@ -679,6 +679,45 @@ fn the_session_warning_buffer_stops_at_the_source_retention_limit() {
     );
 }
 
+/// A warning TiKV reported for a coprocessor request reaches BOTH channels a
+/// client can learn about it from: the buffer `SHOW WARNINGS` reads and the
+/// count the OK/EOF packet carries.
+///
+/// The two are proven independent here (`wire_warning_count` returns 0 while
+/// `InShowWarning` is set, so it is not the buffer's length), and a fix
+/// validated through only one of them is exactly how eleven of these stayed
+/// invisible: `response_channel` appended them correctly into a collector
+/// every production site built FRESH and then dropped.
+///
+/// DEFERRED LIVE CHECK: the audit's named case is `SELECT ROUND(s) FROM t`
+/// with `s = '12abc'`, where TiDB reports the truncated value plus a 1292
+/// warning. Producing the warning needs a real region acting on
+/// `DAGRequest.flags = 482`; what is pinned here is that a warning which
+/// arrives through the statement's coprocessor sink is reported.
+#[test]
+fn a_coprocessor_warning_reaches_both_the_show_warnings_buffer_and_the_wire_count() {
+    let mut session = Session::new();
+    let ctx = tidb_executor::StmtContext::for_query();
+    // What `tidb_distsql`'s `response_channel` does with
+    // `SelectResponse.warnings`; the sink is the statement's own.
+    ctx.cop_warning_sink()
+        .append_tikv_warning(1292, "Truncated incorrect DOUBLE value: '12abc'");
+
+    session.drain_eval_warnings(&ctx);
+
+    assert_eq!(session.warnings().len(), 1);
+    assert_eq!(session.warnings()[0].code, 1292);
+    assert_eq!(
+        session.warnings()[0].message,
+        "Truncated incorrect DOUBLE value: '12abc'"
+    );
+    assert_eq!(
+        session.wire_warning_count(),
+        1,
+        "the OK packet's count is a separate channel from the buffer"
+    );
+}
+
 /// Whether a statement inherits the previous statement's warning buffer is a
 /// decision Go makes on the PARSED node: `ResetContextOfStmt` switches on
 /// `*ast.ShowStmt` and copies the outgoing context's entries forward only for

@@ -54,6 +54,7 @@ pub(crate) mod column_prune;
 pub mod ddl;
 pub mod ddl_sequence;
 pub mod driver;
+pub mod error_context;
 pub mod executor;
 pub mod explain;
 pub mod expression_index;
@@ -83,6 +84,7 @@ pub mod selection;
 pub mod sequence;
 mod skyline;
 pub mod sort;
+pub mod statement_pushdown;
 mod stmt_context;
 pub mod storage;
 pub mod table_access;
@@ -125,7 +127,9 @@ pub use predicate_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp,
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
-pub use stmt_context::{RetryAutoIds, SequenceSnapshot, StmtContext, MAX_WARNING_COUNT};
+pub use stmt_context::{
+    RetryAutoIds, SequenceSnapshot, StatementClass, StmtContext, MAX_WARNING_COUNT,
+};
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
 pub use tidb_expr::{

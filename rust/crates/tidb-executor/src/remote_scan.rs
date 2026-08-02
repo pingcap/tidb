@@ -59,6 +59,7 @@
 use std::fmt;
 
 use tidb_datatype::{Datum, FieldType};
+use tidb_distsql::WarningCollector;
 use tidb_txnkv::Key;
 
 use crate::predicate_pushdown::ScanPredicate;
@@ -113,6 +114,42 @@ pub struct PushdownScanRequest {
     /// reaches the region rather than being re-applied after the rows have
     /// already crossed the network.
     pub ranges: Vec<(Key, Key)>,
+    /// The statement's coprocessor seam: `DAGRequest.flags` and the sink the
+    /// warnings TiKV reports must land in. See [`PushdownStatementContext`].
+    pub statement: PushdownStatementContext,
+}
+
+/// What a coprocessor request must be told about the STATEMENT that issued it,
+/// as opposed to the relation it reads.
+///
+/// The two halves are one type because they are one bug: `flags` decides
+/// whether TiKV degrades a truncation to a warning or fails the request, and
+/// `warnings` decides whether that warning is ever seen. Sending the flags
+/// without the sink turns a failing query into a silently truncating one --
+/// strictly worse than the failure it replaced -- so no call site may thread
+/// one and forget the other.
+#[derive(Clone, Debug, Default)]
+pub struct PushdownStatementContext {
+    /// Go `StatementContext.PushDownFlags()`; see
+    /// [`crate::StmtContext::push_down_flags`].
+    ///
+    /// The `Default` is `0`, TiKV's strictest branch, which is correct for a
+    /// caller with no statement behind it (a fixture, a synthetic request):
+    /// such a caller has no session to warn either.
+    pub push_down_flags: u64,
+    /// Go `DistSQLContext.WarnHandler`: the statement's own warning buffer.
+    pub warnings: WarningCollector,
+}
+
+impl PushdownStatementContext {
+    /// The coprocessor seam of one statement, taken from its context.
+    #[must_use]
+    pub fn from_stmt(ctx: &crate::StmtContext) -> Self {
+        Self {
+            push_down_flags: ctx.push_down_flags(),
+            warnings: ctx.cop_warning_sink(),
+        }
+    }
 }
 
 /// A lazily pulled stream of snapshot rows a backend served remotely.
@@ -260,6 +297,13 @@ mod tests {
         /// the value assertions stay green and only the receipt moves, which
         /// is precisely why value assertions alone cannot see a lost pushdown.
         lower_predicates: std::sync::atomic::AtomicBool,
+        /// Every `DAGRequest.flags` value this backend was told, in request
+        /// order. A region acts on these bits; a fake that ignored them would
+        /// let the literal `0` back in unnoticed.
+        requested_flags: Arc<Mutex<Vec<u64>>>,
+        /// A warning the region reports on each request, standing in for
+        /// TiKV's `SelectResponse.warnings`.
+        region_warning: Mutex<Option<(i32, String)>>,
     }
 
     impl PushdownScanner for FakeCoprocessor {
@@ -272,6 +316,16 @@ mod tests {
             // `tidb_distsql::cop_paging` answers `missing_ranges`, because the
             // range list is what it turns into region tasks. A fake that
             // quietly returned no rows would hide exactly that.
+            self.requested_flags
+                .lock()
+                .unwrap()
+                .push(request.statement.push_down_flags);
+            if let Some((code, message)) = self.region_warning.lock().unwrap().clone() {
+                // Exactly what `tidb_distsql`'s `response_channel` does with
+                // `SelectResponse.warnings`, into whatever collector it was
+                // handed.
+                request.statement.warnings.append_tikv_warning(code, message);
+            }
             if request.ranges.is_empty() {
                 return Err(PushdownScannerError::Backend(StorageError::Backend(
                     "missing_ranges".to_owned(),
@@ -492,6 +546,8 @@ mod tests {
             scanned: Arc::clone(&scanned),
             pk_handle_offset,
             lower_predicates: std::sync::atomic::AtomicBool::new(true),
+            requested_flags: Arc::default(),
+            region_warning: Mutex::new(None),
         });
         let storage = ClusterTableStorage::new(buffer.clone(), handle)
             .with_remote_scanner(Arc::clone(&scanner) as Arc<dyn PushdownScanner>);
@@ -513,6 +569,126 @@ mod tests {
         let mut catalog = Catalog::default();
         catalog.register_kv("t", table);
         catalog
+    }
+
+    /// `DAGRequest.flags` reaches the region from the STATEMENT, through the
+    /// production request builder, and is not the literal `0` it used to be.
+    ///
+    /// `0` is TiKV's strictest branch: no truncation tolerated, no
+    /// zero-in-date tolerated, division by zero an error. A `SELECT` that
+    /// TiDB answers with a value plus a 1292 warning made the region fail the
+    /// whole request instead.
+    ///
+    /// The expected value is COMPUTED from the same statement context the
+    /// query ran under, not written down, so a change to the derivation moves
+    /// both sides together; the second assertion is what keeps that from being
+    /// vacuous if the derivation ever collapses to zero.
+    #[test]
+    fn the_statements_push_down_flags_reach_the_coprocessor_request() {
+        let mut fixture = fixture();
+        fixture
+            .table
+            .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_expr::NoColumns)
+            .unwrap();
+        commit(&fixture.buffer, &fixture.snapshot);
+        let scanner = Arc::clone(&fixture.scanner);
+
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        run_select_on("SELECT a FROM t", &catalog, &ctx).unwrap();
+
+        let flags = scanner.requested_flags.lock().unwrap().clone();
+        assert_eq!(flags, vec![ctx.push_down_flags()]);
+        assert_ne!(
+            flags[0], 0,
+            "flags 0 is TiKV's strictest branch, which is the bug this pins"
+        );
+        assert_eq!(
+            flags[0], 482,
+            "a plain SELECT: TruncateAsWarning 2 | InSelectStmt 32 | \
+             OverflowAsWarning 64 | IgnoreZeroInDate 128 | \
+             DividedByZeroAsWarning 256"
+        );
+    }
+
+    /// A different statement class sends different flags: the derivation's
+    /// INPUTS are threaded, not one statement's output.
+    ///
+    /// Go's `*ast.InsertStmt` arm runs `GetTypeFlagsForInsert`, which under a
+    /// strict `sql_mode` clears `TruncateAsWarning` and `IgnoreZeroInDate` and
+    /// resolves `ErrGroupDividedByZero` to `LevelError` -- so the read half of
+    /// a strict `INSERT ... SELECT` tells the region to FAIL on exactly the
+    /// values a plain `SELECT` tells it to warn about.
+    #[test]
+    fn a_strict_insert_select_sends_different_flags_than_a_plain_select() {
+        let mut fixture = fixture();
+        fixture
+            .table
+            .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_expr::NoColumns)
+            .unwrap();
+        commit(&fixture.buffer, &fixture.snapshot);
+        let scanner = Arc::clone(&fixture.scanner);
+
+        let catalog = catalog_of(fixture.table);
+        // `for_dml(error_for_division_by_zero, strict)` with the INSERT arm's
+        // statement class: the read half of `INSERT INTO u SELECT a FROM t`.
+        let ctx = crate::StmtContext::for_dml(true, true)
+            .with_statement_class(crate::StatementClass::Insert);
+        run_select_on("SELECT a FROM t", &catalog, &ctx).unwrap();
+
+        let flags = scanner.requested_flags.lock().unwrap().clone();
+        assert_eq!(flags, vec![ctx.push_down_flags()]);
+        assert_eq!(
+            flags[0],
+            crate::statement_pushdown::FLAG_IN_INSERT_STMT,
+            "a strict INSERT tolerates nothing, and says only which statement \
+             it is"
+        );
+        assert_ne!(
+            flags[0],
+            crate::StmtContext::for_query().push_down_flags(),
+            "hardcoding one statement's flags would make these equal"
+        );
+    }
+
+    /// A warning TiKV reports lands in the STATEMENT'S buffer, which is what
+    /// `SHOW WARNINGS` and the OK packet's count read.
+    ///
+    /// Every production site used to build a fresh `WarningCollector` here, so
+    /// `response_channel` appended TiKV's warnings correctly, in Go's order,
+    /// into a buffer that was then dropped.
+    ///
+    /// DEFERRED LIVE CHECK: only a real TiKV can produce the warning for the
+    /// audit's named case, `SELECT ROUND(s) FROM t` with `s = '12abc'`, where
+    /// TiDB reports the truncated value plus 1292. The fake below stands in
+    /// for the region's `SelectResponse.warnings` field; that the region fills
+    /// it under flags 482 is what a playground run must confirm.
+    #[test]
+    fn a_warning_the_region_reports_lands_in_the_statements_buffer() {
+        let mut fixture = fixture();
+        fixture
+            .table
+            .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_expr::NoColumns)
+            .unwrap();
+        commit(&fixture.buffer, &fixture.snapshot);
+        let scanner = Arc::clone(&fixture.scanner);
+        *scanner.region_warning.lock().unwrap() = Some((
+            1292,
+            "Truncated incorrect DOUBLE value: '12abc'".to_owned(),
+        ));
+
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        run_select_on("SELECT a FROM t", &catalog, &ctx).unwrap();
+
+        assert_eq!(
+            ctx.take_warnings(),
+            vec![(
+                1292u16,
+                "Truncated incorrect DOUBLE value: '12abc'".to_owned()
+            )],
+            "the sink the request carried is the statement's own"
+        );
     }
 
     /// The wire win: with a predicate lowered into the request, the rows that

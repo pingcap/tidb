@@ -306,6 +306,10 @@ pub(crate) fn build_from(
                     ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
                     restricted_to_partitions(kv, &table_ref.partitions, name)?,
                     ctx.session_zone(),
+                    // The one production build site: the statement's own
+                    // `DAGRequest.flags` and its warning sink, taken together
+                    // from the context that decided both.
+                    crate::remote_scan::PushdownStatementContext::from_stmt(ctx),
                 )),
                 // Handled above, before the columns were taken.
                 TableEntry::View(_) | TableEntry::Sequence(_) => {

@@ -65,6 +65,7 @@ use crate::dag_request::{
     construct_read_only_dag_req, DagRequestBuildError, DagRequestContext, TiKvScanPlan,
 };
 use crate::distsql_recordset::DistSqlRecordSet;
+use crate::statement_pushdown::select_push_down_flags;
 
 /// Parses and types one configured prepared point read without opening PD or
 /// TiKV. The returned template retains the parser-owned marker and can only be
@@ -1115,6 +1116,19 @@ pub struct RealTiKvReadSession<T = ProductionReadTransport, S = PdTimestampSourc
     /// (not merely the next one) observes the new zone.
     time_zone_name: String,
     time_zone_offset_secs: i32,
+    /// `DAGRequest.flags`, Go `builder_utils.go`'s `sc.PushDownFlags()`.
+    ///
+    /// This tier serves ONE statement class -- `ReadOnlyScanPlan` admits
+    /// nothing but a plain read -- and Go's `*ast.SelectStmt` arm of
+    /// `ResetContextOfStmt` writes `WithTruncateAsWarning(true)` and
+    /// `WithIgnoreZeroInDate(true)` as literals with no SQL-mode input, so
+    /// the default here is the derivation's answer for its only statement,
+    /// not a constant standing in for one. A driver that runs a non-SELECT
+    /// over this tier (the read half of `INSERT ... SELECT`) states it with
+    /// [`Self::set_push_down_flags`].
+    push_down_flags: u64,
+    /// The statement's warning sink; see [`Self::set_warning_sink`].
+    warnings: WarningCollector,
 }
 
 impl RealTiKvReadSession<ProductionReadTransport, PdTimestampSource> {
@@ -1155,6 +1169,8 @@ where
             _lease: None,
             time_zone_name: "UTC".to_owned(),
             time_zone_offset_secs: 0,
+            push_down_flags: select_push_down_flags(),
+            warnings: WarningCollector::new(),
         }
     }
 
@@ -1176,7 +1192,25 @@ where
             _lease: lease,
             time_zone_name: "UTC".to_owned(),
             time_zone_offset_secs: 0,
+            push_down_flags: select_push_down_flags(),
+            warnings: WarningCollector::new(),
         }
+    }
+
+    /// Sets `DAGRequest.flags` for every request from this point on, exactly
+    /// as [`Self::set_time_zone`] does for the zone.
+    pub const fn set_push_down_flags(&mut self, flags: u64) {
+        self.push_down_flags = flags;
+    }
+
+    /// Installs the statement's warning sink, so the warnings TiKV reports
+    /// land where `SHOW WARNINGS` and the OK packet's count read them.
+    ///
+    /// Without it the collector below is fresh per query and is dropped with
+    /// its contents: `response_channel` appends TiKV's warnings correctly, in
+    /// Go's order, into a buffer nothing reads.
+    pub fn set_warning_sink(&mut self, warnings: WarningCollector) {
+        self.warnings = warnings;
     }
 
     /// Updates this session's `time_zone`, consulted fresh by every DAG
@@ -1356,7 +1390,7 @@ where
                 .finish()
                 .map_err(|error| RealTiKvReadError::Query(error.to_string()))?;
             let record_set = DistSqlRecordSet::new(
-                response.into_select_iter(field_types, Vec::new(), WarningCollector::new()),
+                response.into_select_iter(field_types, Vec::new(), self.warnings.clone()),
                 protocol_columns,
             );
             self.last_snapshot_ts = None;
@@ -1384,7 +1418,7 @@ where
             &DagRequestContext::new(
                 self.time_zone_name.clone(),
                 i64::from(self.time_zone_offset_secs),
-                0,
+                self.push_down_flags,
                 EncodeType::Default,
             ),
             TiKvScanPlan::Table(plan.table_scan()),
@@ -1410,7 +1444,7 @@ where
             .select_with_runtime_stats(
                 &request,
                 SelectInput::default(),
-                QueryResultContext::new(field_types, WarningCollector::new()),
+                QueryResultContext::new(field_types, self.warnings.clone()),
                 vec![0],
                 0,
                 true,

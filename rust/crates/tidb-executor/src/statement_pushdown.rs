@@ -101,6 +101,38 @@ pub fn push_down_flags_with_type_flags_and_err_levels(
     flags
 }
 
+/// The flags a plain `SELECT` produces, from Go's `*ast.SelectStmt` arm of
+/// `ResetContextOfStmt` (`pkg/executor/select.go`): `WithTruncateAsWarning`
+/// and `WithIgnoreZeroInDate` are written as LITERALS there, with no SQL-mode
+/// input, and `ErrGroupDividedByZero` is `LevelWarn` before the switch. No
+/// session variable can change any of the three, which is what makes one
+/// value correct for every plain read.
+///
+/// It evaluates to 482 (`2 | 32 | 64 | 128 | 256`), but is computed rather
+/// than written down: a change to the bit mapping must move this too.
+///
+/// DEFERRED LIVE CHECK: only a real TiKV can confirm the region acts on these
+/// bits. The named case is `SELECT ROUND(s) FROM t` with `s = '12abc'`, which
+/// TiDB answers with the truncated value plus a 1292 warning. Under flags `0`
+/// the region fails the request instead; under 482 with no warning sink the
+/// answer is right and the warning is silently lost. Both halves are needed
+/// for the observable TiDB behavior, and neither unit test below reaches a
+/// region.
+#[must_use]
+pub fn select_push_down_flags() -> u64 {
+    let mut err_levels = LevelMap::strict();
+    err_levels[ErrGroup::DividedByZero] = Level::Warn;
+    push_down_flags(PushDownFlagsInput {
+        type_flags: ConversionFlags::default()
+            .with_truncate_as_warning(true)
+            .with_ignore_zero_in_date_err(true),
+        err_levels,
+        statement_kind: StatementKind::Select,
+        in_load_data_stmt: false,
+        in_restricted_sql: false,
+    })
+}
+
 /// Synthesizes the source `StatementContext.PushDownFlags` bitfield.
 #[must_use]
 pub fn push_down_flags(input: PushDownFlagsInput) -> u64 {

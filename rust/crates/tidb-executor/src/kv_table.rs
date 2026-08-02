@@ -2036,6 +2036,7 @@ mod tests {
             ExecutorMeta::new(Schema::new(out_cols), 0, 4, 1024),
             t,
             tidb_datatype::SessionTimeZone::utc(),
+            crate::remote_scan::PushdownStatementContext::default(),
         );
         scan.open().unwrap();
         let mut req = scan.new_chunk();

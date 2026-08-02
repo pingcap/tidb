@@ -769,8 +769,12 @@ mod tests {
             1,
             1024,
         );
-        let mut scan =
-            crate::kv_table::TableScanExec::new(meta, table, tidb_datatype::SessionTimeZone::utc());
+        let mut scan = crate::kv_table::TableScanExec::new(
+            meta,
+            table,
+            tidb_datatype::SessionTimeZone::utc(),
+            crate::remote_scan::PushdownStatementContext::default(),
+        );
         scan.open().unwrap();
         let mut req = scan.new_chunk();
         scan.next(&mut req).unwrap();

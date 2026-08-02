@@ -33,7 +33,8 @@ use super::{
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::predicate_pushdown::ScanPredicate;
 use crate::remote_scan::{
-    PushdownRowStream, PushdownScanColumn, PushdownScanRequest, EXTRA_HANDLE_COLUMN_ID,
+    PushdownRowStream, PushdownScanColumn, PushdownScanRequest, PushdownStatementContext,
+    EXTRA_HANDLE_COLUMN_ID,
 };
 use crate::storage::StorageIterator;
 use std::collections::BTreeMap;
@@ -198,6 +199,7 @@ impl KvTable {
         limit: Option<u64>,
         handle_ranges: Option<&[IndexRange]>,
         zone: &SessionTimeZone,
+        statement: &PushdownStatementContext,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         if !self.common_handle_offsets.is_empty() {
             return Ok(None);
@@ -266,6 +268,7 @@ impl KvTable {
             // no timestamp of its own.
             snapshot_ts: 0,
             ranges,
+            statement: statement.clone(),
         };
         let Some(scan) = self.store.open_remote_scan(&request) else {
             return Ok(None);
@@ -911,12 +914,22 @@ pub struct TableScanExec {
     /// into. Captured when the scan is BUILT, which is where the statement's
     /// own context is; `Executor::open` is a trait method with none.
     zone: SessionTimeZone,
+    /// The statement's coprocessor seam -- `DAGRequest.flags` plus the sink
+    /// TiKV's warnings must reach. Captured beside `zone` and for the same
+    /// reason: `Executor::open`, where the request is built, has no statement
+    /// context of its own.
+    statement: PushdownStatementContext,
 }
 
 impl TableScanExec {
     /// Builds a scan over `table`.
     #[must_use]
-    pub fn new(meta: ExecutorMeta, table: KvTable, zone: SessionTimeZone) -> Self {
+    pub fn new(
+        meta: ExecutorMeta,
+        table: KvTable,
+        zone: SessionTimeZone,
+        statement: PushdownStatementContext,
+    ) -> Self {
         // A scan emits the VISIBLE columns: the schema its rows are appended
         // into is the visible one, and a hidden expression-index column's
         // value is only ever needed to write an index entry, never to answer
@@ -937,6 +950,7 @@ impl TableScanExec {
             emitted: 0,
             handle_ranges: None,
             zone,
+            statement,
         }
     }
 
@@ -994,6 +1008,7 @@ impl Executor for TableScanExec {
                 self.limit,
                 self.handle_ranges.as_deref(),
                 &self.zone,
+                &self.statement,
             )
             .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
         if self.remote.is_some() {
