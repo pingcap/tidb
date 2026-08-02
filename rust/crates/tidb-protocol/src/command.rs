@@ -34,6 +34,8 @@ pub const COM_PING: u8 = 0x0e;
 pub const COM_STMT_PREPARE: u8 = 0x16;
 /// MySQL command byte for executing a prepared statement.
 pub const COM_STMT_EXECUTE: u8 = 0x17;
+/// MySQL command byte for appending a chunk to a prepared statement parameter.
+pub const COM_STMT_SEND_LONG_DATA: u8 = 0x18;
 /// MySQL command byte for closing a prepared statement.
 pub const COM_STMT_CLOSE: u8 = 0x19;
 /// MySQL command byte for resetting a prepared statement.
@@ -62,6 +64,10 @@ pub enum Command {
     StmtPrepare(Vec<u8>),
     /// Execute a prepared statement with its binary payload.
     StmtExecute(Vec<u8>),
+    /// Append a chunk to one prepared statement parameter. Go answers this
+    /// command with NO packet at all on success (`clientConn.dispatch`
+    /// returns the handler's nil, `pkg/server/conn.go:1578-1579`).
+    StmtSendLongData(Vec<u8>),
     /// Close a prepared statement.
     StmtClose(Vec<u8>),
     /// Reset a prepared statement.
@@ -122,6 +128,7 @@ pub fn decode_command(payload: &[u8]) -> Result<Command, CommandError> {
         COM_PING => Command::Ping,
         COM_STMT_PREPARE => Command::StmtPrepare(command_payload.to_vec()),
         COM_STMT_EXECUTE => Command::StmtExecute(command_payload.to_vec()),
+        COM_STMT_SEND_LONG_DATA => Command::StmtSendLongData(command_payload.to_vec()),
         COM_STMT_CLOSE => Command::StmtClose(command_payload.to_vec()),
         COM_STMT_RESET => Command::StmtReset(command_payload.to_vec()),
         COM_STMT_FETCH => Command::StmtFetch(command_payload.to_vec()),

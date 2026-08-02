@@ -21,11 +21,13 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 
 use tidb_protocol::{
-    decode_command, decode_prepared_statement_close, decode_prepared_statement_execute,
-    decode_prepared_statement_fetch, encode_error_packet, encode_ok_packet,
+    decode_command, decode_prepared_statement_close,
+    decode_prepared_statement_execute_with_bound_params, decode_prepared_statement_fetch,
+    decode_prepared_statement_send_long_data, encode_error_packet, encode_ok_packet,
     encode_prepared_statement_prepare_response, ColumnInfo, Command, ErrorPacket, OkPacket,
     PacketError, PacketReader, PacketWriter, PreparedParameterType, PreparedParameterTypes,
-    PreparedValue, ResultSetOptions, BINARY_DEFAULT_COLLATION_ID, MYSQL_TYPE_LONGLONG,
+    PreparedValue, ResultSetOptions, BINARY_DEFAULT_COLLATION_ID, DEFAULT_MAX_ALLOWED_PACKET,
+    MYSQL_TYPE_LONGLONG,
 };
 
 use crate::auth_exchange::AuthSwitchRequest;
@@ -142,6 +144,34 @@ struct ConnectionPreparedStatement {
     /// it advertises and the next unread row. Go holds the same thing on the
     /// statement as a row container.
     cursor: Option<CursorState>,
+    /// The `COM_STMT_SEND_LONG_DATA` buffer for each parameter, indexed by
+    /// parameter ID: Go's `TiDBStatement.boundParams`, allocated
+    /// `make([][]byte, paramCount)` at prepare time
+    /// (`pkg/server/driver_tidb.go:358`). `None` is Go's nil slice -- "this
+    /// parameter was never sent as long data" -- and is what makes an empty
+    /// bound buffer distinguishable from an unbound one.
+    bound_params: Vec<Option<Vec<u8>>>,
+}
+
+impl ConnectionPreparedStatement {
+    /// Go `for i := range ts.boundParams { ts.boundParams[i] = nil }`.
+    /// The vector keeps its prepare-time length; only the buffers go.
+    fn clear_bound_params(&mut self) {
+        for slot in &mut self.bound_params {
+            *slot = None;
+        }
+    }
+}
+
+/// Why one `COM_STMT_SEND_LONG_DATA` chunk could not be appended.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AppendParamError {
+    /// No such prepared statement handle on this connection.
+    UnknownStatement,
+    /// The parameter ID is at or past the statement's marker count.
+    ParameterOutOfRange,
+    /// The accumulated buffer would exceed the wire payload cap.
+    TooLarge,
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +205,7 @@ impl PreparedStatementRegistry {
         self.statements.insert(
             statement_id,
             ConnectionPreparedStatement {
+                bound_params: vec![None; statement.parameter_count()],
                 statement,
                 parameter_types: None,
                 cursor: None,
@@ -201,19 +232,73 @@ impl PreparedStatementRegistry {
         self.statements.remove(&statement_id);
     }
 
-    /// Go `stmt.Reset`: returns the statement to the state it had right after
-    /// PREPARE. The cursor and the `SEND_LONG_DATA` buffers Go also clears do
-    /// not exist here, so the remembered parameter-type vector -- the only
-    /// state an execute leaves behind -- is what a reset drops.
+    /// Go `stmt.Reset` (`pkg/server/driver_tidb.go:151-160`): returns the
+    /// statement to the state it had right after PREPARE. Go nils every
+    /// `boundParams[i]`, drops the active cursor, and leaves the statement
+    /// itself installed -- and `handleStmtReset` names exactly those two
+    /// things it must clear, the open cursor and "the argument sent through
+    /// `SEND_LONG_DATA`" (`pkg/server/conn_stmt.go:627-631`). The remembered
+    /// parameter-type vector is dropped for the same reason: it is the other
+    /// piece of state an execute leaves behind.
     fn reset(&mut self, statement_id: u32) -> bool {
         match self.statements.get_mut(&statement_id) {
             Some(statement) => {
                 statement.parameter_types = None;
                 // Go's stmt.Reset closes the open cursor too.
                 statement.cursor = None;
+                statement.clear_bound_params();
                 true
             }
             None => false,
+        }
+    }
+
+    /// Go `TiDBStatement.AppendParam` (`pkg/server/driver_tidb.go:104-116`):
+    /// appends one `COM_STMT_SEND_LONG_DATA` chunk to a parameter's buffer.
+    ///
+    /// A parameter ID at or past the prepared marker count is Go's
+    /// `ErrWrongArguments("stmt_send_longdata")`. An empty chunk stores an
+    /// empty buffer rather than nothing, which is how Go keeps "bound to the
+    /// empty string" distinct from "never bound".
+    fn append_param(
+        &mut self,
+        statement_id: u32,
+        parameter_id: usize,
+        chunk: &[u8],
+    ) -> Result<(), AppendParamError> {
+        let statement = self
+            .statements
+            .get_mut(&statement_id)
+            .ok_or(AppendParamError::UnknownStatement)?;
+        let slot = statement
+            .bound_params
+            .get_mut(parameter_id)
+            .ok_or(AppendParamError::ParameterOutOfRange)?;
+        let buffer = slot.get_or_insert_with(Vec::new);
+        // Go bounds the accumulated value with `max_allowed_packet`, which
+        // this node does not have as a session variable yet (gap #185); the
+        // same hardcoded wire cap the packet reader enforces is therefore the
+        // bound here, so a client cannot grow one parameter without limit.
+        if buffer.len().saturating_add(chunk.len()) > DEFAULT_MAX_ALLOWED_PACKET {
+            return Err(AppendParamError::TooLarge);
+        }
+        buffer.extend_from_slice(chunk);
+        Ok(())
+    }
+
+    fn bound_params(&self, statement_id: u32) -> &[Option<Vec<u8>>] {
+        self.statements
+            .get(&statement_id)
+            .map_or(&[], |statement| statement.bound_params.as_slice())
+    }
+
+    /// Go's `stmt.Reset()` call inside `handleStmtExecute`, run right after
+    /// `parseBinaryParams` has read the buffers
+    /// (`pkg/server/conn_stmt.go:212-217`): long data is consumed by exactly
+    /// one execute and never leaks into the next one.
+    fn clear_bound_params(&mut self, statement_id: u32) {
+        if let Some(statement) = self.statements.get_mut(&statement_id) {
+            statement.clear_bound_params();
         }
     }
 
@@ -272,6 +357,9 @@ pub struct ConnectionCommandCounts {
     pub stmt_close_commands: u64,
     /// Number of `COM_STMT_RESET` commands, including unknown handles.
     pub stmt_reset_commands: u64,
+    /// Number of `COM_STMT_SEND_LONG_DATA` commands, including the ones whose
+    /// handle or parameter ID was rejected. A successful one writes no packet.
+    pub stmt_send_long_data_commands: u64,
     /// Number of `COM_STMT_FETCH` commands, including unknown handles.
     pub stmt_fetch_commands: u64,
     /// Number of complete successful `COM_STMT_FETCH` responses.
@@ -994,7 +1082,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     }
                 };
                 let Some(statement) = prepared.get(statement_id) else {
-                    write_unknown_statement(&mut output, statement_id, protocol_41)?;
+                    write_unknown_statement(
+                        &mut output,
+                        statement_id,
+                        "stmt_execute",
+                        protocol_41,
+                    )?;
                     continue;
                 };
                 let prepared_statement = statement.statement.clone();
@@ -1002,10 +1095,17 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // The marker count is per statement: a point read owns one, a
                 // write owns one per bound column plus its handle.
                 let parameter_count = prepared_statement.parameter_count();
-                let execute = match decode_prepared_statement_execute(
+                // Go reads `stmt.BoundParams()` into `parseBinaryParams` and
+                // then calls `stmt.Reset()` unconditionally -- on the decode
+                // error path too (`pkg/server/conn_stmt.go:212-217`), so a
+                // rejected execute still consumes the long data.
+                let bound_params = prepared.bound_params(statement_id).to_vec();
+                prepared.clear_bound_params(statement_id);
+                let execute = match decode_prepared_statement_execute_with_bound_params(
                     &bytes,
                     parameter_count,
                     previous_types.as_deref(),
+                    &bound_params,
                 ) {
                     Ok(execute) => execute,
                     Err(error) => {
@@ -1334,6 +1434,64 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     }
                 }
             }
+            Command::StmtSendLongData(bytes) => {
+                commands.stmt_send_long_data_commands += 1;
+                // Go's `handleStmtSendLongData` returns nil on success, and a
+                // nil return from `clientConn.dispatch` writes NO packet at
+                // all (`pkg/server/conn.go:1578-1579`): the client is not
+                // reading, so any reply here would be consumed as the answer
+                // to the NEXT command. Its error returns, by contrast, DO
+                // reach the wire -- `dispatch`'s caller ends the failed
+                // command with `cc.writeError(ctx, err)`
+                // (`pkg/server/conn.go:1338`) -- so the two error shapes below
+                // are packets exactly as they are in Go.
+                match decode_prepared_statement_send_long_data(&bytes) {
+                    Ok(long_data) => {
+                        let statement_id = long_data.statement_id;
+                        match prepared.append_param(
+                            statement_id,
+                            usize::from(long_data.parameter_id),
+                            &long_data.chunk,
+                        ) {
+                            Ok(()) => {}
+                            Err(AppendParamError::UnknownStatement) => {
+                                write_unknown_statement(
+                                    &mut output,
+                                    statement_id,
+                                    "stmt_send_longdata",
+                                    protocol_41,
+                                )?;
+                            }
+                            // Go `AppendParam`'s own
+                            // `ErrWrongArguments("stmt_send_longdata")`.
+                            Err(AppendParamError::ParameterOutOfRange) => write_error(
+                                &mut output,
+                                1,
+                                ER_WRONG_ARGUMENTS,
+                                *b"HY000",
+                                "Incorrect arguments to stmt_send_longdata",
+                                protocol_41,
+                            )?,
+                            Err(AppendParamError::TooLarge) => write_error(
+                                &mut output,
+                                1,
+                                ER_UNKNOWN_ERROR,
+                                *b"HY000",
+                                "COM_STMT_SEND_LONG_DATA exceeds the maximum packet size",
+                                protocol_41,
+                            )?,
+                        }
+                    }
+                    Err(error) => write_error(
+                        &mut output,
+                        1,
+                        ER_WRONG_ARGUMENTS,
+                        *b"HY000",
+                        error.to_string(),
+                        protocol_41,
+                    )?,
+                }
+            }
             Command::StmtClose(bytes) => {
                 commands.stmt_close_commands += 1;
                 if let Ok(statement_id) = decode_prepared_statement_close(&bytes) {
@@ -1359,7 +1517,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         )?;
                     }
                     Ok(statement_id) => {
-                        write_unknown_statement(&mut output, statement_id, protocol_41)?;
+                        write_unknown_statement(
+                            &mut output,
+                            statement_id,
+                            "stmt_reset",
+                            protocol_41,
+                        )?;
                     }
                     Err(error) => {
                         write_error(
@@ -1390,7 +1553,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     }
                 };
                 if prepared.get(statement_id).is_none() {
-                    write_unknown_statement(&mut output, statement_id, protocol_41)?;
+                    write_unknown_statement(&mut output, statement_id, "stmt_fetch", protocol_41)?;
                     continue;
                 }
                 let Some(cursor) = prepared.cursor_mut(statement_id) else {
@@ -1618,14 +1781,18 @@ fn write_cursor_fetch_batch(
 fn write_unknown_statement(
     output: &mut ClientStream,
     statement_id: u32,
+    command: &str,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
+    // Go names the command with the same short token it passes to
+    // `mysql.NewErr(mysql.ErrUnknownStmtHandler, strconv.Itoa(stmtID), ...)`:
+    // `stmt_execute`, `stmt_reset`, `stmt_fetch`, `stmt_send_longdata`.
     write_error(
         output,
         1,
         ER_UNKNOWN_STMT_HANDLER,
         *b"HY000",
-        format!("Unknown prepared statement handler ({statement_id}) given to COM_STMT_EXECUTE"),
+        format!("Unknown prepared statement handler ({statement_id}) given to {command}"),
         protocol_41,
     )
 }

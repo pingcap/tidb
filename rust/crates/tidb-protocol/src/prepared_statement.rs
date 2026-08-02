@@ -24,9 +24,10 @@
 
 use crate::{
     append_length_encoded_bytes, append_length_encoded_int, encode_eof_packet, ColumnInfo,
-    EofPacket, ResultSetOptions, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION, TYPE_FLOAT,
-    TYPE_INT24, TYPE_LONG, TYPE_LONGLONG, TYPE_NEW_DECIMAL, TYPE_SHORT, TYPE_STRING,
-    TYPE_TIMESTAMP, TYPE_TINY, TYPE_VARCHAR, TYPE_VAR_STRING, TYPE_YEAR,
+    EofPacket, ResultSetOptions, TYPE_BLOB, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION,
+    TYPE_FLOAT, TYPE_INT24, TYPE_LONG, TYPE_LONGLONG, TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB,
+    TYPE_NEW_DECIMAL, TYPE_SHORT, TYPE_STRING, TYPE_TIMESTAMP, TYPE_TINY, TYPE_TINY_BLOB,
+    TYPE_VARCHAR, TYPE_VAR_STRING, TYPE_YEAR,
 };
 use tidb_datatype::{Decimal, PackedTime};
 
@@ -83,6 +84,16 @@ pub enum PreparedParameterType {
     Timestamp,
     /// A `MYSQL_TYPE_TIME` parameter, which carries a signed day/time span.
     Time,
+    /// A `MYSQL_TYPE_BLOB`/`TINY_BLOB`/`MEDIUM_BLOB`/`LONG_BLOB` parameter,
+    /// carried as a length-encoded byte string. Go groups it with
+    /// `TypeNewDecimal` in `parseBinaryParams`
+    /// (`pkg/server/conn_stmt_params.go:116`) -- length-encoded like the
+    /// string family, but deliberately NOT run through the connection input
+    /// decoder, because blob bytes are binary. A client that declares a
+    /// parameter `BLOB` is exactly the client that sends its value through
+    /// `COM_STMT_SEND_LONG_DATA`, so this arm and the bound-parameter arm
+    /// below arrive together.
+    Blob,
 }
 
 /// A decoded prepared-statement value admitted by this protocol leaf.
@@ -324,6 +335,36 @@ pub fn decode_prepared_statement_execute(
     parameter_count: usize,
     previous_types: Option<&[PreparedParameterType]>,
 ) -> Result<PreparedStatementExecute, PreparedStatementError> {
+    decode_prepared_statement_execute_with_bound_params(
+        payload,
+        parameter_count,
+        previous_types,
+        &[],
+    )
+}
+
+/// The `COM_STMT_EXECUTE` decoder that also honors the parameter chunks a
+/// client delivered earlier through `COM_STMT_SEND_LONG_DATA`.
+///
+/// `bound_params[i]` is the accumulated buffer for parameter `i`, or `None`.
+/// A bound parameter takes its value from that buffer and consumes NOTHING
+/// from the packet's value section: Go's `parseBinaryParams` checks
+/// `boundParams[i] != nil` first and `continue`s before touching `pos`
+/// (`pkg/server/conn_stmt_params.go:48-71`). The NULL bitmap is consulted
+/// only afterwards, because -- as Go's comment records -- some clients
+/// (MariaDB) set the NULL bit even for a parameter they sent as long data
+/// (`pkg/server/conn_stmt_params.go:74-77`).
+///
+/// The declared type of a bound parameter does not change its value: Go
+/// hands the raw buffer through as `TypeBlob` and only refines the *tag* to
+/// the declared TEXT/BLOB type. Here every parameter value is already
+/// untagged bytes, so a bound parameter is always the buffer verbatim.
+pub fn decode_prepared_statement_execute_with_bound_params(
+    payload: &[u8],
+    parameter_count: usize,
+    previous_types: Option<&[PreparedParameterType]>,
+    bound_params: &[Option<Vec<u8>>],
+) -> Result<PreparedStatementExecute, PreparedStatementError> {
     // The body below is count-generic: the null bitmap, the type vector, and
     // the value loop are all driven by `parameter_count`. A zero-marker
     // execute simply skips all three, which is how MySQL encodes executing a
@@ -413,6 +454,12 @@ pub fn decode_prepared_statement_execute(
 
     let mut values = Vec::with_capacity(types.len());
     for (parameter, parameter_type) in types.iter().enumerate() {
+        // A parameter delivered by COM_STMT_SEND_LONG_DATA wins over both the
+        // NULL bitmap and the value section, and advances neither.
+        if let Some(Some(bound)) = bound_params.get(parameter) {
+            values.push(PreparedValue::String(bound.clone()));
+            continue;
+        }
         // A NULL parameter occupies no bytes in the value section.
         if is_null.get(parameter).copied().unwrap_or(false) {
             values.push(PreparedValue::Null);
@@ -466,6 +513,9 @@ pub fn decode_prepared_statement_execute(
             PreparedParameterType::Time => {
                 PreparedValue::Temporal(read_binary_duration(&mut cursor)?)
             }
+            PreparedParameterType::Blob => {
+                PreparedValue::String(cursor.read_length_encoded_string("BLOB value")?)
+            }
         };
         values.push(value);
     }
@@ -502,6 +552,43 @@ pub fn decode_prepared_statement_fetch(
     let statement_id = u32::from_le_bytes(payload[0..4].try_into().expect("four bytes"));
     let fetch_size = u32::from_le_bytes(payload[4..8].try_into().expect("four bytes"));
     Ok((statement_id, fetch_size))
+}
+
+/// One decoded `COM_STMT_SEND_LONG_DATA` command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedStatementSendLongData {
+    /// The prepared statement the chunk belongs to.
+    pub statement_id: u32,
+    /// The zero-based parameter the chunk is appended to.
+    pub parameter_id: u16,
+    /// The chunk itself: every byte after the six-byte header, which may be
+    /// empty (Go stores an empty buffer to distinguish "bound to nothing"
+    /// from "not bound").
+    pub chunk: Vec<u8>,
+}
+
+/// Decodes a `COM_STMT_SEND_LONG_DATA` payload.
+///
+/// Go `handleStmtSendLongData` (`pkg/server/conn_stmt.go:610-625`): fewer than
+/// six bytes is `mysql.ErrMalformPacket`; the first four are the statement ID
+/// and the next two the parameter ID, both little-endian; everything after is
+/// the payload, appended verbatim. No length field and no terminator -- the
+/// packet boundary is the chunk boundary.
+pub fn decode_prepared_statement_send_long_data(
+    payload: &[u8],
+) -> Result<PreparedStatementSendLongData, PreparedStatementError> {
+    if payload.len() < 6 {
+        return Err(PreparedStatementError::Truncated {
+            field: "COM_STMT_SEND_LONG_DATA payload",
+            required: 6,
+            available: payload.len(),
+        });
+    }
+    Ok(PreparedStatementSendLongData {
+        statement_id: u32::from_le_bytes(payload[0..4].try_into().expect("four bytes")),
+        parameter_id: u16::from_le_bytes(payload[4..6].try_into().expect("two bytes")),
+        chunk: payload[6..].to_vec(),
+    })
 }
 
 /// Decodes the four-byte `COM_STMT_CLOSE` payload.
@@ -1079,6 +1166,9 @@ fn decode_parameter_type(
         TYPE_TIMESTAMP => Ok(PreparedParameterType::Timestamp),
         TYPE_DURATION => Ok(PreparedParameterType::Time),
         TYPE_VARCHAR | TYPE_VAR_STRING | TYPE_STRING => Ok(PreparedParameterType::String),
+        TYPE_BLOB | TYPE_TINY_BLOB | TYPE_MEDIUM_BLOB | TYPE_LONG_BLOB => {
+            Ok(PreparedParameterType::Blob)
+        }
         _ => Err(PreparedStatementError::UnsupportedParameterType {
             parameter,
             type_code,
