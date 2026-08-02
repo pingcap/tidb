@@ -37,7 +37,6 @@ use crate::handshake::{
     negotiate_capabilities, parse_response, parse_response_header, InitialHandshake,
     AUTH_NATIVE_PASSWORD, CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH,
     CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION, CLIENT_SSL, DEFAULT_COLLATION_ID,
-    SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_IN_TRANS,
 };
 use crate::mysql_tls::{ClientStream, MysqlServerTls};
 use crate::native_password::generate_handshake_salt;
@@ -46,6 +45,9 @@ use crate::resultset_writer::{ResultSetSink, SinkWriteError};
 use crate::sql_node::{
     ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome,
     PreparedStatement, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
+};
+use crate::wire_status::{
+    WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND,
 };
 use tidb_planner::prepared_dml::PreparedBindValue;
 use tidb_planner::transaction_control::classify_transaction_control;
@@ -462,7 +464,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         salt: salt.to_vec(),
         capability: server_capabilities,
         collation: DEFAULT_COLLATION_ID,
-        status_flags: SERVER_STATUS_AUTOCOMMIT,
+        // Go `writeInitialHandshake` (`pkg/server/conn.go:496`) hardcodes this
+        // one word, and only this one: the handshake precedes any session.
+        status_flags: WireStatus::AUTOCOMMIT.bits(),
         server_version: "5.7.25-TiDB-Rust".to_owned(),
         auth_plugin: AUTH_NATIVE_PASSWORD.to_owned(),
     };
@@ -684,17 +688,18 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     write_ok(
         &mut output,
         response_sequence,
+        engine.wire_status(),
         engine.warning_count(),
         protocol_41,
     )?;
 
-    // The connection-lifetime half of the options: capabilities negotiated at
-    // handshake and the default status. Everything per-statement -- the status
-    // flags a cursor changes, and the warning count Go reads afresh at every
-    // `writeOkWith`/`writeEOF` -- is layered on at each use below.
-    let options = ResultSetOptions {
-        status_flags: SERVER_STATUS_AUTOCOMMIT,
-        warnings: 0,
+    // The connection-lifetime half of the framing, and ALL of it: only the
+    // capabilities negotiated at handshake live this long. The status word and
+    // the warning count are per-statement facts Go re-reads off the session at
+    // every `writeOkWith`/`writeEOF`, so neither is cached here -- caching the
+    // status is precisely what reported `autocommit` to a client that had an
+    // open transaction, and cost it the transaction's writes.
+    let framing = WireFraming {
         deprecate_eof: capabilities & CLIENT_DEPRECATE_EOF != 0,
         protocol_41,
     };
@@ -758,7 +763,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     exit: ConnectionExit::Quit,
                 });
             }
-            Command::Ping => write_ok(&mut output, 1, engine.warning_count(), protocol_41)?,
+            Command::Ping => write_ok(
+                &mut output,
+                1,
+                engine.wire_status(),
+                engine.warning_count(),
+                protocol_41,
+            )?,
             Command::Query(bytes) => {
                 commands.text_query_commands += 1;
                 // `decode_command` has already trimmed exactly one terminal
@@ -782,11 +793,14 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // answer with an OK packet carrying the transaction status, not a
                 // result set; every other statement runs as an ordinary query.
                 match engine.control_transaction(sql) {
-                    Ok(Some(in_transaction)) => {
-                        write_transaction_control_ok(
+                    Ok(Some(_)) => {
+                        // The session has already applied the statement, so its
+                        // own status is the answer -- there is no separate
+                        // transaction flag for this packet to get wrong.
+                        write_ok(
                             &mut output,
                             1,
-                            in_transaction,
+                            engine.wire_status(),
                             engine.warning_count(),
                             protocol_41,
                         )?;
@@ -809,6 +823,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             1,
                             outcome.affected_rows,
                             outcome.last_insert_id,
+                            engine.wire_status(),
                             engine.warning_count(),
                             protocol_41,
                         )?;
@@ -829,10 +844,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     }
                 };
                 let write_result = {
-                    let statement_options = ResultSetOptions {
-                        warnings: result.warning_count(),
-                        ..options
-                    };
+                    let statement_options =
+                        framing.result_set(result.wire_status(), result.warning_count());
                     let mut sink = TcpResultSetSink::new(&mut output, 1);
                     write_connection_result_set_to_sink(
                         result.source(),
@@ -936,11 +949,14 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     }
                 };
                 let parameter_columns = vec![prepared_parameter_column(); parameter_count];
+                // Go `conn_stmt.go:111`/`:129` frames the prepare metadata
+                // with `cc.writeEOF(ctx, cc.ctx.Status())` -- the live word,
+                // like every other EOF.
                 let packets = match encode_prepared_statement_prepare_response(
                     statement_id,
                     &parameter_columns,
                     &result_columns,
-                    options,
+                    framing.result_set(engine.wire_status(), 0),
                 ) {
                     Ok(packets) => packets,
                     Err(error) => {
@@ -1027,11 +1043,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // reads back, are the text protocol's own.
                     PreparedStatement::TransactionControl(sql) => {
                         match engine.control_transaction(&sql) {
-                            Ok(Some(in_transaction)) => {
-                                write_transaction_control_ok(
+                            Ok(Some(_)) => {
+                                write_ok(
                                     &mut output,
                                     1,
-                                    in_transaction,
+                                    engine.wire_status(),
                                     engine.warning_count(),
                                     protocol_41,
                                 )?;
@@ -1079,10 +1095,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 }
                             };
                         let write_result = {
-                            let statement_options = ResultSetOptions {
-                                warnings: result.warning_count(),
-                                ..options
-                            };
+                            let statement_options =
+                                framing.result_set(result.wire_status(), result.warning_count());
                             let mut sink = TcpResultSetSink::new(&mut output, 1);
                             write_connection_binary_result_set_to_sink(
                                 result.source(),
@@ -1150,13 +1164,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                         }
                                     };
                                     let warnings = result.warning_count();
+                                    let status = result.wire_status();
                                     drop(result);
-                                    let cursor_options = ResultSetOptions {
-                                        status_flags: options.status_flags
-                                            | SERVER_STATUS_CURSOR_EXISTS,
+                                    let cursor_options = framing.result_set(
+                                        status.with(SERVER_STATUS_CURSOR_EXISTS),
                                         warnings,
-                                        ..options
-                                    };
+                                    );
                                     let mut stream = match tidb_protocol::BinaryResultSetStream::new(
                                         columns.clone(),
                                         cursor_options,
@@ -1239,10 +1252,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         match engine.execute_general(&general, &values) {
                             Ok(GeneralExecuteOutcome::Rows(mut result)) => {
                                 let write_result = {
-                                    let statement_options = ResultSetOptions {
-                                        warnings: result.warning_count(),
-                                        ..options
-                                    };
+                                    let statement_options = framing
+                                        .result_set(result.wire_status(), result.warning_count());
                                     let mut sink = TcpResultSetSink::new(&mut output, 1);
                                     write_connection_binary_result_set_to_sink(
                                         result.source(),
@@ -1405,23 +1416,21 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 let exhausted = end >= cursor.rows.len();
                 let columns = cursor.columns.clone();
                 let status = if exhausted {
-                    (options.status_flags | SERVER_STATUS_LAST_ROW_SEND)
-                        & !SERVER_STATUS_CURSOR_EXISTS
+                    engine
+                        .wire_status()
+                        .with(SERVER_STATUS_LAST_ROW_SEND)
+                        .without(SERVER_STATUS_CURSOR_EXISTS)
                 } else {
-                    options.status_flags | SERVER_STATUS_CURSOR_EXISTS
+                    engine.wire_status().with(SERVER_STATUS_CURSOR_EXISTS)
                 };
                 match write_cursor_fetch_batch(
                     &mut output,
                     &columns,
                     &batch,
-                    ResultSetOptions {
-                        status_flags: status,
-                        // COM_STMT_FETCH runs no statement of its own, so this
-                        // is still the execute's count -- which is what Go's
-                        // `writeEOF` reads here too.
-                        warnings: engine.warning_count(),
-                        ..options
-                    },
+                    // COM_STMT_FETCH runs no statement of its own, so this is
+                    // still the execute's count -- which is what Go's
+                    // `writeEOF` reads here too.
+                    framing.result_set(status, engine.warning_count()),
                 ) {
                     Ok(()) => {
                         if exhausted {
@@ -1446,7 +1455,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             Command::InitDb(name) => {
                 let name = String::from_utf8_lossy(&name).into_owned();
                 match engine.select_database(&name) {
-                    Ok(()) => write_ok(&mut output, 1, engine.warning_count(), protocol_41)?,
+                    Ok(()) => write_ok(
+                        &mut output,
+                        1,
+                        engine.wire_status(),
+                        engine.warning_count(),
+                        protocol_41,
+                    )?,
                     Err(error) => write_query_error(&mut output, &error, protocol_41)?,
                 }
             }
@@ -1471,36 +1486,14 @@ fn write_affected_rows_ok(
     sequence: u8,
     affected_rows: u64,
     last_insert_id: u64,
+    status: WireStatus,
     warnings: u16,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
     let payload = encode_ok_packet(&OkPacket {
         affected_rows,
         last_insert_id,
-        status_flags: SERVER_STATUS_AUTOCOMMIT,
-        warnings,
-        protocol_41,
-        ..OkPacket::default()
-    });
-    write_payload(output, sequence, &payload)
-}
-
-/// Writes the OK packet answering a `BEGIN`/`COMMIT`/`ROLLBACK`, advertising the
-/// resulting transaction status so the client tracks whether one is open.
-fn write_transaction_control_ok(
-    output: &mut ClientStream,
-    sequence: u8,
-    in_transaction: bool,
-    warnings: u16,
-    protocol_41: bool,
-) -> Result<(), MysqlConnectionError> {
-    let mut status_flags = SERVER_STATUS_AUTOCOMMIT;
-    if in_transaction {
-        status_flags |= SERVER_STATUS_IN_TRANS;
-    }
-    let payload = encode_ok_packet(&OkPacket {
-        affected_rows: 0,
-        status_flags,
+        status_flags: status.bits(),
         warnings,
         protocol_41,
         ..OkPacket::default()
@@ -1532,13 +1525,6 @@ fn prepared_parameter_column() -> ColumnInfo {
         default_value: None,
     }
 }
-
-/// MySQL `SERVER_STATUS_CURSOR_EXISTS` (0x0040): a read-only cursor is open
-/// on the statement, and rows arrive through `COM_STMT_FETCH`.
-const SERVER_STATUS_CURSOR_EXISTS: u16 = 0x0040;
-/// MySQL `SERVER_STATUS_LAST_ROW_SEND` (0x0080): the fetch that carried this
-/// flag exhausted the cursor.
-const SERVER_STATUS_LAST_ROW_SEND: u16 = 0x0080;
 
 /// Materializes every remaining row of a general execute's result, which the
 /// cursor holds for later fetches -- Go's eager cursor fetch fills a row
@@ -1642,24 +1628,57 @@ fn write_unknown_statement(
     )
 }
 
-/// Writes the bare OK packet Go answers `COM_PING` and `COM_INIT_DB` with.
+/// Writes the bare OK packet Go's `writeOK` answers `COM_PING`, `COM_INIT_DB`,
+/// the post-authentication handshake, and `BEGIN`/`COMMIT`/`ROLLBACK` with.
 ///
-/// Neither command runs a statement, so neither resets the warning buffer and
-/// both report the count the preceding statement left -- Go's `writeOK` reads
-/// `ctx.WarningCount()` at that moment just the same.
+/// Go's `writeOK` is exactly `writeOkWith(ctx, mysql.OKHeader, true,
+/// cc.ctx.Status())` (`pkg/server/conn.go:1685`): one live status read, no
+/// per-command variant. Transaction control needs no writer of its own for the
+/// same reason -- the session has already applied the statement by the time
+/// this runs, so its status IS the transaction state, and there is no second
+/// flag to keep in step with it.
+///
+/// None of these commands runs a statement, so none resets the warning buffer
+/// and each reports the count the preceding statement left -- which is what
+/// `ctx.WarningCount()` reads at that moment too.
 fn write_ok(
     output: &mut ClientStream,
     sequence: u8,
+    status: WireStatus,
     warnings: u16,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
     let payload = encode_ok_packet(&OkPacket {
-        status_flags: SERVER_STATUS_AUTOCOMMIT,
+        status_flags: status.bits(),
         warnings,
         protocol_41,
         ..OkPacket::default()
     });
     write_payload(output, sequence, &payload)
+}
+
+/// The only connection-lifetime part of an OK/EOF packet: what the client
+/// negotiated at handshake.
+///
+/// Every [`ResultSetOptions`] this connection builds is built here, and this is
+/// the one place a `status_flags` field is filled -- from a [`WireStatus`],
+/// which cannot be a literal. That is the whole point: a fourth hardcoded
+/// `SERVER_STATUS_AUTOCOMMIT` has nowhere to go.
+#[derive(Clone, Copy)]
+struct WireFraming {
+    deprecate_eof: bool,
+    protocol_41: bool,
+}
+
+impl WireFraming {
+    fn result_set(self, status: WireStatus, warnings: u16) -> ResultSetOptions {
+        ResultSetOptions {
+            status_flags: status.bits(),
+            warnings,
+            deprecate_eof: self.deprecate_eof,
+            protocol_41: self.protocol_41,
+        }
+    }
 }
 
 fn write_query_error(

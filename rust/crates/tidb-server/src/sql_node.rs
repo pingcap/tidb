@@ -30,6 +30,7 @@ use crate::mysql_connection::{serve_mysql_connection_with_tls, MysqlConnectionEr
 use crate::mysql_tls::{resolve_server_tls, MysqlServerTls};
 use crate::node_config::NodeConfig;
 use crate::resultset_source::ResultSetSource;
+use crate::wire_status::WireStatus;
 use tidb_session::process::ProcessKillTarget;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -276,6 +277,16 @@ pub struct QueryResult<'a> {
     /// its rows eagerly -- which is every session that has a warning buffer
     /// today -- has already finished warning by then, so the two agree.
     warnings: u16,
+    /// The status word the result set's EOF packets carry (Go
+    /// `status := cc.ctx.Status()` in `pkg/server/conn.go`, threaded into
+    /// `writeResultSet` -> `writeEOF`).
+    ///
+    /// Go snapshots the status once, right after the statement finished and
+    /// before the first byte of the result set goes out; this holds that same
+    /// snapshot, taken by the session at the same moment, because the result
+    /// holds the session's mutable borrow while it is being written and
+    /// nothing can change the transaction state under it in the meantime.
+    status: WireStatus,
 }
 
 /// One connection-owned, typed prepared point-read definition.
@@ -462,14 +473,30 @@ impl<'a> QueryResult<'a> {
         Self {
             source: BoxedResultSetSource { inner: source },
             warnings: 0,
+            status: WireStatus::AUTOCOMMIT,
         }
     }
 
-    /// Attaches the warning count this statement's EOF packets carry.
+    /// Attaches the warning count AND the status word this statement's EOF
+    /// packets carry.
+    ///
+    /// The two travel together deliberately: Go reads both off the session in
+    /// the same breath (`ctx.WarningCount()` and `ctx.Status()`), and a session
+    /// that remembers one but forgets the other is exactly how a stale
+    /// `SERVER_STATUS_AUTOCOMMIT` reached the wire while a transaction was
+    /// open. A session that never calls this has no transaction concept at all,
+    /// which is what [`WireStatus::AUTOCOMMIT`] states.
     #[must_use]
-    pub fn with_warning_count(mut self, warnings: u16) -> Self {
+    pub fn with_statement_status(mut self, warnings: u16, status: WireStatus) -> Self {
         self.warnings = warnings;
+        self.status = status;
         self
+    }
+
+    /// The status word for the EOF packets that frame this result set.
+    #[must_use]
+    pub fn wire_status(&self) -> WireStatus {
+        self.status
     }
 
     /// The warning count for the EOF packets that frame this result set.
@@ -638,6 +665,22 @@ pub trait QuerySession {
     /// report the buffer. Sessions with no warning buffer report none.
     fn warning_count(&self) -> u16 {
         0
+    }
+
+    /// The live session status word every OK packet this session's statements
+    /// produce must carry (Go `status := cc.ctx.Status()`, `pkg/server/conn.go`,
+    /// read afresh per statement and passed to every `writeOkWith`/`writeEOF`).
+    ///
+    /// Result sets carry their own snapshot on [`QueryResult::wire_status`],
+    /// because the result holds this session's mutable borrow while it is
+    /// written. Everything answered with a bare OK packet -- a write's affected
+    /// rows, transaction control, `COM_PING`, `COM_INIT_DB` -- reads this here,
+    /// after the statement has already updated the session.
+    ///
+    /// A session with no transaction concept is permanently in autocommit and
+    /// never in a transaction, which is what the default states.
+    fn wire_status(&self) -> WireStatus {
+        WireStatus::AUTOCOMMIT
     }
 
     /// Selects this session's current schema (Go `clientConn.useDB`).

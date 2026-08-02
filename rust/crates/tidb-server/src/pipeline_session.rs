@@ -45,6 +45,7 @@ use tidb_session::process::ProcessRegistry;
 use tidb_session::{GlobalSysvars, Session, SharedCatalog, StmtKind, StmtOutput, StmtResult};
 
 use crate::resultset_source::ResultSetSource;
+use crate::wire_status::WireStatus;
 use crate::sql_node::{
     ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession,
     QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
@@ -215,6 +216,14 @@ impl QuerySessionFactory for PipelineSessionFactory {
 }
 
 impl QuerySession for PipelineServerSession {
+    /// The live status word Go reads with `cc.ctx.Status()` before every
+    /// OK/EOF packet: this session owns a real transaction and a real
+    /// `autocommit` variable, so both bits come from it rather than from a
+    /// connection-lifetime constant.
+    fn wire_status(&self) -> WireStatus {
+        WireStatus::of_session(&self.session)
+    }
+
     /// The count Go's `writeOkWith`/`writeEOF` read off `ctx.WarningCount()`.
     /// It is the same buffer `SHOW WARNINGS` reports, so both channels agree
     /// on both what warned and how many.
@@ -335,7 +344,10 @@ impl QuerySession for PipelineServerSession {
                     select_columns(&columns),
                     rows,
                 )))
-                .with_warning_count(self.session.wire_warning_count()),
+                .with_statement_status(
+                    self.session.wire_warning_count(),
+                    WireStatus::of_session(&self.session),
+                ),
             ),
             StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: count,
@@ -364,7 +376,10 @@ impl QuerySession for PipelineServerSession {
         // finished statement's -- the same one Go's terminal `writeEOF` reads.
         Ok(
             QueryResult::new(Box::new(source))
-                .with_warning_count(self.session.wire_warning_count()),
+                .with_statement_status(
+                    self.session.wire_warning_count(),
+                    WireStatus::of_session(&self.session),
+                ),
         )
     }
 }

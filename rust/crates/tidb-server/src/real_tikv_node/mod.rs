@@ -84,6 +84,7 @@ use crate::sql_node::{
     SqlNodeError, SqlQueryError, WriteOutcome,
 };
 use crate::transaction_overlay_result_set::{OverlayHandleSource, TransactionOverlayResultSet};
+use crate::wire_status::WireStatus;
 
 mod query_observability;
 mod schema_following;
@@ -784,6 +785,13 @@ pub(crate) fn refusal_aware_error(
 }
 
 impl QuerySession for RealTiKvServerSession {
+    /// This session's status word: it owns a real explicit transaction (so the
+    /// `SERVER_STATUS_IN_TRANS` bit is its own [`SessionTransaction`]'s answer)
+    /// but no `autocommit` variable, so that bit is constant here.
+    fn wire_status(&self) -> WireStatus {
+        WireStatus::autocommit_session(self.transaction.is_active())
+    }
+
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         let (query_id, query_activity) = self.begin_query()?;
         let cancellation = Arc::new(CancelHandle::default());

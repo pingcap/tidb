@@ -180,6 +180,7 @@ use crate::cluster_analyze_seam::ClusterAnalyze;
 use crate::cluster_session::{cluster_session_catalog, SkippedTable, TableAutoIds};
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::pipeline_session::MaterializedResultSetSource;
+use crate::wire_status::WireStatus;
 use crate::sql_node::{
     ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession,
     QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
@@ -1097,6 +1098,13 @@ impl ClusterServerSession {
 }
 
 impl QuerySession for ClusterServerSession {
+    /// The live status word Go reads with `cc.ctx.Status()` before every
+    /// OK/EOF packet. The driver session owns the transaction state this tier
+    /// acts on, so the wire word and the tier's behaviour cannot disagree.
+    fn wire_status(&self) -> WireStatus {
+        WireStatus::of_session(&self.session)
+    }
+
     /// The OK/EOF packet's warning count, read off the same buffer
     /// `SHOW WARNINGS` reports (Go `ctx.WarningCount()`).
     fn warning_count(&self) -> u16 {
@@ -1286,7 +1294,10 @@ impl QuerySession for ClusterServerSession {
                     crate::pipeline_session::select_columns(&columns),
                     rows,
                 )))
-                .with_warning_count(self.session.wire_warning_count()),
+                .with_statement_status(
+                    self.session.wire_warning_count(),
+                    WireStatus::of_session(&self.session),
+                ),
             ),
             StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: count,
@@ -1348,7 +1359,10 @@ impl QuerySession for ClusterServerSession {
         })?;
         Ok(
             QueryResult::new(Box::new(source))
-                .with_warning_count(self.session.wire_warning_count()),
+                .with_statement_status(
+                    self.session.wire_warning_count(),
+                    WireStatus::of_session(&self.session),
+                ),
         )
     }
 }

@@ -83,6 +83,7 @@ mod session_transaction;
 mod sorting_result_set;
 mod sql_node;
 mod transaction_overlay_result_set;
+pub mod wire_status;
 pub use aggregate_result_set::AggregateResultSetSource;
 pub use auth_exchange::{
     decode_client_packet, AuthClientResponse, AuthExchangeError, AuthMoreData, AuthSwitchRequest,
@@ -166,6 +167,10 @@ pub use sql_node::{
     ConnectionTracker, PreparedPointRead, PreparedStatement, PreparedWrite, QueryCancellationLease,
     QueryResult, QuerySession, QuerySessionFactory, SessionContext, ShutdownHandle, SqlNodeError,
     SqlQueryError, WriteOutcome,
+};
+pub use wire_status::{
+    WireStatus, SERVER_MORE_RESULTS_EXISTS, SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_CURSOR_EXISTS,
+    SERVER_STATUS_IN_TRANS, SERVER_STATUS_LAST_ROW_SEND,
 };
 
 /// Starts the one configured SQL-node authority for its admitted table shape.

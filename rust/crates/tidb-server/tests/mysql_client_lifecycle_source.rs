@@ -26,7 +26,7 @@ use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
     ConnectionTracker, PreparedPointRead, PreparedWrite, QueryResult, QuerySession,
     QuerySessionFactory, ResultSetSource, SessionContext, SessionTransaction, SqlQueryError,
-    WriteOutcome,
+    WireStatus, WriteOutcome,
 };
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
@@ -802,6 +802,12 @@ struct TransactionSession {
 }
 
 impl QuerySession for TransactionSession {
+    /// The status word every OK packet of this session carries, read live off
+    /// the transaction the session actually owns -- Go `cc.ctx.Status()`.
+    fn wire_status(&self) -> WireStatus {
+        WireStatus::autocommit_session(self.transaction.is_active())
+    }
+
     fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         if self.transaction.is_active() {
             return Err(SqlQueryError::unknown(
