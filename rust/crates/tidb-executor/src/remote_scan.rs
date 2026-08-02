@@ -633,9 +633,9 @@ mod tests {
         let scanner = Arc::clone(&fixture.scanner);
 
         let catalog = catalog_of(fixture.table);
-        // `for_dml(error_for_division_by_zero, strict)` with the INSERT arm's
+        // `for_dml(error_for_division_by_zero, strict, ignore_err)` with the INSERT arm's
         // statement class: the read half of `INSERT INTO u SELECT a FROM t`.
-        let ctx = crate::StmtContext::for_dml(true, true)
+        let ctx = crate::StmtContext::for_dml(true, true, false)
             // TiDB's default `sql_mode` bits that `GetTypeFlagsForInsert`
             // reads; without them `IgnoreZeroInDate` is true and the flags
             // would be 136 rather than 8.

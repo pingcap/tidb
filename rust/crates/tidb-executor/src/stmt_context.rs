@@ -184,6 +184,17 @@ pub struct StmtContext {
     /// strict write fails, and both statement classes build this struct.
     truncate: ErrorLevel,
     strict: bool,
+    /// Go `ast.InsertStmt/UpdateStmt/DeleteStmt.IgnoreErr`, the statement's
+    /// own `IGNORE` modifier.
+    ///
+    /// Go folds it into every value-level decision as `!strictSQLMode ||
+    /// ignoreErr` (`util.GetTypeFlagsForInsert`, `ResetContextOfStmt`'s
+    /// `*ast.InsertStmt` arm), so [`Self::for_dml`] resolves it INTO `strict`
+    /// and no reader of `strict` has to know about it. It is kept beside the
+    /// result for the one rule that is not a plain `||`: `ErrGroupBadNull`
+    /// promotes a SINGLE-ROW insert to an error even without a strict mode,
+    /// and `IGNORE` overrides that promotion too.
+    ignore_err: bool,
     /// Go `SessionVars.SQLMode`'s three temporal bits; see
     /// [`crate::zero_date`]. They ride the context rather than being derived
     /// from `strict` because each answers a different question and TiDB's
@@ -409,12 +420,18 @@ impl StmtContext {
     /// field added to the struct now has one place it must be named, so the two
     /// statement classes cannot silently drift apart -- which they would, in the
     /// direction of whichever literal was edited.
-    fn new(division_by_zero: ErrorLevel, truncate: ErrorLevel, strict: bool) -> Self {
+    fn new(
+        division_by_zero: ErrorLevel,
+        truncate: ErrorLevel,
+        strict: bool,
+        ignore_err: bool,
+    ) -> Self {
         Self {
             warnings: Rc::default(),
             division_by_zero,
             truncate,
             strict,
+            ignore_err,
             date_modes: crate::zero_date::DateModes::default(),
             current_db: None,
             version: None,
@@ -487,12 +504,13 @@ impl StmtContext {
     /// literals, with no SQL-mode input, so no mode can make a read fail) and
     /// `8` for a strict `INSERT ... SELECT` under the default `sql_mode`.
     ///
+    /// `INSERT IGNORE`'s `stmt.IgnoreErr` IS modelled: [`Self::for_dml`]
+    /// resolves it into `strict`, so the tolerance it buys reaches the
+    /// coprocessor through the same three bits a non-strict mode does.
+    ///
     /// NOT MODELLED, and named rather than guessed:
     /// `StatementContext.InRestrictedSQL` (bit 11), which only internal SQL
-    /// and auto-analyze set, and `INSERT IGNORE`'s `stmt.IgnoreErr`, which
-    /// Go folds into `GetTypeFlagsForInsert` -- an `INSERT IGNORE` therefore
-    /// under-reports tolerance here, which fails a statement Go would have
-    /// warned on rather than the reverse.
+    /// and auto-analyze set.
     #[must_use]
     pub fn push_down_flags(&self) -> u64 {
         // `push_down_flags` reads exactly three conversion bits, so a default
@@ -585,7 +603,7 @@ impl StmtContext {
     /// literal, with no SQL mode input, so no mode can make a read fail.
     #[must_use]
     pub fn for_query() -> Self {
-        Self::new(ErrorLevel::Warn, ErrorLevel::Warn, true)
+        Self::new(ErrorLevel::Warn, ErrorLevel::Warn, true, false)
             .with_statement_class(StatementClass::Select)
     }
 
@@ -750,8 +768,19 @@ impl StmtContext {
     /// fails on a value that lost information, a permissive one warns. That
     /// is the one place this differs from [`Self::for_query`], and the reason
     /// the level is carried rather than decided at the conversion site.
+    ///
+    /// `ignore_err` is the statement's own `IGNORE` modifier, and Go writes it
+    /// into EVERY value-level rule as the second disjunct of
+    /// `!strictSQLMode || ignoreErr` -- `GetTypeFlagsForInsert`'s truncation
+    /// and zero-in-date bits, and `ResetContextOfStmt`'s bad-NULL, no-default
+    /// and division-by-zero levels alike. Resolving it into `strict` here is
+    /// therefore not an approximation but the same expression written once:
+    /// captured from TiDB, `INSERT IGNORE INTO t(a BIT(1)) VALUES (-1)` under
+    /// the DEFAULT strict mode stores the clamped `1` with warning 1406,
+    /// exactly as the same plain `INSERT` does under `sql_mode = ''`.
     #[must_use]
-    pub fn for_dml(error_for_division_by_zero: bool, strict: bool) -> Self {
+    pub fn for_dml(error_for_division_by_zero: bool, strict: bool, ignore_err: bool) -> Self {
+        let strict = strict && !ignore_err;
         let level = if !error_for_division_by_zero {
             ErrorLevel::Ignore
         } else if strict {
@@ -764,14 +793,26 @@ impl StmtContext {
         } else {
             ErrorLevel::Warn
         };
-        Self::new(level, truncate, strict)
+        Self::new(level, truncate, strict, ignore_err)
     }
 
     /// Whether the statement runs under a strict SQL mode, which decides
     /// whether a value that does not fit its column fails the statement.
+    ///
+    /// An `IGNORE` statement is already resolved to `false` here; see
+    /// [`Self::for_dml`].
     #[must_use]
     pub fn strict(&self) -> bool {
         self.strict
+    }
+
+    /// Go `stmt.IgnoreErr`. Read only where Go's rule is NOT the plain
+    /// `!strictSQLMode || ignoreErr` that [`Self::for_dml`] already resolved:
+    /// `ErrGroupBadNull`, whose `(strictSQLMode || isSingleInsert)` promotes a
+    /// one-row insert to an error in every mode, and which `IGNORE` overrides.
+    #[must_use]
+    pub fn ignore_err(&self) -> bool {
+        self.ignore_err
     }
 
     /// The statement's `time_zone`: Go's `SessionVars.Location()`, which

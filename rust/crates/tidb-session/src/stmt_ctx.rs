@@ -194,6 +194,17 @@ impl Session {
     }
 
     pub(crate) fn statement_context(&self, is_dml: bool) -> tidb_executor::StmtContext {
+        self.statement_context_ignoring(is_dml, false)
+    }
+
+    /// [`Self::statement_context`] for a DML statement that carries the
+    /// `IGNORE` modifier, which Go's `ResetContextOfStmt` reads off the AST
+    /// and folds into every value-level error level.
+    pub(crate) fn statement_context_ignoring(
+        &self,
+        is_dml: bool,
+        ignore_err: bool,
+    ) -> tidb_executor::StmtContext {
         // Go hands the same `SessionVars` to every expression, which is where
         // `DATABASE()` and `VERSION()` read from.
         let current_db = if self.current_db.is_empty() {
@@ -286,6 +297,7 @@ impl Session {
         tidb_executor::StmtContext::for_dml(
             has("ERROR_FOR_DIVISION_BY_ZERO"),
             has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
+            ignore_err,
         )
         .with_date_modes(date_modes)
         .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))

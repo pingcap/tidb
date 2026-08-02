@@ -444,3 +444,116 @@ fn insert_casts_to_column_type() {
         [["ab"], ["NULL"], ["abcd"], ["NULL"]]
     );
 }
+
+/// Go `ResetContextOfStmt`'s `*ast.InsertStmt` arm plus
+/// `util.GetTypeFlagsForInsert`: the `IGNORE` modifier makes every
+/// value-level failure a WARNING and stores the coerced value, under the
+/// DEFAULT strict mode.
+///
+/// Captured from TiDB (`pkg/session` over `mockstore`, default `sql_mode`).
+/// The stored values and the warning codes are BOTH asserted, because the
+/// bug this pins was visible only as "eight later reads return zero rows":
+/// a statement that must have been accepted was refused, so a test that
+/// only checked "no error" would have been satisfied by an empty table.
+///
+/// ```text
+/// insert ignore into tb values(-1,-1),(0,0),(1,1),(3,3);
+///   1406 Data too long for column 'a' at row 1 / at row 4; a+0 = 1,0,1,1
+/// insert ignore into tt(a tinyint) values(1000);   1264, stores 127
+/// insert ignore into ti(a int) values('12abc');    1366, stores 12
+/// insert ignore into td(a date) values('2020-13-45'); 1292, stores 0000-00-00
+/// insert ignore into nn(a int not null) values(null); 1048, stores 0
+/// ```
+#[test]
+fn insert_ignore_downgrades_a_value_error_to_a_warning() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE tb (a BIT(1), b INT)").unwrap();
+    session
+        .run("INSERT IGNORE INTO tb VALUES (-1,-1),(0,0),(1,1),(3,3)")
+        .unwrap();
+    // Both out-of-range rows warn; the two that fit stay silent.
+    let warnings = session.warnings();
+    assert_eq!(warnings.len(), 2);
+    assert_eq!(warnings[0].code, 1406);
+    assert_eq!(warnings[0].message, "Data too long for column 'a' at row 1");
+    assert_eq!(warnings[1].code, 1406);
+    assert_eq!(warnings[1].message, "Data too long for column 'a' at row 4");
+    // The CLAMPED values are stored -- all four rows, in order.
+    assert_eq!(
+        row_text(session.run("SELECT a+0, b FROM tb ORDER BY b")),
+        [["1", "-1"], ["0", "0"], ["1", "1"], ["1", "3"]]
+    );
+
+    // Every other value-level group behaves the same way, and each is
+    // paired with the plain INSERT that must KEEP failing: a fix that
+    // turned the strict mode permissive would pass the first half alone.
+    session.run("CREATE TABLE tt (a TINYINT)").unwrap();
+    session.run("INSERT IGNORE INTO tt VALUES (1000)").unwrap();
+    assert_eq!(session.warnings()[0].code, 1264);
+    assert_eq!(row_text(session.run("SELECT a FROM tt")), [["127"]]);
+    assert!(matches!(
+        session.run("INSERT INTO tt VALUES (1000)"),
+        Err(DriverError::DataOutOfRange { row: 1, .. })
+    ));
+
+    session.run("CREATE TABLE ti (a INT)").unwrap();
+    session
+        .run("INSERT IGNORE INTO ti VALUES ('12abc')")
+        .unwrap();
+    assert_eq!(session.warnings()[0].code, 1366);
+    assert_eq!(row_text(session.run("SELECT a FROM ti")), [["12"]]);
+    assert!(matches!(
+        session.run("INSERT INTO ti VALUES ('12abc')"),
+        Err(DriverError::IncorrectValue { row: 1, .. })
+    ));
+
+    session.run("CREATE TABLE td (a DATE)").unwrap();
+    session
+        .run("INSERT IGNORE INTO td VALUES ('2020-13-45')")
+        .unwrap();
+    assert_eq!(session.warnings()[0].code, 1292);
+    assert_eq!(row_text(session.run("SELECT a FROM td")), [["0000-00-00"]]);
+    assert!(matches!(
+        session.run("INSERT INTO td VALUES ('2020-13-45')"),
+        Err(DriverError::IncorrectTemporalValue { row: 1, .. })
+    ));
+
+    // The bad-NULL group is the one rule `IGNORE` does not reach through
+    // the strict flag: Go promotes a SINGLE-ROW insert to an error in every
+    // SQL mode, and `IGNORE` overrides that promotion separately.
+    session.run("CREATE TABLE nn (a INT NOT NULL)").unwrap();
+    session.run("INSERT IGNORE INTO nn VALUES (NULL)").unwrap();
+    assert_eq!(session.warnings()[0].code, 1048);
+    assert_eq!(row_text(session.run("SELECT a FROM nn")), [["0"]]);
+    assert!(matches!(
+        session.run("INSERT INTO nn VALUES (NULL)"),
+        Err(DriverError::ColumnCannotBeNull(_))
+    ));
+}
+
+/// Go `convertToMysqlBit` returns `ErrDataTooLong` -- NOT the generic
+/// "Incorrect bit value" -- when a value does not fit the declared width,
+/// after clamping it to `(1<<flen)-1`.
+///
+/// Captured from TiDB: `INSERT INTO t(a BIT(1)) VALUES (-1)` under the
+/// default strict mode is `1406 Data too long for column 'a' at row 1`, and
+/// under `sql_mode = ''` the same message is a warning with `a+0 = 1`.
+#[test]
+fn a_bit_column_reports_an_overflow_as_data_too_long() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a BIT(1))").unwrap();
+    match session.run("INSERT INTO t VALUES (-1)") {
+        Err(error) => {
+            let reported = error.to_mysql_error();
+            assert_eq!(reported.code, 1406);
+            assert_eq!(reported.message, "Data too long for column 'a' at row 1");
+        }
+        Ok(other) => panic!("expected a failure, got {other:?}"),
+    }
+    assert_eq!(row_text(session.run("SELECT a+0 FROM t")).len(), 0);
+
+    session.apply_set("SET sql_mode = ''").unwrap();
+    session.run("INSERT INTO t VALUES (-1)").unwrap();
+    assert_eq!(session.warnings()[0].code, 1406);
+    assert_eq!(row_text(session.run("SELECT a+0 FROM t")), [["1"]]);
+}

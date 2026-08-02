@@ -389,14 +389,16 @@ impl Session {
                 Ok(StmtOutput::Rows { columns, rows })
             }
             Stmt::Dml(dml) => match &**dml {
-                DmlStmt::Insert(_) => {
+                DmlStmt::Insert(insert) => {
                     let current_db = self.current_db.clone();
                     // Go `ResetContextOfStmt`'s `*ast.InsertStmt` arm. The class
                     // is what `StmtContext::push_down_flags` turns into the
                     // statement-kind bit of any coprocessor request this
-                    // statement's read half issues.
+                    // statement's read half issues, and `IgnoreErr` is the
+                    // `IGNORE` modifier Go reads off this same AST to downgrade
+                    // every value-level error to a warning.
                     let ctx = self
-                        .statement_context(true)
+                        .statement_context_ignoring(true, insert.ignore)
                         .with_statement_class(tidb_executor::StatementClass::Insert);
                     let result = self.with_staged_catalog(|catalog| {
                         tidb_executor::run_insert_reporting(sql, catalog, &current_db, &ctx)
@@ -424,14 +426,15 @@ impl Session {
                     let (affected, _) = result?;
                     Ok(StmtOutput::Affected(affected))
                 }
-                DmlStmt::Update(_) => {
+                DmlStmt::Update(update) => {
                     let current_db = self.current_db.clone();
-                    // Go `ResetContextOfStmt`'s `*ast.UpdateStmt` arm. The class
-                    // is what `StmtContext::push_down_flags` turns into the
-                    // statement-kind bit of any coprocessor request this
-                    // statement's read half issues.
+                    // Go `ResetUpdateStmtCtx`, which applies the same
+                    // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
+                    // does; the class is what `StmtContext::push_down_flags`
+                    // turns into the statement-kind bit of any coprocessor
+                    // request this statement's read half issues.
                     let ctx = self
-                        .statement_context(true)
+                        .statement_context_ignoring(true, update.ignore)
                         .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                     let output = self.with_staged_catalog(|catalog| {
                         Ok(StmtOutput::Affected(tidb_executor::run_update_in(
@@ -444,14 +447,15 @@ impl Session {
                     self.drain_eval_warnings(&ctx);
                     output
                 }
-                DmlStmt::Delete(_) => {
+                DmlStmt::Delete(delete) => {
                     let current_db = self.current_db.clone();
-                    // Go `ResetContextOfStmt`'s `*ast.DeleteStmt` arm. The class
-                    // is what `StmtContext::push_down_flags` turns into the
-                    // statement-kind bit of any coprocessor request this
-                    // statement's read half issues.
+                    // Go `ResetDeleteStmtCtx`, which applies the same
+                    // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
+                    // does; the class is what `StmtContext::push_down_flags`
+                    // turns into the statement-kind bit of any coprocessor
+                    // request this statement's read half issues.
                     let ctx = self
-                        .statement_context(true)
+                        .statement_context_ignoring(true, delete.ignore)
                         .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
                     let output = self.with_staged_catalog(|catalog| {
                         Ok(StmtOutput::Affected(tidb_executor::run_delete_in(

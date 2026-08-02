@@ -288,13 +288,20 @@ pub(crate) fn run_insert_traced(
     };
     let row_count = source_rows.as_ref().map_or(insert.rows.len(), Vec::len);
     // Go `ResetContextOfStmt`'s `ast.InsertStmt` arm:
-    //   ErrGroupBadNull  = error when (strict || len(stmt.Lists) == 1)
+    //   ErrGroupBadNull  = error when !IgnoreErr && (strict || len(stmt.Lists) == 1)
     //   ErrGroupNoDefault = error when strict
     // `stmt.Lists` is the VALUES lists, so an `INSERT ... SELECT` is never
     // "single" no matter how many rows the query returns -- which is why the
     // count below reads the AST and not `row_count`.
-    let bad_null_level =
-        crate::bad_null::NullLevel::from_is_error(ctx.strict() || insert.rows.len() == 1);
+    //
+    // This is the ONE value-level rule `IGNORE` does not reach through
+    // `strict` alone: the single-row promotion holds in every SQL mode, so an
+    // `IGNORE` statement has to override it separately. Captured from TiDB,
+    // `INSERT IGNORE INTO t(a INT NOT NULL) VALUES (NULL)` under the default
+    // strict mode warns 1048 and stores `0`.
+    let bad_null_level = crate::bad_null::NullLevel::from_is_error(
+        !ctx.ignore_err() && (ctx.strict() || insert.rows.len() == 1),
+    );
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
     // Go `buildValuesListOfInsert` checks arity in two steps: the FIRST row
     // against the target columns, and every later row against the one before
@@ -697,8 +704,15 @@ pub(crate) fn cast_value_for_column(
             column: column.to_owned(),
             row: row_index + 1,
         },
+        // A BIT column is the second producer of Go's `ErrDataTooLong`:
+        // `convertToMysqlBit` clamps a value wider than the declared `flen`
+        // to `(1<<flen)-1` and returns `ErrDataTooLong`, NOT the generic
+        // "Incorrect bit value". Captured from TiDB,
+        // `INSERT INTO t(a BIT(1)) VALUES (-1)` is 1406
+        // "Data too long for column 'a' at row 1", storing `1`.
         tidb_datatype::ScalarConversionEvent::Truncated
-            if matches!(field_type.eval_type(), tidb_datatype::EvalType::String) =>
+            if matches!(field_type.eval_type(), tidb_datatype::EvalType::String)
+                || field_type.code() == tidb_datatype::FieldTypeCode::Bit =>
         {
             DriverError::DataTooLong {
                 column: column.to_owned(),
