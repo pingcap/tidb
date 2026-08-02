@@ -27,6 +27,26 @@ Rust tree: `rust/` in the same repo.
 
 ---
 
+## Status
+
+Items **1.1** and **3.1** below were FIXED TOGETHER, for the reason stated in
+3.1: either one alone makes the observable behavior worse. `DAGRequest.flags`
+now comes from `StmtContext::push_down_flags()` (the statement's own class and
+levels, feeding the `statement_pushdown` port), and the collector the response
+channel fills is the statement's own sink, drained through
+`StmtContext::take_warnings` into the session buffer `SHOW WARNINGS` reads and
+the count `wire_warning_count` publishes.
+
+One half remains DEFERRED: the read-only tier (`real_tikv_read.rs`) sends the
+computed SELECT flags, but no driver of that tier reads its warning sink yet —
+that tier has no `SHOW WARNINGS` surface at all. The cluster-storage path
+(`cop_scan.rs`), which is the one that reaches a session, is complete.
+
+The `ROUND(s) = 12` case over `s = '12abc'` remains a LIVE check: only a real
+region can confirm it now warns rather than failing.
+
+---
+
 ## Rank 1 — TiKV computes a different result
 
 ### 1.1 `DAGRequest.flags` is hardcoded to `0` on both live paths

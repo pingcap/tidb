@@ -1213,6 +1213,20 @@ where
         self.warnings = warnings;
     }
 
+    /// This session's coprocessor warning sink, for a driver that reads the
+    /// warnings out rather than installing its own buffer.
+    ///
+    /// DEFERRED WIRING: no driver of THIS tier reads it yet -- the read-only
+    /// tier has no `SHOW WARNINGS` surface at all today, so there is no
+    /// session buffer to install. The cluster-storage path
+    /// (`crate::cop_scan`) is the one that reaches a session, and it takes
+    /// the statement's own sink through
+    /// `tidb_executor::PushdownStatementContext`.
+    #[must_use]
+    pub fn warnings(&self) -> WarningCollector {
+        self.warnings.clone()
+    }
+
     /// Updates this session's `time_zone`, consulted fresh by every DAG
     /// request from this point on — the same fresh-per-query read Go's
     /// `ConstructDAGReq` performs against `SessionVars.Location()`.
