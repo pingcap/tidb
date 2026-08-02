@@ -194,7 +194,10 @@ impl OpenTransaction {
 
 /// Budget for the RPCs that end a transaction, matching client-go's
 /// `cleanupMaxBackoff = 20000` — see [`MultiStatementTransaction::transaction_end_call`].
-const TRANSACTION_END_TIMEOUT: Duration = Duration::from_secs(20);
+///
+/// Every path that ends a transaction shares it, including the served
+/// `--cluster-session` one in [`crate::cluster_table_storage`].
+pub const TRANSACTION_END_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// One open explicit transaction, owned by exactly one connection.
 pub struct MultiStatementTransaction {

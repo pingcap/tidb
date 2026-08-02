@@ -61,6 +61,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::multi_statement_transaction::TRANSACTION_END_TIMEOUT;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
 };
@@ -201,8 +202,7 @@ impl TransactionThread {
                             return;
                         }
                     };
-                    let call = UnaryCallContext::with_timeout(timeout);
-                    serve_transaction(transaction, &incoming, &call);
+                    serve_transaction(transaction, &incoming, timeout);
                 }),
             )
             .map_err(OptimisticCoordinatorError::SnapshotGet)?;
@@ -295,9 +295,16 @@ fn ask<T>(
 fn serve_transaction(
     mut transaction: ProductionOptimisticTransaction,
     incoming: &Receiver<TransactionRequest>,
-    call: &UnaryCallContext,
+    timeout: Duration,
 ) {
     while let Ok(request) = incoming.recv() {
+        // Minted per request, never once for the thread. `UnaryCallContext`
+        // carries an ABSOLUTE deadline, so a single context made when the
+        // transaction opened would charge every later statement — and the
+        // commit — for the wall-clock time the client spent holding the
+        // transaction, which is not work anything did.
+        let call = UnaryCallContext::with_timeout(timeout);
+        let call = &call;
         match request {
             TransactionRequest::Get { key, reply } => {
                 let answer = transaction
@@ -321,9 +328,14 @@ fn serve_transaction(
                 // The coordinator re-enters the write phase from the read
                 // phase, so this prewrite carries the transaction's original
                 // start timestamp -- the whole point of holding one open.
+                // Ending the transaction is the store's work, not the last
+                // statement's: client-go builds its commit and cleanup
+                // backoffers on `c.store.Ctx()` with `cleanupMaxBackoff`,
+                // deliberately decoupled from the statement's context.
+                let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
                 let _ = reply.send(
                     transaction
-                        .commit(mutations, call)
+                        .commit(mutations, &end_call)
                         .map_err(|error| error.to_string()),
                 );
                 return;
@@ -699,7 +711,7 @@ pub fn commit_staged_buffer(
         None => opener.begin(mutations.len(), planned_bytes),
     }
     .map_err(coordinator_sql_error)?;
-    let call = UnaryCallContext::with_timeout(timeout);
+    let call = UnaryCallContext::with_timeout(timeout.max(TRANSACTION_END_TIMEOUT));
     let outcome = transaction
         .commit(mutations, &call)
         .map_err(coordinator_sql_error)?;
