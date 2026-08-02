@@ -792,7 +792,41 @@ fn points_for_condition(condition: &Expr, column: &RangeColumn) -> Option<Column
     if column_points.points == full_range() || column_points.points == not_null_full_range() {
         return None;
     }
+    // Go `ExtractEqAndInCondition`'s value-info drop. `allEqOrIn` accepts a
+    // bare `IS NULL`, but the very next line asks `extractValueInfo` for the
+    // condition's constant and clears the access slot when that constant is
+    // NULL -- so `b IS NULL` does NOT advance the walk to the next index
+    // column, and `a = 1 AND b IS NULL AND c > 1` reads `[1 NULL,1 NULL]`
+    // rather than `(1 NULL 1,1 NULL +inf]`.
+    //
+    // `extractValueInfo` only ever looks at the TOP-LEVEL function, which is
+    // why the same `IS NULL` inside a disjunction keeps its equality
+    // standing: `(b IS NULL OR b = 2) AND c > 1` does reach `c`. Applying the
+    // rule here, on the conjunct the CNF walk sees, and not inside
+    // [`points_on_column`], is what keeps those two cases apart.
+    if is_bare_null_test(condition) {
+        column_points.eq_or_in = false;
+    }
     Some(column_points)
+}
+
+/// Whether this conjunct is, at its top level, a test for NULL -- `IS NULL`
+/// or `<=> NULL`. Go reaches the same two through `extractValueInfo`'s
+/// `ast.IsNull` arm and `getPotentialEqOrInColOffset`'s explicit
+/// `NullEQ && val.IsNull()` rejection.
+fn is_bare_null_test(condition: &Expr) -> bool {
+    match condition {
+        Expr::Paren(inner) => is_bare_null_test(inner),
+        Expr::Is {
+            target: IsTarget::Null,
+            not: false,
+            ..
+        } => true,
+        Expr::Binary(BinaryOp::NullEq, lhs, rhs) => {
+            constant_value(lhs) == Some(Datum::Null) || constant_value(rhs) == Some(Datum::Null)
+        }
+        _ => false,
+    }
 }
 
 /// The raw endpoints one condition puts on one column, before the
@@ -821,13 +855,22 @@ fn points_on_column(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoin
             } else {
                 union_points(&lhs.points, &rhs.points)
             };
-            // Go's `equalPredicateCount` only counts a column an `=`/`IN`
-            // pinned to a SINGLE value; a union of two equalities does not
-            // qualify, an intersection still does if both sides did.
-            let eq_or_in = match op {
-                BinaryOp::LogicAnd => lhs.eq_or_in || rhs.eq_or_in,
-                _ => false,
-            };
+            // Go `allEqOrIn`, exactly: an `OR` counts as this column's
+            // equality slot when EVERY disjunct does, and an `AND` never does.
+            //
+            // This is what lets the walk keep going. `b = 1 OR b = 2` pins b
+            // to a finite set of single points, so Go moves on to `c` and
+            // reads `(1 1 1,1 1 +inf], (1 2 1,1 2 +inf]`; treating the `OR` as
+            // a spanning interval instead stopped the walk at b and read
+            // `[1 1,1 1], [1 2,1 2]` -- a SUPERSET, filtered correctly by the
+            // residual predicate but reading every `c` for each `b`.
+            //
+            // `AND` returning false is Go's rule and not an oversight: the
+            // only `AND` this arm ever sees is one nested inside an `OR`
+            // branch (a top-level conjunction is flattened before it gets
+            // here), and Go's `getPotentialEqOrInColOffset` gives up on the
+            // whole disjunction the moment one branch is a conjunction.
+            let eq_or_in = matches!(op, BinaryOp::LogicOr) && lhs.eq_or_in && rhs.eq_or_in;
             Some(ColumnPoints { points, eq_or_in })
         }
         Expr::Binary(op, lhs, rhs) => {
@@ -945,9 +988,13 @@ fn points_on_column(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoin
                     Point::end(Datum::Null, false),
                 ]
             };
+            // `ast.IsNull` is in Go's `allEqOrIn` and in
+            // `getPotentialEqOrInColOffset`'s switch: `b IS NULL` pins b to
+            // the single NULL point, so the walk continues to the next index
+            // column. `IS NOT NULL` bounds nothing and does not.
             Some(ColumnPoints {
                 points,
-                eq_or_in: false,
+                eq_or_in: !*not,
             })
         }
         _ => None,
@@ -1433,6 +1480,72 @@ mod tests {
         assert_eq!(derive(&["a"], "a < -1"), "[-inf,-1)");
         assert_eq!(derive(&["a"], "a > -100"), "(-100,+inf]");
         assert_eq!(derive(&["a"], "a < -1 and a < 1"), "[-inf,-1)");
+    }
+
+    /// Go `points.go` `buildFromScalarFunc`'s `ast.LogicOr` arm together with
+    /// `detacher.go` `allEqOrIn`: an `OR` over ONE index column is that
+    /// column's equality slot, so the walk keeps going to the column after it.
+    ///
+    /// Every expectation here is the `range:` cell
+    /// `tests/integrationtest/r/util/ranger.result` records for the same
+    /// statement over `t(a int, b int, c int, key(a, b, c))`.
+    #[test]
+    fn a_disjunction_on_one_index_column_still_pins_it() {
+        assert_eq!(
+            derive(&["a", "b", "c"], "a = 1 and (b = 1 or b = 2) and c > 1"),
+            "(1 1 1,1 1 +inf], (1 2 1,1 2 +inf]"
+        );
+        assert_eq!(
+            derive(
+                &["a", "b", "c"],
+                "a = 1 and (b = 1 or b in (2, 3)) and c > 1"
+            ),
+            "(1 1 1,1 1 +inf], (1 2 1,1 2 +inf], (1 3 1,1 3 +inf]"
+        );
+        assert_eq!(
+            derive(&["a", "b", "c"], "a = 1 and (b is null or b = 2) and c > 1"),
+            "(1 NULL 1,1 NULL +inf], (1 2 1,1 2 +inf]"
+        );
+        // A second condition on the same column intersects with the union, so
+        // a disjunction that cannot hold is an EMPTY range list and not the
+        // surviving branch alone.
+        assert_eq!(
+            derive(
+                &["a", "b", "c"],
+                "a = 1 and (b = 1 or b = 2) and b = 3 and c > 1"
+            ),
+            ""
+        );
+    }
+
+    /// The CONTROL for the test above, and the reason `allEqOrIn` alone is not
+    /// the rule: Go's `ExtractEqAndInCondition` asks `extractValueInfo` for
+    /// the condition's constant right after `allEqOrIn` accepts it, and clears
+    /// the access slot when that constant is NULL.
+    ///
+    /// So a BARE `IS NULL` does NOT advance the walk -- `c > 1` never reaches
+    /// the range -- while the very same `IS NULL` inside a disjunction does.
+    /// Reporting `IS NULL` as an equality everywhere passes the test above and
+    /// breaks these two, which is exactly how the divergence was found.
+    #[test]
+    fn a_bare_is_null_does_not_advance_the_walk() {
+        assert_eq!(
+            derive(&["a", "b", "c"], "a = 1 and b is null and c > 1"),
+            "[1 NULL,1 NULL]"
+        );
+        assert_eq!(
+            derive(
+                &["a", "b", "c"],
+                "a = 1 and b is null and b is null and c > 1"
+            ),
+            "[1 NULL,1 NULL]"
+        );
+        // A bare equality still advances it, so the rule above is about the
+        // NULL constant and not about losing the third column generally.
+        assert_eq!(
+            derive(&["a", "b", "c"], "a = 1 and b = 2 and c > 1"),
+            "(1 2 1,1 2 +inf]"
+        );
     }
 
     fn ft(code: tidb_datatype::FieldTypeCode) -> FieldType {
