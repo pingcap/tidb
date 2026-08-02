@@ -43,6 +43,26 @@ pub struct Decimal {
     /// not print. Normal literals and exact arithmetic keep this equal to
     /// `scale`.
     storage_scale: u32,
+    /// The DECLARED `DECIMAL(M, D)` shape this value was converted into for a
+    /// column, or `None` when no column is involved (a literal, an expression
+    /// result, an intermediate).
+    ///
+    /// This is Go's `Datum.length`/`Datum.decimal` pair, which lives beside
+    /// the value on the datum rather than inside `MyDecimal`: Go's
+    /// `convertToMysqlDecimal` stamps it from the target `FieldType`
+    /// (`pkg/types/datum.go`), the row-v2 encoder passes it straight into
+    /// `codec.EncodeDecimal` (`pkg/util/rowcodec/encoder.go`), and
+    /// `MyDecimal.PrecisionAndFrac` keeps reporting the value's own natural
+    /// shape regardless. Our `Datum::Decimal` is a newtype over this value, so
+    /// the pair rides here; every value-producing operation (parse, arithmetic,
+    /// rounding) goes through [`Decimal::new_with_storage`] and therefore
+    /// resets it to `None`, exactly as a fresh Go `Datum` starts at length 0.
+    ///
+    /// Storage bytes must use this shape, not the natural one: `11.99` written
+    /// to a `DECIMAL(10, 4)` column is 7 payload bytes under `(10, 4)` and 3
+    /// under its natural `(4, 2)`, and TiDB/TiCDC row checksums are computed
+    /// over those bytes.
+    declared_shape: Option<(i64, i64)>,
 }
 
 /// Source `MyDecimal.ToInt`/`ToUint` non-fatal disposition.
@@ -99,6 +119,7 @@ impl Decimal {
             digits,
             scale,
             storage_scale,
+            declared_shape: None,
         }
     }
 
@@ -358,7 +379,40 @@ impl Decimal {
         self.storage_scale
     }
 
+    /// Stamps the declared `DECIMAL(M, D)` column shape onto this value.
+    ///
+    /// Source: Go `Datum.convertToMysqlDecimal`'s
+    /// `ret.SetLength(target.GetFlen()); ret.SetFrac(target.GetDecimal())`.
+    #[must_use]
+    pub fn with_declared_shape(mut self, flen: i64, decimal: i64) -> Self {
+        self.declared_shape = Some((flen, decimal));
+        self
+    }
+
+    /// The declared column shape, or `None` for a value no column produced.
+    pub const fn declared_shape(&self) -> Option<(i64, i64)> {
+        self.declared_shape
+    }
+
+    /// The `(precision, frac)` pair storage codecs must encode under.
+    ///
+    /// `(0, 0)` means "no declared shape", which is precisely what Go's
+    /// `EncodeDecimal` reads as `precision == 0` and answers with
+    /// `PrecisionAndFrac`; an unstamped Go `Datum` reports `Length() == 0` the
+    /// same way. Callers pass this pair through unchanged so the fallback stays
+    /// in the one place Go put it.
+    pub const fn storage_shape(&self) -> (i64, i64) {
+        match self.declared_shape {
+            Some(shape) => shape,
+            None => (0, 0),
+        }
+    }
+
     /// Source `MyDecimal.PrecisionAndFrac`.
+    ///
+    /// This is the value's OWN shape and never the column's; a payload written
+    /// at `DECIMAL(10, 4)` still reports `(4, 2)` for `11.99`, matching Go.
+    /// Storage codecs want [`Decimal::storage_shape`] instead.
     pub fn precision_and_frac(&self) -> (i32, i32) {
         let split = self.digits.len() - self.storage_scale as usize;
         let integer_digits = self.digits[..split].trim_start_matches('0').len() as i32;

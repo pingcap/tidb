@@ -360,6 +360,17 @@ impl Datum {
             value = Decimal::from_int(0);
             event = Some(overflow_event(original.to_string(), target.code()));
         }
+        // Go `convertToMysqlDecimal` opens with
+        // `ret.SetLength(target.GetFlen()); ret.SetFrac(target.GetDecimal())`,
+        // and the row-v2 encoder hands that pair to `codec.EncodeDecimal`. The
+        // declared shape decides the stored byte width, so it must survive the
+        // conversion even though the value itself never learns it. Stamping is
+        // skipped when the target leaves either half unspecified, because a
+        // `-1` written into Go's `uint32`/`uint16` fields is garbage no real
+        // column produces: every DECIMAL column carries a resolved `(M, D)`.
+        if target.flen() != UNSPECIFIED_LENGTH && target.decimal() != UNSPECIFIED_LENGTH {
+            value = value.with_declared_shape(target.flen(), target.decimal());
+        }
         Ok(Converted {
             value: Self::new_decimal(value),
             event,

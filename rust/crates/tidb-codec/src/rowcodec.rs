@@ -362,7 +362,11 @@ fn encode_value_datum(
         }
         Datum::Real(value) | Datum::Float32(value) => encode_float(&mut output, *value),
         Datum::Decimal(value) => {
-            let (precision, scale) = value.precision_and_frac();
+            // Go: `codec.EncodeDecimal(buffer, d.GetMysqlDecimal(), d.Length(),
+            // d.Frac())` — the DECLARED column shape, not the value's natural
+            // one. `(0, 0)` (no column involved) is Go's unset `Datum.length`,
+            // which `EncodeDecimal` itself resolves to `PrecisionAndFrac`.
+            let (precision, scale) = value.storage_shape();
             encode_decimal_fixed(&mut output, value, precision as usize, scale as usize)?;
         }
         Datum::Json(value) => output.extend_from_slice(&value.encoded()),
