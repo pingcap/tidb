@@ -35,7 +35,7 @@
 //! - The zero-argument `UNIX_TIMESTAMP()` needs the statement clock and
 //!   declines when [`Columns::now`] is absent.
 
-use chrono::{Datelike, LocalResult, NaiveDateTime, TimeZone as _, Timelike, Utc};
+use chrono::{Datelike, NaiveDateTime, TimeZone as _, Timelike, Utc};
 
 use super::calendar::date_format;
 use super::convert_tz::parse_datetime;
@@ -181,17 +181,93 @@ pub(super) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
         SessionTimeZone::Fixed { offset_secs, .. } => {
             Some(naive.and_utc() - chrono::Duration::seconds(i64::from(*offset_secs)))
         }
-        SessionTimeZone::Named(tz) => match tz.from_local_datetime(&naive) {
-            LocalResult::Single(t) => Some(t.with_timezone(&Utc)),
-            LocalResult::Ambiguous(earliest, _) => Some(earliest.with_timezone(&Utc)),
-            // A nonexistent local time is a GoTime error: result 0.
-            LocalResult::None => None,
-        },
+        SessionTimeZone::Named(tz) => local_to_instant(tz, &naive),
     };
     let Some(instant) = instant else {
         return Ok(unix_result(0, fsp));
     };
     Ok(unix_result(instant.timestamp_micros(), fsp))
+}
+
+/// Go `time.Date` for a NAMED zone: the instant a wall clock names.
+///
+/// chrono answers this as a three-way `LocalResult`, and mapping those three
+/// onto Go's answer case by case gets the AMBIGUOUS case wrong. On the autumn
+/// transition 02:30 occurs twice, and Go takes the SECOND occurrence --
+/// captured from a real session, `UNIX_TIMESTAMP('2025-10-26 02:30:00')` in
+/// `Europe/Paris` is 1761442200, an hour after chrono's `earliest`.
+///
+/// Go never chooses between occurrences at all, which is why a case analysis
+/// mis-models it: `time.Date` reads the offset in force at the wall clock
+/// READ AS UTC and subtracts it, re-reading the offset once if the result
+/// crossed a transition. The second occurrence is simply what that arithmetic
+/// produces. Doing the same here leaves one rule and no cases -- try that
+/// offset, then the offset at the instant it names, and take the first that
+/// renders back to the wall clock we started from.
+///
+/// A wall clock that renders back from NEITHER exists in no offset at all: it
+/// is inside a spring-forward gap, which is [`dst_gap_bound`]'s subject.
+fn local_to_instant(tz: &chrono_tz::Tz, naive: &NaiveDateTime) -> Option<chrono::DateTime<Utc>> {
+    let first = *naive - chrono::Duration::seconds(i64::from(offset_at(tz, naive)));
+    let second = *naive - chrono::Duration::seconds(i64::from(offset_at(tz, &first)));
+    for candidate in [first, second] {
+        if candidate.and_utc().with_timezone(tz).naive_local() == *naive {
+            return Some(candidate.and_utc());
+        }
+    }
+    dst_gap_bound(tz, naive)
+}
+
+/// The zone's offset east of UTC at a UTC instant (Go's `Location.lookup`).
+fn offset_at(tz: &chrono_tz::Tz, instant: &NaiveDateTime) -> i32 {
+    use chrono::Offset as _;
+    tz.offset_from_utc_datetime(instant).fix().local_minus_utc()
+}
+
+/// Go `types.CoreTime.AdjustedGoTime` (`pkg/types/core_time.go`), reached
+/// from `adjustTimestampErrForDST` whenever a TIMESTAMP's wall clock falls in
+/// a daylight-saving gap.
+///
+/// Go does not reject such a value. `time.Date` normalizes it into the new
+/// offset, `ZoneBounds` then names the transition either side of that
+/// instant, and the CLOSER bound becomes the answer -- unless both are more
+/// than four hours away, which is Go's own guard against a zone whose
+/// transition this heuristic would not really be describing.
+///
+/// `2025-03-30 02:30:00` in `Europe/Paris` is the recorded case: the clock
+/// jumps 02:00 -> 03:00, so the value lands on the transition itself and
+/// `UNIX_TIMESTAMP` answers 1743296400 rather than 0.
+///
+/// The transition is found by bisecting the UTC offset over the day either
+/// side of the value, because chrono-tz publishes offsets rather than the
+/// transition table itself. Within a gap the PRECEDING bound is always the
+/// nearer one -- the following transition is a season away -- so the bisection
+/// only has to find that one.
+fn dst_gap_bound(tz: &chrono_tz::Tz, naive: &NaiveDateTime) -> Option<chrono::DateTime<Utc>> {
+    use chrono::Offset as _;
+    let offset_at =
+        |instant: &NaiveDateTime| tz.offset_from_utc_datetime(instant).fix().local_minus_utc();
+    let mut before = *naive - chrono::Duration::hours(24);
+    let mut after = *naive + chrono::Duration::hours(24);
+    let (offset_before, offset_after) = (offset_at(&before), offset_at(&after));
+    if offset_before == offset_after {
+        return None;
+    }
+    while after - before > chrono::Duration::seconds(1) {
+        let middle = before + (after - before) / 2;
+        if offset_at(&middle) == offset_before {
+            before = middle;
+        } else {
+            after = middle;
+        }
+    }
+    // Go's own normalization of the nonexistent wall clock: the instant it
+    // names using the offset still in force before the transition.
+    let normalized = *naive - chrono::Duration::seconds(i64::from(offset_before));
+    if (after - normalized).abs() > chrono::Duration::hours(4) {
+        return None;
+    }
+    Some(after.and_utc())
 }
 
 /// Builds `UNIX_TIMESTAMP`'s result from epoch microseconds: TRUNCATED at
@@ -310,6 +386,47 @@ mod tests {
         assert_eq!(call(unix_timestamp, &[Datum::Null]), Datum::Null);
         // The zero-argument form needs the statement clock.
         assert!(unix_timestamp(&[], &NoColumns).is_err());
+    }
+
+    /// A session in a NAMED zone. `NoColumns` reports a fixed offset, where a
+    /// daylight-saving transition cannot occur at all, so the transition
+    /// behaviour is unreachable without one of these.
+    struct ParisSession;
+
+    impl Columns for ParisSession {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn time_zone(&self) -> SessionTimeZone {
+            SessionTimeZone::Named(chrono_tz::Europe::Paris)
+        }
+    }
+
+    /// Captured from a real TiDB session (`gorun`, `set @@time_zone =
+    /// 'Europe/Paris'`). Paris skips 02:00 -> 03:00 on 2025-03-30, so every
+    /// wall clock in the gap names no instant at all; TiDB answers the
+    /// transition rather than failing, which is `types.CoreTime.AdjustedGoTime`.
+    ///
+    /// The autumn case is the CONTROL: 02:30 occurs TWICE that day, which is
+    /// the ambiguous arm and not the gap arm, and it must keep answering the
+    /// earlier of the two instants however the gap arm changes.
+    #[test]
+    fn unix_timestamp_in_a_daylight_saving_gap_answers_the_transition() {
+        for (arg, want) in [
+            ("2025-03-30 01:59:59", 1_743_296_399),
+            ("2025-03-30 02:00:00", 1_743_296_400),
+            ("2025-03-30 02:30:00", 1_743_296_400),
+            ("2025-03-30 02:59:59", 1_743_296_400),
+            ("2025-03-30 03:00:00", 1_743_296_400),
+            ("2025-10-26 02:30:00", 1_761_442_200),
+        ] {
+            assert_eq!(
+                unix_timestamp(&[s(arg)], &ParisSession).unwrap(),
+                Datum::Int(want),
+                "UNIX_TIMESTAMP({arg}) in Europe/Paris"
+            );
+        }
     }
 
     #[test]
