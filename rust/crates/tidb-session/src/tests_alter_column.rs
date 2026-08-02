@@ -276,18 +276,20 @@ fn index_names(session: &mut Session, table: &str) -> Vec<String> {
 fn measured_divergences_from_go_test_alter_column() {
     let mut session = Session::new();
 
-    // 1. NONCLUSTERED is accepted and discarded: every primary key this tier
-    //    builds on an integer column is the row handle, so the captured
-    //    `/*T![clustered_index] NONCLUSTERED */` prints as CLUSTERED. A real
-    //    non-clustered primary key is a separate index over a row handle this
-    //    tier does not have, so it is a tier gap, not an oversight.
+    // 1. CLOSED: NONCLUSTERED is honoured. This case pinned the old
+    //    accept-and-discard behaviour with the captured TiDB answer stated,
+    //    and the CREATE TABLE handle-kind fix closed the gap, flipping the
+    //    pin exactly as intended. It now asserts the capture itself: the
+    //    declared NONCLUSTERED primary key survives to SHOW CREATE TABLE as
+    //    `/*T![clustered_index] NONCLUSTERED */`, matching Go's
+    //    ShouldBuildClusteredIndex honouring an explicit clause outright.
     session
         .run("CREATE TABLE nc (a INT PRIMARY KEY NONCLUSTERED, b INT)")
         .unwrap();
     let create = show_create(&mut session, "nc");
     assert!(
-        create.contains("CLUSTERED */") && !create.contains("NONCLUSTERED"),
-        "captured TiDB prints NONCLUSTERED here: {create}"
+        create.contains("/*T![clustered_index] NONCLUSTERED */"),
+        "the captured TiDB answer is NONCLUSTERED: {create}"
     );
 
     // 2. Go's `ErrTooLongKey` (1071): widening a column an index covers past
