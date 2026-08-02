@@ -23,6 +23,9 @@ executed** — this machine cannot run freshly built binaries. `cargo check` and
 2. **B-2** — the top-level `Selectivity()` combination rules and
    `pseudoSelectivity` are not ported at all, so multi-condition selectivity
    has no TiDB-shaped answer. Gap, not a divergence in ported code.
+   **Closed:** the combination tail, both string-match defaults,
+   `crossValidationSelectivity` and `pseudoSelectivity` are ported and pinned
+   to captured TiDB `estRows`.
 3. **A-1** — `Chunk::append_datum` routes a `Datum::Decimal` through decimal
    text and *panics* on a value `MyDecimal` cannot hold; Go stores the
    `MyDecimal` it already has and cannot reach that failure.
@@ -203,28 +206,37 @@ Fixed by reproducing the source's unsigned wrap explicitly, with the Go line
 cited in a comment. The fix deliberately propagates what is almost certainly an
 upstream overflow bug, because matching TiDB's `estRows` is the contract.
 
-**B-2 (rank 1 gap — not a divergence in ported code).**
-The top-level `Selectivity()` combination is absent. What exists is
-`selectivity_greedy.rs` (the `GetUsableSetsByGreedy` mask traversal and
-tie-break) and the per-predicate estimators above. Missing, with Go locations:
+**B-2 (rank 1 gap — CLOSED).**
+The top-level `Selectivity()` combination is now ported. What each piece
+became:
 
-* the product-of-selectivities loop and the `selectionFactor` default for
-  expressions no statistics node covers — `selectivity.go:414`.
-  `SELECTION_FACTOR = 0.8` exists at `rust/crates/tidb-planner/src/cost_factors.rs:24`
-  but **has no caller anywhere in the workspace**.
+* the product-of-selectivities loop, the leftover-condition block, and the
+  one-row floor (`selectivity.go:217-429`) — `combine_selectivity` in
+  `rust/crates/tidb-planner/src/selectivity_greedy.rs`. The leftover block
+  charges its minimum **once for the whole remaining mask**, which is what
+  makes two non-prefix `LIKE`s estimate 1000 rather than 100.
 * `GetStrMatchDefaultSelectivity` / `GetNegateStrMatchDefaultSelectivity`
-  (`selectivity.go:421-424`) — the 0.1 default for LIKE-shaped predicates.
-* `crossValidationSelectivity` (`selectivity.go:1173`).
-* `pseudoSelectivity` (`pseudo.go:40-97`) in its entirety: the
-  `min(SelectivityFactor, 1/1000)` equality tightening, the `1/3` for
-  `</<=/>/>=`, and — most consequential — the unique-key shortcut that returns
-  `1.0 / RealtimeCount` when the covered columns form a unique index.
-  `rust/crates/tidb-planner/src/cardinality/pseudo.rs` ports only the range
-  formulas, not this.
+  (`session.go:3675-3692`) — `SelectivityDefaults::from_session`. The port had
+  been carrying 0.8/0.8 as the shipped default; the shipped default is
+  **0.1/0.9**, and only an explicitly-set 0.8 makes both sides 0.8. Real TiDB
+  prints 1000.00 for `LIKE '%a%'` and 9000.00 for `NOT LIKE '%a%'` on a
+  10000-pseudo-row table, which is the arithmetic that settled it.
+* `crossValidationSelectivity` (`selectivity.go:1173`) —
+  `cross_validation_selectivity`, keeping the `math.MaxFloat64` seed that the
+  caller relies on to fall back, and the unclamped `rowCount / totalRowCount`.
+* `pseudoSelectivity` (`pseudo.go:40-97`) in its entirety —
+  `cardinality::pseudo::pseudo_selectivity`, including the unique-key shortcut
+  that returns `1.0 / RealtimeCount` and abandons every other condition.
 
-Consequence: a multi-condition `WHERE` on a table without statistics has no
-TiDB-shaped combined selectivity. Any `estRows` agreement observed so far comes
-from single-predicate paths.
+Evidence: `rust/crates/tidb-planner/tests/selectivity_pseudo_source.rs` pins
+nineteen `EXPLAIN` `estRows` values captured from a real TiDB server on an
+unanalyzed table. A mutation that truncates the product loop to its first node
+fails every multi-condition pin and leaves the single-condition controls
+passing.
+
+`SELECTION_FACTOR` at `cost_factors.rs:24` still has no caller; the
+combination tail takes its factor from `SelectivityDefaults`, which is the
+session owner's value rather than the cost model's constant.
 
 **B-3 (rank 3 — naming, latent).**
 `pseudo_row_count_by_index_ranges`'s parameter is named `unique_columns:

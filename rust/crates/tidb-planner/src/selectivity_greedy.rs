@@ -251,12 +251,12 @@ impl SelectivityDefaults {
         } else {
             default_str_match_selectivity
         };
-        let negate_str_match_default = if default_str_match_selectivity == DEF_OPT_SELECTIVITY_FACTOR
-        {
-            DEF_OPT_SELECTIVITY_FACTOR
-        } else {
-            1.0 - str_match_default
-        };
+        let negate_str_match_default =
+            if default_str_match_selectivity == DEF_OPT_SELECTIVITY_FACTOR {
+                DEF_OPT_SELECTIVITY_FACTOR
+            } else {
+                1.0 - str_match_default
+            };
         Self {
             selectivity_factor,
             str_match_default,
