@@ -5,8 +5,21 @@ runs `prepare` to completion — `AUTO_INCREMENT` table, 1,000 rows, secondary
 index — and then runs all four `oltp_*` workloads against this node. The
 `--auto-inc=off --create-secondary=off` workarounds are retired.**
 
-The answer is now about speed, not capability. **Update 2026-08-02
-(`a30ddd25dc`, offset 33000): the `MaxUint64` point-get shortcut now fires on
+The answer is now about speed, not capability.
+
+**Update 2026-08-02 (`2784765138`, offset 34000): the ladder now measures BOTH
+engines itself, and it ran the whole way — rung 6 eight of eight, rung 5's
+checksum identical to Go, rung 7 24 accepted / 0 refused, zero `9007` in any
+log.** The `oltp_point_select` per-statement excess is **56.51 µs**
+(`disable`) and **60.86 µs** (`auto`), improved from 67.17 / 76.80 across the
+seven pushes since the last run. **`oltp_write_only`'s excess went the other
+way — 168.31 µs to 298.56 µs — and that is a finding, not this run's noise: a
+control ladder at offset 35000 on the SAME tree minus only the transaction
+budget fix measured 251.94 µs, so no change of this task's caused it.** See
+"The full ladder at `2784765138`" below.
+
+**Update 2026-08-02 (`a30ddd25dc`, offset 33000): the `MaxUint64` point-get
+shortcut now fires on
 the served `--cluster-session` path. `oltp_point_select` fell from 1.005 TSO
 per statement to 0.0034 — Go's own rate in the same run is 0.0021 — and the
 per-statement excess fell from 123.73 µs to 67.17 µs.** The same run also ran
@@ -132,11 +145,11 @@ port is still reachable).
 | 2b. TLS accept control | OK both ways: `--ssl-mode=DISABLED` and `--ssl-mode=REQUIRED` each return `SELECT 1` |
 | 3. `CREATE DATABASE sbtest` through the Rust node | OK |
 | 3b. Capability probe | `rust: 0x00158a08 CLIENT_SSL=yes`, `go: 0x0015aeaf CLIENT_SSL=yes` — unchanged from the TLS run |
-| 3c. Go control: `sysbench prepare` against the Go `tidb-server` | **FAIL again on the `v8.5.6` playground the ladder starts**: `error 8256 ... no enough space in /tmp/tidb/tmp_ddl-47000` at `CREATE INDEX`. Cleared out-of-band by a newer playground — a full Go baseline now exists, see "The Go control rung" below |
+| 3c. Go control: `sysbench prepare` against the Go `tidb-server` | **OK at `2784765138`, offsets 34000 and 35000** — and the ladder now goes further, running all eight Go workload cells itself at rung 6b so the comparison is within one run (see "The full ladder at `2784765138`"). Earlier: **FAIL on the `v8.5.6` playground the ladder used to start**: `error 8256 ... no enough space in /tmp/tidb/tmp_ddl-47000` at `CREATE INDEX`. Cleared out-of-band by a newer playground — a full Go baseline now exists, see "The Go control rung" below |
 | 4. `sysbench oltp_read_only ... prepare` | **OK on the FIRST attempt, `--auto-inc=on`** — sysbench's own default schema. Table created, 1,000 rows inserted, secondary index created, all unmodified |
-| 5. Dataset correctness, Rust vs Go on the same TiKV | **OK, and identical again at `a30ddd25dc`, offset 33000, with the point-get shortcut now firing on the served path:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, post-run re-check `1000 500500 502340` on both sides. **The shortcut altered no row set.** Earlier, at `cfd6f963a9`, offset 38000, with the pinned thread pool and the prepared-`BEGIN` fix in the seam:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, post-run re-check `1000 500500 504083` on both sides. **The transaction-seam changes altered no row set.** Earlier, at `dd97293671`, offset 42000, with the write path on `Point_Get`:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, and the post-run re-check `1000 500500 503191` on both sides. **The write-path change altered no row set** — this is the gate a write-path change has to clear, and it cleared it. Earlier, at `de899c65d1`: Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000` — the same figures as the range-fix run. Neither the range fix nor the binary-protocol fix altered a row set. The post-run re-check also agreed, `1000 500500 502334` on both sides |
-| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | **EIGHT of eight again, 2026-08-02 at `a30ddd25dc`, offset 33000**, no aborted cell, with the point-get shortcut firing. Also eight of eight at `cfd6f963a9`, offset 38000, `ignored errors: 0` in all eight logs, secondary index present, both `--db-ps-mode` settings: the `error 2014` fix is still holding after the transaction-seam changes. Also eight of eight at `dd97293671`, offset 42000, `ignored errors: 0` in all eight logs and no `FAIL` cell: the `error 2014` fix is still holding after the write-path change. Also eight of eight at `de899c65d1`, offset 45000, secondary index present, `ignored errors: 0` in every log; and six of eight at `8eacf363e5`, where the two binary-prepared cells aborted with error 2014 — see "Regression found by this run, and closed") |
-| 7. sysbench's own statements driven by hand | **24 accepted, 0 refused** — unchanged at `cfd6f963a9`, offset 38000, with prefix-index reads also landed, and at `dd97293671`, offset 42000, and at `de899c65d1` before it (was 21/3, and 16/4 before that). Includes both `ADMIN CHECK TABLE`s on the Go server, and `USE INDEX` vs `IGNORE INDEX` agreeing at `1000 500500` |
+| 5. Dataset correctness, Rust vs Go on the same TiKV | **OK, and identical again at `2784765138`, offsets 34000 AND 35000:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, post-run re-check `1000 500500 504907` on both sides at offset 34000. **The transaction-budget fix altered no row set, and neither did the seven pushes before it.** Earlier, and identical, at `a30ddd25dc`, offset 33000, with the point-get shortcut now firing on the served path:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, post-run re-check `1000 500500 502340` on both sides. **The shortcut altered no row set.** Earlier, at `cfd6f963a9`, offset 38000, with the pinned thread pool and the prepared-`BEGIN` fix in the seam:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, post-run re-check `1000 500500 504083` on both sides. **The transaction-seam changes altered no row set.** Earlier, at `dd97293671`, offset 42000, with the write path on `Point_Get`:** Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000`, and the post-run re-check `1000 500500 503191` on both sides. **The write-path change altered no row set** — this is the gate a write-path change has to clear, and it cleared it. Earlier, at `de899c65d1`: Rust `1000 500500 501715 1 1000`; Go `1000 500500 501715 1 1000` — the same figures as the range-fix run. Neither the range fix nor the binary-protocol fix altered a row set. The post-run re-check also agreed, `1000 500500 502334` on both sides |
+| 6. the four `oltp_*` workloads, both `--db-ps-mode=disable` and default | **EIGHT of eight at `2784765138`, offset 34000**, `ignored errors: 0` in every log and **zero occurrences of `9007` in any log of the run** — the write workload now drives the RetryInfo id-reuse path and the changed status word, and neither reached the client. The pre-fix control at offset 35000 was also eight of eight. Also eight of eight, 2026-08-02 at `a30ddd25dc`, offset 33000, no aborted cell, with the point-get shortcut firing. Also eight of eight at `cfd6f963a9`, offset 38000, `ignored errors: 0` in all eight logs, secondary index present, both `--db-ps-mode` settings: the `error 2014` fix is still holding after the transaction-seam changes. Also eight of eight at `dd97293671`, offset 42000, `ignored errors: 0` in all eight logs and no `FAIL` cell: the `error 2014` fix is still holding after the write-path change. Also eight of eight at `de899c65d1`, offset 45000, secondary index present, `ignored errors: 0` in every log; and six of eight at `8eacf363e5`, where the two binary-prepared cells aborted with error 2014 — see "Regression found by this run, and closed") |
+| 7. sysbench's own statements driven by hand | **24 accepted, 0 refused** — unchanged at `2784765138`, offsets 34000 and 35000, both `ADMIN CHECK TABLE` oracles accepted (`after-create-index` and `after-drop-index`), and Go agreed on the checksum both before (`1000 500500 506087 1 1000`) and after (`1000 500500 505171`) the write statements. Also unchanged at `cfd6f963a9`, offset 38000, with prefix-index reads also landed, and at `dd97293671`, offset 42000, and at `de899c65d1` before it (was 21/3, and 16/4 before that). Includes both `ADMIN CHECK TABLE`s on the Go server, and `USE INDEX` vs `IGNORE INDEX` agreeing at `1000 500500` |
 
 Rung 5 is the row that had never been produced: the ladder gates it on a
 `prepare` that returned success, and no prior run had one. `SUM(k)` differs
@@ -144,6 +157,127 @@ from the banked `506087` only because `prepare` randomises `k`; rung 7's
 deterministic 1,000-row load reproduced the banked figures exactly —
 `1000 500500 506087 1 1000` after load and `1000 500500 505171` after the
 write/txn statements, agreeing with Go both times.
+
+### The full ladder at `2784765138`: both engines, one run, one cluster
+
+**2026-08-02 on `hparser-integration` at `2784765138`, port offset 34000, ONE
+`tiup playground v9.0.0-beta.2.pre-nightly` cluster**, release build at that
+tip, Rust node in `--cluster-session`, `--threads=1 --time=10 --tables=1
+--table-size=1000`, stock `prepare` with the default `AUTO_INCREMENT` schema
+and `k_1` present. Artifacts: the `run-34000` set. **The ladder itself now
+measures the Go arm** (rung 6b) and prints the excess (rung 6c), so nothing in
+this table was assembled across runs.
+
+Read the excess column and ignore the qps columns across runs: on this machine
+the same code has measured `oltp_read_only` at 89.15 and 219.91 tps on
+consecutive runs, and Go's own numbers move as much. What is comparable is
+Go's per-statement time measured in the SAME window against the SAME TiKV.
+
+| Workload | ps mode | Rust µs/stmt | Go µs/stmt | Rust excess | Rust qps | Go qps |
+| --- | --- | --- | --- | --- | --- | --- |
+| `oltp_point_select` | disable | 190.39 | 133.88 | **56.51 µs** | 5,252.42 | 7,469.50 |
+| `oltp_point_select` | auto | 185.41 | 124.55 | **60.86 µs** | 5,393.46 | 8,029.18 |
+| `oltp_read_only` | disable | 331.55 | 273.12 | 58.44 µs | 3,016.09 | 3,661.45 |
+| `oltp_read_only` | auto | 326.77 | 201.79 | 124.98 µs | 3,060.25 | 4,955.56 |
+| `oltp_write_only` | disable | 484.73 | 186.18 | **298.56 µs** | 2,062.99 | 5,371.21 |
+| `oltp_write_only` | auto | 483.19 | 170.99 | **312.20 µs** | 2,069.59 | 5,848.27 |
+| `oltp_read_write` | disable | 438.89 | 254.93 | 183.96 µs | 2,278.50 | 3,922.67 |
+| `oltp_read_write` | auto | 439.56 | 260.79 | 178.77 µs | 2,275.00 | 3,834.47 |
+
+**`oltp_point_select` improved: 67.17 -> 56.51 µs (`disable`) and 76.80 ->
+60.86 µs (`auto`)**, about 10 and 16 µs off the read path across the seven
+pushes since offset 33000.
+
+**`oltp_write_only` got worse, by a lot: 168.31 -> 298.56 µs (`disable`) and,
+against the last comparable `auto` figure, 133.75 -> 312.20 µs.** Go's own
+write numbers in the two runs agree (184.35 and 186.18 µs), so the movement is
+on the Rust side. This is reported as a regression, not explained: nothing in
+this run's evidence says which of the seven pushes owns it.
+
+What this run DOES settle is that the transaction-budget fix is not the cause.
+
+#### The control: the same ladder, the same tree, minus only the fix
+
+**2026-08-02, port offset 35000, a SECOND `tiup playground
+v9.0.0-beta.2.pre-nightly` cluster**, the same release build with only
+`crates/tidb-exec` reverted to `d0f4636623` — that is, the binary the fix was
+made against. Artifacts: the `run-35000-prefix` set.
+
+| Workload | ps mode | Rust excess, pre-fix (35000) | Rust excess, post-fix (34000) |
+| --- | --- | --- | --- |
+| `oltp_point_select` | disable | 60.38 µs | **56.51 µs** |
+| `oltp_point_select` | auto | 66.23 µs | **60.86 µs** |
+| `oltp_read_only` | disable | 96.28 µs | 58.44 µs |
+| `oltp_read_only` | auto | 112.71 µs | 124.98 µs |
+| `oltp_write_only` | disable | **251.94 µs** | **298.56 µs** |
+| `oltp_write_only` | auto | **300.20 µs** | **312.20 µs** |
+| `oltp_read_write` | disable | 205.27 µs | 183.96 µs |
+| `oltp_read_write` | auto | 229.93 µs | 178.77 µs |
+
+The write cells are the point: **the pre-fix binary is in the same 250–300 µs
+band**, so the write regression against the offset-33000 run predates this
+task's change. The remaining cell-to-cell differences run in both directions
+and are the size this measurement's own spread has always been
+(`oltp_read_only disable` alone moved 96.28 -> 58.44 between two runs of the
+same binary family on the same afternoon). Minting a call context per request
+instead of once per transaction is a `watch` channel and two `Arc`s; it is not
+worth 100 µs, and the control says it does not cost it.
+
+The control ladder also reached rung 5 with the same `1000 500500 501715 1
+1000` on both engines and rung 7 with 24 accepted / 0 refused, so the two runs
+agree on correctness as well as on the shape of the gap.
+
+#### What the ladder does not exercise: holding a transaction open
+
+sysbench never pauses inside a transaction, so no rung of this ladder could
+have found what `rust/scripts/run-held-transaction-budget.sh` found on the same
+node in the same mode: **before `2784765138`, a client that held an explicit
+transaction open for five seconds could not commit it.**
+`TransactionThread::open` minted one `UnaryCallContext` — an ABSOLUTE deadline
+— when the transaction opened, and every statement and the commit spent it,
+so the commit reached Prewrite with nothing left and answered in 0.3 ms with
+`[kv:1105]transaction failed: Prewrite failed before publication: TiKV
+connection ... timed out after 0ms`.
+
+Measured at port offset 39500 on a `tiup playground
+v9.0.0-beta.2.pre-nightly`, one PESSIMISTIC transaction per leg:
+
+| Hold | pre-fix | post-fix |
+| --- | --- | --- |
+| 2 s | COMMITTED | COMMITTED |
+| 5 s | FAILED, `timed out after 0ms` | COMMITTED, 2.1 ms |
+| 6 s | FAILED, `timed out after 0ms` | COMMITTED, 3.0 ms |
+| 30 s | FAILED | COMMITTED, 3.6 ms |
+| 45 s | not attempted | COMMITTED, 3.4 ms |
+
+The same harness then ran the check the fix unblocks: a pessimistic
+transaction whose first statement takes a lock, waits **30 seconds — past the
+20-second lock TTL window — with the keep-alive heartbeat running**, issues a
+second statement, and commits. It survives. The second statement is admitted
+after the window, the observer sees neither write before COMMIT, and both rows
+are published; the creating Go `tidb-server` reads them back at `id6=6060`,
+`id7=7070`. Since the primary-pin change the key the heartbeat refreshes IS the
+key the commit prewrites first, which is what makes that a real test of the
+pin rather than of the heartbeat alone.
+
+**Beyond 30 seconds a second, unrelated defect takes over**, which is why the
+harness passes `--connection-timeout-ms`: that option is the socket read/write
+timeout stamped on every accepted connection AND the time the node will wait
+for a client's next command, and at its 30-second default the node closes the
+socket under a client that is merely thinking. See
+`rust/crates/tidb-server/src/sql_node.rs` `run_accept_loop` and
+`DEFAULT_CONNECTION_TIMEOUT_MS` in `node_config.rs`. MySQL separates
+`connect_timeout` from `wait_timeout`; this node does not.
+
+#### `9007` and `LAST_INSERT_ID`, watched for and absent
+
+`oltp_write_only` now drives the RetryInfo id-reuse path and the changed status
+word, which is exactly where a write-conflict leak would show. **`9007` occurs
+zero times in any of the 18 sysbench logs of the two runs**, and every log
+reports `ignored errors: 0`. No `LAST_INSERT_ID` anomaly appeared either: the
+workload's `AUTO_INCREMENT` inserts left rung 7's hand-driven checksum agreeing
+with Go exactly, `1000 500500 506087 1 1000` after the load and `1000 500500
+505171` after the write statements, on both sides.
 
 ### The shortcut on the path sysbench actually runs (task #165)
 
@@ -211,7 +345,13 @@ on both sides, and the post-run re-check agrees at `1000 500500 502340` on both
 sides. **The shortcut altered no row set.** **Rung 6 ran eight of eight**, all
 four workloads in both ps modes, no aborted cell.
 
-#### All eight Rust cells and the Go control, offset 33000
+#### Superseded: all eight Rust cells and the Go control, offset 33000
+
+Superseded by "The full ladder at `2784765138`" above, which measured the same
+eight cells with the Go arm run by the ladder itself. Kept because the
+point-select rows here are the before-figures that improvement is measured
+against, and because two of its Go windows were unusable, which the newer run's
+were not.
 
 | Workload | ps mode | Rust µs/stmt | Go µs/stmt | Rust excess | Rust TSO/stmt | Go TSO/stmt |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -836,9 +976,15 @@ our collator table diverging from TiKV's own, which a fake sharing our table
 could never catch — did not materialise on these fixtures: the rows TiKV chose
 to send are the rows Go's engine independently selects.
 
-### Throughput, `--threads=1 --time=10`, **secondary index present**
+### Superseded: throughput, `--threads=1 --time=10`, **secondary index present**
 
-**Current ladder measurement: 2026-08-01 on `hparser-integration` at
+**Superseded by "The full ladder at `2784765138`" above**, which reports the
+same four workloads with a Go control measured inside the same run. These
+absolutes are kept for provenance only; cross-run absolutes on this machine are
+not comparable, which is the whole reason the newer table reports an excess
+instead.
+
+**Earlier ladder measurement: 2026-08-01 on `hparser-integration` at
 `dd97293671`**, the tree carrying the write-path `Point_Get` plan (task #115).
 Release build, macOS arm64, `tiup playground v9.0.0-beta.2.pre-nightly` (server
 `8.0.11-TiDB-v9.0.0-beta.2.pre-2052-g23bff31318`), Rust node in
