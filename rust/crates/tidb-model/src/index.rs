@@ -447,7 +447,8 @@ mod tests {
     // for byte, not become 0.
     #[test]
     fn unknown_index_type_survives_round_trip() {
-        let go = r#"{"id":1,"idx_name":{"O":"i","L":"i"},"tbl_name":{"O":"t","L":"t"},"index_type":9}"#;
+        let go =
+            r#"{"id":1,"idx_name":{"O":"i","L":"i"},"tbl_name":{"O":"t","L":"t"},"index_type":9}"#;
         let idx: IndexInfo = serde_json::from_str(go).unwrap();
         assert_eq!(idx.tp, IndexType(9));
         // Go `IndexType.String` returns "" for an unnamed value, so
