@@ -1240,6 +1240,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     1,
                                     outcome.affected_rows,
                                     outcome.last_insert_id,
+                                    engine.wire_status(),
                                     engine.warning_count(),
                                     protocol_41,
                                 )?;
@@ -1300,6 +1301,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 1,
                                 outcome.affected_rows,
                                 outcome.last_insert_id,
+                                engine.wire_status(),
                                 engine.warning_count(),
                                 protocol_41,
                             )?;
@@ -1320,6 +1322,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     1,
                                     outcome.affected_rows,
                                     outcome.last_insert_id,
+                                    engine.wire_status(),
                                     engine.warning_count(),
                                     protocol_41,
                                 )?;
@@ -1352,6 +1355,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             1,
                             0,
                             0,
+                            engine.wire_status(),
                             engine.warning_count(),
                             protocol_41,
                         )?;

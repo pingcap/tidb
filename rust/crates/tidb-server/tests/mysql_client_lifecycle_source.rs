@@ -819,6 +819,19 @@ impl QuerySession for TransactionSession {
         ))
     }
 
+    /// One DML, answered with an OK packet the way MySQL answers a text-protocol
+    /// write. It exists so the status word that OK packet carries can be pinned
+    /// while a transaction this session really owns is open.
+    fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        if !sql.to_ascii_uppercase().starts_with("INSERT") {
+            return Ok(None);
+        }
+        Ok(Some(WriteOutcome {
+            affected_rows: 1,
+            last_insert_id: 0,
+        }))
+    }
+
     fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
         match classify_transaction_control(sql) {
             None => Ok(None),
@@ -868,6 +881,105 @@ fn read_ok_status_flags(reader: &mut PacketReader<TcpStream>) -> u16 {
     assert_eq!(ok[0], 0, "expected an OK packet, got {ok:02x?}");
     assert_eq!(&ok[1..3], &[0, 0], "affected_rows and last_insert_id are 0");
     u16::from_le_bytes([ok[3], ok[4]])
+}
+
+/// Reads one OK packet answering a write and returns its `status_flags`. The
+/// payload is `header(1) | affected_rows(lenenc) | last_insert_id(lenenc) |
+/// status_flags(2) | warnings(2)`; both counts below 251 encode as one byte.
+fn read_write_ok_status_flags(reader: &mut PacketReader<TcpStream>, affected_rows: u8) -> u16 {
+    let ok = reader.read_packet().unwrap();
+    assert_eq!(ok[0], 0, "expected an OK packet, got {ok:02x?}");
+    assert_eq!(ok[1], affected_rows, "affected_rows");
+    assert_eq!(ok[2], 0, "last_insert_id");
+    u16::from_le_bytes([ok[3], ok[4]])
+}
+
+/// The regression for the data loss: a DML inside `BEGIN` must report the OPEN
+/// transaction on its own OK packet.
+///
+/// Go reads `cc.ctx.Status()` per statement (`pkg/server/conn.go`) and passes it
+/// to `writeOkWith`, so the INSERT's OK carries 0x0003. Reporting 0x0002 there
+/// tells Connector/J with `useLocalTransactionState=true` that no transaction is
+/// open; it then skips the COMMIT and the writes are silently dropped. This
+/// pins the whole word for BEGIN -> DML -> COMMIT.
+#[test]
+fn a_write_inside_a_transaction_reports_the_open_transaction_on_its_own_ok_packet() {
+    const SERVER_STATUS_IN_TRANS: u16 = 0x0001;
+    const SERVER_STATUS_AUTOCOMMIT: u16 = 0x0002;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &TransactionFactory,
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    // The post-authentication OK is written the same way, off the same live
+    // status: a fresh session is in autocommit and in no transaction.
+    assert_eq!(read_ok_status_flags(&mut reader), SERVER_STATUS_AUTOCOMMIT);
+
+    let query = |sql: &str| {
+        let mut command = vec![COM_QUERY];
+        command.extend_from_slice(sql.as_bytes());
+        command
+    };
+
+    // A write OUTSIDE any transaction: autocommit only.
+    write_packet(&mut client, 0, &query("INSERT INTO t VALUES (1)"));
+    reader.set_sequence(1);
+    assert_eq!(
+        read_write_ok_status_flags(&mut reader, 1),
+        SERVER_STATUS_AUTOCOMMIT
+    );
+
+    write_packet(&mut client, 0, &query("BEGIN"));
+    reader.set_sequence(1);
+    assert_eq!(
+        read_ok_status_flags(&mut reader),
+        SERVER_STATUS_AUTOCOMMIT | SERVER_STATUS_IN_TRANS
+    );
+
+    // The statement the bug was about.
+    write_packet(&mut client, 0, &query("INSERT INTO t VALUES (2)"));
+    reader.set_sequence(1);
+    assert_eq!(
+        read_write_ok_status_flags(&mut reader, 1),
+        SERVER_STATUS_AUTOCOMMIT | SERVER_STATUS_IN_TRANS,
+        "the DML's OK packet must report the transaction Connector/J has to COMMIT"
+    );
+
+    // COM_PING answers off the same live status rather than a constant, so the
+    // client cannot be told mid-transaction that no transaction is open.
+    write_packet(&mut client, 0, &[COM_PING]);
+    reader.set_sequence(1);
+    assert_eq!(
+        read_ok_status_flags(&mut reader),
+        SERVER_STATUS_AUTOCOMMIT | SERVER_STATUS_IN_TRANS
+    );
+
+    write_packet(&mut client, 0, &query("COMMIT"));
+    reader.set_sequence(1);
+    assert_eq!(read_ok_status_flags(&mut reader), SERVER_STATUS_AUTOCOMMIT);
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    let report = worker.join().unwrap();
+    assert_eq!(report.exit, ConnectionExit::Quit);
+    assert_eq!(tracker.failed(), 0);
 }
 
 #[test]

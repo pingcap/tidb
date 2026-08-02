@@ -531,6 +531,7 @@ impl ResultSetSource for MaterializedResultSetSource {
 mod tests {
     use super::*;
     use crate::configured_user_store::ConfiguredUserStore;
+    use crate::wire_status::{SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_IN_TRANS};
     use crate::sql_node::ConnectionCancellation;
     use sha1::{Digest, Sha1};
     use std::net::SocketAddr;
@@ -762,5 +763,107 @@ mod tests {
         first.execute("CREATE TABLE t (a BIGINT)").expect("create");
         let mut second = open_session();
         assert!(second.execute("SELECT a FROM t").is_err());
+    }
+
+    /// Go reads `cc.ctx.Status()` afresh for every OK packet, so a DML inside
+    /// an explicit transaction reports `SERVER_STATUS_IN_TRANS |
+    /// SERVER_STATUS_AUTOCOMMIT` (0x0003), not the bare autocommit word.
+    ///
+    /// Connector/J with `useLocalTransactionState=true` acts on exactly this
+    /// bit: told 0x0002 by the INSERT's OK packet, it concludes no transaction
+    /// is open and never sends the COMMIT, and the writes are lost. The word is
+    /// pinned per statement here because the wire is where the client reads it.
+    #[test]
+    fn begin_dml_commit_pins_the_status_word_of_every_ok_packet() {
+        let mut session = open_session();
+        session
+            .execute_write("CREATE TABLE t (a BIGINT)")
+            .expect("create table");
+        assert_eq!(
+            session.wire_status().bits(),
+            SERVER_STATUS_AUTOCOMMIT,
+            "outside a transaction: autocommit only"
+        );
+
+        assert_eq!(
+            session.control_transaction("BEGIN").expect("begin"),
+            Some(true)
+        );
+        assert_eq!(
+            session.wire_status().bits(),
+            SERVER_STATUS_AUTOCOMMIT | SERVER_STATUS_IN_TRANS,
+            "BEGIN opens the transaction (Go SetInTxn(true), isolation/base.go:114)"
+        );
+
+        session
+            .execute_write("INSERT INTO t VALUES (7)")
+            .expect("insert inside the transaction");
+        assert_eq!(
+            session.wire_status().bits(),
+            SERVER_STATUS_AUTOCOMMIT | SERVER_STATUS_IN_TRANS,
+            "the DML's own OK packet still reports the open transaction"
+        );
+
+        // The result set framing a SELECT inside the transaction carries the
+        // same word on its EOF, snapshotted with the statement.
+        let result = session.execute("SELECT a FROM t").expect("select");
+        assert_eq!(
+            result.wire_status().bits(),
+            SERVER_STATUS_AUTOCOMMIT | SERVER_STATUS_IN_TRANS
+        );
+        drop(result);
+
+        assert_eq!(
+            session.control_transaction("COMMIT").expect("commit"),
+            Some(false)
+        );
+        assert_eq!(
+            session.wire_status().bits(),
+            SERVER_STATUS_AUTOCOMMIT,
+            "COMMIT clears IN_TRANS (Go executor/simple.go:792)"
+        );
+    }
+
+    /// `SET autocommit = 0` clears `SERVER_STATUS_AUTOCOMMIT` itself -- Go's
+    /// sysvar hook is `s.SetStatusFlag(mysql.ServerStatusAutocommit,
+    /// isAutocommit)` (`pkg/sessionctx/variable/sysvar.go:2123`) -- so the SET's
+    /// own OK packet carries 0x0000. The next data statement then LAZILY opens a
+    /// transaction (`pkg/sessiontxn/isolation/base.go:323`, guarded by
+    /// `!sessVars.IsAutocommit()`), so its OK packet carries 0x0001: in a
+    /// transaction, not in autocommit.
+    #[test]
+    fn set_autocommit_zero_clears_the_autocommit_bit_and_the_next_dml_opens_a_transaction() {
+        let mut session = open_session();
+        session
+            .execute_write("CREATE TABLE t (a BIGINT)")
+            .expect("create table");
+
+        session
+            .execute_write("SET autocommit = 0")
+            .expect("set autocommit");
+        assert_eq!(
+            session.wire_status().bits(),
+            0,
+            "SET autocommit=0 clears the autocommit bit and opens nothing yet"
+        );
+
+        session
+            .execute_write("INSERT INTO t VALUES (7)")
+            .expect("insert with autocommit off");
+        assert_eq!(
+            session.wire_status().bits(),
+            SERVER_STATUS_IN_TRANS,
+            "the lazy transaction is open, and autocommit is still off"
+        );
+
+        assert_eq!(
+            session.control_transaction("COMMIT").expect("commit"),
+            Some(false)
+        );
+        assert_eq!(
+            session.wire_status().bits(),
+            0,
+            "COMMIT ends the transaction; autocommit stays off until it is SET back"
+        );
     }
 }

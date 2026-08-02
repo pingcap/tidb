@@ -106,11 +106,21 @@ impl WireStatus {
     /// drift from the one the session acts on.
     #[must_use]
     pub fn of_session(session: &Session) -> Self {
+        Self::of_facts(session.is_autocommit(), session.in_transaction())
+    }
+
+    /// Assembles the word from the two session facts Go keeps in it.
+    ///
+    /// This takes the FACTS, never a bit pattern, which is what keeps the
+    /// assembly in one place: a caller that owns its transaction state some
+    /// other way than a [`Session`] still cannot express a word Go would not.
+    #[must_use]
+    pub const fn of_facts(autocommit: bool, in_transaction: bool) -> Self {
         let mut status = 0;
-        if session.is_autocommit() {
+        if autocommit {
             status |= SERVER_STATUS_AUTOCOMMIT;
         }
-        if session.in_transaction() {
+        if in_transaction {
             status |= SERVER_STATUS_IN_TRANS;
         }
         Self(status)
@@ -126,11 +136,7 @@ impl WireStatus {
     /// transaction", never a bit pattern.
     #[must_use]
     pub const fn autocommit_session(in_transaction: bool) -> Self {
-        if in_transaction {
-            Self(SERVER_STATUS_AUTOCOMMIT | SERVER_STATUS_IN_TRANS)
-        } else {
-            Self::AUTOCOMMIT
-        }
+        Self::of_facts(true, in_transaction)
     }
 
     /// Sets the per-packet bits a session does not own -- more results, cursor

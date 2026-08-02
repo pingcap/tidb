@@ -48,10 +48,10 @@ pub const AUTH_NATIVE_PASSWORD: &str = "mysql_native_password";
 
 /// TiDB's default metadata collation (`utf8mb4_bin`).
 pub const DEFAULT_COLLATION_ID: u8 = 46;
-/// `SERVER_STATUS_IN_TRANS`: an explicit transaction is open, set on the OK
-/// packet for `BEGIN`/`START TRANSACTION` and cleared on `COMMIT`/`ROLLBACK`.
-pub const SERVER_STATUS_IN_TRANS: u16 = 0x0001;
-/// The status flag set in the initial TiDB handshake.
+/// The status flag set in the initial TiDB handshake, which Go hardcodes there
+/// too (`pkg/server/conn.go:496`) because the handshake precedes any session.
+/// Every LATER packet's status is the session's own -- see
+/// [`crate::wire_status::WireStatus`], which owns the rest of the bits.
 pub const SERVER_STATUS_AUTOCOMMIT: u16 = 0x0002;
 /// The protocol version emitted by TiDB's initial handshake.
 pub const PROTOCOL_VERSION_10: u8 = 10;
