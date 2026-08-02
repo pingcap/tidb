@@ -169,6 +169,18 @@ pub struct RealOptimisticTransaction<C, L, T> {
     secondary_backoff: RegionBackoffBudget,
     cleanup_backoff: RegionBackoffBudget,
     pessimistic: Option<PessimisticPrewritePlan>,
+    /// The primary key this transaction pinned at its first locking statement,
+    /// which every pessimistic lock it holds already names as `primary_lock`
+    /// and which its TTL heartbeat refreshes.
+    ///
+    /// Go `twoPhaseCommitter.primary()` (`2pc.go:779-787`) returns the pinned
+    /// `c.primaryKey` whenever it is set and only falls back to
+    /// `mutations.GetKey(0)` when it is empty; `initKeysAndMutations`
+    /// (`2pc.go:697-698`) sets it *only if still empty*, so mutation order can
+    /// never override a pessimistically chosen primary. One transaction, one
+    /// primary, for its whole life — that invariant is the entire basis of
+    /// lock recovery.
+    pinned_primary_key: Option<Vec<u8>>,
     /// The store-wide txn safe point every read from this transaction is
     /// validated against once TiKV has answered.
     gc_state: Arc<GcStateCache>,
@@ -185,20 +197,6 @@ pub struct RealOptimisticTransaction<C, L, T> {
 /// check.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PessimisticPrewritePlan {
-    /// The primary key this transaction pinned at its first locking statement,
-    /// and that every pessimistic lock it holds already names as
-    /// `primary_lock`.
-    ///
-    /// Go `twoPhaseCommitter.primary()` (`2pc.go:779-787`) returns the pinned
-    /// `c.primaryKey` whenever it is set and only falls back to
-    /// `mutations.GetKey(0)` when it is empty; `initKeysAndMutations`
-    /// (`2pc.go:697-698`) sets it *only if still empty*, so mutation order can
-    /// never override a pessimistically chosen primary. One transaction, one
-    /// primary, for its whole life — that invariant is the entire basis of
-    /// lock recovery, and it is why this field is not an `Option`: a plan that
-    /// could carry "no primary" is exactly the default that used to silently
-    /// override the pin.
-    pub(super) primary_key: Vec<u8>,
     /// Latest statement timestamp under which locks were acquired.
     pub(super) for_update_ts: u64,
     /// Exact encoded keys this transaction holds a pessimistic lock on.
@@ -304,6 +302,7 @@ where
             secondary_backoff: RegionBackoffBudget::campaign_default(),
             cleanup_backoff: RegionBackoffBudget::campaign_default(),
             pessimistic: None,
+            pinned_primary_key: None,
             gc_state,
             protocol: CommitProtocol::two_phase_only(),
         })
@@ -329,6 +328,17 @@ where
     /// Binds the pessimistic locks a caller already acquired at `start_ts`.
     pub(super) fn set_pessimistic_prewrite(&mut self, plan: PessimisticPrewritePlan) {
         self.pessimistic = Some(plan);
+    }
+
+    /// Pins this transaction's primary key for the rest of its life.
+    ///
+    /// The parameter is a plain `Vec<u8>`, not an `Option`: "pin nothing" is
+    /// not a thing a caller can express here, because a default primary is
+    /// exactly what used to silently override the pinned one. A transaction
+    /// that never locked anything simply never calls this, and prewrite falls
+    /// back to mutation order — Go's `len(c.primaryKey) == 0` branch.
+    pub(super) fn pin_primary_key(&mut self, key: Vec<u8>) {
+        self.pinned_primary_key = Some(key);
     }
 
     pub(super) const fn runtime(&self) -> &SharedReadRuntime<C, L> {

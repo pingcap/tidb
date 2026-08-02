@@ -39,7 +39,7 @@ use super::super::state::{
 };
 use super::{
     classify_key_error, record_attempt, transaction_lock_ttl_ms, OptimisticCoordinatorError,
-    PessimisticPrewritePlan, RealOptimisticTransaction, RecoveryPhase, MAX_COMMIT_TS_DRIFT_MS,
+    RealOptimisticTransaction, RecoveryPhase, MAX_COMMIT_TS_DRIFT_MS,
     MAX_LOCK_ATTEMPTS, TSO_LOGICAL_BITS,
 };
 
@@ -502,7 +502,7 @@ where
         &self,
         mutations: Vec<OptimisticMutation>,
     ) -> Result<(Vec<OptimisticMutation>, Vec<u8>), MutationSetError> {
-        pin_primary(self.pessimistic.as_ref(), mutations)
+        pin_primary(self.pinned_primary_key.as_deref(), mutations)
     }
 
     /// Reports a prewrite whose outcome cannot be known, without cleanup.
@@ -981,14 +981,14 @@ where
 /// kvrpcpb.Op_Lock }`) and so do we — which is why nothing downstream needs a
 /// "the primary is missing" branch.
 fn pin_primary(
-    plan: Option<&PessimisticPrewritePlan>,
+    pinned: Option<&[u8]>,
     mutations: Vec<OptimisticMutation>,
 ) -> Result<(Vec<OptimisticMutation>, Vec<u8>), MutationSetError> {
-    let Some(plan) = plan else {
+    let Some(pinned) = pinned else {
         let primary_key = mutations[0].key().to_vec();
         return Ok((mutations, primary_key));
     };
-    let primary_key = plan.primary_key.clone();
+    let primary_key = pinned.to_vec();
     if mutations
         .iter()
         .any(|mutation| mutation.key() == primary_key.as_slice())
@@ -1044,15 +1044,6 @@ mod tests {
     use super::super::super::mutation::OptimisticMutationKind;
     use super::*;
 
-    fn plan(primary: &[u8]) -> PessimisticPrewritePlan {
-        PessimisticPrewritePlan {
-            primary_key: primary.to_vec(),
-            for_update_ts: 7,
-            locked_keys: [primary.to_vec()].into_iter().collect(),
-            for_update_ts_constraints: std::collections::BTreeMap::new(),
-        }
-    }
-
     fn sorted(keys: &[&[u8]]) -> Vec<OptimisticMutation> {
         validate_and_sort(
             keys.iter()
@@ -1070,7 +1061,7 @@ mod tests {
         // sorts smaller. This is the torn-transaction case: before the pin was
         // carried, prewrite named k3 while the heartbeat refreshed k5.
         let mutations = sorted(&[b"k3", b"k5"]);
-        let (result, primary) = pin_primary(Some(&plan(b"k5")), mutations).unwrap();
+        let (result, primary) = pin_primary(Some(b"k5"), mutations).unwrap();
         assert_eq!(primary, b"k5".to_vec());
         assert_eq!(result.len(), 2, "no Op_Lock is needed when k5 is written");
         assert!(result.iter().any(|m| m.key() == b"k5"));
@@ -1092,7 +1083,7 @@ mod tests {
     fn primary_locked_but_never_written_is_prewritten_as_op_lock() {
         // `SELECT ... FOR UPDATE` on k9, then `UPDATE` of k3 only.
         let mutations = sorted(&[b"k3"]);
-        let (result, primary) = pin_primary(Some(&plan(b"k9")), mutations).unwrap();
+        let (result, primary) = pin_primary(Some(b"k9"), mutations).unwrap();
         assert_eq!(primary, b"k9".to_vec());
         assert_eq!(result.len(), 2);
         let lock = result
@@ -1113,7 +1104,7 @@ mod tests {
     fn heartbeat_key_and_prewrite_primary_are_the_same_key() {
         for heartbeat_key in [b"k1".as_slice(), b"k5", b"k9"] {
             let (result, primary) =
-                pin_primary(Some(&plan(heartbeat_key)), sorted(&[b"k3", b"k5"])).unwrap();
+                pin_primary(Some(heartbeat_key), sorted(&[b"k3", b"k5"])).unwrap();
             assert_eq!(primary, heartbeat_key.to_vec());
             assert!(
                 result.iter().any(|m| m.key() == heartbeat_key),

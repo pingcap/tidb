@@ -396,6 +396,22 @@ pub enum MysqlConnectionError {
     Handshake(String),
     /// A result failed after response bytes may already have escaped.
     PartialResult(String),
+    /// The statement was published and then lost its answer, so whether it
+    /// committed is unknown and this connection must end without a verdict.
+    ///
+    /// Go `pkg/server/conn.go:1288-1291`:
+    ///
+    /// > } else if terror.ErrResultUndetermined.Equal(err) {
+    /// >     logutil.Logger(ctx).Warn("result undetermined, close this connection", zap.Error(err))
+    /// >     server_metrics.DisconnectErrorUndetermined.Inc()
+    /// >     return
+    ///
+    /// It `return`s from the command loop *without* writing an ERR packet: no
+    /// SQL error code can express "unknown", and a client that receives an
+    /// error is entitled to retry — which double-applies if the commit landed.
+    /// A closed connection is the one answer the client cannot mistake for a
+    /// verdict.
+    ResultUndetermined(String),
 }
 
 impl fmt::Display for MysqlConnectionError {
@@ -407,6 +423,12 @@ impl fmt::Display for MysqlConnectionError {
             Self::PartialResult(message) => {
                 write!(formatter, "result failed after bytes escaped: {message}")
             }
+            Self::ResultUndetermined(message) => {
+                write!(
+                    formatter,
+                    "result undetermined, close this connection: {message}"
+                )
+            }
         }
     }
 }
@@ -416,7 +438,7 @@ impl std::error::Error for MysqlConnectionError {
         match self {
             Self::Io(error) => Some(error),
             Self::Packet(error) => Some(error),
-            Self::Handshake(_) | Self::PartialResult(_) => None,
+            Self::Handshake(_) | Self::PartialResult(_) | Self::ResultUndetermined(_) => None,
         }
     }
 }
@@ -1864,6 +1886,15 @@ fn write_query_error_at(
     error: &SqlQueryError,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
+    // The undetermined verdict is refused here rather than at each call site,
+    // so no answer path can write it by omission. Go `pkg/server/conn.go:1288`
+    // reaches the same place by testing the error once, in the command loop,
+    // for every command alike.
+    if error.is_result_undetermined() {
+        return Err(MysqlConnectionError::ResultUndetermined(
+            error.message.clone(),
+        ));
+    }
     write_error(
         output,
         sequence,
@@ -2185,5 +2216,32 @@ mod prepared_execute_wire_tests {
             .remove(&2),
             Some(tidb_datatype::Datum::Null)
         );
+    }
+}
+
+#[cfg(test)]
+mod undetermined_tests {
+    use super::*;
+    use crate::sql_node::RESULT_UNDETERMINED_MESSAGE;
+
+    /// Go `pkg/server/conn.go:1288-1291` returns from the command loop for an
+    /// undetermined result, writing no ERR packet: the client must not be able
+    /// to read the failure as a verdict and retry a commit that may have
+    /// landed.
+    #[test]
+    fn an_undetermined_result_is_never_answered_with_an_err_packet() {
+        let undetermined = SqlQueryError::result_undetermined();
+        assert!(undetermined.is_result_undetermined());
+        assert_eq!(undetermined.message, RESULT_UNDETERMINED_MESSAGE);
+
+        // Every ordinary failure still gets its ERR packet; only this one does
+        // not, and the refusal lives in the single shared writer so no answer
+        // path can forget it.
+        let ordinary = SqlQueryError::unknown("configured write did not commit: RolledBack");
+        assert!(!ordinary.is_result_undetermined());
+        let same_code_different_text = SqlQueryError::unknown("execution result undetermine");
+        assert!(!same_code_different_text.is_result_undetermined());
+        let different_code = SqlQueryError::new(1062, *b"23000", RESULT_UNDETERMINED_MESSAGE);
+        assert!(!different_code.is_result_undetermined());
     }
 }

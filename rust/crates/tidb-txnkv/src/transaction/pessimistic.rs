@@ -534,19 +534,20 @@ where
         mutations: Vec<OptimisticMutation>,
         call: &UnaryCallContext,
     ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
-        // A transaction that never locked anything has no pinned primary and
-        // no locks to verify, so it commits as a plain optimistic transaction.
-        // That is Go's `len(c.primaryKey) == 0` fallback in
-        // `initKeysAndMutations` (`2pc.go:697-698`), not a special case: the
-        // plan exists exactly when a pinned primary exists.
+        self.two_pc
+            .set_pessimistic_prewrite(PessimisticPrewritePlan {
+                for_update_ts: self.for_update_ts,
+                locked_keys: self.locked_keys.clone(),
+                for_update_ts_constraints: self.locked_with_conflict.clone(),
+            });
+        // The primary pinned by the first locking statement is what every lock
+        // this transaction holds names, and what its TTL heartbeat refreshes.
+        // Carrying it here is what keeps prewrite from designating a second
+        // one. A transaction that never locked has nothing to pin and falls
+        // back to mutation order, Go's `len(c.primaryKey) == 0` branch
+        // (`2pc.go:697-698`, `2pc.go:779-787`).
         if let Some(primary_key) = self.primary_key.clone() {
-            self.two_pc
-                .set_pessimistic_prewrite(PessimisticPrewritePlan {
-                    primary_key,
-                    for_update_ts: self.for_update_ts,
-                    locked_keys: self.locked_keys.clone(),
-                    for_update_ts_constraints: self.locked_with_conflict.clone(),
-                });
+            self.two_pc.pin_primary_key(primary_key);
         }
         self.two_pc.commit(mutations, call)
     }

@@ -294,6 +294,10 @@ impl MultiStatementTransaction {
             | OptimisticMutationKind::IndexDelete
             | OptimisticMutationKind::MetaPut
             | OptimisticMutationKind::MetaDelete => None,
+            // An `Op_Lock` changes no value, so it overlays nothing. It also
+            // cannot reach this buffer: only the commit coordinator adds one,
+            // for a pinned primary the buffer never staged.
+            OptimisticMutationKind::LockOnly => None,
         }
     }
 
@@ -336,7 +340,9 @@ impl MultiStatementTransaction {
                 OptimisticMutationKind::IndexPut
                 | OptimisticMutationKind::IndexDelete
                 | OptimisticMutationKind::MetaPut
-                | OptimisticMutationKind::MetaDelete => continue,
+                | OptimisticMutationKind::MetaDelete
+                // An `Op_Lock` changes no value, so it contributes no row.
+                | OptimisticMutationKind::LockOnly => continue,
             };
             overlay.push((handle, row));
         }
@@ -583,7 +589,13 @@ impl WritePlanningSnapshot for MultiStatementTransaction {
         key: &[u8],
         call: &UnaryCallContext,
     ) -> Result<Option<Vec<u8>>, ConfiguredWriteError> {
-        if let Some(staged) = self.buffer.staged(key) {
+        // An `Op_Lock` stages no value, so it must not shadow the snapshot;
+        // every other staged kind decides the read outright.
+        if let Some(staged) = self
+            .buffer
+            .staged(key)
+            .filter(|staged| staged.kind() != OptimisticMutationKind::LockOnly)
+        {
             return Ok(match staged.kind() {
                 OptimisticMutationKind::Delete
                 | OptimisticMutationKind::IndexDelete
@@ -592,6 +604,7 @@ impl WritePlanningSnapshot for MultiStatementTransaction {
                 | OptimisticMutationKind::PutExisting
                 | OptimisticMutationKind::IndexPut
                 | OptimisticMutationKind::MetaPut => Some(staged.value().to_vec()),
+                OptimisticMutationKind::LockOnly => unreachable!("filtered above"),
             });
         }
         Ok(self.open.two_pc().snapshot_get(key, call)?.value)

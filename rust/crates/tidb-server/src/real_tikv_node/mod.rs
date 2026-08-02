@@ -46,7 +46,7 @@ use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl, prepare_cluster_ddl, ClusterDdlReport, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_dml::{
-    commit_configured_write, prepare_configured_write, prepare_text_write,
+    commit_configured_write, prepare_configured_write, prepare_text_write, ConfiguredWriteError,
 };
 use tidb_exec::real_tikv_read::{
     prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
@@ -563,7 +563,7 @@ impl RealTiKvServerSession {
                 PRODUCTION_CONTROL_PLANE_TIMEOUT,
                 tz_offset_secs,
             )
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
+            .map_err(|error| configured_write_error(&error))?,
         };
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
@@ -1708,5 +1708,19 @@ mod tests {
             *events.lock().unwrap(),
             ["factory_drop", "authority_shutdown"]
         );
+    }
+}
+
+/// Maps a configured-write failure to its client answer, keeping the one
+/// failure whose answer is "nobody knows" distinguishable from every failure
+/// that definitely did not commit.
+///
+/// Go's chain: `2pc.go:2062-2069` -> `tikverr.ErrResultUndetermined` ->
+/// `pkg/store/driver/error/error.go:203` -> `terror.ErrResultUndetermined` ->
+/// `pkg/server/conn.go:1288-1291`, which closes the connection.
+fn configured_write_error(error: &ConfiguredWriteError) -> SqlQueryError {
+    match error {
+        ConfiguredWriteError::Undetermined(_) => SqlQueryError::result_undetermined(),
+        other => SqlQueryError::unknown(other.to_string()),
     }
 }

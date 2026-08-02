@@ -109,6 +109,14 @@ pub enum ConfiguredWriteError {
     /// Publication finished in a terminal state that is not a commit, so no
     /// affected-row count may be reported.
     NotCommitted(String),
+    /// The transaction was published and then lost its answer, so whether it
+    /// committed is unknown. This is deliberately NOT `NotCommitted`: that name
+    /// asserts the very thing nobody knows. Go answers this with
+    /// `terror.ErrResultUndetermined`, whose whole point is that no SQL error
+    /// code can express "unknown" and a client receiving an ordinary error is
+    /// entitled to retry — which double-applies if the commit did land
+    /// (`pkg/server/conn.go:1288-1291` closes the connection instead).
+    Undetermined(String),
     /// A bound parameter's kind (integer vs string) did not match its target
     /// column's type — a string into an integer column or the reverse.
     ColumnTypeMismatch {
@@ -215,6 +223,11 @@ impl fmt::Display for ConfiguredWriteError {
             Self::NotCommitted(state) => {
                 write!(formatter, "configured write did not commit: {state}")
             }
+            // Go `pkg/parser/terror/terror.go:265-269`:
+            // `mysql.Message("execution result undetermined", nil)`.
+            Self::Undetermined(detail) => {
+                write!(formatter, "execution result undetermined: {detail}")
+            }
             Self::ColumnTypeMismatch {
                 column,
                 scalar_type,
@@ -282,6 +295,7 @@ impl std::error::Error for ConfiguredWriteError {
             | Self::DuplicateHandle(_)
             | Self::Parse(_)
             | Self::NotCommitted(_)
+            | Self::Undetermined(_)
             | Self::ColumnTypeMismatch { .. }
             | Self::UnsupportedIndex { .. }
             | Self::DataTooLong { .. }
@@ -1353,6 +1367,11 @@ pub fn commit_configured_write(
                 affected_rows,
                 no_write: None,
             }),
+            // A published transaction that lost its answer is undetermined,
+            // not "not committed" — see `ConfiguredWriteError::Undetermined`.
+            OptimisticCommitOutcome::Undetermined(undetermined) => Err(
+                ConfiguredWriteError::Undetermined(format!("{:?}", undetermined.cause)),
+            ),
             other => Err(ConfiguredWriteError::NotCommitted(format!("{other:?}"))),
         },
         ConfiguredWriteOutcome::NoPublication { reason, .. } => Ok(ConfiguredWriteReport {

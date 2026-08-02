@@ -87,6 +87,12 @@ pub enum ClusterDdlError {
     /// Publication reached a terminal state that is not a commit, so the
     /// catalog change cannot be reported as done.
     NotCommitted(String),
+    /// The DDL transaction was published and then lost its answer, so whether
+    /// it committed is unknown. Kept distinct from `NotCommitted`, which
+    /// asserts the very thing nobody knows; Go answers it with
+    /// `terror.ErrResultUndetermined` and closes the connection
+    /// (`pkg/server/conn.go:1288-1291`).
+    Undetermined(String),
     /// The index entries for the rows the table already holds could not be
     /// built, so the change was abandoned before anything was published.
     Backfill(String),
@@ -113,6 +119,11 @@ impl fmt::Display for ClusterDdlError {
                  version {planned_version}; this node performs DDL as the single catalog \
                  writer and refuses to interleave: {detail}"
             ),
+            // Go `pkg/parser/terror/terror.go:265-269`:
+            // `mysql.Message("execution result undetermined", nil)`.
+            Self::Undetermined(detail) => {
+                write!(formatter, "execution result undetermined: {detail}")
+            }
             Self::NotCommitted(state) => {
                 write!(formatter, "catalog change did not commit: {state}")
             }
@@ -137,6 +148,7 @@ impl std::error::Error for ClusterDdlError {
             Self::Transaction(error) => Some(error),
             Self::ConcurrentSchemaChange { .. }
             | Self::NotCommitted(_)
+            | Self::Undetermined(_)
             | Self::Backfill(_)
             | Self::BackfillUnavailable => None,
         }
@@ -250,6 +262,9 @@ pub fn commit_cluster_ddl(
         OptimisticCommitOutcome::CleanupFailed(cleanup_failed) => {
             Err(classify(planned_version, &cleanup_failed.cause))
         }
+        OptimisticCommitOutcome::Undetermined(undetermined) => Err(ClusterDdlError::Undetermined(
+            format!("{:?}", undetermined.cause),
+        )),
         other => Err(ClusterDdlError::NotCommitted(format!(
             "{:?}",
             other.state()

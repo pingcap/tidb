@@ -166,7 +166,7 @@ pub use sql_node::{
     ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
     ConnectionTracker, PreparedPointRead, PreparedStatement, PreparedWrite, QueryCancellationLease,
     QueryResult, QuerySession, QuerySessionFactory, SessionContext, ShutdownHandle, SqlNodeError,
-    SqlQueryError, WriteOutcome,
+    SqlQueryError, WriteOutcome, RESULT_UNDETERMINED_MESSAGE,
 };
 pub use wire_status::{
     WireStatus, SERVER_MORE_RESULTS_EXISTS, SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_CURSOR_EXISTS,

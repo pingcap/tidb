@@ -103,6 +103,9 @@ impl MetaStore {
                     self.pairs
                         .insert(mutation.key().to_vec(), mutation.value().to_vec());
                 }
+                // TiKV's `Op_Lock` writes a lock and no value, so the
+                // committed store is unchanged by one.
+                OptimisticMutationKind::LockOnly => {}
             }
         }
     }
