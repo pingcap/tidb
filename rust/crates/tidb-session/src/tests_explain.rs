@@ -890,7 +890,11 @@ fn explain_est_rows_on_an_unanalyzed_table() {
         ("a + b > 1", "8000.00"),
     ];
     for (where_clause, expected) in pinned {
-        assert_eq!(est_rows(&mut session, where_clause), expected, "{where_clause}");
+        assert_eq!(
+            est_rows(&mut session, where_clause),
+            expected,
+            "{where_clause}"
+        );
     }
 
     // Past 63 conditions `Selectivity` abandons the nodes and calls

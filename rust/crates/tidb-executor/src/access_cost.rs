@@ -139,12 +139,12 @@ use tidb_planner::cardinality::row_count_estimator::{
     get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, ColumnStats,
     EstimatorOptions, IndexRangeDatums, IndexStats,
 };
-use tidb_planner::selectivity_greedy::{
-    combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
-};
 use tidb_planner::cardinality::row_size::{
     get_index_avg_row_size, get_table_avg_row_size, RowSizeColumn, RowSizeColumnStats,
     RowSizeStore, RowSizeType,
+};
+use tidb_planner::selectivity_greedy::{
+    combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
 };
 
 use crate::kv_table::{IndexRange, KvColumn, KvIndex, KvTable};
