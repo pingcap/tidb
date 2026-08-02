@@ -39,8 +39,8 @@ use super::super::state::{
 };
 use super::{
     classify_key_error, record_attempt, transaction_lock_ttl_ms, OptimisticCoordinatorError,
-    RealOptimisticTransaction, RecoveryPhase, MAX_COMMIT_TS_DRIFT_MS,
-    MAX_LOCK_ATTEMPTS, TSO_LOGICAL_BITS,
+    RealOptimisticTransaction, RecoveryPhase, MAX_COMMIT_TS_DRIFT_MS, MAX_LOCK_ATTEMPTS,
+    TSO_LOGICAL_BITS,
 };
 
 impl<C, L, T> RealOptimisticTransaction<C, L, T>
