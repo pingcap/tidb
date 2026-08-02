@@ -94,8 +94,13 @@ impl CreateViewStmt {
         if self.query_parenthesized {
             out.push(')');
         }
-        if self.check_option == ViewCheckOption::LOCAL {
-            out.push_str(" WITH LOCAL CHECK OPTION");
+        // Go restores the clause for anything that is not CASCADED, spelling
+        // the scope with `ViewCheckOption.String()`, which answers "CASCADED"
+        // for a value it has no constant for.
+        if self.check_option != ViewCheckOption::CASCADED {
+            out.push_str(" WITH ");
+            out.push_str(self.check_option.sql());
+            out.push_str(" CHECK OPTION");
         }
     }
 }
