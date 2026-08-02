@@ -347,3 +347,133 @@ pub fn pseudo_row_count_by_index_ranges(
         total_count
     }
 }
+
+/// Which arm of `pseudoSelectivity`'s function-name switch a predicate takes.
+///
+/// Go switches on `fun.FuncName.L` at `pkg/planner/cardinality/pseudo.go:54`.
+/// Only two arms exist; everything else leaves `minFactor` untouched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PseudoFunctionKind {
+    /// `ast.EQ`, `ast.NullEQ`, `ast.In`.
+    Equality,
+    /// `ast.GE`, `ast.GT`, `ast.LE`, `ast.LT`.
+    ///
+    /// The source carries a `FIXME: To resolve the between case.` here: a
+    /// `BETWEEN` that ranger split into `>=` and `<=` charges `1/3` once, not
+    /// the `1/40` a bounded range would deserve.
+    Ordering,
+    /// Any other function name.
+    Other,
+}
+
+/// The column a pseudo predicate resolved to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PseudoColumn {
+    /// Lowercased column name, the key of the source's `colExists` map.
+    pub lower_name: String,
+    /// Whether `mysql.HasUniKeyFlag(col.Info.GetFlag())` holds.
+    pub unique_key_flag: bool,
+}
+
+/// One CNF item as `pseudoSelectivity` sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PseudoPredicate {
+    /// Not a `*expression.ScalarFunction`, or `getConstantColumnID` returned
+    /// `unknownColumnID`. The source `continue`s before the switch, so this
+    /// contributes nothing at all.
+    Unresolved,
+    /// A scalar function over one column and one constant. `column` is `None`
+    /// when `coll.GetCol(colID)` returned nil -- note the source updates
+    /// `minFactor` for an equality **before** that nil check, so a missing
+    /// column still lowers the factor.
+    Resolved {
+        /// Which switch arm the function name takes.
+        kind: PseudoFunctionKind,
+        /// The resolved column, or `None` when the collection has no entry.
+        column: Option<PseudoColumn>,
+    },
+}
+
+/// One index as the source's `ForEachIndexImmutable` walk sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PseudoIndex {
+    /// Whether `idx.Info.Unique` holds.
+    pub unique: bool,
+    /// Lowercased index column names, in index order.
+    pub column_lower_names: Vec<String>,
+}
+
+/// Whole-expression pseudo selectivity, Go `pseudoSelectivity`
+/// (`pkg/planner/cardinality/pseudo.go:40-97`).
+///
+/// `Selectivity` takes this path when there are more than 63 conditions or
+/// when the collection has neither column nor index statistics
+/// (`selectivity.go:69-73`) -- that is, on tables that have not been analyzed,
+/// which is the common case rather than the exotic one.
+///
+/// Three source behaviors are load-bearing and reproduced exactly:
+///
+/// * The unique-key shortcut returns `1.0 / RealtimeCount` **immediately**,
+///   abandoning every other condition's contribution. Real TiDB confirms it:
+///   on a 10000-pseudo-row unanalyzed table, 64 `a != k` conditions estimate
+///   8000.00 rows, and the same 64 plus `d = 7` on a `UNIQUE` column estimate
+///   1.00.
+/// * `minFactor` only ever moves down, and the equality arm charges
+///   `1/pseudoEqualRate` even when the column has no statistics entry.
+/// * The composite-index check requires **every** index column to appear in
+///   `colExists`; a prefix match is not enough. The source's `firstMatch`
+///   variable only gates a statistics-load side effect and has no effect on
+///   the returned number, so it is not modelled here.
+///
+/// `selectivity_factor` is the session's `SelectivityFactor` (0.8 by default).
+#[must_use]
+pub fn pseudo_selectivity(
+    predicates: &[PseudoPredicate],
+    indexes: &[PseudoIndex],
+    realtime_count: i64,
+    selectivity_factor: f64,
+) -> f64 {
+    let mut min_factor = selectivity_factor;
+    let mut col_exists: Vec<&str> = Vec::new();
+
+    for predicate in predicates {
+        let PseudoPredicate::Resolved { kind, column } = predicate else {
+            continue;
+        };
+        match kind {
+            PseudoFunctionKind::Equality => {
+                min_factor = min_factor.min(1.0 / PSEUDO_EQUAL_RATE);
+                let Some(column) = column else {
+                    continue;
+                };
+                if !col_exists.contains(&column.lower_name.as_str()) {
+                    col_exists.push(&column.lower_name);
+                }
+                if column.unique_key_flag {
+                    return 1.0 / realtime_count as f64;
+                }
+            }
+            PseudoFunctionKind::Ordering => {
+                min_factor = min_factor.min(1.0 / PSEUDO_LESS_RATE);
+            }
+            PseudoFunctionKind::Other => {}
+        }
+    }
+
+    if col_exists.is_empty() {
+        return min_factor;
+    }
+
+    let has_unique_key = indexes.iter().any(|index| {
+        index.unique
+            && index
+                .column_lower_names
+                .iter()
+                .all(|name| col_exists.contains(&name.as_str()))
+    });
+
+    if has_unique_key {
+        return 1.0 / realtime_count as f64;
+    }
+    min_factor
+}

@@ -220,13 +220,62 @@ pub struct SelectivityDefaults {
     pub negate_str_match_default: f64,
 }
 
-impl Default for SelectivityDefaults {
-    fn default() -> Self {
+impl SelectivityDefaults {
+    /// Derives the three defaults from the session's raw
+    /// `tidb_default_string_match_selectivity` value.
+    ///
+    /// `pkg/sessionctx/variable/session.go:3675-3692` reads the raw variable
+    /// twice, and both reads have a special case:
+    ///
+    /// ```text
+    /// func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
+    ///     if s.DefaultStrMatchSelectivity == 0 { return 0.1 }
+    ///     return s.DefaultStrMatchSelectivity
+    /// }
+    /// func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
+    ///     if s.DefaultStrMatchSelectivity == vardef.DefOptSelectivityFactor { return vardef.DefOptSelectivityFactor }
+    ///     return 1 - s.GetStrMatchDefaultSelectivity()
+    /// }
+    /// ```
+    ///
+    /// So the shipped default (raw `0`) is **0.1 / 0.9**, not 0.8 / 0.8: only
+    /// the explicitly-set value `0.8` makes both sides 0.8, a backward
+    /// compatibility carve-out for the era when string matches shared the
+    /// general selectivity factor. Real TiDB confirms both arms — on an
+    /// unanalyzed table with 10000 pseudo rows, `c LIKE '%a%'` estimates
+    /// 1000.00 rows and `c NOT LIKE '%a%'` estimates 9000.00.
+    #[must_use]
+    pub fn from_session(default_str_match_selectivity: f64, selectivity_factor: f64) -> Self {
+        let str_match_default = if default_str_match_selectivity == 0.0 {
+            0.1
+        } else {
+            default_str_match_selectivity
+        };
+        let negate_str_match_default = if default_str_match_selectivity == DEF_OPT_SELECTIVITY_FACTOR
+        {
+            DEF_OPT_SELECTIVITY_FACTOR
+        } else {
+            1.0 - str_match_default
+        };
         Self {
-            selectivity_factor: 0.8,
-            str_match_default: 0.8,
-            negate_str_match_default: 0.8,
+            selectivity_factor,
+            str_match_default,
+            negate_str_match_default,
         }
+    }
+}
+
+/// `vardef.DefOptSelectivityFactor`, which is both the default selectivity
+/// factor and the backward-compatibility sentinel in
+/// `GetNegateStrMatchDefaultSelectivity`.
+pub const DEF_OPT_SELECTIVITY_FACTOR: f64 = 0.8;
+
+impl Default for SelectivityDefaults {
+    /// The shipped session defaults: `tidb_opt_selectivity_factor = 0.8` and
+    /// `tidb_default_string_match_selectivity = 0`, which resolves to 0.1 for
+    /// a string match and 0.9 for a negated one.
+    fn default() -> Self {
+        Self::from_session(0.0, DEF_OPT_SELECTIVITY_FACTOR)
     }
 }
 
@@ -304,4 +353,56 @@ pub fn combine_selectivity(
 
     // The source never lets a selectivity fall below one row.
     ret.max(1.0 / realtime_row_count as f64)
+}
+
+/// One index prefix column's cross-validation input.
+///
+/// `None` stands for the source's `ColumnStatsIsInvalid(col, ...)` arm, which
+/// `continue`s without touching either accumulator. `Some(rows)` is the
+/// already-computed `getColumnRowCount` estimate for the point range built
+/// from that column's slot of the index point range.
+pub type CrossValidationColumn = Option<f64>;
+
+/// Cross-validates a multi-column equality estimate against the per-column
+/// statistics, Go `crossValidationSelectivity`
+/// (`pkg/planner/cardinality/selectivity.go:1173`).
+///
+/// Returns `(minRowCount, crossValidationSelectivity)` in the source's order.
+///
+/// Two source shapes are deliberately preserved rather than smoothed over:
+///
+/// * `minRowCount` starts at `math.MaxFloat64` and is **not** reset when every
+///   column is skipped. The caller at `selectivity.go:1102-1110` compares
+///   `minRowCount < idxCount`; an all-skipped run therefore always takes the
+///   `idxCount / idx.TotalRowCount()` branch, which is the intended fallback.
+/// * The per-column ratio is `rowCount / totalRowCount` with **no clamp**. When
+///   the index's `TotalRowCount()` is 0 the source produces `Inf` or `NaN` and
+///   propagates it; adding a guard here would change which branch the caller
+///   takes, so the raw division is kept.
+///
+/// `used_cols_len` reproduces the source's `if i >= usedColsLen { break }`,
+/// which stops at the equality-covered prefix rather than the whole index.
+#[must_use]
+pub fn cross_validation_selectivity(
+    columns: &[CrossValidationColumn],
+    used_cols_len: usize,
+    index_total_row_count: f64,
+) -> (f64, f64) {
+    let mut min_row_count = f64::MAX;
+    let mut cross_validation_selectivity = 1.0_f64;
+
+    for (index, column) in columns.iter().enumerate() {
+        if index >= used_cols_len {
+            break;
+        }
+        let Some(row_count) = *column else {
+            continue;
+        };
+        cross_validation_selectivity *= row_count / index_total_row_count;
+        if row_count < min_row_count {
+            min_row_count = row_count;
+        }
+    }
+
+    (min_row_count, cross_validation_selectivity)
 }
