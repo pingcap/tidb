@@ -297,8 +297,10 @@ fn duration_parse_events_classify_source_warning_branches() {
         ))
     );
 
-    let truncated = parse_duration(b"0x", 0).unwrap_err();
+    let truncated = parse_duration(b"0x", 0).unwrap();
     assert_eq!(truncated.event(), Some(DurationParseEvent::Truncated));
+    let rejected = parse_duration(b"10:70:00", 0).unwrap_err();
+    assert_eq!(rejected.event(), Some(DurationParseEvent::Truncated));
     let invalid_fsp = parse_duration(b"10:11:12", -2).unwrap_err();
     assert_eq!(invalid_fsp.event(), None);
 }
@@ -450,10 +452,14 @@ fn parse_duration_matches_source_colon_and_day_forms() {
         parse_duration(b"10:61:12", 0),
         Err(DurationParseError::InvalidFormat)
     );
+    // Not datetime-shaped for `canFallbackToDateTime` (no ' ' or 'T' tail), so
+    // the source reads `2011` as compact HHMMSS and warns on the leftover.
+    let date_shaped = parse_duration(b"2011-11-11", 0).unwrap();
     assert_eq!(
-        parse_duration(b"2011-11-11", 0),
-        Err(DurationParseError::InvalidFormat)
+        date_shaped.nanoseconds(),
+        20 * 60_000_000_000 + 11_000_000_000
     );
+    assert_eq!(date_shaped.event(), Some(DurationParseEvent::Truncated));
     assert_eq!(
         parse_duration(b"2011-11-11 00:00:01", 0),
         Err(DurationParseError::DateTimeFallback(
@@ -470,8 +476,86 @@ fn parse_duration_matches_source_colon_and_day_forms() {
         parse_duration(b"1234567", 0),
         Err(DurationParseError::InvalidFormat)
     );
-    assert_eq!(
-        parse_duration(b"0x", 0),
-        Err(DurationParseError::InvalidFormat)
-    );
+    // Source `matchDuration` keeps the parsed value for trailing garbage on a
+    // short literal, so `0x` is a warning, not a rejection.
+    let trailing = parse_duration(b"0x", 0).unwrap();
+    assert_eq!(trailing.nanoseconds(), 0);
+    assert_eq!(trailing.event(), Some(DurationParseEvent::Truncated));
+}
+
+/// Go oracle (`types.ParseDuration(DefaultStmtNoWarningContext, s, 6)`), run
+/// against `pkg/types` on this tree:
+///
+/// ```text
+/// "11:22:33abc"          -> 11:22:33.000000  null=false err=1292
+/// "10:70:00"             -> 00:00:00         null=true  err=1292
+/// "1 11:22:33x"          -> 35:22:33.000000  null=false err=1292
+/// "123"                  -> 00:01:23.000000  null=false err=<nil>
+/// "839:00:00"            -> 838:59:59.000000 null=false err=1292
+/// "-839:00:00"           -> -838:59:59.000000 null=false err=1292
+/// "11:22:33."            -> 11:22:33.000000  null=false err=<nil>
+/// "11:22 33"             -> 11:22:00.000000  null=false err=1292
+/// "11:22:33 abc"         -> 00:00:00         null=true  err=1292
+/// "11:22:33.abc"         -> 00:00:00         null=true  err=1292
+/// "111111111111abc"      -> 00:00:00         null=true  err=1292
+/// "11:22:33xxxxxxxxxxxx" -> 00:00:00         null=true  err=1292
+/// ```
+///
+/// `null=true` is the source's NULL outcome, which surfaces here as `Err`;
+/// `null=false err=1292` is the value-plus-warning outcome, which surfaces as
+/// `Ok` with a non-`None` [`DurationParseEvent`].
+#[test]
+fn malformed_duration_input_has_only_the_two_source_outcomes() {
+    for (input, expected, event) in [
+        (
+            "11:22:33abc",
+            "11:22:33.000000",
+            Some(DurationParseEvent::Truncated),
+        ),
+        (
+            "1 11:22:33x",
+            "35:22:33.000000",
+            Some(DurationParseEvent::Truncated),
+        ),
+        ("123", "00:01:23.000000", None),
+        ("11:22:33.", "11:22:33.000000", None),
+        (
+            "11:22 33",
+            "11:22:00.000000",
+            Some(DurationParseEvent::Truncated),
+        ),
+        (
+            "839:00:00",
+            "838:59:59.000000",
+            Some(DurationParseEvent::Overflow(DurationOverflow::Positive)),
+        ),
+        (
+            "-839:00:00",
+            "-838:59:59.000000",
+            Some(DurationParseEvent::Overflow(DurationOverflow::Negative)),
+        ),
+    ] {
+        let parsed = parse_mysql_duration(input, 6, &chrono_tz::UTC, true, false).unwrap();
+        let duration = MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+        assert_eq!(duration.to_string(), expected, "{input}");
+        assert_eq!(parsed.event(), event, "{input}");
+    }
+
+    // The source's other outcome is NULL: an invalid minute/second field, or
+    // leftover bytes on a literal whose `charsLen` reaches 12. Neither one
+    // re-parses the leading digit run.
+    for input in [
+        "10:70:00",
+        "11:22:33 abc",
+        "11:22:33.abc",
+        "111111111111abc",
+        "11:22:33xxxxxxxxxxxx",
+        "abc",
+        "",
+    ] {
+        assert!(
+            parse_mysql_duration(input, 6, &chrono_tz::UTC, true, false).is_err(),
+            "{input}"
+        );
+    }
 }

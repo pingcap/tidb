@@ -587,6 +587,11 @@ pub fn parse_duration(input: &[u8], target_fsp: i64) -> Result<ParsedDuration, D
         skip_ascii_space(input, &mut index);
     }
 
+    // Source `matchDuration` measures `charsLen` after the sign and its
+    // padding, and later uses it to decide whether trailing bytes are a
+    // warning or a NULL.
+    let chars_len = input.len() - index;
+
     let first = parse_duration_number(input, &mut index)?;
     let before_space = index;
     skip_ascii_space(input, &mut index);
@@ -616,10 +621,10 @@ pub fn parse_duration(input: &[u8], target_fsp: i64) -> Result<ParsedDuration, D
         minutes = (first / 100) % 100;
         seconds = first % 100;
     }
-    if minutes > 59 || seconds > 59 {
-        return Err(DurationParseError::InvalidFormat);
-    }
 
+    // Source `matchDuration` applies `parser.Space0` before the fraction and
+    // never again afterwards, so trailing padding is part of the leftover.
+    skip_ascii_space(input, &mut index);
     let mut microseconds = 0_i64;
     if input.get(index) == Some(&b'.') {
         index += 1;
@@ -627,9 +632,8 @@ pub fn parse_duration(input: &[u8], target_fsp: i64) -> Result<ParsedDuration, D
         while input.get(index).is_some_and(u8::is_ascii_digit) {
             index += 1;
         }
-        if start == index {
-            return Err(DurationParseError::InvalidFormat);
-        }
+        // Source `matchFrac` reads `parser.Digit(rest, 0)`, so an empty digit
+        // run is legal and `ParseFrac("")` yields a zero fraction.
         let (fraction, overflow) =
             parse_frac(&input[start..index], fsp).map_err(DurationParseError::Fraction)?;
         microseconds = fraction;
@@ -652,11 +656,20 @@ pub fn parse_duration(input: &[u8], target_fsp: i64) -> Result<ParsedDuration, D
             }
         }
     }
-    skip_ascii_space(input, &mut index);
-    if index != input.len() {
+    // Source order: the leftover verdict runs before `checkHHMMSS`. Long
+    // literals (`charsLen >= 12`) with leftover bytes are NULL; shorter ones
+    // keep the parsed value and only raise `ErrTruncatedWrongVal`.
+    let leftover = index != input.len();
+    if leftover && chars_len >= 12 {
         return Err(DurationParseError::InvalidFormat);
     }
-    parsed_duration_from_parts(negative, hours, minutes, seconds, microseconds, fsp)
+    if minutes > 59 || seconds > 59 {
+        return Err(DurationParseError::InvalidFormat);
+    }
+    let mut parsed =
+        parsed_duration_from_parts(negative, hours, minutes, seconds, microseconds, fsp)?;
+    parsed.truncated |= leftover;
+    Ok(parsed)
 }
 
 /// Parses the complete Go `ParseDuration` surface, including datetime fallback.
@@ -689,34 +702,11 @@ pub fn parse_mysql_duration<TZ: TimeZone>(
                 truncated: false,
             })
         }
-        Err(DurationParseError::InvalidFormat) => {
-            let trimmed = input.trim();
-            let negative = trimmed.starts_with('-');
-            let mut end = usize::from(negative);
-            while trimmed.as_bytes().get(end).is_some_and(u8::is_ascii_digit) {
-                end += 1;
-            }
-            let fsp = check_fsp(target_fsp)
-                .map_err(DurationParseError::InvalidFsp)
-                .map_err(DurationValueError::Duration)?;
-            let mut parsed = if end > usize::from(negative) {
-                parse_duration(&trimmed.as_bytes()[..end], target_fsp).unwrap_or(ParsedDuration {
-                    nanoseconds: 0,
-                    fsp,
-                    overflow: None,
-                    truncated: false,
-                })
-            } else {
-                ParsedDuration {
-                    nanoseconds: 0,
-                    fsp,
-                    overflow: None,
-                    truncated: false,
-                }
-            };
-            parsed.truncated = true;
-            Ok(parsed)
-        }
+        // Source `ParseDuration` has exactly two malformed-input outcomes:
+        // leftover bytes after a successful grammar match keep the parsed
+        // value and warn (handled inside `parse_duration`), and every other
+        // rejection is NULL plus `ErrTruncatedWrongVal`. There is no
+        // leading-digit re-parse.
         Err(error) => Err(DurationValueError::Duration(error)),
     }
 }
