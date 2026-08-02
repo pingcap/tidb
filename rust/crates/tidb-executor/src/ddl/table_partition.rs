@@ -156,7 +156,8 @@ pub fn build_table_partitioning(
         ));
     }
 
-    let (expr_text, built, dependencies) = build_partition_expression(expr, names, types)?;
+    let (expr_text, built, dependencies, dependency_offsets) =
+        build_partition_expression(expr, names, types)?;
     // Go `checkPartitionFuncType`: the partition expression must evaluate to
     // an integer.
     check_partition_expression_type(expr, names, types)?;
@@ -168,7 +169,7 @@ pub fn build_table_partitioning(
                 &partitioning.definitions,
                 names,
                 types,
-                &dependencies,
+                &dependency_offsets,
                 ctx,
             )?;
             let definitions = build_named_partition_definitions(create, allocate_id);
@@ -195,7 +196,7 @@ pub fn build_table_partitioning(
     if definitions.is_empty() {
         return Err(DriverError::PartitionNoParts("partitions"));
     }
-    check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependencies)?;
+    check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
 
     Ok(Some(PartitionSpec {
         kind,
@@ -268,7 +269,15 @@ fn build_partition_expression(
     expr: &Expr,
     names: &[String],
     types: &[FieldType],
-) -> Result<(String, tidb_expr::expression::Expression, Vec<usize>), DriverError> {
+) -> Result<
+    (
+        String,
+        tidb_expr::expression::Expression,
+        Vec<String>,
+        Vec<usize>,
+    ),
+    DriverError,
+> {
     check_partition_expression_allowed(expr)?;
     let resolver = TableColumnResolver::new(names, types);
     let built =
@@ -292,7 +301,8 @@ fn build_partition_expression(
             clause: "partition function".to_owned(),
         });
     }
-    let dependencies = resolver.dependencies();
+    let dependency_offsets = resolver.dependencies();
+    let dependencies = resolver.dependency_names();
     // Go `checkPartitionFuncValid`: an expression naming no column at all is
     // 1486 -- `PARTITION BY HASH(1)` has nothing to partition ON.
     if dependencies.is_empty() {
@@ -302,6 +312,7 @@ fn build_partition_expression(
         expr.restore_with_flags(partition_restore_flags()),
         built,
         dependencies,
+        dependency_offsets,
     ))
 }
 

@@ -37,7 +37,7 @@
 //! `ALTER TABLE ... PARTITION` action. HASH and RANGE are routed, so those
 //! two are accepted and the rest are refused.
 
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::Datum;
 use tidb_expr::expression::Expression;
 
 /// One partition's exclusive upper bound under RANGE: Go
@@ -110,13 +110,17 @@ pub struct PartitionSpec {
     /// Go `PartitionInfo.Expr`: the partition expression in Go's own restored
     /// spelling, which is the text `SHOW CREATE TABLE` prints back.
     pub expr_text: String,
-    /// The evaluable form, whose `Column` nodes index the row by column
-    /// OFFSET -- the same convention a generated column uses, so the row a
-    /// write builds is already the evaluation row.
+    /// The evaluable form, whose `Column` nodes index [`Self::dependencies`]
+    /// -- the same convention a generated column uses
+    /// (`crate::generated_column::GeneratedColumn::expr`), and for the same
+    /// reason: an `ALTER TABLE` that moves a column must not be able to
+    /// re-point the routing at a different column, which would send new rows
+    /// to a different partition than the existing ones with no error.
     pub expr: Expression,
-    /// The column offsets the expression reads. A projected scan must decode
-    /// these or routing would evaluate over holes.
-    pub dependencies: Vec<usize>,
+    /// Go `PartitionInfo.Columns`: the NAMES of the columns the expression
+    /// reads, in the order [`Self::expr`] indexes them. A projected scan must
+    /// decode these or routing would evaluate over holes.
+    pub dependencies: Vec<String>,
     /// The partitions, in definition order. Never empty: Go's
     /// `checkNoHashPartitions` rejects `PARTITIONS 0` with 1504.
     pub definitions: Vec<PartitionDef>,
@@ -161,34 +165,40 @@ impl PartitionSpec {
 
     /// Go `locatePartition`: the physical table id `row` belongs in.
     ///
-    /// `types` is the table's column type list, which the evaluator needs to
-    /// materialize the row; `ctx` is the statement's evaluation context, so
-    /// the expression is evaluated under the SQL mode of the statement that
-    /// writes the row.
+    /// `columns` is the table's CURRENT column list, which is where the
+    /// dependency names become offsets; `ctx` is the statement's evaluation
+    /// context, so the expression is evaluated under the SQL mode of the
+    /// statement that writes the row.
     ///
     /// # Errors
     ///
     /// [`RoutingError::Eval`] when the partition expression fails.
-    pub fn locate(
+    pub fn locate<S: crate::generated_column::GeneratedColumnSlot>(
         &self,
         row: &[Datum],
-        types: &[FieldType],
+        columns: &[S],
         ctx: &impl tidb_expr::Columns,
     ) -> Result<i64, RoutingError> {
-        let index = self.locate_index(row, types, ctx)?;
+        let index = self.locate_index(row, columns, ctx)?;
         Ok(self.definitions[index].id)
     }
 
     /// [`PartitionSpec::locate`] as the partition's ORDINAL, which is what
     /// the per-method rules are written in terms of.
-    fn locate_index(
+    fn locate_index<S: crate::generated_column::GeneratedColumnSlot>(
         &self,
         row: &[Datum],
-        types: &[FieldType],
+        columns: &[S],
         ctx: &impl tidb_expr::Columns,
     ) -> Result<usize, RoutingError> {
-        let value = crate::generated_column::eval_over_row(&self.expr, types, row, ctx)
-            .map_err(RoutingError::Eval)?;
+        let value = crate::generated_column::eval_over_dependencies(
+            &self.expr,
+            &self.dependencies,
+            columns,
+            row,
+            ctx,
+        )
+        .map_err(RoutingError::Eval)?;
         match &self.kind {
             PartitionKind::Hash => Ok(hash_partition_index(&value, self.num())),
             PartitionKind::Range {

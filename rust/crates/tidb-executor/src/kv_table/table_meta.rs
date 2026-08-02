@@ -235,16 +235,19 @@ pub enum FkAction {
 /// One foreign key of a [`KvTable`]: Go `model.FKInfo`, reduced to what a
 /// referential check and a cascade need.
 ///
-/// The referencing side is stored as column OFFSETS because the constraint
-/// lives on the table that declares it, so its own schema is fixed here; the
-/// referenced side is stored as NAMES because the parent is resolved by name
-/// at check time, exactly as Go resolves it through the information schema.
+/// BOTH sides are stored as NAMES (Go `FKInfo.Cols` / `RefCols`, both
+/// `CIStr`). The referencing side used to be offsets on the theory that the
+/// declaring table's own schema is fixed -- it is not: `ALTER TABLE ... ADD
+/// COLUMN ... FIRST` shifts every offset above it, and a constraint that kept
+/// its old ones silently starts checking the wrong columns.
 #[derive(Clone, Debug)]
 pub struct KvForeignKey {
     /// The constraint name, which a violation reports.
     pub name: String,
-    /// The referencing columns' offsets in this table's rows.
-    pub cols: Vec<usize>,
+    /// Go `FKInfo.Cols`: the referencing columns' NAMES in this table.
+    /// Resolved to offsets against the current column list where they are
+    /// used ([`KvTable::foreign_key_offsets`]).
+    pub cols: Vec<String>,
     /// The referenced schema.
     pub ref_schema: String,
     /// The referenced table.
@@ -289,6 +292,10 @@ impl crate::generated_column::GeneratedColumnSlot for KvColumn {
 
     fn column_type(&self) -> &FieldType {
         &self.field_type
+    }
+
+    fn column_name(&self) -> &str {
+        &self.name
     }
 }
 

@@ -72,7 +72,16 @@ impl KvTable {
                 let before = kept.len();
                 for offset in kept.clone() {
                     if let Some(generated) = &self.columns[offset].generated {
-                        kept.extend(generated.dependencies.iter().copied());
+                        // Names, resolved against the current column list --
+                        // the dependency set is keyed by name so no ALTER can
+                        // leave it pointing at a column it never read.
+                        kept.extend(
+                            crate::generated_column::dependency_offsets(
+                                &self.columns,
+                                &generated.dependencies,
+                            )
+                            .unwrap_or_default(),
+                        );
                     }
                 }
                 if kept.len() == before {
@@ -619,13 +628,7 @@ impl RowDecoder {
         // A scan is a READ, so it evaluates at Go's query level: a zero
         // divisor warns and the column reads NULL rather than failing the
         // statement -- see `KvTable::fill_virtual_columns`.
-        crate::generated_column::materialize(
-            &self.columns,
-            |i| self.columns[i].name.clone(),
-            &mut row,
-            true,
-            &tidb_expr::NoColumns,
-        )
+        crate::generated_column::materialize(&self.columns, &mut row, true, &tidb_expr::NoColumns)
         .map_err(|error| KvTableError::Generation {
             column: error.column,
             detail: error.detail,

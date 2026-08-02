@@ -109,16 +109,11 @@ enum Side {
 
 /// Renders the constraint the way Go's error text quotes it, which is the
 /// `CONSTRAINT ... FOREIGN KEY ... REFERENCES ...` clause.
-fn constraint_text(foreign_key: &KvForeignKey, child_columns: &[String]) -> String {
-    let cols: Vec<&str> = foreign_key
-        .cols
-        .iter()
-        .map(|offset| child_columns[*offset].as_str())
-        .collect();
+fn constraint_text(foreign_key: &KvForeignKey) -> String {
     format!(
         "CONSTRAINT `{}` FOREIGN KEY (`{}`) REFERENCES `{}` (`{}`)",
         foreign_key.name,
-        cols.join("`, `"),
+        foreign_key.cols.join("`, `"),
         foreign_key.ref_table,
         foreign_key.ref_cols.join("`, `"),
     )
@@ -129,10 +124,9 @@ fn violation(
     database: &str,
     table: &str,
     foreign_key: &KvForeignKey,
-    child_columns: &[String],
 ) -> DriverError {
     let name = format!("`{database}`.`{table}`");
-    let constraint = constraint_text(foreign_key, child_columns);
+    let constraint = constraint_text(foreign_key);
     match side {
         Side::Child => DriverError::ForeignKeyNoReferencedRow {
             table: name,
@@ -204,6 +198,24 @@ fn referring(
     found
 }
 
+/// Resolves the REFERENCING columns' offsets in the child's own schema.
+///
+/// The constraint stores names, so this runs against the column list as it is
+/// NOW: an `ALTER TABLE` that moved a column leaves the constraint checking
+/// the columns it was declared over, not whatever sits at the old offsets.
+/// `None` means a referencing column is gone, which DDL refuses to do.
+fn child_offsets(names: &[String], foreign_key: &KvForeignKey) -> Option<Vec<usize>> {
+    foreign_key
+        .cols
+        .iter()
+        .map(|name| {
+            names
+                .iter()
+                .position(|column| column.eq_ignore_ascii_case(name))
+        })
+        .collect()
+}
+
 /// Resolves the referenced columns' offsets in the parent's schema.
 fn parent_offsets(
     catalog: &Catalog,
@@ -237,6 +249,9 @@ pub(crate) fn check_child_rows(
     let mut verdicts = vec![None; rows.len()];
     let (keys, columns) = declared(catalog, database, table);
     for foreign_key in &keys {
+        let Some(child) = child_offsets(&columns, foreign_key) else {
+            continue;
+        };
         // Every row's key for this constraint, deduplicated so a wide insert
         // scans the parent once. A `Datum` is not hashable (its numeric
         // variants compare across representations), so the association is an
@@ -246,7 +261,7 @@ pub(crate) fn check_child_rows(
             if verdicts[index].is_some() {
                 continue;
             }
-            let Some(key) = key_at(row, &foreign_key.cols) else {
+            let Some(key) = key_at(row, &child) else {
                 continue;
             };
             match wanted.iter_mut().find(|(seen, _)| *seen == key) {
@@ -282,7 +297,6 @@ pub(crate) fn check_child_rows(
                     database,
                     table,
                     foreign_key,
-                    &columns,
                 ));
             }
         }
@@ -311,6 +325,9 @@ pub(crate) fn require_existing_rows(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(), DriverError> {
     let (_, columns) = declared(catalog, database, table);
+    let Some(child) = child_offsets(&columns, foreign_key) else {
+        return Ok(());
+    };
     let Some((offsets, _)) = parent_offsets(catalog, foreign_key) else {
         return Ok(());
     };
@@ -328,7 +345,7 @@ pub(crate) fn require_existing_rows(
     for row in &rows {
         // MATCH SIMPLE, and Go's `%n is not null` conjunction: a row with any
         // NULL in the referencing columns is not checked.
-        let Some(key) = key_at(row, &foreign_key.cols) else {
+        let Some(key) = key_at(row, &child) else {
             continue;
         };
         if !parent_rows
@@ -340,7 +357,6 @@ pub(crate) fn require_existing_rows(
                 database,
                 table,
                 foreign_key,
-                &columns,
             ));
         }
     }
@@ -456,13 +472,16 @@ fn cascade_at_depth(
             continue;
         }
         let (_, child_columns) = declared(catalog, &child_db, &child_table);
+        let Some(child) = child_offsets(&child_columns, &foreign_key) else {
+            continue;
+        };
         let Some(child_rows) = scan(catalog, &child_db, &child_table, &ctx.session_zone()) else {
             continue;
         };
         let mut affected: Vec<(usize, Option<Vec<Datum>>)> = Vec::new();
         for (index, row) in child_rows.iter().enumerate() {
             accountant.account_row(row).map_err(DriverError::from)?;
-            let Some(key) = key_at(row, &foreign_key.cols) else {
+            let Some(key) = key_at(row, &child) else {
                 continue;
             };
             if let Some((_, replacement)) = withdrawn.iter().find(|(from, _)| *from == key) {
@@ -488,7 +507,6 @@ fn cascade_at_depth(
                 &child_db,
                 &child_table,
                 &foreign_key,
-                &child_columns,
             ));
         }
         plans.push((
@@ -498,10 +516,11 @@ fn cascade_at_depth(
             action,
             deleting,
             affected,
+            child,
         ));
     }
 
-    for (child_db, child_table, foreign_key, action, deleting, affected) in plans {
+    for (child_db, child_table, _foreign_key, action, deleting, affected, child) in plans {
         let Some(child_rows) = scan(catalog, &child_db, &child_table, &ctx.session_zone()) else {
             continue;
         };
@@ -533,7 +552,7 @@ fn cascade_at_depth(
                 for (index, replacement) in &affected {
                     let old = child_rows[*index].clone();
                     let mut new = old.clone();
-                    for (position, offset) in foreign_key.cols.iter().enumerate() {
+                    for (position, offset) in child.iter().enumerate() {
                         new[*offset] = match (action, replacement) {
                             (FkAction::Cascade, Some(values)) => values[position].clone(),
                             _ => Datum::Null,
@@ -672,9 +691,13 @@ pub(crate) fn check_index_needed(
     let refused = || DriverError::DropIndexNeededInForeignKey(dropping.name.clone());
 
     // The constraints this table DECLARES: the referencing columns are its
-    // own offsets.
+    // own, resolved from their names into current offsets.
+    let own: Vec<String> = kv.columns.iter().map(|c| c.name.clone()).collect();
     for foreign_key in kv.foreign_keys() {
-        if covers(&foreign_key.cols) && !remaining_covers(&foreign_key.cols) {
+        let Some(child) = child_offsets(&own, foreign_key) else {
+            continue;
+        };
+        if covers(&child) && !remaining_covers(&child) {
             return Err(refused());
         }
     }
@@ -710,13 +733,11 @@ pub(crate) fn check_drop_tables(
             }) {
                 continue;
             }
-            let (_, columns) = declared(catalog, &child_db, &child_table);
             return Err(violation(
                 Side::Parent,
                 &child_db,
                 &child_table,
                 &foreign_key,
-                &columns,
             ));
         }
     }

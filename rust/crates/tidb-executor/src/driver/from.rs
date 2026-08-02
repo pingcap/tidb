@@ -209,9 +209,13 @@ fn table_func_deps(
             break;
         }
         if let Some(generation) = crate::generated_column::GeneratedColumnSlot::generation(column) {
-            if !generation.dependencies.is_empty() && in_scope(&generation.dependencies) {
-                deps.generated
-                    .push((generation.dependencies.clone(), offset));
+            let dependencies = crate::generated_column::dependency_offsets(
+                &kv.columns,
+                &generation.dependencies,
+            )
+            .unwrap_or_default();
+            if !dependencies.is_empty() && in_scope(&dependencies) {
+                deps.generated.push((dependencies, offset));
             }
         }
         if column.field_type.flags() & NOT_NULL_FLAG != 0 {

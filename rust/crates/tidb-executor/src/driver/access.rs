@@ -469,10 +469,13 @@ fn pruned_partition_ids(select: &tidb_ast::SelectStmt, table: &KvTable) -> Optio
     let where_clause = select.where_clause.as_ref()?;
     // A bare column is the one partition expression whose own value a range
     // over a column IS.
-    let [offset] = partition.dependencies.as_slice() else {
+    let [dependency] = partition.dependencies.as_slice() else {
         return None;
     };
-    let column = table.columns.get(*offset)?;
+    let column = table
+        .columns
+        .iter()
+        .find(|column| column.name.eq_ignore_ascii_case(dependency))?;
     if partition.expr_text != format!("`{}`", column.name) {
         return None;
     }

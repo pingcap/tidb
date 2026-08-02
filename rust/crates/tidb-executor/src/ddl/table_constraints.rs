@@ -483,7 +483,13 @@ pub(crate) fn build_foreign_key(
         }
         Ok(KvForeignKey {
             name: fk_name,
-            cols,
+            // The TABLE's spelling of each referencing column, which is what
+            // the constraint is keyed by from here on -- an offset would be
+            // wrong the moment an `ALTER TABLE` moved the column.
+            cols: cols
+                .iter()
+                .map(|offset| columns[*offset].name.clone())
+                .collect(),
             ref_schema,
             ref_table,
             ref_cols,

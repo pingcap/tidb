@@ -188,10 +188,14 @@ pub(crate) fn add_index_to_table(
     let hidden = crate::expression_index::build_hidden_columns(index_name, parts, &names, &types)?;
     // Go `checkExpressionIndexAutoIncrement` (3754).
     if let Some(auto) = table.auto_increment_offset() {
-        if hidden
-            .iter()
-            .any(|(_, column)| column.generated.dependencies.contains(&auto))
-        {
+        let auto_name = table.columns[auto].name.clone();
+        if hidden.iter().any(|(_, column)| {
+            column
+                .generated
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.eq_ignore_ascii_case(&auto_name))
+        }) {
             return Err(DriverError::ExpressionIndexCanNotRefer(
                 index_name.to_owned(),
             ));
@@ -233,8 +237,12 @@ pub(crate) fn add_index_to_table(
     // is sound only while this holds. See `crate::ddl::table_partition`.
     if unique {
         if let Some(partition) = table.partition() {
-            if !partition
-                .dependencies
+            let partition_offsets = crate::generated_column::dependency_offsets(
+                &table.columns,
+                &partition.dependencies,
+            )
+            .unwrap_or_default();
+            if !partition_offsets
                 .iter()
                 .all(|offset| offsets.contains(offset))
             {

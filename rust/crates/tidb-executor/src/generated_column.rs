@@ -157,14 +157,22 @@ pub struct GeneratedColumn {
     /// Go `ColumnInfo.GeneratedStored`: false for `VIRTUAL`, which is also
     /// what an omitted keyword means.
     pub stored: bool,
-    /// The evaluable form, whose `Column` nodes index the row by column
-    /// OFFSET -- the row a write builds and a read decodes is exactly the
-    /// evaluation row, so no schema mapping stands between them.
+    /// The evaluable form, whose `Column` nodes index [`Self::dependencies`]
+    /// -- NOT the table's columns.
+    ///
+    /// This namespace is what makes an `ALTER TABLE` that moves columns
+    /// harmless: the dependency list is fixed at DDL time and never
+    /// reorders, so there is no offset here for a mutator to forget to
+    /// remap. The table offsets are derived from the NAMES at evaluation
+    /// time ([`dependency_offsets`]), which is also Go's shape -- its
+    /// `Dependences` is a name set and its evaluator binds by schema lookup.
     pub expr: Expression,
-    /// Go `ColumnInfo.Dependences`, as column offsets: the columns the
-    /// expression reads. A projected scan must decode these even when the
-    /// query never named them, or the expression would evaluate over holes.
-    pub dependencies: Vec<usize>,
+    /// Go `ColumnInfo.Dependences`: the NAMES of the columns the expression
+    /// reads, in first-seen order -- which is also the namespace
+    /// [`Self::expr`]'s `Column` nodes index. A projected scan must decode
+    /// these even when the query never named them, or the expression would
+    /// evaluate over holes.
+    pub dependencies: Vec<String>,
 }
 
 /// A column description reduced to what generation needs: the two facts
@@ -178,6 +186,35 @@ pub trait GeneratedColumnSlot {
     fn generation(&self) -> Option<&GeneratedColumn>;
     /// The column's own type, which the computed value is cast into.
     fn column_type(&self) -> &FieldType;
+    /// The column's name, which is what a dependency names it by.
+    fn column_name(&self) -> &str;
+}
+
+/// The offset of `name` in `columns`, matched as MySQL matches column names.
+pub fn offset_of<S: GeneratedColumnSlot>(columns: &[S], name: &str) -> Option<usize> {
+    columns
+        .iter()
+        .position(|column| column.column_name().eq_ignore_ascii_case(name))
+}
+
+/// The offsets `dependencies` name in `columns`, or the first name that is
+/// not there.
+///
+/// This is the ONLY place a name-keyed dependency becomes an offset, and it
+/// reads the CURRENT column list every time, so an `ALTER TABLE` that
+/// reorders columns has nothing to invalidate.
+///
+/// # Errors
+///
+/// The first dependency name `columns` does not define.
+pub fn dependency_offsets<S: GeneratedColumnSlot>(
+    columns: &[S],
+    dependencies: &[String],
+) -> Result<Vec<usize>, String> {
+    dependencies
+        .iter()
+        .map(|name| offset_of(columns, name).ok_or_else(|| name.clone()))
+        .collect()
 }
 
 /// Whether a column's value is NOT written into the row bytes: a generated
@@ -216,7 +253,6 @@ pub struct GenerationError {
 /// input it may legally name is final.
 pub fn materialize<S: GeneratedColumnSlot>(
     columns: &[S],
-    names: impl Fn(usize) -> String,
     row: &mut [Datum],
     only_virtual: bool,
     ctx: &impl tidb_expr::Columns,
@@ -224,7 +260,6 @@ pub fn materialize<S: GeneratedColumnSlot>(
     if !columns.iter().any(|c| c.generation().is_some()) {
         return Ok(());
     }
-    let types: Vec<FieldType> = columns.iter().map(|c| c.column_type().clone()).collect();
     for (offset, column) in columns.iter().enumerate() {
         let Some(generated) = column.generation() else {
             continue;
@@ -232,9 +267,9 @@ pub fn materialize<S: GeneratedColumnSlot>(
         if only_virtual && generated.stored {
             continue;
         }
-        let value =
-            eval_over_row(&generated.expr, &types, row, ctx).map_err(|error| GenerationError {
-                column: names(offset),
+        let value = eval_over_dependencies(&generated.expr, &generated.dependencies, columns, row, ctx)
+            .map_err(|error| GenerationError {
+                column: columns[offset].column_name().to_owned(),
                 detail: format!("{error:?}"),
                 eval: Some(error),
             })?;
@@ -249,7 +284,7 @@ pub fn materialize<S: GeneratedColumnSlot>(
                 Ok(converted) => converted.value,
                 Err(error) => {
                     return Err(GenerationError {
-                        column: names(offset),
+                        column: columns[offset].column_name().to_owned(),
                         detail: format!("{error:?}"),
                         eval: None,
                     })
@@ -259,6 +294,45 @@ pub fn materialize<S: GeneratedColumnSlot>(
         row[offset] = value;
     }
     Ok(())
+}
+
+/// Evaluates an expression whose `Column` nodes index `dependencies` against
+/// a row of the TABLE, gathering the named columns' values into the
+/// expression's own namespace.
+///
+/// The gather is where a name becomes an offset, and it happens per
+/// evaluation over the CURRENT column list. That is the whole of the
+/// invalidation story: no offset survives an `ALTER TABLE` because none is
+/// stored. It also picks up the current TYPES, so a `MODIFY COLUMN` that
+/// rewrites a dependency's type is seen without a rebuild either.
+///
+/// The gathered row is `dependencies.len()` wide rather than the table's
+/// width, so this is also strictly less work than evaluating over a full row
+/// -- the cost of name-keying is the lookups, not the chunk.
+///
+/// # Errors
+///
+/// [`tidb_expr::EvalError`] from the expression, or `Unsupported` when a
+/// dependency names a column the table no longer defines -- which DDL
+/// refuses to create (3837 / 1054), so it is a corruption report, not a
+/// user-reachable path.
+pub(crate) fn eval_over_dependencies<S: GeneratedColumnSlot>(
+    expr: &Expression,
+    dependencies: &[String],
+    columns: &[S],
+    row: &[Datum],
+    ctx: &impl tidb_expr::Columns,
+) -> Result<Datum, tidb_expr::EvalError> {
+    let mut types = Vec::with_capacity(dependencies.len());
+    let mut values = Vec::with_capacity(dependencies.len());
+    for name in dependencies {
+        let offset = offset_of(columns, name).ok_or(tidb_expr::EvalError::Unsupported(
+            "a generated or partition expression names a column the table no longer defines",
+        ))?;
+        types.push(columns[offset].column_type().clone());
+        values.push(row.get(offset).cloned().unwrap_or(Datum::Null));
+    }
+    eval_over_row(expr, &types, &values, ctx)
 }
 
 /// Evaluates one expression against a row of datums by materializing the row
@@ -373,7 +447,7 @@ pub fn build_generated_columns(
             expr_text: expression.restore_with_flags(generated_restore_flags()),
             stored: *stored,
             expr,
-            dependencies,
+            dependencies: resolver.dependency_names(),
         }));
     }
     Ok(built)
@@ -408,8 +482,11 @@ pub(crate) fn generated_restore_flags() -> tidb_ast::RestoreFlags {
 pub struct TableColumnResolver<'a> {
     names: &'a [String],
     types: &'a [FieldType],
-    /// The offsets successfully resolved, in first-seen order.
-    seen: RefCell<Vec<usize>>,
+    /// The columns successfully resolved, in first-seen order, as (offset,
+    /// name). This order IS the namespace the built expression indexes: a
+    /// `Column` node's `index` is a position in this list, never a position
+    /// in the table.
+    seen: RefCell<Vec<(usize, String)>>,
     /// The first name that resolved to nothing, which is Go's 1054 argument.
     missing: RefCell<Option<String>>,
 }
@@ -425,9 +502,19 @@ impl<'a> TableColumnResolver<'a> {
         }
     }
 
-    /// The column offsets the expression referenced.
+    /// The column offsets the expression referenced, in the table the
+    /// expression was BUILT against. Only DDL-time checks may use these: they
+    /// run while that table is still the current one. Anything stored has to
+    /// keep [`Self::dependency_names`] instead.
     pub fn dependencies(&self) -> Vec<usize> {
-        self.seen.borrow().clone()
+        self.seen.borrow().iter().map(|(at, _)| *at).collect()
+    }
+
+    /// The column NAMES the expression referenced, in the order the built
+    /// expression indexes them. This is what a `GeneratedColumn` or a
+    /// `PartitionSpec` stores.
+    pub fn dependency_names(&self) -> Vec<String> {
+        self.seen.borrow().iter().map(|(_, name)| name.clone()).collect()
     }
 
     /// The first unresolvable name, if any.
@@ -446,10 +533,16 @@ impl ColumnResolver for TableColumnResolver<'_> {
         match offset {
             Some(offset) => {
                 let mut seen = self.seen.borrow_mut();
-                if !seen.contains(&offset) {
-                    seen.push(offset);
-                }
-                Some((offset, self.types[offset].clone(), offset as i64))
+                let index = match seen.iter().position(|(at, _)| *at == offset) {
+                    Some(index) => index,
+                    None => {
+                        // The TABLE's spelling, not the reference's, so the
+                        // later lookup is stable whatever case was written.
+                        seen.push((offset, self.names[offset].clone()));
+                        seen.len() - 1
+                    }
+                };
+                Some((index, self.types[offset].clone(), index as i64))
             }
             None => {
                 let mut missing = self.missing.borrow_mut();

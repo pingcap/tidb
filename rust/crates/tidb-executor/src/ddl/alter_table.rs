@@ -434,7 +434,8 @@ fn add_foreign_key_action(
     // why re-adding a constraint over the same columns adds no second key.
     // Go `IsIndexPrefixCovered`: a key part that stores only a PREFIX of its
     // column cannot answer the constraint's lookup, so it earns no exemption.
-    let covered = |offsets: &[usize]| offsets.starts_with(&foreign_key.cols);
+    let fk_offsets = table.foreign_key_offsets(&foreign_key).unwrap_or_default();
+    let covered = |offsets: &[usize]| offsets.starts_with(&fk_offsets[..]);
     let column_flens: Vec<i64> = table
         .columns
         .iter()
@@ -442,7 +443,7 @@ fn add_foreign_key_action(
         .collect();
     let covered_index = |index: &super::KvIndex| {
         covered(&index.column_offsets)
-            && foreign_key.cols.iter().enumerate().all(|(position, at)| {
+            && fk_offsets.iter().enumerate().all(|(position, at)| {
                 let length = index.prefix_length(position);
                 length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
                     || column_flens.get(*at).is_some_and(|flen| length >= *flen)
@@ -454,10 +455,10 @@ fn add_foreign_key_action(
             id,
             name: foreign_key.name.clone(),
             unique: false,
-            column_offsets: foreign_key.cols.clone(),
+            column_offsets: fk_offsets.clone(),
             prefix_lengths: vec![
                 crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                foreign_key.cols.len()
+                fk_offsets.len()
             ],
             visible: true,
         });

@@ -439,9 +439,8 @@ impl KvTable {
         let Some(partition) = &self.partition else {
             return Ok(self.table_id);
         };
-        let types: Vec<FieldType> = self.columns.iter().map(|c| c.field_type.clone()).collect();
         partition
-            .locate(row, &types, ctx)
+            .locate(row, &self.columns, ctx)
             .map_err(|error| match error {
                 crate::partition_routing::RoutingError::NoPartitionForValue(value) => {
                     KvTableError::NoPartitionForValue(value)
@@ -830,13 +829,7 @@ impl KvTable {
         if row.len() < self.columns.len() {
             row.resize(self.columns.len(), Datum::Null);
         }
-        crate::generated_column::materialize(
-            &self.columns,
-            |i| self.columns[i].name.clone(),
-            row,
-            false,
-            ctx,
-        )
+        crate::generated_column::materialize(&self.columns, row, false, ctx)
         .map_err(generation_error)
     }
 
@@ -860,13 +853,7 @@ impl KvTable {
         row: &mut [Datum],
         ctx: &impl tidb_expr::Columns,
     ) -> Result<(), KvTableError> {
-        crate::generated_column::materialize(
-            &self.columns,
-            |i| self.columns[i].name.clone(),
-            row,
-            true,
-            ctx,
-        )
+        crate::generated_column::materialize(&self.columns, row, true, ctx)
         .map_err(generation_error)
     }
 
@@ -1118,10 +1105,28 @@ impl KvTable {
     /// why Go refuses both with `ErrDependentByFunctionalIndex` (3837).
     #[must_use]
     pub fn expression_index_depends_on(&self, offset: usize) -> bool {
+        let Some(name) = self.columns.get(offset).map(|column| column.name.as_str()) else {
+            return false;
+        };
         self.columns[self.visible_column_count()..]
             .iter()
             .filter_map(|column| column.generated.as_ref())
-            .any(|generated| generated.dependencies.contains(&offset))
+            .any(|generated| {
+                generated
+                    .dependencies
+                    .iter()
+                    .any(|dependency| dependency.eq_ignore_ascii_case(name))
+            })
+    }
+
+    /// The offsets a foreign key's referencing columns sit at NOW, resolved
+    /// from the names the constraint stores.
+    ///
+    /// `None` when a referencing column is gone, which DDL refuses to do
+    /// (1553 keeps the index, and the column beneath it, alive).
+    #[must_use]
+    pub fn foreign_key_offsets(&self, foreign_key: &KvForeignKey) -> Option<Vec<usize>> {
+        crate::generated_column::dependency_offsets(&self.columns, &foreign_key.cols).ok()
     }
 
     /// Appends a hidden column -- the one an expression index key part is

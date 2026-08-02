@@ -353,7 +353,7 @@ pub fn build_hidden_columns(
                     // Go sets `GeneratedStored: false`: the value is
                     // recomputed on every read, and only the INDEX stores it.
                     stored: false,
-                    dependencies: resolver.dependencies(),
+                    dependencies: resolver.dependency_names(),
                     expr: built_expr,
                 },
             },

@@ -829,7 +829,13 @@ pub fn run_create_table_in(
         // read an AUTO_INCREMENT column. Captured as 3754 naming the index,
         // which is the index whose part built this column.
         if let Some(auto) = auto_increment_offset {
-            if hidden.generated.dependencies.contains(&auto) {
+            let auto_name = info.columns[auto].name.original().to_owned();
+            if hidden
+                .generated
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.eq_ignore_ascii_case(&auto_name))
+            {
                 return Err(DriverError::ExpressionIndexCanNotRefer(
                     indexes
                         .iter()
@@ -873,10 +879,21 @@ pub fn run_create_table_in(
         // entry holding `'abc'` for `'abcdef'` cannot answer "does a parent
         // row with this value exist", so a prefix index earns the child no
         // exemption and TiDB adds the constraint's own index beside it.
-        let covered = |offsets: &[usize]| offsets.starts_with(&foreign_key.cols);
+        // The constraint stores NAMES; the index it may need is built over
+        // offsets, so resolve once here against the table as it stands.
+        let fk_offsets: Vec<usize> = foreign_key
+            .cols
+            .iter()
+            .filter_map(|name| {
+                info.columns
+                    .iter()
+                    .position(|column| column.name.original().eq_ignore_ascii_case(name))
+            })
+            .collect();
+        let covered = |offsets: &[usize]| offsets.starts_with(&fk_offsets[..]);
         let covered_index = |index: &KvIndex| {
             covered(&index.column_offsets)
-                && foreign_key.cols.iter().enumerate().all(|(position, at)| {
+                && fk_offsets.iter().enumerate().all(|(position, at)| {
                     let length = index.prefix_length(position);
                     length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
                         || info
@@ -891,12 +908,12 @@ pub fn run_create_table_in(
                 id,
                 name: foreign_key.name.clone(),
                 unique: false,
-                column_offsets: foreign_key.cols.clone(),
+                column_offsets: fk_offsets.clone(),
                 // Go's auto-created foreign-key index names whole columns:
                 // an `FKInfo` has no per-column length to carry.
                 prefix_lengths: vec![
                     crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
-                    foreign_key.cols.len()
+                    fk_offsets.len()
                 ],
                 visible: true,
             });
