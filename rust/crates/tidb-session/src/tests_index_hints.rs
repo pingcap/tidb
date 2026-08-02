@@ -373,6 +373,113 @@ fn a_hint_naming_a_missing_index_is_1176() {
     }
 }
 
+/// A hinted index that neither narrows a range nor covers the read is still
+/// the path, because the same hint deleted the table path it would otherwise
+/// have lost to. This is Go's `keepIndex := ... || path.Forced` arm, and it is
+/// the case where "the hint restricts the candidate set" and "the hint makes
+/// the optimizer prefer the index" stop being distinguishable from the
+/// outside -- there is nothing left to prefer over.
+///
+/// Go's capture for `use index(idx_c) where b = 2` is an `IndexLookUp` whose
+/// build side is `IndexFullScan ... index:idx_c(c)` with `eq(test.t.b, 2)` as
+/// the probe-side `Selection`, and the rows are `RS:2|2|2`.
+#[test]
+fn a_forced_index_that_neither_narrows_nor_covers_is_still_the_path() {
+    let mut session = hinted_session();
+
+    // Control: unhinted, the cost model reads idx_b and would never reach for
+    // idx_c, which has nothing to say about `b`.
+    assert!(plan_uses_index(
+        &mut session,
+        "EXPLAIN SELECT * FROM t WHERE b = 2",
+        "idx_b"
+    ));
+    assert!(!plan_uses_index(
+        &mut session,
+        "EXPLAIN SELECT * FROM t WHERE b = 2",
+        "idx_c"
+    ));
+
+    assert!(plan_uses_index(
+        &mut session,
+        "EXPLAIN SELECT * FROM t USE INDEX(idx_c) WHERE b = 2",
+        "idx_c"
+    ));
+    assert!(!plan_uses_index(
+        &mut session,
+        "EXPLAIN SELECT * FROM t USE INDEX(idx_c) WHERE b = 2",
+        "idx_b"
+    ));
+    // Reading the wrong index is still reading every matching row.
+    assert_eq!(
+        row_text(session.run("SELECT * FROM t USE INDEX(idx_c) WHERE b = 2")),
+        vec![vec!["2".to_owned(), "2".to_owned(), "2".to_owned()]]
+    );
+    assert_eq!(session.warnings(), &[]);
+    assert_eq!(session.wire_warning_count(), 0);
+}
+
+/// A `FOR JOIN`/`FOR ORDER BY`/`FOR GROUP BY` qualifier takes the hint out of
+/// scan-path selection entirely -- Go's `hint.HintScope != ast.HintForScan ->
+/// continue`, which skips the name lookup too. So such a hint changes no plan
+/// AND a missing index name in one is not 1176, which is the surprising half.
+///
+/// Captured: all three of `use index for join (idx_b)`,
+/// `use index for join (no_such_idx)` and `use index for order by (idx_c)`
+/// over `where a = 2` plan the same `Point_Get ... handle:2` the unhinted
+/// statement does.
+#[test]
+fn a_scope_qualified_hint_is_inert() {
+    let mut session = hinted_session();
+
+    let unhinted = access_objects(&mut session, "EXPLAIN SELECT b FROM t WHERE a = 2");
+    for hint in [
+        "USE INDEX FOR JOIN (idx_b)",
+        "USE INDEX FOR JOIN (no_such_idx)",
+        "USE INDEX FOR ORDER BY (idx_c)",
+        "IGNORE INDEX FOR GROUP BY (idx_b)",
+    ] {
+        let sql = format!("EXPLAIN SELECT b FROM t {hint} WHERE a = 2");
+        assert_eq!(access_objects(&mut session, &sql), unhinted, "{hint}");
+    }
+    // Not 1176: the name was never looked up.
+    assert_eq!(
+        row_text(session.run("SELECT b FROM t USE INDEX FOR JOIN (no_such_idx) WHERE a = 2")),
+        vec![vec!["2".to_owned()]]
+    );
+    assert_eq!(session.warnings(), &[]);
+    assert_eq!(session.wire_warning_count(), 0);
+}
+
+/// An INVISIBLE index is not an access path at all, so naming one in a hint is
+/// the same 1176 as naming an index that was never created -- Go builds
+/// `publicPaths` without it and `getPathByIndexName` then finds nothing.
+/// Captured: `force index(idx_b)` on a table whose `idx_b` is invisible is
+/// `ERR`, where the same statement with the index visible reads it.
+#[test]
+fn an_invisible_index_is_1176_in_a_hint() {
+    let mut session = hinted_session();
+    session
+        .run("CREATE TABLE u (a BIGINT PRIMARY KEY, b INT, INDEX idx_b(b))")
+        .unwrap();
+    session.run("INSERT INTO u VALUES (1,1),(2,2)").unwrap();
+
+    // Control: while it is visible, the hint binds to it.
+    assert!(plan_uses_index(
+        &mut session,
+        "EXPLAIN SELECT * FROM u FORCE INDEX(idx_b) WHERE b = 2",
+        "idx_b"
+    ));
+
+    session.run("ALTER TABLE u ALTER INDEX idx_b INVISIBLE").unwrap();
+    let (code, message) = error_of(
+        &mut session,
+        "EXPLAIN SELECT * FROM u FORCE INDEX(idx_b) WHERE b = 2",
+    );
+    assert_eq!(code, 1176, "{message}");
+    assert_eq!(message, "Key 'idx_b' doesn't exist in table 'u'");
+}
+
 /// A comment-style optimizer hint naming a table the statement never mentions
 /// is Go's canonical inapplicable-hint case (#153): the plan is unaffected and
 /// warning 1815 says so, verbatim
