@@ -37,9 +37,12 @@
 //! backend still needs.
 
 mod auto_id;
+mod column_deps;
 mod index_entries;
 mod table_meta;
 mod table_scan;
+
+pub use column_deps::ColumnDependent;
 
 pub use auto_id::{
     advance, exceeds, AutoIdError, AutoIdStore, AutoIdStoreError, LocalAutoIdStore,
@@ -287,25 +290,6 @@ impl AutoIncrement {
             Self::Reused(id) | Self::Allocated(id) => Some(id.max(0) as u64),
         }
     }
-}
-
-/// The piece of name-keyed metadata that stops a column being dropped or
-/// renamed, as [`KvTable::column_dependent`] reports it.
-///
-/// One value per error code Go raises, because the code is the whole
-/// observable difference: all three refusals say the same thing about the
-/// same column and only the number tells a client which metadata objected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ColumnDependent {
-    /// The hidden generated column an expression index was rewritten into.
-    /// Go `ErrDependentByFunctionalIndex` (3837).
-    ExpressionIndex,
-    /// A visible generated column whose expression reads this one. Go
-    /// `ErrDependentByGeneratedColumn` (3108).
-    GeneratedColumn,
-    /// The partition expression, or the `PARTITION BY ... COLUMNS` list. Go
-    /// `ErrDependentByPartitionFunctional` (3855).
-    Partition,
 }
 
 impl KvTable {
@@ -1113,64 +1097,6 @@ impl KvTable {
     #[must_use]
     pub fn is_hidden(&self, offset: usize) -> bool {
         offset >= self.visible_column_count()
-    }
-
-    /// What name-keyed metadata reads the column at `offset`, if any.
-    ///
-    /// Three pieces of a `TableInfo` name a column rather than pointing at it:
-    /// a generated column's expression, the hidden generated column an
-    /// expression index was rewritten into, and the partition expression (or
-    /// its `COLUMNS` list). None of them can survive the column's NAME going
-    /// away, so a DDL that drops or renames the column has to answer for all
-    /// three -- and Go answers by REFUSING, with a different code for each.
-    ///
-    /// Order is Go's, and it is observable: Go's
-    /// `checkModifyColumnWithGeneratedColumnsConstraint` walks `t.Cols()` in
-    /// offset order and the FIRST generated column that names this one
-    /// decides between 3837 and 3108, and only then does
-    /// `checkDropColumnWithPartitionConstraint` get to say 3855. Hidden
-    /// columns are appended after the visible ones, so walking `self.columns`
-    /// is that walk.
-    #[must_use]
-    pub fn column_dependent(&self, offset: usize) -> Option<ColumnDependent> {
-        let name = self
-            .columns
-            .get(offset)
-            .map(|column| column.name.as_str())?;
-        let names_it = |dependencies: &[String]| {
-            dependencies
-                .iter()
-                .any(|dependency| dependency.eq_ignore_ascii_case(name))
-        };
-        for (other, column) in self.columns.iter().enumerate() {
-            let Some(generated) = column.generated.as_ref() else {
-                continue;
-            };
-            if names_it(&generated.dependencies) {
-                return Some(if self.is_hidden(other) {
-                    ColumnDependent::ExpressionIndex
-                } else {
-                    ColumnDependent::GeneratedColumn
-                });
-            }
-        }
-        if self
-            .partition()
-            .is_some_and(|spec| names_it(&spec.dependencies))
-        {
-            return Some(ColumnDependent::Partition);
-        }
-        None
-    }
-
-    /// The offsets a foreign key's referencing columns sit at NOW, resolved
-    /// from the names the constraint stores.
-    ///
-    /// `None` when a referencing column is gone, which DDL refuses to do
-    /// (1553 keeps the index, and the column beneath it, alive).
-    #[must_use]
-    pub fn foreign_key_offsets(&self, foreign_key: &KvForeignKey) -> Option<Vec<usize>> {
-        crate::generated_column::dependency_offsets(&self.columns, &foreign_key.cols).ok()
     }
 
     /// Appends a hidden column -- the one an expression index key part is
@@ -1988,50 +1914,6 @@ mod tests {
                 },
             ],
         )
-    }
-
-    /// A foreign key names its referencing columns, so a column inserted
-    /// BEFORE them must not move the constraint onto different columns.
-    ///
-    /// `ALTER TABLE` refuses to reach a table in a foreign key at all today
-    /// (`crate::ddl::alter_table`), so this is the pin at the level the
-    /// representation lives: with the offsets stored instead of the names,
-    /// `cols = ["s"]` resolved to 1 before the insert and still to 1 after,
-    /// which is `z` -- the constraint would have been checking the wrong
-    /// column with no error anywhere.
-    #[test]
-    fn a_foreign_key_follows_its_columns_when_one_is_inserted_before_them() {
-        let mut t = test_table();
-        t.add_foreign_key(KvForeignKey {
-            name: "fk_1".to_owned(),
-            cols: vec!["s".to_owned()],
-            ref_schema: "test".to_owned(),
-            ref_table: "parent".to_owned(),
-            ref_cols: vec!["s".to_owned()],
-            on_delete: FkAction::Restrict,
-            on_update: FkAction::Restrict,
-        });
-        // Re-read the constraint from the table on both sides: a clone taken
-        // BEFORE the insert carries its own `cols` and would answer from
-        // those, which is not the question.
-        let offsets = |t: &KvTable| t.foreign_key_offsets(&t.foreign_keys()[0]);
-        assert_eq!(offsets(&t), Some(vec![1]));
-        t.add_column(
-            0,
-            KvColumn {
-                name: "z".to_owned(),
-                id: 3,
-                field_type: long(),
-                default_value: None,
-                origin_default: None,
-                generated: None,
-            },
-        );
-        assert_eq!(
-            offsets(&t),
-            Some(vec![2]),
-            "the constraint follows `s`, it does not stay at offset 1"
-        );
     }
 
     /// The scan bound must cover the whole table and nothing beyond it: the
