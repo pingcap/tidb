@@ -180,11 +180,11 @@ use crate::cluster_analyze_seam::ClusterAnalyze;
 use crate::cluster_session::{cluster_session_catalog, SkippedTable, TableAutoIds};
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::pipeline_session::MaterializedResultSetSource;
-use crate::wire_status::WireStatus;
 use crate::sql_node::{
     ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession,
     QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
 };
+use crate::wire_status::WireStatus;
 
 /// The PD/TiKV control-plane deadline this node's boot and statements use, the
 /// same one the bounded node applies.
@@ -1357,13 +1357,10 @@ impl QuerySession for ClusterServerSession {
                 StmtOutput::Done(_) => crate::pipeline_session::affected_rows_source(0),
             })
         })?;
-        Ok(
-            QueryResult::new(Box::new(source))
-                .with_statement_status(
-                    self.session.wire_warning_count(),
-                    WireStatus::of_session(&self.session),
-                ),
-        )
+        Ok(QueryResult::new(Box::new(source)).with_statement_status(
+            self.session.wire_warning_count(),
+            WireStatus::of_session(&self.session),
+        ))
     }
 }
 

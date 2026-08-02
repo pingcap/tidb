@@ -45,11 +45,11 @@ use tidb_session::process::ProcessRegistry;
 use tidb_session::{GlobalSysvars, Session, SharedCatalog, StmtKind, StmtOutput, StmtResult};
 
 use crate::resultset_source::ResultSetSource;
-use crate::wire_status::WireStatus;
 use crate::sql_node::{
     ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession,
     QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
 };
+use crate::wire_status::WireStatus;
 
 /// One connection's pipeline-backed query session.
 pub struct PipelineServerSession {
@@ -374,13 +374,10 @@ impl QuerySession for PipelineServerSession {
         };
         // The rows are already materialized, so the buffer this reads is the
         // finished statement's -- the same one Go's terminal `writeEOF` reads.
-        Ok(
-            QueryResult::new(Box::new(source))
-                .with_statement_status(
-                    self.session.wire_warning_count(),
-                    WireStatus::of_session(&self.session),
-                ),
-        )
+        Ok(QueryResult::new(Box::new(source)).with_statement_status(
+            self.session.wire_warning_count(),
+            WireStatus::of_session(&self.session),
+        ))
     }
 }
 
@@ -531,8 +528,8 @@ impl ResultSetSource for MaterializedResultSetSource {
 mod tests {
     use super::*;
     use crate::configured_user_store::ConfiguredUserStore;
-    use crate::wire_status::{SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_IN_TRANS};
     use crate::sql_node::ConnectionCancellation;
+    use crate::wire_status::{SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_IN_TRANS};
     use sha1::{Digest, Sha1};
     use std::net::SocketAddr;
     use tidb_protocol::{TYPE_LONGLONG, TYPE_VAR_STRING};

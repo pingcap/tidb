@@ -46,9 +46,7 @@ use crate::sql_node::{
     ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome,
     PreparedStatement, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
 };
-use crate::wire_status::{
-    WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND,
-};
+use crate::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
 use tidb_planner::prepared_dml::PreparedBindValue;
 use tidb_planner::transaction_control::classify_transaction_control;
 
