@@ -33,6 +33,43 @@ type JoinMethodHint struct {
 	HintInfo         *hint.PlanHints
 }
 
+// indexJoinHintMask is intentionally limited to the index-join family because
+// this fix only restores the inapplicable-warning path carried by those hints.
+// Other join-method hints still need dedicated rebinding semantics and should be
+// handled in follow-up changes instead of being folded into this path implicitly.
+const indexJoinHintMask = hint.PreferINLJ | hint.PreferINLHJ | hint.PreferINLMJ |
+	hint.PreferNoIndexJoin | hint.PreferNoIndexHashJoin | hint.PreferNoIndexMergeJoin
+
+// ShouldRebindJoinMethodHint reports whether a join method hint should follow
+// the optimized vertex ID after recursive subtree optimization.
+func ShouldRebindJoinMethodHint(preferJoinMethod uint) bool {
+	return preferJoinMethod&indexJoinHintMask != 0
+}
+
+// RebindJoinMethodHints remaps hint keys from pre-optimization plan IDs to the
+// optimized vertex IDs after recursive subtree optimization rebuilds the child
+// plans participating in join reorder.
+func RebindJoinMethodHints(hints map[int]*JoinMethodHint, vertexMap map[int]base.LogicalPlan) map[int]*JoinMethodHint {
+	if len(hints) == 0 || len(vertexMap) == 0 {
+		return hints
+	}
+	rebuilt := make(map[int]*JoinMethodHint, len(hints))
+	for oldID, hintInfo := range hints {
+		if ShouldRebindJoinMethodHint(hintInfo.PreferJoinMethod) {
+			optimizedVertex, ok := vertexMap[oldID]
+			intest.Assert(ok, "join method hint vertex must be present in optimized vertex map")
+			if ok {
+				rebuilt[optimizedVertex.ID()] = hintInfo
+				continue
+			}
+			// Keep the original key in non-intest builds so we do not silently drop
+			// the hint if a future caller violates the rebinding invariant.
+		}
+		rebuilt[oldID] = hintInfo
+	}
+	return rebuilt
+}
+
 // CheckAndGenerateLeadingHint used to check and generate the valid leading hint.
 // We are allowed to use at most one leading hint in a join group. When more than one,
 // all leading hints in the current join group will be invalid.

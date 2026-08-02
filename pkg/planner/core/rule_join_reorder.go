@@ -335,11 +335,17 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 		result = extractJoinGroup(p)
 		curJoinGroup, joinTypes, joinOrderHintInfo, hasOuterJoin := result.group, result.joinTypes, result.joinOrderHintInfo, result.hasOuterJoin
 		if len(curJoinGroup) > 1 {
+			optimizedVertexMap := make(map[int]base.LogicalPlan, len(curJoinGroup))
 			for i := range curJoinGroup {
+				oldID := curJoinGroup[i].ID()
 				curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i])
 				if err != nil {
 					return nil, err
 				}
+				optimizedVertexMap[oldID] = curJoinGroup[i]
+			}
+			if len(result.joinMethodHintInfo) > 0 {
+				result.joinMethodHintInfo = joinorder.RebindJoinMethodHints(result.joinMethodHintInfo, optimizedVertexMap)
 			}
 			origJoinRoot := p
 			originalSchema := p.Schema()
