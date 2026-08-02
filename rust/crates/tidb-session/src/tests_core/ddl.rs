@@ -1112,3 +1112,101 @@ fn show_warnings_prints_the_note_level() {
         [["Note", "1051", "Unknown table 'test.nosuch'"]]
     );
 }
+
+/// A generated column's expression is keyed by the NAMES it reads, so an
+/// `ALTER TABLE` that inserts a column BEFORE one of them cannot re-point it.
+///
+/// This is #202's first pin. With the expression indexing the table row by
+/// offset, `ADD COLUMN z INT FIRST` shifted `b` from offset 1 to offset 2
+/// while `c AS (b+1)` went on reading offset 1 -- so `c` silently began
+/// computing `z+1`, for the rows written after the ALTER and, because a
+/// VIRTUAL column is recomputed on every read, for the rows written before it
+/// as well.
+#[test]
+fn a_generated_column_follows_its_dependency_across_a_column_move() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE g (a INT, b INT, c INT AS (b+1))")
+        .unwrap();
+    session.run("INSERT INTO g (a, b) VALUES (1, 10)").unwrap();
+    session.run("ALTER TABLE g ADD COLUMN z INT FIRST").unwrap();
+    session
+        .run("INSERT INTO g (z, a, b) VALUES (100, 2, 20)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT b, c FROM g ORDER BY b")),
+        [["10", "11"], ["20", "21"]],
+        "c is b+1, not z+1"
+    );
+}
+
+/// Go `RenameColumn` refuses to rename a column that name-keyed metadata
+/// reads, rather than rewriting that metadata, and the error names WHICH
+/// metadata objected: 3108 for a visible generated column
+/// (`checkModifyColumnWithGeneratedColumnsConstraint`, `pkg/ddl/
+/// modify_column.go`), 3837 for the hidden generated column an expression
+/// index was rewritten into, from the same function.
+///
+/// This is the pin that says the corruption did not merely relocate when the
+/// metadata became name-keyed: a rename that got through would leave `c`'s
+/// expression naming a column no longer there.
+#[test]
+fn renaming_a_column_a_generated_column_reads_is_refused() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE rg (a INT, b INT, c INT AS (b+1))")
+        .unwrap();
+
+    let rendered = session
+        .run("ALTER TABLE rg RENAME COLUMN b TO z2")
+        .expect_err("a generated column reads b")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 3108);
+    assert_eq!(
+        rendered.message,
+        "Column 'b' has a generated column dependency."
+    );
+
+    // CHANGE COLUMN renames too, and Go raises the same refusal from
+    // `getModifiableColumnJob` -- but only when the name actually changes.
+    assert_eq!(
+        session
+            .run("ALTER TABLE rg CHANGE COLUMN b z2 INT")
+            .expect_err("the rename half of CHANGE COLUMN is the same refusal")
+            .to_mysql_error()
+            .code,
+        3108
+    );
+    session
+        .run("ALTER TABLE rg MODIFY COLUMN b BIGINT")
+        .unwrap();
+
+    // Unaffected columns rename freely, and the expression still computes.
+    session.run("ALTER TABLE rg RENAME COLUMN a TO a2").unwrap();
+    session
+        .run("INSERT INTO rg (a2, b) VALUES (1, 10)")
+        .unwrap();
+    assert_eq!(row_text(session.run("SELECT c FROM rg")), [["11"]]);
+
+    // The hidden generated column behind an expression index is the same
+    // refusal with Go's other code.
+    session.run("CREATE TABLE fi (a INT, b INT)").unwrap();
+    session.run("ALTER TABLE fi ADD INDEX idx((a+b))").unwrap();
+    assert_eq!(
+        session
+            .run("ALTER TABLE fi RENAME COLUMN a TO z")
+            .expect_err("an expression index reads a")
+            .to_mysql_error()
+            .code,
+        3837
+    );
+    // And a DROP is the same question with the same answer.
+    assert_eq!(
+        session
+            .run("ALTER TABLE rg DROP COLUMN b")
+            .expect_err("a generated column reads b")
+            .to_mysql_error()
+            .code,
+        3108
+    );
+}

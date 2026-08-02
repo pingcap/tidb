@@ -1990,6 +1990,47 @@ mod tests {
         )
     }
 
+    /// A foreign key names its referencing columns, so a column inserted
+    /// BEFORE them must not move the constraint onto different columns.
+    ///
+    /// `ALTER TABLE` refuses to reach a table in a foreign key at all today
+    /// (`crate::ddl::alter_table`), so this is the pin at the level the
+    /// representation lives: with the offsets stored instead of the names,
+    /// `cols = ["s"]` resolved to 1 before the insert and still to 1 after,
+    /// which is `z` -- the constraint would have been checking the wrong
+    /// column with no error anywhere.
+    #[test]
+    fn a_foreign_key_follows_its_columns_when_one_is_inserted_before_them() {
+        let mut t = test_table();
+        t.add_foreign_key(KvForeignKey {
+            name: "fk_1".to_owned(),
+            cols: vec!["s".to_owned()],
+            ref_schema: "test".to_owned(),
+            ref_table: "parent".to_owned(),
+            ref_cols: vec!["s".to_owned()],
+            on_delete: FkAction::Restrict,
+            on_update: FkAction::Restrict,
+        });
+        let key = t.foreign_keys()[0].clone();
+        assert_eq!(t.foreign_key_offsets(&key), Some(vec![1]));
+        t.add_column(
+            0,
+            KvColumn {
+                name: "z".to_owned(),
+                id: 3,
+                field_type: long(),
+                default_value: None,
+                origin_default: None,
+                generated: None,
+            },
+        );
+        assert_eq!(
+            t.foreign_key_offsets(&key),
+            Some(vec![2]),
+            "the constraint follows `s`, it does not stay at offset 1"
+        );
+    }
+
     /// The scan bound must cover the whole table and nothing beyond it: the
     /// codec's handle range is inclusive at the top while the iterator's upper
     /// bound is exclusive, so the largest handle must still be returned and a

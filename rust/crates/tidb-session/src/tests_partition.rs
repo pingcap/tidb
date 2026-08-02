@@ -976,3 +976,72 @@ fn a_write_restricted_to_partitions_is_refused_rather_than_ignored() {
         vec![vec!["2".to_owned()]]
     );
 }
+
+/// The partition expression is keyed by the NAMES it reads, so an
+/// `ALTER TABLE` that inserts a column before the partitioning column cannot
+/// re-route the table.
+///
+/// This is #202's second pin, and it is the one with no error to notice:
+/// with the expression indexing the row by offset, `ADD COLUMN z int FIRST`
+/// shifted `b` from offset 1 to 2 while routing went on reading offset 1 --
+/// which is now `a` -- so rows written after the ALTER landed in a different
+/// partition from identically-keyed rows written before it, and a
+/// partition-pruned read then found only half of them.
+#[test]
+fn a_column_move_does_not_reroute_a_partitioned_table() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE hm (a int, b int) PARTITION BY HASH(b) PARTITIONS 4")
+        .unwrap();
+    session.run("INSERT INTO hm VALUES (7, 1)").unwrap();
+    let holder = sole_holder(&mut session, "hm");
+
+    session
+        .run("ALTER TABLE hm ADD COLUMN z int FIRST")
+        .unwrap();
+    session
+        .run("INSERT INTO hm (a, b, z) VALUES (8, 1, 100)")
+        .unwrap();
+
+    let counts = partition_counts(&mut session, "hm");
+    assert_eq!(
+        counts
+            .iter()
+            .find(|(name, _)| *name == holder)
+            .map(|(_, rows)| *rows),
+        Some(2),
+        "both b=1 rows belong to the partition b=1 hashes to, got {counts:?}"
+    );
+}
+
+/// Go `checkDropColumnWithPartitionConstraint` (`pkg/ddl/executor.go`), which
+/// `RenameColumn` and `DropColumn` both call: a column the partition
+/// expression -- or a `COLUMNS` list -- reads cannot be renamed or dropped,
+/// because nothing rewrites that expression. 3855, reporting the column name
+/// LOWERCASED, which is Go's `GenWithStackByArgs(colName.L)`.
+#[test]
+fn renaming_a_partitioning_column_is_refused() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE hp (Ab int, b int) PARTITION BY HASH(Ab) PARTITIONS 4")
+        .unwrap();
+    let rendered = session
+        .run("ALTER TABLE hp RENAME COLUMN Ab TO z")
+        .expect_err("the partition expression reads Ab")
+        .to_mysql_error();
+    assert_eq!(rendered.code, 3855);
+    assert_eq!(
+        rendered.message,
+        "Column 'ab' has a partitioning function dependency and cannot be dropped or renamed"
+    );
+    assert_eq!(
+        session
+            .run("ALTER TABLE hp DROP COLUMN Ab")
+            .expect_err("the partition expression reads Ab")
+            .to_mysql_error()
+            .code,
+        3855
+    );
+    // The column the expression does NOT read renames.
+    session.run("ALTER TABLE hp RENAME COLUMN b TO b2").unwrap();
+}
