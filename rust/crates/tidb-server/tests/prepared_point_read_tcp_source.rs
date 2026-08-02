@@ -72,7 +72,9 @@ fn prepare_and_execute_use_typed_real_session_and_binary_rows() {
     // marker count became per statement, but the ordering this asserts —
     // typed decode, then execution, then binary rows — is the actual contract.
     let decode = connection[execute_branch..]
-        .find("decode_prepared_statement_execute(")
+        // The bound-parameter variant: the execute must read the
+        // COM_STMT_SEND_LONG_DATA buffers along with the packet's own values.
+        .find("decode_prepared_statement_execute_with_bound_params(")
         .map(|offset| execute_branch + offset)
         .expect("execute packet is typed before execution");
     let execute = connection[execute_branch..]

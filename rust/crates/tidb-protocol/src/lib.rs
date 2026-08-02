@@ -48,7 +48,7 @@ pub use column::{
 pub use command::{
     decode_command, Command, CommandError, COM_FIELD_LIST, COM_INIT_DB, COM_PING, COM_QUERY,
     COM_QUIT, COM_RESET_CONNECTION, COM_SET_OPTION, COM_STMT_CLOSE, COM_STMT_EXECUTE,
-    COM_STMT_FETCH, COM_STMT_PREPARE, COM_STMT_RESET,
+    COM_STMT_FETCH, COM_STMT_PREPARE, COM_STMT_RESET, COM_STMT_SEND_LONG_DATA,
 };
 pub use compression::{
     CompressedHeader, CompressedReader, CompressedWriter, CompressionAlgorithm,

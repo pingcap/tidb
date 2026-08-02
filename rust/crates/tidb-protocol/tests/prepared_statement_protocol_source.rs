@@ -16,11 +16,14 @@
 
 use tidb_datatype::{Decimal, PackedTime};
 use tidb_protocol::{
-    decode_prepared_statement_close, decode_prepared_statement_execute, encode_binary_datetime,
+    decode_prepared_statement_close, decode_prepared_statement_execute,
+    decode_prepared_statement_execute_with_bound_params, decode_prepared_statement_send_long_data,
+    encode_binary_datetime,
     encode_binary_result_row, encode_binary_signed_longlong_row, encode_binary_time,
     encode_prepared_statement_prepare_response, BinaryDateTimeType, BinaryResultCell,
     BinaryResultSetStream, ColumnInfo, PreparedParameterType, PreparedParameterTypes,
-    PreparedStatementError, PreparedValue, ResultSetOptions, TYPE_LONGLONG,
+    PreparedStatementError, PreparedStatementSendLongData, PreparedValue, ResultSetOptions,
+    TYPE_LONGLONG,
 };
 
 fn longlong_column(name: &str) -> ColumnInfo {
@@ -907,4 +910,84 @@ fn execute_decodes_every_parameter_family() {
             "{name}"
         );
     }
+}
+
+/// pkg/server/conn_stmt.go:610-625 handleStmtSendLongData.
+///
+/// Four bytes of statement ID, two of parameter ID, and the rest is the
+/// chunk verbatim -- no length prefix, no terminator. Fewer than six bytes is
+/// Go's `mysql.ErrMalformPacket`.
+#[test]
+fn send_long_data_splits_into_statement_parameter_and_chunk() {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&9_u32.to_le_bytes());
+    payload.extend_from_slice(&2_u16.to_le_bytes());
+    payload.extend_from_slice(b"chunk\0with a NUL");
+    assert_eq!(
+        decode_prepared_statement_send_long_data(&payload),
+        Ok(PreparedStatementSendLongData {
+            statement_id: 9,
+            parameter_id: 2,
+            chunk: b"chunk\0with a NUL".to_vec(),
+        })
+    );
+
+    // An empty chunk is legal: Go stores an empty buffer for it, which is
+    // how "bound to nothing" stays distinct from "never bound".
+    assert_eq!(
+        decode_prepared_statement_send_long_data(&payload[..6]),
+        Ok(PreparedStatementSendLongData {
+            statement_id: 9,
+            parameter_id: 2,
+            chunk: Vec::new(),
+        })
+    );
+
+    assert!(matches!(
+        decode_prepared_statement_send_long_data(&payload[..5]),
+        Err(PreparedStatementError::Truncated { required: 6, .. })
+    ));
+}
+
+/// pkg/server/conn_stmt_params.go:48-71: a bound parameter takes its value
+/// from the long-data buffer and consumes NOTHING from the value section, so
+/// the parameters after it still decode at the right offsets.
+#[test]
+fn a_bound_parameter_consumes_no_bytes_from_the_execute_value_section() {
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&3_u32.to_le_bytes());
+    payload.push(0);
+    payload.extend_from_slice(&1_u32.to_le_bytes());
+    payload.push(0); // null bitmap
+    payload.push(1); // new types bound
+    payload.extend_from_slice(&[0xfc, 0, 0x08, 0]); // BLOB, then LONGLONG
+    payload.extend_from_slice(&77_i64.to_le_bytes());
+
+    let decoded = decode_prepared_statement_execute_with_bound_params(
+        &payload,
+        2,
+        None,
+        &[Some(b"long data".to_vec()), None],
+    )
+    .unwrap();
+    assert_eq!(
+        decoded.values,
+        vec![
+            PreparedValue::String(b"long data".to_vec()),
+            PreparedValue::SignedLongLong(77),
+        ]
+    );
+
+    // The NULL bitmap loses to the buffer: MariaDB sets the bit even for a
+    // parameter it sent as long data (Go's own comment,
+    // pkg/server/conn_stmt_params.go:74-77).
+    let mut null_marked = payload.clone();
+    null_marked[9] = 0b01;
+    let decoded =
+        decode_prepared_statement_execute_with_bound_params(&null_marked, 2, None, &[
+            Some(b"long data".to_vec()),
+            None,
+        ])
+        .unwrap();
+    assert_eq!(decoded.values[0], PreparedValue::String(b"long data".to_vec()));
 }

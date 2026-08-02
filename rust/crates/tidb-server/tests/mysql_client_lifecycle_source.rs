@@ -20,7 +20,8 @@ use tidb_planner::read_only_scan::{
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_protocol::{
     ColumnInfo, PacketReader, PacketWriter, COM_INIT_DB, COM_PING, COM_QUERY, COM_QUIT,
-    COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_PREPARE, DEFAULT_MAX_ALLOWED_PACKET, TYPE_LONGLONG,
+    COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_PREPARE, COM_STMT_RESET, COM_STMT_SEND_LONG_DATA,
+    DEFAULT_MAX_ALLOWED_PACKET, TYPE_BLOB, TYPE_LONGLONG,
 };
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
@@ -1070,4 +1071,304 @@ fn begin_and_commit_dispatch_toggles_the_in_transaction_status_flag() {
     assert_eq!(tracker.active(), 0);
     assert_eq!(tracker.completed(), 1);
     assert_eq!(tracker.failed(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// COM_STMT_SEND_LONG_DATA (0x18): the silent command with a buffer.
+// ---------------------------------------------------------------------------
+
+fn long_data_catalog() -> ConfiguredCatalog {
+    ConfiguredCatalog::new([ConfiguredTable::new(
+        "campaign187",
+        "notes",
+        187,
+        [
+            ConfiguredColumn::clustered_primary_key("id", 1),
+            ConfiguredColumn::stored_char_not_null("note", 2, 64),
+        ],
+    )])
+    .unwrap()
+}
+
+/// Records the exact bind values every prepared write receives, which is where
+/// a long-data parameter must arrive as one concatenated byte string.
+struct LongDataSession {
+    bound: Arc<Mutex<Vec<Vec<PreparedBindValue>>>>,
+}
+
+impl QuerySession for LongDataSession {
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "text execution is not part of this test",
+        ))
+    }
+
+    fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
+        let template = prepare_configured_write(sql, &long_data_catalog())
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        Ok(PreparedWrite::new(template))
+    }
+
+    fn execute_prepared_write(
+        &mut self,
+        statement: &PreparedWrite,
+        parameters: &[PreparedBindValue],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        self.bound.lock().unwrap().push(parameters.to_vec());
+        statement
+            .template()
+            .bind(parameters)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        Ok(WriteOutcome {
+            affected_rows: 1,
+            last_insert_id: 0,
+        })
+    }
+}
+
+struct LongDataFactory {
+    bound: Arc<Mutex<Vec<Vec<PreparedBindValue>>>>,
+}
+
+impl QuerySessionFactory for LongDataFactory {
+    type Session = LongDataSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(LongDataSession {
+            bound: Arc::clone(&self.bound),
+        })
+    }
+}
+
+fn send_long_data_command(statement_id: u32, parameter_id: u16, chunk: &[u8]) -> Vec<u8> {
+    let mut command = vec![COM_STMT_SEND_LONG_DATA];
+    command.extend_from_slice(&statement_id.to_le_bytes());
+    command.extend_from_slice(&parameter_id.to_le_bytes());
+    command.extend_from_slice(chunk);
+    command
+}
+
+/// Prepares the two-marker INSERT and consumes its three response packets.
+fn prepare_long_data_insert(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>) -> u32 {
+    let mut command = vec![COM_STMT_PREPARE];
+    command.extend_from_slice(b"INSERT INTO campaign187.notes (id, note) VALUES (?, ?)");
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let prepare_ok = reader.read_packet().unwrap();
+    assert_eq!(prepare_ok[0], 0);
+    assert_eq!(u16::from_le_bytes([prepare_ok[7], prepare_ok[8]]), 2);
+    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+    u32::from_le_bytes(prepare_ok[1..5].try_into().unwrap())
+}
+
+/// Asserts the server has nothing further to say, which is how a command that
+/// must answer with silence is observed: not by parsing its reply, but by
+/// counting that no reply exists.
+fn assert_no_pending_packet(
+    socket: &TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    context: &str,
+) {
+    socket
+        .set_read_timeout(Some(std::time::Duration::from_millis(250)))
+        .unwrap();
+    let pending = reader.read_packet();
+    socket.set_read_timeout(None).unwrap();
+    assert!(
+        pending.is_err(),
+        "{context}: the server wrote an unexpected packet {:?}",
+        pending.map(|packet| packet.first().copied())
+    );
+}
+
+#[test]
+fn send_long_data_writes_no_packet_and_lands_as_the_concatenated_parameter() {
+    // pkg/server/conn_stmt.go:610-625 handleStmtSendLongData returns nil,
+    // and pkg/server/conn.go:1578-1579 dispatches it: a nil return writes no
+    // packet at all. Answering with an ERR desynchronises the stream, and
+    // answering with silence alone would drop the data, so this test pins
+    // both halves at once -- zero response packets AND the concatenated value.
+    // pkg/server/driver_tidb.go:104-116 TiDBStatement.AppendParam appends.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let bound = Arc::new(Mutex::new(Vec::new()));
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_bound = Arc::clone(&bound);
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let factory = LongDataFactory {
+            bound: worker_bound,
+        };
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &factory,
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let timeout_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let statement_id = prepare_long_data_insert(&mut client, &mut reader);
+
+    // Two chunks for parameter 1, exactly as a JDBC `setBlob` past
+    // `blobSendChunkSize` or a C-API `mysql_stmt_send_long_data` loop sends
+    // them. The client does not read between them.
+    write_packet(
+        &mut client,
+        0,
+        &send_long_data_command(statement_id, 1, b"the first half, "),
+    );
+    write_packet(
+        &mut client,
+        0,
+        &send_long_data_command(statement_id, 1, b"then the second"),
+    );
+    // Nothing may be on the wire yet: not after the first chunk, not after
+    // the second. This is the packet count, taken before the execute reply
+    // can be mistaken for it.
+    assert_no_pending_packet(&timeout_side, &mut reader, "after two long-data chunks");
+
+    // The execute carries the OTHER parameter only: the long-data parameter
+    // occupies no bytes in the value section at all.
+    let mut execute = vec![COM_STMT_EXECUTE];
+    execute.extend_from_slice(&statement_id.to_le_bytes());
+    execute.push(0);
+    execute.extend_from_slice(&1_u32.to_le_bytes());
+    execute.push(0); // null bitmap: neither parameter is NULL
+    execute.push(1); // new parameter types bound
+    execute.extend_from_slice(&[TYPE_LONGLONG, 0, TYPE_BLOB, 0]);
+    execute.extend_from_slice(&7_i64.to_le_bytes());
+    write_packet(&mut client, 0, &execute);
+
+    reader.set_sequence(1);
+    let ok = reader.read_packet().unwrap();
+    assert_eq!(
+        ok[0],
+        0,
+        "the execute is answered by an OK packet, and it is the FIRST packet \
+         written since the prepare response; server said: {}",
+        String::from_utf8_lossy(&ok)
+    );
+    assert_eq!(ok[1], 1, "exactly one row was affected");
+    assert_no_pending_packet(&timeout_side, &mut reader, "after the execute reply");
+
+    assert_eq!(
+        *bound.lock().unwrap(),
+        vec![vec![
+            PreparedBindValue::Int(7),
+            PreparedBindValue::Bytes(b"the first half, then the second".to_vec()),
+        ]],
+        "the two chunks land as one concatenated value, in chunk order"
+    );
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    let report = worker.join().unwrap();
+    assert_eq!(report.exit, ConnectionExit::Quit);
+    assert_eq!(
+        report.commands.stmt_send_long_data_commands, 2,
+        "both long-data commands were dispatched -- the silence is a handled \
+         command, not an ignored one"
+    );
+    assert_eq!(report.commands.stmt_execute_successes, 1);
+}
+
+#[test]
+fn stmt_reset_drops_the_long_data_buffer_before_the_next_execute() {
+    // pkg/server/conn_stmt.go:627-631 names what RESET must clear: the open
+    // cursor and "the argument sent through SEND_LONG_DATA".
+    // pkg/server/driver_tidb.go:151-160 stmt.Reset nils every boundParams[i].
+    // This is also the no-long-data control: its value arrives entirely in
+    // the execute payload.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let bound = Arc::new(Mutex::new(Vec::new()));
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_bound = Arc::clone(&bound);
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let factory = LongDataFactory {
+            bound: worker_bound,
+        };
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &factory,
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let timeout_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let statement_id = prepare_long_data_insert(&mut client, &mut reader);
+
+    write_packet(
+        &mut client,
+        0,
+        &send_long_data_command(statement_id, 1, b"abandoned"),
+    );
+    assert_no_pending_packet(&timeout_side, &mut reader, "after the long-data chunk");
+
+    // COM_STMT_RESET, unlike SEND_LONG_DATA, DOES answer: Go's
+    // handleStmtReset ends in `cc.writeOK` on every path.
+    let mut reset = vec![COM_STMT_RESET];
+    reset.extend_from_slice(&statement_id.to_le_bytes());
+    write_packet(&mut client, 0, &reset);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0, "RESET answers with OK");
+
+    // Both parameters now arrive in the payload, the abandoned chunk having
+    // been dropped. If the buffer survived the reset, parameter 1 would be
+    // "abandoned" instead.
+    let mut execute = vec![COM_STMT_EXECUTE];
+    execute.extend_from_slice(&statement_id.to_le_bytes());
+    execute.push(0);
+    execute.extend_from_slice(&1_u32.to_le_bytes());
+    execute.push(0);
+    execute.push(1);
+    execute.extend_from_slice(&[TYPE_LONGLONG, 0, TYPE_BLOB, 0]);
+    execute.extend_from_slice(&9_i64.to_le_bytes());
+    execute.push(4);
+    execute.extend_from_slice(b"kept");
+    write_packet(&mut client, 0, &execute);
+    reader.set_sequence(1);
+    let ok = reader.read_packet().unwrap();
+    assert_eq!(ok[0], 0, "the execute after a reset succeeds");
+
+    assert_eq!(
+        *bound.lock().unwrap(),
+        vec![vec![
+            PreparedBindValue::Int(9),
+            PreparedBindValue::Bytes(b"kept".to_vec()),
+        ]],
+        "the reset dropped the long-data buffer; the payload value is used"
+    );
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    let report = worker.join().unwrap();
+    assert_eq!(report.exit, ConnectionExit::Quit);
+    assert_eq!(report.commands.stmt_reset_commands, 1);
 }
