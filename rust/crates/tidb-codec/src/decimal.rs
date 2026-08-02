@@ -75,13 +75,24 @@ pub fn inspect_decimal(input: &[u8]) -> Result<(&[u8], DecimalWireMetadata), Cod
     ))
 }
 
-/// Appends TiDB/MySQL's fixed-precision mem-comparable decimal representation.
+/// Appends TiDB/MySQL's mem-comparable decimal representation at the shape the
+/// value carries.
 ///
 /// The two leading bytes contain precision and scale, followed by MySQL's
 /// packed decimal binary format. The lossless coefficient/storage scale from
 /// `tidb-datatype` is used; SQL display rounding is never consulted.
+///
+/// The shape is [`Decimal::storage_shape`] because Go's generic
+/// `codec.encode` (`pkg/util/codec/codec.go`, the encoder behind `EncodeKey`
+/// and `EncodeValue`) reads `vals[i].Length(), vals[i].Frac()` exactly as
+/// `rowcodec` does. A `DECIMAL(10, 4)` index key must therefore be written at
+/// `(10, 4)`, which also keeps every key in that index the same payload width
+/// — a natural shape per value would make two rows of one column mutually
+/// incomparable. An unstamped value passes `(0, 0)` and gets its natural
+/// shape, which is Go's unset `Datum.length`.
 pub fn encode_decimal(buffer: &mut Vec<u8>, decimal: &Decimal) -> Result<(), CodecError> {
-    encode_decimal_fixed(buffer, decimal, 0, 0)
+    let (precision, scale) = decimal.storage_shape();
+    encode_decimal_fixed(buffer, decimal, precision as usize, scale as usize)
 }
 
 /// Appends TiDB/MySQL's fixed-schema decimal representation.

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 )
 
@@ -42,6 +43,28 @@ func main() {
 	emit("row_decimal_natural_11_99", []int64{1}, natural)
 	emit("row_decimal_mixed_11_99", []int64{1, 2}, stamped, natural)
 	emit("row_decimal_20_10_neg_0_5", []int64{1}, wide)
+
+	// `codec.encode` -- the encoder behind EncodeKey/EncodeValue, and so behind
+	// every index key -- reads the same `Length`/`Frac` pair.
+	emitKey("key_decimal_10_4_11_99", stamped)
+	emitKey("key_decimal_natural_11_99", natural)
+	emitValue("value_decimal_10_4_11_99", stamped)
+}
+
+func emitKey(name string, values ...types.Datum) {
+	key, err := codec.EncodeKey(time.UTC, nil, values...)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%s=%x\n", name, key)
+}
+
+func emitValue(name string, values ...types.Datum) {
+	value, err := codec.EncodeValue(time.UTC, nil, values...)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%s=%x\n", name, value)
 }
 
 func emit(name string, colIDs []int64, values ...types.Datum) {

@@ -23,7 +23,7 @@
 //!
 //! Fixture: `generate_decimal_column_rows.go` beside the `.hex`.
 
-use tidb_codec::{decode_row_to_map, encode_row, ColumnInfo};
+use tidb_codec::{decode_row_to_map, encode_key, encode_row, encode_value, ColumnInfo};
 use tidb_datatype::{
     Datum, Decimal, FieldType, FieldTypeCode, SessionTimeZone, DEFAULT_STATEMENT_FLAGS,
 };
@@ -91,6 +91,33 @@ fn wide_negative_declared_decimal_row_is_go_byte_exact() {
     assert_eq!(
         encode(&[1], &[value]),
         fixture("row_decimal_20_10_neg_0_5")
+    );
+}
+
+/// Index keys and old-format row values take the declared shape too.
+///
+/// Go's generic `codec.encode` — the encoder behind `EncodeKey` and
+/// `EncodeValue` — reads `vals[i].Length(), vals[i].Frac()` exactly as
+/// `rowcodec` does, so an index over a `DECIMAL(10, 4)` column writes every key
+/// at that one width. A natural shape per value would give two rows of the same
+/// column different payload widths, which is a sort-order problem on top of the
+/// byte divergence.
+#[test]
+fn declared_decimal_key_and_value_are_go_byte_exact() {
+    let stamped = column_value("11.99", 10, 4);
+    assert_eq!(
+        encode_key(std::slice::from_ref(&stamped)).unwrap(),
+        fixture("key_decimal_10_4_11_99")
+    );
+    assert_eq!(
+        encode_value(std::slice::from_ref(&stamped)).unwrap(),
+        fixture("value_decimal_10_4_11_99")
+    );
+
+    let natural = Datum::new_decimal(Decimal::from_literal("11.99"));
+    assert_eq!(
+        encode_key(std::slice::from_ref(&natural)).unwrap(),
+        fixture("key_decimal_natural_11_99")
     );
 }
 
