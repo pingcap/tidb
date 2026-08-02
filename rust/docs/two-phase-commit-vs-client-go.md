@@ -537,11 +537,36 @@ Everything empirical. Specifically:
   smallest key; reproducing D2 needs a prewrite whose response is dropped after
   the write applied.
 
-## What was deliberately not changed
+## What was deliberately not changed — SUPERSEDED for D1–D4
 
-All nine. Three of them (D1, D2, D3) sit directly on live data with async commit
-and 1PC enabled by default, and none of them can be tested here. A wrong change
-on this surface does not raise an error — it loses or tears data — so the
-refusal to patch blind is itself the finding's safest disposition. D4 is the
-cheapest correct fix but needs a connection-termination path that does not exist
-in this repository yet.
+At the time of the audit, all nine were left unchanged: three sat on live data
+with async commit and 1PC on by default and nothing could be tested, so the
+refusal to patch blind was the safest disposition. That reasoning held, and the
+fixes landed later, once each could be verified:
+
+- **D1 (torn transaction / dropped primary pin): FIXED.** The pin travels on
+  the transaction (`pinned_primary_key`, settable only with a real key), the
+  prewrite primary comes from `pin_primary(pinned, mutations)`, and a pinned
+  primary the transaction locked but never wrote goes in as an `Op_Lock`
+  mutation — client-go's `initKeysAndMutations` `HasLocked()` arm — so the
+  recovery entry point always exists. Verified on a real cluster including the
+  lock-only primary (`SELECT ... FOR UPDATE` on a never-written key: TiKV
+  accepted the `Op_Lock` prewrite and the transaction committed intact).
+- **D2/D3 (lost async/1PC prewrite answer rolled back): FIXED** — one
+  `response_is_undetermined` predicate now serves prewrite and primary-Commit,
+  with a `Prewriting → Undetermined` state edge. Not cluster-induced (a healthy
+  playground cannot lose a response); the match-arm tests plus client-go
+  `prewrite.go:352-361`/`436-443` are the evidence, and only fault injection
+  can add more.
+- **D4 (Undetermined flattened to NotCommitted): FIXED** — distinct
+  `Undetermined` variants end at the single answer-writer, which refuses to
+  encode a verdict and closes the connection, matching Go `conn.go:1288-1291`
+  (no ERR packet, loop returns).
+
+**D7 was found blocking D1's torn-transaction reproduction and remains open**:
+rollback/commit cleanup runs inside the caller's per-call timeout instead of
+its own budget (client-go derives a fresh 20s from `c.store.Ctx()`), so any
+transaction held ≥6s dies at commit with "TiKV connection timed out after 0ms"
+— identically for an unmodified control. Until D7 is fixed, the 20s-TTL
+abandonment window is unreachable and the pre-fix tear cannot be reproduced
+live. D5, D6, D8, D9 remain unchanged as written.
