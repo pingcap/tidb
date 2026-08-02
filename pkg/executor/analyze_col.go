@@ -91,7 +91,11 @@ func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) e
 	e.memTracker = memory.NewTracker(int(e.ctx.GetSessionVars().PlanID.Load()), -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.resultHandler = &tableResultHandler{}
-	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, true, false, !hasPkHist(e.handleCols))
+	// Full-sampling analyze restores handle order after collecting samples,
+	// so it can scan both sides of the unsigned integer boundary in one request.
+	// Version 1 merges Region PK histograms in response order, so it keeps the order.
+	keepOrder := e.StatsVersion < statistics.Version2
+	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, keepOrder, false, !hasPkHist(e.handleCols))
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		return err
@@ -120,12 +124,12 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		startTS = e.snapshot
 		isoLevel = kv.SI
 	}
-	// Always set KeepOrder of the request to be true, in order to compute
-	// correct `correlation` of columns.
+	// Full-sampling analyze sorts collected samples by handle before computing
+	// correlation, so this request does not need KeepOrder. Version 1 still does.
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
-		SetKeepOrder(true).
+		SetKeepOrder(e.StatsVersion < statistics.Version2).
 		SetConcurrency(e.concurrency).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
@@ -134,6 +138,7 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	if err != nil {
 		return nil, err
 	}
+	failpoint.InjectCall("analyzeColumnsRequestBuilt", kvReq)
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
 		return nil, err
