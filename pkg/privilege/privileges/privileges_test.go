@@ -1541,12 +1541,14 @@ func TestInfoSchemaUserAttributes(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE USER uanobody, uaroot, uaselectonmysqluser, uaselectonmysql")
+	tk.MustExec("CREATE USER uanobody, uaroot, uaselectonmysqluser, uaselectonmysql, uacreateonly, uasystemholder")
 	tk.MustExec(`CREATE USER uavictim@'%' ATTRIBUTE '{"secret": "victim-data"}'`)
 	tk.MustExec(`ALTER USER root@'%' ATTRIBUTE '{"secret": "root-data"}'`)
 	tk.MustExec("GRANT SUPER ON *.* TO uaroot")
 	tk.MustExec("GRANT SELECT ON mysql.user TO uaselectonmysqluser")
 	tk.MustExec("GRANT SELECT ON mysql.* TO uaselectonmysql")
+	tk.MustExec("GRANT CREATE USER ON *.* TO uacreateonly")
+	tk.MustExec("GRANT SYSTEM_USER ON *.* TO uasystemholder")
 
 	authLocalhost := func(user string) {
 		tk.Session().Auth(&auth.UserIdentity{
@@ -1563,12 +1565,18 @@ func TestInfoSchemaUserAttributes(t *testing.T) {
 
 	authLocalhost("uaselectonmysqluser")
 	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows(
-		"root", "uanobody", "uaroot", "uaselectonmysql", "uaselectonmysqluser", "uavictim",
+		"root", "uacreateonly", "uanobody", "uaroot", "uaselectonmysql", "uaselectonmysqluser", "uasystemholder", "uavictim",
 	))
 
 	authLocalhost("uaselectonmysql")
 	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows(
-		"root", "uanobody", "uaroot", "uaselectonmysql", "uaselectonmysqluser", "uavictim",
+		"root", "uacreateonly", "uanobody", "uaroot", "uaselectonmysql", "uaselectonmysqluser", "uasystemholder", "uavictim",
+	))
+
+	// CREATE USER without SYSTEM_USER: visible for self and all non-SYSTEM_USER accounts.
+	authLocalhost("uacreateonly")
+	tk.MustQuery(`SELECT user FROM information_schema.user_attributes ORDER BY user`).Check(testkit.Rows(
+		"uacreateonly", "uanobody", "uaselectonmysql", "uaselectonmysqluser", "uavictim",
 	))
 }
 
