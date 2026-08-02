@@ -145,20 +145,18 @@ impl GlobalSysvars {
         if !def.has_global_scope() && !def.has_instance_scope() {
             return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
         }
-        let validated =
-            def.validate_in_scope(&value, scope)
-                .map_err(|error| match error {
-                    ValidationError::WrongType => {
-                        VarError::WrongTypeForVar(name.to_ascii_lowercase())
-                    }
-                    ValidationError::WrongValue => {
-                        VarError::WrongValueForVar(name.to_ascii_lowercase(), value.clone())
-                    }
-                    ValidationError::WrongValueOf(part) => {
-                        VarError::WrongValueForVar(name.to_ascii_lowercase(), part)
-                    }
-                    ValidationError::Refused(message) => VarError::ValidationRefused(message),
-                })?;
+        let validated = def
+            .validate_in_scope(&value, scope)
+            .map_err(|error| match error {
+                ValidationError::WrongType => VarError::WrongTypeForVar(name.to_ascii_lowercase()),
+                ValidationError::WrongValue => {
+                    VarError::WrongValueForVar(name.to_ascii_lowercase(), value.clone())
+                }
+                ValidationError::WrongValueOf(part) => {
+                    VarError::WrongValueForVar(name.to_ascii_lowercase(), part)
+                }
+                ValidationError::Refused(message) => VarError::ValidationRefused(message),
+            })?;
         let key = name.to_ascii_lowercase();
         let mut values = self.store(def).lock().expect("global sysvar lock poisoned");
         if let Some(other) = alias_of(&key) {
