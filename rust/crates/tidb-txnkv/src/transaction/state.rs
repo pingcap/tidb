@@ -400,6 +400,13 @@ impl CoordinatorState {
                     Self::PrimaryCommitting,
                     Self::PrimaryCommitted | Self::RollingBack | Self::Undetermined
                 )
+                // Under async commit or 1PC a published prewrite may already
+                // BE the commit point, so a prewrite that loses its answer
+                // leaves the transaction's outcome unknown rather than failed.
+                // Go `prewrite.go:352-361` sets the undetermined flag for
+                // exactly those protocols, and `2pc.go:1717-1737` then skips
+                // cleanup.
+                | (Self::Prewriting, Self::Undetermined)
                 | (Self::Prewriting | Self::Prewritten, Self::RollingBack)
                 | (Self::RollingBack, Self::RolledBack | Self::CleanupFailed)
                 | (

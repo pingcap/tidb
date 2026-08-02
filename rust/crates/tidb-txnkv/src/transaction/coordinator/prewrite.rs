@@ -277,6 +277,27 @@ pub(super) struct AttemptedProtocol {
 }
 
 impl AttemptedProtocol {
+    /// Whether a prewrite of this transaction, once published, may already have
+    /// decided its outcome.
+    ///
+    /// Under 1PC the prewrite *is* the commit; under async commit a completed
+    /// prewrite *is* the commit point. For both, a prewrite that loses its
+    /// answer leaves the transaction undetermined rather than failed. Go
+    /// `prewrite.go:352-361`: `if (c.isAsyncCommit() || c.isOnePC()) &&
+    /// sender.GetRPCError() != nil && !c.isCanceled() { c.setUndeterminedErr(...) }`.
+    pub(super) const fn commit_point_may_have_passed(&self) -> bool {
+        self.use_async_commit || self.use_one_pc
+    }
+
+    /// Names the protocol in an operator-facing message.
+    pub(super) const fn name(&self) -> &'static str {
+        match (self.use_one_pc, self.use_async_commit) {
+            (true, _) => "1PC",
+            (false, true) => "async commit",
+            (false, false) => "two-phase commit",
+        }
+    }
+
     /// Go `checkOnePCFallBack`: 1PC is a single-region protocol, so the moment
     /// the mutations need more than one region it is off — including when a
     /// region split discovers this mid-prewrite.

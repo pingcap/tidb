@@ -137,6 +137,31 @@ where
                         .prewrite_attempt_publications
                         .push(response.publication.clone());
                     if let Some(region_error) = response.response.region_error.as_ref() {
+                        // Go `prewrite.go:436-443` (`handleRegionErr`): an
+                        // `UndeterminedResult` under async commit or 1PC
+                        // returns `ErrResultUndetermined` immediately, before
+                        // any backoff or relocation. TiKV is saying it does not
+                        // know whether this write applied, and for these
+                        // protocols the write may have been the commit.
+                        if response_is_undetermined(region_error)
+                            && protocol.commit_point_may_have_passed()
+                        {
+                            let cause = TransactionCause::Region {
+                                detail: format!(
+                                    "Prewrite returned undetermined region error under {}: {region_error:?}",
+                                    protocol.name()
+                                ),
+                            };
+                            record_attempt(
+                                &mut receipt,
+                                TransactionAttemptPhase::Prewrite,
+                                &published_keys,
+                                &batch,
+                                Some(response.publication.clone()),
+                                TransactionAttemptResult::Ambiguous(cause.clone()),
+                            );
+                            return self.undetermined_prewrite(receipt, cause);
+                        }
                         let region_cause = TransactionCause::Region {
                             detail: format!("Prewrite region retry: {region_error:?}"),
                         };
@@ -294,6 +319,33 @@ where
                     receipt
                         .prewrite_attempt_publications
                         .push(publication.clone());
+                    // Go `prewrite.go:352-361` (`prewrite1BatchReqHandler.drop`):
+                    // an async-commit or 1PC committer whose prewrite got no
+                    // answer calls `setUndeterminedErr`, because for these
+                    // protocols a prewrite that got no answer may already have
+                    // committed the transaction. `2pc.go:1717-1737` then runs
+                    // cleanup only when `c.getUndeterminedErr() == nil`, so the
+                    // locks are left for the lock resolver, which can read the
+                    // primary lock's secondary list and decide correctly.
+                    // Rolling back here would be a contradicting operation, not
+                    // a retry.
+                    if protocol.commit_point_may_have_passed() {
+                        let cause = TransactionCause::Transport {
+                            detail: format!(
+                                "Prewrite completion failed after publication under {}: {error}",
+                                protocol.name()
+                            ),
+                        };
+                        record_attempt(
+                            &mut receipt,
+                            TransactionAttemptPhase::Prewrite,
+                            &published_keys,
+                            &batch,
+                            Some(publication),
+                            TransactionAttemptResult::Ambiguous(cause.clone()),
+                        );
+                        return self.undetermined_prewrite(receipt, cause);
+                    }
                     let cause = TransactionCause::Transport {
                         detail: format!("Prewrite completion failed after publication: {error}"),
                     };
@@ -453,6 +505,25 @@ where
         pin_primary(self.pessimistic.as_ref(), mutations)
     }
 
+    /// Reports a prewrite whose outcome cannot be known, without cleanup.
+    ///
+    /// Go `2pc.go:1717-1737`: `execute`'s defer runs `c.cleanup(ctx)` only when
+    /// `c.getUndeterminedErr() == nil`. Issuing a BatchRollback against a
+    /// transaction whose commit point may already have passed is precisely the
+    /// operation client-go refuses to perform, so no key is touched here.
+    fn undetermined_prewrite(
+        &mut self,
+        receipt: OptimisticTransactionReceipt,
+        cause: TransactionCause,
+    ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
+        self.state
+            .transition(CoordinatorState::Undetermined)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        Ok(OptimisticCommitOutcome::Undetermined(
+            UndeterminedTransaction { receipt, cause },
+        ))
+    }
+
     fn commit_timestamp(
         &self,
         minimum: u64,
@@ -568,7 +639,7 @@ where
                         .primary_publications
                         .push(response.publication.clone());
                     if let Some(region_error) = response.response.region_error.as_ref() {
-                        if primary_region_response_is_ambiguous(region_error) {
+                        if response_is_undetermined(region_error) {
                             let cause = TransactionCause::Region {
                                 detail: format!("primary Commit returned undetermined region error: {region_error:?}"),
                             };
@@ -935,7 +1006,13 @@ enum PrimaryResult {
     Undetermined(TransactionCause),
 }
 
-fn primary_region_response_is_ambiguous(error: &tidb_proto::RegionError) -> bool {
+/// TiKV explicitly saying "I do not know whether this write applied".
+///
+/// Go `commit.go:151-158` uses it on the primary Commit and
+/// `prewrite.go:436-443` on prewrite; the signal is the same either way, so it
+/// is one predicate serving both callers rather than a primary-only helper the
+/// prewrite path could forget to consult.
+fn response_is_undetermined(error: &tidb_proto::RegionError) -> bool {
     error.undetermined_result.is_some()
 }
 
@@ -1077,15 +1154,72 @@ mod tests {
         ));
     }
 
+    fn protocol(one_pc: bool, async_commit: bool) -> super::super::prewrite::AttemptedProtocol {
+        super::super::prewrite::AttemptedProtocol {
+            use_async_commit: async_commit,
+            use_one_pc: one_pc,
+            max_commit_ts: 0,
+            one_pc_commit_ts: 0,
+            secondaries: Vec::new(),
+        }
+    }
+
+    /// Go `prewrite.go:352-361`: `if (c.isAsyncCommit() || c.isOnePC()) &&
+    /// sender.GetRPCError() != nil && !c.isCanceled() { c.setUndeterminedErr }`.
+    /// Under 1PC the prewrite IS the commit; under async commit a completed
+    /// prewrite IS the commit point.
     #[test]
-    fn only_explicit_undetermined_primary_region_response_is_ambiguous() {
-        assert!(!primary_region_response_is_ambiguous(
+    fn a_lost_prewrite_answer_is_undetermined_only_under_one_pc_or_async_commit() {
+        assert!(protocol(true, false).commit_point_may_have_passed());
+        assert!(protocol(false, true).commit_point_may_have_passed());
+        assert!(protocol(true, true).commit_point_may_have_passed());
+        // Plain 2PC has decided nothing at prewrite, so a lost answer is a
+        // definitive failure and rolling back is correct — client-go's
+        // `2pc.go:1689-1698` cleanup path.
+        assert!(!protocol(false, false).commit_point_may_have_passed());
+    }
+
+    /// Once TiKV declines 1PC and async commit, no commit point has passed and
+    /// the rollback branch is correct again.
+    #[test]
+    fn a_protocol_that_fell_back_to_two_phase_commit_is_determinate_again() {
+        let mut fell_back = protocol(true, true);
+        fell_back
+            .observe_prewrite_response(&tidb_proto::KvrpcPrewriteResponse::default())
+            .unwrap();
+        assert!(!fell_back.commit_point_may_have_passed());
+        assert_eq!(fell_back.name(), "two-phase commit");
+    }
+
+    #[test]
+    fn protocol_names_itself_for_the_operator() {
+        assert_eq!(protocol(true, true).name(), "1PC");
+        assert_eq!(protocol(false, true).name(), "async commit");
+        assert_eq!(protocol(false, false).name(), "two-phase commit");
+    }
+
+    /// The state machine has to admit the new edge, or the routing would turn
+    /// a wrong rollback into a hard error instead of an honest verdict.
+    #[test]
+    fn prewriting_may_reach_undetermined_without_a_primary_commit() {
+        let mut state = CoordinatorState::Prewriting;
+        assert_eq!(state.transition(CoordinatorState::Undetermined), Ok(()));
+        // Undetermined is terminal: nothing may follow it, least of all a
+        // rollback. Go `2pc.go:1717-1737` skips cleanup for exactly this case.
+        let mut terminal = CoordinatorState::Undetermined;
+        assert!(terminal.transition(CoordinatorState::RollingBack).is_err());
+        assert!(terminal.transition(CoordinatorState::Committed).is_err());
+    }
+
+    #[test]
+    fn only_explicit_undetermined_response_is_undetermined() {
+        assert!(!response_is_undetermined(
             &tidb_proto::RegionError::default()
         ));
         let undetermined = tidb_proto::RegionError {
             undetermined_result: Some(tidb_proto::errorpb::UndeterminedResult::default()),
             ..tidb_proto::RegionError::default()
         };
-        assert!(primary_region_response_is_ambiguous(&undetermined));
+        assert!(response_is_undetermined(&undetermined));
     }
 }
