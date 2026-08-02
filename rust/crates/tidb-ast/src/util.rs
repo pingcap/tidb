@@ -17,8 +17,8 @@
 //! kept here rather than duplicated or hung off any one domain, since none
 //! of these carry domain-specific meaning of their own.
 
-use tidb_lexer::identifier_to_lower;
 use crate::{AdminStmt, QueryStmt, SelectStmt, SetOprStmt, SetOprTermBody, Stmt};
+use tidb_mysql::to_lowercase as identifier_to_lower;
 
 impl Stmt {
     /// Returns whether executing this statement is read-only.

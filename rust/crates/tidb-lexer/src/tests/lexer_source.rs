@@ -640,3 +640,14 @@ fn test_long_tokens_do_not_panic_or_truncate() {
     assert_eq!(token.text.len(), string.len());
     assert_eq!(token.end_offset, string.len());
 }
+
+#[test]
+fn charset_lookup_folds_non_ascii_with_gos_simple_case_mapping() {
+    // Go folds the introducer/charset name with strings.ToLower before the
+    // table lookup, and strings.ToLower maps U+0130 to a plain ASCII `i`.
+    // An ASCII-only fold would reject a name Go accepts.
+    assert_eq!(crate::canonical_charset("UTF8MB4"), Some("utf8mb4"));
+    assert_eq!(crate::canonical_charset("utf8mb3"), Some("utf8"));
+    assert_eq!(crate::canonical_charset("nosuchcharset"), None);
+    assert_eq!(crate::canonical_charset("LAT\u{130}N1"), Some("latin1"));
+}

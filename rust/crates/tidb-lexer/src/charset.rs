@@ -6,6 +6,8 @@
 // `underscoreCS` token whose literal is the canonical charset name.
 #![allow(clippy::all)]
 
+use tidb_mysql::to_lowercase as identifier_to_lower;
+
 /// Recognized charset names (lowercase), sorted for binary search.
 pub static CHARSET_NAMES: &[&str] = &[
     "armscii8", "ascii", "big5", "binary", "cp1250", "cp1251", "cp1256", "cp1257", "cp850",
@@ -19,7 +21,7 @@ pub static CHARSET_NAMES: &[&str] = &[
 /// recognized charset. `utf8mb3` is normalized to `utf8`, matching
 /// charset.GetCharsetInfo.
 pub fn canonical_charset(name: &str) -> Option<&'static str> {
-    let lower = crate::ident_case::identifier_to_lower(name);
+    let lower = identifier_to_lower(name);
     let idx = CHARSET_NAMES.binary_search(&lower.as_str()).ok()?;
     let canon = CHARSET_NAMES[idx];
     Some(if canon == "utf8mb3" { "utf8" } else { canon })

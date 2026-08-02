@@ -17,3 +17,4 @@ path = "tests/all.rs"
 workspace = true
 
 [dependencies]
+tidb-mysql = { path = "../tidb-mysql" }

@@ -14,8 +14,8 @@
 
 //! AST and restore contracts translated from `pkg/parser/traffic_parser.go`.
 
-use tidb_lexer::identifier_to_lower;
 use std::collections::HashSet;
+use tidb_mysql::to_lowercase as identifier_to_lower;
 
 use crate::util::{back_quote, escape_string_literal, redact_url};
 

@@ -1693,6 +1693,9 @@ version = "0.0.0"
 [[package]]
 name = "tidb-lexer"
 version = "0.0.0"
+dependencies = [
+ "tidb-mysql",
+]
 
 [[package]]
 name = "tidb-log"

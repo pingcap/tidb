@@ -19,6 +19,8 @@
 //! metadata layer gives every DDL parser branch the same Go acceptance and
 //! alias boundary without duplicating a partial list in each grammar.
 
+use tidb_mysql::to_lowercase as identifier_to_lower;
+
 /// Collation names accepted by TiDB's parser, sorted for binary search.
 ///
 /// The three utf8mb3_* compatibility aliases are handled by
@@ -304,7 +306,7 @@ pub static COLLATION_NAMES: &[&str] = &[
 /// TiDB's Go parser lowercases before lookup and treats the historical
 /// utf8mb3 spellings as aliases of the corresponding utf8 collations.
 pub fn canonical_collation(name: &str) -> Option<&'static str> {
-    let lower = crate::ident_case::identifier_to_lower(name);
+    let lower = identifier_to_lower(name);
     let alias = match lower.as_str() {
         "utf8mb3_bin" => "utf8_bin",
         "utf8mb3_general_ci" => "utf8_general_ci",
@@ -333,5 +335,16 @@ mod tests {
         );
         assert_eq!(canonical_collation("UTF8MB3_BIN"), Some("utf8_bin"));
         assert_eq!(canonical_collation("utf8bin"), None);
+    }
+
+    /// Go folds the name with strings.ToLower before the table lookup, and
+    /// strings.ToLower maps U+0130 to a plain ASCII `i`. An ASCII-only fold
+    /// would leave the name unrecognized where Go accepts it.
+    #[test]
+    fn lookup_folds_non_ascii_with_gos_simple_case_mapping() {
+        assert_eq!(
+            canonical_collation("UTF8MB4_B\u{130}N"),
+            Some("utf8mb4_bin")
+        );
     }
 }

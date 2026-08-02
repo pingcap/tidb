@@ -16,8 +16,8 @@
 //! the sibling modules below.
 
 mod cast;
-use tidb_lexer::identifier_to_lower;
 use cast::restore_cast_type;
+use tidb_mysql::to_lowercase as identifier_to_lower;
 mod op;
 mod restore;
 

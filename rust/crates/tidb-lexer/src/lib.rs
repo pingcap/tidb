@@ -29,7 +29,6 @@ mod charset;
 mod collation;
 mod escape;
 mod features;
-mod ident_case;
 mod keyword_catalog;
 mod keywords;
 mod reader;
@@ -40,7 +39,6 @@ mod token;
 pub use charset::canonical_charset;
 pub use collation::canonical_collation;
 pub use escape::unescape_char;
-pub use ident_case::identifier_to_lower;
 pub use features::{
     can_parse_feature, FEATURE_ID_AFFINITY, FEATURE_ID_AUTO_ID_CACHE, FEATURE_ID_AUTO_RANDOM,
     FEATURE_ID_AUTO_RANDOM_BASE, FEATURE_ID_CLUSTERED_INDEX, FEATURE_ID_FORCE_AUTO_INC,

@@ -15,9 +15,9 @@
 //! to, mirroring the `Restore`/`Format` methods Go hangs off its expression
 //! nodes in `pkg/parser/ast/expressions.go`.
 
-use tidb_lexer::identifier_to_lower;
 use super::cast::{restore_cast_type, restore_typed_literal};
 use super::*;
+use tidb_mysql::to_lowercase as identifier_to_lower;
 
 impl Expr {
     /// Formats this expression using Go AST's `ExprNode.Format` contract.

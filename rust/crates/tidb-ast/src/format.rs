@@ -14,11 +14,11 @@
 
 //! SQL restore state from `pkg/parser/format/format.go`.
 
-use tidb_lexer::identifier_to_lower;
 use std::convert::Infallible;
 use std::fmt::{self, Write};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, DerefMut, Not};
 use std::sync::Arc;
+use tidb_mysql::to_lowercase as identifier_to_lower;
 
 use tidb_mysql::{to_lowercase as go_simple_lowercase, to_uppercase as go_simple_uppercase};
 

@@ -14,8 +14,8 @@
 
 //! Shared AST model values transcreated from `pkg/parser/ast/model.go`.
 
-use tidb_lexer::identifier_to_lower;
 use std::hash::{Hash, Hasher};
+use tidb_mysql::to_lowercase as identifier_to_lower;
 
 use serde::de::Deserializer;
 use serde::ser::{SerializeStruct, Serializer};
@@ -29,7 +29,14 @@ pub struct CiString {
 }
 
 impl CiString {
-    /// Constructs both representations using Unicode lowercase conversion.
+    /// Constructs both representations, folding with Go's simple case mapping.
+    ///
+    /// The folded form is the catalog lookup key, so it must be byte-identical
+    /// to Go's `strings.ToLower`. Rust's [`str::to_lowercase`] is the full
+    /// Unicode conversion and is *not* interchangeable here: it emits a
+    /// word-final sigma for `Σ` and expands `İ` to two codepoints, either of
+    /// which hides a Go-created object from a Rust node and lets the same
+    /// `CREATE TABLE` succeed twice.
     pub fn new(value: impl Into<String>) -> Self {
         let original = value.into();
         let lowercase = identifier_to_lower(&original);
@@ -751,6 +758,65 @@ mod tests {
             serde_json::from_str(r#"{"O":"aaBB","L":"aabb"}"#).expect("object form");
         assert_eq!(from_object, from_string);
         assert_eq!(from_object.original(), "aaBB");
+    }
+
+    /// Go capture (go1.26.0): strings.ToLower("ΟΔΟΣ") == "οδοσ" with U+03C3,
+    /// and strings.ToLower("İ") == "i" as a single U+0069. Catalog lookups key
+    /// on CiString.L, so any deviation hides a Go-created object from Rust.
+    #[test]
+    fn identifier_folding_uses_go_simple_case_mapping() {
+        let sigma = CiString::new("ΟΔΟΣ");
+        assert_eq!(sigma.lowercase(), "οδοσ");
+        assert_eq!(
+            sigma
+                .lowercase()
+                .chars()
+                .map(|c| c as u32)
+                .collect::<Vec<_>>(),
+            vec![0x03BF, 0x03B4, 0x03BF, 0x03C3],
+            "final-sigma context rule must not apply to identifiers"
+        );
+
+        let dotted = CiString::new("İ");
+        assert_eq!(
+            dotted
+                .lowercase()
+                .chars()
+                .map(|c| c as u32)
+                .collect::<Vec<_>>(),
+            vec![0x0069],
+            "U+0130 must fold to a single U+0069, not i + combining dot"
+        );
+
+        // Control: Go and Rust already agree here, so this must stay green even
+        // under the mutation probe that restores str::to_lowercase.
+        let umlaut = CiString::new("Ä");
+        assert_eq!(umlaut.lowercase(), "ä");
+    }
+
+    /// Go capture (go1.26.0):
+    ///   strings.ToLower("ΟΔΟΣ") -> 03BF 03B4 03BF 03C3
+    ///   strings.ToLower("Οδοσ") -> 03BF 03B4 03BF 03C3
+    /// The two spellings share one catalog key in Go, so the second CREATE
+    /// TABLE must see the first. Rust's `str::to_lowercase` would fold the
+    /// first to a word-final 03C2 and split them into two invisible tables.
+    #[test]
+    fn sigma_spellings_share_one_catalog_key() {
+        let created = CiString::new("ΟΔΟΣ");
+        let looked_up = CiString::new("Οδοσ");
+        assert_eq!(created.lowercase(), looked_up.lowercase());
+        assert_eq!(created, looked_up);
+
+        let mut catalog = std::collections::HashSet::new();
+        assert!(catalog.insert(created.clone()));
+        assert!(
+            !catalog.insert(looked_up),
+            "a second CREATE TABLE differing only in sigma form must collide"
+        );
+
+        // A spelling that already carries the final sigma stays a distinct name
+        // on both sides: Go leaves an already-lowercase 03C2 alone.
+        assert!(catalog.insert(CiString::new("ΟΔΟς")));
     }
 
     #[test]
