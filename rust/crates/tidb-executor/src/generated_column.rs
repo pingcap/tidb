@@ -126,20 +126,20 @@
 //! This section used to record an obstacle, and it was the wrong one, so read
 //! it as a correction rather than a status: the two expressions to compare
 //! DO live in different column namespaces -- a [`GeneratedColumn::expr`]'s
-//! `Column` nodes index the row by OFFSET, deliberately, so the evaluation
-//! row is the row a write builds and a read decodes, while a `WHERE`
-//! condition's columns index the query -- and the conclusion drawn from that,
-//! that an explicit mapping between the two had to be built and kept honest
-//! across pruning and derived tables, was wrong.
+//! `Column` nodes index [`GeneratedColumn::dependencies`], the expression's
+//! OWN name list, while a `WHERE` condition's columns index the query -- and
+//! the conclusion drawn from that, that an explicit mapping between the two
+//! had to be built and kept honest across pruning and derived tables, was
+//! wrong.
 //!
-//! The two never have to meet in the offset namespace at all. The consumer of
-//! the rewrite is the access-path choice, and that consumes the `WHERE` as an
-//! `tidb_ast::Expr` with column NAMES -- not as a resolved `Expression`. The
-//! table side already carries [`GeneratedColumn::expr_text`], the canonically
-//! restored text of the same AST. Reducing both sides with the one flag set
-//! they are already stored under ([`generated_restore_flags`]) gives a single
-//! equality with no mapping and no second comparison mode. The offset-indexed
-//! [`GeneratedColumn::expr`] is not consulted by the rule at all.
+//! The two never have to meet in a positional namespace at all. The consumer
+//! of the rewrite is the access-path choice, and that consumes the `WHERE` as
+//! an `tidb_ast::Expr` with column NAMES -- not as a resolved `Expression`.
+//! The table side already carries [`GeneratedColumn::expr_text`], the
+//! canonically restored text of the same AST. Reducing both sides with the
+//! one flag set they are already stored under ([`generated_restore_flags`])
+//! gives a single equality with no mapping and no second comparison mode. The
+//! compiled [`GeneratedColumn::expr`] is not consulted by the rule at all.
 
 use std::cell::RefCell;
 

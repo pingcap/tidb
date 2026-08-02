@@ -27,15 +27,15 @@
 //! Go compares two `expression.Expression`s with `Equal`, and gets that for
 //! free because both sides are already columns of `ds.Schema()`. This tier
 //! cannot: a [`GeneratedColumn::expr`](crate::generated_column::
-//! GeneratedColumn::expr)'s `Column` nodes index the row by OFFSET
-//! (deliberately -- the evaluation row IS the row a write builds), while a
-//! `WHERE` condition's columns are AST names in the query's own namespace.
-//! Comparing those two directly would need a mapping between namespaces, and
-//! a mapping is a second equality definition to keep honest across pruning
-//! and derived tables.
+//! GeneratedColumn::expr)'s `Column` nodes index that expression's OWN
+//! dependency name list (deliberately -- so no `ALTER TABLE` that reorders
+//! the table's columns can re-point it), while a `WHERE` condition's columns
+//! are AST names in the query's own namespace. Comparing those two directly
+//! would need a mapping between namespaces, and a mapping is a second
+//! equality definition to keep honest across pruning and derived tables.
 //!
 //! There is no mapping here, because the two expressions never have to meet
-//! in the offset namespace at all. The access-path choice this rule feeds
+//! in a positional namespace at all. The access-path choice this rule feeds
 //! ([`crate::access_cost::enumerate_paths`]) consumes the `WHERE` as an
 //! `tidb_ast::Expr` with column NAMES, and a generated column already carries
 //! its expression as `expr_text` -- the canonically RESTORED text of the same
