@@ -34,6 +34,7 @@ enum TsoReply {
     Response(pdpb::TsoResponse),
     Status(tonic::Code, &'static str),
     Delayed(Duration, pdpb::TsoResponse),
+    DelayedStatus(Duration, tonic::Code, &'static str),
 }
 
 struct State {
@@ -45,19 +46,31 @@ struct State {
     /// request whose scripted reply is exhausted by allocating `count`
     /// consecutive timestamps and reporting the LAST one, exactly as PD does.
     auto_batch_physical: Option<i64>,
+    /// Suffix width the auto-batching allocator reserves, as a multi-DC PD
+    /// (`enable-local-tso = true`) would report.
+    auto_batch_suffix_bits: u32,
+    /// Sticky failure used once the scripted replies run out, so a mock PD can
+    /// fail every batch it is asked for instead of closing its stream.
+    auto_status: Option<(tonic::Code, &'static str)>,
 }
 
 impl State {
     fn auto_reply(&mut self, count: u32) -> Option<TsoReply> {
+        if let Some((code, message)) = self.auto_status {
+            return Some(TsoReply::Status(code, message));
+        }
+        let suffix_bits = self.auto_batch_suffix_bits;
         let physical = self.auto_batch_physical.as_mut()?;
         *physical += 1;
         Some(TsoReply::Response(pdpb::TsoResponse {
             header: Some(header()),
             count,
+            // PD reports the batch's LAST timestamp; with a suffix reserved,
+            // successive timestamps are `1 << suffix_bits` apart.
             timestamp: Some(pdpb::Timestamp {
                 physical: *physical,
-                logical: i64::from(count),
-                suffix_bits: 0,
+                logical: i64::from(count) << suffix_bits,
+                suffix_bits,
             }),
         }))
     }
@@ -114,6 +127,13 @@ impl Pd for MockPd {
                     tokio::time::sleep(delay).await;
                     responses.send(Ok(response)).await.unwrap();
                 }
+                Some(TsoReply::DelayedStatus(delay, code, message)) => {
+                    tokio::time::sleep(delay).await;
+                    responses
+                        .send(Err(tonic::Status::new(code, message)))
+                        .await
+                        .unwrap();
+                }
                 None => panic!("mock PD has no reply for the first TSO request"),
             }
         }
@@ -147,6 +167,11 @@ impl Pd for MockPd {
                         if responses.send(Ok(response)).await.is_err() {
                             break;
                         }
+                    }
+                    Some(TsoReply::DelayedStatus(delay, code, message)) => {
+                        tokio::time::sleep(delay).await;
+                        let _ = responses.send(Err(tonic::Status::new(code, message))).await;
+                        break;
                     }
                     None => break,
                 }
@@ -236,8 +261,35 @@ impl Server {
     }
 
     fn start_auto_batching() -> Self {
+        Self::start_auto_batching_with_suffix_bits(0)
+    }
+
+    /// An allocator that reserves `suffix_bits` low bits of the logical part,
+    /// as PD does when local TSO is enabled and more than one dc-location
+    /// exists (`CalSuffixBits`). No playground PD reaches this path.
+    fn start_auto_batching_with_suffix_bits(suffix_bits: u32) -> Self {
         let server = Self::start_with_header_behavior([], false);
-        server.state.lock().unwrap().auto_batch_physical = Some(0);
+        {
+            let mut state = server.state.lock().unwrap();
+            state.auto_batch_physical = Some(0);
+            state.auto_batch_suffix_bits = suffix_bits;
+        }
+        server
+    }
+
+    /// A PD that fails every TSO batch it is handed, after making the first
+    /// one wait long enough for other callers to pile into the next batch.
+    fn start_failing_after_a_slow_first_batch(delay: Duration) -> Self {
+        let server = Self::start_with_header_behavior(
+            [TsoReply::DelayedStatus(
+                delay,
+                tonic::Code::Internal,
+                "tso batch failed",
+            )],
+            false,
+        );
+        server.state.lock().unwrap().auto_status =
+            Some((tonic::Code::Internal, "tso batch failed"));
         server
     }
 
@@ -258,6 +310,8 @@ impl Server {
             stream_opens: 0,
             withhold_headers_until_request,
             auto_batch_physical: None,
+            auto_batch_suffix_bits: 0,
+            auto_status: None,
         }));
         let service = MockPd {
             state: Arc::clone(&state),
@@ -478,6 +532,133 @@ fn concurrent_waiters_never_share_a_timestamp() {
     assert!(
         requests < total,
         "no batching occurred: {requests} requests for {total} timestamps"
+    );
+    client.shutdown().unwrap();
+}
+
+/// THE UNEXERCISED PATH: a PD with local TSO enabled reserves the low
+/// `suffix_bits` of the logical part for its allocator suffix, so consecutive
+/// timestamps of one batch are `1 << suffix_bits` apart rather than 1 apart
+/// (`pd/client` `tsoutil.AddLogical`: `logical + count<<suffixBits`). Every
+/// playground PD reports `suffix_bits = 0`, so only this mock reaches the
+/// shifted split. A mis-shifted split would hand two waiters the same value
+/// with no error anywhere.
+#[test]
+fn batching_survives_a_reserved_allocator_suffix() {
+    const THREADS: usize = 16;
+    const PER_THREAD: usize = 100;
+    const SUFFIX_BITS: u32 = 4;
+
+    let server = Server::start_auto_batching_with_suffix_bits(SUFFIX_BITS);
+    let client = PdClient::connect(&server.address, Duration::from_secs(10)).unwrap();
+    let collected = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let client = client.clone();
+                scope.spawn(move || {
+                    (0..PER_THREAD)
+                        .map(|_| client.get_timestamp().unwrap())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+
+    let all: Vec<u64> = collected.iter().flatten().copied().collect();
+    let total = all.len();
+    assert_eq!(total, THREADS * PER_THREAD);
+
+    let mut unique = all.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(
+        unique.len(),
+        total,
+        "a reserved suffix made two waiters share a timestamp"
+    );
+    for thread in &collected {
+        assert!(
+            thread.windows(2).all(|pair| pair[0] < pair[1]),
+            "timestamps went backwards within one caller"
+        );
+    }
+
+    // Each mock reply allocated one batch under a distinct physical time and
+    // reported `count << SUFFIX_BITS` as its last logical. The timestamps
+    // handed out for that physical must therefore be exactly the shifted run
+    // `(1..=count) << SUFFIX_BITS` — the model, checked without reference to
+    // how the client got there.
+    let mut by_physical: std::collections::BTreeMap<u64, Vec<u64>> =
+        std::collections::BTreeMap::new();
+    for timestamp in all {
+        by_physical
+            .entry(timestamp >> 18)
+            .or_default()
+            .push(timestamp & ((1 << 18) - 1));
+    }
+    assert!(
+        by_physical.len() < total,
+        "no batching occurred: {} batches for {total} timestamps",
+        by_physical.len()
+    );
+    for (physical, mut logicals) in by_physical {
+        logicals.sort_unstable();
+        let count = u64::try_from(logicals.len()).unwrap();
+        let expected: Vec<u64> = (1..=count).map(|i| i << SUFFIX_BITS).collect();
+        assert_eq!(
+            logicals, expected,
+            "batch at physical {physical} was not the shifted run PD allocated"
+        );
+    }
+    client.shutdown().unwrap();
+}
+
+/// THE FAN-OUT PIN: one round trip serves many waiters, so a PD failure must
+/// reach every waiter of that batch. None may hang, and none may be handed a
+/// timestamp out of a batch that failed.
+#[test]
+fn a_failed_batch_fails_every_waiter_in_it() {
+    const THREADS: usize = 16;
+
+    // The first batch is held open long enough for the other callers to queue
+    // behind it, so the batch that fails afterwards is provably wider than one
+    // waiter. Every batch fails, including the first.
+    let server = Server::start_failing_after_a_slow_first_batch(Duration::from_millis(300));
+    let client = PdClient::connect(&server.address, Duration::from_secs(10)).unwrap();
+    let outcomes = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let client = client.clone();
+                scope.spawn(move || client.get_timestamp())
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+
+    // Every waiter returned (no hang) and none received a timestamp.
+    assert_eq!(outcomes.len(), THREADS);
+    for outcome in &outcomes {
+        let error = outcome
+            .as_ref()
+            .expect_err("a failed batch yields no timestamp");
+        assert_eq!(error.kind(), "transport");
+        assert!(error.to_string().contains("tso batch failed"));
+    }
+
+    // Fewer PD requests than waiters proves at least one request carried
+    // several waiters, and all of them were failed together.
+    let requests = server.state.lock().unwrap().requests.len();
+    assert!(
+        requests < THREADS,
+        "batching never happened, so the fan-out was not exercised: \
+         {requests} requests for {THREADS} waiters"
     );
     client.shutdown().unwrap();
 }
