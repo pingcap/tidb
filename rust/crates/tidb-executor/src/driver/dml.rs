@@ -819,6 +819,15 @@ pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverErro
         crate::kv_table::KvTableError::NoPartitionForValue(value) => {
             DriverError::NoPartitionForValue(value)
         }
+        // A HASH partition value with no signed reading is Go's own
+        // `ConvertTo` error surfacing out of `locateHashPartition`: 1690,
+        // naming the value and `bigint`, the type it did not fit.
+        crate::kv_table::KvTableError::PartitionValueOverflowsBigint(value) => {
+            DriverError::ConstantOverflows {
+                value,
+                type_name: "bigint".to_owned(),
+            }
+        }
         // The `_tidb_rowid` a non-clustered row needs comes off the same
         // counter the AUTO_INCREMENT column does, so its exhaustion is the
         // same 1467 an allocated column value would have reported.

@@ -134,6 +134,15 @@ pub enum RoutingError {
     /// `0..num` -- but RANGE and LIST will, so the error lives with the
     /// routing rather than with one method.
     NoPartitionForValue(String),
+    /// Go `types.ErrOverflow` (1690), raised by the `ConvertTo(TypeLonglong)`
+    /// inside `locateHashPartition`: a value above `i64::MAX` has no signed
+    /// reading, so the row is REJECTED rather than routed by a clamped one.
+    ///
+    /// CAPTURED from real TiDB: on
+    /// `create table tc (a bit(64), b int) partition by hash(a) partitions 3`,
+    /// `insert into tc values(b'1111...1' /* 64 ones */, 1)` answers
+    /// `[types:1690]constant 18446744073709551615 overflows bigint`.
+    ValueOverflowsBigint(String),
     /// The partition expression could not be evaluated over this row.
     Eval(tidb_expr::EvalError),
 }
@@ -200,7 +209,7 @@ impl PartitionSpec {
         )
         .map_err(RoutingError::Eval)?;
         match &self.kind {
-            PartitionKind::Hash => Ok(hash_partition_index(&value, self.num())),
+            PartitionKind::Hash => hash_partition_index(&value, self.num()),
             PartitionKind::Range {
                 less_than,
                 unsigned,
@@ -277,17 +286,62 @@ fn range_bound_exceeds(bound: RangeBound, value: i64, unsigned: bool) -> bool {
 ///
 /// `-(i64::MIN)` cannot overflow here because `v % n` already lies strictly
 /// between `-n` and `n`, and `n` is at most Go's 8192 partitions.
-fn hash_partition_index(value: &Datum, num: u64) -> usize {
+///
+/// # A `BIT` column is NOT already an integer
+///
+/// Go's column fast path reads the datum's kind and CONVERTS anything that is
+/// not `KindInt64`/`KindUint64` with `ConvertTo(TypeLonglong)` before taking
+/// the modulus. `BIT(n)` is an admitted partition column and its value
+/// arrives as [`Datum::Bit`], so treating a non-integer kind as zero routes
+/// EVERY row of such a table into `p0` -- a silent wrong answer, since
+/// `SELECT ... PARTITION (p1)` then returns nothing. CAPTURED from real TiDB
+/// on `bit(8) ... partition by hash(a) partitions 3` holding `0,1,2,3`:
+/// `p0` reads `0,3`, `p1` reads `1`, `p2` reads `2` -- plain `v mod 3` over
+/// the bits' integer value.
+///
+/// # Errors
+///
+/// [`RoutingError::ValueOverflowsBigint`] when the conversion has no exact
+/// signed reading, which is Go returning `ConvertTo`'s error from
+/// `locateHashPartition` and failing the write.
+fn hash_partition_index(value: &Datum, num: u64) -> Result<usize, RoutingError> {
     let bits = match value {
         Datum::Int(value) => *value,
         Datum::UInt(value) => *value as i64,
-        // NULL, and any value the expression produced that is not an
-        // integer, route to the first partition: DDL admits only integer
-        // partition expressions (1659), so the non-integer case here is NULL
-        // arriving as some other kind.
-        _ => return 0,
+        // Go's `ConvertTo` returns NULL unchanged and `GetInt64` reads it as
+        // 0, which is the captured `NULL -> p0`.
+        Datum::Null => 0,
+        other => {
+            let rejected = || RoutingError::ValueOverflowsBigint(overflow_text(other));
+            let converted = other
+                .convert_to(
+                    &tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    tidb_datatype::ConversionFlags::from_bits(0),
+                )
+                .map_err(|_| rejected())?;
+            if converted.event.is_some() {
+                return Err(rejected());
+            }
+            match converted.value {
+                Datum::Int(value) => value,
+                _ => 0,
+            }
+        }
     };
-    (bits % num as i64).unsigned_abs() as usize
+    Ok((bits % num as i64).unsigned_abs() as usize)
+}
+
+/// The value as Go's `types.overflow` prints it inside 1690.
+///
+/// A `BIT` value has no signed reading to print -- the whole reason it
+/// overflowed -- so it is named by the UNSIGNED integer its bits spell, which
+/// is what the capture shows (`constant 18446744073709551615 overflows
+/// bigint`, not `-1`).
+fn overflow_text(value: &Datum) -> String {
+    match value {
+        Datum::Bit(literal) | Datum::BinaryLiteral(literal) => literal.to_int().value().to_string(),
+        other => format!("{other:?}"),
+    }
 }
 
 #[cfg(test)]
@@ -310,20 +364,61 @@ mod tests {
             (i64::MIN, 0),
         ] {
             assert_eq!(
-                hash_partition_index(&Datum::Int(value), 4),
+                hash_partition_index(&Datum::Int(value), 4).unwrap(),
                 expected,
                 "hash({value}) over 4 partitions"
             );
         }
-        assert_eq!(hash_partition_index(&Datum::Null, 4), 0);
+        assert_eq!(hash_partition_index(&Datum::Null, 4).unwrap(), 0);
         // The unsigned captures, which only agree if the value is read as a
         // 64-bit pattern: u64::MAX is -1, and 9223372036854775809 is
         // -9223372036854775807.
-        assert_eq!(hash_partition_index(&Datum::UInt(u64::MAX), 4), 1);
+        assert_eq!(hash_partition_index(&Datum::UInt(u64::MAX), 4).unwrap(), 1);
         assert_eq!(
-            hash_partition_index(&Datum::UInt(9_223_372_036_854_775_809), 4),
+            hash_partition_index(&Datum::UInt(9_223_372_036_854_775_809), 4).unwrap(),
             3
         );
+    }
+
+    /// A `BIT` column's value is CONVERTED before the modulus, which is Go's
+    /// `locateHashPartition` column path.
+    ///
+    /// CAPTURED from real TiDB on `create table tb (a bit(8), b int)
+    /// partition by hash(a) partitions 3` holding `(0,0),(1,1),(2,2),(3,3)`:
+    /// `select b from tb partition (p0)` reads `0,3`, `(p1)` reads `1`,
+    /// `(p2)` reads `2`. Reading the datum's kind and defaulting to zero --
+    /// what this did before -- puts all four in `p0` and makes `partition
+    /// (p1)` return nothing.
+    #[test]
+    fn a_bit_column_routes_by_its_integer_value() {
+        for (bits, expected) in [(0_u8, 0_usize), (1, 1), (2, 2), (3, 0)] {
+            let value = Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(
+                u64::from(bits),
+                None,
+            ));
+            assert_eq!(
+                hash_partition_index(&value, 3).unwrap(),
+                expected,
+                "hash(bit {bits}) over 3 partitions"
+            );
+        }
+    }
+
+    /// A `BIT(64)` value above `i64::MAX` has no signed reading, so Go's
+    /// `ConvertTo` errors and the row is REJECTED.
+    ///
+    /// CAPTURED from real TiDB: `insert into tc values(b'1{64}', 1)` on
+    /// `bit(64) ... partition by hash(a) partitions 3` answers
+    /// `[types:1690]constant 18446744073709551615 overflows bigint`.
+    #[test]
+    fn a_bit_value_with_no_signed_reading_is_rejected() {
+        let value = Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(u64::MAX, None));
+        match hash_partition_index(&value, 3) {
+            Err(RoutingError::ValueOverflowsBigint(text)) => {
+                assert_eq!(text, "18446744073709551615");
+            }
+            other => panic!("expected 1690, got {other:?}"),
+        }
     }
 
     /// Every RANGE routing this unit captured from real TiDB, as the rule.
@@ -404,8 +499,8 @@ mod tests {
     /// `-1 + -1 -> p2`).
     #[test]
     fn hash_routing_is_not_a_power_of_two_special_case() {
-        assert_eq!(hash_partition_index(&Datum::Int(2), 3), 2);
-        assert_eq!(hash_partition_index(&Datum::Int(3), 3), 0);
-        assert_eq!(hash_partition_index(&Datum::Int(-2), 3), 2);
+        assert_eq!(hash_partition_index(&Datum::Int(2), 3).unwrap(), 2);
+        assert_eq!(hash_partition_index(&Datum::Int(3), 3).unwrap(), 0);
+        assert_eq!(hash_partition_index(&Datum::Int(-2), 3).unwrap(), 2);
     }
 }

@@ -234,6 +234,10 @@ pub enum KvTableError {
     /// LIST can (captured: `insert into r2 values (20,0)` on a RANGE table
     /// with no `MAXVALUE` partition is `Table has no partition for value 20`).
     NoPartitionForValue(String),
+    /// Go `types.ErrOverflow` (1690) raised by `locateHashPartition`'s
+    /// `ConvertTo(TypeLonglong)`: the row's partition value has no signed
+    /// reading, so the write fails instead of routing by a clamped one.
+    PartitionValueOverflowsBigint(String),
     /// Go `autoid.ErrAutoincReadFailed` (1467) raised while allocating the
     /// row's `_tidb_rowid`, which shares the AUTO_INCREMENT counter.
     AutoIdExhausted,
@@ -447,6 +451,9 @@ impl KvTable {
             .map_err(|error| match error {
                 crate::partition_routing::RoutingError::NoPartitionForValue(value) => {
                     KvTableError::NoPartitionForValue(value)
+                }
+                crate::partition_routing::RoutingError::ValueOverflowsBigint(value) => {
+                    KvTableError::PartitionValueOverflowsBigint(value)
                 }
                 crate::partition_routing::RoutingError::Eval(error) => {
                     KvTableError::Decode(format!("{error:?}"))

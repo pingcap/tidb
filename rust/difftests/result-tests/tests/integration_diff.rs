@@ -1341,26 +1341,44 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // divergences went from 38 to 31 (the other 7 are in that unonboarded
     // topic).
     //
-    // Of `util/ranger`'s 31, THREE are row ORDER and they have been chased
-    // twice on a wrong theory, so the answer is written down here. They are
-    // `select * from t`, `... where a < 3`, and `... where a > -1` over
+    // `util/ranger` is 28, DOWN FROM 31, and the THREE that closed were the
+    // row-ORDER ones. The note that stood here had the cause wrong twice
+    // over, so the correction is written down instead of the theory. They
+    // were `select * from t`, `... where a < 3`, and `... where a > -1` over
     // `TestIndexRangeForBit`'s table:
     //
     //     CREATE TABLE t (a bit(1), b int) PARTITION BY HASH(a) PARTITIONS 3;
     //     insert ignore into t values(-1,-1),(0,0),(1,1),(3,3);
     //
-    // TiDB answers `<0x00>,0 / <0x01>,-1 / <0x01>,1 / <0x01>,3` and this engine
-    // answers the same four rows as `-1 / 0 / 1 / 3`. It is NOT an encoding or
-    // a sort: the VALUES are identical on both sides (the `insert ignore`
-    // clamps -1 and 3 to the bit(1) maximum 0x01 here exactly as in Go, which
-    // is why three rows share a partition), there is no ORDER BY, and both
-    // sides run a `TableFullScan`. The order is the PARTITION scan order --
-    // under `tidb_partition_prune_mode='static'` TiDB emits a PartitionUnion
-    // that reads p0 (a=0) then p1 (a=1), while this engine reads one
-    // unpartitioned table in handle order, which is insert order. The same
-    // cause prints as the eleven `partition:p0 + partition:p1` plan
-    // divergences beside them. All three fall out when HASH partitioning
-    // lands; nothing in the codec or the ranger will move them.
+    // TiDB answers `<0x00>,0 / <0x01>,-1 / <0x01>,1 / <0x01>,3` and this
+    // engine answered the same four rows as `-1 / 0 / 1 / 3`. The old note
+    // called that "the PARTITION scan order, which falls out when HASH
+    // partitioning lands, and nothing in the codec or the ranger will move".
+    // HASH partitioning HAD landed, and the table scan already reads one key
+    // range per partition in ascending id order -- so the order should
+    // already have been TiDB's. It was not, because `locateHashPartition`
+    // put every row of a BIT-keyed table in `p0`: it read the datum's KIND
+    // and treated anything that was not `Int`/`UInt` as zero, where Go
+    // CONVERTS a non-integer kind with `ConvertTo(TypeLonglong)` first.
+    // A `bit(1)` value is `KindMysqlBit`, so every row hashed to 0.
+    //
+    // That was a WRONG ANSWER hiding behind a row-order divergence, not a
+    // plan-text gap: `select * from t partition (p1)` returned NOTHING here
+    // where TiDB returns three rows, on a table this suite never asked that
+    // question of. See `tidb_executor::partition_routing`, whose captures
+    // (`bit(8)` over 3 partitions: p0 reads 0 and 3, p1 reads 1, p2 reads 2)
+    // pin the rule.
+    //
+    // The NINE `partition:p0` / `partition:p0 + partition:p1` plan-text
+    // divergences beside them do NOT share that cause and remain -- the old
+    // note said "eleven", and the measurement is nine. Those are the planner
+    // not modelling partitions at all: no static-mode PartitionUnion, no
+    // hash pruning off the partition column's ranges, and no partition
+    // annotation in any access object this tier prints. Three more in the
+    // same block (`where a = -1` / `a = 3` / `a < -1`) are the same absence
+    // seen from the other side: TiDB prunes EVERY partition away and returns
+    // `TableDual rows:0` where this tier plans a scan. Twelve of
+    // `util/ranger`'s 28 are that one unbuilt rung.
     //
     // Two measured negatives from that chase, so neither is repeated: the
     // `decimal unsigned` index cases at the head of the same file
