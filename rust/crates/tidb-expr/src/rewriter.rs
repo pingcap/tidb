@@ -522,6 +522,26 @@ fn base64_needed_encoded_length(n: i64) -> i64 {
 /// The `TIME` target and the `ARRAY` modifier are refused here for the same
 /// reason `cast::eval_cast` refuses them -- there is no value domain for them
 /// in this crate yet.
+/// The literal text a typed temporal literal wraps.
+///
+/// Go's `getFunction` asserts the argument is a `*Constant` and PANICS
+/// otherwise, because its parser only ever puts a string literal there. The
+/// ODBC spelling `{ts <expr>}` accepts a full expression, so the argument is
+/// rewritten and folded first; anything that does not fold to a constant is a
+/// boundary this tier reports instead of crashing on.
+fn literal_text(expr: &Expr, resolver: &impl ColumnResolver) -> Result<String, EvalError> {
+    let built = rewrite_expr_resolved(expr, resolver)?;
+    let Expression::Constant(constant) = built else {
+        return Err(EvalError::Unsupported(
+            "a temporal literal whose argument is not constant",
+        ));
+    };
+    constant
+        .value
+        .sql_string()
+        .map_err(|_| EvalError::Unsupported("invalid UTF-8 in a temporal literal"))
+}
+
 fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldType)> {
     use tidb_ast::CastType;
     let name = match cast_type {
@@ -1411,6 +1431,32 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         // Go builds one `builtinCast*As*Sig` per target type, so the cast
         // node becomes a one-argument function whose RESULT type carries the
         // target -- `CONVERT(x, t)` and `BINARY x` are the same node.
+        // `DATE 'lit'` / `TIMESTAMP 'lit'` (and `{d ...}` / `{ts ...}`) share
+        // the `Cast` node with `CAST(x AS DATE)` but are a DIFFERENT function
+        // class in Go, with their own regex gate, their own hard errors and
+        // their own fractional precision. Folding them here -- where Go also
+        // resolves them, in `getFunction` -- is what keeps them from being
+        // lowered into the never-failing, fraction-dropping cast below.
+        // See `crate::time_literal`.
+        Expr::Cast(cast)
+            if matches!(
+                cast.style,
+                tidb_ast::CastStyle::DateLiteral | tidb_ast::CastStyle::TimestampLiteral
+            ) =>
+        {
+            let text = literal_text(&cast.expr, resolver)?;
+            let value = match cast.style {
+                tidb_ast::CastStyle::DateLiteral => crate::time_literal::date_literal(&text)?,
+                _ => crate::time_literal::timestamp_literal(&text)?,
+            };
+            // The value is a formatted string for the same reason
+            // `cast_target` types the temporal casts `VarString`: this crate
+            // has no `Time` cell in the chunk column domain.
+            Ok(Expression::Constant(Constant::new(
+                Datum::new_string(value),
+                FieldType::new(FieldTypeCode::VarString),
+            )))
+        }
         Expr::Cast(cast) => {
             if cast.array {
                 return Err(EvalError::Unsupported(

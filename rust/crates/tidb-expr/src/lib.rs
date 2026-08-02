@@ -366,6 +366,7 @@ pub mod schema;
 mod string_fn;
 mod string_signature;
 mod time_fn;
+mod time_literal;
 
 pub use field_name::{find_field_name, find_field_name_index_by_column, NonUniqueFieldName};
 

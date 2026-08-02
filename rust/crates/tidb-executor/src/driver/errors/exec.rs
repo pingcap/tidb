@@ -106,6 +106,11 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         EvalError::TruncatedWrongValue(message) => {
             MysqlError::coded(ER_TRUNCATED_WRONG_VALUE, message)
         }
+        // A typed temporal literal raises 1292 (22007) for a parse failure and
+        // 1525 (HY000) for its regex gate, so the code travels with the
+        // message and the SQLSTATE is derived from it like the JSON class
+        // above.
+        EvalError::WrongTemporalLiteral { code, message } => MysqlError::coded(code, message),
         // CAPTURED from TiDB: `select 9223372036854775807 + 1` is
         // `1690 / 22003 / BIGINT value is out of range in '(9223372036854775807 + 1)'`,
         // `select 1e308 * 10` the DOUBLE spelling, and a 65-digit product the

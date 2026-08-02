@@ -59,6 +59,17 @@ pub enum EvalError {
     TruncatedWrongValue(String),
     /// A `json`-class error that carries its own MySQL error code.
     Json(JsonError),
+    /// Go `types.ErrWrongValue` (1292) / `ErrWrongValue2` (1525) raised while
+    /// BUILDING a typed temporal literal (`DATE 'lit'`, `TIMESTAMP 'lit'`).
+    /// Unlike the cast of the same text, these reject the whole statement --
+    /// see `crate::time_literal` for the three ways the literal differs from
+    /// the cast. The code is carried because this one syntax raises both.
+    WrongTemporalLiteral {
+        /// The MySQL error number, 1292 or 1525.
+        code: u16,
+        /// The fully formatted message body.
+        message: String,
+    },
     /// Go `collate.ErrIllegalMix2Collation`/`ErrIllegalMix3Collation` (1267):
     /// the operands of one operation carry collations that cannot be
     /// aggregated, and no explicit `COLLATE` clause resolves the tie. Carries
