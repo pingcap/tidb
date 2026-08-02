@@ -421,7 +421,11 @@ fn go_test_convert_type_out_of_range_enum_keeps_the_empty_enum() {
 fn go_test_to_int64() {
     fn to_int64(value: &Datum) -> i64 {
         value
-            .convert_to_signed(FieldTypeCode::LongLong, crate::DEFAULT_STATEMENT_FLAGS)
+            .convert_to_signed(
+                FieldTypeCode::LongLong,
+                crate::DEFAULT_STATEMENT_FLAGS,
+                &crate::SessionTimeZone::utc(),
+            )
             .unwrap_or_else(|error| panic!("{value:?}: {error:?}"))
             .value
     }
@@ -463,5 +467,73 @@ fn go_test_to_int64() {
         (Datum::new_decimal(decimal), 3),
     ] {
         assert_eq!(to_int64(&value), expected, "{value:?}");
+    }
+}
+
+/// The session zone reaches `Datum.ConvertTo`'s integer and DURATION arms.
+///
+/// Go's `toSignedInteger` rounds a `KindMysqlTime` with
+/// `RoundFrac(ctx, DefaultFsp)` and `StrToDuration(ctx, str, fsp)` parses a
+/// 12-or-more-digit literal as a DATETIME first; both round through
+/// `t.GoTime(ctx.Location())`. When the sub-second carry lands exactly on a
+/// DST transition instant, the wall clock read back afterwards is the
+/// SESSION zone's. Both arms used to hardcode UTC here.
+///
+/// Every expectation below is a verbatim capture from
+/// `pkg/types` run against this tree:
+///
+/// ```text
+/// Time.RoundFrac(ctx, DefaultFsp).ToNumber()
+///   2011-03-13 01:59:59.999999  UTC=20110313020000  America/LA=20110313030000
+///   2011-11-06 01:59:59.999999  UTC=20111106020000  America/LA=20111106010000
+/// StrToDuration(ctx, str, fsp=0)
+///   "20110313015959.999999"     UTC=2011-03-13 02:00:00  America/LA=2011-03-13 03:00:00
+///   "20111106015959.999999"     UTC=2011-11-06 02:00:00  America/LA=2011-11-06 01:00:00
+/// ```
+///
+/// `2011-03-13 02:00:00` does not exist in America/Los_Angeles (spring
+/// forward), and `2011-11-06 01:00:00` is the repeated hour (fall back).
+#[test]
+fn session_zone_reaches_signed_and_duration_conversion() {
+    let la = SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
+    let utc = SessionTimeZone::utc();
+    let long_long = FieldType::new(FieldTypeCode::LongLong);
+
+    for (input, in_utc, in_la) in [
+        (
+            "2011-03-13 01:59:59.999999",
+            20110313020000_i64,
+            20110313030000_i64,
+        ),
+        ("2011-11-06 01:59:59.999999", 20111106020000, 20111106010000),
+    ] {
+        let time = Datum::Time(parse_datetime_fsp(input, TimeType::DateTime, 6));
+        for (zone, expected) in [(&utc, in_utc), (&la, in_la)] {
+            let got = time
+                .convert_to_in(&long_long, crate::DEFAULT_STATEMENT_FLAGS, zone)
+                .unwrap_or_else(|error| panic!("{input} in {zone:?}: {error:?}"))
+                .value;
+            assert_eq!(got, Datum::Int(expected), "{input} in {zone:?}");
+        }
+    }
+
+    // `StrToDuration`'s DATETIME branch: the literal is >= 12 digits, so the
+    // fsp=0 rounding carry crosses the same transition instants.
+    let duration_type = FieldType::new(FieldTypeCode::Duration).with_decimal(0);
+    for (input, in_utc, in_la) in [
+        ("20110313015959.999999", "02:00:00", "03:00:00"),
+        ("20111106015959.999999", "02:00:00", "01:00:00"),
+    ] {
+        let text = Datum::new_string(input.to_string());
+        for (zone, expected) in [(&utc, in_utc), (&la, in_la)] {
+            let got = text
+                .convert_to_in(&duration_type, crate::DEFAULT_STATEMENT_FLAGS, zone)
+                .unwrap_or_else(|error| panic!("{input} in {zone:?}: {error:?}"))
+                .value;
+            let Datum::Duration(got) = got else {
+                panic!("{input} in {zone:?}: expected a Duration, got {got:?}")
+            };
+            assert_eq!(got.to_string(), expected, "{input} in {zone:?}");
+        }
     }
 }

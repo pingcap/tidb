@@ -612,7 +612,16 @@ fn parse_datetime_core<TZ: TimeZone>(
     };
     let mut core = checked_core(fields, microsecond)?;
     if overflow {
-        core = core.add_duration(1_000_000_000);
+        // Go: `t1, err := tmp.GoTime(ctx.Location()); tmp = FromGoTime(t1.Add(gotime.Second))`
+        // (pkg/types/time.go::parseDatetime). The fractional carry is applied
+        // to the INSTANT in the session zone, not to the calendar fields, so
+        // when it crosses a DST transition the wall clock moves by the offset
+        // change as well: `"20110313015959.999999"` at fsp=0 parses to
+        // `2011-03-13 02:00:00` under UTC but `2011-03-13 03:00:00` under
+        // America/Los_Angeles. Field arithmetic silently produced the UTC
+        // answer for every session.
+        let carried = core.to_datetime(timezone)? + chrono::Duration::seconds(1);
+        core = core_time_from_datetime(timezone.from_utc_datetime(&carried.naive_utc()));
     }
 
     if let Some(suffix) = timezone_suffix {

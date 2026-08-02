@@ -123,6 +123,30 @@ pub(crate) fn timestamp_literal(text: &str) -> Result<String, EvalError> {
     parse(text, TimeType::DateTime, fsp).map_err(|()| wrong_value(1292, "datetime", text))
 }
 
+/// # KNOWN GAP: this parse is UTC where Go's is the session's
+///
+/// Go resolves `DATE 'lit'`/`TIMESTAMP 'lit'` in `getFunction`, whose `ctx`
+/// carries the session location, and a literal whose fraction is wider than
+/// `fsp` ROUNDS -- with the carry applied to the INSTANT in that zone. So
+/// when the carry lands on a DST transition the two answers differ.
+/// CAPTURED from real TiDB:
+///
+/// ```text
+/// select timestamp '2011-03-13 01:59:59.9999999'
+///   time_zone='UTC'                 2011-03-13 02:00:00.000000
+///   time_zone='America/Los_Angeles' 2011-03-13 03:00:00.000000
+/// select timestamp '2011-11-06 01:59:59.9999999'
+///   time_zone='UTC'                 2011-11-06 02:00:00.000000
+///   time_zone='America/Los_Angeles' 2011-11-06 01:00:00.000000
+/// ```
+///
+/// This tier answers the UTC row for every session. The sibling site in
+/// `crate::cast::cast_to_time` was the SAME bug and is fixed, because a cast
+/// is evaluated against a [`crate::Columns`] that carries `time_zone()`. A
+/// literal is folded in `crate::rewriter` against a `ColumnResolver`, which
+/// carries no session at all, so closing this one means threading the zone
+/// into that trait rather than editing this function. Left as a measured,
+/// named gap instead of a half-thread.
 fn parse(text: &str, kind: TimeType, fsp: i64) -> Result<String, ()> {
     tidb_datatype::parse_time(text, kind, fsp, false, true, true, &chrono::Utc)
         .map(|parsed| parsed.time.to_string())

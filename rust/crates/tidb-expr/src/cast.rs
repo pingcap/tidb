@@ -449,8 +449,17 @@ fn cast_to_time(
         return Ok(Datum::Null);
     };
     let modes = ctx.date_modes();
-    // The timezone only reaches TIMESTAMP's range check, which neither of
-    // these two target types performs; UTC keeps it out of the answer.
+    // The zone is the SESSION's, as Go's `builtinCastStringAsTimeSig` passes
+    // `ctx.TypeCtx()`. It does more than TIMESTAMP's range check: a literal
+    // whose fraction is wider than `fsp` ROUNDS, and Go applies that carry to
+    // the INSTANT in `ctx.Location()`, so a carry landing on a DST transition
+    // moves the wall clock by the offset change too. CAPTURED from real TiDB:
+    // `cast('2011-03-13 01:59:59.9999999' as datetime)` is
+    // `2011-03-13 02:00:00` under `time_zone='UTC'` and `03:00:00` under
+    // `'America/Los_Angeles'` (02:00 does not exist there), and
+    // `cast('2011-11-06 01:59:59.9999999' as datetime)` is `02:00:00` under
+    // UTC and `01:00:00` there (the repeated hour). Hardcoding UTC returned
+    // the UTC answer for every session.
     let parsed = tidb_datatype::parse_time(
         &s,
         kind,
@@ -458,7 +467,7 @@ fn cast_to_time(
         false,
         true,
         modes.allow_invalid_dates,
-        &chrono::Utc,
+        &ctx.time_zone(),
     );
     let Ok(parsed) = parsed else {
         return Ok(invalid_time_warning(ctx, &s));
@@ -568,5 +577,69 @@ mod tests {
         // A negative real clamps to zero under the default flags.
         assert_eq!(to_u64_unsigned(&Datum::Real(-5.6)), 0);
         assert_eq!(to_u64_unsigned(&Datum::Real(-0.4)), 0);
+    }
+
+    /// `CAST(str AS DATETIME)` rounds in the SESSION zone, not in UTC.
+    ///
+    /// Go's `builtinCastStringAsTimeSig` passes `ctx.TypeCtx()`, whose
+    /// location the fractional-carry arm of `parseDatetime` applies the carry
+    /// in. CAPTURED from real TiDB, both instants chosen so the carry lands
+    /// exactly on a DST transition:
+    ///
+    /// ```text
+    /// select cast('2011-03-13 01:59:59.9999999' as datetime)
+    ///   time_zone='UTC'                 2011-03-13 02:00:00
+    ///   time_zone='America/Los_Angeles' 2011-03-13 03:00:00
+    /// select cast('2011-11-06 01:59:59.9999999' as datetime)
+    ///   time_zone='UTC'                 2011-11-06 02:00:00
+    ///   time_zone='America/Los_Angeles' 2011-11-06 01:00:00
+    /// ```
+    ///
+    /// A four-zone probe over ordinary instants shows NO difference at all,
+    /// which is why this pin uses the transition instants: an invariance
+    /// probe here is a false negative.
+    #[test]
+    fn a_string_cast_to_datetime_rounds_in_the_session_zone() {
+        use crate::Columns as _;
+        struct Zoned(tidb_datatype::SessionTimeZone);
+        impl crate::Columns for Zoned {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+                self.0.clone()
+            }
+        }
+        let utc = Zoned(tidb_datatype::SessionTimeZone::utc());
+        let la = Zoned(tidb_datatype::SessionTimeZone::Named(
+            chrono_tz::America::Los_Angeles,
+        ));
+        for (input, in_utc, in_la) in [
+            (
+                "2011-03-13 01:59:59.9999999",
+                "2011-03-13 02:00:00",
+                "2011-03-13 03:00:00",
+            ),
+            (
+                "2011-11-06 01:59:59.9999999",
+                "2011-11-06 02:00:00",
+                "2011-11-06 01:00:00",
+            ),
+        ] {
+            for (ctx, expected) in [(&utc, in_utc), (&la, in_la)] {
+                let got = cast_to_time(
+                    &Datum::new_string(input.to_string()),
+                    ctx,
+                    tidb_datatype::TimeType::DateTime,
+                )
+                .unwrap_or_else(|error| panic!("{input}: {error:?}"));
+                assert_eq!(
+                    got,
+                    Datum::new_string(expected.to_string()),
+                    "{input} in {:?}",
+                    ctx.time_zone()
+                );
+            }
+        }
     }
 }

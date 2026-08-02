@@ -452,7 +452,18 @@ impl Time {
         let rounded = ((microsecond + quantum / 2) / quantum) * quantum;
         let core = match self.core.to_datetime(timezone) {
             Ok(value) => {
-                core_time_from_datetime(value + ChronoDuration::microseconds(rounded - microsecond))
+                let shifted = value + ChronoDuration::microseconds(rounded - microsecond);
+                // Go's `roundTime` hands back a `time.Time` still bound to
+                // `ctx.Location()`, so every wall-clock field is re-derived
+                // from the ZONE at the rounded instant. chrono's `Add` instead
+                // keeps the offset cached from before the shift, which pins
+                // the stale offset when the carry crosses a DST transition:
+                // `2011-03-13 01:59:59.999999` in America/Los_Angeles rounds
+                // to the instant 02:00:00 PST, and reading it at the cached
+                // PST offset yields 02:00:00 -- a wall clock that does not
+                // exist there. Re-resolving through the zone yields Go's
+                // 03:00:00 PDT.
+                core_time_from_datetime(timezone.from_utc_datetime(&shifted.naive_utc()))
             }
             Err(_) => {
                 let clock_micros = (i64::from(self.core.hour()) * 3_600

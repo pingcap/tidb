@@ -88,7 +88,7 @@ impl Datum {
                     self.convert_to_unsigned(target.code(), flags)
                         .map(map_converted(Self::UInt))
                 } else {
-                    self.convert_to_signed(target.code(), flags)
+                    self.convert_to_signed(target.code(), flags, zone)
                         .map(map_converted(Self::Int))
                 }
             }
@@ -127,8 +127,8 @@ impl Datum {
             FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
                 self.convert_to_time_target(target, flags, zone)
             }
-            FieldTypeCode::Duration => self.convert_to_duration_target(target),
-            FieldTypeCode::Year => self.convert_to_year(flags),
+            FieldTypeCode::Duration => self.convert_to_duration_target(target, zone),
+            FieldTypeCode::Year => self.convert_to_year(flags, zone),
             FieldTypeCode::Enum => self.convert_to_enum(target, flags),
             FieldTypeCode::Set => self.convert_to_set(target, flags),
             FieldTypeCode::Bit => self.convert_to_bit(target, flags),
@@ -186,6 +186,7 @@ impl Datum {
         &self,
         target: FieldTypeCode,
         flags: ConversionFlags,
+        zone: &SessionTimeZone,
     ) -> Result<Converted<i64>, DatumValueError> {
         let lower = integer_signed_lower_bound(target);
         let upper = integer_signed_upper_bound(target);
@@ -216,9 +217,21 @@ impl Datum {
             // Go rounds the temporal value itself before rendering it as a
             // number, so a carry propagates through the sexagesimal fields:
             // `11:59:59.999999` becomes 120000, not 115960.
+            //
+            // The zone is load-bearing, not decoration. Go's
+            // `Time.RoundFrac` (pkg/types/time.go) rounds through
+            // `t.GoTime(ctx.Location())`, so when the carry lands exactly on
+            // a DST transition instant the wall clock read back is the
+            // SESSION zone's, not UTC's. Measured against Go:
+            // `2011-03-13 01:59:59.999999` rounds to 20110313020000 in UTC
+            // but 20110313030000 in America/Los_Angeles (02:00 does not
+            // exist there), and `2011-11-06 01:59:59.999999` rounds to
+            // 20111106020000 in UTC but 20111106010000 in
+            // America/Los_Angeles (the repeated hour). Passing `Utc` here
+            // silently returned the UTC answer for every session.
             Self::Time(value) => decimal_to_signed(
                 &value
-                    .round_frac(crate::DEFAULT_FSP, &Utc)
+                    .round_frac(crate::DEFAULT_FSP, zone)
                     .map_err(conversion_error)?
                     .to_number(),
                 lower,
@@ -497,6 +510,7 @@ impl Datum {
     fn convert_to_duration_target(
         &self,
         target: &FieldType,
+        zone: &SessionTimeZone,
     ) -> Result<Converted<Self>, DatumValueError> {
         let fsp = if target.decimal() == UNSPECIFIED_LENGTH {
             0
@@ -512,23 +526,28 @@ impl Datum {
                     .map_err(conversion_error)?,
             ),
             Self::Duration(value) => exact(value.round_frac(fsp).map_err(conversion_error)?),
-            Self::String(value) => duration_from_text(value.as_utf8()?, fsp)?,
-            Self::Bytes(value) => duration_from_text(std::str::from_utf8(value)?, fsp)?,
+            Self::String(value) => duration_from_text(value.as_utf8()?, fsp, zone)?,
+            Self::Bytes(value) => duration_from_text(std::str::from_utf8(value)?, fsp, zone)?,
             Self::Int(_) | Self::UInt(_) | Self::Real(_) | Self::Float32(_) | Self::Decimal(_) => {
                 duration_from_text(
                     &self.sql_string().map_err(|error| {
                         DatumValueError::Comparison(format!("duration conversion failed: {error}"))
                     })?,
                     fsp,
+                    zone,
                 )?
             }
-            Self::Json(value) => duration_from_text(&value.unquote()?, fsp)?,
+            Self::Json(value) => duration_from_text(&value.unquote()?, fsp, zone)?,
             _ => return Err(DatumValueError::Unsupported(self.kind(), "duration")),
         };
         Ok(map_converted(Self::new_duration)(converted))
     }
 
-    fn convert_to_year(&self, flags: ConversionFlags) -> Result<Converted<Self>, DatumValueError> {
+    fn convert_to_year(
+        &self,
+        flags: ConversionFlags,
+        zone: &SessionTimeZone,
+    ) -> Result<Converted<Self>, DatumValueError> {
         let (year, adjust_zero, event) = match self {
             Self::String(value) => year_from_text(value.as_utf8()?)?,
             Self::Bytes(value) => year_from_text(std::str::from_utf8(value)?)?,
@@ -545,7 +564,7 @@ impl Datum {
                 (converted.value, false, converted.event)
             }
             _ => {
-                let converted = self.convert_to_signed(FieldTypeCode::LongLong, flags)?;
+                let converted = self.convert_to_signed(FieldTypeCode::LongLong, flags, zone)?;
                 (converted.value, false, converted.event)
             }
         };
@@ -1025,8 +1044,20 @@ fn decimal_to_unsigned(value: &Decimal, upper: u64, target: FieldTypeCode) -> Co
     numeric_outcome(converted)
 }
 
-fn duration_from_text(text: &str, fsp: i64) -> Result<Converted<MySqlDuration>, DatumValueError> {
-    let converted = str_to_duration(text, fsp, &Utc).map_err(conversion_error)?;
+/// Go `StrToDuration(ctx, str, fsp)` (pkg/types/convert.go), whose `ctx`
+/// carries the session location: a 12-or-more-digit literal is parsed as a
+/// DATETIME first, and rounding it to `fsp` goes through the same
+/// zone-sensitive `RoundFrac` as [`Datum::convert_to_signed`]'s time arm.
+/// Measured against Go at `fsp=0`, `"20110313015959.999999"` yields
+/// `2011-03-13 02:00:00` under UTC but `2011-03-13 03:00:00` under
+/// America/Los_Angeles, and `"20111106015959.999999"` yields
+/// `2011-11-06 02:00:00` under UTC but `2011-11-06 01:00:00` there.
+fn duration_from_text(
+    text: &str,
+    fsp: i64,
+    zone: &SessionTimeZone,
+) -> Result<Converted<MySqlDuration>, DatumValueError> {
+    let converted = str_to_duration(text, fsp, zone).map_err(conversion_error)?;
     let value = match converted.value {
         DurationOrTime::Duration(value) => value,
         DurationOrTime::Time(value) => value.to_duration().map_err(conversion_error)?,
