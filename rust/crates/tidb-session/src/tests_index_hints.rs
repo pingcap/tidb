@@ -114,12 +114,19 @@
 //! `Internal : ` prefix even though `errno.ErrInternal`'s registered
 //! message is `"Internal : %s"`.
 //!
-//! Every assertion below that still names a DIVERGENCE is a tripwire for
-//! #153, the COMMENT-hint spelling, which is deliberately still unreported:
-//! the set of hints that are genuinely inapplicable only becomes well-defined
-//! now that table-level hints bind, and those two tests are what will go red
-//! when it is implemented. They also serve as this file's control -- closing
-//! #179 must not have moved the comment-hint plans or the warning count.
+//! The COMMENT-hint spelling (#153) is reported now too, by
+//! `tidb_executor::index_hints::report_comment_index_hints`. It stays a
+//! separate rule from the `FROM` spelling in both directions: a comment hint
+//! matches the query block's ALIAS rather than the table name, and a bad
+//! index name in one is a WARNING where the `FROM` spelling fails the
+//! statement.
+//!
+//! MEASURED NEGATIVE, not implemented here: a matched comment hint does not
+//! yet CONSTRAIN the plan the way the `FROM` spelling does. Go's
+//! `getPossibleAccessPaths` appends it to the same `indexHints` slice, so
+//! `/*+ use_index(t, idx_c) */ ... WHERE b = 2` plans the same `IndexLookUp`
+//! over `idx_c` that `USE INDEX(idx_c)` does (captured). Only the WARNING
+//! surface is closed.
 
 #![cfg(test)]
 
@@ -153,6 +160,21 @@ fn plan_uses_index(session: &mut Session, sql: &str, index: &str) -> bool {
     access_objects(session, sql)
         .iter()
         .any(|object| object.contains(&format!("index:{index}")))
+}
+
+/// The level, code and message of every warning the last statement reported.
+fn reported(session: &Session) -> Vec<(&str, u16, String)> {
+    session
+        .warnings()
+        .iter()
+        .map(|warning| {
+            (
+                warning.level.as_str(),
+                warning.code,
+                warning.message.clone(),
+            )
+        })
+        .collect()
 }
 
 /// The code and message a statement failed with.
@@ -512,13 +534,11 @@ fn an_invisible_index_is_1176_in_a_hint() {
 /// warning 1815 says so, verbatim
 ///   `use_index(test.zzz, idx_b) is inapplicable, check whether the table(test.zzz) exists`
 ///
-/// This tier drops it in silence. Reporting it is deliberately NOT implemented
-/// here: the set of hints that are genuinely inapplicable only becomes
-/// well-defined once table-level hints actually bind (#179), and announcing a
-/// hint as unhonoured while honourable ones are still being ignored would be
-/// wrong in both directions.
+/// The comment spelling is a genuinely different rule from the `FROM` one two
+/// tests up: naming a missing INDEX there is a statement ERROR, here it is a
+/// warning with the same 1176 and the same text, and the statement answers.
 #[test]
-fn an_inapplicable_comment_hint_is_dropped_without_reporting() {
+fn an_inapplicable_comment_hint_is_reported_as_1815() {
     let mut session = hinted_session();
 
     // The plan is unaffected in both systems: Go also keeps the idx_b read.
@@ -527,25 +547,155 @@ fn an_inapplicable_comment_hint_is_dropped_without_reporting() {
         "EXPLAIN SELECT /*+ use_index(zzz, idx_b) */ * FROM t WHERE b = 2",
         "idx_b"
     ));
+    assert_eq!(
+        reported(&session),
+        vec![(
+            "Warning",
+            1815,
+            "use_index(test.zzz, idx_b) is inapplicable, \
+             check whether the table(test.zzz) exists"
+                .to_owned()
+        )]
+    );
+    assert_eq!(session.wire_warning_count(), 1);
 
-    // DIVERGENCE (#153): Go's `SHOW WARNINGS` has exactly one row,
-    //   Warning | 1815 | use_index(test.zzz, idx_b) is inapplicable, check whether the table(test.zzz) exists
-    // and the wire warning count is 1. Both are zero here.
-    assert_eq!(session.warnings(), &[]);
-    assert_eq!(session.wire_warning_count(), 0);
-
-    // Same shape for a comment hint naming a missing index: Go warns 1176
-    // (a warning, not the 1176 ERROR the table-level spelling raises) and
-    // leaves the plan alone.
+    // A comment hint naming a missing index of a table that DOES match warns
+    // 1176 and leaves the plan alone -- the `FROM` spelling of the same
+    // mistake fails the statement.
     assert!(plan_uses_index(
         &mut session,
         "EXPLAIN SELECT /*+ use_index(t, no_such_idx) */ * FROM t WHERE b = 2",
         "idx_b"
     ));
-    // DIVERGENCE (#153): Go has one `Warning | 1176 | Key 'no_such_idx'
-    // doesn't exist in table 't'` here.
+    assert_eq!(
+        reported(&session),
+        vec![(
+            "Warning",
+            1176,
+            "Key 'no_such_idx' doesn't exist in table 't'".to_owned()
+        )]
+    );
+    assert_eq!(session.wire_warning_count(), 1);
+
+    // Control: a comment hint that names a real table and a real index of it
+    // is applicable, and reports nothing at all.
+    session
+        .run("SELECT /*+ use_index(t, idx_b) */ * FROM t WHERE b = 2")
+        .unwrap();
     assert_eq!(session.warnings(), &[]);
     assert_eq!(session.wire_warning_count(), 0);
+}
+
+/// Go renders the 1815 text through `HintedIndex.IndexString`, and every
+/// asymmetry of that rendering is measured rather than guessed: the table name
+/// keeps the case it was WRITTEN in while each index name is lowercased, an
+/// unqualified table is reported under the CURRENT database, a hint with no
+/// index list has no comma at all, and `order_index`/`no_order_index` render
+/// with an EMPTY hint name because Go's own `HintTypeString` has no arm for
+/// them. All four captured verbatim.
+#[test]
+fn the_1815_text_reproduces_gos_rendering_asymmetries() {
+    let mut session = hinted_session();
+
+    for (sql, expected) in [
+        (
+            "SELECT /*+ USE_INDEX(ZZZ, IdX_B) */ * FROM t WHERE b = 2",
+            "use_index(test.ZZZ, idx_b) is inapplicable, check whether the table(test.ZZZ) exists",
+        ),
+        (
+            "SELECT /*+ use_index(mydb.zzz, idx_b) */ * FROM t WHERE b = 2",
+            "use_index(mydb.zzz, idx_b) is inapplicable, check whether the table(mydb.zzz) exists",
+        ),
+        (
+            "SELECT /*+ use_index(zzz) */ * FROM t WHERE b = 2",
+            "use_index(test.zzz) is inapplicable, check whether the table(test.zzz) exists",
+        ),
+        (
+            "SELECT /*+ order_index(zzz, idx_b) */ * FROM t WHERE b = 2",
+            "(test.zzz, idx_b) is inapplicable, check whether the table(test.zzz) exists",
+        ),
+        (
+            "SELECT /*+ ignore_index(zzz, idx_b) */ * FROM t WHERE b = 2",
+            "ignore_index(test.zzz, idx_b) is inapplicable, check whether the table(test.zzz) exists",
+        ),
+        (
+            "SELECT /*+ force_index(zzz, idx_b) */ * FROM t WHERE b = 2",
+            "force_index(test.zzz, idx_b) is inapplicable, check whether the table(test.zzz) exists",
+        ),
+        (
+            "SELECT /*+ use_index_merge(zzz, idx_b) */ * FROM t WHERE b = 2",
+            "use_index_merge(test.zzz, idx_b) is inapplicable, check whether the table(test.zzz) exists",
+        ),
+    ] {
+        session.run(sql).unwrap();
+        assert_eq!(
+            reported(&session),
+            vec![("Warning", 1815, expected.to_owned())],
+            "{sql}"
+        );
+    }
+}
+
+/// Go matches the hint against the `DataSource`'s reported name, which is the
+/// ALIAS whenever one is written -- so aliasing a table makes its own name
+/// stop matching. A DERIVED table is not a `DataSource` at all, so its alias
+/// matches nothing either. A `FROM`-less select matches nothing by
+/// construction. All captured.
+#[test]
+fn a_comment_hint_matches_the_alias_not_the_table() {
+    let mut session = hinted_session();
+
+    // The alias matches, and reports nothing.
+    session
+        .run("SELECT /*+ use_index(t2, idx_b) */ * FROM t t2 WHERE b = 2")
+        .unwrap();
+    assert_eq!(session.warnings(), &[]);
+
+    // The underlying name no longer does.
+    session
+        .run("SELECT /*+ use_index(t, idx_b) */ * FROM t t2 WHERE b = 2")
+        .unwrap();
+    assert_eq!(
+        reported(&session),
+        vec![(
+            "Warning",
+            1815,
+            "use_index(test.t, idx_b) is inapplicable, check whether the table(test.t) exists"
+                .to_owned()
+        )]
+    );
+
+    // A derived table's alias is not a `DataSource` name.
+    session
+        .run("SELECT /*+ use_index(d, idx_b) */ * FROM (SELECT * FROM t) d WHERE b = 2")
+        .unwrap();
+    assert_eq!(
+        reported(&session),
+        vec![(
+            "Warning",
+            1815,
+            "use_index(test.d, idx_b) is inapplicable, check whether the table(test.d) exists"
+                .to_owned()
+        )]
+    );
+
+    // No `FROM` at all: the hint still reports.
+    session.run("SELECT /*+ use_index(t, i) */ 1").unwrap();
+    assert_eq!(
+        reported(&session),
+        vec![(
+            "Warning",
+            1815,
+            "use_index(test.t, i) is inapplicable, check whether the table(test.t) exists"
+                .to_owned()
+        )]
+    );
+
+    // An explicit database qualifier matches case-insensitively.
+    session
+        .run("SELECT /*+ use_index(TeSt.t, idx_b) */ * FROM t WHERE b = 2")
+        .unwrap();
+    assert_eq!(session.warnings(), &[]);
 }
 
 /// The warning channel this tier would report through already carries

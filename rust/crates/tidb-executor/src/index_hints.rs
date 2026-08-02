@@ -288,3 +288,178 @@ fn validate_join_node(
         tidb_ast::JoinNode::Derived { .. } => Ok(()),
     }
 }
+
+/// Go's COMMENT-style index hints (`/*+ use_index(t, idx) */`), which are a
+/// genuinely different rule from the `FROM`-clause spelling above even though
+/// they name the same paths.
+///
+/// Go appends them to the very same `indexHints` slice
+/// (`getPossibleAccessPaths`, `planbuilder.go:1445`) but remembers the
+/// original length, and every refusal below that boundary is downgraded:
+///
+/// * a name no index of the matched table has is `AppendWarning(1176)` and a
+///   `continue`, not the statement-level 1176 the `FROM` spelling raises;
+/// * a hint whose TABLE matched nothing in the query block is not reported
+///   here at all -- it is reported once, at the end of the block, by
+///   `popTableHints` -> `SetHintWarning` (`hint.go:1234`), as 1815. That is
+///   `ErrInternal.FastGen`, and `FastGen` REPLACES the class message, which
+///   is why the wire text carries no `Internal : ` prefix even though
+///   `errno.ErrInternal` is `"Internal : %s"`.
+///
+/// The matching itself is `HintedIndex.Match`: the hint's table name against
+/// the query block's ALIAS when one is written (`FROM t t2` is matched by
+/// `use_index(t2, ...)` and NOT by `use_index(t, ...)`), and the hint's
+/// database -- defaulted to the current one -- against the table's. Both
+/// case-insensitively. A DERIVED table is not a `DataSource` and matches
+/// nothing, so `use_index(d, ...)` over `FROM (SELECT ...) d` is 1815.
+///
+/// # Capture (`rust/difftests/gorun`, verbatim)
+///
+/// ```text
+/// select /*+ use_index(zzz, idx_b) */ * from t where b = 2
+///   RS:2|2|2
+///   show warnings -> RS:Warning|1815|use_index(test.zzz, idx_b) is inapplicable, check whether the table(test.zzz) exists
+/// select /*+ use_index(t, no_such_idx) */ * from t where b = 2
+///   RS:2|2|2
+///   show warnings -> RS:Warning|1176|Key 'no_such_idx' doesn't exist in table 't'
+/// select /*+ USE_INDEX(ZZZ, IdX_B) */ * from t where b = 2
+///   show warnings -> RS:Warning|1815|use_index(test.ZZZ, idx_b) is inapplicable, check whether the table(test.ZZZ) exists
+/// select /*+ use_index(zzz) */ * from t where b = 2
+///   show warnings -> RS:Warning|1815|use_index(test.zzz) is inapplicable, check whether the table(test.zzz) exists
+/// select /*+ order_index(zzz, idx_b) */ * from t where b = 2
+///   show warnings -> RS:Warning|1815|(test.zzz, idx_b) is inapplicable, check whether the table(test.zzz) exists
+/// ```
+///
+/// The last one is not a transcription slip: Go's `HintedIndex.HintTypeString`
+/// switches over only `HintUse`/`HintIgnore`/`HintForce` and returns `""` for
+/// `order_index`/`no_order_index`, so the rendered warning really does start
+/// at the open paren. It is ported as measured rather than repaired.
+pub(crate) fn report_comment_index_hints(
+    select: &tidb_ast::SelectStmt,
+    catalog: &crate::driver::Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) {
+    use tidb_expr::Columns as _;
+
+    for hint in &select.hints {
+        let tidb_ast::HintKind::Index { table, indexes, .. } = &hint.kind else {
+            continue;
+        };
+        let Some(type_string) = comment_hint_type_string(&hint.name) else {
+            continue;
+        };
+        let db = table.db_name.as_deref().unwrap_or(current_db);
+        match matched_hint_table(select, table, db, catalog, current_db) {
+            // Go validates the names against the matched `DataSource`, and a
+            // miss below `indexHintsLen` warns instead of failing.
+            Some(matched) => {
+                for name in indexes {
+                    if resolve_index_name(&matched, name).is_none() {
+                        let reported = DriverError::KeyNotExists {
+                            key: name.clone(),
+                            table: matched.name.clone(),
+                        }
+                        .to_mysql_error();
+                        ctx.append_warning(reported.code, &reported.message);
+                    }
+                }
+            }
+            None => ctx.append_warning(
+                1815,
+                &unmatched_hint_warning(type_string, db, &table.name, indexes),
+            ),
+        }
+    }
+}
+
+/// Go `HintedIndex.HintTypeString`, plus the membership test that decides
+/// whether a hint is in `PlanHints.IndexHintList` at all.
+///
+/// `None` means the hint is not an index hint of this family and has nothing
+/// to do with 1815 here (`NO_INDEX_LOOKUP_PUSHDOWN` collects into a separate
+/// `HintedTable` list with its own, differently-worded warning).
+fn comment_hint_type_string(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "USE_INDEX" => "use_index",
+        "IGNORE_INDEX" => "ignore_index",
+        "FORCE_INDEX" => "force_index",
+        "USE_INDEX_MERGE" => "use_index_merge",
+        "INDEX_LOOKUP_PUSHDOWN" => "index_lookup_pushdown",
+        // Go's own switch has no arm for these two, so the format string
+        // renders an empty hint name. Captured.
+        "ORDER_INDEX" | "NO_ORDER_INDEX" => "",
+        _ => return None,
+    })
+}
+
+/// Go `collectUnmatchedIndexHintWarning`'s format string, including its own
+/// asymmetry: the table name keeps the case it was WRITTEN in (`CIStr`'s
+/// `%s` is the original), while each index name is lowercased (`.L`).
+fn unmatched_hint_warning(type_string: &str, db: &str, table: &str, indexes: &[String]) -> String {
+    let mut index_list = String::new();
+    for name in indexes {
+        index_list.push_str(", ");
+        index_list.push_str(&name.to_lowercase());
+    }
+    format!(
+        "{type_string}({db}.{table}{index_list}) is inapplicable, \
+         check whether the table({db}.{table}) exists"
+    )
+}
+
+/// Go `HintedIndex.Match` over the query block's own `DataSource`s: the
+/// stored table one comment hint names, or `None` when it names none of them.
+fn matched_hint_table(
+    select: &tidb_ast::SelectStmt,
+    hinted: &tidb_ast::HintTable,
+    hinted_db: &str,
+    catalog: &crate::driver::Catalog,
+    current_db: &str,
+) -> Option<KvTable> {
+    let join = select.from.as_ref()?;
+    let mut found = None;
+    visit_join_tables(join, &mut |table_ref| {
+        if found.is_some() {
+            return;
+        }
+        // Go matches the hint against the `DataSource`'s reported name, which
+        // is the alias whenever one is written.
+        let referenced = table_ref
+            .alias
+            .as_deref()
+            .or_else(|| table_ref.name.last().map(String::as_str));
+        if !referenced.is_some_and(|name| name.eq_ignore_ascii_case(&hinted.name)) {
+            return;
+        }
+        let Ok((database, name)) = crate::driver::split_table_path_pub(&table_ref.name, current_db)
+        else {
+            return;
+        };
+        if !database.eq_ignore_ascii_case(hinted_db) {
+            return;
+        }
+        if let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_in(database, name) {
+            found = Some(table.clone());
+        }
+    });
+    found
+}
+
+/// Every plain table reference of one `FROM`, in written order. A derived
+/// table is deliberately NOT descended into: its own query block pops its own
+/// hints, and the derived table itself is not a `DataSource` a hint can name.
+fn visit_join_tables(join: &tidb_ast::Join, visit: &mut impl FnMut(&tidb_ast::TableRef)) {
+    visit_join_node(&join.left, visit);
+    if let Some(right) = &join.right {
+        visit_join_node(right, visit);
+    }
+}
+
+fn visit_join_node(node: &tidb_ast::JoinNode, visit: &mut impl FnMut(&tidb_ast::TableRef)) {
+    match node {
+        tidb_ast::JoinNode::Table(table_ref) => visit(table_ref),
+        tidb_ast::JoinNode::Join(join) => visit_join_tables(join, visit),
+        tidb_ast::JoinNode::Derived { .. } => {}
+    }
+}

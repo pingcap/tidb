@@ -158,6 +158,13 @@ impl Session {
                 )));
             }
         };
+        // Planning an `EXPLAIN` raises the same plan-time warnings planning
+        // the statement itself does -- an inapplicable optimizer hint is 1815
+        // under `EXPLAIN` too, captured -- so the buffer is drained here for
+        // the same reason the `EXPLAIN ANALYZE` arm above drains it. Nothing
+        // is executed on this path, so no evaluation warning can arrive that
+        // Go, which also executes nothing, would not have raised.
+        self.drain_eval_warnings(&ctx);
         Ok(Some(StmtOutput::Rows { columns, rows }))
     }
 }

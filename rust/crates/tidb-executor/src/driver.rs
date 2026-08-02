@@ -303,6 +303,11 @@ pub(crate) fn run_select_traced(
         select
     };
 
+    // Go's `buildSelect` pushes this block's `/*+ ... */` hints and its
+    // deferred `popTableHints` reports the ones no `DataSource` of the block
+    // claimed, as 1815. It runs whether or not there is a `FROM` -- a hint on
+    // a `FROM`-less select names nothing and is reported too. Captured.
+    crate::index_hints::report_comment_index_hints(select, catalog, current_db, ctx);
     // Resolve FROM: none -> table-dual; otherwise the (possibly joined) tables.
     let (mut from_source, mut scope): (Option<Box<dyn Executor>>, FromScope) = match &select.from {
         None => {
