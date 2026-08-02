@@ -133,6 +133,10 @@ pub use stmt_context::{
 };
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
+/// The level a statement warning carries -- Go's three `contextutil` levels,
+/// re-exported so the session can read the one a `StmtContext` recorded
+/// without depending on `tidb-distsql` directly.
+pub use tidb_distsql::WarningLevel as WarnLevel;
 pub use tidb_expr::{
     eval_in, like_match_with_collation, truthy_of, Columns, EvalError, JsonError, MysqlRng,
     SessionTimeZone,

@@ -348,7 +348,7 @@ pub fn run_drop_index_in(
         &table_name,
         &drop.name,
         drop.if_exists,
-        &ctx.session_zone(),
+        ctx,
     )
 }
 
@@ -359,8 +359,9 @@ pub(crate) fn drop_index_from_table(
     table_name: &str,
     index_name: &str,
     if_exists: bool,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    let zone = &ctx.session_zone();
     // Go `ddl.checkIndexNeededInForeignKey`, before anything is removed: an
     // index a live constraint relies on is 1553, on either side.
     crate::foreign_key::check_index_needed(catalog, database, table_name, index_name)?;
@@ -392,8 +393,16 @@ pub(crate) fn drop_index_from_table(
     let dropped = table
         .drop_index(index_name, zone)
         .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;
-    if !dropped && !if_exists {
-        return Err(DriverError::UnknownIndex(index_name.to_owned()));
+    if !dropped {
+        // Go's `IF EXISTS` does not silence the index that was not there --
+        // it DEMOTES it. Captured: `alter table t drop index if exists no_idx`
+        // leaves `Note | 1091 | index no_idx doesn't exist`, and so does the
+        // `DROP INDEX ... ON t` spelling.
+        let missing = DriverError::UnknownIndex(index_name.to_owned());
+        if !if_exists {
+            return Err(missing);
+        }
+        ctx.append_suppressed(&missing);
     }
     for offset in hidden {
         table.drop_column(offset);

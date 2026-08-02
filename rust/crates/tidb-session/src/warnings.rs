@@ -73,6 +73,18 @@ pub enum WarningLevel {
 }
 
 impl WarningLevel {
+    /// The same three levels, arriving from the executor's own statement
+    /// buffer. Both spell Go's `contextutil` levels; this is the one place
+    /// they meet, so a note raised deep in a DDL action keeps its level all
+    /// the way to `SHOW WARNINGS`.
+    pub(crate) const fn from_executor(level: tidb_executor::WarnLevel) -> Self {
+        match level {
+            tidb_executor::WarnLevel::Warning => Self::Warning,
+            tidb_executor::WarnLevel::Error => Self::Error,
+            tidb_executor::WarnLevel::Note => Self::Note,
+        }
+    }
+
     /// The text the `Level` column shows.
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -188,8 +200,8 @@ impl Session {
 
     /// Moves what evaluation recorded into the statement's warning buffer.
     pub(crate) fn drain_eval_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
-        for (code, message) in ctx.take_warnings() {
-            self.append_warning(WarningLevel::Warning, code, message);
+        for (level, code, message) in ctx.take_warnings() {
+            self.append_warning(WarningLevel::from_executor(level), code, message);
         }
     }
 

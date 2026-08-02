@@ -158,7 +158,7 @@ pub fn run_alter_table_in(
                     if_exists: *if_exists,
                     allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
                 },
-                &ctx.session_zone(),
+                ctx,
             )?,
             tidb_ast::AlterTableAction::ChangeColumn {
                 if_exists,
@@ -180,20 +180,13 @@ pub fn run_alter_table_in(
                         if_exists: *if_exists,
                         allow_remove_auto_inc: ctx.allow_remove_auto_inc(),
                     },
-                    &ctx.session_zone(),
+                    ctx,
                 )?;
             }
             tidb_ast::AlterTableAction::DropColumn {
                 if_exists,
                 name: column_name,
-            } => drop_column_action(
-                catalog,
-                &database,
-                &name,
-                column_name,
-                *if_exists,
-                &ctx.session_zone(),
-            )?,
+            } => drop_column_action(catalog, &database, &name, column_name, *if_exists, ctx)?,
             tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
                 let unique = matches!(
                     index.kind,
@@ -266,14 +259,7 @@ pub fn run_alter_table_in(
                 if_exists,
                 name: index_name,
             } => {
-                drop_index_from_table(
-                    catalog,
-                    &database,
-                    &name,
-                    index_name,
-                    *if_exists,
-                    &ctx.session_zone(),
-                )?;
+                drop_index_from_table(catalog, &database, &name, index_name, *if_exists, ctx)?;
             }
             tidb_ast::AlterTableAction::AddForeignKey(definition) => {
                 add_foreign_key_action(catalog, &database, &name, definition, ctx)?;
@@ -909,8 +895,9 @@ struct ModifyColumnRequest<'a> {
 fn modify_column_action(
     catalog: &mut Catalog,
     request: &ModifyColumnRequest<'_>,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    let zone = &ctx.session_zone();
     let &ModifyColumnRequest {
         database,
         table_name,
@@ -973,14 +960,19 @@ fn modify_column_action(
         .iter()
         .position(|column| column.name.eq_ignore_ascii_case(old_name))
     else {
-        // Go's IF EXISTS turns the missing column into a no-op (with a note).
-        if if_exists {
-            return Ok(());
-        }
-        return Err(DriverError::UnknownColumnInTable {
+        // Go's `IF EXISTS` demotes the missing column rather than silencing
+        // it. Captured: `alter table t modify column if exists no_col bigint`
+        // leaves `Note | 1054 | Unknown column 'no_col' in 't'`, and the
+        // `CHANGE COLUMN` spelling that shares this action leaves the same.
+        let missing = DriverError::UnknownColumnInTable {
             column: old_name.to_owned(),
             table: table_name.to_owned(),
-        });
+        };
+        if !if_exists {
+            return Err(missing);
+        }
+        ctx.append_suppressed(&missing);
+        return Ok(());
     };
     // A rename onto another column's name is a duplicate, but renaming a
     // column to the name it already has is allowed.
@@ -1285,8 +1277,9 @@ fn drop_column_action(
     table_name: &str,
     column_name: &str,
     if_exists: bool,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    let zone = &ctx.session_zone();
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
@@ -1297,10 +1290,16 @@ fn drop_column_action(
         .iter()
         .position(|column| column.name.eq_ignore_ascii_case(column_name))
     else {
-        if if_exists {
-            return Ok(());
+        // Captured: `alter table t drop column if exists no_col` leaves
+        // `Note | 1091 | Can't DROP 'no_col'; check that column/key exists` --
+        // a DIFFERENT code and text from the MODIFY spelling above, which is
+        // why the note carries the suppressed error rather than a shared one.
+        let missing = DriverError::UnknownColumnInAlter(column_name.to_owned());
+        if !if_exists {
+            return Err(missing);
         }
-        return Err(DriverError::UnknownColumnInAlter(column_name.to_owned()));
+        ctx.append_suppressed(&missing);
+        return Ok(());
     };
     // Captured: dropping the only column is 1090.
     if table.columns.len() == 1 {

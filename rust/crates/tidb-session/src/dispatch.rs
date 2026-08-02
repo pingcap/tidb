@@ -493,10 +493,18 @@ impl Session {
                     // under `sql_mode = ''`, exactly as the INSERT of such a
                     // row does.
                     let ctx = self.statement_context(true);
-                    self.with_catalog_mut(|catalog| {
+                    let result = self.with_catalog_mut(|catalog| {
                         tidb_executor::run_create_index_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
-                    })
+                    });
+                    // A DDL action raises notes of its own -- an `IF EXISTS`
+                    // that skipped something files the error it swallowed as
+                    // Go's `Note`, from inside the executor. Draining after
+                    // the call rather than after a successful one is what Go
+                    // does too: the buffer belongs to the statement, not to
+                    // its outcome.
+                    self.drain_eval_warnings(&ctx);
+                    result
                 }
                 DdlStmt::DropIndex(_) => {
                     let current_db = self.current_db.clone();
@@ -504,19 +512,35 @@ impl Session {
                     // it needs the session's `@@time_zone` for the same reason
                     // writing the entry did.
                     let ctx = self.statement_context(true);
-                    self.with_catalog_mut(|catalog| {
+                    let result = self.with_catalog_mut(|catalog| {
                         tidb_executor::run_drop_index_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
-                    })
+                    });
+                    // A DDL action raises notes of its own -- an `IF EXISTS`
+                    // that skipped something files the error it swallowed as
+                    // Go's `Note`, from inside the executor. Draining after
+                    // the call rather than after a successful one is what Go
+                    // does too: the buffer belongs to the statement, not to
+                    // its outcome.
+                    self.drain_eval_warnings(&ctx);
+                    result
                 }
                 DdlStmt::AlterTable(_) => {
                     let current_db = self.current_db.clone();
                     // `ADD INDEX` backfills, so the same write level applies.
                     let ctx = self.statement_context(true);
-                    self.with_catalog_mut(|catalog| {
+                    let result = self.with_catalog_mut(|catalog| {
                         tidb_executor::run_alter_table_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
-                    })
+                    });
+                    // A DDL action raises notes of its own -- an `IF EXISTS`
+                    // that skipped something files the error it swallowed as
+                    // Go's `Note`, from inside the executor. Draining after
+                    // the call rather than after a successful one is what Go
+                    // does too: the buffer belongs to the statement, not to
+                    // its outcome.
+                    self.drain_eval_warnings(&ctx);
+                    result
                 }
                 DdlStmt::DropTable(_) => {
                     let current_db = self.current_db.clone();

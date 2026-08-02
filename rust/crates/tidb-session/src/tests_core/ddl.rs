@@ -1101,6 +1101,91 @@ fn if_exists_demotes_the_error_it_swallowed_to_a_note() {
     assert_eq!(session.wire_warning_count(), 0);
 }
 
+/// The three `IF EXISTS` sites that live in the EXECUTOR rather than the
+/// session were silent, and could not have been fixed at the call site alone
+/// (#172): `StmtContext`'s warning buffer held `(code, message)` with no
+/// level, and `Session::drain_eval_warnings` stamped everything it took out
+/// as `Warning`. A note raised in a DDL action therefore could not survive
+/// the trip. The buffer now carries Go's level, so it does.
+///
+/// Each note carries the SUPPRESSED error's own code and text, which is why
+/// the three differ from one another rather than sharing one string. All
+/// captured from `gorun` against real TiDB:
+///
+/// ```text
+/// alter table t modify column if exists no_col bigint
+///   -> Note|1054|Unknown column 'no_col' in 't'
+/// alter table t change column if exists no_col nc bigint
+///   -> Note|1054|Unknown column 'no_col' in 't'
+/// alter table t drop column if exists no_col
+///   -> Note|1091|Can't DROP 'no_col'; check that column/key exists
+/// alter table t drop index if exists no_idx
+///   -> Note|1091|index no_idx doesn't exist
+/// drop index if exists no_idx on t
+///   -> Note|1091|index no_idx doesn't exist
+/// ```
+#[test]
+fn an_executor_tier_if_exists_keeps_its_note_level() {
+    let mut session = Session::new();
+    let seen = |session: &Session| -> Vec<String> {
+        session
+            .warnings()
+            .iter()
+            .map(|w| format!("{}|{}|{}", w.level.as_str(), w.code, w.message))
+            .collect()
+    };
+    session
+        .run("CREATE TABLE t (a INT, b INT, INDEX ib(b))")
+        .unwrap();
+
+    for (sql, note) in [
+        (
+            "ALTER TABLE t MODIFY COLUMN IF EXISTS no_col BIGINT",
+            "Note|1054|Unknown column 'no_col' in 't'",
+        ),
+        (
+            "ALTER TABLE t CHANGE COLUMN IF EXISTS no_col nc BIGINT",
+            "Note|1054|Unknown column 'no_col' in 't'",
+        ),
+        (
+            "ALTER TABLE t DROP COLUMN IF EXISTS no_col",
+            "Note|1091|Can't DROP 'no_col'; check that column/key exists",
+        ),
+        (
+            "ALTER TABLE t DROP INDEX IF EXISTS no_idx",
+            "Note|1091|index no_idx doesn't exist",
+        ),
+        (
+            "DROP INDEX IF EXISTS no_idx ON t",
+            "Note|1091|index no_idx doesn't exist",
+        ),
+    ] {
+        session.run(sql).unwrap();
+        assert_eq!(seen(&session), [note], "{sql}");
+        assert_eq!(session.wire_warning_count(), 1, "{sql}");
+    }
+
+    // Controls in both directions. Without IF EXISTS the same three are
+    // statement ERRORS, and with IF EXISTS over something that IS there the
+    // action happens and says nothing.
+    for sql in [
+        "ALTER TABLE t MODIFY COLUMN no_col BIGINT",
+        "ALTER TABLE t DROP COLUMN no_col",
+        "ALTER TABLE t DROP INDEX no_idx",
+    ] {
+        assert!(session.run(sql).is_err(), "{sql}");
+    }
+    session
+        .run("ALTER TABLE t DROP INDEX IF EXISTS ib")
+        .unwrap();
+    assert!(seen(&session).is_empty());
+    session
+        .run("ALTER TABLE t DROP COLUMN IF EXISTS b")
+        .unwrap();
+    assert!(seen(&session).is_empty());
+    assert_eq!(session.wire_warning_count(), 0);
+}
+
 /// The `Level` column reads `Note`, through the same `SHOW WARNINGS` a client
 /// runs -- the channel the wire count above cannot show.
 #[test]

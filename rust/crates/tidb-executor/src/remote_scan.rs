@@ -693,10 +693,12 @@ mod tests {
         assert_eq!(
             ctx.take_warnings(),
             vec![(
+                tidb_distsql::WarningLevel::Warning,
                 1292u16,
                 "Truncated incorrect DOUBLE value: '12abc'".to_owned()
             )],
-            "the sink the request carried is the statement's own"
+            "the sink the request carried is the statement's own, and keeps \
+             the level TiKV's warning was collected under"
         );
     }
 

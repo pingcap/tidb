@@ -19,12 +19,13 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use tidb_datatype::Datum;
-use tidb_distsql::WarningCollector;
+use tidb_distsql::{WarningCollector, WarningLevel};
 use tidb_expr::{Columns, ErrorLevel, MysqlRng};
 
 use crate::error_context::{ErrGroup, Level, LevelMap};
 use crate::mem_quota::{OomAction, StatementMemory};
 use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
+use crate::DriverError;
 
 /// Which of Go's mutually exclusive `StatementContext` statement-kind
 /// booleans this statement sets (`InInsertStmt`, `InUpdateStmt`/
@@ -168,7 +169,14 @@ impl RetryAutoIds {
 /// resource tracker and the runtime stats.
 #[derive(Clone, Default)]
 pub struct StmtContext {
-    warnings: Rc<RefCell<Vec<(u16, String)>>>,
+    /// Go's `StaticWarnHandler` entries: a LEVEL, a code and a message.
+    ///
+    /// The level is not decoration. Go reaches this one buffer through three
+    /// doors -- `AppendWarning`, `AppendError` and `AppendNote` -- and an
+    /// `IF EXISTS` that swallowed an error files it as a `Note`, which
+    /// `SHOW WARNINGS` prints in its `Level` column. Without the level here
+    /// every executor-tier note would arrive at the session as a `Warning`.
+    warnings: Rc<RefCell<Vec<(WarningLevel, u16, String)>>>,
     division_by_zero: ErrorLevel,
     /// Go's truncation flags (`IgnoreTruncateErr` / `TruncateAsWarning`)
     /// collapsed to the level `types.Context.HandleTruncate` acts on. It is
@@ -965,7 +973,7 @@ impl StmtContext {
     /// remote ones come last. Only the ORDER differs; both sets are reported,
     /// with their codes.
     #[must_use]
-    pub fn take_warnings(&self) -> Vec<(u16, String)> {
+    pub fn take_warnings(&self) -> Vec<(WarningLevel, u16, String)> {
         let mut warnings = std::mem::take(&mut *self.warnings.borrow_mut());
         for warning in self.cop_warnings.take() {
             if warnings.len() >= MAX_WARNING_COUNT {
@@ -974,9 +982,31 @@ impl StmtContext {
             // A TiKV warning without a code is one the region could not name;
             // 1105 (`ErrUnknown`) is what TiDB reports for exactly that.
             let code = u16::try_from(warning.code.unwrap_or(1105)).unwrap_or(1105);
-            warnings.push((code, warning.message));
+            warnings.push((warning.level, code, warning.message));
         }
         warnings
+    }
+
+    /// Go `StmtCtx.AppendNote`: the level an `IF EXISTS` / `IF NOT EXISTS`
+    /// files the error it swallowed under.
+    ///
+    /// The note carries the SUPPRESSED error's own code and text rather than
+    /// a second string beside it, exactly as Go's `dropTableObject` hands
+    /// `AppendNote` the very `ErrBadTable` it would otherwise have returned --
+    /// so the two can never drift.
+    pub(crate) fn append_suppressed(&self, error: &DriverError) {
+        let reported = error.clone().to_mysql_error();
+        self.append_leveled(WarningLevel::Note, reported.code, &reported.message);
+    }
+
+    /// The one push onto the buffer, so its retention limit lives in one
+    /// place regardless of which level came through.
+    fn append_leveled(&self, level: WarningLevel, code: u16, message: &str) {
+        let mut warnings = self.warnings.borrow_mut();
+        if warnings.len() >= MAX_WARNING_COUNT {
+            return;
+        }
+        warnings.push((level, code, message.to_owned()));
     }
 }
 
@@ -1076,11 +1106,7 @@ impl Columns for StmtContext {
     }
 
     fn append_warning(&self, code: u16, message: &str) {
-        let mut warnings = self.warnings.borrow_mut();
-        if warnings.len() >= MAX_WARNING_COUNT {
-            return;
-        }
-        warnings.push((code, message.to_owned()));
+        self.append_leveled(WarningLevel::Warning, code, message);
     }
 
     /// The same three mode bits the WRITE path reads from
@@ -1156,8 +1182,8 @@ mod tests {
         assert_eq!(warnings.len(), MAX_WARNING_COUNT);
         // The entries kept are the FIRST ones: Go appends until the limit and
         // then drops, rather than evicting the oldest.
-        assert_eq!(warnings[0].1, "value 0");
-        assert_eq!(warnings[MAX_WARNING_COUNT - 1].1, "value 65534");
+        assert_eq!(warnings[0].2, "value 0");
+        assert_eq!(warnings[MAX_WARNING_COUNT - 1].2, "value 65534");
     }
 
     #[test]
