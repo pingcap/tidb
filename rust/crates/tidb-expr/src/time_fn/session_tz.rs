@@ -207,7 +207,10 @@ pub(super) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
 ///
 /// A wall clock that renders back from NEITHER exists in no offset at all: it
 /// is inside a spring-forward gap, which is [`dst_gap_bound`]'s subject.
-fn local_to_instant(tz: &chrono_tz::Tz, naive: &NaiveDateTime) -> Option<chrono::DateTime<Utc>> {
+pub(super) fn local_to_instant(
+    tz: &chrono_tz::Tz,
+    naive: &NaiveDateTime,
+) -> Option<chrono::DateTime<Utc>> {
     let first = *naive - chrono::Duration::seconds(i64::from(offset_at(tz, naive)));
     let second = *naive - chrono::Duration::seconds(i64::from(offset_at(tz, &first)));
     for candidate in [first, second] {

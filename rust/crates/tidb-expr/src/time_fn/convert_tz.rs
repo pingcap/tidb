@@ -20,8 +20,10 @@
 //! Behavior pinned against goeval (TiDB's production engine), not assumed:
 //! - the fractional-seconds text passes through verbatim (offsets are whole
 //!   minutes, so the fraction is timezone-invariant);
-//! - an AMBIGUOUS local time (DST fall-back) resolves to the EARLIEST
-//!   instant, matching Go's `time.Date`;
+//! - a wall clock the DST fall-back REPEATS names two instants, and Go
+//!   picks neither "the earlier" nor "the later" as a rule — it runs
+//!   `time.Date`, whose answer is the earlier instant in `US/Eastern` and
+//!   the later one in `Europe/Paris`;
 //! - a NONEXISTENT local time (DST spring-forward gap) resolves to the
 //!   transition instant itself — Go's `AdjustedGoTime` picks the closest
 //!   zone bound, and inside a normal (≤4h) gap that is the transition;
@@ -36,10 +38,7 @@
 use std::str::FromStr;
 use std::sync::LazyLock;
 
-use chrono::{
-    DateTime, Duration, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeZone as _,
-    Utc,
-};
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, TimeZone as _, Utc};
 use chrono_tz::Tz;
 use regex::Regex;
 
@@ -79,8 +78,12 @@ fn parse_conv_tz(s: &str) -> Result<Option<ConvTz>, EvalError> {
     Ok(Tz::from_str(s).ok().map(ConvTz::Named))
 }
 
-/// Interprets `naive` as a local time in `tz`, resolving DST ambiguity and
-/// gaps the way Go's `GoTime`/`AdjustedGoTime` do; `None` is NULL.
+/// Interprets `naive` as a local time in `tz`; `None` is NULL.
+///
+/// A named zone is Go's `time.Date`, which
+/// [`super::session_tz::local_to_instant`] already models as the single rule
+/// it is; a fixed offset has no transitions, so the wall clock names exactly
+/// one instant.
 fn local_to_instant(naive: NaiveDateTime, tz: &ConvTz) -> Option<DateTime<Utc>> {
     match tz {
         ConvTz::Fixed(offset) => {
@@ -92,48 +95,8 @@ fn local_to_instant(naive: NaiveDateTime, tz: &ConvTz) -> Option<DateTime<Utc>> 
                     .with_timezone(&Utc),
             )
         }
-        ConvTz::Named(tz) => match tz.from_local_datetime(&naive) {
-            LocalResult::Single(t) => Some(t.with_timezone(&Utc)),
-            // Fall-back: Go's time.Date lands on the earlier instant.
-            LocalResult::Ambiguous(earliest, _) => Some(earliest.with_timezone(&Utc)),
-            // Spring-forward gap: the closest zone bound is the transition.
-            LocalResult::None => gap_transition_instant(*tz, naive),
-        },
+        ConvTz::Named(tz) => super::session_tz::local_to_instant(tz, &naive),
     }
-}
-
-/// Locates the DST transition instant containing the nonexistent local time
-/// `naive` by bisecting the surrounding ±5h window on the UTC axis. Mirrors
-/// Go `AdjustedGoTime`'s closest-zone-bound choice, including its refusal of
-/// transitions wider than 4 hours.
-fn gap_transition_instant(tz: Tz, naive: NaiveDateTime) -> Option<DateTime<Utc>> {
-    let window = Duration::hours(5);
-    let mut lo = tz
-        .from_local_datetime(&(naive - window))
-        .earliest()?
-        .with_timezone(&Utc);
-    let mut hi = tz
-        .from_local_datetime(&(naive + window))
-        .latest()?
-        .with_timezone(&Utc);
-
-    let off_lo = tz.offset_from_utc_datetime(&lo.naive_utc()).fix();
-    let off_hi = tz.offset_from_utc_datetime(&hi.naive_utc()).fix();
-    let gap_secs = i64::from(off_hi.local_minus_utc()) - i64::from(off_lo.local_minus_utc());
-    if !(1..=4 * 3600).contains(&gap_secs) {
-        return None;
-    }
-
-    // First UTC instant whose offset equals the post-transition offset.
-    while hi - lo > Duration::seconds(1) {
-        let mid = lo + (hi - lo) / 2;
-        if tz.offset_from_utc_datetime(&mid.naive_utc()).fix() == off_hi {
-            hi = mid;
-        } else {
-            lo = mid;
-        }
-    }
-    Some(hi)
 }
 
 /// Parses `YYYY-MM-DD[ HH:MM[:SS[.frac]]]` into calendar fields plus the
@@ -257,12 +220,79 @@ mod tests {
                 "UTC",
                 "2007-03-11 07:00:00",
             ),
-            // Fall-back ambiguity resolves to the earliest instant.
+            // A repeated wall clock: `time.Date` answers the EARLIER of the
+            // two instants here...
             (
                 "2007-11-04 01:30:00",
                 "US/Eastern",
                 "UTC",
                 "2007-11-04 05:30:00",
+            ),
+            (
+                "2021-11-07 01:30:00",
+                "America/Los_Angeles",
+                "UTC",
+                "2021-11-07 08:30:00",
+            ),
+            // ...and the LATER one here, which is why "take the earliest"
+            // is not the rule. Zones east of UTC read the wall clock as UTC
+            // into the post-transition period and land on the second pass.
+            (
+                "2025-10-26 02:30:00",
+                "Europe/Paris",
+                "UTC",
+                "2025-10-26 01:30:00",
+            ),
+            (
+                "2025-10-26 02:30:00.5",
+                "Europe/Paris",
+                "UTC",
+                "2025-10-26 01:30:00.5",
+            ),
+            (
+                "2021-10-31 01:30:00",
+                "Europe/London",
+                "UTC",
+                "2021-10-31 01:30:00",
+            ),
+            (
+                "2021-04-04 02:30:00",
+                "Australia/Sydney",
+                "UTC",
+                "2021-04-03 16:30:00",
+            ),
+            // Controls: unrepeated wall clocks either side of that same
+            // Paris fall-back, and one nowhere near a transition.
+            (
+                "2025-10-26 01:30:00",
+                "Europe/Paris",
+                "UTC",
+                "2025-10-25 23:30:00",
+            ),
+            (
+                "2025-10-26 03:00:00",
+                "Europe/Paris",
+                "UTC",
+                "2025-10-26 02:00:00",
+            ),
+            (
+                "2025-06-15 02:30:00",
+                "Europe/Paris",
+                "UTC",
+                "2025-06-15 00:30:00",
+            ),
+            // Spring-forward gaps in both hemispheres.
+            (
+                "2025-03-30 02:30:00",
+                "Europe/Paris",
+                "UTC",
+                "2025-03-30 01:00:00",
+            ),
+            (
+                "2021-10-03 02:30:00",
+                "Australia/Sydney",
+                "UTC",
+                "2021-10-02 16:00:00",
             ),
             (
                 "2004-07-01 12:00:00",
