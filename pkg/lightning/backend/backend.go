@@ -116,6 +116,15 @@ type LocalEngineConfig struct {
 
 	// blocksize
 	BlockSize int
+
+	// MinRegionNum is the least number of regions the key range of this engine
+	// should be split into on import. It is this engine's share of the
+	// table-level tikv-importer.min-region-num: each engine is split
+	// independently, so the caller must divide the table-level target between
+	// the engines of the table, else the table gets split into
+	// min-region-num * <number of engines> regions. 0 means no minimum, the
+	// split then only follows region-split-size/region-split-keys.
+	MinRegionNum int64
 }
 
 // ExternalEngineConfig is the configuration used for local backend external engine.

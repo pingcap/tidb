@@ -428,7 +428,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	require.NoError(s.T(), err)
 
 	// open the first engine meet error, should directly return the error
-	_, err = s.tr.preprocessEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
+	_, err = s.tr.preprocessEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0], 0)
 	require.Equal(s.T(), "mock open index local writer failed", err.Error())
 
 	localWriter := func(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
@@ -450,7 +450,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	require.NoError(s.T(), err)
 
 	// open engine failed after write rows failed, should return write rows error
-	_, err = s.tr.preprocessEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
+	_, err = s.tr.preprocessEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0], 0)
 	require.Equal(s.T(), "mock write rows failed", err.Error())
 }
 
@@ -2397,4 +2397,80 @@ func TestGetDDLStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, model.JobStateRunning, status.state)
 	require.Equal(t, int64(123)+int64(456), status.rowCount)
+}
+
+func TestDistributeMinRegionNum(t *testing.T) {
+	engineOf := func(chunkSizes ...int64) *checkpoints.EngineCheckpoint {
+		ecp := &checkpoints.EngineCheckpoint{}
+		for _, size := range chunkSizes {
+			ecp.Chunks = append(ecp.Chunks, &checkpoints.ChunkCheckpoint{
+				Chunk: mydump.Chunk{EndOffset: size},
+			})
+		}
+		return ecp
+	}
+
+	t.Run("disabled", func(t *testing.T) {
+		res := distributeMinRegionNum(0, map[int32]*checkpoints.EngineCheckpoint{
+			common.IndexEngineID: engineOf(),
+			0:                    engineOf(100),
+		})
+		require.Empty(t, res)
+	})
+
+	t.Run("single data engine takes it all", func(t *testing.T) {
+		res := distributeMinRegionNum(6838, map[int32]*checkpoints.EngineCheckpoint{
+			common.IndexEngineID: engineOf(),
+			0:                    engineOf(300, 400),
+		})
+		require.Equal(t, map[int32]int64{0: 6838}, res)
+	})
+
+	t.Run("proportional to engine size", func(t *testing.T) {
+		res := distributeMinRegionNum(1000, map[int32]*checkpoints.EngineCheckpoint{
+			common.IndexEngineID: engineOf(),
+			0:                    engineOf(600),
+			1:                    engineOf(150, 150),
+			2:                    engineOf(100),
+		})
+		// the whole table gets ~min-region-num regions, not min-region-num per engine
+		require.Equal(t, map[int32]int64{0: 600, 1: 300, 2: 100}, res)
+	})
+
+	t.Run("total stays near min-region-num", func(t *testing.T) {
+		engines := map[int32]*checkpoints.EngineCheckpoint{common.IndexEngineID: engineOf()}
+		for i := int32(0); i < 8; i++ {
+			engines[i] = engineOf(100 * units.GiB)
+		}
+		res := distributeMinRegionNum(6838, engines)
+		require.Len(t, res, 8)
+		var total int64
+		for _, share := range res {
+			total += share
+		}
+		require.InDelta(t, 6838, total, float64(len(res)))
+	})
+
+	t.Run("share never drops below one", func(t *testing.T) {
+		res := distributeMinRegionNum(10, map[int32]*checkpoints.EngineCheckpoint{
+			0: engineOf(1 * units.GiB),
+			1: engineOf(1),
+		})
+		require.Equal(t, map[int32]int64{0: 10, 1: 1}, res)
+	})
+
+	t.Run("even share when sizes are unknown", func(t *testing.T) {
+		res := distributeMinRegionNum(10, map[int32]*checkpoints.EngineCheckpoint{
+			0: engineOf(),
+			1: engineOf(),
+		})
+		require.Equal(t, map[int32]int64{0: 5, 1: 5}, res)
+	})
+
+	t.Run("index engine only", func(t *testing.T) {
+		res := distributeMinRegionNum(10, map[int32]*checkpoints.EngineCheckpoint{
+			common.IndexEngineID: engineOf(100),
+		})
+		require.Empty(t, res)
+	})
 }

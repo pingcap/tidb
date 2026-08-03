@@ -417,6 +417,49 @@ func createColumnPermutation(
 	return colPerm, nil
 }
 
+// distributeMinRegionNum splits the table level tikv-importer.min-region-num
+// between the data engines of one table, so that all engines together split
+// ~min-region-num regions. Each engine gets a share proportional to the size of
+// the data it imports, or an even share when no size information is available.
+func distributeMinRegionNum(minRegionNum int64, engines map[int32]*checkpoints.EngineCheckpoint) map[int32]int64 {
+	res := make(map[int32]int64, len(engines))
+	if minRegionNum <= 0 {
+		return res
+	}
+
+	sizes := make(map[int32]int64, len(engines))
+	var totalSize int64
+	for engineID, engineCp := range engines {
+		// the index engine's KV size is unrelated to the data file sizes, it keeps
+		// the region-split-size based splitting
+		if engineID == common.IndexEngineID {
+			continue
+		}
+		var size int64
+		for _, chunk := range engineCp.Chunks {
+			size += chunk.TotalSize()
+		}
+		sizes[engineID] = size
+		totalSize += size
+	}
+	if len(sizes) == 0 {
+		return res
+	}
+
+	for engineID, size := range sizes {
+		var share int64
+		if totalSize > 0 {
+			// round to nearest to not lose regions on every engine
+			share = (minRegionNum*size + totalSize/2) / totalSize
+		} else {
+			// no size information, fall back to an even share
+			share = minRegionNum / int64(len(sizes))
+		}
+		res[engineID] = max(1, share)
+	}
+	return res
+}
+
 func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	indexEngineCp := cp.Engines[common.IndexEngineID]
 	if indexEngineCp == nil {
@@ -499,8 +542,16 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 		}
 		slices.SortFunc(allEngines, func(i, j engineCheckpoint) int { return cmp.Compare(i.engineID, j.engineID) })
 
-		// make sure if we have multiple engines, we won't split into MinRegionNum * len(cp.Engines) regions
-		rc.cfg.TikvImporter.MinRegionNum = rc.cfg.TikvImporter.MinRegionNum / int64(len(cp.Engines))
+		// min-region-num is a target for the whole table, but every engine's key
+		// range is split independently, so each engine only gets a share of it.
+		// Without this the table would be split into MinRegionNum * len(cp.Engines)
+		// regions.
+		engineMinRegionNum := distributeMinRegionNum(rc.cfg.TikvImporter.MinRegionNum, cp.Engines)
+		if rc.cfg.TikvImporter.MinRegionNum > 0 {
+			tr.logger.Info("distribute min-region-num over engines",
+				zap.Int64("minRegionNum", rc.cfg.TikvImporter.MinRegionNum),
+				zap.Any("perEngineMinRegionNum", engineMinRegionNum))
+		}
 
 		for _, ecp := range allEngines {
 			engineID := ecp.engineID
@@ -531,7 +582,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 				go func(w *worker.Worker, eid int32, ecp *checkpoints.EngineCheckpoint) {
 					defer wg.Done()
 					engineLogTask := tr.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
-					dataClosedEngine, err := tr.preprocessEngine(ctx, rc, indexEngine, eid, ecp)
+					dataClosedEngine, err := tr.preprocessEngine(ctx, rc, indexEngine, eid, ecp, engineMinRegionNum[eid])
 					engineLogTask.End(zap.ErrorLevel, err)
 					rc.tableWorkers.Recycle(w)
 					if err == nil {
@@ -628,6 +679,7 @@ func (tr *TableImporter) preprocessEngine(
 	indexEngine *backend.OpenedEngine,
 	engineID int32,
 	cp *checkpoints.EngineCheckpoint,
+	minRegionNum int64,
 ) (*backend.ClosedEngine, error) {
 	ctx, cancel := context.WithCancel(pCtx)
 	defer cancel()
@@ -635,6 +687,9 @@ func (tr *TableImporter) preprocessEngine(
 	if cp.Status >= checkpoints.CheckpointStatusAllWritten {
 		engineCfg := &backend.EngineConfig{
 			TableInfo: tr.tableInfo,
+			Local: backend.LocalEngineConfig{
+				MinRegionNum: minRegionNum,
+			},
 		}
 		closedEngine, err := rc.engineMgr.UnsafeCloseEngine(ctx, engineCfg, tr.tableName, engineID)
 		// If any error occurred, recycle worker immediately
@@ -667,7 +722,8 @@ func (tr *TableImporter) preprocessEngine(
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 		Local: backend.LocalEngineConfig{
-			BlockSize: int(rc.cfg.TikvImporter.BlockSize),
+			BlockSize:    int(rc.cfg.TikvImporter.BlockSize),
+			MinRegionNum: minRegionNum,
 		},
 	}
 	if !tr.tableMeta.IsRowOrdered {

@@ -451,7 +451,11 @@ type BackendConfig struct {
 	// default true.
 	DisableAutomaticCompactions bool
 	BlockSize                   int
-	MinRegionNum                int64
+	// MinRegionNum is the table-level tikv-importer.min-region-num. It is only
+	// used directly for external engines: local engines are split independently
+	// per engine, so their caller assigns each engine a share of it through
+	// backend.LocalEngineConfig.MinRegionNum.
+	MinRegionNum int64
 }
 
 // NewBackendConfig creates a new BackendConfig.
@@ -1396,6 +1400,9 @@ func (local *Backend) ImportEngine(
 	}
 
 	var e common.Engine
+	// external engines are not part of a table-level engine set, so they use the
+	// backend-level config as-is.
+	minRegionNum := local.MinRegionNum
 	if externalEngine, ok := local.engineMgr.getExternalEngine(engineUUID); ok {
 		e = externalEngine
 	} else {
@@ -1407,6 +1414,9 @@ func (local *Backend) ImportEngine(
 		defer localEngine.unlock()
 		localEngine.regionSplitSize = regionSplitSize
 		localEngine.regionSplitKeyCnt = regionSplitKeys
+		// this engine's share of the table-level min-region-num, assigned when the
+		// engine was opened/closed. See LocalEngineConfig.MinRegionNum.
+		minRegionNum = localEngine.config.MinRegionNum
 		e = localEngine
 	}
 	lfTotalSize, lfLength := e.KVStatistics()
@@ -1417,7 +1427,7 @@ func (local *Backend) ImportEngine(
 	}
 
 	// split sorted file into range about regionSplitSize per file
-	splitKeys, err := getRegionSplitKeys(ctx, e, regionSplitSize, regionSplitKeys, local.MinRegionNum)
+	splitKeys, err := getRegionSplitKeys(ctx, e, regionSplitSize, regionSplitKeys, minRegionNum)
 	if err != nil {
 		return err
 	}
