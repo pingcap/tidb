@@ -43,6 +43,34 @@ pub(super) fn e(expr: &str) -> String {
     }
 }
 
+/// Parses a constant expression and evaluates it through the CHUNK tier --
+/// the rewriter's `ScalarFunction` path that live SQL takes, as opposed to
+/// [`e`]'s AST/value tier. Only this tier carries each argument's static
+/// `FieldType` and the derived result collation, so it is the only one that
+/// can see a temporal argument or a `COLLATE` clause.
+pub(super) fn chunk_e(expr: &str) -> String {
+    let stmt = tidb_parser::parse(&format!("select {expr}")).expect("parse");
+    let Stmt::Query(query) = stmt else {
+        panic!("not query")
+    };
+    let QueryStmt::Select(s) = query.into_inner() else {
+        panic!("not select")
+    };
+    let SelectField::Expr { expr, .. } = &s.fields[0] else {
+        panic!("no expr")
+    };
+    let rewritten = match crate::rewriter::rewrite_expr(expr) {
+        Ok(rewritten) => rewritten,
+        Err(err) => return format!("{err:?}"),
+    };
+    let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    chunk.set_num_virtual_rows(1);
+    match rewritten.eval(&NoColumns, chunk.get_row(0)) {
+        Ok(value) => value.label(),
+        Err(err) => format!("{err:?}"),
+    }
+}
+
 /// Parses and evaluates a constant expression to its raw `Datum`.
 pub(super) fn v(expr: &str) -> Datum {
     let stmt = tidb_parser::parse(&format!("select {expr}")).expect("parse");
@@ -1761,4 +1789,22 @@ fn floats() {
     // a hand-rolled same-type-only check.
     assert_eq!(e("nullif(150, 1.5e2)"), "NULL");
     assert_eq!(e("sign(0.0e0)"), "INT:0"); // unlike IEEE-754 signum, never 0
+}
+
+/// `TRANSLATE` was fully ported on both signatures and reachable from the AST
+/// evaluator, but had no arm in the rewriter's result-type table, so the chunk
+/// tier -- the one live SQL uses -- refused it outright. Go
+/// `translateFunctionClass.getFunction` builds an `ETString` result whose flen
+/// is argument 0's own. Captured from TiDB:
+///
+/// ```text
+/// select translate('abcabc', 'ab', 'xy');  -> xycxyc
+/// select translate('hello', 'lo', 'L');    -> heLL
+/// ```
+#[test]
+fn translate_is_reachable_from_the_chunk_tier() {
+    assert_eq!(chunk_e("translate('abcabc', 'ab', 'xy')"), "STR:xycxyc");
+    assert_eq!(chunk_e("translate('hello', 'lo', 'L')"), "STR:heLL");
+    assert_eq!(chunk_e("translate('中文测试', '中试', 'XY')"), "STR:X文测Y");
+    assert_eq!(chunk_e("translate('abc', null, 'x')"), "NULL");
 }

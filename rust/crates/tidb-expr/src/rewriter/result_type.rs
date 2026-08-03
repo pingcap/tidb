@@ -131,6 +131,20 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         | "right" | "substring" | "substr" | "mid" | "replace" | "repeat" | "lpad" | "rpad"
         | "space" | "hex" | "md5" | "elt" | "make_set" | "substring_index" | "insert_func"
         | "char_func" | "export_set" | "quote" => text(),
+        // Go `translateFunctionClass.getFunction`: an `ETString` result whose
+        // flen is argument 0's own, and `SetBinFlagOrBinStr(args[0], bf.tp)`
+        // -- the latter being exactly what `derive_collation`'s `translate`
+        // arm (first argument decides) already reproduces, so only the width
+        // is set here. Both signature bodies were already ported and reachable
+        // from the AST evaluator; without this arm the chunk tier refused
+        // `TRANSLATE` outright, so live SQL never reached them.
+        "translate" if args.len() == 3 => {
+            let mut ft = text();
+            if let Some(arg) = args[0].static_type() {
+                ft.set_flen(arg.flen());
+            }
+            ft
+        }
         // `CONCAT`/`CONCAT_WS` are the two of that family that SIZE their
         // result, and the size reaches the client as the column metadata's
         // `ColumnLength`. See [`concat_flen`].
