@@ -510,6 +510,17 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 		"where query like 'select%t_tiflash;'").
 		Check(testkit.Rows("0 1"))
 
+	// Table has an available TiFlash replica, but the chosen plan reads from TiKV only.
+	// Having TiFlash available must not set Storage_from_mpp. (issue #70296)
+	tk.MustExec("create table t_kv_with_tiflash (a int)")
+	tk.MustExec("alter table t_kv_with_tiflash set tiflash replica 1")
+	tbKV := external.GetTableByName(t, tk, "test", "t_kv_with_tiflash")
+	require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tbKV.Meta().ID, true))
+	query := "select /*+ read_from_storage(tikv[t_kv_with_tiflash]) */ a from t_kv_with_tiflash"
+	require.False(t, tk.HasTiFlashPlan(query))
+	tk.MustExec(query)
+	checkStorageEngines(t, tk, "query like 'select%t_kv_with_tiflash;'", "1 0")
+
 	// Query that reads from both TiKV and TiFlash
 	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ t_tikv.a, /*+ read_from_storage(tiflash[t_tiflash]) */ t_tiflash.a from t_tikv, t_tiflash")
 	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
@@ -518,7 +529,7 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 
 	// Point get queries should register as reading from TiKV
 	tk.MustExec("create table t_pointget (a int primary key)")
-	query := "select a from t_pointget where a = 1"
+	query = "select a from t_pointget where a = 1"
 	tk.MustHavePlan(query, "Point_Get")
 	tk.MustExec(query)
 	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
