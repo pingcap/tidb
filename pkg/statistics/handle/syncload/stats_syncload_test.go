@@ -372,11 +372,9 @@ func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 	}
 }
 
-// TestSyncWaitStatsLoadWithFailedResultBeforeTimer tests the behavior of SyncWaitStatsLoad when a
-// sync load request failed and the failed result was delivered to the result channel before
-// SyncWaitStatsLoad's own timer fires. Currently the failure is only logged and SyncWaitStatsLoad
-// returns nil, so whether a timed-out sync load is reported to the caller depends on which of the
-// two timers (the request's and the waiter's) fires first. See issue #67629.
+// TestSyncWaitStatsLoadWithFailedResultBeforeTimer tests that SyncWaitStatsLoad still reports an
+// error when the failed result arrives before its own timer fires, so the outcome of a timed-out
+// sync load does not depend on which of the two racing timers fires first. See issue #67629.
 func TestSyncWaitStatsLoadWithFailedResultBeforeTimer(t *testing.T) {
 	originConfig := config.GetGlobalConfig()
 	newConfig := config.NewConfig()
@@ -418,8 +416,8 @@ func TestSyncWaitStatsLoadWithFailedResultBeforeTimer(t *testing.T) {
 	rs := <-observerCtx.StatsLoad.ResultCh[0]
 	require.Error(t, rs.Err) // no worker handles the request, so it times out
 	// The errored result is waiting in stmtCtx's result channel, so SyncWaitStatsLoad consumes it
-	// instead of hitting its own timer. The failure is currently swallowed and reported as success.
-	require.NoError(t, h.SyncWaitStatsLoad(stmtCtx))
+	// instead of hitting its own timer. It must still report the failure.
+	require.Error(t, h.SyncWaitStatsLoad(stmtCtx))
 }
 
 func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
