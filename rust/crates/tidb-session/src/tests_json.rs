@@ -1072,3 +1072,105 @@ fn json_column_type() {
     );
     assert!(row_text(session.run("SHOW CREATE TABLE tj"))[0][1].contains("`j` json DEFAULT NULL"));
 }
+
+/// `json_schema_valid` is in Go's `GAFunction4ExpressionIndex`
+/// (`pkg/sessionctx/variable/varsutil.go`), so this tier's allowlist keeps
+/// it -- dropping the name would DIVERGE from Go rather than fix anything.
+/// What is missing is the evaluator (Go delegates the whole of JSON Schema
+/// draft-2020-12 to `santhosh-tekuri/jsonschema`), and this pins that the
+/// absence surfaces as a refusal at BOTH doors rather than as a wrong
+/// answer or an index that silently stores nothing.
+#[test]
+fn json_schema_valid_is_allowlisted_for_expression_indexes_and_refused_by_both_doors() {
+    let mut session = Session::new();
+    let error = session
+        .run("SELECT json_schema_valid('{\"type\":\"object\"}', '{}')")
+        .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("not yet built"),
+        "a missing evaluator must refuse, not answer: {error:?}"
+    );
+
+    session.run("CREATE TABLE t (j JSON)").unwrap();
+    let error = session
+        .run("CREATE INDEX i ON t ((json_schema_valid('{\"type\":\"object\"}', j)))")
+        .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("not supported yet"),
+        "an index over it must refuse rather than be built empty: {error:?}"
+    );
+    // The name is still ALLOWLISTED: the refusal above is the evaluator's,
+    // not 8200. A name Go does not allow reports the different, earlier
+    // error.
+    let error = session
+        .run("CREATE INDEX i2 ON t ((json_depth(j) + length(cast(j as char))))")
+        .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("UnsafeFunctionInExpressionIndex"),
+        "got {error:?}"
+    );
+}
+
+/// `JSON_TYPE` cannot report Go's typed names, and the reason is NOT
+/// `json/report.rs`.
+///
+/// CAPTURED from a running TiDB: `json_type(cast(cast(1 as unsigned) as
+/// json))` is `UNSIGNED INTEGER`, a date is `DATE`, a datetime `DATETIME`, a
+/// time `TIME`, and `cast(x'aabb' as json)` is `BLOB`. This tier answers
+/// `INTEGER` for the first and RAISES for the rest.
+///
+/// `BinaryJSON::type_name` (`tidb-datatype`) already produces every one of
+/// those names correctly, and routing `json_type`'s `Datum::Json` arm
+/// through it changes NOTHING here -- measured, byte for byte, on all five
+/// cases. The arm is dead in the live path: `cast_as_json` renders the
+/// BinaryJSON to serde_json TEXT and returns a `Datum::String`, so the type
+/// code is already gone before `json_type` is called. The loss is the JSON
+/// tier's text representation, not this function.
+///
+/// This test records the measured state so the divergence is visible and so
+/// a real fix -- one that keeps the binary document -- is detected by these
+/// assertions failing.
+#[test]
+fn json_type_loses_gos_typed_names_at_cast_not_at_json_type() {
+    let mut session = Session::new();
+    let text = |session: &mut Session, sql: &str| match session.run(sql) {
+        Ok(StmtResult::Rows(rows)) => Ok(datum_text(&rows[0][0]).unwrap()),
+        Ok(other) => panic!("expected rows, got {other:?}"),
+        Err(error) => Err(format!("{error:?}")),
+    };
+
+    // Go: UNSIGNED INTEGER. The unsignedness is gone by the time JSON_TYPE
+    // sees the value.
+    assert_eq!(
+        text(
+            &mut session,
+            "SELECT json_type(cast(cast(1 as unsigned) as json))"
+        ),
+        Ok("INTEGER".to_owned())
+    );
+    // Go: DATE / DATETIME / BLOB. Here the CAST itself cannot render them as
+    // JSON text, so the statement raises before JSON_TYPE runs.
+    for sql in [
+        "SELECT json_type(cast(cast('2020-01-01' as date) as json))",
+        "SELECT json_type(cast(cast('2020-01-01 00:00:00' as datetime) as json))",
+        "SELECT json_type(cast(x'aabb' as json))",
+    ] {
+        assert!(
+            text(&mut session, sql).is_err(),
+            "{sql} unexpectedly answered"
+        );
+    }
+    // The paths that do NOT go through a typed literal agree with Go.
+    assert_eq!(
+        text(&mut session, "SELECT json_type('1')"),
+        Ok("INTEGER".to_owned())
+    );
+    assert_eq!(
+        text(&mut session, "SELECT json_type('[1,2]')"),
+        Ok("ARRAY".to_owned())
+    );
+    assert_eq!(
+        text(&mut session, "SELECT json_type('{\"a\":1}')"),
+        Ok("OBJECT".to_owned())
+    );
+}
