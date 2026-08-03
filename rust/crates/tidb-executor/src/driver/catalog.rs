@@ -176,12 +176,18 @@ impl Default for Catalog {
                 tables: HashMap::new(),
             },
         );
-        Catalog {
+        let mut catalog = Catalog {
             databases,
             next_table_id: 0,
             version: 0,
             statistics: HashMap::new(),
-        }
+        };
+        // Go's bootstrap builds the `information_schema` tables into the
+        // infoschema itself, so they are ordinary objects to every name
+        // lookup. Doing it here rather than at each construction site is what
+        // makes that unforgettable.
+        super::infoschema_meta::register_tables(&mut catalog);
+        catalog
     }
 }
 

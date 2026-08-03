@@ -104,6 +104,7 @@ pub use ddl::{
 pub use ddl_sequence::{
     run_alter_sequence_in, run_create_sequence_in, run_drop_sequence_in, show_create_sequence,
 };
+pub use driver::infoschema_meta;
 pub use driver::{
     bind_parameters, parameter_count, run_delete_in, run_delete_on, run_insert_in, run_insert_on,
     run_insert_reporting, run_select, run_select_meta_in, run_select_meta_on, run_select_meta_stmt,

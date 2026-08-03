@@ -360,6 +360,33 @@ impl PlanTrace {
         )
     }
 
+    /// Go's `PhysicalMemTable`: the read of a virtual table, which is a
+    /// single ROOT node rather than a scan the coprocessor serves.
+    ///
+    /// Go decides this by SCHEMA NAME (`metadef.IsMemDB`, which
+    /// `find_best_task.go` consults before it costs any access path), and so
+    /// does the caller here. Captured
+    /// (`tests/integrationtest/r/explain_easy.result`):
+    ///
+    /// ```text
+    /// explain format = 'plan_tree' select * from information_schema.columns;
+    /// MemTableScan  root  table:COLUMNS
+    /// ```
+    ///
+    /// DIVERGENCE (documented): Go's per-table `MemTablePredicateExtractor`
+    /// pulls the equality predicates INTO this node's operator info
+    /// (`table_name:["t1"]`) and drops the `Selection` above it; this tier
+    /// keeps the `Selection` and leaves the operator info empty, so the
+    /// filtering is right and the printed shape names it one level up.
+    pub(crate) fn mem_table_scan(&mut self, declared_name: &str) {
+        self.push(PlanNode::new(
+            "MemTableScan",
+            None,
+            format!("table:{declared_name}"),
+            String::new(),
+        ));
+    }
+
     /// A whole-table read.
     ///
     /// `estimate` is the access-path choice's own answer for this table (see

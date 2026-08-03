@@ -303,7 +303,15 @@ pub(crate) fn build_from(
             // paths in `run_select_stmt` REPLACE this node at the same
             // moment they replace the executor it describes.
             if let Some(trace) = trace.as_deref_mut() {
-                trace.table_full_scan(&visible, full_scan_estimate(catalog, entry));
+                // Go plans a table in a memory schema as a `PhysicalMemTable`
+                // rather than costing any access path over it
+                // (`find_best_task.go`'s `metadef.IsMemDB` check), and names
+                // it by the DECLARED name rather than by the written one.
+                if crate::infoschema_meta::is_information_schema(database) {
+                    trace.mem_table_scan(&declared_table_name(entry, name));
+                } else {
+                    trace.table_full_scan(&visible, full_scan_estimate(catalog, entry));
+                }
             }
             if let TableEntry::View(view) = entry {
                 let (exec, scope) = build_view_source(
@@ -1275,4 +1283,14 @@ pub(crate) fn single_table_name(
     }
     let (database, name) = split_table_path(&table_ref.name, current_db)?;
     Ok((database.to_owned(), name.to_owned()))
+}
+
+/// The name a catalog entry stores for itself, which is what Go prints as a
+/// memory table's access object -- `table:COLUMNS`, not the lower-case
+/// `columns` the statement wrote.
+fn declared_table_name(entry: &TableEntry, written: &str) -> String {
+    match entry {
+        TableEntry::Kv(table) if !table.name.is_empty() => table.name.clone(),
+        _ => written.to_owned(),
+    }
 }

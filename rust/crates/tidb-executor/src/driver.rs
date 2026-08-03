@@ -93,6 +93,7 @@ mod errors;
 mod from;
 pub(crate) mod funcdep;
 mod grouping;
+pub mod infoschema_meta;
 mod multi_dml;
 mod only_full_group_by;
 mod params;

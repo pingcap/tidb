@@ -1806,3 +1806,103 @@ fn clamping_a_system_variable_warns_1292_with_the_original_value() {
         );
     }
 }
+
+/// Every cell a served `information_schema` table produces must have the
+/// Datum kind its DECLARED column type can hold, or the chunk write panics.
+///
+/// This is the invariant that `STATISTICS.NON_UNIQUE` broke: Go declares it
+/// `varchar(1)` and writes the string "1"/"0"
+/// (`setDataForStatisticsInTable`), and building it as an integer only
+/// showed up once the declared types stopped being "LongLong or VarString".
+#[test]
+fn every_information_schema_cell_matches_its_declared_column_type() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t (id BIGINT PRIMARY KEY, u INT UNIQUE, a INT, b VARCHAR(8), \
+             KEY idx_ab (a, b))",
+        )
+        .unwrap();
+    session.run("CREATE VIEW v AS SELECT id FROM t").unwrap();
+
+    for name in infoschema::served_table_names() {
+        let columns = infoschema::table_schema(name).expect("a served table has a schema");
+        let rows = session
+            .run_with_columns(&format!("SELECT * FROM information_schema.{name}"))
+            .unwrap_or_else(|error| panic!("{name} did not answer: {error:?}"));
+        let StmtOutput::Rows {
+            columns: reported,
+            rows,
+        } = rows
+        else {
+            panic!("{name} did not return rows");
+        };
+        assert_eq!(
+            reported.len(),
+            columns.len(),
+            "{name} reported a different arity than it declares"
+        );
+        for row in &rows {
+            for (cell, (column_name, field_type)) in row.iter().zip(&columns) {
+                let numeric = matches!(
+                    field_type.code(),
+                    tidb_datatype::FieldTypeCode::Long
+                        | tidb_datatype::FieldTypeCode::LongLong
+                        | tidb_datatype::FieldTypeCode::Double
+                );
+                match cell {
+                    Datum::Null => {}
+                    Datum::Int(_) | Datum::UInt(_) | Datum::Real(_) => assert!(
+                        numeric,
+                        "{name}.{column_name} is declared {:?} but a row holds {cell:?}",
+                        field_type.code()
+                    ),
+                    Datum::Bytes(_) | Datum::String(_) => assert!(
+                        !numeric,
+                        "{name}.{column_name} is declared {:?} but a row holds bytes",
+                        field_type.code()
+                    ),
+                    other => panic!("{name}.{column_name} holds an unexpected {other:?}"),
+                }
+            }
+        }
+    }
+}
+
+/// `SHOW CREATE TABLE information_schema.<t>` for every served table, against
+/// text CAPTURED from a running TiDB (`difftests/infoschema/show_create_table.txt`).
+///
+/// This is the whole point of #248: before the tables were catalog objects,
+/// each of these answered 1146.
+#[test]
+fn show_create_table_matches_go_for_every_served_information_schema_table() {
+    let expected = include_str!("../../../difftests/infoschema/show_create_table.txt");
+    // The fixture is one `CREATE TABLE ... ) ENGINE=...` block per table, in
+    // the order it was captured.
+    let mut blocks = Vec::new();
+    let mut current = String::new();
+    for line in expected.lines().filter(|line| !line.starts_with('#')) {
+        current.push_str(line);
+        current.push('\n');
+        if line.starts_with(") ENGINE=") {
+            blocks.push(current.trim_end().to_owned());
+            current.clear();
+        }
+    }
+    let mut session = Session::new();
+    for block in &blocks {
+        let name = block
+            .split('`')
+            .nth(1)
+            .expect("a captured block names its table");
+        let StmtOutput::Rows { rows, .. } = session
+            .run_with_columns(&format!("SHOW CREATE TABLE information_schema.{name}"))
+            .unwrap_or_else(|error| panic!("{name}: {error:?}"))
+        else {
+            panic!("{name} did not return rows");
+        };
+        let text = datum_text(&rows[0][1]).unwrap();
+        assert_eq!(text, *block, "SHOW CREATE TABLE information_schema.{name}");
+    }
+    assert_eq!(blocks.len(), infoschema::served_table_names().len());
+}
