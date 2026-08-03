@@ -5182,6 +5182,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		if len(conditionString) > 0 && !job.ReorgMeta.IsFastReorg {
 			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg is not supported")
 		}
+		if len(conditionString) > 0 && model.GetJobVerInUse() == model.JobVersion1 {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index during upgrade is not supported")
+		}
 	}
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
