@@ -118,14 +118,6 @@ func readAllData(
 	concurrences := make([]int, len(dataFiles))
 	totalFileSize := uint64(0)
 	for i := range dataFiles {
-		if estimatedEndOffsets[i] < startOffsets[i] {
-			return errors.Errorf(
-				"estimated end offset %d is before start offset %d for file %s",
-				estimatedEndOffsets[i],
-				startOffsets[i],
-				dataFiles[i],
-			)
-		}
 		size := estimatedEndOffsets[i] - startOffsets[i]
 		totalFileSize += size
 		readerMemorySizes[i], concurrences[i] = readerMemoryForRange(size, memoryLimit)
