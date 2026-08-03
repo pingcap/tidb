@@ -119,6 +119,15 @@ func (c *Chunk) GetKey() string {
 	return c.Path + ":" + strconv.FormatInt(c.Offset, 10)
 }
 
+// GetSize get the original file size of this chunk.
+func (c *Chunk) GetSize() int64 {
+	if c.Type == mydump.SourceTypeParquet {
+		// for parquet, Offset/EndOffset means rows
+		return c.FileSize
+	}
+	return c.EndOffset - c.Offset
+}
+
 func (c *Chunk) toSourceFileMeta() mydump.SourceFileMeta {
 	return mydump.SourceFileMeta{
 		Path:        c.Path,
