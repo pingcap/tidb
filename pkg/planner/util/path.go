@@ -49,6 +49,8 @@ type AccessPath struct {
 	IdxCols        []*expression.Column
 	IdxColLens     []int
 	// ConstCols indicates whether the column is constant under the given conditions for all index columns.
+	// A column is also marked when an access condition restricts it to a single value only at execution
+	// time, i.e. `index_col = correlated_col`. See markConstCol.
 	ConstCols []bool
 	Ranges    []*ranger.Range
 	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
@@ -225,6 +227,8 @@ func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
+// Each equality it moves also marks the matched index column in AccessPath.ConstCols, so that the
+// order the remaining index columns provide can be recognized. See markConstCol for the reasoning.
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
@@ -254,6 +258,11 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			access[i-eqOrInCount] = filter
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
+<<<<<<< HEAD
+=======
+				usedCnt++
+				path.markConstCol(i)
+>>>>>>> 684ced8facb (planner: recognize order by correlated equality (#70217))
 			}
 			break
 		}
@@ -268,6 +277,28 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 		}
 	}
 	return access, remained
+}
+
+// markConstCol records that path.IdxCols[idx] is restricted to a single value by an access
+// condition, so callers that reason about index order (matchProperty) may skip over it.
+//
+// The ranger cannot build a range for `index_col = correlated_col` at plan time, so such a
+// column is neither point-ranged in path.Ranges nor marked in ConstCols by
+// DetachCondAndBuildRangeForIndex. The range is instead rebuilt per execution of the inner
+// subtree in ResolveCorrelatedColumns/rebuildIndexRanges, and because the condition is an
+// equality that rebuilt range is always a single point on this column. Hence the index columns
+// after it stay sorted, exactly as they would be for a literal equality, and an ORDER BY on
+// them can be satisfied by the scan order instead of a sort.
+//
+// Only full-length columns may be marked: on a prefix column the stored value is truncated, so
+// an equality does not pin the column to one value.
+func (path *AccessPath) markConstCol(idx int) {
+	if path.ConstCols == nil {
+		path.ConstCols = make([]bool, len(path.IdxCols))
+	}
+	if idx < len(path.ConstCols) {
+		path.ConstCols[idx] = true
+	}
 }
 
 // isColEqConstant checks if the expression is eq function that one side is column and the other side is constant.
