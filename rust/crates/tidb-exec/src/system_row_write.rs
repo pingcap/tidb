@@ -392,6 +392,12 @@ fn encode_row(table: &TableInfo, values: &RowValues) -> Result<Vec<u8>, RowEncod
         column_ids.push(column.id);
         row.push(typed_value(value, &column.field_type)?);
     }
+    // No time zone, because every `TIMESTAMP` that reaches this module is
+    // ALREADY the UTC wall clock: a fresh value comes from
+    // `mysql_bootstrap::utc_now_timestamp`, and an edited row's untouched
+    // columns came back from a decode that likewise did not convert. The
+    // rowcodec's session->UTC step is for a value still in session time; adding
+    // it here would shift every stored timestamp by the session's offset.
     encode_table_row(None, &row, &column_ids, true, None)
         .map_err(|error| encode_error(error.to_string()))
 }

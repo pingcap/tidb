@@ -738,6 +738,11 @@ fn admit_temporal_value(
 fn encode_row_value(columns: &[(i64, Datum)]) -> Result<Vec<u8>, ConfiguredWriteError> {
     let ids: Vec<i64> = columns.iter().map(|(id, _)| *id).collect();
     let values: Vec<Datum> = columns.iter().map(|(_, value)| value.clone()).collect();
+    // No time zone, because a `TIMESTAMP` reaching here is ALREADY UTC:
+    // `configured_stored_value` parses it in the session zone and then calls
+    // `convert_time_zone(session, Utc)` itself, and `decode_stored_row` reads
+    // one back without converting. The rowcodec's session->UTC step is for a
+    // value still in session time; adding it here would convert twice.
     Ok(encode_table_row(None, &values, &ids, true, None)?)
 }
 
