@@ -98,6 +98,7 @@
 
 use super::super::*;
 use super::node_fixture::*;
+use crate::resultset_source::ResultSetSource;
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
 use tidb_exec::pessimistic_lock_error::ERR_WRITE_CONFLICT;
@@ -633,6 +634,97 @@ fn an_uncontended_insert_still_advances_the_auto_increment() {
     assert_eq!(
         rows(&mut session, "SELECT LAST_INSERT_ID()"),
         vec![vec![Datum::UInt(2)]]
+    );
+}
+
+/// A PREPARE under `autocommit = 0` is NOT the statement that opens the
+/// transaction -- the first statement that touches data still is.
+///
+/// This is the third door onto the same question, after a prepared `BEGIN` and
+/// `SET autocommit = 0` itself, and it is the one that goes the OTHER way:
+/// those two had to open a transaction and did not, this one must not and did.
+/// Go's `PrepareStmt` does call `PrepareTxnCtx` (`pkg/session/session.go:3171`),
+/// but with a nil statement and through `EnterNewTxnBeforeStmt`, which makes
+/// the session's transaction *pending* -- no timestamp is spent and
+/// `SessionVars.InTxn()` stays false -- and the timestamp is taken by the first
+/// statement that really reads. Captured 2026-08-03 from a real TiDB over
+/// `mockstore`, two sessions on one store:
+///
+/// ```text
+/// == A: binary PrepareStmt under autocommit=0 ==
+/// s1 @@autocommit -> 0
+/// s1 PrepareStmt err -> <nil>
+/// s1 @@tidb_current_ts after PREPARE -> 0
+/// s2 update -> OK
+/// s1 read after s2 commit -> 99
+/// == B: control, a SELECT under autocommit=0 ==
+/// s1 read #1 -> 10
+/// s1 @@tidb_current_ts after read -> 468115494319161354
+/// s1 read #2 -> 10
+/// == C: text PREPARE under autocommit=0 ==
+/// s1 PREPARE -> OK
+/// s1 @@tidb_current_ts after PREPARE -> 0
+/// s2 update -> OK
+/// s1 EXECUTE p -> 99
+/// == D: rollback after PREPARE + write ==
+/// s2 sees id=7 after s1 rollback -> (none)
+/// == E: in-transaction status flag ==
+/// status before PREPARE -> false
+/// status after PREPARE -> false
+/// status after a real read -> true
+/// ```
+///
+/// `B` is the control that says the capture can tell a started transaction
+/// from an unstarted one at all: a real read pins the snapshot, so the second
+/// read still says 10 while the PREPARE case moves to 99.
+///
+/// The cost of getting this wrong is a stale read with no error: this node's
+/// PREPARE probes a query's result columns by RUNNING it, so opening the
+/// connection's transaction there pins its `start_ts` before the client has
+/// executed anything, and every later statement of that transaction -- and the
+/// conflict check of its eventual commit -- lives at that earlier timestamp.
+#[test]
+fn a_prepare_under_autocommit_off_opens_no_transaction() {
+    let (mut reader, cluster) = open_session();
+    reader
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+
+    set(&mut reader, "SET autocommit = 0");
+    let statement = reader
+        .prepare_general("SELECT v FROM t WHERE id = 1")
+        .expect("prepare");
+    assert_eq!(
+        cluster.begun.load(Ordering::Acquire),
+        0,
+        "Go's PREPARE leaves the transaction pending: no timestamp is spent \
+         (captured `@@tidb_current_ts after PREPARE -> 0`)"
+    );
+
+    let mut writer = open_session_on(&cluster);
+    writer
+        .execute_write("UPDATE t SET v = 99 WHERE id = 1")
+        .expect("the outside writer commits after the PREPARE");
+
+    let outcome = reader.execute_general(&statement, &[]).expect("execute");
+    let GeneralExecuteOutcome::Rows(mut result) = outcome else {
+        panic!("a query must answer with rows");
+    };
+    let source = result.source();
+    let batch = source.next_batch(8).expect("batch");
+    source.finish().expect("finish");
+    source.close().expect("close");
+    assert_eq!(
+        batch,
+        vec![vec![Datum::Int(99)]],
+        "the EXECUTE is the first statement that touches data, so the \
+         transaction opens THERE and sees the commit the PREPARE predates \
+         (captured `s1 EXECUTE p -> 99`)"
+    );
+    assert_eq!(
+        cluster.begun.load(Ordering::Acquire),
+        1,
+        "and it is still one transaction, opened once"
     );
 }
 

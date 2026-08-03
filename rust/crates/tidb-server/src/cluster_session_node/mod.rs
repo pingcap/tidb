@@ -82,6 +82,16 @@
 //! which owns the rules; a second copy that could drift is the bug all four
 //! were.
 //!
+//! A PREPARE is deliberately NOT a fifth door, and that took measuring: Go's
+//! `PrepareStmt` does call `PrepareTxnCtx`, but the transaction it leaves is
+//! *pending* -- no timestamp, `InTxn()` still false -- so under
+//! `autocommit = 0` the first statement that touches data is still what opens
+//! one. This node's PREPARE probe RUNS the statement to learn its result
+//! columns, so it had to be routed away from the opening
+//! ([`ClusterServerSession::probe_statement`]); leaving it there pinned the
+//! connection's `start_ts` at PREPARE time and every later statement of that
+//! transaction read a snapshot the client never asked for.
+//!
 //! Writes never touch the slot: they stage into the connection's
 //! [`MutationBuffer`], which outlives the statement. A failed statement is
 //! rolled back to the buffer snapshot taken before it ran, so an explicit
@@ -601,10 +611,46 @@ impl ClusterServerSession {
     fn with_statement<T>(
         &mut self,
         shape: StatementReadShape,
-        mut run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
+        run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         self.rebuild_catalog_if_stale();
         self.begin_if_autocommit_off()?;
+        self.with_bound_statement(shape, run)
+    }
+
+    /// [`Self::with_statement`] for work the CLIENT did not ask to run: the
+    /// PREPARE probe, which executes a query only to learn its result columns.
+    ///
+    /// The one thing it must not do is open the transaction `autocommit = 0`
+    /// implies. Go's `PrepareStmt` calls `PrepareTxnCtx` too
+    /// (`pkg/session/session.go:3171`), but with a nil statement and through
+    /// `EnterNewTxnBeforeStmt`, which leaves the transaction *pending*: no
+    /// timestamp is spent and the first statement that really reads is what
+    /// takes one. Captured: `@@tidb_current_ts` is `0` after a PREPARE under
+    /// `autocommit = 0`, and a read issued after another session's commit sees
+    /// the NEW value. Opening it here would instead pin this connection's
+    /// `start_ts` at PREPARE time, so every later statement of the
+    /// transaction, and the conflict check of its commit, would live at a
+    /// timestamp the client never asked for.
+    ///
+    /// An already-open transaction is read through as usual -- a PREPARE
+    /// inside `BEGIN` costs no timestamp either way -- so this differs from
+    /// [`Self::with_statement`] in exactly one thing: it never OPENS one.
+    fn probe_statement<T>(
+        &mut self,
+        shape: StatementReadShape,
+        run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
+    ) -> Result<T, SqlQueryError> {
+        self.rebuild_catalog_if_stale();
+        self.with_bound_statement(shape, run)
+    }
+
+    /// The statement lifecycle proper: savepoint, attempt, replay budget.
+    fn with_bound_statement<T>(
+        &mut self,
+        shape: StatementReadShape,
+        mut run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
+    ) -> Result<T, SqlQueryError> {
         let savepoint = self.buffer.staged();
         let mut retried: u32 = 0;
         let outcome = loop {
@@ -701,6 +747,46 @@ impl ClusterServerSession {
     ///
     /// The error test is Go's `kv.IsTxnRetryableError` (`pkg/kv/error.go:85`)
     /// narrowed to the code that reaches this seam: only a write conflict.
+    ///
+    /// # The one thing this replay is NOT, and what it costs
+    ///
+    /// Go's replay runs in PESSIMISTIC mode whatever `@@tidb_txn_mode` says:
+    /// `retry` calls `PrepareTxnCtx(ctx, nil)` (`pkg/session/session.go:1194`)
+    /// while `RetryInfo.Retrying` is set, and `decideTxnMode`
+    /// (`session.go:4921-4923`) returns `ast.Pessimistic` unconditionally for
+    /// that. This node's replay stays optimistic, because it has no
+    /// pessimistic statement path at all -- the seam is
+    /// `RealOptimisticTransactionOpener` from end to end.
+    ///
+    /// What that does NOT cost is a lost update. The replay re-runs the whole
+    /// statement against its own fresh timestamp and publishes at that same
+    /// one, so a value derived from a stale read cannot reach the store: see
+    /// `an_autocommit_update_that_loses_the_race_is_retried_at_a_new_read`,
+    /// and the exhausted-budget case still reports 9007 rather than
+    /// succeeding.
+    ///
+    /// What it does cost is the failure mode under a lock that is HELD rather
+    /// than a commit that already landed. Measured on TiDB over `mockstore`
+    /// (2026-08-03), with a second session holding a pessimistic lock on the
+    /// row and `innodb_lock_wait_timeout = 1`:
+    ///
+    /// ```text
+    /// s1 @@tidb_txn_mode -> pessimistic
+    /// s1 @@tidb_disable_txn_auto_retry -> 1
+    /// s2 holds a pessimistic lock on id=1
+    /// s1 autocommit update -> [tikv:1205]Lock wait timeout exceeded; try
+    ///                         restarting transaction
+    /// ```
+    ///
+    /// Go WAITS on the lock -- 1205 is a pessimistic-lock error, so the replay
+    /// really did take locks -- and against a lock that clears in time it
+    /// succeeds. This node cannot wait: it spends its budget of re-reads and
+    /// reports 9007. Closing that needs the pessimistic path
+    /// (`tidb_txnkv::transaction::pessimistic::RealPessimisticTransaction`
+    /// exists; nothing at this tier drives it), NOT a mode flag: locks have to
+    /// be taken while the statement reads, and taking them after it has
+    /// computed from a stale read would introduce exactly the lost update this
+    /// seam exists to prevent.
     fn may_retry_autocommit_statement(&self, error: &SqlQueryError, retried: u32) -> bool {
         error.code == ERR_WRITE_CONFLICT
             && retried < AUTOCOMMIT_RETRY_LIMIT
@@ -1222,8 +1308,9 @@ impl QuerySession for ClusterServerSession {
         // other statement.
         let owned = sql.to_owned();
         // The PREPARE probe runs the statement with every marker NULL, which
-        // is not the statement the client will execute; it declares nothing.
-        let result_columns = self.with_statement(StatementReadShape::Unknown, move |session| {
+        // is not the statement the client will execute; it declares nothing,
+        // and -- see `probe_statement` -- it opens no transaction either.
+        let result_columns = self.probe_statement(StatementReadShape::Unknown, move |session| {
             let probe: Vec<tidb_datatype::Datum> =
                 std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
             Ok(match session.run_with_params(&owned, &probe) {
