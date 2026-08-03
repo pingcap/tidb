@@ -14,11 +14,12 @@
 
 //! Connection routing for incremental result-set responses.
 
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, PackedTime, TimeType};
 use tidb_protocol::{
-    is_binary_decimal_result_type, is_binary_string_result_type, BinaryResultCell,
-    BinaryResultSetStream, ResultSetOptions, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT24, TYPE_LONG,
-    TYPE_LONGLONG, TYPE_SHORT, TYPE_TINY, TYPE_YEAR,
+    is_binary_datetime_result_type, is_binary_decimal_result_type, is_binary_duration_result_type,
+    is_binary_string_result_type, BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream,
+    ResultSetOptions, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT24, TYPE_LONG, TYPE_LONGLONG, TYPE_SHORT,
+    TYPE_TINY, TYPE_YEAR,
 };
 
 /// Maps one decoded `Datum` to the binary cell its column type dumps, following
@@ -54,6 +55,45 @@ pub(crate) fn datum_to_binary_cell(datum: Datum, type_code: u8) -> Option<Binary
         }
         Datum::Bytes(value) if is_binary_string_result_type(type_code) => {
             Some(BinaryResultCell::String(value))
+        }
+        // `TypeBit` sits in Go's string arm and dumps `row.GetBytes(i)`, which
+        // for a BIT column is the stored big-endian payload.
+        Datum::Bit(value) | Datum::BinaryLiteral(value)
+            if is_binary_string_result_type(type_code) =>
+        {
+            Some(BinaryResultCell::String(value.into_bytes()))
+        }
+        // `TypeEnum`/`TypeSet`/`TypeJSON`/`TypeTiDBVectorFloat32` each stringify
+        // and then take the same length-encoded-string exit as the string arm.
+        // Go's `Enum.String()`/`Set.String()` are both `return e.Name`.
+        Datum::Enum(value, _) if is_binary_string_result_type(type_code) => {
+            Some(BinaryResultCell::String(value.name().as_bytes().to_vec()))
+        }
+        Datum::Set(value, _) if is_binary_string_result_type(type_code) => {
+            Some(BinaryResultCell::String(value.name().as_bytes().to_vec()))
+        }
+        Datum::Json(value) if is_binary_string_result_type(type_code) => {
+            Some(BinaryResultCell::String(value.to_string().into_bytes()))
+        }
+        Datum::VectorFloat32(value) if is_binary_string_result_type(type_code) => {
+            Some(BinaryResultCell::String(value.to_string().into_bytes()))
+        }
+        // `dump.BinaryDateTime(buffer, row.GetTime(i))`. The body shape follows
+        // the value's own field type, so the cell carries it alongside the
+        // packed calendar fields.
+        Datum::Time(value) if is_binary_datetime_result_type(type_code) => {
+            let packed = PackedTime::from_raw(value.to_packed_uint().ok()?);
+            let kind = match value.kind() {
+                TimeType::Date => BinaryDateTimeType::Date,
+                TimeType::DateTime => BinaryDateTimeType::Datetime,
+                TimeType::Timestamp => BinaryDateTimeType::Timestamp,
+            };
+            Some(BinaryResultCell::Datetime(packed, kind))
+        }
+        // `dump.BinaryTime(row.GetDuration(i, 0).Duration)` takes the signed
+        // nanosecond span; the fsp travels in the column metadata, not the body.
+        Datum::Duration(value) if is_binary_duration_result_type(type_code) => {
+            Some(BinaryResultCell::Duration(value.nanoseconds()))
         }
         _ => None,
     }
@@ -259,4 +299,179 @@ fn write_binary_payload<W: ResultSetSink>(
             },
             finish_attempted,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::datum_to_binary_cell;
+    use tidb_datatype::{
+        BinaryJSON, CoreTime, Datum, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType,
+    };
+    use tidb_protocol::encode_binary_result_row;
+
+    /// The Go side of this fixture is `rust/difftests/gobinaryrow/main.go`,
+    /// which runs the production `column.DumpBinaryRow` over real chunk rows.
+    /// This asserts the whole `Datum -> cell -> bytes` wiring, not just the
+    /// encoder, so a column type that reaches the writer as the wrong cell is
+    /// caught here rather than on the wire.
+    fn go_row(name: &str) -> Vec<u8> {
+        let fixture = include_str!("../../../difftests/gobinaryrow/go_binary_rows.txt");
+        for line in fixture.lines() {
+            if let Some(hex) = line
+                .strip_prefix(name)
+                .and_then(|rest| rest.strip_prefix(' '))
+            {
+                return (0..hex.len())
+                    .step_by(2)
+                    .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).expect("hex"))
+                    .collect();
+            }
+        }
+        panic!("fixture row {name}");
+    }
+
+    fn row(datum: Datum, type_code: u8) -> Vec<u8> {
+        let cell = datum_to_binary_cell(datum, type_code).expect("column type admits this datum");
+        encode_binary_result_row(&[cell])
+    }
+
+    #[test]
+    fn temporal_datums_reach_the_wire_as_go_dumps_them() {
+        let datetime = |core, kind, fsp| Datum::Time(Time::new(core, kind, fsp).expect("time"));
+        assert_eq!(
+            row(
+                datetime(
+                    CoreTime::from_date(2017, 1, 5, 23, 59, 59, 575_601),
+                    TimeType::DateTime,
+                    6
+                ),
+                tidb_protocol::TYPE_DATETIME
+            ),
+            go_row("datetime_micros")
+        );
+        assert_eq!(
+            row(
+                datetime(
+                    CoreTime::from_date(2017, 1, 5, 23, 59, 59, 0),
+                    TimeType::DateTime,
+                    0
+                ),
+                tidb_protocol::TYPE_DATETIME
+            ),
+            go_row("datetime_seconds")
+        );
+        assert_eq!(
+            row(
+                datetime(CoreTime::default(), TimeType::DateTime, 0),
+                tidb_protocol::TYPE_DATETIME
+            ),
+            go_row("datetime_zero")
+        );
+        assert_eq!(
+            row(
+                datetime(
+                    CoreTime::from_date(2020, 6, 15, 12, 34, 56, 1),
+                    TimeType::Timestamp,
+                    6
+                ),
+                tidb_protocol::TYPE_TIMESTAMP
+            ),
+            go_row("timestamp_micros")
+        );
+        assert_eq!(
+            row(
+                datetime(
+                    CoreTime::from_date(2020, 6, 15, 0, 0, 0, 0),
+                    TimeType::Date,
+                    0
+                ),
+                tidb_protocol::TYPE_DATE
+            ),
+            go_row("date_plain")
+        );
+    }
+
+    #[test]
+    fn duration_datums_reach_the_wire_as_go_dumps_them() {
+        let duration = |nanoseconds| {
+            Datum::Duration(MySqlDuration::from_nanoseconds(nanoseconds, 6).expect("duration"))
+        };
+        assert_eq!(
+            row(duration(0), tidb_protocol::TYPE_DURATION),
+            go_row("duration_zero")
+        );
+        assert_eq!(
+            row(
+                duration((26 * 3600 + 3 * 60 + 4) * 1_000_000_000),
+                tidb_protocol::TYPE_DURATION
+            ),
+            go_row("duration_1d2h3m4s")
+        );
+        assert_eq!(
+            row(
+                duration((3600 + 2 * 60 + 3) * 1_000_000_000 + 456_789_000),
+                tidb_protocol::TYPE_DURATION
+            ),
+            go_row("duration_micros")
+        );
+        assert_eq!(
+            row(
+                duration(-((10 * 3600 + 20 * 60 + 30) * 1_000_000_000)),
+                tidb_protocol::TYPE_DURATION
+            ),
+            go_row("duration_negative")
+        );
+    }
+
+    #[test]
+    fn blob_bit_enum_set_and_json_datums_reach_the_wire_as_go_dumps_them() {
+        assert_eq!(
+            row(
+                Datum::Bytes(b"hello blob".to_vec()),
+                tidb_protocol::TYPE_BLOB
+            ),
+            go_row("blob")
+        );
+        assert_eq!(
+            row(
+                Datum::Bytes(b"tiny".to_vec()),
+                tidb_protocol::TYPE_TINY_BLOB
+            ),
+            go_row("tiny_blob")
+        );
+        assert_eq!(
+            row(
+                Datum::Bit(tidb_datatype::BinaryLiteral::from(vec![0x01, 0x02])),
+                tidb_protocol::TYPE_BIT
+            ),
+            go_row("bit")
+        );
+        assert_eq!(
+            row(
+                Datum::Enum(
+                    MysqlEnum::new("green", 2),
+                    tidb_datatype::Collation::Utf8Mb4Bin
+                ),
+                tidb_protocol::TYPE_ENUM
+            ),
+            go_row("enum")
+        );
+        assert_eq!(
+            row(
+                Datum::Set(
+                    MysqlSet::new("a,c", 5),
+                    tidb_datatype::Collation::Utf8Mb4Bin
+                ),
+                tidb_protocol::TYPE_SET
+            ),
+            go_row("set")
+        );
+        assert_eq!(
+            row(
+                Datum::Json(BinaryJSON::parse(r#"{"a": [1, 2]}"#).expect("json")),
+                tidb_protocol::TYPE_JSON
+            ),
+            go_row("json")
+        );
+    }
 }

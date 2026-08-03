@@ -24,10 +24,11 @@
 
 use crate::{
     append_length_encoded_bytes, append_length_encoded_int, encode_eof_packet, ColumnInfo,
-    EofPacket, ResultSetOptions, TYPE_BLOB, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION,
-    TYPE_FLOAT, TYPE_INT24, TYPE_LONG, TYPE_LONGLONG, TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB,
-    TYPE_NEW_DECIMAL, TYPE_SHORT, TYPE_STRING, TYPE_TIMESTAMP, TYPE_TINY, TYPE_TINY_BLOB,
-    TYPE_VARCHAR, TYPE_VAR_STRING, TYPE_YEAR,
+    EofPacket, ResultSetOptions, TYPE_BIT, TYPE_BLOB, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE,
+    TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_INT24, TYPE_JSON, TYPE_LONG, TYPE_LONGLONG,
+    TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB, TYPE_NEW_DECIMAL, TYPE_SET, TYPE_SHORT, TYPE_STRING,
+    TYPE_TIDB_VECTOR_FLOAT32, TYPE_TIMESTAMP, TYPE_TINY, TYPE_TINY_BLOB, TYPE_VARCHAR,
+    TYPE_VAR_STRING, TYPE_YEAR,
 };
 use tidb_datatype::{Decimal, PackedTime};
 
@@ -806,9 +807,10 @@ pub fn encode_binary_datetime(time: PackedTime, kind: BinaryDateTimeType) -> Vec
 /// null-bitmap bit — the case a nullable aggregate such as `SUM` over an empty
 /// group produces.
 ///
-/// Not yet represented (fail closed in the stream, see the risk register in
-/// HANDOFF): temporal (`Date`/`Datetime`/`Timestamp` via `dump.BinaryDateTime`),
-/// `Duration` (`dump.BinaryTime`), `Enum`/`Set`/`JSON`/`TiDBVectorFloat32`.
+/// Every arm of Go's switch is represented. `Enum`/`Set`/`JSON`/
+/// `TiDBVectorFloat32` need no variant of their own: Go stringifies each and
+/// then takes the same `dump.LengthEncodedString` exit as the string group, so
+/// they arrive here as [`Self::String`] already stringified.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BinaryResultCell {
     /// SQL `NULL` → no value bytes; the row's null bitmap marks this column.
@@ -831,6 +833,15 @@ pub enum BinaryResultCell {
     NewDecimal(Decimal),
     /// A string/blob cell carrying its raw stored bytes.
     String(Vec<u8>),
+    /// `TypeDate`/`TypeDatetime`/`TypeTimestamp` → `dump.BinaryDateTime`.
+    ///
+    /// The discriminant is the *value's* `types.Time.Type()`, which is what Go
+    /// switches on inside `BinaryDateTime`; the column type only decides that
+    /// this encoder runs.
+    Datetime(PackedTime, BinaryDateTimeType),
+    /// `TypeDuration` → `dump.BinaryTime` over the signed nanosecond span
+    /// (Go's `row.GetDuration(i, 0).Duration`).
+    Duration(i64),
 }
 
 /// Encodes one binary result row from typed cells.
@@ -889,17 +900,67 @@ pub fn encode_binary_result_row(cells: &[BinaryResultCell]) -> Vec<u8> {
             BinaryResultCell::String(bytes) => {
                 append_length_encoded_bytes(&mut encoded, Some(bytes));
             }
+            // `dump.BinaryDateTime(buffer, row.GetTime(i))` and
+            // `append(buffer, dump.BinaryTime(row.GetDuration(i, 0).Duration)...)`:
+            // both write a length-prefixed body of their own, not a
+            // length-encoded string, so the bytes append verbatim.
+            BinaryResultCell::Datetime(packed, kind) => {
+                encoded.extend_from_slice(&encode_binary_datetime(*packed, *kind));
+            }
+            BinaryResultCell::Duration(nanoseconds) => {
+                encoded.extend_from_slice(&encode_binary_time(*nanoseconds));
+            }
         }
     }
     encoded
 }
 
 /// Whether a result column type is dumped as a length-encoded string by TiDB's
-/// `DumpBinaryRow` string group (the `CHAR`/`VARCHAR` subset this node projects;
-/// the blob/bit members of that group are not produced here).
+/// `DumpBinaryRow`.
+///
+/// Go writes five separate switch arms here -- the `TypeString`/`TypeBit`/blob
+/// group, `TypeEnum`, `TypeSet`, `TypeJSON`, and `TypeTiDBVectorFloat32` -- but
+/// every one of them ends in the same `dump.LengthEncodedString(d.EncodeData(..))`
+/// call. They differ only in how the value is stringified before the dump (a
+/// `GetBytes` versus an `Enum.String()`/`Set.String()`/`JSON.String()`) and in
+/// which collation `EncodeData` is told to use, and both of those are the
+/// caller's job: the cell already carries finished bytes. So the arms collapse
+/// into one predicate rather than five.
 #[must_use]
 pub const fn is_binary_string_result_type(type_code: u8) -> bool {
-    matches!(type_code, TYPE_STRING | TYPE_VAR_STRING | TYPE_VARCHAR)
+    matches!(
+        type_code,
+        TYPE_STRING
+            | TYPE_VAR_STRING
+            | TYPE_VARCHAR
+            | TYPE_BIT
+            | TYPE_TINY_BLOB
+            | TYPE_MEDIUM_BLOB
+            | TYPE_LONG_BLOB
+            | TYPE_BLOB
+            | TYPE_ENUM
+            | TYPE_SET
+            | TYPE_JSON
+            | TYPE_TIDB_VECTOR_FLOAT32
+    )
+}
+
+/// Whether a result column type is one of `DumpBinaryRow`'s `dump.BinaryDateTime`
+/// cases (`TypeDate`, `TypeDatetime`, `TypeTimestamp`).
+///
+/// The three share one arm because `BinaryDateTime` switches on the *value's*
+/// `t.Type()`, not the column's -- the column type only decides that the
+/// datetime encoder runs at all.
+#[must_use]
+pub const fn is_binary_datetime_result_type(type_code: u8) -> bool {
+    matches!(type_code, TYPE_DATE | TYPE_DATETIME | TYPE_TIMESTAMP)
+}
+
+/// Whether a result column type is `DumpBinaryRow`'s `TypeDuration` case,
+/// dumped through `dump.BinaryTime`.
+#[must_use]
+pub const fn is_binary_duration_result_type(type_code: u8) -> bool {
+    type_code == TYPE_DURATION
 }
 
 /// Whether a result column type is one of `DumpBinaryRow`'s fixed-width signed
@@ -937,6 +998,11 @@ const fn cell_matches_result_type(cell: &BinaryResultCell, type_code: u8) -> boo
         BinaryResultCell::Double(_) => type_code == TYPE_DOUBLE,
         BinaryResultCell::NewDecimal(_) => is_binary_decimal_result_type(type_code),
         BinaryResultCell::String(_) => is_binary_string_result_type(type_code),
+        // Go dumps by the VALUE's `t.Type()`, so a `DATETIME` value under a
+        // `DATE` column still writes the datetime body. The column type only
+        // gates which encoder runs, which is what this checks.
+        BinaryResultCell::Datetime(_, _) => is_binary_datetime_result_type(type_code),
+        BinaryResultCell::Duration(_) => is_binary_duration_result_type(type_code),
     }
 }
 
@@ -957,11 +1023,12 @@ enum BinaryResultSetState {
 
 impl BinaryResultSetStream {
     /// Creates a binary stream after verifying every advertised result column is
-    /// one this path can dump: a `DumpBinaryRow` fixed-width integer, IEEE-754
-    /// float, `NewDecimal`, or string type. Temporal and enum/set/json/vector
-    /// are fail closed here — see the HANDOFF risk register — because their cell
-    /// source (a temporal codec, an `EncodeData` charset re-encode) is not
-    /// ported yet.
+    /// one `DumpBinaryRow` has an arm for.
+    ///
+    /// This is Go's `default: return nil, err.ErrInvalidType.GenWithStack(
+    /// "invalid type %v", columns[i].Type)`, hoisted from the per-row dump to
+    /// stream construction so an unencodable column is rejected before any byte
+    /// of the result reaches the client.
     pub fn new(
         columns: Vec<ColumnInfo>,
         options: ResultSetOptions,
@@ -971,6 +1038,8 @@ impl BinaryResultSetStream {
                 && !is_binary_float_result_type(metadata.type_code)
                 && !is_binary_decimal_result_type(metadata.type_code)
                 && !is_binary_string_result_type(metadata.type_code)
+                && !is_binary_datetime_result_type(metadata.type_code)
+                && !is_binary_duration_result_type(metadata.type_code)
             {
                 return Err(PreparedStatementError::UnsupportedBinaryResultColumn {
                     column,

@@ -592,14 +592,16 @@ fn the_stream_rejects_a_cell_that_does_not_match_its_column_type() {
 #[test]
 fn the_stream_rejects_an_unsupported_result_column_type() {
     let mut column = varstring_column("c");
-    column.type_code = 12; // TypeDatetime, temporal cell source not ported yet
+    // TypeGeometry: Go's DumpBinaryRow has no arm for it and falls into
+    // `default: return nil, ErrInvalidType`.
+    column.type_code = 0xff;
     assert_eq!(
         BinaryResultSetStream::new(vec![column], ResultSetOptions::default())
             .map(|_| ())
             .unwrap_err(),
         PreparedStatementError::UnsupportedBinaryResultColumn {
             column: 0,
-            type_code: 12,
+            type_code: 0xff,
         }
     );
 }
@@ -646,20 +648,176 @@ fn float_and_double_cells_dump_ieee754_little_endian_bits() {
 }
 
 #[test]
-fn the_stream_admits_the_whole_numeric_family_and_rejects_unported_types() {
-    // Tiny, Short, Year, Int24, Long, Longlong, Float, Double, NewDecimal (246) —
-    // all sourced.
-    for tp in [1u8, 2, 13, 9, 3, 8, 4, 5, 246] {
+fn the_stream_admits_every_type_go_dump_binary_row_has_an_arm_for() {
+    // Every non-default arm of Go's `switch columns[i].Type` in DumpBinaryRow:
+    // Tiny(1), Short(2), Year(13), Int24(9), Long(3), Longlong(8), Float(4),
+    // Double(5), NewDecimal(246), String(254), VarString(253), Varchar(15),
+    // Bit(16), TinyBlob(249), MediumBlob(250), LongBlob(251), Blob(252),
+    // Date(10), Datetime(12), Timestamp(7), Duration(11), Enum(247), Set(248),
+    // Json(245), TiDBVectorFloat32(225).
+    for tp in [
+        1u8, 2, 13, 9, 3, 8, 4, 5, 246, 254, 253, 15, 16, 249, 250, 251, 252, 10, 12, 7, 11, 247,
+        248, 245, 225,
+    ] {
         let mut c = longlong_column("n");
         c.type_code = tp;
-        assert!(BinaryResultSetStream::new(vec![c], ResultSetOptions::default()).is_ok());
+        assert!(
+            BinaryResultSetStream::new(vec![c], ResultSetOptions::default()).is_ok(),
+            "type {tp} is a DumpBinaryRow arm and must be admitted"
+        );
     }
-    // Datetime (12), Timestamp (7), Enum (0xf7) are fail closed pending a
-    // temporal / EncodeData cell source.
-    for tp in [12u8, 7, 0xf7] {
+    // Go's `default:` arm returns ErrInvalidType. Null(6), Geometry(255) and
+    // NewDate(14) have no arm, so the stream refuses them up front.
+    for tp in [6u8, 255, 14] {
         let mut c = longlong_column("n");
         c.type_code = tp;
-        assert!(BinaryResultSetStream::new(vec![c], ResultSetOptions::default()).is_err());
+        assert!(
+            BinaryResultSetStream::new(vec![c], ResultSetOptions::default()).is_err(),
+            "type {tp} has no DumpBinaryRow arm and must be refused"
+        );
+    }
+}
+
+/// Byte-level oracle: every row here was produced by running the production Go
+/// `column.DumpBinaryRow` over a real `chunk.Row`
+/// (`rust/difftests/gobinaryrow/main.go`, run inside `pkg/server/internal/` so
+/// it can reach that internal package). Nothing is round-tripped through this
+/// encoder to produce the expectation.
+#[test]
+fn binary_rows_match_go_dump_binary_row_bytes() {
+    let fixture = include_str!("../../../difftests/gobinaryrow/go_binary_rows.txt");
+    let mut expected = std::collections::HashMap::new();
+    for line in fixture.lines().filter(|line| !line.trim().is_empty()) {
+        let (name, hex) = line.split_once(' ').expect("`<name> <hex>` fixture line");
+        let bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex byte"))
+            .collect();
+        expected.insert(name.to_owned(), bytes);
+    }
+
+    let packed = |year, month, day, hour, minute, second, microsecond| {
+        PackedTime::from_parts(year, month, day, hour, minute, second, microsecond)
+            .expect("valid packed time")
+    };
+    let text = |bytes: &[u8]| BinaryResultCell::String(bytes.to_vec());
+
+    let cases: Vec<(&str, Vec<BinaryResultCell>)> = vec![
+        (
+            "datetime_micros",
+            vec![BinaryResultCell::Datetime(
+                packed(2017, 1, 5, 23, 59, 59, 575_601),
+                BinaryDateTimeType::Datetime,
+            )],
+        ),
+        (
+            "datetime_seconds",
+            vec![BinaryResultCell::Datetime(
+                packed(2017, 1, 5, 23, 59, 59, 0),
+                BinaryDateTimeType::Datetime,
+            )],
+        ),
+        (
+            "datetime_midnight",
+            vec![BinaryResultCell::Datetime(
+                packed(2017, 1, 5, 0, 0, 0, 0),
+                BinaryDateTimeType::Datetime,
+            )],
+        ),
+        (
+            "datetime_zero",
+            vec![BinaryResultCell::Datetime(
+                PackedTime::ZERO,
+                BinaryDateTimeType::Datetime,
+            )],
+        ),
+        (
+            "timestamp_micros",
+            vec![BinaryResultCell::Datetime(
+                packed(2020, 6, 15, 12, 34, 56, 1),
+                BinaryDateTimeType::Timestamp,
+            )],
+        ),
+        (
+            "date_plain",
+            vec![BinaryResultCell::Datetime(
+                packed(2020, 6, 15, 0, 0, 0, 0),
+                BinaryDateTimeType::Date,
+            )],
+        ),
+        (
+            "date_zero",
+            vec![BinaryResultCell::Datetime(
+                PackedTime::ZERO,
+                BinaryDateTimeType::Date,
+            )],
+        ),
+        ("duration_zero", vec![BinaryResultCell::Duration(0)]),
+        ("duration_neg_1ns", vec![BinaryResultCell::Duration(-1)]),
+        (
+            "duration_1d2h3m4s",
+            vec![BinaryResultCell::Duration(
+                (26 * 3600 + 3 * 60 + 4) * 1_000_000_000,
+            )],
+        ),
+        (
+            "duration_2s",
+            vec![BinaryResultCell::Duration(2_000_000_000)],
+        ),
+        (
+            "duration_micros",
+            vec![BinaryResultCell::Duration(
+                (3600 + 2 * 60 + 3) * 1_000_000_000 + 456_789_000,
+            )],
+        ),
+        (
+            "duration_negative",
+            vec![BinaryResultCell::Duration(
+                -((10 * 3600 + 20 * 60 + 30) * 1_000_000_000),
+            )],
+        ),
+        ("blob", vec![text(b"hello blob")]),
+        ("tiny_blob", vec![text(b"tiny")]),
+        ("long_blob", vec![text(b"long")]),
+        ("bit", vec![text(&[0x01, 0x02])]),
+        ("enum", vec![text(b"green")]),
+        ("set", vec![text(b"a,c")]),
+        ("json", vec![text(br#"{"a": [1, 2]}"#)]),
+        (
+            "mixed_row",
+            vec![
+                BinaryResultCell::LongLong(7),
+                BinaryResultCell::Datetime(
+                    packed(1999, 12, 31, 23, 59, 58, 0),
+                    BinaryDateTimeType::Datetime,
+                ),
+                BinaryResultCell::Duration(90 * 1_000_000_000),
+                text(b"tail"),
+            ],
+        ),
+        (
+            "mixed_row_nulls",
+            vec![
+                BinaryResultCell::LongLong(7),
+                BinaryResultCell::Null,
+                BinaryResultCell::Duration(90 * 1_000_000_000),
+                BinaryResultCell::Null,
+            ],
+        ),
+    ];
+
+    assert_eq!(
+        cases.len(),
+        expected.len(),
+        "every Go fixture row must be exercised"
+    );
+    for (name, cells) in cases {
+        let want = expected.get(name).unwrap_or_else(|| panic!("fixture {name}"));
+        assert_eq!(
+            &encode_binary_result_row(&cells),
+            want,
+            "row {name} diverges from Go DumpBinaryRow"
+        );
     }
 }
 

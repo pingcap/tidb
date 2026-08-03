@@ -71,12 +71,12 @@ pub use prepared_statement::{
     decode_prepared_statement_execute_with_bound_params, decode_prepared_statement_fetch,
     decode_prepared_statement_send_long_data, encode_binary_datetime, encode_binary_result_row,
     encode_binary_signed_longlong_row, encode_binary_time,
-    encode_prepared_statement_prepare_response, is_binary_decimal_result_type,
-    is_binary_float_result_type, is_binary_integer_result_type, is_binary_string_result_type,
-    BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream, PreparedParameterType,
-    PreparedParameterTypes, PreparedStatementError, PreparedStatementExecute,
-    PreparedStatementSendLongData, PreparedValue, CURSOR_TYPE_READ_ONLY, MYSQL_TYPE_LONGLONG,
-    MYSQL_UNSIGNED_FLAG,
+    encode_prepared_statement_prepare_response, is_binary_datetime_result_type,
+    is_binary_decimal_result_type, is_binary_duration_result_type, is_binary_float_result_type,
+    is_binary_integer_result_type, is_binary_string_result_type, BinaryDateTimeType,
+    BinaryResultCell, BinaryResultSetStream, PreparedParameterType, PreparedParameterTypes,
+    PreparedStatementError, PreparedStatementExecute, PreparedStatementSendLongData, PreparedValue,
+    CURSOR_TYPE_READ_ONLY, MYSQL_TYPE_LONGLONG, MYSQL_UNSIGNED_FLAG,
 };
 pub use result::{
     append_length_encoded_bytes, append_length_encoded_int, encode_text_row, is_string_column_type,
