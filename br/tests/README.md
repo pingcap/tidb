@@ -33,10 +33,11 @@ This folder contains all tests which relies on external processes such as TiDB.
 
 ## Preparations
 
-1. The following 9 executables must be copied or linked into the `bin` folder under the TiDB root dir:
+1. The following 10 executables must be copied or linked into the `bin` folder under the TiDB root dir:
 
     * `bin/tidb-server`
     * `bin/tikv-server`
+    * `bin/tikv-ctl`
     * `bin/pd-server`
     * `bin/pd-ctl`
     * `bin/go-ycsb`
@@ -78,7 +79,7 @@ If you have docker installed, you can skip step 1 and step 2 by running
 ## Running
 
 1. Build `br.test` using `make build_for_br_integration_test`
-2. Check that all 9 required executables and `br` executable exist
+2. Check that all 10 required executables and `br` executable exist
 3. Select the tests to run using `export TEST_NAME="<test_name1> <test_name2> ..."` 
 4. Execute `br/tests/run.sh`
 <!-- 4. To start cluster with tiflash, please run `TIFLASH=1 tests/run.sh` -->
