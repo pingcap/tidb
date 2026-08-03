@@ -31,8 +31,8 @@ pub(crate) fn dispatch(
     ctx: &dyn crate::Columns,
 ) -> Option<Result<Datum, EvalError>> {
     match (name, vals.len()) {
-        ("LEAST", _) => Some(extremum(vals, Ordering::Less)),
-        ("GREATEST", _) => Some(extremum(vals, Ordering::Greater)),
+        ("LEAST", _) => Some(extremum(vals, Ordering::Less, ctx)),
+        ("GREATEST", _) => Some(extremum(vals, Ordering::Greater, ctx)),
         ("INTERVAL", n) if n >= 2 => Some(interval(vals, ctx)),
         ("ISNULL", 1) => Some(Ok(Datum::Int(i64::from(matches!(vals[0], Datum::Null))))),
         ("INET_ATON", 1) => Some(inet_aton(&vals[0])),
@@ -58,12 +58,88 @@ pub(crate) fn dispatch(
 /// keeps that source boundary without inventing a numeric coercion. Port of
 /// the signatures built by `leastFunctionClass` and
 /// `greatestFunctionClass` in `pkg/expression/builtin_compare.go`.
-fn extremum(vals: &[Datum], want: Ordering) -> Result<Datum, EvalError> {
+fn extremum(vals: &[Datum], want: Ordering, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    // The AST/value evaluator has no argument `FieldType`s, so it can neither
+    // see a temporal argument nor read a derived collation. Both are the chunk
+    // evaluator's ([`extremum_with_mode`]'s other caller,
+    // `ScalarFunction::eval_by_signature`) -- this tier asks for Go's
+    // no-temporal, connection-default answer.
+    extremum_with_mode(
+        vals,
+        want,
+        GlCmpStringMode::Directly,
+        crate::ops::DERIVATION_FREE_COLLATION,
+        ctx,
+    )
+}
+
+/// Go `GLCmpStringMode` (`pkg/expression/builtin_compare.go`): which of the
+/// three ETString GREATEST/LEAST signatures `resolveType4Extremum` selected.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GlCmpStringMode {
+    /// `GLCmpStringDirectly` -> `builtinGreatestStringSig`: compare the
+    /// strings themselves, under the function's derived collation.
+    Directly,
+    /// `GLCmpStringAsDate` -> `builtinGreatestCmpStringAsTimeSig{cmpAsDate:
+    /// true}`: parse every argument as a DATE and compare the re-rendered
+    /// canonical text.
+    AsDate,
+    /// `GLCmpStringAsDatetime` -> the same signature with `cmpAsDate: false`,
+    /// parsing every argument as a DATETIME.
+    AsDatetime,
+}
+
+/// [`extremum`] with the two things only the chunk evaluator knows: the
+/// temporal compare mode `resolveType4Extremum` derived from the argument
+/// FieldTypes, and the collation `deriveCollation` derived for the function.
+///
+/// `mode != Directly` is `builtinGreatestCmpStringAsTimeSig` /
+/// `builtinLeastCmpStringAsTimeSig`: EVERY argument is parsed as a time and
+/// re-emitted canonically before comparison, so which argument wins changes.
+/// CAPTURED from TiDB over a `DATE` column holding `2020-01-01`:
+///
+/// ```text
+/// greatest(d, '99-1-1')  -> 2020-01-01     least(d, '99-1-1')  -> 1999-01-01
+/// greatest(d, 'zzz')     -> zzz            least(d, '2019-5-5') -> 2019-05-05
+/// ```
+///
+/// The last row is the one that pins the ERROR rule: an argument that does not
+/// parse keeps its ORIGINAL text (Go `doTimeConversionForGL` leaves `strVal`
+/// alone once `handleInvalidTimeError` has downgraded the error to a warning),
+/// which is why `'zzz'` -- not the date -- is the greatest. Note also that this
+/// signature compares with `strings.Compare`, NOT the collator: only the
+/// `Directly` mode is collation-aware.
+pub(crate) fn extremum_with_mode(
+    vals: &[Datum],
+    want: Ordering,
+    mode: GlCmpStringMode,
+    collation: tidb_datatype::Collation,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
     if vals.is_empty() {
         return Err(EvalError::Unsupported("bad function arity"));
     }
     if vals.contains(&Datum::Null) {
         return Ok(Datum::Null);
+    }
+    if mode != GlCmpStringMode::Directly {
+        let cmp_as_date = mode == GlCmpStringMode::AsDate;
+        let mut best: Option<String> = None;
+        for value in vals {
+            let Some(text) = coerce_str(value)? else {
+                return Ok(Datum::Null);
+            };
+            let text = time_conversion_for_gl(cmp_as_date, &text, ctx);
+            let wins = match &best {
+                None => true,
+                Some(best) if want == Ordering::Greater => text > *best,
+                Some(best) => text < *best,
+            };
+            if wins {
+                best = Some(text);
+            }
+        }
+        return Ok(Datum::new_string(best.unwrap_or_default()));
     }
     // A string operand makes aggregateType choose ETString in Go, so numeric
     // values are first rendered with EvalString and then compared under the
@@ -75,12 +151,18 @@ fn extremum(vals: &[Datum], want: Ordering) -> Result<Datum, EvalError> {
         .iter()
         .any(|v| matches!(v, Datum::String(_) | Datum::Bytes(_)))
     {
+        // Go `builtinGreatestStringSig.evalString` compares with
+        // `types.CompareString(v, maxv, b.collation)` -- the function's own
+        // derived collator, not raw bytes. CAPTURED from TiDB:
+        // `greatest('a' collate utf8mb4_general_ci, 'B')` is `B` and
+        // `least(...)` is `a`, the SWAP of the byte answer; and under the
+        // PAD SPACE default `greatest('a', 'a ')` is `a`, because the two
+        // compare EQUAL and Go keeps the earlier argument.
+        let collator = tidb_datatype::get_collator(collation.name());
         let mut best = extremum_string_value(&vals[0])?;
         for v in &vals[1..] {
             let candidate = extremum_string_value(v)?;
-            if (want == Ordering::Greater && candidate > best)
-                || (want == Ordering::Less && candidate < best)
-            {
+            if collator.compare(&candidate, &best) == want {
                 best = candidate;
             }
         }
@@ -163,6 +245,41 @@ fn extremum_string_value(value: &Datum) -> Result<Vec<u8>, EvalError> {
             .to_bytes()
             .map_err(|_| EvalError::Unsupported("datum string conversion"))?,
     })
+}
+
+/// Go `doTimeConversionForGL` (`pkg/expression/builtin_compare.go`): parse one
+/// GREATEST/LEAST argument as a DATE or DATETIME and re-render it as
+/// `types.Time.String()`.
+///
+/// A value that does not parse keeps its ORIGINAL text: Go raises the invalid
+/// time through `handleInvalidTimeError`, and in the non-erroring modes that
+/// leaves `strVal` untouched. The zero date is NOT rejected here -- this is not
+/// the cast path's `NO_ZERO_DATE` check -- so
+/// `least(<a DATE>, '0000-00-00')` is `0000-00-00`, captured from TiDB.
+fn time_conversion_for_gl(cmp_as_date: bool, value: &str, ctx: &dyn crate::Columns) -> String {
+    let (kind, fsp) = if cmp_as_date {
+        // `types.ParseDate` asks for `MinFsp`; a DATE carries no fraction.
+        (tidb_datatype::TimeType::Date, 0)
+    } else {
+        // `types.ParseDatetime` asks for the literal's own fraction width.
+        (
+            tidb_datatype::TimeType::DateTime,
+            i64::from(tidb_datatype::get_fsp(value)),
+        )
+    };
+    let parsed = tidb_datatype::parse_time(
+        value,
+        kind,
+        fsp,
+        false,
+        true,
+        ctx.date_modes().allow_invalid_dates,
+        &ctx.time_zone(),
+    );
+    match parsed {
+        Ok(parsed) => parsed.time.to_string(),
+        Err(_) => value.to_owned(),
+    }
 }
 
 /// `INTERVAL(n, n1, n2, ...)`: return the zero-based position of the first

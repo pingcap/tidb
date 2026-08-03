@@ -29,6 +29,8 @@
 use super::{Constant, Expression};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
+use crate::builtin_ext::GlCmpStringMode;
+
 /// Go `types.SetBinChsClnFlag`: the binary charset/collation plus the binary
 /// flag every non-string literal type carries.
 /// The builtins whose result is a BINARY string: Go's `getFunction` for each
@@ -645,6 +647,45 @@ fn concat_flen(args: &[Expression], skip: usize) -> i64 {
     clamp_blob_width(flen)
 }
 
+/// Go `resolveType4Extremum`'s `cmpStringMode`
+/// (`pkg/expression/builtin_compare.go`): when GREATEST/LEAST's arguments
+/// aggregate to a STRING kind that is not itself temporal, and at least one
+/// argument IS a date or datetime, Go compares every argument as a parsed
+/// time instead of as text.
+///
+/// `Directly` -- Go's default -- is also the answer whenever an argument has
+/// no static type here, since an unknown type cannot be shown to be temporal.
+pub fn gl_cmp_string_mode(args: &[Expression]) -> GlCmpStringMode {
+    let typed: Vec<FieldType> = args
+        .iter()
+        .filter_map(|arg| arg.static_type().cloned())
+        .collect();
+    if typed.len() != args.len() || typed.is_empty() {
+        return GlCmpStringMode::Directly;
+    }
+    let aggregated = tidb_datatype::agg_field_type(&typed);
+    if !aggregated.eval_type().is_string_kind() || aggregated.code().is_type_temporal() {
+        return GlCmpStringMode::Directly;
+    }
+    // Go scans for a temporal argument but PREFERS a DATETIME one, so a
+    // (DATE, DATETIME, string) list compares as datetime rather than as date.
+    let mut temporal: Option<FieldTypeCode> = None;
+    for ft in &typed {
+        if ft.code().is_type_temporal()
+            && (temporal.is_none() || ft.code() == FieldTypeCode::Datetime)
+        {
+            temporal = Some(ft.code());
+        }
+    }
+    match temporal {
+        Some(FieldTypeCode::Date) => GlCmpStringMode::AsDate,
+        Some(code) if code.is_temporal_with_date() => GlCmpStringMode::AsDatetime,
+        // A DURATION is temporal but carries no date, so Go leaves the mode
+        // alone and the plain string signature runs.
+        _ => GlCmpStringMode::Directly,
+    }
+}
+
 fn extremum_return_type(args: &[Expression]) -> Option<FieldType> {
     let typed: Vec<&FieldType> = args
         .iter()
@@ -677,6 +718,21 @@ fn extremum_return_type(args: &[Expression]) -> Option<FieldType> {
             .collect();
         let mut merged = arg_numeric_type(&owned)?;
         set_numeric_len_from_args(&mut merged, &typed);
+        return Some(merged);
+    }
+    // Everything left is a MIXTURE of kinds, which Go handles the same way it
+    // handles the uniform cases: `resolveType4Extremum` aggregates the
+    // argument FieldTypes and `getFunction` picks one signature per EVAL type.
+    // A mixture whose aggregate is string-kind -- a string beside a number, a
+    // DATE beside a string (which additionally selects the compare-as-time
+    // signature, see [`gl_cmp_string_mode`]), or the JSON case Go also folds
+    // onto `ETString` -- therefore returns a string, where this table used to
+    // refuse the whole shape and no such call ran at all.
+    let aggregated =
+        tidb_datatype::agg_field_type(&typed.iter().map(|ft| (*ft).clone()).collect::<Vec<_>>());
+    if aggregated.eval_type().is_string_kind() {
+        let mut merged = FieldType::new(FieldTypeCode::VarString);
+        merged.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
         return Some(merged);
     }
     if typed.iter().any(|ft| ft.code() != first.code()) {

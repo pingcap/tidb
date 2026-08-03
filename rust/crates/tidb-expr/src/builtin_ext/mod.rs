@@ -31,6 +31,7 @@ pub(crate) mod misc;
 pub(crate) mod regexp;
 pub(crate) mod string2;
 
+pub(crate) use compare2::{extremum_with_mode, GlCmpStringMode};
 pub(crate) use json::{cast_as_json, cast_as_json_typed, dispatch_typed as json_dispatch_typed};
 pub(crate) use string2::find_in_set_with_collation;
 

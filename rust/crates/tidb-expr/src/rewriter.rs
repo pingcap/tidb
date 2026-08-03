@@ -38,7 +38,7 @@ use crate::EvalError;
 use tidb_ast::{BinaryOp, CiString, Expr, IsTarget, UnaryOp};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
-mod result_type;
+pub(crate) mod result_type;
 
 pub use result_type::set_numeric_len_from_args;
 use result_type::{

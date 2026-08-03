@@ -759,6 +759,30 @@ impl ScalarFunction {
                     let vals = [self.args[0].eval(ctx, row)?, self.args[1].eval(ctx, row)?];
                     return crate::builtin_ext::find_in_set_with_collation(&vals, collation);
                 }
+                // Go `greatestFunctionClass`/`leastFunctionClass`: the
+                // ETString signature compares under `b.collation`, and
+                // `resolveType4Extremum` may instead have selected the
+                // compare-as-time signature from the argument FieldTypes.
+                // Neither is visible to the values-only dispatch below.
+                "greatest" | "least" if !self.args.is_empty() => {
+                    let vals: Vec<Datum> = self
+                        .args
+                        .iter()
+                        .map(|a| a.eval(ctx, row))
+                        .collect::<Result<_, _>>()?;
+                    let want = if name == "greatest" {
+                        std::cmp::Ordering::Greater
+                    } else {
+                        std::cmp::Ordering::Less
+                    };
+                    return crate::builtin_ext::extremum_with_mode(
+                        &vals,
+                        want,
+                        crate::rewriter::result_type::gl_cmp_string_mode(&self.args),
+                        collation,
+                        ctx,
+                    );
+                }
                 "field" if self.args.len() >= 2 => {
                     let vals: Vec<Datum> = self
                         .args
