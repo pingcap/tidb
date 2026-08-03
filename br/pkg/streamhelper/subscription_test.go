@@ -5,6 +5,7 @@ package streamhelper_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -265,4 +266,68 @@ func TestEncounterError(t *testing.T) {
 	}, 3*time.Second, 100*time.Millisecond)
 	sub.HandleErrors(context.Background())
 	require.NoError(t, sub.PendingErrors())
+}
+
+func TestSubscriptionIdleTimeoutClearsCacheBeforeRetry(t *testing.T) {
+	req := require.New(t)
+	ctx := context.Background()
+	c := createFakeCluster(t, 1, true)
+	installSubscribeSupport(c)
+
+	clearedCache := make(chan uint64, 1)
+	c.onClearCache = func(storeID uint64) error {
+		select {
+		case clearedCache <- storeID:
+		default:
+		}
+		return nil
+	}
+
+	sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
+	defer sub.Drop()
+	req.NoError(sub.UpdateStoreTopology(ctx))
+	req.Eventually(func() bool {
+		err := sub.PendingErrors()
+		return err != nil && strings.Contains(err.Error(), "while receiving from")
+	}, 3*time.Second, 10*time.Millisecond)
+
+	sub.HandleErrors(ctx)
+	req.NoError(sub.PendingErrors())
+	req.Eventually(func() bool {
+		return len(clearedCache) > 0
+	}, 3*time.Second, 10*time.Millisecond)
+
+	cp := c.advanceCheckpoints()
+	c.flushAll()
+	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
+	req.Eventually(func() bool {
+		for {
+			select {
+			case event := <-sub.Events():
+				s.Merge(event)
+			default:
+				return s.MinValue() == cp
+			}
+		}
+	}, 3*time.Second, 10*time.Millisecond)
+}
+
+func TestSubscriptionIdleTimeoutWhileSendingEvents(t *testing.T) {
+	req := require.New(t)
+	ctx := context.Background()
+	c := createFakeCluster(t, 4, true)
+	c.splitAndScatter(manyRegions(0, 1500)...)
+	installSubscribeSupport(c)
+
+	sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
+	defer sub.Drop()
+	req.NoError(sub.UpdateStoreTopology(ctx))
+
+	c.advanceCheckpoints()
+	c.flushAll()
+
+	req.Eventually(func() bool {
+		err := sub.PendingErrors()
+		return err != nil && strings.Contains(err.Error(), "has no activity")
+	}, 3*time.Second, 10*time.Millisecond)
 }

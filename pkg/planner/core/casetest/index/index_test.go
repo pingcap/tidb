@@ -20,9 +20,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -304,13 +306,11 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Warning 1105 analyzing vector index is not supported, skip idx",
 		"Warning 1105 analyzing vector index is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/1) as the sample-rate=1\"",
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
 		"Warning 1105 analyzing vector index is not supported, skip idx",
 		"Warning 1105 analyzing vector index is not supported, skip idx2"))
@@ -333,14 +333,116 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing vector index is not supported, skip idx2",
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx"))
+		"Warning 1105 analyzing vector index is not supported, skip idx",
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tk.MustExec("analyze table t index a")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tk.MustExec("analyze table t index a, idx, idx2")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing vector index is not supported, skip idx2",
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
+}
+
+func TestPartialIndexWithPlanCache(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
+
+		stmt := "select * from t where a = ?"
+		if cascades == "on" {
+			stmt = "select a from t where a = ?"
+		}
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", stmt))
+		tk.MustExec("set @a = 123")
+
+		// IS NOT NULL pre condition can use plan cache.
+		tk.MustExec("execute stmt using @a")
+		tk.MustExec("execute stmt using @a")
+		tkProcess := tk.Session().ShowProcess()
+		ps := []*util.ProcessInfo{tkProcess}
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx1")
+		tk.MustExec("execute stmt using @a")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+		// Normal pre condition can not use plan cache.
+		stmt = "select * from t where b = ?"
+		if cascades == "on" {
+			stmt = "select b from t where b = ?"
+		}
+		tk.MustExec(fmt.Sprintf("prepare stmt from '%s'", stmt))
+		tk.MustExec("set @a = 20")
+		tk.MustExec("execute stmt using @a")
+		tk.MustExec("execute stmt using @a")
+		tkProcess = tk.Session().ShowProcess()
+		ps[0] = tkProcess
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx2")
+		tk.MustExec("execute stmt using @a")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	})
+}
+
+func TestPartialIndexWithIndexPrune(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
+		query := "explain select * from t use index(idx1) where a > 1"
+		if cascades == "on" {
+			query = "explain select a from t use index(idx1) where a > 1"
+		}
+		tk.MustQuery(query).CheckContain("idx1")
+
+		tk.MustExec("set @@tidb_opt_index_prune_threshold=0")
+
+		fpName := "github.com/pingcap/tidb/pkg/planner/core/rule/InjectCheckForIndexPrune"
+		require.NoError(t, failpoint.EnableCall(fpName, func(paths []*plannerutil.AccessPath) {
+			for _, path := range paths {
+				if path != nil && path.Index != nil && path.Index.ConditionExprString != "" {
+					require.True(t, false, "Partial index should be pruned")
+				}
+			}
+		}))
+		tk.MustQuery("select * from t")
+
+		require.NoError(t, failpoint.EnableCall(fpName, func(paths []*plannerutil.AccessPath) {
+			idx2Found := false
+			for _, path := range paths {
+				if path != nil && path.Index != nil && path.Index.Name.L == "idx1" {
+					require.True(t, false, "Partial index idx1 should be pruned")
+				}
+				if path != nil && path.Index != nil && path.Index.Name.L == "idx2" {
+					idx2Found = true
+				}
+			}
+			require.True(t, idx2Found, "Partial index idx2 should not be pruned")
+		}))
+		tk.MustQuery("explain select * from t order by b").CheckNotContain("idx2")
+
+		require.NoError(t, failpoint.EnableCall(fpName, func(paths []*plannerutil.AccessPath) {
+			idx1Found := false
+			for _, path := range paths {
+				if path != nil && path.Index != nil && path.Index.Name.L == "idx2" {
+					require.True(t, false, "Partial index idx2 should be pruned")
+				}
+				if path != nil && path.Index != nil && path.Index.Name.L == "idx1" {
+					idx1Found = true
+				}
+			}
+			require.True(t, idx1Found, "Partial index idx1 should not be pruned")
+		}))
+		tk.MustQuery("explain select * from t where a is null").CheckNotContain("idx1")
+		require.NoError(t, failpoint.Disable(fpName))
+	})
 }

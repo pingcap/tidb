@@ -136,13 +136,13 @@ Projection_15	2.00	root		planner__core__rule_constant_propagation.t.id, planner_
 └─HashJoin_17	2.00	root		inner join, equal:[eq(planner__core__rule_constant_propagation.s.id, planner__core__rule_constant_propagation.t.id)]
   ├─Selection_18(Build)	1.60	root		not(isnull(planner__core__rule_constant_propagation.s.id))
   │ └─TopN_19	2.00	root		planner__core__rule_constant_propagation.s.id, offset:0, count:2
-  │   └─TableReader_27	2.00	root		data:TopN_26
-  │     └─TopN_26	2.00	cop[tikv]		planner__core__rule_constant_propagation.s.id, offset:0, count:2
-  │       └─Selection_25	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1)
-  │         └─TableFullScan_24	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-  └─TableReader_30(Probe)	9990.00	root		data:Selection_29
-    └─Selection_29	9990.00	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.id))
-      └─TableFullScan_28	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  │   └─TableReader_28	2.00	root		data:TopN_27
+  │     └─TopN_27	2.00	cop[tikv]		planner__core__rule_constant_propagation.s.id, offset:0, count:2
+  │       └─Selection_26	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1)
+  │         └─TableFullScan_25	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+  └─TableReader_31(Probe)	9990.00	root		data:Selection_30
+    └─Selection_30	9990.00	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.id))
+      └─TableFullScan_29	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t, s;
 create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));

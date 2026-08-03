@@ -139,6 +139,8 @@ const (
 	AvgQueuedRcTimeStr                = "AVG_QUEUED_RC_TIME"
 	MaxQueuedRcTimeStr                = "MAX_QUEUED_RC_TIME"
 	ResourceGroupName                 = "RESOURCE_GROUP"
+	StorageKVStr                      = "STORAGE_KV"
+	StorageMPPStr                     = "STORAGE_MPP"
 )
 
 type columnInfo interface {
@@ -497,6 +499,12 @@ var columnFactoryMap = map[string]columnFactory{
 	},
 	PlanCacheUnqualifiedLastReasonStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.PlanCacheUnqualifiedLastReason
+	},
+	StorageKVStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.StorageKV
+	},
+	StorageMPPStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.StorageMPP
 	},
 }
 

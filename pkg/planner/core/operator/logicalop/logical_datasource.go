@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -29,6 +30,7 @@ import (
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
+	"github.com/pingcap/tidb/pkg/planner/core/partidx"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -69,8 +71,15 @@ type DataSource struct {
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
 
-	// PossibleAccessPaths stores all the possible access path for physical plan, including table scan.
+	// PossibleAccessPaths stores all the possible access path for one specific logical alternative.
+	// because different logical alternative may have different filter condition, so the possible access path may be different.
+	// like:
+	// * special rule XForm will gen additional selection which will be push down to a ds alternative.
+	// * correlate rule XForm will gen additional correlated condition which will be push down to a ds alternative.
+	// No matter whether the newly generated ds is always good or not, we should both derive the stats from the conditions we so far.
 	PossibleAccessPaths []*util.AccessPath
+	// AllPossibleAccessPaths stores all the possible access paths before pruning.
+	AllPossibleAccessPaths []*util.AccessPath
 
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
@@ -84,7 +93,8 @@ type DataSource struct {
 	UnMutableHandleCols util.HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
-	TblCols []*expression.Column
+	TblCols     []*expression.Column
+	TblColsByID map[int64]*expression.Column
 	// CommonHandleCols and CommonHandleLens save the info of primary key which is the clustered index.
 	CommonHandleCols []*expression.Column
 	CommonHandleLens []int
@@ -114,6 +124,11 @@ type DataSource struct {
 	// It's calculated after we generated the access paths and estimated row count for them, and before entering findBestTask.
 	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
 	AccessPathMinSelectivity float64
+
+	// InterestingColumns stores columns from this DataSource that are used in the query.
+	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
+	// index pruning early in the planning phase - which is an approximate heuristic.
+	InterestingColumns []*expression.Column
 }
 
 // Init initializes DataSource.
@@ -368,9 +383,8 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([][]*expression.Column, 0, len(ds.PossibleAccessPaths))
-
-	for _, path := range ds.PossibleAccessPaths {
+	result := make([][]*expression.Column, 0, len(ds.AllPossibleAccessPaths))
+	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsIntHandlePath {
 			col := ds.GetPKIsHandleCol()
 			if col != nil {
@@ -390,6 +404,11 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*
 		}
 	}
 	return result
+}
+
+// IsSingleScan checks whether the access path can be a single scan.
+func (ds *DataSource) IsSingleScan(cols []*expression.Column, colLens []int) bool {
+	return utilfuncp.IsSingleScan(ds, cols, colLens)
 }
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.LogicalPlan.<14th> implementation.
@@ -556,6 +575,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 	is := LogicalIndexScan{
 		Source:         ds,
 		IsDoubleRead:   false,
+		NotAlwaysValid: path.PartIdxCondNotAlwaysValid,
 		Index:          path.Index,
 		FullIdxCols:    path.FullIdxCols,
 		FullIdxColLens: path.FullIdxColLens,
@@ -566,7 +586,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
 	is.SetSchema(ds.Schema())
-	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.Schema().Columns, is.Index)
+	is.IdxCols, is.IdxColLens = util.IndexInfo2PrefixCols(is.Columns, is.Schema().Columns, is.Index)
 
 	sg := TiKVSingleGather{
 		Source:        ds,
@@ -580,18 +600,25 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 
 // Convert2Gathers builds logical TiKVSingleGathers from DataSource.
 func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
-	tg := ds.buildTableGather()
-	gathers = append(gathers, tg)
+	ds.CheckPartialIndexes()
 	for _, path := range ds.PossibleAccessPaths {
-		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
-			// If index columns can cover all the needed columns, we can use a IndexGather + IndexScan.
-			if utilfuncp.IsSingleScan(ds, path.FullIdxCols, path.FullIdxColLens) {
-				gathers = append(gathers, ds.buildIndexGather(path))
-			}
-			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
+		if path.IsTablePath() {
+			gathers = append(gathers, ds.buildTableGather())
+			continue
 		}
+		if path.IsIntHandlePath {
+			continue
+		}
+		path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
+			util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+		// If index columns can cover all the needed columns, we can use a IndexGather + IndexScan.
+		if utilfuncp.IsSingleScan(ds, path.FullIdxCols, path.FullIdxColLens) {
+			gathers = append(gathers, ds.buildIndexGather(path))
+		}
+		// TODO: If index columns can not cover the schema, use IndexLookUpGather.
+	}
+	if len(gathers) == 0 {
+		gathers = append(gathers, ds.buildTableGather())
 	}
 	return gathers
 }
@@ -676,4 +703,103 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		}
 	}
 	return resultColumn, resultColumnInfo
+}
+
+// AppendTableCol appends a column to the original columns of the table before pruning,
+// accessed through ds.TblCols and ds.TblColsByID.
+func (ds *DataSource) AppendTableCol(col *expression.Column) {
+	ds.TblCols = append(ds.TblCols, col)
+	ds.TblColsByID[col.ID] = col
+}
+
+// CheckPartialIndexes checks and removes the partial indexes that cannot be used according to the pushed down conditions.
+// It will go through each partial index to see whether it's condition constraints are all satisfied by the pushed down conditions.
+// Detailed checking can be found in the comment of `CheckConstraints`.
+// And we specially implement a `AlwaysMeetConstraints` function for IS NOT NULL constraint to make it suitable for plan cache.
+// It's a special handler now, and it's not easy to extend to other constraints.
+func (ds *DataSource) CheckPartialIndexes() {
+	var removedPaths map[int64]struct{}
+	partialIndexUsedHint, hasPartialIndex := false, false
+	for _, path := range ds.PossibleAccessPaths {
+		// If there is no condition expression, it is not a partial index.
+		// So we skip it directly.
+		if path.Index == nil || !path.Index.HasCondition() {
+			continue
+		}
+		hasPartialIndex = true
+		valid, notAlwaysValid := ds.CheckPartialIndexByFilters(path.Index, ds.PushedDownConds)
+		if !valid {
+			if removedPaths == nil {
+				removedPaths = make(map[int64]struct{})
+			}
+			removedPaths[path.Index.ID] = struct{}{}
+			continue
+		}
+		if path.Forced {
+			partialIndexUsedHint = true
+		}
+		// A special handler for plan cache.
+		// We only do it for single IS NOT NULL constraint now.
+		if ds.SCtx().GetSessionVars().StmtCtx.UseCache() {
+			path.PartIdxCondNotAlwaysValid = notAlwaysValid
+		}
+	}
+	// 1. No partial index,
+	// 2. Or no partial index is removed and no partial index is used by hint.
+	// In these cases, we don't need to do anything.
+	if !hasPartialIndex || (len(removedPaths) == 0 && !partialIndexUsedHint) {
+		return
+	}
+	checkIndex := func(path *util.AccessPath, checkForced bool) bool {
+		isRemoved := false
+		if path.Index != nil {
+			_, isRemoved = removedPaths[path.Index.ID]
+		}
+		return isRemoved || (checkForced && !path.Forced)
+	}
+	if partialIndexUsedHint {
+		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, true)
+		})
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, true)
+		})
+	} else {
+		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, false)
+		})
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, false)
+		})
+	}
+}
+
+// CheckPartialIndexByFilters checks if filters can prove the partial index condition.
+// The second return value indicates whether the condition cannot be guaranteed for all parameter values.
+func (ds *DataSource) CheckPartialIndexByFilters(index *model.IndexInfo, filters []expression.Expression) (valid bool, notAlwaysValid bool) {
+	if index == nil || !index.HasCondition() {
+		return true, false
+	}
+	columnNames := make(types.NameSlice, 0, ds.schema.Len())
+	for i := range ds.Schema().Columns {
+		columnNames = append(columnNames, &types.FieldName{
+			TblName: ds.TableInfo.Name,
+			ColName: ds.Columns[i].Name,
+		})
+	}
+	expr, err := expression.ParseSimpleExpr(ds.SCtx().GetExprCtx(), index.ConditionExprString, expression.WithInputSchemaAndNames(ds.schema, columnNames, ds.TableInfo))
+	if err != nil {
+		return false, false
+	}
+	cnfExprs := expression.SplitCNFItems(expr)
+	exprCtx := ds.SCtx().GetExprCtx()
+	normalizedFilters := make([]expression.Expression, len(filters))
+	for i, filter := range filters {
+		normalizedFilters[i] = expression.PushDownNot(exprCtx, filter)
+		normalizedFilters[i] = expression.EliminateNoPrecisionLossCast(exprCtx, normalizedFilters[i])
+	}
+	if !partidx.CheckConstraints(ds.SCtx(), cnfExprs, normalizedFilters) {
+		return false, false
+	}
+	return true, !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, normalizedFilters)
 }

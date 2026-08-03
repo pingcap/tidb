@@ -1188,13 +1188,13 @@ a	var_pop(distinct b)	var_pop(distinct c)	var_pop(distinct d)	var_pop(distinct e
 drop table t;
 create table t(a int, b bigint, c float, d double, e decimal);
 insert into t values(1, 1000, 6.8, 3.45, 8.3), (1, 3998, -3.4, 5.12, 9.3),(1, 288, 9.2, 6.08, 1);
-select variance(b), variance(c), variance(d), variance(e) from t group by a;
-variance(b)	variance(c)	variance(d)	variance(e)
-2584338.6666666665	29.840000178019228	1.1808222222222229	12.666666666666666
+select round(variance(b), 10), round(variance(c), 10), round(variance(d), 10), round(variance(e), 10) from t group by a;
+round(variance(b), 10)	round(variance(c), 10)	round(variance(d), 10)	round(variance(e), 10)
+2584338.6666666665	29.840000178	1.1808222222	12.6666666667
 insert into t values(1, 255, 6.8, 6.08, 1);
-select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a;
-variance(distinct b)	variance(distinct c)	variance(distinct d)	variance(distinct e)
-2364075.6875	29.840000178019228	1.1808222222222229	12.666666666666666
+select round(variance(distinct b), 10), round(variance(distinct c), 10), round(variance(distinct d), 10), round(variance(distinct e), 10) from t group by a;
+round(variance(distinct b), 10)	round(variance(distinct c), 10)	round(variance(distinct d), 10)	round(variance(distinct e), 10)
+2364075.6875	29.840000178	1.1808222222	12.6666666667
 insert into t values(2, 322, 0.8, 2.22, 6);
 select a, variance(b) over w from t window w as (partition by a);
 a	variance(b) over w

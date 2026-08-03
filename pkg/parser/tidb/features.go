@@ -34,6 +34,8 @@ const (
 	FeatureIDResourceGroup = "resource_group"
 	// FeatureIDGlobalIndex is the `Global Index` feature.
 	FeatureIDGlobalIndex = "global_index"
+	// FeatureIDAffinity is the `Affinity` feature.
+	FeatureIDAffinity = "affinity"
 	// FeatureIDPresplit is the pre-split feature.
 	FeatureIDPresplit = "pre_split"
 )
@@ -47,6 +49,7 @@ var featureIDs = map[string]struct{}{
 	FeatureIDPlacement:      {},
 	FeatureIDTTL:            {},
 	FeatureIDGlobalIndex:    {},
+	FeatureIDAffinity:       {},
 	FeatureIDPresplit:       {},
 }
 

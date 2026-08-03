@@ -82,11 +82,11 @@ func TestShowStatsMeta(t *testing.T) {
 	require.Equal(t, "p0", result.Rows()[1][2])
 
 	// For static partitioned table, there is no global table.
-	tk.MustExec("set @@global.tidb_partition_prune_mode='static'")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int) partition by range(a) (partition p0 values less than (6))")
 	tk.MustExec(`insert into t values (1, 1)`)
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	result = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 1)
 	require.Equal(t, "test", result.Rows()[0][0])
@@ -512,4 +512,41 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	rows = tk.MustQuery("show analyze status").Rows()
 	require.Len(t, rows, 2)
 	require.Equal(t, "merge global stats for test.t2's index idx", rows[0][3])
+
+	tk.MustExec("delete from mysql.analyze_jobs")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3 (a int, b int, primary key(a))")
+	tk.MustExec(`insert into t3 values (1, 1), (2, 2)`)
+	tk.MustExec("analyze table t3")
+	tk.MustExec("delete from mysql.analyze_jobs")
+
+	originalTZ := tk.MustQuery("select @@time_zone").Rows()[0][0]
+	defer func() {
+		tk.MustExec("set @@time_zone = ?", originalTZ)
+	}()
+	tk.MustExec("set @@time_zone = '+08:00'")
+	tk.MustExec(`insert into mysql.analyze_jobs (
+		table_schema,
+		table_name,
+		partition_name,
+		job_info,
+		processed_rows,
+		start_time,
+		state,
+		instance
+	) values (
+		'test',
+		't3',
+		'',
+		'analyze table all indexes, all columns with 256 buckets, 100 topn, 1 samplerate',
+		1,
+		CURRENT_TIMESTAMP - INTERVAL 1 MINUTE,
+		'running',
+		'127.0.0.1:4000'
+	)`)
+	rows = tk.MustQuery("show analyze status where table_name = 't3' and state = 'running'").Rows()
+	require.Len(t, rows, 1)
+	remainingDuration, err := time.ParseDuration(rows[0][11].(string))
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, remainingDuration, time.Duration(0))
 }

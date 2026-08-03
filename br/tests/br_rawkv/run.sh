@@ -22,6 +22,8 @@ export ENABLE_ENCRYPTION_CHECK
 
 set -eux
 
+res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
+
 # restart service without tiflash
 source $UTILS_DIR/run_services
 start_services --no-tiflash
@@ -128,6 +130,22 @@ run_test() {
 
     if [ "$checksum_new" != "$checksum_empty" ];then
         echo "failed to delete data in range"
+        fail_and_exit
+    fi
+
+    # failed on restore full
+    echo "restore full start..."
+    restore_fail=0
+    run_br --pd $PD_ADDR restore full -s "local://$BACKUP_DIR" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef" > $res_file 2>&1 || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
+        echo 'full restore from raw backup data success'
+        exit 1
+    fi
+    check_contains "restore mode mismatch"
+
+    checksum_new=$(checksum 31 3130303030303030)
+    if [ "$checksum_new" != "$checksum_empty" ]; then
+        echo "not empty after restore failed"
         fail_and_exit
     fi
 

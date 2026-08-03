@@ -42,7 +42,7 @@ func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 // HGet gets the value of a hash field.
 func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	dataKey := t.encodeHashDataKey(key, field)
-	value, err := t.reader.Get(context.TODO(), dataKey)
+	value, err := kv.GetValue(context.TODO(), t.reader, dataKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
@@ -267,6 +267,10 @@ func (t *TxStructure) IterateHashWithBoundedKey(hashStartKey []byte, hashEndKey 
 	for it.Valid() {
 		key, field, err = t.decodeHashDataKey(it.Key())
 		if err != nil {
+			err = it.Next()
+			if err != nil {
+				return errors.Trace(err)
+			}
 			continue
 		}
 		if err = fn(key, field, it.Value()); err != nil {
@@ -389,7 +393,7 @@ func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (b
 }
 
 func (t *TxStructure) loadHashValue(dataKey []byte) ([]byte, error) {
-	v, err := t.reader.Get(context.TODO(), dataKey)
+	v, err := kv.GetValue(context.TODO(), t.reader, dataKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 		v = nil

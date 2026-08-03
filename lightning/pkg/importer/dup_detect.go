@@ -289,6 +289,7 @@ func (d *dupDetector) addKeysByChunk(
 		}
 		kv.ClearRow(row)
 
+		parser.RecycleRow(lastRow)
 		offset, _ = parser.Pos()
 		if err := parser.ReadRow(); err != nil {
 			if errors.Cause(err) == io.EOF {

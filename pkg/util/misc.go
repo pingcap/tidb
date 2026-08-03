@@ -65,7 +65,7 @@ const (
 // RunWithRetry will run the f with backoff and retry.
 // retryCnt: Max retry count
 // backoff: When run f failed, it will sleep backoff * triedCount time.Millisecond.
-// Function f should have two return value. The first one is an bool which indicate if the err if retryable.
+// Function f should have two return value. The first one is an bool which indicate if the err is retryable.
 // The second is if the f meet any error.
 func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err error) {
 	for i := 1; i <= retryCnt; i++ {
@@ -707,12 +707,14 @@ func createTLSCertificates(certpath string, keypath string, rsaKeySize int) erro
 // GetTypeFlagsForInsert gets the type flags for insert statement.
 func GetTypeFlagsForInsert(baseFlags types.Flags, sqlMode mysql.SQLMode, ignoreErr bool) types.Flags {
 	strictSQLMode := sqlMode.HasStrictMode()
+	// see comments in ResetContextOfStmt for WithAllowNegativeToUnsigned part.
 	return baseFlags.
 		WithTruncateAsWarning(!strictSQLMode || ignoreErr).
 		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!sqlMode.HasNoZeroInDateMode() ||
 			!sqlMode.HasNoZeroDateMode() || !strictSQLMode || ignoreErr ||
-			sqlMode.HasAllowInvalidDatesMode())
+			sqlMode.HasAllowInvalidDatesMode()).
+		WithAllowNegativeToUnsigned(false)
 }
 
 // GetTypeFlagsForImportInto gets the type flags for import into statement which

@@ -734,8 +734,11 @@ type copIteratorWorker struct {
 	req      *kv.Request
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
-	vars     *tikv.Variables
-	kvclient *txnsnapshot.ClientHelper
+	// requestRateLimit controls the aggregate number of in-flight cop requests.
+	// The token lifecycle is tied to one send attempt instead of response consumption.
+	requestRateLimit *util.RateLimit
+	vars             *tikv.Variables
+	kvclient         *txnsnapshot.ClientHelper
 
 	memTracker *memory.Tracker
 
@@ -916,6 +919,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		req:                     it.req,
 		respChan:                it.respChan,
 		finishCh:                it.finishCh,
+		requestRateLimit:        it.req.CoprRequestRateLimit,
 		vars:                    it.vars,
 		kvclient:                txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
 		memTracker:              it.memTracker,
@@ -1021,6 +1025,11 @@ func (it *copIterator) GetBuildTaskElapsed() time.Duration {
 // GetSendRate returns the rate-limit object.
 func (it *copIterator) GetSendRate() *util.RateLimit {
 	return it.sendRate
+}
+
+// GetRequestRateLimit returns the shared request rate-limit object.
+func (it *copIterator) GetRequestRateLimit() *util.RateLimit {
+	return it.req.CoprRequestRateLimit
 }
 
 // GetTasks returns the built tasks.
@@ -1377,8 +1386,26 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		req.ReplicaReadType = options.GetTiKVReplicaReadType(kv.ReplicaReadFollower)
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
-	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
-		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
+
+	if worker.requestRateLimit != nil {
+		exit := worker.requestRateLimit.GetToken(worker.finishCh)
+		if exit {
+			return nil, nil
+		}
+	}
+	// Keep the request-rate token and send attempt in a small scope so the
+	// token is released immediately after the send attempt returns, while
+	// still remaining panic-safe.
+	resp, rpcCtx, storeAddr, err := func() (*tikvrpc.Response, *tikv.RPCContext, string, error) {
+		defer func() {
+			if worker.requestRateLimit != nil {
+				worker.requestRateLimit.PutToken()
+			}
+		}()
+		failpoint.InjectCall("onBeforeSendReqCtx", req)
+		return worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
+			timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
+	}()
 	err = derr.ToTiDBErr(err)
 	if worker.req.RunawayChecker != nil {
 		err = worker.req.RunawayChecker.CheckThresholds(nil, 0, err)
@@ -1552,10 +1579,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
 
-		firstRangeStartKey := task.ranges.At(0).StartKey
-		lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
-
-		logutil.Logger(bo.GetCtx()).Warn("other error",
+		otherErrFields := []zap.Field{
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.GetID()),
 			zap.Uint64("regionVer", task.region.GetVer()),
@@ -1563,10 +1587,18 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			zap.Uint64("bucketsVer", task.bucketsVer),
 			zap.Uint64("latestBucketsVer", resp.pbResp.GetLatestBucketsVersion()),
 			zap.Int("rangeNums", task.ranges.Len()),
-			zap.ByteString("firstRangeStartKey", firstRangeStartKey),
-			zap.ByteString("lastRangeEndKey", lastRangeEndKey),
 			zap.String("storeAddr", task.storeAddr),
-			zap.String("error", otherErr))
+			zap.String("error", otherErr),
+		}
+		// A rangeless task (e.g. a BroadcastQuery request) has no ranges, so
+		// guard At(0)/At(Len-1) to avoid a nil dereference.
+		if task.ranges.Len() > 0 {
+			otherErrFields = append(otherErrFields,
+				zap.ByteString("firstRangeStartKey", task.ranges.At(0).StartKey),
+				zap.ByteString("lastRangeEndKey", task.ranges.At(task.ranges.Len()-1).EndKey),
+			)
+		}
+		logutil.Logger(bo.GetCtx()).Warn("other error", otherErrFields...)
 		if strings.Contains(err.Error(), "write conflict") {
 			return nil, kv.ErrWriteConflict.FastGen("%s", otherErr)
 		}
@@ -1696,10 +1728,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		if otherErr := batchResp.GetOtherError(); otherErr != "" {
 			err := errors.Errorf("other error: %s", otherErr)
 
-			firstRangeStartKey := task.ranges.At(0).StartKey
-			lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
-
-			logutil.Logger(bo.GetCtx()).Warn("other error",
+			otherErrFields := []zap.Field{
 				zap.Uint64("txnStartTS", worker.req.StartTs),
 				zap.Uint64("regionID", task.region.GetID()),
 				zap.Uint64("regionVer", task.region.GetVer()),
@@ -1708,10 +1737,18 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				// TODO: add bucket version in log
 				//zap.Uint64("latestBucketsVer", batchResp.GetLatestBucketsVersion()),
 				zap.Int("rangeNums", task.ranges.Len()),
-				zap.ByteString("firstRangeStartKey", firstRangeStartKey),
-				zap.ByteString("lastRangeEndKey", lastRangeEndKey),
 				zap.String("storeAddr", task.storeAddr),
-				zap.Error(err))
+				zap.Error(err),
+			}
+			// A rangeless task (e.g. a BroadcastQuery request) has no ranges, so
+			// guard At(0)/At(Len-1) to avoid a nil dereference.
+			if task.ranges.Len() > 0 {
+				otherErrFields = append(otherErrFields,
+					zap.ByteString("firstRangeStartKey", task.ranges.At(0).StartKey),
+					zap.ByteString("lastRangeEndKey", task.ranges.At(task.ranges.Len()-1).EndKey),
+				)
+			}
+			logutil.Logger(bo.GetCtx()).Warn("other error", otherErrFields...)
 			if strings.Contains(err.Error(), "write conflict") {
 				return batchRespList, nil, kv.ErrWriteConflict.FastGen("%s", otherErr)
 			}
@@ -1728,9 +1765,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		// when the error is generated by client or a load-based server busy,
 		// response is empty by design, skip warning for this case.
 		if len(batchResps) != 0 {
-			firstRangeStartKey := task.ranges.At(0).StartKey
-			lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
-			logutil.Logger(bo.GetCtx()).Error("response of batched task missing",
+			missingFields := []zap.Field{
 				zap.Uint64("id", task.taskID),
 				zap.Uint64("txnStartTS", worker.req.StartTs),
 				zap.Uint64("regionID", task.region.GetID()),
@@ -1738,9 +1773,17 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				zap.Uint64("regionConfVer", task.region.GetConfVer()),
 				zap.Uint64("bucketsVer", task.bucketsVer),
 				zap.Int("rangeNums", task.ranges.Len()),
-				zap.ByteString("firstRangeStartKey", firstRangeStartKey),
-				zap.ByteString("lastRangeEndKey", lastRangeEndKey),
-				zap.String("storeAddr", task.storeAddr))
+				zap.String("storeAddr", task.storeAddr),
+			}
+			// A rangeless task (e.g. a BroadcastQuery request) has no ranges, so
+			// guard At(0)/At(Len-1) to avoid a nil dereference.
+			if task.ranges.Len() > 0 {
+				missingFields = append(missingFields,
+					zap.ByteString("firstRangeStartKey", task.ranges.At(0).StartKey),
+					zap.ByteString("lastRangeEndKey", task.ranges.At(task.ranges.Len()-1).EndKey),
+				)
+			}
+			logutil.Logger(bo.GetCtx()).Error("response of batched task missing", missingFields...)
 		}
 		appendRemainTasks(t.task)
 	}
@@ -1777,9 +1820,18 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 		logutil.Logger(bo.GetCtx()).Debug("coprocessor encounters lock",
 			zap.Stringer("lock", lockErr))
 	}
+	var locks []*txnlock.Lock
+	if sharedLocks := lockErr.GetSharedLockInfos(); len(sharedLocks) > 0 {
+		locks = make([]*txnlock.Lock, 0, len(sharedLocks))
+		for _, l := range sharedLocks {
+			locks = append(locks, txnlock.NewLock(l))
+		}
+	} else {
+		locks = []*txnlock.Lock{txnlock.NewLock(lockErr)}
+	}
 	resolveLocksOpts := txnlock.ResolveLocksOptions{
 		CallerStartTS: worker.req.StartTs,
-		Locks:         []*txnlock.Lock{txnlock.NewLock(lockErr)},
+		Locks:         locks,
 		Detail:        resolveLockDetail,
 	}
 	resolveLocksRes, err1 := worker.kvclient.ResolveLocksWithOpts(bo.TiKVBackoffer(), resolveLocksOpts)

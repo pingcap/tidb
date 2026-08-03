@@ -5,10 +5,13 @@ package task
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
+	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
@@ -103,6 +106,58 @@ func TestTiDBConfigUnchanged(t *testing.T) {
 	require.NotEqual(t, config.GetGlobalConfig(), cfg)
 	restoreConfig()
 	require.Equal(t, config.GetGlobalConfig(), cfg)
+}
+
+func TestEnsureOperationContext(t *testing.T) {
+	t.Run("creates command boundary identity", func(t *testing.T) {
+		var cfg Config
+
+		require.NoError(t, cfg.EnsureOperationContext("log-restore"))
+
+		require.NotEmpty(t, cfg.OperationContext.OperationID)
+		require.False(t, cfg.OperationContext.StartedAt.IsZero())
+	})
+
+	t.Run("keeps existing identity snapshot", func(t *testing.T) {
+		startedAt := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+		cfg := Config{
+			OperationContext: operation.Context{
+				OperationID: "operation-id",
+				StartedAt:   startedAt,
+			},
+		}
+
+		require.NoError(t, cfg.EnsureOperationContext("log-restore"))
+
+		require.Equal(t, "operation-id", cfg.OperationContext.OperationID)
+		require.Equal(t, startedAt, cfg.OperationContext.StartedAt)
+	})
+
+	t.Run("rejects incomplete identity snapshot", func(t *testing.T) {
+		cfg := Config{
+			OperationContext: operation.Context{
+				OperationID: "operation-id",
+			},
+		}
+
+		err := cfg.EnsureOperationContext("log-restore")
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation started time")
+	})
+
+	t.Run("rejects started time without operation ID", func(t *testing.T) {
+		cfg := Config{
+			OperationContext: operation.Context{
+				StartedAt: time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC),
+			},
+		}
+
+		err := cfg.EnsureOperationContext("log-restore")
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation ID")
+	})
 }
 
 func TestStripingPDURL(t *testing.T) {
@@ -271,7 +326,7 @@ func expectedDefaultConfig() Config {
 		Checksum:                  true,
 		SendCreds:                 true,
 		CheckRequirements:         true,
-		FilterStr:                 []string(nil),
+		FilterStr:                 []string{"*.*"},
 		TableFilter:               filter.CaseInsensitive(must(filter.Parse([]string{"*.*"}))),
 		Schemas:                   map[string]struct{}{},
 		Tables:                    map[string]struct{}{},
@@ -293,31 +348,38 @@ func expectedDefaultBackupConfig() BackupConfig {
 		CompressionConfig: CompressionConfig{
 			CompressionType: backup.CompressionType_ZSTD,
 		},
-		IgnoreStats:     true,
-		UseBackupMetaV2: true,
-		UseCheckpoint:   true,
+		RangeLimit:       30000000,
+		IgnoreStats:      true,
+		UseBackupMetaV2:  true,
+		UseCheckpoint:    true,
+		TableConcurrency: 64,
 	}
 }
 
 func expectedDefaultRestoreConfig() RestoreConfig {
 	defaultConfig := expectedDefaultConfig()
-	defaultConfig.Concurrency = defaultRestoreConcurrency
 	return RestoreConfig{
 		Config: defaultConfig,
-		RestoreCommonConfig: RestoreCommonConfig{Online: false,
-			Granularity:               "fine-grained",
+		RestoreCommonConfig: RestoreCommonConfig{
+			Online:                    false,
+			Granularity:               "coarse-grained",
+			ConcurrencyPerStore:       kvconfig.ConfigTerm[uint]{Value: conn.DefaultImportNumGoroutines},
 			MergeSmallRegionSizeBytes: kvconfig.ConfigTerm[uint64]{Value: 0x6000000},
 			MergeSmallRegionKeyCount:  kvconfig.ConfigTerm[uint64]{Value: 0xea600},
 			WithSysTable:              true,
-			ResetSysUsers:             []string{"cloud_admin", "root"}},
-		NoSchema:            false,
-		LoadStats:           true,
-		PDConcurrency:       0x1,
-		StatsConcurrency:    0xc,
-		BatchFlushInterval:  16000000000,
-		DdlBatchSize:        0x80,
-		WithPlacementPolicy: "STRICT",
-		UseCheckpoint:       true,
+			ResetSysUsers:             []string{"cloud_admin", "root"},
+		},
+		NoSchema:                 false,
+		LoadStats:                true,
+		FastLoadSysTables:        true,
+		PDConcurrency:            0x1,
+		StatsConcurrency:         0xc,
+		BatchFlushInterval:       16000000000,
+		DdlBatchSize:             0x80,
+		RegionScanConcurrency:    256,
+		WithPlacementPolicy:      "STRICT",
+		UseCheckpoint:            true,
+		AllowPITRFromIncremental: true,
 	}
 }
 
@@ -377,6 +439,10 @@ func TestParseAndValidateMasterKeyInfo(t *testing.T) {
 							Vendor: "aws",
 							KeyId:  "key-id",
 							Region: "us-west-2",
+							AwsKms: &encryptionpb.AwsKms{
+								AccessKey:       "AKIAIOSFODNN7EXAMPLE",
+								SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+							},
 						},
 					},
 				},
@@ -438,6 +504,10 @@ func TestParseAndValidateMasterKeyInfo(t *testing.T) {
 							Vendor: "aws",
 							KeyId:  "key-id",
 							Region: "us-west-2",
+							AwsKms: &encryptionpb.AwsKms{
+								AccessKey:       "AKIAIOSFODNN7EXAMPLE",
+								SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+							},
 						},
 					},
 				},

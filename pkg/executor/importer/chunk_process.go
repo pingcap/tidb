@@ -50,10 +50,18 @@ var (
 type rowToEncode struct {
 	row   []types.Datum
 	rowID int64
-	// endOffset represents the offset after the current row in encode reader.
+	// endOffset represents the offset of lower level reader after parsing the
+	// current row , it mostly > the offset where parser has parsed.
+	// we use this offset for progress reporting, we meet a case in lightning
+	// that the parser parsed pos goes back, and negative delta causes prometheus
+	// panic, but we cannot reproduce it now. so we always use the lower level
+	// reader offset for this purpose.
 	// it will be negative if the data source is not file.
 	endOffset int64
-	resetFn   func()
+	// startPos is the offset when the parser start parsing current row.
+	// it will be negative if the data source is not file.
+	startPos int64
+	resetFn  func()
 }
 
 type encodeReaderFn func(ctx context.Context) (data rowToEncode, closed bool, err error)
@@ -68,7 +76,6 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 		}
 
 		err = parser.ReadRow()
-		// todo: we can implement a ScannedPos which don't return error, will change it later.
 		currOffset, _ := parser.ScannedPos()
 		switch errors.Cause(err) {
 		case nil:
@@ -77,7 +84,7 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 			err = nil
 			return
 		default:
-			err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(filename, currOffset)
+			err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(filename, readPos)
 			return
 		}
 		lastRow := parser.LastRow()
@@ -85,6 +92,7 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 			row:       lastRow.Row,
 			rowID:     lastRow.RowID,
 			endOffset: currOffset,
+			startPos:  readPos,
 			resetFn:   func() { parser.RecycleRow(lastRow) },
 		}
 		return
@@ -107,6 +115,7 @@ func queryRowEncodeReader(rowCh <-chan QueryRow) encodeReaderFn {
 				row:       row.Data,
 				rowID:     row.ID,
 				endOffset: -1,
+				startPos:  -1,
 				resetFn:   func() {},
 			}
 			return
@@ -173,7 +182,7 @@ type chunkEncoder struct {
 
 	chunkName string
 	logger    *zap.Logger
-	encoder   KVEncoder
+	encoder   *TableKVEncoder
 	keyspace  []byte
 
 	// total duration takes by read/encode.
@@ -189,7 +198,7 @@ func newChunkEncoder(
 	offset int64,
 	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error,
 	logger *zap.Logger,
-	encoder KVEncoder,
+	encoder *TableKVEncoder,
 	keyspace []byte,
 ) *chunkEncoder {
 	return &chunkEncoder{
@@ -266,6 +275,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		return nil
 	}
 
+	var rowNumber int
 	for {
 		readDurStart := time.Now()
 		data, closed, err := p.readFn(ctx)
@@ -275,6 +285,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		if closed {
 			break
 		}
+		rowNumber++
 		readDur += time.Since(readDurStart)
 
 		encodeDurStart := time.Now()
@@ -282,8 +293,8 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		currOffset = data.endOffset
 		data.resetFn()
 		if encodeErr != nil {
-			// todo: record and ignore encode error if user set max-errors param
-			return common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.endOffset)
+			err2 := common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.startPos)
+			return errors.Annotatef(err2, "when encoding %d-th data row in this chunk", rowNumber)
 		}
 		encodeDur += time.Since(encodeDurStart)
 
@@ -358,7 +369,7 @@ func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 // exported for test.
 func NewFileChunkProcessor(
 	parser mydump.Parser,
-	encoder KVEncoder,
+	encoder *TableKVEncoder,
 	keyspace []byte,
 	chunk *checkpoints.ChunkCheckpoint,
 	logger *zap.Logger,
@@ -501,7 +512,7 @@ type QueryRow struct {
 
 func newQueryChunkProcessor(
 	rowCh chan QueryRow,
-	encoder KVEncoder,
+	encoder *TableKVEncoder,
 	keyspace []byte,
 	logger *zap.Logger,
 	diskQuotaLock *syncutil.RWMutex,
@@ -535,17 +546,20 @@ func newQueryChunkProcessor(
 	}
 }
 
+// WriterFactory is a factory function to create a new index KV writer.
+type WriterFactory func(indexID int64) (*external.Writer, error)
+
 // IndexRouteWriter is a writer for index when using global sort.
 // we route kvs of different index to different writer in order to make
 // merge sort easier, else kv data of all subtasks will all be overlapped.
 type IndexRouteWriter struct {
 	writers       map[int64]*external.Writer
 	logger        *zap.Logger
-	writerFactory func(int64) *external.Writer
+	writerFactory WriterFactory
 }
 
 // NewIndexRouteWriter creates a new IndexRouteWriter.
-func NewIndexRouteWriter(logger *zap.Logger, writerFactory func(int64) *external.Writer) *IndexRouteWriter {
+func NewIndexRouteWriter(logger *zap.Logger, writerFactory WriterFactory) *IndexRouteWriter {
 	return &IndexRouteWriter{
 		writers:       make(map[int64]*external.Writer),
 		logger:        logger,
@@ -563,7 +577,11 @@ func (w *IndexRouteWriter) AppendRows(ctx context.Context, _ []string, rows enco
 		for _, item := range kvs {
 			writer, ok := w.writers[indexID]
 			if !ok {
-				writer = w.writerFactory(indexID)
+				var err error
+				writer, err = w.writerFactory(indexID)
+				if err != nil {
+					return errors.Trace(err)
+				}
 				w.writers[indexID] = writer
 			}
 			if err := writer.WriteRow(ctx, item.Key, item.Val, nil); err != nil {

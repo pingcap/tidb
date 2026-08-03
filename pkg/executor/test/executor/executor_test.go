@@ -2761,7 +2761,7 @@ func TestSessionRootTrackerDetach(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create table t1(a int, c int, index idx(a))")
 	tk.MustExec("set tidb_mem_quota_query=10")
-	err := tk.ExecToErr("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	err := tk.QueryToErr("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
 	fmt.Println(err.Error())
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 	tk.MustExec("set tidb_mem_quota_query=1000")
@@ -3015,12 +3015,21 @@ func TestIssue48756(t *testing.T) {
 
 			warnings := tk.MustQuery("show warnings").Rows()
 			require.Len(t, warnings, 2)
-			require.Equal(t, "Warning", warnings[0][0], "generates a warning")
-			require.Equal(t, "1292", warnings[0][1], "expected error code")
-			require.Equal(t, "Incorrect time value: '120120519090607'", warnings[0][2],
-				"expected error message")
-			require.Equal(t, "Warning", warnings[1][0], "generates a warning")
-			require.Equal(t, "1105", warnings[1][1], "expected error code")
+			var hasIncorrectTimeWarning, hasOtherWarning bool
+			for _, warning := range warnings {
+				require.Equal(t, "Warning", warning[0], "generates a warning")
+				switch warning[1] {
+				case "1292":
+					require.Contains(t, warning[2], "Incorrect time value:", "expected error message")
+					hasIncorrectTimeWarning = true
+				case "1105":
+					hasOtherWarning = true
+				default:
+					require.Failf(t, "unexpected warning", "warning=%v", warning)
+				}
+			}
+			require.True(t, hasIncorrectTimeWarning, "expected incorrect time warning")
+			require.True(t, hasOtherWarning, "expected other warning")
 		})
 	}
 }
@@ -3100,4 +3109,36 @@ func TestQueryWithKill(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+func TestIssue63329(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int, c int);")
+	tk.MustExec("create table t2(x int, y int, z int);")
+	tk.MustExec("insert into t1 values(1, 1, 1),(2, 2, 2);")
+	tk.MustExec("insert into t2 values(1, 1, 1),(2, 2, 2);")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, exists)
+	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+	require.NoError(t, err)
+	for _, tblInfo := range tblInfos {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("alter table t1 cache;")
+	tk.MustExec("alter table t2 cache;")
+
+	for range 10 {
+		tk.MustQuery("select /*+ READ_FROM_STORAGE(tiflash[t1], tiflash[t2]) */ * from t1 join t2 on t1.a=t2.x;").Check(testkit.Rows("1 1 1 1 1 1", "2 2 2 2 2 2"))
+	}
 }

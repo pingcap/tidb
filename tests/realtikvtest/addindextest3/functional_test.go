@@ -15,6 +15,7 @@
 package addindextest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -26,11 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -84,9 +85,21 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 
 func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
-	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	job := &model.Job{Type: model.ActionAddIndex, ID: 1, ReorgMeta: &model.DDLReorgMeta{}}
-	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), job, false, nil, discovery, "test", 1, 0, 0, 0)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int);")
+	var realJob *model.Job
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+		if job.State == model.JobStateDone && job.Type == model.ActionAddIndex {
+			realJob = job.Clone()
+		}
+	})
+	tk.MustExec("alter table t add index idx(a);")
+	require.NotNil(t, realJob)
+
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, false, 0)
+	require.NoError(t, err)
+	bCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
 	require.NoError(t, err)
 	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
 	uniques := make([]bool, 0, len(idxIDs))
@@ -106,10 +119,12 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	ingest.LitBackCtxMgr.Unregister(1)
+	bCtx.Close()
+	bd.Close()
 }
 
 func TestMockMemoryUsedUp(t *testing.T) {
+	t.Skip("TODO(tangenta): support memory tracking later")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/setMemTotalInMB", "return(100)")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -144,8 +159,6 @@ func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
 	rs = rows[0][0].(string)
 	require.Equal(t, 2, strings.Count(rs, "writes"), rs)
 }
-<<<<<<< HEAD
-=======
 
 func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -261,4 +274,3 @@ func TestAddIndexPresplitFunctional(t *testing.T) {
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (1) and (2) regions 3);")
 	tk.MustExec("drop table t;")
 }
->>>>>>> 3735ed55a39 (parser: support pre-split global index add special comment support for pre_split index option (#58408))

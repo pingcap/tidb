@@ -17,18 +17,22 @@ package variable_test
 import (
 	"context"
 	"math/rand"
+	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -141,9 +145,12 @@ func TestAllocMPPID(t *testing.T) {
 }
 
 func TestSlowLogFormat(t *testing.T) {
-	ctx := mock.NewContext()
-
-	seVar := ctx.GetSessionVars()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1,1), (2,2)")
+	seVar := tk.Session().GetSessionVars()
 	require.NotNil(t, seVar)
 
 	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
@@ -156,7 +163,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
-	execDetail := execdetails.ExecDetails{
+	execDetail := &execdetails.ExecDetails{
 		BackoffTime:  time.Millisecond,
 		RequestCount: 2,
 		ScanDetail: &util.ScanDetail{
@@ -169,6 +176,21 @@ func TestSlowLogFormat(t *testing.T) {
 				WaitTime:    time.Minute,
 			},
 		},
+	}
+	copExecDetail := execdetails.CopExecDetails{
+		BackoffTime:   execDetail.BackoffTime,
+		BackoffSleep:  execDetail.BackoffSleep,
+		BackoffTimes:  execDetail.BackoffTimes,
+		CalleeAddress: execDetail.CalleeAddress,
+		TimeDetail:    execDetail.TimeDetail,
+	}
+	if execDetail.ScanDetail != nil {
+		copExecDetail.ScanDetail = *execDetail.ScanDetail
+	}
+	tikvExecDetail := util.ExecDetails{
+		WaitKVRespDuration: (10 * time.Second).Nanoseconds(),
+		WaitPDRespDuration: (11 * time.Second).Nanoseconds(),
+		BackoffDuration:    (12 * time.Second).Nanoseconds(),
 	}
 	usedStats1 := &stmtctx.UsedStatsInfoForTable{
 		Name:                  "t1",
@@ -261,9 +283,16 @@ func TestSlowLogFormat(t *testing.T) {
 # Resource_group: rg1
 # Request_unit_read: 50
 # Request_unit_write: 100.56
-# Time_queued_by_rc: 0.134`
+# Time_queued_by_rc: 0.134
+# Storage_from_kv: true
+# Storage_from_mpp: false`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
+	ruDetails := util.NewRUDetailsWith(50.0, 100.56, 134*time.Millisecond)
+	seVar.DurationParse = 10
+	seVar.DurationCompile = 10
+	seVar.DurationOptimization = 10
+	seVar.DurationWaitTS = 3
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		KeyspaceName:      "keyspace_a",
@@ -271,22 +300,16 @@ func TestSlowLogFormat(t *testing.T) {
 		SQL:               sql,
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
-		TimeParse:         time.Duration(10),
-		TimeCompile:       time.Duration(10),
-		TimeOptimize:      time.Duration(10),
-		TimeWaitTS:        time.Duration(3),
 		IndexNames:        "[t1:a,t2:b]",
 		CopTasks:          copTasks,
 		ExecDetail:        execDetail,
+		KVExecDetail:      &tikvExecDetail,
 		MemMax:            memMax,
 		DiskMax:           diskMax,
 		Prepared:          true,
 		PlanFromCache:     true,
 		PlanFromBinding:   true,
 		HasMoreResults:    true,
-		KVTotal:           10 * time.Second,
-		PDTotal:           11 * time.Second,
-		BackoffTotal:      12 * time.Second,
 		WriteSQLRespTotal: 1 * time.Second,
 		ResultRows:        12345,
 		Succ:              true,
@@ -301,19 +324,136 @@ func TestSlowLogFormat(t *testing.T) {
 		IsWriteCacheTable: true,
 		UsedStats:         &stmtctx.UsedStatsInfo{},
 		ResourceGroupName: "rg1",
-		RRU:               50.0,
-		WRU:               100.56,
-		WaitRUDuration:    134 * time.Millisecond,
+		RUDetails:         ruDetails,
+		StorageKV:         true,
+		StorageMPP:        false,
 	}
 	logItems.UsedStats.RecordUsedInfo(1, usedStats1)
 	logItems.UsedStats.RecordUsedInfo(2, usedStats2)
+	seVar.CurrentDBChanged = false
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
-
+	require.NotContains(t, logString, variable.SlowLogSessionConnectAttrs)
 	seVar.CurrentDBChanged = true
 	logString = seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
 	require.False(t, seVar.CurrentDBChanged)
+
+	// Verify SessionConnectAttrs serialization.
+	logItems.SessionConnectAttrs = map[string]string{
+		"_client_name": "libmysql",
+		"_os":          "Linux",
+		"app_name":     "test_svc",
+	}
+	logString = seVar.SlowLogFormat(logItems)
+	// json.Encoder sorts map keys, so the output is deterministic.
+	expectedAttrsLine := `# Session_connect_attrs: {"_client_name":"libmysql","_os":"Linux","app_name":"test_svc"}`
+	require.Contains(t, logString, expectedAttrsLine)
+	seVar.EnableRedactLog = variable.On
+	logString = seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, expectedAttrsLine)
+	seVar.EnableRedactLog = variable.Off
+	// Session_connect_attrs should appear after Storage_from_mpp, before Prev_stmt, and before the SQL.
+	attrsIdx := strings.Index(logString, "Session_connect_attrs")
+	mppIdx := strings.Index(logString, variable.SlowLogStorageFromMPP)
+	prevStmtIdx := strings.Index(logString, variable.SlowLogPrevStmt)
+	sqlIdx := strings.Index(logString, sql)
+	require.Greater(t, attrsIdx, 0)
+	require.Greater(t, mppIdx, 0)
+	require.Greater(t, attrsIdx, mppIdx, "Session_connect_attrs should appear after Storage_from_mpp")
+	if prevStmtIdx > 0 {
+		require.Less(t, attrsIdx, prevStmtIdx, "Session_connect_attrs should appear before Prev_stmt")
+	}
+	require.Less(t, attrsIdx, sqlIdx, "Session_connect_attrs should appear before the SQL statement")
+
+	// Verify reserved truncation metadata key is serialized as expected.
+	logItems.SessionConnectAttrs = map[string]string{
+		"_truncated": "4",
+		"app_name":   "test_svc",
+	}
+	logString = seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, `# Session_connect_attrs: {"_truncated":"4","app_name":"test_svc"}`)
+	// Restore for subsequent assertions.
+	logItems.SessionConnectAttrs = nil
+
+	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
+	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
+		Fields: map[string]struct{}{
+			strings.ToLower(variable.SlowLogDBStr):          {},
+			strings.ToLower(variable.SlowLogSucc):           {},
+			strings.ToLower(execdetails.ProcessTimeStr):     {},
+			strings.ToLower(variable.SlowLogResourceGroup):  {},
+			strings.ToLower(variable.SlowLogExecRetryCount): {},
+		},
+	})
+	seVar.StmtCtx.SyncExecDetails.Reset()
+	seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&copExecDetail, 0)
+	// Make RequestCount to be 2.
+	seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&execdetails.CopExecDetails{}, 0)
+	seVar.StmtCtx.ExecRetryCount = logItems.ExecRetryCount
+	seVar.StmtCtx.ResourceGroupName = logItems.ResourceGroupName
+	ctx := context.WithValue(context.Background(), execdetails.StmtExecDetailKey,
+		&execdetails.StmtExecDetails{WriteSQLRespDuration: logItems.WriteSQLRespTotal})
+	actual := executor.PrepareSlowLogItemsForRules(ctx, variable.GlobalSlowLogRules.Load(), seVar)
+	childCtx := context.WithValue(ctx, util.ExecDetailsKey, &tikvExecDetail)
+	executor.CompleteSlowLogItemsForRules(childCtx, seVar, actual)
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	// make StmtCtx.OriginalSQL is the same as sql
+	seVar.StmtCtx.OriginalSQL = sql
+	seVar.StmtCtx.ResetSQLDigest(sql)
+	seVar.StmtCtx.IndexNames = []string{"t1:a", "t2:b"}
+	seVar.TxnCtx.IsExplicit = logItems.IsExplicitTxn
+	seVar.FoundInPlanCache = logItems.PlanFromCache
+	seVar.FoundInBinding = logItems.PlanFromBinding
+	seVar.RewritePhaseInfo = logItems.RewriteInfo
+	// get an ExecStmt
+	compiler := executor.Compiler{Ctx: tk.Session()}
+	execStmt, err := compiler.Compile(childCtx, stmt)
+	execStmt.GoCtx = childCtx
+	require.NoError(t, err)
+
+	executor.SetSlowLogItems(execStmt, txnTS, logItems.HasMoreResults, actual)
+	compareSlowLogItems(t, logItems, actual)
+}
+
+func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogItems) {
+	require.NotNil(t, expected)
+	require.NotNil(t, actual)
+
+	ev := reflect.ValueOf(expected).Elem()
+	av := reflect.ValueOf(actual).Elem()
+	et := ev.Type()
+
+	// Some fields are hard to mock, so we skip them.
+	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
+		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
+	skipFieldsFunc := func(res string, fields []string) bool {
+		for _, f := range fields {
+			if res == f {
+				return true
+			}
+		}
+		return false
+	}
+
+	for i := 0; i < ev.NumField(); i++ {
+		field := et.Field(i)
+		expVal := ev.Field(i).Interface()
+		actVal := av.Field(i).Interface()
+
+		if skipFieldsFunc(field.Name, skipFields) {
+			continue
+		}
+		if ev.Field(i).Kind() == reflect.Ptr {
+			if ev.Field(i).IsNil() && av.Field(i).IsNil() {
+				continue
+			}
+			require.Equal(t, expVal, actVal, "field %s mismatch", field.Name)
+		} else {
+			require.Equal(t, expVal, actVal, "field %s mismatch", field.Name)
+		}
+	}
 }
 
 func TestIsolationRead(t *testing.T) {
@@ -335,7 +475,6 @@ func TestTableDeltaClone(t *testing.T) {
 		Delta:    1,
 		Count:    2,
 		InitTime: time.Now(),
-		TableID:  5,
 	}
 	td1 := td0.Clone()
 	require.Equal(t, td0, td1)
@@ -354,7 +493,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 					Delta:    1,
 					Count:    2,
 					InitTime: time.Now(),
-					TableID:  5,
 				},
 			},
 		},
@@ -375,7 +513,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		Delta:    6,
 		Count:    7,
 		InitTime: time.Now(),
-		TableID:  9,
 	}
 	tc.SetPessimisticLockCache([]byte{'b'}, []byte{'b'})
 	tc.FlushStmtPessimisticLockCache()
@@ -391,7 +528,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		Delta:    10,
 		Count:    11,
 		InitTime: time.Now(),
-		TableID:  13,
 	}
 	tc.SetPessimisticLockCache([]byte{'c'}, []byte{'c'})
 	tc.FlushStmtPessimisticLockCache()
@@ -597,4 +733,99 @@ func TestUserVars(t *testing.T) {
 	dt, ok = vars.GetUserVarVal("b")
 	require.True(t, ok)
 	require.Equal(t, types.NewStringDatum("v2"), dt)
+}
+
+func TestTiDBOptPartialOrderedIndexForTopNSessionAndGlobal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test default value
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+
+	// Test session scope
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = COST")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	tk.MustQuery("select @@session.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	// Global should not be affected
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = DISABLE")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+
+	// Test global scope
+	tk.MustExec("set @@global.tidb_opt_partial_ordered_index_for_topn = COST")
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	// New session should inherit global value
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+
+	// Session value should override global value
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = DISABLE")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+	// Global should still be COST
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+
+	// Test different value formats (only DISABLE and COST are allowed)
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'COST'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'DISABLE'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'cost'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'disable'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+
+	// Test disallowed values
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'ON'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'OFF'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 1"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 0"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'true'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'false'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 2"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = -1"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'yes'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'no'"))
+
+	// Verify the field is accessible in SessionVars
+	vars := tk.Session().GetSessionVars()
+	require.Equal(t, "DISABLE", vars.OptPartialOrderedIndexForTopN)
+	require.False(t, vars.IsPartialOrderedIndexForTopNEnabled())
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = COST")
+	require.Equal(t, "COST", vars.OptPartialOrderedIndexForTopN)
+	require.True(t, vars.IsPartialOrderedIndexForTopNEnabled())
+}
+
+func TestPerformanceSchemaSessionConnectAttrsSizeGlobalSQL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originSize := variable.ConnectAttrsSize.Load()
+	defer func() {
+		variable.ConnectAttrsSize.Store(originSize)
+		tk.MustExec("set global performance_schema_session_connect_attrs_size = " + strconv.FormatInt(originSize, 10))
+	}()
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 0")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("0"))
+	require.Equal(t, int64(0), variable.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 65536")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("65536"))
+	require.Equal(t, int64(65536), variable.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = -1")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("-1"))
+	require.Equal(t, int64(-1), variable.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 70000")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("65536"))
+	require.Equal(t, int64(65536), variable.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = -2")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("-1"))
+	require.Equal(t, int64(-1), variable.ConnectAttrsSize.Load())
 }

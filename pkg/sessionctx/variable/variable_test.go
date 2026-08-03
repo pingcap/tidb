@@ -65,6 +65,18 @@ func TestSysVar(t *testing.T) {
 	// default enable vectorized_expression
 	f = GetSysVar("tidb_enable_vectorized_expression")
 	require.Equal(t, "ON", f.Value)
+
+	autoBuildStats := GetSysVar(TiDBAutoBuildStatsConcurrency)
+	require.NotNil(t, autoBuildStats)
+	buildStats := GetSysVar(TiDBBuildStatsConcurrency)
+	require.NotNil(t, buildStats)
+	require.Equal(t, buildStats.Value, autoBuildStats.Value)
+
+	sysProcScan := GetSysVar(TiDBSysProcScanConcurrency)
+	require.NotNil(t, sysProcScan)
+	analyzeScan := GetSysVar(TiDBAnalyzeDistSQLScanConcurrency)
+	require.NotNil(t, analyzeScan)
+	require.Equal(t, analyzeScan.Value, sysProcScan.Value)
 }
 
 func TestError(t *testing.T) {
@@ -140,6 +152,35 @@ func TestIntValidation(t *testing.T) {
 
 	// out of range but permitted due to auto value
 	val, err = sv.Validate(vars, "-1", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "-1", val)
+}
+
+func TestPerformanceSchemaSessionConnectAttrsSizeValidation(t *testing.T) {
+	sv := GetSysVar(PerformanceSchemaSessionConnectAttrsSize)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasSessionScope())
+
+	vars := NewSessionVars(nil)
+
+	val, err := sv.Validate(vars, "-1", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "-1", val)
+
+	val, err = sv.Validate(vars, "0", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	val, err = sv.Validate(vars, "65536", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "65536", val)
+
+	val, err = sv.Validate(vars, "65537", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "65536", val)
+
+	val, err = sv.Validate(vars, "-2", ScopeGlobal)
 	require.NoError(t, err)
 	require.Equal(t, "-1", val)
 }
