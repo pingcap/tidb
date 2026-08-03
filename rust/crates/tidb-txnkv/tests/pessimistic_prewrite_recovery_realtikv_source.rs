@@ -76,6 +76,11 @@ const LIVE_LOCK_TTL_MS: u64 = 120_000;
 const EXPIRED_LOCK_KEY: &[u8] = b"pessimistic-prewrite-recovery-expired";
 const LIVE_LOCK_KEY: &[u8] = b"pessimistic-prewrite-recovery-live";
 const GATED_LOCK_KEY: &[u8] = b"pessimistic-prewrite-recovery-gated";
+/// The secondary an orphaned transaction prewrote before it died.
+const ORPHAN_SECONDARY_KEY: &[u8] = b"pessimistic-prewrite-recovery-orphan-secondary";
+/// The primary that same transaction never got to prewrite, so no lock and no
+/// write record for it exists anywhere in the cluster.
+const ORPHAN_PRIMARY_KEY: &[u8] = b"pessimistic-prewrite-recovery-orphan-primary";
 
 type RealRuntime = SharedReadRuntime<TonicCoprocessorClient, PdRegionLoader>;
 
@@ -510,4 +515,122 @@ fn the_gate_off_run_reproduces_the_recorded_refusal() {
          detail={detail}",
         cluster.pd.cluster_id(),
     );
+}
+
+/// Leaves the canonical orphan: an optimistic prewrite lock on a secondary key
+/// naming a primary that was never prewritten.
+///
+/// This is what a coordinator that died between its secondary and primary
+/// batches leaves behind, and it is the exact state that makes TiKV answer
+/// CheckTxnStatus on the primary with `TxnNotFound`.
+fn hold_orphan_secondary_lock(runtime: &RealRuntime, start_ts: u64, ttl_ms: u64) {
+    let (address, context) = route(runtime, ORPHAN_SECONDARY_KEY);
+    let request = KvrpcPrewriteRequest {
+        mutations: vec![KvrpcMutation {
+            op: KvrpcOp::Put as i32,
+            key: ORPHAN_SECONDARY_KEY.to_vec(),
+            value: b"orphaned".to_vec(),
+            ..KvrpcMutation::default()
+        }],
+        // The primary is a key this fixture deliberately never prewrites.
+        primary_lock: ORPHAN_PRIMARY_KEY.to_vec(),
+        start_version: start_ts,
+        lock_ttl: ttl_ms,
+        txn_size: 2,
+        assertion_level: KvrpcAssertionLevel::Off as i32,
+        ..KvrpcPrewriteRequest::default()
+    };
+    let call = call();
+    let mut pending = runtime
+        .client()
+        .try_borrow_mut()
+        .expect("fixture client is not borrowed")
+        .begin_transaction_prewrite(&address, None, &request, &context, &call)
+        .expect("publish the orphan secondary prewrite");
+    let response = pending
+        .complete(&call)
+        .expect("complete the orphan secondary prewrite")
+        .expect("decode the orphan secondary prewrite response");
+    assert!(response.response.region_error.is_none());
+    assert!(
+        response.response.errors.is_empty(),
+        "the orphan fixture key must be prewritable: {:?}",
+        response.response.errors
+    );
+}
+
+/// Claim 4: the canonical orphan lock is recoverable, not permanent.
+///
+/// A secondary prewrite landed and the coordinator died before the primary, so
+/// CheckTxnStatus on that primary answers `TxnNotFound` — there is no lock and
+/// no write record to report. Go `getTxnStatusFromLock`
+/// (`txnkv/txnlock/lock_resolver.go:928-980`) loops: once the lock is past its
+/// TTL it re-asks with `rollback_if_not_exist`, TiKV writes the rollback
+/// record, and the key becomes readable. Treating `TxnNotFound` as terminal
+/// leaves the key unreadable and unwritable *forever*, because every later
+/// reader repeats the identical failing query.
+///
+/// Only TiKV can prove this: the assertion is that TiKV, asked a second time
+/// with `rollback_if_not_exist`, really does write the rollback record. No
+/// scripted store can answer that, because scripting the answer is assuming it.
+///
+/// This claim is independent of `TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY` — the
+/// orphan is an ordinary optimistic prewrite lock — and rides the gate-ON pass
+/// only because that is the pass which runs every ignored test in this module.
+#[test]
+#[ignore = "requires run-realtikv-pessimistic-prewrite-recovery.sh (gate ON pass)"]
+fn an_orphaned_secondary_prewrite_lock_is_recoverable_by_a_later_reader() {
+    let cluster = connect();
+
+    let orphan_start_ts = cluster
+        .pd
+        .get_timestamp()
+        .expect("allocate the orphaned transaction's start timestamp");
+    hold_orphan_secondary_lock(&cluster.fixture, orphan_start_ts, EXPIRING_LOCK_TTL_MS);
+    println!(
+        "pessimistic_prewrite_recovery phase=orphaned key=orphan-secondary \
+         orphan_start_ts={orphan_start_ts}"
+    );
+
+    // Nothing will ever refresh or resolve this lock: its coordinator is gone.
+    std::thread::sleep(Duration::from_millis(EXPIRING_LOCK_TTL_MS * 3));
+
+    // Pre-fix this read failed with a terminal KeyError carrying TxnNotFound,
+    // and would have failed identically for every reader from then on.
+    let observed = read_back(&cluster.opener, ORPHAN_SECONDARY_KEY);
+    assert_eq!(
+        observed, None,
+        "the orphaned transaction never committed, so its secondary must read \
+         as absent once the lock is rolled back"
+    );
+
+    // Readable is not enough: the key must be writable again too, which only
+    // holds if the lock is really gone rather than merely stepped over.
+    let writer = cluster
+        .opener
+        .begin(1, 128)
+        .expect("allocate a writer newer than the orphaned lock");
+    assert!(writer.start_ts() > orphan_start_ts);
+    let outcome = writer
+        .commit(
+            vec![OptimisticMutation::insert(
+                ORPHAN_SECONDARY_KEY.to_vec(),
+                b"after-orphan-recovery".to_vec(),
+            )
+            .unwrap()],
+            &call(),
+        )
+        .expect("the writer reaches a terminal outcome");
+    assert!(
+        matches!(outcome, OptimisticCommitOutcome::Committed(_)),
+        "an orphaned lock that was really resolved cannot block a later \
+         writer: {outcome:?}"
+    );
+    assert_eq!(
+        read_back(&cluster.opener, ORPHAN_SECONDARY_KEY),
+        Some(b"after-orphan-recovery".to_vec())
+    );
+
+    // The recovery must not have invented a value for the primary either.
+    assert_eq!(read_back(&cluster.opener, ORPHAN_PRIMARY_KEY), None);
 }
