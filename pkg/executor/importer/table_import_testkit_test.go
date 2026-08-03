@@ -24,11 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-<<<<<<< HEAD
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-=======
 	"github.com/pingcap/tidb/pkg/parser/mysql"
->>>>>>> 23e5a09fd91 (executor: tiny optimize import into from select performance (#60384))
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"

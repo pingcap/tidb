@@ -38,11 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-<<<<<<< HEAD
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-=======
 	"github.com/pingcap/tidb/pkg/parser/mysql"
->>>>>>> 23e5a09fd91 (executor: tiny optimize import into from select performance (#60384))
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -330,30 +327,12 @@ func TestProcessChunkWith(t *testing.T) {
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
-<<<<<<< HEAD
 		ti := getTableImporter(ctx, t, store, "t", "", importer.DataFormatCSV, nil)
 		defer ti.Backend().CloseEngineMgr()
-		rowsCh := make(chan importer.QueryRow, 3)
-		for i := 1; i <= 3; i++ {
-			rowsCh <- importer.QueryRow{
-				ID: int64(i),
-				Data: []types.Datum{
-					types.NewIntDatum(int64((i-1)*3 + 1)),
-					types.NewIntDatum(int64((i-1)*3 + 2)),
-					types.NewIntDatum(int64((i-1)*3 + 3)),
-				},
-			}
-=======
-		ti := getTableImporter(ctx, t, store, "t", "", nil)
-		defer func() {
-			ti.LoadDataController.Close()
-			ti.Backend().CloseEngineMgr()
-		}()
 		chkCh := make(chan importer.QueryChunk, 3)
 		fields := make([]*types.FieldType, 0, 3)
 		for i := 0; i < 3; i++ {
 			fields = append(fields, types.NewFieldType(mysql.TypeLong))
->>>>>>> 23e5a09fd91 (executor: tiny optimize import into from select performance (#60384))
 		}
 		chk := chunk.New(fields, 2, 2)
 		for i := 1; i <= 2; i++ {

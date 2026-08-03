@@ -118,20 +118,9 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context) (data rowToEncode,
 				closed = true
 				return
 			}
-<<<<<<< HEAD
-			data = rowToEncode{
-				row:       row.Data,
-				rowID:     row.ID,
-				endOffset: -1,
-				startPos:  -1,
-				resetFn:   func() {},
-			}
-			return
-=======
 			r.currChk = currChk
 			r.cursor = 0
 			r.numRows = r.currChk.Chk.NumRows()
->>>>>>> 23e5a09fd91 (executor: tiny optimize import into from select performance (#60384))
 		}
 	}
 
@@ -543,13 +532,8 @@ type QueryChunk struct {
 }
 
 func newQueryChunkProcessor(
-<<<<<<< HEAD
-	rowCh chan QueryRow,
-	encoder *TableKVEncoder,
-=======
 	chunkCh chan QueryChunk,
-	encoder KVEncoder,
->>>>>>> 23e5a09fd91 (executor: tiny optimize import into from select performance (#60384))
+	encoder *TableKVEncoder,
 	keyspace []byte,
 	logger *zap.Logger,
 	diskQuotaLock *syncutil.RWMutex,
