@@ -42,12 +42,17 @@ import (
 	"go.uber.org/zap"
 )
 
-// writeStepMemShareCount defines the number of shares of memory per job worker.
+// readerMemoryQuotaPerCore is reserved before applying the write-step memory
+// share model. It bounds temporary buffers used to read data files.
+const readerMemoryQuotaPerCore int64 = 128 * units.MiB
+
+// writeStepMemShareCount defines the number of shares of the remaining memory
+// per job worker after reserving readerMemoryQuotaPerCore.
 // For each job worker, the memory it can use is determined by cpu:mem ratio, say
 // a 16c32G machine, each worker can use 2G memory.
-// And for the memory corresponding to each job worker, we divide into below and
-// total 6.5 shares:
-//   - one share used by HTTP and GRPC buf, such as loadRangeBatchData, write TiKV
+// We first reserve readerMemoryQuotaPerCore for loadRangeBatchData reader
+// buffers, then divide the remaining memory into 6.5 shares:
+//   - one share used by other HTTP and GRPC buffers, such as writing to TiKV
 //   - one share used by loadRangeBatchData to store loaded data batch A
 //   - one share used by generateAndSendJob for handle loaded data batch B
 //   - one share used by the active job on job worker
@@ -81,22 +86,26 @@ import (
 //	|       | cpu:mem=1:1.7 | cpu:mem=1:3.5 |
 //	|-------|---------------|---------------|
 //	|   96M |       192M(1) |       480M(1) |
-//	|  256M |       256M(1) |       512M(1) |
-//	|  512M |       256M(2) |       512M(1) |
+//	|  256M |       128M(2) |       512M(1) |
+//	|  512M |       171M(3) |       512M(1) |
 const writeStepMemShareCount = 6.5
 
 // getEngineMemoryLimit calculates the memory limit for external engine according
-// to the memory capacity.
-func getEngineMemoryLimit(memCapacity int64) int {
+// to the memory capacity and worker concurrency.
+func getEngineMemoryLimit(memCapacity int64, concurrency int) int {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
-	return int(float64(memCapacity) / writeStepMemShareCount * 3)
+	usableMem := memCapacity - readerMemoryQuotaPerCore*int64(concurrency)
+	if usableMem <= 0 {
+		return 0
+	}
+	return int(float64(usableMem) / writeStepMemShareCount * 3)
 }
 
 type memKVsAndBuffers struct {
 	mu  sync.Mutex
 	kvs []simplesst.KVPair
-	// memKVBuffers contains two types of buffer, first half are used for small block
-	// buffer, second half are used for large one.
+	// memKVBuffers stores decoded keys and values until downstream ingest jobs
+	// release the corresponding MemoryIngestData.
 	memKVBuffers []*membuf.Buffer
 	size         int
 	droppedSize  int
@@ -139,7 +148,6 @@ type Engine struct {
 	jobKeys           [][]byte
 	splitKeys         [][]byte
 	smallBlockBufPool *membuf.Pool
-	largeBlockBufPool *membuf.Pool
 
 	memKVsAndBuffers memKVsAndBuffers
 	// totalLoadedKVsCount accumulates the total number of KVs loaded in LoadIngestData
@@ -209,9 +217,12 @@ func NewExternalEngine(
 	onDup engineapi.OnDuplicateKey,
 	filePrefix string,
 ) *Engine {
-	memLimit := getEngineMemoryLimit(memCapacity)
+	memLimit := getEngineMemoryLimit(memCapacity, workerConcurrency)
+	readerCfg := newReaderConfig(workerConcurrency)
 	logutil.Logger(ctx).Info("create external engine",
 		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))),
+		zap.String("readerMemLimit", units.BytesSize(float64(readerCfg.memoryLimit))),
+		zap.Int("readerCountLimit", readerCfg.maxReaders),
 		zap.Int("dataFileCount", len(dataFiles)),
 		zap.Int("jobKeysCount", len(jobKeys)),
 		zap.Int("splitKeysCount", len(splitKeys)),
@@ -229,11 +240,6 @@ func NewExternalEngine(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
 			membuf.WithBlockSize(smallBlockSize),
-		),
-		largeBlockBufPool: membuf.NewPool(
-			membuf.WithBlockNum(0),
-			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
 		),
 		checkHotspot:      checkHotspot,
 		workerConcurrency: *atomic.NewInt32(int32(workerConcurrency)),
@@ -295,7 +301,7 @@ func (e *Engine) loadRangeBatchData(
 			startOffsets,
 			estimatedEndOffsets,
 			e.smallBlockBufPool,
-			e.largeBlockBufPool,
+			newReaderConfig(int(e.workerConcurrency.Load())),
 			&e.memKVsAndBuffers,
 		)
 		if err == nil {
@@ -656,7 +662,7 @@ func (e *Engine) UpdateResource(ctx context.Context, concurrency int, memCapacit
 	}
 
 	// Update memLimit first, then update concurrency and wait.
-	e.memLimit = getEngineMemoryLimit(memCapacity)
+	e.memLimit = getEngineMemoryLimit(memCapacity, concurrency)
 	e.workerConcurrency.Store(int32(concurrency))
 
 	failpoint.InjectCall("afterUpdateWorkerConcurrency")
@@ -745,10 +751,6 @@ func (e *Engine) Close() error {
 		e.smallBlockBufPool.Destroy()
 		e.smallBlockBufPool = nil
 	}
-	if e.largeBlockBufPool != nil {
-		e.largeBlockBufPool.Destroy()
-		e.largeBlockBufPool = nil
-	}
 	return nil
 }
 
@@ -761,14 +763,6 @@ func (e *Engine) Reset() {
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
 			membuf.WithBlockSize(smallBlockSize),
-		)
-	}
-	if e.largeBlockBufPool != nil {
-		e.largeBlockBufPool.Destroy()
-		e.largeBlockBufPool = membuf.NewPool(
-			membuf.WithBlockNum(0),
-			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
 		)
 	}
 }

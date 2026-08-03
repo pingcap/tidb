@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -117,6 +116,39 @@ func TestReadAllOneFile(t *testing.T) {
 func TestReadLargeFile(t *testing.T) {
 	ctx := context.Background()
 	memStore := objstore.NewMemStorage()
+	cfg := newReaderConfig(7)
+	require.EqualValues(t, 7*128*units.MiB, cfg.memoryLimit)
+	require.Equal(t, 7*maxReadersPerCore, cfg.maxReaders)
+
+	memorySize, concurrency := readerMemoryForRange(8*units.MiB, 2, cfg)
+	require.EqualValues(t, 8*units.MiB, memorySize)
+	require.Zero(t, concurrency)
+
+	memorySize, concurrency = readerMemoryForRange(16*units.MiB, 2, cfg)
+	require.EqualValues(t, 16*units.MiB, memorySize)
+	require.Equal(t, 1, concurrency)
+
+	// One file never takes more than maxLanesPerFile lanes, on either side of the
+	// half-quota rule.
+	laneSize := int64(2 * simplesst.ConcurrentReaderBufferSizePerConc)
+	memorySize, concurrency = readerMemoryForRange(units.GiB, 2, cfg)
+	require.EqualValues(t, int64(maxLanesPerFile)*laneSize, memorySize)
+	require.Equal(t, maxLanesPerFile, concurrency)
+
+	memorySize, concurrency = readerMemoryForRange(units.GiB, 1, cfg)
+	require.EqualValues(t, int64(maxLanesPerFile)*laneSize, memorySize)
+	require.Equal(t, maxLanesPerFile, concurrency)
+
+	// Below that cap the quota still halves once more than one large file competes.
+	smallCfg := newReaderConfig(1)
+	memorySize, concurrency = readerMemoryForRange(units.GiB, 2, smallCfg)
+	require.EqualValues(t, smallCfg.memoryLimit/2, memorySize)
+	require.Equal(t, 4, concurrency)
+
+	memorySize, concurrency = readerMemoryForRange(units.GiB, 1, smallCfg)
+	require.EqualValues(t, smallCfg.memoryLimit, memorySize)
+	require.Equal(t, 8, concurrency)
+
 	backup := simplesst.ConcurrentReaderBufferSizePerConc
 	t.Cleanup(func() {
 		simplesst.ConcurrentReaderBufferSizePerConc = backup
@@ -142,16 +174,11 @@ func TestReadLargeFile(t *testing.T) {
 	datas, stats := getKVAndStatFiles(summary)
 	require.Len(t, datas, 1)
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ingestor/globalsort/assertReloadAtMostOnce", "return()")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ingestor/globalsort/assertReloadAtMostOnce")
-
+	memLimiter := membuf.NewLimiter(60 * units.MiB)
 	smallBlockBufPool := membuf.NewPool(
 		membuf.WithBlockNum(0),
+		membuf.WithPoolMemoryLimiter(memLimiter),
 		membuf.WithBlockSize(smallBlockSize),
-	)
-	largeBlockBufPool := membuf.NewPool(
-		membuf.WithBlockNum(0),
-		membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
 	)
 	output := &memKVsAndBuffers{}
 	startKey := []byte("key000000")
@@ -165,7 +192,7 @@ func TestReadLargeFile(t *testing.T) {
 		startKey, endKey,
 		readRanges[0],
 		readRanges[1],
-		smallBlockBufPool, largeBlockBufPool, output)
+		smallBlockBufPool, newReaderConfig(1), output)
 	require.NoError(t, err)
 	output.build(ctx)
 	require.Equal(t, startKey, output.kvs[0].Key)

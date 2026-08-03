@@ -17,6 +17,7 @@ package simplesst
 import (
 	"context"
 	"io"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -27,6 +28,7 @@ import (
 // concurrentFileReader reads a file with multiple chunks concurrently.
 type concurrentFileReader struct {
 	ctx            context.Context
+	cancel         context.CancelFunc
 	concurrency    int
 	readBufferSize int
 
@@ -35,6 +37,17 @@ type concurrentFileReader struct {
 
 	offset   int64
 	fileSize int64
+
+	bufferSets [2][][]byte
+	started    bool
+	resultCh   chan concurrentReadResult
+	wg         sync.WaitGroup
+}
+
+type concurrentReadResult struct {
+	bufferSet int
+	buffers   [][]byte
+	err       error
 }
 
 // newConcurrentFileReader creates a new concurrentFileReader.
@@ -47,25 +60,73 @@ func newConcurrentFileReader(
 	concurrency int,
 	readBufferSize int,
 ) (*concurrentFileReader, error) {
+	childCtx, cancel := context.WithCancel(ctx)
 	return &concurrentFileReader{
-		ctx:            ctx,
+		ctx:            childCtx,
+		cancel:         cancel,
 		concurrency:    concurrency,
 		readBufferSize: readBufferSize,
 		offset:         offset,
 		fileSize:       fileSize,
 		name:           name,
 		storage:        st,
+		resultCh:       make(chan concurrentReadResult, 1),
 	}, nil
 }
 
-// read loads the file content concurrently into the buffer.
+// read returns the next in-order buffer window. While the caller consumes the
+// returned window, the reader fills the other window concurrently.
 func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
+	if len(bufs) < 2*r.concurrency {
+		return nil, errors.Errorf(
+			"concurrent reader needs %d buffers, got %d",
+			2*r.concurrency,
+			len(bufs),
+		)
+	}
+
+	if !r.started {
+		r.bufferSets[0] = bufs[:r.concurrency]
+		r.bufferSets[1] = bufs[r.concurrency : 2*r.concurrency]
+		r.started = true
+
+		r.startRead(0)
+		result := <-r.resultCh
+		if result.err != nil {
+			return nil, result.err
+		}
+		r.startRead(1)
+		return result.buffers, nil
+	}
+
+	result := <-r.resultCh
+	if result.err != nil {
+		return nil, result.err
+	}
+	r.startRead(1 - result.bufferSet)
+	return result.buffers, nil
+}
+
+func (r *concurrentFileReader) startRead(bufferSet int) {
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		buffers, err := r.readOnce(r.bufferSets[bufferSet])
+		r.resultCh <- concurrentReadResult{
+			bufferSet: bufferSet,
+			buffers:   buffers,
+			err:       err,
+		}
+	}()
+}
+
+func (r *concurrentFileReader) readOnce(bufs [][]byte) ([][]byte, error) {
 	if r.offset >= r.fileSize {
 		return nil, io.EOF
 	}
 
 	ret := make([][]byte, 0, r.concurrency)
-	eg := errgroup.Group{}
+	eg, egCtx := errgroup.WithContext(r.ctx)
 	for i := range r.concurrency {
 		if r.offset >= r.fileSize {
 			break
@@ -80,7 +141,7 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 		r.offset += int64(end)
 		eg.Go(func() error {
 			_, err := objstore.ReadDataInRange(
-				r.ctx,
+				egCtx,
 				r.storage,
 				r.name,
 				offset,
@@ -98,4 +159,9 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 	}
 
 	return ret, nil
+}
+
+func (r *concurrentFileReader) close() {
+	r.cancel()
+	r.wg.Wait()
 }

@@ -51,7 +51,7 @@ func TestConcurrentRead(t *testing.T) {
 	concurrency := rand.Intn(4) + 1
 	readBufferSize := rand.Intn(100) + 1
 
-	bufs := make([][]byte, concurrency)
+	bufs := make([][]byte, 2*concurrency)
 	for i := range bufs {
 		bufs[i] = make([]byte, readBufferSize)
 	}
@@ -65,6 +65,7 @@ func TestConcurrentRead(t *testing.T) {
 		readBufferSize,
 	)
 	require.NoError(t, err)
+	defer rd.close()
 
 	got := make([]byte, 0, 256)
 

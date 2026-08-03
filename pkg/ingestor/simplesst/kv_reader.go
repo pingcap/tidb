@@ -53,11 +53,38 @@ func NewKVReader(
 ) (*KVReader, error) {
 	// some test use very random buf size, might < 3
 	oneThird := max(bufSize/3, 1)
-	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset, oneThird*2)
+	return newKVReader(ctx, name, store, initFileOffset, oneThird, oneThird*2)
+}
+
+// NewKVReaderWithPrefetchSize creates a KV reader with an independently sized
+// object-storage prefetch buffer. bufSize keeps the same meaning as in
+// NewKVReader and controls the small structured-read buffer.
+func NewKVReaderWithPrefetchSize(
+	ctx context.Context,
+	name string,
+	store storeapi.Storage,
+	initFileOffset uint64,
+	bufSize int,
+	prefetchSize int,
+) (*KVReader, error) {
+	// Some tests use very small random buffer sizes.
+	smallBufSize := max(bufSize/3, 1)
+	return newKVReader(ctx, name, store, initFileOffset, smallBufSize, prefetchSize)
+}
+
+func newKVReader(
+	ctx context.Context,
+	name string,
+	store storeapi.Storage,
+	initFileOffset uint64,
+	smallBufSize int,
+	prefetchSize int,
+) (*KVReader, error) {
+	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset, prefetchSize)
 	if err != nil {
 		return nil, err
 	}
-	br, err := newByteReader(ctx, sr, oneThird)
+	br, err := newByteReader(ctx, sr, smallBufSize)
 	if err != nil {
 		return nil, err
 	}
@@ -114,8 +141,5 @@ func noEOF(err error) error {
 
 // Close the reader.
 func (r *KVReader) Close() error {
-	if p := r.byteReader.concurrentReader.largeBufferPool; p != nil {
-		p.Destroy()
-	}
 	return r.byteReader.Close()
 }

@@ -17,12 +17,10 @@ package simplesst
 import (
 	"context"
 	goerrors "errors"
-	"fmt"
 	"io"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -196,13 +194,23 @@ func (r *byteReader) switchToConcurrentReader() error {
 		return err
 	}
 
-	readerFields.largeBuf = make([][]byte, readerFields.concurrency)
+	readerFields.largeBuf = make([][]byte, 2*readerFields.concurrency)
 	for i := range readerFields.largeBuf {
 		readerFields.largeBuf[i], err = readerFields.largeBufferPool.TryAllocBytes(readerFields.bufSizePerConc)
 		if err != nil {
+			readerFields.reader.close()
+			readerFields.reader = nil
+			readerFields.largeBufferPool.Destroy()
+			readerFields.largeBufferPool = nil
+			readerFields.largeBuf = nil
 			return err
 		}
 		if readerFields.largeBuf[i] == nil {
+			readerFields.reader.close()
+			readerFields.reader = nil
+			readerFields.largeBufferPool.Destroy()
+			readerFields.largeBufferPool = nil
+			readerFields.largeBuf = nil
 			return errors.Errorf("alloc large buffer failed, size %d", readerFields.bufSizePerConc)
 		}
 	}
@@ -350,12 +358,10 @@ func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) 
 		zap.Int("dropBytes", r.concurrentReader.bufSizePerConc*(len(r.curBuf)-r.curBufIdx)-r.curBufOffset),
 		zap.Int("curBufIdx", r.curBufIdx),
 	)
-	failpoint.Inject("assertReloadAtMostOnce", func() {
-		if r.concurrentReader.reloadCnt > 1 {
-			panic(fmt.Sprintf("reloadCnt is %d", r.concurrentReader.reloadCnt))
-		}
-	})
+	r.concurrentReader.reader.close()
+	r.concurrentReader.reader = nil
 	r.concurrentReader.largeBufferPool.Destroy()
+	r.concurrentReader.largeBufferPool = nil
 	r.concurrentReader.largeBuf = nil
 	r.concurrentReader.now = false
 	reloadCnt = r.concurrentReader.reloadCnt
@@ -369,6 +375,9 @@ func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) 
 func (r *byteReader) Close() error {
 	if r.concurrentReader.now {
 		r.closeConcurrentReader()
+	} else if r.concurrentReader.largeBufferPool != nil {
+		r.concurrentReader.largeBufferPool.Destroy()
+		r.concurrentReader.largeBufferPool = nil
 	}
 	return r.storageReader.Close()
 }
