@@ -227,7 +227,8 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         // are the string and integer ones rather than Go's temporal types.
         // The VALUES match TiDB; the reported column type is the documented
         // divergence, the same one the temporal casts carry.
-        "now" | "current_timestamp" | "utc_timestamp" | "curdate" | "current_date" | "utc_date"
+        "now" | "current_timestamp" | "localtime" | "localtimestamp" | "utc_timestamp"
+        | "curdate" | "current_date" | "utc_date"
         | "curtime" | "current_time" | "utc_time" | "monthname" | "dayname" | "last_day"
         | "sec_to_time" | "maketime" | "makedate" | "from_days" | "date_format" | "str_to_date" => {
             text()

@@ -490,6 +490,25 @@ fn date_time_builtins() {
         [["1", "1"]]
     );
 
+    // `pkg/expression/builtin.go:722-725` binds NOW, CURRENT_TIMESTAMP,
+    // LOCALTIME and LOCALTIMESTAMP to the SAME `nowFunctionClass`, so the
+    // four are one function with four spellings -- including the bare
+    // keyword forms the parser already accepted and the eval layer refused.
+    // Captured: `select localtime(), localtimestamp(), localtime,
+    // localtimestamp, now()` prints one value five times, `localtime() =
+    // now()` is 1, and `localtimestamp(3)` carries three fractional digits.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT LOCALTIME() = NOW(), LOCALTIMESTAMP() = NOW(), \
+             LOCALTIME = NOW(), LOCALTIMESTAMP = NOW()"
+        )),
+        [["1", "1", "1", "1"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT LENGTH(LOCALTIMESTAMP(3)) = 23")),
+        [["1"]]
+    );
+
     // The session zone reaches the clock: UTC and a +10 offset differ by
     // ten hours in the hour NOW() reports for the same instant.
     let hour_at = |session: &mut Session, zone: &str| -> i64 {

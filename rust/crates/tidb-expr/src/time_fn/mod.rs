@@ -33,7 +33,13 @@ pub(crate) fn dispatch(
     cols: &dyn Columns,
 ) -> Option<Result<Datum, EvalError>> {
     Some(match name {
-        "NOW" | "CURRENT_TIMESTAMP" => now(vals, cols),
+        // `pkg/expression/builtin.go:722-725` binds all four names to the SAME
+        // `nowFunctionClass`, so LOCALTIME and LOCALTIMESTAMP are NOW down to
+        // the optional fsp argument and the statement-timestamp clock. Go's
+        // capture: `select localtime(), localtimestamp(), localtime,
+        // localtimestamp, now()` prints one value five times, and
+        // `localtime() = now()` is 1.
+        "NOW" | "CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP" => now(vals, cols),
         "UTC_TIMESTAMP" => utc_timestamp(vals, cols),
         "CURDATE" | "CURRENT_DATE" => current_date(vals, cols),
         "UTC_DATE" => utc_date(vals, cols),
