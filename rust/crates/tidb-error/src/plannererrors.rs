@@ -250,6 +250,10 @@ pub static ERR_INVALID_WILD_CARD: LazyLock<TerrorError> =
 pub static ERR_MIX_OF_GROUP_FUNC_AND_FIELDS: LazyLock<TerrorError> =
     LazyLock::new(|| TerrorError::registered_std(TerrorClass::Optimizer, TerrorCode::new(8123)));
 
+/// Go `plannererrors.ErrTooBigPrecision` (`ClassExpression.NewStd(errno.ErrTooBigPrecision)`).
+pub static ERR_TOO_BIG_PRECISION: LazyLock<TerrorError> =
+    LazyLock::new(|| TerrorError::registered_std(TerrorClass::Expression, TerrorCode::new(1426)));
+
 /// Go `plannererrors.ErrDBaccessDenied` (`ClassOptimizer.NewStd(errno.ErrDBaccessDenied)`).
 pub static ERR_DBACCESS_DENIED: LazyLock<TerrorError> =
     LazyLock::new(|| TerrorError::registered_std(TerrorClass::Optimizer, TerrorCode::new(1044)));
@@ -382,6 +386,22 @@ pub static ERR_KEY_PART0: LazyLock<TerrorError> =
 pub static ERR_GETTING_NOOP_VARIABLE: LazyLock<TerrorError> =
     LazyLock::new(|| TerrorError::registered_std(TerrorClass::Optimizer, TerrorCode::new(8145)));
 
+/// Go `plannererrors.ErrPrepareMulti` (`ClassExecutor.NewStd(errno.ErrPrepareMulti)`).
+pub static ERR_PREPARE_MULTI: LazyLock<TerrorError> =
+    LazyLock::new(|| TerrorError::registered_std(TerrorClass::Executor, TerrorCode::new(8115)));
+
+/// Go `plannererrors.ErrUnsupportedPs` (`ClassExecutor.NewStd(errno.ErrUnsupportedPs)`).
+pub static ERR_UNSUPPORTED_PS: LazyLock<TerrorError> =
+    LazyLock::new(|| TerrorError::registered_std(TerrorClass::Executor, TerrorCode::new(1295)));
+
+/// Go `plannererrors.ErrPsManyParam` (`ClassExecutor.NewStd(errno.ErrPsManyParam)`).
+pub static ERR_PS_MANY_PARAM: LazyLock<TerrorError> =
+    LazyLock::new(|| TerrorError::registered_std(TerrorClass::Executor, TerrorCode::new(1390)));
+
+/// Go `plannererrors.ErrPrepareDDL` (`ClassExecutor.NewStd(errno.ErrPrepareDDL)`).
+pub static ERR_PREPARE_DDL: LazyLock<TerrorError> =
+    LazyLock::new(|| TerrorError::registered_std(TerrorClass::Executor, TerrorCode::new(8116)));
+
 /// Go `plannererrors.ErrRowIsReferenced2` (`ClassOptimizer.NewStd(errno.ErrRowIsReferenced2)`).
 pub static ERR_ROW_IS_REFERENCED2: LazyLock<TerrorError> =
     LazyLock::new(|| TerrorError::registered_std(TerrorClass::Optimizer, TerrorCode::new(1451)));
@@ -394,7 +414,8 @@ pub static ERR_NO_REFERENCED_ROW2: LazyLock<TerrorError> =
 pub static ERR_SP_DOES_NOT_EXIST: LazyLock<TerrorError> =
     LazyLock::new(|| TerrorError::registered_std(TerrorClass::Optimizer, TerrorCode::new(1305)));
 
-/// Go `plannererrors.ErrAccessDenied` (`ClassOptimizer.NewStd(errno.ErrAccessDenied)`).
+/// Go `plannererrors.ErrAccessDenied` (`ClassOptimizer.NewStdErr(errno.ErrAccessDenied,
+/// errno.MySQLErrName[errno.ErrAccessDeniedNoPassword])`).
 pub static ERR_ACCESS_DENIED: LazyLock<TerrorError> = LazyLock::new(|| {
     let message = crate::mysql::message_by_code(1698)
         .copied()
@@ -466,6 +487,7 @@ mod tests {
         let _ = ERR_PRIVILEGE_CHECK_FAIL.code();
         let _ = ERR_INVALID_WILD_CARD.code();
         let _ = ERR_MIX_OF_GROUP_FUNC_AND_FIELDS.code();
+        let _ = ERR_TOO_BIG_PRECISION.code();
         let _ = ERR_DBACCESS_DENIED.code();
         let _ = ERR_TABLEACCESS_DENIED.code();
         let _ = ERR_SPECIFIC_ACCESS_DENIED.code();
@@ -501,10 +523,102 @@ mod tests {
         let _ = ERR_GETTING_NOOP_VARIABLE.code();
         let _ = ERR_ROW_IS_REFERENCED2.code();
         let _ = ERR_NO_REFERENCED_ROW2.code();
+        let _ = ERR_PREPARE_MULTI.code();
+        let _ = ERR_UNSUPPORTED_PS.code();
+        let _ = ERR_PS_MANY_PARAM.code();
+        let _ = ERR_PREPARE_DDL.code();
         let _ = ERR_SP_DOES_NOT_EXIST.code();
         let _ = ERR_ACCESS_DENIED.code();
         // Spot-check specific codes, incl. the NewStdErr special case.
         assert_eq!(ERR_UNSUPPORTED_TYPE.code().value(), 8108);
         assert_eq!(ERR_ACCESS_DENIED.code().value(), 1045);
+        assert_eq!(ERR_TOO_BIG_PRECISION.code().value(), 1426);
+        assert_eq!(ERR_PREPARE_MULTI.code().value(), 8115);
+        assert_eq!(ERR_UNSUPPORTED_PS.code().value(), 1295);
+        assert_eq!(ERR_PS_MANY_PARAM.code().value(), 1390);
+        assert_eq!(ERR_PREPARE_DDL.code().value(), 8116);
+    }
+
+    // Go `TestError` (pkg/util/dbterror/plannererrors/errors_test.go:25):
+    // for each listed prototype, `terror.ToSQLError(err).Code` must be its
+    // own registered code, never the ErrUnknown (1105) fallback.
+    #[test]
+    fn test_error() {
+        let kv_errs: &[&LazyLock<TerrorError>] = &[
+            &ERR_UNSUPPORTED_TYPE,
+            &ERR_ANALYZE_MISS_INDEX,
+            &ERR_ANALYZE_MISS_COLUMN,
+            &ERR_WRONG_PARAM_COUNT,
+            &ERR_SCHEMA_CHANGED,
+            &ERR_TABLENAME_NOT_ALLOWED_HERE,
+            &ERR_NOT_SUPPORTED_YET,
+            &ERR_WRONG_USAGE,
+            &ERR_UNKNOWN_TABLE,
+            &ERR_WRONG_ARGUMENTS,
+            &ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT,
+            &ERR_BAD_GENERATED_COLUMN,
+            &ERR_FIELD_NOT_IN_GROUP_BY,
+            &ERR_BAD_TABLE,
+            &ERR_KEY_DOES_NOT_EXIST,
+            &ERR_OPERAND_COLUMNS,
+            &ERR_INVALID_GROUP_FUNC_USE,
+            &ERR_ILLEGAL_REFERENCE,
+            &ERR_NO_DB,
+            &ERR_UNKNOWN_EXPLAIN_FORMAT,
+            &ERR_WRONG_GROUP_FIELD,
+            &ERR_DUP_FIELD_NAME,
+            &ERR_NON_UPDATABLE_TABLE,
+            &ERR_INTERNAL,
+            &ERR_NON_UNIQ_TABLE,
+            &ERR_WINDOW_INVALID_WINDOW_FUNC_USE,
+            &ERR_WINDOW_INVALID_WINDOW_FUNC_ALIAS_USE,
+            &ERR_WINDOW_NO_SUCH_WINDOW,
+            &ERR_WINDOW_CIRCULARITY_IN_WINDOW_GRAPH,
+            &ERR_WINDOW_NO_CHILD_PARTITIONING,
+            &ERR_WINDOW_NO_INHERENT_FRAME,
+            &ERR_WINDOW_NO_REDEFINE_ORDER_BY,
+            &ERR_WINDOW_DUPLICATE_NAME,
+            &ERR_PARTITION_CLAUSE_ON_NONPARTITIONED,
+            &ERR_WINDOW_FRAME_START_ILLEGAL,
+            &ERR_WINDOW_FRAME_END_ILLEGAL,
+            &ERR_WINDOW_FRAME_ILLEGAL,
+            &ERR_WINDOW_RANGE_FRAME_ORDER_TYPE,
+            &ERR_WINDOW_RANGE_FRAME_TEMPORAL_TYPE,
+            &ERR_WINDOW_RANGE_FRAME_NUMERIC_TYPE,
+            &ERR_WINDOW_RANGE_BOUND_NOT_CONSTANT,
+            &ERR_WINDOW_ROWS_INTERVAL_USE,
+            &ERR_WINDOW_FUNCTION_IGNORES_FRAME,
+            &ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
+            &ERR_PRIVILEGE_CHECK_FAIL,
+            &ERR_INVALID_WILD_CARD,
+            &ERR_MIX_OF_GROUP_FUNC_AND_FIELDS,
+            &ERR_DBACCESS_DENIED,
+            &ERR_TABLEACCESS_DENIED,
+            &ERR_SPECIFIC_ACCESS_DENIED,
+            &ERR_VIEW_NO_EXPLAIN,
+            &ERR_WRONG_VALUE_COUNT_ON_ROW,
+            &ERR_VIEW_INVALID,
+            &ERR_NO_SUCH_THREAD,
+            &ERR_UNKNOWN_COLUMN,
+            &ERR_CARTESIAN_PRODUCT_UNSUPPORTED,
+            &ERR_STMT_NOT_FOUND,
+            &ERR_AMBIGUOUS,
+            &ERR_KEY_PART0,
+        ];
+        for err in kv_errs {
+            let code = err.to_sql_error().code;
+            assert_ne!(
+                code,
+                crate::mysql::errcode::ErrUnknown,
+                "{}",
+                err.rfc_code()
+            );
+            assert_eq!(
+                isize::try_from(code).unwrap(),
+                err.code().value(),
+                "{}",
+                err.rfc_code()
+            );
+        }
     }
 }
