@@ -715,28 +715,65 @@ fn contains_node(object: &JSONNode, target: &JSONNode) -> Result<bool, BinaryJSO
     })
 }
 
+/// Go `OverlapsBinaryJSON` (`pkg/types/json_binary_functions.go`).
+///
+/// Overlap is decided ONE level down and by whole-value equality: two objects
+/// overlap when they share a key whose values compare equal, two arrays when
+/// they share an equal element. It does not recurse. `{"a":[1,2]}` and
+/// `{"a":[2]}` do NOT overlap, and neither do `[[1,2]]` and `[1,2]` — the
+/// shared `2` is one level too deep in both.
 fn overlaps_node(left: &JSONNode, right: &JSONNode) -> Result<bool, BinaryJSONError> {
-    Ok(match (left, right) {
-        (JSONNode::Object(left), JSONNode::Object(right)) => left.iter().any(|(key, left)| {
-            right
-                .iter()
-                .find(|(name, _)| name == key)
-                .is_some_and(|(_, right)| overlaps_node(left, right).unwrap_or(false))
-        }),
-        (JSONNode::Array(left), JSONNode::Array(right)) => left.iter().any(|left| {
-            right
-                .iter()
-                .any(|right| overlaps_node(left, right).unwrap_or(false))
-        }),
-        (JSONNode::Array(values), scalar) | (scalar, JSONNode::Array(values)) => values
-            .iter()
-            .any(|value| overlaps_node(value, scalar).unwrap_or(false)),
-        _ => {
-            let left = BinaryJSON::from_node(left)?;
-            let right = BinaryJSON::from_node(right)?;
-            compare_binary_json(&left, &right).is_eq()
+    // Go's single normalisation: a non-array against an array is answered as
+    // that array against the non-array, so only one asymmetric arm exists.
+    let (object, target) = match (left, right) {
+        (left @ (JSONNode::Object(_) | JSONNode::Scalar(_)), right @ JSONNode::Array(_)) => {
+            (right, left)
         }
+        _ => (left, right),
+    };
+    Ok(match (object, target) {
+        (JSONNode::Object(object), JSONNode::Object(target)) => {
+            target.iter().try_fold(false, |found, (key, value)| {
+                if found {
+                    return Ok(true);
+                }
+                match object.iter().find(|(name, _)| name == key) {
+                    Some((_, existing)) => nodes_equal(existing, value),
+                    None => Ok(false),
+                }
+            })?
+        }
+        // Go returns false for an object against anything that is not an
+        // object, which the equality below also answers.
+        (JSONNode::Object(_), _) => false,
+        (JSONNode::Array(object), JSONNode::Array(target)) => {
+            object.iter().try_fold(false, |found, element| {
+                if found {
+                    return Ok(true);
+                }
+                target.iter().try_fold(false, |found, other| {
+                    if found {
+                        return Ok(true);
+                    }
+                    nodes_equal(element, other)
+                })
+            })?
+        }
+        (JSONNode::Array(object), target) => object.iter().try_fold(false, |found, element| {
+            if found {
+                return Ok(true);
+            }
+            nodes_equal(element, target)
+        })?,
+        (object, target) => nodes_equal(object, target)?,
     })
+}
+
+/// Go `CompareBinaryJSON(a, b) == 0`, the only comparison overlap uses.
+fn nodes_equal(left: &JSONNode, right: &JSONNode) -> Result<bool, BinaryJSONError> {
+    let left = BinaryJSON::from_node(left)?;
+    let right = BinaryJSON::from_node(right)?;
+    Ok(compare_binary_json(&left, &right).is_eq())
 }
 
 fn merge_preserve_node(left: JSONNode, right: JSONNode) -> JSONNode {
@@ -906,7 +943,11 @@ fn modify_node(
                     }
                     let value = values.remove(index);
                     values.insert(index, modify_node(value, remain, replacement, mode));
-                } else if remain.is_empty() && *index >= 0 && mode != JSONModifyType::Replace {
+                } else if remain.is_empty() && mode != JSONModifyType::Replace {
+                    // Go `binaryModifier.doInsert`: when the path selected no
+                    // cell, the new value is APPENDED to the parent array.
+                    // Which cell it named does not matter, so `$[last]` on an
+                    // empty array appends exactly like `$[7]` does.
                     values.push(replacement);
                 }
                 return document;
@@ -915,7 +956,10 @@ fn modify_node(
             if normalize_index(*index, 1) == Some(0) {
                 return modify_node(document, remain, replacement, mode);
             }
-            if remain.is_empty() && *index > 0 && mode != JSONModifyType::Replace {
+            if remain.is_empty() && mode != JSONModifyType::Replace {
+                // Go `doInsert` again, its non-array arm: a document that is
+                // not an array becomes `[document, value]`. `$[last-1]` names
+                // no cell of a one-element autowrap, so it lands here.
                 return JSONNode::Array(vec![document, replacement]);
             }
             document
