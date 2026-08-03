@@ -564,6 +564,25 @@ pub fn run_create_table_in(
             "temporary tables are not supported yet",
         ));
     }
+    // Go refuses CTAS outright and has never implemented it:
+    // `preprocess.go` -> `checkCreateTableGrammar` does
+    //
+    //   if stmt.Select != nil {
+    //       p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
+    //       return
+    //   } else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
+    //       p.err = dbterror.ErrTableMustHaveColumns
+    //
+    // A bare `errors.New` carries no terror code, so the client sees 1105
+    // with exactly this text. The `else if` ordering matters: with a column
+    // list present, `CREATE TABLE t (a INT) AS SELECT ...` still has to fail
+    // on the CTAS arm rather than pass the column check and create an empty
+    // table.
+    if create.ctas.is_some() {
+        return Err(DriverError::unsupported(
+            "'CREATE TABLE ... SELECT' is not implemented yet",
+        ));
+    }
     if create.like_table.is_none() && create.columns.is_empty() {
         return Err(DriverError::unsupported("a table needs columns"));
     }

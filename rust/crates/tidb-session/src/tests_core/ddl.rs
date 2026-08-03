@@ -1305,3 +1305,53 @@ fn renaming_a_column_a_generated_column_reads_is_refused() {
         3108
     );
 }
+
+/// `CREATE TABLE ... AS SELECT`. Transcreated from Go
+/// `pkg/planner/core/preprocess_test.go` `TestPreprocess`'s four CTAS rows,
+/// which all expect the same bare `errors.New` text, plus a live capture from
+/// a real Go session (mockstore) confirming the wire shape:
+///
+/// ```text
+/// create table t2 as select * from t1;
+///   ERR code=1105 msg='CREATE TABLE ... SELECT' is not implemented yet
+/// create table t3 (m int) select * from t1;
+///   ERR code=1105 msg='CREATE TABLE ... SELECT' is not implemented yet
+/// show tables;  RS:t1
+/// ```
+///
+/// The last line is the load-bearing one: Go creates NOTHING. The column-list
+/// form is the case that used to slip through here, because the CTAS clause
+/// was parsed into `CreateTableStmt.ctas` and then never read -- an empty
+/// table appeared where Go refuses.
+#[test]
+fn create_table_as_select_is_refused_and_creates_nothing() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t1 (a INT)").unwrap();
+
+    for sql in [
+        "CREATE TABLE t2 AS SELECT * FROM t1",
+        "CREATE TABLE t3 SELECT * FROM t1",
+        "CREATE TABLE t4 (m INT) SELECT * FROM t1",
+        "CREATE TABLE t5 IGNORE SELECT * FROM t1 UNION SELECT * FROM t1",
+    ] {
+        let error = session.run(sql).expect_err(sql).to_mysql_error();
+        assert_eq!(error.code, 1105, "{sql}");
+        assert_eq!(
+            error.message, "'CREATE TABLE ... SELECT' is not implemented yet",
+            "{sql}"
+        );
+    }
+
+    // Go's fourth `TestPreprocess` row. It is refused here too, but at parse
+    // time with 1064 rather than 1105: `parse_create_table_result_source`
+    // stops at the CTAS source's closing paren, while Go's
+    // `ddl_table_parser.go` runs `maybeParseUnion` on the parenthesized
+    // branch as well. That is a parser gap, tracked separately -- what this
+    // asserts here is only that the statement never creates a table.
+    assert!(session
+        .run("CREATE TABLE t6 (m INT) REPLACE AS (SELECT * FROM t1) UNION (SELECT * FROM t1)")
+        .is_err());
+
+    // Go's `show tables` after the same script lists t1 alone.
+    assert_eq!(row_text(session.run("SHOW TABLES")), [["t1"]]);
+}
