@@ -591,9 +591,14 @@ impl ScalarFunction {
                     return Ok(ctx.sysvar(None, "version").unwrap_or(Datum::Null));
                 }
                 // Go `builtinCurrentUserSig` reports the MATCHED grant
-                // identity and `builtinUserSig` the LOGIN identity; MySQL
-                // makes SESSION_USER a synonym of USER.
-                "current_user" | "system_user" => {
+                // identity (`UserIdentity.String()`, which prefers
+                // AuthUsername@AuthHostname). CURRENT_USER is the only name
+                // bound to it: `pkg/expression/builtin.go:823` registers
+                // `currentUserFunctionClass` for CURRENT_USER alone, while
+                // USER, SESSION_USER and SYSTEM_USER (`:833`, `:840`, `:841`)
+                // all share `userFunctionClass`, whose sig returns
+                // `UserIdentity.LoginString()` -- the authenticated identity.
+                "current_user" => {
                     return Ok(match ctx.current_user() {
                         Some(user) => Datum::Bytes(user.into_bytes()),
                         None => Datum::Null,
@@ -608,7 +613,7 @@ impl ScalarFunction {
                         None => Datum::Null,
                     })
                 }
-                "user" | "session_user" => {
+                "user" | "session_user" | "system_user" => {
                     return Ok(match ctx.login_user() {
                         Some(user) => Datum::Bytes(user.into_bytes()),
                         None => Datum::Null,

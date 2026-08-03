@@ -754,9 +754,13 @@ fn like_between_case_and_builtins() {
         [["NULL", "NULL"]]
     );
     session.set_user("bob@%".to_owned(), "bob@10.0.0.1".to_owned());
+    // Only CURRENT_USER is bound to `currentUserFunctionClass`
+    // (`pkg/expression/builtin.go:823`) and so reports the matched grant
+    // identity. USER, SESSION_USER and SYSTEM_USER (`:833`, `:840`, `:841`)
+    // all share `userFunctionClass`, whose sig returns `LoginString()`.
     assert_eq!(
-        row_text(session.run("SELECT CURRENT_USER(), USER(), SESSION_USER()")),
-        [["bob@%", "bob@10.0.0.1", "bob@10.0.0.1"]]
+        row_text(session.run("SELECT CURRENT_USER(), USER(), SESSION_USER(), SYSTEM_USER()")),
+        [["bob@%", "bob@10.0.0.1", "bob@10.0.0.1", "bob@10.0.0.1"]]
     );
 
     // CONNECTION_ID() is NULL until a front end attaches one (Go itself
