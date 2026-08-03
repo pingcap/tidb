@@ -443,7 +443,7 @@ func NewFileChunkProcessor(
 ) ChunkProcessor {
 	chunkLogger := logger.With(
 		zap.String("key", chunk.GetKey()),
-		zap.Int64("chunkSize", chunk.EndOffset-chunk.Offset),
+		zap.Int64("chunkSize", chunk.GetSize()),
 	)
 	deliver := &dataDeliver{
 		logger:        chunkLogger,
