@@ -783,6 +783,38 @@ impl ScalarFunction {
                         ctx,
                     );
                 }
+                // Go `weightStringFunctionClass`: a NUMERIC argument builds
+                // `builtinWeightStringNullSig` (always NULL) from the
+                // argument's FieldType, and the sort key is taken under the
+                // ARGUMENT's collation -- the function's own is forced to
+                // `binary`, so `derived_collation` is the wrong one here.
+                "weight_string" if !self.args.is_empty() => {
+                    let arg_type = self.args[0].static_type();
+                    if arg_type.is_some_and(|ft| ft.code().is_type_numeric()) {
+                        return Ok(Datum::Null);
+                    }
+                    let arg_collation = arg_type
+                        .and_then(|ft| tidb_datatype::Collation::from_name(ft.collation_name()))
+                        .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION);
+                    let value = self.args[0].eval(ctx, row)?;
+                    // The `AS` clause travels as the constant second and
+                    // third arguments the rewriter built.
+                    let padding = match self.args.len() {
+                        3 => {
+                            let kind = self.args[1].eval(ctx, row)?;
+                            let length = self.args[2].eval(ctx, row)?;
+                            let binary = kind.sql_string().is_ok_and(|k| k == "BINARY");
+                            Some((binary, crate::cast::to_i64_signed(&length)))
+                        }
+                        _ => None,
+                    };
+                    return crate::string_packet::weight_string(
+                        &value,
+                        padding,
+                        arg_collation,
+                        ctx,
+                    );
+                }
                 "field" if self.args.len() >= 2 => {
                     let vals: Vec<Datum> = self
                         .args

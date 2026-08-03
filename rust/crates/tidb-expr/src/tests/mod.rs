@@ -698,7 +698,7 @@ fn right_and_rpad_sig_source_vectors_preserve_scalar_boundaries() {
     assert_eq!(e("rpad(NULL, 6, '123')"), "NULL");
     assert_eq!(e("rpad('abc', 6, NULL)"), "NULL");
     assert_eq!(
-        string_fn::pad(
+        string_packet::pad(
             &[
                 Datum::new_bytes(b"ab".to_vec()),
                 Datum::Int(3),
@@ -711,7 +711,7 @@ fn right_and_rpad_sig_source_vectors_preserve_scalar_boundaries() {
         Datum::new_bytes(vec![b'a', b'b', 0xff])
     );
     assert_eq!(
-        string_fn::pad(&[], false, &NoColumns),
+        string_packet::pad(&[], false, &NoColumns),
         Err(EvalError::Unsupported("bad LPAD/RPAD arguments"))
     );
 }
@@ -1808,4 +1808,94 @@ fn translate_is_reachable_from_the_chunk_tier() {
     assert_eq!(chunk_e("translate('hello', 'lo', 'L')"), "STR:heLL");
     assert_eq!(chunk_e("translate('中文测试', '中试', 'XY')"), "STR:X文测Y");
     assert_eq!(chunk_e("translate('abc', null, 'x')"), "NULL");
+}
+
+/// `WEIGHT_STRING` and `LOAD_FILE`, both previously refused outright.
+///
+/// `LOAD_FILE` is `builtinLoadFileSig.evalString`, which reads its argument
+/// and then returns `"", true, nil` UNCONDITIONALLY -- TiDB has no
+/// server-side file access, so every path is NULL and there is no
+/// `secure_file_priv` policy to model. CAPTURED: `load_file('/etc/hosts')`
+/// is NULL on a server whose own process can read that file.
+///
+/// `WEIGHT_STRING` is the collation SORT KEY surfaced to SQL -- what
+/// `ORDER BY` actually compares. Every row below is CAPTURED from TiDB as
+/// `HEX(...)`:
+///
+/// ```text
+/// weight_string('a')                             -> 61
+/// weight_string('A' collate utf8mb4_general_ci)  -> 0041
+/// weight_string('ab' as char(1))                 -> 61
+/// weight_string('ab' as char(4))                 -> 6162
+/// weight_string('ab' as binary(4))               -> 61620000
+/// weight_string('ab' as binary(1))               -> 61
+/// weight_string('中')                             -> E4B8AD
+/// weight_string(1) / weight_string(1 as char(2)) -> NULL
+/// ```
+///
+/// `AS CHAR(4)` is `6162`, not `61622020`: the spaces are padded on before
+/// the key is taken and `utf8mb4_bin` is PAD SPACE, so they are trimmed right
+/// back off. `AS BINARY(4)` keeps its NUL padding because `binary` is not.
+#[test]
+fn weight_string_and_load_file_source_vectors() {
+    for (sql, want) in [
+        ("hex(weight_string('a'))", "STR:61"),
+        (
+            "hex(weight_string('A' collate utf8mb4_general_ci))",
+            "STR:0041",
+        ),
+        ("hex(weight_string('ab' as char(1)))", "STR:61"),
+        ("hex(weight_string('ab' as char(4)))", "STR:6162"),
+        ("hex(weight_string('ab' as binary(4)))", "STR:61620000"),
+        ("hex(weight_string('ab' as binary(1)))", "STR:61"),
+        ("hex(weight_string('中'))", "STR:E4B8AD"),
+        // `AS CHAR(n)` counts RUNES and `AS BINARY(n)` counts BYTES -- the
+        // two truncate the same input to different places. CAPTURED.
+        ("hex(weight_string('中文' as char(1)))", "STR:E4B8AD"),
+        ("hex(weight_string('中文' as binary(1)))", "STR:E4"),
+        // The same distinction on the PADDING side: 3 is past the two RUNES
+        // but short of the six BYTES, so `AS CHAR(3)` pads rather than
+        // truncates -- visible only under a NO PAD collation. CAPTURED.
+        (
+            "hex(weight_string('中文' collate utf8mb4_0900_bin as char(3)))",
+            "STR:E4B8ADE6968720",
+        ),
+        // A NO PAD collation is where `AS CHAR(n)`'s padding SURVIVES the
+        // key, which is what makes padding-before-keying observable at all:
+        // under `utf8mb4_bin` (PAD SPACE) the spaces are trimmed back off.
+        // CAPTURED from TiDB.
+        (
+            "hex(weight_string('ab' collate utf8mb4_0900_ai_ci as char(4)))",
+            "STR:1C471C6002090209",
+        ),
+        (
+            "hex(weight_string('ab' collate utf8mb4_0900_ai_ci))",
+            "STR:1C471C60",
+        ),
+        (
+            "hex(weight_string('ab' collate utf8mb4_0900_bin as char(4)))",
+            "STR:61622020",
+        ),
+        ("hex(weight_string(cast('ab' as binary)))", "STR:6162"),
+        // `builtinWeightStringNullSig`: a numeric argument is always NULL,
+        // with or without an AS clause.
+        ("weight_string(1)", "NULL"),
+        ("weight_string(1 as char(2))", "NULL"),
+        ("weight_string(null)", "NULL"),
+        ("load_file('/etc/hosts')", "NULL"),
+        ("load_file(null)", "NULL"),
+    ] {
+        assert_eq!(chunk_e(sql), want, "{sql}");
+    }
+
+    // The AST/value tier agrees on every row EXCEPT the explicit COLLATE one:
+    // it has no collation derivation, so it keys `'A'` under the connection
+    // default and answers `41` where the chunk tier answers the
+    // `utf8mb4_general_ci` weight `0041`. The same documented boundary the
+    // other collation-aware builtins carry.
+    assert_eq!(e("hex(weight_string('ab' as binary(4)))"), "STR:61620000");
+    assert_eq!(
+        e("hex(weight_string('A' collate utf8mb4_general_ci))"),
+        "STR:41"
+    );
 }

@@ -21,10 +21,10 @@ use crate::eval_in;
 use crate::row::row_compare;
 use crate::string_fn::{
     ascii, bin, bit_count, bit_length, case_convert, char_func, concat, concat_ws, elt, field,
-    format_num, from_base64, hex, locate, locate_collation, make_set, oct, ord, pad, quote, repeat,
-    replace, reverse, space, str_insert, str_take, strcmp, substring, substring_index, to_base64,
-    unhex,
+    format_num, from_base64, hex, locate, locate_collation, make_set, oct, ord, quote, replace,
+    reverse, str_insert, str_take, strcmp, substring, substring_index, unhex,
 };
+use crate::string_packet::{pad, repeat, space, to_base64};
 use crate::time_fn::calendar::{date_add, date_diff, date_format, date_part, from_days, time_part};
 use crate::{BuildContext, Columns, Datum, EvalError, StringLengthFunction};
 
@@ -436,6 +436,11 @@ pub(crate) fn eval_func_values(
         "FORMAT" if vals.len() == 2 => format_num(vals, ctx),
         "CHAR_FUNC" if !vals.is_empty() => char_func(vals),
         "TO_BASE64" if vals.len() == 1 => to_base64(vals, ctx),
+        // Go `builtinLoadFileSig.evalString` reads the argument and then
+        // returns `"", true, nil` UNCONDITIONALLY: TiDB has no server-side
+        // file access at all, so LOAD_FILE is NULL for every path, readable
+        // or not. CAPTURED: `select load_file('/etc/hosts')` is NULL.
+        "LOAD_FILE" if vals.len() == 1 => Ok(Datum::Null),
         "FROM_BASE64" if vals.len() == 1 => from_base64(vals),
         // ---- date-part extraction ----
         // A `DATE`/`DATETIME` value is a plain string to this evaluator (no

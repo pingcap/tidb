@@ -988,6 +988,33 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             );
             Ok(node)
         }
+        // Go `weightStringFunctionClass`: the `AS CHAR(n)`/`AS BINARY(n)`
+        // clause is not syntax sugar over a cast -- it becomes the second and
+        // third ARGUMENTS of the builtin, which `verifyArgs` requires to be
+        // constants, and only then does `getFunction` pick the padding. Both
+        // spellings are rebuilt here as those constants so one evaluator arm
+        // reads them.
+        Expr::WeightString { expr, as_type } => {
+            let mut args = vec![rewrite_expr_resolved(expr, resolver)?];
+            if let Some((kind, length)) = as_type {
+                args.push(constant_string(match kind {
+                    tidb_ast::WeightStringType::Char => "CHAR",
+                    tidb_ast::WeightStringType::Binary => "BINARY",
+                }));
+                args.push(Expression::Constant(Constant::new(
+                    Datum::Int(i64::try_from(*length).unwrap_or(i64::MAX)),
+                    FieldType::new(FieldTypeCode::LongLong),
+                )));
+            }
+            let mut ret_type = FieldType::new(FieldTypeCode::VarString);
+            ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            set_binary_charset(&mut ret_type);
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("weight_string"),
+                ret_type,
+                args,
+            )))
+        }
         // Go `trimFunctionClass`: the direction picks one of the three
         // signatures, and a bare `TRIM(x)` strips spaces from both ends.
         Expr::Trim {

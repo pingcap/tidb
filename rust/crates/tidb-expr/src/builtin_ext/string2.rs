@@ -312,7 +312,8 @@ fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
 mod tests {
     use super::{dispatch, locate3};
     use crate::coerce::coerce_str;
-    use crate::string_fn::{char_func, format_num, position, substring, to_base64};
+    use crate::string_fn::{char_func, format_num, position, substring};
+    use crate::string_packet::to_base64;
     use crate::Datum;
 
     fn string(value: &str) -> Datum {

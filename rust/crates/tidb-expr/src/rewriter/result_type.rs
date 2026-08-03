@@ -42,7 +42,13 @@ use crate::builtin_ext::GlCmpStringMode;
 /// type built in [`builtin_return_type`] and the re-assertion after generic
 /// collation derivation -- so the two cannot drift apart.
 pub(super) fn returns_binary_string(name: &str) -> bool {
-    matches!(name, "unhex" | "from_base64" | "inet6_aton")
+    // `weight_string` is the fourth: `weightStringFunctionClass.getFunction`
+    // calls `types.SetBinChsClnFlag(bf.tp)` on a result whose bytes are a
+    // collation SORT KEY, which is not text in any charset.
+    matches!(
+        name,
+        "unhex" | "from_base64" | "inet6_aton" | "weight_string"
+    )
 }
 
 pub(super) fn set_binary_charset(ft: &mut FieldType) {
@@ -236,6 +242,13 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         | "json_merge_preserve" | "json_merge_patch" => text(),
         "json_valid" | "json_contains" | "json_length" | "json_depth" => int(),
         "conv" | "bin" | "oct" | "format" => text(),
+        // Go `loadFileFunctionClass.getFunction`: an `ETString` result of
+        // flen 64 in the connection charset. The VALUE is always NULL.
+        "load_file" if args.len() == 1 => {
+            let mut ft = text();
+            ft.set_flen(64);
+            ft
+        }
         // NOT the same merge a CASE uses, even though both are "combine the
         // argument types". Go `greatestFunctionClass.getFunction` takes only
         // the EVAL TYPE from `resolveType4Extremum` and then picks one
