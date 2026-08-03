@@ -209,6 +209,7 @@ pub(crate) fn add_index_to_table(
     }
     let mut offsets = Vec::with_capacity(parts.len());
     let mut prefix_lengths = Vec::with_capacity(parts.len());
+    let mut part_types: Vec<tidb_datatype::FieldType> = Vec::with_capacity(parts.len());
     let mut built = hidden.into_iter();
     let mut pending = Vec::new();
     for part in parts {
@@ -226,16 +227,27 @@ pub(crate) fn add_index_to_table(
                     name,
                     *prefix_len,
                 )?);
+                part_types.push(table.columns[offset].field_type.clone());
                 offsets.push(offset);
             }
             tidb_ast::IndexPart::Expr { .. } => {
                 let (_, column) = built.next().expect("one hidden column per expression part");
                 offsets.push(table.columns.len() + pending.len());
                 prefix_lengths.push(crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
+                part_types.push(column.field_type.clone());
                 pending.push(column);
             }
         }
     }
+    // Go `buildIndexColumns` runs the same running sum for ADD INDEX as for
+    // CREATE TABLE: each part may be legal and their total still refused.
+    crate::ddl::index_prefix::check_index_key_length(
+        part_types.iter().zip(prefix_lengths.iter().copied()),
+        parts.len(),
+        unique,
+        true,
+    )
+    .map_err(crate::ddl::index_prefix::driver_error)?;
     // Go `checkPartitionKeysConstraint` reaches ADD INDEX too: a unique index
     // on a partitioned table must include every partitioning column unless it
     // is GLOBAL (8264). It is not merely a rule to copy -- this tier keys

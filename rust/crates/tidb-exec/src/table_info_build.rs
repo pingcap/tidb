@@ -177,10 +177,33 @@ fn prefix_length(
             tidb_error::tidb::errcode::ErrKeyPart0,
             format!("Key part '{column}' length cannot be 0"),
         ),
+        PrefixError::WrongKeyColumn(column) => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrWrongKeyColumn,
+            format!("The used storage engine can't index column '{column}'"),
+        ),
         PrefixError::TooLongKey { length, max } => DdlAdmissionError::with_code(
             tidb_error::tidb::errcode::ErrTooLongKey,
             format!("Specified key was too long ({length} bytes); max key length is {max} bytes"),
         ),
+    })
+}
+
+/// Go `buildIndexColumns`' running sum over one index's key parts, mapped onto
+/// this builder's refusal. The per-part rules are [`prefix_length`]; this is
+/// the separate limit on their TOTAL.
+fn key_length_sum<'a>(
+    parts: impl IntoIterator<Item = (&'a tidb_datatype::FieldType, i64)>,
+    part_count: usize,
+    unique: bool,
+) -> Refusal<()> {
+    use tidb_executor::ddl::index_prefix::{check_index_key_length, PrefixError};
+
+    check_index_key_length(parts, part_count, unique, true).map_err(|error| match error {
+        PrefixError::TooLongKey { length, max } => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrTooLongKey,
+            format!("Specified key was too long ({length} bytes); max key length is {max} bytes"),
+        ),
+        other => unreachable!("the key-length sum reports only ErrTooLongKey, got {other:?}"),
     })
 }
 
@@ -848,6 +871,8 @@ fn build_table(
             constraint.name.clone()
         };
         let mut index_columns = Vec::with_capacity(constraint.parts.len());
+        let mut part_lengths: Vec<(&tidb_datatype::FieldType, i64)> =
+            Vec::with_capacity(constraint.parts.len());
         for part in &constraint.parts {
             let Some(column) = table
                 .columns
@@ -867,6 +892,7 @@ fn build_table(
             // deferring; what it must not do is store an ILLEGAL one, which
             // is what it did before this call existed.
             let length = prefix_length(&column.field_type, column.name.original(), part)?;
+            part_lengths.push((&column.field_type, length));
             index_columns.push(IndexColumn {
                 name: column.name.clone(),
                 offset: column.offset,
@@ -874,6 +900,14 @@ fn build_table(
                 ..IndexColumn::default()
             });
         }
+        // Go `buildIndexColumns`: the sum of every key part's stored bytes
+        // must stay within `config.MaxIndexLength`. Each part above may be
+        // legal on its own and the total still refused.
+        key_length_sum(
+            part_lengths,
+            constraint.parts.len(),
+            primary || constraint.kind == ConstraintKind::Unique,
+        )?;
         table.max_index_id += 1;
         table.indices.push(IndexInfo {
             id: table.max_index_id,

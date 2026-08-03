@@ -512,6 +512,12 @@ impl DriverError {
             *b"HY000",
             format!("Key part '{column}' length cannot be 0"),
         ),
+        // Go: "The used storage engine can't index column '%-.192s'".
+        DriverError::WrongKeyColumn(column) => MysqlError::new(
+            1167,
+            *b"42000",
+            format!("The used storage engine can't index column '{column}'"),
+        ),
         // Go: "Specified key was too long (%d bytes); max key length is %d
         // bytes".
         DriverError::TooLongKey { length, max } => MysqlError::new(

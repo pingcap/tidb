@@ -230,6 +230,10 @@ pub(crate) fn table_indexes(
         )?;
         let mut offsets = Vec::with_capacity(index.parts.len());
         let mut prefix_lengths = Vec::with_capacity(index.parts.len());
+        // Go's `buildIndexColumns` runs a SUM over the key parts beside the
+        // per-part checks; the field type of each part is what that sum needs,
+        // and a hidden expression column's type is only in hand here.
+        let mut part_types: Vec<tidb_datatype::FieldType> = Vec::with_capacity(index.parts.len());
         for (position, part) in index.parts.iter().enumerate() {
             match part {
                 tidb_ast::IndexPart::Column {
@@ -241,6 +245,7 @@ pub(crate) fn table_indexes(
                         name,
                         *prefix_len,
                     )?);
+                    part_types.push(column_types[offset].clone());
                     offsets.push(offset);
                 }
                 // The hidden columns are appended after the declared ones, in
@@ -255,9 +260,20 @@ pub(crate) fn table_indexes(
                     // An expression key part has no declared length: Go's
                     // parser has nowhere to write one on `KEY ((a + 1))`.
                     prefix_lengths.push(crate::ddl::index_prefix::UNSPECIFIED_LENGTH);
+                    part_types.push(built[index_in_built].1.field_type.clone());
                 }
             }
         }
+        // Go `buildIndexColumns`: the sum of every key part's stored bytes
+        // must stay within `config.MaxIndexLength`, checked in declaration
+        // order so the reported number is the running sum that crossed it.
+        crate::ddl::index_prefix::check_index_key_length(
+            part_types.iter().zip(prefix_lengths.iter().copied()),
+            index.parts.len(),
+            unique,
+            true,
+        )
+        .map_err(crate::ddl::index_prefix::driver_error)?;
         hidden.extend(built.into_iter().map(|(_, column)| column));
         push(
             &mut indexes,
@@ -652,6 +668,8 @@ pub(crate) fn primary_key_column(
             ));
         }
         let mut names = Vec::with_capacity(index.parts.len());
+        let mut part_lengths: Vec<(&tidb_datatype::FieldType, i64)> =
+            Vec::with_capacity(index.parts.len());
         for part in &index.parts {
             let tidb_ast::IndexPart::Column {
                 name, prefix_len, ..
@@ -682,8 +700,22 @@ pub(crate) fn primary_key_column(
                     crate::ddl::index_prefix::clustered_prefix_unsupported(),
                 ));
             }
+            part_lengths.push((field_type, crate::ddl::index_prefix::UNSPECIFIED_LENGTH));
             names.push(name.clone());
         }
+        // Go `buildIndexColumns`: a primary key's parts are summed like any
+        // other index's. Captured: four `varchar(255)` utf8mb4 columns are
+        // 1020 bytes each and legal one at a time, but
+        // `PRIMARY KEY (c01,c02,c03,c04)` is
+        // "[ddl:1071]Specified key was too long (4080 bytes); max key length
+        // is 3072 bytes".
+        crate::ddl::index_prefix::check_index_key_length(
+            part_lengths,
+            index.parts.len(),
+            true,
+            true,
+        )
+        .map_err(crate::ddl::index_prefix::driver_error)?;
         found = Some(PrimaryKeyDecl {
             columns: names,
             storage: index.options.primary_key_storage,

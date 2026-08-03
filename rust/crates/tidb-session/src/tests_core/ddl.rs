@@ -1355,3 +1355,115 @@ fn create_table_as_select_is_refused_and_creates_nothing() {
     // Go's `show tables` after the same script lists t1 alone.
     assert_eq!(row_text(session.run("SHOW TABLES")), [["t1"]]);
 }
+
+/// Go `buildIndexColumns` (`pkg/ddl/index.go:116`) checks TWO index-length
+/// rules, not one: `checkIndexColumn` bounds each key part on its own, and a
+/// running `sumLength` bounds their total. Only the first was ported, so a
+/// schema whose parts are each legal and whose sum is not was accepted here
+/// and refused by TiDB.
+///
+/// The same function's first arm, `ErrWrongKeyColumn` (1167), was missing
+/// too: a `char(0)`/`binary(0)`/`varchar(0)` has no bytes to key on.
+///
+/// Every expectation below is captured from a real Go session (mockstore):
+///
+/// ```text
+/// CREATE TABLE k1 (c01..c04 varchar(255) NOT NULL, PRIMARY KEY (c01,c02,c03,c04) clustered);
+///   ERR 1071 Specified key was too long (4080 bytes); max key length is 3072 bytes
+/// CREATE TABLE k2 (c01..c03 varchar(255) NOT NULL, KEY kk (c01,c02,c03));   OK
+/// CREATE TABLE k3 (b char(0), index(b));    ERR 1167 ... can't index column 'b'
+/// CREATE TABLE k4 (c binary(0), index(c));  ERR 1167 ... can't index column 'c'
+/// CREATE TABLE k5 (d varchar(0), index(d)); ERR 1167 ... can't index column 'd'
+/// CREATE TABLE k6 (a,b,c varchar(200) charset ascii, key kk(a,b,c));  OK
+/// CREATE TABLE k7 (a text, unique (a(769)));            ERR 1071 (3076 bytes)
+/// CREATE TABLE k8 (a text charset ascii, unique (a(3073)));  ERR 1071 (3073 bytes)
+/// CREATE TABLE k9 (a varchar(600), b varchar(600), key(a,b)); ERR 1071 (4800 bytes)
+/// ```
+///
+/// k2 and k6 are the load-bearing negatives: 3 x 1020 = 3060 and 3 x 200 = 600
+/// both stay under the limit, so the sum has to be a real sum and not a
+/// per-part check with a bigger number.
+#[test]
+fn create_table_bounds_the_whole_index_key_not_just_each_part() {
+    let mut session = Session::new();
+    let refused = |session: &mut Session, sql: &str, code: u16, message: &str| {
+        let error = session.run(sql).expect_err(sql).to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    };
+    let too_long = |bytes: usize| {
+        format!("Specified key was too long ({bytes} bytes); max key length is 3072 bytes")
+    };
+
+    refused(
+        &mut session,
+        "CREATE TABLE k1 (c01 varchar(255) NOT NULL, c02 varchar(255) NOT NULL, \
+         c03 varchar(255) NOT NULL, c04 varchar(255) NOT NULL, \
+         PRIMARY KEY (c01,c02,c03,c04) clustered)",
+        1071,
+        &too_long(4080),
+    );
+    // Three of the same columns are 3060 bytes and legal.
+    session
+        .run(
+            "CREATE TABLE k2 (c01 varchar(255) NOT NULL, c02 varchar(255) NOT NULL, \
+             c03 varchar(255) NOT NULL, KEY kk (c01,c02,c03))",
+        )
+        .unwrap();
+
+    for (sql, column) in [
+        ("CREATE TABLE k3 (b char(0), index(b))", "b"),
+        ("CREATE TABLE k4 (c binary(0), index(c))", "c"),
+        ("CREATE TABLE k5 (d varchar(0), index(d))", "d"),
+    ] {
+        refused(
+            &mut session,
+            sql,
+            1167,
+            &format!("The used storage engine can't index column '{column}'"),
+        );
+    }
+
+    // One byte per character, so three 200-character parts are 600 bytes.
+    session
+        .run(
+            "CREATE TABLE k6 (a varchar(200) charset ascii, b varchar(200) charset ascii, \
+             c varchar(200) charset ascii, key kk(a,b,c))",
+        )
+        .unwrap();
+
+    // The per-part rule still reports what it always did.
+    refused(
+        &mut session,
+        "CREATE TABLE k7 (a text, unique (a(769)))",
+        1071,
+        &too_long(3076),
+    );
+    refused(
+        &mut session,
+        "CREATE TABLE k8 (a text charset ascii, unique (a(3073)))",
+        1071,
+        &too_long(3073),
+    );
+    // Neither part declares a prefix, so each takes the COLUMN's own width:
+    // 2 x 4 x 600 = 4800. A port that summed only DECLARED prefixes reads 0.
+    refused(
+        &mut session,
+        "CREATE TABLE k9 (a varchar(600), b varchar(600), key(a,b))",
+        1071,
+        &too_long(4800),
+    );
+    // ALTER TABLE ADD INDEX runs the same `buildIndexColumns`.
+    session
+        .run("CREATE TABLE ka (a varchar(600), b varchar(600))")
+        .unwrap();
+    refused(
+        &mut session,
+        "ALTER TABLE ka ADD INDEX kk (a,b)",
+        1071,
+        &too_long(4800),
+    );
+}

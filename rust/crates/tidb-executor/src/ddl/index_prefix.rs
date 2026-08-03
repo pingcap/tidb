@@ -80,6 +80,9 @@ pub enum PrefixError {
     BlobKeyWithoutLength(String),
     /// Go `dbterror.ErrKeyPart0` (1391): the length was written as zero.
     KeyPart0(String),
+    /// Go `dbterror.ErrWrongKeyColumn` (1167): the column cannot carry an
+    /// index at all.
+    WrongKeyColumn(String),
     /// Go `dbterror.ErrTooLongKey` (1071). Both numbers are BYTES, and the
     /// first has already been multiplied by the charset's maximum bytes per
     /// character, which is what Go reports.
@@ -91,10 +94,9 @@ pub enum PrefixError {
     },
 }
 
-/// Go `checkIndexColumn`'s `ErrWrongKeyColumn` (1167) and `ErrJSONUsedAsKey`
-/// (3152) arms are NOT here: both tiers already raise them from their own
-/// index lowering, where the column name is in hand, and neither depends on
-/// the declared length.
+/// Go `checkIndexColumn`'s `ErrJSONUsedAsKey` (3152) arm is NOT here: both
+/// tiers already raise it from their own index lowering, where the column
+/// name is in hand, and it does not depend on the declared length.
 ///
 /// Validates the declared length of one key part and returns the length TiDB
 /// STORES for it, which is not always the one that was written.
@@ -115,6 +117,18 @@ pub fn stored_index_length(
 ) -> Result<i64, PrefixError> {
     let code = field_type.code();
     let declared = declared.unwrap_or(UNSPECIFIED_LENGTH);
+
+    // Go `checkIndexColumn`'s FIRST arm: a NULL-typed column, or a
+    // `char(0)`/`varchar(0)`/`binary(0)` whose declared width leaves no bytes
+    // to key on, cannot be indexed at all. Captured:
+    // `create table t (b char(0), index(b))` is
+    // "[ddl:1167]The used storage engine can't index column 'b'".
+    if code == tidb_datatype::FieldTypeCode::Null
+        || (field_type.flen() == 0
+            && (code.is_type_char() || code == tidb_datatype::FieldTypeCode::Varchar))
+    {
+        return Err(PrefixError::WrongKeyColumn(column.to_owned()));
+    }
 
     // A BLOB/TEXT key part must carry a length, and it may not be zero.
     if code.is_type_blob() {
@@ -165,6 +179,94 @@ pub fn stored_index_length(
     Ok(declared)
 }
 
+/// Go `getIndexColumnLength` (`pkg/ddl/index.go:307`): the BYTES one key part
+/// occupies in the index.
+///
+/// This is not the declared length. A key part with no declared length takes
+/// the COLUMN's own `flen` -- which is why `KEY(a, b)` over two
+/// `varchar(600)` utf8mb4 columns is 4800 bytes even though neither part
+/// carries a prefix -- and a fixed-width type takes its storage size from
+/// `mysql.DefaultLengthOfMysqlTypes` regardless of its display width.
+#[must_use]
+pub fn index_column_bytes(field_type: &FieldType, declared: i64) -> i64 {
+    use tidb_datatype::FieldTypeCode as Code;
+
+    let length = if declared != UNSPECIFIED_LENGTH {
+        declared
+    } else {
+        field_type.flen()
+    };
+    match field_type.code() {
+        // A BIT column is packed eight values to the byte.
+        Code::Bit => (length + 7) >> 3,
+        Code::Varchar
+        | Code::String
+        | Code::VarString
+        | Code::TinyBlob
+        | Code::MediumBlob
+        | Code::Blob
+        | Code::LongBlob => charset_max_bytes(field_type) * length,
+        Code::Tiny => 1,
+        Code::Short => 2,
+        Code::Int24 => 3,
+        Code::Long => 4,
+        Code::LongLong | Code::Double => 8,
+        // `mysql.MaxFloatPrecisionLength` is 24: above it a FLOAT is stored
+        // with double precision, so it costs a DOUBLE's eight bytes.
+        Code::Float => {
+            if length <= 24 {
+                4
+            } else {
+                8
+            }
+        }
+        Code::NewDecimal => (length / 9 * 4) + ((length % 9) + 1) / 2,
+        Code::Year => 1,
+        Code::Date | Code::Duration => 3,
+        Code::Datetime => 8,
+        Code::Timestamp => 4,
+        // Go's `default` arm, which ENUM and SET reach too -- they are absent
+        // from its switch even though `DefaultLengthOfMysqlTypes` names them.
+        _ => length,
+    }
+}
+
+/// Go `buildIndexColumns`' running-sum check: the key parts of ONE index
+/// together may not exceed `config.MaxIndexLength`.
+///
+/// This is a separate rule from the per-key-part limit in
+/// [`stored_index_length`], and it is the one that refuses
+/// `PRIMARY KEY (c01,c02,c03,c04)` over four `varchar(255)` utf8mb4 columns:
+/// each part is 1020 bytes and legal on its own, but the fourth takes the sum
+/// to 4080. Go reports the running sum at the part that crossed the line, not
+/// the total, so the parts are checked in declaration order.
+///
+/// `strict` is the SQL mode. Go downgrades this to a warning-and-truncate
+/// only when the mode is non-strict AND the index is a single non-unique key
+/// part; a multi-part or unique index is an error either way.
+///
+/// # Errors
+///
+/// [`PrefixError::TooLongKey`] carrying the running sum that crossed the max.
+pub fn check_index_key_length<'a>(
+    parts: impl IntoIterator<Item = (&'a FieldType, i64)>,
+    part_count: usize,
+    unique: bool,
+    strict: bool,
+) -> Result<(), PrefixError> {
+    let mut sum = 0;
+    for (field_type, declared) in parts {
+        sum += index_column_bytes(field_type, declared);
+        if sum > MAX_INDEX_LENGTH && (strict || unique || part_count > 1) {
+            return Err(PrefixError::TooLongKey {
+                length: sum,
+                max: MAX_INDEX_LENGTH,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Go `charset.GetCharsetInfo(col.GetCharset()).Maxlen`, for the charsets a
 /// column may declare here.
 fn charset_max_bytes(field_type: &FieldType) -> i64 {
@@ -195,16 +297,22 @@ pub fn key_part_length(
     // Strict mode is not threaded to this tier's DDL yet, and the strict
     // reading is the one that refuses rather than silently truncating a key,
     // so it is the safe default until it is.
-    match stored_index_length(field_type, column, declared, true) {
-        Ok(length) => Ok(length),
-        Err(PrefixError::IncorrectPrefixKey) => Err(crate::DriverError::IncorrectPrefixKey),
-        Err(PrefixError::BlobKeyWithoutLength(column)) => {
-            Err(crate::DriverError::BlobKeyWithoutLength(column))
+    stored_index_length(field_type, column, declared, true).map_err(driver_error)
+}
+
+/// Go's index-length errors as the driver reports them, so an illegal key
+/// reaches the client as TiDB's own code rather than as a refusal of this
+/// tier's own.
+#[must_use]
+pub fn driver_error(error: PrefixError) -> crate::DriverError {
+    match error {
+        PrefixError::IncorrectPrefixKey => crate::DriverError::IncorrectPrefixKey,
+        PrefixError::BlobKeyWithoutLength(column) => {
+            crate::DriverError::BlobKeyWithoutLength(column)
         }
-        Err(PrefixError::KeyPart0(column)) => Err(crate::DriverError::KeyPart0(column)),
-        Err(PrefixError::TooLongKey { length, max }) => {
-            Err(crate::DriverError::TooLongKey { length, max })
-        }
+        PrefixError::KeyPart0(column) => crate::DriverError::KeyPart0(column),
+        PrefixError::WrongKeyColumn(column) => crate::DriverError::WrongKeyColumn(column),
+        PrefixError::TooLongKey { length, max } => crate::DriverError::TooLongKey { length, max },
     }
 }
 

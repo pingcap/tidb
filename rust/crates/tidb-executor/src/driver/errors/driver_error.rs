@@ -125,6 +125,10 @@ pub enum DriverError {
     IncorrectPrefixKey,
     /// Go `ErrKeyPart0` (1391): an index key part declared a zero length.
     KeyPart0(String),
+    /// Go `ErrWrongKeyColumn` (1167): the column cannot be indexed at all --
+    /// a `NULL`-typed column, or a `char(0)`/`varchar(0)`/`binary(0)` whose
+    /// declared width leaves nothing to key on.
+    WrongKeyColumn(String),
     /// Go `ErrTooLongKey` (1071): an index key part is longer than
     /// `MaxIndexLength`. Both numbers are BYTES.
     TooLongKey {
