@@ -63,6 +63,7 @@ type DistSQLContext struct {
 	TiFlashQuerySpillRatio               float64
 	TiFlashHashJoinVersion               string
 
+	QueryCopStoreLimiter          *kv.QueryCopStoreLimiter
 	DistSQLConcurrency            int
 	ReplicaReadType               kv.ReplicaReadType
 	WeakConsistency               bool
