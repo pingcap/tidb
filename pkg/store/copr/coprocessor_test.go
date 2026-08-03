@@ -16,7 +16,6 @@ package copr
 
 import (
 	"context"
-	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -187,173 +186,6 @@ func TestBuildTasksWithoutBuckets(t *testing.T) {
 	require.Len(t, tasks, 2)
 	taskEqual(t, tasks[0], regionIDs[1], 0, "h", "k", "m", "n")
 	taskEqual(t, tasks[1], regionIDs[2], 0, "n", "p")
-}
-
-func TestAnalyzeStoreBatchConcurrency(t *testing.T) {
-	tasksWithWeights := func(weights ...int) []*copTask {
-		tasks := make([]*copTask, 0, len(weights))
-		for _, weight := range weights {
-			task := &copTask{}
-			if weight > 1 {
-				task.batchTaskList = make(map[uint64]*batchedCopTask, weight-1)
-				for child := 1; child < weight; child++ {
-					task.batchTaskList[uint64(child)] = nil
-				}
-			}
-			tasks = append(tasks, task)
-		}
-		return tasks
-	}
-	for _, tt := range []struct {
-		name        string
-		scanBudget  int
-		weights     []int
-		concurrency int
-	}{
-		{"no tasks keeps worker floor", 4, nil, 1},
-		{"fully packed groups", 4, []int{2, 2, 2}, 2},
-		{"mixed fragmentation", 4, []int{2, 1, 1, 1}, 3},
-		{"all singletons recover budget", 4, []int{1, 1, 1, 1, 1}, 4},
-		{"mixed width five groups", 15, []int{5, 5, 3, 1, 1}, 5},
-		{"width seven groups beyond the legacy cap", 64, []int{7, 7, 7, 7, 7, 7, 7, 7, 7, 7}, 9},
-		{"largest task leaves no room", 4, []int{3, 2, 1}, 1},
-	} {
-		require.Equalf(
-			t,
-			tt.concurrency,
-			analyzeStoreBatchConcurrency(tasksWithWeights(tt.weights...), tt.scanBudget),
-			"case %q",
-			tt.name,
-		)
-	}
-
-	// The admission arithmetic itself must not overflow at extreme budgets.
-	maxInt := int(^uint(0) >> 1)
-	require.True(t, analyzeScanBudgetFits(maxInt-2, 2, maxInt))
-	require.False(t, analyzeScanBudgetFits(maxInt-1, 2, maxInt))
-	require.False(t, analyzeScanBudgetFits(maxInt, 1, maxInt))
-}
-
-func TestAnalyzeStoreBatchWidthUsesRequestRegionCount(t *testing.T) {
-	for _, tt := range []struct {
-		name        string
-		regionCount int
-		scanBudget  int
-		wantWidth   int
-	}{
-		{name: "max int exact gate", regionCount: math.MaxInt - 1, scanBudget: math.MaxInt / 2, wantWidth: 1},
-		{name: "max int above gate", regionCount: math.MaxInt, scanBudget: math.MaxInt / 2, wantWidth: 3},
-		{name: "max int below overflowing double budget", regionCount: math.MaxInt, scanBudget: math.MaxInt/2 + 1, wantWidth: 1},
-		{name: "max int overflow-safe ceil", regionCount: math.MaxInt, scanBudget: 32, wantWidth: 5},
-		{name: "largest configured budget", regionCount: math.MaxInt, scanBudget: math.MaxInt32, wantWidth: 46340},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			width := analyzeStoreBatchWidth(tt.regionCount, tt.scanBudget)
-			require.Equal(t, tt.wantWidth, width)
-			if width > 1 {
-				require.LessOrEqual(t, width, max(tt.scanBudget, 1)/(width+1))
-			}
-		})
-	}
-}
-
-func TestAnalyzeStoreBatchWidthMatchesSmallIntegerReference(t *testing.T) {
-	for inputBudget := 0; inputBudget <= 128; inputBudget++ {
-		scanBudget := max(inputBudget, 1)
-		cap := 0
-		for width := 0; width*(width+1) <= scanBudget; width++ {
-			cap = width
-		}
-		for regionCount := 0; regionCount <= 1024; regionCount++ {
-			want := 1
-			if regionCount > 2*scanBudget && cap > 1 {
-				pressure := regionCount / scanBudget
-				if regionCount%scanBudget != 0 {
-					pressure++
-				}
-				want = min(pressure, cap)
-			}
-			require.Equalf(
-				t,
-				want,
-				analyzeStoreBatchWidth(regionCount, inputBudget),
-				"N=%d C=%d",
-				regionCount,
-				inputBudget,
-			)
-		}
-	}
-}
-
-func TestAnalyzeRetryBuildsSingletons(t *testing.T) {
-	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
-	require.NoError(t, err)
-	testutils.BootstrapWithMultiRegions(cluster, []byte("f"), []byte("h"))
-	tikvStore, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, tikvStore.Close())
-	}()
-	copStore, err := NewStore(tikvStore, nil)
-	require.NoError(t, err)
-	defer copStore.Close()
-	cache := copStore.GetRegionCache()
-	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
-	req := &kv.Request{
-		Tp:                      kv.ReqTypeAnalyze,
-		StoreType:               kv.TiKV,
-		AllowBatchTaskDataMerge: true,
-	}
-	tasks, err := buildCopTasks(bo, NewKeyRanges(BuildKeyRanges("f", "h")), &buildCopTaskOpt{
-		req:   req,
-		cache: cache,
-	})
-	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	failedChild := tasks[0]
-	require.Empty(t, failedChild.batchTaskList)
-
-	// Split the child's Region underneath it and drop the stale cache entry,
-	// so the retry rebuild has to resolve two Regions.
-	newRegionID, newPeerID := cluster.AllocID(), cluster.AllocID()
-	cluster.Split(failedChild.region.GetID(), newRegionID, []byte("g"), []uint64{newPeerID}, newPeerID)
-	cache.InvalidateCachedRegion(failedChild.region)
-
-	failedChild.taskID = 1
-	var storeBatchedNum atomic.Uint64
-	var storeBatchedFallbackNum atomic.Uint64
-	worker := &copIteratorWorker{
-		store:                   copStore,
-		req:                     req,
-		storeBatchedNum:         &storeBatchedNum,
-		storeBatchedFallbackNum: &storeBatchedFallbackNum,
-	}
-	_, retryTasks, err := worker.handleBatchCopResponse(
-		bo,
-		nil,
-		&coprocessor.Response{
-			BatchResponses: []*coprocessor.StoreBatchTaskResponse{
-				{
-					TaskId: failedChild.taskID,
-					RegionError: &errorpb.Error{
-						EpochNotMatch: &errorpb.EpochNotMatch{},
-					},
-				},
-			},
-		},
-		map[uint64]*batchedCopTask{
-			failedChild.taskID: {task: failedChild},
-		},
-	)
-	require.NoError(t, err)
-	// One failed batched input rebuilds into one singleton task per new
-	// Region and counts as exactly one fallback.
-	require.Len(t, retryTasks, 2)
-	for _, task := range retryTasks {
-		require.Empty(t, task.batchTaskList)
-	}
-	require.Zero(t, storeBatchedNum.Load())
-	require.Equal(t, uint64(1), storeBatchedFallbackNum.Load())
 }
 
 func TestBuildTasksByBuckets(t *testing.T) {
@@ -1263,59 +1095,7 @@ func TestStoreBatchTasksPreserveChildBucketsVersion(t *testing.T) {
 	}, versionByRegion)
 }
 
-func TestHandleBatchCopResponseMergedAndUnansweredTasks(t *testing.T) {
-	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
-	var batched, fallback atomic.Uint64
-	executionStats := &copIteratorRuntimeStats{}
-	worker := &copIteratorWorker{
-		req:                     &kv.Request{},
-		kvclient:                &txnsnapshot.ClientHelper{},
-		storeBatchedNum:         &batched,
-		storeBatchedFallbackNum: &fallback,
-		stats:                   executionStats,
-	}
-
-	mergedTask := &copTask{taskID: 1}
-	responses, remains, err := worker.handleBatchCopResponse(bo, nil, &coprocessor.Response{
-		BatchResponses: []*coprocessor.StoreBatchTaskResponse{
-			{
-				TaskId:                 mergedTask.taskID,
-				DataMergedIntoResponse: true,
-				ExecDetailsV2: &kvrpcpb.ExecDetailsV2{
-					ScanDetailV2: &kvrpcpb.ScanDetailV2{ProcessedVersions: 7},
-					TimeDetailV2: &kvrpcpb.TimeDetailV2{ProcessWallTimeNs: uint64(time.Millisecond)},
-				},
-			},
-		},
-	}, map[uint64]*batchedCopTask{
-		mergedTask.taskID: {task: mergedTask},
-	})
-	require.NoError(t, err)
-	require.Empty(t, remains)
-	require.Empty(t, responses)
-	require.Equal(t, uint64(1), batched.Load())
-	require.Zero(t, fallback.Load())
-	collectedStats := (&copIterator{stats: executionStats}).CollectUnconsumedCopRuntimeStats()
-	require.Len(t, collectedStats, 1)
-	require.Equal(t, int64(7), collectedStats[0].ScanDetail.ProcessedKeys)
-	require.Equal(t, time.Millisecond, collectedStats[0].TimeDetail.ProcessTime)
-
-	unansweredTask := &copTask{taskID: 3}
-	responses, remains, err = worker.handleBatchCopResponse(
-		bo,
-		nil,
-		&coprocessor.Response{},
-		map[uint64]*batchedCopTask{unansweredTask.taskID: {task: unansweredTask}},
-	)
-	require.NoError(t, err)
-	require.Empty(t, responses)
-	require.Len(t, remains, 1)
-	require.Same(t, unansweredTask, remains[0])
-	require.Equal(t, uint64(1), batched.Load())
-	require.Equal(t, uint64(1), fallback.Load())
-}
-
-func TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T) {
+func TestHandleBatchCopResponse(t *testing.T) {
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("m"))
@@ -1334,6 +1114,39 @@ func TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T
 	cache := copStore.GetRegionCache()
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 	req := &kv.Request{}
+	var storeBatchedNum, storeBatchedFallbackNum atomic.Uint64
+	executionStats := &copIteratorRuntimeStats{}
+	worker := &copIteratorWorker{
+		store: copStore, req: req, kvclient: &txnsnapshot.ClientHelper{}, stats: executionStats,
+		storeBatchedNum: &storeBatchedNum, storeBatchedFallbackNum: &storeBatchedFallbackNum,
+	}
+
+	// A merged child contributes stats but no separate response.
+	mergedTask := &copTask{taskID: 1}
+	mergedResp := &coprocessor.Response{BatchResponses: []*coprocessor.StoreBatchTaskResponse{{
+		TaskId: mergedTask.taskID, DataMergedIntoResponse: true,
+		ExecDetailsV2: &kvrpcpb.ExecDetailsV2{
+			ScanDetailV2: &kvrpcpb.ScanDetailV2{ProcessedVersions: 7},
+			TimeDetailV2: &kvrpcpb.TimeDetailV2{ProcessWallTimeNs: uint64(time.Millisecond)},
+		},
+	}}}
+	responses, remains, err := worker.handleBatchCopResponse(bo, nil, mergedResp, map[uint64]*batchedCopTask{1: {task: mergedTask}})
+	require.NoError(t, err)
+	require.Empty(t, responses)
+	require.Empty(t, remains)
+	require.Equal(t, []uint64{1, 0}, []uint64{storeBatchedNum.Load(), storeBatchedFallbackNum.Load()})
+	collectedStats := (&copIterator{stats: executionStats}).CollectUnconsumedCopRuntimeStats()
+	require.Len(t, collectedStats, 1)
+	require.Equal(t, int64(7), collectedStats[0].ScanDetail.ProcessedKeys)
+	require.Equal(t, time.Millisecond, collectedStats[0].TimeDetail.ProcessTime)
+
+	// An unanswered child retries and counts as one fallback.
+	unansweredTask := &copTask{taskID: 3}
+	responses, remains, err = worker.handleBatchCopResponse(bo, nil, &coprocessor.Response{}, map[uint64]*batchedCopTask{3: {task: unansweredTask}})
+	require.NoError(t, err)
+	require.Empty(t, responses)
+	require.Equal(t, []*copTask{unansweredTask}, remains)
+	require.Equal(t, []uint64{1, 1}, []uint64{storeBatchedNum.Load(), storeBatchedFallbackNum.Load()})
 
 	parentTasks, err := buildCopTasks(bo, buildCopRanges("a", "b"), &buildCopTaskOpt{
 		req:   req,
@@ -1353,14 +1166,6 @@ func TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T
 	require.Equal(t, uint64(11), childTask.bucketsVer)
 
 	childTask.taskID = 1
-	var storeBatchedNum atomic.Uint64
-	var storeBatchedFallbackNum atomic.Uint64
-	worker := &copIteratorWorker{
-		store:                   copStore,
-		req:                     req,
-		storeBatchedNum:         &storeBatchedNum,
-		storeBatchedFallbackNum: &storeBatchedFallbackNum,
-	}
 	parentRPCCtx := &tikv.RPCContext{
 		Region:        parentTask.region,
 		BucketVersion: parentTask.bucketsVer,
@@ -1380,7 +1185,7 @@ func TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T
 		},
 	}
 
-	_, remains, err := worker.handleBatchCopResponse(bo, parentRPCCtx, resp, map[uint64]*batchedCopTask{
+	_, remains, err = worker.handleBatchCopResponse(bo, parentRPCCtx, resp, map[uint64]*batchedCopTask{
 		childTask.taskID: {task: childTask},
 	})
 	require.NoError(t, err)
@@ -1391,4 +1196,28 @@ func TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T
 	require.Equal(t, regionIDs[1], loc.Region.GetID())
 	require.Equal(t, uint64(99), loc.Buckets.GetVersion())
 	require.Equal(t, bucketKeys, loc.Buckets.GetKeys())
+
+	// A Region split rebuilds one failed child as singleton retry tasks and
+	// counts the original child, rather than the split output, as one fallback.
+	req.Tp, req.StoreType, req.AllowBatchTaskDataMerge = kv.ReqTypeAnalyze, kv.TiKV, true
+	failedTasks, err := buildCopTasks(bo, buildCopRanges("f", "h"), &buildCopTaskOpt{req: req, cache: cache})
+	require.NoError(t, err)
+	require.Len(t, failedTasks, 1)
+	failedChild := failedTasks[0]
+	newRegionID, newPeerID := cluster.AllocID(), cluster.AllocID()
+	cluster.Split(failedChild.region.GetID(), newRegionID, []byte("g"), []uint64{newPeerID}, newPeerID)
+	cache.InvalidateCachedRegion(failedChild.region)
+	failedChild.taskID = 4
+	storeBatchedNum.Store(0)
+	storeBatchedFallbackNum.Store(0)
+	splitResp := &coprocessor.Response{BatchResponses: []*coprocessor.StoreBatchTaskResponse{{
+		TaskId: 4, RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}},
+	}}}
+	_, retryTasks, err := worker.handleBatchCopResponse(bo, nil, splitResp, map[uint64]*batchedCopTask{4: {task: failedChild}})
+	require.NoError(t, err)
+	require.Len(t, retryTasks, 2)
+	for _, task := range retryTasks {
+		require.Empty(t, task.batchTaskList)
+	}
+	require.Equal(t, []uint64{0, 1}, []uint64{storeBatchedNum.Load(), storeBatchedFallbackNum.Load()})
 }

@@ -148,13 +148,8 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 			}
 		}
 	})
-	storeBatchEnabled := checkStoreBatchCopr(req)
-	if !storeBatchEnabled {
+	if !checkStoreBatchCopr(req) {
 		req.StoreBatchSize = 0
-	}
-	analyzeScanBudget := 0
-	if storeBatchEnabled && isAnalyzeStoreBatchRequest(req) {
-		analyzeScanBudget = max(req.Concurrency, 1)
 	}
 
 	boCtx := ctx
@@ -180,30 +175,26 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		respChan: req.KeepOrder,
 		elapsed:  &elapsed,
 	}
-	if analyzeScanBudget > 0 {
-		tasks, err = buildAnalyzeRequestTasks(bo, buildOpt, analyzeScanBudget)
-	} else {
-		buildTaskFunc := func(ranges []kv.KeyRange, hints []int) error {
-			keyRanges := NewKeyRanges(ranges)
-			if tryRowHint {
-				buildOpt.rowHints = hints
-			}
-			tasksFromRanges, err := buildCopTasks(bo, keyRanges, buildOpt)
-			if err != nil {
-				return err
-			}
-			if len(tasks) == 0 {
-				tasks = tasksFromRanges
-			} else {
-				tasks = append(tasks, tasksFromRanges...)
-			}
+	buildTaskFunc := func(ranges []kv.KeyRange, hints []int) error {
+		keyRanges := NewKeyRanges(ranges)
+		if tryRowHint {
+			buildOpt.rowHints = hints
+		}
+		tasksFromRanges, err := buildCopTasks(bo, keyRanges, buildOpt)
+		if err != nil {
+			return err
+		}
+		if len(tasks) == 0 {
+			tasks = tasksFromRanges
 			return nil
 		}
-		// Here we build the task by partition, not directly by region.
-		// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
-		// Keep it split by partition would be more safe.
-		err = req.KeyRanges.ForEachPartitionWithErr(buildTaskFunc)
+		tasks = append(tasks, tasksFromRanges...)
+		return nil
 	}
+	// Here we build the task by partition, not directly by region.
+	// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
+	// Keep it split by partition would be more safe.
+	err = req.KeyRanges.ForEachPartitionWithErr(buildTaskFunc)
 	// only batch store requests in first build.
 	req.StoreBatchSize = 0
 	reqType := "null"
@@ -217,14 +208,10 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if err != nil {
 		return nil, copErrorResponse{err}
 	}
-	concurrency := req.Concurrency
-	if analyzeScanBudget > 0 {
-		concurrency = analyzeStoreBatchConcurrency(tasks, analyzeScanBudget)
-	}
 	it := &copIterator{
 		store:            c.store,
 		req:              req,
-		concurrency:      concurrency,
+		concurrency:      req.Concurrency,
 		finishCh:         make(chan struct{}),
 		vars:             vars,
 		memTracker:       req.MemTracker,
@@ -294,79 +281,6 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 	it.actionOnExceed.setEnabled(option.EnabledRateLimitAction)
 	return it, nil
-}
-
-// buildAnalyzeRequestTasks resolves every KeyRanges partition once, selects
-// one batch width from the request's distinct Regions, then packs each
-// partition independently. Retry builders never route through this helper,
-// so every rebuilt task is a plain singleton.
-func buildAnalyzeRequestTasks(bo *Backoffer, opt *buildCopTaskOpt, analyzeScanBudget int) ([]*copTask, error) {
-	start := time.Now()
-	defer func() {
-		if opt.elapsed != nil {
-			*opt.elapsed += time.Since(start)
-		}
-	}()
-
-	singletonOpt := *opt
-	singletonOpt.rowHints = nil
-	// The outer timer covers resolution, collection, selection, and packing as
-	// one operation. Do not also accumulate each partition's inner build time.
-	singletonOpt.elapsed = nil
-
-	taskPartitions := make([][]*copTask, 0, opt.req.KeyRanges.PartitionNum())
-	regionIDs := make(map[uint64]struct{})
-	err := opt.req.KeyRanges.ForEachPartitionWithErr(func(ranges []kv.KeyRange, _ []int) error {
-		partitionTasks, err := buildCopTasks(bo, NewKeyRanges(ranges), &singletonOpt)
-		if err != nil {
-			return err
-		}
-		taskPartitions = append(taskPartitions, partitionTasks)
-		for _, task := range partitionTasks {
-			if task != nil {
-				regionIDs[task.region.GetID()] = struct{}{}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	width := analyzeStoreBatchWidth(len(regionIDs), analyzeScanBudget)
-	tasks := make([]*copTask, 0, len(regionIDs))
-	if width <= 1 {
-		for _, partitionTasks := range taskPartitions {
-			tasks = append(tasks, partitionTasks...)
-		}
-		return tasks, nil
-	}
-
-	for _, partitionTasks := range taskPartitions {
-		if opt.req.Desc {
-			// buildCopTasks already put the legacy singleton tasks in response
-			// order. Restore canonical order before packing, then reverse the
-			// packed outer tasks below.
-			reverseTasks(partitionTasks)
-		}
-		builder := newBatchTaskBuilder(
-			bo,
-			opt.req,
-			opt.cache,
-			opt.req.ReplicaRead,
-			width-1,
-		)
-		for _, task := range partitionTasks {
-			if err := builder.handle(task); err != nil {
-				return nil, err
-			}
-		}
-		if opt.req.Desc {
-			builder.reverse()
-		}
-		tasks = append(tasks, builder.build()...)
-	}
-	return tasks, nil
 }
 
 // copTask contains a related Region and KeyRange for a kv.Request.
@@ -739,17 +653,11 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 		chanSize = 18
 	}
 
-	storeBatchSize := req.StoreBatchSize
-	if isAnalyzeStoreBatchRequest(req) {
-		// The request-wide Analyze helper is the only activation point. Its
-		// first phase and every retry deliberately use the legacy builder.
-		storeBatchSize = 0
-	}
 	var builder taskBuilder
-	// Without row-count hints, generic tasks cannot be safely classified as
-	// small. Full-sampling Analyze constructs its private builder directly.
-	if storeBatchSize > 0 && hints != nil {
-		builder = newBatchTaskBuilder(bo, req, cache, req.ReplicaRead, storeBatchSize)
+	// A caller that accepts merged child data explicitly owns the response-size
+	// bound, so it can batch without the SELECT-oriented row-count hints.
+	if req.StoreBatchSize > 0 && (hints != nil || req.AllowBatchTaskDataMerge) {
+		builder = newBatchTaskBuilder(bo, req, cache, req.ReplicaRead)
 	} else {
 		builder = newLegacyTaskBuilder(len(locs))
 	}
@@ -899,19 +807,13 @@ type batchStoreTaskBuilder struct {
 	replicaRead kv.ReplicaReadType
 }
 
-func newBatchTaskBuilder(
-	bo *Backoffer,
-	req *kv.Request,
-	cache *RegionCache,
-	replicaRead kv.ReplicaReadType,
-	limit int,
-) *batchStoreTaskBuilder {
+func newBatchTaskBuilder(bo *Backoffer, req *kv.Request, cache *RegionCache, replicaRead kv.ReplicaReadType) *batchStoreTaskBuilder {
 	return &batchStoreTaskBuilder{
 		bo:          bo,
 		req:         req,
 		cache:       cache,
 		taskID:      0,
-		limit:       limit,
+		limit:       req.StoreBatchSize,
 		store2Idx:   make(map[storeReplicaKey]int, 16),
 		tasks:       make([]*copTask, 0, 16),
 		replicaRead: replicaRead,
@@ -928,10 +830,9 @@ func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
 			b.tasks = append(b.tasks, task)
 		}
 	}()
-	// Small-task gating normally limits store batching by row-count hints.
-	// Full-sampling Analyze opts in explicitly and instead bounds batch width
-	// through its resolved scan budget because it carries no such hints.
-	if b.limit <= 0 || !canStoreBatchTask(b.req, task) {
+	// Requests without the merged-data capability retain the generic
+	// SELECT-oriented small-task memory gate.
+	if b.limit <= 0 || (!b.req.AllowBatchTaskDataMerge && !isSmallTask(task)) {
 		return nil
 	}
 	batchedTask, err := b.cache.BuildBatchTask(b.bo, b.req, task, b.replicaRead)
@@ -1032,96 +933,6 @@ func isSmallTask(task *copTask) bool {
 	return task.RowCountHint > 0 &&
 		(len(task.batchTaskList) == 0 && task.RowCountHint <= CopSmallTaskRow) ||
 		(len(task.batchTaskList) > 0 && task.RowCountHint <= 2*CopSmallTaskRow)
-}
-
-// isAnalyzeStoreBatchRequest identifies the full-sampling Analyze caller that
-// explicitly opts in to store batching and merged child acknowledgments.
-func isAnalyzeStoreBatchRequest(req *kv.Request) bool {
-	return req.Tp == kv.ReqTypeAnalyze && req.AllowBatchTaskDataMerge
-}
-
-// analyzeStoreBatchWidth selects a total physical width: one top region plus
-// its children. Batching starts only after more than two legacy scan waves.
-// The triangular cap guarantees that a batched width B leaves room for at
-// least B+1 concurrent outer workers: B*(B+1) <= scanBudget.
-func analyzeStoreBatchWidth(regionCount, scanBudget int) int {
-	scanBudget = max(scanBudget, 1)
-	// Compare against 2*scanBudget without overflowing. This gate already
-	// covers N <= 0.
-	if regionCount <= scanBudget || regionCount-scanBudget <= scanBudget {
-		return 1
-	}
-
-	pressure := regionCount / scanBudget
-	if regionCount%scanBudget != 0 {
-		pressure++
-	}
-	cap := analyzeStoreBatchWidthCap(scanBudget)
-	if cap <= 1 {
-		return 1
-	}
-	return min(pressure, cap)
-}
-
-// analyzeStoreBatchWidthCap returns the greatest B satisfying
-// B*(B+1) <= scanBudget. Division keeps the search overflow-safe.
-func analyzeStoreBatchWidthCap(scanBudget int) int {
-	low, high := 0, scanBudget/2+1
-	for low+1 < high {
-		mid := low + (high-low)/2
-		if mid <= scanBudget/(mid+1) {
-			low = mid
-		} else {
-			high = mid
-		}
-	}
-	return low
-}
-
-func analyzeScanBudgetFits(usedBudget, weight, scanBudget int) bool {
-	return usedBudget <= scanBudget && weight <= scanBudget-usedBudget
-}
-
-// analyzeStoreBatchConcurrency returns the exact static worker bound for the
-// built task weights. Any k active tasks weigh no more than the k heaviest
-// tasks, so their descending prefix must fit the physical scan budget.
-// Retries only split groups into weight-one tasks, which cannot increase any
-// descending prefix; the bound therefore remains safe after region errors.
-func analyzeStoreBatchConcurrency(tasks []*copTask, scanBudget int) int {
-	scanBudget = max(scanBudget, 1)
-	weightCounts := make([]int, 2)
-	maxWeight := 1
-	for _, task := range tasks {
-		weight := 1 + len(task.batchTaskList)
-		if weight > scanBudget {
-			return 1
-		}
-		if weight >= len(weightCounts) {
-			weightCounts = append(weightCounts, make([]int, weight-len(weightCounts)+1)...)
-		}
-		weightCounts[weight]++
-		maxWeight = max(maxWeight, weight)
-	}
-	concurrency, usedBudget := 0, 0
-	for weight := maxWeight; weight >= 1; weight-- {
-		for range weightCounts[weight] {
-			if !analyzeScanBudgetFits(usedBudget, weight, scanBudget) {
-				return max(concurrency, 1)
-			}
-			usedBudget += weight
-			concurrency++
-		}
-	}
-	return max(concurrency, 1)
-}
-
-// Full-sampling Analyze carries no row-count hints, so its explicitly bounded
-// batch bypasses the small-task check. Other requests must pass that check.
-func canStoreBatchTask(req *kv.Request, task *copTask) bool {
-	if isAnalyzeStoreBatchRequest(req) {
-		return true
-	}
-	return isSmallTask(task)
 }
 
 // smallTaskConcurrency counts the small tasks of tasks,
@@ -1946,9 +1757,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		Tasks:           task.ToPBBatchTasks(),
 		ConnectionId:    worker.req.ConnID,
 		ConnectionAlias: worker.req.ConnAlias,
-		// The analyze result handling accepts responses whose batched
-		// tasks' results are merged into the main response, see
-		// handleBatchCopResponse.
+		// Forward the consumer capability used by handleBatchCopResponse.
 		AllowBatchTaskDataMerge: worker.req.AllowBatchTaskDataMerge,
 	}
 
@@ -2695,7 +2504,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			return batchRespList, nil, errors.New("store batched coprocessor with server is busy error shouldn't contain responses")
 		}
 		busyThresholdFallback = true
-		handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower, worker.req.StoreBatchSize)
+		handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
 		for _, task := range remainTasks {
 			// do not set busy threshold again.
 			task.busyThreshold = 0
@@ -3267,7 +3076,7 @@ func optRowHint(req *kv.Request) bool {
 }
 
 func checkStoreBatchCopr(req *kv.Request) bool {
-	if (req.Tp != kv.ReqTypeDAG && !isAnalyzeStoreBatchRequest(req)) || req.StoreType != kv.TiKV {
+	if (req.Tp != kv.ReqTypeDAG && !req.AllowBatchTaskDataMerge) || req.StoreType != kv.TiKV {
 		return false
 	}
 	// TODO: support keep-order batch
@@ -3279,12 +3088,9 @@ func checkStoreBatchCopr(req *kv.Request) bool {
 	if req.Paging.Enable || req.Paging.PagingSizeBytes > 0 {
 		return false
 	}
-	// Every Analyze request is marked internal, including manual Analyze.
-	// Full-sampling Analyze opts in explicitly and derives its width from the
-	// already-resolved manual or system scan budget. Its policy batches only
-	// beyond two scan waves and retains at least two outer workers; other
-	// internal requests retain the generic no-batching rule.
-	if req.RequestSource.RequestSourceInternal && !isAnalyzeStoreBatchRequest(req) {
+	// Internal requests remain disabled unless their consumer explicitly opts
+	// into the merged-child response contract.
+	if req.RequestSource.RequestSourceInternal && !req.AllowBatchTaskDataMerge {
 		return false
 	}
 	return true

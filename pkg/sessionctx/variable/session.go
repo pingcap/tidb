@@ -1754,8 +1754,7 @@ type SessionVars struct {
 	// duplicate task in plan replayer continues capture
 	PlanReplayerFinishedTaskKey map[replayer.PlanReplayerTaskKey]struct{}
 
-	// StoreBatchSize is the generic DAG store-batch child limit; zero disables
-	// that path. Full-sampling Analyze derives its own request-local width.
+	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
 
 	// shardGenerator indicates to generate shard for row id.
