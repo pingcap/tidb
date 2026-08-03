@@ -273,9 +273,11 @@ pub(crate) fn alter_column_default_action(
              NoDefaultValueFlag, which this tier does not model",
         ));
     };
-    let rewritten =
-        tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
-            .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
+    let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+        expr,
+        &tidb_expr::rewriter::ZonedNoResolver(zone.clone()),
+    )
+    .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
     let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
         return Err(DriverError::unsupported(
             "an expression DEFAULT is not supported yet",

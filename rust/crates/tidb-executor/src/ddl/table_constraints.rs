@@ -70,6 +70,7 @@ pub(crate) fn table_indexes(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],
     clustered: bool,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(Vec<KvIndex>, Vec<HiddenIndexColumn>), DriverError> {
     let column_names: Vec<String> = columns
         .iter()
@@ -225,6 +226,7 @@ pub(crate) fn table_indexes(
             &index.parts,
             &column_names,
             &column_types,
+            zone,
         )?;
         let mut offsets = Vec::with_capacity(index.parts.len());
         let mut prefix_lengths = Vec::with_capacity(index.parts.len());

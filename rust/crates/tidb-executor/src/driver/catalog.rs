@@ -704,9 +704,16 @@ impl Catalog {
 pub(crate) struct TableResolver<'a> {
     pub(crate) table_name: &'a str,
     pub(crate) columns: &'a [(String, FieldType)],
+    /// The statement's session `time_zone` (see [`ColumnResolver::time_zone`]),
+    /// taken from the write's `StmtContext` at each build site.
+    pub(crate) zone: tidb_expr::SessionTimeZone,
 }
 
 impl ColumnResolver for TableResolver<'_> {
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        self.zone.clone()
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         let (qualifier, name) = match path {
             [name] => (None, name),

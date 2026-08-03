@@ -278,6 +278,7 @@ pub fn build_hidden_columns(
     parts: &[IndexPart],
     names: &[String],
     types: &[FieldType],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<(usize, HiddenIndexColumn)>, DriverError> {
     let mut built = Vec::new();
     for (position, part) in parts.iter().enumerate() {
@@ -298,7 +299,7 @@ pub fn build_hidden_columns(
             return Err(DriverError::DuplicateColumnName(name));
         }
 
-        let resolver = TableColumnResolver::new(names, types);
+        let resolver = TableColumnResolver::new(names, types, zone.clone());
         let built_expr = match tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver) {
             Ok(built_expr) => built_expr,
             Err(_) => {

@@ -342,9 +342,11 @@ pub(crate) fn run_insert_traced(
             let value = match source_rows.as_ref() {
                 Some(_) => value_rows[index][position].clone(),
                 None => {
-                    let rewritten =
-                        rewrite_expr_resolved(&insert.rows[index][position], &NoResolver)
-                            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                    let rewritten = rewrite_expr_resolved(
+                        &insert.rows[index][position],
+                        &tidb_expr::rewriter::ZonedNoResolver(ctx.session_zone()),
+                    )
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
                     rewritten
                         .eval(ctx, eval_chunk.get_row(0))
                         .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?
@@ -1028,6 +1030,7 @@ pub(crate) fn apply_on_duplicate(
         let resolver = TableResolver {
             table_name: "",
             columns: column_list,
+            zone: ctx.session_zone(),
         };
         let expr = rewrite_expr_resolved(&bound, &resolver)
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
@@ -1250,6 +1253,7 @@ pub(crate) fn run_update_traced(
     let resolver = TableResolver {
         table_name: table_ref.alias.as_deref().unwrap_or(&name),
         columns: &column_list,
+        zone: ctx.session_zone(),
     };
     let mut assignments = Vec::with_capacity(update.assignments.len());
     for assignment in &update.assignments {
@@ -1641,6 +1645,7 @@ pub(crate) fn run_delete_traced(
     let resolver = TableResolver {
         table_name: table_ref.alias.as_deref().unwrap_or(&name),
         columns: &column_list,
+        zone: ctx.session_zone(),
     };
     let predicate = match &delete.where_clause {
         Some(expr) => Some(

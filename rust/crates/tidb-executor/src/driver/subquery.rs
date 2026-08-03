@@ -671,11 +671,15 @@ pub(crate) fn select_outer_scope(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> FromScope {
+    let empty = || FromScope {
+        zone: ctx.session_zone(),
+        ..FromScope::default()
+    };
     match &select.from {
-        None => FromScope::default(),
+        None => empty(),
         Some(join) => match build_join(join, catalog, current_db, ctx, None, None, &[]) {
             Ok((_, scope)) => scope,
-            Err(_) => FromScope::default(),
+            Err(_) => empty(),
         },
     }
 }

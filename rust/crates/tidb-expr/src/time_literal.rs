@@ -39,13 +39,12 @@
 //! Go does all three while BUILDING the expression, and so does this: the
 //! literal folds to its formatted value here, and no per-row work remains.
 //!
-//! DOCUMENTED DIVERGENCE, shared with `crate::cast::cast_to_time`: the parse
-//! runs against UTC rather than the session's time zone, so a literal that
-//! carries an explicit offset (`'... 14:00:00+02:00'`) is normalized into UTC
-//! instead of into the session zone. The rewriter has no session context to
-//! consult; threading one is a separate change, and this is the SAME zone the
-//! cast path already uses, so no statement's answer moves because of this
-//! module.
+//! The parse runs in the SESSION's time zone, as Go's does: the rewriter
+//! hands it down through [`crate::rewriter::ColumnResolver::time_zone`], the
+//! fold-time sibling of the [`crate::Columns::time_zone`] the cast path
+//! consults at eval time. A literal carrying an explicit offset
+//! (`'... 14:00:00+02:00'`) normalizes into that zone, and a fractional
+//! carry rounds the INSTANT in it (see [`parse`]).
 //!
 //! LIKEWISE the SQL mode: Go consults the statement's `TypeCtx` flags, and
 //! this parses at the MOST PERMISSIVE setting (zero and invalid dates
@@ -102,11 +101,19 @@ fn date_pattern() -> &'static Regex {
 
 /// Go `builtinDateLiteralSig`: the value of `DATE 'lit'`, or the error that
 /// rejects the whole statement.
-pub(crate) fn date_literal(text: &str) -> Result<String, EvalError> {
+///
+/// `zone` is inert here in practice -- `date_pattern` refuses a time part, so
+/// neither a fractional carry nor an explicit offset can reach the parse --
+/// but Go's `getFunction` passes its ctx location all the same, and so does
+/// this, so the two literals cannot drift apart.
+pub(crate) fn date_literal(
+    text: &str,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<String, EvalError> {
     if !date_pattern().is_match(text) {
         return Err(wrong_value(1292, "date", text));
     }
-    parse(text, TimeType::Date, 0).map_err(|()| wrong_value(1292, "date", text))
+    parse(text, TimeType::Date, 0, zone).map_err(|()| wrong_value(1292, "date", text))
 }
 
 /// Go `builtinTimestampLiteralSig`: the value of `TIMESTAMP 'lit'`, or the
@@ -115,15 +122,18 @@ pub(crate) fn date_literal(text: &str) -> Result<String, EvalError> {
 /// The two codes are Go's own and are NOT interchangeable: the regex gate is
 /// `ErrWrongValue2` (1525) and the parse failure is `ErrWrongValue` (1292),
 /// which is why the recorded topic carries both against this one syntax.
-pub(crate) fn timestamp_literal(text: &str) -> Result<String, EvalError> {
+pub(crate) fn timestamp_literal(
+    text: &str,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<String, EvalError> {
     if !timestamp_pattern().is_match(text) {
         return Err(wrong_value(1525, "datetime", text));
     }
     let fsp = i64::from(tidb_datatype::get_fsp(text));
-    parse(text, TimeType::DateTime, fsp).map_err(|()| wrong_value(1292, "datetime", text))
+    parse(text, TimeType::DateTime, fsp, zone).map_err(|()| wrong_value(1292, "datetime", text))
 }
 
-/// # KNOWN GAP: this parse is UTC where Go's is the session's
+/// The parse runs in the SESSION's zone, as Go's does.
 ///
 /// Go resolves `DATE 'lit'`/`TIMESTAMP 'lit'` in `getFunction`, whose `ctx`
 /// carries the session location, and a literal whose fraction is wider than
@@ -140,15 +150,20 @@ pub(crate) fn timestamp_literal(text: &str) -> Result<String, EvalError> {
 ///   time_zone='America/Los_Angeles' 2011-11-06 01:00:00.000000
 /// ```
 ///
-/// This tier answers the UTC row for every session. The sibling site in
-/// `crate::cast::cast_to_time` was the SAME bug and is fixed, because a cast
-/// is evaluated against a [`crate::Columns`] that carries `time_zone()`. A
-/// literal is folded in `crate::rewriter` against a `ColumnResolver`, which
-/// carries no session at all, so closing this one means threading the zone
-/// into that trait rather than editing this function. Left as a measured,
-/// named gap instead of a half-thread.
-fn parse(text: &str, kind: TimeType, fsp: i64) -> Result<String, ()> {
-    tidb_datatype::parse_time(text, kind, fsp, false, true, true, &chrono::Utc)
+/// This used to hardcode `chrono::Utc` -- the dropped-Context seam -- and
+/// answered the UTC row for every session. The zone now arrives from
+/// [`crate::rewriter::ColumnResolver::time_zone`], the fold-time sibling of
+/// the [`crate::Columns::time_zone`] the eval-time cast already consults, so
+/// the same statement rounds identically whichever of the two paths builds
+/// it. An explicit `+HH:MM` offset in the literal likewise normalizes into
+/// this zone rather than into UTC.
+fn parse(
+    text: &str,
+    kind: TimeType,
+    fsp: i64,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<String, ()> {
+    tidb_datatype::parse_time(text, kind, fsp, false, true, true, zone)
         .map(|parsed| parsed.time.to_string())
         .map_err(|_| ())
 }
@@ -170,31 +185,69 @@ mod tests {
     /// `tests/integrationtest/r/types/time.result`.
     #[test]
     fn literal_gates_and_fraction_follow_the_recording() {
+        let utc = tidb_datatype::SessionTimeZone::utc();
         // The regex gate: a date with no time is a 1525 for TIMESTAMP even
         // though CAST accepts it.
         assert!(matches!(
-            timestamp_literal("2024-01-01"),
+            timestamp_literal("2024-01-01", &utc),
             Err(EvalError::WrongTemporalLiteral { code: 1525, .. })
         ));
         // A parse failure is a hard error, not a warning plus NULL.
         assert!(matches!(
-            timestamp_literal("2024-01-01 14:00:00+14:01"),
+            timestamp_literal("2024-01-01 14:00:00+14:01", &utc),
             Err(EvalError::WrongTemporalLiteral { code: 1292, .. })
         ));
         // The literal's own fsp survives into the printed value.
         assert_eq!(
-            timestamp_literal("2024-01-01 14:00:00.010").unwrap(),
+            timestamp_literal("2024-01-01 14:00:00.010", &utc).unwrap(),
             "2024-01-01 14:00:00.010"
         );
         assert_eq!(
-            timestamp_literal("2024-01-01 14:00:00").unwrap(),
+            timestamp_literal("2024-01-01 14:00:00", &utc).unwrap(),
             "2024-01-01 14:00:00"
         );
         // DATE refuses a literal carrying a time part.
         assert!(matches!(
-            date_literal("2024-01-01 01:12:31"),
+            date_literal("2024-01-01 01:12:31", &utc),
             Err(EvalError::WrongTemporalLiteral { code: 1292, .. })
         ));
-        assert_eq!(date_literal("2024-01-01").unwrap(), "2024-01-01");
+        assert_eq!(date_literal("2024-01-01", &utc).unwrap(), "2024-01-01");
+    }
+
+    /// The fold rounds in the SESSION zone, not in UTC: the capture in
+    /// [`parse`]'s doc, replayed against both zones. The instants are DST
+    /// TRANSITIONS on purpose -- a probe over ordinary instants shows no
+    /// difference in ANY zone and is a false negative (the same trap the
+    /// sibling test in `crate::cast` documents).
+    #[test]
+    fn the_fractional_carry_rounds_in_the_session_zone() {
+        let utc = tidb_datatype::SessionTimeZone::utc();
+        let la = tidb_datatype::SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
+        for (input, in_utc, in_la) in [
+            (
+                "2011-03-13 01:59:59.9999999",
+                "2011-03-13 02:00:00.000000",
+                "2011-03-13 03:00:00.000000",
+            ),
+            (
+                "2011-11-06 01:59:59.9999999",
+                "2011-11-06 02:00:00.000000",
+                "2011-11-06 01:00:00.000000",
+            ),
+        ] {
+            assert_eq!(timestamp_literal(input, &utc).unwrap(), in_utc, "{input}");
+            assert_eq!(timestamp_literal(input, &la).unwrap(), in_la, "{input}");
+        }
+        // An explicit offset in the literal normalizes into the session zone
+        // (the divergence the module doc used to pin as UTC-only): 14:00 at
+        // +02:00 is 12:00 UTC and 04:00 in Los Angeles (PST, -08:00).
+        assert_eq!(
+            timestamp_literal("2024-01-01 14:00:00+02:00", &utc).unwrap(),
+            "2024-01-01 12:00:00"
+        );
+        assert_eq!(
+            timestamp_literal("2024-01-01 14:00:00+02:00", &la).unwrap(),
+            "2024-01-01 04:00:00"
+        );
     }
 }

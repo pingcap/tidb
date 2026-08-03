@@ -390,6 +390,7 @@ pub fn build_generated_columns(
     defs: &[tidb_ast::ColumnDef],
     names: &[String],
     types: &[FieldType],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<Option<GeneratedColumn>>, GeneratedDdlError> {
     // Which columns are generated has to be known before any expression is
     // validated, because the 3107 check asks about the column it READS.
@@ -414,7 +415,7 @@ pub fn build_generated_columns(
             built.push(None);
             continue;
         };
-        let resolver = TableColumnResolver::new(names, types);
+        let resolver = TableColumnResolver::new(names, types, zone.clone());
         let expr = match tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver) {
             Ok(expr) => expr,
             Err(_) => {
@@ -472,8 +473,9 @@ pub fn build_added_generated_column(
     stored: bool,
     names: &[String],
     types: &[FieldType],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<GeneratedColumn, GeneratedDdlError> {
-    let resolver = TableColumnResolver::new(names, types);
+    let resolver = TableColumnResolver::new(names, types, zone.clone());
     let expr = match tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver) {
         Ok(expr) => expr,
         Err(_) => {
@@ -525,6 +527,10 @@ pub(crate) fn generated_restore_flags() -> tidb_ast::RestoreFlags {
 pub struct TableColumnResolver<'a> {
     names: &'a [String],
     types: &'a [FieldType],
+    /// The DDL statement's session `time_zone` (Go threads its
+    /// `BuildContext` down every expression-building DDL path), which the
+    /// rewriter reads while folding temporal literals in the expression.
+    zone: tidb_datatype::SessionTimeZone,
     /// The columns successfully resolved, in first-seen order, as (offset,
     /// name). This order IS the namespace the built expression indexes: a
     /// `Column` node's `index` is a position in this list, never a position
@@ -536,10 +542,15 @@ pub struct TableColumnResolver<'a> {
 
 impl<'a> TableColumnResolver<'a> {
     /// A resolver over the table's columns, by name and declared type.
-    pub fn new(names: &'a [String], types: &'a [FieldType]) -> Self {
+    pub fn new(
+        names: &'a [String],
+        types: &'a [FieldType],
+        zone: tidb_datatype::SessionTimeZone,
+    ) -> Self {
         Self {
             names,
             types,
+            zone,
             seen: RefCell::new(Vec::new()),
             missing: RefCell::new(None),
         }
@@ -571,6 +582,10 @@ impl<'a> TableColumnResolver<'a> {
 }
 
 impl ColumnResolver for TableColumnResolver<'_> {
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        self.zone.clone()
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         let name = path.last()?;
         let offset = self
@@ -654,7 +669,8 @@ mod tests {
         let names = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
         let types = vec![int_type(), int_type(), int_type()];
         let build = |text: &str| {
-            let resolver = TableColumnResolver::new(&names, &types);
+            let resolver =
+                TableColumnResolver::new(&names, &types, tidb_datatype::SessionTimeZone::utc());
             let expr = parse_generated_expr(text);
             GeneratedColumn {
                 expr_text: text.to_owned(),
@@ -735,7 +751,8 @@ mod tests {
     fn an_unknown_dependency_is_reported_by_name() {
         let names = vec!["a".to_owned()];
         let types = vec![int_type()];
-        let resolver = TableColumnResolver::new(&names, &types);
+        let resolver =
+            TableColumnResolver::new(&names, &types, tidb_datatype::SessionTimeZone::utc());
         let expr = parse_generated_expr("zz + 1");
         assert!(tidb_expr::rewriter::rewrite_expr_resolved(&expr, &resolver).is_err());
         assert_eq!(resolver.missing_name().as_deref(), Some("zz"));
@@ -745,7 +762,8 @@ mod tests {
     fn dependencies_are_the_offsets_the_expression_reads() {
         let names = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
         let types = vec![int_type(), int_type(), int_type()];
-        let resolver = TableColumnResolver::new(&names, &types);
+        let resolver =
+            TableColumnResolver::new(&names, &types, tidb_datatype::SessionTimeZone::utc());
         let expr = parse_generated_expr("c + a");
         tidb_expr::rewriter::rewrite_expr_resolved(&expr, &resolver).unwrap();
         assert_eq!(resolver.dependencies(), vec![2, 0]);

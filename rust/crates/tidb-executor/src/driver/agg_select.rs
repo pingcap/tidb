@@ -88,10 +88,11 @@ struct AggPipelineState {
 /// A resolver over the aggregation's CURRENT output columns, which is what
 /// `HAVING`, `ORDER BY` and the final projection are rewritten against (Go's
 /// `Aggregation.Schema()`).
-fn agg_output_resolver(state: &AggPipelineState) -> AggOutputResolver {
+fn agg_output_resolver(state: &AggPipelineState, ctx: &crate::StmtContext) -> AggOutputResolver {
     AggOutputResolver {
         names: state.names.clone(),
         types: state.types.clone(),
+        zone: ctx.session_zone(),
     }
 }
 
@@ -212,7 +213,7 @@ pub(crate) fn run_aggregate_select(
     let (root, out_schema) = build_window_stage(root, out_schema, &mut state, ctx)?;
 
     // ORDER BY and the final projection resolve against the WIDENED output.
-    let agg_resolver = agg_output_resolver(&state);
+    let agg_resolver = agg_output_resolver(&state, ctx);
 
     // Stage 9: ORDER BY, then LIMIT.
     let root = build_order_and_limit(
@@ -1142,6 +1143,7 @@ fn build_apply_chain(
                 offset: 0,
                 func_deps: Default::default(),
             }],
+            zone: ctx.session_zone(),
             ..FromScope::default()
         };
         state.types.push(value_type);
@@ -1199,7 +1201,7 @@ fn build_having_stage(
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let mut root = root;
-    let agg_resolver = agg_output_resolver(state);
+    let agg_resolver = agg_output_resolver(state, ctx);
     let out_schema = out_schema.clone();
     if let Some(having) = &state.having_expr {
         let predicate = rewrite_expr_resolved(having, &agg_resolver)
@@ -1244,6 +1246,7 @@ fn build_window_stage(
                 offset: 0,
                 func_deps: Default::default(),
             }],
+            zone: ctx.session_zone(),
             ..FromScope::default()
         };
         let rows = drain_executor_rows(root, &state.types)?;

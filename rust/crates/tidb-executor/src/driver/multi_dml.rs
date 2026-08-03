@@ -119,6 +119,10 @@ type SourceRow = (Vec<Option<RowId>>, Vec<Datum>);
 struct MultiSource {
     tables: Vec<SourceTable>,
     rows: Vec<SourceRow>,
+    /// The statement's session `time_zone`, carried into [`Self::scope`] so
+    /// the `WHERE`/`ON`/`SET` rewrites over this source fold temporal
+    /// literals in the session's zone (see [`FromScope::zone`]).
+    zone: tidb_expr::SessionTimeZone,
 }
 
 impl MultiSource {
@@ -141,6 +145,7 @@ impl MultiSource {
                     func_deps: Default::default(),
                 })
                 .collect(),
+            zone: self.zone.clone(),
             ..FromScope::default()
         }
     }
@@ -250,6 +255,7 @@ fn scan_base_table(
     };
     let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
     Ok(MultiSource {
+        zone: zone.clone(),
         tables: vec![SourceTable {
             visible,
             qualifiable_db: table_ref.alias.is_none().then(|| database.to_owned()),
@@ -284,6 +290,7 @@ fn join_sources(
     let joined = MultiSource {
         tables,
         rows: Vec::new(),
+        zone: ctx.session_zone(),
     };
     let field_types = joined.field_types();
     let condition = match &join.on {

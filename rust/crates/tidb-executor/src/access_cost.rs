@@ -493,8 +493,9 @@ pub(crate) fn enumerate_paths(
     // clustered integer handle. Nothing here narrows what is EVALUATED -- the
     // `WHERE` stays in the pipeline above the source -- so a range only ever
     // decides how much is read and what the path is costed at.
-    let handle =
-        where_clause.and_then(|clause| crate::handle_range::build_handle_ranges(table, clause));
+    let handle = where_clause.and_then(|clause| {
+        crate::handle_range::build_handle_ranges(table, clause, &resolver.time_zone())
+    });
     let handle_ranges = handle.as_ref().map(|built| built.ranges.clone());
     let table_scan = table_scan_path(
         table,
@@ -581,7 +582,11 @@ pub(crate) fn enumerate_paths(
             continue;
         }
         let built = range_clause.and_then(|range_clause| {
-            crate::index_range::detach_cond_and_build_range_for_index(&index_columns, range_clause)
+            crate::index_range::detach_cond_and_build_range_for_index(
+                &index_columns,
+                range_clause,
+                &resolver.time_zone(),
+            )
         });
         let Some(built) = built else {
             // Go's `keepIndex := len(path.AccessConds) > 0 || ... ||
@@ -1464,6 +1469,7 @@ fn column_ranges(
             column.field_type.clone(),
         )],
         conjunct,
+        &resolver.time_zone(),
     )?;
     let ranges = built
         .ranges

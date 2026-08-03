@@ -27,9 +27,17 @@ use super::*;
 /// `NATURAL`/`USING` coalescing does not change that row layout at all -- it
 /// is expressed here, as the two pieces of naming a coalesced join adds on
 /// top of it (see [`coalesce_common_columns`]).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct FromScope {
     pub(crate) tables: Vec<FromTable>,
+    /// The statement's session `time_zone`, which [`ScopeResolver`] publishes
+    /// to the expression rewriter as [`ColumnResolver::time_zone`] -- Go's
+    /// `ctx.Location()`, reached while BUILDING an expression (the
+    /// `TIMESTAMP 'lit'` fold rounds and offset-normalizes in it). It rides
+    /// on the scope because the scope is the one value every rewrite over
+    /// this `FROM` already receives; the statement build points set it from
+    /// `StmtContext::session_zone` and every derived scope clones it along.
+    pub(crate) zone: tidb_expr::SessionTimeZone,
     /// The row offsets a `NATURAL`/`USING` join coalesced AWAY: the inner
     /// side's copy of each common column, which stays reachable through its
     /// own table's qualifier (`SELECT u2.id`) but is invisible to `*` and to
@@ -40,6 +48,22 @@ pub(crate) struct FromScope {
     /// order: a coalesced join puts the common columns first and a RIGHT
     /// join reports its two sides right-then-left. Empty means row order.
     pub(crate) star: Vec<usize>,
+}
+
+impl Default for FromScope {
+    /// An empty scope in UTC -- the same zone a fresh session's
+    /// `StmtContext` answers before any `SET time_zone`. Statement build
+    /// points that HAVE a context overwrite the zone from it; only tests and
+    /// scopes for statements that never fold a temporal literal rely on this
+    /// default.
+    fn default() -> Self {
+        Self {
+            tables: Vec::new(),
+            coalesced: Vec::new(),
+            star: Vec::new(),
+            zone: tidb_expr::SessionTimeZone::utc(),
+        }
+    }
 }
 
 impl FromScope {
@@ -115,6 +139,12 @@ pub(crate) fn scope_resolver(scope: &FromScope) -> impl ColumnResolver + '_ {
 }
 
 impl ColumnResolver for ScopeResolver<'_> {
+    /// The zone the scope's build point took from the statement's
+    /// `StmtContext` -- see [`FromScope::zone`].
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        self.scope.zone.clone()
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         let (schema, qualifier, name) = match path {
             [name] => (None, None, name),
@@ -339,6 +369,7 @@ pub(crate) fn build_from(
                     columns,
                     offset: 0,
                 }],
+                zone: ctx.session_zone(),
                 ..FromScope::default()
             };
             Ok((meter(exec, trace), scope))
@@ -447,6 +478,7 @@ pub(crate) fn build_derived_source(
             offset: 0,
             func_deps: Default::default(),
         }],
+        zone: ctx.session_zone(),
         ..FromScope::default()
     };
     Ok((exec, scope))
@@ -820,6 +852,7 @@ pub(crate) fn build_view_source(
             offset: 0,
             func_deps: Default::default(),
         }],
+        zone: ctx.session_zone(),
         ..FromScope::default()
     };
     Ok((exec, scope))

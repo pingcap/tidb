@@ -136,9 +136,11 @@ fn fold_range_bound(
     // under a fixed UTC instead put a row real TiDB routes to `p7` into `p9`
     // -- a wrong answer with no error -- which is why this bound was refused
     // outright until the context reached here.
-    let rewritten =
-        tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
-            .map_err(|_| DriverError::PartitionValuesNotInt(partition.to_owned()))?;
+    let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+        expr,
+        &tidb_expr::rewriter::ZonedNoResolver(ctx.session_zone()),
+    )
+    .map_err(|_| DriverError::PartitionValuesNotInt(partition.to_owned()))?;
     let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
     dual.set_num_virtual_rows(1);
     let value = rewritten

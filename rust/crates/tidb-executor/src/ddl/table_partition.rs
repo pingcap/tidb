@@ -157,7 +157,7 @@ pub fn build_table_partitioning(
     }
 
     let (expr_text, built, dependencies, dependency_offsets) =
-        build_partition_expression(expr, names, types)?;
+        build_partition_expression(expr, names, types, &ctx.session_zone())?;
     // Go `checkPartitionFuncType`: the partition expression must evaluate to
     // an integer.
     check_partition_expression_type(expr, names, types)?;
@@ -269,6 +269,7 @@ fn build_partition_expression(
     expr: &Expr,
     names: &[String],
     types: &[FieldType],
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<
     (
         String,
@@ -279,7 +280,7 @@ fn build_partition_expression(
     DriverError,
 > {
     check_partition_expression_allowed(expr)?;
-    let resolver = TableColumnResolver::new(names, types);
+    let resolver = TableColumnResolver::new(names, types, zone.clone());
     let built =
         tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(|_| match resolver
             .missing_name()

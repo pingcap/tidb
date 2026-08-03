@@ -59,7 +59,7 @@ use std::cmp::Ordering;
 use tidb_ast::{BinaryOp, Expr, IsTarget};
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::{rewrite_expr_resolved, NoResolver};
+use tidb_expr::rewriter::rewrite_expr_resolved;
 
 /// One index key part as the ranger sees it: the column it names, its type,
 /// and how much of it the index actually stores.
@@ -458,8 +458,8 @@ fn is_column(expr: &Expr, name: &str) -> bool {
 }
 
 /// A constant expression's value, when it is one.
-fn constant_value(expr: &Expr) -> Option<Datum> {
-    match rewrite_expr_resolved(expr, &NoResolver) {
+fn constant_value(expr: &Expr, zone: &tidb_datatype::SessionTimeZone) -> Option<Datum> {
+    match rewrite_expr_resolved(expr, &tidb_expr::rewriter::ZonedNoResolver(zone.clone())) {
         Ok(Expression::Constant(constant)) => constant.eval().ok(),
         // The rewriter only folds a bare literal into a `Constant`; anything
         // built out of literals -- `-100` is `unaryminus(100)`, and Go folds it
@@ -633,11 +633,14 @@ fn points_from_bin_op(op: BinaryOp, value: Datum) -> Option<Vec<Point>> {
 /// Go `builder.buildFromIn`: each list value becomes a point interval, the
 /// intervals are sorted, and duplicates are dropped. A NULL in the list is
 /// skipped, which is why `a IN (1, NULL)` is exactly `[1,1]`.
-fn points_from_in(list: &[Expr]) -> Option<(Vec<Point>, bool)> {
+fn points_from_in(
+    list: &[Expr],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<(Vec<Point>, bool)> {
     let mut points = Vec::with_capacity(list.len() * 2);
     let mut has_null = false;
     for item in list {
-        let value = constant_value(item)?;
+        let value = constant_value(item, zone)?;
         if value == Datum::Null {
             has_null = true;
             continue;
@@ -670,8 +673,8 @@ fn points_from_in(list: &[Expr]) -> Option<(Vec<Point>, bool)> {
 
 /// Go `builder.buildFromNot` for `IN`: the gaps between the list values,
 /// starting at an excluded NULL.
-fn points_from_not_in(list: &[Expr]) -> Option<Vec<Point>> {
-    let (points, has_null) = points_from_in(list)?;
+fn points_from_not_in(list: &[Expr], zone: &tidb_datatype::SessionTimeZone) -> Option<Vec<Point>> {
+    let (points, has_null) = points_from_in(list, zone)?;
     // `a NOT IN (1, NULL)` is never true, so Go builds no points at all.
     if has_null {
         return Some(Vec::new());
@@ -781,8 +784,12 @@ fn cut_prefix_for_points(points: &mut [Point], column: &RangeColumn) {
 ///
 /// Go cuts a prefix key part at the tail of every `build` arm; doing it once
 /// here, on the way out, is the same cut with one place to get it right.
-fn points_for_condition(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoints> {
-    let mut column_points = points_on_column(condition, column)?;
+fn points_for_condition(
+    condition: &Expr,
+    column: &RangeColumn,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<ColumnPoints> {
+    let mut column_points = points_on_column(condition, column, zone)?;
     cut_prefix_for_points(&mut column_points.points, column);
     // Go's `conditionChecker` rejects a condition that bounds nothing --- a
     // LIKE with no literal prefix, an IS NOT NULL --- and `points.go` signals
@@ -804,7 +811,7 @@ fn points_for_condition(condition: &Expr, column: &RangeColumn) -> Option<Column
     // standing: `(b IS NULL OR b = 2) AND c > 1` does reach `c`. Applying the
     // rule here, on the conjunct the CNF walk sees, and not inside
     // [`points_on_column`], is what keeps those two cases apart.
-    if is_bare_null_test(condition) {
+    if is_bare_null_test(condition, zone) {
         column_points.eq_or_in = false;
     }
     Some(column_points)
@@ -814,16 +821,17 @@ fn points_for_condition(condition: &Expr, column: &RangeColumn) -> Option<Column
 /// or `<=> NULL`. Go reaches the same two through `extractValueInfo`'s
 /// `ast.IsNull` arm and `getPotentialEqOrInColOffset`'s explicit
 /// `NullEQ && val.IsNull()` rejection.
-fn is_bare_null_test(condition: &Expr) -> bool {
+fn is_bare_null_test(condition: &Expr, zone: &tidb_datatype::SessionTimeZone) -> bool {
     match condition {
-        Expr::Paren(inner) => is_bare_null_test(inner),
+        Expr::Paren(inner) => is_bare_null_test(inner, zone),
         Expr::Is {
             target: IsTarget::Null,
             not: false,
             ..
         } => true,
         Expr::Binary(BinaryOp::NullEq, lhs, rhs) => {
-            constant_value(lhs) == Some(Datum::Null) || constant_value(rhs) == Some(Datum::Null)
+            constant_value(lhs, zone) == Some(Datum::Null)
+                || constant_value(rhs, zone) == Some(Datum::Null)
         }
         _ => false,
     }
@@ -831,10 +839,14 @@ fn is_bare_null_test(condition: &Expr) -> bool {
 
 /// The raw endpoints one condition puts on one column, before the
 /// bounds-nothing check above.
-fn points_on_column(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoints> {
+fn points_on_column(
+    condition: &Expr,
+    column: &RangeColumn,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<ColumnPoints> {
     let name = column.name.as_str();
     match condition {
-        Expr::Paren(inner) => points_on_column(inner, column),
+        Expr::Paren(inner) => points_on_column(inner, column, zone),
         // Go `buildFromScalarFunc`'s `ast.LogicAnd` / `ast.LogicOr` arms. A
         // boolean connective over ONE index column is still a point set on
         // that column: `b = 1 OR b = 2` is the union of the two, and
@@ -848,8 +860,8 @@ fn points_on_column(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoin
         // is not merely a lost opportunity but a WRONG range -- keeping only
         // the side that parsed would exclude rows the other side admits.
         Expr::Binary(op @ (BinaryOp::LogicAnd | BinaryOp::LogicOr), lhs, rhs) => {
-            let lhs = points_on_column(lhs, column)?;
-            let rhs = points_on_column(rhs, column)?;
+            let lhs = points_on_column(lhs, column, zone)?;
+            let rhs = points_on_column(rhs, column, zone)?;
             let points = if matches!(op, BinaryOp::LogicAnd) {
                 intersection(&lhs.points, &rhs.points)
             } else {
@@ -875,9 +887,9 @@ fn points_on_column(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoin
         }
         Expr::Binary(op, lhs, rhs) => {
             let (op, value) = if is_column(lhs, name) {
-                (*op, constant_value(rhs)?)
+                (*op, constant_value(rhs, zone)?)
             } else if is_column(rhs, name) {
-                (flip(*op)?, constant_value(lhs)?)
+                (flip(*op)?, constant_value(lhs, zone)?)
             } else {
                 return None;
             };
@@ -909,9 +921,9 @@ fn points_on_column(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoin
                 return None;
             }
             let points = if *not {
-                points_from_not_in(list)?
+                points_from_not_in(list, zone)?
             } else {
-                points_from_in(list)?.0
+                points_from_in(list, zone)?.0
             };
             Some(ColumnPoints {
                 points,
@@ -929,8 +941,8 @@ fn points_on_column(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoin
             if !is_column(expr, name) {
                 return None;
             }
-            let low = constant_value(low)?;
-            let high = constant_value(high)?;
+            let low = constant_value(low, zone)?;
+            let high = constant_value(high, zone)?;
             let points = if *not {
                 union_points(
                     &points_from_bin_op(BinaryOp::Lt, low)?,
@@ -961,7 +973,7 @@ fn points_on_column(condition: &Expr, column: &RangeColumn) -> Option<ColumnPoin
             // The pattern's own collation carries over to the bounds, so the
             // derived endpoints sort against the column exactly as an `=`
             // constant on the same column would.
-            let (bytes, collation) = match constant_value(pattern)? {
+            let (bytes, collation) = match constant_value(pattern, zone)? {
                 Datum::String(value) => (value.bytes().to_vec(), value.collation()),
                 Datum::Bytes(value) => (value, tidb_datatype::Collation::Binary),
                 _ => return None,
@@ -1035,7 +1047,11 @@ pub(crate) struct IndexRanges<'a> {
 /// equalities and `IN`s pin the leading index columns one at a time, then
 /// every remaining condition on the next column is intersected into one
 /// spanning interval.
-fn build_cnf_ranges<'a>(index_columns: &[RangeColumn], conditions: &[&'a Expr]) -> IndexRanges<'a> {
+fn build_cnf_ranges<'a>(
+    index_columns: &[RangeColumn],
+    conditions: &[&'a Expr],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> IndexRanges<'a> {
     let mut consumed = vec![false; conditions.len()];
     let mut eq_in_points: Vec<Vec<Point>> = Vec::new();
     let mut access_count = 0;
@@ -1048,7 +1064,7 @@ fn build_cnf_ranges<'a>(index_columns: &[RangeColumn], conditions: &[&'a Expr]) 
             if consumed[i] {
                 continue;
             }
-            let Some(column) = points_for_condition(condition, key_part) else {
+            let Some(column) = points_for_condition(condition, key_part, zone) else {
                 continue;
             };
             if !column.eq_or_in {
@@ -1077,7 +1093,7 @@ fn build_cnf_ranges<'a>(index_columns: &[RangeColumn], conditions: &[&'a Expr]) 
             if consumed[i] {
                 continue;
             }
-            let Some(column) = points_for_condition(condition, key_part) else {
+            let Some(column) = points_for_condition(condition, key_part, zone) else {
                 continue;
             };
             tail = Some(intersection(
@@ -1187,6 +1203,7 @@ fn is_or(expr: &Expr) -> bool {
 fn build_dnf_ranges<'a>(
     index_columns: &[RangeColumn],
     disjunct: &'a Expr,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<IndexRanges<'a>> {
     let mut branches = Vec::new();
     collect_disjuncts(disjunct, &mut branches);
@@ -1201,7 +1218,7 @@ fn build_dnf_ranges<'a>(
     for branch in branches {
         let mut conjuncts = Vec::new();
         collect_conjuncts(branch, &mut conjuncts);
-        let built = build_cnf_ranges(index_columns, &conjuncts);
+        let built = build_cnf_ranges(index_columns, &conjuncts, zone);
         // A branch that constrains nothing, or that keeps a residual of its
         // own, makes the disjunction unusable for access.
         if built.access_count == 0 || built.access_count != conjuncts.len() {
@@ -1251,6 +1268,7 @@ fn build_dnf_ranges<'a>(
 pub(crate) fn detach_cond_and_build_range_for_index<'a>(
     index_columns: &[RangeColumn],
     where_clause: &'a Expr,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<IndexRanges<'a>> {
     let mut conjuncts = Vec::new();
     collect_conjuncts(where_clause, &mut conjuncts);
@@ -1260,11 +1278,11 @@ pub(crate) fn detach_cond_and_build_range_for_index<'a>(
     // deferred, so a mixed AND/OR reaches the CNF walk, where the OR simply
     // stays a filter.
     if conjuncts.len() == 1 && is_or(conjuncts[0]) {
-        let built = build_dnf_ranges(index_columns, conjuncts[0])?;
+        let built = build_dnf_ranges(index_columns, conjuncts[0], zone)?;
         return (built.column_count > 0).then_some(built);
     }
 
-    let built = build_cnf_ranges(index_columns, &conjuncts);
+    let built = build_cnf_ranges(index_columns, &conjuncts, zone);
     (built.access_count > 0).then_some(built)
 }
 
@@ -1340,7 +1358,11 @@ mod tests {
             .where_clause
             .as_ref()
             .expect("the corpus has a WHERE");
-        match detach_cond_and_build_range_for_index(index, where_clause) {
+        match detach_cond_and_build_range_for_index(
+            index,
+            where_clause,
+            &tidb_datatype::SessionTimeZone::utc(),
+        ) {
             Some(built) => render(&built.ranges),
             None => "<no range>".to_owned(),
         }

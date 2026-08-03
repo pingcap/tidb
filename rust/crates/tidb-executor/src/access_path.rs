@@ -136,6 +136,7 @@ pub fn statement_read_shape(
     stmt: &tidb_ast::Stmt,
     catalog: &crate::driver::Catalog,
     current_db: &str,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> StatementReadShape {
     let tidb_ast::Stmt::Query(query) = stmt else {
         return StatementReadShape::Unknown;
@@ -173,7 +174,8 @@ pub fn statement_read_shape(
     // helpers, so a statement this predicate accepts is a statement that arm
     // accepts. It reads nothing: both helpers walk the AST only.
     let mut pairs = Vec::new();
-    if !crate::driver::access::name_value_pairs(where_clause, &mut pairs) || pairs.len() != 1 {
+    if !crate::driver::access::name_value_pairs(where_clause, &mut pairs, zone) || pairs.len() != 1
+    {
         return StatementReadShape::Unknown;
     }
     if !crate::driver::access::convert_pairs_to_column_domain(&mut pairs, &columns) {

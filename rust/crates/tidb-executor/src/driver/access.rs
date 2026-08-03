@@ -89,7 +89,7 @@ pub(crate) fn commit_fast_path_source(
     // so does this: an offer refused leaves the source reading every
     // partition, which is a superset and still every row the statement
     // admits.
-    if let Some(ids) = pruned_partition_ids(select, &table) {
+    if let Some(ids) = pruned_partition_ids(select, &table, zone) {
         if let Some(access) = from_source
             .as_mut()
             .and_then(|source| source.table_access())
@@ -501,7 +501,11 @@ pub(crate) fn choose_index_range_path(
 ///   does not port; a monotonicity claim that is wrong drops a partition
 ///   holding matching rows;
 /// * a `SELECT` with no `WHERE`, which constrains nothing.
-fn pruned_partition_ids(select: &tidb_ast::SelectStmt, table: &KvTable) -> Option<Vec<i64>> {
+fn pruned_partition_ids(
+    select: &tidb_ast::SelectStmt,
+    table: &KvTable,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<Vec<i64>> {
     let partition = table.partition()?;
     let where_clause = select.where_clause.as_ref()?;
     // A bare column is the one partition expression whose own value a range
@@ -522,6 +526,7 @@ fn pruned_partition_ids(select: &tidb_ast::SelectStmt, table: &KvTable) -> Optio
             column.field_type.clone(),
         )],
         where_clause,
+        zone,
     )?;
     crate::partition_pruning::pruned_ids(partition, &built.ranges)
 }
@@ -724,7 +729,7 @@ pub(crate) fn write_read_path(
         return Ok(Some(WriteReadPath::Point(handle)));
     }
     Ok(
-        write_handle_ranges(catalog, database, name, stmt.where_clause)
+        write_handle_ranges(catalog, database, name, stmt.where_clause, zone)
             .map(|(ranges, estimate)| WriteReadPath::Ranges(ranges, estimate)),
     )
 }
@@ -741,12 +746,13 @@ fn write_handle_ranges(
     database: &str,
     name: &str,
     where_clause: Option<&tidb_ast::Expr>,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<(Vec<IndexRange>, crate::access_cost::ScanEstimate)> {
     let where_clause = where_clause?;
     let Some(TableEntry::Kv(table)) = catalog.get_in(database, name) else {
         return None;
     };
-    let ranges = crate::handle_range::build_handle_ranges(table, where_clause)?.ranges;
+    let ranges = crate::handle_range::build_handle_ranges(table, where_clause, zone)?.ranges;
     let stats = catalog.table_statistics(table.table_id);
     let stats = stats.as_ref().map(AsRef::as_ref);
     let estimate = crate::access_cost::ScanEstimate {
@@ -860,7 +866,7 @@ fn scan_predicate(
             }
             let mut literals = Vec::with_capacity(list.len());
             for element in list {
-                let literal = constant_value(element)?;
+                let literal = constant_value(element, &resolver.time_zone())?;
                 // A NULL member makes `IN` UNKNOWN rather than false for a
                 // non-matching row, and `NOT IN` UNKNOWN for every row; that
                 // is not the membership test this description promises.
@@ -908,7 +914,7 @@ fn scan_operand(
     // is the constant Go would have folded rather than a `plus` call. Only an
     // integer is describable: every other constant family needs the TiPB
     // literal encoding this tier does not build.
-    if let Some(Datum::Int(value)) = constant_value(argument) {
+    if let Some(Datum::Int(value)) = constant_value(argument, &resolver.time_zone()) {
         return Some(PbScalar::IntLiteral(value));
     }
     scan_operand_call(argument, resolver)
@@ -974,17 +980,24 @@ fn resolve_column(
 /// (`foldConstant` over a deterministic function of constants) and the
 /// coprocessor is therefore sent the negative constant, not a `UnaryMinus`
 /// node. Without this, `WHERE a > -1` describes nothing at all.
-fn constant_value(expr: &tidb_ast::Expr) -> Option<Datum> {
+fn constant_value(expr: &tidb_ast::Expr, zone: &tidb_datatype::SessionTimeZone) -> Option<Datum> {
     match expr {
-        tidb_ast::Expr::Paren(inner) => constant_value(inner),
-        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Minus, inner) => match constant_value(inner)? {
-            Datum::Int(value) => value.checked_neg().map(Datum::Int),
-            // Any other negated constant keeps whatever type MySQL's unary
-            // minus gives it, which is not this narrow fold's business.
-            _ => None,
-        },
+        tidb_ast::Expr::Paren(inner) => constant_value(inner, zone),
+        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Minus, inner) => {
+            match constant_value(inner, zone)? {
+                Datum::Int(value) => value.checked_neg().map(Datum::Int),
+                // Any other negated constant keeps whatever type MySQL's unary
+                // minus gives it, which is not this narrow fold's business.
+                _ => None,
+            }
+        }
         _ => {
-            let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(expr, &NoResolver)
+            // The zone is the STATEMENT's: a fold here must agree byte for
+            // byte with the residual predicate's own fold, or a conjunct
+            // consumed into a scan key would probe a different instant than
+            // the filter it replaced would have accepted.
+            let Ok(Expression::Constant(constant)) =
+                rewrite_expr_resolved(expr, &tidb_expr::rewriter::ZonedNoResolver(zone.clone()))
             else {
                 return None;
             };
@@ -1012,7 +1025,7 @@ fn scan_comparison(
     };
     // A second column reference on the "constant" side leaves the shape.
     let (offset, column_type, _) = resolver.resolve(column)?;
-    let literal = constant_value(value)?;
+    let literal = constant_value(value, &resolver.time_zone())?;
     // A NULL constant makes the comparison unknown for every row; that is a
     // whole-predicate property Go handles in the ranger, not a filter shape.
     if literal == Datum::Null {
@@ -1123,7 +1136,9 @@ pub(crate) fn try_batch_point_get(
     // Every list element must be a constant, or this is not a point plan.
     let mut values = Vec::with_capacity(list.len());
     for item in list {
-        let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(item, &NoResolver) else {
+        let Ok(Expression::Constant(constant)) =
+            rewrite_expr_resolved(item, &tidb_expr::rewriter::ZonedNoResolver(zone.clone()))
+        else {
             return Ok(None);
         };
         let Ok(value) = constant.eval() else {
@@ -1247,12 +1262,16 @@ impl NameValuePair {
 /// through `AND`; anything else (an `OR`, a comparison, a function call)
 /// makes the statement ineligible for a point get, which is what returning
 /// `None` means here.
-pub(crate) fn name_value_pairs(expr: &tidb_ast::Expr, pairs: &mut Vec<NameValuePair>) -> bool {
+pub(crate) fn name_value_pairs(
+    expr: &tidb_ast::Expr,
+    pairs: &mut Vec<NameValuePair>,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
     use tidb_ast::{BinaryOp, Expr};
     match expr {
-        Expr::Paren(inner) => name_value_pairs(inner, pairs),
+        Expr::Paren(inner) => name_value_pairs(inner, pairs, zone),
         Expr::Binary(BinaryOp::LogicAnd, lhs, rhs) => {
-            name_value_pairs(lhs, pairs) && name_value_pairs(rhs, pairs)
+            name_value_pairs(lhs, pairs, zone) && name_value_pairs(rhs, pairs, zone)
         }
         Expr::Binary(BinaryOp::Eq, lhs, rhs) => {
             let (column, value) = match (&**lhs, &**rhs) {
@@ -1265,7 +1284,9 @@ pub(crate) fn name_value_pairs(expr: &tidb_ast::Expr, pairs: &mut Vec<NameValueP
             };
             // Only a literal qualifies; anything needing evaluation against a
             // row is not a point-get key.
-            let Ok(value) = rewrite_expr_resolved(value, &NoResolver) else {
+            let Ok(value) =
+                rewrite_expr_resolved(value, &tidb_expr::rewriter::ZonedNoResolver(zone.clone()))
+            else {
                 return false;
             };
             let Expression::Constant(constant) = value else {
@@ -1367,7 +1388,7 @@ pub(crate) fn try_point_get(
         return Ok(None);
     };
     let mut pairs = Vec::new();
-    if !name_value_pairs(where_clause, &mut pairs) || pairs.is_empty() {
+    if !name_value_pairs(where_clause, &mut pairs, zone) || pairs.is_empty() {
         return Ok(None);
     }
     // Go `getNameValuePairs` moves every constant into its column's domain

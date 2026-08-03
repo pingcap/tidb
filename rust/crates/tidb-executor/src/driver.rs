@@ -52,7 +52,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_expr::builtin_compare::refine_comparisons;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver, NoResolver};
+use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 
 /// The name an unaliased field takes: a column reference keeps its column
 /// name, anything else keeps the text it was WRITTEN with -- Go's
@@ -314,7 +314,13 @@ pub(crate) fn run_select_traced(
             if let Some(trace) = trace.as_deref_mut() {
                 trace.table_dual();
             }
-            (None, FromScope::default())
+            (
+                None,
+                FromScope {
+                    zone: ctx.session_zone(),
+                    ..FromScope::default()
+                },
+            )
         }
         Some(join) => {
             // Go raises `ErrKeyDoesNotExist` (1176) from

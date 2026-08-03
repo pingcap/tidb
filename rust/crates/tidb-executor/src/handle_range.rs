@@ -104,6 +104,7 @@ use tidb_txnkv::Key;
 pub(crate) fn build_handle_ranges<'a>(
     table: &KvTable,
     where_clause: &'a tidb_ast::Expr,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<IndexRanges<'a>> {
     let column = handle_column(table)?;
     let built = crate::index_range::detach_cond_and_build_range_for_index(
@@ -114,6 +115,7 @@ pub(crate) fn build_handle_ranges<'a>(
             column.field_type.clone(),
         )],
         where_clause,
+        zone,
     )?;
     Some(built)
 }

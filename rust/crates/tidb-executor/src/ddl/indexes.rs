@@ -185,7 +185,13 @@ pub(crate) fn add_index_to_table(
         .iter()
         .map(|c| c.field_type.clone())
         .collect();
-    let hidden = crate::expression_index::build_hidden_columns(index_name, parts, &names, &types)?;
+    let hidden = crate::expression_index::build_hidden_columns(
+        index_name,
+        parts,
+        &names,
+        &types,
+        &ctx.session_zone(),
+    )?;
     // Go `checkExpressionIndexAutoIncrement` (3754).
     if let Some(auto) = table.auto_increment_offset() {
         let auto_name = table.columns[auto].name.clone();

@@ -938,7 +938,7 @@ fn modify_column_action(
             tidb_ast::ColumnOption::Default(expr) => {
                 let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
                     expr,
-                    &tidb_expr::rewriter::NoResolver,
+                    &tidb_expr::rewriter::ZonedNoResolver(zone.clone()),
                 )
                 .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
                 let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
@@ -1295,7 +1295,7 @@ fn add_column_action(
             tidb_ast::ColumnOption::Default(expr) => {
                 let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
                     expr,
-                    &tidb_expr::rewriter::NoResolver,
+                    &tidb_expr::rewriter::ZonedNoResolver(zone.clone()),
                 )
                 .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
                 let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
@@ -1397,7 +1397,7 @@ fn add_column_action(
                 .collect();
             Some(
                 crate::generated_column::build_added_generated_column(
-                    expression, false, &names, &types,
+                    expression, false, &names, &types, zone,
                 )
                 .map_err(crate::ddl::generated_column_error)?,
             )

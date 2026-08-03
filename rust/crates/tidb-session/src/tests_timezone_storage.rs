@@ -561,3 +561,57 @@ fn unix_timestamp_agrees_with_the_stored_resolution() {
         [["1636270200", "1636273800", "1636281000"]]
     );
 }
+
+/// A `TIMESTAMP 'lit'` FOLDS in the session's `time_zone`, not in a hardcoded
+/// UTC -- the dropped-Context seam: the fold happens in the expression
+/// REWRITER (Go's `getFunction`), which used to reach `chrono::Utc` directly
+/// because its `ColumnResolver` carried no session at all.
+///
+/// Captured from real TiDB (`gorun`, 2026-08-03), all four rows:
+///
+/// ```text
+/// set time_zone='+02:00'; select timestamp '2024-01-01 14:00:00+05:00';
+///   -> 2024-01-01 11:00:00       (offset normalizes into the SESSION zone)
+/// set time_zone='UTC';    select timestamp '2024-01-01 14:00:00+05:00';
+///   -> 2024-01-01 09:00:00
+/// set time_zone='America/Los_Angeles';
+///   select timestamp '2011-03-13 01:59:59.9999999';
+///   -> 2011-03-13 03:00:00.000000  (the carry lands on the spring-forward gap)
+///   select timestamp '2011-11-06 01:59:59.9999999';
+///   -> 2011-11-06 01:00:00.000000  (the carry lands on the repeated hour)
+/// ```
+///
+/// The first pair uses FIXED offsets on purpose: it is the case a session
+/// that cannot name IANA zones can still reach, so this divergence is live on
+/// every tier. A probe over instants away from a DST transition (or literals
+/// without an explicit offset) shows NO zone dependence anywhere and is a
+/// false negative.
+#[test]
+fn a_timestamp_literal_folds_in_the_sessions_time_zone() {
+    let mut session = session();
+    set_zone(&mut session, "+02:00");
+    assert_eq!(
+        rows(&mut session, "SELECT TIMESTAMP '2024-01-01 14:00:00+05:00'"),
+        [["2024-01-01 11:00:00"]]
+    );
+    set_zone(&mut session, "UTC");
+    assert_eq!(
+        rows(&mut session, "SELECT TIMESTAMP '2024-01-01 14:00:00+05:00'"),
+        [["2024-01-01 09:00:00"]]
+    );
+    set_zone(&mut session, "America/Los_Angeles");
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT TIMESTAMP '2011-03-13 01:59:59.9999999'"
+        ),
+        [["2011-03-13 03:00:00.000000"]]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT TIMESTAMP '2011-11-06 01:59:59.9999999'"
+        ),
+        [["2011-11-06 01:00:00.000000"]]
+    );
+}

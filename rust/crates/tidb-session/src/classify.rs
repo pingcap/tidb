@@ -167,7 +167,12 @@ impl Session {
             .catalog
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        tidb_executor::access_path::statement_read_shape(&stmt, &catalog, self.current_database())
+        tidb_executor::access_path::statement_read_shape(
+            &stmt,
+            &catalog,
+            self.current_database(),
+            &self.session_time_zone(),
+        )
     }
 
     /// Classifies a statement by parsing alone (no execution), so a caller can

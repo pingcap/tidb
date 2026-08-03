@@ -729,7 +729,7 @@ pub fn run_create_table_in(
                     let built = crate::column_default::build(expr, &field_type, |expr| {
                         let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
                             expr,
-                            &tidb_expr::rewriter::NoResolver,
+                            &tidb_expr::rewriter::ZonedNoResolver(ctx.session_zone()),
                         )
                         .map_err(|_| {
                             crate::column_default::DefaultError::Unsupported(
@@ -799,6 +799,7 @@ pub fn run_create_table_in(
         &create.columns,
         &column_names,
         &column_types,
+        &ctx.session_zone(),
     )
     .map_err(generated_column_error)?;
     // Go `ErrUnsupportedOnGeneratedColumn`: a VIRTUAL generated column cannot
@@ -855,7 +856,8 @@ pub fn run_create_table_in(
             }
         }
     }
-    let (indexes, hidden_columns) = table_indexes(create, &info.columns, clustered)?;
+    let (indexes, hidden_columns) =
+        table_indexes(create, &info.columns, clustered, &ctx.session_zone())?;
     for hidden in hidden_columns {
         // Go `checkExpressionIndexAutoIncrement`: an expression index may not
         // read an AUTO_INCREMENT column. Captured as 3754 naming the index,

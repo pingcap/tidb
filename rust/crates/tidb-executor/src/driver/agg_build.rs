@@ -337,9 +337,16 @@ fn constant_eval_int(value: &Datum) -> Option<i64> {
 pub(crate) struct AggOutputResolver {
     pub(crate) names: Vec<String>,
     pub(crate) types: Vec<FieldType>,
+    /// The statement's session `time_zone` (see [`ColumnResolver::time_zone`]),
+    /// carried over from the source scope the aggregation reads.
+    pub(crate) zone: tidb_expr::SessionTimeZone,
 }
 
 impl ColumnResolver for AggOutputResolver {
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        self.zone.clone()
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         let name = path.last()?;
         let index = self

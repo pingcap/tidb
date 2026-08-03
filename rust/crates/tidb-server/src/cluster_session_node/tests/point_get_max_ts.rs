@@ -326,7 +326,12 @@ fn the_statement_shape_predicate_matches_the_guard_it_ports() {
     let shape = |sql: &str| {
         let catalog = catalog.lock().expect("catalog");
         let stmt = tidb_parser::parse(sql).expect("parse");
-        statement_read_shape(&stmt, &catalog, "app")
+        statement_read_shape(
+            &stmt,
+            &catalog,
+            "app",
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
     };
     let takes = |sql: &str| shape(sql) == StatementReadShape::AutocommitPointGet;
 

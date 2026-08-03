@@ -45,6 +45,34 @@ pub trait ColumnResolver {
     /// Resolves `path` (e.g. `["t", "a"]` or `["a"]`) to
     /// `(row index, result type, unique id)`, or `None` when unknown.
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)>;
+
+    /// The session `time_zone` the rewrite runs under -- Go's
+    /// `ctx.Location()`, which `getFunction` reaches while BUILDING the
+    /// expression and which the `TIMESTAMP 'lit'` fold both normalizes an
+    /// explicit `+HH:MM` offset into and applies a fractional-second carry
+    /// in (see `crate::time_literal`).
+    ///
+    /// There is NO default on purpose: Go has no session-less rewrite, so
+    /// every implementor must decide what zone its callers' statements run
+    /// in rather than silently inheriting a hardcode -- which is exactly the
+    /// dropped-Context bug this accessor closes.
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone;
+}
+
+/// A resolver that knows no columns but folds in a REAL session zone: what
+/// [`NoResolver`] should be wherever the caller has a statement context to
+/// take the zone from. `resolve` answering `None` is the constant test the
+/// callers rely on; only the zone differs.
+pub struct ZonedNoResolver(pub tidb_datatype::SessionTimeZone);
+
+impl ColumnResolver for ZonedNoResolver {
+    fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
+        None
+    }
+
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        self.0.clone()
+    }
 }
 
 /// A resolver that knows no columns (for constant-only expressions).
@@ -53,6 +81,16 @@ pub struct NoResolver;
 impl ColumnResolver for NoResolver {
     fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
         None
+    }
+
+    /// UTC: the zone the pre-accessor code hardcoded, kept so the
+    /// constant-only callers (DDL partition bounds, column defaults, index
+    /// ranges) answer exactly what they answered before. Each such site that
+    /// Go runs under a real session should migrate to a session-aware
+    /// resolver; until then this is a named, greppable stand-in rather than
+    /// a buried literal.
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
     }
 }
 
@@ -1559,9 +1597,12 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             ) =>
         {
             let text = literal_text(&cast.expr, resolver)?;
+            let zone = resolver.time_zone();
             let value = match cast.style {
-                tidb_ast::CastStyle::DateLiteral => crate::time_literal::date_literal(&text)?,
-                _ => crate::time_literal::timestamp_literal(&text)?,
+                tidb_ast::CastStyle::DateLiteral => {
+                    crate::time_literal::date_literal(&text, &zone)?
+                }
+                _ => crate::time_literal::timestamp_literal(&text, &zone)?,
             };
             // The value is a formatted string for the same reason
             // `cast_target` types the temporal casts `VarString`: this crate
