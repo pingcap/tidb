@@ -357,16 +357,17 @@ fn a_pruned_scan_still_computes_a_virtual_column() {
     );
 }
 
-/// An `ALTER TABLE` that adds or modifies a generated column is REFUSED
-/// rather than silently added as an ordinary column -- Go answers 3106 for
-/// the STORED case and supports the virtual one, which this tier does not do
-/// yet. The point of the test is that the refusal is loud.
+/// An `ALTER TABLE` that MODIFIES a generated column is still refused, and
+/// the refusal is loud.
+///
+/// This test used to assert that ADDING one was refused too, and that
+/// assertion was ENCODING A GAP rather than a rule: Go accepts
+/// `ALTER TABLE ... ADD COLUMN ... AS (expr) VIRTUAL`, and so does this tier
+/// now -- see
+/// [`adding_a_virtual_generated_column_by_alter_computes_over_existing_rows`].
 #[test]
-fn alter_table_with_a_generated_column_is_refused_loudly() {
+fn modifying_a_generated_column_by_alter_is_refused_loudly() {
     let mut session = chain();
-    assert!(session
-        .run("ALTER TABLE t1 ADD COLUMN d INT AS (a+2) VIRTUAL")
-        .is_err());
     assert!(session
         .run("ALTER TABLE t1 MODIFY COLUMN b BIGINT AS (a+1) VIRTUAL")
         .is_err());
@@ -493,5 +494,114 @@ fn without_error_for_division_by_zero_the_same_writes_are_accepted() {
     assert_eq!(
         rows(&mut session, "SELECT * FROM e3 ORDER BY a"),
         vec![vec!["0".to_owned()], vec!["5".to_owned()]]
+    );
+}
+
+/// `ALTER TABLE ... ADD COLUMN <name> <type> AS (expr) VIRTUAL`, and the
+/// STORED half TiDB refuses. Captured from real TiDB through `gorun`:
+///
+/// ```text
+/// create table g (a int, b varchar(20), d int as (a+1) virtual)
+/// insert into g (a,b) values (1,'p'),(2,'q')
+/// alter table g add column f int as (a*2) stored
+///   -> Error|3106|'Adding generated stored column through ALTER TABLE'
+///      is not supported for generated columns.
+/// alter table g add column e varchar(60) as (concat(b,'yy')) virtual  -> OK
+/// select * from g   -> 1|p|2|pyy ; 2|q|3|qyy
+/// ```
+///
+/// The `select` is the load-bearing half: a VIRTUAL column added by ALTER
+/// computes over rows that were written BEFORE it existed, because nothing
+/// was ever stored for it. A refusal-shaped implementation, or one that added
+/// the column as an ordinary NULL one, would both pass a DDL-only assertion.
+#[test]
+fn adding_a_virtual_generated_column_by_alter_computes_over_existing_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE g (a INT, b VARCHAR(20), d INT AS (a+1) VIRTUAL)")
+        .unwrap();
+    session
+        .run("INSERT INTO g (a,b) VALUES (1,'p'),(2,'q')")
+        .unwrap();
+
+    assert_eq!(
+        message(
+            &mut session,
+            "ALTER TABLE g ADD COLUMN f INT AS (a*2) STORED"
+        ),
+        "'Adding generated stored column through ALTER TABLE' is not supported for \
+         generated columns."
+    );
+
+    session
+        .run("ALTER TABLE g ADD COLUMN e VARCHAR(60) AS (concat(b,'yy')) VIRTUAL")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM g ORDER BY a"),
+        vec![
+            vec![
+                "1".to_owned(),
+                "p".to_owned(),
+                "2".to_owned(),
+                "pyy".to_owned()
+            ],
+            vec![
+                "2".to_owned(),
+                "q".to_owned(),
+                "3".to_owned(),
+                "qyy".to_owned()
+            ],
+        ]
+    );
+}
+
+/// `ALTER TABLE ... MODIFY COLUMN` may not change a column's generated-ness
+/// in EITHER direction, and Go words all of it for the STORED case even when
+/// the column is VIRTUAL. Captured from real TiDB:
+///
+/// ```text
+/// alter table g modify column d int              -- d IS `a+1` VIRTUAL
+///   -> Error|3106|'Changing the STORED status' is not supported for generated columns.
+/// alter table g modify column a bigint as (1) virtual   -- a is ORDINARY
+///   -> Error|3106|'Changing the STORED status' is not supported for generated columns.
+/// ```
+///
+/// NOT PORTED, and pinned here so the gap is visible: Go ACCEPTS a MODIFY
+/// that keeps the generated-ness, including one that REPLACES the expression
+/// (`alter table g modify column d int as (a+5) virtual` succeeds and the
+/// rows read back recomputed). This tier refuses it rather than applying the
+/// new type with the OLD expression still attached.
+#[test]
+fn modifying_a_columns_generated_status_is_3106_either_way() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE g (a INT, d INT AS (a+1) VIRTUAL)")
+        .unwrap();
+    let stored_status = "'Changing the STORED status' is not supported for generated columns.";
+    assert_eq!(
+        message(&mut session, "ALTER TABLE g MODIFY COLUMN d INT"),
+        stored_status,
+        "generated -> ordinary"
+    );
+    assert_eq!(
+        message(
+            &mut session,
+            "ALTER TABLE g MODIFY COLUMN a BIGINT AS (1) VIRTUAL"
+        ),
+        stored_status,
+        "ordinary -> generated"
+    );
+    assert_eq!(
+        code(&mut session, "ALTER TABLE g MODIFY COLUMN d INT"),
+        Some(3106)
+    );
+    // The gap Go does not have.
+    assert_eq!(
+        message(
+            &mut session,
+            "ALTER TABLE g MODIFY COLUMN d BIGINT AS (a+1) VIRTUAL"
+        ),
+        "ALTER TABLE MODIFY COLUMN of a generated column is not supported yet",
+        "Go accepts this and replaces the expression"
     );
 }

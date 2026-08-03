@@ -1062,7 +1062,9 @@ fn column_dependent_error_text(
 }
 
 /// Names a generated-column DDL refusal the way Go's own error does.
-fn generated_column_error(error: crate::generated_column::GeneratedDdlError) -> DriverError {
+pub(crate) fn generated_column_error(
+    error: crate::generated_column::GeneratedDdlError,
+) -> DriverError {
     use crate::generated_column::GeneratedDdlError;
     match error {
         GeneratedDdlError::UnknownDependency(name) => DriverError::UnknownColumnInClause {

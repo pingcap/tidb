@@ -454,6 +454,48 @@ pub fn build_generated_columns(
     Ok(built)
 }
 
+/// Builds ONE generated column for `ALTER TABLE ... ADD COLUMN <name> <type>
+/// AS (expr) VIRTUAL`, against the columns that will PRECEDE it.
+///
+/// `names`/`types` are the preceding columns in table order and
+/// `generated_at` says which of them are themselves generated -- the same
+/// three inputs [`build_generated_columns`] derives per position, except that
+/// here every candidate really is earlier, so Go's
+/// `verifyColumnGeneration` prior-order rule can only be satisfied and is
+/// carried by construction rather than re-tested.
+///
+/// STORED is the caller's refusal, not this function's: Go answers 3106
+/// `'Adding generated stored column through ALTER TABLE' is not supported for
+/// generated columns.` before any expression is built (captured).
+pub fn build_added_generated_column(
+    expression: &tidb_ast::Expr,
+    stored: bool,
+    names: &[String],
+    types: &[FieldType],
+) -> Result<GeneratedColumn, GeneratedDdlError> {
+    let resolver = TableColumnResolver::new(names, types);
+    let expr = match tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver) {
+        Ok(expr) => expr,
+        Err(_) => {
+            return Err(match resolver.missing_name() {
+                Some(name) => GeneratedDdlError::UnknownDependency(name),
+                None => GeneratedDdlError::Unbuildable(
+                    "this generated-column expression is not supported yet",
+                ),
+            })
+        }
+    };
+    if let Some(name) = resolver.missing_name() {
+        return Err(GeneratedDdlError::UnknownDependency(name));
+    }
+    Ok(GeneratedColumn {
+        expr_text: expression.restore_with_flags(generated_restore_flags()),
+        stored,
+        expr,
+        dependencies: resolver.dependency_names(),
+    })
+}
+
 /// The flag set Go restores `GeneratedExprString` with
 /// (`pkg/ddl/add_column.go`): single-quoted strings, lowercase keywords,
 /// back-quoted names, spaces around binary operations, and no schema or table

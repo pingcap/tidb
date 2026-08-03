@@ -957,7 +957,11 @@ fn modify_column_action(
             // AUTO_INCREMENT is legal here as long as the column already has
             // it; the set/remove rules are checked below, once the old column
             // is in hand.
-            | tidb_ast::ColumnOption::AutoIncrement => {}
+            | tidb_ast::ColumnOption::AutoIncrement
+            // Whether the generated-ness is allowed to change is a question
+            // about the OLD column, so it is asked below once that column is
+            // in hand.
+            | tidb_ast::ColumnOption::Generated { .. } => {}
             _ => {
                 return Err(DriverError::unsupported(
                     "this column option is not supported in ALTER TABLE MODIFY COLUMN",
@@ -965,6 +969,10 @@ fn modify_column_action(
             }
         }
     }
+    let new_generated_stored = def.options.iter().find_map(|option| match option {
+        tidb_ast::ColumnOption::Generated { stored, .. } => Some(*stored),
+        _ => None,
+    });
     let not_null = def
         .options
         .iter()
@@ -1002,6 +1010,34 @@ fn modify_column_action(
         ctx.append_suppressed(&missing);
         return Ok(());
     };
+    // Go `checkModifyGeneratedColumn` (`pkg/ddl/modify_column.go`): a MODIFY
+    // may not turn a generated column into an ordinary one, nor an ordinary
+    // column into a generated one, nor move a column between VIRTUAL and
+    // STORED. All three are ONE error, and Go words it for the STORED case
+    // whichever of them happened -- captured, on a VIRTUAL column both
+    // directions answer `Error|3106|'Changing the STORED status' is not
+    // supported for generated columns.` The wording is Go's; it is ported as
+    // measured rather than repaired.
+    let old_generated_stored = table.columns[offset]
+        .generated
+        .as_ref()
+        .map(|generated| generated.stored);
+    if new_generated_stored != old_generated_stored {
+        return Err(DriverError::UnsupportedOnGeneratedColumn(
+            "Changing the STORED status".to_owned(),
+        ));
+    }
+    // Keeping the generated-ness is what Go ACCEPTS -- including replacing
+    // the expression: captured, `alter table g modify column d int as (a+5)
+    // virtual` succeeds and the rows read back recomputed. Rebuilding the
+    // expression against the modified table is not modelled yet, so the
+    // statement is refused rather than applied with the OLD expression
+    // silently kept under a definition that asked for a new one.
+    if new_generated_stored.is_some() {
+        return Err(DriverError::unsupported(
+            "ALTER TABLE MODIFY COLUMN of a generated column is not supported yet",
+        ));
+    }
     // Go `getModifiableColumnJob` (`pkg/ddl/modify_column.go`) computes
     // `checkModifyColumnWithGeneratedColumnsConstraint` ONCE and then raises
     // it in two different shapes -- the rename arm just below, and the 3106
@@ -1275,6 +1311,20 @@ fn add_column_action(
             }
             tidb_ast::ColumnOption::NotNull => {}
             tidb_ast::ColumnOption::Null => {}
+            // Go `checkAddColumnTooManyColumns`'s neighbour in
+            // `pkg/ddl/column.go`: a STORED generated column added by ALTER
+            // would have to be backfilled into every existing row, which TiDB
+            // refuses outright. Captured: `alter table g add column f int as
+            // (a*2) stored` -> `Error|3106|'Adding generated stored column
+            // through ALTER TABLE' is not supported for generated columns.`
+            // The VIRTUAL form is accepted and computes on read, which is why
+            // only this half is refused.
+            tidb_ast::ColumnOption::Generated { stored: true, .. } => {
+                return Err(DriverError::UnsupportedOnGeneratedColumn(
+                    "Adding generated stored column through ALTER TABLE".to_owned(),
+                ))
+            }
+            tidb_ast::ColumnOption::Generated { stored: false, .. } => {}
             _ => {
                 return Err(DriverError::unsupported(
                     "this column option is not supported in ALTER TABLE ADD COLUMN",
@@ -1282,6 +1332,10 @@ fn add_column_action(
             }
         }
     }
+    let generated_expression = def.options.iter().find_map(|option| match option {
+        tidb_ast::ColumnOption::Generated { expression, .. } => Some(expression),
+        _ => None,
+    });
     let not_null = def
         .options
         .iter()
@@ -1328,6 +1382,28 @@ fn add_column_action(
     let stored_default = default_value
         .clone()
         .map(crate::column_default::ColumnDefault::Value);
+    // A generated expression resolves against the columns that will PRECEDE
+    // the new one, which is Go's `verifyColumnGeneration` prior-order rule
+    // and, for the default append position, every column the table has.
+    let generated = match generated_expression {
+        Some(expression) => {
+            let names: Vec<String> = table.columns[..index]
+                .iter()
+                .map(|column| column.name.clone())
+                .collect();
+            let types: Vec<tidb_datatype::FieldType> = table.columns[..index]
+                .iter()
+                .map(|column| column.field_type.clone())
+                .collect();
+            Some(
+                crate::generated_column::build_added_generated_column(
+                    expression, false, &names, &types,
+                )
+                .map_err(crate::ddl::generated_column_error)?,
+            )
+        }
+        None => None,
+    };
     let id = table.next_column_id();
     let field_type_for_origin = field_type.clone();
     table.add_column(
@@ -1336,9 +1412,7 @@ fn add_column_action(
             name: def.name.clone(),
             id,
             field_type,
-            // As in MODIFY: `ALTER TABLE ... ADD COLUMN ... AS (...)` is
-            // refused above rather than silently added as a plain column.
-            generated: None,
+            generated,
             default_value: stored_default,
             // Rows written before this column existed read back the default.
             // A NOT NULL column with NO default reads back the TYPE's zero
