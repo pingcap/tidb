@@ -934,6 +934,59 @@ mod tests {
         Some(items.iter().map(|s| (*s).to_string()).collect())
     }
 
+    /// The fractional-seconds carry runs on the INSTANT in the caller's zone
+    /// (Go `parseDatetime`: `tmp.GoTime(ctx.Location()).Add(time.Second)`),
+    /// so a carry that crosses a DST transition moves the wall clock by the
+    /// offset change too — and it does so BEFORE the value's type is set,
+    /// which makes `DATE` zone-sensitive as well as `DATETIME`.
+    ///
+    /// Both pairs are captured from TiDB, inserting the same literal into the
+    /// same column under two `time_zone` settings and reading back at UTC.
+    /// Every write-path caller must therefore pass the session zone; passing
+    /// `Utc` unconditionally silently stores the first column of each pair.
+    #[test]
+    fn go_fractional_carry_follows_the_session_zone() {
+        let cases: &[(&str, TimeType, chrono_tz::Tz, &str)] = &[
+            // 2011-03-13 02:00 does not exist in Los Angeles: the clock jumps
+            // 01:59:59 PST -> 03:00:00 PDT.
+            (
+                "2011-03-13 01:59:59.9999999",
+                TimeType::DateTime,
+                chrono_tz::UTC,
+                "2011-03-13 02:00:00",
+            ),
+            (
+                "2011-03-13 01:59:59.9999999",
+                TimeType::DateTime,
+                chrono_tz::America::Los_Angeles,
+                "2011-03-13 03:00:00",
+            ),
+            // Apia skipped 2011-12-30 entirely when it crossed the date line,
+            // so the one-second carry lands a whole DAY later.
+            (
+                "2011-12-29 23:59:59.9999999",
+                TimeType::Date,
+                chrono_tz::UTC,
+                "2011-12-30",
+            ),
+            (
+                "2011-12-29 23:59:59.9999999",
+                TimeType::Date,
+                chrono_tz::Pacific::Apia,
+                "2011-12-31",
+            ),
+        ];
+        for (input, kind, timezone, want) in cases {
+            let parsed = parse_time(input, *kind, 0, false, false, false, timezone)
+                .unwrap_or_else(|error| panic!("parse_time({input}, {timezone}): {error}"));
+            assert_eq!(
+                parsed.time.to_string(),
+                *want,
+                "parse_time({input}, {timezone})"
+            );
+        }
+    }
+
     /// TiDB `TestParseDateFormat` (`pkg/types/time_test.go`).
     #[test]
     fn go_parse_date_format_vectors() {

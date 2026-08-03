@@ -628,13 +628,28 @@ fn admit_decimal_value(
 /// (`fsp`) exactly as `parse_time`/`parse_duration` already do for the read
 /// path's literal folding.
 ///
-/// `TIMESTAMP` is parsed as a wall-clock value in the session's own
-/// `tz_offset_secs`, range-checked, then converted to UTC for storage —
-/// matching Go's `checkTimestampType` (parses/validates the literal in
-/// `SessionVars.Location()`) and `pkg/tablecodec/tablecodec.go`'s `flatten`
-/// (`t.ConvertTimeZone(loc, time.UTC)` when `loc != time.UTC`). `DATE`/
-/// `DATETIME`/`TIME` carry no timezone and are stored exactly as written,
-/// same as Go.
+/// Every arm parses in the session's own `tz_offset_secs`, because Go's
+/// `parseDatetime` (`pkg/types/time.go`) applies the fractional-seconds carry
+/// to the INSTANT in `ctx.Location()` — `tmp.GoTime(loc).Add(time.Second)` —
+/// before the value's type is even set. A carry that crosses a transition
+/// therefore moves the stored wall clock by the offset change, for `DATE` as
+/// much as for `DATETIME`; captured from TiDB:
+///
+/// ```text
+/// '2011-03-13 01:59:59.9999999' -> DATETIME
+///   UTC                 2011-03-13 02:00:00
+///   America/Los_Angeles 2011-03-13 03:00:00
+/// '2011-12-29 23:59:59.9999999' -> DATE
+///   UTC                 2011-12-30
+///   Pacific/Apia        2011-12-31   (2011-12-30 does not exist there)
+/// ```
+///
+/// `TIMESTAMP` additionally range-checks the wall-clock value and converts it
+/// to UTC for storage, matching Go's `checkTimestampType` and
+/// `pkg/tablecodec/tablecodec.go`'s `flatten`
+/// (`t.ConvertTimeZone(loc, time.UTC)` when `loc != time.UTC`); `DATE`,
+/// `DATETIME` and `TIME` are stored as the wall clock that came out of the
+/// parse, same as Go.
 fn admit_temporal_value(
     column: &ConfiguredColumn,
     bytes: &[u8],
@@ -647,9 +662,11 @@ fn admit_temporal_value(
     };
     let text = std::str::from_utf8(bytes)
         .map_err(|_| invalid(String::from_utf8_lossy(bytes).into_owned()))?;
+    let session_tz = chrono::FixedOffset::east_opt(tz_offset_secs)
+        .expect("session time_zone offset is always in FixedOffset's range");
     match scalar_type {
         ConfiguredScalarType::Date => {
-            let parsed = parse_time(text, TimeType::Date, 0, false, false, false, &chrono::Utc)
+            let parsed = parse_time(text, TimeType::Date, 0, false, false, false, &session_tz)
                 .map_err(|error| invalid(format!("{text}: {error}")))?;
             Ok(Datum::Time(parsed.time))
         }
@@ -661,14 +678,12 @@ fn admit_temporal_value(
                 false,
                 false,
                 false,
-                &chrono::Utc,
+                &session_tz,
             )
             .map_err(|error| invalid(format!("{text}: {error}")))?;
             Ok(Datum::Time(parsed.time))
         }
         ConfiguredScalarType::Timestamp { fsp } => {
-            let session_tz = chrono::FixedOffset::east_opt(tz_offset_secs)
-                .expect("session time_zone offset is always in FixedOffset's range");
             let mut parsed = parse_time(
                 text,
                 TimeType::Timestamp,
