@@ -620,12 +620,220 @@ fn rewrite_rows(
 /// and `DROP TABLE` leave `ref_table` dangling, so both stay REFUSED on a
 /// participating table rather than silently breaking the reference. Go
 /// rewrites the affected `FKInfo`s instead, which is the graduation path.
-/// A column RENAME is no longer in that group: it rewrites `cols` exactly as
-/// Go's `updateFKInfoWhenModifyColumn` does (see
-/// `crate::ddl::alter_metadata::rename_column_action`).
+/// A column RENAME is still in that group: `rename_column_action` assigns the
+/// new name and rewrites nothing else, so a constraint over the renamed column
+/// would be left naming a column no table has.
+///
+/// `MODIFY`/`CHANGE` is NOT in that group any more: it asks
+/// [`check_modify_column`] the same question Go's
+/// `checkModifyColumnWithForeignKeyConstraint` asks, and a `CHANGE` that also
+/// renames rewrites the constraint through [`rewrite_column_name`], which is
+/// Go's `updateFKInfoWhenModifyColumn` plus
+/// `adjustForeignKeyChildTableInfoAfterModifyColumn`.
 pub(crate) fn participates(catalog: &Catalog, database: &str, table: &str) -> bool {
     let (declared_keys, _) = declared(catalog, database, table);
     !declared_keys.is_empty() || !referring(catalog, database, table).is_empty()
+}
+
+/// Go `ddl.isAcceptableForeignKeyColumnChange` (`pkg/ddl/foreign_key.go`).
+///
+/// `new` is the type the `MODIFY` asks for, `original` the column's type
+/// today, and `related` the type of the column on the OTHER side of the
+/// constraint. Reached only once the two TYPES already agree, so this decides
+/// the WIDTH question alone.
+///
+/// The integer arm is Go's, comment included: an integer's `Flen` is a display
+/// width and says nothing about the value range, so every integer width move
+/// is acceptable. Captured: `modify user_id int(5)` over an `int(11)` column
+/// referencing an `int(11)` succeeds.
+fn acceptable_column_change(
+    new: &tidb_datatype::FieldType,
+    original: &tidb_datatype::FieldType,
+    related: &tidb_datatype::FieldType,
+) -> bool {
+    use tidb_datatype::FieldTypeCode::*;
+    if matches!(new.code(), Tiny | Short | Int24 | Long | LongLong) {
+        return true;
+    }
+    if new.flen() < related.flen() || new.flen() < original.flen() {
+        return false;
+    }
+    // A decimal's precision and scale are both part of the stored key, so
+    // Go refuses ANY move of either -- including a WIDENING one, which is why
+    // `decimal(10,2)` -> `decimal(12,2)` is 1832 rather than accepted.
+    if new.code() == NewDecimal
+        && (new.flen() != original.flen() || new.decimal() != original.decimal())
+    {
+        return false;
+    }
+    true
+}
+
+/// The `FieldType` of `column` in `database.table`, or `None` when either the
+/// table or the column is gone.
+fn column_type(
+    catalog: &Catalog,
+    database: &str,
+    table: &str,
+    column: &str,
+) -> Option<tidb_datatype::FieldType> {
+    match catalog.get_in(database, table)? {
+        TableEntry::Kv(kv) => kv
+            .columns
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(column))
+            .map(|c| c.field_type.clone()),
+        _ => None,
+    }
+}
+
+/// Go `ddl.checkModifyColumnWithForeignKeyConstraint` (`pkg/ddl/foreign_key.go`).
+///
+/// Asked once per `MODIFY`/`CHANGE COLUMN`, from BOTH directions:
+///
+/// * the constraints this table DECLARES over the column, checked against the
+///   parent's referenced column -- a type move is 3780, a width move Go does
+///   not accept is 1832;
+/// * the constraints OTHER tables declare AGAINST this column, checked against
+///   each child's referencing column -- the same type move is 3780, and the
+///   width move is 1833 naming the child as `schema.table`.
+///
+/// Go's early return is load-bearing and is kept: when type, `Flen` and
+/// `Decimal` are all unchanged the check is skipped entirely, which is what
+/// lets `alter table orders modify user_id int null` -- a NULLABILITY change
+/// and nothing else -- through on a constrained column. That statement is in
+/// the recording (`executor/foreign_key.result`), and refusing it was this
+/// tier's last divergence in that topic.
+pub(crate) fn check_modify_column(
+    catalog: &Catalog,
+    database: &str,
+    table: &str,
+    old_name: &str,
+    original: &tidb_datatype::FieldType,
+    new: &tidb_datatype::FieldType,
+) -> Result<(), DriverError> {
+    if new.code() == original.code()
+        && new.flen() == original.flen()
+        && new.decimal() == original.decimal()
+    {
+        return Ok(());
+    }
+    let (declared_keys, _) = declared(catalog, database, table);
+    for foreign_key in &declared_keys {
+        for (i, col) in foreign_key.cols.iter().enumerate() {
+            if !col.eq_ignore_ascii_case(old_name) {
+                continue;
+            }
+            let referenced = &foreign_key.ref_cols[i];
+            // Go reads the parent through the infoschema and propagates its
+            // error; a parent that is gone cannot answer the question, and
+            // this tier has no such error to raise here.
+            let Some(refer) = column_type(
+                catalog,
+                &foreign_key.ref_schema,
+                &foreign_key.ref_table,
+                referenced,
+            ) else {
+                continue;
+            };
+            if new.code() != refer.code() {
+                return Err(DriverError::FkIncompatibleColumns {
+                    referencing: old_name.to_owned(),
+                    referenced: referenced.clone(),
+                    constraint: foreign_key.name.clone(),
+                });
+            }
+            if !acceptable_column_change(new, original, &refer) {
+                return Err(DriverError::ForeignKeyColumnCannotChange {
+                    column: old_name.to_owned(),
+                    constraint: foreign_key.name.clone(),
+                });
+            }
+        }
+    }
+    for (child_db, child_table, foreign_key) in referring(catalog, database, table) {
+        for (i, col) in foreign_key.ref_cols.iter().enumerate() {
+            if !col.eq_ignore_ascii_case(old_name) {
+                continue;
+            }
+            let child_column = &foreign_key.cols[i];
+            let Some(child) = column_type(catalog, &child_db, &child_table, child_column) else {
+                continue;
+            };
+            if new.code() != child.code() {
+                // Go names the CHILD's column first here, where the declared
+                // side above names this table's own.
+                return Err(DriverError::FkIncompatibleColumns {
+                    referencing: child_column.clone(),
+                    referenced: old_name.to_owned(),
+                    constraint: foreign_key.name.clone(),
+                });
+            }
+            if !acceptable_column_change(new, original, &child) {
+                return Err(DriverError::ForeignKeyColumnCannotChangeChild {
+                    column: old_name.to_owned(),
+                    constraint: foreign_key.name.clone(),
+                    child_table: format!(
+                        "{}.{}",
+                        child_db.to_lowercase(),
+                        child_table.to_lowercase()
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Go `ddl.updateFKInfoWhenModifyColumn` plus
+/// `ddl.adjustForeignKeyChildTableInfoAfterModifyColumn`: a `CHANGE COLUMN`
+/// that RENAMES carries every constraint naming the old name onto the new one.
+///
+/// Both directions, because a constraint stores the two sides in two different
+/// tables: this table's own `cols`, and every child's `ref_cols`. Captured:
+/// after `alter table orders change user_id uid int`, `SHOW CREATE TABLE`
+/// prints `` FOREIGN KEY (`uid`) `` and the parent-side `modify id bigint`
+/// still reports the constraint under the NEW child column name.
+pub(crate) fn rewrite_column_name(
+    catalog: &mut Catalog,
+    database: &str,
+    table: &str,
+    old_name: &str,
+    new_name: &str,
+) {
+    if old_name.eq_ignore_ascii_case(new_name) {
+        return;
+    }
+    if let Some(TableEntry::Kv(kv)) = catalog.table_mut_in(database, table) {
+        for foreign_key in kv.foreign_keys_mut() {
+            for col in &mut foreign_key.cols {
+                if col.eq_ignore_ascii_case(old_name) {
+                    *col = new_name.to_owned();
+                }
+            }
+        }
+    }
+    let children: Vec<(String, String)> = referring(catalog, database, table)
+        .into_iter()
+        .map(|(db, tbl, _)| (db, tbl))
+        .collect();
+    for (child_db, child_table) in children {
+        let Some(TableEntry::Kv(kv)) = catalog.table_mut_in(&child_db, &child_table) else {
+            continue;
+        };
+        for foreign_key in kv.foreign_keys_mut() {
+            if !foreign_key.ref_schema.eq_ignore_ascii_case(database)
+                || !foreign_key.ref_table.eq_ignore_ascii_case(table)
+            {
+                continue;
+            }
+            for col in &mut foreign_key.ref_cols {
+                if col.eq_ignore_ascii_case(old_name) {
+                    *col = new_name.to_owned();
+                }
+            }
+        }
+    }
 }
 
 /// Go `ddl.checkIndexNeededInForeignKey`: an index a foreign key relies on

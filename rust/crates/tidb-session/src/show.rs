@@ -150,7 +150,7 @@ fn index_part_text(table: &tidb_executor::KvTable, offset: usize, prefix_length:
 /// charset differs prints `CHARACTER SET <cs> COLLATE <coll>`, one that only
 /// differs in collation prints `COLLATE <coll>`, and a binary-charset column
 /// (`varbinary`, `blob`) prints neither because its type name already says so.
-fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String {
+fn show_create_table_text(database: &str, name: &str, table: &tidb_executor::KvTable) -> String {
     let mut out = format!("CREATE TABLE {} (\n", escape_name(name));
     let mut clauses: Vec<String> = Vec::with_capacity(table.columns.len() + 1);
 
@@ -285,10 +285,26 @@ fn show_create_table_text(name: &str, table: &tidb_executor::KvTable) -> String 
             .map(|name| escape_name(name))
             .collect::<Vec<_>>()
             .join(",");
+        // Go `pkg/executor/show.go`: the referenced table is qualified with
+        // its SCHEMA only when that schema differs from the one holding this
+        // table (`fk.RefSchema.L != "" && fk.RefSchema.L != dbName.L`).
+        // Without this a cross-schema constraint printed back as a
+        // same-schema one, which is a `SHOW CREATE TABLE` output no server
+        // could replay into the table it came from.
+        let target = if foreign_key.ref_schema.is_empty()
+            || foreign_key.ref_schema.eq_ignore_ascii_case(database)
+        {
+            escape_name(&foreign_key.ref_table)
+        } else {
+            format!(
+                "{}.{}",
+                escape_name(&foreign_key.ref_schema),
+                escape_name(&foreign_key.ref_table)
+            )
+        };
         let mut clause = format!(
-            "  CONSTRAINT {} FOREIGN KEY ({columns}) REFERENCES {} ({referenced})",
+            "  CONSTRAINT {} FOREIGN KEY ({columns}) REFERENCES {target} ({referenced})",
             escape_name(&foreign_key.name),
-            escape_name(&foreign_key.ref_table),
         );
         if let Some(action) = referential_action_sql(foreign_key.on_delete) {
             clause.push_str(&format!(" ON DELETE {action}"));
@@ -1531,7 +1547,7 @@ impl Session {
                             true,
                         )),
                         tidb_executor::TableEntry::Kv(table) => Ok((
-                            show_create_table_text(&table_name, table),
+                            show_create_table_text(&database, &table_name, table),
                             table_name.clone(),
                             false,
                             false,

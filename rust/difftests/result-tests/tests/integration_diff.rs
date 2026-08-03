@@ -275,6 +275,15 @@ const TOPICS: &[(&str, &str)] = &[
          statements compared, nothing skipped, over partition boundary reads",
     ),
     (
+        "executor/foreign_key",
+        "referential integrity end to end: 258 of 318 compared at ZERO \
+         divergences, and the only onboarded topic that gates a CROSS-SCHEMA \
+         constraint -- both the `REFERENCES `db`.`tbl`` spelling `SHOW CREATE \
+         TABLE` prints and the `MODIFY`/`CHANGE COLUMN` rules a constrained \
+         column lives under (3780/1832/1833, and the nullability-only change \
+         Go lets through)",
+    ),
+    (
         "executor/revoke",
         "REVOKE's row and side-effect results, 43 of 65 compared",
     ),

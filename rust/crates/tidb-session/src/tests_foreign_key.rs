@@ -420,19 +420,24 @@ fn show_create_table_prints_the_constraint_and_its_implicit_index() {
     assert!(!rows(&mut session, "SHOW CREATE TABLE g")[0][1].contains("KEY `fk_1`"));
 }
 
-/// A constraint addresses its own side by column offset and the other side
-/// by table name, so a layout change or a rename would silently repoint it.
-/// Both are REFUSED on a participating table -- on either side of the
-/// constraint -- rather than corrupting it. (Real TiDB rewrites the affected
-/// `FKInfo`s instead; this is the honest refusal until that lands.)
+/// A constraint names the other side by TABLE name and its own side by COLUMN
+/// name, so a drop or a rename of either would leave it naming something that
+/// is gone. Those are REFUSED on a participating table rather than corrupting
+/// it. (Real TiDB rewrites the affected `FKInfo`s instead; this is the honest
+/// refusal until that lands.)
+///
+/// This test USED TO assert that `ADD COLUMN` and a repositioning `MODIFY`
+/// were refused too, which encoded the old blanket refusal as if it were the
+/// rule. It is not: captured from real TiDB, `alter table c add column extra
+/// int`, `alter table c modify column pid int first` and `alter table p add
+/// column extra int` all SUCCEED, and the constraint survives all three,
+/// because the constraint resolves its names at every use. They are listed
+/// below as the statements that must keep working.
 #[test]
 fn a_layout_change_or_rename_is_refused_on_either_side_of_a_constraint() {
     for statement in [
-        "ALTER TABLE c ADD COLUMN extra INT",
         "ALTER TABLE c DROP COLUMN id",
-        "ALTER TABLE c MODIFY COLUMN pid INT FIRST",
         "ALTER TABLE c RENAME TO cc",
-        "ALTER TABLE p ADD COLUMN extra INT",
         "ALTER TABLE p RENAME TO pp",
         "RENAME TABLE c TO cc",
         "RENAME TABLE p TO pp",
@@ -441,6 +446,23 @@ fn a_layout_change_or_rename_is_refused_on_either_side_of_a_constraint() {
         assert!(
             session.run(statement).is_err(),
             "{statement} should be refused"
+        );
+    }
+    for statement in [
+        "ALTER TABLE c ADD COLUMN extra INT",
+        "ALTER TABLE c MODIFY COLUMN pid INT FIRST",
+        "ALTER TABLE p ADD COLUMN extra INT",
+    ] {
+        let mut session = pair("");
+        session
+            .run(statement)
+            .unwrap_or_else(|e| panic!("{statement}: {e:?}"));
+        // The constraint still holds afterwards, which is what makes the
+        // acceptance safe rather than merely permissive.
+        assert_eq!(
+            code(&mut session, "INSERT INTO c (id, pid) VALUES (30, 99)"),
+            Some(1452),
+            "{statement}"
         );
     }
     // An index change touches neither addressing scheme, so it still runs.
@@ -1149,5 +1171,340 @@ fn the_generated_column_rules_fire_from_the_alter_path_too() {
              REFERENCES t1(b) ON DELETE CASCADE"
         ),
         None
+    );
+}
+
+/// The error MESSAGE a statement fails with, or `None` when it succeeded.
+/// The foreign-key MODIFY refusals below are distinguished by their arguments
+/// as much as by their code, so the text is what is pinned.
+fn message(session: &mut Session, sql: &str) -> Option<String> {
+    match session.run(sql) {
+        Ok(_) => None,
+        Err(error) => Some(error.to_mysql_error().message),
+    }
+}
+
+/// The recording's own cross-schema pair
+/// (`executor/foreign_key.test` -> `TestForeignKeyOtherSchema`).
+fn cross_schema_pair() -> Session {
+    let mut session = Session::new();
+    session.run("CREATE DATABASE d2").unwrap();
+    session
+        .run("CREATE TABLE d2.users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON)")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE orders (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, \
+             user_id INT NOT NULL, doc JSON, \
+             FOREIGN KEY fk_user_id (user_id) REFERENCES d2.users(id))",
+        )
+        .unwrap();
+    session
+}
+
+/// Go `pkg/executor/show.go`: `REFERENCES` carries the referenced SCHEMA only
+/// when it differs from the schema of the table being printed.
+///
+/// Captured from real TiDB (`gorun`, the same statements as
+/// `TestForeignKeyOtherSchema`): the cross-schema constraint prints
+/// ``REFERENCES `d2`.`users` ``. Printing it unqualified was a `SHOW CREATE
+/// TABLE` output that named a DIFFERENT table than the one it came from --
+/// the last divergence in `executor/foreign_key`.
+#[test]
+fn show_create_table_qualifies_a_cross_schema_reference() {
+    let mut session = cross_schema_pair();
+    let text = &rows(&mut session, "SHOW CREATE TABLE orders")[0][1];
+    assert!(
+        text.contains(
+            "CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`) REFERENCES `d2`.`users` (`id`)"
+        ),
+        "{text}"
+    );
+    // THE CONTROL: a same-schema constraint stays unqualified, which is the
+    // half of Go's condition a blanket qualification would have broken.
+    session
+        .run("CREATE TABLE local_parent (id INT NOT NULL PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("CREATE TABLE local_child (pid INT, FOREIGN KEY fk_local (pid) REFERENCES local_parent(id))")
+        .unwrap();
+    let text = &rows(&mut session, "SHOW CREATE TABLE local_child")[0][1];
+    assert!(text.contains("REFERENCES `local_parent` (`id`)"), "{text}");
+}
+
+/// Go `ddl.checkModifyColumnWithForeignKeyConstraint`'s EARLY RETURN: when
+/// type, `Flen` and `Decimal` are all unchanged the constraint is not
+/// consulted at all, so a pure NULLABILITY change goes through.
+///
+/// Captured: `alter table orders modify user_id int null` succeeds and
+/// `SHOW CREATE TABLE` then prints `` `user_id` int DEFAULT NULL ``. This
+/// statement is in the recording; this tier used to refuse it with a blanket
+/// 1105 over every column change on a constrained table.
+#[test]
+fn a_nullability_only_modify_of_a_constrained_column_is_accepted() {
+    let mut session = cross_schema_pair();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE orders MODIFY user_id INT NULL"),
+        None
+    );
+    let text = &rows(&mut session, "SHOW CREATE TABLE orders")[0][1];
+    assert!(text.contains("`user_id` int DEFAULT NULL"), "{text}");
+}
+
+/// Go `isAcceptableForeignKeyColumnChange`'s integer arm: an integer's `Flen`
+/// is a DISPLAY WIDTH and bounds nothing, so every integer width move is
+/// accepted while the type itself holds still.
+#[test]
+fn an_integer_width_change_on_a_constrained_column_is_accepted() {
+    let mut session = cross_schema_pair();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE orders MODIFY user_id INT(5)"),
+        None
+    );
+}
+
+/// Go `dbterror.ErrFKIncompatibleColumns` (3780): a `MODIFY` that moves a
+/// constrained column onto a type the OTHER side does not share.
+///
+/// Both directions, and the message's argument ORDER differs between them --
+/// the declared side names this table's own column first, the referred side
+/// names the CHILD's. Captured verbatim from `gorun`.
+#[test]
+fn a_type_change_that_breaks_a_constraint_is_3780() {
+    let mut session = cross_schema_pair();
+    assert_eq!(
+        message(&mut session, "ALTER TABLE orders MODIFY user_id BIGINT").as_deref(),
+        Some(
+            "Referencing column 'user_id' and referenced column 'id' in foreign key \
+             constraint 'fk_user_id' are incompatible."
+        )
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE orders MODIFY user_id VARCHAR(10)"
+        ),
+        Some(3780)
+    );
+    // The PARENT side asks the same question of every child that refers to
+    // it, and reports the CHILD's column as the referencing one.
+    assert_eq!(
+        message(&mut session, "ALTER TABLE d2.users MODIFY id BIGINT").as_deref(),
+        Some(
+            "Referencing column 'user_id' and referenced column 'id' in foreign key \
+             constraint 'fk_user_id' are incompatible."
+        )
+    );
+}
+
+/// Go `updateFKInfoWhenModifyColumn` +
+/// `adjustForeignKeyChildTableInfoAfterModifyColumn`: a `CHANGE COLUMN` that
+/// RENAMES carries the constraint onto the new name, on this table and on
+/// every child of it.
+///
+/// Captured: after `alter table orders change user_id uid int`, TiDB prints
+/// `` FOREIGN KEY (`uid`) `` and the parent-side refusal below names `uid`,
+/// which is the proof the CHILD's `ref_cols` were rewritten too -- a rewrite
+/// that only touched this table would still report the old name there.
+#[test]
+fn a_change_column_rename_carries_the_constraint_to_the_new_name() {
+    let mut session = cross_schema_pair();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE orders CHANGE user_id uid INT"),
+        None
+    );
+    let text = &rows(&mut session, "SHOW CREATE TABLE orders")[0][1];
+    assert!(
+        text.contains("FOREIGN KEY (`uid`) REFERENCES `d2`.`users` (`id`)"),
+        "{text}"
+    );
+    assert_eq!(
+        message(&mut session, "ALTER TABLE d2.users MODIFY id BIGINT").as_deref(),
+        Some(
+            "Referencing column 'uid' and referenced column 'id' in foreign key \
+             constraint 'fk_user_id' are incompatible."
+        )
+    );
+    // The constraint still WORKS over the renamed column, which is the point
+    // of rewriting rather than refusing.
+    session
+        .run("INSERT INTO d2.users VALUES (1, NULL)")
+        .unwrap();
+    assert_eq!(
+        code(&mut session, "INSERT INTO orders VALUES (1, 1, NULL)"),
+        None
+    );
+    assert_eq!(
+        code(&mut session, "INSERT INTO orders VALUES (2, 99, NULL)"),
+        Some(1452)
+    );
+}
+
+/// Go `dbterror.ErrForeignKeyColumnCannotChange` (1832) and
+/// `ErrForeignKeyColumnCannotChangeChild` (1833): the type still agrees, but
+/// the WIDTH move is not one `isAcceptableForeignKeyColumnChange` allows.
+///
+/// The child-side spelling names the child as `schema.table`, LOWERCASED,
+/// which is Go's `referredFK.ChildSchema.L + "." + referredFK.ChildTable.L`.
+/// Both captured verbatim.
+#[test]
+fn a_narrowing_width_change_on_a_constrained_column_is_1832() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE p (a VARCHAR(20) NOT NULL PRIMARY KEY, z INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE c (b VARCHAR(20), z INT, FOREIGN KEY fk (b) REFERENCES p(a))")
+        .unwrap();
+    assert_eq!(
+        message(&mut session, "ALTER TABLE c MODIFY b VARCHAR(10)").as_deref(),
+        Some("Cannot change column 'b': used in a foreign key constraint 'fk'")
+    );
+    // THE CONTROL: WIDENING a non-integer column is accepted, so the refusal
+    // is about the direction rather than about the column being constrained.
+    assert_eq!(
+        code(&mut session, "ALTER TABLE c MODIFY b VARCHAR(30)"),
+        None
+    );
+    assert_eq!(
+        message(&mut session, "ALTER TABLE p MODIFY a VARCHAR(10)").as_deref(),
+        Some("Cannot change column 'a': used in a foreign key constraint 'fk' of table 'test.c'")
+    );
+}
+
+/// The decimal arm of `isAcceptableForeignKeyColumnChange`, which is the one
+/// place a WIDENING change is still refused: precision and scale are both
+/// part of the stored key, so Go refuses any move of either.
+///
+/// Captured: `decimal(10,2)` -> `decimal(12,2)` is 1832 even though it is
+/// strictly wider, and so is `decimal(10,3)`.
+#[test]
+fn any_decimal_precision_or_scale_move_on_a_constrained_column_is_1832() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE pd (a DECIMAL(10,2) NOT NULL PRIMARY KEY, z INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE cd (b DECIMAL(10,2), z INT, FOREIGN KEY fk (b) REFERENCES pd(a))")
+        .unwrap();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE cd MODIFY b DECIMAL(12,2)"),
+        Some(1832)
+    );
+    assert_eq!(
+        code(&mut session, "ALTER TABLE cd MODIFY b DECIMAL(10,3)"),
+        Some(1832)
+    );
+    // THE CONTROL: the identical type is the early return, not the decimal
+    // arm, so it is still accepted.
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE cd MODIFY b DECIMAL(10,2) NOT NULL"
+        ),
+        None
+    );
+}
+
+/// Go's `AddColumn` asks NOTHING about foreign keys, and neither does this
+/// tier any more: the constraint resolves its column names at every use, so
+/// an added column that shifts the offsets changes nothing about it.
+#[test]
+fn adding_a_column_to_a_constrained_table_is_accepted() {
+    let mut session = cross_schema_pair();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE orders ADD COLUMN extra INT"),
+        None
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE orders ADD COLUMN first_col INT FIRST"
+        ),
+        None
+    );
+    session
+        .run("INSERT INTO d2.users VALUES (1, NULL)")
+        .unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "INSERT INTO orders (id, user_id) VALUES (1, 99)"
+        ),
+        Some(1452)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "INSERT INTO orders (id, user_id) VALUES (1, 1)"
+        ),
+        None
+    );
+}
+
+/// A PIN on the three column/table changes this tier still refuses on a
+/// constrained table, so the refusal is a KNOWN gap rather than a silent one.
+///
+/// Go accepts all three and rewrites the affected `FKInfo`s; captured:
+/// `alter table c rename column b to bb` and `alter table c rename to c2`
+/// both succeed and carry the constraint, and `alter table c drop column b`
+/// is Go's `[ddl:1828] Cannot drop column 'b': needed in a foreign key
+/// constraint 'fk'` -- a REFUSAL, but under a different code than the 1105
+/// this tier raises.
+///
+/// Each assertion below flips the day the corresponding rewrite lands.
+#[test]
+fn drop_column_and_the_two_renames_are_still_refused_on_a_constrained_table() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE p (a VARCHAR(20) NOT NULL PRIMARY KEY, z INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE c (b VARCHAR(20), z INT, FOREIGN KEY fk (b) REFERENCES p(a))")
+        .unwrap();
+    for statement in [
+        "ALTER TABLE c DROP COLUMN b",
+        "ALTER TABLE c RENAME COLUMN b TO bb",
+        "ALTER TABLE c RENAME TO c2",
+    ] {
+        assert_eq!(code(&mut session, statement), Some(1105), "{statement}");
+    }
+    // The UNCONSTRAINED column is not covered by the refusal's blast radius
+    // in Go, but it is here: this line records the WIDTH of the gap.
+    assert_eq!(
+        code(&mut session, "ALTER TABLE c DROP COLUMN z"),
+        Some(1105)
+    );
+}
+
+/// The OTHER half of the rename rewrite, and the one a child-side-only test
+/// cannot reach: renaming the PARENT's referenced column must rewrite every
+/// CHILD's `ref_cols`, because that is where the parent's column name is
+/// stored (Go `adjustForeignKeyChildTableInfoAfterModifyColumn`).
+///
+/// Captured: after `alter table p change id pk int`, the child prints
+/// ``REFERENCES `p` (`pk`)`` and its 1452 quotes the constraint with `pk`.
+/// The first version of the test above did NOT kill a mutation that skipped
+/// this loop, because it renamed the child's own column; this one does.
+#[test]
+fn a_parent_column_rename_carries_every_childs_reference_to_the_new_name() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE p (id INT PRIMARY KEY, z INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE c (cid INT, pid INT, FOREIGN KEY fk (pid) REFERENCES p(id))")
+        .unwrap();
+    assert_eq!(code(&mut session, "ALTER TABLE p CHANGE id pk INT"), None);
+    let text = &rows(&mut session, "SHOW CREATE TABLE c")[0][1];
+    assert!(text.contains("REFERENCES `p` (`pk`)"), "{text}");
+    session.run("INSERT INTO p VALUES (1, 1)").unwrap();
+    assert_eq!(code(&mut session, "INSERT INTO c VALUES (10, 1)"), None);
+    assert_eq!(
+        message(&mut session, "INSERT INTO c VALUES (11, 99)").as_deref(),
+        Some(
+            "Cannot add or update a child row: a foreign key constraint fails \
+             (`test`.`c`, CONSTRAINT `fk` FOREIGN KEY (`pid`) REFERENCES `p` (`pk`))"
+        )
     );
 }

@@ -229,6 +229,41 @@ impl DriverError {
             *b"HY000",
             format!("Cannot drop index '{index}': needed in a foreign key constraint"),
         ),
+        // Go: "Referencing column '%s' and referenced column '%s' in foreign
+        // key constraint '%s' are incompatible.". Captured: `[ddl:3780]`.
+        DriverError::FkIncompatibleColumns {
+            referencing,
+            referenced,
+            constraint,
+        } => MysqlError::new(
+            3780,
+            *b"HY000",
+            format!(
+                "Referencing column '{referencing}' and referenced column '{referenced}' in \
+                 foreign key constraint '{constraint}' are incompatible."
+            ),
+        ),
+        // Go: "Cannot change column '%-.192s': used in a foreign key
+        // constraint '%-.192s'". Captured: `[ddl:1832]`.
+        DriverError::ForeignKeyColumnCannotChange { column, constraint } => MysqlError::new(
+            1832,
+            *b"HY000",
+            format!("Cannot change column '{column}': used in a foreign key constraint '{constraint}'"),
+        ),
+        // Go: "Cannot change column '%-.192s': used in a foreign key
+        // constraint '%-.192s' of table '%-.192s'". Captured: `[ddl:1833]`.
+        DriverError::ForeignKeyColumnCannotChangeChild {
+            column,
+            constraint,
+            child_table,
+        } => MysqlError::new(
+            1833,
+            *b"HY000",
+            format!(
+                "Cannot change column '{column}': used in a foreign key constraint \
+                 '{constraint}' of table '{child_table}'"
+            ),
+        ),
         // Go: "Duplicate foreign key constraint name '%s'".
         DriverError::FkDupName(name) => MysqlError::new(
             1826,

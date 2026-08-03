@@ -571,6 +571,37 @@ pub enum DriverError {
     },
     /// Go `dbterror.ErrDropIndexNeededInForeignKey` (1553).
     DropIndexNeededInForeignKey(String),
+    /// Go `dbterror.ErrFKIncompatibleColumns` (3780): a `MODIFY`/`CHANGE`
+    /// moved a constrained column onto a type the column on the other side of
+    /// the constraint does not share.
+    FkIncompatibleColumns {
+        /// The REFERENCING column's name.
+        referencing: String,
+        /// The REFERENCED column's name.
+        referenced: String,
+        /// The constraint's name.
+        constraint: String,
+    },
+    /// Go `dbterror.ErrForeignKeyColumnCannotChange` (1832): the type is
+    /// still compatible, but the change is not one a constraint survives --
+    /// a narrowed non-integer width, or any decimal precision/scale move.
+    ForeignKeyColumnCannotChange {
+        /// The column named by the `MODIFY`, under its OLD name.
+        column: String,
+        /// The constraint this table declares over it.
+        constraint: String,
+    },
+    /// Go `dbterror.ErrForeignKeyColumnCannotChangeChild` (1833): the same
+    /// refusal reached from the PARENT side, where the constraint lives in
+    /// another table.
+    ForeignKeyColumnCannotChangeChild {
+        /// The parent column named by the `MODIFY`, under its OLD name.
+        column: String,
+        /// The child's constraint name.
+        constraint: String,
+        /// The child as `schema.table`, lowercased the way Go builds it.
+        child_table: String,
+    },
     /// Go `dbterror.ErrFkDupName` (1826): `ALTER TABLE ... ADD FOREIGN KEY`
     /// named a constraint the table already declares. Checked before the
     /// reference resolves, so it fires with `foreign_key_checks` at 0 too.

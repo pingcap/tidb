@@ -566,6 +566,12 @@ impl KvTable {
         &self.foreign_keys
     }
 
+    /// The same list, for the one caller that rewrites the column NAMES a
+    /// constraint stores: Go `updateFKInfoWhenModifyColumn`.
+    pub fn foreign_keys_mut(&mut self) -> &mut [KvForeignKey] {
+        &mut self.foreign_keys
+    }
+
     /// Sets the table's default character set and collation.
     pub fn set_charset(&mut self, charset: TableCharset) {
         self.charset = charset;

@@ -83,24 +83,24 @@ pub fn run_alter_table_in(
         )));
     }
 
-    // A constraint names its columns and its referenced table, and nothing
-    // here rewrites either, so a DROP COLUMN, a column RENAME or a table
-    // RENAME would leave the constraint naming something that is gone. (An
-    // ADD/MODIFY that only MOVES columns is harmless now that the constraint
-    // resolves its names at every use -- this refusal is wider than the
-    // hazard, deliberately, because Go's answer is to rewrite the `FKInfo`
-    // and until that is ported one refusal is easier to trust than four
-    // rules.) Refused rather than corrupted; see `foreign_key::participates`.
+    // A constraint names its columns and its referenced table, and a DROP
+    // COLUMN, a column RENAME or a table RENAME rewrites neither, so each
+    // would leave the constraint naming something that is gone. Refused
+    // rather than corrupted; see `foreign_key::participates`.
+    //
+    // ADD COLUMN is NOT in this set: Go's `AddColumn` asks nothing about
+    // foreign keys, and a constraint that resolves its names at every use
+    // (`KvTable::foreign_key_offsets`) survives the offsets moving.
+    // MODIFY/CHANGE is not in it either -- it asks Go's own question in
+    // `modify_column_action` below, which is narrower AND stricter than this
+    // blanket refusal was: it lets a nullability change through and refuses
+    // an incompatible type with Go's 3780/1832/1833 instead of 1105.
     let participates = crate::foreign_key::participates(catalog, &database, &name);
     for action in &alter.actions {
         if participates
             && matches!(
                 action,
-                tidb_ast::AlterTableAction::AddColumn { .. }
-                    | tidb_ast::AlterTableAction::AddColumns { .. }
-                    | tidb_ast::AlterTableAction::ModifyColumn { .. }
-                    | tidb_ast::AlterTableAction::ChangeColumn { .. }
-                    | tidb_ast::AlterTableAction::DropColumn { .. }
+                tidb_ast::AlterTableAction::DropColumn { .. }
                     | tidb_ast::AlterTableAction::RenameTable { .. }
                     // A foreign key names its REFERENCED columns by name, so
                     // renaming one would silently repoint the constraint.
@@ -950,7 +950,11 @@ fn modify_column_action(
         .iter()
         .any(|option| matches!(option, tidb_ast::ColumnOption::AutoIncrement));
 
-    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+    // Phase one reads only, because the foreign-key question below is asked
+    // of the WHOLE catalog -- a constraint's other side lives in another table,
+    // and often another schema. The mutable borrow is taken once every check
+    // has passed, at the point the column is actually replaced.
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
         ));
@@ -1005,6 +1009,23 @@ fn modify_column_action(
             return Err(super::column_dependent_error(dependent, old_name));
         }
     }
+
+    // Go `getModifiableColumnJob` asks this HERE: after the rename checks
+    // above and BEFORE the index-flag copy and `checkModifyTypes` below.
+    // Keeping Go's position is what decides which error a statement that
+    // breaks two rules at once reports.
+    let original_type = table.columns[offset].field_type.clone();
+    crate::foreign_key::check_modify_column(
+        catalog,
+        database,
+        table_name,
+        old_name,
+        &original_type,
+        &field_type,
+    )?;
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+        unreachable!("the table was found above and nothing here removes it");
+    };
 
     let mut field_type = field_type;
     if not_null {
@@ -1158,6 +1179,15 @@ fn modify_column_action(
     let stored_default = default_value
         .clone()
         .map(crate::column_default::ColumnDefault::Value);
+    // Go `updateFKInfoWhenModifyColumn` +
+    // `adjustForeignKeyChildTableInfoAfterModifyColumn`: a CHANGE that also
+    // renames carries every constraint over the old name onto the new one,
+    // on this table AND on every child that refers to it. Done before the
+    // column itself is replaced, so `referring` still sees the old name.
+    crate::foreign_key::rewrite_column_name(catalog, database, table_name, old_name, &def.name);
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        unreachable!("the table was found above and nothing here removes it");
+    };
     let column = KvColumn {
         name: def.name.clone(),
         id: table.columns[offset].id,
