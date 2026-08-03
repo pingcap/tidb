@@ -311,6 +311,31 @@ func (rgp *rowGroupParser) Close() error {
 	return onceErr.Get()
 }
 
+// scanProgress tracks the furthest data offset reached across column readers.
+// A *scanProgress is intentionally nil for metadata-only readers used to parse
+// the footer or read the row count. Its methods accept nil receivers so callers
+// can update progress without conditional checks.
+type scanProgress struct {
+	highWater atomic.Int64
+}
+
+func (p *scanProgress) advance(pos int64) {
+	if p == nil {
+		return
+	}
+	current := p.highWater.Load()
+	for current < pos && !p.highWater.CompareAndSwap(current, pos) {
+		current = p.highWater.Load()
+	}
+}
+
+func (p *scanProgress) current() int64 {
+	if p == nil {
+		return 0
+	}
+	return p.highWater.Load()
+}
+
 // Parser parses a parquet file for import
 type Parser struct {
 	fileMeta *metadata.FileMetaData
@@ -335,9 +360,9 @@ type Parser struct {
 	curRowGroup   int
 	totalRowGroup int
 
-	totalRows      int64 // total rows in this file
-	totalReadRows  int64 // total rows read
-	totalReadBytes int   // total bytes read, estimated by all the read datum.
+	totalRows     int64 // total rows in this file
+	totalReadRows int64 // total rows read
+	progress      *scanProgress
 
 	lastRow parsedef.Row
 	logger  log.Logger
@@ -435,7 +460,7 @@ func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) 
 
 	base := pp.preloadBase
 	if base == nil && ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
-		base, err = newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
+		base, err = newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges, pp.progress)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -459,7 +484,7 @@ func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) 
 			&storeapi.ReaderOption{
 				StartOffset: &ranges.columnStarts[c],
 				EndOffset:   &ranges.columnEnds[c],
-			})
+			}, pp.progress)
 	}, nil
 }
 
@@ -495,7 +520,6 @@ func (pp *Parser) readSingleRow(row []types.Datum) error {
 		return err
 	}
 
-	pp.totalReadBytes += estimateRowSize(row)
 	pp.totalReadRows++
 	return nil
 }
@@ -526,9 +550,16 @@ func (pp *Parser) SetPos(pos int64, rowID int64) error {
 }
 
 // ScannedPos implements the Parser interface.
-// For parquet we use the size of all read datum to estimate the scanned position.
+// Parquet may read disjoint column ranges, so this returns the furthest data
+// offset reached by any reader rather than a single underlying reader position.
 func (pp *Parser) ScannedPos() (int64, error) {
-	return int64(pp.totalReadBytes), nil
+	fileSize := max(pp.fileMeta.GetSourceFileSize(), int64(0))
+	if pp.totalReadRows == pp.totalRows {
+		// when all rows are read, return whole file size as progress might not
+		// track the footer.
+		return fileSize, nil
+	}
+	return min(max(pp.progress.current(), int64(0)), fileSize), nil
 }
 
 // Close closes the parquet file of the parser.
@@ -636,7 +667,8 @@ func NewParser(
 	meta FileMeta,
 ) (*Parser, error) {
 	logger := log.Wrap(logutil.Logger(ctx))
-	wrapper, preloadBase, r, err := prepareReader(ctx, store, openReader, path, fileSize)
+	progress := &scanProgress{}
+	wrapper, preloadBase, r, err := prepareReader(ctx, store, openReader, path, fileSize, progress)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -761,6 +793,7 @@ func NewParser(
 		logger:      logger,
 		rowPool:     &pool,
 		preloadBase: preloadBase,
+		progress:    progress,
 	}
 	if err := parser.Init(effectiveLoc); err != nil {
 		return nil, errors.Trace(err)

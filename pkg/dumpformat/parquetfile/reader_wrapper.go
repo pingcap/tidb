@@ -53,14 +53,15 @@ type readerAtSeekerCloser interface {
 // readerWrapper implements parquet.ReaderAtSeeker.
 type readerWrapper struct {
 	io.ReadSeekCloser
-	lastOff int64
-	skipBuf []byte
+	lastOff  int64
+	skipBuf  []byte
+	progress *scanProgress
 }
 
 func (p *readerWrapper) readNBytes(buf []byte) (int, error) {
 	n, err := io.ReadFull(p, buf)
 	if err != nil && err != io.EOF {
-		return 0, errors.Trace(err)
+		return n, errors.Trace(err)
 	}
 	if n != len(buf) {
 		return n, errors.Errorf("error reading %d bytes, only read %d bytes", len(buf), n)
@@ -79,16 +80,20 @@ func (p *readerWrapper) ReadAt(buf []byte, off int64) (int, error) {
 		}
 	} else {
 		p.skipBuf = p.skipBuf[:gap]
-		if read, err := p.readNBytes(p.skipBuf); err != nil {
-			return read, err
+		read, err := p.readNBytes(p.skipBuf)
+		p.lastOff += int64(read)
+		p.progress.advance(p.lastOff)
+		if err != nil {
+			return 0, err
 		}
 	}
 
 	read, err := p.readNBytes(buf)
+	p.lastOff = off + int64(read)
+	p.progress.advance(p.lastOff)
 	if err != nil {
 		return read, err
 	}
-	p.lastOff = off + int64(read)
 
 	return len(buf), nil
 }
@@ -109,6 +114,7 @@ func newReaderWrapper(
 	store storeapi.Storage,
 	path string,
 	opts *storeapi.ReaderOption,
+	progress *scanProgress,
 ) (*readerWrapper, error) {
 	reader, err := store.Open(ctx, path, opts)
 	if err != nil {
@@ -127,6 +133,7 @@ func newReaderWrapper(
 		ReadSeekCloser: reader,
 		lastOff:        lastOff,
 		skipBuf:        make([]byte, defaultBufSize),
+		progress:       progress,
 	}, nil
 }
 
@@ -156,12 +163,17 @@ func newInMemoryReaderBase(
 	store storeapi.Storage,
 	path string,
 	rowGroup rowGroupRange,
+	progress *scanProgress,
 ) (*inMemoryReaderBase, error) {
 	base := &inMemoryReaderBase{
 		rowGroup: rowGroup,
 		buffer:   make([]byte, rowGroup.end-rowGroup.start),
 	}
-	return base, base.loadRowGroup(ctx, store, path)
+	if err := base.loadRowGroup(ctx, store, path); err != nil {
+		return base, err
+	}
+	progress.advance(rowGroup.end)
+	return base, nil
 }
 
 func (r *inMemoryReaderBase) ReadAt(p []byte, off int64) (int, error) {
@@ -252,9 +264,10 @@ func prepareReader(
 	openReader func(context.Context) (io.ReadSeekCloser, error),
 	path string,
 	fileSize int64,
+	progress *scanProgress,
 ) (parquet.ReaderAtSeeker, *inMemoryReaderBase, io.ReadSeekCloser, error) {
 	if fileSize > 0 && fileSize <= int64(wholeFileInMemoryThreshold) {
-		base, err := newInMemoryReaderBase(ctx, store, path, rowGroupRange{start: 0, end: fileSize})
+		base, err := newInMemoryReaderBase(ctx, store, path, rowGroupRange{start: 0, end: fileSize}, progress)
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
@@ -264,6 +277,8 @@ func prepareReader(
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
+	// This reader is used only to parse footer metadata. Tracking its reads would
+	// make construction look like all source data had already been scanned.
 	return &readerWrapper{ReadSeekCloser: r}, nil, r, nil
 }
 
