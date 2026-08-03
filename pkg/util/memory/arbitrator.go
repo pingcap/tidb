@@ -2261,7 +2261,7 @@ func (m *MemArbitrator) updateAvoidSize() {
 	)
 	m.avoidance.size.Store(avoidSize)
 
-	if delta := m.allocated() - m.limit() + avoidSize; delta > 0 && m.awaitFree.pool.allocated() > 0 {
+	if delta := m.allocated() - m.limit() + avoidSize; delta > 0 && m.awaitFree.pool.ApproxAllocated() > 0 {
 		reclaimed := int64(0)
 		poolReleased := int64(0)
 		for i := range len(m.awaitFree.budget.shards) {
@@ -2667,7 +2667,7 @@ func (m *MemArbitrator) tryShrinkAwaitFreePool(minRemain int64, utimeMilli int64
 }
 
 func (m *MemArbitrator) shrinkAwaitFreePool(minRemain int64, utimeMilli int64) {
-	if m.awaitFree.pool.allocated() <= 0 {
+	if m.awaitFree.pool.ApproxAllocated() <= 0 {
 		return
 	}
 

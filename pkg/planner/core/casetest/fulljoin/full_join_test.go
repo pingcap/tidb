@@ -301,40 +301,6 @@ func TestFullOuterJoinSkipJoinReOrder(t *testing.T) {
 	require.Equal(t, 2, fullOuterJoinCnt, sql)
 }
 
-func TestFullOuterJoinConvertOuterToInner(t *testing.T) {
-	s := createPlannerSuite(t)
-	defer s.Close()
-	s.sctx.GetSessionVars().EnableFullOuterJoin = true
-
-	tests := []struct {
-		sql      string
-		joinType base.JoinType
-	}{
-		{
-			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1",
-			joinType: base.LeftOuterJoin,
-		},
-		{
-			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t2.b > 1",
-			joinType: base.RightOuterJoin,
-		},
-		{
-			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1 and t2.b > 1",
-			joinType: base.InnerJoin,
-		},
-		{
-			sql:      "select * from t t1 full outer join t t2 on t1.a = t2.a where t1.b > 1 or t2.b > 1",
-			joinType: base.FullOuterJoin,
-		},
-	}
-	for _, tt := range tests {
-		p := optimizeLogicalPlan(t, s, tt.sql, rule.FlagConvertOuterToInnerJoin)
-		join, ok := findFirstPhysicalJoin(p)
-		require.True(t, ok, tt.sql)
-		require.Equal(t, tt.joinType, join.GetJoinType(), tt.sql)
-	}
-}
-
 func TestFullOuterJoinTailScanCostVer1(t *testing.T) {
 	s := createPlannerSuite(t)
 	defer s.Close()

@@ -81,6 +81,36 @@ func withMinValue(minVal int64) execConcurrencySysVarOption {
 	return func(sv *SysVar) { sv.MinValue = minVal }
 }
 
+func newEmbeddingAPIKeySysVar(name string, load func() string, swap func(string) string) *SysVar {
+	return &SysVar{
+		Scope: vardef.ScopeGlobal,
+		Name:  name,
+		Value: "",
+		Type:  vardef.TypeStr,
+		SetGlobal: func(_ context.Context, _ *SessionVars, value string) error {
+			if oldValue := swap(value); oldValue != value {
+				vardef.EmbeddingConfigVersion.Inc()
+			}
+			return nil
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return maskEmbeddingAPIKey(load()), nil
+		},
+	}
+}
+
+// maskEmbeddingAPIKey keeps a short suffix so SQL users can identify
+// the configured credential. Log paths must fully redact the value instead.
+func maskEmbeddingAPIKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	if len(key) <= 6 {
+		return "******"
+	}
+	return "******" + key[len(key)-4:]
+}
+
 // newExecConcurrencySysVar creates a session/global SysVar for executor concurrency settings.
 func newExecConcurrencySysVar(name string, defValue int, setter concurrencySetter, opts ...execConcurrencySysVarOption) *SysVar {
 	sv := &SysVar{
@@ -3922,6 +3952,28 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(vardef.TiDBTSOClientRPCMode, val)
 		},
 	},
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedJinaAIAPIKey, vardef.EmbedJinaAPIKey.Load, vardef.EmbedJinaAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedOpenAIAPIKey, vardef.EmbedOpenAIAPIKey.Load, vardef.EmbedOpenAIAPIKey.Swap),
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBExpEmbedOpenAIAPIBase, Value: vardef.DefTiDBEmbedOpenAIAPIBase, Type: vardef.TypeStr, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, _ *SessionVars, value string) error {
+			normalized, err := NormalizeOpenAIEmbeddingAPIBase(value)
+			if err != nil {
+				return err
+			}
+			oldValue := vardef.EmbedOpenAIAPIBase.Swap(normalized)
+			if resolveOpenAIEmbeddingBaseURL(oldValue) != resolveOpenAIEmbeddingBaseURL(normalized) {
+				vardef.EmbeddingConfigVersion.Inc()
+			}
+			return nil
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return GetOpenAIEmbeddingBaseURL(), nil
+		},
+	},
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedCohereAPIKey, vardef.EmbedCohereAPIKey.Load, vardef.EmbedCohereAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedHuggingFaceAPIKey, vardef.EmbedHuggingFaceAPIKey.Load, vardef.EmbedHuggingFaceAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedNvidiaNIMAPIKey, vardef.EmbedNvidiaNIMAPIKey.Load, vardef.EmbedNvidiaNIMAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedGeminiAPIKey, vardef.EmbedGeminiAPIKey.Load, vardef.EmbedGeminiAPIKey.Swap),
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio, Value: strconv.FormatFloat(vardef.DefTiDBCircuitBreakerPDMetaErrorRateRatio, 'f', -1, 64),
 		Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {

@@ -170,6 +170,7 @@ func NewEvalContext(sctx sessionctx.Context) *EvalContext {
 	// set all optional properties
 	ctx.setOptionalProp(currentUserProp(sctx))
 	ctx.setOptionalProp(expropt.NewSessionVarsProvider(sctx))
+	ctx.setOptionalProp(expropt.NewSessionContextPropProvider(sctx))
 	ctx.setOptionalProp(infoSchemaProp(sctx))
 	ctx.setOptionalProp(expropt.KVStorePropProvider(sctx.GetStore))
 	ctx.setOptionalProp(sqlExecutorProp(sctx))
