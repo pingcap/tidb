@@ -153,6 +153,7 @@ mod explain_binary_source;
 mod explain_plan_tree_source;
 mod explain_values_source;
 mod expr;
+mod expr_typed_args;
 mod expressions;
 mod field_type_source;
 mod flag;
