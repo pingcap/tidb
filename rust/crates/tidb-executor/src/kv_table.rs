@@ -98,9 +98,7 @@ use tidb_datatype::{
 };
 
 use index_entries::{duplicate_value_text, index_entry_handle};
-use tidb_tablecodec::{
-    decode_table_row_to_map, encode_handle_in_unique_index_value, encode_table_row,
-};
+use tidb_tablecodec::{decode_table_row_to_map, encode_table_row};
 use tidb_txnkv::Key;
 
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
@@ -1051,21 +1049,10 @@ impl KvTable {
                     key: self.qualified_key(&index.name),
                 });
             }
-            let value = if distinct {
-                match handle {
-                    TableHandle::Int(value) => encode_handle_in_unique_index_value(
-                        &tidb_txnkv::IntHandle::new(*value).into(),
-                        false,
-                    ),
-                    TableHandle::Common(bytes) => {
-                        let common = tidb_txnkv::CommonHandle::new(bytes.clone())
-                            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-                        encode_handle_in_unique_index_value(&common.into(), false)
-                    }
-                }
-            } else {
-                vec![b'0']
-            };
+            // The same entry value an INSERT writes, restored data and all --
+            // a backfill that stored a simpler one would leave the index
+            // holding two different formats for the same table.
+            let value = self.index_entry_value(&index, row, handle, distinct, &zone)?;
             self.store
                 .set(key.clone(), value)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -2206,7 +2193,10 @@ mod tests {
         let zone = tidb_datatype::SessionTimeZone::utc();
         let written = t
             .insert_row(
-                &[Datum::Decimal(tidb_datatype::Decimal::from_int(5)), Datum::Int(42)],
+                &[
+                    Datum::Decimal(tidb_datatype::Decimal::from_int(5)),
+                    Datum::Int(42),
+                ],
                 &tidb_expr::NoColumns,
             )
             .unwrap();
