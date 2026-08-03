@@ -65,36 +65,23 @@
 use std::any::Any;
 use std::collections::BTreeMap;
 
-use tidb_ast::{RestoreContext, RestoreFlags, Stmt, Visitable as _, Visitor};
+use tidb_ast::{Stmt, Visitable as _, Visitor};
 use tidb_executor::DriverError;
 
-/// Go's `bindingRestoreFlag`: `defaultRestoreFlag |
-/// RestoreSkipRedundantParentheses`. `defaultRestoreFlag` is single-quoted
-/// strings, spaces around binary operations, strings without their charset
-/// introducer, and back-quoted names; this crate's [`RestoreFlags::DEFAULT`]
-/// additionally uppercases keywords, which is what Go's restore emits anyway
-/// because its `WriteKeyWord` calls pass uppercase text.
-fn binding_restore_flags() -> RestoreFlags {
-    RestoreFlags::DEFAULT
-        | RestoreFlags::SPACES_AROUND_BINARY_OPERATION
-        | RestoreFlags::STRING_WITHOUT_CHARSET
-        | RestoreFlags::SKIP_REDUNDANT_PARENTHESES
-}
-
 /// Go `utilparser.RestoreWithDefaultDB`: the statement's canonical text with
-/// every unqualified table name qualified by `default_db`.
+/// every unqualified table name qualified by `default_db`. Delegates to the
+/// complete `pkg/util/parser` port; Go additionally passes `node.Text()` so
+/// `SimpleCases` can keep the user's own formatting, but this AST does not
+/// retain the statement's raw text, so the full-restore path is always taken
+/// (same output as before this delegation).
 pub(crate) fn restore_with_default_db(stmt: &Stmt, default_db: &str) -> String {
-    stmt.restore_with_context(
-        &RestoreContext::new(binding_restore_flags()).with_default_db(default_db),
-    )
+    tidb_parser::util_parser::restore_with_default_db(stmt, default_db, "")
 }
 
 /// Go `utilparser.RestoreWithoutDB`: the same text with every schema
 /// qualifier ERASED, which is what makes a binding portable across databases.
 pub(crate) fn restore_without_db(stmt: &Stmt) -> String {
-    stmt.restore_with_context(&RestoreContext::new(
-        binding_restore_flags() | RestoreFlags::WITHOUT_SCHEMA_NAME,
-    ))
+    tidb_parser::util_parser::restore_without_db(stmt)
 }
 
 /// Go `bindinfo.NormalizeStmtForBinding`, the with-DB half: the normalized

@@ -301,6 +301,7 @@ mod show;
 mod statement;
 mod traffic;
 mod user;
+pub mod util_parser;
 
 use tidb_ast::{
     AdminStmt, DdlStmt, DescribeTableStmt, ExplainForStmt, ExplainStmt, ExplainTarget, Expr,
