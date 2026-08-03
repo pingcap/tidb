@@ -348,6 +348,15 @@ func getPlanCostVer24PhysicalTableReader(pp base.PhysicalPlan, taskType property
 	return p.PlanCostVer2, nil
 }
 
+type indexLookUpCostInput struct {
+	ctx         base.PlanContext
+	indexPlan   base.PhysicalPlan
+	tablePlan   base.PhysicalPlan
+	expectedCnt uint64
+	keepOrder   bool
+	pushedLimit *physicalop.PushedDownLimit
+}
+
 // getPlanCostVer24PhysicalIndexLookUpReader returns the plan-cost of this sub-plan, which is:
 // plan-cost = index-side-cost + (table-side-cost + double-read-cost) / double-read-concurrency
 // index-side-cost = (index-child-cost + index-net-cost) / dist-concurrency # same with IndexReader
@@ -361,37 +370,54 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
+	planCost, usePaging, err := getPlanCostVer24IndexLookUpReader(indexLookUpCostInput{
+		ctx:         p.SCtx(),
+		indexPlan:   p.IndexPlan,
+		tablePlan:   p.TablePlan,
+		expectedCnt: p.ExpectedCnt,
+		keepOrder:   p.KeepOrder,
+		pushedLimit: p.PushedLimit,
+	}, taskType, option)
+	if err != nil {
+		return costusage.ZeroCostVer2, err
+	}
+	p.PlanCostVer2 = planCost
+	p.Paging = p.Paging || usePaging
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
+}
 
-	indexRows := getCardinality(p.IndexPlan, option.CostFlag)
-	tableRows := getCardinality(p.TablePlan, option.CostFlag)
+func getPlanCostVer24IndexLookUpReader(input indexLookUpCostInput, taskType property.TaskType, option *costusage.PlanCostOption) (costusage.CostVer2, bool, error) {
+	indexRows := getCardinality(input.indexPlan, option.CostFlag)
+	tableRows := getCardinality(input.tablePlan, option.CostFlag)
 
-	if p.PushedLimit != nil { // consider pushed down limit clause
-		indexRows = min(indexRows, float64(p.PushedLimit.Count)) // rows returned from the index side
-		tableRows = min(tableRows, float64(p.PushedLimit.Count)) // rows to scan on the table side
+	if input.pushedLimit != nil { // consider pushed down limit clause
+		indexRows = min(indexRows, float64(input.pushedLimit.Count)) // rows returned from the index side
+		tableRows = min(tableRows, float64(input.pushedLimit.Count)) // rows to scan on the table side
 	}
 
-	indexRowSize := cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.IndexPlan), p.IndexPlan.Schema().Columns, true, false)
-	tableRowSize := cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.TablePlan), p.TablePlan.Schema().Columns, false, false)
-	cpuFactor := getTaskCPUFactorVer2(p, taskType)
-	netFactor := getTaskNetFactorVer2(p, taskType)
-	requestFactor := getTaskRequestFactorVer2(p, taskType)
-	distConcurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
-	doubleReadConcurrency := float64(p.SCtx().GetSessionVars().IndexLookupConcurrency())
+	indexRowSize := cardinality.GetAvgRowSize(input.ctx, physicalop.GetTblStats(input.indexPlan), input.indexPlan.Schema().Columns, true, false)
+	tableRowSize := cardinality.GetAvgRowSize(input.ctx, physicalop.GetTblStats(input.tablePlan), input.tablePlan.Schema().Columns, false, false)
+	cpuFactor := getTaskCPUFactorVer2(input.indexPlan, taskType)
+	netFactor := getTaskNetFactorVer2(input.tablePlan, taskType)
+	requestFactor := getTaskRequestFactorVer2(input.tablePlan, taskType)
+	distConcurrency := float64(input.ctx.GetSessionVars().DistSQLScanConcurrency())
+	doubleReadConcurrency := float64(input.ctx.GetSessionVars().IndexLookupConcurrency())
 
 	// index-side
 	indexNetCost := netCostVer2(option, indexRows, indexRowSize, netFactor)
-	indexChildCost, err := p.IndexPlan.GetPlanCostVer2(property.CopMultiReadTaskType, option)
+	indexChildCost, err := input.indexPlan.GetPlanCostVer2(property.CopMultiReadTaskType, option)
 	if err != nil {
-		return costusage.ZeroCostVer2, err
+		return costusage.ZeroCostVer2, false, err
 	}
 	indexSideCost := costusage.DivCostVer2(costusage.SumCostVer2(indexNetCost, indexChildCost), distConcurrency)
 
 	// table-side
 	tableNetCost := netCostVer2(option, tableRows, tableRowSize, netFactor)
 	// set the isChildOfINL signal.
-	tableChildCost, err := p.TablePlan.GetPlanCostVer2(property.CopMultiReadTaskType, option, true)
+	tableChildCost, err := input.tablePlan.GetPlanCostVer2(property.CopMultiReadTaskType, option, true)
 	if err != nil {
-		return costusage.ZeroCostVer2, err
+		return costusage.ZeroCostVer2, false, err
 	}
 	tableSideCost := costusage.DivCostVer2(costusage.SumCostVer2(tableNetCost, tableChildCost), distConcurrency)
 
@@ -399,30 +425,29 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 	doubleReadCPUCost := costusage.NewCostVer2(option, cpuFactor,
 		indexRows*cpuFactor.Value,
 		func() string { return fmt.Sprintf("double-read-cpu(%v*%v)", doubleReadRows, cpuFactor) })
-	batchSize := float64(p.SCtx().GetSessionVars().IndexLookupSize)
+	batchSize := float64(input.ctx.GetSessionVars().IndexLookupSize)
 	taskPerBatch := 32.0 // TODO: remove this magic number
 	doubleReadTasks := doubleReadRows / batchSize * taskPerBatch
 	doubleReadRequestCost := doubleReadCostVer2(option, doubleReadTasks, requestFactor)
 	doubleReadCost := costusage.SumCostVer2(doubleReadCPUCost, doubleReadRequestCost)
 
-	p.PlanCostVer2 = costusage.SumCostVer2(indexSideCost, costusage.DivCostVer2(costusage.SumCostVer2(tableSideCost, doubleReadCost), doubleReadConcurrency))
+	planCost := costusage.SumCostVer2(indexSideCost, costusage.DivCostVer2(costusage.SumCostVer2(tableSideCost, doubleReadCost), doubleReadConcurrency))
 
-	if p.SCtx().GetSessionVars().EnablePaging && p.ExpectedCnt > 0 && p.ExpectedCnt <= paging.Threshold {
+	usePaging := input.ctx.GetSessionVars().EnablePaging && input.expectedCnt > 0 && input.expectedCnt <= paging.Threshold
+	if usePaging {
 		// if the expectCnt is below the paging threshold, using paging API
-		p.Paging = true // TODO: move this operation from cost model to physical optimization
-		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 0.6)
+		planCost = costusage.MulCostVer2(planCost, 0.6)
 	}
 
-	p.PlanCostInit = true
-	if p.PushedLimit != nil && tableRows <= float64(p.PushedLimit.Count) {
+	if input.pushedLimit != nil && tableRows <= float64(input.pushedLimit.Count) {
 		// Multiply by limit cost factor - defaults to 1, but can be increased/decreased to influence the cost model
-		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().LimitCostFactor)
-		p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptLimitCostFactor)
+		planCost = costusage.MulCostVer2(planCost, input.ctx.GetSessionVars().LimitCostFactor)
+		input.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptLimitCostFactor)
 	}
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
-	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexLookupCostFactor)
-	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexLookupCostFactor)
-	return p.PlanCostVer2, nil
+	planCost = costusage.MulCostVer2(planCost, input.ctx.GetSessionVars().IndexLookupCostFactor)
+	input.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexLookupCostFactor)
+	return planCost, usePaging, nil
 }
 
 // GetPlanCostVer24PhysicalIndexMergeReader returns the plan-cost of this sub-plan, which is:
