@@ -2185,6 +2185,8 @@ github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeA
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5/go.mod h1:rlimy0GcTvjiJqvD5mXTRr8O2eNZPBrcUgiWVYp9530=
 github.com/pingcap/tipb v0.0.0-20260623093813-5f9928e91afe h1:9I5GHZesmR+hv68t00BO7tayKMFfywi+hlpn119GscM=
 github.com/pingcap/tipb v0.0.0-20260623093813-5f9928e91afe/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
+github.com/pingyu/client-go/v2 v2.0.1-0.20260803170505-11cb9ad8088b h1:uBHv7Y7ZUwrCONnwvo/+zwmmIezHd7Wnibps4Lbhykk=
+github.com/pingyu/client-go/v2 v2.0.1-0.20260803170505-11cb9ad8088b/go.mod h1:kNePJmoqcbd+eTTzZmzZy40rX8LjI6qFYCzdV66cu18=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c/go.mod h1:7rwL4CYBLnjLxUqIJNnCWiEdr3bn6IUYi15bNlnbCCU=
 github.com/pkg/diff v0.0.0-20210226163009-20ebb0f2a09e/go.mod h1:pJLUxLENpZxwdsKMEsNbx1VGcRFpLqf3715MtcvvzbA=
@@ -2357,8 +2359,6 @@ github.com/tidwall/pretty v1.2.1 h1:qjsOFOWWQl+N3RsoF5/ssm1pHmJJwhjlSbZ51I6wMl4=
 github.com/tidwall/pretty v1.2.1/go.mod h1:ITEVvHYasfjBbM0u2Pg8T2nJnzm8xPwvNhhsoaGGjNU=
 github.com/tidwall/sjson v1.2.5 h1:kLy8mja+1c9jlljvWTlSazM7cKDRfJuR/bOJhcY5NcY=
 github.com/tidwall/sjson v1.2.5/go.mod h1:Fvgq9kS/6ociJEDnK0Fk1cpYF4FIW6ZF7LAe+6jwd28=
-github.com/tikv/client-go/v2 v2.0.8-0.20260803074519-341d4692ec57 h1:20uV3D/EvkPVkDvSGWcOg2+jZOKaCYpIoIkwSb7amJM=
-github.com/tikv/client-go/v2 v2.0.8-0.20260803074519-341d4692ec57/go.mod h1:kNePJmoqcbd+eTTzZmzZy40rX8LjI6qFYCzdV66cu18=
 github.com/tikv/pd/client v0.0.0-20260708075407-4e05b9d2c2d3 h1:OoBvgoeWmdNEXtS+eOlhysz/OvhA4GS0OdPVhTXteGA=
 github.com/tikv/pd/client v0.0.0-20260708075407-4e05b9d2c2d3/go.mod h1:3/Bu91CJONgkDA+Y0v/cnbROSJnu5tQ09vv7JGybUBA=
 github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67 h1:9LPGD+jzxMlnk5r6+hJnar67cgpDIz/iyD+rfl5r2Vk=

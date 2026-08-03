@@ -52,6 +52,18 @@ func TestGetGroup(t *testing.T) {
 
 	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.Addrs)
 
+	keyspaceMeta = &keyspacepb.KeyspaceMeta{
+		Config: map[string]string{
+			metaservice.GroupIDKey:    "group1",
+			metaservice.GroupAddrsKey: expectedAddrsStr,
+			"safe_point_version":      "v2",
+		},
+	}
+	keyspaceMetaServiceGroup, err = metaservice.GetGroup(keyspaceMeta, pdAddrs)
+	require.NoError(t, err)
+	require.Equal(t, "group1", keyspaceMetaServiceGroup.GroupID)
+	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.Addrs)
+
 	// Test case where the keyspace does not use keyspace-level GC.
 	keyspaceMeta = &keyspacepb.KeyspaceMeta{
 		Name: "ks-unified-gc",

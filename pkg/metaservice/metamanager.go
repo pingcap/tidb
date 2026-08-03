@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -90,7 +91,7 @@ func GetGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, pdAddrs []string) (*Group, 
 		if err := validateGroupID(groupID); err != nil {
 			return nil, err
 		}
-		if !pd.IsKeyspaceUsingKeyspaceLevelGC(keyspaceMeta) {
+		if !pd.IsKeyspaceUsingKeyspaceLevelGC(keyspaceMeta) && !tikv.IsCESKeyspaceLevelGC(keyspaceMeta) {
 			return nil, errors.Annotatef(
 				ErrKeyspaceLevelGCRequired,
 				"keyspace %q configured meta service group %q",
