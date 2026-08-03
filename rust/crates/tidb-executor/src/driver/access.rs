@@ -467,6 +467,7 @@ pub(crate) fn choose_index_range_path(
         limit.as_ref(),
         stats,
         hints,
+        !select.order_by.is_empty(),
     );
     // Go's `prop.ExpectedCnt != math.MaxFloat64`: a row cap on the required
     // property is what disables Fix45132's row-ratio rule inside pruning.

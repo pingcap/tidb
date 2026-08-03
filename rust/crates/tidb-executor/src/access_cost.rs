@@ -486,6 +486,12 @@ pub(crate) fn enumerate_paths(
     limit: Option<&PushedLimit<'_>>,
     stats: Option<&TableStatistics>,
     hints: &crate::index_hints::AvailablePaths,
+    // Go's `!prop.IsSortItemEmpty()`: whether the caller re-entered path
+    // selection carrying an ORDER the read could establish itself. Go reaches
+    // this as the physical property of a second `findBestTask` invocation;
+    // this tier has no second invocation, so the statement's own `ORDER BY`
+    // is passed in directly.
+    sort_property: bool,
 ) -> Vec<Candidate<AccessPath>> {
     let realtime = realtime_row_count(stats);
     let source_rows = source_row_count(table, where_clause, resolver, stats, realtime);
@@ -610,6 +616,7 @@ pub(crate) fn enumerate_paths(
                 stats,
                 realtime,
                 forced,
+                sort_property,
             ) {
                 candidates.push(candidate);
             }
@@ -707,9 +714,10 @@ fn full_scan_candidate(
     stats: Option<&TableStatistics>,
     realtime: f64,
     forced: bool,
+    sort_property: bool,
 ) -> Option<Candidate<AccessPath>> {
     let covering = is_covering(index, table, needed_columns);
-    if !covering && !forced {
+    if !covering && !forced && !sort_property {
         return None;
     }
     // The ranger consumed nothing, so every conjunct is residual.
@@ -1606,6 +1614,65 @@ mod tests {
             low_exclusive: false,
             high_exclusive: false,
         }
+    }
+
+    /// Go's `keepIndex` in `skylinePruning` (`find_best_task.go:1830`):
+    ///
+    /// ```go
+    /// keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() ||
+    ///     path.Forced || path.IsSingleScan || matchPartialOrderIndex
+    /// ```
+    ///
+    /// The `!prop.IsSortItemEmpty()` arm is what lets a NON-covering index
+    /// survive for `SELECT * FROM t ORDER BY b LIMIT n`: captured TiDB reads
+    ///
+    /// ```text
+    /// IndexLookUp_23        limit embedded(offset:0, count:3)
+    /// ├─Limit_22(Build)     cop[tikv]  offset:0, count:3
+    /// │ └─IndexFullScan_20  cop[tikv]  table:tt, index:ka(a)  keep order:true
+    /// └─TableRowIDScan_21   cop[tikv]  table:tt
+    /// ```
+    ///
+    /// even though `ka(a)` covers nothing of `SELECT *`. Without an order to
+    /// establish, the same index is pruned -- reading every entry and then
+    /// looking up every row can never beat the table scan it would do anyway.
+    ///
+    /// SCOPE, measured: closing this ENUMERATION gap does not yet move a
+    /// chosen plan. `crate::skyline` holds Go's `matchResult` dimension at 0,
+    /// so the table path -- a single scan with the same access columns and no
+    /// more rows -- still dominates this candidate in pruning, and the tier
+    /// has no keep-order scan for the plan to exploit if it survived. This
+    /// asserts the enumeration itself, which is the half that is fixed.
+    #[test]
+    fn a_sort_property_keeps_a_non_covering_index_go_would_keep() {
+        let table = table_with_index();
+        let index_id = table.plan_indexes().next().unwrap().id;
+        let columns: Vec<(String, FieldType)> = table
+            .columns
+            .iter()
+            .map(|column| (column.name.clone(), column.field_type.clone()))
+            .collect();
+        // `SELECT *` over `t(a, b, c)` with only `ib(b)`: not covering.
+        let needed: Vec<usize> = (0..columns.len()).collect();
+        let hints = crate::index_hints::AvailablePaths::unrestricted();
+        let enumerate = |sort_property| {
+            enumerate_paths(
+                &table,
+                &columns,
+                None,
+                &needed,
+                &NoResolver,
+                None,
+                None,
+                &hints,
+                sort_property,
+            )
+            .into_iter()
+            .filter_map(|candidate| candidate.path.index.map(|(id, _)| id))
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(enumerate(false), Vec::<i64>::new());
+        assert_eq!(enumerate(true), vec![index_id]);
     }
 
     /// What actually decides a double read is the TABLE SIDE, not the request
