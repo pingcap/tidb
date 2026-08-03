@@ -218,11 +218,10 @@ func NewExternalEngine(
 	filePrefix string,
 ) *Engine {
 	memLimit := getEngineMemoryLimit(memCapacity, workerConcurrency)
-	readerCfg := newReaderConfig(workerConcurrency)
 	logutil.Logger(ctx).Info("create external engine",
 		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))),
-		zap.String("readerMemLimit", units.BytesSize(float64(readerCfg.memoryLimit))),
-		zap.Int("readerCountLimit", readerCfg.maxReaders),
+		zap.String("readerMemLimit", units.BytesSize(float64(readerMemoryQuotaPerCore*int64(workerConcurrency)))),
+		zap.Int("readerCountLimit", maxReadersPerCore*workerConcurrency),
 		zap.Int("dataFileCount", len(dataFiles)),
 		zap.Int("jobKeysCount", len(jobKeys)),
 		zap.Int("splitKeysCount", len(splitKeys)),
@@ -301,7 +300,7 @@ func (e *Engine) loadRangeBatchData(
 			startOffsets,
 			estimatedEndOffsets,
 			e.smallBlockBufPool,
-			newReaderConfig(int(e.workerConcurrency.Load())),
+			int(e.workerConcurrency.Load()),
 			&e.memKVsAndBuffers,
 		)
 		if err == nil {

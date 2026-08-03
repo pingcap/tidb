@@ -116,37 +116,26 @@ func TestReadAllOneFile(t *testing.T) {
 func TestReadLargeFile(t *testing.T) {
 	ctx := context.Background()
 	memStore := objstore.NewMemStorage()
-	cfg := newReaderConfig(7)
-	require.EqualValues(t, 7*128*units.MiB, cfg.memoryLimit)
-	require.Equal(t, 7*maxReadersPerCore, cfg.maxReaders)
+	memoryLimit := readerMemoryQuotaPerCore * 7
 
-	memorySize, concurrency := readerMemoryForRange(8*units.MiB, 2, cfg)
+	// A range too small for one lane is charged its own size and read as a stream.
+	memorySize, concurrency := readerMemoryForRange(8*units.MiB, memoryLimit)
 	require.EqualValues(t, 8*units.MiB, memorySize)
 	require.Zero(t, concurrency)
 
-	memorySize, concurrency = readerMemoryForRange(16*units.MiB, 2, cfg)
+	memorySize, concurrency = readerMemoryForRange(16*units.MiB, memoryLimit)
 	require.EqualValues(t, 16*units.MiB, memorySize)
 	require.Equal(t, 1, concurrency)
 
-	// One file never takes more than maxLanesPerFile lanes, on either side of the
-	// half-quota rule.
+	// One file never takes more than maxLanesPerFile lanes.
 	laneSize := int64(2 * simplesst.ConcurrentReaderBufferSizePerConc)
-	memorySize, concurrency = readerMemoryForRange(units.GiB, 2, cfg)
+	memorySize, concurrency = readerMemoryForRange(units.GiB, memoryLimit)
 	require.EqualValues(t, int64(maxLanesPerFile)*laneSize, memorySize)
 	require.Equal(t, maxLanesPerFile, concurrency)
 
-	memorySize, concurrency = readerMemoryForRange(units.GiB, 1, cfg)
-	require.EqualValues(t, int64(maxLanesPerFile)*laneSize, memorySize)
-	require.Equal(t, maxLanesPerFile, concurrency)
-
-	// Below that cap the quota still halves once more than one large file competes.
-	smallCfg := newReaderConfig(1)
-	memorySize, concurrency = readerMemoryForRange(units.GiB, 2, smallCfg)
-	require.EqualValues(t, smallCfg.memoryLimit/2, memorySize)
-	require.Equal(t, 4, concurrency)
-
-	memorySize, concurrency = readerMemoryForRange(units.GiB, 1, smallCfg)
-	require.EqualValues(t, smallCfg.memoryLimit, memorySize)
+	// A budget smaller than that cap binds instead, and a charge never exceeds it.
+	memorySize, concurrency = readerMemoryForRange(units.GiB, readerMemoryQuotaPerCore)
+	require.EqualValues(t, readerMemoryQuotaPerCore, memorySize)
 	require.Equal(t, 8, concurrency)
 
 	backup := simplesst.ConcurrentReaderBufferSizePerConc
@@ -192,7 +181,7 @@ func TestReadLargeFile(t *testing.T) {
 		startKey, endKey,
 		readRanges[0],
 		readRanges[1],
-		smallBlockBufPool, newReaderConfig(1), output)
+		smallBlockBufPool, 1, output)
 	require.NoError(t, err)
 	output.build(ctx)
 	require.Equal(t, startKey, output.kvs[0].Key)

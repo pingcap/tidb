@@ -45,43 +45,29 @@ const maxReadersPerCore = 16
 // It is a var so benchmarks can sweep it.
 var maxLanesPerFile = 16
 
-type readerConfig struct {
-	memoryLimit int64
-	maxReaders  int
-}
-
-func newReaderConfig(concurrency int) readerConfig {
-	return readerConfig{
-		memoryLimit: readerMemoryQuotaPerCore * int64(concurrency),
-		maxReaders:  maxReadersPerCore * concurrency,
-	}
-}
-
-// readerMemoryForRange returns the primary reader-buffer charge and the number
-// of 8 MiB range-read lanes. Each lane owns a current and a prefetched buffer.
-func readerMemoryForRange(rangeSize uint64, largeFileCount int, cfg readerConfig) (int64, int) {
-	if rangeSize == 0 || cfg.memoryLimit <= 0 {
+// readerMemoryForRange returns the reader-buffer charge for one file's byte range
+// and the number of 8 MiB range-read lanes it buys. Each lane owns a current and a
+// prefetched buffer. A range too small for one lane is charged its own size and is
+// read as a single prefetched stream instead.
+func readerMemoryForRange(rangeSize uint64, memoryLimit int64) (int64, int) {
+	if rangeSize == 0 || memoryLimit <= 0 {
 		return 0, 0
 	}
 
-	maxFileMemory := cfg.memoryLimit
-	if largeFileCount > 1 {
-		maxFileMemory /= 2
-	}
-	requested := maxFileMemory
-	if rangeSize < uint64(maxFileMemory) {
-		requested = int64(rangeSize)
-	}
 	laneSize := int64(2 * simplesst.ConcurrentReaderBufferSizePerConc)
 	// A single charge must never exceed the budget: semaphore.Acquire blocks
 	// until ctx is done when n > size.
-	requested = min(requested, int64(maxLanesPerFile)*laneSize, cfg.memoryLimit)
+	perFileLimit := min(int64(maxLanesPerFile)*laneSize, memoryLimit)
+	requested := perFileLimit
+	if rangeSize < uint64(perFileLimit) {
+		requested = int64(rangeSize)
+	}
 	if requested < laneSize {
 		return requested, 0
 	}
 
-	concurrency := int(requested / laneSize)
-	return int64(concurrency) * laneSize, concurrency
+	lanes := int(requested / laneSize)
+	return int64(lanes) * laneSize, lanes
 }
 
 func readAllData(
@@ -91,7 +77,7 @@ func readAllData(
 	startKey, endKey []byte,
 	startOffsets, estimatedEndOffsets []uint64,
 	smallBlockBufPool *membuf.Pool,
-	readerCfg readerConfig,
+	concurrency int,
 	output *memKVsAndBuffers,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx), "read all data")
@@ -121,19 +107,16 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	if readerCfg.memoryLimit <= 0 {
-		return errors.New("reader memory limit must be positive")
+	if concurrency <= 0 {
+		return errors.New("reader concurrency must be positive")
 	}
-	if readerCfg.maxReaders <= 0 {
-		return errors.New("reader count limit must be positive")
-	}
+	memoryLimit := readerMemoryQuotaPerCore * int64(concurrency)
+	maxReaders := maxReadersPerCore * concurrency
 
-	readerMemory := semaphore.NewWeighted(readerCfg.memoryLimit)
-	rangeSizes := make([]uint64, len(dataFiles))
+	readerMemory := semaphore.NewWeighted(memoryLimit)
 	readerMemorySizes := make([]int64, len(dataFiles))
 	concurrences := make([]int, len(dataFiles))
 	totalFileSize := uint64(0)
-	largeFileCount := 0
 	for i := range dataFiles {
 		if estimatedEndOffsets[i] < startOffsets[i] {
 			return errors.Errorf(
@@ -144,18 +127,8 @@ func readAllData(
 			)
 		}
 		size := estimatedEndOffsets[i] - startOffsets[i]
-		rangeSizes[i] = size
 		totalFileSize += size
-		if size >= uint64(2*simplesst.ConcurrentReaderBufferSizePerConc) {
-			largeFileCount++
-		}
-	}
-	for i := range dataFiles {
-		readerMemorySizes[i], concurrences[i] = readerMemoryForRange(
-			rangeSizes[i],
-			largeFileCount,
-			readerCfg,
-		)
+		readerMemorySizes[i], concurrences[i] = readerMemoryForRange(size, memoryLimit)
 		if concurrences[i] > 0 {
 			logutil.Logger(ctx).Info("found hotspot file in readAllData",
 				zap.String("filename", dataFiles[i]),
@@ -170,7 +143,7 @@ func readAllData(
 		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	readConn := min(readerCfg.maxReaders, len(dataFiles))
+	readConn := min(maxReaders, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn)
 	largeBlockBufPool := membuf.NewPool(
@@ -221,7 +194,7 @@ func readAllData(
 
 	// Dispatch small files first. semaphore.Weighted serves waiters in FIFO
 	// order, so putting large readers first could otherwise make small readers
-	// wait behind a half-quota request even when enough memory is available.
+	// wait behind a whole-budget request even when enough memory is available.
 	for smallFiles := true; ; smallFiles = false {
 		for fileIdx := range dataFiles {
 			if (concurrences[fileIdx] == 0) != smallFiles {

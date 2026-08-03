@@ -705,7 +705,7 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 		startKey, endKey,
 		readRanges[0],
 		readRanges[1],
-		smallBlockBufPool, newReaderConfig(*concurrency), output)
+		smallBlockBufPool, *concurrency, output)
 	t.Logf("read all data cost: %s", time.Since(now))
 	intest.AssertNoError(err)
 }
@@ -857,7 +857,7 @@ finishCreateFiles:
 		readRangeStart, readRangeEnd,
 		readRanges[0],
 		readRanges[1],
-		smallBlockBufPool, newReaderConfig(*concurrency), output)
+		smallBlockBufPool, *concurrency, output)
 	require.NoError(t, err)
 	output.build(ctx)
 	elapsed := time.Since(now)
