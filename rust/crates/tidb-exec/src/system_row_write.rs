@@ -51,12 +51,15 @@
 
 use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_codec::Encoder;
-use tidb_datatype::{parse_enum, parse_set_name, Collation, Datum, FieldType, FieldTypeCode, Time};
+use tidb_datatype::{
+    is_bin_collation, parse_enum, parse_set_name, Collation, Datum, FieldType, FieldTypeCode, Time,
+};
 use tidb_model::column::{ColumnDefaultValue, ColumnInfo};
 use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::{
-    encode_table_row, generate_index_key, generate_index_value, IndexColumn as CodecIndexColumn,
-    IndexInfo as CodecIndexInfo, TableColumn as CodecTableColumn, TableInfo as CodecTableInfo,
+    encode_table_row, generate_index_key, generate_index_value, truncate_index_value,
+    IndexColumn as CodecIndexColumn, IndexInfo as CodecIndexInfo, TableColumn as CodecTableColumn,
+    TableInfo as CodecTableInfo,
 };
 use tidb_txnkv::transaction::OptimisticMutation;
 use tidb_txnkv::{CommonHandle, Handle, IntHandle};
@@ -65,6 +68,16 @@ use crate::mysql_system_tables::HandleLayout;
 
 /// Go `ast.CurrentTimestamp`, as a column default stores it.
 pub(crate) const CURRENT_TIMESTAMP: &str = "CURRENT_TIMESTAMP";
+
+/// Go `collate.NewCollationEnabled()`: an index key is a new-collation SORT
+/// KEY rather than the raw bytes, which is exactly why the entry VALUE has to
+/// carry restored data -- a sort key case-folds and trims trailing spaces, so
+/// the column cannot be read back out of the key. The one `Encoder::new(true)`
+/// this module builds already commits to it.
+const USE_NEW_COLLATION: bool = true;
+
+/// Go `types.UnspecifiedLength`: a key part that stores its whole column.
+const UNSPECIFIED_LENGTH: i64 = -1;
 
 /// Go's own `Y`/`N` privilege spelling.
 pub const YES: &str = "Y";
@@ -413,7 +426,10 @@ fn index_entries(
                     index.name.original()
                 ))
             })?;
-            indexed.push(typed_value(value, &column.field_type)?);
+            indexed.push(collated_value(
+                typed_value(value, &column.field_type)?,
+                &column.field_type,
+            ));
         }
         let (index_key, distinct) = generate_index_key(
             Encoder::new(true),
@@ -429,17 +445,22 @@ fn index_entries(
             IndexOp::Delete => OptimisticMutation::index_delete(index_key),
             IndexOp::Put => {
                 let index_value = generate_index_value(
-                    true,
+                    USE_NEW_COLLATION,
                     None,
                     &codec_table,
                     codec_index,
-                    false,
+                    // Go `tables.NeedRestoredData`, computed per index rather
+                    // than assumed absent: the index KEY is a new-collation
+                    // sort key, so for an indexed VARCHAR (or any column under
+                    // a case-insensitive collation) this value is the only
+                    // place the original bytes survive.
+                    needs_restored_data(&codec_table, codec_index),
                     distinct,
                     false,
                     &indexed,
                     &handle,
                     0,
-                    &[],
+                    &handle_restored_data(table, &codec_table, codec_index, values)?,
                 )
                 .map_err(|error| encode_error(error.to_string()))?;
                 OptimisticMutation::index_put(index_key, index_value)
@@ -448,6 +469,142 @@ fn index_entries(
         mutations.push(mutation.map_err(|error| encode_error(error.to_string()))?);
     }
     Ok(mutations)
+}
+
+/// A string value re-tagged with the collation of the column it belongs to.
+///
+/// An index KEY is a new-collation SORT KEY, and the key codec takes the
+/// collation from the DATUM. A caller states its values as plain bytes, whose
+/// collation is `binary`, so without this every index key over a
+/// `utf8mb4_general_ci` column would hold the raw bytes where Go holds the
+/// case-folded weights -- and a Go server would not find the row through the
+/// index at all. `mysql.db`, `mysql.tables_priv` and `mysql.columns_priv` all
+/// key on such a column.
+///
+/// Go reaches the same place from the other side: its `INSERT` casts each
+/// value to the column type (`table.CastValue`), and a cast result carries the
+/// column's collation.
+fn collated_value(value: Datum, field_type: &FieldType) -> Datum {
+    if !field_type.is_character_string() {
+        return value;
+    }
+    match value {
+        Datum::Bytes(bytes) => Datum::new_collation_string(bytes, field_type.collation()),
+        Datum::String(string) => {
+            Datum::new_collation_string(string.bytes().to_vec(), field_type.collation())
+        }
+        other => other,
+    }
+}
+
+/// The field type one index key part encodes under, Go
+/// `model.GetIdxChangingFieldType`: the column's own type, or the type an
+/// in-flight `MODIFY COLUMN` is moving it to.
+fn indexed_field_type<'a>(
+    codec_table: &'a CodecTableInfo,
+    index_column: &CodecIndexColumn,
+) -> Option<&'a FieldType> {
+    let column = codec_table.columns.get(index_column.offset)?;
+    if index_column.use_changing_type {
+        if let Some(changing) = column.changing_field_type.as_ref() {
+            return Some(changing);
+        }
+    }
+    Some(&column.field_type)
+}
+
+/// Go `tables.NeedRestoredData`: whether any of this index's key parts stores
+/// a column whose new-collation sort key loses the original bytes.
+fn needs_restored_data(codec_table: &CodecTableInfo, codec_index: &CodecIndexInfo) -> bool {
+    codec_index.columns.iter().any(|index_column| {
+        indexed_field_type(codec_table, index_column).is_some_and(|field_type| {
+            field_type.need_restored_data_with_collation(USE_NEW_COLLATION)
+        })
+    })
+}
+
+/// Go `tables.TryGetHandleRestoredDataWrapper`: the clustered PRIMARY KEY's
+/// own restored data, which a version-1 common-handle table repeats in EVERY
+/// secondary index entry so an index-only read can rebuild the handle columns
+/// as well as the indexed ones.
+fn handle_restored_data(
+    table: &TableInfo,
+    codec_table: &CodecTableInfo,
+    codec_index: &CodecIndexInfo,
+    values: &RowValues,
+) -> Result<Vec<Datum>, RowEncodeError> {
+    if !codec_table.is_common_handle || codec_table.common_handle_version == 0 {
+        return Ok(Vec::new());
+    }
+    let Some(primary) = codec_table.indices.iter().find(|index| index.primary) else {
+        return Ok(Vec::new());
+    };
+    let mut restored = Vec::new();
+    for index_column in &primary.columns {
+        let column = codec_table
+            .columns
+            .get(index_column.offset)
+            .ok_or_else(|| {
+                encode_error(format!(
+                    "{}'s primary key names an offset the table does not have",
+                    table_name(table)
+                ))
+            })?;
+        if !column
+            .field_type
+            .need_restored_data_with_collation(USE_NEW_COLLATION)
+        {
+            continue;
+        }
+        let stored = values.get(&column.id).ok_or_else(|| {
+            encode_error(format!(
+                "{}'s primary key column {} has no value in the row being written",
+                table_name(table),
+                column.id
+            ))
+        })?;
+        let mut value =
+            collated_value(typed_value(stored, &column.field_type)?, &column.field_type);
+        // Go `TryTruncateRestoredData`: the restored copy is cut to whichever
+        // of the primary key's own prefix and the reading index's prefix keeps
+        // MORE of the column, so it always covers what either key lost.
+        let target = codec_index
+            .columns
+            .iter()
+            .find(|reading| reading.offset == index_column.offset)
+            .map_or(index_column, |reading| longer_prefix(index_column, reading));
+        truncate_index_value(&mut value, target, column)
+            .map_err(|error| encode_error(error.to_string()))?;
+        // Go `ConvertDatumToTailSpaceCount`: a bin collation's sort key
+        // differs from the data only by the trailing spaces it trimmed, so the
+        // COUNT restores it and the string would be a second copy of the key.
+        if is_bin_collation(column.field_type.collation().name()) {
+            value = Datum::Int(trailing_spaces(&value) as i64);
+        }
+        restored.push(value);
+    }
+    Ok(restored)
+}
+
+/// Go `tables.maxIndexLen`: the key part that stores MORE of its column, with
+/// "no declared prefix" winning outright because it stores the whole column.
+fn longer_prefix<'a>(a: &'a CodecIndexColumn, b: &'a CodecIndexColumn) -> &'a CodecIndexColumn {
+    if a.length == UNSPECIFIED_LENGTH || b.length == UNSPECIFIED_LENGTH {
+        return if a.length == UNSPECIFIED_LENGTH { a } else { b };
+    }
+    if a.length > b.length {
+        a
+    } else {
+        b
+    }
+}
+
+/// Go `stringutil.GetTailSpaceCount`.
+fn trailing_spaces(value: &Datum) -> usize {
+    value
+        .as_raw_bytes()
+        .map(|bytes| bytes.iter().rev().take_while(|byte| **byte == b' ').count())
+        .unwrap_or(0)
 }
 
 fn table_name(table: &TableInfo) -> &str {
@@ -657,7 +814,10 @@ pub fn codec_table_info(table: &TableInfo) -> CodecTableInfo {
                 primary_key: column
                     .field_type
                     .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-                changing_field_type: None,
+                // Go `ColumnInfo.ChangingFieldType`: the type an in-flight
+                // `MODIFY COLUMN` is moving this column to, which the key
+                // parts flagged `using_changing_type` encode under.
+                changing_field_type: column.changing_field_type.as_deref().cloned(),
             })
             .collect(),
         indices: table
@@ -672,11 +832,15 @@ pub fn codec_table_info(table: &TableInfo) -> CodecTableInfo {
                         offset: usize::try_from(column.offset)
                             .expect("a column offset is not negative"),
                         length: i64::from(column.length),
-                        use_changing_type: false,
+                        use_changing_type: column.use_changing_type,
                     })
                     .collect(),
                 unique: index.unique,
                 global: index.global,
+                // `model::IndexInfo` carries no `global_index_version`, so
+                // there is nothing to thread through: every index this crate
+                // writes reads back as the legacy format, which is also the
+                // only format a non-partitioned `mysql.*` table ever uses.
                 global_index_version: 0,
                 primary: index.primary,
             })

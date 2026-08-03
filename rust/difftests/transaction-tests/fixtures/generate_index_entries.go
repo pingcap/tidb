@@ -50,6 +50,8 @@ func main() {
 	uniqueUtf8mb4BinTrailingSpace()
 	shortCommonHandleNonUnique()
 	commonHandleVersion1RestoredHandle()
+	systemGlobalVariables()
+	systemDb()
 }
 
 func varchar(collate string) *types.FieldType {
@@ -95,7 +97,7 @@ func emit(name string, tbl *model.TableInfo, idx *model.IndexInfo, row []types.D
 	for _, idxCol := range idx.Columns {
 		indexed = append(indexed, row[idxCol.Offset])
 	}
-	key, distinct, err := tablecodec.GenIndexKey(codec.NewEncoder(true), time.UTC, tbl, idx, tableID, indexed, h, nil)
+	key, distinct, err := tablecodec.GenIndexKey(codec.NewEncoder(true), time.UTC, tbl, idx, tbl.ID, indexed, h, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -228,4 +230,63 @@ func commonHandleVersion1RestoredHandle() {
 	}
 	emit("common_handle_v1_restored", tbl, idx,
 		[]types.Datum{pkDatum, types.NewCollationStringDatum("Val", "utf8mb4_general_ci")}, h)
+}
+
+// `mysql.global_variables` as a live cluster declares it: a row-ID table whose
+// unique PRIMARY is one VARCHAR(64) `utf8mb4_bin` column. `utf8mb4_bin` is a
+// bin collation, but the VARCHAR carve-out in `NeedRestoredDataWithCollate`
+// puts it back in scope -- so every `SET GLOBAL` this tier persists writes an
+// entry whose value carries restored data.
+func systemGlobalVariables() {
+	name := varchar("utf8mb4_bin")
+	name.SetFlen(64)
+	name.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
+	value := varchar("utf8mb4_bin")
+	value.SetFlen(1024)
+	idx := index(1, "primary", true, indexColumn("variable_name", 0))
+	idx.Primary = true
+	tbl := &model.TableInfo{
+		ID:      281474976710641,
+		Name:    ast.NewCIStr("global_variables"),
+		Columns: []*model.ColumnInfo{column(1, 0, "variable_name", name), column(2, 1, "variable_value", value)},
+		Indices: []*model.IndexInfo{idx},
+		State:   model.StatePublic,
+	}
+	emit("mysql_global_variables", tbl, idx, []types.Datum{
+		types.NewCollationStringDatum("max_connections", "utf8mb4_bin"),
+		types.NewCollationStringDatum("0", "utf8mb4_bin"),
+	}, kv.IntHandle(1))
+}
+
+// `mysql.db`: a row-ID table whose unique PRIMARY mixes a `utf8mb4_bin` CHAR
+// (no restored data) with a `utf8mb4_general_ci` one (case-folding, so the
+// original spelling lives only in the restored data).
+func systemDb() {
+	charCol := func(collate string) *types.FieldType {
+		ft := types.NewFieldType(mysql.TypeString)
+		ft.SetFlen(255)
+		ft.SetCharset("utf8mb4")
+		ft.SetCollate(collate)
+		ft.AddFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
+		return ft
+	}
+	idx := index(1, "primary", true,
+		indexColumn("host", 0), indexColumn("db", 1), indexColumn("user", 2))
+	idx.Primary = true
+	tbl := &model.TableInfo{
+		ID:   281474976710644,
+		Name: ast.NewCIStr("db"),
+		Columns: []*model.ColumnInfo{
+			column(1, 0, "host", charCol("utf8mb4_bin")),
+			column(2, 1, "db", charCol("utf8mb4_general_ci")),
+			column(3, 2, "user", charCol("utf8mb4_bin")),
+		},
+		Indices: []*model.IndexInfo{idx},
+		State:   model.StatePublic,
+	}
+	emit("mysql_db", tbl, idx, []types.Datum{
+		types.NewCollationStringDatum("%", "utf8mb4_bin"),
+		types.NewCollationStringDatum("Test", "utf8mb4_general_ci"),
+		types.NewCollationStringDatum("root", "utf8mb4_bin"),
+	}, kv.IntHandle(1))
 }

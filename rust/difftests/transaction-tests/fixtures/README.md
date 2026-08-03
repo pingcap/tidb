@@ -156,3 +156,26 @@ Two Go behaviors are pinned rather than assumed, both confirmed by running
 GOFLAGS=-p=12 go run ./rust/difftests/transaction-tests/fixtures/generate_bytes_float_vectors.go \
   > rust/difftests/transaction-tests/fixtures/bytes_float_vectors.hex
 ```
+
+## Index entry fixture
+
+`index_entries.hex` is `tablecodec.GenIndexKey` / `tablecodec.GenIndexValuePortal`
+output for the entries a live write stores, with `needRestoredData` and the
+handle's restored data computed the way `pkg/table/tables/index.go` and
+`tables.TryGetHandleRestoredDataWrapper` compute them.
+
+```bash
+GOFLAGS=-p=12 go run ./rust/difftests/transaction-tests/fixtures/generate_index_entries.go \
+  > rust/difftests/transaction-tests/fixtures/index_entries.hex
+```
+
+These are the vectors a round-trip test structurally cannot replace. An index
+KEY is a new-collation SORT KEY: it case-folds under `utf8mb4_general_ci` and
+trims trailing spaces under `utf8mb4_bin`, so the entry VALUE's restored data is
+the only place the stored bytes survive. A writer that invents its own simpler
+value round-trips against its own reader perfectly and still hands a Go reader
+-- an index-only scan, `ADMIN CHECK INDEX`, a DDL backfill -- corrupted data.
+
+Consumed by `tidb-executor/tests/index_entry_go_bytes.rs` (the `KvTable` write
+path) and `tidb-exec/tests/system_index_entry_go_bytes.rs` (the `mysql.*`
+writer, over the real captured bootstrap `TableInfo`s).
