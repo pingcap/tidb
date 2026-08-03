@@ -439,58 +439,58 @@ func TestStarterPrivilegeResetMetadataState(t *testing.T) {
 		{
 			name: "restore pending",
 			config: map[string]string{
-				restoreResetDoneKey: "False",
+				restoreBootstrapDoneKey: "False",
 			},
 			pendingMarkers: map[string]string{
-				restoreResetDoneKey: "False",
+				restoreBootstrapDoneKey: "False",
 			},
 		},
 		{
 			name: "restore complete",
 			config: map[string]string{
-				restoreResetDoneKey: "true",
+				restoreBootstrapDoneKey: "true",
 			},
 		},
 		{
 			name: "branch pending",
 			config: map[string]string{
-				branchResetDoneKey: "False",
+				branchBootstrapDoneKey: "False",
 			},
 			pendingMarkers: map[string]string{
-				branchResetDoneKey: "False",
+				branchBootstrapDoneKey: "False",
 			},
 		},
 		{
 			name: "branch complete",
 			config: map[string]string{
-				branchResetDoneKey: "true",
+				branchBootstrapDoneKey: "true",
 			},
 		},
 		{
 			name: "branch complete and restore pending",
 			config: map[string]string{
-				branchResetDoneKey:  "true",
-				restoreResetDoneKey: "False",
+				branchBootstrapDoneKey:  "true",
+				restoreBootstrapDoneKey: "False",
 			},
 			pendingMarkers: map[string]string{
-				restoreResetDoneKey: "False",
+				restoreBootstrapDoneKey: "False",
 			},
 		},
 		{
 			name: "branch and restore pending",
 			config: map[string]string{
-				branchResetDoneKey:  "False",
-				restoreResetDoneKey: "false",
+				branchBootstrapDoneKey:  "False",
+				restoreBootstrapDoneKey: "false",
 			},
 			pendingMarkers: map[string]string{
-				branchResetDoneKey:  "False",
-				restoreResetDoneKey: "false",
+				branchBootstrapDoneKey:  "False",
+				restoreBootstrapDoneKey: "false",
 			},
 		},
 		{
 			name: "invalid marker",
 			config: map[string]string{
-				restoreResetDoneKey: "invalid",
+				restoreBootstrapDoneKey: "invalid",
 			},
 			err: "invalid starter privilege reset marker",
 		},
@@ -498,16 +498,16 @@ func TestStarterPrivilegeResetMetadataState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			state, pending, err := parsePrivilegeReset(tt.config)
+			reset, pending, err := parsePrivilegeResetMarkers(tt.config)
 			if tt.err != "" {
 				require.ErrorContains(t, err, tt.err)
 				require.False(t, pending)
-				require.Empty(t, state.pendingMarkers)
+				require.Empty(t, reset.markers)
 				return
 			}
 			require.NoError(t, err)
 			require.Equal(t, len(tt.pendingMarkers) > 0, pending)
-			require.Equal(t, tt.pendingMarkers, state.pendingMarkers)
+			require.Equal(t, tt.pendingMarkers, reset.markers)
 		})
 	}
 }
@@ -529,8 +529,8 @@ func TestStarterPrivilegeResetWorkflow(t *testing.T) {
 		Id:   42,
 		Name: "restored_keyspace",
 		Config: map[string]string{
-			branchResetDoneKey:  "False",
-			restoreResetDoneKey: "False",
+			branchBootstrapDoneKey:  "False",
+			restoreBootstrapDoneKey: "False",
 		},
 	}
 	underlyingStore, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
@@ -576,8 +576,8 @@ func TestStarterPrivilegeResetWorkflow(t *testing.T) {
 	completedVersion, err := getStoreStarterBootstrapVersion(store)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), completedVersion)
-	require.Equal(t, "False", keyspaceMeta.Config[branchResetDoneKey])
-	require.Equal(t, "False", keyspaceMeta.Config[restoreResetDoneKey])
+	require.Equal(t, "False", keyspaceMeta.Config[branchBootstrapDoneKey])
+	require.Equal(t, "False", keyspaceMeta.Config[restoreBootstrapDoneKey])
 
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
@@ -589,8 +589,8 @@ func TestStarterPrivilegeResetWorkflow(t *testing.T) {
 
 	require.NoError(t, upgradeStarterBootstrapWithFile(store, bootstrapFile))
 	require.Equal(t, 2, pdHTTPClient.updateCalls)
-	require.Equal(t, "True", keyspaceMeta.Config[branchResetDoneKey])
-	require.Equal(t, "True", keyspaceMeta.Config[restoreResetDoneKey])
+	require.Equal(t, "True", keyspaceMeta.Config[branchBootstrapDoneKey])
+	require.Equal(t, "True", keyspaceMeta.Config[restoreBootstrapDoneKey])
 	require.NoError(t, upgradeStarterBootstrapWithFile(store, bootstrapFile))
 	require.Equal(t, 2, pdHTTPClient.updateCalls)
 
@@ -598,7 +598,7 @@ func TestStarterPrivilegeResetWorkflow(t *testing.T) {
 		Id:   keyspaceMeta.Id,
 		Name: keyspaceMeta.Name,
 		Config: map[string]string{
-			restoreResetDoneKey: "False",
+			restoreBootstrapDoneKey: "False",
 		},
 	}
 	require.NoError(t, upgradeStarterBootstrapWithFile(store, bootstrapFile))
@@ -614,7 +614,7 @@ func TestStarterPrivilegeResetWorkflow(t *testing.T) {
 	requireStarterPrivilegeRows(t, se, "source_keyspace.user", 0)
 	requireStarterRootUser(t, se)
 
-	keyspaceMeta.Config[restoreResetDoneKey] = "invalid"
+	keyspaceMeta.Config[restoreBootstrapDoneKey] = "invalid"
 	seedStarterPrivilegeRows(t, se, "invalid_marker.user")
 	err = upgradeStarterBootstrapWithFile(store, validStarterPrivilegeBootstrapFile(t))
 	require.ErrorContains(t, err, "invalid starter privilege reset marker")
@@ -628,7 +628,7 @@ func TestStarterPrivilegeReset(t *testing.T) {
 
 	t.Run("validation does not mutate privileges", func(t *testing.T) {
 		_, se := newStarterPrivilegeResetSession(t)
-		require.ErrorContains(t, resetPrivilegesLocked(se, &starterBootstrapFileSpec{Version: 3}),
+		require.ErrorContains(t, resetStarterPrivilegesLocked(se, &starterBootstrapFileSpec{Version: 3}),
 			"must contain bootstrap SQL")
 
 		nonTransactionalFile, err := parseStarterBootstrapFile([]byte(`{
@@ -636,7 +636,7 @@ func TestStarterPrivilegeReset(t *testing.T) {
 			"bootstrap": ["CREATE TABLE mysql.starter_reset_ddl (id INT)"]
 		}`))
 		require.NoError(t, err)
-		require.ErrorContains(t, resetPrivilegesLocked(se, nonTransactionalFile),
+		require.ErrorContains(t, resetStarterPrivilegesLocked(se, nonTransactionalFile),
 			"must be INSERT, REPLACE, UPDATE, or DELETE")
 		requireStarterPrivilegeRows(t, se, "source_keyspace.user", 1)
 	})
@@ -650,13 +650,13 @@ func TestStarterPrivilegeReset(t *testing.T) {
 			]
 		}`))
 		require.NoError(t, err)
-		require.ErrorContains(t, resetPrivilegesLocked(se, missingRootFile),
+		require.ErrorContains(t, resetStarterPrivilegesLocked(se, missingRootFile),
 			"must create 'restored_keyspace.root'@'%'")
 		requireStarterPrivilegeRows(t, se, "source_keyspace.user", 0)
 		require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
 			"SELECT COUNT(*) FROM mysql.user WHERE User = ?", "restored_keyspace.not_root"))
 
-		require.NoError(t, resetPrivilegesLocked(se, validStarterPrivilegeBootstrapFile(t)))
+		require.NoError(t, resetStarterPrivilegesLocked(se, validStarterPrivilegeBootstrapFile(t)))
 		requireStarterRootUser(t, se)
 	})
 
@@ -670,12 +670,12 @@ func TestStarterPrivilegeReset(t *testing.T) {
 			]
 		}`))
 		require.NoError(t, err)
-		require.Error(t, resetPrivilegesLocked(se, failingBootstrapFile))
+		require.Error(t, resetStarterPrivilegesLocked(se, failingBootstrapFile))
 		requireStarterPrivilegeRows(t, se, "source_keyspace.user", 0)
 		require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
 			"SELECT COUNT(*) FROM mysql.user WHERE Host = '%' AND User = ?", "restored_keyspace.failed"))
 
-		require.NoError(t, resetPrivilegesLocked(se, validStarterPrivilegeBootstrapFile(t)))
+		require.NoError(t, resetStarterPrivilegesLocked(se, validStarterPrivilegeBootstrapFile(t)))
 		requireStarterRootUser(t, se)
 	})
 
@@ -694,7 +694,7 @@ func TestStarterPrivilegeReset(t *testing.T) {
 		_, rollbackErr := se.ExecuteInternal(ctx, "ROLLBACK")
 		require.NoError(t, rollbackErr)
 
-		require.NoError(t, resetPrivilegesLocked(se, validStarterPrivilegeBootstrapFile(t)))
+		require.NoError(t, resetStarterPrivilegesLocked(se, validStarterPrivilegeBootstrapFile(t)))
 		requireStarterPrivilegeRows(t, se, "source_keyspace.user", 0)
 		require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
 			"SELECT COUNT(*) FROM mysql.user WHERE User LIKE 'source_keyspace.user%'"))
@@ -753,7 +753,7 @@ func validStarterPrivilegeBootstrapFile(t *testing.T) *starterBootstrapFileSpec 
 
 func requireStarterPrivilegeRows(t *testing.T, se sessionapi.Session, user string, expected int64) {
 	t.Helper()
-	for _, table := range privilegeResetTables {
+	for _, table := range privilegeTablesToClear {
 		userColumn := "User"
 		if table == "role_edges" {
 			userColumn = "TO_USER"
