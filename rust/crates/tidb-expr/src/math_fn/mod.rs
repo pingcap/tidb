@@ -107,11 +107,23 @@ pub(crate) fn dispatch_values(
 /// A leading `+`/`-` sign is honored; an empty valid prefix yields `"0"`.
 /// `NULL` if any argument is `NULL`.
 pub(crate) fn conv(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let (Some(n), Datum::Int(from), Datum::Int(to)) = (coerce_str(&vals[0])?, &vals[1], &vals[2])
-    else {
+    if vals.iter().any(Datum::is_range_sentinel) {
+        return Err(EvalError::Unsupported("range sentinel CONV argument"));
+    }
+    let Some(n) = coerce_str(&vals[0])? else {
         return Ok(Datum::Null);
     };
-    let (mut from, mut to) = (*from, *to);
+    if vals[1].is_null() || vals[2].is_null() {
+        return Ok(Datum::Null);
+    }
+    // Both bases are `ETInt` arguments in `convFunctionClass.getFunction`, so
+    // every domain with an integer reading reaches them -- notably
+    // `Datum::UInt`, which `CAST(16 AS UNSIGNED)` produces. Matching on
+    // `Datum::Int` alone answered NULL for it.
+    let (mut from, mut to) = (
+        crate::cast::to_i64_signed(&vals[1]),
+        crate::cast::to_i64_signed(&vals[2]),
+    );
     let signed = from < 0;
     let ignore_sign = to < 0;
     if signed {
@@ -696,6 +708,15 @@ fn round_or_truncate(vals: &[Datum], round: bool, ctx: &dyn Columns) -> Result<D
     // boundary explicit instead of letting the value-only scale cast invent
     // a signed negative precision.
     let unsigned_integer_scale = !round && matches!(vals.get(1), Some(Datum::UInt(_)));
+    // `builtinRoundIntSig.evalInt` is literally `return b.args[0].EvalInt(...)`:
+    // the ONE-argument integer ROUND is the identity, not a round trip through
+    // `f64`. The two-argument form is a different signature
+    // (`builtinRoundWithFracIntSig`) that really does go through `f64`, so the
+    // distinction is a signature boundary rather than an optimization.
+    // It is observable past `f64`'s 53-bit exact range: CAPTURED from TiDB,
+    // `ROUND(9223372036854775806)` is `9223372036854775806` while
+    // `ROUND(9223372036854775806, 0)` is `9223372036854775807`.
+    let int_round_is_identity = round && vals.len() == 1;
     let (v, d) = match vals {
         [v] if round => (v, 0i64),
         [v, d] => match d {
@@ -707,7 +728,7 @@ fn round_or_truncate(vals: &[Datum], round: bool, ctx: &dyn Columns) -> Result<D
     };
     Ok(match v {
         Datum::Int(i) => {
-            if unsigned_integer_scale {
+            if unsigned_integer_scale || int_round_is_identity {
                 Datum::Int(*i)
             } else {
                 Datum::Int(if round {
@@ -718,11 +739,19 @@ fn round_or_truncate(vals: &[Datum], round: bool, ctx: &dyn Columns) -> Result<D
             }
         }
         Datum::UInt(i) => {
-            if unsigned_integer_scale {
+            if unsigned_integer_scale || int_round_is_identity {
                 Datum::UInt(*i)
             } else {
                 Datum::UInt(if round {
-                    go_round_float(*i as f64, d) as u64
+                    // `builtinRoundWithFracIntSig` reads the argument through
+                    // `EvalInt` -- the SAME 64 bits, read as `int64` -- and
+                    // only the result FieldType carries UNSIGNED. Reading the
+                    // u64 as a magnitude instead diverges past `i64::MAX`:
+                    // CAPTURED from TiDB,
+                    // `ROUND(CAST(18446744073709551610 AS UNSIGNED), -1)` is
+                    // `18446744073709551606`, which is `-6` rounded to `-10`
+                    // and re-read unsigned, not `...610` rounded up.
+                    go_round_float(*i as i64 as f64, d) as i64 as u64
                 } else {
                     // `builtinTruncateUintSig` operates on the original
                     // uint64, not through `EvalReal`/f64.  The distinction is

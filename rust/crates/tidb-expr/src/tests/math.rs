@@ -61,6 +61,46 @@ fn conv_matches_go_prefix_and_base_semantics() {
     assert_eq!(call_conv(Datum::Null, 10, 10), Datum::Null);
 }
 
+/// Both bases are `ETInt` arguments in `convFunctionClass.getFunction`, so an
+/// UNSIGNED base has to reach them; matching on `Datum::Int` alone answered
+/// NULL. Captured from TiDB:
+///
+/// ```text
+/// select conv('a', cast(16 as unsigned), 2);  -> 1010
+/// ```
+#[test]
+fn conv_reads_the_unsigned_base_domain() {
+    let want = Datum::new_string("1010".to_string());
+    assert_eq!(
+        conv(&[
+            Datum::new_string("a".to_string()),
+            Datum::UInt(16),
+            Datum::Int(2)
+        ])
+        .unwrap(),
+        want
+    );
+    assert_eq!(
+        conv(&[
+            Datum::new_string("a".to_string()),
+            Datum::Int(16),
+            Datum::UInt(2)
+        ])
+        .unwrap(),
+        want
+    );
+    // A NULL base still short-circuits to NULL.
+    assert_eq!(
+        conv(&[
+            Datum::new_string("a".to_string()),
+            Datum::Null,
+            Datum::Int(2)
+        ])
+        .unwrap(),
+        Datum::Null
+    );
+}
+
 /// UTF-8 source vectors from `pkg/expression/builtin_math_test.go`'s
 /// `TestCRC32`. The GBK-only vectors belong to the executor charset domain,
 /// which this scalar `String` value intentionally does not model.
@@ -481,6 +521,31 @@ fn round_truncate() {
     assert_eq!(e("round(2.5e0)"), "FLOAT:2");
     assert_eq!(e("round(3.5e0)"), "FLOAT:4");
     assert_eq!(e("round(-2.5e0)"), "FLOAT:-2");
+    // `builtinRoundIntSig.evalInt` is `return b.args[0].EvalInt(...)`: the
+    // one-argument integer form is the IDENTITY, while the two-argument form
+    // is `builtinRoundWithFracIntSig`, which really does go through `f64`.
+    // The two answers differ past `f64`'s 53-bit exact range -- CAPTURED from
+    // TiDB, both of the rows below.
+    assert_eq!(e("round(9223372036854775806)"), "INT:9223372036854775806");
+    assert_eq!(
+        e("round(9223372036854775806, 0)"),
+        "INT:9223372036854775807"
+    );
+    assert_eq!(
+        e("round(cast(18446744073709551615 as unsigned))"),
+        "UINT:18446744073709551615"
+    );
+    // The two-argument UNSIGNED form reads the same 64 bits AS int64
+    // (`EvalInt`), so 18446744073709551610 is -6, rounds to -10, and reads
+    // back as 18446744073709551606. CAPTURED from TiDB.
+    assert_eq!(
+        e("round(cast(18446744073709551610 as unsigned), -1)"),
+        "UINT:18446744073709551606"
+    );
+    assert_eq!(
+        e("round(cast(18446744073709551615 as unsigned), -1)"),
+        "UINT:0"
+    );
     // A negative `d` rounds/truncates into the integer part.
     assert_eq!(e("round(12345, -2)"), "INT:12300");
     assert_eq!(e("truncate(12345, 2)"), "INT:12345"); // d >= 0: no-op on Int
