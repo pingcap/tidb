@@ -905,7 +905,17 @@ impl KvTable {
                 .collect();
             let encoded = tidb_codec::encode_key_in_timezone(zone, &values)
                 .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-            return Ok(TableHandle::Common(encoded));
+            // Go `kv.NewCommonHandle` pads a short encoding out to nine bytes,
+            // and so does the record-key codec this handle is about to be
+            // written through -- so a handle that skips the padding is one the
+            // READ side (which recovers it from the record key) never produces.
+            // Padding here, at the one place a row's handle is born, is what
+            // makes the write's index entries and the delete's index entries
+            // the same keys. A DECIMAL primary key is the short case: `5`
+            // encodes to four bytes.
+            let padded = tidb_txnkv::CommonHandle::new(encoded)
+                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+            return Ok(TableHandle::Common(padded.encoded().to_vec()));
         }
         match self.pk_handle_offset {
             Some(offset) => match row.get(offset) {
@@ -2149,6 +2159,70 @@ mod tests {
             .apply_auto_increment(&mut row, (1, 1), || None)
             .unwrap();
         assert_eq!(row[0], Datum::UInt((1 << 63) + 1));
+    }
+
+    /// A clustered common handle whose codec encoding is SHORTER than nine
+    /// bytes is zero-padded by the record-key codec (Go `kv.NewCommonHandle`,
+    /// `tablecodec.EncodeRowKeyWithHandle`), so a write that files its index
+    /// entries under the RAW encoding files them under a key the delete path
+    /// -- which reads its handle back out of the record key -- can never
+    /// name. `DECIMAL` is the shortest such encoding this tier can build:
+    /// `5` is four bytes.
+    #[test]
+    fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
+        let mut decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
+        decimal_type.set_flen(4);
+        decimal_type.set_decimal(0);
+        let mut t = KvTable::new(
+            77,
+            vec![
+                KvColumn {
+                    name: "pk".to_owned(),
+                    id: 1,
+                    field_type: decimal_type,
+                    default_value: None,
+                    origin_default: None,
+                    generated: None,
+                },
+                KvColumn {
+                    name: "v".to_owned(),
+                    id: 2,
+                    field_type: long(),
+                    default_value: None,
+                    origin_default: None,
+                    generated: None,
+                },
+            ],
+        );
+        t.set_common_handle_offsets(vec![0]);
+        t.add_index(KvIndex {
+            id: 1,
+            name: "idx".to_owned(),
+            unique: false,
+            column_offsets: vec![1],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+            visible: true,
+        });
+        let zone = tidb_datatype::SessionTimeZone::utc();
+        let written = t
+            .insert_row(
+                &[Datum::Decimal(tidb_datatype::Decimal::from_int(5)), Datum::Int(42)],
+                &tidb_expr::NoColumns,
+            )
+            .unwrap();
+        // The handle a WRITE derives from the row and the handle a READ
+        // derives from the record key must be the same handle, or every
+        // index entry the write filed is unreachable.
+        let scanned = t.scan_rows_with_handles(&zone).unwrap();
+        assert_eq!(scanned.len(), 1);
+        assert_eq!(scanned[0].0, written, "the write and the read disagree");
+
+        t.delete_row(&scanned[0].0, &zone).unwrap();
+        assert_eq!(
+            t.stored_keys().unwrap(),
+            Vec::<Vec<u8>>::new(),
+            "the delete left orphaned index entries behind"
+        );
     }
 
     /// The same explicit id on a SIGNED column is a value the counter is
