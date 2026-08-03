@@ -146,7 +146,6 @@ func TestFixAdminAlterDDLJobs(t *testing.T) {
 			}
 
 			ch := make(chan struct{})
-			// Wait for a running worker so ADMIN ALTER exercises dynamic adjustment. See issue #70138.
 			workerStarted := make(chan struct{}, 1)
 			testfailpoint.EnableCall(t, tc.stuckFp, func() {
 				select {
@@ -159,6 +158,7 @@ func TestFixAdminAlterDDLJobs(t *testing.T) {
 			wg.Run(func() {
 				tk1.MustExec(tc.sql)
 			})
+			// Wait for workers to start first, then adjust parameters and check.
 			<-workerStarted
 			var (
 				realWorkerCnt     atomic.Int64
