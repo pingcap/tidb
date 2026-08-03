@@ -378,6 +378,38 @@ pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, Dri
     )
 }
 
+/// How many of an `ALTER TABLE`'s actions are `CHECK`-constraint actions the
+/// `tidb_enable_check_constraint = OFF` model DISCARDS, which is one warning
+/// each. `ADD [CONSTRAINT n] CHECK` and `ALTER {CHECK|CONSTRAINT} n
+/// {ENFORCED|NOT ENFORCED}` are both in this class; `DROP {CHECK|CONSTRAINT}
+/// n` is NOT -- it raises 3940 instead, and Go raises it with the variable
+/// off just as with it on (captured).
+#[must_use]
+pub fn discarded_check_constraint_actions(alter: &tidb_ast::AlterTableStmt) -> usize {
+    alter
+        .actions
+        .iter()
+        .filter(|action| {
+            matches!(
+                action,
+                tidb_ast::AlterTableAction::AddCheck(_) | tidb_ast::AlterTableAction::AlterCheck(_)
+            )
+        })
+        .count()
+}
+
+/// How many of an `ALTER TABLE`'s actions ADD a `CHECK` constraint, which is
+/// what the `tidb_enable_check_constraint = ON` refusal is gated on: with the
+/// variable ON, Go would STORE and enforce these.
+#[must_use]
+pub fn added_check_constraint_actions(alter: &tidb_ast::AlterTableStmt) -> usize {
+    alter
+        .actions
+        .iter()
+        .filter(|action| matches!(action, tidb_ast::AlterTableAction::AddCheck(_)))
+        .count()
+}
+
 /// How many `CHECK` constraints a `CREATE TABLE` writes, counting both the
 /// table-level `[CONSTRAINT name] CHECK (expr)` form and the form written
 /// inline on a column.

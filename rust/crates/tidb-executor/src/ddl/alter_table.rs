@@ -314,6 +314,30 @@ pub fn run_alter_table_in(
                     &ctx.session_zone(),
                 )?;
             }
+            // `CHECK` constraints, under the `tidb_enable_check_constraint =
+            // OFF` model this engine implements (see `crate::ddl`'s doc and
+            // `run_create_table_in`). The variable is read by the SESSION,
+            // which refuses `ADD CHECK` outright when it is ON and files the
+            // per-action `tidb_enable_check_constraint is off` warning when it
+            // is OFF; what is left here is what the DDL itself does.
+            //
+            // Captured from real TiDB with the variable OFF:
+            //   alter table t3 add constraint cc check (a > 0)
+            //     -> OK, Warning 1105, and SHOW CREATE TABLE is UNCHANGED
+            //   insert into t3 values (-1)          -> OK (nothing enforces)
+            //   alter table e alter constraint nope not enforced
+            //     -> OK, Warning 1105 -- the name is NOT looked up
+            //   alter table e drop constraint nope  -> ERROR 3940
+            // The asymmetry in the last two is Go's, and is ported as
+            // measured: DROP resolves the name and ALTER does not.
+            tidb_ast::AlterTableAction::AddCheck(_) | tidb_ast::AlterTableAction::AlterCheck(_) => {
+            }
+            // No table in this engine can hold a CHECK constraint, so the
+            // name never resolves -- which is the same answer Go gives with
+            // the variable ON for a name that is not there (captured: 3940).
+            tidb_ast::AlterTableAction::DropCheck(drop) => {
+                return Err(DriverError::CheckConstraintNotExists(drop.name.clone()));
+            }
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE action is not supported yet",

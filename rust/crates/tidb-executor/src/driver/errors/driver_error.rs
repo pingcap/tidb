@@ -644,6 +644,12 @@ pub enum DriverError {
     /// argument is not one of the `GROUP BY` expressions. The number Go prints
     /// is the argument's 0-based position.
     FieldInGroupingNotGroupBy(usize),
+    /// Go `ErrConstraintNotFound` (3940): `Constraint '%s' does not exist.`
+    /// Raised by `ALTER TABLE ... DROP {CHECK|CONSTRAINT} <name>` -- which is
+    /// ONE action in TiDB's grammar, and names a CHECK constraint only.
+    /// Measured: `ALTER TABLE c DROP CONSTRAINT fk1` where `fk1` IS a foreign
+    /// key answers this error and leaves the key in place.
+    CheckConstraintNotExists(String),
     /// Go's `preprocessor`'s `CREATE BINDING` check (`preprocess.go`), a plain
     /// error and so 1105: the origin and hinted statements do not normalize to
     /// the same text once their hints are erased. Both normalized texts are

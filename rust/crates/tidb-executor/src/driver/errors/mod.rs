@@ -643,6 +643,11 @@ impl DriverError {
             *b"HY000",
             format!("Percentage value {percent} is out of range [1, 100]"),
         ),
+        DriverError::CheckConstraintNotExists(name) => MysqlError::new(
+            3940,
+            *b"HY000",
+            format!("Constraint '{name}' does not exist."),
+        ),
         // Go's own wording, including the colon with no following space.
         DriverError::BindingHintedSqlMismatch { origin, hinted } => MysqlError::new(
             1105,

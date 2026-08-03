@@ -1610,6 +1610,98 @@ fn a_check_constraint_is_refused_when_the_variable_is_on() {
     ));
     // A table with no CHECK constraint is unaffected by the variable.
     session.run("create table plain (a int)").unwrap();
+    // ALTER TABLE reaches the same gate rather than the generic "this ALTER
+    // TABLE action is not supported yet" it used to answer -- what Go would
+    // do here is STORE the constraint and validate the existing rows against
+    // it, so a silent no-op would be the accept-then-discard shape.
+    assert!(matches!(
+        session.run("alter table plain add constraint cc check (a > 0)"),
+        Err(DriverError::Unsupported(reason)) if reason == "CHECK constraints are only modelled with tidb_enable_check_constraint off"
+    ));
+    // `ALTER CONSTRAINT` is NOT in that gate. Captured with the variable ON:
+    // `alter table d alter constraint nope enforced` -> `Error|3940|Constraint
+    // 'nope' does not exist.` -- which this tier can always say, because no
+    // table it holds can carry a CHECK constraint.
+    let missing = session
+        .run("alter table plain alter constraint nope enforced")
+        .expect_err("3940")
+        .to_mysql_error();
+    assert_eq!(
+        (missing.code, missing.message.as_str()),
+        (3940, "Constraint 'nope' does not exist.")
+    );
+}
+
+/// `ALTER TABLE`'s three `CHECK`-constraint actions with
+/// `tidb_enable_check_constraint` at its OFF default, all captured from real
+/// TiDB through `gorun`:
+///
+/// ```text
+/// create table t3 (a int)
+/// alter table t3 add constraint cc check (a > 0)      -- OK
+/// show warnings          -- Warning|1105|tidb_enable_check_constraint is off
+/// show create table t3   -- UNCHANGED: no CONSTRAINT clause
+/// insert into t3 values (-1)                          -- OK, nothing enforces
+/// alter table e alter constraint nope not enforced    -- OK
+/// show warnings          -- Warning|1105|tidb_enable_check_constraint is off
+/// alter table e drop constraint nope                  -- ERR
+/// show errors            -- Error|3940|Constraint 'nope' does not exist.
+/// ```
+///
+/// The last two are Go's own asymmetry and are ported as measured: with the
+/// variable OFF, `DROP CONSTRAINT` still resolves the name and fails, while
+/// `ALTER CONSTRAINT` does not look it up at all.
+///
+/// `DROP CONSTRAINT` is also the only spelling for dropping a CHECK -- it is
+/// NOT MySQL's generic constraint drop. Captured: `alter table c drop
+/// constraint fk1` where `fk1` is a FOREIGN KEY answers 3940 and leaves the
+/// key in place.
+#[test]
+fn altering_check_constraints_is_discarded_and_warned_about_while_the_variable_is_off() {
+    let mut session = Session::new();
+    let warnings = |session: &Session| {
+        session
+            .warnings()
+            .iter()
+            .map(|w| (w.code, w.message.clone()))
+            .collect::<Vec<_>>()
+    };
+    let is_off = || (1105u16, "tidb_enable_check_constraint is off".to_owned());
+    let create_table_text =
+        |session: &mut Session| match session.run_with_columns("SHOW CREATE TABLE t3").unwrap() {
+            StmtOutput::Rows { rows, .. } => datum_text(&rows[0][1]).unwrap(),
+            other => panic!("expected rows, got {other:?}"),
+        };
+
+    session.run("create table t3 (a int)").unwrap();
+    let before = create_table_text(&mut session);
+
+    session
+        .run("alter table t3 add constraint cc check (a > 0)")
+        .unwrap();
+    assert_eq!(warnings(&session), vec![is_off()]);
+    assert_eq!(
+        create_table_text(&mut session),
+        before,
+        "the constraint is discarded, so the restored DDL cannot change"
+    );
+    // Nothing enforces it, which is the half a stored-but-unenforced
+    // constraint would get wrong.
+    session.run("insert into t3 values (-1)").unwrap();
+
+    session
+        .run("alter table t3 alter constraint nope not enforced")
+        .expect("Go does not resolve the name here");
+    assert_eq!(warnings(&session), vec![is_off()]);
+
+    let missing = session
+        .run("alter table t3 drop constraint nope")
+        .expect_err("Go DOES resolve the name here")
+        .to_mysql_error();
+    assert_eq!(
+        (missing.code, missing.message.as_str()),
+        (3940, "Constraint 'nope' does not exist.")
+    );
 }
 
 /// A system variable whose assignment Go CLAMPS rather than refuses reports

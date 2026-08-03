@@ -541,7 +541,31 @@ impl Session {
                     self.drain_eval_warnings(&ctx);
                     result
                 }
-                DdlStmt::AlterTable(_) => {
+                DdlStmt::AlterTable(alter) => {
+                    // `CHECK` constraints reach ALTER TABLE through the same
+                    // `tidb_enable_check_constraint` model CREATE TABLE uses
+                    // (see `tidb_executor::run_create_table_in`): with the
+                    // variable ON, Go STORES and enforces an added
+                    // constraint, none of which is modelled, so it is refused
+                    // with the same reason rather than silently discarded.
+                    // `ALTER CONSTRAINT` is NOT in that gate: Go answers 3940
+                    // for it when the variable is on, which this tier can
+                    // always say honestly because no table here holds one.
+                    let discarded_checks = tidb_executor::discarded_check_constraint_actions(alter);
+                    if self.enable_check_constraint() {
+                        if tidb_executor::added_check_constraint_actions(alter) > 0 {
+                            return Err(DriverError::unsupported(
+                                "CHECK constraints are only modelled with \
+                                 tidb_enable_check_constraint off",
+                            ));
+                        }
+                        if let Some(name) = alter.actions.iter().find_map(|action| match action {
+                            tidb_ast::AlterTableAction::AlterCheck(alter) => Some(&alter.name),
+                            _ => None,
+                        }) {
+                            return Err(DriverError::CheckConstraintNotExists(name.clone()));
+                        }
+                    }
                     let current_db = self.current_db.clone();
                     // `ADD INDEX` backfills, so the same write level applies.
                     let ctx = self.statement_context(true);
@@ -549,6 +573,17 @@ impl Session {
                         tidb_executor::run_alter_table_in(sql, catalog, &current_db, &ctx)?;
                         Ok(StmtOutput::Affected(0))
                     });
+                    // One `tidb_enable_check_constraint is off` warning per
+                    // discarded action, the same rule CREATE TABLE follows.
+                    if result.is_ok() {
+                        for _ in 0..discarded_checks {
+                            self.append_warning(
+                                WarningLevel::Warning,
+                                CHECK_CONSTRAINT_IS_OFF_CODE,
+                                CHECK_CONSTRAINT_IS_OFF_MESSAGE.to_owned(),
+                            );
+                        }
+                    }
                     // A DDL action raises notes of its own -- an `IF EXISTS`
                     // that skipped something files the error it swallowed as
                     // Go's `Note`, from inside the executor. Draining after
