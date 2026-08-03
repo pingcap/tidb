@@ -260,13 +260,21 @@ pub(crate) fn find_in_set_with_collation(
 
 /// `EXPORT_SET(bits, on, off[, separator[, number_of_bits]])`, ported from
 /// `builtinExportSet{3,4,5}ArgSig` and `exportSet` in
-/// `pkg/expression/builtin_string.go`.  This port accepts the native signed
-/// integer bits domain; string/decimal coercion would require TiDB's warning
-/// context and is intentionally not approximated.
+/// `pkg/expression/builtin_string.go`.
+///
+/// `bits` and `number_of_bits` are both `EvalInt` arguments in Go, so every
+/// argument domain that has an integer reading reaches them -- notably
+/// `Datum::UInt`, which is what `1|4` produces here (`ops.rs`'s bitwise
+/// operators return the unsigned domain, exactly as TiDB's do) and what
+/// `CAST(5 AS UNSIGNED)` produces. `EvalInt` on an unsigned source keeps the
+/// same 64 bits and reads them as `int64`, which is `crate::cast::to_i64_signed`.
+/// Matching on `Datum::Int` alone made the idiomatic `EXPORT_SET(1|4, ...)`
+/// spelling return NULL.
 fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let Datum::Int(bits) = vals[0] else {
+    if vals[0].is_null() {
         return Ok(Datum::Null);
-    };
+    }
+    let bits = crate::cast::to_i64_signed(&vals[0]);
     let (Some(on), Some(off)) = (coerce_str(&vals[1])?, coerce_str(&vals[2])?) else {
         return Ok(Datum::Null);
     };
@@ -279,11 +287,10 @@ fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
         ",".to_string()
     };
     let mut count = if vals.len() == 5 {
-        match vals[4] {
-            Datum::Null => return Ok(Datum::Null),
-            Datum::Int(count) => count,
-            _ => return Err(EvalError::Unsupported("EXPORT_SET number_of_bits coercion")),
+        if vals[4].is_null() {
+            return Ok(Datum::Null);
         }
+        crate::cast::to_i64_signed(&vals[4])
     } else {
         64
     };
@@ -316,6 +323,74 @@ mod tests {
         dispatch(name, vals, &crate::NoColumns)
             .expect("string2 name/arity should dispatch")
             .expect("Go-derived vector should evaluate")
+    }
+
+    /// Both integer arguments are `EvalInt` in Go, so the UNSIGNED domain has
+    /// to reach them. `1|4` is the idiomatic spelling of a bit mask and this
+    /// crate's bitwise operators return `Datum::UInt`, exactly as TiDB's do;
+    /// matching on `Datum::Int` alone answered NULL for it, and an unsigned
+    /// `number_of_bits` was a hard error. Captured from TiDB:
+    ///
+    /// ```text
+    /// select export_set(1|4,'Y','N',',',5);                  -> Y,N,Y,N,N
+    /// select export_set(5,'Y','N',',',cast(5 as unsigned));  -> Y,N,Y,N,N
+    /// ```
+    #[test]
+    fn export_set_reads_the_unsigned_integer_domain() {
+        let want = Datum::new_string("Y,N,Y,N,N".to_string());
+        assert_eq!(
+            call(
+                "EXPORT_SET",
+                &[
+                    Datum::UInt(5),
+                    string("Y"),
+                    string("N"),
+                    string(","),
+                    Datum::Int(5)
+                ]
+            ),
+            want
+        );
+        assert_eq!(
+            call(
+                "EXPORT_SET",
+                &[
+                    Datum::Int(5),
+                    string("Y"),
+                    string("N"),
+                    string(","),
+                    Datum::UInt(5)
+                ]
+            ),
+            want
+        );
+        // A NULL in either integer position still short-circuits to NULL.
+        assert_eq!(
+            call(
+                "EXPORT_SET",
+                &[
+                    Datum::Null,
+                    string("Y"),
+                    string("N"),
+                    string(","),
+                    Datum::Int(5)
+                ]
+            ),
+            Datum::Null
+        );
+        assert_eq!(
+            call(
+                "EXPORT_SET",
+                &[
+                    Datum::Int(5),
+                    string("Y"),
+                    string("N"),
+                    string(","),
+                    Datum::Null
+                ]
+            ),
+            Datum::Null
+        );
     }
 
     /// `builtinTranslateUTF8Sig` (rune path): map, delete-past-`to`, first
