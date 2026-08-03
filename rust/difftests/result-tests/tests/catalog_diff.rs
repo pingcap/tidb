@@ -420,7 +420,12 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// `NONCLUSTERED`, and the `AUTO_INCREMENT=505488` counter is not printed at
 /// all. Both belong to the clustered-index and auto-increment surfaces, not
 /// to partitioning.
-const KNOWN_CATALOG_DIVERGENCES: usize = 105;
+/// 105 -> 102: the CREATE TABLE index-key validations landed (Go's
+/// `buildIndexColumns` running `sumLength` and `checkIndexColumn`'s 1167),
+/// so three catalog reads whose tables TiDB refuses to create are now
+/// refused here too, and their `SHOW CREATE TABLE` divergences vanish with
+/// the tables.
+const KNOWN_CATALOG_DIVERGENCES: usize = 102;
 
 /// The floor on catalog reads that MATCH TiDB's recording exactly. See
 /// [`KNOWN_CATALOG_DIVERGENCES`] for why a divergence ceiling alone is not a
@@ -499,7 +504,7 @@ const MATCHED_FLOOR: usize = 114;
 /// reads back `bigint` with no `VIRTUAL GENERATED` in `Extra` -- a separate,
 /// still-open gap -- so the count could not see this: the fingerprint is the
 /// only gate that could.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 9_329_879_596_375_632_442;
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 3_498_801_845_461_611_979;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.
