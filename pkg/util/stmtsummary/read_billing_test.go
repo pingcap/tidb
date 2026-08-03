@@ -23,12 +23,12 @@ import (
 
 func TestReadBillingDemoAggregationCaps(t *testing.T) {
 	stats := ReadBillingDemoStatementStats{
-		ModelVersion:  "v1",
+		ModelVersion:  "v3",
 		WeightVersion: "v1",
 	}
 	for i := 0; i < MaxReadBillingDemoBaseUnitKeysPerRecord+2; i++ {
 		stats.BaseUnits = append(stats.BaseUnits, ReadBillingDemoBaseUnitSample{
-			ModelVersion:   "v1",
+			ModelVersion:   "v3",
 			WeightVersion:  "v1",
 			Site:           "tidb",
 			OpClass:        fmt.Sprintf("op_%03d", i),
@@ -46,6 +46,26 @@ func TestReadBillingDemoAggregationCaps(t *testing.T) {
 	require.Len(t, baseAggs, MaxReadBillingDemoBaseUnitKeysPerRecord)
 	require.Equal(t, uint64(2), requireReadBillingDemoStatusReason(t, ReadBillingDemoStatusEntriesFromMap(statusAggs), readBillingDemoReasonAggregation).Count)
 	require.Equal(t, float64(MaxReadBillingDemoBaseUnitKeysPerRecord*(MaxReadBillingDemoBaseUnitKeysPerRecord+1)/2), acceptedSummary.SumReadBillingDemoInputRows)
+
+	v4Stats := ReadBillingDemoStatementStats{
+		ModelVersion:  "v4",
+		WeightVersion: "v3-resource-formula-uncalibrated",
+		BaseUnits: []ReadBillingDemoBaseUnitSample{{
+			ModelVersion:  "v4",
+			WeightVersion: "v3-resource-formula-uncalibrated",
+			Site:          "tidb",
+			OpClass:       "projection_eval",
+			OperatorKind:  "projection",
+			Unit:          "input_rows",
+			InputSource:   "runtime_child_act_rows",
+			InputSide:     "all",
+			Value:         10,
+		}},
+	}
+	_, _, v4Summary := AddReadBillingDemoStatementStatsToMaps(nil, nil, &v4Stats)
+	require.Zero(t, v4Summary.SumReadBillingDemoFixedEvents)
+	require.Zero(t, v4Summary.SumReadBillingDemoInputRows)
+	require.Zero(t, v4Summary.SumReadBillingDemoInputBytes)
 
 	baseEntries, statusEntries, acceptedSummary := AddReadBillingDemoStatementStatsToEntries(nil, nil, &stats)
 	require.Len(t, baseEntries, MaxReadBillingDemoBaseUnitKeysPerRecord)
@@ -84,33 +104,103 @@ func TestReadBillingDemoAggregationCaps(t *testing.T) {
 }
 
 func TestReadBillingDemoDMLKindAggregation(t *testing.T) {
-	stats := ReadBillingDemoStatementStats{ModelVersion: "v2", WeightVersion: "v1"}
+	stats := ReadBillingDemoStatementStats{ModelVersion: "v6", WeightVersion: "test-v6-calibrated"}
 	for _, dmlKind := range []string{"insert", "update"} {
+		for _, unit := range []string{"cpu_work", "encoded_mutation_count"} {
+			stats.BaseUnits = append(stats.BaseUnits, ReadBillingDemoBaseUnitSample{
+				ModelVersion:   "v6",
+				WeightVersion:  "test-v6-calibrated",
+				Site:           "tidb",
+				OpClass:        "kv_mutation",
+				OperatorKind:   "memdb_mutation",
+				DMLKind:        dmlKind,
+				Unit:           unit,
+				InputSource:    "stmt_memdb_mutation_calls",
+				InputSide:      "all",
+				RowWidthSource: "not_applicable",
+				Value:          1,
+			})
+		}
+	}
+	stats.BaseUnits = append(stats.BaseUnits,
+		ReadBillingDemoBaseUnitSample{
+			ModelVersion: "v6", WeightVersion: "test-v6-calibrated", Site: "tidb", OpClass: "reader_transport", OperatorKind: "mixed_reader",
+			Unit: "net_bytes", InputSource: "ruv2_metrics", InputSide: "all", RowWidthSource: "not_applicable", Value: 4,
+		},
+		ReadBillingDemoBaseUnitSample{
+			ModelVersion: "v6", WeightVersion: "test-v6-calibrated", Site: "tidb", OpClass: "sql_frontend", OperatorKind: "parser_optimizer",
+			Unit: "frontend_compile_bytes", InputSource: "statement_original_sql", InputSide: "all", RowWidthSource: "not_applicable", Value: 29,
+		},
+		ReadBillingDemoBaseUnitSample{
+			ModelVersion: "v6", WeightVersion: "test-v6-calibrated", Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get",
+			Unit: "cpu_work", InputSource: "snapshot_runtime_stats", InputSide: "all", RowWidthSource: "not_applicable", Value: 2,
+		},
+		ReadBillingDemoBaseUnitSample{
+			ModelVersion: "v6", WeightVersion: "test-v6-calibrated", Site: "tikv", OpClass: "kv_write", OperatorKind: "txn_write", DMLKind: "insert",
+			Unit: "write_keys", InputSource: "commit_detail", InputSide: "all", RowWidthSource: "not_applicable", Value: 3,
+		},
+		ReadBillingDemoBaseUnitSample{
+			ModelVersion: "v6", WeightVersion: "test-v6-calibrated", Site: "tikv", OpClass: "kv_write", OperatorKind: "txn_write", DMLKind: "insert",
+			Unit: "write_bytes", InputSource: "commit_detail", InputSide: "all", RowWidthSource: "not_applicable", Value: 66,
+		},
+	)
+	for unit, value := range map[string]float64{
+		"scan_bytes": 37, "total_keys": 2, "processed_keys": 1, "processed_keys_size": 37,
+		"detail_records": 1, "completed_responses": 1,
+	} {
 		stats.BaseUnits = append(stats.BaseUnits, ReadBillingDemoBaseUnitSample{
-			ModelVersion:   "v2",
-			WeightVersion:  "v1",
-			Site:           "tidb",
-			OpClass:        "kv_mutation",
-			OperatorKind:   "memdb_mutation",
-			DMLKind:        dmlKind,
-			Unit:           "encoded_mutation_count",
-			InputSource:    "stmt_memdb_mutation_calls",
-			InputSide:      "all",
-			RowWidthSource: "not_applicable",
-			Value:          1,
+			ModelVersion: "v6", WeightVersion: "test-v6-calibrated", Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get",
+			Unit: unit, InputSource: "snapshot_runtime_stats", InputSide: "all", RowWidthSource: "not_applicable", Value: value,
 		})
 	}
 
 	aggs, _, _ := AddReadBillingDemoStatementStatsToMaps(nil, nil, &stats)
-	require.Len(t, aggs, 2)
+	require.Len(t, aggs, 15)
 	entries := ReadBillingDemoBaseUnitEntriesFromMap(aggs)
-	require.Equal(t, "insert", entries[0].DMLKind)
-	require.Equal(t, "update", entries[1].DMLKind)
+	seenUnits := make(map[string]int)
 	for _, entry := range entries {
-		require.Equal(t, "kv_mutation", entry.OpClass)
-		require.Equal(t, "memdb_mutation", entry.OperatorKind)
-		require.Equal(t, "encoded_mutation_count", entry.Unit)
+		require.Equal(t, "all", entry.InputSide)
+		switch entry.Unit {
+		case "encoded_mutation_count":
+			require.Equal(t, "kv_mutation", entry.OpClass)
+			require.Equal(t, "memdb_mutation", entry.OperatorKind)
+			require.Equal(t, "stmt_memdb_mutation_calls", entry.InputSource)
+			require.Contains(t, []string{"insert", "update"}, entry.DMLKind)
+		case "net_bytes":
+			require.Equal(t, "reader_transport", entry.OpClass)
+			require.Equal(t, "mixed_reader", entry.OperatorKind)
+			require.Equal(t, "ruv2_metrics", entry.InputSource)
+		case "frontend_compile_bytes":
+			require.Equal(t, "sql_frontend", entry.OpClass)
+			require.Equal(t, "parser_optimizer", entry.OperatorKind)
+			require.Equal(t, "statement_original_sql", entry.InputSource)
+		case "cpu_work":
+			if entry.OpClass == "kv_mutation" {
+				require.Equal(t, "memdb_mutation", entry.OperatorKind)
+				require.Equal(t, "stmt_memdb_mutation_calls", entry.InputSource)
+				require.Contains(t, []string{"insert", "update"}, entry.DMLKind)
+				break
+			}
+			fallthrough
+		case "scan_bytes", "total_keys", "processed_keys", "processed_keys_size", "detail_records", "completed_responses":
+			require.Equal(t, "kv_point_lookup", entry.OpClass)
+			require.Equal(t, "point_get", entry.OperatorKind)
+			require.Equal(t, "snapshot_runtime_stats", entry.InputSource)
+		case "write_keys", "write_bytes":
+			require.Equal(t, "kv_write", entry.OpClass)
+			require.Equal(t, "txn_write", entry.OperatorKind)
+			require.Equal(t, "insert", entry.DMLKind)
+			require.Equal(t, "commit_detail", entry.InputSource)
+		default:
+			require.Failf(t, "unexpected unit", "entry=%+v", entry)
+		}
+		seenUnits[entry.Unit]++
 	}
+	require.Equal(t, map[string]int{
+		"cpu_work": 3, "encoded_mutation_count": 2, "net_bytes": 1, "frontend_compile_bytes": 1, "scan_bytes": 1,
+		"total_keys": 1, "processed_keys": 1, "processed_keys_size": 1,
+		"detail_records": 1, "completed_responses": 1, "write_keys": 1, "write_bytes": 1,
+	}, seenUnits)
 }
 
 func TestReadBillingDemoReservedStatusMergeBypassesStatusCap(t *testing.T) {

@@ -143,14 +143,21 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				ruDetails = ruDetailsRaw.(*clientutil.RUDetails).Clone()
 			}
 			ruv2Metrics := execdetails.SyncRUV2MetricsFromContext(ctx)
-			if ruDetails != nil || ruv2Metrics != nil {
+			execDetails := e.Ctx().GetSessionVars().StmtCtx.GetExecDetails()
+			ruv2Snapshot := ruv2Metrics.CloneWithCommitDetailsForReporting(execDetails.CommitDetail)
+			// Autocommit EXPLAIN ANALYZE DML has already committed before this
+			// snapshot is rendered, while statement finalization has not merged
+			// its commit details into the live metrics yet. Complete only the
+			// reporting snapshot here; finalization remains the sole merger of
+			// commit details into live metrics and cannot double count them.
+			if ruDetails != nil || ruv2Snapshot != nil {
 				ruVersion := rmclient.DefaultRUVersion
 				if do := domain.GetDomain(e.Ctx()); do != nil {
 					ruVersion = do.GetRUVersion()
 				}
 				coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{
 					RUDetails: ruDetails,
-					Metrics:   ruv2Metrics.Clone(),
+					Metrics:   ruv2Snapshot,
 					Weights:   e.Ctx().GetSessionVars().RUV2Weights(),
 					RUVersion: ruVersion,
 				})

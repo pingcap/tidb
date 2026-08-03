@@ -171,6 +171,8 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
 		ctx.GetSessionVars().RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
 		require.NotNil(t, ctx.GetSessionVars().RUV2Metrics)
+		commitDetails := &clientutil.CommitDetails{WriteKeys: 3, WriteSize: 66}
+		ctx.GetSessionVars().StmtCtx.SyncExecDetails.MergeExecDetails(commitDetails)
 
 		analyzeExec := &mockEmptyOperator{
 			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), 1),
@@ -190,9 +192,30 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 
 		metrics := ctx.GetSessionVars().RUV2Metrics
 		require.Equal(t, int64(15), metrics.ExecutorL5InsertRows())
+		require.Zero(t, metrics.WriteKeys())
+		require.Zero(t, metrics.WriteSize())
+
+		rootStats := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID())
+		_, groups := rootStats.MergeStats()
+		var ruStats *execdetails.RURuntimeStats
+		for _, group := range groups {
+			if stats, ok := group.(*execdetails.RURuntimeStats); ok {
+				ruStats = stats
+				break
+			}
+		}
+		require.NotNil(t, ruStats)
+		require.Equal(t, int64(3), ruStats.Metrics.WriteKeys())
+		require.Equal(t, int64(66), ruStats.Metrics.WriteSize())
+
+		// Statement finalization merges the same commit details once into the
+		// live metrics; the Explain snapshot above must not have modified them.
+		execdetails.UpdateRUV2MetricsFromCommitDetails(metrics, commitDetails)
+		require.Equal(t, int64(3), metrics.WriteKeys())
+		require.Equal(t, int64(66), metrics.WriteSize())
 		// DefaultRUVersion is v1 (no domain in unit test), so RU stats show RRU+WRU format.
 		// Verify the stats are registered and contain "RU:" prefix.
-		rootStatsStr := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID()).String()
+		rootStatsStr := rootStats.String()
 		require.Contains(t, rootStatsStr, "RU:")
 
 		require.Equal(t, int64(15), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())

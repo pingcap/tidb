@@ -283,6 +283,9 @@ func (a *ReadBillingDemoStatusAgg) addEntry(entry ReadBillingDemoStatusAggEntry)
 }
 
 func (s *ReadBillingDemoBaseUnitSummary) addSample(sample ReadBillingDemoBaseUnitSample) {
+	if sample.ModelVersion != "v3" {
+		return
+	}
 	switch sample.Unit {
 	case "fixed_events":
 		s.SumReadBillingDemoFixedEvents += sample.Value
@@ -294,6 +297,9 @@ func (s *ReadBillingDemoBaseUnitSummary) addSample(sample ReadBillingDemoBaseUni
 }
 
 func (s *ReadBillingDemoBaseUnitSummary) addEntry(entry ReadBillingDemoBaseUnitAggEntry) {
+	if entry.ModelVersion != "v3" {
+		return
+	}
 	switch entry.Unit {
 	case "fixed_events":
 		s.SumReadBillingDemoFixedEvents += entry.Value

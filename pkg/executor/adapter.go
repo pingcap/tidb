@@ -1797,7 +1797,10 @@ type readBillingDemoGeneralLogUnit struct {
 	site         string
 	opClass      string
 	operatorKind string
+	dmlKind      string
 	unit         string
+	inputSource  string
+	inputSide    string
 	value        float64
 }
 
@@ -1805,7 +1808,10 @@ func (u readBillingDemoGeneralLogUnit) MarshalLogObject(enc zapcore.ObjectEncode
 	enc.AddString("site", u.site)
 	enc.AddString("op_class", u.opClass)
 	enc.AddString("operator_kind", u.operatorKind)
+	enc.AddString("dml_kind", u.dmlKind)
 	enc.AddString("unit", u.unit)
+	enc.AddString("input_source", u.inputSource)
+	enc.AddString("input_side", u.inputSide)
 	enc.AddFloat64("value", u.value)
 	return nil
 }
@@ -1828,7 +1834,10 @@ func buildReadBillingDemoGeneralLogUnits(stats stmtsummary.ReadBillingDemoStatem
 			site:         sample.Site,
 			opClass:      sample.OpClass,
 			operatorKind: sample.OperatorKind,
+			dmlKind:      sample.DMLKind,
 			unit:         sample.Unit,
+			inputSource:  sample.InputSource,
+			inputSide:    sample.InputSide,
 		}
 		totals[key] += sample.Value
 	}
@@ -1848,7 +1857,16 @@ func buildReadBillingDemoGeneralLogUnits(stats stmtsummary.ReadBillingDemoStatem
 		if cmp := strings.Compare(left.operatorKind, right.operatorKind); cmp != 0 {
 			return cmp
 		}
-		return strings.Compare(left.unit, right.unit)
+		if cmp := strings.Compare(left.dmlKind, right.dmlKind); cmp != 0 {
+			return cmp
+		}
+		if cmp := strings.Compare(left.unit, right.unit); cmp != 0 {
+			return cmp
+		}
+		if cmp := strings.Compare(left.inputSource, right.inputSource); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(left.inputSide, right.inputSide)
 	})
 	return units
 }

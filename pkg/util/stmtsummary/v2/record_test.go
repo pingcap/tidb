@@ -125,10 +125,10 @@ func TestStmtRecord(t *testing.T) {
 func TestStmtRecordReadBillingDemoStructuredStats(t *testing.T) {
 	info := GenerateStmtExecInfo4Test("digest_read_billing")
 	info.ReadBillingDemoStats = stmtsummarybase.ReadBillingDemoStatementStats{
-		ModelVersion:  "v1",
+		ModelVersion:  "v3",
 		WeightVersion: "v1",
 		Statuses: []stmtsummarybase.ReadBillingDemoStatusSample{{
-			ModelVersion:  "v1",
+			ModelVersion:  "v3",
 			WeightVersion: "v1",
 			Site:          "statement",
 			OpClass:       "statement",
@@ -138,7 +138,7 @@ func TestStmtRecordReadBillingDemoStructuredStats(t *testing.T) {
 		}},
 		BaseUnits: []stmtsummarybase.ReadBillingDemoBaseUnitSample{
 			{
-				ModelVersion:   "v1",
+				ModelVersion:   "v3",
 				WeightVersion:  "v1",
 				Site:           "tidb",
 				OpClass:        "projection_eval",
@@ -152,7 +152,7 @@ func TestStmtRecordReadBillingDemoStructuredStats(t *testing.T) {
 				RowWidth:       16,
 			},
 			{
-				ModelVersion:   "v1",
+				ModelVersion:   "v3",
 				WeightVersion:  "v1",
 				Site:           "tidb",
 				OpClass:        "projection_eval",

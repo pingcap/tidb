@@ -707,6 +707,245 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 		require.NotContains(t, completionFields["normalized_sql"], "secret_literal")
 	})
 
+	t.Run("preview RU general log fails closed on incomplete point scan detail", func(t *testing.T) {
+		core, recorded := observer.New(zap.InfoLevel)
+		oldLogger := logutil.GeneralLogger
+		logutil.GeneralLogger = zap.New(core)
+		oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+		t.Cleanup(func() {
+			logutil.GeneralLogger = oldLogger
+			vardef.ProcessGeneralLog.Store(oldGeneralLog)
+		})
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table point_get_rpc_ru_units (id int primary key, v int)")
+		tk.MustExec("insert into point_get_rpc_ru_units values (1, 10), (2, 20)")
+		tk.MustExec("set tidb_enable_read_billing_demo = on")
+		vardef.ProcessGeneralLog.Store(true)
+
+		testCases := []struct {
+			name              string
+			querySQL          string
+			statementRequests int64
+			rows              []string
+		}{
+			{"point get", "select v from point_get_rpc_ru_units where id = 1", 3, []string{"10"}},
+			{"batch point get", "select v from point_get_rpc_ru_units where id in (1, 2) order by v", 4, []string{"10", "20"}},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				recorded.TakeAll()
+				ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+				execdetails.RUV2MetricsFromContext(ctx).AddResourceManagerReadCnt(tc.statementRequests)
+				tk.MustQueryWithContext(ctx, tc.querySQL).Check(testkit.Rows(tc.rows...))
+
+				entries := recorded.TakeAll()
+				var completionEntries []observer.LoggedEntry
+				for _, entry := range entries {
+					if entry.Message == "GENERAL_LOG_RU_UNITS" {
+						completionEntries = append(completionEntries, entry)
+					}
+				}
+				require.Len(t, completionEntries, 1)
+				requireReadBillingDemoGeneralLogIdentity(t, completionEntries[0], tc.querySQL)
+				rawUnits, ok := completionEntries[0].ContextMap()["units"].([]any)
+				require.True(t, ok)
+				require.Empty(t, rawUnits)
+			})
+		}
+	})
+
+	t.Run("preview RU outputs preserve a skipped lookup inner", func(t *testing.T) {
+		core, recorded := observer.New(zap.InfoLevel)
+		oldLogger := logutil.GeneralLogger
+		logutil.GeneralLogger = zap.New(core)
+		oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+		t.Cleanup(func() {
+			logutil.GeneralLogger = oldLogger
+			vardef.ProcessGeneralLog.Store(oldGeneralLog)
+		})
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+		tk.MustExec("use test")
+		originEnableStmtSummary := fmt.Sprint(tk.MustQuery("select @@global.tidb_enable_stmt_summary").Rows()[0][0])
+		defer tk.MustExec(fmt.Sprintf("set global tidb_enable_stmt_summary = %s", originEnableStmtSummary))
+		tk.MustExec("set global tidb_enable_stmt_summary = 0")
+		tk.MustExec("set global tidb_enable_stmt_summary = 1")
+		tk.MustExec("create table read_billing_empty_outer(a int primary key, b int, key idx_b(b))")
+		tk.MustExec("create table read_billing_lookup_inner(a int primary key, b int, key idx_b(b))")
+		tk.MustExec("insert into read_billing_lookup_inner values (1, 1), (2, 2)")
+		tk.MustExec("set tidb_enable_read_billing_demo = on")
+		vardef.ProcessGeneralLog.Store(true)
+		recorded.TakeAll()
+
+		commonMetricLabels := map[string]string{
+			"model_version":  "v6",
+			"weight_version": "v6-frontend-compile-work-uncalibrated",
+		}
+		metricLabels := func(labels map[string]string) map[string]string {
+			result := make(map[string]string, len(commonMetricLabels)+len(labels))
+			for name, value := range commonMetricLabels {
+				result[name] = value
+			}
+			for name, value := range labels {
+				result[name] = value
+			}
+			return result
+		}
+		successLabels := metricLabels(map[string]string{"status": "success"})
+		unknownLabels := metricLabels(map[string]string{"status": "unknown_input"})
+		joinExpressionLabels := metricLabels(map[string]string{
+			"site": "tidb", "op_class": "join_lookup", "operator_kind": "indexjoin", "unit": "expression_count",
+			"input_source": "physical_plan", "input_side": "all",
+		})
+		joinStatusLabels := metricLabels(map[string]string{
+			"site": "tidb", "op_class": "join_lookup", "operator_kind": "indexjoin", "status": "ok", "reason": "none",
+		})
+		outerScanStatusLabels := metricLabels(map[string]string{
+			"site": "tikv", "op_class": "kv_range_scan", "operator_kind": "tablefullscan", "status": "ok", "reason": "none",
+		})
+		innerScanStatusLabels := metricLabels(map[string]string{
+			"site": "tikv", "op_class": "kv_range_scan", "operator_kind": "indexrangescan", "status": "ok", "reason": "none",
+		})
+		outerScanBytesLabels := metricLabels(map[string]string{
+			"site": "tikv", "op_class": "kv_range_scan", "operator_kind": "tablefullscan", "unit": "scan_bytes",
+			"input_source": "scan_detail", "input_side": "all",
+		})
+		innerScanBytesLabels := metricLabels(map[string]string{
+			"site": "tikv", "op_class": "kv_range_scan", "operator_kind": "indexrangescan", "unit": "scan_bytes",
+			"input_source": "scan_detail", "input_side": "all",
+		})
+		outerReaderStatusLabels := metricLabels(map[string]string{
+			"site": "tidb", "op_class": "reader_transport", "operator_kind": "table_reader", "status": "ok", "reason": "none",
+		})
+		innerReaderStatusLabels := metricLabels(map[string]string{
+			"site": "tidb", "op_class": "reader_transport", "operator_kind": "index_reader", "status": "ok", "reason": "none",
+		})
+		outerReaderNetBytesLabels := metricLabels(map[string]string{
+			"site": "tidb", "op_class": "reader_transport", "operator_kind": "table_reader", "unit": "net_bytes",
+			"input_source": "ruv2_metrics", "input_side": "all",
+		})
+		innerReaderNetBytesLabels := metricLabels(map[string]string{
+			"site": "tidb", "op_class": "reader_transport", "operator_kind": "index_reader", "unit": "net_bytes",
+			"input_source": "ruv2_metrics", "input_side": "all",
+		})
+
+		beforeSuccess, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoStatementsCounter, successLabels)
+		beforeUnknown, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoStatementsCounter, unknownLabels)
+		beforeJoinExpression, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, joinExpressionLabels)
+		beforeJoinStatus, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoOperatorStatusCounter, joinStatusLabels)
+		beforeOuterScanStatus, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoOperatorStatusCounter, outerScanStatusLabels)
+		beforeInnerScanStatus, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoOperatorStatusCounter, innerScanStatusLabels)
+		beforeOuterScanBytes, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, outerScanBytesLabels)
+		beforeInnerScanBytes, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, innerScanBytesLabels)
+		beforeOuterReaderStatus, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoOperatorStatusCounter, outerReaderStatusLabels)
+		beforeInnerReaderStatus, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoOperatorStatusCounter, innerReaderStatusLabels)
+		beforeOuterReaderNetBytes, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, outerReaderNetBytesLabels)
+		beforeInnerReaderNetBytes, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, innerReaderNetBytesLabels)
+
+		lookupSQL := "select /*+ INL_JOIN(i) */ o.a, i.a from read_billing_empty_outer o ignore index(idx_b) straight_join read_billing_lookup_inner i use index(idx_b) on o.b = i.b"
+		queryCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		execdetails.RUV2MetricsFromContext(queryCtx).AddResourceManagerReadCnt(1)
+		tk.MustQueryWithContext(queryCtx, lookupSQL).Check(testkit.Rows())
+
+		afterSuccess, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoStatementsCounter, successLabels)
+		afterUnknown, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoStatementsCounter, unknownLabels)
+		afterJoinExpression, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, joinExpressionLabels)
+		afterJoinStatus, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoOperatorStatusCounter, joinStatusLabels)
+		afterOuterScanStatus, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoOperatorStatusCounter, outerScanStatusLabels)
+		afterInnerScanStatus, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoOperatorStatusCounter, innerScanStatusLabels)
+		afterOuterScanBytes, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, outerScanBytesLabels)
+		afterInnerScanBytes, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, innerScanBytesLabels)
+		afterOuterReaderStatus, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoOperatorStatusCounter, outerReaderStatusLabels)
+		afterInnerReaderStatus, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoOperatorStatusCounter, innerReaderStatusLabels)
+		afterOuterReaderNetBytes, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, outerReaderNetBytesLabels)
+		afterInnerReaderNetBytes, _ := readExecutorCounterVecValueByLabels(t, metrics.ReadBillingDemoBaseUnitsCounter, innerReaderNetBytesLabels)
+
+		require.Equal(t, beforeSuccess+1, afterSuccess)
+		require.Equal(t, beforeUnknown, afterUnknown)
+		require.Equal(t, beforeJoinExpression+1, afterJoinExpression)
+		require.Equal(t, beforeJoinStatus+1, afterJoinStatus)
+		require.Equal(t, beforeOuterScanStatus+1, afterOuterScanStatus)
+		require.Equal(t, beforeInnerScanStatus, afterInnerScanStatus)
+		require.Equal(t, beforeOuterScanBytes, afterOuterScanBytes)
+		require.Equal(t, beforeInnerScanBytes, afterInnerScanBytes)
+		require.Equal(t, beforeOuterReaderStatus+1, afterOuterReaderStatus)
+		require.Equal(t, beforeInnerReaderStatus, afterInnerReaderStatus)
+		require.Equal(t, beforeOuterReaderNetBytes, afterOuterReaderNetBytes)
+		require.Equal(t, beforeInnerReaderNetBytes, afterInnerReaderNetBytes)
+
+		var completionEntries []observer.LoggedEntry
+		for _, entry := range recorded.TakeAll() {
+			if entry.Message == "GENERAL_LOG_RU_UNITS" {
+				completionEntries = append(completionEntries, entry)
+			}
+		}
+		require.Len(t, completionEntries, 1)
+		requireReadBillingDemoGeneralLogIdentity(t, completionEntries[0], lookupSQL)
+		rawUnits, ok := completionEntries[0].ContextMap()["units"].([]any)
+		require.True(t, ok)
+		joinUnits := make(map[string]float64)
+		rangeScanUnits := 0
+		rangeScanKinds := make(map[string]struct{})
+		transportUnits := make(map[string]float64)
+		transportKinds := make(map[string]struct{})
+		for _, rawUnit := range rawUnits {
+			unit, ok := rawUnit.(map[string]any)
+			require.True(t, ok)
+			switch unit["op_class"] {
+			case "join_lookup":
+				require.Equal(t, "tidb", unit["site"])
+				require.Equal(t, "indexjoin", unit["operator_kind"])
+				joinUnits[unit["unit"].(string)] = unit["value"].(float64)
+			case "kv_range_scan":
+				rangeScanUnits++
+				rangeScanKinds[unit["operator_kind"].(string)] = struct{}{}
+			case "reader_transport":
+				require.Equal(t, "tidb", unit["site"])
+				transportKinds[unit["operator_kind"].(string)] = struct{}{}
+				transportUnits[unit["unit"].(string)] = unit["value"].(float64)
+			}
+		}
+		require.Equal(t, 0.0, joinUnits["cpu_work"])
+		require.Equal(t, 0.0, joinUnits["join_output_rows"])
+		require.Equal(t, 1.0, joinUnits["expression_count"])
+		require.Equal(t, 1, rangeScanUnits)
+		require.Equal(t, map[string]struct{}{"tablefullscan": {}}, rangeScanKinds)
+		require.Equal(t, map[string]struct{}{"table_reader": {}}, transportKinds)
+		require.Equal(t, map[string]float64{"net_bytes": 0}, transportUnits)
+
+		tk.MustQuery(`select unit, sample_count, value from information_schema.statements_summary_read_billing_demo_base_units
+			where digest_text like '%read_billing_empty_outer%' and op_class = 'join_lookup'
+			and unit in ('cpu_work', 'join_output_rows') order by unit`).Check(testkit.Rows(
+			"cpu_work 1 0",
+			"join_output_rows 1 0",
+		))
+		tk.MustQuery(`select operator_kind, unit, sample_count, value from information_schema.statements_summary_read_billing_demo_base_units
+			where digest_text like '%read_billing_empty_outer%' and op_class = 'kv_range_scan'
+			order by operator_kind, unit`).Check(testkit.Rows(
+			"tablefullscan scan_bytes 1 0",
+		))
+		tk.MustQuery(`select count(*) from information_schema.statements_summary_read_billing_demo_base_units
+			where digest_text like '%read_billing_empty_outer%' and op_class = 'kv_range_scan'
+			and operator_kind like 'index%'`).Check(testkit.Rows("0"))
+		tk.MustQuery(`select operator_kind, unit, sample_count, value from information_schema.statements_summary_read_billing_demo_base_units
+			where digest_text like '%read_billing_empty_outer%' and op_class = 'reader_transport'
+			and unit = 'net_bytes'`).Check(testkit.Rows(
+			"table_reader net_bytes 1 0",
+		))
+		tk.MustQuery(`select count(*) from information_schema.statements_summary_read_billing_demo_base_units
+			where digest_text like '%read_billing_empty_outer%' and op_class = 'reader_transport'
+			and operator_kind = 'index_reader'`).Check(testkit.Rows("0"))
+		tk.MustQuery(`select status, reason, count from information_schema.statements_summary_read_billing_demo_status
+			where digest_text like '%read_billing_empty_outer%' and site = 'statement'`).Check(testkit.Rows(
+			"success none 1",
+		))
+	})
+
 	t.Run("preview RU general log DML completion is self describing", func(t *testing.T) {
 		core, recorded := observer.New(zap.InfoLevel)
 		oldLogger := logutil.GeneralLogger

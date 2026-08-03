@@ -6596,11 +6596,11 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "88ea247dcebc279190ca0480f59f831eedd4ce0267d7b3e421300e438087449a",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20260617030124-661db4f5f4e8",
+        sha256 = "284009f6b78480414e64a38bf7c201354f9e26abfb1babeb106b366f9f151ec7",
+        strip_prefix = "github.com/winoros/client-go/v2@v2.0.0-20260802190030-ae98d71ed578",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260617030124-661db4f5f4e8.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260617030124-661db4f5f4e8.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/winoros/client-go/v2/com_github_winoros_client_go_v2-v2.0.0-20260802190030-ae98d71ed578.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/winoros/client-go/v2/com_github_winoros_client_go_v2-v2.0.0-20260802190030-ae98d71ed578.zip",
         ],
     )
     go_repository(

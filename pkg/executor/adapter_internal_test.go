@@ -118,8 +118,8 @@ func TestReadBillingDemoGeneralLogUnits(t *testing.T) {
 	sessVars.StmtCtx.OriginalSQL = "select 12345, 'secret_literal'"
 	expectedNormalizedSQL, expectedDigest := parser.NormalizeDigest(sessVars.StmtCtx.OriginalSQL)
 	stats := stmtsummary.ReadBillingDemoStatementStats{
-		ModelVersion:  "v3",
-		WeightVersion: "v2",
+		ModelVersion:  "v6",
+		WeightVersion: "test-v6-calibrated",
 		BaseUnits: []stmtsummary.ReadBillingDemoBaseUnitSample{
 			{
 				Site: "tikv", OpClass: "join_hash", OperatorKind: "hashjoin", Unit: "input_rows", Value: 2,
@@ -131,6 +131,24 @@ func TestReadBillingDemoGeneralLogUnits(t *testing.T) {
 			},
 			{Site: "tidb", OpClass: "agg_hash", OperatorKind: "hashagg", Unit: "output_rows", Value: 1},
 			{Site: "tidb", OpClass: "agg_hash", OperatorKind: "hashagg", Unit: "input_bytes", Value: 8},
+			{Site: "tidb", OpClass: "kv_mutation", OperatorKind: "memdb_mutation", DMLKind: "insert", Unit: "cpu_work", InputSource: "stmt_memdb_mutation_calls", InputSide: "all", Value: 3.5},
+			{Site: "tidb", OpClass: "kv_mutation", OperatorKind: "memdb_mutation", DMLKind: "insert", Unit: "encoded_mutation_count", InputSource: "stmt_memdb_mutation_calls", InputSide: "all", Value: 2},
+			{Site: "tidb", OpClass: "kv_mutation", OperatorKind: "memdb_mutation", DMLKind: "insert", Unit: "encoded_mutation_bytes", InputSource: "stmt_memdb_mutation_calls", InputSide: "all", Value: 15},
+			{Site: "tidb", OpClass: "kv_mutation", OperatorKind: "memdb_mutation", DMLKind: "insert", Unit: "set_count", InputSource: "stmt_memdb_mutation_calls", InputSide: "all", Value: 2},
+			{Site: "tidb", OpClass: "kv_mutation", OperatorKind: "memdb_mutation", DMLKind: "insert", Unit: "delete_count", InputSource: "stmt_memdb_mutation_calls", InputSide: "all", Value: 0},
+			{Site: "tidb", OpClass: "kv_mutation", OperatorKind: "memdb_mutation", DMLKind: "insert", Unit: "key_bytes", InputSource: "stmt_memdb_mutation_calls", InputSide: "all", Value: 5},
+			{Site: "tidb", OpClass: "kv_mutation", OperatorKind: "memdb_mutation", DMLKind: "insert", Unit: "value_bytes", InputSource: "stmt_memdb_mutation_calls", InputSide: "all", Value: 10},
+			{Site: "tidb", OpClass: "reader_transport", OperatorKind: "mixed_reader", Unit: "net_bytes", InputSource: "ruv2_metrics", InputSide: "all", Value: 4},
+			{Site: "tidb", OpClass: "sql_frontend", OperatorKind: "parser_optimizer", Unit: "frontend_compile_bytes", InputSource: "statement_original_sql", InputSide: "all", Value: 29},
+			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "cpu_work", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 2},
+			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "scan_bytes", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 37},
+			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "total_keys", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 2},
+			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "processed_keys", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 1},
+			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "processed_keys_size", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 37},
+			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "detail_records", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 1},
+			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "completed_responses", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 1},
+			{Site: "tikv", OpClass: "kv_write", OperatorKind: "txn_write", DMLKind: "insert", Unit: "write_keys", InputSource: "commit_detail", InputSide: "all", Value: 3},
+			{Site: "tikv", OpClass: "kv_write", OperatorKind: "txn_write", DMLKind: "insert", Unit: "write_bytes", InputSource: "commit_detail", InputSide: "all", Value: 66},
 		},
 	}
 
@@ -161,8 +179,8 @@ func TestReadBillingDemoGeneralLogUnits(t *testing.T) {
 	fields := entries[0].ContextMap()
 	require.Len(t, fields, 6)
 	require.Equal(t, uint64(42), fields["conn"])
-	require.Equal(t, "v3", fields["model_version"])
-	require.Equal(t, "v2", fields["weight_version"])
+	require.Equal(t, "v6", fields["model_version"])
+	require.Equal(t, "test-v6-calibrated", fields["weight_version"])
 	require.Equal(t, expectedNormalizedSQL, fields["normalized_sql"])
 	require.Equal(t, expectedDigest.String(), fields["sql_digest"])
 	require.NotContains(t, fields["normalized_sql"], "12345")
@@ -170,30 +188,67 @@ func TestReadBillingDemoGeneralLogUnits(t *testing.T) {
 	require.NotContains(t, fields, "sql")
 	rawUnits, ok := fields["units"].([]any)
 	require.True(t, ok)
-	require.Len(t, rawUnits, 3)
+	require.Len(t, rawUnits, 22)
 
 	units := make([]map[string]any, 0, len(rawUnits))
 	for _, rawUnit := range rawUnits {
 		unit, ok := rawUnit.(map[string]any)
 		require.True(t, ok)
-		require.Len(t, unit, 5)
-		for _, field := range []string{"site", "op_class", "operator_kind", "unit", "value"} {
+		require.Len(t, unit, 8)
+		for _, field := range []string{"site", "op_class", "operator_kind", "dml_kind", "unit", "input_source", "input_side", "value"} {
 			require.Contains(t, unit, field)
 		}
-		for _, internalField := range []string{"dml_kind", "input_source", "input_side", "row_width_source", "row_width", "operator_id"} {
+		for _, internalField := range []string{"row_width_source", "row_width", "operator_id"} {
 			require.NotContains(t, unit, internalField)
 		}
 		units = append(units, unit)
 	}
 	require.Equal(t, map[string]any{
-		"site": "tidb", "op_class": "agg_hash", "operator_kind": "hashagg", "unit": "input_bytes", "value": float64(8),
+		"site": "tidb", "op_class": "agg_hash", "operator_kind": "hashagg", "dml_kind": "", "unit": "input_bytes", "input_source": "", "input_side": "", "value": float64(8),
 	}, units[0])
 	require.Equal(t, map[string]any{
-		"site": "tidb", "op_class": "agg_hash", "operator_kind": "hashagg", "unit": "output_rows", "value": float64(1),
+		"site": "tidb", "op_class": "agg_hash", "operator_kind": "hashagg", "dml_kind": "", "unit": "output_rows", "input_source": "", "input_side": "", "value": float64(1),
 	}, units[1])
+	expectedMutationValues := map[string]float64{
+		"cpu_work": 3.5, "delete_count": 0, "encoded_mutation_bytes": 15, "encoded_mutation_count": 2,
+		"key_bytes": 5, "set_count": 2, "value_bytes": 10,
+	}
+	for i, unitName := range []string{"cpu_work", "delete_count", "encoded_mutation_bytes", "encoded_mutation_count", "key_bytes", "set_count", "value_bytes"} {
+		require.Equal(t, map[string]any{
+			"site": "tidb", "op_class": "kv_mutation", "operator_kind": "memdb_mutation", "dml_kind": "insert",
+			"unit": unitName, "input_source": "stmt_memdb_mutation_calls", "input_side": "all", "value": expectedMutationValues[unitName],
+		}, units[i+2])
+	}
 	require.Equal(t, map[string]any{
-		"site": "tikv", "op_class": "join_hash", "operator_kind": "hashjoin", "unit": "input_rows", "value": float64(5),
-	}, units[2])
+		"site": "tidb", "op_class": "reader_transport", "operator_kind": "mixed_reader", "dml_kind": "", "unit": "net_bytes", "input_source": "ruv2_metrics", "input_side": "all", "value": float64(4),
+	}, units[9])
+	require.Equal(t, map[string]any{
+		"site": "tidb", "op_class": "sql_frontend", "operator_kind": "parser_optimizer", "dml_kind": "", "unit": "frontend_compile_bytes", "input_source": "statement_original_sql", "input_side": "all", "value": float64(29),
+	}, units[10])
+	require.Equal(t, map[string]any{
+		"site": "tikv", "op_class": "join_hash", "operator_kind": "hashjoin", "dml_kind": "insert", "unit": "input_rows", "input_source": "child", "input_side": "left", "value": float64(2),
+	}, units[11])
+	require.Equal(t, map[string]any{
+		"site": "tikv", "op_class": "join_hash", "operator_kind": "hashjoin", "dml_kind": "update", "unit": "input_rows", "input_source": "runtime", "input_side": "right", "value": float64(3),
+	}, units[12])
+	expectedPointValues := map[string]float64{
+		"completed_responses": 1, "cpu_work": 2, "detail_records": 1, "processed_keys": 1,
+		"processed_keys_size": 37, "scan_bytes": 37, "total_keys": 2,
+	}
+	for i, unitName := range []string{"completed_responses", "cpu_work", "detail_records", "processed_keys", "processed_keys_size", "scan_bytes", "total_keys"} {
+		require.Equal(t, map[string]any{
+			"site": "tikv", "op_class": "kv_point_lookup", "operator_kind": "point_get", "dml_kind": "",
+			"unit": unitName, "input_source": "snapshot_runtime_stats", "input_side": "all", "value": expectedPointValues[unitName],
+		}, units[i+13])
+	}
+	require.Equal(t, map[string]any{
+		"site": "tikv", "op_class": "kv_write", "operator_kind": "txn_write", "dml_kind": "insert",
+		"unit": "write_bytes", "input_source": "commit_detail", "input_side": "all", "value": float64(66),
+	}, units[20])
+	require.Equal(t, map[string]any{
+		"site": "tikv", "op_class": "kv_write", "operator_kind": "txn_write", "dml_kind": "insert",
+		"unit": "write_keys", "input_source": "commit_detail", "input_side": "all", "value": float64(3),
+	}, units[21])
 
 	// A valid completed snapshot with no unit samples stays structured and does
 	// not invent one statement status from the snapshot's multi-status model.

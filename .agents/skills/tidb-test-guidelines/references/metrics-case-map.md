@@ -10,7 +10,7 @@
 
 ### Tests
 - `pkg/metrics/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/metrics/metrics_internal_test.go` - Tests retained labels and preview-RU bounded metric propagation, including measured zero base-unit samples.
+- `pkg/metrics/metrics_internal_test.go` - Tests retained labels and preview-RU bounded metric propagation, including v6 point `cpu_work`/`scan_bytes` plus raw coverage diagnostics, network-only reader transport, dimension-qualified mutation `cpu_work`, committed `write_keys`/`write_bytes`, raw mutation samples, and measured zero base-unit samples.
 - `pkg/metrics/metrics_test.go` - Tests metrics.
 
 ## pkg/metrics/common

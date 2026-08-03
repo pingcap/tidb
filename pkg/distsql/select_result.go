@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -1049,6 +1050,14 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++
 	}
+}
+
+// GetCmdRPCCount returns the number of RPCs issued by this SelectResult for cmd.
+func (s *selectResultRuntimeStats) GetCmdRPCCount(cmd tikvrpc.CmdType) int64 {
+	if s == nil || s.reqStat == nil {
+		return 0
+	}
+	return int64(s.reqStat.GetCmdRPCCount(cmd))
 }
 
 func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {

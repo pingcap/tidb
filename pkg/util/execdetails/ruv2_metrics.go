@@ -498,6 +498,22 @@ func (m *RUV2Metrics) Clone() *RUV2Metrics {
 	return cloned
 }
 
+// CloneWithCommitDetailsForReporting returns a pre-finalization reporting
+// snapshot completed with commit counters. Unlike
+// UpdateRUV2MetricsFromCommitDetails, it does not update process-wide metrics;
+// statement finalization remains the sole observer of those counters.
+func (m *RUV2Metrics) CloneWithCommitDetailsForReporting(commitDetails *tikvutil.CommitDetails) *RUV2Metrics {
+	cloned := m.Clone()
+	if cloned == nil || commitDetails == nil || cloned.Bypass() {
+		return cloned
+	}
+	extra := cloned.ensureExtra()
+	atomic.AddInt64(&extra.writeKeys, int64(commitDetails.WriteKeys))
+	atomic.AddInt64(&extra.writeSize, int64(commitDetails.WriteSize))
+	atomic.AddInt64(&extra.prewriteRegionNum, int64(atomic.LoadInt32(&commitDetails.PrewriteRegionNum)))
+	return cloned
+}
+
 const (
 	ruv2LabelBatchPointGetExec = "BatchPointGetExec"
 	ruv2LabelPointGetExecutor  = "PointGetExecutor"

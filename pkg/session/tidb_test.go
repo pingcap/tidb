@@ -397,6 +397,41 @@ func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
 	})
 }
 
+func TestRUV2MetricsWriteRequestsInPessimisticTxn(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	se, err := createSession(store)
+	require.NoError(t, err)
+	MustExec(t, se, "use test")
+	MustExec(t, se, "drop table if exists ruv2_pessimistic_requests")
+	MustExec(t, se, "create table ruv2_pessimistic_requests (id int primary key, v int)")
+	MustExec(t, se, "insert into ruv2_pessimistic_requests values (1, 1)")
+	MustExec(t, se, "set @@session.tidb_txn_mode = 'pessimistic'")
+
+	MustExec(t, se, "begin pessimistic")
+	MustExec(t, se, "update ruv2_pessimistic_requests set v = v + 1 where id = 1")
+	dmlMetrics := se.sessionVars.RUV2Metrics
+	require.NotNil(t, dmlMetrics)
+	// MockStore does not produce resource-manager RPC detail. Inject the
+	// finalized DML observation into the same statement snapshot to prove that
+	// the following COMMIT cannot inherit, drain, or overwrite it.
+	dmlMetrics.AddResourceManagerWriteCnt(7)
+	dmlWriteRequests := dmlMetrics.ResourceManagerWriteCnt()
+	require.Equal(t, int64(7), dmlWriteRequests)
+
+	MustExec(t, se, "commit")
+	commitMetrics := se.sessionVars.RUV2Metrics
+	require.NotNil(t, commitMetrics)
+	require.NotSame(t, dmlMetrics, commitMetrics)
+	require.Zero(t, commitMetrics.ResourceManagerWriteCnt(), "COMMIT must start with a fresh statement snapshot")
+	commitMetrics.AddResourceManagerWriteCnt(2)
+	commitWriteRequests := commitMetrics.ResourceManagerWriteCnt()
+	require.Equal(t, int64(2), commitWriteRequests)
+	require.Equal(t, dmlWriteRequests, dmlMetrics.ResourceManagerWriteCnt(), "COMMIT must not drain or mutate the completed DML snapshot")
+}
+
 func TestSchemaCacheSizeVar(t *testing.T) {
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
