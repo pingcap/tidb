@@ -22,9 +22,14 @@ set -euo pipefail
 
 RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TAG="realtikv-pessimistic-prewrite-recovery-${$}"
-PORT_OFFSET=${PESSIMISTIC_PREWRITE_RECOVERY_PORT_OFFSET:-46000}
+# `--kv 3` claims 20160, 20161 and 20162 above the offset, and each TiKV also
+# claims a status port 20 above its own, so 20182 is the highest port an offset
+# has to keep inside 65535. Any default above 45353 makes the run refuse itself
+# before it starts, which is exactly what 46000 did.
+PORT_OFFSET=${PESSIMISTIC_PREWRITE_RECOVERY_PORT_OFFSET:-45000}
 PD_PORT=$((2379 + PORT_OFFSET))
 KV_PORT=$((20160 + PORT_OFFSET))
+KV_HIGHEST_PORT=$((20182 + PORT_OFFSET))
 PD_ADDR="127.0.0.1:${PD_PORT}"
 TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
 PLAYGROUND_LOG="${TMPDIR:-/tmp}/${TAG}-playground.log"
@@ -121,7 +126,7 @@ if [[ $# -ne 0 ]]; then
   exit 2
 fi
 if [[ ! "${PORT_OFFSET}" =~ ^[0-9]+$ ]] \
-  || (( PORT_OFFSET < 1000 || PD_PORT > 65535 || KV_PORT > 65535 )); then
+  || (( PORT_OFFSET < 1000 || PD_PORT > 65535 || KV_HIGHEST_PORT > 65535 )); then
   echo "PESSIMISTIC_PREWRITE_RECOVERY_PORT_OFFSET must be numeric, at least 1000, and keep ports valid" >&2
   exit 2
 fi

@@ -82,7 +82,15 @@ type RealRuntime = SharedReadRuntime<TonicCoprocessorClient, PdRegionLoader>;
 /// Everything one claim needs: the PD authority that hands out timestamps, the
 /// opener the transaction under test uses, and a second session the fixture
 /// speaks raw kvproto through.
+///
+/// `authority` is held for its lifetime, not for its API. `SharedReadAuthority`
+/// owns the sole TiKV transport worker, so dropping it stops that worker and
+/// every session derived from it -- including `fixture` and `opener` -- answers
+/// `Closed` on its first RPC. Only a real cluster shows this: a scripted store
+/// has no worker to lose.
 struct Cluster {
+    #[expect(dead_code, reason = "held to keep the sole TiKV transport worker alive")]
+    authority: SharedReadAuthority<TonicCoprocessorClient, PdRegionLoader>,
     pd: PdClient,
     opener: RealOptimisticTransactionOpener,
     fixture: RealRuntime,
@@ -116,6 +124,7 @@ fn connect() -> Cluster {
         .open_session()
         .expect("open the fixture session from the same authority");
     Cluster {
+        authority: shared,
         pd,
         opener,
         fixture,
