@@ -348,6 +348,9 @@ func getPlanCostVer24PhysicalTableReader(pp base.PhysicalPlan, taskType property
 	return p.PlanCostVer2, nil
 }
 
+// indexLookUpCostInput carries the plan state needed to cost an IndexLookUpReader
+// without holding the physical operator. pushedLimit is only read by the v2
+// model; speculative unfinished CopTask costing leaves it nil.
 type indexLookUpCostInput struct {
 	ctx         base.PlanContext
 	indexPlan   base.PhysicalPlan

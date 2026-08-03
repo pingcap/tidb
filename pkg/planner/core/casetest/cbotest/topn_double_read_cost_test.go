@@ -31,6 +31,7 @@ func TestTopNChoosesGloballyCheaperDoubleReadPath(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_cost_model_version = 2")
 
 	tk.MustExec(`CREATE TABLE test.masked_event_journal (
 		rec_id BIGINT NOT NULL AUTO_INCREMENT,
@@ -88,12 +89,13 @@ func TestTopNChoosesGloballyCheaperDoubleReadPath(t *testing.T) {
 		  AND state_flag = 1
 		ORDER BY seen_at DESC
 		LIMIT 1`
-	plan := testdata.ConvertRowsToStrings(tk.MustQuery(explainSQL).Rows())
+	rows := tk.MustQuery(explainSQL).Rows()
+	plan := testdata.ConvertRowsToStrings(rows)
 	require.NotEmpty(t, plan)
 	require.Contains(t, plan[0], "TopN")
 
 	var hasProbeTopN, hasBuildTopN, hasTargetIndex bool
-	for _, row := range plan {
+	for i, row := range plan {
 		if strings.Contains(row, "TopN") && strings.Contains(row, "(Probe)") {
 			hasProbeTopN = true
 		}
@@ -102,15 +104,8 @@ func TestTopNChoosesGloballyCheaperDoubleReadPath(t *testing.T) {
 		}
 		if strings.Contains(row, "IndexRangeScan") && strings.Contains(row, "index:idx_event_shard_batch_route_state") {
 			hasTargetIndex = true
-			var estRows float64
-			var parsed bool
-			for _, field := range strings.Fields(row) {
-				if value, err := strconv.ParseFloat(field, 64); err == nil {
-					estRows, parsed = value, true
-					break
-				}
-			}
-			require.True(t, parsed)
+			estRows, err := strconv.ParseFloat(rows[i][1].(string), 64)
+			require.NoError(t, err)
 			require.Greater(t, estRows, 10000.0)
 		}
 	}

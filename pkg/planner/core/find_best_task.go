@@ -481,6 +481,12 @@ func compareTaskCost(curTask, bestTask base.Task) (curIsBetter bool, err error) 
 
 type taskCostGetter func(base.Task) (float64, bool, error)
 
+type taskCostResult struct {
+	cost    float64
+	invalid bool
+	err     error
+}
+
 func compareTaskCostWith(curTask, bestTask base.Task, getCost taskCostGetter) (curIsBetter bool, err error) {
 	curCost, curInvalid, err := getCost(curTask)
 	if err != nil {
@@ -501,8 +507,15 @@ func compareTaskCostWith(curTask, bestTask base.Task, getCost taskCostGetter) (c
 
 // compareDataSourceTaskCost compares local DataSource candidates. An unfinished
 // double-read candidate is costed as the IndexLookUpReader it will become.
-func compareDataSourceTaskCost(curTask, bestTask base.Task) (curIsBetter bool, err error) {
-	return compareTaskCostWith(curTask, bestTask, getDataSourceTaskPlanCost)
+func compareDataSourceTaskCost(curTask, bestTask base.Task, costCache map[base.Task]taskCostResult) (curIsBetter bool, err error) {
+	return compareTaskCostWith(curTask, bestTask, func(t base.Task) (float64, bool, error) {
+		if result, ok := costCache[t]; ok {
+			return result.cost, result.invalid, result.err
+		}
+		cost, invalid, err := getDataSourceTaskPlanCost(t)
+		costCache[t] = taskCostResult{cost: cost, invalid: invalid, err: err}
+		return cost, invalid, err
+	})
 }
 
 func getDataSourceTaskPlanCost(t base.Task) (float64, bool, error) {
@@ -631,7 +644,7 @@ func getUnfinishedIndexLookUpCost(cop *physicalop.CopTask) (float64, error) {
 	}
 	option := costusage.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate)
 	if ctx.GetSessionVars().CostModelVersion == modelVer2 {
-		cost, _, err := getPlanCostVer24IndexLookUpReader(input, property.RootTaskType, option)
+		cost, _, err := getPlanCostVer24IndexLookUpReader(input, property.CopMultiReadTaskType, option)
 		return cost.GetCost(), err
 	}
 	cost, _, err := getPlanCostVer14IndexLookUpReader(input, option)
@@ -2182,6 +2195,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	}
 
 	t = base.InvalidTask
+	dataSourceCostCache := make(map[base.Task]taskCostResult)
 	candidates := skylinePruning(ds, prop)
 	pruningInfo := getPruningInfo(ds, candidates, prop)
 	defer func() {
@@ -2210,7 +2224,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			if err != nil {
 				return nil, err
 			}
-			curIsBetter, err := compareDataSourceTaskCost(idxMergeTask, t)
+			curIsBetter, err := compareDataSourceTaskCost(idxMergeTask, t, dataSourceCostCache)
 			if err != nil {
 				return nil, err
 			}
@@ -2308,7 +2322,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 					ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Batch/PointGet plans may be over-optimized")
 				}
 
-				curIsBetter, cerr := compareDataSourceTaskCost(pointGetTask, t)
+				curIsBetter, cerr := compareDataSourceTaskCost(pointGetTask, t, dataSourceCostCache)
 				if cerr != nil {
 					return nil, cerr
 				}
@@ -2339,7 +2353,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			if err != nil {
 				return nil, err
 			}
-			curIsBetter, err := compareDataSourceTaskCost(tblTask, t)
+			curIsBetter, err := compareDataSourceTaskCost(tblTask, t, dataSourceCostCache)
 			if err != nil {
 				return nil, err
 			}
@@ -2360,7 +2374,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		if err != nil {
 			return nil, err
 		}
-		curIsBetter, err := compareDataSourceTaskCost(idxTask, t)
+		curIsBetter, err := compareDataSourceTaskCost(idxTask, t, dataSourceCostCache)
 		if err != nil {
 			return nil, err
 		}

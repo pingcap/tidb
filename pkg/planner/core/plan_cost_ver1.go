@@ -130,9 +130,9 @@ func getCost4IndexLookUpReader(input indexLookUpCostInput, costFlag uint64) (cos
 	idxCst := indexRows * sessVars.GetCPUFactor()
 	// if the expectCnt is below the paging threshold, using paging API, recalculate idxCst.
 	// paging API reduces the count of index and table rows, however introduces more seek cost.
-	if ctx.GetSessionVars().EnablePaging && input.expectedCnt > 0 && input.expectedCnt <= paging.Threshold {
+	if sessVars.EnablePaging && input.expectedCnt > 0 && input.expectedCnt <= paging.Threshold {
 		usePaging = true
-		pagingCst := calcPagingCost(ctx, input.indexPlan, input.expectedCnt)
+		pagingCst := calcPagingCost(ctx, indexPlan, input.expectedCnt)
 		// prevent enlarging the cost because we take paging as a better plan,
 		// if the cost is enlarged, it'll be easier to go another plan.
 		idxCst = math.Min(idxCst, pagingCst)
@@ -176,7 +176,6 @@ func getPlanCostVer14PhysicalIndexLookUpReader(pp base.PhysicalPlan, _ property.
 		tablePlan:   p.TablePlan,
 		expectedCnt: p.ExpectedCnt,
 		keepOrder:   p.KeepOrder,
-		pushedLimit: p.PushedLimit,
 	}, option)
 	if err != nil {
 		return 0, err
