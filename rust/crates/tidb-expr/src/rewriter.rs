@@ -154,10 +154,25 @@ fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     }
     Some(match name {
         // String in, string out.
-        "concat" | "concat_ws" | "upper" | "ucase" | "lower" | "lcase" | "trim" | "ltrim"
-        | "rtrim" | "reverse" | "left" | "right" | "substring" | "substr" | "mid" | "replace"
-        | "repeat" | "lpad" | "rpad" | "space" | "hex" | "md5" | "elt" | "make_set"
-        | "substring_index" | "insert_func" | "char_func" | "export_set" | "quote" => text(),
+        "upper" | "ucase" | "lower" | "lcase" | "trim" | "ltrim" | "rtrim" | "reverse" | "left"
+        | "right" | "substring" | "substr" | "mid" | "replace" | "repeat" | "lpad" | "rpad"
+        | "space" | "hex" | "md5" | "elt" | "make_set" | "substring_index" | "insert_func"
+        | "char_func" | "export_set" | "quote" => text(),
+        // `CONCAT`/`CONCAT_WS` are the two of that family that SIZE their
+        // result, and the size reaches the client as the column metadata's
+        // `ColumnLength`. See [`concat_flen`].
+        "concat" => {
+            let mut ft = text();
+            ft.set_flen(concat_flen(args, 0));
+            ft
+        }
+        "concat_ws" if !args.is_empty() => {
+            // The separator lands between the remaining arguments, so it is
+            // counted `len(args) - 2` times rather than once.
+            let separators = i64::from(u32::try_from(args.len().saturating_sub(2)).ok()?);
+            let separator_flen = separators * string_cast_flen(args[0].static_type()?);
+            ft_with_flen(text(), clamp_blob_width(concat_flen(args, 1) + separator_flen))
+        }
         // Go `unhexFunctionClass`/`base64FunctionClass.fromBase64` (see
         // `types.SetBinChsClnFlag` in `pkg/expression/builtin_string.go`):
         // unlike the plain string-in-string-out family above, these two
@@ -635,6 +650,105 @@ fn maxlen(lhs: i64, rhs: i64) -> i64 {
 /// `builtinGreatestRealSig`, whose `evalReal` is an `f64`, so a FLOAT argument
 /// widens to DOUBLE here even though the same pair of branches inside a CASE
 /// stays FLOAT.
+/// `pkg/parser/mysql.MaxBlobWidth` and `MaxLongBlobWidth`.
+const MAX_BLOB_WIDTH: i64 = 16_777_216;
+const MAX_LONG_BLOB_WIDTH: i64 = 4_294_967_295;
+
+fn ft_with_flen(mut ft: FieldType, flen: i64) -> FieldType {
+    ft.set_flen(flen);
+    ft
+}
+
+fn clamp_blob_width(flen: i64) -> i64 {
+    if flen >= MAX_BLOB_WIDTH {
+        MAX_BLOB_WIDTH
+    } else {
+        flen
+    }
+}
+
+/// The flen an argument carries once `WrapWithCastAsString` has wrapped it,
+/// which is the width `CONCAT` actually sums.
+///
+/// Two Go functions decide it in sequence (`pkg/expression/builtin_cast.go`).
+/// `WrapWithCastAsString` asks for a width: a string argument is not wrapped
+/// at all and keeps its own flen, an integer widens to `MaxIntWidth` whatever
+/// its declared display width (a `BIT(n)` instead asks for its byte count),
+/// a decimal gains three for the sign, the point and a leading zero, and a
+/// float or double asks for nothing because `CAST(f AS CHAR)`'s printed width
+/// is not predictable. `setCastFlen`-style sizing on the cast's own return
+/// type then fills in every width still unasked-for, which is where the
+/// remaining types get theirs.
+///
+/// Captured from Go, one `CONCAT` argument each: `DOUBLE` 370, `FLOAT` 87,
+/// `DATE` 10, `DATETIME` 19, `DATETIME(3)` 23, `TIME(2)` 13, `TINYINT(4)` 20,
+/// `BIT(8)` 1, `DECIMAL(10,2)` 13, `VARCHAR(16)` 16.
+///
+/// Not modeled: a DECIMAL whose own flen is unspecified, where Go computes
+/// `decimalPrecisionToLength`. That leaves the unspecified path below, which
+/// is Go's answer for an argument of genuinely unknown width.
+fn string_cast_flen(ft: &FieldType) -> i64 {
+    use tidb_datatype::EvalType;
+    const UNSPECIFIED: i64 = tidb_datatype::UNSPECIFIED_LENGTH;
+
+    let eval_type = ft.eval_type();
+    let requested = match eval_type {
+        // Already a string: no cast is inserted at all.
+        EvalType::String => return ft.flen(),
+        EvalType::Int if ft.code() == FieldTypeCode::Bit => (ft.flen() + 7) / 8,
+        EvalType::Int => 20,
+        EvalType::Decimal if ft.flen() != UNSPECIFIED => ft.flen() + 3,
+        EvalType::Real => UNSPECIFIED,
+        _ => ft.flen(),
+    };
+    if requested != UNSPECIFIED {
+        return requested;
+    }
+
+    // The cast's return-type sizing, reached only for a width nobody asked for.
+    let with_fraction = |base: i64| {
+        if ft.decimal() > 0 {
+            base + 1 + ft.decimal()
+        } else {
+            base
+        }
+    };
+    match eval_type {
+        // 87 and 370 are Go's own worst-case widths for `%f`-formatted
+        // f32/f64, not MySQL's 12/22 -- TiDB never uses scientific notation.
+        EvalType::Real if ft.code() == FieldTypeCode::Float => 87,
+        EvalType::Real => 370,
+        EvalType::Datetime | EvalType::Timestamp if ft.code() == FieldTypeCode::Date => 10,
+        EvalType::Datetime | EvalType::Timestamp => with_fraction(19),
+        EvalType::Duration => with_fraction(10),
+        EvalType::Json => MAX_LONG_BLOB_WIDTH,
+        _ => UNSPECIFIED,
+    }
+}
+
+/// Go `concatFunctionClass.getFunction`, over `args[skip..]`.
+///
+/// The result's flen is the sum of the arguments' string-cast widths, clamped
+/// at `MaxBlobWidth`. An argument of unknown width does NOT simply make the
+/// whole thing unknown: Go restarts the running sum at `MaxBlobWidth` and then
+/// still adds that argument's negative flen, so a single unsized argument
+/// leaves `MaxBlobWidth - 1` unless a later argument pushes the sum back over
+/// the clamp. That is Go's arithmetic verbatim, oddity included -- it is what
+/// the client is told, so it is what we must say.
+fn concat_flen(args: &[Expression], skip: usize) -> i64 {
+    let mut flen = 0_i64;
+    for arg in args.iter().skip(skip) {
+        let arg_flen = arg
+            .static_type()
+            .map_or(tidb_datatype::UNSPECIFIED_LENGTH, string_cast_flen);
+        if arg_flen < 0 {
+            flen = MAX_BLOB_WIDTH;
+        }
+        flen += arg_flen;
+    }
+    clamp_blob_width(flen)
+}
+
 fn extremum_return_type(args: &[Expression]) -> Option<FieldType> {
     let typed: Vec<&FieldType> = args
         .iter()
@@ -1574,6 +1688,143 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         _ => Err(EvalError::Unsupported(
             "expression form is not yet supported by the rewriter",
         )),
+    }
+}
+
+#[cfg(test)]
+mod concat_flen_tests {
+    use super::*;
+
+    fn arg(code: FieldTypeCode, flen: i64, decimal: i64) -> Expression {
+        let mut ft = FieldType::new(code);
+        ft.set_flen(flen);
+        ft.set_decimal(decimal);
+        Expression::Constant(Constant::new(Datum::Null, ft))
+    }
+
+    fn flen_of(name: &str, args: &[Expression]) -> i64 {
+        builtin_return_type(name, args)
+            .unwrap_or_else(|| panic!("{name} has no return type"))
+            .flen()
+    }
+
+    const UNSPECIFIED: i64 = tidb_datatype::UNSPECIFIED_LENGTH;
+
+    fn varchar(flen: i64) -> Expression {
+        arg(FieldTypeCode::Varchar, flen, UNSPECIFIED)
+    }
+    fn bigint() -> Expression {
+        arg(FieldTypeCode::LongLong, 11, 0)
+    }
+
+    /// Every number below is Go's own `GetFlen()` for the built expression,
+    /// captured by running `expression.NewFunction` over these exact argument
+    /// FieldTypes. `CONCAT`'s width reaches the client as the result set's
+    /// `ColumnLength`, so an unspecified flen here is wire-visible.
+    #[test]
+    fn concat_sums_the_string_cast_widths_go_sums() {
+        assert_eq!(flen_of("concat", &[varchar(16)]), 16);
+        assert_eq!(flen_of("concat", &[varchar(16), varchar(16)]), 32);
+        // Any integer widens to MaxIntWidth, whatever its display width.
+        assert_eq!(flen_of("concat", &[bigint(), bigint()]), 40);
+        assert_eq!(flen_of("concat", &[arg(FieldTypeCode::Tiny, 4, 0)]), 20);
+        // BIT is the exception: its BYTE count, because TiKV needs the real
+        // length when it evaluates things like ASCII(bit).
+        assert_eq!(flen_of("concat", &[arg(FieldTypeCode::Bit, 8, 0)]), 1);
+        // Sign, decimal point and a leading zero.
+        assert_eq!(
+            flen_of("concat", &[arg(FieldTypeCode::NewDecimal, 10, 2)]),
+            13
+        );
+        // TiDB prints reals in full, never scientific notation, so the
+        // worst-case widths are far wider than MySQL's 12/22.
+        assert_eq!(
+            flen_of(
+                "concat",
+                &[arg(FieldTypeCode::Float, UNSPECIFIED, UNSPECIFIED)]
+            ),
+            87
+        );
+        assert_eq!(
+            flen_of(
+                "concat",
+                &[arg(FieldTypeCode::Double, UNSPECIFIED, UNSPECIFIED)]
+            ),
+            370
+        );
+        assert_eq!(
+            flen_of(
+                "concat",
+                &[
+                    varchar(16),
+                    arg(FieldTypeCode::Double, UNSPECIFIED, UNSPECIFIED)
+                ]
+            ),
+            386
+        );
+        assert_eq!(
+            flen_of(
+                "concat",
+                &[arg(FieldTypeCode::Date, UNSPECIFIED, UNSPECIFIED)]
+            ),
+            10
+        );
+        assert_eq!(
+            flen_of("concat", &[arg(FieldTypeCode::Datetime, UNSPECIFIED, 0)]),
+            19
+        );
+        assert_eq!(
+            flen_of("concat", &[arg(FieldTypeCode::Datetime, UNSPECIFIED, 3)]),
+            23
+        );
+        assert_eq!(
+            flen_of("concat", &[arg(FieldTypeCode::Duration, UNSPECIFIED, 2)]),
+            13
+        );
+    }
+
+    /// The separator is counted `len(args) - 2` times, so a single value
+    /// argument contributes no separator at all.
+    #[test]
+    fn concat_ws_counts_the_separator_between_values_only() {
+        assert_eq!(flen_of("concat_ws", &[varchar(3), varchar(16)]), 16);
+        assert_eq!(
+            flen_of("concat_ws", &[varchar(3), varchar(16), varchar(16)]),
+            35
+        );
+        assert_eq!(
+            flen_of("concat_ws", &[varchar(3), bigint(), bigint(), bigint()]),
+            66
+        );
+        assert_eq!(
+            flen_of(
+                "concat_ws",
+                &[
+                    varchar(3),
+                    arg(FieldTypeCode::Double, UNSPECIFIED, UNSPECIFIED),
+                    varchar(16)
+                ]
+            ),
+            389
+        );
+    }
+
+    /// Go restarts the running sum at MaxBlobWidth for an argument of unknown
+    /// width and then still ADDS that argument's -1, so a lone unsized
+    /// argument leaves MaxBlobWidth - 1 rather than MaxBlobWidth. Porting the
+    /// arithmetic rather than the intent is what keeps us on Go's number.
+    #[test]
+    fn concat_clamps_at_max_blob_width_the_way_go_does() {
+        let unsized_arg = arg(FieldTypeCode::Varchar, UNSPECIFIED, UNSPECIFIED);
+        assert_eq!(
+            flen_of("concat", std::slice::from_ref(&unsized_arg)),
+            MAX_BLOB_WIDTH - 1
+        );
+        // A second argument pushes the sum back over the clamp.
+        assert_eq!(
+            flen_of("concat", &[unsized_arg, varchar(16)]),
+            MAX_BLOB_WIDTH
+        );
     }
 }
 
