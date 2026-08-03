@@ -321,3 +321,66 @@ fn rand_seed_sysvars_seed_the_generator_and_always_read_back_as_zero() {
         [["0.00000009313225754828403"]]
     );
 }
+
+/// Converting a FLOAT to a DECIMAL, against values captured from a running
+/// TiDB.
+///
+/// Go's `ConvertDatumToDecimal` calls `dec.FromFloat64`, which formats the
+/// float with `strconv.FormatFloat(f, 'g', -1, 64)` and feeds that to
+/// `FromString`, RETURNING the error. This tier's live path
+/// (`tidb-datatype`'s `Datum::to_decimal`) instead formats with Rust's
+/// `f64::Display` and discards the error (`event: None`).
+///
+/// Measured, and this is what splits the finding in two:
+///
+///  - the VALUES agree with Go on every case tried, including the ones where
+///    the two spellings differ (Rust prints `1e308` as 309 digits where Go
+///    prints `1e+308`), because `parse_mysql` reaches the same decimal from
+///    either spelling. The "rendering diverges" half does not reach an
+///    observable answer.
+///
+///  - the WARNINGS do not. Go raises TWO on the out-of-range cases below --
+///    1292 `Truncated incorrect DECIMAL value: '1e+308'` (whose text is the
+///    `'g'` spelling, so the formatting DOES matter here) and 1690
+///    `DECIMAL value is out of range in '(65, 0)'` -- and this tier raises
+///    none, because the discarded error is the only thing that could have
+///    produced them.
+///
+/// The warning assertions below record the KNOWN gap: a real fix makes them
+/// fail, which is the point.
+#[test]
+fn float_to_decimal_matches_gos_values_but_not_yet_its_warnings() {
+    let mut session = Session::new();
+
+    // Captured from TiDB.
+    assert_eq!(
+        row_text(session.run("SELECT cast(1e30 as decimal(65,0))")),
+        [["1000000000000000000000000000000"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT cast(1.5e-8 as decimal(30,20))")),
+        [["0.00000001500000000000"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT cast(1e-30 as decimal(35,30))")),
+        [["0.000000000000000000000000000001"]]
+    );
+    // The extremes, where Rust's `Display` and Go's `'g'` spell the input
+    // differently and still land on the same decimal.
+    assert_eq!(
+        row_text(session.run("SELECT cast(5e-324 as decimal(65,30))")),
+        [["0.000000000000000000000000000000"]]
+    );
+    for sql in [
+        "SELECT cast(1e308 as decimal(65,0))",
+        "SELECT cast(1e300 as decimal(65,0))",
+    ] {
+        assert_eq!(
+            row_text(session.run(sql)),
+            [["99999999999999999999999999999999999999999999999999999999999999999"]],
+            "{sql}"
+        );
+        // KNOWN GAP: Go reports 1292 and then 1690 here.
+        assert_eq!(row_text(session.run("SHOW WARNINGS")).len(), 0, "{sql}");
+    }
+}
