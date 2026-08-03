@@ -714,6 +714,43 @@ pub enum DriverError {
     /// CONNECTION_ADMIN privilege, not modelled in this tier). Killing one's
     /// own connection is always allowed regardless of privilege.
     KillAccessDenied,
+    /// Go `plannererrors.ErrSpecificAccessDenied` (1227), the general form:
+    /// the statement needs at least one of the named privileges. The payload
+    /// is Go's own argument text VERBATIM, including its capitalization
+    /// quirks -- `CREATE USER` reports `"CREATE User"` while `DROP USER`
+    /// reports `"CREATE USER"` (`executor/simple.go`'s `executeCreateUser`
+    /// and `executeDropUser`).
+    SpecificAccessDenied(String),
+    /// Go `exeerrors.ErrDBaccessDenied` (1044): the caller may not reach a
+    /// whole schema. Raised by `SET PASSWORD` for another account and by
+    /// `SHOW GRANTS FOR <other>`, both of which name the `mysql` schema.
+    DbAccessDenied {
+        /// The caller's authenticated username.
+        user: String,
+        /// The caller's authenticated host.
+        host: String,
+        /// The schema the caller was refused.
+        database: String,
+    },
+    /// Go `ErrTableaccessDenied` (1142): the caller lacks one privilege on
+    /// one table. Raised by `SHOW CREATE USER FOR <other>`, which needs
+    /// `SELECT` on `mysql.user`.
+    TableAccessDenied {
+        /// The privilege name Go prints, uppercase (`SELECT`).
+        privilege: &'static str,
+        /// The caller's authenticated username.
+        user: String,
+        /// The caller's authenticated host.
+        host: String,
+        /// The table the caller was refused.
+        table: String,
+    },
+    /// Go `plannererrors.ErrPrivilegeCheckFail` (8121): a `visitInfo` entry
+    /// with no statement-specific `authErr` failed, which is what a denied
+    /// `GRANT`/`REVOKE` reports outside `performance_schema`
+    /// (`planner/core/optimizer.go`'s `CheckPrivilege`). The payload is the
+    /// privilege's Go `String()` form.
+    PrivilegeCheckFail(String),
     /// Go `ErrDerivedMustHaveAlias` (1248): a derived table was written
     /// without an alias. Captured from Go for both a plain `SELECT` and a
     /// view body.

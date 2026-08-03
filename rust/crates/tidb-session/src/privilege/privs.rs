@@ -158,6 +158,40 @@ impl GlobalPriv {
         }
     }
 
+    /// Go `mysql.PrivilegeType.String()` -- the `Priv2Str` spelling, which is
+    /// MIXED case and differs from [`Self::print_name`]'s `SHOW GRANTS` form
+    /// for the multi-word privileges (`Show Databases`, `Create User`,
+    /// `Grant Option`). Only one message uses it:
+    /// `ErrPrivilegeCheckFail` (8121), which a denied `GRANT`/`REVOKE`
+    /// reports.
+    #[must_use]
+    pub fn check_fail_name(self) -> &'static str {
+        match self {
+            Self::Select => "Select",
+            Self::Insert => "Insert",
+            Self::Update => "Update",
+            Self::Delete => "Delete",
+            Self::Create => "Create",
+            Self::Drop => "Drop",
+            Self::Process => "Process",
+            Self::References => "References",
+            Self::Alter => "Alter",
+            Self::ShowDatabases => "Show Databases",
+            Self::Super => "Super",
+            Self::Execute => "Execute",
+            Self::Index => "Index",
+            Self::CreateUser => "Create User",
+            Self::CreateTablespace => "Create Tablespace",
+            Self::Trigger => "Trigger",
+            Self::CreateView => "Create View",
+            Self::ShowView => "Show View",
+            Self::GrantOption => "Grant Option",
+            // Go's `Priv2Str` spells the remaining entries in the same
+            // uppercase form `SHOW GRANTS` prints.
+            _ => self.print_name(),
+        }
+    }
+
     /// Resolves the exact spelling `tidb-parser`'s `GrantPrivilege::name`
     /// restores for a standard (non-dynamic) privilege token. Returns `None`
     /// for names this tier does not model as a static privilege (roles,

@@ -274,7 +274,14 @@ fn kill_answers_ok_and_reaches_only_live_connections() {
 #[test]
 fn kill_of_another_users_connection_requires_super() {
     let registry = process::ProcessRegistry::default();
-    let mut victim = session_with_privileges();
+    let privs = privilege::PrivilegeRegistry::default();
+    // bob cannot create his own account or grant himself SUPER -- that is
+    // the escalation the account gates refuse -- so the server provisions
+    // both, as a real deployment does before anybody logs in.
+    let mut boot = bootstrap_session(&privs);
+    boot.run("CREATE USER 'bob'@'%'").unwrap();
+
+    let mut victim = authenticated_session(&privs, "root", "%");
     victim.set_user("root@%".to_owned(), "root@10.0.0.1".to_owned());
     let victim_guard = registry.register(
         1,
@@ -285,7 +292,7 @@ fn kill_of_another_users_connection_requires_super() {
     );
     victim.attach_process(1, victim_guard);
 
-    let mut bob = session_with_privileges();
+    let mut bob = authenticated_session(&privs, "bob", "%");
     bob.set_user("bob@%".to_owned(), "bob@10.0.0.2".to_owned());
     let bob_guard = registry.register(
         2,
@@ -295,7 +302,6 @@ fn kill_of_another_users_connection_requires_super() {
         None,
     );
     bob.attach_process(2, bob_guard);
-    bob.run("CREATE USER 'bob'@'%'").unwrap();
 
     // Killing one's own connection never needs a privilege.
     assert_eq!(
@@ -311,7 +317,7 @@ fn kill_of_another_users_connection_requires_super() {
     }
 
     // Granting SUPER lets the same KILL through.
-    bob.run("GRANT SUPER ON *.* TO 'bob'@'%'").unwrap();
+    boot.run("GRANT SUPER ON *.* TO 'bob'@'%'").unwrap();
     assert_eq!(bob.run("kill 1").unwrap(), StmtResult::Affected(0));
 }
 
@@ -322,7 +328,11 @@ fn kill_of_another_users_connection_requires_super() {
 #[test]
 fn kill_of_another_users_connection_accepts_connection_admin() {
     let registry = process::ProcessRegistry::default();
-    let mut victim = session_with_privileges();
+    let privs = privilege::PrivilegeRegistry::default();
+    let mut boot = bootstrap_session(&privs);
+    boot.run("CREATE USER 'bob'@'%'").unwrap();
+
+    let mut victim = authenticated_session(&privs, "root", "%");
     victim.set_user("root@%".to_owned(), "root@10.0.0.1".to_owned());
     let victim_guard = registry.register(
         1,
@@ -333,7 +343,7 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
     );
     victim.attach_process(1, victim_guard);
 
-    let mut bob = session_with_privileges();
+    let mut bob = authenticated_session(&privs, "bob", "%");
     bob.set_user("bob@%".to_owned(), "bob@10.0.0.2".to_owned());
     let bob_guard = registry.register(
         2,
@@ -343,14 +353,13 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
         None,
     );
     bob.attach_process(2, bob_guard);
-    bob.run("CREATE USER 'bob'@'%'").unwrap();
 
     match bob.run("kill 1") {
         Err(DriverError::KillAccessDenied) => {}
         other => panic!("expected KillAccessDenied, got {other:?}"),
     }
 
-    bob.run("GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'")
+    boot.run("GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'")
         .unwrap();
     assert_eq!(
         bob.run("kill 1").unwrap(),
@@ -367,7 +376,7 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
         ]
     );
 
-    bob.run("REVOKE CONNECTION_ADMIN ON *.* FROM 'bob'@'%'")
+    boot.run("REVOKE CONNECTION_ADMIN ON *.* FROM 'bob'@'%'")
         .unwrap();
     match bob.run("kill 1") {
         Err(DriverError::KillAccessDenied) => {}
@@ -382,7 +391,10 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
 #[test]
 fn grant_process_gates_processlist_visibility() {
     let registry = process::ProcessRegistry::default();
-    let mut session = session_with_privileges();
+    let privs = privilege::PrivilegeRegistry::default();
+    let mut boot = bootstrap_session(&privs);
+    boot.run("CREATE USER 'bob'@'%'").unwrap();
+    let mut session = authenticated_session(&privs, "bob", "%");
     session.set_user("bob@%".to_owned(), "bob@10.0.0.1".to_owned());
     let guard = registry.register(
         1,
@@ -400,9 +412,8 @@ fn grant_process_gates_processlist_visibility() {
         None,
     );
 
-    session.run("CREATE USER 'bob'@'%'").unwrap();
     assert_eq!(row_text(session.run("show processlist")).len(), 1);
 
-    session.run("GRANT PROCESS ON *.* TO 'bob'@'%'").unwrap();
+    boot.run("GRANT PROCESS ON *.* TO 'bob'@'%'").unwrap();
     assert_eq!(row_text(session.run("show processlist")).len(), 2);
 }

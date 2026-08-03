@@ -6,6 +6,7 @@
 mod accounts;
 mod column_grants;
 mod dynamic_grants;
+mod enforcement;
 mod password_policy;
 mod processlist;
 mod roles;

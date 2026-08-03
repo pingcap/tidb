@@ -192,6 +192,33 @@ pub(crate) fn session_with_privileges() -> Session {
     session
 }
 
+/// A session on `registry` with NO authenticated identity, and therefore
+/// unrestricted -- the in-process shape the server's own bootstrap uses.
+///
+/// The privilege gates on `CREATE USER`/`GRANT` exist to stop an
+/// AUTHENTICATED session escalating itself, so a test that merely needs the
+/// rows to exist provisions them from here rather than from the session
+/// under test, exactly as a real deployment provisions them before anybody
+/// logs in.
+pub(crate) fn bootstrap_session(registry: &privilege::PrivilegeRegistry) -> Session {
+    let mut session = Session::new();
+    session.attach_privileges(registry.clone());
+    session
+}
+
+/// A connection to `registry` authenticated as `user`@`host`, over a fresh
+/// catalog. [`session_as`] is the same thing on a catalog the caller owns.
+pub(crate) fn authenticated_session(
+    registry: &privilege::PrivilegeRegistry,
+    user: &str,
+    host: &str,
+) -> Session {
+    let mut session = Session::new();
+    session.set_user(format!("{user}@{host}"), format!("{user}@{host}"));
+    session.attach_privileges(registry.clone());
+    session
+}
+
 /// A second connection to the same server, authenticated as `user`@`host`.
 ///
 /// The identity is installed BEFORE the registry, which is the order

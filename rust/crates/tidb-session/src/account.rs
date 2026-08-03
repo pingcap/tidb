@@ -189,6 +189,173 @@ impl Session {
     /// [`privilege::encode_password`]), which is the same row the wire front
     /// end verifies a login against -- so an account created here can
     /// immediately log in with that password.
+    /// Go's `executeCreateUser` gate (`executor/simple.go` around line 1051):
+    /// `INSERT` on `mysql.user`, else the global `CREATE USER` privilege.
+    ///
+    /// Go's role form also accepts `CreateRolePriv`, which this registry does
+    /// not model as a column at all (see `privilege::ALL_GLOBAL_PRIVS`), so
+    /// that disjunct is permanently false here and the check collapses to
+    /// `CREATE USER` -- fail-closed, and exactly Go's answer for every
+    /// account that was never granted `CREATE ROLE`.
+    ///
+    /// The privilege text is Go's own argument VERBATIM, capitalization
+    /// quirk included: `CREATE USER` reports `CREATE User`.
+    fn require_create_user_privilege(&self, is_role: bool) -> Result<(), DriverError> {
+        if self.has_scoped_privilege(
+            tidb_mysql::consts::SystemDB,
+            tidb_mysql::consts::UserTable,
+            privilege::GlobalPriv::Insert,
+        ) || self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser)
+        {
+            return Ok(());
+        }
+        Err(DriverError::SpecificAccessDenied(
+            if is_role {
+                "CREATE ROLE or CREATE USER"
+            } else {
+                "CREATE User"
+            }
+            .to_owned(),
+        ))
+    }
+
+    /// Go's `executeDropUser` gate (`executor/simple.go` around line 2519):
+    /// `DELETE` on `mysql.user`, else the global `CREATE USER` privilege
+    /// (`DropRolePriv` is unmodelled, exactly as `CreateRolePriv` is above).
+    fn require_drop_user_privilege(&self, is_role: bool) -> Result<(), DriverError> {
+        if self.has_scoped_privilege(
+            tidb_mysql::consts::SystemDB,
+            tidb_mysql::consts::UserTable,
+            privilege::GlobalPriv::Delete,
+        ) || self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser)
+        {
+            return Ok(());
+        }
+        Err(DriverError::SpecificAccessDenied(
+            if is_role {
+                "DROP ROLE or CREATE USER"
+            } else {
+                "CREATE USER"
+            }
+            .to_owned(),
+        ))
+    }
+
+    /// Go's shared `SYSTEM_USER` guard on `DROP USER`/`ALTER USER`
+    /// (`executor/simple.go` around lines 2563 and 1958): an account that
+    /// itself holds `SYSTEM_USER` may only be modified by a caller who holds
+    /// `SYSTEM_USER` (or `RESTRICTED_USER_ADMIN`) too. Because SUPER is the
+    /// fallback for every dynamic privilege, this reads as "only a SUPER may
+    /// touch a SUPER", which is why Go's message names both.
+    fn require_system_user_privilege_over(
+        &self,
+        user: &str,
+        host: &str,
+    ) -> Result<(), DriverError> {
+        if self.privileges.is_none() || self.current_identity().is_none() {
+            return Ok(());
+        }
+        if self.has_dynamic_privilege("SYSTEM_USER", false)
+            || self.has_dynamic_privilege("RESTRICTED_USER_ADMIN", false)
+        {
+            return Ok(());
+        }
+        if self.target_has_dynamic_privilege(user, host, "SYSTEM_USER") {
+            return Err(DriverError::SpecificAccessDenied(
+                "SYSTEM_USER or SUPER".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Go's `executeAlterUser` admin gate (`executor/simple.go` around line
+    /// 1941): the global `CREATE USER` privilege, or `UPDATE` on
+    /// `mysql.user`. A caller changing only its OWN password with a bare
+    /// `IDENTIFIED BY` skips the gate entirely (Go's `alterCurrentUser &&
+    /// alterPassword`), which is what lets any account rotate its own
+    /// password -- and what a sandboxed session relies on.
+    fn require_alter_user_privilege(&self, user: &str, host: &str) -> Result<(), DriverError> {
+        if self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser)
+            || self.has_scoped_privilege(
+                tidb_mysql::consts::SystemDB,
+                tidb_mysql::consts::UserTable,
+                privilege::GlobalPriv::Update,
+            )
+        {
+            return self.require_system_user_privilege_over(user, host);
+        }
+        Err(DriverError::SpecificAccessDenied("CREATE USER".to_owned()))
+    }
+
+    /// Go's `GRANT`/`REVOKE` gate: "to GRANT, you must have the privileges
+    /// you are granting, plus the GRANT OPTION"
+    /// (`planner/core/planbuilder.go`'s `collectVisitInfoFromGrantStmt`
+    /// around line 3946 and `collectVisitInfoFromRevokeStmt` around line
+    /// 3878, checked by `optimizer.go`'s `CheckPrivilege`).
+    ///
+    /// Every named STATIC privilege is verified at the statement's own scope,
+    /// then `GRANT OPTION` at that same scope when the statement named any
+    /// static privilege at all. A DYNAMIC privilege is instead verified as
+    /// itself WITH its own grant option, which is why a dynamic-only
+    /// statement never consults the account's global `GRANT OPTION`.
+    ///
+    /// The two statements report a denial differently: `GRANT` names the
+    /// missing `GRANT OPTION` for a dynamic privilege (1227), while every
+    /// other denial -- and every `REVOKE` denial -- carries no
+    /// statement-specific error and falls to Go's generic
+    /// `ErrPrivilegeCheckFail` (8121).
+    ///
+    /// One deliberate divergence: an explicit privilege LIST is verified in
+    /// `privilege::ALL_GLOBAL_PRIVS` order rather than in written order,
+    /// because the caller has already folded the list into a mask. That
+    /// changes only WHICH privilege a denial names when several are missing,
+    /// never whether the statement is denied, and it matches Go exactly for
+    /// `ALL PRIVILEGES` (whose expansion is that same list).
+    fn require_grant_privileges(
+        &self,
+        database: &str,
+        table: &str,
+        static_mask: u64,
+        dynamic: &[String],
+        is_grant: bool,
+    ) -> Result<(), DriverError> {
+        let denied = |priv_: privilege::GlobalPriv| {
+            DriverError::PrivilegeCheckFail(priv_.check_fail_name().to_owned())
+        };
+        for priv_ in privilege::ALL_GLOBAL_PRIVS {
+            if static_mask & priv_.bit() != 0 && !self.has_scoped_privilege(database, table, *priv_)
+            {
+                return Err(denied(*priv_));
+            }
+        }
+        for name in dynamic {
+            if !self.has_dynamic_privilege(name, true) {
+                return Err(if is_grant {
+                    DriverError::SpecificAccessDenied("GRANT OPTION".to_owned())
+                } else {
+                    // Go interpolates the `[]string` of dynamic privileges,
+                    // so its message keeps the slice brackets.
+                    DriverError::PrivilegeCheckFail(format!("[{name}]"))
+                });
+            }
+        }
+        // Go appends the scope's `GRANT OPTION` LAST, and only when the
+        // statement named at least one non-dynamic privilege.
+        if static_mask != 0
+            && !self.has_scoped_privilege(database, table, privilege::GlobalPriv::GrantOption)
+        {
+            return Err(denied(privilege::GlobalPriv::GrantOption));
+        }
+        Ok(())
+    }
+
+    /// Whether `(user, host)` is the account this session authenticated as --
+    /// Go's `alterCurrentUser`, which keys on the AUTHENTICATED identity so a
+    /// statement naming that account explicitly is still self-service.
+    fn is_own_account(&self, user: &str, host: &str) -> bool {
+        self.current_identity() == Some((user, host))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn create_user_stmt(
         &mut self,
@@ -212,6 +379,7 @@ impl Session {
         // Go validates every statement-level option BEFORE writing any row,
         // so a bad `PASSWORD EXPIRE INTERVAL 0 DAY` creates no account.
         let options = PasswordOrLockOptions::load(password_options)?;
+        self.require_create_user_privilege(false)?;
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::unsupported(
                 "CREATE USER requires a server front end with a privilege registry",
@@ -253,6 +421,7 @@ impl Session {
         if_not_exists: bool,
         roles: &[tidb_ast::RoleSpec],
     ) -> Result<StmtOutput, DriverError> {
+        self.require_create_user_privilege(true)?;
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::unsupported(
                 "CREATE ROLE requires a server front end with a privilege registry",
@@ -282,6 +451,14 @@ impl Session {
         &mut self,
         grant: &tidb_ast::GrantRoleStmt,
     ) -> Result<StmtOutput, DriverError> {
+        // Go `planbuilder.go`'s `*ast.GrantRoleStmt` case (around line 3775):
+        // the DYNAMIC `ROLE_ADMIN`, whose SUPER fallback is why the message
+        // names both.
+        if !self.has_dynamic_privilege("ROLE_ADMIN", false) {
+            return Err(DriverError::SpecificAccessDenied(
+                "SUPER or ROLE_ADMIN".to_owned(),
+            ));
+        }
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::unsupported(
                 "GRANT <role> requires a server front end with a privilege registry",
@@ -309,6 +486,13 @@ impl Session {
         &mut self,
         revoke: &tidb_ast::RevokeRoleStmt,
     ) -> Result<StmtOutput, DriverError> {
+        // Go `planbuilder.go`'s `*ast.RevokeRoleStmt` case (around line 3783),
+        // the same `ROLE_ADMIN` gate `GRANT <role>` uses.
+        if !self.has_dynamic_privilege("ROLE_ADMIN", false) {
+            return Err(DriverError::SpecificAccessDenied(
+                "SUPER or ROLE_ADMIN".to_owned(),
+            ));
+        }
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::unsupported(
                 "REVOKE <role> requires a server front end with a privilege registry",
@@ -393,6 +577,24 @@ impl Session {
             ));
         };
         let accounts = self.resolve_role_grantees(&set_default.users, "SET DEFAULT ROLE")?;
+        // Go `executeSetDefaultRole` (`executor/simple.go` around line 445):
+        // setting one's OWN default roles needs no privilege at all;
+        // anything else needs `UPDATE` on `mysql.default_roles`, else the
+        // global `CREATE USER` privilege.
+        let only_self = accounts.len() == 1
+            && accounts
+                .first()
+                .is_some_and(|(user, host)| self.is_own_account(user, host));
+        if !only_self
+            && !self.has_scoped_privilege(
+                tidb_mysql::consts::SystemDB,
+                tidb_mysql::consts::DefaultRoleTable,
+                privilege::GlobalPriv::Update,
+            )
+            && !self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser)
+        {
+            return Err(DriverError::SpecificAccessDenied("CREATE USER".to_owned()));
+        }
         for account in &accounts {
             let roles = match &set_default.selection {
                 tidb_ast::DefaultRoleSelection::None => Vec::new(),
@@ -564,6 +766,20 @@ impl Session {
                 ));
             }
             let (user, host) = self.resolve_account(&spec.user)?;
+            // Go's `needAdminPrivCheck` (`executor/simple.go` around line
+            // 1924): a bare self password change -- `IDENTIFIED BY` with no
+            // `WITH <plugin>` and no statement-level option -- is
+            // self-service and needs no privilege; everything else needs
+            // ALTER USER authority. `alterUserHasPrivilegedOptions` is the
+            // statement-level option test, and every option kind it names
+            // other than `PASSWORD ...`/`ACCOUNT ...` is already refused as
+            // unsupported above, so `password_options` is what remains.
+            let bare_self_password_change = self.is_own_account(&user, &host)
+                && matches!(spec.auth, Some(tidb_ast::CreateUserAuth::By(_)))
+                && alter.password_options.is_empty();
+            if !bare_self_password_change {
+                self.require_alter_user_privilege(&user, &host)?;
+            }
             if let Some(auth) = spec.auth.as_ref() {
                 // A bare `IDENTIFIED BY` (no `WITH <plugin>`) keeps the
                 // account's CURRENT plugin (Go backfills
@@ -644,6 +860,26 @@ impl Session {
         spec: &tidb_ast::UserSpec,
     ) -> Result<StmtOutput, DriverError> {
         let (user, host) = self.resolve_account(spec)?;
+        // Go `executor/show.go`'s `fetchShowCreateUser` (around line 1873):
+        // this statement renders `IDENTIFIED WITH '<plugin>' AS '<hash>'`,
+        // so naming ANOTHER account needs `SELECT` on `mysql.user` -- the
+        // privilege that would let the caller read the stored hash directly.
+        if !spec.current_user
+            && !self.is_own_account(&user, &host)
+            && !self.has_scoped_privilege(
+                tidb_mysql::consts::SystemDB,
+                tidb_mysql::consts::UserTable,
+                privilege::GlobalPriv::Select,
+            )
+        {
+            let (caller, caller_host) = self.own_account()?;
+            return Err(DriverError::TableAccessDenied {
+                privilege: "SELECT",
+                user: caller,
+                host: caller_host,
+                table: tidb_mysql::consts::UserTable.to_owned(),
+            });
+        }
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::unsupported(
                 "SHOW CREATE USER requires a server front end with a privilege registry",
@@ -740,6 +976,20 @@ impl Session {
             Some(spec) => self.resolve_account(spec)?,
             None => self.own_account()?,
         };
+        // Go `executeSetPwd` (`executor/simple.go` around line 2905):
+        // changing ANOTHER account's password is TiDB's long-standing
+        // SUPER-only operation, and the refusal names the `mysql` schema
+        // rather than the privilege.
+        if !self.is_own_account(&user, &host)
+            && !self.has_scoped_privilege("", "", privilege::GlobalPriv::Super)
+        {
+            let (caller, caller_host) = self.own_account()?;
+            return Err(DriverError::DbAccessDenied {
+                user: caller,
+                host: caller_host,
+                database: tidb_mysql::consts::SystemDB.to_owned(),
+            });
+        }
         let auth_string = privilege::encode_password(&set_password.password);
         if !registry.set_auth_string(&user, &host, &auth_string) {
             return Err(DriverError::SetPasswordNoMatchingRow);
@@ -761,6 +1011,10 @@ impl Session {
         &mut self,
         pairs: &[tidb_ast::RenameUserPair],
     ) -> Result<StmtOutput, DriverError> {
+        // Go `planbuilder.go`'s `*ast.RenameUserStmt` case (around line 3743).
+        if !self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser) {
+            return Err(DriverError::SpecificAccessDenied("CREATE USER".to_owned()));
+        }
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::unsupported(
                 "RENAME USER requires a server front end with a privilege registry",
@@ -820,6 +1074,7 @@ impl Session {
         if_exists: bool,
         users: &[tidb_ast::UserSpec],
     ) -> Result<StmtOutput, DriverError> {
+        self.require_drop_user_privilege(is_role)?;
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::unsupported(
                 "DROP USER requires a server front end with a privilege registry",
@@ -842,6 +1097,12 @@ impl Session {
                     DriverError::DropUserMissing { accounts }
                 });
             }
+        }
+        // Go rolls the whole statement back when ONE target turns out to be
+        // a `SYSTEM_USER`, so the guard has to clear every target before the
+        // first delete rather than inside the delete loop.
+        for spec in users {
+            self.require_system_user_privilege_over(&spec.user, &spec.host)?;
         }
         for spec in users {
             registry.drop_user(&spec.user, &spec.host);
@@ -903,6 +1164,7 @@ impl Session {
                 // property of the user".
                 let names_static = grant.privileges.iter().any(|privilege| !privilege.dynamic);
                 let mask = static_mask | if names_static { with_grant } else { 0 };
+                self.require_grant_privileges("", "", static_mask, &dynamic, true)?;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -922,6 +1184,7 @@ impl Session {
                 let database = self.resolve_grant_database(database.as_deref())?;
                 let privs = self.resolve_scoped_privs(&grant.privileges, ScopeKind::Database)?;
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit()) | with_grant;
+                self.require_grant_privileges(&database, "", mask, &[], true)?;
                 for spec in &grant.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -938,6 +1201,11 @@ impl Session {
                     columns,
                 } = self.resolve_table_scope_privs(&grant.privileges)?;
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit()) | with_grant;
+                // Go passes an EMPTY column to every `GRANT`-collected
+                // `visitInfo`, so a column list is verified at TABLE scope
+                // like any other privilege in the same statement.
+                let column_mask = columns.iter().fold(mask, |mask, (_, bits)| mask | bits);
+                self.require_grant_privileges(&database, table, column_mask, &[], true)?;
                 // Go allows granting on a table that does not exist only
                 // when the privilege list includes `CREATE` (captured:
                 // issues #28533/#29268); otherwise it reports
@@ -1009,6 +1277,7 @@ impl Session {
         match &revoke.level {
             tidb_ast::GrantLevel::Global => {
                 let (mask, dynamic) = self.split_global_privs(&revoke.privileges, false)?;
+                self.require_grant_privileges("", "", mask, &dynamic, false)?;
                 let revoke_all_dynamic = revoke
                     .privileges
                     .iter()
@@ -1050,6 +1319,7 @@ impl Session {
                 let database = self.resolve_grant_database(database.as_deref())?;
                 let privs = self.resolve_scoped_privs(&revoke.privileges, ScopeKind::Database)?;
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
+                self.require_grant_privileges(&database, "", mask, &[], false)?;
                 for spec in &revoke.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -1076,6 +1346,8 @@ impl Session {
                     columns,
                 } = self.resolve_table_scope_privs(&revoke.privileges)?;
                 let mask = privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit());
+                let column_mask = columns.iter().fold(mask, |mask, (_, bits)| mask | bits);
+                self.require_grant_privileges(&database, table, column_mask, &[], false)?;
                 for spec in &revoke.users {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
@@ -1367,6 +1639,25 @@ impl Session {
             }
             Some(spec) => (spec.user.clone(), spec.host.clone()),
         };
+        // Go `executor/show.go`'s `fetchShowGrants` (around line 2018):
+        // reading ANOTHER account's grants needs `SELECT` on the whole
+        // `mysql` schema, because that is what reading the grant tables
+        // would need. Without it, one statement enumerates every account's
+        // privileges.
+        if !is_own
+            && !self.has_scoped_privilege(
+                tidb_mysql::consts::SystemDB,
+                "",
+                privilege::GlobalPriv::Select,
+            )
+        {
+            let (caller, caller_host) = self.own_account()?;
+            return Err(DriverError::DbAccessDenied {
+                user: caller,
+                host: caller_host,
+                database: tidb_mysql::consts::SystemDB.to_owned(),
+            });
+        }
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::unsupported(
                 "SHOW GRANTS requires a server front end with a privilege registry",

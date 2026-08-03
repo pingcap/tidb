@@ -40,10 +40,21 @@ const CLIENT_CONNECT_ATTRS: u32 = 1 << 20;
 const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
 
 fn users() -> ConfiguredUserStore {
-    ConfiguredUserStore::parse(
+    let store = ConfiguredUserStore::parse(
         "alice\t%\tmysql_native_password\t*14E65567ABDB5135D0CFD9A70B3032C179A49EE7\n",
     )
-    .unwrap()
+    .unwrap();
+    // The account and DDL statements below are privileged on a Go TiDB, and
+    // now here too. The strict TSV provisions identities only, so an account
+    // it names starts with USAGE and nothing else; give `alice` the authority
+    // an operator would give the account they administer this node with.
+    let all = tidb_session::privilege::ALL_GLOBAL_PRIVS
+        .iter()
+        .fold(tidb_session::privilege::GlobalPriv::GrantOption.mask(), |mask, priv_| {
+            mask | priv_.mask()
+        });
+    store.accounts().grant("alice", "%", all);
+    store
 }
 
 fn write_packet(stream: &mut TcpStream, sequence: u8, payload: &[u8]) {
@@ -890,14 +901,26 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         vec![vec!["2".to_owned(), "DOUBLE".to_owned()]]
     );
 
-    // The privilege registry answers over the wire.
-    // The handshake-matched identity is seeded into the privilege registry
-    // on login, so a fresh account reports USAGE, as Go's mysql.user does.
+    // The privilege registry answers over the wire, and the grants it
+    // reports are the ones the statements below are checked against.
     let grants = run_query(&mut client, &mut reader, "SHOW GRANTS");
     assert_eq!(
         grants[0][0],
-        "GRANT USAGE ON *.* TO 'alice'@'%'",
+        "GRANT ALL PRIVILEGES ON *.* TO 'alice'@'%' WITH GRANT OPTION",
         "{grants:?}"
+    );
+    // A fresh account reports USAGE, as Go's mysql.user does -- and reading
+    // ANOTHER account's grants is itself privileged (Go: SELECT on `mysql`),
+    // which this caller holds.
+    assert_eq!(
+        run_write(&mut client, &mut reader, "CREATE USER 'wireusage'@'%'"),
+        0
+    );
+    let other = run_query(&mut client, &mut reader, "SHOW GRANTS FOR 'wireusage'@'%'");
+    assert_eq!(
+        other[0][0],
+        "GRANT USAGE ON *.* TO 'wireusage'@'%'",
+        "{other:?}"
     );
 
     // A JSON column round-trips through the real cell (type 245) with the

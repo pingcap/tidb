@@ -751,6 +751,43 @@ impl DriverError {
              privilege(s) for this operation"
                 .to_owned(),
         ),
+        // Go `ErrSpecificAccessDenied` (1227), the general form.
+        DriverError::SpecificAccessDenied(privileges) => MysqlError::new(
+            1227,
+            *b"42000",
+            format!(
+                "Access denied; you need (at least one of) the {privileges} \
+                 privilege(s) for this operation"
+            ),
+        ),
+        // Go `ErrDBaccessDenied` (1044).
+        DriverError::DbAccessDenied {
+            user,
+            host,
+            database,
+        } => MysqlError::new(
+            1044,
+            *b"42000",
+            format!("Access denied for user '{user}'@'{host}' to database '{database}'"),
+        ),
+        // Go `ErrTableaccessDenied` (1142).
+        DriverError::TableAccessDenied {
+            privilege,
+            user,
+            host,
+            table,
+        } => MysqlError::new(
+            1142,
+            *b"42000",
+            format!("{privilege} command denied to user '{user}'@'{host}' for table '{table}'"),
+        ),
+        // Go `ErrPrivilegeCheckFail` (8121). Go's message deliberately
+        // begins lowercase.
+        DriverError::PrivilegeCheckFail(privilege) => MysqlError::new(
+            8121,
+            *b"HY000",
+            format!("privilege check for '{privilege}' fail"),
+        ),
         // Go `ErrCannotUser` (1396): "Operation %s failed for %.256s", quoted
         // `'user'@'host'` for CREATE USER.
         DriverError::CreateUserAlreadyExists { user, host } => MysqlError::new(

@@ -56,29 +56,36 @@ impl Session {
         }
     }
 
-    /// Go `RequestVerification` at table scope: whether this session holds
-    /// `global_priv` on `database`.`table`, through its own grants or a role.
-    ///
-    /// A session with no attached registry, or none with a front end, is
-    /// unrestricted -- the same rule
-    /// [`Self::require_set_global_privilege`] applies, and the same reason:
-    /// an in-process session has no identity to check.
+    /// The account table plus this session's authenticated identity -- what
+    /// every privilege gate needs, and `None` for a session that is
+    /// UNRESTRICTED because it has no front end (no registry attached, or no
+    /// authenticated identity). Go's executors treat a missing privilege
+    /// manager as "miss privilege checker" and refuse; this tier's in-process
+    /// sessions legitimately have none, so they pass instead -- the rule
+    /// every check here already followed, now stated once.
+    fn privilege_context(&self) -> Option<(&privilege::PrivilegeRegistry, &str, &str)> {
+        let registry = self.privileges.as_ref()?;
+        let (user, host) = self.current_identity()?;
+        Some((registry, user, host))
+    }
+
+    /// Go `RequestVerification(activeRoles, database, table, "", priv)`:
+    /// whether this session holds `global_priv` at that scope, through its
+    /// own grants or a role. An EMPTY `database` and `table` is Go's GLOBAL
+    /// (`*.*`) scope; an empty `table` alone is schema scope.
     ///
     /// The *error* a denied caller reports is the caller's, not this
     /// method's: Go words it per statement (`ANALYZE` reports
     /// `ErrTableaccessDenied` naming INSERT or SELECT), and only the caller
     /// knows which privilege it was asking about.
     #[must_use]
-    pub fn has_table_privilege(
+    pub fn has_scoped_privilege(
         &self,
         database: &str,
         table: &str,
         global_priv: privilege::GlobalPriv,
     ) -> bool {
-        let Some(registry) = &self.privileges else {
-            return true;
-        };
-        let Some((user, host)) = self.current_identity() else {
+        let Some((registry, user, host)) = self.privilege_context() else {
             return true;
         };
         registry.has_table_priv_with_roles(
@@ -89,6 +96,45 @@ impl Session {
             table,
             global_priv,
         )
+    }
+
+    /// [`Self::has_scoped_privilege`] at table scope, the name the executor
+    /// arms that predate the general form call it by.
+    #[must_use]
+    pub fn has_table_privilege(
+        &self,
+        database: &str,
+        table: &str,
+        global_priv: privilege::GlobalPriv,
+    ) -> bool {
+        self.has_scoped_privilege(database, table, global_priv)
+    }
+
+    /// Go `RequestDynamicVerification(activeRoles, name, grantable)`. The
+    /// registry's own SUPER fallback is part of this, which is why Go's
+    /// denial messages name `SUPER or <PRIVILEGE>`.
+    #[must_use]
+    pub fn has_dynamic_privilege(&self, name: &str, with_grant: bool) -> bool {
+        let Some((registry, user, host)) = self.privilege_context() else {
+            return true;
+        };
+        registry.has_dynamic_priv_with_roles(user, host, self.active_roles(), name, with_grant)
+    }
+
+    /// Go `RequestDynamicVerificationWithUser` (`privileges.go` around line
+    /// 118): whether the NAMED account holds a dynamic privilege, evaluated
+    /// over that account's own DEFAULT roles rather than the caller's active
+    /// ones. `DROP USER` and `ALTER USER` ask this about their target, which
+    /// is how a `SYSTEM_USER` account is protected from a merely
+    /// `CREATE USER`-privileged caller.
+    #[must_use]
+    pub(crate) fn target_has_dynamic_privilege(&self, user: &str, host: &str, name: &str) -> bool {
+        let Some(registry) = self.privileges.as_ref() else {
+            return false;
+        };
+        let account = (user.to_owned(), host.to_owned());
+        let roles = registry.default_roles(&account);
+        registry.has_dynamic_priv_with_roles(user, host, &roles, name, false)
     }
 
     /// The `user@host` this session authenticated as, as Go's
