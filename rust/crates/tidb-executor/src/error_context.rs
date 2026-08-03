@@ -12,125 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed error handling policy from `pkg/errctx/context.go`.
+//! Statement-flag derivation of the error-context policy from
+//! `pkg/sessionctx/stmtctx/stmtctx.go`.
 //!
-//! This module owns only the typed policy decision: source error groups, their
-//! error/warning/ignore levels, and the statement flags that influence
-//! that decision in `pkg/sessionctx/stmtctx/stmtctx.go`. It deliberately does
-//! not attach error codes, warning text, SQL mode, or a mutable session warning
-//! sink. Those concerns belong to the future statement/session owner. Keeping
-//! this seam pure makes precedence and copy-on-write behavior testable without
-//! fabricating a Go error implementation in Rust.
+//! The `pkg/errctx` package itself -- [`Level`], [`ErrGroup`], [`LevelMap`],
+//! the error-code group table, the warning-handling `Context`, and
+//! `ResolveErrLevel` -- is fully transcreated in [`tidb_error::errctx`] and
+//! re-exported here; this module no longer carries its own copy. What this
+//! module owns is the stmtctx side: the typed statement flags
+//! ([`ErrorContextFlags`]) and the `newErrCtx`-shaped derivation of a group
+//! [`LevelMap`] from them ([`ErrorContext`]), which is what the executor
+//! push-down path consumes.
 
-use std::ops::{Index, IndexMut};
+pub use tidb_error::errctx::{resolve_err_level, ErrGroup, Level, LevelMap};
 
 use tidb_datatype::ConversionFlags;
-
-/// How an error in an [`ErrGroup`] is published to its caller.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Level {
-    /// Return the error to the statement caller.
-    #[default]
-    Error,
-    /// Append the error as a warning and continue the statement.
-    Warn,
-    /// Ignore the error and continue without a warning.
-    Ignore,
-}
-
-/// The source groups whose handling can be overridden by a statement.
-///
-/// `pkg/errctx/context.go` keeps these in a fixed array (`errGroupCount`), so
-/// this Rust representation also uses stable discriminants rather than a
-/// string map. Error-code membership is intentionally not reproduced here:
-/// the current Rust executor has no source-compatible errno/error wrapper.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(usize)]
-pub enum ErrGroup {
-    /// Truncation, overflow, and malformed temporal-value errors.
-    Truncate = 0,
-    /// Duplicate-key errors.
-    DupKey = 1,
-    /// Invalid NULL assignment errors.
-    BadNull = 2,
-    /// Missing-default-value errors.
-    NoDefault = 3,
-    /// Division-by-zero errors.
-    DividedByZero = 4,
-    /// Auto-increment allocation/read errors.
-    AutoIncReadFailed = 5,
-    /// No partition accepted the row.
-    NoMatchedPartition = 6,
-}
-
-impl ErrGroup {
-    /// Number of source error groups (`errGroupCount`).
-    pub const COUNT: usize = 7;
-
-    /// Every group in source declaration order.
-    pub const ALL: [Self; Self::COUNT] = [
-        Self::Truncate,
-        Self::DupKey,
-        Self::BadNull,
-        Self::NoDefault,
-        Self::DividedByZero,
-        Self::AutoIncReadFailed,
-        Self::NoMatchedPartition,
-    ];
-
-    const fn index(self) -> usize {
-        self as usize
-    }
-}
-
-/// Fixed source-shaped map from [`ErrGroup`] to [`Level`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LevelMap([Level; ErrGroup::COUNT]);
-
-impl LevelMap {
-    /// Creates a strict map, matching Go's zero-valued `LevelMap`.
-    pub const fn strict() -> Self {
-        Self([Level::Error; ErrGroup::COUNT])
-    }
-
-    /// Returns a group's level.
-    pub const fn get(self, group: ErrGroup) -> Level {
-        self.0[group.index()]
-    }
-
-    /// Returns a copy with one group's level replaced.
-    #[must_use]
-    pub const fn with_level(self, group: ErrGroup, level: Level) -> Self {
-        let mut levels = self.0;
-        levels[group.index()] = level;
-        Self(levels)
-    }
-
-    /// Returns all levels in source declaration order.
-    pub const fn as_array(self) -> [Level; ErrGroup::COUNT] {
-        self.0
-    }
-}
-
-impl Default for LevelMap {
-    fn default() -> Self {
-        Self::strict()
-    }
-}
-
-impl Index<ErrGroup> for LevelMap {
-    type Output = Level;
-
-    fn index(&self, group: ErrGroup) -> &Self::Output {
-        &self.0[group.index()]
-    }
-}
-
-impl IndexMut<ErrGroup> for LevelMap {
-    fn index_mut(&mut self, group: ErrGroup) -> &mut Self::Output {
-        &mut self.0[group.index()]
-    }
-}
 
 /// Statement flags that directly affect the Go error-context policy.
 ///
@@ -311,7 +207,7 @@ impl ErrorContext {
     /// Converts one group's level into the action an error producer should
     /// take. No warning is appended here; the statement owner owns that sink.
     pub const fn disposition(self, group: ErrGroup) -> ErrorDisposition {
-        self.level_for(group).into_disposition()
+        ErrorDisposition::from_level(self.level_for(group))
     }
 }
 
@@ -326,24 +222,14 @@ pub enum ErrorDisposition {
     Ignore,
 }
 
-impl Level {
-    const fn into_disposition(self) -> ErrorDisposition {
-        match self {
-            Self::Error => ErrorDisposition::Return,
-            Self::Warn => ErrorDisposition::Warn,
-            Self::Ignore => ErrorDisposition::Ignore,
+impl ErrorDisposition {
+    /// Maps a group [`Level`] to the action an error producer should take.
+    #[must_use]
+    pub const fn from_level(level: Level) -> Self {
+        match level {
+            Level::Error => Self::Return,
+            Level::Warn => Self::Warn,
+            Level::Ignore => Self::Ignore,
         }
-    }
-}
-
-/// Resolves the source `ignore`/`warn` flags. Ignore always wins if both are
-/// supplied, matching `pkg/errctx/context.go:254-265`.
-pub const fn resolve_err_level(ignore: bool, warn: bool) -> Level {
-    if ignore {
-        Level::Ignore
-    } else if warn {
-        Level::Warn
-    } else {
-        Level::Error
     }
 }

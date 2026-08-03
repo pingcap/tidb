@@ -21,6 +21,7 @@
 //! crates depend on this leaf instead of copying numeric registries or local
 //! terror-class markers.
 
+pub mod errctx;
 pub mod mysql;
 pub mod plannererrors;
 pub mod terror;

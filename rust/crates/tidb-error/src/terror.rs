@@ -767,7 +767,7 @@ pub fn must_nil(
     process::exit(1);
 }
 
-fn root_cause<'a>(mut error: &'a (dyn Error + 'static)) -> &'a (dyn Error + 'static) {
+pub(crate) fn root_cause<'a>(mut error: &'a (dyn Error + 'static)) -> &'a (dyn Error + 'static) {
     while let Some(source) = error.source() {
         error = source;
     }
