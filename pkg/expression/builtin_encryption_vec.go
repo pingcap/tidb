@@ -795,16 +795,12 @@ func (b *builtinUncompressSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 
 	result.ReserveString(n)
 	tc := typeCtx(ctx)
-<<<<<<< HEAD
-	for i := 0; i < n; i++ {
-=======
 	tracker, err := b.getMemTracker(ctx)
 	if err != nil {
 		return err
 	}
 	var out bytes.Buffer
-	for i := range n {
->>>>>>> c6e3cf83998 (*: fix uncompress mem dos (#70199))
+	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue

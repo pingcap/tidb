@@ -955,13 +955,7 @@ func (c *uncompressFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinUncompressSig struct {
 	baseBuiltinFunc
-<<<<<<< HEAD
-=======
 	expropt.SessionVarsPropReader
-	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
-	// as this expression may be shared across sessions.
-	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
->>>>>>> c6e3cf83998 (*: fix uncompress mem dos (#70199))
 }
 
 func (b *builtinUncompressSig) Clone() builtinFunc {
