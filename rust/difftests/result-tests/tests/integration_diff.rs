@@ -452,9 +452,14 @@ fn warning_comparison_covers_only_enable_warnings_statements() {
         TOPICS.len(),
         per_topic.join("\n  ")
     );
+    // Re-read, not patched: onboarding `executor/foreign_key` -- its
+    // divergences reached zero once Go's MODIFY COLUMN rules for foreign-key
+    // columns landed -- added that topic's 318 statements, 2 of which run
+    // under `--enable_warnings`. 6564 + 318 = 6882 and 29 + 2 = 31, so the
+    // entire move is that one topic; nothing else changed what the gate sees.
     assert_eq!(
         (covered, total),
-        (29, 6564),
+        (31, 6882),
         "the warning gate's reach changed; re-read what it now covers rather \
          than updating this number to match"
     );
