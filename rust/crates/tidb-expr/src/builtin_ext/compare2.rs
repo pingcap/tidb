@@ -110,7 +110,31 @@ fn extremum(vals: &[Datum], want: Ordering) -> Result<Datum, EvalError> {
         return Ok(Datum::Real(to_f64(best)));
     }
     if vals.iter().any(|v| matches!(v, Datum::Decimal(_))) {
-        return Ok(Datum::Decimal(to_decimal(best)));
+        // The result carries the SIGNATURE's scale, not the winning value's
+        // own. Go aggregates the arguments' FieldTypes into one return type
+        // whose `Decimal` is the MAX over them, then wraps every argument in
+        // `WrapWithCastAsDecimal` to it -- so which argument wins cannot
+        // change the scale. Reading the runtime datum instead lets an integer
+        // winner keep scale 0. CAPTURED from real TiDB:
+        //
+        //   least(1, 2.5)      1.0     least(2.5, 1)         1.0
+        //   least(1, 2.555)    1.000   least(1, 2.5, 3.25)   1.00
+        //   least(1, 2.50)     1.00    greatest(3, 2.55, 1)  3.00
+        //   greatest(3, 2.5)   3.0     greatest(2.5, 1.234)  2.500
+        //
+        // `least(2.5, 1)` and `greatest(2.5, 1.234)` are the two that pin the
+        // rule: in the first the winner is an INT and still prints a
+        // fraction, in the second the winner's own scale is 1 and the printed
+        // one is 3.
+        let scale = vals
+            .iter()
+            .map(|value| match value {
+                Datum::Decimal(value) => value.scale(),
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0);
+        return Ok(Datum::Decimal(to_decimal(best).cast_to_precision(0, scale)));
     }
     // TiDB's common numeric type for a mixed signed/unsigned integer list is
     // DECIMAL. Preserve that result domain even when the winning value is an
@@ -780,5 +804,45 @@ mod tests {
             assert_eq!(call("ISNULL", &[value]), Datum::Int(0));
         }
         assert_eq!(call("ISNULL", &[Datum::Null]), Datum::Int(1));
+    }
+
+    /// LEAST/GREATEST print the SIGNATURE's scale, not the winner's own.
+    ///
+    /// Go aggregates the arguments' FieldTypes into one return type whose
+    /// `Decimal` is the max over them and casts every argument to it, so an
+    /// INTEGER argument that wins the comparison still prints a fraction.
+    /// Every expectation is a verbatim capture from real TiDB.
+    #[test]
+    fn extremum_decimal_carries_the_aggregated_scale() {
+        let d = |text: &str| Datum::Decimal(Decimal::from_literal(text));
+        let text = |value: Datum| value.sql_string().expect("a decimal renders");
+        for (name, args, expected) in [
+            // The winner is the INT and still carries the fraction.
+            ("LEAST", vec![Datum::Int(1), d("2.5")], "1.0"),
+            ("LEAST", vec![d("2.5"), Datum::Int(1)], "1.0"),
+            ("LEAST", vec![Datum::Int(1), d("2.555")], "1.000"),
+            ("LEAST", vec![Datum::Int(1), d("2.50")], "1.00"),
+            ("LEAST", vec![Datum::Int(-1), d("2.5")], "-1.0"),
+            ("GREATEST", vec![Datum::Int(3), d("2.5")], "3.0"),
+            ("GREATEST", vec![Datum::Int(1), d("2.0")], "2.0"),
+            // The MAX scale over ALL arguments, not the winner's.
+            ("LEAST", vec![Datum::Int(1), d("2.5"), d("3.25")], "1.00"),
+            (
+                "GREATEST",
+                vec![Datum::Int(3), d("2.55"), Datum::Int(1)],
+                "3.00",
+            ),
+            ("GREATEST", vec![d("2.5"), d("1.234")], "2.500"),
+            ("LEAST", vec![d("2.5"), d("1.234")], "1.234"),
+            ("GREATEST", vec![d("2.5"), d("1.2")], "2.5"),
+            // No decimal argument at all keeps the integer domain.
+            ("LEAST", vec![Datum::Int(1), Datum::Int(2)], "1"),
+            // A signed/unsigned mix promotes to DECIMAL but to scale 0,
+            // because neither argument carries a fraction.
+            ("LEAST", vec![Datum::Int(1), Datum::UInt(2)], "1"),
+            ("GREATEST", vec![Datum::Int(1), Datum::UInt(2)], "2"),
+        ] {
+            assert_eq!(text(call(name, &args)), expected, "{name}({args:?})");
+        }
     }
 }
