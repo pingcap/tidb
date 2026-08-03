@@ -355,11 +355,6 @@ func (p *WorkerPool[T, R]) CloseAndWait() {
 	p.Release()
 }
 
-// Wait waits for all workers to exit without releasing the pool.
-func (p *WorkerPool[T, R]) Wait() {
-	p.wg.Wait()
-}
-
 // Release waits the pool to be released.
 // It will wait the input channel to be closed,
 // or the context being cancelled by business error.

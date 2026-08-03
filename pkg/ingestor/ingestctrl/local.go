@@ -1654,15 +1654,15 @@ func (local *Backend) doImport(
 		clusterID = local.pdCli.GetClusterID(ctx)
 	}
 
+	// Workers must use wctx so OnError cancels their in-flight work before
+	// Release waits for them to exit.
+	wctx := workerpool.NewContext(workerCtx)
 	pool := getRegionJobWorkerPool(
-		workerCtx, &jobWg,
+		wctx, &jobWg,
 		local, balancer,
 		jobToWorkerCh, jobFromWorkerCh,
 		clusterID,
 	)
-	wctx := workerpool.NewContext(workerCtx)
-	// The normal and error paths release the pool at different points below.
-	releasePool := sync.OnceFunc(pool.Release)
 
 	if e, ok := engine.(*globalsort.Engine); ok {
 		e.SetWorkerPool(pool)
@@ -1672,14 +1672,20 @@ func (local *Backend) doImport(
 		failpoint.Goto("afterStartWorker")
 	})
 
-	workGroup.Go(func() error {
-		pool.Start(wctx)
-		<-wctx.Done()
-		failpoint.InjectCall("beforeReleaseRegionJobWorkerPool")
-		return wctx.OperatorErr()
-	})
+	pool.Start(wctx)
 
 	failpoint.Label("afterStartWorker")
+
+	workGroup.Go(func() error {
+		<-wctx.Done()
+		failpoint.InjectCall("beforeReleaseRegionJobWorkerPool")
+		pool.Release()
+		operatorErr := wctx.OperatorErr()
+		if operatorErr == nil && workerCtx.Err() == nil {
+			dispatcher.markAllJobsSucceeded()
+		}
+		return operatorErr
+	})
 
 	workGroup.Go(func() error {
 		err := local.prepareAndSendJob(
@@ -1711,26 +1717,10 @@ func (local *Backend) doImport(
 		}
 
 		wctx.Cancel()
-		// jobWg can reach zero before HandleTask returns and reports its error.
-		// Wait for all workers so OperatorErr is stable before closing the result
-		// channel, which the dispatcher treats as normal completion.
-		pool.Wait()
-		if err := wctx.OperatorErr(); err != nil {
-			return err
-		}
-		if err := workerCtx.Err(); err != nil {
-			return err
-		}
-
-		// Close the result channel only after all workers exit without error.
-		releasePool()
-		return nil
+		return wctx.OperatorErr()
 	})
 
 	err := workGroup.Wait()
-	// Error paths do not release the pool above. At this point, the dispatcher has
-	// exited through context cancellation, so it is safe to close the result channel.
-	releasePool()
 	if err != nil && !common.IsContextCanceledError(err) {
 		tidblogutil.Logger(ctx).Error("do import meets error", zap.Error(err))
 	}
