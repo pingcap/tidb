@@ -70,6 +70,68 @@ pub fn is_create_user_plugin(plugin: &str) -> bool {
     CREATE_USER_PLUGINS.contains(&plugin)
 }
 
+/// How a login over a NETWORK connection may be verified for an account
+/// whose `mysql.user.plugin` is `plugin`.
+///
+/// Go picks the wire plugin from the account row (`server/conn.go`'s
+/// `checkAuthPlugin`, around line 1027, auth-switches the client to
+/// `userplugin`) and then dispatches on that same row in
+/// `privileges.ConnectionVerification` (`privileges.go` around line 666).
+/// This tier's wire front end always auth-switches to
+/// `mysql_native_password`, so the account's plugin cannot select a
+/// handshake -- but it MUST still select the verifier, because most of
+/// Go's plugin arms accept credentials a native scramble can never carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginPluginVerification {
+    /// Compare the client's `mysql_native_password` scramble against the
+    /// stored native hash, and accept an empty response for an empty
+    /// stored string. Go's `mysql.AuthNativePassword` arm.
+    NativeHash,
+    /// Only a passwordless login -- empty stored string AND empty client
+    /// response -- can succeed.
+    ///
+    /// Go reaches its password arms only through
+    /// `else if len(pwd) > 0 || len(authentication) > 0`, so an account with
+    /// an empty `authentication_string` that receives an empty response
+    /// authenticates whatever its plugin is; this arm reproduces exactly
+    /// that, and denies the rest because this tier cannot run the plugin's
+    /// hash (`caching_sha2_password`, `tidb_sm3_password`) or does not know
+    /// it at all (Go's `default` arm, which denies).
+    PasswordlessOnly,
+    /// No network login can succeed, whatever the client sends.
+    ///
+    /// `auth_socket` is refused outright off a Unix socket
+    /// (`server/conn.go` around line 988, and again at line 878);
+    /// `tidb_auth_token` needs a JWT this tier has no JWKS for
+    /// (`privileges.go` around line 670, which also denies an empty token);
+    /// and both LDAP plugins need a bind against a directory server
+    /// (`privileges.go` around lines 690 and 699). All three report Go's
+    /// generic `ErrAccessDenied` (1045).
+    Deny,
+}
+
+/// Selects the verifier Go's `ConnectionVerification` would use for an
+/// account whose `mysql.user.plugin` column holds `plugin`.
+///
+/// An empty `plugin` is Go's "no user plugin set" case (`server/conn.go`
+/// around line 1008), which assumes `mysql_native_password`.
+#[must_use]
+pub fn login_plugin_verification(plugin: &str) -> LoginPluginVerification {
+    if plugin.is_empty() || plugin == AuthNativePassword {
+        LoginPluginVerification::NativeHash
+    } else if plugin == AuthSocket
+        || plugin == AuthTiDBAuthToken
+        || plugin == AuthLDAPSimple
+        || plugin == AuthLDAPSASL
+    {
+        LoginPluginVerification::Deny
+    } else {
+        // `caching_sha2_password`, `tidb_sm3_password`, and any plugin name
+        // this tier does not know -- Go's `default` arm.
+        LoginPluginVerification::PasswordlessOnly
+    }
+}
+
 /// One account specification's `IDENTIFIED WITH <plugin> [BY '<password>' |
 /// AS '<hash>']` credential, already split into the shape Go's
 /// `encodedPassword` switches on.

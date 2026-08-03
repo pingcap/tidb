@@ -30,7 +30,9 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use tidb_session::privilege::{AccountLockout, PrivilegeRegistry};
+use tidb_session::privilege::{
+    login_plugin_verification, AccountLockout, LoginPluginVerification, PrivilegeRegistry,
+};
 use tidb_session::GlobalSysvars;
 
 use crate::auth_identity::{
@@ -278,9 +280,12 @@ impl ConfiguredUserStore {
     /// The successful result contains the canonical stored host pattern, not
     /// the client-supplied host.
     ///
-    /// A passwordless account (empty `authentication_string`) authenticates
-    /// only on an empty auth response, which is what a client sends when the
-    /// user supplies no password.
+    /// A passwordless NATIVE account (empty `authentication_string`)
+    /// authenticates only on an empty auth response, which is what a client
+    /// sends when the user supplies no password. Which verifier runs at all
+    /// is chosen by the account's `mysql.user.plugin`
+    /// ([`login_plugin_verification`]), because most plugins ALSO store an
+    /// empty `authentication_string` without being passwordless.
     ///
     /// The failed-login lockout and password-expiry checks run in Go's order
     /// (`pkg/session.(*session).Auth`): the auto-lock window is checked and
@@ -335,17 +340,39 @@ impl ConfiguredUserStore {
             self.accounts
                 .auth_string(identity.username(), identity.host())
         });
+        // Go's verifier is selected by the ACCOUNT's `mysql.user.plugin`,
+        // not by the plugin the wire front end happens to speak: an
+        // `auth_socket`/`tidb_auth_token`/LDAP account carries an EMPTY
+        // `authentication_string` (captured), so verifying it the native way
+        // would turn every one of them into a passwordless account.
+        let verification = identity
+            .as_ref()
+            .and_then(|identity| self.accounts.plugin(identity.username(), identity.host()))
+            .map_or(LoginPluginVerification::NativeHash, |plugin| {
+                login_plugin_verification(&plugin)
+            });
 
         // Three outcomes, not two: no such account, an account with no
         // password, and an account with a stored hash.
         let verified = match stored.as_deref() {
             None => verify_candidate(None, salt, response),
-            Some("") => response.is_empty(),
-            Some(encoded) => verify_candidate(
-                NativePasswordHash::parse(encoded).ok().as_ref(),
-                salt,
-                response,
-            ),
+            Some(encoded) => match verification {
+                LoginPluginVerification::NativeHash => {
+                    if encoded.is_empty() {
+                        response.is_empty()
+                    } else {
+                        verify_candidate(
+                            NativePasswordHash::parse(encoded).ok().as_ref(),
+                            salt,
+                            response,
+                        )
+                    }
+                }
+                LoginPluginVerification::PasswordlessOnly => {
+                    encoded.is_empty() && response.is_empty()
+                }
+                LoginPluginVerification::Deny => false,
+            },
         };
         let Some(identity) = identity else {
             // No such account: the verifier ran against a dummy hash above

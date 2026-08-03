@@ -475,3 +475,87 @@ fn default_password_lifetime_ages_out_a_password_expire_default_account() {
         .unwrap();
     assert!(login().is_ok());
 }
+
+/// The account's `mysql.user.plugin` -- not the plugin the wire front end
+/// speaks -- selects the verifier, so the plugins whose real handshake this
+/// tier cannot run are REFUSED rather than admitted with an empty password.
+///
+/// Captured from a real TiDB (`gorun`), which is the whole reason this
+/// matters:
+///
+/// ```text
+/// CREATE USER 'sock'@'%' IDENTIFIED WITH auth_socket
+/// CREATE USER 'tok'@'%'  IDENTIFIED WITH tidb_auth_token
+/// CREATE USER 'ldap'@'%' IDENTIFIED WITH authentication_ldap_simple
+/// CREATE USER 'sha2'@'%' IDENTIFIED WITH caching_sha2_password BY 'p'
+/// CREATE USER 'nopw'@'%'
+/// SELECT user, plugin, length(authentication_string), account_locked ...
+/// RS:ldap|authentication_ldap_simple|0|N;nopw|mysql_native_password|0|N;
+///    sha2|caching_sha2_password|70|N;sock|auth_socket|0|N;
+///    tok|tidb_auth_token|0|N
+/// ```
+///
+/// Three of those five carry an EMPTY `authentication_string` while being
+/// anything but passwordless, and none is locked. Go denies each over a
+/// network connection: `server/conn.go` around line 988 refuses
+/// `auth_socket` off a Unix socket outright, and
+/// `privileges.ConnectionVerification` (`privileges.go` around lines 670,
+/// 690 and 699) denies an empty token and requires an LDAP bind. All three
+/// report `ErrAccessDenied` (1045), which is
+/// [`AuthenticationFailure::AccessDenied`] here -- deliberately the same
+/// answer a wrong password gets.
+#[test]
+fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
+    let file = AuthFile::new(&format!("bob\t%\tmysql_native_password\t{ABC_HASH}\n"));
+    let store = ConfiguredUserStore::load(file.path()).expect("strict auth file");
+    let accounts = store.accounts();
+
+    // POSITIVE CONTROL: the native account this file provisions still logs
+    // in with its password, and a genuinely passwordless native account
+    // still logs in with an empty response.
+    let right = scramble(b"abc", &SOURCE_SALT);
+    assert_eq!(
+        store
+            .authenticate_native("bob", "127.0.0.1", &SOURCE_SALT, &right)
+            .expect("native login")
+            .username(),
+        "bob"
+    );
+    assert!(accounts.create_user("nopw", "%", ""));
+    assert!(store
+        .authenticate_native("nopw", "127.0.0.1", &SOURCE_SALT, &[])
+        .is_ok());
+
+    // The three plugins whose handshake this tier cannot run. Each row is
+    // exactly what the capture above shows a real TiDB stores.
+    for plugin in [
+        "auth_socket",
+        "tidb_auth_token",
+        "authentication_ldap_simple",
+        "authentication_ldap_sasl",
+    ] {
+        assert!(accounts.create_user_with_plugin(plugin, "%", "", plugin));
+        for response in [&[][..], &right[..], plugin.as_bytes()] {
+            assert_eq!(
+                store.authenticate_native(plugin, "127.0.0.1", &SOURCE_SALT, response),
+                Err(configured_user_store::AuthenticationFailure::AccessDenied),
+                "{plugin} must never authenticate over a network connection"
+            );
+        }
+    }
+
+    // A hashing plugin this tier cannot verify is fail-closed for a real
+    // password, but an empty stored string with an empty response is Go's
+    // passwordless success (its password arms are guarded by
+    // `len(pwd) > 0 || len(authentication) > 0`).
+    let sha2 = "$A$005$THISISACOMBINATIONOFINVALIDSALTANDPASSWORDTHATMUSTNEVERBRBEUSED";
+    assert!(accounts.create_user_with_plugin("sha2", "%", sha2, "caching_sha2_password"));
+    assert_eq!(
+        store.authenticate_native("sha2", "127.0.0.1", &SOURCE_SALT, &right),
+        Err(configured_user_store::AuthenticationFailure::AccessDenied)
+    );
+    assert!(accounts.set_auth_string_and_plugin("sha2", "%", "", "caching_sha2_password"));
+    assert!(store
+        .authenticate_native("sha2", "127.0.0.1", &SOURCE_SALT, &[])
+        .is_ok());
+}
