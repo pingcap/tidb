@@ -7,6 +7,40 @@ index — and then runs all four `oltp_*` workloads against this node. The
 
 The answer is now about speed, not capability.
 
+## Admissibility: what a ladder run can and cannot claim
+
+**Every numeric cell in this document dated 2026-08-03 or earlier is a SINGLE
+10-second sample at `--threads=1`.** The instrument itself proved that
+inadequate: a single-sample pair manufactured the `oltp_write_only`
+`168.31 -> 298.56 µs` "regression" (closed below as a measurement artifact
+after it cost two investigations), and the same read code has measured 89.15
+and 219.91 tps on consecutive runs. Read every historical figure below with
+that label attached.
+
+The ladder now runs each rung-6/6b cell `SYSBENCH_SAMPLES` times (default
+**3**) and rung 6c reports the **median with the min..max spread**, computing
+the Rust excess from the medians. `SYSBENCH_SAMPLES=1` remains available as a
+smoke mode, and rung 6c stamps its table `SINGLE-SAMPLE SMOKE RUN ...
+INADMISSIBLE for trend or regression claims` when it is used.
+
+**The admissibility rule:**
+
+* **No trend or regression claim may be made from a pair of single-sample
+  cells.** Not within one document revision, not across two.
+* A multi-sample median pair from ONE machine supports a claim only when the
+  two medians differ by more than the wider of the two min..max spreads.
+* Claims below ~100 µs of excess additionally need the A/B shape described in
+  the 2026-08-03 update — both binaries, one machine, serialized runs, each
+  with its own in-run Go arm — regardless of sample count.
+
+**Housekeeping note (`tiup_process_meta`):** the Go tidb-server that `tiup
+playground` starts records its `tiup_process_meta` at the TiUP data root
+joined with the already-absolute instance data dir, so it lands at
+`~/.tiup/data/Users/<user>/.tiup/data/<TAG>/` and survives both `tiup clean`
+and the tag-dir removal. The ladder's cleanup trap now sweeps its own run's
+nested copy (and only its own, only from inside the TiUP data root); if older
+runs left orphans behind, they are under that nested spine.
+
 **Update 2026-08-03 (`3b963564f9` vs `21f325882c`, offset 41000, two serialized
 full ladders): the `oltp_write_only` regression hunt is CLOSED as a measurement
 artifact. Neither endpoint of the claimed `168.31 -> 298.56 µs` move

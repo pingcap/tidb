@@ -91,6 +91,17 @@ AUTH_PASSWORD=${SYSBENCH_AUTH_PASSWORD:-sbtest-native-password}
 SYSBENCH_DB=sbtest
 TABLE_SIZE=${SYSBENCH_TABLE_SIZE:-1000}
 RUN_TIME=${SYSBENCH_RUN_TIME:-10}
+# How many times each rung-6/6b sysbench cell runs. A single 10s sample at
+# --threads=1 has manufactured a fake regression before (the same read code
+# measured 89.15 and 219.91 tps on consecutive runs), so the default is 3 and
+# rung 6c reports the MEDIAN with the min..max spread beside it. Set
+# SYSBENCH_SAMPLES=1 for a smoke run; a 1-sample table is explicitly labeled
+# inadmissible for trend claims.
+RUN_SAMPLES=${SYSBENCH_SAMPLES:-3}
+if [[ ! "${RUN_SAMPLES}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "SYSBENCH_SAMPLES must be a positive integer" >&2
+  exit 1
+fi
 
 step() { printf '\n===== %s =====\n' "$*" | tee -a "${LADDER_LOG}"; }
 note() { printf '%s\n' "$*" | tee -a "${LADDER_LOG}"; }
@@ -413,21 +424,24 @@ else
   note "SKIP rung 5: no dataset to check"
 fi
 
-step "rung 6: workload ladder (--threads=1 --time=${RUN_TIME})"
+step "rung 6: workload ladder (--threads=1 --time=${RUN_TIME}, ${RUN_SAMPLES} sample(s) per cell)"
 for workload in oltp_point_select oltp_read_only oltp_write_only oltp_read_write; do
   for ps_mode in disable auto; do
     label="${workload}-ps-${ps_mode}"
-    log="${OUT_DIR}/${label}.log"
     note "--- ${label} ---"
-    if sysbench "${workload}" "${SYSBENCH_CONN[@]}" \
-      --db-ps-mode="${ps_mode}" --threads=1 --time="${RUN_TIME}" \
-      --report-interval=0 run >"${log}" 2>&1; then
-      grep -E "queries:|transactions:|avg:|95th percentile:|total time:" "${log}" \
-        | tee -a "${LADDER_LOG}"
-    else
-      note "FAIL ${label}:"
-      grep -m 5 -E "FATAL|ERROR" "${log}" | tee -a "${LADDER_LOG}"
-    fi
+    for sample in $(seq 1 "${RUN_SAMPLES}"); do
+      log="${OUT_DIR}/${label}-s${sample}.log"
+      note "sample ${sample}/${RUN_SAMPLES}:"
+      if sysbench "${workload}" "${SYSBENCH_CONN[@]}" \
+        --db-ps-mode="${ps_mode}" --threads=1 --time="${RUN_TIME}" \
+        --report-interval=0 run >"${log}" 2>&1; then
+        grep -E "queries:|transactions:|avg:|95th percentile:|total time:" "${log}" \
+          | tee -a "${LADDER_LOG}"
+      else
+        note "FAIL ${label} sample ${sample}:"
+        grep -m 5 -E "FATAL|ERROR" "${log}" | tee -a "${LADDER_LOG}"
+      fi
+    done
   done
 done
 
@@ -451,17 +465,20 @@ if [[ "${prepared}" == true ]]; then
   for workload in oltp_point_select oltp_read_only oltp_write_only oltp_read_write; do
     for ps_mode in disable auto; do
       label="go-${workload}-ps-${ps_mode}"
-      log="${OUT_DIR}/${label}.log"
       note "--- ${label} ---"
-      if sysbench "${workload}" "${GO_SYSBENCH_CONN[@]}" \
-        --db-ps-mode="${ps_mode}" --threads=1 --time="${RUN_TIME}" \
-        --report-interval=0 run >"${log}" 2>&1; then
-        grep -E "queries:|transactions:|avg:|95th percentile:|total time:" "${log}" \
-          | tee -a "${LADDER_LOG}"
-      else
-        note "FAIL ${label}:"
-        grep -m 5 -E "FATAL|ERROR" "${log}" | tee -a "${LADDER_LOG}"
-      fi
+      for sample in $(seq 1 "${RUN_SAMPLES}"); do
+        log="${OUT_DIR}/${label}-s${sample}.log"
+        note "sample ${sample}/${RUN_SAMPLES}:"
+        if sysbench "${workload}" "${GO_SYSBENCH_CONN[@]}" \
+          --db-ps-mode="${ps_mode}" --threads=1 --time="${RUN_TIME}" \
+          --report-interval=0 run >"${log}" 2>&1; then
+          grep -E "queries:|transactions:|avg:|95th percentile:|total time:" "${log}" \
+            | tee -a "${LADDER_LOG}"
+        else
+          note "FAIL ${label} sample ${sample}:"
+          grep -m 5 -E "FATAL|ERROR" "${log}" | tee -a "${LADDER_LOG}"
+        fi
+      done
     done
   done
 else
@@ -469,10 +486,11 @@ else
 fi
 
 step "rung 6c: per-statement time and the Rust excess, within this one run"
-python3 - "${OUT_DIR}" <<'PY' 2>&1 | tee -a "${LADDER_LOG}"
-import pathlib, re, sys
+python3 - "${OUT_DIR}" "${RUN_SAMPLES}" <<'PY' 2>&1 | tee -a "${LADDER_LOG}"
+import pathlib, re, statistics, sys
 
 out = pathlib.Path(sys.argv[1])
+samples = int(sys.argv[2])
 
 
 def measure(path):
@@ -493,22 +511,51 @@ def measure(path):
     }
 
 
-print("| Workload | ps mode | Rust us/stmt | Go us/stmt | Rust excess | Rust qps | Go qps |")
+def cell(label):
+    """Every sample of one cell, so the table reports the MEDIAN with the
+    min..max spread beside it. A sample that produced no queries is dropped
+    (an aborted sample is a finding, not a zero)."""
+    runs = [measure(out / f"{label}-s{i}.log") for i in range(1, samples + 1)]
+    runs = [run for run in runs if run is not None]
+    if not runs:
+        return None
+    per_stmt = sorted(run["us_per_stmt"] for run in runs)
+    return {
+        "median": statistics.median(per_stmt),
+        "low": per_stmt[0],
+        "high": per_stmt[-1],
+        "qps_median": statistics.median(run["qps"] for run in runs),
+        "count": len(runs),
+    }
+
+
+def spread(c):
+    if c["count"] == 1:
+        return f"{c['median']:.2f} (1 sample)"
+    return f"{c['median']:.2f} [{c['low']:.2f}..{c['high']:.2f}] n={c['count']}"
+
+
+if samples == 1:
+    print("SINGLE-SAMPLE SMOKE RUN: the cells below are one 10s window each and")
+    print("are INADMISSIBLE for trend or regression claims; rerun with the")
+    print("default SYSBENCH_SAMPLES=3 (or more) before comparing runs.")
+print("| Workload | ps mode | Rust us/stmt median [min..max] | Go us/stmt median [min..max] | Rust excess (of medians) | Rust qps med | Go qps med |")
 print("| --- | --- | --- | --- | --- | --- | --- |")
 for workload in ("oltp_point_select", "oltp_read_only", "oltp_write_only", "oltp_read_write"):
     for ps_mode in ("disable", "auto"):
-        rust = measure(out / f"{workload}-ps-{ps_mode}.log")
-        go = measure(out / f"go-{workload}-ps-{ps_mode}.log")
+        rust = cell(f"{workload}-ps-{ps_mode}")
+        go = cell(f"go-{workload}-ps-{ps_mode}")
         if rust is None or go is None:
-            # A cell whose window produced no queries is reported as absent
-            # rather than as a number, because an aborted run is a finding.
-            rust_us = "-" if rust is None else f"{rust['us_per_stmt']:.2f}"
-            go_us = "-" if go is None else f"{go['us_per_stmt']:.2f}"
+            # A cell none of whose windows produced queries is reported as
+            # absent rather than as a number, because an aborted cell is a
+            # finding.
+            rust_us = "-" if rust is None else spread(rust)
+            go_us = "-" if go is None else spread(go)
             print(f"| `{workload}` | {ps_mode} | {rust_us} | {go_us} | (no cell) | - | - |")
             continue
-        excess = rust["us_per_stmt"] - go["us_per_stmt"]
-        print(f"| `{workload}` | {ps_mode} | {rust['us_per_stmt']:.2f} | {go['us_per_stmt']:.2f} | "
-              f"**{excess:.2f} us** | {rust['qps']:.2f} | {go['qps']:.2f} |")
+        excess = rust["median"] - go["median"]
+        print(f"| `{workload}` | {ps_mode} | {spread(rust)} | {spread(go)} | "
+              f"**{excess:.2f} us** | {rust['qps_median']:.2f} | {go['qps_median']:.2f} |")
 PY
 
 step "post-run correctness re-check"
