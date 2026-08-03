@@ -3,6 +3,7 @@ package ddl
 import (
 	"context"
 	"crypto/tls"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/logreplicationpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -75,7 +77,10 @@ func pkdbDialOptions() ([]grpc.DialOption, error) {
 	if tlsCfg != nil {
 		transportCreds = credentials.NewTLS(tlsCfg)
 	}
-	return []grpc.DialOption{grpc.WithTransportCredentials(transportCreds)}, nil
+	return []grpc.DialOption{
+		grpc.WithTransportCredentials(transportCreds),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
+	}, nil
 }
 
 // tidbWaitJob represents a log replication action that need to use tidb-server's
@@ -358,6 +363,9 @@ func saveStoreRegionProgresses(ctx context.Context, pdCli pd.Client, raftProgres
 		if tikvrpc.GetStoreTypeByMeta(store) != tikvrpc.TiKV {
 			continue
 		}
+		if store.GetState() != metapb.StoreState_Up {
+			continue
+		}
 		storeID, addr := store.GetId(), store.GetAddress()
 		g.Go(func() error {
 			conn, err := grpc.DialContext(gCtx, addr, dialOptions...)
@@ -403,6 +411,9 @@ func loadStoreRegionProgresses(ctx context.Context, pdCli pd.Client, raftProgres
 	g.SetLimit(pkdbDefaultReadStoreConcurrency)
 	for _, store := range stores {
 		if tikvrpc.GetStoreTypeByMeta(store) != tikvrpc.TiKV {
+			continue
+		}
+		if store.GetState() != metapb.StoreState_Up {
 			continue
 		}
 		storeID, addr := store.GetId(), store.GetAddress()
