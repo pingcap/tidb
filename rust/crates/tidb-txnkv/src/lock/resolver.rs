@@ -23,11 +23,16 @@ use tidb_proto::{
     KvrpcResolveLockResponse, KvrpcTxnAction,
 };
 
-use crate::region::{ReadPolicy, RegionLoader, RequestSelection};
+use crate::region::{
+    ReadPolicy, RegionBackoffBudget, RegionBackoffKind, RegionLoader, RequestSelection,
+};
 use crate::rpc::TonicCoprocessorClient;
 use crate::{DirectUnaryClientError, SharedReadRuntime, UnaryCallContext};
 
 use super::{LockAdmissionError, OptimisticLock};
+
+/// Go `getTxnStatusMaxBackoff` (`txnkv/txnlock/lock_resolver.go:51`).
+const GET_TXN_STATUS_MAX_BACKOFF: Duration = Duration::from_millis(20_000);
 
 /// Exact timestamp authority injected by the caller.
 pub trait TimestampSource: fmt::Debug {
@@ -209,6 +214,11 @@ pub enum LockRecoveryError {
     NonAsyncCommitLock,
     /// An async-commit recovery observed a self-contradictory commit timestamp.
     AsyncCommitConflict(String),
+    /// The TxnNotFound retry loop spent its whole backoff budget.
+    ///
+    /// Go `bo.Backoff(BoTxnNotFound, err)` returns the backoffer's exhaustion
+    /// error from inside `getTxnStatusFromLock`'s loop; this is that boundary.
+    StatusBackoffExhausted,
 }
 
 impl fmt::Display for LockRecoveryError {
@@ -241,6 +251,9 @@ impl fmt::Display for LockRecoveryError {
             Self::AsyncCommitConflict(error) => {
                 write!(formatter, "async commit recovery is inconsistent: {error}")
             }
+            Self::StatusBackoffExhausted => formatter.write_str(
+                "CheckTxnStatus kept reporting TxnNotFound until the backoff budget ran out",
+            ),
         }
     }
 }
@@ -270,92 +283,310 @@ where
     let mut statuses = Vec::with_capacity(locks.len());
     let mut minimum_wait = None::<Duration>;
     for lock in locks {
-        check_cancelled(call)?;
-        let current_ts = timestamp_source
-            .current_ts()
-            .map_err(LockRecoveryError::Timestamp)?;
-        check_cancelled(call)?;
-        let (primary_address, primary_context) = route_key(runtime, &lock.primary, base_context)?;
-        check_cancelled(call)?;
-        let check_request = KvrpcCheckTxnStatusRequest {
-            primary_key: lock.primary.clone(),
-            lock_ts: lock.txn_id,
+        // Go `resolve(l, forceSyncCommit)` (`lock_resolver.go:577-621`) is a
+        // closure that calls itself exactly once more, with forceSyncCommit
+        // set, when the async-commit recovery reports a secondary that is not
+        // an async-commit lock. Two views of one transaction cannot both be
+        // true, and the sync-commit view is the one TiKV can still answer.
+        let outcome = match resolve_one_optimistic_lock(
+            runtime,
+            lock,
             caller_start_ts,
-            current_ts,
-            rollback_if_not_exist: false,
-            force_sync_commit: false,
-            resolving_pessimistic_lock: false,
-            verify_is_primary: true,
-            is_txn_file: false,
-            ..KvrpcCheckTxnStatusRequest::default()
+            base_context,
+            call,
+            timestamp_source,
+            false,
+        ) {
+            Err(LockRecoveryError::NonAsyncCommitLock) => resolve_one_optimistic_lock(
+                runtime,
+                lock,
+                caller_start_ts,
+                base_context,
+                call,
+                timestamp_source,
+                true,
+            )?,
+            other => other?,
         };
-        let check_response = runtime
-            .client()
-            .try_borrow_mut()
-            .map_err(|_| LockRecoveryError::ClientLifecycle)?
-            .check_txn_status_for_lock(&primary_address, &check_request, &primary_context, call)
-            .map_err(map_rpc_error)?;
-        // Match client-go's post-RPC ctx.Err precedence before interpreting or
-        // acting on a simultaneous CheckTxnStatus result.
-        check_cancelled(call)?;
-        reject_check_error(&check_response)?;
-        let primary_lock = match check_response.lock_info.as_ref() {
-            // The returned primary lock uses the same strict protocol gate.
-            Some(primary_lock) => super::decode_lock_observation(primary_lock)?
-                .into_iter()
-                .next(),
-            None => None,
-        };
-        if check_response.lock_ttl > 0 {
-            let async_commit_primary = primary_lock
-                .as_ref()
-                .is_some_and(|primary_lock| primary_lock.use_async_commit);
-            if !async_commit_primary
-                && check_response.action == KvrpcTxnAction::MinCommitTsPushed as i32
-            {
-                return Err(LockRecoveryError::MinCommitTsPushed);
+        match outcome {
+            OneLockOutcome::Resolved(status) => statuses.push(status),
+            OneLockOutcome::Alive(wait) => {
+                minimum_wait = Some(minimum_wait.map_or(wait, |current| current.min(wait)));
             }
-            // client-go sends the pre-RPC TSO in CheckTxnStatus, then asks the
-            // oracle again when converting the returned absolute lock TTL to
-            // a remaining wait. A slow status RPC must consume its own time.
-            check_cancelled(call)?;
-            let post_check_ts = timestamp_source
-                .current_ts()
-                .map_err(LockRecoveryError::Timestamp)?;
-            check_cancelled(call)?;
-            let ttl = remaining_lock_ttl(lock.txn_id, check_response.lock_ttl, post_check_ts);
-            // Go `expiredAsyncCommitLocks`: an async-commit primary that is
-            // still present but expired is not "alive". Its commit point is the
-            // completed prewrite, so waiting for a TTL nobody will refresh only
-            // stalls the reader; the fate must come from the secondaries.
-            if async_commit_primary && ttl.is_zero() {
-                let primary_lock = primary_lock.expect("an async-commit primary was observed");
-                statuses.push(resolve_async_commit_lock(
-                    runtime,
-                    lock,
-                    &primary_lock,
-                    base_context,
-                    call,
-                )?);
-                continue;
-            }
-            if check_response.action == KvrpcTxnAction::MinCommitTsPushed as i32 {
-                return Err(LockRecoveryError::MinCommitTsPushed);
-            }
-            minimum_wait = Some(minimum_wait.map_or(ttl, |wait| wait.min(ttl)));
-            continue;
         }
-        let status = classify_determined_status(&check_response)?;
-        if lock.key != lock.primary {
-            check_cancelled(call)?;
-            resolve_secondary(runtime, lock, status, base_context, call)?;
-        }
-        statuses.push(status);
     }
     Ok(match minimum_wait {
         Some(wait) => LockRecoveryResult::Alive(wait),
         None => LockRecoveryResult::Resolved(statuses),
     })
+}
+
+/// What one lock's recovery concluded.
+pub(super) enum OneLockOutcome {
+    /// The owner is still running; wait this long before looking again.
+    Alive(Duration),
+    /// The owner's fate is decided and this lock has been cleaned.
+    Resolved(ResolvedTxnStatus),
+}
+
+fn resolve_one_optimistic_lock<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    lock: &OptimisticLock,
+    caller_start_ts: u64,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    timestamp_source: &T,
+    force_sync_commit: bool,
+) -> Result<OneLockOutcome, LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionLoader,
+    T: TimestampSource + ?Sized,
+{
+    let check_response = match query_txn_status(
+        runtime,
+        &LockStatusQuery {
+            primary: &lock.primary,
+            txn_id: lock.txn_id,
+            ttl_ms: lock.ttl_ms,
+            resolving_pessimistic_lock: false,
+        },
+        caller_start_ts,
+        base_context,
+        call,
+        timestamp_source,
+        force_sync_commit,
+    )? {
+        LockStatus::Answered(response) => response,
+        // Both of these are gated on `resolving_pessimistic_lock` inside the
+        // query, exactly as Go gates them (`lock_resolver.go:947-968,1069`), so
+        // an optimistic lock reaches neither. Go's own non-pessimistic arm at
+        // `lock_resolver.go:581-584` raises the error, and so does this.
+        LockStatus::AlivePessimistic(ttl_ms) => {
+            return Ok(OneLockOutcome::Alive(Duration::from_millis(ttl_ms)));
+        }
+        LockStatus::PrimaryMismatch => {
+            return Err(LockRecoveryError::KeyError(
+                "CheckTxnStatus reported primary mismatch for an optimistic lock".to_owned(),
+            ));
+        }
+    };
+    let primary_lock = match check_response.lock_info.as_ref() {
+        // The returned primary lock uses the same strict protocol gate.
+        Some(primary_lock) => super::decode_lock_observation(primary_lock)?
+            .into_iter()
+            .next(),
+        None => None,
+    };
+    if check_response.lock_ttl > 0 {
+        let async_commit_primary = primary_lock
+            .as_ref()
+            .is_some_and(|primary_lock| primary_lock.use_async_commit);
+        if !async_commit_primary
+            && check_response.action == KvrpcTxnAction::MinCommitTsPushed as i32
+        {
+            return Err(LockRecoveryError::MinCommitTsPushed);
+        }
+        // client-go sends the pre-RPC TSO in CheckTxnStatus, then asks the
+        // oracle again when converting the returned absolute lock TTL to
+        // a remaining wait. A slow status RPC must consume its own time.
+        check_cancelled(call)?;
+        let post_check_ts = timestamp_source
+            .current_ts()
+            .map_err(LockRecoveryError::Timestamp)?;
+        check_cancelled(call)?;
+        let ttl = remaining_lock_ttl(lock.txn_id, check_response.lock_ttl, post_check_ts);
+        // Go `expiredAsyncCommitLocks`: an async-commit primary that is
+        // still present but expired is not "alive". Its commit point is the
+        // completed prewrite, so waiting for a TTL nobody will refresh only
+        // stalls the reader; the fate must come from the secondaries.
+        // `!forceSyncCommit` is part of Go's condition: the retry exists
+        // precisely to stop taking the async-commit path for this lock.
+        if async_commit_primary && !force_sync_commit && ttl.is_zero() {
+            let primary_lock = primary_lock.expect("an async-commit primary was observed");
+            return Ok(OneLockOutcome::Resolved(resolve_async_commit_lock(
+                runtime,
+                lock,
+                &primary_lock,
+                base_context,
+                call,
+            )?));
+        }
+        if check_response.action == KvrpcTxnAction::MinCommitTsPushed as i32 {
+            return Err(LockRecoveryError::MinCommitTsPushed);
+        }
+        return Ok(OneLockOutcome::Alive(ttl));
+    }
+    let status = classify_determined_status(&check_response)?;
+    if lock.key != lock.primary {
+        check_cancelled(call)?;
+        resolve_secondary(runtime, lock, status, base_context, call)?;
+    }
+    Ok(OneLockOutcome::Resolved(status))
+}
+
+/// The identity one CheckTxnStatus query needs from the lock it is about.
+pub(super) struct LockStatusQuery<'a> {
+    /// Primary key named by the lock, which the query is sent to.
+    pub(super) primary: &'a [u8],
+    /// Owning transaction's start timestamp.
+    pub(super) txn_id: u64,
+    /// The lock's own TTL as TiKV reported it.
+    ///
+    /// Two distinct roles, both of them load-bearing: zero selects the
+    /// unconditional-resolve protocol below, and any other value is the expiry
+    /// input that decides whether a TxnNotFound answer escalates to
+    /// `rollback_if_not_exist`.
+    pub(super) ttl_ms: u64,
+    /// Whether the lock being cleaned is a pessimistic lock, which TiKV needs
+    /// in order to answer `primary_mismatch` and which gates the two
+    /// pessimistic-only arms of Go's TxnNotFound handling.
+    pub(super) resolving_pessimistic_lock: bool,
+}
+
+/// How a status query ended, short of an error.
+///
+/// The decoded response dwarfs the other two variants, and it is the one
+/// returned on essentially every call, so boxing it would only add an
+/// allocation to the hot answer.
+#[allow(clippy::large_enum_variant)]
+pub(super) enum LockStatus {
+    /// TiKV determined something; the caller interprets the response.
+    Answered(KvrpcCheckTxnStatusResponse),
+    /// A live pessimistic transaction whose primary record does not exist.
+    ///
+    /// Go `lock_resolver.go:966-968`: rolling this back would abort a running
+    /// transaction that merely rolled back its own primary lock, so the caller
+    /// waits out the lock's TTL and lets the owner retry instead.
+    AlivePessimistic(u64),
+    /// The lock names a key that is not its transaction's primary.
+    PrimaryMismatch,
+}
+
+/// Queries one transaction's status, looping the way Go's
+/// `getTxnStatusFromLock` (`lock_resolver.go:910-980`) loops.
+///
+/// TxnNotFound is not an error here, it is the canonical orphan: a secondary
+/// prewrite landed and the coordinator died before the primary. Treating it as
+/// terminal leaves the key unreadable and unwritable forever, because every
+/// later reader repeats the same failing query. The escape is TiKV's own:
+/// re-ask with `rollback_if_not_exist`, which makes TiKV write the rollback
+/// record and unstick the lock.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn query_txn_status<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    query: &LockStatusQuery<'_>,
+    caller_start_ts: u64,
+    base_context: &KvrpcContext,
+    call: &UnaryCallContext,
+    timestamp_source: &T,
+    force_sync_commit: bool,
+) -> Result<LockStatus, LockRecoveryError>
+where
+    C: LockRecoveryClient,
+    L: RegionLoader,
+    T: TimestampSource + ?Sized,
+{
+    check_cancelled(call)?;
+    // Go `lock_resolver.go:915-926`, comment and all: "NOTE: l.TTL = 0 is a
+    // special protocol!!!". When a pessimistic prewrite collides with a lock,
+    // TiKV reports TTL 0 to say "resolve this unconditionally". Taking a fresh
+    // TSO instead makes the lock look alive for its whole real TTL and
+    // livelocks the collision.
+    let current_ts = if query.ttl_ms == 0 {
+        u64::MAX
+    } else {
+        timestamp_source
+            .current_ts()
+            .map_err(LockRecoveryError::Timestamp)?
+    };
+    let mut rollback_if_not_exist = false;
+    let mut backoff = RegionBackoffBudget::new(GET_TXN_STATUS_MAX_BACKOFF);
+    loop {
+        check_cancelled(call)?;
+        let (primary_address, primary_context) = route_key(runtime, query.primary, base_context)?;
+        check_cancelled(call)?;
+        let request = KvrpcCheckTxnStatusRequest {
+            primary_key: query.primary.to_vec(),
+            lock_ts: query.txn_id,
+            caller_start_ts,
+            current_ts,
+            rollback_if_not_exist,
+            force_sync_commit,
+            resolving_pessimistic_lock: query.resolving_pessimistic_lock,
+            verify_is_primary: true,
+            is_txn_file: false,
+            ..KvrpcCheckTxnStatusRequest::default()
+        };
+        let response = runtime
+            .client()
+            .try_borrow_mut()
+            .map_err(|_| LockRecoveryError::ClientLifecycle)?
+            .check_txn_status_for_lock(&primary_address, &request, &primary_context, call)
+            .map_err(map_rpc_error)?;
+        // Match client-go's post-RPC ctx.Err precedence before interpreting or
+        // acting on a simultaneous CheckTxnStatus result.
+        check_cancelled(call)?;
+        if let Some(error) = response.region_error.as_ref() {
+            return Err(LockRecoveryError::RegionError(format!("{error:?}")));
+        }
+        let Some(key_error) = response.error.as_ref() else {
+            return Ok(LockStatus::Answered(response));
+        };
+        if key_error.txn_not_found.is_some() {
+            // Asking again with the same escalation would repeat forever: TiKV
+            // cannot both be told to write the rollback record and keep
+            // reporting that there is nothing to write. Go has no such guard
+            // and spins here without backing off; one terminal answer is the
+            // honest end of the loop.
+            if rollback_if_not_exist {
+                return Err(LockRecoveryError::KeyError(format!("{key_error:?}")));
+            }
+            // Go re-reads the oracle on every iteration, so a lock that expires
+            // mid-loop is noticed. `TTL == 0` is already "expired" by protocol.
+            let expired = if current_ts == u64::MAX {
+                true
+            } else {
+                check_cancelled(call)?;
+                let now = timestamp_source
+                    .current_ts()
+                    .map_err(LockRecoveryError::Timestamp)?;
+                remaining_lock_ttl(query.txn_id, query.ttl_ms, now).is_zero()
+            };
+            if expired {
+                rollback_if_not_exist = true;
+                continue;
+            }
+            if query.resolving_pessimistic_lock {
+                return Ok(LockStatus::AlivePessimistic(query.ttl_ms));
+            }
+            wait_status_backoff(&mut backoff, call)?;
+            continue;
+        }
+        // Go `lock_resolver.go:1069-1073`: only a pessimistic lock may act on
+        // this, by rolling itself back; anything else is an unexpected error.
+        if key_error.primary_mismatch.is_some() && query.resolving_pessimistic_lock {
+            return Ok(LockStatus::PrimaryMismatch);
+        }
+        return Err(LockRecoveryError::KeyError(format!("{key_error:?}")));
+    }
+}
+
+/// Sleeps one `BoTxnNotFound` interval, bounded by the caller's deadline.
+fn wait_status_backoff(
+    backoff: &mut RegionBackoffBudget,
+    call: &UnaryCallContext,
+) -> Result<(), LockRecoveryError> {
+    let delay = backoff
+        .next_delay(RegionBackoffKind::TxnNotFound)
+        .map_err(|_| LockRecoveryError::StatusBackoffExhausted)?;
+    if delay > call.timeout() {
+        return Err(LockRecoveryError::StatusBackoffExhausted);
+    }
+    if call.cancellation().wait_timeout(delay) {
+        return Err(LockRecoveryError::CallerCancelled);
+    }
+    check_cancelled(call)
 }
 
 pub(super) fn remaining_lock_ttl(txn_id: u64, lock_ttl_ms: u64, current_ts: u64) -> Duration {
@@ -367,18 +598,6 @@ pub(super) fn remaining_lock_ttl(txn_id: u64, lock_ttl_ms: u64, current_ts: u64)
             .saturating_add(lock_ttl_ms)
             .saturating_sub(now_ms),
     )
-}
-
-pub(super) fn reject_check_error(
-    response: &KvrpcCheckTxnStatusResponse,
-) -> Result<(), LockRecoveryError> {
-    if let Some(error) = response.region_error.as_ref() {
-        return Err(LockRecoveryError::RegionError(format!("{error:?}")));
-    }
-    if let Some(error) = response.error.as_ref() {
-        return Err(LockRecoveryError::KeyError(format!("{error:?}")));
-    }
-    Ok(())
 }
 
 pub(super) fn classify_determined_status(

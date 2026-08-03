@@ -25,8 +25,7 @@
 use std::time::Duration;
 
 use tidb_proto::{
-    KvrpcCheckTxnStatusRequest, KvrpcCheckTxnStatusResponse, KvrpcContext,
-    KvrpcPessimisticRollbackRequest, KvrpcTxnAction,
+    KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcPessimisticRollbackRequest, KvrpcTxnAction,
 };
 
 use crate::region::RegionLoader;
@@ -34,8 +33,8 @@ use crate::{SharedReadRuntime, UnaryCallContext};
 
 use super::model::{BlockingLock, PessimisticLock};
 use super::resolver::{
-    check_cancelled, classify_determined_status, map_rpc_error, reject_check_error,
-    remaining_lock_ttl, route_key,
+    check_cancelled, classify_determined_status, map_rpc_error, query_txn_status,
+    remaining_lock_ttl, route_key, LockStatus, LockStatusQuery,
 };
 use super::{
     LockRecoveryClient, LockRecoveryError, LockRecoveryResult, ResolvedTxnStatus, TimestampSource,
@@ -143,31 +142,39 @@ where
     L: RegionLoader,
     T: TimestampSource + ?Sized,
 {
-    let current_ts = timestamp_source
-        .current_ts()
-        .map_err(LockRecoveryError::Timestamp)?;
-    check_cancelled(call)?;
-    let (primary_address, primary_context) = route_key(runtime, &lock.primary, base_context)?;
-    let request = KvrpcCheckTxnStatusRequest {
-        primary_key: lock.primary.clone(),
-        lock_ts: lock.txn_id,
+    let response = match query_txn_status(
+        runtime,
+        &LockStatusQuery {
+            primary: &lock.primary,
+            txn_id: lock.txn_id,
+            ttl_ms: lock.ttl_ms,
+            resolving_pessimistic_lock: true,
+        },
         caller_start_ts,
-        current_ts,
-        rollback_if_not_exist: false,
-        force_sync_commit: false,
-        resolving_pessimistic_lock: true,
-        verify_is_primary: true,
-        is_txn_file: false,
-        ..KvrpcCheckTxnStatusRequest::default()
+        base_context,
+        call,
+        timestamp_source,
+        false,
+    )? {
+        LockStatus::Answered(response) => response,
+        // Go `lock_resolver.go:966-968`: the owner is alive and merely rolled
+        // its own primary lock back, so waiting lets it retry instead of
+        // aborting it.
+        LockStatus::AlivePessimistic(ttl_ms) => {
+            return Ok(LockRecoveryResult::Alive(Duration::from_millis(ttl_ms)));
+        }
+        // Go `lock_resolver.go:580-586`: this lock points at a key that is not
+        // its transaction's primary, so it is stale by construction. It is
+        // rolled back without the `key != primary` guard the determined path
+        // uses — the mismatch is the proof that this key is not a primary.
+        LockStatus::PrimaryMismatch => {
+            check_cancelled(call)?;
+            pessimistic_rollback_lock(runtime, lock, base_context, call)?;
+            return Ok(LockRecoveryResult::Resolved(vec![
+                ResolvedTxnStatus::RolledBack,
+            ]));
+        }
     };
-    let response = runtime
-        .client()
-        .try_borrow_mut()
-        .map_err(|_| LockRecoveryError::ClientLifecycle)?
-        .check_txn_status_for_lock(&primary_address, &request, &primary_context, call)
-        .map_err(map_rpc_error)?;
-    check_cancelled(call)?;
-    reject_check_error(&response)?;
     if response.lock_ttl > 0 {
         let post_check_ts = timestamp_source
             .current_ts()

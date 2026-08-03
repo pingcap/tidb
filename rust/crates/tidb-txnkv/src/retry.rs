@@ -55,10 +55,18 @@ pub enum RegionBackoffKind {
     RegionNotInitialized,
     /// The selected peer is a witness.
     IsWitness,
+    /// A read or write is blocked behind another transaction's lock.
+    TxnLock,
+    /// The same wait after a cheap resolve, which client-go starts far shorter
+    /// because the common case is a lock that is already gone.
+    TxnLockFast,
+    /// CheckTxnStatus found a secondary lock whose primary record does not
+    /// exist yet, which a concurrent prewrite resolves on its own.
+    TxnNotFound,
 }
 
 impl RegionBackoffKind {
-    const COUNT: usize = 10;
+    const COUNT: usize = 13;
     const ALL: [Self; Self::COUNT] = [
         Self::TikvRpc,
         Self::RegionMiss,
@@ -70,6 +78,9 @@ impl RegionBackoffKind {
         Self::MaxTimestampNotSynced,
         Self::RegionNotInitialized,
         Self::IsWitness,
+        Self::TxnLock,
+        Self::TxnLockFast,
+        Self::TxnNotFound,
     ];
 
     const fn is_sleep_excluded(self) -> bool {
@@ -87,6 +98,9 @@ impl RegionBackoffKind {
             Self::MaxTimestampNotSynced => (2, 500, false),
             Self::RegionNotInitialized => (2, 1_000, false),
             Self::IsWitness => (1_000, 10_000, true),
+            Self::TxnLock => (100, 3_000, true),
+            Self::TxnLockFast => (2, 3_000, true),
+            Self::TxnNotFound => (2, 500, false),
         }
     }
 }

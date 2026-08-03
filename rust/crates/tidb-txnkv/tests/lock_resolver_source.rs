@@ -533,36 +533,208 @@ fn caller_cancelled_rpc_is_typed_at_both_lock_commands() {
     ));
 }
 
-#[test]
-fn txn_not_found_primary_mismatch_and_undetermined_status_fail_closed() {
-    for error in [
-        kvrpcpb::KeyError {
+fn txn_not_found_status() -> KvrpcCheckTxnStatusResponse {
+    KvrpcCheckTxnStatusResponse {
+        error: Some(kvrpcpb::KeyError {
             txn_not_found: Some(kvrpcpb::TxnNotFound {
                 start_ts: 1_000 << 18,
                 primary_key: b"primary".to_vec(),
             }),
             ..kvrpcpb::KeyError::default()
+        }),
+        ..KvrpcCheckTxnStatusResponse::default()
+    }
+}
+
+/// The canonical orphan lock is recoverable: a secondary prewrite landed and
+/// the coordinator died before the primary.
+///
+/// Go `getTxnStatusFromLock` (`lock_resolver.go:928-980`) is a `for{}`. On
+/// txnNotFound with the lock already past its TTL it sets
+/// `rollbackIfNotExist = true` and asks again, which makes TiKV write the
+/// rollback record and unstick the key. Treating txnNotFound as terminal
+/// leaves that key unreadable and unwritable forever — every later reader
+/// repeats the identical failing query, including the catalog load.
+#[test]
+fn an_expired_txn_not_found_lock_escalates_to_rollback_if_not_exist() {
+    let (runtime, recorded) = runtime(vec![
+        txn_not_found_status(),
+        KvrpcCheckTxnStatusResponse {
+            action: KvrpcTxnAction::LockNotExistRollback as i32,
+            ..KvrpcCheckTxnStatusResponse::default()
         },
-        kvrpcpb::KeyError {
+    ]);
+
+    let result = resolve_optimistic_locks(
+        &runtime,
+        &[secondary()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        // The lock started at physical 1_000 with a 500ms TTL; the expiry read
+        // at 2_000 is well past it.
+        &AdvancingTimestampSource::new([1_100 << 18, 2_000 << 18]),
+    )
+    .expect("an expired orphan lock is recoverable, not a permanent error");
+
+    assert_eq!(
+        result,
+        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::RolledBack])
+    );
+    let recorded = recorded.borrow();
+    assert_eq!(recorded.checks.len(), 2);
+    assert!(
+        !recorded.checks[0].1.rollback_if_not_exist,
+        "the first query must not ask TiKV to invent a rollback record"
+    );
+    assert!(
+        recorded.checks[1].1.rollback_if_not_exist,
+        "only the escalation may, and without it the lock is uncleanable"
+    );
+    assert_eq!(recorded.resolves.len(), 1);
+    assert_eq!(recorded.resolves[0].1.commit_version, 0);
+}
+
+/// A txnNotFound whose lock has *not* expired is a concurrent prewrite whose
+/// primary simply has not landed yet: back off and ask again, never roll it
+/// back. Go `bo.Backoff(retry.BoTxnNotFound, err)` (`lock_resolver.go:975`).
+#[test]
+fn a_live_txn_not_found_lock_backs_off_instead_of_rolling_back() {
+    let (runtime, recorded) = runtime(vec![
+        txn_not_found_status(),
+        KvrpcCheckTxnStatusResponse {
+            commit_version: 1_200 << 18,
+            ..KvrpcCheckTxnStatusResponse::default()
+        },
+    ]);
+
+    let result = resolve_optimistic_locks(
+        &runtime,
+        &[secondary()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        // The expiry read at 1_200 is still inside the lock's 500ms TTL.
+        &AdvancingTimestampSource::new([1_100 << 18, 1_200 << 18]),
+    )
+    .expect("a concurrent prewrite is waited out, not failed");
+
+    assert_eq!(
+        result,
+        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::Committed(1_200 << 18)])
+    );
+    let recorded = recorded.borrow();
+    assert_eq!(recorded.checks.len(), 2);
+    assert!(
+        recorded
+            .checks
+            .iter()
+            .all(|(_, request, _)| !request.rollback_if_not_exist),
+        "a live transaction's primary must never be rolled back by a reader"
+    );
+}
+
+/// A lock whose TTL TiKV reported as zero is resolved unconditionally.
+///
+/// Go `lock_resolver.go:915-926`, comment and all: "NOTE: l.TTL = 0 is a
+/// special protocol!!!" — TiKV says zero to tell the client to resolve now,
+/// and the client answers by sending `current_ts = MaxUint64`. Taking a fresh
+/// TSO instead makes the lock look alive for its whole real TTL and livelocks
+/// the pessimistic-prewrite collision.
+#[test]
+fn a_zero_ttl_lock_is_resolved_unconditionally_with_max_current_ts() {
+    let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        action: KvrpcTxnAction::TtlExpireRollback as i32,
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+
+    let result = resolve_optimistic_locks(
+        &runtime,
+        &[OptimisticLock {
+            ttl_ms: 0,
+            ..secondary()
+        }],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        // Exhausted on purpose: the protocol forbids consulting the oracle at
+        // all, so any TSO read here is the bug.
+        &AdvancingTimestampSource::new([]),
+    )
+    .expect("a zero-TTL lock is resolved without asking the oracle");
+
+    assert_eq!(
+        result,
+        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::RolledBack])
+    );
+    let recorded = recorded.borrow();
+    assert_eq!(recorded.checks.len(), 1);
+    assert_eq!(recorded.checks[0].1.current_ts, u64::MAX);
+}
+
+/// A pessimistic lock naming a key that is not its transaction's primary is
+/// stale by construction, so it is pessimistic-rolled-back rather than raised.
+///
+/// Go `lock_resolver.go:1069-1073` returns `primaryMismatch` only when
+/// `resolvingPessimisticLock`, and `lock_resolver.go:580-586` then clears the
+/// status and falls into `resolvePessimisticLock`.
+#[test]
+fn a_primary_mismatch_pessimistic_lock_is_rolled_back_not_raised() {
+    let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        error: Some(kvrpcpb::KeyError {
             primary_mismatch: Some(kvrpcpb::PrimaryMismatch { lock_info: None }),
             ..kvrpcpb::KeyError::default()
-        },
-    ] {
-        let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
-            error: Some(error),
-            ..KvrpcCheckTxnStatusResponse::default()
-        }]);
-        let result = resolve_optimistic_locks(
-            &runtime,
+        }),
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+
+    let result = resolve_blocking_locks(
+        &runtime,
+        &[blocking_pessimistic(b"secondary", 0)],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &call(),
+        &FixedTimestampSource::new(1_100 << 18),
+    )
+    .expect("a stale pessimistic lock is cleanable");
+
+    assert_eq!(
+        result,
+        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::RolledBack])
+    );
+    let recorded = recorded.borrow();
+    assert_eq!(recorded.pessimistic_rollbacks.len(), 1);
+    assert_eq!(
+        recorded.pessimistic_rollbacks[0].1.keys,
+        vec![b"secondary".to_vec()]
+    );
+    assert!(recorded.resolves.is_empty());
+}
+
+#[test]
+fn primary_mismatch_and_undetermined_status_fail_closed() {
+    // An *optimistic* lock has no primary-mismatch recourse: Go's handler is
+    // gated on `resolvingPessimisticLock` and its caller re-raises for any
+    // non-pessimistic lock (`lock_resolver.go:581-584`).
+    let (mismatch_runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        error: Some(kvrpcpb::KeyError {
+            primary_mismatch: Some(kvrpcpb::PrimaryMismatch { lock_info: None }),
+            ..kvrpcpb::KeyError::default()
+        }),
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+    assert!(matches!(
+        resolve_optimistic_locks(
+            &mismatch_runtime,
             &[secondary()],
             1_300 << 18,
             &KvrpcContext::default(),
             &call(),
             &FixedTimestampSource::new(1_100 << 18),
-        );
-        assert!(matches!(result, Err(LockRecoveryError::KeyError(_))));
-        assert!(recorded.borrow().resolves.is_empty());
-    }
+        ),
+        Err(LockRecoveryError::KeyError(_))
+    ));
+    assert!(recorded.borrow().resolves.is_empty());
 
     let (undetermined_runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse {
         action: KvrpcTxnAction::MinCommitTsPushed as i32,
@@ -1013,12 +1185,24 @@ fn an_async_commit_txn_with_a_rolled_back_key_resolves_as_rolled_back() {
         .all(|(_, request, _)| request.commit_version == 0));
 }
 
-/// A secondary that denies the async-commit protocol its primary claims fails
-/// closed rather than picking one of the two contradictory views.
+/// A secondary that denies the async-commit protocol its primary claims sends
+/// the whole recovery back through the sync-commit path.
+///
+/// Go `resolve(l, true)` (`lock_resolver.go:619-621`): the two views cannot
+/// both be true, and the sync-commit view is the one TiKV can still answer, so
+/// the status query is re-sent with `force_sync_commit`. Raising instead leaves
+/// every key of that transaction permanently blocked.
 #[test]
-fn a_non_async_commit_secondary_fails_the_recovery_closed() {
+fn a_non_async_commit_secondary_retries_with_force_sync_commit() {
     let (runtime, recorded) = runtime_with_secondary_checks(
-        vec![async_primary_status(1_400 << 18)],
+        vec![
+            async_primary_status(1_400 << 18),
+            // The forced retry sees a plain determined status.
+            KvrpcCheckTxnStatusResponse {
+                commit_version: 1_500 << 18,
+                ..KvrpcCheckTxnStatusResponse::default()
+            },
+        ],
         vec![KvrpcCheckSecondaryLocksResponse {
             locks: vec![KvrpcLockInfo {
                 use_async_commit: false,
@@ -1028,21 +1212,30 @@ fn a_non_async_commit_secondary_fails_the_recovery_closed() {
         }],
     );
 
-    let error = resolve_optimistic_locks(
+    let result = resolve_optimistic_locks(
         &runtime,
         &[async_blocker()],
         1_300 << 18,
         &KvrpcContext::default(),
         &call(),
-        &expired_timestamps(),
+        // Pre-RPC, post-RPC (expired), then the forced retry's own pre-RPC read.
+        &AdvancingTimestampSource::new([1_100 << 18, 2_000 << 18, 2_100 << 18]),
     )
-    .expect_err("two contradictory views of one transaction cannot both be applied");
+    .expect("the sync-commit view resolves what the async-commit view could not");
 
-    assert_eq!(error, LockRecoveryError::NonAsyncCommitLock);
-    assert!(
-        recorded.borrow().resolves.is_empty(),
-        "no key may be resolved before the fate is determined"
+    assert_eq!(
+        result,
+        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::Committed(1_500 << 18)])
     );
+    let recorded = recorded.borrow();
+    assert_eq!(recorded.checks.len(), 2);
+    assert!(!recorded.checks[0].1.force_sync_commit);
+    assert!(
+        recorded.checks[1].1.force_sync_commit,
+        "the retry exists precisely to stop taking the async-commit path"
+    );
+    assert_eq!(recorded.resolves.len(), 1);
+    assert_eq!(recorded.resolves[0].1.commit_version, 1_500 << 18);
 }
 
 /// An async-commit primary whose TTL has *not* run out is still alive, so the
