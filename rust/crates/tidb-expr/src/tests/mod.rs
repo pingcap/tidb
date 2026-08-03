@@ -705,12 +705,13 @@ fn right_and_rpad_sig_source_vectors_preserve_scalar_boundaries() {
                 Datum::new_bytes(vec![0xff]),
             ],
             false,
+            &NoColumns,
         )
         .unwrap(),
         Datum::new_bytes(vec![b'a', b'b', 0xff])
     );
     assert_eq!(
-        string_fn::pad(&[], false),
+        string_fn::pad(&[], false, &NoColumns),
         Err(EvalError::Unsupported("bad LPAD/RPAD arguments"))
     );
 }

@@ -371,6 +371,41 @@ pub trait Columns {
         let _ = (code, message);
     }
 
+    /// Go `EvalContext.GetMaxAllowedPacket`, which every result-sizing string
+    /// builtin captures into its signature at BUILD time
+    /// (`builtinSpaceSig.maxAllowedPacket` and friends).
+    ///
+    /// The default is Go's `DefMaxAllowedPacket`, 64 MiB -- the value a
+    /// default server runs with, and the one this crate's string builtins
+    /// were already hardcoding. A session-backed resolver overrides it; until
+    /// one does, a server whose `max_allowed_packet` was lowered still sizes
+    /// results by the default here.
+    fn max_allowed_packet(&self) -> u64 {
+        64 << 20
+    }
+
+    /// Go `handleAllowedPacketOverflowed` (`pkg/expression/errors.go`): a
+    /// string builtin whose result would exceed `max_allowed_packet` warns
+    /// 1301 and yields NULL.
+    ///
+    /// Without this the oversized result was still NULL, but SILENTLY -- the
+    /// client had no way to tell a genuine NULL from a truncated one.
+    ///
+    /// NOT MODELED: Go escalates to a statement ERROR when the statement has
+    /// neither `TruncateAsWarning` nor `IgnoreTruncateErr`, i.e. a strict
+    /// `INSERT`. Spelling that needs an `EvalError` variant carrying code
+    /// 1301 plus a mapping arm in `tidb_executor`'s error table; the warning
+    /// spelling here is what every read and every non-strict write takes.
+    fn handle_allowed_packet_overflowed(&self, expr_name: &str) {
+        self.append_warning(
+            1301,
+            &format!(
+                "Result of {expr_name}() was larger than max_allowed_packet ({}) - truncated",
+                self.max_allowed_packet()
+            ),
+        );
+    }
+
     /// Go `SessionVars.SQLMode`'s three temporal bits, shared with the write
     /// path (`tidb_executor::zero_date`) so one table decides what a zero,
     /// zero-in, or invalid date means on BOTH sides of a value.

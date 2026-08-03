@@ -399,12 +399,12 @@ pub(crate) fn eval_func_values(
         "REVERSE" => reverse(vals),
         // `ASCII`: the first BYTE's numeric value (0 for the empty string).
         "ASCII" => ascii(vals),
-        "REPEAT" if vals.len() == 2 => repeat(vals),
+        "REPEAT" if vals.len() == 2 => repeat(vals, ctx),
         "REPLACE" if vals.len() == 3 => replace(vals),
-        "SPACE" if vals.len() == 1 => space(vals),
+        "SPACE" if vals.len() == 1 => space(vals, ctx),
         "STRCMP" if vals.len() == 2 => strcmp(vals),
-        "LPAD" if vals.len() == 3 => pad(vals, true),
-        "RPAD" if vals.len() == 3 => pad(vals, false),
+        "LPAD" if vals.len() == 3 => pad(vals, true, ctx),
+        "RPAD" if vals.len() == 3 => pad(vals, false, ctx),
         // `LOCATE(substr, str)` / `INSTR(str, substr)` — same 1-indexed
         // char position, arguments in the opposite order (reusing
         // `position`, which already handles the empty-substr and
@@ -435,7 +435,7 @@ pub(crate) fn eval_func_values(
         "BIT_COUNT" if vals.len() == 1 => bit_count(vals),
         "FORMAT" if vals.len() == 2 => format_num(vals, ctx),
         "CHAR_FUNC" if !vals.is_empty() => char_func(vals),
-        "TO_BASE64" if vals.len() == 1 => to_base64(vals),
+        "TO_BASE64" if vals.len() == 1 => to_base64(vals, ctx),
         "FROM_BASE64" if vals.len() == 1 => from_base64(vals),
         // ---- date-part extraction ----
         // A `DATE`/`DATETIME` value is a plain string to this evaluator (no

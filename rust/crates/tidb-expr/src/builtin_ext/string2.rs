@@ -764,27 +764,37 @@ mod tests {
             (string("qwerty123456"), "cXdlcnR5MTIzNDU2"),
             (string("一二三"), "5LiA5LqM5LiJ"),
         ] {
-            assert_eq!(to_base64(&[input]).unwrap(), string(want));
+            assert_eq!(
+                to_base64(&[input], &crate::NoColumns).unwrap(),
+                string(want)
+            );
         }
-        assert_eq!(to_base64(&[Datum::Null]).unwrap(), Datum::Null);
         assert_eq!(
-            to_base64(&[Datum::new_bytes(vec![0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd])]).unwrap(),
+            to_base64(&[Datum::Null], &crate::NoColumns).unwrap(),
+            Datum::Null
+        );
+        assert_eq!(
+            to_base64(
+                &[Datum::new_bytes(vec![0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd])],
+                &crate::NoColumns
+            )
+            .unwrap(),
             string("0ru2/sj9")
         );
         assert_eq!(
-            to_base64(&[Datum::new_bytes(vec![0xff, 0x00])]).unwrap(),
+            to_base64(&[Datum::new_bytes(vec![0xff, 0x00])], &crate::NoColumns).unwrap(),
             string("/wA=")
         );
         let long = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         assert_eq!(
-            to_base64(&[string(long)]).unwrap(),
+            to_base64(&[string(long)], &crate::NoColumns).unwrap(),
             string(
                 "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrLw=="
             )
         );
         let triple = format!("{long}{long}{long}");
         assert_eq!(
-            to_base64(&[string(&triple)]).unwrap(),
+            to_base64(&[string(&triple)], &crate::NoColumns).unwrap(),
             string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv")
         );
     }
@@ -962,7 +972,7 @@ mod tests {
     fn to_base64_wraps_at_the_go_76_column_boundary() {
         let input = string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/");
         assert_eq!(
-            to_base64(&[input]).unwrap().sql_string().unwrap(),
+            to_base64(&[input], &crate::NoColumns).unwrap().sql_string().unwrap(),
             "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrLw=="
         );
     }

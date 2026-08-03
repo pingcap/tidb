@@ -295,11 +295,11 @@ pub(crate) fn position_with_collation(
 /// same signed-integer coercion boundary as `EvalInt` (including string
 /// numeric prefixes, decimal rounding, and float ties-to-even).  Go strings
 /// are byte sequences rather than guaranteed UTF-8; retaining the evaluated
-/// string bytes keeps binary input lossless here.  The context-free Rust
-/// evaluator uses TiDB's default 64 MiB `max_allowed_packet`; the warning
-/// channel used by `builtinRepeatSig.evalString` is outside this value-only
-/// API, so an oversized result is represented as `NULL` without a warning.
-pub(crate) fn repeat(vals: &[Datum]) -> Result<Datum, EvalError> {
+/// string bytes keeps binary input lossless here.  `builtinRepeatSig` checks
+/// `byteLength*num` against the session `max_allowed_packet` and answers NULL
+/// with warning 1301; the multiplication overflow arm takes the same exit,
+/// since a product too large for `usize` is by construction over any limit.
+pub(crate) fn repeat(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let [value, count] = vals else {
         return Err(EvalError::Unsupported("bad REPEAT arity"));
     };
@@ -314,11 +314,12 @@ pub(crate) fn repeat(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::new_string(Vec::<u8>::new()));
     }
     let count = count.min(i64::from(i32::MAX)) as usize;
-    const DEFAULT_MAX_ALLOWED_PACKET: usize = 64 << 20;
     let Some(output_len) = value.len().checked_mul(count) else {
+        ctx.handle_allowed_packet_overflowed("repeat");
         return Ok(Datum::Null);
     };
-    if output_len > DEFAULT_MAX_ALLOWED_PACKET {
+    if output_len as u64 > ctx.max_allowed_packet() {
+        ctx.handle_allowed_packet_overflowed("repeat");
         return Ok(Datum::Null);
     }
     let mut output = Vec::with_capacity(output_len);
@@ -387,26 +388,8 @@ fn string_result(source: &Datum, bytes: Vec<u8>) -> Datum {
 /// an integer-literal-only convenience: decimal arguments round away from
 /// zero while float arguments round ties to even through the shared `EvalInt`
 /// conversion.  TiDB returns `NULL` rather than allocating above
-/// `mysql.MaxBlobWidth`.
-pub(crate) fn space(vals: &[Datum]) -> Result<Datum, EvalError> {
-    // The value-only evaluator has no session context, so keep its existing
-    // default packet limit while exposing the source signature's actual
-    // boundary as a small parameterized helper for context-aware callers and
-    // direct source-vector tests.
-    space_with_max_allowed_packet(vals, 64 << 20)
-}
-
-/// Evaluates `SPACE(n)` with the caller's `max_allowed_packet` limit.
-///
-/// `builtinSpaceSig.evalString` checks the session packet limit before the
-/// `mysql.MaxBlobWidth` result limit.  Both limits map to `NULL` in this
-/// value-only API because statement warnings are intentionally outside its
-/// result surface; preserving the order here keeps a future session-aware
-/// caller on the same source path rather than duplicating the edge checks.
-pub(crate) fn space_with_max_allowed_packet(
-    vals: &[Datum],
-    max_allowed_packet: u64,
-) -> Result<Datum, EvalError> {
+/// `mysql.MaxBlobWidth`, and warns 1301 above `max_allowed_packet`.
+pub(crate) fn space(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad SPACE arity"));
     };
@@ -415,7 +398,10 @@ pub(crate) fn space_with_max_allowed_packet(
     }
     let width = crate::cast::to_i64_signed(value);
     let width = width.max(0);
-    if (width as u64) > max_allowed_packet {
+    // `builtinSpaceSig.evalString` checks the session packet limit BEFORE the
+    // `mysql.MaxBlobWidth` result limit, and only the first of the two warns.
+    if (width as u64) > ctx.max_allowed_packet() {
+        ctx.handle_allowed_packet_overflowed("space");
         return Ok(Datum::Null);
     }
     const MAX_BLOB_WIDTH: i64 = 16_777_216; // pkg/parser/mysql.MaxBlobWidth
@@ -481,8 +467,13 @@ fn strcmp_under(
 /// NEGATIVE `len` yields `NULL` (not the empty string); `len == 0` yields
 /// the empty string; truncation keeps the first `len` chars; an empty `pad`
 /// that can't reach `len` yields the empty string. `NULL` if any argument is
-/// `NULL` or `len` exceeds TiDB's `mysql.MaxBlobWidth`.
-pub(crate) fn pad(vals: &[Datum], left: bool) -> Result<Datum, EvalError> {
+/// `NULL` or `len` exceeds TiDB's `mysql.MaxBlobWidth`. A `len` whose result
+/// could not fit `max_allowed_packet` is NULL with warning 1301.
+pub(crate) fn pad(
+    vals: &[Datum],
+    left: bool,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
     const MAX_BLOB_WIDTH: i64 = 16_777_216;
     if vals.len() != 3 {
         return Err(EvalError::Unsupported("bad LPAD/RPAD arguments"));
@@ -491,14 +482,30 @@ pub(crate) fn pad(vals: &[Datum], left: bool) -> Result<Datum, EvalError> {
         Datum::Null => return Ok(Datum::Null),
         value => crate::cast::to_i64_signed(value),
     };
+    // `lpadFunctionClass.getFunction` tests BOTH string arguments, so a binary
+    // pad string makes the whole call byte-based.
+    let binary = crate::string_signature::is_binary_str(&vals[0])
+        || crate::string_signature::is_binary_str(&vals[2]);
+    // The packet check comes FIRST in both signatures, before the negative /
+    // MaxBlobWidth rejections, and is the only one of the three that warns.
+    // The byte signature compares the target length itself; the rune one
+    // compares it times `mysql.MaxBytesOfCharacter`, because that many bytes
+    // is the widest the result can become.
+    let requested = if binary {
+        u64::try_from(len).unwrap_or(u64::MAX)
+    } else {
+        u64::try_from(len)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(MAX_BYTES_OF_CHARACTER)
+    };
+    if requested > ctx.max_allowed_packet() {
+        ctx.handle_allowed_packet_overflowed(if left { "lpad" } else { "rpad" });
+        return Ok(Datum::Null);
+    }
     if !(0..=MAX_BLOB_WIDTH).contains(&len) {
         return Ok(Datum::Null);
     }
-    // `lpadFunctionClass.getFunction` tests BOTH string arguments, so a binary
-    // pad string makes the whole call byte-based.
-    if crate::string_signature::is_binary_str(&vals[0])
-        || crate::string_signature::is_binary_str(&vals[2])
-    {
+    if binary {
         let (Some(s), Some(padstr)) = (coerce_str_bytes(&vals[0])?, coerce_str_bytes(&vals[2])?)
         else {
             return Ok(Datum::Null);
@@ -1109,15 +1116,46 @@ pub(crate) fn make_set(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(Datum::new_string(parts.join(",")))
 }
 
+/// Go `mysql.MaxBytesOfCharacter`: the widest a single character can encode
+/// to, which `builtinLpadUTF8Sig`/`builtinRpadUTF8Sig` multiply the requested
+/// character count by before testing `max_allowed_packet`.
+const MAX_BYTES_OF_CHARACTER: u64 = 4;
+
+/// Go `base64NeededEncodedLength`: the encoded width of `n` input bytes,
+/// including the newline every 76 output characters. `None` is Go's `-1`,
+/// the input width past which the answer would overflow a signed `int` --
+/// which `builtinToBase64Sig` answers NULL for WITHOUT a packet warning,
+/// since it never got as far as comparing a length.
+fn base64_needed_encoded_length(n: usize) -> Option<u64> {
+    // Go's 64-bit arm; the 32-bit constant is for a platform this crate does
+    // not build for, and `usize` here is the same width Go's `int` is there.
+    if n > 6_827_690_988_321_067_803 {
+        return None;
+    }
+    let length = (n as u64).div_ceil(3) * 4;
+    // Go computes `(length-1)/76` in signed `int`, where the empty input's
+    // `-1/76` truncates toward zero rather than wrapping.
+    Some(length + length.saturating_sub(1) / 76)
+}
+
 /// `TO_BASE64(str)`: standard base-64 encoding (with `=` padding) of the
 /// argument's bytes.  `builtinToBase64Sig.evalString` in
 /// `pkg/expression/builtin_string.go` inserts a newline after every 76
-/// encoded characters; `NULL` propagates.  `max_allowed_packet` overflow is
-/// session state and therefore intentionally outside this value-only layer.
-pub(crate) fn to_base64(vals: &[Datum]) -> Result<Datum, EvalError> {
+/// encoded characters; `NULL` propagates.  A result over `max_allowed_packet`
+/// is NULL with warning 1301.
+pub(crate) fn to_base64(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     let Some(bytes) = coerce_str_bytes(&vals[0])? else {
         return Ok(Datum::Null);
     };
+    // Go `base64NeededEncodedLength` then the packet check, both BEFORE any
+    // encoding happens -- the point is not to allocate the oversized result.
+    let Some(needed) = base64_needed_encoded_length(bytes.len()) else {
+        return Ok(Datum::Null);
+    };
+    if needed > ctx.max_allowed_packet() {
+        ctx.handle_allowed_packet_overflowed("to_base64");
+        return Ok(Datum::Null);
+    }
     const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for chunk in bytes.chunks(3) {
@@ -1762,8 +1800,122 @@ pub(crate) fn trim_value(
 
 #[cfg(test)]
 mod space_tests {
-    use super::{space, space_with_max_allowed_packet};
-    use crate::{Datum, Decimal, EvalError};
+    use super::{pad, repeat, space, to_base64};
+    use crate::{Columns, Datum, Decimal, EvalError, NoColumns};
+
+    /// A session whose `max_allowed_packet` is `limit` and that records the
+    /// warnings the builtins raise. The warning is half of what is ported
+    /// here: the oversized answer was ALREADY NULL, so a version that only
+    /// returned NULL would pass every value assertion and still leave the
+    /// client unable to tell a truncated result from a genuine one.
+    #[derive(Default)]
+    struct Packet {
+        limit: u64,
+        warnings: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl Packet {
+        fn new(limit: u64) -> Self {
+            Self {
+                limit,
+                warnings: std::cell::RefCell::default(),
+            }
+        }
+        fn warnings(&self) -> Vec<String> {
+            self.warnings.borrow().clone()
+        }
+    }
+
+    impl Columns for Packet {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn max_allowed_packet(&self) -> u64 {
+            self.limit
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push(format!("{code} {message}"));
+        }
+    }
+
+    /// The whole `max_allowed_packet` family, each against the packet limit
+    /// its Go source test uses.
+    ///
+    /// `TestSpaceSig` and `TestRepeatSig` both build their signature with a
+    /// 1000-byte limit; `LPAD`/`RPAD`/`TO_BASE64` are the three that had NO
+    /// packet check at all here. The message is Go's
+    /// `ErrWarnAllowedPacketOverflowed` verbatim -- CAPTURED from TiDB at the
+    /// default limit:
+    ///
+    /// ```text
+    /// select space(70000000);  show warnings;
+    ///   Warning 1301 Result of space() was larger than
+    ///                max_allowed_packet (67108864) - truncated
+    /// ```
+    #[test]
+    fn max_allowed_packet_overflow_is_null_with_warning_1301() {
+        let over = |name: &str, result: Datum, ctx: &Packet| {
+            assert_eq!(result, Datum::Null, "{name} over the packet limit is NULL");
+            assert_eq!(
+                ctx.warnings(),
+                vec![format!(
+                    "1301 Result of {name}() was larger than max_allowed_packet ({}) - truncated",
+                    ctx.limit
+                )],
+                "{name} must warn exactly once"
+            );
+        };
+
+        let ctx = Packet::new(1_000);
+        assert_eq!(
+            space(&[Datum::Int(6)], &ctx),
+            Ok(Datum::new_string("      ".to_string()))
+        );
+        assert!(
+            ctx.warnings().is_empty(),
+            "an in-budget result must not warn"
+        );
+        let ctx = Packet::new(1_000);
+        over("space", space(&[Datum::Int(1_001)], &ctx).unwrap(), &ctx);
+
+        let ctx = Packet::new(1_000);
+        let repeated = repeat(
+            &[Datum::new_string("a".to_string()), Datum::Int(1_001)],
+            &ctx,
+        );
+        over("repeat", repeated.unwrap(), &ctx);
+
+        // The rune signature multiplies the requested CHARACTER count by
+        // `mysql.MaxBytesOfCharacter` (4) before the comparison, so 251
+        // characters already exceed a 1000-byte packet while 250 do not.
+        let lpad_args = |len: i64| {
+            [
+                Datum::new_string("a".to_string()),
+                Datum::Int(len),
+                Datum::new_string("x".to_string()),
+            ]
+        };
+        let ctx = Packet::new(1_000);
+        assert!(pad(&lpad_args(250), true, &ctx).unwrap() != Datum::Null);
+        assert!(ctx.warnings().is_empty());
+        let ctx = Packet::new(1_000);
+        over("lpad", pad(&lpad_args(251), true, &ctx).unwrap(), &ctx);
+        let ctx = Packet::new(1_000);
+        over("rpad", pad(&lpad_args(251), false, &ctx).unwrap(), &ctx);
+
+        // `base64NeededEncodedLength` is the 4/3 expansion plus one newline
+        // per 76 output characters: 741 input bytes need exactly 1000 and fit,
+        // 742 need 1005 and do not.
+        let ctx = Packet::new(1_000);
+        assert!(to_base64(&[Datum::new_string("a".repeat(741))], &ctx).unwrap() != Datum::Null);
+        assert!(ctx.warnings().is_empty());
+        let ctx = Packet::new(1_000);
+        over(
+            "to_base64",
+            to_base64(&[Datum::new_string("a".repeat(742))], &ctx).unwrap(),
+            &ctx,
+        );
+    }
 
     /// Complete scalar table from `TestSpace` in
     /// `pkg/expression/builtin_string_test.go`.  The Go test's injected
@@ -1788,32 +1940,22 @@ mod space_tests {
             (Datum::Null, Datum::Null),
         ];
         for (input, want) in cases {
-            assert_eq!(space(&[input]), Ok(want));
+            assert_eq!(space(&[input], &NoColumns), Ok(want));
         }
 
         // EvalInt's decimal and FLOAT tie rules are intentionally different
         // in TiDB; retain that distinction at this function boundary.
         assert_eq!(
-            space(&[Datum::Decimal(Decimal::from_literal("2.5"))]),
+            space(&[Datum::Decimal(Decimal::from_literal("2.5"))], &NoColumns),
             Ok(Datum::new_string("   ".to_string()))
         );
         assert_eq!(
-            space(&[Datum::Real(2.5)]),
+            space(&[Datum::Real(2.5)], &NoColumns),
             Ok(Datum::new_string("  ".to_string()))
         );
-        assert_eq!(space(&[]), Err(EvalError::Unsupported("bad SPACE arity")));
-
-        // `TestSpaceSig` constructs the signature with a 1000-byte packet
-        // limit: six spaces succeed while 1001 spaces become NULL (the Go
-        // side also emits a warning, which this value-only API deliberately
-        // does not model).
         assert_eq!(
-            space_with_max_allowed_packet(&[Datum::Int(6)], 1_000),
-            Ok(Datum::new_string("      ".to_string()))
-        );
-        assert_eq!(
-            space_with_max_allowed_packet(&[Datum::Int(1_001)], 1_000),
-            Ok(Datum::Null)
+            space(&[], &NoColumns),
+            Err(EvalError::Unsupported("bad SPACE arity"))
         );
     }
 }
@@ -1991,11 +2133,11 @@ mod concat_source_tests {
 #[cfg(test)]
 mod to_base64_tests {
     use super::to_base64;
-    use crate::Datum;
+    use crate::{Columns, Datum, NoColumns};
 
     /// Length and newline count of `TO_BASE64` over `byte_count` `'a'` bytes.
     fn shape(byte_count: usize) -> (usize, usize) {
-        match to_base64(&[Datum::new_bytes(vec![b'a'; byte_count])]).unwrap() {
+        match to_base64(&[Datum::new_bytes(vec![b'a'; byte_count])], &NoColumns).unwrap() {
             Datum::String(text) => {
                 let bytes = text.bytes();
                 (bytes.len(), bytes.iter().filter(|&&b| b == b'\n').count())
@@ -2021,7 +2163,7 @@ mod to_base64_tests {
 
     #[test]
     fn to_base64_null_is_null() {
-        assert_eq!(to_base64(&[Datum::Null]).unwrap(), Datum::Null);
+        assert_eq!(to_base64(&[Datum::Null], &NoColumns).unwrap(), Datum::Null);
     }
 
     /// The `maxAllowPacket` rows of `TestToBase64Sig`
@@ -2030,42 +2172,37 @@ mod to_base64_tests {
     /// by `builtin_ext::string2::tests::to_base64_matches_go_source_vectors`,
     /// including the 76-column wrap of the 64-char alphabet and its triple.
     ///
-    /// Here: when the encoded result
-    /// would exceed `max_allowed_packet`, Go returns NULL and warns
-    /// `errWarnAllowedPacketOverflowed` (`'abc'` with a 3-byte limit; the
-    /// 64-char alphabet with an 88-byte limit; its triple with 258). This layer
-    /// has no `max_allowed_packet` seam at all -- documented on `to_base64` as
-    /// "session state and therefore intentionally outside this value-only
-    /// layer" -- so Go's answer is asserted here and ignored.
-    ///
-    /// Paired with `to_base64_ignores_packet_size_today`, which RUNS.
+    /// Here: when the encoded result would exceed `max_allowed_packet`, Go
+    /// returns NULL and warns `errWarnAllowedPacketOverflowed`. This layer
+    /// used to have no `max_allowed_packet` seam at all and encoded anyway,
+    /// so the whole row set was `#[ignore]`d.
     #[test]
-    #[ignore = "max_allowed_packet is session state this value-only layer does not carry"]
     fn to_base64_source_max_allowed_packet_rows() {
         const ALPHABET: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        // (input, max_allowed_packet) pairs whose result Go makes NULL.
-        for (input, _max_allowed_packet) in [
+        struct Limit(u64);
+        impl Columns for Limit {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn max_allowed_packet(&self) -> u64 {
+                self.0
+            }
+        }
+        for (input, max_allowed_packet) in [
             ("abc".to_owned(), 3u64),
             (ALPHABET.to_owned(), 88),
             (ALPHABET.repeat(3), 258),
         ] {
             assert_eq!(
-                to_base64(&[Datum::new_string(input.clone())]).unwrap(),
+                to_base64(
+                    &[Datum::new_string(input.clone())],
+                    &Limit(max_allowed_packet)
+                )
+                .unwrap(),
                 Datum::Null,
                 "{input:?} over its max_allowed_packet must be NULL"
             );
         }
-    }
-
-    /// Today's answer for the rows above: the encoding happens whatever the
-    /// packet size would have been. Keeps the `#[ignore]`d row honest -- if a
-    /// `max_allowed_packet` seam ever lands, this fails and points at it.
-    #[test]
-    fn to_base64_ignores_packet_size_today() {
-        assert!(matches!(
-            to_base64(&[Datum::new_string("abc".to_owned())]).unwrap(),
-            Datum::String(_)
-        ));
     }
 }
 
