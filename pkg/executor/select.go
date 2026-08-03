@@ -295,7 +295,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for id := range e.tblID2Handle {
 		e.UpdateDeltaForTableID(id)
 	}
-	lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, len(e.keys))
+	lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, len(e.keys), false)
 	if err != nil {
 		return err
 	}
@@ -336,7 +336,7 @@ func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
 	return nil
 }
 
-func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
+func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inSharedMode bool) (*tikvstore.LockCtx, error) {
 	seVars := sctx.GetSessionVars()
 	forUpdateTS, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
 	if err != nil {
@@ -348,6 +348,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
 	lockCtx.LockKeysCount = &seVars.StmtCtx.LockKeysCount
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
+	lockCtx.InShareMode = inSharedMode
 
 	// Set max_execution_time deadline for SELECT statements
 	if seVars.StmtCtx.InSelectStmt && seVars.GetMaxExecutionTime() > 0 {
@@ -614,7 +615,7 @@ func init() {
 			return nil, err
 		}
 
-		e := newExecutorBuilder(sctx, is, nil)
+		e := newExecutorBuilder(ctx, sctx, is, nil)
 		executor := e.build(p)
 		if e.err != nil {
 			return nil, e.err
@@ -962,10 +963,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		clear(sc.TableStats)
 	}
-	if sc.MDLRelatedTableIDs == nil {
-		sc.MDLRelatedTableIDs = make(map[int64]struct{})
+	if sc.RelatedTableIDs == nil {
+		sc.RelatedTableIDs = make(map[int64]struct{})
 	} else {
-		clear(sc.MDLRelatedTableIDs)
+		clear(sc.RelatedTableIDs)
 	}
 	if sc.TblInfo2UnionScan == nil {
 		sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
@@ -1118,7 +1119,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// For single-row INSERT statements, ignore non-strict mode
 		// See https://dev.mysql.com/doc/refman/5.7/en/constraint-invalid-data.html
 		isSingleInsert := len(stmt.Lists) == 1
-		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, (!strictSQLMode && !isSingleInsert) || stmt.IgnoreErr)
+		enableStrictNotNullCheck := vars.EnableStrictNotNullCheck
+		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !((strictSQLMode || isSingleInsert) && enableStrictNotNullCheck) || stmt.IgnoreErr)
 		errLevels[errctx.ErrGroupNoDefault] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
 		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 			!vars.SQLMode.HasErrorForDivisionByZeroMode(),

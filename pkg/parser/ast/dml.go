@@ -534,16 +534,42 @@ type TableSource struct {
 
 	// AsName is the alias name of the table source.
 	AsName model.CIStr
+
+	// Lateral indicates whether this is a LATERAL derived table.
+	// MySQL 8.0+ syntax: FROM t1, LATERAL (SELECT ...) AS dt
+	// LATERAL allows the derived table to reference columns from tables to its left.
+	Lateral bool
+
+	// ColumnNames is the optional column alias list for derived tables.
+	// e.g. LATERAL (SELECT ...) AS dt(c1, c2)
+	ColumnNames []model.CIStr
 }
 
 func (*TableSource) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
-	needParen := false
+	// Validate AST invariants before emitting any SQL.
+	derivedTable := false
 	switch n.Source.(type) {
 	case *SelectStmt, *SetOprStmt:
-		needParen = true
+		derivedTable = true
+	}
+	if n.Lateral && !derivedTable {
+		return errors.New("LATERAL cannot be applied to a table name, only to derived tables")
+	}
+	if len(n.ColumnNames) > 0 && !derivedTable {
+		return errors.New("column alias list cannot be applied to a table name")
+	}
+	if len(n.ColumnNames) > 0 && n.AsName.String() == "" {
+		return errors.New("column list provided without alias for derived table")
+	}
+
+	needParen := derivedTable
+
+	// Output LATERAL keyword if this is a LATERAL derived table
+	if n.Lateral {
+		ctx.WriteKeyWord("LATERAL ")
 	}
 
 	if tn, tnCase := n.Source.(*TableName); tnCase {
@@ -591,6 +617,16 @@ func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 		if asName := n.AsName.String(); asName != "" {
 			ctx.WriteKeyWord(" AS ")
 			ctx.WriteName(asName)
+			if len(n.ColumnNames) > 0 {
+				ctx.WritePlain("(")
+				for i, col := range n.ColumnNames {
+					if i > 0 {
+						ctx.WritePlain(", ")
+					}
+					ctx.WriteName(col.String())
+				}
+				ctx.WritePlain(")")
+			}
 		}
 	}
 
@@ -660,6 +696,10 @@ func (n SelectLockType) String() string {
 type WildCardField struct {
 	node
 
+	// For example:
+	// `SELECT test.t.* FROM t` -> {Schema: "test", Table: "t"}
+	// `SELECT t.* FROM t` -> {Schema: "", Table: "t"}
+	// `SELECT t.a FROM t` -> nil
 	Table  model.CIStr
 	Schema model.CIStr
 }
@@ -708,6 +748,13 @@ type SelectField struct {
 	Auxiliary             bool
 	AuxiliaryColInAgg     bool
 	AuxiliaryColInOrderBy bool
+
+	// IsUnfoldFromWildCard indicates whether this field is unfolded from a wildcard, which can be used in checking privilege.
+	// Although we always check SELECT privilege in column-level, a table-level access deny error will be return if the
+	// column is unfolded from a wildcard. For example, assume that table t has columns (a,b,c)
+	// Both `SELECT * FROM t` and `SELECT a,b,c FROM t`` require SELECT privilege of a,b and c.
+	// But if lacking privilege, the former reports error code 1142, the latter reports 1143.
+	IsUnfoldFromWildCard bool
 }
 
 // Restore implements Node interface.
@@ -2243,6 +2290,19 @@ func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
 func (n *ImportIntoStmt) SecureText() string {
 	redactedStmt := *n
 	redactedStmt.Path = RedactURL(n.Path)
+	redactedStmt.Options = make([]*LoadDataOpt, 0, len(n.Options))
+	for _, opt := range n.Options {
+		outOpt := opt
+		ln := strings.ToLower(opt.Name)
+		if ln == CloudStorageURI {
+			redactedStr := RedactURL(opt.Value.(ValueExpr).GetString())
+			outOpt = &LoadDataOpt{
+				Name:  opt.Name,
+				Value: NewValueExpr(redactedStr, "", ""),
+			}
+		}
+		redactedStmt.Options = append(redactedStmt.Options, outOpt)
+	}
 	var sb strings.Builder
 	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 	return sb.String()
@@ -3054,6 +3114,7 @@ const (
 	ShowReplicaStatus
 	ShowDistributionJobs
 	ShowDistributions
+	ShowAffinity
 )
 
 const (

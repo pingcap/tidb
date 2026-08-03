@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 )
 
 // FKCheck indicates the foreign key constraint checker.
@@ -384,6 +385,9 @@ func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSche
 	if fk == nil || fk.Version < 1 {
 		return nil, nil, nil
 	}
+	if err := dbutil.CheckTableModeIsNormal(childTable.Meta().Name, childTable.Meta().Mode); err != nil {
+		return nil, nil, err
+	}
 	var fkReferOption pmodel.ReferOptionType
 	if fk.State != model.StatePublic {
 		fkReferOption = pmodel.ReferOptionRestrict
@@ -454,7 +458,7 @@ func buildFKCheck(ctx base.PlanContext, tbl table.Table, cols []pmodel.CIStr, fa
 		}
 	}
 
-	referTbIdxInfo := model.FindIndexByColumns(tblInfo, tblInfo.Indices, cols...)
+	referTbIdxInfo := model.FindIndexByColumnsForForeignKey(tblInfo, tblInfo.Indices, cols...)
 	if referTbIdxInfo == nil {
 		return nil, failedErr
 	}
@@ -500,7 +504,7 @@ func buildFKCascade(ctx base.PlanContext, tp FKCascadeType, referredFK *model.Re
 			return fkCascade, nil
 		}
 	}
-	indexForFK := model.FindIndexByColumns(childTable.Meta(), childTable.Meta().Indices, fk.Cols...)
+	indexForFK := model.FindIndexByColumnsForForeignKey(childTable.Meta(), childTable.Meta().Indices, fk.Cols...)
 	if indexForFK == nil {
 		return nil, errors.Errorf("Missing index for '%s' foreign key columns in the table '%s'", fk.Name, childTable.Meta().Name)
 	}

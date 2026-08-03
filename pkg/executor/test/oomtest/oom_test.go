@@ -95,6 +95,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "", oom.GetTracker())
+	oom.ClearMessageFilter()
 	oom.AddMessageFilter("expensive_query during bootstrap phase")
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
@@ -106,6 +107,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
 	require.Equal(t, "", oom.GetTracker())
+	oom.ClearMessageFilter()
 	oom.AddMessageFilter("expensive_query during bootstrap phase")
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
@@ -117,6 +119,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
 	require.Equal(t, "", oom.GetTracker())
+	oom.ClearMessageFilter()
 	oom.AddMessageFilter("expensive_query during bootstrap phase")
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
@@ -131,6 +134,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "", oom.GetTracker())
+	oom.ClearMessageFilter()
 	oom.AddMessageFilter("expensive_query during bootstrap phase")
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
@@ -144,6 +148,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "", oom.GetTracker())
+	oom.ClearMessageFilter()
 	oom.AddMessageFilter("expensive_query during bootstrap phase")
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
@@ -196,7 +201,7 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/disableFixedRowCountHint"))
 	}()
 	tk.Session().GetSessionVars().EnabledRateLimitAction = true
-	tk.Session().GetSessionVars().MemQuotaQuery = 10000
+	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
 	require.Equal(t, "memory exceeds quota, rateLimitAction delegate to fallback action", oom.GetTracker())
 }
@@ -264,7 +269,7 @@ func (h *oomCapture) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	// They are just common background task and not related to the oom.
-	if !h.messageFilter.Empty() && !h.messageFilter.Exist(entry.Message) {
+	if !h.messageFilter.Exist(entry.Message) {
 		return nil
 	}
 	h.tracker = entry.Message

@@ -48,7 +48,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/lightning/pkg/importer"
-	"github.com/pingcap/tidb/lightning/pkg/web"
+	"github.com/pingcap/tidb/lightning/pkg/progress"
 	_ "github.com/pingcap/tidb/pkg/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
@@ -66,7 +66,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/shurcooL/httpgzip"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -219,7 +218,6 @@ func httpHandleWrapper(h http.HandlerFunc) http.HandlerFunc {
 
 func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
-	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
 
 	registry := l.promRegistry
 	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -253,17 +251,6 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.HandleFunc("/pause", httpHandleWrapper(handlePause))
 	mux.HandleFunc("/resume", httpHandleWrapper(handleResume))
 	mux.HandleFunc("/loglevel", httpHandleWrapper(handleLogLevel))
-
-	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
-		IndexHTML: true,
-		ServeError: func(w http.ResponseWriter, req *http.Request, err error) {
-			if os.IsNotExist(err) && !strings.Contains(req.URL.Path, ".") {
-				http.Redirect(w, req, "/web/", http.StatusFound)
-			} else {
-				httpgzip.NonSpecific(w, req, err)
-			}
-		},
-	})))
 
 	listener, err := net.Listen("tcp", statusAddr)
 	if err != nil {
@@ -458,14 +445,14 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	l.cancel = cancel
 	l.curTask = taskCfg
 	l.cancelLock.Unlock()
-	web.BroadcastStartTask()
+	progress.BroadcastStartTask()
 
 	defer func() {
 		cancel()
 		l.cancelLock.Lock()
 		l.cancel = nil
 		l.cancelLock.Unlock()
-		web.BroadcastEndTask(err)
+		progress.BroadcastEndTask(err)
 	}()
 
 	failpoint.Inject("SkipRunTask", func() {
@@ -508,7 +495,6 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	if err := taskCfg.TiDB.Security.BuildTLSConfig(); err != nil {
 		return common.ErrInvalidTLSConfig.Wrap(err)
 	}
-
 	s := o.dumpFileStorage
 	if s == nil {
 		u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
@@ -557,7 +543,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	}
 
 	dbMetas := mdl.GetDatabases()
-	web.BroadcastInitProgress(dbMetas)
+	progress.BroadcastInitProgress(dbMetas)
 
 	// db is only not nil in unit test
 	db := o.db
@@ -888,7 +874,7 @@ func writeBytesCompressed(w http.ResponseWriter, req *http.Request, b []byte) {
 
 func handleProgressTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	res, err := web.MarshalTaskProgress()
+	res, err := progress.MarshalTaskProgress()
 	if err == nil {
 		writeBytesCompressed(w, req, res)
 	} else {
@@ -900,7 +886,7 @@ func handleProgressTask(w http.ResponseWriter, req *http.Request) {
 func handleProgressTable(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	tableName := req.URL.Query().Get("t")
-	res, err := web.MarshalTableCheckpoints(tableName)
+	res, err := progress.MarshalTableCheckpoints(tableName)
 	if err == nil {
 		writeBytesCompressed(w, req, res)
 	} else {

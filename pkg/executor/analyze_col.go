@@ -61,12 +61,16 @@ type AnalyzeColumnsExec struct {
 	baseCount               int64
 	baseModifyCnt           int64
 
+	// Resolved on the main goroutine; SessionVars.systems is not safe for
+	// concurrent lookup across partition workers.
+	samplingStatsConcurrency int
+
 	memTracker *memory.Tracker
 }
 
-func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
+func analyzeColumnsPushDownEntry(ctx context.Context, gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
-		return e.toV2().analyzeColumnsPushDownV2(gp)
+		return e.toV2().analyzeColumnsPushDownV2(ctx, gp)
 	}
 	return e.toV1().analyzeColumnsPushDownV1()
 }
@@ -83,12 +87,12 @@ func (e *AnalyzeColumnsExec) toV2() *AnalyzeColumnsExecV2 {
 	}
 }
 
-func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
+func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) error {
 	e.memTracker = memory.NewTracker(int(e.ctx.GetSessionVars().PlanID.Load()), -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, true, false, !hasPkHist(e.handleCols))
-	firstResult, err := e.buildResp(firstPartRanges)
+	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		return err
 	}
@@ -97,7 +101,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 		return nil
 	}
 	var secondResult distsql.SelectResult
-	secondResult, err = e.buildResp(secondPartRanges)
+	secondResult, err = e.buildResp(ctx, secondPartRanges)
 	if err != nil {
 		return err
 	}
@@ -106,7 +110,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 	return nil
 }
 
-func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
+func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
@@ -130,7 +134,6 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	if err != nil {
 		return nil, err
 	}
-	ctx := context.TODO()
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
 		return nil, err
@@ -139,7 +142,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 }
 
 func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats bool) (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, extStats *statistics.ExtendedStatsColl, err error) {
-	if err = e.open(ranges); err != nil {
+	if err = e.open(context.TODO(), ranges); err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
 	defer func() {
@@ -399,13 +402,21 @@ func prepareColumns(e *AnalyzeColumnsExec, b *strings.Builder) {
 	if len(cols) == 0 {
 		return
 	}
-	if len(cols) < len(e.tableInfo.Columns) {
+
+	filteredCols := make([]*model.ColumnInfo, 0, len(cols))
+	for _, col := range cols {
+		if !col.IsChanging() && !col.IsRemoving() {
+			filteredCols = append(filteredCols, col)
+		}
+	}
+
+	if len(filteredCols) < len(e.tableInfo.GetNonTempColumns()) {
 		if len(cols) > 1 {
 			b.WriteString(" columns ")
 		} else {
 			b.WriteString(" column ")
 		}
-		for i, col := range cols {
+		for i, col := range filteredCols {
 			if i > 0 {
 				b.WriteString(", ")
 			}

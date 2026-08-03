@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -167,6 +168,9 @@ func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	if p.FromDecorrelatedApply {
+		p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanSameOrderIndexJoin()
+	}
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.innerPlan)
 	} else {
@@ -526,10 +530,8 @@ func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 		CommonHandleCols: t.commonHandleCols,
 		expectedCnt:      t.expectCnt,
 		keepOrder:        t.keepOrder,
-	}.Init(ctx, t.tablePlan.QueryBlockOffset())
-	p.PlanPartInfo = t.physPlanPartInfo
-	setTableScanToTableRowIDScan(p.tablePlan)
-	p.SetStats(t.tablePlan.StatsInfo())
+		PlanPartInfo:     t.physPlanPartInfo,
+	}.Init(ctx, t.tablePlan.QueryBlockOffset(), t.indexLookUpPushDownBy)
 	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
 	// the final agg would be broken. Please reference comments for the similar logic in
 	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
@@ -779,11 +781,15 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t base.Task) bool {
 		Offset: p.Offset,
 		Count:  p.Count,
 	}
-	originStats := ts.StatsInfo()
-	ts.SetStats(p.StatsInfo())
-	if originStats != nil {
-		// keep the original stats version
-		ts.StatsInfo().StatsVersion = originStats.StatsVersion
+	if originStats := ts.StatsInfo(); originStats.RowCount >= p.StatsInfo().RowCount {
+		// Only reset the table scan stats when its row estimation is larger than the limit count.
+		// When indexLookUp push down is enabled, some rows have been looked up in TiKV side,
+		// and the rows processed by the TiDB table scan may be less than the limit count.
+		ts.SetStats(p.StatsInfo())
+		if originStats != nil {
+			// keep the original stats version
+			ts.StatsInfo().StatsVersion = originStats.StatsVersion
+		}
 	}
 	reader.SetStats(p.StatsInfo())
 	if isProj {
@@ -1038,6 +1044,11 @@ func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool)
 // Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
+	if copTask, ok := t.(*CopTask); ok {
+		if copTask.partialOrderMatchResult != nil && copTask.partialOrderMatchResult.Matched {
+			return handlePartialOrderTopN(p, copTask)
+		}
+	}
 	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
@@ -1050,6 +1061,23 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		}
 	}
 	if copTask, ok := t.(*CopTask); ok && needPushDown && p.canPushDownToTiKV(copTask) && len(copTask.rootTaskConds) == 0 {
+		// Handle IndexMerge with advisory sort items when some (but not all)
+		// partial paths satisfy the sort order. When all paths satisfy, the
+		// existing Limit pushdown via attach2Task4PhysicalLimit gives a better plan.
+		if len(copTask.idxMergePartPlans) > 0 && !copTask.indexPlanFinished && !copTask.idxMergeIsIntersection &&
+			copTask.idxMergeMatchWithAdvisorySortItems {
+			intest.Assert(len(copTask.idxMergePartPlans) == len(copTask.idxMergePartPlansMatchResults))
+			allSatisfy := true
+			for _, result := range copTask.idxMergePartPlansMatchResults {
+				if !result.Matched() {
+					allSatisfy = false
+					break
+				}
+			}
+			if !allSatisfy {
+				return handleAdvisorySortItemsForIndexMerge(p, copTask)
+			}
+		}
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
@@ -1071,6 +1099,100 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	// will take care of the filter.
 	if len(p.GetPartitionBy()) > 0 {
 		return t
+	}
+	return attachPlan2Task(p, rootTask)
+}
+
+// handlePartialOrderTopN handles the partial order TopN scenario.
+//
+// Case 1: two-phase TopN, where TiDB keeps TopN and TiKV applies a partial-order Limit:
+//
+//	TopN(with partial info)
+//	  └─IndexLookUp
+//	     └─Limit(with partial info)
+//
+// Case 2: one-phase TopN, where the whole TopN can be executed in the coprocessor:
+//
+//	TopN(with partial info)
+//	  ├─IndexPlan
+//	  └─TablePlan
+func handlePartialOrderTopN(p *PhysicalTopN, copTask *CopTask) base.Task {
+	matchResult := copTask.partialOrderMatchResult
+	partialOrderedLimit := p.Count + p.Offset
+	p.PrefixCol = matchResult.PrefixCol
+	p.PrefixLen = matchResult.PrefixLen
+
+	canPushLimit := len(copTask.idxMergePartPlans) == 0 &&
+		!copTask.indexPlanFinished &&
+		len(copTask.rootTaskConds) == 0 &&
+		copTask.indexPlan != nil
+	if canPushLimit {
+		maxX := estimateMaxXForPartialOrder(p.SCtx(), copTask)
+		estimatedRows := float64(partialOrderedLimit) + float64(maxX)
+		childProfile := copTask.indexPlan.StatsInfo()
+		limitStats := util.DeriveLimitStats(childProfile, estimatedRows)
+
+		pushedDownLimit := PhysicalLimit{
+			Count:     partialOrderedLimit,
+			PrefixCol: matchResult.PrefixCol,
+			PrefixLen: matchResult.PrefixLen,
+		}.Init(p.SCtx(), limitStats, p.QueryBlockOffset())
+		pushedDownLimit.SetChildren(copTask.indexPlan)
+		pushedDownLimit.SetSchema(copTask.indexPlan.Schema())
+		copTask.indexPlan = pushedDownLimit
+	}
+	rootTask := copTask.ConvertToRootTask(p.SCtx())
+	return attachPlan2Task(p, rootTask)
+}
+
+// estimateMaxXForPartialOrder estimates the extra rows X to read for partial order optimization.
+func estimateMaxXForPartialOrder(_ base.PlanContext, _ *CopTask) uint64 {
+	return 0
+}
+
+// handleAdvisorySortItemsForIndexMerge handles TopN pushdown when IndexMerge
+// has advisory sort items satisfaction info. It pushes Limit to partial paths that
+// satisfy the sort order and TopN to those that do not, then keeps a root TopN
+// for the final merge.
+func handleAdvisorySortItemsForIndexMerge(p *PhysicalTopN, copTask *CopTask) base.Task {
+	newCount := p.Offset + p.Count
+
+	cols := make([]*expression.Column, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		cols = append(cols, expression.ExtractColumns(item.Expr)...)
+	}
+	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
+	for _, expr := range p.GetPartitionBy() {
+		newPartitionBy = append(newPartitionBy, expr.Clone())
+	}
+
+	for i, partialPlan := range copTask.idxMergePartPlans {
+		if copTask.idxMergePartPlansMatchResults[i].Matched() {
+			// This partial path satisfies the sort order, push Limit.
+			childProfile := partialPlan.StatsInfo()
+			stats := util.DeriveLimitStats(childProfile, float64(newCount))
+			pushedDownLimit := PhysicalLimit{
+				Count:       newCount,
+				PartitionBy: newPartitionBy,
+			}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+			pushedDownLimit.SetChildren(partialPlan)
+			pushedDownLimit.SetSchema(partialPlan.Schema())
+			copTask.idxMergePartPlans[i] = pushedDownLimit
+		} else if p.canPushToIndexPlan(partialPlan, cols) {
+			// This partial path does not satisfy the sort order, push TopN.
+			copTask.idxMergePartPlans[i] = p.getPushedDownTopN(partialPlan)
+		}
+	}
+
+	// Push TopN to the table plan side if it exists.
+	if copTask.tablePlan != nil {
+		copTask.tablePlan = p.getPushedDownTopN(copTask.tablePlan)
+	}
+
+	// Keep the root TopN as the final merge layer.
+	rootTask := copTask.ConvertToRootTask(p.SCtx())
+	if len(p.GetPartitionBy()) > 0 {
+		return rootTask
 	}
 	return attachPlan2Task(p, rootTask)
 }
@@ -1941,11 +2063,13 @@ func (p *PhysicalHashAgg) scaleStats4GroupingSets(groupingSets expression.Groupi
 		}
 	}
 	sumNDV := float64(0)
+	groupingSetCols := make([]*expression.Column, 0, 4)
 	for _, groupingSet := range groupingSets {
 		// for every grouping set, pick its cols out, and combine with normal group cols to get the ndv.
-		groupingSetCols := groupingSet.ExtractCols()
+		groupingSetCols = groupingSet.ExtractCols(groupingSetCols)
 		groupingSetCols = append(groupingSetCols, normalGbyCols...)
 		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(groupingSetCols, childSchema, childStats)
+		groupingSetCols = groupingSetCols[:0]
 		sumNDV += ndv
 	}
 	// After group operator, all same rows are grouped into one row, that means all

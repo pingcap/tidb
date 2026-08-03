@@ -54,7 +54,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
 	"go.uber.org/zap"
 )
 
@@ -104,10 +104,12 @@ func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
 	s.dom.SetStatsUpdating(true)
 
 	tearDown := func() {
-		s.tiflash.Lock()
-		s.tiflash.StatusServer.Close()
-		s.tiflash.Unlock()
 		s.dom.Close()
+		s.tiflash.Lock()
+		if s.tiflash.StatusServer != nil {
+			s.tiflash.StatusServer.Close()
+		}
+		s.tiflash.Unlock()
 		require.NoError(t, s.store.Close())
 		ddl.PollTiFlashInterval = 2 * time.Second
 	}
@@ -492,6 +494,26 @@ func CheckTableAvailableWithTableName(dom *domain.Domain, t *testing.T, count ui
 	require.ElementsMatch(t, labels, replica.LocationLabels)
 }
 
+func WaitTablesAvailableWithTableName(dom *domain.Domain, t *testing.T, count uint64, labels []string, db string, tables []string, timeout time.Duration) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		for _, tableName := range tables {
+			tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(tableName))
+			if err != nil {
+				return false
+			}
+			replica := tb.Meta().TiFlashReplica
+			if replica == nil || !replica.Available {
+				return false
+			}
+		}
+		return true
+	}, timeout, ddl.PollTiFlashInterval/2)
+	for _, tableName := range tables {
+		CheckTableAvailableWithTableName(dom, t, count, labels, db, tableName)
+	}
+}
+
 func CheckTableAvailable(dom *domain.Domain, t *testing.T, count uint64, labels []string) {
 	CheckTableAvailableWithTableName(dom, t, count, labels, "test", "ddltiflash")
 }
@@ -536,18 +558,16 @@ func TestTiFlashMassiveReplicaAvailable(t *testing.T) {
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
 
+	tableNames := make([]string, 100)
 	tk.MustExec("use test")
 	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("drop table if exists ddltiflash%v", i))
-		tk.MustExec(fmt.Sprintf("create table ddltiflash%v(z int)", i))
-		tk.MustExec(fmt.Sprintf("alter table ddltiflash%v set tiflash replica 1", i))
+		tableNames[i] = fmt.Sprintf("ddltiflash%v", i)
+		tk.MustExec(fmt.Sprintf("drop table if exists %s", tableNames[i]))
+		tk.MustExec(fmt.Sprintf("create table %s(z int)", tableNames[i]))
+		tk.MustExec(fmt.Sprintf("alter table %s set tiflash replica 1", tableNames[i]))
 	}
 
-	time.Sleep(ddl.PollTiFlashInterval * 10)
-	// Should get schema right now
-	for i := 0; i < 100; i++ {
-		CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", fmt.Sprintf("ddltiflash%v", i))
-	}
+	WaitTablesAvailableWithTableName(s.dom, t, 1, []string{}, "test", tableNames, 30*time.Second)
 }
 
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.
@@ -1124,12 +1144,13 @@ func TestTiFlashFailureProgressAfterAvailable(t *testing.T) {
 func TestTiFlashProgressAfterAvailable(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
+	se := session.CreateSessionAndSetID(t, s.store)
+	defer se.Close()
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int)")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "drop table if exists ddltiflash")
+	session.MustExec(t, se, "create table ddltiflash(z int)")
+	session.MustExec(t, se, "alter table ddltiflash set tiflash replica 1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	CheckTableAvailable(s.dom, t, 1, []string{})
 
@@ -1437,7 +1458,7 @@ func TestTiFlashReorgPartition(t *testing.T) {
 				stores, _ := pdCli.GetAllStores(ctx)
 				for _, pDef := range args.PartInfo.Definitions {
 					startKey, endKey := tablecodec.GetTableHandleKeyRange(pDef.ID)
-					regions, _ := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
+					regions, _ := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 					for i := range regions {
 						// similar as storeHasEngineTiFlashLabel
 						for _, store := range stores {

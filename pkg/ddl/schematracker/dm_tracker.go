@@ -417,7 +417,9 @@ func (d *SchemaTracker) createIndex(
 		return err
 	}
 	for _, hiddenCol := range hiddenCols {
-		ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+		colInfo := ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+		// Mark the hidden column public to match the metadata produced by executing ADD INDEX.
+		colInfo.State = model.StatePublic
 	}
 
 	indexInfo, err := ddl.BuildIndexInfo(
@@ -753,6 +755,7 @@ func (d *SchemaTracker) renameIndex(_ sessionctx.Context, ident ast.Ident, spec 
 	if err != nil {
 		return err
 	}
+	ddl.RenameExpressionIndexColumns(tblInfo, spec.FromKey, spec.ToKey)
 	idx := tblInfo.FindIndexByName(spec.FromKey.L)
 	idx.Name = spec.ToKey
 	return nil
@@ -1111,6 +1114,11 @@ func (*SchemaTracker) UnlockTables(_ sessionctx.Context, _ []model.TableLockTpIn
 	return nil
 }
 
+// AlterTableMode implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) AlterTableMode(_ sessionctx.Context, _ *model.AlterTableModeArgs) error {
+	return nil
+}
+
 // CleanupTableLock implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) CleanupTableLock(_ sessionctx.Context, _ []*ast.TableName) error {
 	return nil
@@ -1183,5 +1191,10 @@ func (d *SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema 
 
 // CreatePlacementPolicyWithInfo implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *model.PolicyInfo, _ ddl.OnExist) error {
+	return nil
+}
+
+// RefreshMeta implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) RefreshMeta(_ sessionctx.Context, _ *model.RefreshMetaArgs) error {
 	return nil
 }

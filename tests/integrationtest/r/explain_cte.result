@@ -14,11 +14,11 @@ TableReader_9	10000.00	root		data:TableFullScan_8
 └─TableFullScan_8	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain with cte(a,b,c,d) as (select * from t1, t2) select * from cte;
 id	estRows	task	access object	operator info
-HashJoin_13	100000000.00	root		CARTESIAN inner join
-├─TableReader_20(Build)	10000.00	root		data:TableFullScan_19
-│ └─TableFullScan_19	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader_16(Probe)	10000.00	root		data:TableFullScan_15
-  └─TableFullScan_15	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin_14	100000000.00	root		CARTESIAN inner join
+├─TableReader_21(Build)	10000.00	root		data:TableFullScan_20
+│ └─TableFullScan_20	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_17(Probe)	10000.00	root		data:TableFullScan_16
+  └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain with recursive cte(a) as (select 1 union select a+1 from cte where a < 10) select * from cte;
 id	estRows	task	access object	operator info
 CTEFullScan_17	2.00	root	CTE:cte	data:CTE_0
@@ -48,9 +48,9 @@ CTE_2	2.00	root		Recursive CTE
     └─CTETable_27	1.00	root		Scan on CTE_2
 explain with recursive cte(a) as (select 1 union select a+1 from cte where a < 10) select * from cte t1, cte t2;
 id	estRows	task	access object	operator info
-HashJoin_20	4.00	root		CARTESIAN inner join
-├─CTEFullScan_23(Build)	2.00	root	CTE:cte AS t2	data:CTE_0
-└─CTEFullScan_22(Probe)	2.00	root	CTE:cte AS t1	data:CTE_0
+HashJoin_21	4.00	root		CARTESIAN inner join
+├─CTEFullScan_24(Build)	2.00	root	CTE:cte AS t2	data:CTE_0
+└─CTEFullScan_23(Probe)	2.00	root	CTE:cte AS t1	data:CTE_0
 CTE_0	2.00	root		Recursive CTE
 ├─Projection_13(Seed Part)	1.00	root		1->Column#2
 │ └─TableDual_14	1.00	root		rows:1
@@ -59,9 +59,9 @@ CTE_0	2.00	root		Recursive CTE
     └─CTETable_17	1.00	root		Scan on CTE_0
 explain with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte t1, cte t2;
 id	estRows	task	access object	operator info
-HashJoin_25	4.00	root		CARTESIAN inner join
-├─CTEFullScan_28(Build)	2.00	root	CTE:cte AS t2	data:CTE_0
-└─CTEFullScan_27(Probe)	2.00	root	CTE:cte AS t1	data:CTE_0
+HashJoin_26	4.00	root		CARTESIAN inner join
+├─CTEFullScan_29(Build)	2.00	root	CTE:cte AS t2	data:CTE_0
+└─CTEFullScan_28(Probe)	2.00	root	CTE:cte AS t1	data:CTE_0
 CTE_0	2.00	root		Non-Recursive CTE
 └─CTEFullScan_22(Seed Part)	2.00	root	CTE:cte1	data:CTE_1
 CTE_1	2.00	root		Recursive CTE
@@ -72,9 +72,9 @@ CTE_1	2.00	root		Recursive CTE
     └─CTETable_20	1.00	root		Scan on CTE_1
 explain with recursive cte1(a) as (select 1 union select a+1 from cte1 where a < 10), cte2(a) as (select c2 from t1 union select a+1 from cte2 where a < 10) select * from cte1, cte2;
 id	estRows	task	access object	operator info
-HashJoin_37	16002.00	root		CARTESIAN inner join
-├─CTEFullScan_40(Build)	2.00	root	CTE:cte1	data:CTE_0
-└─CTEFullScan_41(Probe)	8001.00	root	CTE:cte2	data:CTE_1
+HashJoin_38	16002.00	root		CARTESIAN inner join
+├─CTEFullScan_41(Build)	2.00	root	CTE:cte1	data:CTE_0
+└─CTEFullScan_42(Probe)	8001.00	root	CTE:cte2	data:CTE_1
 CTE_0	2.00	root		Recursive CTE
 ├─Projection_21(Seed Part)	1.00	root		1->Column#2
 │ └─TableDual_22	1.00	root		rows:1
@@ -89,11 +89,11 @@ CTE_1	8001.00	root		Recursive CTE
     └─CTETable_33	10000.00	root		Scan on CTE_1
 explain with q(a,b) as (select * from t1) select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;
 id	estRows	task	access object	operator info
-HashJoin_15	2.56	root		CARTESIAN inner join
-├─Selection_19(Build)	1.60	root		eq(explain_cte.t1.c1, 2)
-│ └─CTEFullScan_20	2.00	root	CTE:q AS q1	data:CTE_0
-└─Selection_17(Probe)	1.60	root		eq(explain_cte.t1.c1, 1)
-  └─CTEFullScan_18	2.00	root	CTE:q	data:CTE_0
+HashJoin_16	2.56	root		CARTESIAN inner join
+├─Selection_20(Build)	1.60	root		eq(explain_cte.t1.c1, 2)
+│ └─CTEFullScan_21	2.00	root	CTE:q AS q1	data:CTE_0
+└─Selection_18(Probe)	1.60	root		eq(explain_cte.t1.c1, 1)
+  └─CTEFullScan_19	2.00	root	CTE:q	data:CTE_0
 CTE_0	2.00	root		Non-Recursive CTE
 └─Batch_Point_Get_12(Seed Part)	2.00	root	table:t1	handle:[1 2], keep order:false, desc:false
 explain with recursive cte(a,b) as (select 1, concat('a', 1) union select a+1, concat(b, 1) from cte where a < 5) select * from cte;

@@ -147,6 +147,36 @@ func TestInferCollation(t *testing.T) {
 			false,
 			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
+		// Regression test: utf8mb4_0900_bin is a binary collation and should win
+		// over non-bin collations at the same coercibility (same as utf8mb4_bin).
+		{
+			[]Expression{
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB40900Bin),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
+			},
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB40900Bin},
+		},
+		{
+			[]Expression{
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB40900Bin),
+			},
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB40900Bin},
+		},
+		// Regression test: two utf8mb4 columns with utf8mb4_0900_bin + utf8mb4_unicode_ci
+		// combined with a binary blob. utf8mb4_0900_bin should be recognized as bin
+		// collation so binary wins without triggering from_binary() cast.
+		{
+			[]Expression{
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB40900Bin),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetBin, charset.CollationBin),
+			},
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBin, charset.CollationBin},
+		},
 		// binary charset with non-binary charset.
 		{
 			[]Expression{

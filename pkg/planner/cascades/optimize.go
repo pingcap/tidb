@@ -20,9 +20,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
@@ -118,11 +120,30 @@ func (opt *Optimizer) FindBestPlan(sctx base.PlanContext, logical base.LogicalPl
 
 func (*Optimizer) onPhasePreprocessing(_ base.PlanContext, plan base.LogicalPlan) (base.LogicalPlan, error) {
 	var err error
+	if hasPartialIndexAccessPath(plan) {
+		_, plan = plan.PredicatePushDown(nil, optimizetrace.DefaultLogicalOptimizeOption())
+	}
 	plan, err = plan.PruneColumns(plan.Schema().Columns, nil)
 	if err != nil {
 		return nil, err
 	}
 	return plan, nil
+}
+
+func hasPartialIndexAccessPath(plan base.LogicalPlan) bool {
+	if ds, ok := plan.(*logicalop.DataSource); ok {
+		for _, path := range ds.PossibleAccessPaths {
+			if path.Index != nil && path.Index.HasCondition() {
+				return true
+			}
+		}
+	}
+	for _, child := range plan.Children() {
+		if hasPartialIndexAccessPath(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func (opt *Optimizer) onPhaseExploration(_ base.PlanContext, g *memo.Group) error {

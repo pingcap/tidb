@@ -71,6 +71,10 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 	defer func() {
 		config.StoreGlobalConfig(origConfig)
 	}()
+	session.SetStatsLease(3 * time.Second)
+	// Here I didn't restore the original stats lease because it's not exposed in this version.
+	// It should be acceptable because most of the tests will set lease to -1 to disable the stats lease.
+
 	newConfig := *origConfig
 	for _, lite := range []bool{false, true} {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats", "pause"))

@@ -96,9 +96,8 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		if !ok {
 			return errors.Errorf("unexpected plan type, expect: PhysicalExchangeSender, got: %s", e.originalPlan.TP())
 		}
-		if _, e.kvRanges, _, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is); err != nil {
-			return nil
-		}
+		_, e.kvRanges, _, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is)
+		return err
 	}
 	planIDs := collectPlanIDs(e.originalPlan, nil)
 	if e.mppExec, err = mpp.NewExecutorWithRetry(ctx, e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.is); err != nil {
@@ -128,6 +127,10 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
 	if e.dummy {
+		if e.respIter != nil {
+			_ = e.respIter.Close()
+			return errors.Trace(errors.New("e.respIter != nil when e.dummy is set"))
+		}
 		return nil
 	}
 	if e.respIter != nil {

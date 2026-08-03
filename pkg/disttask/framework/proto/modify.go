@@ -1,0 +1,56 @@
+// Copyright 2024 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package proto
+
+import "fmt"
+
+// ModificationType is the type of task modification.
+type ModificationType string
+
+// String implements fmt.Stringer interface.
+func (t ModificationType) String() string {
+	return string(t)
+}
+
+const (
+	// ModifyConcurrency is the type for modifying task concurrency.
+	ModifyConcurrency ModificationType = "modify_concurrency"
+	// ModifyBatchSize is the type for modifying batch size of add-index.
+	ModifyBatchSize ModificationType = "modify_batch_size"
+	// ModifyMaxWriteSpeed is the type for modifying max write speed of add-index.
+	ModifyMaxWriteSpeed ModificationType = "modify_max_write_speed"
+)
+
+// ModifyParam is the parameter for task modification.
+type ModifyParam struct {
+	PrevState     TaskState      `json:"prev_state"`
+	Modifications []Modification `json:"modifications"`
+}
+
+// String implements fmt.Stringer interface.
+func (p *ModifyParam) String() string {
+	return fmt.Sprintf("{prev_state: %s, modifications: %v}", p.PrevState, p.Modifications)
+}
+
+// Modification is one modification for task.
+type Modification struct {
+	Type ModificationType `json:"type"`
+	To   int64            `json:"to"`
+}
+
+// String implements fmt.Stringer interface.
+func (m Modification) String() string {
+	return fmt.Sprintf("{type: %s, to: %d}", m.Type, m.To)
+}

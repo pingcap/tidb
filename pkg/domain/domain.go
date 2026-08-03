@@ -16,6 +16,7 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -97,12 +99,14 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memoryusagealarm"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -144,6 +148,7 @@ func NewMockDomain() *Domain {
 type Domain struct {
 	store           kv.Storage
 	infoCache       *infoschema.InfoCache
+	schemaFilter    issyncer.Filter
 	privHandle      *privileges.Handle
 	bindHandle      atomic.Value
 	statsHandle     atomic.Pointer[handle.Handle]
@@ -467,7 +472,19 @@ func (*Domain) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {
-	allSchemas, err := m.ListDatabases()
+	var allSchemas []*model.DBInfo
+	var err error
+	if do.schemaFilter != nil {
+		allSchemas = make([]*model.DBInfo, 0, 6)
+		err = m.IterDatabases(func(dbInfo *model.DBInfo) error {
+			if !do.schemaFilter.SkipLoadSchema(dbInfo) {
+				allSchemas = append(allSchemas, dbInfo)
+			}
+			return nil
+		})
+	} else {
+		allSchemas, err = m.ListDatabases()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -536,6 +553,16 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 			}
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
+			if domainutil.RepairInfo.InRepairMode() && len(domainutil.RepairInfo.GetRepairTableList()) > 0 {
+				mustLoadReapirTableIDs := domainutil.RepairInfo.GetMustLoadRepairTableListByDB(di.Name.L, name2ID)
+				for _, id := range mustLoadReapirTableIDs {
+					tblInfo, err := m.GetTable(di.ID, id)
+					if err != nil {
+						return err
+					}
+					tables = append(tables, tblInfo)
+				}
+			}
 		} else {
 			tables, err = m.ListTables(ctx, di.ID)
 			if err != nil {
@@ -636,6 +663,12 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
+		if do.schemaFilter != nil && do.schemaFilter.SkipLoadDiff(diff, do.infoCache.GetLatest()) {
+			// We still need to advance the schema version even if we skip applying
+			// the diff to reflect where the infoschema has been synced to.
+			builder.SetSchemaVersion(diff.Version)
+			continue
+		}
 		if diff.RegenerateSchemaMap {
 			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
@@ -1290,12 +1323,13 @@ func (do *Domain) Close() {
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
+func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory, schemaFilter issyncer.Filter) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-		store: store,
-		exit:  make(chan struct{}),
+		store:        store,
+		exit:         make(chan struct{}),
+		schemaFilter: schemaFilter,
 		sysSessionPool: util.NewSessionPool(
 			capacity, factory,
 			func(r pools.Resource) {
@@ -1334,7 +1368,8 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(schemaLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
-	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
+	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit,
+		&memoryusagealarm.TiDBConfigProvider{})
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
@@ -1571,9 +1606,9 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	if err != nil {
 		return err
 	}
-	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv := streamhelper.NewTiDBCheckpointAdvancer(env)
 	do.brOwnerMgr = streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient)
-	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickDuration)
+	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickTimeout())
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
 		return err
@@ -1641,7 +1676,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		return nil
 	}
 
-	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdClient.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return err
 	}
@@ -1853,6 +1888,71 @@ func (do *Domain) GetPDHTTPClient() pdhttp.Client {
 	return nil
 }
 
+func (do *Domain) decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
+	var msg PrivilegeEvent
+	isNewVersionEvents := false
+	for _, event := range resp.Events {
+		if event.Kv != nil {
+			val := event.Kv.Value
+			if len(val) > 0 {
+				var tmp PrivilegeEvent
+				err := json.Unmarshal(val, &tmp)
+				if err != nil {
+					logutil.BgLogger().Warn("decodePrivilegeEvent unmarshal fail", zap.Error(err))
+					break
+				}
+				isNewVersionEvents = true
+				if do.ServerID() != 0 && tmp.ServerID == do.ServerID() {
+					// Skip the events from this TiDB-Server
+					continue
+				}
+				if tmp.All {
+					msg.All = true
+					break
+				}
+				// duplicated users in list is ok.
+				msg.UserList = append(msg.UserList, tmp.UserList...)
+			}
+		}
+	}
+
+	// In case old version triggers the event, the event value is empty,
+	// Then we fall back to the old way: reload all the users.
+	if len(msg.UserList) == 0 && !isNewVersionEvents {
+		msg.All = true
+	}
+	return msg
+}
+
+func (do *Domain) batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEvent {
+	timer := time.NewTimer(5 * time.Millisecond)
+	defer timer.Stop()
+	const maxBatchSize = 128
+	for range maxBatchSize {
+		select {
+		case resp, ok := <-ch:
+			if !ok {
+				return event
+			}
+			tmp := do.decodePrivilegeEvent(resp)
+			if tmp.All {
+				event.All = true
+			} else {
+				if !event.All {
+					event.UserList = append(event.UserList, tmp.UserList...)
+				}
+			}
+			succ := timer.Reset(5 * time.Millisecond)
+			if !succ {
+				return event
+			}
+		case <-timer.C:
+			return event
+		}
+	}
+	return event
+}
+
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
@@ -1862,15 +1962,15 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor())
-	if err := do.privHandle.Update(); err != nil {
+	do.privHandle = privileges.NewHandle(do.SysSessionPool())
+	if err := do.privHandle.UpdateAll(); err != nil {
 		return errors.Trace(err)
 	}
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
 	if do.etcdClient != nil {
-		watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
+		watchCh = do.etcdClient.Watch(do.ctx, privilegeKey)
 		duration = 10 * time.Minute
 	}
 
@@ -1882,25 +1982,37 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 
 		var count int
 		for {
-			ok := true
+			var event PrivilegeEvent
 			select {
 			case <-do.exit:
 				return
-			case _, ok = <-watchCh:
-			case <-time.After(duration):
-			}
-			if !ok {
-				logutil.BgLogger().Warn("load privilege loop watch channel closed")
-				watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
-				count++
-				if count > 10 {
-					time.Sleep(time.Duration(count) * time.Second)
+			case resp, ok := <-watchCh:
+				if ok {
+					count = 0
+					event = do.decodePrivilegeEvent(resp)
+					event = do.batchReadMoreData(watchCh, event)
+				} else {
+					if do.ctx.Err() == nil {
+						logutil.BgLogger().Warn("load privilege loop watch channel closed")
+						watchCh = do.etcdClient.Watch(do.ctx, privilegeKey)
+						count++
+						if count > 10 {
+							time.Sleep(time.Duration(count) * time.Second)
+						}
+						continue
+					}
 				}
+			case <-time.After(duration):
+				event.All = true
+				event = do.batchReadMoreData(watchCh, event)
+			}
+
+			// All events are from this TiDB-Server, skip them
+			if !event.All && len(event.UserList) == 0 {
 				continue
 			}
 
-			count = 0
-			err := do.privHandle.Update()
+			err := privReloadEvent(do.privHandle, &event)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Warn("load privilege failed", zap.Error(err))
@@ -1908,6 +2020,13 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		}
 	}, "loadPrivilegeInLoop")
 	return nil
+}
+
+func privReloadEvent(h *privileges.Handle, event *PrivilegeEvent) (err error) {
+	if !variable.AccelerateUserCreationUpdate.Load() || event.All {
+		return h.UpdateAll()
+	}
+	return h.Update(event.UserList)
 }
 
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
@@ -2419,7 +2538,7 @@ func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
-	do.statsOwner.SetListener(owner.NewListenersWrapper(statsHandle, do.ddlNotifier))
+	do.statsOwner.SetListener(owner.NewListenersWrapper(do.ddlNotifier))
 	if config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load() {
 		err := do.statsOwner.CampaignOwner()
 		if err != nil {
@@ -2721,8 +2840,10 @@ func (do *Domain) gcStatsWorker() {
 
 func (do *Domain) dumpColStatsUsageWorker() {
 	logutil.BgLogger().Info("dumpColStatsUsageWorker started.")
-	lease := do.statsLease
-	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
+	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
+	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
+	dumpDuration := 100*do.statsLease + randDuration
+	dumpColStatsUsageTicker := time.NewTicker(dumpDuration)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
@@ -2778,6 +2899,12 @@ func (do *Domain) autoAnalyzeWorker() {
 		case <-analyzeTicker.C:
 			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
+			} else if !variable.RunAutoAnalyze.Load() || !do.statsOwner.IsOwner() {
+				// Once the auto analyze is disabled or this instance is not the owner,
+				// we close the priority queue to release resources.
+				// This would guarantee that when auto analyze is re-enabled or this instance becomes the owner again,
+				// the priority queue would be re-initialized.
+				statsHandle.ClosePriorityQueue()
 			}
 		case <-do.exit:
 			return
@@ -2883,15 +3010,40 @@ const (
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 
+// PrivilegeEvent is the message definition for NotifyUpdatePrivilege(), encoded in json.
+// TiDB old version do not use no such message.
+type PrivilegeEvent struct {
+	All      bool
+	ServerID uint64
+	UserList []string
+}
+
+// NotifyUpdateAllUsersPrivilege updates privilege key in etcd, TiDB client that watches
+// the key will get notification.
+func (do *Domain) NotifyUpdateAllUsersPrivilege() error {
+	return do.notifyUpdatePrivilege(PrivilegeEvent{All: true})
+}
+
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
-func (do *Domain) NotifyUpdatePrivilege() error {
+func (do *Domain) NotifyUpdatePrivilege(userList []string) error {
+	return do.notifyUpdatePrivilege(PrivilegeEvent{UserList: userList})
+}
+
+func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 	// No matter skip-grant-table is configured or not, sending an etcd message is required.
 	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
-		row := do.etcdClient.KV
-		_, err := row.Put(context.Background(), privilegeKey, "")
+		event.ServerID = do.serverID
+		data, err := json.Marshal(event)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if uint64(len(data)) > size.MB {
+			logutil.BgLogger().Warn("notify update privilege message too large", zap.ByteString("value", data))
+		}
+		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, 5, privilegeKey, string(data))
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
@@ -2904,7 +3056,7 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 		return nil
 	}
 
-	return do.PrivilegeHandle().Update()
+	return privReloadEvent(do.PrivilegeHandle(), &event)
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB

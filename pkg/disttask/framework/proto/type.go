@@ -15,7 +15,7 @@
 package proto
 
 const (
-	// TaskTypeExample is TaskType of Example.
+	// TaskTypeExample is TaskType of Example, it's for test.
 	TaskTypeExample TaskType = "Example"
 	// ImportInto is TaskType of ImportInto.
 	ImportInto TaskType = "ImportInto"

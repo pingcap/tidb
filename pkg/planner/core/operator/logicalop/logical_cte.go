@@ -133,7 +133,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *op
 	newPred := make([]expression.Expression, 0, len(predicates))
 	for i := range pushedPredicates {
 		newPred = append(newPred, pushedPredicates[i].Clone())
-		ruleutil.ResolveExprAndReplace(newPred[i], p.Cte.ColumnMap)
+		newPred[i] = ruleutil.ResolveExprAndReplace(newPred[i], p.Cte.ColumnMap)
 	}
 	p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.ComposeCNFCondition(p.SCtx().GetExprCtx(), newPred...))
 	return predicates, p.Self()
@@ -210,7 +210,18 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	}
 	if p.Cte.RecursivePartLogicalPlan != nil {
 		if p.Cte.RecursivePartPhysicalPlan == nil {
-			_, p.Cte.RecursivePartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.RecursivePartLogicalPlan)
+			// TODO: parallel apply inside a recursive CTE body produces incorrect results
+			// (grandchildren are silently dropped) because the CTE iteration model shares
+			// mutable state (the working-table buffer) across goroutines, causing rows from
+			// deeper recursion levels to be lost.  Disable parallel apply for the recursive
+			// body until the executor is fixed to handle this safely.
+			// See: TestLateralHierarchyParallelApply (flat query verifies concurrency > 1
+			// for non-recursive LATERAL; recursive correctness is tracked separately).
+			vars := p.SCtx().GetSessionVars()
+			savedParallelApply := vars.EnableParallelApply
+			vars.EnableParallelApply = false
+			defer func() { vars.EnableParallelApply = savedParallelApply }()
+			p.Cte.RecursivePartLogicalPlan, p.Cte.RecursivePartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.RecursivePartLogicalPlan)
 			if err != nil {
 				return nil, err
 			}

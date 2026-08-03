@@ -151,7 +151,6 @@ func (ei *engineInfo) CreateWriter(id int, writerCfg *backend.LocalWriterConfig)
 		return nil, err
 	}
 
-	ei.memRoot.Consume(structSizeWriterCtx)
 	logutil.Logger(ei.ctx).Info(LitInfoCreateWrite, zap.Int64("job ID", ei.jobID),
 		zap.Int64("index ID", ei.indexID), zap.Int("worker ID", id),
 		zap.Int64("allocate memory", structSizeWriterCtx+writerCfg.Local.MemCacheSize),
@@ -178,7 +177,6 @@ func (ei *engineInfo) newWriterContext(workerID int, writerCfg *backend.LocalWri
 		}
 		// Cache the local writer.
 		ei.writerCache.Store(workerID, lWrite)
-		ei.memRoot.ConsumeWithTag(encodeBackendTag(ei.jobID), writerCfg.Local.MemCacheSize)
 	}
 	wc := &writerContext{
 		ctx:    ei.ctx,
@@ -200,7 +198,6 @@ func (ei *engineInfo) closeWriters() error {
 			}
 		}
 		ei.writerCache.Delete(wid)
-		ei.memRoot.Release(structSizeWriterCtx)
 	}
 	return firstErr
 }

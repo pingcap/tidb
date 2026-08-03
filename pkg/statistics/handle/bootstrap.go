@@ -187,7 +187,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 		if table == nil || table.PhysicalID != tblID {
 			tblInfoValid = false
 			if table != nil {
-				table.ColAndIdxExistenceMap.SetChecked()
 				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 			}
 			var ok bool
@@ -297,7 +296,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 		}
 	}
 	if table != nil {
-		table.ColAndIdxExistenceMap.SetChecked()
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 }
@@ -305,6 +303,10 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 // genInitStatsHistogramsSQL generates the SQL to load all stats_histograms records.
 // We need to read all the records since we need to do initialization of table.ColAndIdxExistenceMap.
 func genInitStatsHistogramsSQL(isPaging bool) string {
+	// Keep the ORDER_INDEX(tbl) hint: `tbl` still exists on clusters bootstrapped
+	// before stats_histograms moved to a clustered PRIMARY KEY. On fresh clusters
+	// it is inapplicable but harmless: the clustered PK scan is already ordered by
+	// table_id.
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
 	orderSuffix := " order by table_id"
 	if !isPaging {
@@ -332,6 +334,9 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.S
 			break
 		}
 		h.initStatsHistograms4ChunkLite(cache, iter)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -355,6 +360,9 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 			break
 		}
 		h.initStatsHistograms4Chunk(is, cache, iter, false)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -392,6 +400,9 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 			break
 		}
 		h.initStatsHistograms4Chunk(is, cache, iter, IsFullCacheFunc(cache, totalMemory))
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -484,6 +495,9 @@ func (h *Handle) initStatsTopN(cache statstypes.StatsCache, totalMemory uint64) 
 			break
 		}
 		h.initStatsTopN4Chunk(cache, iter, totalMemory)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -520,6 +534,9 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 			break
 		}
 		h.initStatsTopN4Chunk(cache, iter, totalMemory)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -597,6 +614,9 @@ func (h *Handle) initStatsFMSketch(cache statstypes.StatsCache) error {
 			break
 		}
 		h.initStatsFMSketch4Chunk(cache, iter)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -645,6 +665,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 // We only need to load the indexes' since we only record the existence of columns in ColAndIdxExistenceMap.
 // The stats of the column is not loaded during the bootstrap process.
 func genInitStatsBucketsSQLForIndexes(isPaging bool) string {
+	// Keep the ORDER_INDEX(tbl) hint for upgraded clusters; see genInitStatsHistogramsSQL.
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl) */ HIGH_PRIORITY table_id, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1"
 	orderSuffix := " order by table_id"
 	if !isPaging {
@@ -681,6 +702,9 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint6
 				break
 			}
 			h.initStatsBuckets4Chunk(cache, iter)
+			// The same table may continue in the next chunk. Drain LFU async admission/rejection
+			// before the next chunk reads or mutates it again.
+			cache.WaitForAsyncUpdates()
 		}
 	}
 	tables := cache.Values()
@@ -723,6 +747,9 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 			break
 		}
 		h.initStatsBuckets4Chunk(cache, iter)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -777,6 +804,9 @@ func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Required: initStatsMeta adds new tables without an internal wait; histogram loading
+	// reads them immediately.
+	cache.WaitForAsyncUpdates()
 	statslogutil.StatsLogger().Info("Complete loading the stats meta in the lite mode", zap.Duration("duration", time.Since(start)))
 	start = time.Now()
 	err = h.initStatsHistogramsLite(ctx, cache)
@@ -817,6 +847,9 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Required: initStatsMeta adds new tables without an internal wait; histogram loading
+	// reads them immediately.
+	cache.WaitForAsyncUpdates()
 	statslogutil.StatsLogger().Info("Complete loading the stats meta", zap.Duration("duration", time.Since(start)))
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
 	start = time.Now()
@@ -854,6 +887,8 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// CalcPreScalar writes tables back; drain before replacing/publishing the cache.
+	cache.WaitForAsyncUpdates()
 	h.Replace(cache)
 	return nil
 }

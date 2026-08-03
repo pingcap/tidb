@@ -9,7 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 10,
+    shard_count = 11,
     deps = [
         "//pkg/config",
         "//pkg/kv",
@@ -20,6 +20,8 @@ go_test(
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/memory",
+        "//pkg/util/sqlkiller",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",

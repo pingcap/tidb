@@ -39,7 +39,7 @@ go_test(
     timeout = "short",
     srcs = ["autoanalyze_test.go"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 16,
     deps = [
         ":autoanalyze",
         "//pkg/domain",

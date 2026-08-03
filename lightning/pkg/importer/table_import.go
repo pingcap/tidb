@@ -29,9 +29,8 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/lightning/pkg/web"
+	pkgprogress "github.com/pingcap/tidb/lightning/pkg/progress"
 	"github.com/pingcap/tidb/pkg/errno"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -188,7 +187,7 @@ func (tr *TableImporter) importTable(
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, tr.tableName, cp.Engines); err != nil {
 			return false, errors.Trace(err)
 		}
-		web.BroadcastTableCheckpoint(tr.tableName, cp)
+		pkgprogress.BroadcastTableCheckpoint(tr.tableName, cp)
 
 		// rebase the allocator based on the max ID from table info.
 		ti := tr.tableInfo.Core
@@ -786,13 +785,6 @@ ChunkLoop:
 			break
 		}
 
-		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-			// TODO: use the compressed size of the chunk to conduct memory control
-			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
 		go func(w *worker.Worker, cr *chunkProcessor) {
@@ -1199,42 +1191,6 @@ func (tr *TableImporter) postProcess(
 	return true, nil
 }
 
-func getChunkCompressedSizeForParquet(
-	ctx context.Context,
-	chunk *checkpoints.ChunkCheckpoint,
-	store storage.ExternalStorage,
-) (int64, error) {
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
-		ZStdDecodeConcurrency: 1,
-	})
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	parser, err := mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
-	if err != nil {
-		_ = reader.Close()
-		return 0, errors.Trace(err)
-	}
-	//nolint: errcheck
-	defer parser.Close()
-	err = parser.Reader.ReadFooter()
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	rowGroups := parser.Reader.Footer.GetRowGroups()
-	var maxRowGroupSize int64
-	for _, rowGroup := range rowGroups {
-		var rowGroupSize int64
-		columnChunks := rowGroup.GetColumns()
-		for _, columnChunk := range columnChunks {
-			columnChunkSize := columnChunk.MetaData.GetTotalCompressedSize()
-			rowGroupSize += columnChunkSize
-		}
-		maxRowGroupSize = max(maxRowGroupSize, rowGroupSize)
-	}
-	return maxRowGroupSize, nil
-}
-
 func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {
 	s := common.SQLWithRetry{
 		DB:     db,
@@ -1474,7 +1430,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 
 	defer func() {
 		if retErr == nil {
-			web.BroadcastTableProgress(tr.tableName, progressStep, 1)
+			pkgprogress.BroadcastTableProgress(tr.tableName, progressStep, 1)
 		} else if !log.IsContextCanceledError(retErr) {
 			// Try to strip the prefix of the error message.
 			// e.g "add index failed: Error 1062 ..." -> "Error 1062 ..."
@@ -1500,7 +1456,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 			if progress > 1 {
 				progress = 1
 			}
-			web.BroadcastTableProgress(tableName, progressStep, progress)
+			pkgprogress.BroadcastTableProgress(tableName, progressStep, progress)
 			logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 		}
 	})
@@ -1521,7 +1477,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 			if totalRows > 0 {
 				p := float64(status.rowCount) / float64(totalRows)
 				progress := baseProgress + p/float64(len(multiSQLs))
-				web.BroadcastTableProgress(tableName, progressStep, progress)
+				pkgprogress.BroadcastTableProgress(tableName, progressStep, progress)
 				logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 			}
 		})
@@ -1529,7 +1485,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 			return err
 		}
 		baseProgress += 1.0 / float64(len(multiSQLs))
-		web.BroadcastTableProgress(tableName, progressStep, baseProgress)
+		pkgprogress.BroadcastTableProgress(tableName, progressStep, baseProgress)
 	}
 	return nil
 }

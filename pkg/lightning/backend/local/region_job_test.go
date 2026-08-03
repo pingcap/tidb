@@ -16,18 +16,24 @@ package local
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 )
 
 func TestIsIngestRetryable(t *testing.T) {
@@ -383,19 +389,21 @@ func mockWorkerReadJob(
 ) []*regionJob {
 	ret := make([]*regionJob, len(jobs))
 	jobToWorkerCh <- jobs[0]
+	ret[0] = <-b.innerJobToWorkerCh
 	require.Eventually(t, func() bool {
-		// wait runSendToWorker goroutine is blocked at sending
-		return b.jobLen() == 0
+		for _, p := range jobs[0].region.Region.GetPeers() {
+			v, ok := b.storeLoadMap.Load(p.StoreId)
+			if !ok || v.(int) <= 0 {
+				return false
+			}
+		}
+		return true
 	}, time.Second, 10*time.Millisecond)
 
 	for _, job := range jobs[1:] {
 		jobToWorkerCh <- job
 	}
-	require.Eventually(t, func() bool {
-		// rest are waiting to be picked
-		return b.jobLen() == len(jobs)-1
-	}, time.Second, 10*time.Millisecond)
-	for i := range ret {
+	for i := 1; i < len(ret); i++ {
 		got := <-b.innerJobToWorkerCh
 		ret[i] = got
 	}
@@ -600,4 +608,163 @@ func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestWorkerPoolWithErrors(t *testing.T) {
+	generator := func(
+		ctx context.Context,
+		jobToWorkerCh chan<- *regionJob,
+		jobWg *sync.WaitGroup,
+		mockErr bool,
+	) error {
+		counter := 0
+		for range 4 {
+			jobWg.Add(1)
+			job := &regionJob{}
+			select {
+			case jobToWorkerCh <- job:
+				counter++
+				if mockErr && counter > 2 {
+					return errors.Errorf("generator error")
+				}
+			case <-ctx.Done():
+				job.done(jobWg)
+				return nil
+			}
+		}
+		return nil
+	}
+
+	drainer := func(
+		ctx context.Context,
+		jobFromWorkerCh <-chan *regionJob,
+		jobWg *sync.WaitGroup,
+		mockErr bool,
+	) error {
+		counter := 0
+		for {
+			select {
+			case job, ok := <-jobFromWorkerCh:
+				if !ok {
+					return nil
+				}
+				job.done(jobWg)
+				counter++
+				if mockErr && counter > 2 {
+					return errors.Errorf("drainer error")
+				}
+			case <-ctx.Done():
+				return nil
+			}
+		}
+	}
+
+	type testCase struct {
+		fp               string
+		expr             string
+		mockGeneratorErr bool
+		mockDrainerErr   bool
+		wgErr            string
+		opErr            string
+	}
+
+	singleTest := func(t *testing.T, tc testCase) {
+		testfailpoint.Enable(t, tc.fp, tc.expr)
+
+		workGroup, workerCtx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
+		jobToWorkerCh := make(chan *regionJob)
+		jobFromWorkerCh := make(chan *regionJob)
+		jobWg := &sync.WaitGroup{}
+
+		local := &Backend{
+			writeLimiter: newStoreWriteLimiter(0),
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: *atomic.NewInt32(4),
+			},
+			tls:       &common.TLS{},
+			engineMgr: &engineManager{},
+		}
+
+		pool := getRegionJobWorkerPool(
+			workerCtx, jobWg,
+			local, nil,
+			jobToWorkerCh, jobFromWorkerCh,
+		)
+
+		wctx := workerpool.NewContext(workerCtx)
+		var opErr error
+		workGroup.Go(func() error {
+			pool.Start(wctx)
+			<-wctx.Done()
+			pool.Release()
+			opErr = wctx.OperatorErr()
+			return opErr
+		})
+
+		workGroup.Go(func() error {
+			return drainer(workerCtx, jobFromWorkerCh, jobWg, tc.mockDrainerErr)
+		})
+
+		workGroup.Go(func() error {
+			if err := generator(workerCtx, jobToWorkerCh, jobWg, tc.mockGeneratorErr); err != nil {
+				return err
+			}
+			jobWg.Wait()
+			wctx.Cancel()
+			return nil
+		})
+
+		wgErr := workGroup.Wait()
+		if tc.opErr == "" {
+			require.NoError(t, opErr)
+		} else {
+			require.ErrorContains(t, opErr, tc.opErr)
+		}
+		if tc.wgErr == "" {
+			require.NoError(t, wgErr)
+		} else {
+			require.ErrorContains(t, wgErr, tc.wgErr)
+		}
+	}
+
+	tests := []testCase{
+		{
+			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			expr:             "return",
+			mockGeneratorErr: false,
+			mockDrainerErr:   false,
+			wgErr:            "",
+			opErr:            "",
+		},
+		{
+			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			expr:             "return",
+			mockGeneratorErr: false,
+			mockDrainerErr:   true,
+			wgErr:            "drainer error",
+			opErr:            "",
+		},
+		{
+			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			expr:             "return",
+			mockGeneratorErr: true,
+			mockDrainerErr:   false,
+			wgErr:            "generator error",
+			opErr:            "",
+		},
+		{
+			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/injectPanicForRegionJob",
+			expr:             "panic",
+			mockGeneratorErr: false,
+			mockDrainerErr:   false,
+			wgErr:            "region job worker panic",
+			opErr:            "region job worker panic",
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
+			singleTest(t, tc)
+		})
+	}
 }

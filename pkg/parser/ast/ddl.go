@@ -735,6 +735,7 @@ type IndexOption struct {
 	Visibility   IndexVisibility
 	PrimaryKeyTp model.PrimaryKeyType
 	Global       bool
+	Condition    ExprNode     `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
 	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
 }
 
@@ -748,6 +749,7 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
+		n.Condition != nil ||
 		n.SplitOpt != nil {
 		return false
 	}
@@ -839,7 +841,19 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WritePlain(")")
 		}
+		hasPrevOption = true
 	}
+
+	if n.Condition != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("WHERE ")
+		if err := n.Condition.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing IndexOption Condition")
+		}
+	}
+
 	return nil
 }
 
@@ -2536,6 +2550,9 @@ const (
 	TableOptionTTL
 	TableOptionTTLEnable
 	TableOptionTTLJobInterval
+	/* Some options are not cherry-picked from master, reserve the options */
+
+	TableOptionAffinity        = 47
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2579,6 +2596,28 @@ const (
 	TableOptionCharsetWithoutConvertTo uint64 = 0
 	TableOptionCharsetWithConvertTo    uint64 = 1
 )
+
+const (
+	// TableAffinityLevelNone means no affinity.
+	TableAffinityLevelNone = "none"
+	// TableAffinityLevelTable means table-level affinity.
+	TableAffinityLevelTable = "table"
+	// TableAffinityLevelPartition means partition-level affinity.
+	TableAffinityLevelPartition = "partition"
+)
+
+// NormalizeTableAffinityLevel normalizes the affinity level to lower case and checks if it's valid.
+func NormalizeTableAffinityLevel(s string) (string, bool) {
+	lower := strings.ToLower(s)
+	switch lower {
+	case TableAffinityLevelNone, TableAffinityLevelTable, TableAffinityLevelPartition:
+		return lower, true
+	case "":
+		return TableAffinityLevelNone, true
+	default:
+		return s, false
+	}
+}
 
 // TableOption is used for parsing table option from SQL.
 type TableOption struct {
@@ -2897,6 +2936,13 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 	case TableOptionTTLJobInterval:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
 			ctx.WriteKeyWord("TTL_JOB_INTERVAL ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+			return nil
+		})
+	case TableOptionAffinity:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAffinity, func() error {
+			ctx.WriteKeyWord("AFFINITY ")
 			ctx.WritePlain("= ")
 			ctx.WriteString(n.StrValue)
 			return nil

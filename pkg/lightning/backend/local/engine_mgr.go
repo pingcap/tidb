@@ -40,6 +40,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -48,7 +49,7 @@ var (
 	// RunInTest indicates whether the current process is running in test.
 	RunInTest bool
 	// LastAlloc is the last ID allocator.
-	LastAlloc manual.Allocator
+	LastAlloc atomic.Pointer[manual.Allocator]
 )
 
 // StoreHelper have some api to help encode or store KV data
@@ -94,7 +95,7 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 	alloc := manual.Allocator{}
 	if RunInTest {
 		alloc.RefCnt = new(atomic.Int64)
-		LastAlloc = alloc
+		LastAlloc.Store(&alloc)
 	}
 	var opts = make([]membuf.Option, 0, 1)
 	if !inMemTest {
@@ -321,13 +322,14 @@ func (em *engineManager) closeEngine(
 			externalCfg.EndKey,
 			externalCfg.JobKeys,
 			externalCfg.SplitKeys,
-			em.WorkerConcurrency,
+			int(em.WorkerConcurrency.Load()),
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
 			externalCfg.MemCapacity,
 			externalCfg.OnDup,
+			externalCfg.FilePrefix,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -362,26 +364,7 @@ func (em *engineManager) closeEngine(
 	}
 
 	engine := engineI.(*Engine)
-	engine.rLock()
-	if engine.closed.Load() {
-		engine.rUnlock()
-		return nil
-	}
-
-	err := engine.flushEngineWithoutLock(ctx)
-	engine.rUnlock()
-
-	// use mutex to make sure we won't close sstMetasChan while other routines
-	// trying to do flush.
-	engine.lock(importMutexStateClose)
-	engine.closed.Store(true)
-	close(engine.sstMetasChan)
-	engine.unlock()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	engine.wg.Wait()
-	return engine.ingestErr.Get()
+	return engine.finishWrite(ctx)
 }
 
 // getImportedKVCount returns the number of imported KV pairs of some engine.
@@ -406,6 +389,14 @@ func (em *engineManager) getExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	return v.ImportedStatistics()
 }
 
+func (em *engineManager) getExternalEngineConflictInfo(engineUUID uuid.UUID) common.ConflictInfo {
+	v, ok := em.externalEngine[engineUUID]
+	if !ok {
+		return common.ConflictInfo{}
+	}
+	return v.ConflictInfo()
+}
+
 // resetEngine reset the engine and reclaim the space.
 func (em *engineManager) resetEngine(
 	ctx context.Context,
@@ -417,7 +408,8 @@ func (em *engineManager) resetEngine(
 	if localEngine == nil {
 		if engineI, ok := em.externalEngine[engineUUID]; ok {
 			extEngine := engineI.(*external.Engine)
-			return extEngine.Reset()
+			extEngine.Reset()
+			return nil
 		}
 
 		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
@@ -494,6 +486,33 @@ func (em *engineManager) cleanupEngine(ctx context.Context, engineUUID uuid.UUID
 	localEngine.TotalSize.Store(0)
 	localEngine.Length.Store(0)
 	return nil
+}
+
+// cleanupAllLocalEngines performs best-effort cleanup for all local engines.
+// Failures are logged internally and not returned to the caller.
+func (em *engineManager) cleanupAllLocalEngines(ctx context.Context) {
+	var (
+		retErr  error
+		engines []*Engine
+	)
+	em.engines.Range(func(_, v any) bool {
+		engines = append(engines, v.(*Engine))
+		return true
+	})
+	task := em.logger.With(zap.Int("engineCount", len(engines))).Begin(zap.InfoLevel, "cleanup all local engines")
+	defer func() {
+		task.End(zap.ErrorLevel, retErr)
+	}()
+	for _, eng := range engines {
+		if err := eng.finishWrite(ctx); err != nil {
+			retErr = multierr.Append(retErr, errors.Annotatef(err,
+				"finish write failed, engine id=%s, uuid=%s", eng.ID(), eng.UUID))
+		}
+		if err := em.cleanupEngine(ctx, eng.UUID); err != nil {
+			retErr = multierr.Append(retErr, errors.Annotatef(err,
+				"cleanup failed, engine id=%s, uuid=%s", eng.ID(), eng.UUID))
+		}
+	}
 }
 
 // LocalWriter returns a new local writer.

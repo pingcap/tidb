@@ -241,3 +241,12 @@ explain format = 'brief' select /*+ use_index_merge(tt) */ * from tt where a=10 
 explain format = 'brief' select /*+ use_index_merge(tt) */ * from tt where a=15 or (a < 10 or a > 20);
 --disable_warnings
 
+# INDEX_LOOKUP_PUSH_DOWN is in developing, it should be disabled currently
+drop table if exists t1;
+create table t1(id int primary key, a int, b int, v int, index idx_a(a), unique key idx_b(b));
+--enable_warnings
+explain format = 'brief' select /*+ INDEX_LOOKUP_PUSH_DOWN(t1, idx_a) */ * from t1;
+explain format = 'brief' select /*+ INDEX_LOOKUP_PUSH_DOWN(t1, idx_a) */ * from t1 where a=2;
+explain format = 'brief' select /*+ INDEX_LOOKUP_PUSH_DOWN(t1, idx_b) */ * from t1 where b=3;
+--disable_warnings
+
