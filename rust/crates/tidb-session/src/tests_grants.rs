@@ -11,3 +11,4 @@ mod password_policy;
 mod processlist;
 mod roles;
 mod static_grants;
+mod table_scope;

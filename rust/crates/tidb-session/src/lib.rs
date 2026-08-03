@@ -298,6 +298,7 @@ mod non_prepared_plan_cache;
 mod noop;
 mod prepared_statements;
 mod stmt_ctx;
+mod table_privilege;
 mod txn;
 mod variables;
 mod warnings;

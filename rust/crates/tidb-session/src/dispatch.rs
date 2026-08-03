@@ -355,6 +355,13 @@ impl Session {
             self.check_noop_functions(query)?;
             self.check_query_clauses(query)?;
         }
+        // Go's `CheckPrivilege` runs on the `visitInfo` the planner
+        // collected, so it too refuses before any table is touched. This is
+        // the single seam for it, because every statement whose privileges
+        // are table-scoped reaches here: the account statements
+        // `apply_schema_stmt` answers earlier demand their own, statement-
+        // specific privileges instead.
+        self.require_statement_table_privileges(&stmt)?;
         // Go raises ErrNoDB where an unqualified NAME is resolved, not for
         // every statement: `SELECT 1` and `SELECT DATABASE()` both run with
         // no database selected (captured). The driver's own

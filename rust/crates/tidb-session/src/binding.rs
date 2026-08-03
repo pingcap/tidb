@@ -230,6 +230,75 @@ pub(crate) fn collect_table_names(stmt: &Stmt) -> Vec<(String, String)> {
     collector.names
 }
 
+/// Every `TableRef` in traversal order, keeping the name path and alias AS
+/// WRITTEN.
+///
+/// [`collect_table_names`] lowercases and drops the alias because Go's
+/// binding matcher compares `.L` names; the privilege collector
+/// ([`crate::table_privilege`]) needs the written spelling for the error
+/// message and the alias to place a multi-table `UPDATE`/`DELETE` target, so
+/// it reads the same nodes through this.
+pub(crate) fn collect_table_refs(stmt: &Stmt) -> Vec<(Vec<String>, Option<String>)> {
+    struct Collector {
+        refs: Vec<(Vec<String>, Option<String>)>,
+    }
+    impl Visitor for Collector {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
+                self.refs
+                    .push((table_ref.name.clone(), table_ref.alias.clone()));
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+            true
+        }
+    }
+    let mut stmt = stmt.clone();
+    let mut collector = Collector { refs: Vec::new() };
+    stmt.accept(&mut collector);
+    collector.refs
+}
+
+/// The written name path of every `TableRef`, which is the row-source list
+/// Go's `buildDataSource` walks.
+pub(crate) fn collect_table_paths(stmt: &Stmt) -> Vec<Vec<String>> {
+    collect_table_refs(stmt)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect()
+}
+
+/// Every name a `WITH` clause anywhere in `stmt` defines.
+///
+/// A CTE is REFERENCED through the ordinary table grammar, so it parses as a
+/// `TableRef` -- but it resolves to the query that defined it, not to a
+/// stored table, and Go's `buildDataSource` is never reached for one. The
+/// privilege collector subtracts these so `WITH c AS (...) SELECT * FROM c`
+/// does not demand `SELECT` on a table named `c`.
+pub(crate) fn collect_cte_names(stmt: &Stmt) -> Vec<String> {
+    struct Collector {
+        names: Vec<String>,
+    }
+    impl Visitor for Collector {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            if let Some(cte) = node.downcast_mut::<tidb_ast::Cte>() {
+                self.names.push(cte.name.clone());
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+            true
+        }
+    }
+    let mut stmt = stmt.clone();
+    let mut collector = Collector { names: Vec::new() };
+    stmt.accept(&mut collector);
+    collector.names
+}
+
 /// Go's `bindinfo.Binding`, minus the fields only a stored global binding
 /// has (`PlanDigest` from a captured plan, `SourceHistory`, the usage
 /// counters `mysql.bind_info` carries).

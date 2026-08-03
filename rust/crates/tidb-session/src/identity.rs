@@ -137,6 +137,54 @@ impl Session {
         registry.has_dynamic_priv_with_roles(user, host, &roles, name, false)
     }
 
+    /// Go's `CheckPrivilege` (`planner/core/optimizer.go` around line 187)
+    /// over the `visitInfo` one statement collects
+    /// ([`crate::table_privilege::required_table_privileges`]).
+    ///
+    /// Entries are checked in the order the builder appended them, and the
+    /// FIRST failure is reported -- with the statement's own
+    /// `ErrTableaccessDenied` (1142) where Go attached one, and with the
+    /// generic `ErrPrivilegeCheckFail` (8121) where it did not.
+    pub(crate) fn require_statement_table_privileges(
+        &self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<(), DriverError> {
+        let Some((_, user, host)) = self.privilege_context() else {
+            return Ok(());
+        };
+        let (user, host) = (user.to_owned(), host.to_owned());
+        for request in crate::table_privilege::required_table_privileges(stmt, &self.current_db) {
+            // Go answers a virtual schema from fixed rules before it reads a
+            // single grant, so `SELECT ... FROM information_schema.*` needs
+            // nothing and a write there is refused whatever is granted.
+            let granted = match crate::table_privilege::mem_db_verdict(
+                &request.database,
+                request.privilege,
+            ) {
+                Some(verdict) => verdict,
+                None => {
+                    self.has_scoped_privilege(&request.database, &request.table, request.privilege)
+                }
+            };
+            if granted {
+                continue;
+            }
+            return Err(if request.table_named_in_error {
+                DriverError::TableAccessDenied {
+                    // Go's `authErr` spells the verb as the uppercase
+                    // command name and the table as `tableInfo.Name.L`.
+                    privilege: request.privilege.print_name(),
+                    user,
+                    host,
+                    table: request.table.to_lowercase(),
+                }
+            } else {
+                DriverError::PrivilegeCheckFail(request.privilege.check_fail_name().to_owned())
+            });
+        }
+        Ok(())
+    }
+
     /// The `user@host` this session authenticated as, as Go's
     /// `AuthUsername`/`AuthHostname` pair. `None` for a session with no front
     /// end.
