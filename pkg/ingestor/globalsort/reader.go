@@ -16,10 +16,12 @@ package globalsort
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/hex"
 	goerrors "errors"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/docker/go-units"
@@ -184,22 +186,21 @@ func readAllData(
 		})
 	}
 
-	// Dispatch small files first. semaphore.Weighted serves waiters in FIFO
-	// order, so putting large readers first could otherwise make small readers
-	// wait behind a whole-budget request even when enough memory is available.
-	for smallFiles := true; ; smallFiles = false {
-		for fileIdx := range dataFiles {
-			if (concurrences[fileIdx] == 0) != smallFiles {
-				continue
-			}
-			select {
-			case <-egCtx.Done():
-				return eg.Wait()
-			case taskCh <- fileIdx:
-			}
-		}
-		if !smallFiles {
-			break
+	// Dispatch cheap readers first: semaphore.Weighted queues an acquire behind any
+	// existing waiter, so an expensive reader at the head holds up readers that the
+	// free budget could admit right away.
+	dispatchOrder := make([]int, len(dataFiles))
+	for i := range dispatchOrder {
+		dispatchOrder[i] = i
+	}
+	slices.SortStableFunc(dispatchOrder, func(a, b int) int {
+		return cmp.Compare(readerMemorySizes[a], readerMemorySizes[b])
+	})
+	for _, fileIdx := range dispatchOrder {
+		select {
+		case <-egCtx.Done():
+			return eg.Wait()
+		case taskCh <- fileIdx:
 		}
 	}
 	close(taskCh)
