@@ -1901,8 +1901,7 @@ mod prepared_execute_wire_tests {
 
 #[cfg(test)]
 mod undetermined_tests {
-    use super::*;
-    use crate::sql_node::RESULT_UNDETERMINED_MESSAGE;
+    use crate::sql_node::{SqlQueryError, RESULT_UNDETERMINED_MESSAGE};
 
     /// Go `pkg/server/conn.go:1288-1291` returns from the command loop for an
     /// undetermined result, writing no ERR packet: the client must not be able
