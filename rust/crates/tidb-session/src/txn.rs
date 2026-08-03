@@ -209,6 +209,26 @@ impl Session {
         };
         match &**session_stmt {
             SessionStmt::Begin(begin) => {
+                // Go `SimpleExec.executeBegin`: `START TRANSACTION READ ONLY`
+                // is a no-op clause -- TiDB does not actually stop writes --
+                // so it goes through `tidb_enable_noop_functions`, refusing
+                // with 1235 at the OFF default. `AS OF TIMESTAMP` exempts it,
+                // because that spelling names a real historical read rather
+                // than the bare read-only claim.
+                if begin.read_only && begin.as_of.is_none() {
+                    self.gate_noop_clause("READ ONLY", false)?;
+                }
+                // `START TRANSACTION READ ONLY AS OF TIMESTAMP <expr>` opens
+                // the transaction AT that timestamp, so every statement in it
+                // reads history. This tier's store keeps none, and answering
+                // from the present under a historical name is undetectable --
+                // the same reason a table reference's `AS OF TIMESTAMP` and a
+                // pinned `tidb_snapshot` are refused.
+                if begin.as_of.is_some() {
+                    return Err(DriverError::unsupported(
+                        "START TRANSACTION ... AS OF TIMESTAMP is not supported yet",
+                    ));
+                }
                 // An open transaction is committed first (Go's implicit commit).
                 if self.txn.is_some() {
                     self.commit()?;

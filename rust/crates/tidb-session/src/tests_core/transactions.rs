@@ -282,3 +282,61 @@ fn as_of_timestamp_on_a_table_reference_is_refused() {
         "got {error:?}"
     );
 }
+
+/// Go `SimpleExec.executeBegin`: `START TRANSACTION READ ONLY` is a no-op
+/// clause -- TiDB does not stop writes for it -- so it takes the
+/// `tidb_enable_noop_functions` gate and is refused with 1235 at the OFF
+/// default.
+#[test]
+fn start_transaction_read_only_takes_the_noop_functions_gate() {
+    let mut session = Session::new();
+    let error = session.run("START TRANSACTION READ ONLY").unwrap_err();
+    assert!(
+        format!("{error:?}").contains("READ ONLY"),
+        "expected the 1235 noop refusal, got {error:?}"
+    );
+    assert!(
+        !session.in_transaction(),
+        "the refusal must not have opened a transaction"
+    );
+
+    // WARN accepts it and says so; ON says nothing.
+    session
+        .run("SET @@tidb_enable_noop_functions = 'WARN'")
+        .unwrap();
+    session.run("START TRANSACTION READ ONLY").unwrap();
+    assert!(session.in_transaction());
+    session.run("ROLLBACK").unwrap();
+
+    session
+        .run("SET @@tidb_enable_noop_functions = 'ON'")
+        .unwrap();
+    session.run("START TRANSACTION READ ONLY").unwrap();
+    assert!(session.in_transaction());
+    session.run("ROLLBACK").unwrap();
+}
+
+/// `START TRANSACTION READ ONLY AS OF TIMESTAMP` opens the transaction at a
+/// HISTORICAL timestamp; this tier keeps no history, so it refuses rather
+/// than opening an ordinary transaction that reads the present.
+///
+/// Go exempts this spelling from the `READ ONLY` noop gate
+/// (`executeBegin` checks `s.AsOf == nil` first), so the refusal has to come
+/// from somewhere else -- it is the same historical-read refusal a table
+/// reference's `AS OF TIMESTAMP` gets.
+#[test]
+fn start_transaction_as_of_timestamp_is_refused_not_silently_current() {
+    let mut session = Session::new();
+    // Even with the noop gate wide open, the historical read still refuses.
+    session
+        .run("SET @@tidb_enable_noop_functions = 'ON'")
+        .unwrap();
+    let error = session
+        .run("START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-01-01 00:00:00'")
+        .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("AS OF TIMESTAMP"),
+        "got {error:?}"
+    );
+    assert!(!session.in_transaction());
+}

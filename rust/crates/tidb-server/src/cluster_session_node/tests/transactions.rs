@@ -589,3 +589,74 @@ fn deferral_does_not_reach_a_statement_inside_a_transaction() {
     // Outside the transaction the same connection sees the racing row.
     assert_eq!(rows(&mut session, "SELECT v FROM t").len(), 2);
 }
+
+/// A transaction-control statement this node cannot honor is refused BEFORE
+/// the driver session is touched, so the two halves of the transaction state
+/// can never disagree.
+///
+/// `Session::control_transaction` sets `in_transaction` for every BEGIN
+/// spelling, including the ones classified `Unsupported`. Honoring the
+/// refusal after that call -- which is what an empty match arm did -- left
+/// the session inside a transaction that this node never opened: no
+/// `self.explicit`, so every following statement took a FRESH snapshot, its
+/// writes stayed in the buffer instead of being staged, and its COMMIT
+/// published with no conflict check.
+#[test]
+fn an_unsupported_transaction_control_leaves_the_session_untouched() {
+    let (mut session, cluster) = open_session();
+
+    assert_eq!(session.control_transaction("BEGIN").unwrap(), Some(true));
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("insert");
+    assert_eq!(cluster.rows(), 0, "the write is staged, not published");
+
+    // `COMMIT AND CHAIN` is the sharpest case: the driver session accepts it
+    // as a plain COMMIT, so without an early refusal the session would end
+    // its transaction while `self.explicit` stayed open -- the staged write
+    // stranded in a transaction no statement belongs to any more.
+    let error = session
+        .control_transaction("COMMIT AND CHAIN")
+        .expect_err("a completion mode this node cannot honor is refused");
+    assert!(
+        format!("{error:?}").contains("completion mode"),
+        "got {error:?}"
+    );
+    // Neither half moved: the session is still in its transaction, and the
+    // write is still staged rather than published.
+    assert!(session.session.in_transaction());
+    assert_eq!(cluster.rows(), 0);
+    assert_eq!(cluster.publications.load(Ordering::Acquire), 0);
+
+    // The transaction is still the one that was opened, and its COMMIT
+    // publishes exactly the write it staged.
+    session.control_transaction("COMMIT").unwrap();
+    assert_eq!(cluster.rows(), 1);
+    assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
+}
+
+/// A `BEGIN` spelling this node cannot honor is refused the same way, and
+/// leaves the session outside any transaction rather than inside one this
+/// node never opened.
+#[test]
+fn an_unsupported_begin_opens_no_half_transaction() {
+    let (mut session, cluster) = open_session();
+    let opened_before = cluster.opened.load(Ordering::Acquire);
+    let error = session
+        .control_transaction("START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-01-01 00:00:00'")
+        .expect_err("a historical read this node cannot serve is refused");
+    assert!(
+        format!("{error:?}").contains("AS OF TIMESTAMP"),
+        "got {error:?}"
+    );
+    assert!(!session.session.in_transaction());
+    assert_eq!(cluster.opened.load(Ordering::Acquire), opened_before);
+
+    // The session still works as an autocommit one: the write publishes.
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("insert")
+        .expect("a write answers with an OK packet");
+    assert_eq!(cluster.rows(), 1);
+    assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
+}

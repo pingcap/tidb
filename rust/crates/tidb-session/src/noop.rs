@@ -79,7 +79,24 @@ impl Session {
         if normalized.as_deref() != Some("ON") {
             return Ok(());
         }
-        match self.noop_funcs_mode(is_global) {
+        self.gate_noop_clause(clause, is_global)
+    }
+
+    /// The three-way `tidb_enable_noop_functions` decision, which every gated
+    /// clause takes: `OFF` refuses with 1235, `WARN` warns with the same text
+    /// and continues, `ON` says nothing.
+    ///
+    /// Go spells this rule once per call site
+    /// (`preprocessor.checkNoopFuncs`, `varsutil.checkReadOnly`,
+    /// `SimpleExec.executeBegin`); keeping it in one place here is what makes
+    /// a new gated clause a one-line addition rather than a fourth copy of
+    /// the same `if`.
+    pub(crate) fn gate_noop_clause(
+        &mut self,
+        clause: &'static str,
+        global: bool,
+    ) -> Result<(), DriverError> {
+        match self.noop_funcs_mode(global) {
             NoopFuncsMode::On => Ok(()),
             NoopFuncsMode::Off => Err(DriverError::FunctionsNoopImpl(clause)),
             NoopFuncsMode::Warn => {

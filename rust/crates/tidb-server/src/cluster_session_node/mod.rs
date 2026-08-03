@@ -1204,6 +1204,19 @@ impl QuerySession for ClusterServerSession {
     /// adds what the state means for cluster storage.
     fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
         let control = classify_transaction_control(sql);
+        // Refused BEFORE the driver session is touched, which is the whole
+        // point: `Session::control_transaction` sets `in_transaction` for any
+        // BEGIN spelling, so honoring the refusal afterwards would leave the
+        // session inside a transaction that this node never opened -- no
+        // `self.explicit`, so every following statement reads at a fresh
+        // timestamp, its writes stay in the buffer, and its COMMIT publishes
+        // without a conflict check. The read-only node already refuses here
+        // (`real_tikv_node`); this one used to fall through an empty arm.
+        if let Some(TransactionControl::Unsupported(feature)) = control {
+            return Err(SqlQueryError::unknown(format!(
+                "{feature} is not supported yet"
+            )));
+        }
         let state = self.session.control_transaction(sql).map_err(map_error)?;
         let Some(in_transaction) = state else {
             return Ok(None);
@@ -1225,6 +1238,7 @@ impl QuerySession for ClusterServerSession {
                 | TransactionControl::RollbackToSavepoint(_)
                 | TransactionControl::ReleaseSavepoint(_)),
             ) => self.apply_savepoint(&control)?,
+            // Refused above, before the session was touched.
             Some(TransactionControl::Unsupported(_)) | None => {}
         }
         Ok(Some(in_transaction))
