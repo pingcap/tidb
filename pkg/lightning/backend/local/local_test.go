@@ -2119,6 +2119,91 @@ func TestDoImport(t *testing.T) {
 	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "fatal error")
 
+	t.Run("worker error cancels other running workers", func(t *testing.T) {
+		const fatalErr = "worker fatal error"
+
+		var workerCount atomic.Int32
+		secondWorkerStarted := make(chan struct{})
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
+			func(ctx context.Context) {
+				switch workerCount.Add(1) {
+				case 1:
+					<-ctx.Done()
+				case 2:
+					close(secondWorkerStarted)
+				}
+			},
+		)
+
+		regionKeys := [][]byte{{'a'}, {'b'}}
+		jobRange := engineapi.Range{Start: regionKeys[0], End: regionKeys[1]}
+		fakeRegionJobs = map[[2]string]struct {
+			jobs []*regionJob
+			err  error
+		}{
+			{"a", "b"}: {
+				jobs: []*regionJob{
+					{
+						keyRange:   jobRange,
+						ingestData: &Engine{},
+						injected: []injectedBehaviour{{
+							write: injectedWriteBehaviour{err: errors.New(fatalErr)},
+						}},
+						region: dummyRegionInfo,
+					},
+					{
+						keyRange:   jobRange,
+						ingestData: &Engine{},
+						injected: []injectedBehaviour{{
+							write: injectedWriteBehaviour{err: errors.New(fatalErr)},
+						}},
+						region: dummyRegionInfo,
+					},
+				},
+			},
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		local := &Backend{
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: toAtomic(2),
+			},
+		}
+		engine := &Engine{regionSplitKeysCache: regionKeys}
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- local.doImport(
+				ctx,
+				engine,
+				regionKeys,
+				int64(config.SplitRegionSize),
+				int64(config.SplitRegionKeys),
+			)
+		}()
+
+		select {
+		case <-secondWorkerStarted:
+		case <-time.After(10 * time.Second):
+			cancel()
+			t.Fatal("timed out waiting for both region workers to start")
+		}
+
+		select {
+		case err := <-errCh:
+			cancel()
+			require.ErrorContains(t, err, fatalErr)
+		case <-time.After(10 * time.Second):
+			cancel()
+			select {
+			case <-errCh:
+			case <-time.After(10 * time.Second):
+				t.Fatal("doImport remained blocked after canceling its parent context")
+			}
+			t.Fatal("doImport blocked waiting for another worker after a worker error")
+		}
+	})
+
 	t.Run("context canceled before import completes", func(t *testing.T) {
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipStartWorker", "return()")
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/injectVariables", "return()")
@@ -2287,6 +2372,23 @@ func TestDoImport(t *testing.T) {
 		cancel()
 
 		dispatcher := &dispatcher{workerCtx: ctx}
+		require.ErrorIs(t, dispatcher.run(), context.Canceled)
+	})
+
+	t.Run("dispatcher handles error shutdown when result channel closes", func(t *testing.T) {
+		workerCtx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeWaitForRegionJobWorkerPoolOutcome",
+			cancel,
+		)
+
+		jobFromWorkerCh := make(chan *regionJob)
+		close(jobFromWorkerCh)
+		jobToWorkerCh := make(chan *regionJob)
+		retryer := newRegionJobRetryer(workerCtx, jobToWorkerCh, &sync.WaitGroup{})
+
+		dispatcher := newDispatcher(workerCtx, jobFromWorkerCh, &sync.WaitGroup{}, retryer)
 		require.ErrorIs(t, dispatcher.run(), context.Canceled)
 	})
 }
