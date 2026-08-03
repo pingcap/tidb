@@ -7,6 +7,53 @@ index — and then runs all four `oltp_*` workloads against this node. The
 
 The answer is now about speed, not capability.
 
+**Update 2026-08-03 (`3b963564f9` vs `21f325882c`, offset 41000, two serialized
+full ladders): the `oltp_write_only` regression hunt is CLOSED as a measurement
+artifact. Neither endpoint of the claimed `168.31 -> 298.56 µs` move
+reproduces.** Two release binaries — this tree's tip and a parked
+`21f325882c`, 156 commits apart — each ran a whole ladder against a Go control
+measured in the SAME run, back to back on an otherwise idle machine:
+
+| Workload | ps mode | excess at `21f325882c` | excess at `3b963564f9` | delta |
+| --- | --- | --- | --- | --- |
+| `oltp_point_select` | disable | 66.51 µs | 88.21 µs | +21.70 |
+| `oltp_point_select` | auto | 78.20 µs | 96.39 µs | +18.19 |
+| `oltp_read_only` | disable | 105.36 µs | 76.08 µs | -29.28 |
+| `oltp_read_only` | auto | 117.64 µs | 192.43 µs | +74.79 |
+| `oltp_write_only` | disable | 226.17 µs | 230.64 µs | **+4.47** |
+| `oltp_write_only` | auto | 235.58 µs | 257.83 µs | +22.25 |
+| `oltp_read_write` | disable | 173.36 µs | 186.32 µs | +12.96 |
+| `oltp_read_write` | auto | 215.33 µs | 191.07 µs | -24.26 |
+
+**156 commits move `oltp_write_only`'s excess by 4.47 µs — 1.9%.** The older
+binary does not show 168 µs and does not show 299 µs; it shows 226 µs, and the
+newer one shows 231 µs. The `168.31 -> 298.56` pair was two draws from a
+distribution wide enough to contain both, not a regression, and the five
+suspects the earlier hunt named were all dead by code path anyway.
+
+**The same run falsifies the companion claim in the opposite direction.**
+`oltp_point_select`'s excess was reported as *improving* 67.17 -> 56.51 µs.
+The parked older binary measures **66.51 µs** today and this tree's tip
+measures **88.21 µs** — the "improved" tree is now the slower number, and the
+newer tree is worse than either figure the improvement was drawn between.
+
+**What this means for the instrument.** The within-run excess was adopted
+because raw tps is not comparable across runs. That is still true, but the
+excess is not comparable across runs either at the tens-of-microseconds scale.
+Across the eight cells above — where the two trees differ by 156 commits that
+were not aimed at any of these paths — the excess moves by anywhere from 4 µs
+to 75 µs, in both directions. **A single ladder cannot support a claim about
+a change worth less than about 100 µs of excess.** Claims below that threshold
+need the A/B shape used here — both binaries, one machine, serialized runs,
+each with its own in-run Go arm — or they should not be made.
+
+Everything else in the tip run is green: rung 6 eight of eight, rung 5's
+checksum identical to Go (`1000 500500 501715 1 1000`), the post-run re-check
+identical again (`1000 500500 503336`), rung 7 **24 accepted / 0 refused**,
+both `ADMIN CHECK TABLE` calls accepted by a real Go tidb-server (after
+`CREATE INDEX` and again after `DROP INDEX`), `USE INDEX` and `IGNORE INDEX`
+agreeing, and **zero `9007` in any log of either run**.
+
 **Update 2026-08-02 (`2784765138`, offset 34000): the ladder now measures BOTH
 engines itself, and it ran the whole way — rung 6 eight of eight, rung 5's
 checksum identical to Go, rung 7 24 accepted / 0 refused, zero `9007` in any

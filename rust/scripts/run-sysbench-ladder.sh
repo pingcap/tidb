@@ -165,6 +165,24 @@ cleanup() {
   done
   if [[ "${cleanup_failed}" == false ]]; then
     rm -rf -- "${TAG_DIR}"
+    # The Go tidb-server this ladder starts under `tiup playground` records its
+    # `tiup_process_meta` at the TiUP data root joined with the ALREADY-ABSOLUTE
+    # instance data dir, so it lands at
+    # `~/.tiup/data/Users/<user>/.tiup/data/<TAG>/` and survives both
+    # `tiup clean` and the removal above. Two consecutive ladder runs each left
+    # one behind. Only this run's own tag is removed, and only from inside the
+    # TiUP data root.
+    local tiup_data="${TIUP_HOME:-${HOME}/.tiup}/data"
+    local nested="${tiup_data}${TAG_DIR}"
+    if [[ "${TAG}" == sysbench-ladder-* ]] && [[ -d "${nested}" ]]; then
+      rm -rf -- "${nested}"
+      # Prune the empty `Users/<user>/.tiup/data` spine the join created, but
+      # never the data root itself.
+      local spine="${nested%/*}"
+      while [[ "${spine}" != "${tiup_data}" ]] && rmdir "${spine}" 2>/dev/null; do
+        spine="${spine%/*}"
+      done
+    fi
     [[ -n "${RUNTIME_DIR}" ]] && rm -rf -- "${RUNTIME_DIR}"
   fi
   echo "sysbench-ladder artifacts: ${OUT_DIR}" >&2
