@@ -1469,7 +1469,8 @@ func TestDBAStmt(t *testing.T) {
 		{"show config", true, "SHOW CONFIG"},
 		{"show config where type='tidb'", true, "SHOW CONFIG WHERE `type`=_UTF8MB4'tidb'"},
 		{"show config where instance='127.0.0.1:3306'", true, "SHOW CONFIG WHERE `instance`=_UTF8MB4'127.0.0.1:3306'"},
-		{"create table CONFIG (a int)", true, "CREATE TABLE `CONFIG` (`a` INT)"}, // check that `CONFIG` is unreserved keyword
+		{"create table CONFIG (a int)", true, "CREATE TABLE `CONFIG` (`a` INT)"},   // check that `CONFIG` is unreserved keyword
+		{"create table AUTO (AUTO int)", true, "CREATE TABLE `AUTO` (`AUTO` INT)"}, // check that AUTO remains usable as an identifier
 
 		// for FLUSH statement
 		{"flush no_write_to_binlog tables tbl1 with read lock", true, "FLUSH NO_WRITE_TO_BINLOG TABLES `tbl1` WITH READ LOCK"},
@@ -3283,6 +3284,7 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = FOO", false, ""},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 'a'", false, ""},
 		{"ALTER TABLE t ADD PRIMARY KEY (a) CLUSTERED PRE_SPLIT_REGIONS = 4", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) CLUSTERED PRE_SPLIT_REGIONS = 4"},
 		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS = 4 NONCLUSTERED", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) NONCLUSTERED PRE_SPLIT_REGIONS = 4"},

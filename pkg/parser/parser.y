@@ -744,6 +744,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	addDate               "ADDDATE"
 	approxCountDistinct   "APPROX_COUNT_DISTINCT"
 	approxPercentile      "APPROX_PERCENTILE"
+	auto                  "AUTO"
 	background            "BACKGROUND"
 	bitAnd                "BIT_AND"
 	bitOr                 "BIT_OR"
@@ -7199,12 +7200,8 @@ IndexOption:
 			},
 		}
 	}
-|	"PRE_SPLIT_REGIONS" EqOpt Identifier
+|	"PRE_SPLIT_REGIONS" EqOpt "AUTO"
 	{
-		if !strings.EqualFold($3, "AUTO") {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
 		$$ = &ast.IndexOption{
 			SplitOpt: &ast.SplitOption{
 				Auto: true,
@@ -7774,6 +7771,7 @@ NotKeywordToken:
 	"ADDDATE"
 |	"APPROX_COUNT_DISTINCT"
 |	"APPROX_PERCENTILE"
+|	"AUTO"
 |	"BIT_AND"
 |	"BIT_OR"
 |	"BIT_XOR"
