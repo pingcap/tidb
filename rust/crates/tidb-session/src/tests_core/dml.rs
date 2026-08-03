@@ -557,3 +557,88 @@ fn a_bit_column_reports_an_overflow_as_data_too_long() {
     assert_eq!(session.warnings()[0].code, 1406);
     assert_eq!(row_text(session.run("SELECT a+0 FROM t")), [["1"]]);
 }
+
+/// `VALUES()` nested inside a larger expression. Go handles `*ast.ValuesExpr`
+/// in its expression rewriter's `Enter`
+/// (`pkg/planner/core/expression_rewriter.go:623`), which is driven by the
+/// generic `Node.Accept` walk -- so the nesting depth and the surrounding
+/// variant do not matter. A per-variant substitution here reached only
+/// `Paren`/`Unary`/`Binary` and left `VALUES()` alive inside every function
+/// call, `CASE`, `IN` and `BETWEEN`.
+///
+/// Captured from a real Go session (mockstore, `gorun`):
+///
+/// ```text
+/// create table od (a int primary key, b int, c varchar(10));
+/// insert into od values (1, 10, 'x');
+/// insert into od values (1, 20, 'y')
+///   on duplicate key update b = ifnull(values(b), 0) + 1;   -- 1|21|x
+/// insert into od values (1, 30, 'z')
+///   on duplicate key update b = case when values(b) > 5
+///                               then values(b) * 2 else b end;   -- 1|60|x
+/// insert into od values (1, 7, 'q')
+///   on duplicate key update b = values(b) in (7, 8);        -- 1|1|x
+/// insert into od values (1, 3, 'w')
+///   on duplicate key update c = concat(values(c), '!');     -- 1|1|w!
+/// insert into od values (1, 3, 'w')
+///   on duplicate key update b = values(b) between 1 and 5;  -- 1|1|w!
+/// ```
+#[test]
+fn on_duplicate_key_update_substitutes_nested_values_references() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE od (a INT PRIMARY KEY, b INT, c VARCHAR(10))")
+        .unwrap();
+    session.run("INSERT INTO od VALUES (1, 10, 'x')").unwrap();
+
+    let expect = |session: &mut Session, sql: &str, row: [&str; 3]| {
+        session.run(sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+        assert_eq!(
+            row_text(session.run("SELECT a, b, c FROM od")),
+            [row.map(str::to_owned)],
+            "{sql}"
+        );
+    };
+
+    // Inside a function call.
+    expect(
+        &mut session,
+        "INSERT INTO od VALUES (1, 20, 'y') ON DUPLICATE KEY UPDATE b = IFNULL(VALUES(b), 0) + 1",
+        ["1", "21", "x"],
+    );
+    // Inside a CASE, twice, in two different clauses.
+    expect(
+        &mut session,
+        "INSERT INTO od VALUES (1, 30, 'z') ON DUPLICATE KEY UPDATE \
+         b = CASE WHEN VALUES(b) > 5 THEN VALUES(b) * 2 ELSE b END",
+        ["1", "60", "x"],
+    );
+    // Inside an IN list's left-hand side.
+    expect(
+        &mut session,
+        "INSERT INTO od VALUES (1, 7, 'q') ON DUPLICATE KEY UPDATE b = VALUES(b) IN (7, 8)",
+        ["1", "1", "x"],
+    );
+    // A string function over a string column.
+    expect(
+        &mut session,
+        "INSERT INTO od VALUES (1, 3, 'w') ON DUPLICATE KEY UPDATE c = CONCAT(VALUES(c), '!')",
+        ["1", "1", "w!"],
+    );
+    // Inside a BETWEEN.
+    expect(
+        &mut session,
+        "INSERT INTO od VALUES (1, 3, 'w') ON DUPLICATE KEY UPDATE \
+         b = VALUES(b) BETWEEN 1 AND 5",
+        ["1", "1", "w!"],
+    );
+
+    // Go scopes an unknown column inside VALUES() to the insert's field list:
+    // 1054 "Unknown column 'zz' in 'field list'".
+    let error = session
+        .run("INSERT INTO od VALUES (1, 3, 'w') ON DUPLICATE KEY UPDATE b = ABS(VALUES(zz))")
+        .expect_err("zz is not a column")
+        .to_mysql_error();
+    assert_eq!(error.code, 1054);
+    assert_eq!(error.message, "Unknown column 'zz' in 'field list'");
+}

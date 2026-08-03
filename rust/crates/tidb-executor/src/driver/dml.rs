@@ -1053,45 +1053,96 @@ pub(crate) fn apply_on_duplicate(
 
 /// Replaces every `VALUES(col)` in an `ON DUPLICATE KEY UPDATE` assignment
 /// with the literal the insert would have written for that column.
+///
+/// Go does not substitute at all: its expression rewriter handles
+/// `*ast.ValuesExpr` in `Enter` (`expression_rewriter.go:623`) by pushing a
+/// `ScalarFunction` closed over the column OFFSET onto the expression stack,
+/// which reads `SessionVars.CurrInsertValues` at eval time. Because that is a
+/// stack rewrite driven by the generic AST walk, the position of `VALUES()`
+/// inside the assignment is irrelevant -- `a = IFNULL(VALUES(a), 0)` and
+/// `a = CASE WHEN VALUES(a) > 0 THEN VALUES(a) ELSE b END` are handled by the
+/// same line as `a = VALUES(a)`.
+///
+/// So this substitution has to be TOTAL over the expression tree, not a
+/// hand-listed set of container variants: a per-variant recursion silently
+/// left `VALUES()` alive inside every function call, `CASE`, `IN`, `BETWEEN`
+/// and subquery, where it then resolved as an unknown function. Riding the
+/// package-wide [`tidb_ast::Visitable`] walk -- the same traversal Go's
+/// `Node.Accept` gives its rewriter -- removes the variant list entirely.
 pub(crate) fn substitute_values_references(
     expr: &tidb_ast::Expr,
     candidate: &[Datum],
     column_list: &[(String, FieldType)],
 ) -> Result<tidb_ast::Expr, DriverError> {
-    use tidb_ast::Expr;
-    Ok(match expr {
-        Expr::Func { name, args, .. } if name.eq_ignore_ascii_case("values") => {
-            let Some(Expr::Column(path)) = args.first() else {
+    use tidb_ast::Visitable;
+
+    struct Substitute<'a> {
+        candidate: &'a [Datum],
+        column_list: &'a [(String, FieldType)],
+        error: Option<DriverError>,
+    }
+
+    impl Substitute<'_> {
+        fn value_of(&self, args: &[tidb_ast::Expr]) -> Result<tidb_ast::Expr, DriverError> {
+            let Some(tidb_ast::Expr::Column(path)) = args.first() else {
                 return Err(DriverError::unsupported("VALUES() takes a column name"));
             };
             let name = path
                 .last()
                 .ok_or(DriverError::unsupported("VALUES() takes a column name"))?;
-            let offset = column_list
+            let offset = self
+                .column_list
                 .iter()
                 .position(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+                // Go scopes the same failure to the insert's field list:
+                // `plannererrors.ErrUnknownColumn.GenWithStackByArgs(
+                // v.Column.Name.OrigColName(), "field list")`.
                 .ok_or_else(|| DriverError::UnknownColumnInClause {
                     column: name.clone(),
                     clause: "field list".to_owned(),
                 })?;
-            datum_to_literal(&candidate[offset])?
+            datum_to_literal(&self.candidate[offset])
         }
-        Expr::Paren(inner) => Expr::Paren(Box::new(substitute_values_references(
-            inner,
-            candidate,
-            column_list,
-        )?)),
-        Expr::Unary(op, inner) => Expr::Unary(
-            *op,
-            Box::new(substitute_values_references(inner, candidate, column_list)?),
-        ),
-        Expr::Binary(op, left, right) => Expr::Binary(
-            *op,
-            Box::new(substitute_values_references(left, candidate, column_list)?),
-            Box::new(substitute_values_references(right, candidate, column_list)?),
-        ),
-        other => other.clone(),
-    })
+    }
+
+    impl tidb_ast::Visitor for Substitute<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+                return false;
+            };
+            let tidb_ast::Expr::Func { name, args, .. } = expr else {
+                return false;
+            };
+            if !name.eq_ignore_ascii_case("values") {
+                return false;
+            }
+            match self.value_of(args) {
+                Ok(literal) => *expr = literal,
+                Err(error) => self.error = Some(error),
+            }
+            // The arguments of a substituted `VALUES()` are gone with it, and
+            // its replacement is a literal: nothing below is left to visit.
+            true
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            // Go's `Enter` returns `ok == false` on a rewrite failure, which
+            // aborts the whole walk; stopping here is the same abort.
+            self.error.is_none()
+        }
+    }
+
+    let mut rewritten = expr.clone();
+    let mut visitor = Substitute {
+        candidate,
+        column_list,
+        error: None,
+    };
+    rewritten.accept(&mut visitor);
+    match visitor.error {
+        Some(error) => Err(error),
+        None => Ok(rewritten),
+    }
 }
 
 /// One column's share of what the default and NOT NULL rules read:
