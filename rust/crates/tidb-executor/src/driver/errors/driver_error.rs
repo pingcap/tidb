@@ -644,6 +644,17 @@ pub enum DriverError {
     /// argument is not one of the `GROUP BY` expressions. The number Go prints
     /// is the argument's 0-based position.
     FieldInGroupingNotGroupBy(usize),
+    /// Go's `preprocessor`'s `CREATE BINDING` check (`preprocess.go`), a plain
+    /// error and so 1105: the origin and hinted statements do not normalize to
+    /// the same text once their hints are erased. Both normalized texts are
+    /// carried because Go prints both, and they are the whole diagnostic --
+    /// the user wrote two statements that differ in more than hints.
+    BindingHintedSqlMismatch {
+        /// The origin statement's normalized, DB-qualified text.
+        origin: String,
+        /// The hinted statement's normalized, DB-qualified text.
+        hinted: String,
+    },
     /// Go's plain `INSERT into view` refusal, which carries no error class:
     /// `insert into view %s is not supported now`.
     InsertIntoViewUnsupported(String),

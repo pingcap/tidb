@@ -209,6 +209,20 @@ pub struct Session {
     /// prepared statements this session holds. Per-session and not shared: a
     /// peer over the same catalog holds its own.
     prepared_statements: prepared_statements::PreparedStore,
+    /// Go's `sessionBindingHandle` (`pkg/bindinfo/session_handle.go`): the
+    /// SQL bindings created with `CREATE [SESSION] BINDING`. Session-scoped
+    /// and unshared, exactly as Go's is; GLOBAL bindings would need
+    /// `mysql.bind_info`, which this tier has no catalog entry for. See
+    /// [`binding`].
+    session_bindings: binding::SessionBindings,
+    /// Go `SessionVars.FoundInBinding`: whether the statement RUNNING now
+    /// took its hints from a binding.
+    found_in_binding: bool,
+    /// Go `SessionVars.PrevFoundInBinding`, which is what
+    /// `@@last_plan_from_binding` reads -- the PRECEDING statement's value,
+    /// promoted at the statement boundary for the same reason
+    /// `@@last_plan_from_cache` is.
+    prev_found_in_binding: bool,
 }
 
 impl Default for Session {
@@ -250,6 +264,9 @@ impl Default for Session {
             sandbox_mode: false,
             rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),
+            session_bindings: binding::SessionBindings::default(),
+            found_in_binding: false,
+            prev_found_in_binding: false,
         }
     }
 }
@@ -270,6 +287,8 @@ pub use tidb_executor::TxnErrorKind;
 mod account;
 mod admin_check_arm;
 mod analyze_arm;
+mod binding;
+mod binding_arm;
 mod classify;
 mod dispatch;
 mod explain_arm;
@@ -477,6 +496,10 @@ impl Session {
         // fields above -- which is why `select @@last_plan_from_cache`
         // reports the PRECEDING statement rather than itself.
         self.prev_found_in_plan_cache = std::mem::take(&mut self.found_in_plan_cache);
+        // Go promotes `FoundInBinding` at the same boundary, which is why
+        // `select @@last_plan_from_binding` reports the statement BEFORE it
+        // rather than itself (that SELECT matches no binding of its own).
+        self.prev_found_in_binding = std::mem::take(&mut self.found_in_binding);
         let result = self.execute_statement(sql);
         // Go `ExecStmt` puts a `SET_VAR` hint's variables back when the
         // statement finishes, from the restore list the optimizer built --
@@ -508,6 +531,8 @@ mod tests_analyze;
 mod tests_auto_increment;
 #[cfg(test)]
 mod tests_bad_null;
+#[cfg(test)]
+mod tests_binding;
 #[cfg(test)]
 mod tests_cast_int_truncation;
 #[cfg(test)]

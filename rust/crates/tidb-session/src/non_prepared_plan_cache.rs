@@ -630,7 +630,7 @@ impl crate::Session {
     /// Reads one session boolean, falling back to `default` when the variable
     /// is unreadable -- a probe must never turn a variable-table problem into
     /// a statement error.
-    fn session_bool(&self, name: &str, default: bool) -> bool {
+    pub(crate) fn session_bool(&self, name: &str, default: bool) -> bool {
         match self.vars.get_system(name) {
             Ok(value) => matches!(
                 value.to_ascii_uppercase().as_str(),

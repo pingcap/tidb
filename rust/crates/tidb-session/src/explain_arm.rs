@@ -49,6 +49,13 @@ impl Session {
                 "EXPLAIN of a plan digest is not supported yet",
             ));
         };
+        // Go matches a binding against the statement INSIDE the EXPLAIN
+        // (`NormalizeStmtForBinding` unwraps `*ast.ExplainStmt` before
+        // normalizing), so `EXPLAIN <query>` shows the plan the binding
+        // produces -- which is how TiDB's own `bindinfo` suite checks that a
+        // binding took effect at all.
+        let bound = self.bind_statement_hints(target);
+        let target = bound.as_ref().unwrap_or(target);
         let current_db = self.current_db.clone();
         // Both forms plan through the driver's own build path (see
         // `tidb_executor::explain`), which needs the statement context every

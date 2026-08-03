@@ -736,6 +736,16 @@ impl Session {
                         i32::from(self.last_plan_from_cache()).to_string(),
                     ));
                 }
+                // `@@last_plan_from_binding` is Go's `PrevFoundInBinding`
+                // read, for the same reason and at the same boundary as
+                // `@@last_plan_from_cache` above.
+                if *scope != Some(tidb_ast::SysVarScope::Global)
+                    && name.eq_ignore_ascii_case("last_plan_from_binding")
+                {
+                    return Ok(Expr::Int(
+                        i32::from(self.last_plan_from_binding()).to_string(),
+                    ));
+                }
                 // `@@global.x` reads the shared table live; every other
                 // scope (unqualified, `@@session.x`, `@@instance.x`) reads
                 // this session's own copy.

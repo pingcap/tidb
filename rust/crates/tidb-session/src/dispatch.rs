@@ -380,6 +380,18 @@ impl Session {
                 if let Some(output) = self.run_information_schema_select(select)? {
                     return Ok(output);
                 }
+                // Go plans a matched SQL binding's hints onto the statement
+                // before optimizing it (`planner.optimize`), so the binding
+                // decides the access path the same way a hint written in the
+                // query would. See `crate::binding`.
+                let bound = self.bind_statement_hints(&stmt);
+                let select = match &bound {
+                    Some(Stmt::Query(query)) => match query.as_ref() {
+                        tidb_ast::QueryStmt::Select(bound) => bound,
+                        tidb_ast::QueryStmt::SetOpr(_) => select,
+                    },
+                    _ => select,
+                };
                 let current_db = self.current_db.clone();
                 let ctx = self.statement_context(false);
                 let (columns, rows) = self.with_catalog_mut(|catalog| {

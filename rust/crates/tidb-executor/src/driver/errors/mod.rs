@@ -643,6 +643,15 @@ impl DriverError {
             *b"HY000",
             format!("Percentage value {percent} is out of range [1, 100]"),
         ),
+        // Go's own wording, including the colon with no following space.
+        DriverError::BindingHintedSqlMismatch { origin, hinted } => MysqlError::new(
+            1105,
+            *b"HY000",
+            format!(
+                "hinted sql and origin sql don't match when hinted sql erase the hint info, \
+                 after erase hint info, originSQL:{origin}, hintedSQL:{hinted}"
+            ),
+        ),
         DriverError::InsertIntoViewUnsupported(name) => MysqlError::new(
             1105,
             *b"HY000",

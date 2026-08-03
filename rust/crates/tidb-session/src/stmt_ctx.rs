@@ -35,7 +35,7 @@ impl Session {
     /// the statement, because this tier accepts the variable without
     /// validating it at SET time -- Go validates there instead, and that
     /// check is the deferred half of this port.
-    fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
+    pub(crate) fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
         use tidb_executor::SessionTimeZone;
         let written = self
             .vars
@@ -84,7 +84,7 @@ impl Session {
     /// exactly: `SET timestamp = 1700000000.654321` really does land on
     /// 654320955ns, which is why the truncating readers report `.654320`
     /// while the rounding ones report `.654321`.
-    fn statement_clock(&self, zone: &tidb_executor::SessionTimeZone) -> (i64, u32, i32) {
+    pub(crate) fn statement_clock(&self, zone: &tidb_executor::SessionTimeZone) -> (i64, u32, i32) {
         use tidb_executor::SessionTimeZone;
         let pinned = self
             .vars
