@@ -571,4 +571,47 @@ mod tests {
         assert_eq!(ic.name.original(), "Bar");
         assert!(find_index_column_by_name(&cols, "baz").is_none());
     }
+
+    /// Go `encoding/json` output for `model.IndexInfo` at each
+    /// `GlobalIndexVersion`, captured from a program that marshals the real Go
+    /// struct against this worktree's `pkg/meta/model`.
+    ///
+    /// The version is what tells a reader whether the partition id is part of
+    /// the index KEY (`GenIndexKey`'s `GlobalIndexVersionV1+` arm). Dropping it
+    /// on read makes a V1 global index read back as legacy and produce keys
+    /// that collide across partitions, so the round trip is pinned here.
+    const GO_INDEX_INFO_JSON: [(u8, &str); 3] = [
+        (
+            0,
+            r#"{"id":3,"idx_name":{"O":"g","L":"g"},"tbl_name":{"O":"t","L":"t"},"idx_cols":null,"state":0,"backfill_state":0,"comment":"","index_type":0,"is_unique":true,"is_primary":false,"is_invisible":false,"is_global":false,"mv_index":false,"vector_index":null,"inverted_index":null,"full_text_index":null,"condition_expr_string":""}"#,
+        ),
+        (
+            1,
+            r#"{"id":3,"idx_name":{"O":"g","L":"g"},"tbl_name":{"O":"t","L":"t"},"idx_cols":null,"state":0,"backfill_state":0,"comment":"","index_type":0,"is_unique":true,"is_primary":false,"is_invisible":false,"is_global":true,"mv_index":false,"vector_index":null,"inverted_index":null,"full_text_index":null,"condition_expr_string":"","global_index_version":1}"#,
+        ),
+        (
+            2,
+            r#"{"id":3,"idx_name":{"O":"g","L":"g"},"tbl_name":{"O":"t","L":"t"},"idx_cols":null,"state":0,"backfill_state":0,"comment":"","index_type":0,"is_unique":true,"is_primary":false,"is_invisible":false,"is_global":true,"mv_index":false,"vector_index":null,"inverted_index":null,"full_text_index":null,"condition_expr_string":"","global_index_version":2}"#,
+        ),
+    ];
+
+    #[test]
+    fn go_global_index_version_survives_the_round_trip() {
+        for (version, json) in GO_INDEX_INFO_JSON {
+            let index: IndexInfo = serde_json::from_str(json).unwrap();
+            assert_eq!(index.global_index_version, version);
+            assert_eq!(index.global, version != 0);
+            assert!(!index.mv_index);
+            // Go's tag is `global_index_version,omitempty`, so version 0 must
+            // not appear in the re-encoded form and any other version must.
+            let encoded = serde_json::to_string(&index).unwrap();
+            assert_eq!(
+                encoded.contains("global_index_version"),
+                version != 0,
+                "omitempty parity for version {version}"
+            );
+            let reparsed: IndexInfo = serde_json::from_str(&encoded).unwrap();
+            assert_eq!(reparsed.global_index_version, version);
+        }
+    }
 }

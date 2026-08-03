@@ -843,11 +843,13 @@ pub fn codec_table_info(table: &TableInfo) -> CodecTableInfo {
                     .collect(),
                 unique: index.unique,
                 global: index.global,
-                // `model::IndexInfo` carries no `global_index_version`, so
-                // there is nothing to thread through: every index this crate
-                // writes reads back as the legacy format, which is also the
-                // only format a non-partitioned `mysql.*` table ever uses.
-                global_index_version: 0,
+                // Go `IndexInfo.GlobalIndexVersion` decides whether the
+                // partition id is part of the index KEY, so it is read from
+                // the schema rather than assumed. Every `mysql.*` table this
+                // crate writes is unpartitioned, so the value is 0 in
+                // practice — but assuming that in the code would be a lie the
+                // first time a partitioned table reaches this path.
+                global_index_version: index.global_index_version,
                 primary: index.primary,
             })
             .collect(),
