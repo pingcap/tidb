@@ -45,6 +45,7 @@ use crate::projection::ProjectionExec;
 use crate::selection::SelectionExec;
 use crate::sort::{SortByItem, SortExec};
 use crate::table_dual::TableDualExec;
+use crate::topn::TopNExec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tidb_ast::{JoinNode, QueryStmt, SelectField, SelectFieldList, Stmt};
@@ -801,6 +802,9 @@ pub(crate) fn run_select_traced(
     // the SELECT list first and the SOURCE schema second -- Go's own
     // resolution order, which is why ordering by a column that is not
     // projected still works while an alias shadows one that is.
+    //
+    // Whether the `LIMIT` below was already consumed by a fused `TopN`.
+    let mut fused_topn = false;
     if !select.order_by.is_empty() {
         let mut by_items = Vec::with_capacity(select.order_by.len());
         for item in &select.order_by {
@@ -815,16 +819,56 @@ pub(crate) fn run_select_traced(
             });
         }
         let sort_schema = source.schema().clone();
-        source = Box::new(SortExec::new(
-            ExecutorMeta::new(sort_schema, 3, INIT_CAP, MAX_CHUNK_SIZE),
-            by_items,
-            source,
-            ctx.clone(),
-            ctx.statement_memory(),
-        ));
-        if let Some(trace) = trace.as_deref_mut() {
-            trace.sort(&traced_select.order_by, &qualify);
-            source = trace.meter(source);
+        // Go's `topn_push_down` rule fuses the `LIMIT` into the `Sort`: the
+        // `LogicalLimit` becomes a by-item-less `LogicalTopN`, pushes through
+        // the projection, and the `LogicalSort` hands it its by-items
+        // (`logical_sort.go` `PushDownTopN`). The result is one bounded
+        // operator where the projection then evaluates only the rows that
+        // survived -- which is also why a projection expression that errors
+        // on a discarded row no longer fails the statement, as in Go.
+        //
+        // `SELECT DISTINCT` is the one case that must NOT fuse: this tier's
+        // dedup sits BETWEEN the sort and the limit, so a bounded sort would
+        // drop rows before they were deduplicated. Go's own plan puts the
+        // TopN ABOVE the aggregation (captured: `TopN_9 | root` over
+        // `HashAgg_18`), a position this build order cannot express.
+        let fused_limit = if select.distinct {
+            None
+        } else {
+            select.limit.as_ref()
+        };
+        if let Some(limit) = fused_limit {
+            let count = eval_limit_bound(&limit.count)?;
+            let offset = match &limit.offset {
+                Some(expr) => eval_limit_bound(expr)?,
+                None => 0,
+            };
+            source = Box::new(TopNExec::new(
+                ExecutorMeta::new(sort_schema, 3, INIT_CAP, MAX_CHUNK_SIZE),
+                by_items,
+                source,
+                ctx.clone(),
+                offset,
+                count,
+                ctx.statement_memory(),
+            ));
+            fused_topn = true;
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.topn(&traced_select.order_by, &qualify, offset, count);
+                source = trace.meter(source);
+            }
+        } else {
+            source = Box::new(SortExec::new(
+                ExecutorMeta::new(sort_schema, 3, INIT_CAP, MAX_CHUNK_SIZE),
+                by_items,
+                source,
+                ctx.clone(),
+                ctx.statement_memory(),
+            ));
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.sort(&traced_select.order_by, &qualify);
+                source = trace.meter(source);
+            }
         }
     }
 
@@ -852,8 +896,9 @@ pub(crate) fn run_select_traced(
     }
 
     // LIMIT [offset,] count: both bounds must be non-negative integer literals
-    // (as in SQL; Go validates the same in the planner).
-    if let Some(limit) = &select.limit {
+    // (as in SQL; Go validates the same in the planner). A fused `TopN`
+    // already applied this window.
+    if let Some(limit) = select.limit.as_ref().filter(|_| !fused_topn) {
         let count = eval_limit_bound(&limit.count)?;
         let offset = match &limit.offset {
             Some(expr) => eval_limit_bound(expr)?,

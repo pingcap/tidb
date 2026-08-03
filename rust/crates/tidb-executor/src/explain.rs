@@ -59,10 +59,21 @@
 //!    the pushdown tests assert on. Making the plan print `cop[tikv]` is a
 //!    separate change with its own plan-text ratchet accounting, not a
 //!    side effect of a pushdown fix.
-//! 2. **`Sort` + `Limit`, never `TopN`.** Go's optimizer merges `ORDER BY` +
-//!    `LIMIT` into one `TopN`. The driver builds a
-//!    [`crate::sort::SortExec`] and a [`crate::limit::LimitExec`], so the
-//!    plan shows both.
+//! 2. **A cop-side `TopN` is not printed.** Go's optimizer merges an
+//!    `ORDER BY` and the `LIMIT` above it into one `TopN`
+//!    (`rule_topn_push_down`), and this tier does
+//!    the same: the driver builds a [`crate::topn::TopNExec`] where it would
+//!    otherwise have built a [`crate::sort::SortExec`] and a
+//!    [`crate::limit::LimitExec`], and the plan shows Go's
+//!    `<by items>, offset:N, count:N`. What Go additionally does is push a
+//!    SECOND `TopN` into the coprocessor task; that half is out of reach
+//!    until the distsql request can carry one, so the plan shows the root
+//!    `TopN` only.
+//!
+//!    `SELECT DISTINCT ... ORDER BY ... LIMIT` is the one query that still
+//!    shows a `Sort` and a `Limit`: this tier's dedup sits between them, so
+//!    fusing would discard rows before they were deduplicated, while Go
+//!    lands its `TopN` above the aggregation instead.
 //! 3. **`Projection` is always present.** Go elides the projection when a
 //!    query selects exactly the source columns (`select * from t` shows no
 //!    `Projection`). The driver always builds a

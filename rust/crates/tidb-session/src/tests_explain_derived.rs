@@ -219,11 +219,19 @@ fn two_derived_tables_join_without_a_base_table() {
 /// The OBJECT now agrees: `ia(a)` covers `select a`, so this tier reads the
 /// whole index too (`skylinePruning`'s `path.IsSingleScan`).
 ///
-/// DIVERGENCE, narrowed to the ORDER: Go reads `ia(a)` backwards because the
-/// index already supplies `a desc`, so its scan stops after 2 rows, while
-/// this tier scans the index forwards and sorts. That is a `keep order` /
-/// pushed-limit gap, not an enumeration one, and it is NOT anything about
-/// derived tables. The rows, and their order, agree with Go's `3;2`.
+/// DIVERGENCE, narrowed to the ORDER: Go reads `ia(a)` BACKWARDS because the
+/// index already supplies `a desc`, so it needs no ordering operator at all
+/// and prints a plain `Limit` over a `keep order:true, desc` scan (captured):
+///
+///   Limit_13            2.00  root                 offset:0, count:2
+///   └─IndexReader_26    2.00  root                 index:Limit_25
+///     └─Limit_25        2.00  cop[tikv]            offset:0, count:2
+///       └─IndexFullScan_24 2.00 cop[tikv] table:t, index:ia(a) keep order:true, desc, stats:pseudo
+///
+/// This tier scans the index forwards and orders with the fused `TopN`, which
+/// is the correct shape for a scan that cannot keep order. Closing the gap is
+/// the keep-order scan work (#241), not anything about derived tables. The
+/// rows, and their order, agree with Go's `3;2`.
 #[test]
 fn a_derived_table_keeps_its_own_order_by_limit() {
     let mut session = derived_session();
@@ -233,11 +241,10 @@ fn a_derived_table_keeps_its_own_order_by_limit() {
             "explain select x.a from (select a from t order by a desc limit 2) x"
         ),
         vec![
-            "Projection_5|2.00|root||test.x.a",
-            "└─Limit_4|2.00|root||offset:0, count:2",
-            "  └─Projection_3|10000.00|root||test.t.a",
-            "    └─Sort_2|10000.00|root||test.t.a:desc",
-            "      └─IndexFullScan_1|10000.00|root|table:t, index:ia(a)|keep order:false, stats:pseudo",
+            "Projection_4|2.00|root||test.x.a",
+            "└─Projection_3|2.00|root||test.t.a",
+            "  └─TopN_2|2.00|root||test.t.a:desc, offset:0, count:2",
+            "    └─IndexFullScan_1|10000.00|root|table:t, index:ia(a)|keep order:false, stats:pseudo",
         ]
     );
     assert_eq!(

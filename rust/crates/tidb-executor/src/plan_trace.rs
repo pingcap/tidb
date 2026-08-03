@@ -599,8 +599,8 @@ impl PlanTrace {
         self.wrap("HashAgg", est, info);
     }
 
-    /// `ORDER BY` (divergence 2: a `Sort`, never a `TopN`).
-    pub(crate) fn sort(&mut self, order_by: &[tidb_ast::OrderItem], qualify: &Qualifier<'_>) {
+    /// Go `util.ExplainByItems`: the by-item list a `Sort` or a `TopN` prints.
+    fn by_items_text(order_by: &[tidb_ast::OrderItem], qualify: &Qualifier<'_>) -> String {
         let items: Vec<String> = order_by
             .iter()
             .map(|item| {
@@ -612,7 +612,35 @@ impl PlanTrace {
                 }
             })
             .collect();
-        self.wrap("Sort", Est::Inherit, items.join(", "));
+        items.join(", ")
+    }
+
+    /// `ORDER BY` with no `LIMIT` above it to fuse with.
+    pub(crate) fn sort(&mut self, order_by: &[tidb_ast::OrderItem], qualify: &Qualifier<'_>) {
+        self.wrap("Sort", Est::Inherit, Self::by_items_text(order_by, qualify));
+    }
+
+    /// `ORDER BY` + `LIMIT` fused into Go's `TopN`
+    /// (`pkg/planner/core/rule_topn_push_down.go`).
+    ///
+    /// The info text is Go's `LogicalTopN.ExplainInfo`: the by-items, then
+    /// `, offset:N, count:N`. The estimate is Go's
+    /// `property.DeriveLimitStats(child, Count)` -- the COUNT, not
+    /// `offset + count`, which is what real TiDB prints for
+    /// `order by b limit 1,2` (captured: `TopN_8 | 2.00 | root`).
+    pub(crate) fn topn(
+        &mut self,
+        order_by: &[tidb_ast::OrderItem],
+        qualify: &Qualifier<'_>,
+        offset: u64,
+        count: u64,
+    ) {
+        let items = Self::by_items_text(order_by, qualify);
+        self.wrap(
+            "TopN",
+            Est::CapAt(count as f64),
+            format!("{items}, offset:{offset}, count:{count}"),
+        );
     }
 
     /// The projection the driver always builds (divergence 3).

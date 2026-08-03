@@ -138,40 +138,56 @@ fn explain_select() {
         ]
     );
 
-    // ORDER BY + LIMIT. DIVERGENCE (item 2): TiDB merges these into one
-    // TopN_7 (10.00). This tier builds a Sort and a Limit, so both show.
-    // The Limit's 10.00 and its `offset:0, count:10` match Go's.
+    // ORDER BY + LIMIT: the fused TopN, Go's `topn_push_down` rule. Real
+    // TiDB prints (captured with `gorun`, on a `c` with no index)
+    //
+    //   TopN_7             10.00     root                test.t.b, offset:0, count:10
+    //   └─TableReader_17   10.00     root                data:TopN_16
+    //     └─TopN_16        10.00     cop[tikv]           test.t.b, offset:0, count:10
+    //       └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo
+    //
+    // so the ROOT TopN, its 10.00, and its `offset:0, count:10` are Go's
+    // exactly. The remaining differences are the two standing ones: this
+    // tier has no cop task (item 1), and always builds a Projection (item 3),
+    // which Go folds into the TopN as an inline projection.
     assert_eq!(
         row_text(session.run("EXPLAIN SELECT * FROM t ORDER BY c LIMIT 10")),
         vec![
             vec![
-                "Limit_4".to_owned(),
+                "Projection_3".to_owned(),
                 "10.00".to_owned(),
-                "root".to_owned(),
-                String::new(),
-                "offset:0, count:10".to_owned(),
-            ],
-            vec![
-                "└─Projection_3".to_owned(),
-                "10000.00".to_owned(),
                 "root".to_owned(),
                 String::new(),
                 "*".to_owned(),
             ],
             vec![
-                "  └─Sort_2".to_owned(),
-                "10000.00".to_owned(),
+                "└─TopN_2".to_owned(),
+                "10.00".to_owned(),
                 "root".to_owned(),
                 String::new(),
-                "test.t.c".to_owned(),
+                "test.t.c, offset:0, count:10".to_owned(),
             ],
             vec![
-                "    └─TableFullScan_1".to_owned(),
+                "  └─TableFullScan_1".to_owned(),
                 "10000.00".to_owned(),
                 "root".to_owned(),
                 "table:t".to_owned(),
                 "keep order:false, stats:pseudo".to_owned(),
             ],
+        ]
+    );
+
+    // ORDER BY with no LIMIT above it still builds a plain Sort: there is
+    // nothing for the rule to fuse.
+    assert_eq!(
+        row_text(session.run("EXPLAIN SELECT * FROM t ORDER BY c"))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect::<Vec<_>>(),
+        vec![
+            "Projection_3".to_owned(),
+            "└─Sort_2".to_owned(),
+            "  └─TableFullScan_1".to_owned(),
         ]
     );
 
