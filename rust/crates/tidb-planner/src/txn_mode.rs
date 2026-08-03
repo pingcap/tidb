@@ -111,7 +111,17 @@ pub struct StatementTxnModeInputs<'a> {
 /// pessimistic. Captured from TiDB's mock store, where an autocommit `UPDATE`
 /// against a row another session holds a pessimistic lock on first fails
 /// Prewrite with `9007 ... reason=Optimistic`, and only the automatic retry
-/// (which is pessimistic) reports `1205`.
+/// (which is pessimistic) reports `1205`. Re-measured 2026-08-03: the error
+/// that shape leaves the client with is
+/// `[tikv:1205]Lock wait timeout exceeded; try restarting transaction`.
+///
+/// NOTE (measured negative, 2026-08-03): this function has NO production
+/// caller. The live cluster node opens every transaction through
+/// `RealOptimisticTransactionOpener`, so there is no pessimistic statement
+/// path for its answer to select, and the `retrying` arm in particular is
+/// unreachable -- that node's autocommit replay stays optimistic where Go's is
+/// pessimistic. See `ClusterServerSession::may_retry_autocommit_statement` in
+/// `tidb-server` for what the divergence does and does not cost.
 #[must_use]
 pub fn txn_mode_for_statement(inputs: StatementTxnModeInputs<'_>) -> SessionTxnMode {
     if inputs.retrying {
