@@ -2942,3 +2942,37 @@ func TestUninitializedStats(t *testing.T) {
 	tk.MustQuery("show stats_histograms").CheckNotContain("allEvicted")
 	tk.MustQuery("explain analyze format = 'brief' select /*+ use_index(t1, idx_expr) */ * from t1 where (cast(json_unquote(json_extract(`c2`, _utf8mb4'$.location_id')) as char(255)) collate utf8mb4_bin) > '100'  and c2 > 'abc';").CheckNotContain("unInitialized")
 }
+
+// TestEqualEstimateOnZeroRepeatBucketUpper covers equality estimation on a
+// bucket upper that carries no point frequency. Merged global histograms
+// produce such buckets when an upper falls on a merge cut, and the sampled
+// builder produces them when the estimated NDV exceeds the histogram's row
+// count. A bucket upper is a value observed in the data, so a zero Repeat
+// means "not recorded" rather than "no rows", and the estimate must fall
+// back to the uniform average instead of reporting an exact zero.
+func TestEqualEstimateOnZeroRepeatBucketUpper(t *testing.T) {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	colInfo := &model.ColumnInfo{ID: 1, FieldType: *tp}
+	// 200 rows over an NDV of 100, so the uniform average is 2 per value.
+	hg := statistics.NewHistogram(colInfo.ID, 100, 0, 0, tp, 2, 0)
+	lo1, up1 := types.NewIntDatum(1), types.NewIntDatum(50)
+	lo2, up2 := types.NewIntDatum(51), types.NewIntDatum(100)
+	hg.AppendBucket(&lo1, &up1, 100, 0) // no frequency recorded for 50
+	hg.AppendBucket(&lo2, &up2, 200, 5) // 100 was observed 5 times
+	col := &statistics.Column{
+		Histogram:         *hg,
+		Info:              colInfo,
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	sctx := mock.NewContext()
+
+	est, err := getColumnRowCount(sctx, col, getRange(50, 50), 200, 0, false)
+	require.NoError(t, err)
+	require.Equal(t, 2.0, est.Est,
+		"a zero Repeat must fall back to the uniform average, not report zero rows")
+
+	est, err = getColumnRowCount(sctx, col, getRange(100, 100), 200, 0, false)
+	require.NoError(t, err)
+	require.Equal(t, 5.0, est.Est, "an observed Repeat must still be used as is")
+}
