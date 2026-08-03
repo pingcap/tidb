@@ -221,6 +221,9 @@ pub(crate) fn run_aggregate_select(
         &out_schema,
         &agg_resolver,
         select,
+        traced_select,
+        resolver,
+        current_db,
         &state,
         ctx,
         trace.as_deref_mut(),
@@ -1285,20 +1288,39 @@ fn build_window_stage(
 }
 
 /// Stage 9 (order / limit): `Sort` over the aggregation's (widened) output,
-/// then `Limit`.
+/// then `Limit` -- fused into one `TopN` when both are present, exactly as
+/// the plain path fuses them.
 ///
-/// Mirrors Go's `buildSort` + `buildLimit` above the Window operator.
+/// Mirrors Go's `buildSort` + `buildLimit` above the Window operator, plus
+/// `topn_push_down`. Go's `TopN` cannot push through a `LogicalAggregation`
+/// (`LogicalAggregation` inherits `BaseLogicalPlan.PushDownTopN`, which
+/// attaches it on top), so Go's TopN also lands here, above the aggregate:
+/// captured `Projection_7|2.00|root` over `TopN_10|2.00|root||test.t.a,
+/// offset:0, count:2` over the two-phase `HashAgg`.
+///
+/// `SELECT DISTINCT` does not fuse, for the plain path's reason: stage 11's
+/// dedup runs ABOVE this, so a bounded sort would discard rows before they
+/// were deduplicated.
+#[allow(clippy::too_many_arguments)]
 fn build_order_and_limit(
     root: Box<dyn Executor>,
     out_schema: &Schema,
     agg_resolver: &AggOutputResolver,
     select: &tidb_ast::SelectStmt,
+    traced_select: &tidb_ast::SelectStmt,
+    resolver: &ScopeResolver<'_>,
+    current_db: &str,
     state: &AggPipelineState,
     ctx: &crate::StmtContext,
-    trace: Option<&mut PlanTrace>,
+    mut trace: Option<&mut PlanTrace>,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let mut root = root;
     let out_schema = out_schema.clone();
+    let qualify = Qualifier {
+        db: current_db,
+        scope: resolver.scope,
+    };
+    let mut fused_topn = false;
     if !state.order_by_exprs.is_empty() {
         let mut by_items = Vec::with_capacity(state.order_by_exprs.len());
         for (expr, desc) in &state.order_by_exprs {
@@ -1308,15 +1330,42 @@ fn build_order_and_limit(
                 desc: *desc,
             });
         }
-        root = Box::new(SortExec::new(
-            ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
-            by_items,
-            root,
-            ctx.clone(),
-            ctx.statement_memory(),
-        ));
+        let fused_limit = if select.distinct {
+            None
+        } else {
+            select.limit.as_ref()
+        };
+        if let Some(limit) = fused_limit {
+            let count = eval_limit_bound(&limit.count)?;
+            let offset = match &limit.offset {
+                Some(expr) => eval_limit_bound(expr)?,
+                None => 0,
+            };
+            root = Box::new(TopNExec::new(
+                ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
+                by_items,
+                root,
+                ctx.clone(),
+                offset,
+                count,
+                ctx.statement_memory(),
+            ));
+            fused_topn = true;
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.topn(&traced_select.order_by, &qualify, offset, count);
+                root = trace.meter(root);
+            }
+        } else {
+            root = Box::new(SortExec::new(
+                ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
+                by_items,
+                root,
+                ctx.clone(),
+                ctx.statement_memory(),
+            ));
+        }
     }
-    if let Some(limit) = &select.limit {
+    if let Some(limit) = select.limit.as_ref().filter(|_| !fused_topn) {
         let count = eval_limit_bound(&limit.count)?;
         let offset = match &limit.offset {
             Some(expr) => eval_limit_bound(expr)?,

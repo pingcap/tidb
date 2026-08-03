@@ -176,16 +176,25 @@ fn an_order_by_without_a_limit_still_builds_a_sort() {
     );
 }
 
-/// A `GROUP BY` pipeline orders and limits above the aggregate, which is
-/// where Go's rule also stops (its `TopN` cannot push through a
-/// `LogicalAggregation`, so `base_logical_plan.go`'s default attaches it on
-/// top). Captured shape: `Projection_7|2.00|root|| ...` over
-/// `TopN_10|2.00|root||test.t.a, offset:0, count:2` over the two-phase
-/// `HashAgg`. The rows are pinned here; the aggregate path's own fusion is
-/// the next commit.
+/// A `GROUP BY` pipeline fuses above the aggregate, which is where Go's rule
+/// also stops: `LogicalAggregation` inherits `BaseLogicalPlan.PushDownTopN`,
+/// which attaches the `TopN` on top rather than pushing it through. Captured
+/// shape: `Projection_7|2.00|root|| ...` over `TopN_10|2.00|root||test.t.a,
+/// offset:0, count:2` over the two-phase `HashAgg`.
 #[test]
-fn a_group_by_pipeline_orders_above_the_aggregate() {
+fn a_group_by_pipeline_fuses_above_the_aggregate() {
     let mut session = topn_session();
+    assert_eq!(
+        plan(
+            &mut session,
+            "explain select a, count(*) from t group by a order by a limit 2"
+        ),
+        vec![
+            "TopN_3|2.00|root||test.t.a, offset:0, count:2",
+            "└─HashAgg_2|8000.00|root||group by:test.t.a, funcs:test.t.a, count(1)",
+            "  └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
+        ]
+    );
     // gorun: `select a, count(*) from t group by a order by a limit 2`
     //   -> 1 2;2 2
     assert_eq!(
@@ -193,5 +202,51 @@ fn a_group_by_pipeline_orders_above_the_aggregate() {
             "select a, count(*) from t group by a order by a limit 2"
         ))),
         vec!["1,2".to_owned(), "2,2".to_owned()]
+    );
+}
+
+/// The aggregate pipeline's own DISTINCT guard exists for the plain path's
+/// reason -- stage 11's dedup runs ABOVE stage 9's order/limit, so fusing
+/// would discard rows before they were deduplicated.
+///
+/// Without a `LIMIT` the pipeline already agrees with Go.
+#[test]
+fn a_distinct_over_a_group_by_orders_like_go() {
+    let mut session = topn_session();
+    // gorun: `select distinct a from t group by a, b order by a` -> 1;2;3
+    assert_eq!(
+        flat(row_text(
+            session.run("select distinct a from t group by a, b order by a")
+        )),
+        vec!["1".to_owned(), "2".to_owned(), "3".to_owned()]
+    );
+}
+
+/// KNOWN BUG, pre-dating the `TopN` work and NOT introduced by it: the
+/// aggregate pipeline applies `SELECT DISTINCT` (stage 11) ABOVE the `LIMIT`
+/// (stage 9), while Go's `buildSelect` builds `Projection -> Distinct ->
+/// Sort -> Limit`, with the dedup BELOW the limit. So the limit truncates
+/// before the dedup and this answers `1` where Go answers `1;2`.
+///
+/// Fixing it means running stage 10's projection and the dedup before stage
+/// 9 and resolving the by-items against the PROJECTED schema (which
+/// `checkOrderByInDistinct` already guarantees they are in) -- a
+/// restructuring of the aggregate pipeline's tail with its own test surface,
+/// not a side effect of the ORDER BY + LIMIT fusion. Ignored rather than
+/// pinned, so the wrong answer is never recorded as expected.
+///
+/// It also means the aggregate path's own DISTINCT guard cannot be probed by
+/// a mutation today: removing it produces the same wrong answer this bug
+/// already produces.
+#[test]
+#[ignore = "pre-existing: the aggregate pipeline dedups above the LIMIT, not below it"]
+fn a_distinct_over_a_group_by_limits_after_the_dedup_like_go() {
+    let mut session = topn_session();
+    // gorun: `select distinct a from t group by a, b order by a limit 2` -> 1;2
+    assert_eq!(
+        flat(row_text(session.run(
+            "select distinct a from t group by a, b order by a limit 2"
+        ))),
+        vec!["1".to_owned(), "2".to_owned()]
     );
 }
