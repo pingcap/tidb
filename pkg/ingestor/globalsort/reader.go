@@ -79,6 +79,7 @@ func readAllData(
 	startKey, endKey []byte,
 	startOffsets, estimatedEndOffsets []uint64,
 	smallBlockBufPool *membuf.Pool,
+	largeBlockBufPool *membuf.Pool,
 	concurrency int,
 	output *memKVsAndBuffers,
 ) (err error) {
@@ -140,11 +141,6 @@ func readAllData(
 	readConn := min(maxReaders, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn)
-	largeBlockBufPool := membuf.NewPool(
-		membuf.WithBlockNum(0),
-		membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
-	)
-	defer largeBlockBufPool.Destroy()
 	for readIdx := range readConn {
 		eg.Go(func() error {
 			output.memKVBuffers[readIdx] = smallBlockBufPool.NewBuffer()

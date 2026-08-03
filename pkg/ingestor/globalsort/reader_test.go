@@ -169,6 +169,10 @@ func TestReadLargeFile(t *testing.T) {
 		membuf.WithPoolMemoryLimiter(memLimiter),
 		membuf.WithBlockSize(smallBlockSize),
 	)
+	largeBlockBufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
+	)
 	output := &memKVsAndBuffers{}
 	startKey := []byte("key000000")
 	maxKey := []byte("key004998")
@@ -181,7 +185,7 @@ func TestReadLargeFile(t *testing.T) {
 		startKey, endKey,
 		readRanges[0],
 		readRanges[1],
-		smallBlockBufPool, 1, output)
+		smallBlockBufPool, largeBlockBufPool, 1, output)
 	require.NoError(t, err)
 	output.build(ctx)
 	require.Equal(t, startKey, output.kvs[0].Key)

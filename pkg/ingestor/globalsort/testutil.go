@@ -86,6 +86,7 @@ func testReadAndCompare(
 			readRanges[0],
 			readRanges[1],
 			bufPool,
+			bufPool,
 			1,
 			loaded,
 		)

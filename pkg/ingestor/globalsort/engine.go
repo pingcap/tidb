@@ -148,6 +148,7 @@ type Engine struct {
 	jobKeys           [][]byte
 	splitKeys         [][]byte
 	smallBlockBufPool *membuf.Pool
+	largeBlockBufPool *membuf.Pool
 
 	memKVsAndBuffers memKVsAndBuffers
 	// totalLoadedKVsCount accumulates the total number of KVs loaded in LoadIngestData
@@ -240,6 +241,10 @@ func NewExternalEngine(
 			membuf.WithPoolMemoryLimiter(memLimiter),
 			membuf.WithBlockSize(smallBlockSize),
 		),
+		largeBlockBufPool: membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
+		),
 		checkHotspot:      checkHotspot,
 		workerConcurrency: *atomic.NewInt32(int32(workerConcurrency)),
 		readyCh:           make(chan struct{}),
@@ -300,6 +305,7 @@ func (e *Engine) loadRangeBatchData(
 			startOffsets,
 			estimatedEndOffsets,
 			e.smallBlockBufPool,
+			e.largeBlockBufPool,
 			int(e.workerConcurrency.Load()),
 			&e.memKVsAndBuffers,
 		)
@@ -750,6 +756,10 @@ func (e *Engine) Close() error {
 		e.smallBlockBufPool.Destroy()
 		e.smallBlockBufPool = nil
 	}
+	if e.largeBlockBufPool != nil {
+		e.largeBlockBufPool.Destroy()
+		e.largeBlockBufPool = nil
+	}
 	return nil
 }
 
@@ -762,6 +772,13 @@ func (e *Engine) Reset() {
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
 			membuf.WithBlockSize(smallBlockSize),
+		)
+	}
+	if e.largeBlockBufPool != nil {
+		e.largeBlockBufPool.Destroy()
+		e.largeBlockBufPool = membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
 		)
 	}
 }
