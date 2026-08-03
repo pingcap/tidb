@@ -208,13 +208,19 @@ where
                         });
                     }
                 }
-                // client-go `prewrite.go` `handleSingleBatch`: an optimistic
-                // committer that meets a lock with a larger start TS will fail
-                // with WriteConflict whatever the resolver decides, so the
-                // error is constructed here rather than paid for in RPCs. The
-                // lock's own protocol is irrelevant to that judgement — only
-                // the committer's is — so this stays ahead of the split.
-                if lock.txn_id() > self.start_ts {
+                // client-go `prewrite.go:541`: an *optimistic* committer that
+                // meets a lock with a larger start TS will fail with
+                // WriteConflict whatever the resolver decides, so the error is
+                // constructed here rather than paid for in RPCs. The lock's own
+                // protocol is irrelevant to that judgement — the committer's is
+                // the whole condition, and Go spells it
+                // `&& !handler.committer.isPessimistic` with the reason in the
+                // comment above it: for a pessimistic committer TiKV either
+                // answers PessimisticLockNotFound directly, or reports
+                // `lock.TTL = 0` and the lock still has to be resolved.
+                // Shortcutting it here turns a resolvable collision into a
+                // spurious write conflict for every pessimistic transaction.
+                if lock.txn_id() > self.start_ts && self.pessimistic.is_none() {
                     return Err(TransactionCause::WriteConflict {
                         detail: format!(
                             "Prewrite observed newer {} lock txn_id={} start_ts={}",

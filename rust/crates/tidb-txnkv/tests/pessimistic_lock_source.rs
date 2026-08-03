@@ -49,8 +49,8 @@ use tidb_txnkv::region::{
 };
 use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
 use tidb_txnkv::transaction::{
-    LockWaitTime, OptimisticMutation, PessimisticLockFailure, RealOptimisticTransaction,
-    RealPessimisticTransaction, TransactionCause,
+    LockWaitTime, OptimisticCommitOutcome, OptimisticMutation, PessimisticLockFailure,
+    RealOptimisticTransaction, RealPessimisticTransaction, TransactionCause,
 };
 use tidb_txnkv::SharedReadRuntime;
 
@@ -214,6 +214,9 @@ struct Recorded {
 #[derive(Clone)]
 struct ScriptedTikv {
     locks: Arc<Mutex<Vec<LockOutcome>>>,
+    /// When set, the first Prewrite answers `KeyIsLocked` with a lock whose
+    /// `lock_version` is this timestamp. Every later Prewrite succeeds.
+    prewrite_blocked_by: Arc<Mutex<Option<u64>>>,
     recorded: Arc<Mutex<Recorded>>,
 }
 
@@ -221,8 +224,14 @@ impl ScriptedTikv {
     fn new(locks: Vec<LockOutcome>) -> Self {
         Self {
             locks: Arc::new(Mutex::new(locks)),
+            prewrite_blocked_by: Arc::new(Mutex::new(None)),
             recorded: Arc::new(Mutex::new(Recorded::default())),
         }
+    }
+
+    /// Scripts the first Prewrite to report a lock held by `lock_ts`.
+    fn block_first_prewrite_with(&self, lock_ts: u64) {
+        *self.prewrite_blocked_by.lock().unwrap() = Some(lock_ts);
     }
 
     /// Later attempts than the script describes are granted, which models a
@@ -419,8 +428,26 @@ impl ScriptedTikv {
                 let request = KvrpcPrewriteRequest::decode(body.as_slice())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
                 self.recorded.lock().unwrap().prewrites.push(request);
+                let blocked = self.prewrite_blocked_by.lock().unwrap().take();
+                let errors = blocked.map_or_else(Vec::new, |lock_ts| {
+                    vec![KvrpcKeyError {
+                        locked: Some(KvrpcLockInfo {
+                            key: PRIMARY_KEY.to_vec(),
+                            primary_lock: PRIMARY_KEY.to_vec(),
+                            lock_version: lock_ts,
+                            lock_ttl: 500,
+                            lock_type: KvrpcOp::Put as i32,
+                            ..KvrpcLockInfo::default()
+                        }),
+                        ..KvrpcKeyError::default()
+                    }]
+                });
                 Ok(ResponseCmd::Prewrite(
-                    KvrpcPrewriteResponse::default().encode_to_vec(),
+                    KvrpcPrewriteResponse {
+                        errors,
+                        ..KvrpcPrewriteResponse::default()
+                    }
+                    .encode_to_vec(),
                 ))
             }
             RequestCmd::Commit(body) => {
@@ -1249,5 +1276,52 @@ fn a_statement_that_fails_on_a_later_batch_keeps_the_locks_it_already_took() {
         transaction.primary_key(),
         Some(PRIMARY_KEY),
         "cleanup of that lock needs the primary it names"
+    );
+}
+
+/// A *pessimistic* committer that meets a newer lock at Prewrite resolves it
+/// instead of failing with a write conflict.
+///
+/// Go `prewrite.go:541` spells the condition
+/// `lock.TxnID > startTS && !handler.committer.isPessimistic`, with the reason
+/// in the comment above it: for a pessimistic committer TiKV either answers
+/// PessimisticLockNotFound directly, or reports `lock.TTL = 0` and the lock
+/// still has to be resolved. Dropping the guard turns every such collision
+/// into a spurious 9007 for a transaction whose locks are already held.
+#[test]
+fn a_pessimistic_committer_resolves_a_newer_prewrite_lock_instead_of_conflicting() {
+    let service = ScriptedTikv::new(vec![LockOutcome::Granted]);
+    // Strictly newer than this transaction, which is the whole shortcut.
+    service.block_first_prewrite_with(START_TS + 50);
+    let server = TestServer::start(service);
+    let mut transaction = transaction(SingleRegion::new(server.store_address()));
+    transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect("the pessimistic lock is granted");
+
+    let outcome = transaction
+        .commit(
+            vec![OptimisticMutation::put_existing(PRIMARY_KEY.to_vec(), b"v".to_vec()).unwrap()],
+            &call(),
+        )
+        .expect("the two-phase commit runs to a terminal outcome");
+
+    // This harness scripts no CheckTxnStatus, so the recovery cannot complete —
+    // but *attempting* it is the entire point. Pre-fix this was a WriteConflict
+    // raised without a single recovery RPC.
+    let cause = match &outcome {
+        OptimisticCommitOutcome::RolledBack(rolled_back) => rolled_back.cause.clone(),
+        OptimisticCommitOutcome::CleanupFailed(failed) => failed.cause.clone(),
+        other => panic!("a blocked prewrite cannot commit: {other:?}"),
+    };
+    assert!(
+        matches!(cause, TransactionCause::Lock { .. }),
+        "a pessimistic committer must reach lock recovery, not shortcut to a \
+         write conflict: {cause:?}"
     );
 }
