@@ -146,13 +146,20 @@ func TestFixAdminAlterDDLJobs(t *testing.T) {
 			}
 
 			ch := make(chan struct{})
+			workerStarted := make(chan struct{}, 1)
 			testfailpoint.EnableCall(t, tc.stuckFp, func() {
+				select {
+				case workerStarted <- struct{}{}:
+				default:
+				}
 				<-ch
 			})
 			var wg util.WaitGroupWrapper
 			wg.Run(func() {
 				tk1.MustExec(tc.sql)
 			})
+			// Wait for workers to start first, then adjust parameters and check.
+			<-workerStarted
 			var (
 				realWorkerCnt     atomic.Int64
 				realBatchSize     atomic.Int64
