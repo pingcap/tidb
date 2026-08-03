@@ -64,7 +64,7 @@ type LogRestoreTableIDsBlocklistFile struct {
 	// RestoreCommitTs records the timestamp after PITR restore done. Only the later PITR restore from the log backup of the cluster,
 	// whose BackupTS is not less than it, can ignore the restore table IDs blocklist recorded in the file.
 	RestoreCommitTs uint64 `protobuf:"varint,1,opt,name=restore_commit_ts,proto3"`
-	// SnapshotBackupTs is kept for decoding legacy blocklist files only.
+	// Deprecated: SnapshotBackupTs is kept for decoding legacy blocklist files only.
 	// New blocklist files must leave it as zero and use RestoreStartTs.
 	SnapshotBackupTs uint64 `protobuf:"varint,2,opt,name=snapshot_backup_ts,proto3"`
 	// RestoreStartTs records the restore start timestamp. PITR operations restoring to an earlier time can ignore this blocklist.
