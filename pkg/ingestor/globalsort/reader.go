@@ -239,7 +239,7 @@ func readOneFile(
 		dataFile,
 		storage,
 		startOffset,
-		64*1024,
+		simplesst.DefaultReadBufferSize/3,
 		prefetchSize,
 	)
 	if err != nil {

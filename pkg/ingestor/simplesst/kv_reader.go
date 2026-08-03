@@ -56,20 +56,18 @@ func NewKVReader(
 	return newKVReader(ctx, name, store, initFileOffset, oneThird, oneThird*2)
 }
 
-// NewKVReaderWithPrefetchSize creates a KV reader with an independently sized
-// object-storage prefetch buffer. bufSize keeps the same meaning as in
-// NewKVReader and controls the small structured-read buffer.
+// NewKVReaderWithPrefetchSize creates a KV reader whose object-storage prefetch
+// buffer is sized independently of the structured-read buffer, so readBufSize is
+// used as-is rather than being carved out of one shared budget.
 func NewKVReaderWithPrefetchSize(
 	ctx context.Context,
 	name string,
 	store storeapi.Storage,
 	initFileOffset uint64,
-	bufSize int,
+	readBufSize int,
 	prefetchSize int,
 ) (*KVReader, error) {
-	// Some tests use very small random buffer sizes.
-	smallBufSize := max(bufSize/3, 1)
-	return newKVReader(ctx, name, store, initFileOffset, smallBufSize, prefetchSize)
+	return newKVReader(ctx, name, store, initFileOffset, max(readBufSize, 1), prefetchSize)
 }
 
 func newKVReader(
