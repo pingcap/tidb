@@ -1238,10 +1238,86 @@ pub(crate) fn selectivity_of_conjuncts(
                 );
                 (estimate.est / realtime).clamp(0.0, 1.0)
             }
-            None => crate::plan_trace::SELECTIVITY_FACTOR,
+            // A condition no statistics node covered goes into Go's leftover
+            // buckets; `notCoveredDNF` is estimated for real before the
+            // default factor is charged.
+            None => dnf_selectivity(conjunct, table, resolver, stats)
+                .unwrap_or(crate::plan_trace::SELECTIVITY_FACTOR),
         };
     }
-    total.clamp(0.0, 1.0)
+    // `selectivity.go:430`: "Don't allow the result to be less than 1 row".
+    // A product of independent selectivities falls off a cliff -- four
+    // point conditions on an eight-row table multiply to 1/4096 -- and the
+    // source refuses to believe in less than one row.
+    total.clamp(0.0, 1.0).max(1.0 / realtime)
+}
+
+/// An expression with every enclosing `(...)` removed.
+///
+/// Go has no parenthesis node: `ParenthesesExpr` is gone by the time
+/// `Selectivity` runs, so `and(a<8, (b>10 or c<3))` reaches it as a plain
+/// `LogicAnd` over a `LogicOr`. This port keeps the node, so every structural
+/// test on a condition has to look through it first.
+fn strip_parens(expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
+    let mut expr = expr;
+    while let tidb_ast::Expr::Paren(inner) = expr {
+        expr = inner;
+    }
+    expr
+}
+
+/// Go `expression.FlattenDNFConditions`: the `OR` terms of one condition.
+fn collect_or<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
+    let expr = strip_parens(expr);
+    if let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, lhs, rhs) = expr {
+        collect_or(lhs, out);
+        collect_or(rhs, out);
+        return;
+    }
+    out.push(expr);
+}
+
+/// Go's `notCoveredDNF` branch of `Selectivity` (`selectivity.go:324-385`).
+///
+/// ```text
+/// // sel(condA or condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
+/// for _, cond := range dnfItems {
+///     cnfItems := FlattenCNFConditions(cond)          // when it is an AND
+///     curSelectivity, err := Selectivity(ctx, coll, cnfItems, nil)
+///     selectivity = selectivity + curSelectivity - selectivity*curSelectivity
+/// }
+/// ```
+///
+/// Inclusion-exclusion under independence, with each term estimated by the
+/// SAME entry point -- so an `AND` inside an `OR` inside an `AND` is handled
+/// by recursion rather than by a second rule. `None` when the condition is
+/// not a disjunction, or when the terms estimate to exactly zero, which is
+/// Go's `if selectivity != 0` guard against covering the condition with a
+/// number that would zero the whole result.
+///
+/// NOT MODELLED: Go's pre-guard at `selectivity.go:328-334`, which abandons
+/// the DNF branch when any column it names has no statistics. Direction: this
+/// port estimates such a disjunction from the columns it does have instead of
+/// charging the flat 0.8 default.
+fn dnf_selectivity(
+    conjunct: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: &TableStatistics,
+) -> Option<f64> {
+    let mut items = Vec::new();
+    collect_or(conjunct, &mut items);
+    if items.len() <= 1 {
+        return None;
+    }
+    let mut selectivity = 0.0_f64;
+    for item in items {
+        let mut cnf = Vec::new();
+        crate::plan_trace::collect_and(strip_parens(item), &mut cnf);
+        let current = selectivity_of_conjuncts(&cnf, table, resolver, Some(stats));
+        selectivity = selectivity + current - selectivity * current;
+    }
+    (selectivity != 0.0).then_some(selectivity)
 }
 
 /// `cardinality.Selectivity` for a table with NO loaded histograms -- Go's

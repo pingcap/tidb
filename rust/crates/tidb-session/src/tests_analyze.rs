@@ -328,3 +328,77 @@ fn analyze_inside_a_transaction_rolls_back_with_it() {
     session.run("COMMIT").unwrap();
     assert_eq!(scan_row(&mut session, "EXPLAIN SELECT * FROM t").0, "3.00");
 }
+
+/// `Selectivity`'s two rules this port did not have: the DNF branch and the
+/// one-row floor.
+///
+/// The fixture is Go's own `TestDNFCondSelectivity`
+/// (`pkg/planner/cardinality/selectivity_test.go:1075`) -- same schema, same
+/// eight rows, same two extra indexes, same `ANALYZE` -- and the estimates
+/// below are captured from a real Go session on it (`rust/difftests/gorun`):
+///
+/// ```text
+/// explain select * from dt where b > 7 or c < 4;
+///   Selection_9  2.75  or(gt(test.dt.b, 7), lt(test.dt.c, 4))
+/// explain select * from dt where d < 5 or b > 6;                       5.00
+/// explain select * from dt where a > 8 or d < 4 or c > 7 or b < 5;     6.59
+/// explain select * from dt where c = 4 and d = 4;                      1.00
+/// explain select * from dt where c = 6 and d = 10 and b = 2;           1.00
+/// explain select * from dt where c > 100;                              1.00
+/// ```
+///
+/// `2.75 / 8 = 0.34375`, `5.00 / 8 = 0.625` and `6.59 / 8 = 0.82421875` are
+/// exactly the three values Go's own `TestDNFCondSelectivity` testdata holds,
+/// so this pins the algorithm and not just the rendering. A port with no DNF
+/// branch reads 6.40 for all three -- the flat `selectionFactor` of 0.8.
+///
+/// The equality rows are the floor: three independent point conditions on an
+/// eight-row table multiply to about 8/512 of a row, and the source refuses
+/// to believe in less than one.
+///
+/// KNOWN REMAINING GAP, measured: `a < 8 and (b > 10 or c < 3 or b > 4) and
+/// a > 2` is 2.50 in Go and 4.00 here. That is NOT the DNF branch -- it is
+/// `plan_trace::selection`'s `Est::Inherit`, which keeps the access path's
+/// own estimate whenever the path consumed a condition, while Go recomputes
+/// the whole `Selection` as `RealtimeCount * Selectivity(allConds)`.
+#[test]
+fn analyzed_selectivity_estimates_a_disjunction_and_never_drops_below_one_row() {
+    let mut session = Session::new();
+    session
+        .run("create table dt(a int, b int, c int, d int, index idx(a, b, c, d))")
+        .unwrap();
+    session
+        .run(
+            "insert into dt value(1,5,4,4),(3,4,1,8),(4,2,6,10),(6,7,2,5),\
+             (7,1,4,9),(8,9,8,3),(9,1,9,1),(10,6,6,2)",
+        )
+        .unwrap();
+    session.run("alter table dt add index (b)").unwrap();
+    session.run("alter table dt add index (d)").unwrap();
+    session.run("analyze table dt").unwrap();
+
+    let selection_rows = |session: &mut Session, sql: &str| -> String {
+        let rows = row_text(session.run(sql));
+        rows.iter()
+            .find(|row| row[0].contains("Selection"))
+            .unwrap_or_else(|| panic!("no Selection in the plan of `{sql}`: {rows:?}"))[1]
+            .clone()
+    };
+
+    for (sql, expected) in [
+        ("explain select * from dt where b > 7 or c < 4", "2.75"),
+        ("explain select * from dt where d < 5 or b > 6", "5.00"),
+        (
+            "explain select * from dt where a > 8 or d < 4 or c > 7 or b < 5",
+            "6.59",
+        ),
+        ("explain select * from dt where c = 4 and d = 4", "1.00"),
+        (
+            "explain select * from dt where c = 6 and d = 10 and b = 2",
+            "1.00",
+        ),
+        ("explain select * from dt where c > 100", "1.00"),
+    ] {
+        assert_eq!(selection_rows(&mut session, sql), expected, "{sql}");
+    }
+}
