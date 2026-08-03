@@ -312,13 +312,8 @@ func isStatsTable(schemaName string, tableName string) bool {
 	return ok
 }
 
-<<<<<<< HEAD
 func isRenameableSysTable(schemaName string, tableName string) bool {
 	tableMap, ok := renameableSysTables[schemaName]
-=======
-func isPlanReplayerTables(schemaName string, tableName string) bool {
-	tableMap, ok := planPeplayerTables[schemaName]
->>>>>>> 4b98d4e74c0 (br: complete the list of unrecoverable tables (#52531))
 	if !ok {
 		return false
 	}
@@ -326,7 +321,15 @@ func isPlanReplayerTables(schemaName string, tableName string) bool {
 	return ok
 }
 
-<<<<<<< HEAD
+func isPlanReplayerTables(schemaName string, tableName string) bool {
+	tableMap, ok := planPeplayerTables[schemaName]
+	if !ok {
+		return false
+	}
+	_, ok = tableMap[tableName]
+	return ok
+}
+
 func removeUserResourceGroup(ctx context.Context, dbName string, execSQL func(context.Context, string) error) error {
 	sql := fmt.Sprintf("UPDATE %s SET User_attributes = JSON_REMOVE(User_attributes, '$.resource_group');",
 		utils.EncloseDBAndTable(dbName, sysUserTableName))
@@ -340,8 +343,6 @@ func removeUserResourceGroup(ctx context.Context, dbName string, execSQL func(co
 	return nil
 }
 
-=======
->>>>>>> 4b98d4e74c0 (br: complete the list of unrecoverable tables (#52531))
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
 func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter, loadSysTablePhysical bool) (rerr error) {
