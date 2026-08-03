@@ -162,6 +162,19 @@ pub struct NodeConfig {
     pub ssl_cert: Option<PathBuf>,
     /// Private key matching [`Self::ssl_cert`] (TiDB's `[security] ssl-key`).
     pub ssl_key: Option<PathBuf>,
+    /// TiDB's `[security] disconnect-on-expired-password`, default `true`:
+    /// refuse a login whose password has expired with 1862 instead of
+    /// admitting it into a sandbox session.
+    ///
+    /// Go stores the INVERSE of this in a process-global atomic at startup
+    /// (`cmd/tidb-server/main.go` around line 1067,
+    /// `vardef.IsSandBoxModeEnabled.Store(!cfg.Security.DisconnectOnExpiredPassword)`),
+    /// which is the only production writer of the flag the login path's
+    /// expiry check reads. `--no-disconnect-on-expired-password` is that
+    /// store, and it is what makes sandbox mode -- and the per-statement
+    /// gate that restricts a sandboxed session to `SET PASSWORD`/`ALTER
+    /// USER` -- reachable at all.
+    pub disconnect_on_expired_password: bool,
     /// Generate a self-signed certificate when no `--ssl-cert`/`--ssl-key` is
     /// configured, as TiDB's `[security] auto-tls` does.
     ///
@@ -263,6 +276,7 @@ impl NodeConfig {
         let mut ssl_cert = None;
         let mut ssl_key = None;
         let mut no_auto_tls = false;
+        let mut no_disconnect_on_expired_password = false;
         let mut cluster_ssl_ca = None;
         let mut cluster_ssl_cert = None;
         let mut cluster_ssl_key = None;
@@ -292,6 +306,13 @@ impl NodeConfig {
                     return Err(NodeConfigError::DuplicateOption(argument));
                 }
                 no_auto_tls = true;
+                continue;
+            }
+            if argument == "--no-disconnect-on-expired-password" {
+                if no_disconnect_on_expired_password {
+                    return Err(NodeConfigError::DuplicateOption(argument));
+                }
+                no_disconnect_on_expired_password = true;
                 continue;
             }
             if argument == "--cluster-session" {
@@ -444,6 +465,7 @@ impl NodeConfig {
             ssl_cert: ssl_cert.map(PathBuf::from),
             ssl_key: ssl_key.map(PathBuf::from),
             auto_tls: !no_auto_tls,
+            disconnect_on_expired_password: !no_disconnect_on_expired_password,
             cluster_security,
         })
     }
@@ -463,6 +485,7 @@ impl NodeConfig {
 [--host <loopback-ip>] [-P <port>|--port <port>] [--store tikv] \
 [--max-allowed-packet <bytes>] \
 [--ssl-cert <cert-pem> --ssl-key <key-pem>] [--no-auto-tls] \
+[--no-disconnect-on-expired-password] \
 [--cluster-ssl-ca <ca-pem> [--cluster-ssl-cert <cert-pem> --cluster-ssl-key <key-pem>] \
 [--cluster-verify-cn <cn[,cn...]>]]"
     }
@@ -1049,6 +1072,51 @@ mod tests {
         assert!(matches!(
             NodeConfig::parse(base),
             Err(NodeConfigError::MissingOption("--auth-file"))
+        ));
+    }
+
+    /// Go `cmd/tidb-server/main.go` around line 1067 stores the INVERSE of
+    /// `security.disconnect-on-expired-password` (default `true`) into the
+    /// server-wide sandbox flag. This flag is that config option, and it is
+    /// the only production writer of the flag: without it, sandbox mode --
+    /// and the per-statement gate that restricts a sandboxed session -- are
+    /// unreachable code.
+    #[test]
+    fn expired_passwords_disconnect_by_default_and_the_flag_opts_into_sandboxing() {
+        let base = [
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+            "--load-privileges",
+        ];
+        assert!(
+            NodeConfig::parse(base)
+                .expect("a complete configuration")
+                .disconnect_on_expired_password
+        );
+        assert!(
+            !NodeConfig::parse(
+                base.iter()
+                    .copied()
+                    .chain(["--no-disconnect-on-expired-password"])
+                    .collect::<Vec<_>>(),
+            )
+            .expect("a complete configuration")
+            .disconnect_on_expired_password
+        );
+        assert!(matches!(
+            NodeConfig::parse(
+                base.iter()
+                    .copied()
+                    .chain([
+                        "--no-disconnect-on-expired-password",
+                        "--no-disconnect-on-expired-password",
+                    ])
+                    .collect::<Vec<_>>(),
+            ),
+            Err(NodeConfigError::DuplicateOption(_))
         ));
     }
 }

@@ -1074,11 +1074,27 @@ pub(crate) fn served_table_descriptor(table: &ConfiguredTable) -> String {
     )
 }
 
+/// Go `cmd/tidb-server/main.go` around line 1067:
+/// `vardef.IsSandBoxModeEnabled.Store(!cfg.Security.DisconnectOnExpiredPassword)`.
+///
+/// This is the ONLY production writer of the server-wide sandbox flag, and
+/// therefore the whole reason the flag's reader (the login path's
+/// `check_password_expired`) can ever return "admitted, sandboxed" instead of
+/// 1862 -- which in turn is the only way a session's sandbox mode, and the
+/// per-statement gate that restricts a sandboxed session to
+/// `SET PASSWORD`/`ALTER USER`, become reachable.
+pub(crate) fn apply_expired_password_policy(config: &NodeConfig, users: &ConfiguredUserStore) {
+    users
+        .accounts()
+        .set_sandbox_mode_enabled(!config.disconnect_on_expired_password);
+}
+
 /// Starts the bounded concurrent production Rust SQL node.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
-    let users = Arc::new(
-        ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?,
-    );
+    let users =
+        ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?;
+    apply_expired_password_policy(&config, &users);
+    let users = Arc::new(users);
     let (factory, authority) =
         RealTiKvSessionFactory::connect(&config).map_err(RunConfiguredNodeError::Engine)?;
     run_bound_node(config, factory, authority, users, None)
@@ -1184,13 +1200,10 @@ pub(crate) fn node_accounts(
     authority: &ProductionReadProcessAuthority,
 ) -> Result<(Arc<ConfiguredUserStore>, Option<PrivilegeReloader>), RunConfiguredNodeError> {
     if !config.load_privileges {
-        return Ok((
-            Arc::new(
-                ConfiguredUserStore::load(&config.auth_file)
-                    .map_err(RunConfiguredNodeError::Auth)?,
-            ),
-            None,
-        ));
+        let users =
+            ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?;
+        apply_expired_password_policy(config, &users);
+        return Ok((Arc::new(users), None));
     }
     let accounts = tidb_exec::real_tikv_privileges::load_accounts_from_cluster(
         &authority.transaction_opener(),
@@ -1242,6 +1255,7 @@ pub(crate) fn node_accounts(
     // `SET GLOBAL` run through this node's own wide session updates only this
     // in-memory table, not `mysql.global_variables` itself.
     users.global_vars().load_from_cluster(accounts.sysvars);
+    apply_expired_password_policy(config, &users);
     let users = Arc::new(users);
     // Ticks at the same `schema_lease / 2` cadence as the catalog reloader,
     // so a node is never more than one lease behind the cluster's accounts

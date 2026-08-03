@@ -974,9 +974,10 @@ fn emit_multi_query_transport_publication(
 
 /// Starts the existing listener/lifecycle against the two-relation factory.
 pub fn run_configured_multi_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
-    let users = Arc::new(
-        ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?,
-    );
+    let users =
+        ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?;
+    crate::real_tikv_node::apply_expired_password_policy(&config, &users);
+    let users = Arc::new(users);
     let (factory, authority) =
         RealTiKvMultiSessionFactory::connect(&config).map_err(RunConfiguredNodeError::Engine)?;
     run_bound_multi_node(config, factory, authority, users, None)

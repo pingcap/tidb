@@ -390,6 +390,17 @@ fn create_account(registry: &PrivilegeRegistry, user: &LoadedUser) {
     if user.account_locked {
         registry.set_locked(&user.user, &user.host, true);
     }
+    // `mysql.user.Password_expired = 'Y'` is a login-time restriction, not a
+    // display column: without it an account a Go node put under
+    // `PASSWORD EXPIRE` opens a full unrestricted session here instead of
+    // reporting 1862 (or starting sandboxed).
+    if user.password_expired {
+        registry.set_password_expire(
+            &user.user,
+            &user.host,
+            tidb_session::privilege::PasswordExpireSetting::Now,
+        );
+    }
 }
 
 /// Resolves a `SET`-valued privilege list, naming anything unmodelled.
@@ -729,6 +740,37 @@ mod tests {
             password_expired: false,
             privileges: privs,
         }
+    }
+
+    /// `mysql.user.Password_expired = 'Y'` is a LOGIN-time restriction, so a
+    /// node that reads a Go cluster's accounts must carry it across: an
+    /// account a Go node put under `PASSWORD EXPIRE` used to open a full
+    /// unrestricted session here.
+    #[test]
+    fn a_cluster_accounts_expired_password_survives_the_load() {
+        let mut expired = user("stale", "%", "*ABC", false, vec!["SELECT"]);
+        expired.password_expired = true;
+        let loaded = ClusterPrivileges {
+            users: vec![expired, user("fresh", "%", "*ABC", false, vec!["SELECT"])],
+            ..ClusterPrivileges::default()
+        };
+        let built = registry_from_cluster(&loaded);
+        assert!(
+            built
+                .registry
+                .password_expiry("stale", "%")
+                .expect("the account exists")
+                .expired
+        );
+        // POSITIVE CONTROL: an ordinary row is not marked expired on the way
+        // in, so this is the column and not a blanket default.
+        assert!(
+            !built
+                .registry
+                .password_expiry("fresh", "%")
+                .expect("the account exists")
+                .expired
+        );
     }
 
     #[test]
