@@ -36,8 +36,8 @@ use super::super::state::{
     RolledBackTransaction, TransactionAttemptPhase, TransactionAttemptResult, TransactionCause,
 };
 use super::{
-    classify_key_error, record_attempt, OptimisticCoordinatorError, RealOptimisticTransaction,
-    RecoveryPhase,
+    classify_key_error, cleanup_call_budget, record_attempt, OptimisticCoordinatorError,
+    RealOptimisticTransaction, RecoveryPhase,
 };
 
 impl<C, L, T> RealOptimisticTransaction<C, L, T>
@@ -114,7 +114,7 @@ where
         if keys.is_empty() {
             return Vec::new();
         }
-        let cleanup_call = UnaryCallContext::with_timeout(self.timeout);
+        let cleanup_call = UnaryCallContext::with_timeout(cleanup_call_budget());
         let mut queue = match group_keys(&self.runtime, keys) {
             Ok(batches) => VecDeque::from(batches),
             Err(error) => {

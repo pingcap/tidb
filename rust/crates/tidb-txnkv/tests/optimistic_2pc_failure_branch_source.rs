@@ -80,6 +80,9 @@ const HIGH_REGION: u64 = 42;
 struct SplitTopology {
     address: String,
     loads: Arc<Mutex<HashMap<u64, u64>>>,
+    /// When set, every load returns a routable leader, so a region error is
+    /// followed by a regroup that succeeds and the command actually retries.
+    always_routable: bool,
 }
 
 impl SplitTopology {
@@ -87,6 +90,17 @@ impl SplitTopology {
         Self {
             address,
             loads: Arc::new(Mutex::new(HashMap::new())),
+            always_routable: false,
+        }
+    }
+
+    /// Topology whose every load is routable, used to observe a retry that
+    /// completes rather than one that dies in the regroup.
+    fn new_always_routable(address: String) -> Self {
+        Self {
+            address,
+            loads: Arc::new(Mutex::new(HashMap::new())),
+            always_routable: true,
         }
     }
 
@@ -153,7 +167,12 @@ impl RegionLoader for SplitTopology {
             *counter += 1;
             *counter
         };
-        Ok(self.location(region_id, start, end, loads == 1))
+        Ok(self.location(
+            region_id,
+            start,
+            end,
+            self.always_routable || loads == 1,
+        ))
     }
 }
 
@@ -424,6 +443,14 @@ fn transaction(
     server: &TestServer,
     topology: SplitTopology,
 ) -> RealOptimisticTransaction<TonicCoprocessorClient, SplitTopology, FixedTimestampSource> {
+    transaction_with_timeout(server, topology, CALL_TIMEOUT)
+}
+
+fn transaction_with_timeout(
+    server: &TestServer,
+    topology: SplitTopology,
+    timeout: Duration,
+) -> RealOptimisticTransaction<TonicCoprocessorClient, SplitTopology, FixedTimestampSource> {
     let client = TonicCoprocessorClient::new().unwrap();
     let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(topology));
     assert_eq!(runtime.cluster_id(), 7);
@@ -431,7 +458,7 @@ fn transaction(
     RealOptimisticTransaction::new_injected(
         runtime,
         FixedTimestampSource::new(NEXT_TIMESTAMP.fetch_add(1, Ordering::Relaxed)),
-        CALL_TIMEOUT,
+        timeout,
         START_TS,
         Instant::now(),
         4,
@@ -651,4 +678,85 @@ fn rollback_regroup_failure_reports_cleanup_failed_with_outstanding_keys() {
         .all(|rollback| rollback.start_version == START_TS));
     assert_eq!(topology.loads_for(LOW_REGION), 2);
     assert_eq!(topology.loads_for(HIGH_REGION), 1);
+}
+
+/// Cleanup backs off and retries even when the statement's own call timeout is
+/// already gone.
+///
+/// Go builds the cleanup backoffer on `c.store.Ctx()` with `cleanupMaxBackoff`
+/// (`2pc.go:1638,1660`) and runs it detached (`2pc.go:1651`) — a statement that
+/// spent its deadline still gets a full 20-second budget to unstick the locks
+/// it left prewritten. Binding cleanup to the statement timeout instead makes
+/// the first backoff delay exceed the call deadline, so `wait_with_call`
+/// returns `Transport`, the rollback cannot retry at all, and the locks are
+/// abandoned to the lock resolver.
+///
+/// A 1ms transaction timeout is not a contrivance: it is what a statement that
+/// has nearly exhausted `max_execution_time` looks like at the moment prewrite
+/// fails, which is exactly when cleanup matters most.
+#[test]
+fn cleanup_backs_off_on_its_own_budget_not_the_statement_timeout() {
+    let service = ScriptedTikv::new(
+        vec![CommandOutcome::Ok, CommandOutcome::AlreadyExists],
+        Vec::new(),
+        // The primary region's rollback hits a retryable region error. With a
+        // routable regroup the retry can complete — provided the wait is
+        // allowed to happen at all.
+        vec![CommandOutcome::RecoveryInProgress],
+    );
+    let recorded = Arc::clone(&service.recorded);
+    let server = TestServer::start(service);
+    let topology = SplitTopology::new_always_routable(server.store_address());
+    let transaction =
+        transaction_with_timeout(&server, topology.clone(), Duration::from_millis(1));
+
+    let outcome = transaction
+        .commit(
+            two_region_mutations(),
+            &UnaryCallContext::with_timeout(CALL_TIMEOUT),
+        )
+        .expect("the coordinator must return a terminal outcome, not a caller error");
+
+    assert_eq!(
+        outcome.state(),
+        OptimisticTransactionState::RolledBack,
+        "a spent statement timeout must not turn a retryable region error into an \
+         abandoned lock"
+    );
+    let OptimisticCommitOutcome::RolledBack(rolled_back) = outcome else {
+        panic!("every key was rolled back, so the outcome is RolledBack");
+    };
+    assert!(
+        matches!(
+            &rolled_back.cause,
+            TransactionCause::AlreadyExists { key, .. } if key == SECONDARY_KEY
+        ),
+        "cleanup must not overwrite the original cause: {:?}",
+        rolled_back.cause
+    );
+
+    // Three publications: the region-errored attempt, its retry, and the other
+    // region's single clean rollback.
+    let receipt = &rolled_back.receipt;
+    assert_eq!(receipt.rollback_publications.len(), 2);
+    assert_eq!(receipt.rollback_attempt_publications.len(), 3);
+    let rollback_results = receipt
+        .attempt_history
+        .iter()
+        .filter(|attempt| attempt.phase == TransactionAttemptPhase::BatchRollback)
+        .map(|attempt| attempt.result.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        matches!(rollback_results[0], TransactionAttemptResult::Retry(_)),
+        "the region error must be retried, not reported: {:?}",
+        rollback_results[0]
+    );
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(
+        recorded.rollbacks.len(),
+        3,
+        "the region-errored batch must be published a second time"
+    );
+    assert_eq!(topology.loads_for(LOW_REGION), 2);
 }

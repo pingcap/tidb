@@ -67,6 +67,37 @@ const ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT: u64 = 4 * 1024;
 /// Go `config.DefaultConfig().TiKVClient.AsyncCommit.SafeWindow` (2s).
 const ASYNC_COMMIT_SAFE_WINDOW_MS: u64 = 2_000;
 pub(super) const MAX_LOCK_ATTEMPTS: usize = 4;
+
+/// Go `client.ReadTimeoutShort` (`internal/client/client.go:79`), the per-RPC
+/// deadline every cleanup and commit batch is sent under.
+const RPC_READ_TIMEOUT_SHORT: Duration = Duration::from_secs(30);
+/// Go `cleanupMaxBackoff` (`2pc.go:1638`).
+const CLEANUP_MAX_BACKOFF: Duration = Duration::from_millis(20_000);
+/// Go `CommitSecondaryMaxBackoff` (`2pc.go:967`).
+const COMMIT_SECONDARY_MAX_BACKOFF: Duration = Duration::from_millis(41_000);
+
+/// The deadline a detached cleanup runs under.
+///
+/// Go builds the cleanup backoffer on `c.store.Ctx()` (`2pc.go:1660`) — the
+/// *store* context, not the statement's — and spawns it detached
+/// (`2pc.go:1651`), precisely so a statement that has already spent its own
+/// deadline still gets a full 20-second budget to unstick the locks it left
+/// behind. Binding cleanup to the statement timeout instead makes
+/// [`wait_with_call`] reject the very first backoff delay, so the rollback
+/// cannot retry at all and the locks are abandoned to the lock resolver.
+///
+/// One backoff budget plus one full-length RPC: the budget is sleep-only in Go,
+/// and a batch that consumed `ReadTimeoutShort` must still be able to spend it.
+pub(super) const fn cleanup_call_budget() -> Duration {
+    CLEANUP_MAX_BACKOFF.saturating_add(RPC_READ_TIMEOUT_SHORT)
+}
+
+/// The deadline secondary commit runs under, same store-lifetime reasoning as
+/// [`cleanup_call_budget`]; Go uses `c.store.Ctx()` at `2pc.go:1054` and
+/// `2pc.go:2036` with `CommitSecondaryMaxBackoff`.
+pub(super) const fn secondary_commit_call_budget() -> Duration {
+    COMMIT_SECONDARY_MAX_BACKOFF.saturating_add(RPC_READ_TIMEOUT_SHORT)
+}
 const TSO_LOGICAL_BITS: u32 = 18;
 const MAX_COMMIT_TS_DRIFT_MS: u64 = 60 * 60 * 1_000;
 
@@ -299,8 +330,8 @@ where
             opened_at,
             authority_id,
             forward_backoff: RegionBackoffBudget::campaign_default(),
-            secondary_backoff: RegionBackoffBudget::campaign_default(),
-            cleanup_backoff: RegionBackoffBudget::campaign_default(),
+            secondary_backoff: RegionBackoffBudget::new(COMMIT_SECONDARY_MAX_BACKOFF),
+            cleanup_backoff: RegionBackoffBudget::new(CLEANUP_MAX_BACKOFF),
             pessimistic: None,
             pinned_primary_key: None,
             gc_state,
