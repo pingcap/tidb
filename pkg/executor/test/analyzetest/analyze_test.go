@@ -745,12 +745,6 @@ func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, fail
 		rows := tk.MustQuery(query).Rows()
 		return len(rows) == 1 && rows[0][3] == jobInfo && rows[0][7] == status && rows[0][8] == failReason
 	}, 3*time.Second, 10*time.Millisecond, comment)
-
-	rows := tk.MustQuery(query).Rows()
-	require.Equal(t, 1, len(rows), comment)
-	require.Equal(t, jobInfo, rows[0][3], comment)
-	require.Equal(t, status, rows[0][7], comment)
-	require.Equal(t, failReason, rows[0][8], comment)
 }
 
 func getMockKillAutoAnalyzeFailpoint(status string) string {
