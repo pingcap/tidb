@@ -121,6 +121,14 @@ pub fn sub_uint64(lhs: u64, rhs: u64) -> Result<u64, OverflowError> {
 }
 
 /// Subtracts two signed BIGINT values.
+///
+/// DIVERGENCE, deliberately stricter than the source: Go's `SubInt64` guards
+/// with `(a > 0 && -b > MaxInt64-a) || (a < 0 && -b < MinInt64-a)`, which
+/// negates `b` first, so `b == MinInt64` wraps to itself and both halves of the
+/// guard read false. `SubInt64(1, MinInt64)` therefore returns
+/// `-9223372036854775807` with a nil error in Go, while this returns an
+/// overflow. Reporting the overflow is the correct answer; it is recorded here
+/// so the difference is not mistaken for a transcreation bug.
 pub fn sub_int64(lhs: i64, rhs: i64) -> Result<i64, OverflowError> {
     lhs.checked_sub(rhs)
         .ok_or_else(|| signed_error(lhs, rhs as i128))

@@ -231,6 +231,10 @@ pub fn convert_uint_to_uint(
 }
 
 /// `ConvertFloatToUint`.
+///
+/// DIVERGENCE, deliberately stricter than the source: Go reaches
+/// `strconv.FormatFloat` on a NaN input and panics. Here a non-finite input
+/// saturates at the upper bound and reports an overflow.
 pub fn convert_float_to_uint(
     flags: ConversionFlags,
     value: f64,
@@ -793,7 +797,11 @@ pub fn number_to_duration(
     fsp: i64,
 ) -> Result<Converted<MySqlDuration>, crate::TimeError> {
     const TIME_MAX_VALUE: i64 = 8_385_959;
-    if number.abs() > TIME_MAX_VALUE {
+    // Go tests the two bounds separately, so it never negates a value it has
+    // not already ruled in range. `number.abs()` here made `i64::MIN` panic in
+    // debug and wrap to a negative "magnitude" in release, whose hour/minute
+    // fields then read false against the `> 838` / `>= 60` guards below.
+    if !(-TIME_MAX_VALUE..=TIME_MAX_VALUE).contains(&number) {
         if number >= 10_000_000_000 {
             if let Ok(parsed) = parse_time_from_num(
                 number,
@@ -825,8 +833,11 @@ pub fn number_to_duration(
     let minute = (number / 100) % 100;
     let second = number % 100;
     if hour > 838 || minute >= 60 || second >= 60 {
+        // Go returns `ZeroDuration`, whose fsp is 0 -- NOT a zero of the
+        // requested fsp -- so the printed value is `00:00:00`, never
+        // `00:00:00.0`.
         return Ok(Converted::truncated(
-            MySqlDuration::from_nanoseconds(0, fsp).map_err(crate::TimeError::InvalidFsp)?,
+            MySqlDuration::from_nanoseconds(0, 0).map_err(crate::TimeError::InvalidFsp)?,
         ));
     }
     let sign = if negative { -1 } else { 1 };
@@ -990,64 +1001,30 @@ pub fn json_to_float(json: &BinaryJSON) -> Converted<f64> {
     }
 }
 
-pub(crate) fn decimal_text(text: &str) -> Option<Decimal> {
-    let expanded = convert_scientific_notation(text).ok()?;
-    let magnitude = expanded.strip_prefix(['+', '-']).unwrap_or(&expanded);
-    if magnitude.is_empty()
-        || magnitude.matches('.').count() > 1
-        || magnitude
-            .bytes()
-            .any(|byte| !byte.is_ascii_digit() && byte != b'.')
-    {
-        return None;
-    }
-    Some(Decimal::from_signed_literal(&expanded))
-}
-
 /// `MyDecimal.FromString`, which is prefix-accepting: it keeps the longest
-/// leading `[space]* [sign] digits [. digits]` it can read and reports
-/// `ErrTruncated` for whatever follows. Go returns that partial value beside
-/// the error, so `'1,999.00'` converts to `1`, not to `0`.
+/// leading `[space|tab]* [sign] digits [. digits] [eE exponent]` it can read
+/// and reports `ErrTruncated` for whatever follows. Go returns that partial
+/// value beside the error, so `'1,999.00'` converts to `1`, not to `0`.
+///
+/// The whole rule -- prefix acceptance, the fixed word buffer, and the
+/// `MaxInt32/2` exponent clamp -- lives in [`Decimal::parse_mysql`], which is
+/// the byte-for-byte transcreation of `FromString`. This function only maps its
+/// error disposition onto the conversion event. It deliberately does NOT expand
+/// the exponent into a digit string first: `convert_scientific_notation` is the
+/// transcreation of a DIFFERENT Go function (`convertScientificNotation`, used
+/// only by `convertDecimalStrToUint`) and materializes the exponent as literal
+/// zeros, so routing decimals through it turned `'1e9223372036854775807'` into a
+/// 9.2-exabyte allocation instead of Go's clamped 81 nines plus `ErrOverflow`.
 pub(crate) fn decimal_from_text(text: &str) -> Converted<Decimal> {
-    if let Some(value) = decimal_text(text) {
-        return Converted::exact(value);
-    }
-    let rest = text.trim_start_matches(is_decimal_space);
-    let (sign, rest) = match rest.strip_prefix('-') {
-        Some(rest) => ("-", rest),
-        None => ("", rest.strip_prefix('+').unwrap_or(rest)),
+    let (value, error) = Decimal::parse_mysql(text);
+    let event = match error {
+        None => None,
+        Some(crate::DecimalParseError::Overflow) => Some(ScalarConversionEvent::Overflow(
+            overflow(text, FieldTypeCode::NewDecimal),
+        )),
+        Some(_) => Some(ScalarConversionEvent::Truncated),
     };
-    let integral: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    let rest = &rest[integral.len()..];
-    let (fractional, rest) = match rest.strip_prefix('.') {
-        Some(rest) => {
-            let fractional: String = rest.chars().take_while(char::is_ascii_digit).collect();
-            let remaining = &rest[fractional.len()..];
-            (fractional, remaining)
-        }
-        None => (String::new(), rest),
-    };
-    if integral.is_empty() && fractional.is_empty() {
-        return Converted::truncated(Decimal::from_int(0));
-    }
-    let literal = if fractional.is_empty() {
-        format!("{sign}{integral}")
-    } else {
-        format!("{sign}{integral}.{fractional}")
-    };
-    let value = Decimal::from_signed_literal(&literal);
-    // Go only reports truncation when something other than trailing
-    // whitespace follows the number.
-    if rest.trim_matches(is_decimal_space).is_empty() {
-        Converted::exact(value)
-    } else {
-        Converted::truncated(value)
-    }
-}
-
-/// Go `isSpace` from `pkg/types/mydecimal.go`.
-fn is_decimal_space(character: char) -> bool {
-    matches!(character, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c')
+    Converted { value, event }
 }
 
 /// `ConvertJSONToDecimal`.
@@ -1069,18 +1046,18 @@ pub fn json_to_decimal(json: &BinaryJSON) -> Converted<Decimal> {
         )),
         JSON_TYPE_CODE_FLOAT64 => {
             let value = json.as_f64().expect("validated binary JSON float");
-            decimal_text(&value.to_string()).map_or_else(
+            Decimal::from_f64(value).map_or_else(
                 || Converted::truncated(Decimal::from_int(0)),
                 Converted::exact,
             )
         }
+        // Go's `res.FromString(j.GetString())`, which is prefix-accepting:
+        // `"123abc"` is `123` and `"1,999.00"` is `1`, both with a truncation
+        // warning. Rejecting the whole string instead STORED a silent `0`.
         JSON_TYPE_CODE_STRING => {
             let text = std::str::from_utf8(json.as_string().expect("validated binary JSON string"))
                 .unwrap_or("");
-            decimal_text(text).map_or_else(
-                || Converted::truncated(Decimal::from_int(0)),
-                Converted::exact,
-            )
+            decimal_from_text(text)
         }
         _ => Converted::truncated(Decimal::from_int(0)),
     }
@@ -1332,10 +1309,35 @@ mod tests {
     /// statement error. Go stops at the float prefix, so `"123..34"` answers
     /// `"123."` here and `"123"` above -- the reason the policy is a parameter
     /// of `valid_integer_prefix` rather than something its caller applies.
+    ///
     /// DIVERGENCE, recorded not fixed: Go's error is
     /// `ErrTruncatedWrongVal("INTEGER", str)`; this tier reports
-    /// `InvalidUnsignedInteger`. Nothing reaches SQL from here yet (the
-    /// function has no caller), so only the value is pinned.
+    /// `InvalidUnsignedInteger`, so only the value is pinned.
+    ///
+    /// A SECOND, LIVE divergence hangs off the same rule, and an earlier note
+    /// here mis-scoped it as unreachable "because the function has no caller".
+    /// [`str_to_int`] and [`str_to_uint`] ARE callers of this rule -- reached
+    /// from `datum_convert.rs` and `datum/convert.rs` -- and they hard-code the
+    /// warning policy. So when Go runs strict and the float prefix is not
+    /// itself a valid integer literal, Go returns the FLOAT prefix, its
+    /// `ParseInt` fails, and the statement error is `ErrOverflow` (1690)
+    /// `BIGINT value is out of range in '123.'` with value 0, whereas this tier
+    /// answers `123` plus a truncation. Captured in this checkout:
+    ///
+    /// | input       | Go strict                | Go warning | here      |
+    /// | ----------- | ------------------------ | ---------- | --------- |
+    /// | `"123..34"` | `0`, 1690 on `"123."`    | `123`, nil | `123`, tr |
+    /// | `"1.1e1.3"` | `0`, 1690 on `"1.1e1"`   | `11`, nil  | `11`, tr  |
+    /// | `"123abc"`  | `123`, 1292              | `123`, nil | `123`, tr |
+    /// | `"-1-1"`    | `-1`, 1292               | `-1`, nil  | `-1`, tr  |
+    /// | `"  12  "`  | `12`, nil                | `12`, nil  | `12`, nil |
+    /// | `""`        | `0`, 1292                | `0`, nil   | `0`, tr   |
+    ///
+    /// Only the strict column diverges, and only on the first two rows. Closing
+    /// it means threading the statement's truncation policy down to
+    /// `str_to_int`/`str_to_uint` -- the callers do not carry it today -- so it
+    /// is left recorded rather than half-applied: hard-coding the strict policy
+    /// instead would turn today's correct non-strict answers into errors.
     #[test]
     fn source_valid_integer_prefix_strict_rows() {
         for (input, expected, errored) in [
@@ -1551,8 +1553,13 @@ mod tests {
             (838_1222, "838:12:22", false),
             (1_001_222, "100:12:22", false),
             (20_171_222, "838:59:59", true),
-            (176_022, "00:00:00.0", true),
-            (171_260, "00:00:00.0", true),
+            // Go's truncation arm answers `ZeroDuration` (fsp 0), so the
+            // requested fsp 1 does NOT appear in the printed value.
+            (176_022, "00:00:00", true),
+            (171_260, "00:00:00", true),
+            // `i64::MIN` must not be negated before its range is ruled out.
+            (i64::MIN, "-838:59:59", true),
+            (i64::MAX, "838:59:59", true),
         ] {
             let actual =
                 number_to_duration(number, i64::from(number == 176_022 || number == 171_260))
@@ -1690,5 +1697,55 @@ mod tests {
             scalar_to_string(ScalarStringValue::Decimal(&decimal)).unwrap(),
             "3.14159"
         );
+    }
+}
+
+#[cfg(test)]
+mod decimal_from_text_source_rows {
+    use super::*;
+
+    /// Captured from Go in this checkout with a throwaway
+    /// `MyDecimal.FromString` probe. The first row used to abort the process:
+    /// the old `decimal_text` expanded the exponent into literal zeros, so
+    /// `1e9223372036854775807` asked for a 9.2-exabyte `String`.
+    #[test]
+    fn source_from_string_exponent_rows() {
+        let nines = "9".repeat(81);
+        for (input, expected, event) in [
+            ("1e9223372036854775807", nines.as_str(), "overflow"),
+            ("1e2147483647", nines.as_str(), "overflow"),
+            ("1e15", "1000000000000000", "exact"),
+            ("1e-9223372036854775808", "0", "truncated"),
+            ("1.5e3", "1500", "exact"),
+            ("123abc", "123", "truncated"),
+            ("1,999.00", "1", "truncated"),
+        ] {
+            let actual = decimal_from_text(input);
+            assert_eq!(actual.value.to_string(), expected, "{input:?}");
+            let kind = match actual.event {
+                None => "exact",
+                Some(ScalarConversionEvent::Truncated) => "truncated",
+                Some(ScalarConversionEvent::Overflow(_)) => "overflow",
+                Some(ScalarConversionEvent::RoundedToScale) => "rounded",
+            };
+            assert_eq!(kind, event, "{input:?}");
+        }
+        let negative = decimal_from_text("-1e9223372036854775807");
+        assert_eq!(negative.value.to_string(), format!("-{nines}"));
+    }
+
+    /// `ConvertJSONToDecimal`'s string arm is Go's `FromString`, so it accepts
+    /// a numeric prefix instead of collapsing the value to `0`.
+    #[test]
+    fn source_json_string_decimal_is_prefix_accepting() {
+        for (literal, expected) in [
+            (r#""123abc""#, "123"),
+            (r#""1,999.00""#, "1"),
+            (r#""12""#, "12"),
+        ] {
+            let json = BinaryJSON::parse(literal).unwrap();
+            let actual = json_to_decimal(&json);
+            assert_eq!(actual.value.to_string(), expected, "{literal:?}");
+        }
     }
 }
