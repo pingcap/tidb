@@ -204,11 +204,13 @@ impl GlobalSysvars {
     /// takes on a column or privilege name the running version does not
     /// know.
     pub fn load_from_cluster<I: IntoIterator<Item = (String, String)>>(&self, rows: I) {
-        let mut values = self.values.lock().expect("global sysvar lock poisoned");
         for (name, value) in rows {
             let key = name.to_ascii_lowercase();
-            if get_sys_var(&key).is_some() {
-                values.insert(key, value);
+            if let Some(def) = get_sys_var(&key) {
+                self.store(def)
+                    .lock()
+                    .expect("global sysvar lock poisoned")
+                    .insert(key, value);
             }
         }
     }
@@ -242,6 +244,8 @@ impl GlobalSysvars {
     pub fn replace_from(&self, fresh: &Self) {
         *self.values.lock().expect("global sysvar lock poisoned") =
             std::mem::take(&mut *fresh.values.lock().expect("global sysvar lock poisoned"));
+        *self.instances.lock().expect("global sysvar lock poisoned") =
+            std::mem::take(&mut *fresh.instances.lock().expect("global sysvar lock poisoned"));
     }
 }
 
