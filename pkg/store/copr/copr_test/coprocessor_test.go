@@ -57,6 +57,160 @@ func getKeyspaceAwareKey(store kv.Storage, key []byte) []byte {
 	return codec.EncodeKey(key)
 }
 
+// newAnalyzeBatchStore bootstraps a mock store whose keyspace holds fourteen
+// Regions with boundaries at b..n, all led by one TiKV store.
+func newAnalyzeBatchStore(t *testing.T) kv.Storage {
+	t.Helper()
+	const regionCount = 14
+
+	tempStore, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.MockTiKV))
+	require.NoError(t, err)
+	boundaries := make([][]byte, 0, regionCount-1)
+	for i := 1; i < regionCount; i++ {
+		boundaries = append(boundaries, getKeyspaceAwareKey(tempStore, []byte{byte('a' + i)}))
+	}
+	require.NoError(t, tempStore.Close())
+
+	store, err := mockstore.NewMockStore(
+		mockstore.WithStoreType(mockstore.MockTiKV),
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			testutils.BootstrapWithMultiRegions(c.(*testutils.MockCluster), boundaries...)
+		}),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	return store
+}
+
+func TestAnalyzeBatchUsesRequestWideDistinctRegionCount(t *testing.T) {
+	store := newAnalyzeBatchStore(t)
+	client := store.GetClient().(*copr.CopClient)
+	ctx := context.Background()
+	killed := uint32(0)
+	vars := kv.NewVariables(&killed)
+	opt := &kv.ClientSendOption{}
+
+	var ascendingTasks, descendingTasks []string
+	for _, tc := range []struct {
+		storeBatchSize int
+		desc           bool
+	}{
+		{storeBatchSize: 0},
+		{storeBatchSize: 25000},
+		{storeBatchSize: 0, desc: true},
+	} {
+		req := &kv.Request{
+			Tp:        kv.ReqTypeAnalyze,
+			StoreType: kv.TiKV,
+			KeyRanges: kv.NewPartitionedKeyRanges([][]kv.KeyRange{
+				copr.BuildKeyRanges("a", "h"),
+				copr.BuildKeyRanges("h", "z"),
+			}),
+			Concurrency:             6,
+			StoreBatchSize:          tc.storeBatchSize,
+			Desc:                    tc.desc,
+			AllowBatchTaskDataMerge: true,
+		}
+		req.RequestSource.RequestSourceInternal = true
+		it, errRes := client.BuildCopIterator(ctx, req, vars, opt)
+		require.Nil(t, errRes)
+		tasks := it.GetTasks()
+		require.Len(t, tasks, 8)
+		fullGroups, singletons := 0, 0
+		for _, task := range tasks {
+			switch len(task.ToPBBatchTasks()) {
+			case 0:
+				singletons++
+			case 1:
+				fullGroups++
+			default:
+				require.FailNow(t, "Analyze group exceeded the selected width")
+			}
+		}
+		// Each seven-Region KeyRanges partition forms three width-two groups
+		// and one singleton. The two singletons prove packing did not cross the
+		// partition boundary even though N=14 is request-wide.
+		require.Equal(t, 6, fullGroups)
+		require.Equal(t, 2, singletons)
+		concurrency, smallTaskConcurrency := it.GetConcurrency()
+		require.Equal(t, 3, concurrency)
+		require.Zero(t, smallTaskConcurrency)
+		if tc.storeBatchSize == 0 {
+			taskStrings := make([]string, len(tasks))
+			for i, task := range tasks {
+				taskStrings[i] = task.String()
+			}
+			if tc.desc {
+				descendingTasks = taskStrings
+			} else {
+				ascendingTasks = taskStrings
+			}
+		}
+	}
+	require.Len(t, ascendingTasks, 8)
+	require.Len(t, descendingTasks, 8)
+	for partition := 0; partition < 2; partition++ {
+		for i := 0; i < 4; i++ {
+			require.Equal(
+				t,
+				ascendingTasks[partition*4+3-i],
+				descendingTasks[partition*4+i],
+			)
+		}
+	}
+
+	// The same fixture without the merge marker keeps one task per Region and
+	// the full outer concurrency: at identical Region pressure (N=14 > 2*6),
+	// only the explicit opt-in enters batching.
+	unmarkedReq := &kv.Request{
+		Tp:        kv.ReqTypeAnalyze,
+		StoreType: kv.TiKV,
+		KeyRanges: kv.NewPartitionedKeyRanges([][]kv.KeyRange{
+			copr.BuildKeyRanges("a", "h"),
+			copr.BuildKeyRanges("h", "z"),
+		}),
+		Concurrency: 6,
+	}
+	unmarkedReq.RequestSource.RequestSourceInternal = true
+	itUnmarked, errUnmarked := client.BuildCopIterator(ctx, unmarkedReq, vars, opt)
+	require.Nil(t, errUnmarked)
+	require.Len(t, itUnmarked.GetTasks(), 14)
+	for _, task := range itUnmarked.GetTasks() {
+		require.Empty(t, task.ToPBBatchTasks())
+	}
+	unmarkedConcurrency, unmarkedSmall := itUnmarked.GetConcurrency()
+	require.Equal(t, 6, unmarkedConcurrency)
+	require.Zero(t, unmarkedSmall)
+
+	// Both KeyRanges partitions cover a different slice of the same g-h
+	// Region. N is the 14 distinct Region IDs, not the 15 built tasks. At C=7
+	// the former stays on the two-wave singleton boundary while the latter
+	// would incorrectly activate width two, so fifteen singleton tasks with
+	// all seven outer workers retained prove the request-wide deduplication.
+	req := &kv.Request{
+		Tp:        kv.ReqTypeAnalyze,
+		StoreType: kv.TiKV,
+		KeyRanges: kv.NewPartitionedKeyRanges([][]kv.KeyRange{
+			copr.BuildKeyRanges("a", "g0"),
+			copr.BuildKeyRanges("g0", "z"),
+		}),
+		Concurrency:             7,
+		AllowBatchTaskDataMerge: true,
+	}
+	req.RequestSource.RequestSourceInternal = true
+	it, errRes := client.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	require.Len(t, it.GetTasks(), 15)
+	for _, task := range it.GetTasks() {
+		require.Empty(t, task.ToPBBatchTasks())
+	}
+	concurrency, smallTaskConcurrency := it.GetConcurrency()
+	require.Equal(t, 7, concurrency)
+	require.Zero(t, smallTaskConcurrency)
+}
+
 func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
@@ -289,6 +443,58 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	_, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
 	require.Zero(t, req.Paging.PagingSizeBytes)
+
+	// The merge capability must reach the actual TiDB-to-TiKV request on the
+	// wire in both directions: a marked request carries the protobuf flag and
+	// an unmarked request does not. Canceling in the send hook keeps this
+	// check independent of response decoding.
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	sendContexts := make(map[string]context.Context, 2)
+	cancelSend := make(map[string]context.CancelFunc, 2)
+	sawRequest := map[string]*atomic.Bool{"unmarked": {}, "marked": {}}
+	wireFlag := map[string]*atomic.Bool{"unmarked": {}, "marked": {}}
+	for alias := range sawRequest {
+		sendContexts[alias], cancelSend[alias] = context.WithTimeout(ctx, 5*time.Second)
+	}
+	testfailpoint.EnableCall(
+		t,
+		"github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx",
+		func(rpcReq *tikvrpc.Request) {
+			copReq, ok := rpcReq.Req.(*coprocessor.Request)
+			if !ok || copReq.Tp != kv.ReqTypeAnalyze {
+				return
+			}
+			if cancel, tracked := cancelSend[copReq.ConnectionAlias]; tracked {
+				sawRequest[copReq.ConnectionAlias].Store(true)
+				wireFlag[copReq.ConnectionAlias].Store(copReq.AllowBatchTaskDataMerge)
+				cancel()
+			}
+		},
+	)
+	for _, tc := range []struct {
+		alias      string
+		allowMerge bool
+	}{
+		{"unmarked", false},
+		{"marked", true},
+	} {
+		req = &kv.Request{
+			Tp:                      kv.ReqTypeAnalyze,
+			StoreType:               kv.TiKV,
+			KeyRanges:               kv.NewNonParitionedKeyRangesWithHint(ranges, nil),
+			Concurrency:             15,
+			StoreBatchSize:          3,
+			AllowBatchTaskDataMerge: tc.allowMerge,
+			ConnAlias:               tc.alias,
+		}
+		req.RequestSource.RequestSourceInternal = true
+		resp := copClient.Send(sendContexts[tc.alias], req, vars, opt)
+		_, err = resp.Next(sendContexts[tc.alias])
+		require.ErrorIs(t, err, context.Canceled)
+		require.NoError(t, resp.Close())
+		require.True(t, sawRequest[tc.alias].Load())
+		require.Equal(t, tc.allowMerge, wireFlag[tc.alias].Load())
+	}
 
 	// only small tasks will be batched.
 	ranges = copr.BuildKeyRanges("a", "b", "h", "i", "o", "p")

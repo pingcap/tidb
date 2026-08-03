@@ -123,6 +123,7 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
 		SetConcurrency(e.concurrency).
+		SetAllowBatchTaskDataMerge(true).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).

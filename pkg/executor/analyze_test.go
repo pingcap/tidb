@@ -80,6 +80,9 @@ func TestAnalyzeBuildsSingleBatchableRequest(t *testing.T) {
 	tk.MustExec("analyze table tu with 1 samplerate, 0 topn, 2 buckets")
 	require.Equal(t, int64(1), requestCount.Load())
 	require.False(t, lastRequest.Load().KeepOrder)
+	// Analyze marks its requests as able to consume merged child responses,
+	// which enables same-store batching in the coprocessor client.
+	require.True(t, lastRequest.Load().AllowBatchTaskDataMerge)
 
 	bucketRows := tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 'tu' and column_name = 'a' and is_index = 0").Rows()
 	bounds := make(map[string]struct{}, 2*len(bucketRows))
