@@ -673,7 +673,7 @@ func (e *InsertValues) fillColValue(
 func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool, rowIdx int) (
 	[]types.Datum, error,
 ) {
-	gCols := make([]*table.Column, 0)
+	var gCols []*table.Column
 	tCols := e.Table.Cols()
 	if e.hasExtraHandle {
 		col := &table.Column{}
@@ -712,13 +712,22 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		}
 	}
 
+	// Fast path: no generated columns, nothing more to do.
+	if len(gCols) == 0 {
+		return row, nil
+	}
+
 	sctx := e.Ctx()
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
+	// Build the MutRow once and update it in-place after each generated column is
+	// evaluated. Previously MutRowFromDatums was called inside the loop, causing a
+	// full row copy O(columns) allocation for every generated column — O(G*C) total.
+	mutRow := chunk.MutRowFromDatums(row)
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
-		val, err := e.GenExprs[i].Eval(evalCtx, chunk.MutRowFromDatums(row).ToRow())
+		val, err := e.GenExprs[i].Eval(evalCtx, mutRow.ToRow())
 		if err != nil && gCol.FieldType.IsArray() {
 			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
 		}
@@ -740,6 +749,9 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		if err = gCol.HandleBadNull(sc.ErrCtx(), &row[colIdx], rowCntInLoadData); err != nil {
 			return nil, err
 		}
+		// Keep mutRow in sync so subsequent generated columns that reference
+		// already-computed generated columns see the updated value.
+		mutRow.SetDatum(colIdx, row[colIdx])
 	}
 	return row, nil
 }

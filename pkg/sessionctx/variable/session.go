@@ -1058,6 +1058,7 @@ type SessionVars struct {
 	MergeJoinCostFactor        float64
 	HashJoinCostFactor         float64
 	IndexJoinCostFactor        float64
+	IndexJoinMaxScanRowsRatio  float64
 
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
@@ -2261,6 +2262,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		MergeJoinCostFactor:           DefOptMergeJoinCostFactor,
 		HashJoinCostFactor:            DefOptHashJoinCostFactor,
 		IndexJoinCostFactor:           DefOptIndexJoinCostFactor,
+		IndexJoinMaxScanRowsRatio:     DefOptIndexJoinMaxScanRowsRatio,
 		CommandValue:                  uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
 		TiDBOptJoinReorderThroughProj: DefTiDBOptJoinReorderThroughProj,

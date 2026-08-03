@@ -798,6 +798,12 @@ func (local *Backend) FlushAllEngines(parentCtx context.Context) (err error) {
 	return local.engineMgr.flushAllEngines(parentCtx)
 }
 
+// CleanupAllLocalEngines performs best-effort cleanup for all local engines.
+// Failures are logged internally and not returned to the caller.
+func (local *Backend) CleanupAllLocalEngines(ctx context.Context) {
+	local.engineMgr.cleanupAllLocalEngines(ctx)
+}
+
 // RetryImportDelay returns the delay time before retrying to import a file.
 func (*Backend) RetryImportDelay() time.Duration {
 	return defaultRetryBackoffTime
@@ -1102,17 +1108,20 @@ func (local *Backend) generateAndSendJob(
 						}
 						return err
 					}
-					// we need to increase the ref count before sending jobs to
-					// jobToWorkerCh, in case some job finished quickly and decrease
-					// the ref count to zero and cause the data being released.
+					// All jobs must be ref'd before sending any job to jobToWorkerCh.
+					// Jobs run asynchronously after they are sent. If an earlier job finishes
+					// before later jobs increase their refs, the ingest data can be released
+					// when its ref count drops to zero.
 					for _, job := range jobs {
 						job.ref(jobWg)
 					}
-					for _, job := range jobs {
+					for i, job := range jobs {
 						select {
 						case <-egCtx.Done():
-							// this job is not put into jobToWorkerCh
-							job.done(jobWg)
+							for _, unsentJob := range jobs[i:] {
+								// These jobs are not put into jobToWorkerCh.
+								unsentJob.done(jobWg)
+							}
 							// if the context is canceled, it means worker has error.
 							return nil
 						case jobToWorkerCh <- job:

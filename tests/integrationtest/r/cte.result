@@ -1142,7 +1142,7 @@ Union_213	199600.20	root
   └─CTEFullScan_217	99800.10	root	CTE:product_detail	data:CTE_4
 CTE_4	99800.10	root		Non-Recursive CTE
 └─Projection_175(Seed Part)	99800.10	root		cte1.table_c.col_4, 3集合->Column#413
-  └─HashJoin_191	99800.10	root		left outer join, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column#390, cte1.table_c.col_1)]
+  └─HashJoin_176	99800.10	root		left outer join, equal:[eq(cte1.table_c.col_4, cte1.table_c.col_4) eq(Column#390, cte1.table_c.col_1)]
     ├─TableReader_207(Build)	9980.01	root		data:Selection_206
     │ └─Selection_206	9980.01	cop[tikv]		not(isnull(cte1.table_c.col_1)), not(isnull(cte1.table_c.col_4))
     │   └─TableFullScan_205	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo

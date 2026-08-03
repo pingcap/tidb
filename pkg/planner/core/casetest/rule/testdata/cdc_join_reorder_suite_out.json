@@ -1212,7 +1212,7 @@
         "Plan": [
           "Projection_19 2.40 root  test.t1.id, test.t1.name, test.t3.id, test.t3.name, test.t4.id, test.t4.name, test.t2.id, test.t2.name",
           "└─Selection_20 2.40 root  or(like(test.t3.name, \"test3\", 92), like(test.t4.name, \"test4\", 92))",
-          "  └─MergeJoin_21 3.00 root  left outer join, left key:test.t3.id, right key:test.t4.id",
+          "  └─MergeJoin_23 3.00 root  left outer join, left key:test.t3.id, right key:test.t4.id",
           "    ├─TableReader_51(Build) 3.00 root  data:TableFullScan_50",
           "    │ └─TableFullScan_50 3.00 cop[tikv] table:t4 keep order:true",
           "    └─MergeJoin_33(Probe) 3.00 root  inner join, left key:test.t1.id, right key:test.t3.id",
@@ -1229,7 +1229,7 @@
         "SQL": "explain select /*+ leading(t3, t4, t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4'",
         "Plan": [
           "Projection_18 3.00 root  test.t1.id, test.t1.name, test.t3.id, test.t3.name, test.t4.id, test.t4.name, test.t2.id, test.t2.name",
-          "└─MergeJoin_19 3.00 root  inner join, left key:test.t1.id, right key:test.t2.id",
+          "└─MergeJoin_21 3.00 root  inner join, left key:test.t1.id, right key:test.t2.id",
           "  ├─TableReader_49(Build) 3.00 root  data:TableFullScan_48",
           "  │ └─TableFullScan_48 3.00 cop[tikv] table:t2 keep order:true",
           "  └─MergeJoin_31(Probe) 3.00 root  inner join, left key:test.t3.id, right key:test.t1.id, other cond:or(like(test.t3.name, \"test3\", 92), like(test.t4.name, \"test4\", 92))",
@@ -1247,7 +1247,7 @@
         "Plan": [
           "Projection_19 2.40 root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.id, test.t4.name",
           "└─Selection_20 2.40 root  or(like(test.t2.name, \"test2\", 92), like(test.t3.name, \"test3\", 92))",
-          "  └─MergeJoin_21 3.00 root  left outer join, left key:test.t2.id, right key:test.t3.id",
+          "  └─MergeJoin_23 3.00 root  left outer join, left key:test.t2.id, right key:test.t3.id",
           "    ├─TableReader_51(Build) 3.00 root  data:TableFullScan_50",
           "    │ └─TableFullScan_50 3.00 cop[tikv] table:t3 keep order:true",
           "    └─MergeJoin_33(Probe) 3.00 root  inner join, left key:test.t1.id, right key:test.t2.id",
@@ -1263,7 +1263,7 @@
       {
         "SQL": "explain select * from t1 where exists (select 1 from t2 inner join t3 on t2.id=t3.id left join t4 on t4.id=t3.id join t5 on t2.id=t5.id where (t3.name like 'test3' or t4.name like 'test4') and t2.id = t1.id)",
         "Plan": [
-          "MergeJoin_24 2.40 root  semi join, left key:test.t1.id, right key:test.t2.id",
+          "MergeJoin_25 2.40 root  semi join, left key:test.t1.id, right key:test.t2.id",
           "├─MergeJoin_28(Build) 2.40 root  inner join, left key:test.t2.id, right key:test.t5.id",
           "│ ├─TableReader_63(Build) 3.00 root  data:TableFullScan_62",
           "│ │ └─TableFullScan_62 3.00 cop[tikv] table:t5 keep order:true",
@@ -1284,11 +1284,11 @@
         "SQL": "explain select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or rand() < 0.5) sub inner join t4 on sub.id=t4.id",
         "Plan": [
           "Projection_18 2.40 root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.id, test.t4.name",
-          "└─HashJoin_30 2.40 root  inner join, equal:[eq(test.t4.id, test.t1.id)]",
+          "└─HashJoin_20 2.40 root  inner join, equal:[eq(test.t4.id, test.t1.id)]",
           "  ├─TableReader_110(Build) 3.00 root  data:TableFullScan_109",
           "  │ └─TableFullScan_109 3.00 cop[tikv] table:t4 keep order:false",
           "  └─Selection_57(Probe) 2.40 root  or(like(test.t2.name, \"test2\", 92), or(like(test.t3.name, \"test3\", 92), lt(rand(), 0.5)))",
-          "    └─MergeJoin_58 3.00 root  left outer join, left key:test.t2.id, right key:test.t3.id",
+          "    └─MergeJoin_60 3.00 root  left outer join, left key:test.t2.id, right key:test.t3.id",
           "      ├─TableReader_81(Build) 3.00 root  data:TableFullScan_80",
           "      │ └─TableFullScan_80 3.00 cop[tikv] table:t3 keep order:true",
           "      └─MergeJoin_70(Probe) 3.00 root  inner join, left key:test.t1.id, right key:test.t2.id",
@@ -1302,11 +1302,11 @@
         "SQL": "explain select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or sleep(0) = 0) sub inner join t4 on sub.id=t4.id",
         "Plan": [
           "Projection_18 2.40 root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.id, test.t4.name",
-          "└─HashJoin_30 2.40 root  inner join, equal:[eq(test.t4.id, test.t1.id)]",
+          "└─HashJoin_20 2.40 root  inner join, equal:[eq(test.t4.id, test.t1.id)]",
           "  ├─TableReader_110(Build) 3.00 root  data:TableFullScan_109",
           "  │ └─TableFullScan_109 3.00 cop[tikv] table:t4 keep order:false",
           "  └─Selection_57(Probe) 2.40 root  or(like(test.t2.name, \"test2\", 92), or(like(test.t3.name, \"test3\", 92), eq(sleep(0), 0)))",
-          "    └─MergeJoin_58 3.00 root  left outer join, left key:test.t2.id, right key:test.t3.id",
+          "    └─MergeJoin_60 3.00 root  left outer join, left key:test.t2.id, right key:test.t3.id",
           "      ├─TableReader_81(Build) 3.00 root  data:TableFullScan_80",
           "      │ └─TableFullScan_80 3.00 cop[tikv] table:t3 keep order:true",
           "      └─MergeJoin_70(Probe) 3.00 root  inner join, left key:test.t1.id, right key:test.t2.id",
@@ -1321,7 +1321,7 @@
         "Plan": [
           "Projection_24 2.40 root  test.t1.id, test.t1.name, test.t2.name, test.t3.name, test.t4.name, test.t5.id, test.t5.name",
           "└─Selection_25 2.40 root  or(like(test.t2.name, \"test2\", 92), like(test.t3.name, \"test3\", 92))",
-          "  └─MergeJoin_26 3.00 root  left outer join, left key:test.t2.id, right key:test.t3.id",
+          "  └─MergeJoin_28 3.00 root  left outer join, left key:test.t2.id, right key:test.t3.id",
           "    ├─TableReader_68(Build) 3.00 root  data:TableFullScan_67",
           "    │ └─TableFullScan_67 3.00 cop[tikv] table:t3 keep order:true",
           "    └─MergeJoin_38(Probe) 3.00 root  inner join, left key:test.t1.id, right key:test.t2.id",
