@@ -15,8 +15,7 @@
 //! DistSQL continuation for bounded optimistic lock recovery.
 
 use tidb_txnkv::lock::{
-    decode_lock_observation, resolve_optimistic_locks, LockRecoveryClient, LockRecoveryResult,
-    TimestampSource,
+    decode_lock_observation, resolve_optimistic_locks, LockRecoveryClient, TimestampSource,
 };
 use tidb_txnkv::region::RegionRecoveryLoader;
 use tidb_txnkv::SharedReadRuntime;
@@ -63,9 +62,13 @@ where
             &observation.request_context,
             &observation.call,
             &self.timestamp_source,
+            // Go `ClientHelper` is read-only by construction
+            // (`client_helper.go:57-58`), and a Cop request is a read.
+            true,
         )
         .map_err(|error| error.to_string())?;
-        if let LockRecoveryResult::Alive(ttl) = result {
+        if result.is_alive() {
+            let ttl = result.ttl;
             let deadline_budget = observation.call.timeout();
             if deadline_budget.is_zero() {
                 return Err("optimistic lock recovery exceeded the unary deadline".to_owned());
@@ -78,6 +81,9 @@ where
                 return Err("optimistic lock recovery exceeded the unary deadline".to_owned());
             }
         }
-        Ok(LockedResponseAction::RetrySameTask)
+        // Go `ClientHelper.ResolveLocks` hands the two lists straight to the
+        // snapshot's `TSSet`s, which the *next* send stamps onto its context.
+        // The retry below is that next send.
+        Ok(LockedResponseAction::RetrySameTask { recovered: result })
     }
 }

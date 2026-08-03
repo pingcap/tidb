@@ -171,12 +171,124 @@ pub enum ResolvedTxnStatus {
 }
 
 /// Bounded outcome returned to DistSQL's same-task retry owner.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum LockRecoveryResult {
-    /// All determined locks were cleaned and no wait remains.
-    Resolved(Vec<ResolvedTxnStatus>),
-    /// At least one transaction is alive; wait the minimum response TTL.
-    Alive(Duration),
+///
+/// Go `txnlock.ResolveLockResult` (`lock_resolver.go:405-411`). One batch of
+/// locks can end in more than one way at once — one owner still running while
+/// another's min-commit-ts was pushed past the reader — so the three answers
+/// are fields, not alternatives. Collapsing them into an enum would silently
+/// drop the pushed transaction's id and make the reader meet the same lock
+/// forever.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LockRecoveryResult {
+    /// Shortest wait any still-running owner asked for; zero means none did.
+    ///
+    /// Go `ResolveLockResult.TTL`, produced by `txnExpireTime`, whose
+    /// uninitialised value is likewise `0`.
+    pub ttl: Duration,
+    /// Determined fates observed while cleaning the expired locks.
+    pub statuses: Vec<ResolvedTxnStatus>,
+    /// Transactions whose locks the reader may step over.
+    ///
+    /// Go `ResolveLockResult.IgnoreLocks` -> `Context.resolved_locks`.
+    pub ignore_locks: Vec<u64>,
+    /// Transactions committed at or before the reader, whose value the reader
+    /// must see through the lock.
+    ///
+    /// Go `ResolveLockResult.AccessLocks` -> `Context.committed_locks`.
+    pub access_locks: Vec<u64>,
+}
+
+impl LockRecoveryResult {
+    /// Whether at least one owner is still running and asked to be waited for.
+    ///
+    /// Go tests `msBeforeTxnExpired > 0` at every caller.
+    #[must_use]
+    pub const fn is_alive(&self) -> bool {
+        !self.ttl.is_zero()
+    }
+
+    /// One owner is still running and nothing was decided.
+    #[must_use]
+    pub(crate) fn alive(ttl: Duration) -> Self {
+        Self {
+            ttl,
+            ..Self::default()
+        }
+    }
+
+    /// One lock whose owner's fate is now decided.
+    ///
+    /// Go `lock_resolver.go:632-651` sorts exactly these three cases, and it
+    /// does so on the write path too — the write callers simply discard the
+    /// lists. Sorting here as well keeps one rule instead of two.
+    #[must_use]
+    pub(crate) fn resolved(txn_id: u64, status: ResolvedTxnStatus, caller_start_ts: u64) -> Self {
+        let mut result = Self {
+            statuses: vec![status],
+            ..Self::default()
+        };
+        result.classify(txn_id, status, caller_start_ts);
+        result
+    }
+
+    /// Files one decided status under `ignore` or `access`.
+    fn classify(&mut self, txn_id: u64, status: ResolvedTxnStatus, caller_start_ts: u64) {
+        match status {
+            // Go: `status.IsCommitted() && status.CommitTS() <= callerStartTS`
+            // — the reader is entitled to the value under the lock.
+            ResolvedTxnStatus::Committed(commit_ts) if commit_ts <= caller_start_ts => {
+                self.access_locks.push(txn_id);
+            }
+            // Go: `status.IsRolledBack()`, and committed strictly after the
+            // reader — either way there is nothing here for it to see.
+            ResolvedTxnStatus::Committed(_) | ResolvedTxnStatus::RolledBack => {
+                self.ignore_locks.push(txn_id);
+            }
+        }
+    }
+}
+
+/// The two per-reader timestamp sets a read replays into its request context.
+///
+/// Go `KVSnapshot.resolvedLocks` / `KVSnapshot.committedLocks`
+/// (`snapshot.go:124-125`), filled from [`LockRecoveryResult`] by
+/// `ClientHelper` (`client_helper.go:97-122`) and stamped onto
+/// `Context.resolved_locks` / `Context.committed_locks` before every send
+/// (`client_helper.go:148-149`). Go guards them with a mutex because a
+/// snapshot is shared across goroutines; a reader here is owned by one caller,
+/// so the ordered set alone carries the same meaning.
+///
+/// This set is what makes a lock the reader has already classified stop
+/// blocking it. Without it the retry meets the same lock again — the deadloop
+/// `client_helper.go`'s own comment warns about.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SnapshotLockSet {
+    /// Go `resolvedLocks` -> `Context.resolved_locks`.
+    ignore: std::collections::BTreeSet<u64>,
+    /// Go `committedLocks` -> `Context.committed_locks`.
+    access: std::collections::BTreeSet<u64>,
+}
+
+impl SnapshotLockSet {
+    /// Go `ClientHelper.ResolveLocks`: whatever the resolver classified is put
+    /// into the reader's sets and stays there for the reader's life.
+    pub fn absorb(&mut self, result: &LockRecoveryResult) {
+        self.ignore.extend(result.ignore_locks.iter().copied());
+        self.access.extend(result.access_locks.iter().copied());
+    }
+
+    /// Go `ClientHelper.SendReqCtx`: both sets are stamped onto the context of
+    /// every request this reader sends after the first resolve.
+    pub fn stamp(&self, context: &mut KvrpcContext) {
+        context.resolved_locks = self.ignore.iter().copied().collect();
+        context.committed_locks = self.access.iter().copied().collect();
+    }
+
+    /// Whether anything has been classified yet.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.ignore.is_empty() && self.access.is_empty()
+    }
 }
 
 /// Fail-closed recovery errors.
@@ -205,8 +317,6 @@ pub enum LockRecoveryError {
     Rpc(String),
     /// The canonical read cancellation won before further lock recovery.
     CallerCancelled,
-    /// MinCommitTSPushed requires resolved-lock propagation outside this slice.
-    MinCommitTsPushed,
     /// CheckSecondaryLocks answered with a lock that is not async-commit.
     ///
     /// Go `nonAsyncCommitLock`: the primary said async commit and a secondary
@@ -243,8 +353,6 @@ impl fmt::Display for LockRecoveryError {
             }
             Self::Rpc(error) => write!(formatter, "lock RPC failed: {error}"),
             Self::CallerCancelled => formatter.write_str("lock recovery cancelled by caller"),
-            Self::MinCommitTsPushed => formatter
-                .write_str("MinCommitTSPushed lock requires deferred resolved-lock propagation"),
             Self::NonAsyncCommitLock => {
                 formatter.write_str("CheckSecondaryLocks returned a non-async-commit lock")
             }
@@ -267,6 +375,11 @@ impl From<LockAdmissionError> for LockRecoveryError {
 }
 
 /// Resolves admitted locks using only the supplied shared runtime.
+///
+/// `for_read` is Go's `ResolveLocksOptions.ForRead`
+/// (`ResolveLocksForRead` vs `ResolveLocks`). It is not a tuning knob: a
+/// reader may step over or read through a live lock and a writer may not, so
+/// the same lock legitimately ends the call two different ways.
 pub fn resolve_optimistic_locks<C, L, T>(
     runtime: &SharedReadRuntime<C, L>,
     locks: &[OptimisticLock],
@@ -274,13 +387,17 @@ pub fn resolve_optimistic_locks<C, L, T>(
     base_context: &KvrpcContext,
     call: &UnaryCallContext,
     timestamp_source: &T,
+    for_read: bool,
 ) -> Result<LockRecoveryResult, LockRecoveryError>
 where
     C: LockRecoveryClient,
     L: RegionLoader,
     T: TimestampSource + ?Sized,
 {
-    let mut statuses = Vec::with_capacity(locks.len());
+    let mut result = LockRecoveryResult {
+        statuses: Vec::with_capacity(locks.len()),
+        ..LockRecoveryResult::default()
+    };
     let mut minimum_wait = None::<Duration>;
     for lock in locks {
         // Go `resolve(l, forceSyncCommit)` (`lock_resolver.go:577-621`) is a
@@ -308,23 +425,53 @@ where
             )?,
             other => other?,
         };
+        // Go `lock_resolver.go:632-651` classifies every lock, whatever its
+        // outcome was, into exactly one of three buckets.
         match outcome {
-            OneLockOutcome::Resolved(status) => statuses.push(status),
-            OneLockOutcome::Alive(wait) => {
+            // Go `lock_resolver.go:626-632`: a writer never reads through or
+            // around a lock, so for it a live owner ends the classification
+            // right here whatever `action` said.
+            OneLockOutcome::Alive { wait, .. } if !for_read => {
+                minimum_wait = Some(minimum_wait.map_or(wait, |current| current.min(wait)));
+            }
+            // Go: `status.action == kvrpcpb.Action_MinCommitTSPushed`. TiKV
+            // moved this still-running transaction's min-commit-ts above the
+            // reader's timestamp, so whatever it eventually commits at is
+            // invisible here. The lock is stepped over, not waited for.
+            OneLockOutcome::Alive {
+                min_commit_ts_pushed: true,
+                ..
+            } => result.ignore_locks.push(lock.txn_id),
+            OneLockOutcome::Resolved(status) => {
+                result.statuses.push(status);
+                result.classify(lock.txn_id, status, caller_start_ts);
+            }
+            // Go's trailing `else`: the owner is alive and its min-commit-ts
+            // was not pushed, so the reader owes it the rest of its TTL.
+            OneLockOutcome::Alive { wait, .. } => {
                 minimum_wait = Some(minimum_wait.map_or(wait, |current| current.min(wait)));
             }
         }
     }
-    Ok(match minimum_wait {
-        Some(wait) => LockRecoveryResult::Alive(wait),
-        None => LockRecoveryResult::Resolved(statuses),
-    })
+    result.ttl = minimum_wait.unwrap_or_default();
+    Ok(result)
 }
 
 /// What one lock's recovery concluded.
+///
+/// Go carries this as one `TxnStatus`: `ttl != 0` is the alive state and
+/// `action` rides along with it, which is why the pushed min-commit-ts is a
+/// field of the alive answer rather than an answer of its own.
 pub(super) enum OneLockOutcome {
-    /// The owner is still running; wait this long before looking again.
-    Alive(Duration),
+    /// The owner is still running (Go `status.ttl != 0`).
+    Alive {
+        /// How long is left of the owner's TTL.
+        wait: Duration,
+        /// Go `status.action == Action_MinCommitTSPushed`: TiKV moved this
+        /// owner's min-commit-ts above the caller, so a *reader* may step over
+        /// the lock instead of waiting. A writer still waits.
+        min_commit_ts_pushed: bool,
+    },
     /// The owner's fate is decided and this lock has been cleaned.
     Resolved(ResolvedTxnStatus),
 }
@@ -363,7 +510,10 @@ where
         // an optimistic lock reaches neither. Go's own non-pessimistic arm at
         // `lock_resolver.go:581-584` raises the error, and so does this.
         LockStatus::AlivePessimistic(ttl_ms) => {
-            return Ok(OneLockOutcome::Alive(Duration::from_millis(ttl_ms)));
+            return Ok(OneLockOutcome::Alive {
+                wait: Duration::from_millis(ttl_ms),
+                min_commit_ts_pushed: false,
+            });
         }
         LockStatus::PrimaryMismatch => {
             return Err(LockRecoveryError::KeyError(
@@ -382,11 +532,6 @@ where
         let async_commit_primary = primary_lock
             .as_ref()
             .is_some_and(|primary_lock| primary_lock.use_async_commit);
-        if !async_commit_primary
-            && check_response.action == KvrpcTxnAction::MinCommitTsPushed as i32
-        {
-            return Err(LockRecoveryError::MinCommitTsPushed);
-        }
         // client-go sends the pre-RPC TSO in CheckTxnStatus, then asks the
         // oracle again when converting the returned absolute lock TTL to
         // a remaining wait. A slow status RPC must consume its own time.
@@ -412,10 +557,12 @@ where
                 call,
             )?));
         }
-        if check_response.action == KvrpcTxnAction::MinCommitTsPushed as i32 {
-            return Err(LockRecoveryError::MinCommitTsPushed);
-        }
-        return Ok(OneLockOutcome::Alive(ttl));
+        return Ok(OneLockOutcome::Alive {
+            wait: ttl,
+            // Go keeps this on `TxnStatus.action` and reads it back in the
+            // classification loop, so the wait and the push are one answer.
+            min_commit_ts_pushed: check_response.action == KvrpcTxnAction::MinCommitTsPushed as i32,
+        });
     }
     let status = classify_determined_status(&check_response)?;
     if lock.key != lock.primary {

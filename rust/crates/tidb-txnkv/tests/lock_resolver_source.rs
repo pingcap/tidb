@@ -35,7 +35,7 @@ mod lock;
 use lock::{
     resolve_blocking_locks, resolve_optimistic_locks, BlockingLock, FixedTimestampSource,
     LockRecoveryClient, LockRecoveryError, LockRecoveryResult, OptimisticLock, ResolvedTxnStatus,
-    TimestampSource, SKIP_RESOLVE_THRESHOLD_MS,
+    SnapshotLockSet, TimestampSource, SKIP_RESOLVE_THRESHOLD_MS,
 };
 use region::{
     Peer, PeerRole, RegionCache, RegionEpoch, RegionLoadError, RegionLoader, RegionLocation,
@@ -223,6 +223,36 @@ fn runtime_with_secondary_checks(
     (SharedReadRuntime::new_injected(client, cache), recorded)
 }
 
+/// Go `ResolveLockResult` whose `IgnoreLocks` names these transactions: their
+/// locks are stepped over, and the ids reach TiKV as `Context.resolved_locks`.
+fn ignoring(statuses: Vec<ResolvedTxnStatus>, txn_ids: Vec<u64>) -> LockRecoveryResult {
+    LockRecoveryResult {
+        ttl: Duration::ZERO,
+        statuses,
+        ignore_locks: txn_ids,
+        access_locks: Vec::new(),
+    }
+}
+
+/// Go `ResolveLockResult` whose `AccessLocks` names these transactions: the
+/// caller reads through their locks via `Context.committed_locks`.
+fn accessing(statuses: Vec<ResolvedTxnStatus>, txn_ids: Vec<u64>) -> LockRecoveryResult {
+    LockRecoveryResult {
+        ttl: Duration::ZERO,
+        statuses,
+        ignore_locks: Vec::new(),
+        access_locks: txn_ids,
+    }
+}
+
+/// Go `ResolveLockResult` that only asked the caller to wait.
+fn still_alive(ttl: Duration) -> LockRecoveryResult {
+    LockRecoveryResult {
+        ttl,
+        ..LockRecoveryResult::default()
+    }
+}
+
 fn secondary() -> OptimisticLock {
     OptimisticLock {
         key: b"secondary".to_vec(),
@@ -293,11 +323,15 @@ fn committed_primary_resolves_exact_secondary_through_same_authorities() {
         },
         &call(),
         &FixedTimestampSource::new(1_100 << 18),
+        true,
     )
     .unwrap();
     assert_eq!(
         result,
-        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::Committed(commit_ts)])
+        accessing(
+            vec![ResolvedTxnStatus::Committed(commit_ts)],
+            vec![1_000 << 18]
+        )
     );
 
     let recorded = recorded.borrow();
@@ -344,11 +378,12 @@ fn rolled_back_status_uses_zero_commit_version() {
             &KvrpcContext::default(),
             &call(),
             &FixedTimestampSource::new(1_100 << 18),
+            true,
         )
         .unwrap();
         assert_eq!(
             result,
-            LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::RolledBack])
+            ignoring(vec![ResolvedTxnStatus::RolledBack], vec![1_000 << 18])
         );
         assert_eq!(recorded.borrow().resolves[0].1.commit_version, 0);
     }
@@ -368,10 +403,11 @@ fn alive_status_returns_only_remaining_absolute_transaction_ttl() {
             &KvrpcContext::default(),
             &call(),
             &AdvancingTimestampSource::new([1_100 << 18, current_physical_ms << 18]),
+            true,
         )
         .unwrap();
         assert_eq!(
-            LockRecoveryResult::Alive(Duration::from_millis(expected_remaining_ms)),
+            still_alive(Duration::from_millis(expected_remaining_ms)),
             result
         );
         assert!(recorded.borrow().resolves.is_empty());
@@ -393,6 +429,7 @@ fn alive_status_rejects_an_exhausted_one_shot_timestamp_source() {
             &KvrpcContext::default(),
             &call(),
             &FixedTimestampSource::new(1_100 << 18),
+            true,
         ),
         Err(LockRecoveryError::Timestamp(
             "one-shot timestamp source is exhausted".to_owned()
@@ -417,9 +454,10 @@ fn alive_status_uses_post_check_timestamp_and_rechecks_cancellation() {
             &KvrpcContext::default(),
             &call(),
             &timestamps,
+            true,
         )
         .unwrap(),
-        LockRecoveryResult::Alive(Duration::from_millis(200))
+        still_alive(Duration::from_millis(200))
     );
     assert_eq!(recorded.borrow().checks[0].1.current_ts, 1_100 << 18);
     assert_eq!(timestamps.calls.get(), 2);
@@ -442,6 +480,7 @@ fn alive_status_uses_post_check_timestamp_and_rechecks_cancellation() {
             &KvrpcContext::default(),
             &UnaryCallContext::new(Duration::from_secs(2), cancellation),
             &timestamps,
+            true,
         ),
         Err(LockRecoveryError::CallerCancelled)
     );
@@ -467,6 +506,7 @@ fn cancellation_after_check_or_resolve_wins_before_followup_mutation() {
             &KvrpcContext::default(),
             &UnaryCallContext::new(Duration::from_secs(2), cancellation),
             &FixedTimestampSource::new(1_100 << 18),
+            true,
         );
         assert_eq!(result, Err(LockRecoveryError::CallerCancelled));
         assert_eq!(
@@ -488,6 +528,7 @@ fn caller_cancelled_rpc_is_typed_at_both_lock_commands() {
             &KvrpcContext::default(),
             &call(),
             &FixedTimestampSource::new(1_100 << 18),
+            true,
         ),
         Err(LockRecoveryError::CallerCancelled)
     );
@@ -506,6 +547,7 @@ fn caller_cancelled_rpc_is_typed_at_both_lock_commands() {
             &KvrpcContext::default(),
             &call(),
             &FixedTimestampSource::new(1_100 << 18),
+            true,
         ),
         Err(LockRecoveryError::CallerCancelled)
     );
@@ -528,6 +570,7 @@ fn caller_cancelled_rpc_is_typed_at_both_lock_commands() {
             &KvrpcContext::default(),
             &call(),
             &FixedTimestampSource::new(1_100 << 18),
+            true,
         ),
         Err(LockRecoveryError::Rpc(_))
     ));
@@ -574,12 +617,13 @@ fn an_expired_txn_not_found_lock_escalates_to_rollback_if_not_exist() {
         // The lock started at physical 1_000 with a 500ms TTL; the expiry read
         // at 2_000 is well past it.
         &AdvancingTimestampSource::new([1_100 << 18, 2_000 << 18]),
+        true,
     )
     .expect("an expired orphan lock is recoverable, not a permanent error");
 
     assert_eq!(
         result,
-        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::RolledBack])
+        ignoring(vec![ResolvedTxnStatus::RolledBack], vec![1_000 << 18])
     );
     let recorded = recorded.borrow();
     assert_eq!(recorded.checks.len(), 2);
@@ -616,12 +660,16 @@ fn a_live_txn_not_found_lock_backs_off_instead_of_rolling_back() {
         &call(),
         // The expiry read at 1_200 is still inside the lock's 500ms TTL.
         &AdvancingTimestampSource::new([1_100 << 18, 1_200 << 18]),
+        true,
     )
     .expect("a concurrent prewrite is waited out, not failed");
 
     assert_eq!(
         result,
-        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::Committed(1_200 << 18)])
+        accessing(
+            vec![ResolvedTxnStatus::Committed(1_200 << 18)],
+            vec![1_000 << 18]
+        )
     );
     let recorded = recorded.borrow();
     assert_eq!(recorded.checks.len(), 2);
@@ -660,12 +708,13 @@ fn a_zero_ttl_lock_is_resolved_unconditionally_with_max_current_ts() {
         // Exhausted on purpose: the protocol forbids consulting the oracle at
         // all, so any TSO read here is the bug.
         &AdvancingTimestampSource::new([]),
+        true,
     )
     .expect("a zero-TTL lock is resolved without asking the oracle");
 
     assert_eq!(
         result,
-        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::RolledBack])
+        ignoring(vec![ResolvedTxnStatus::RolledBack], vec![1_000 << 18])
     );
     let recorded = recorded.borrow();
     assert_eq!(recorded.checks.len(), 1);
@@ -700,7 +749,7 @@ fn a_primary_mismatch_pessimistic_lock_is_rolled_back_not_raised() {
 
     assert_eq!(
         result,
-        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::RolledBack])
+        ignoring(vec![ResolvedTxnStatus::RolledBack], vec![1_000 << 18])
     );
     let recorded = recorded.borrow();
     assert_eq!(recorded.pessimistic_rollbacks.len(), 1);
@@ -731,6 +780,7 @@ fn primary_mismatch_and_undetermined_status_fail_closed() {
             &KvrpcContext::default(),
             &call(),
             &FixedTimestampSource::new(1_100 << 18),
+            true,
         ),
         Err(LockRecoveryError::KeyError(_))
     ));
@@ -748,27 +798,56 @@ fn primary_mismatch_and_undetermined_status_fail_closed() {
             &KvrpcContext::default(),
             &call(),
             &FixedTimestampSource::new(1_100 << 18),
+            true,
         ),
         Err(LockRecoveryError::UndeterminedStatus { .. })
     ));
 
-    let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+    // Go `lock_resolver.go:632-638`: a live lock whose min-commit-ts TiKV
+    // pushed above the reader is neither an error nor a wait. The owner will
+    // commit after this reader, so the reader steps over the lock and names
+    // the owner in `Context.resolved_locks` on its retry.
+    let (pushed_runtime, pushed_recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
         action: KvrpcTxnAction::MinCommitTsPushed as i32,
         lock_ttl: 500,
         ..KvrpcCheckTxnStatusResponse::default()
     }]);
     assert_eq!(
         resolve_optimistic_locks(
-            &runtime,
+            &pushed_runtime,
             &[secondary()],
             1_300 << 18,
             &KvrpcContext::default(),
             &call(),
-            &FixedTimestampSource::new(1_100 << 18),
+            &AdvancingTimestampSource::new([1_100 << 18, 1_100 << 18]),
+            true,
         ),
-        Err(LockRecoveryError::MinCommitTsPushed)
+        Ok(ignoring(Vec::new(), vec![1_000 << 18]))
     );
-    assert!(recorded.borrow().resolves.is_empty());
+    // Nothing was cleaned: the owner is still running.
+    assert!(pushed_recorded.borrow().resolves.is_empty());
+
+    // Go `lock_resolver.go:626-632`: the same answer reaches a *writer* through
+    // the `!forRead` guard, which returns before the classification. A writer
+    // cannot step over a lock, so it waits out the rest of the owner's TTL.
+    let (write_runtime, write_recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        action: KvrpcTxnAction::MinCommitTsPushed as i32,
+        lock_ttl: 500,
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+    assert_eq!(
+        resolve_optimistic_locks(
+            &write_runtime,
+            &[secondary()],
+            1_300 << 18,
+            &KvrpcContext::default(),
+            &call(),
+            &AdvancingTimestampSource::new([1_100 << 18, 1_100 << 18]),
+            false,
+        ),
+        Ok(still_alive(Duration::from_millis(400)))
+    );
+    assert!(write_recorded.borrow().resolves.is_empty());
 }
 
 // -----------------------------------------------------------------------------
@@ -824,7 +903,7 @@ fn an_expired_pessimistic_blocker_is_rolled_back_at_its_own_for_update_ts() {
 
     assert_eq!(
         result,
-        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::RolledBack])
+        ignoring(vec![ResolvedTxnStatus::RolledBack], vec![1_000 << 18])
     );
     let recorded = recorded.borrow();
     // The status query must announce which protocol it is resolving, or TiKV
@@ -865,10 +944,7 @@ fn a_live_pessimistic_blocker_reports_its_remaining_ttl() {
 
     // The lock started at 1_000ms with a 500ms TTL and it is now 1_200ms, so
     // 300ms of the owner's lease remain.
-    assert_eq!(
-        result,
-        LockRecoveryResult::Alive(Duration::from_millis(300))
-    );
+    assert_eq!(result, still_alive(Duration::from_millis(300)));
     assert!(recorded.borrow().pessimistic_rollbacks.is_empty());
 }
 
@@ -896,7 +972,7 @@ fn a_freshly_refreshed_blocker_is_assumed_alive_without_a_status_rpc() {
 
     assert_eq!(
         result,
-        LockRecoveryResult::Alive(Duration::from_millis(SKIP_RESOLVE_THRESHOLD_MS))
+        still_alive(Duration::from_millis(SKIP_RESOLVE_THRESHOLD_MS))
     );
     let recorded = recorded.borrow();
     assert!(recorded.checks.is_empty(), "no RPC may be spent");
@@ -935,10 +1011,18 @@ fn a_mixed_blocker_set_uses_each_locks_own_cleanup_protocol() {
 
     assert_eq!(
         result,
-        LockRecoveryResult::Resolved(vec![
-            ResolvedTxnStatus::Committed(1_200 << 18),
-            ResolvedTxnStatus::RolledBack,
-        ])
+        LockRecoveryResult {
+            ttl: Duration::ZERO,
+            statuses: vec![
+                ResolvedTxnStatus::Committed(1_200 << 18),
+                ResolvedTxnStatus::RolledBack,
+            ],
+            // The optimistic blocker committed at or before this caller, so
+            // its value is readable through the lock; the pessimistic blocker
+            // left nothing behind, so its lock is merely stepped over.
+            ignore_locks: vec![1_000 << 18],
+            access_locks: vec![1_000 << 18],
+        }
     );
     let recorded = recorded.borrow();
     assert_eq!(recorded.checks.len(), 2);
@@ -1068,12 +1152,16 @@ fn an_expired_async_commit_txn_commits_at_the_largest_min_commit_ts() {
         &KvrpcContext::default(),
         &call(),
         &expired_timestamps(),
+        true,
     )
     .unwrap();
 
     assert_eq!(
         result,
-        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::Committed(1_500 << 18)]),
+        ignoring(
+            vec![ResolvedTxnStatus::Committed(1_500 << 18)],
+            vec![ASYNC_TXN_ID]
+        ),
         "the commit timestamp is the maximum min_commit_ts, not the primary's"
     );
 
@@ -1143,12 +1231,16 @@ fn a_missing_lock_fixes_the_commit_timestamp_for_the_whole_transaction() {
         &KvrpcContext::default(),
         &call(),
         &expired_timestamps(),
+        true,
     )
     .unwrap();
 
     assert_eq!(
         result,
-        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::Committed(1_600 << 18)])
+        ignoring(
+            vec![ResolvedTxnStatus::Committed(1_600 << 18)],
+            vec![ASYNC_TXN_ID]
+        )
     );
 }
 
@@ -1171,12 +1263,13 @@ fn an_async_commit_txn_with_a_rolled_back_key_resolves_as_rolled_back() {
         &KvrpcContext::default(),
         &call(),
         &expired_timestamps(),
+        true,
     )
     .unwrap();
 
     assert_eq!(
         result,
-        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::RolledBack])
+        ignoring(vec![ResolvedTxnStatus::RolledBack], vec![ASYNC_TXN_ID])
     );
     assert!(recorded
         .borrow()
@@ -1220,12 +1313,16 @@ fn a_non_async_commit_secondary_retries_with_force_sync_commit() {
         &call(),
         // Pre-RPC, post-RPC (expired), then the forced retry's own pre-RPC read.
         &AdvancingTimestampSource::new([1_100 << 18, 2_000 << 18, 2_100 << 18]),
+        true,
     )
     .expect("the sync-commit view resolves what the async-commit view could not");
 
     assert_eq!(
         result,
-        LockRecoveryResult::Resolved(vec![ResolvedTxnStatus::Committed(1_500 << 18)])
+        ignoring(
+            vec![ResolvedTxnStatus::Committed(1_500 << 18)],
+            vec![ASYNC_TXN_ID]
+        )
     );
     let recorded = recorded.borrow();
     assert_eq!(recorded.checks.len(), 2);
@@ -1253,13 +1350,11 @@ fn a_live_async_commit_primary_is_waited_for_rather_than_recovered() {
         &call(),
         // The post-check timestamp is still inside the 500ms TTL.
         &AdvancingTimestampSource::new([1_100 << 18, 1_200 << 18]),
+        true,
     )
     .unwrap();
 
-    assert_eq!(
-        result,
-        LockRecoveryResult::Alive(Duration::from_millis(300))
-    );
+    assert_eq!(result, still_alive(Duration::from_millis(300)));
     assert!(recorded.borrow().secondary_checks.is_empty());
     assert!(recorded.borrow().resolves.is_empty());
 }
@@ -1278,4 +1373,77 @@ fn prewrite_pessimistic_recovery_is_off_unless_the_environment_opts_in() {
         lock::pessimistic_prewrite_recovery_enabled(),
         std::env::var_os("TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY").is_some()
     );
+}
+
+/// Go `ClientHelper.ResolveLocks` then `ClientHelper.SendReqCtx`
+/// (`client_helper.go:113-122,148-149`): what the resolver classified is put
+/// into the reader's two `TSSet`s and replayed on every later request.
+///
+/// Both the ordering and the de-duplication are Go's: `TSSet` is a map, so a
+/// transaction named twice appears once, and `GetAll` returns a set.
+#[test]
+fn a_readers_lock_sets_accumulate_across_resolves_and_reach_every_request() {
+    let mut sets = SnapshotLockSet::default();
+    assert!(sets.is_empty());
+
+    let mut context = KvrpcContext::default();
+    sets.stamp(&mut context);
+    // Go `TSSet.GetAll` returns nil for an empty set, which is the same wire
+    // shape as an empty repeated field.
+    assert!(context.resolved_locks.is_empty());
+    assert!(context.committed_locks.is_empty());
+
+    sets.absorb(&ignoring(Vec::new(), vec![1_000 << 18]));
+    sets.absorb(&accessing(
+        vec![ResolvedTxnStatus::Committed(1_200 << 18)],
+        vec![900 << 18],
+    ));
+    // A second meeting with the same pushed transaction must not duplicate it.
+    sets.absorb(&ignoring(Vec::new(), vec![1_000 << 18, 1_100 << 18]));
+
+    let mut context = KvrpcContext::default();
+    sets.stamp(&mut context);
+    assert_eq!(
+        context.resolved_locks,
+        vec![1_000 << 18, 1_100 << 18],
+        "IgnoreLocks -> Context.resolved_locks"
+    );
+    assert_eq!(
+        context.committed_locks,
+        vec![900 << 18],
+        "AccessLocks -> Context.committed_locks"
+    );
+    assert!(!sets.is_empty());
+}
+
+/// The snapshot read path must fill the sets before it retries and stamp them
+/// before it sends, or the retry meets the identical lock forever.
+#[test]
+fn the_snapshot_read_path_stamps_its_lock_sets_on_every_send() {
+    let snapshot = std::fs::read_to_string(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/transaction/coordinator/snapshot_read.rs"),
+    )
+    .unwrap();
+    // One stamp per read command, both taken from the freshly routed context.
+    assert_eq!(
+        snapshot
+            .matches("self.resolved_locks.stamp(&mut context)")
+            .count(),
+        2
+    );
+    assert_eq!(
+        snapshot
+            .matches("self.resolved_locks.absorb(&recovery)")
+            .count(),
+        2
+    );
+    assert!(!snapshot.contains("route.context(), call)"));
+    for command in ["begin_get", "begin_scan"] {
+        let body = snapshot
+            .split(&format!("let response = self.{command}("))
+            .nth(1)
+            .expect("read command call");
+        assert!(body.starts_with("&route, &context, &request, call)"));
+    }
 }

@@ -27,5 +27,5 @@ pub use pessimistic::{
 };
 pub use resolver::{
     resolve_optimistic_locks, FixedTimestampSource, LockRecoveryClient, LockRecoveryError,
-    LockRecoveryResult, ResolvedTxnStatus, TimestampSource,
+    LockRecoveryResult, ResolvedTxnStatus, SnapshotLockSet, TimestampSource,
 };

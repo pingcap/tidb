@@ -26,8 +26,7 @@ use tidb_proto::{
 
 use crate::lock::{
     decode_blocking_lock_observation, pessimistic_prewrite_recovery_enabled,
-    resolve_blocking_locks, BlockingLock, LockAdmissionError, LockRecoveryClient,
-    LockRecoveryResult, TimestampSource,
+    resolve_blocking_locks, BlockingLock, LockAdmissionError, LockRecoveryClient, TimestampSource,
 };
 use crate::region::RegionRecoveryLoader;
 use crate::rpc::UnaryCallContext;
@@ -254,15 +253,16 @@ where
             key: eligible_locks[0].key().to_vec(),
             detail: format!("Prewrite lock recovery failed: {error}"),
         })? {
-            LockRecoveryResult::Resolved(_) => Ok(()),
-            LockRecoveryResult::Alive(wait) if alive_retry_delay(wait) <= call.timeout() => {
-                wait_with_call(call, alive_retry_delay(wait))?;
+            recovery if !recovery.is_alive() => Ok(()),
+            recovery if alive_retry_delay(recovery.ttl) <= call.timeout() => {
+                wait_with_call(call, alive_retry_delay(recovery.ttl))?;
                 Ok(())
             }
-            LockRecoveryResult::Alive(wait) => Err(TransactionCause::Lock {
+            recovery => Err(TransactionCause::Lock {
                 key: eligible_locks[0].key().to_vec(),
                 detail: format!(
-                    "Prewrite lock remains alive for {wait:?}, beyond transaction deadline"
+                    "Prewrite lock remains alive for {:?}, beyond transaction deadline",
+                    recovery.ttl
                 ),
             }),
         }

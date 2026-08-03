@@ -216,6 +216,17 @@ pub struct RealOptimisticTransaction<C, L, T> {
     /// validated against once TiKV has answered.
     gc_state: Arc<GcStateCache>,
     protocol: CommitProtocol,
+    /// Transactions whose locks every later read from this snapshot may step
+    /// over, and transactions whose committed value every later read must see
+    /// through their lock.
+    ///
+    /// Go `KVSnapshot.resolvedLocks` / `KVSnapshot.committedLocks`
+    /// (`snapshot.go:124-125`), the two `util.TSSet`s that `ClientHelper`
+    /// fills from `ResolveLockResult` and replays into `Context` on every
+    /// subsequent send. Without them a reader that meets a lock whose
+    /// min-commit-ts TiKV pushed meets the very same lock on its retry, which
+    /// is the deadloop `client_helper.go`'s own comment warns about.
+    resolved_locks: crate::lock::SnapshotLockSet,
 }
 
 /// What a pessimistic transaction already proved before it reached Prewrite.
@@ -336,6 +347,7 @@ where
             pinned_primary_key: None,
             gc_state,
             protocol: CommitProtocol::two_phase_only(),
+            resolved_locks: crate::lock::SnapshotLockSet::default(),
         })
     }
 

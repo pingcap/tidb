@@ -39,7 +39,7 @@ fn delegate_has_one_shared_runtime_and_only_same_task_continuation() {
 fn alive_ttl_uses_exact_cancellation_wait_without_polling() {
     let recovery = source("src/cop_paging/lock_recovery.rs");
     let alive = recovery
-        .split("LockRecoveryResult::Alive(ttl)")
+        .split("if result.is_alive() {")
         .nth(1)
         .expect("alive branch");
     assert!(alive.contains("let deadline_budget = observation.call.timeout()"));
@@ -49,6 +49,25 @@ fn alive_ttl_uses_exact_cancellation_wait_without_polling() {
     assert!(alive.contains("cancelled by caller"));
     assert!(!alive.contains("thread::sleep"));
     assert!(!alive.contains("is_cancelled"));
+}
+
+/// Go `ClientHelper` (`client_helper.go:97-122,148-149`): whatever the resolver
+/// classified is stored on the reader and stamped onto the context of every
+/// later send. A retry that forgets them meets the identical lock, which is the
+/// deadloop `client_helper.go`'s own comment warns about.
+#[test]
+fn recovered_locks_reach_the_retry_request_context() {
+    let recovery = source("src/cop_paging/lock_recovery.rs");
+    assert!(recovery.contains("LockedResponseAction::RetrySameTask { recovered: result }"));
+
+    let direct = source("src/cop_paging/direct_unary_query_transport.rs");
+    assert!(direct.contains("self.snapshot_locks.absorb(&recovered)"));
+    assert!(direct.contains("self.snapshot_locks.stamp(&mut request.context)"));
+    // The stamp must happen while the request is still being built, before the
+    // encoded `DirectUnaryRequest` is frozen for dispatch.
+    let stamped = direct.find("self.snapshot_locks.stamp(&mut request.context)").unwrap();
+    let frozen = direct.find("let client_request = DirectUnaryRequest {").unwrap();
+    assert!(stamped < frozen);
 }
 
 #[test]

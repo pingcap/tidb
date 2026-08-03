@@ -178,10 +178,19 @@ impl From<&DirectUnaryResponse> for ObservedPhysicalResponse {
 }
 
 /// Only continuation admitted after bounded lock handling succeeds.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LockedResponseAction {
     /// Retry the same unconsumed logical task.
-    RetrySameTask,
+    RetrySameTask {
+        /// What the resolver classified, which the retry must carry into its
+        /// request context.
+        ///
+        /// Go `ClientHelper.ResolveLocks` (`client_helper.go:113-122`) puts
+        /// the same two lists into the snapshot's `TSSet`s before returning.
+        /// Retrying without them makes the retry meet the identical lock —
+        /// the deadloop `client_helper.go`'s own comment describes.
+        recovered: tidb_txnkv::lock::LockRecoveryResult,
+    },
 }
 
 /// Fail-closed locked-response policy boundary.
@@ -777,6 +786,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             network_metrics: UnaryNetworkMetrics::default(),
             evidence: Rc::clone(&self.evidence),
             publication_observer: Rc::clone(&self.publication_observer),
+            snapshot_locks: tidb_txnkv::lock::SnapshotLockSet::default(),
         }))
     }
 }
@@ -902,6 +912,12 @@ pub struct DirectUnaryQueryResponse<C, L> {
     network_metrics: UnaryNetworkMetrics,
     evidence: Rc<RefCell<DirectUnaryTransportEvidence>>,
     publication_observer: Rc<RefCell<Option<PublicationObserver>>>,
+    /// Transactions this response already classified while resolving locks.
+    ///
+    /// Go `KVSnapshot.resolvedLocks`/`committedLocks`, reached through
+    /// `ClientHelper`. One Cop response owns one read, so the sets live for
+    /// exactly as long as the read that filled them.
+    snapshot_locks: tidb_txnkv::lock::SnapshotLockSet,
 }
 
 struct PreparedRegionDispatch {
@@ -1105,6 +1121,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         );
         request.context.busy_threshold_ms =
             u32::try_from(effective_busy_threshold.as_millis()).unwrap_or(u32::MAX);
+        // Go `ClientHelper.SendReqCtx` (`client_helper.go:148-149`) stamps both
+        // sets onto the context of every send, not only the retry that follows
+        // a resolve: a later page of the same read meets the same locks.
+        self.snapshot_locks.stamp(&mut request.context);
         if request.endpoint != EndpointType::TiKv {
             return Err(DirectUnaryTransportError::ResponseState(
                 "direct unary request selected a non-TiKV endpoint",
@@ -1429,7 +1449,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 })?;
             self.check_retry_active()?;
             match action {
-                LockedResponseAction::RetrySameTask => {
+                LockedResponseAction::RetrySameTask { recovered } => {
+                    self.snapshot_locks.absorb(&recovered);
                     let failed = self.runtime.consume_failed_attempt(attempt_id)?;
                     let replacement = self.runtime.retry_transport_attempt(failed)?;
                     self.install_same_task_retry(replacement)?;

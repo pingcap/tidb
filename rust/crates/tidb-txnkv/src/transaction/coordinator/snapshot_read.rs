@@ -24,8 +24,7 @@ use tidb_proto::{
 };
 
 use crate::lock::{
-    decode_lock_observation, resolve_optimistic_locks, LockRecoveryClient, LockRecoveryResult,
-    TimestampSource,
+    decode_lock_observation, resolve_optimistic_locks, LockRecoveryClient, TimestampSource,
 };
 use crate::region::RegionRecoveryLoader;
 use crate::rpc::{TransactionBatchPublication, TransactionBatchResponse, UnaryCallContext};
@@ -81,13 +80,18 @@ where
         loop {
             let route = point_route(&self.runtime, key)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            // Go `ClientHelper.SendReqCtx` stamps both sets onto the context
+            // immediately before every send, so a lock this snapshot already
+            // classified is never met a second time.
+            let mut context = route.context().clone();
+            self.resolved_locks.stamp(&mut context);
             let request = KvrpcGetRequest {
                 key: key.to_vec(),
                 version: self.start_ts,
                 need_commit_ts: true,
                 ..KvrpcGetRequest::default()
             };
-            let response = self.begin_get(&route, &request, call)?;
+            let response = self.begin_get(&route, &context, &request, call)?;
             if let Some(region_error) = response.response.region_error.as_ref() {
                 self.recover_region_error(
                     RecoveryPhase::Forward,
@@ -103,38 +107,31 @@ where
                     let locks = decode_lock_observation(lock_info).map_err(|error| {
                         OptimisticCoordinatorError::SnapshotGet(error.to_string())
                     })?;
-                    match resolve_optimistic_locks(
+                    let recovery = resolve_optimistic_locks(
                         &self.runtime,
                         &locks,
                         self.start_ts,
-                        route.context(),
+                        &context,
                         call,
                         &self.timestamps,
+                        true,
                     )
-                    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?
-                    {
-                        LockRecoveryResult::Resolved(_) if lock_attempts < MAX_LOCK_ATTEMPTS => {
-                            lock_attempts += 1;
-                            continue;
-                        }
-                        LockRecoveryResult::Resolved(_) => {
-                            return Err(OptimisticCoordinatorError::SnapshotGet(
-                                "snapshot lock retry budget exhausted".to_owned(),
-                            ));
-                        }
-                        LockRecoveryResult::Alive(wait) => {
-                            if lock_attempts >= MAX_LOCK_ATTEMPTS {
-                                return Err(OptimisticCoordinatorError::SnapshotGet(
-                                    "snapshot lock retry budget exhausted".to_owned(),
-                                ));
-                            }
-                            wait_with_call(call, alive_retry_delay(wait)).map_err(|error| {
-                                OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                            })?;
-                            lock_attempts += 1;
-                            continue;
-                        }
+                    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+                    // Go `ClientHelper.ResolveLocks`: record before retrying,
+                    // or the retry meets the same lock and never terminates.
+                    self.resolved_locks.absorb(&recovery);
+                    if lock_attempts >= MAX_LOCK_ATTEMPTS {
+                        return Err(OptimisticCoordinatorError::SnapshotGet(
+                            "snapshot lock retry budget exhausted".to_owned(),
+                        ));
                     }
+                    if recovery.is_alive() {
+                        wait_with_call(call, alive_retry_delay(recovery.ttl)).map_err(|error| {
+                            OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                        })?;
+                    }
+                    lock_attempts += 1;
+                    continue;
                 }
                 return Err(OptimisticCoordinatorError::SnapshotGet(format!(
                     "TiKV key error: {key_error:?}"
@@ -206,6 +203,8 @@ where
         while cursor.as_slice() < end_key {
             let route = point_route(&self.runtime, &cursor)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            let mut context = route.context().clone();
+            self.resolved_locks.stamp(&mut context);
             // TiKV stops at the region boundary anyway; naming it keeps the
             // cursor advance exact when a page ends flush with the region.
             let region_end = route.region_end_key().to_vec();
@@ -229,7 +228,7 @@ where
                 version: self.start_ts,
                 ..KvrpcScanRequest::default()
             };
-            let response = self.begin_scan(&route, &request, call)?;
+            let response = self.begin_scan(&route, &context, &request, call)?;
             if let Some(region_error) = response.response.region_error.as_ref() {
                 self.recover_region_error(
                     RecoveryPhase::Forward,
@@ -256,22 +255,21 @@ where
                     ));
                 }
                 lock_attempts += 1;
-                match resolve_optimistic_locks(
+                let recovery = resolve_optimistic_locks(
                     &self.runtime,
                     &locked,
                     self.start_ts,
-                    route.context(),
+                    &context,
                     call,
                     &self.timestamps,
+                    true,
                 )
-                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?
-                {
-                    LockRecoveryResult::Resolved(_) => {}
-                    LockRecoveryResult::Alive(wait) => {
-                        wait_with_call(call, alive_retry_delay(wait)).map_err(|error| {
-                            OptimisticCoordinatorError::SnapshotGet(error.to_string())
-                        })?;
-                    }
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+                self.resolved_locks.absorb(&recovery);
+                if recovery.is_alive() {
+                    wait_with_call(call, alive_retry_delay(recovery.ttl)).map_err(|error| {
+                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                    })?;
                 }
                 // Redo this page: a locked scan returns no trustworthy pairs.
                 continue;
@@ -317,6 +315,7 @@ where
     fn begin_get(
         &self,
         route: &RegionKeyBatch,
+        context: &tidb_proto::KvrpcContext,
         request: &KvrpcGetRequest,
         call: &UnaryCallContext,
     ) -> Result<TransactionBatchResponse<KvrpcGetResponse>, OptimisticCoordinatorError> {
@@ -329,7 +328,7 @@ where
                     "TiKV client is already borrowed".to_owned(),
                 )
             })?
-            .publish_transaction_get(route.address(), request, route.context(), call);
+            .publish_transaction_get(route.address(), request, context, call);
         match published {
             PublishedCommand::Response(response) => Ok(response),
             PublishedCommand::BeforePublication(error)
@@ -342,6 +341,7 @@ where
     fn begin_scan(
         &self,
         route: &RegionKeyBatch,
+        context: &tidb_proto::KvrpcContext,
         request: &KvrpcScanRequest,
         call: &UnaryCallContext,
     ) -> Result<TransactionBatchResponse<KvrpcScanResponse>, OptimisticCoordinatorError> {
@@ -354,7 +354,7 @@ where
                     "TiKV client is already borrowed".to_owned(),
                 )
             })?
-            .publish_transaction_scan(route.address(), request, route.context(), call);
+            .publish_transaction_scan(route.address(), request, context, call);
         match published {
             PublishedCommand::Response(response) => Ok(response),
             PublishedCommand::BeforePublication(error)

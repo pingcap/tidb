@@ -50,7 +50,7 @@ use tidb_proto::{
 
 use crate::lock::{
     decode_blocking_lock_observation, resolve_blocking_locks, BlockingLock, LockRecoveryClient,
-    LockRecoveryResult, TimestampSource,
+    TimestampSource,
 };
 use crate::region::{RegionLoader, RegionRecoveryLoader};
 use crate::rpc::UnaryCallContext;
@@ -844,16 +844,14 @@ where
                 detail: format!("pessimistic lock recovery failed: {error}"),
             })
         })?;
-        match recovery {
-            // The blockers are gone; the immediate retry will take the lock.
-            LockRecoveryResult::Resolved(_) => Ok(()),
+        if recovery.is_alive() {
             // At least one owner is alive. TiKV already queued and woke this
             // request, so client-go does not add its own backoff here; only the
             // statement's own budget decides whether to try again.
-            LockRecoveryResult::Alive(_) => {
-                self.check_wait_budget(wait, wait_started_at, Some(&blocked_key))
-            }
+            return self.check_wait_budget(wait, wait_started_at, Some(&blocked_key));
         }
+        // The blockers are gone; the immediate retry will take the lock.
+        Ok(())
     }
 
     fn check_wait_budget(

@@ -67,8 +67,8 @@ pub fn pessimistic_prewrite_recovery_enabled() -> bool {
 
 /// Resolves every lock blocking one pessimistic locking attempt.
 ///
-/// Returns [`LockRecoveryResult::Alive`] when at least one owner is still
-/// running, carrying the shortest remaining TTL, exactly like the optimistic
+/// Returns a non-zero [`LockRecoveryResult::ttl`] when at least one owner is
+/// still running, carrying the shortest remaining TTL, exactly like the optimistic
 /// path. Locks refreshed within [`SKIP_RESOLVE_THRESHOLD_MS`] are treated as
 /// alive without an RPC.
 pub fn resolve_blocking_locks<C, L, T>(
@@ -84,7 +84,10 @@ where
     L: RegionLoader,
     T: TimestampSource + ?Sized,
 {
-    let mut statuses = Vec::with_capacity(locks.len());
+    let mut result = LockRecoveryResult {
+        statuses: Vec::with_capacity(locks.len()),
+        ..LockRecoveryResult::default()
+    };
     let mut minimum_wait = None::<Duration>;
     for lock in locks {
         check_cancelled(call)?;
@@ -106,6 +109,9 @@ where
                 base_context,
                 call,
                 timestamp_source,
+                // Go `ResolveLocks` (not `ResolveLocksForRead`): a lock
+                // blocking a write is waited out, never stepped over.
+                false,
             )?,
             BlockingLock::Pessimistic(lock) => resolve_one_pessimistic_lock(
                 runtime,
@@ -116,17 +122,16 @@ where
                 timestamp_source,
             )?,
         };
-        match outcome {
-            LockRecoveryResult::Resolved(resolved) => statuses.extend(resolved),
-            LockRecoveryResult::Alive(wait) => {
-                minimum_wait = Some(minimum_wait.map_or(wait, |current| current.min(wait)));
-            }
+        if outcome.is_alive() {
+            minimum_wait =
+                Some(minimum_wait.map_or(outcome.ttl, |current| current.min(outcome.ttl)));
         }
+        result.statuses.extend(outcome.statuses);
+        result.ignore_locks.extend(outcome.ignore_locks);
+        result.access_locks.extend(outcome.access_locks);
     }
-    Ok(match minimum_wait {
-        Some(wait) => LockRecoveryResult::Alive(wait),
-        None => LockRecoveryResult::Resolved(statuses),
-    })
+    result.ttl = minimum_wait.unwrap_or_default();
+    Ok(result)
 }
 
 fn resolve_one_pessimistic_lock<C, L, T>(
@@ -161,7 +166,7 @@ where
         // its own primary lock back, so waiting lets it retry instead of
         // aborting it.
         LockStatus::AlivePessimistic(ttl_ms) => {
-            return Ok(LockRecoveryResult::Alive(Duration::from_millis(ttl_ms)));
+            return Ok(LockRecoveryResult::alive(Duration::from_millis(ttl_ms)));
         }
         // Go `lock_resolver.go:580-586`: this lock points at a key that is not
         // its transaction's primary, so it is stale by construction. It is
@@ -170,9 +175,11 @@ where
         LockStatus::PrimaryMismatch => {
             check_cancelled(call)?;
             pessimistic_rollback_lock(runtime, lock, base_context, call)?;
-            return Ok(LockRecoveryResult::Resolved(vec![
+            return Ok(LockRecoveryResult::resolved(
+                lock.txn_id,
                 ResolvedTxnStatus::RolledBack,
-            ]));
+                caller_start_ts,
+            ));
         }
     };
     if response.lock_ttl > 0 {
@@ -180,7 +187,7 @@ where
             .current_ts()
             .map_err(LockRecoveryError::Timestamp)?;
         check_cancelled(call)?;
-        return Ok(LockRecoveryResult::Alive(remaining_lock_ttl(
+        return Ok(LockRecoveryResult::alive(remaining_lock_ttl(
             lock.txn_id,
             response.lock_ttl,
             post_check_ts,
@@ -194,7 +201,11 @@ where
         check_cancelled(call)?;
         pessimistic_rollback_lock(runtime, lock, base_context, call)?;
     }
-    Ok(LockRecoveryResult::Resolved(vec![status]))
+    Ok(LockRecoveryResult::resolved(
+        lock.txn_id,
+        status,
+        caller_start_ts,
+    ))
 }
 
 /// Classifies a status query that announced `resolving_pessimistic_lock`.
