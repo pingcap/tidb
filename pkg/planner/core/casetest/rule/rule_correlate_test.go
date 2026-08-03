@@ -318,3 +318,83 @@ func TestCorrelateWithCostFactors(tt *testing.T) {
 		}
 	})
 }
+
+// TestCorrelateAggMinMaxChoosesApply verifies that the correlate round rewrites a
+// join against a MIN/MAX aggregation on the join key into an Apply, and that the
+// Apply wins on cost when the outer side is selective enough that one probe per
+// outer row beats a full pass over the aggregated table.
+func TestCorrelateAggMinMaxChoosesApply(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists summary, journal")
+	tk.MustExec("create table summary (ns_id int not null, tag int not null, primary key(ns_id) clustered, key(tag))")
+	tk.MustExec("create table journal (ns_id int not null, id int not null, primary key(ns_id, id) clustered)")
+	for i := range 60 {
+		tk.MustExec(fmt.Sprintf("insert into summary values (%d, %d)", i, i%30))
+		for j := range 20 {
+			tk.MustExec(fmt.Sprintf("insert into journal values (%d, %d)", i, i*100+j))
+		}
+	}
+	tk.MustExec("analyze table summary, journal")
+
+	// The outer predicate keeps two rows, so the aggregation is needed for two
+	// groups out of sixty.
+	sql := "select s.ns_id, d.min_id from summary s " +
+		"left join (select ns_id, min(id) as min_id from journal group by ns_id) d on d.ns_id = s.ns_id " +
+		"where s.tag = 7"
+
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
+	rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+	require.False(t, explainContains(rows, "Apply"),
+		"without alternative plans, expected no Apply in plan:\n%s", joinExplainRows(rows))
+	want := testdata.ConvertRowsToStrings(tk.MustQuery(sql + " order by 1").Rows())
+
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	rows = tk.MustQuery("explain format = 'brief' " + sql).Rows()
+	require.True(t, explainContains(rows, "Apply"),
+		"with alternative plans, expected Apply in plan:\n%s", joinExplainRows(rows))
+	// The pinned group turns MIN into a one-row read rather than an aggregation.
+	require.False(t, explainContains(rows, "StreamAgg"),
+		"expected the correlated inner side to drop the aggregation:\n%s", joinExplainRows(rows))
+	tk.MustQuery(sql + " order by 1").Check(testkit.Rows(want...))
+}
+
+// TestCorrelateAggMinMaxParity checks that the correlate round never changes
+// results, across the shapes it accepts and the shapes it must reject.
+func TestCorrelateAggMinMaxParity(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists o, i2")
+	tk.MustExec("create table o (k int not null, k2 int not null, v int)")
+	tk.MustExec("create table i2 (k int not null, k2 int not null, id int not null, nid int, key ki(k, id))")
+	tk.MustExec("insert into o values (1,1,10),(2,1,20),(3,1,30),(4,2,40)")
+	// ns 3 has no inner rows at all, so the left join must NULL-extend it.
+	tk.MustExec("insert into i2 values (1,1,100,null),(1,1,50,5),(2,1,7,null),(2,2,900,9),(4,2,3,3)")
+
+	sqls := []string{
+		// Accepted: MIN over a NOT NULL column, group key covered by the join.
+		"select o.k, d.m from o left join (select k, min(id) m from i2 group by k) d on d.k = o.k",
+		// Accepted: MAX, and as an inner join.
+		"select o.k, d.m from o join (select k, max(id) m from i2 group by k) d on d.k = o.k",
+		// Accepted: composite group key, fully covered.
+		"select o.k, d.m from o left join (select k, k2, min(id) m from i2 group by k, k2) d on d.k = o.k and d.k2 = o.k2",
+		// Rejected: COUNT must keep the aggregation so an empty group stays NULL.
+		"select o.k, d.c from o left join (select k, count(*) c from i2 group by k) d on d.k = o.k",
+		// Rejected: MIN over a nullable column skips NULLs, an ordered read would not.
+		"select o.k, d.m from o left join (select k, min(nid) m from i2 group by k) d on d.k = o.k",
+		// Rejected: k2 is not pinned by the join, so one outer row spans groups.
+		"select o.k, d.m from o left join (select k, k2, min(id) m from i2 group by k, k2) d on d.k = o.k",
+		// Rejected: a limited derived table depends on which groups exist globally.
+		"select o.k, d.m from o left join (select k, min(id) m from i2 group by k order by k limit 2) d on d.k = o.k",
+		// Rejected: HAVING filters aggregated output, which has no correlated form.
+		"select o.k, d.m from o left join (select k, min(id) m from i2 group by k having min(id) > 10) d on d.k = o.k",
+	}
+	for _, sql := range sqls {
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
+		want := testdata.ConvertRowsToStrings(tk.MustQuery(sql + " order by 1, 2").Sort().Rows())
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+		tk.MustQuery(sql + " order by 1, 2").Sort().Check(testkit.Rows(want...))
+	}
+}
