@@ -444,7 +444,7 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		// correlated sub-query & partitioned
 		"select * from test.t1 where a in (select a from test.t where a > t1.a)",
 
-		// JSON column filter guard still applies when the filter wraps the column in JSON_EXTRACT.
+		// Keep the wrapped JSON-column filter conservatively uncacheable on this release branch.
 		"select * from test.t_json_guard where json_extract(j, '$.a') is not null",
 	}
 

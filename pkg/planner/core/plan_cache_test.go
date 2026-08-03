@@ -1157,6 +1157,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
@@ -1164,18 +1165,6 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
-<<<<<<< HEAD:pkg/planner/core/plan_cache_test.go
-=======
-		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
-		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
-		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
-		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
-		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
-		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
-		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
-		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
-		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
->>>>>>> c22327ff3e0 (planner: allow json_extract in plan cache (#69523)):pkg/planner/core/casetest/plancache/plan_cache_suite_test.go
 		"skip non-prepared plan-cache: access tables in system schema",
 		"skip non-prepared plan-cache: queries that access views are not supported",
 		"skip non-prepared plan-cache: query has null constants",
