@@ -487,14 +487,32 @@ func TestAutoPresplitIndexRegionsGateAndManualOverride(t *testing.T) {
 		require.Equal(t, 2, loadCount)
 	})
 	for _, tc := range []struct {
-		name  string
-		store kv.Storage
+		name          string
+		store         kv.Storage
+		result        splitIndexRegionResult
+		skipReason    string
+		wantResultErr bool
 	}{
-		{name: "split", store: &fakeAutoPresplitStore{regionIDs: []uint64{1, 2, 3}}},
-		{name: "failed", store: &fakeAutoPresplitStore{regionIDs: []uint64{1}, splitErr: context.DeadlineExceeded}},
-		{name: "unsupported"},
+		{
+			name:   "split",
+			store:  &fakeAutoPresplitStore{regionIDs: []uint64{1, 2, 3}},
+			result: splitIndexRegionResult{splitRegions: 3, scatterRegions: 3},
+		},
+		{name: "failed", store: &fakeAutoPresplitStore{regionIDs: []uint64{1}, splitErr: context.DeadlineExceeded}, wantResultErr: true},
+		{name: "unsupported", skipReason: "unsupported storage"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			result, skipReason, resultErr := autoPresplitIndexRegion(
+				context.Background(), sctx, tc.store, tblInfo, idxInfo, hotStatsProvider,
+				make(map[int64][][]types.Datum), false)
+			if tc.wantResultErr {
+				require.Error(t, resultErr)
+			} else {
+				require.NoError(t, resultErr)
+			}
+			require.Equal(t, tc.result, result)
+			require.Equal(t, tc.skipReason, skipReason)
+
 			err := runAutoPresplit(nil, tc.store, hotStatsProvider)
 			require.NoError(t, err)
 			require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
@@ -554,6 +572,17 @@ func TestAutoPresplitIndexRegionsGateAndManualOverride(t *testing.T) {
 		reorgMeta, manualArgs, hotStatsProvider)
 	require.NoError(t, err)
 	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
+	capturedKeys = nil
+	err = preSplitIndexRegions(
+		context.Background(), sctx, &fakeAutoPresplitStore{regionIDs: []uint64{1, 2, 3}},
+		tblInfo, []*model.IndexInfo{idxInfo}, reorgMeta, manualArgs, hotStatsProvider)
+	require.NoError(t, err)
+	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
+	capturedKeys = nil
+	err = preSplitIndexRegions(
+		context.Background(), sctx, &fakeAutoPresplitStore{splitErr: context.DeadlineExceeded},
+		tblInfo, []*model.IndexInfo{idxInfo}, reorgMeta, manualArgs, hotStatsProvider)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 
 	err = runAutoPresplit(nil, nil, statsProvider)
 	require.NoError(t, err)

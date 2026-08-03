@@ -108,22 +108,13 @@ func LoadColumnStatsForAutoPresplit(
 	limit int,
 ) (*AutoPresplitColumnStats, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
-	if cause := context.Cause(ctx); cause != nil {
-		return nil, cause
-	}
 	version, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return nil, err
 	}
-	if cause := context.Cause(ctx); cause != nil {
-		return nil, cause
-	}
 
 	item := &model.TableItemID{TableID: physicalTableID, ID: columnID}
 	histMeta, statsVer, err := histMetaFromStorage(ctx, sctx, item, colInfo, version.Ver)
-	if cause := context.Cause(ctx); cause != nil {
-		return nil, cause
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -149,18 +140,12 @@ func LoadColumnStatsForAutoPresplit(
 	if limit > 0 {
 		result.Column.TopN, result.TopNError = topNFromStorageWithPriorityAndLimit(
 			ctx, sctx, physicalTableID, 0, columnID, kv.PriorityNormal, limit, version.Ver)
-		if cause := context.Cause(ctx); cause != nil {
-			return nil, cause
-		}
 	}
 
 	histogram, histogramErr := histogramFromStorageWithPriority(
 		ctx, sctx, physicalTableID, columnID, &colInfo.FieldType,
 		histMeta.NDV, 0, histMeta.LastUpdateVersion, result.Column.NullCount,
 		histMeta.TotColSize, histMeta.Correlation, kv.PriorityNormal, version.Ver)
-	if cause := context.Cause(ctx); cause != nil {
-		return nil, cause
-	}
 	result.HistogramError = histogramErr
 	if histogramErr == nil && histogram != nil {
 		result.Column.Histogram = *histogram
