@@ -64,6 +64,7 @@ const SECOND_KEY: &[u8] = b"b";
 const BLOCKER_TS: u64 = 300;
 
 const REGION_ID: u64 = 41;
+const SECOND_REGION_ID: u64 = 42;
 
 type ScriptedTransaction =
     RealPessimisticTransaction<TonicCoprocessorClient, SingleRegion, MonotonicTimestamps>;
@@ -96,6 +97,9 @@ impl TimestampSource for MonotonicTimestamps {
 struct SingleRegion {
     address: String,
     loads: Arc<AtomicU64>,
+    /// When set, keys below it belong to [`REGION_ID`] and keys at or above it
+    /// to [`SECOND_REGION_ID`], so one statement produces two region batches.
+    split_key: Option<Vec<u8>>,
 }
 
 impl SingleRegion {
@@ -103,6 +107,17 @@ impl SingleRegion {
         Self {
             address,
             loads: Arc::new(AtomicU64::new(0)),
+            split_key: None,
+        }
+    }
+
+    /// Two regions split at `split_key`, for the sequences that need a
+    /// statement whose keys cannot be locked in one request.
+    fn new_split(address: String, split_key: &[u8]) -> Self {
+        Self {
+            address,
+            loads: Arc::new(AtomicU64::new(0)),
+            split_key: Some(split_key.to_vec()),
         }
     }
 }
@@ -112,18 +127,23 @@ impl RegionLoader for SingleRegion {
         7
     }
 
-    fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+    fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
         self.loads.fetch_add(1, Ordering::SeqCst);
+        let (region_id, start_key, end_key) = match self.split_key.as_deref() {
+            None => (REGION_ID, Vec::new(), Vec::new()),
+            Some(split) if key < split => (REGION_ID, Vec::new(), split.to_vec()),
+            Some(split) => (SECOND_REGION_ID, split.to_vec(), Vec::new()),
+        };
         Ok(RegionLocation {
             region: RegionVerId {
-                id: REGION_ID,
+                id: region_id,
                 epoch: RegionEpoch {
                     conf_ver: 1,
                     version: 1,
                 },
             },
-            start_key: Vec::new(),
-            end_key: Vec::new(),
+            start_key,
+            end_key,
             peers: vec![Peer {
                 id: 410,
                 store_id: 4_100,
@@ -1188,5 +1208,46 @@ fn committing_without_any_lock_keeps_every_key_on_the_optimistic_check() {
     assert_eq!(
         prewrite.pessimistic_actions,
         vec![KvrpcPessimisticAction::SkipPessimisticCheck as i32]
+    );
+}
+
+/// A statement whose second region batch fails must not forget the locks TiKV
+/// already granted for the first one.
+///
+/// Go accumulates lock state on the committer as each batch returns, so a
+/// statement that dies partway still knows which keys it holds and which
+/// primary they name — that is what the pessimistic rollback, and later the
+/// whole transaction's recovery, are keyed on. Accumulating in a local and
+/// merging only after the loop means any early return drops them, leaving real
+/// locks on a real cluster that this transaction can no longer name.
+#[test]
+fn a_statement_that_fails_on_a_later_batch_keeps_the_locks_it_already_took() {
+    // The first batch is granted; the second is rejected outright.
+    let service = ScriptedTikv::new(vec![LockOutcome::Granted, LockOutcome::Deadlock]);
+    let server = TestServer::start(service);
+    let mut transaction = transaction(SingleRegion::new_split(server.store_address(), SECOND_KEY));
+
+    let failure = transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec(), SECOND_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect_err("the second batch ends the statement");
+    assert!(
+        matches!(failure, PessimisticLockFailure::Deadlock { .. }),
+        "unexpected failure: {failure:?}"
+    );
+
+    assert_eq!(
+        transaction.locked_keys(),
+        vec![PRIMARY_KEY.to_vec()],
+        "the lock TiKV granted exists; forgetting it abandons it on the cluster"
+    );
+    assert_eq!(
+        transaction.primary_key(),
+        Some(PRIMARY_KEY),
+        "cleanup of that lock needs the primary it names"
     );
 }

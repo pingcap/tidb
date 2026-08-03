@@ -77,6 +77,24 @@ pub enum LockWaitTime {
 }
 
 impl LockWaitTime {
+    /// The wait a plain `SELECT ... FOR UPDATE` gets, from
+    /// `@@innodb_lock_wait_timeout` (Go `DefInnodbLockWaitTimeout` = 50).
+    ///
+    /// This is the value that makes the whole [`Self::Timeout`] arm reachable
+    /// for an ordinary locking read. A statement mapped to [`Self::AlwaysWait`]
+    /// instead can only ever end at the surrounding call's deadline, which is
+    /// the control-plane RPC budget — an order of magnitude shorter than what
+    /// MySQL and TiDB promise, and not a lock-wait budget at all.
+    ///
+    /// A fixed value because this node has no `SET`-able session-variable
+    /// store; it is the bootstrap value a real cluster writes into
+    /// `mysql.global_variables`. When a session store exists, this is the one
+    /// call site that has to read from it.
+    #[must_use]
+    pub const fn session_lock_wait_timeout() -> Self {
+        Self::Timeout(Duration::from_secs(50))
+    }
+
     /// Encodes the residual budget into `PessimisticLockRequest.wait_timeout`.
     ///
     /// TiKV waits server-side for this many milliseconds before answering, so
@@ -428,6 +446,16 @@ where
                 call,
             )? {
                 BatchOutcome::Locked { conflicts } => {
+                    // Merged into the transaction *now*, not after the loop.
+                    // Go keeps `lockCtx.MaxLockedWithConflictTS` live during
+                    // the call for exactly this reason: a later batch may fail
+                    // and abort the statement, and the locks this batch already
+                    // holds must still be rolled back — at the timestamp they
+                    // actually exist at, which for a conflict-granted lock is
+                    // higher than the requested `for_update_ts`. Accumulating
+                    // in a local means any `?` below drops them and leaves real
+                    // locks behind that the cleanup no longer names.
+                    self.record_locked_batch(&primary_key, batch.keys(), &conflicts);
                     newly_locked.extend(batch.keys().iter().cloned());
                     locked_with_conflict.extend(conflicts);
                 }
@@ -439,17 +467,35 @@ where
             }
         }
         self.primary_key = Some(primary_key.clone());
-        self.locked_keys.extend(newly_locked.iter().cloned());
-        for (key, conflict_ts) in &locked_with_conflict {
-            self.locked_with_conflict.insert(key.clone(), *conflict_ts);
-            self.max_locked_with_conflict_ts = self.max_locked_with_conflict_ts.max(*conflict_ts);
-        }
         Ok(AcquiredLocks {
             for_update_ts: self.for_update_ts,
             keys: newly_locked,
             primary_key,
             locked_with_conflict,
         })
+    }
+
+    /// Records one batch TiKV has already granted, before the next one runs.
+    ///
+    /// The transaction now holds these locks whatever happens next, so every
+    /// fact cleanup needs about them — which keys, which primary they name, and
+    /// the highest timestamp fair locking granted one at — belongs to the
+    /// transaction from this moment, not from the end of a loop that may never
+    /// be reached.
+    fn record_locked_batch(
+        &mut self,
+        primary_key: &[u8],
+        keys: &[Vec<u8>],
+        conflicts: &[(Vec<u8>, u64)],
+    ) {
+        if self.primary_key.is_none() {
+            self.primary_key = Some(primary_key.to_vec());
+        }
+        self.locked_keys.extend(keys.iter().cloned());
+        for (key, conflict_ts) in conflicts {
+            self.locked_with_conflict.insert(key.clone(), *conflict_ts);
+            self.max_locked_with_conflict_ts = self.max_locked_with_conflict_ts.max(*conflict_ts);
+        }
     }
 
     /// Releases the pessimistic locks on `keys` without ending the transaction.
@@ -823,15 +869,16 @@ where
         if wait.is_exhausted(wait_started_at.elapsed()) {
             return Err(PessimisticLockFailure::LockWaitTimeout { key });
         }
-        // `AlwaysWait` still ends at the surrounding call's deadline: without
-        // this, a statement waiting on a lock nobody will ever release would
-        // spin forever rather than surface the caller's timeout.
+        // `AlwaysWait` still ends at the surrounding call's deadline, because a
+        // statement waiting on a lock nobody will ever release must stop
+        // somewhere. What that stop *means*, though, is "the lock wait ran
+        // out" — the same fact `LockWaitTime::Timeout` reports. Go answers it
+        // with statement-scoped 1205 and leaves the transaction intact; calling
+        // it a transport failure instead escalates a blocked `FOR UPDATE` into
+        // 1105 and destroys the whole transaction, which no amount of waiting
+        // ever justifies.
         if wait_started_at.elapsed() >= self.two_pc.call_timeout() {
-            return Err(PessimisticLockFailure::Transaction(
-                TransactionCause::Transport {
-                    detail: "pessimistic lock wait reached the call deadline".to_owned(),
-                },
-            ));
+            return Err(PessimisticLockFailure::LockWaitTimeout { key });
         }
         Ok(())
     }
@@ -963,5 +1010,24 @@ mod tests {
             })
             .is_statement_scoped()
         );
+    }
+
+    /// A blocked `FOR UPDATE` waits `@@innodb_lock_wait_timeout`, not the
+    /// control-plane RPC budget.
+    ///
+    /// Go's default is 50 seconds and the wait ends in statement-scoped 1205
+    /// with the transaction intact. Mapping a plain locking read to
+    /// `AlwaysWait` capped it at the 5-second control-plane timeout and
+    /// reported a transaction-scoped transport failure instead — three
+    /// divergences in one line: wrong wait, wrong code, wrong scope.
+    #[test]
+    fn a_plain_locking_read_waits_the_session_lock_wait_timeout() {
+        let wait = LockWaitTime::session_lock_wait_timeout();
+        assert_eq!(wait, LockWaitTime::Timeout(Duration::from_secs(50)));
+        assert_eq!(wait.wait_timeout_ms(Duration::ZERO), 50_000);
+        assert!(!wait.is_exhausted(Duration::from_secs(49)));
+        assert!(wait.is_exhausted(Duration::from_secs(50)));
+        // The arm this makes reachable is the statement-scoped one.
+        assert!(PessimisticLockFailure::LockWaitTimeout { key: Vec::new() }.is_statement_scoped());
     }
 }

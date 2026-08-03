@@ -470,7 +470,12 @@ impl MultiStatementTransaction {
             })
             .collect::<Vec<_>>();
         let wait = match wait {
-            ReadLockWait::Blocking => LockWaitTime::AlwaysWait,
+            // Go maps a plain `FOR UPDATE` to `@@innodb_lock_wait_timeout`,
+            // not to "wait forever": `AlwaysWait` here could only end at the
+            // statement's own control-plane call deadline, five seconds, and
+            // it would end as a transport failure that destroys the whole
+            // transaction instead of the statement-scoped 1205 MySQL promises.
+            ReadLockWait::Blocking => LockWaitTime::session_lock_wait_timeout(),
             ReadLockWait::NoWait => LockWaitTime::NoWait,
             ReadLockWait::Seconds(seconds) => LockWaitTime::Timeout(Duration::from_secs(seconds)),
         };
