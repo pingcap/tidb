@@ -294,6 +294,18 @@ pub(crate) fn build_from(
             // A `db.t` reference resolves in that schema; a bare `t` resolves
             // in the session's current one (Go's name resolution).
             let (database, name) = split_table_path(&table_ref.name, current_db)?;
+            // `t AS OF TIMESTAMP <expr>` pins a HISTORICAL read. Go resolves
+            // the expression to a timestamp and reads the MVCC version at it
+            // (`CalculateAsOfTsExpr` -> `StalenessTxnContextProvider`); this
+            // tier's store keeps no history, so answering from the present
+            // under a historical name would be undetectable. Refuse it, the
+            // same way `tidb-planner`'s bounded scan already does
+            // (`UnsupportedReadOnlyFeature::StaleRead`).
+            if table_ref.as_of.is_some() {
+                return Err(DriverError::unsupported(
+                    "AS OF TIMESTAMP is not supported yet",
+                ));
+            }
             let entry = catalog
                 .get_in(database, name)
                 .ok_or(DriverError::unsupported("table not found in catalog"))?;

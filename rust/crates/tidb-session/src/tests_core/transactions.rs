@@ -223,3 +223,62 @@ fn autocommit_off_puts_a_statement_in_a_transaction() {
         ])
     );
 }
+
+/// A session that has pinned a historical timestamp must not be answered
+/// from the present.
+///
+/// Go reads the PAST for both of these: `tidb_snapshot` sets the session's
+/// `SnapshotTS`, and a negative `tidb_read_staleness` reads
+/// `now() - staleness` (`CalculateAsOfTsExpr`). This tier's store keeps no
+/// MVCC history, so it refuses -- the same answer `tidb-planner`'s bounded
+/// scan already gives (`UnsupportedReadOnlyFeature::StaleRead`). Silently
+/// returning current rows is the one outcome a client cannot detect.
+#[test]
+fn a_pinned_historical_read_is_refused_rather_than_answered_from_the_present() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1, 10)").unwrap();
+
+    session.run("SET @@tidb_read_staleness = -1").unwrap();
+    let error = session.run("SELECT b FROM t").unwrap_err();
+    assert!(
+        format!("{error:?}").contains("tidb_read_staleness"),
+        "a staleness-pinned read must name what it refused, got {error:?}"
+    );
+    // A write is refused for the same reason, and so is a read of a table
+    // that does not exist -- the guard is above name resolution.
+    assert!(session.run("INSERT INTO t VALUES (2, 20)").is_err());
+    // Unpinning is always possible: `SET` and transaction control sit above
+    // the guard.
+    session.run("SET @@tidb_read_staleness = 0").unwrap();
+    session.run("SELECT b FROM t").unwrap();
+
+    session
+        .run("SET @@tidb_snapshot = '2020-01-01 00:00:00'")
+        .unwrap();
+    let error = session.run("SELECT b FROM t").unwrap_err();
+    assert!(
+        format!("{error:?}").contains("tidb_snapshot"),
+        "a snapshot-pinned read must name what it refused, got {error:?}"
+    );
+    session.run("SET @@tidb_snapshot = ''").unwrap();
+    session.run("SELECT b FROM t").unwrap();
+}
+
+/// `AS OF TIMESTAMP` on a table reference is the per-statement form of the
+/// same historical read, and it is refused at the one door every base-table
+/// read goes through.
+#[test]
+fn as_of_timestamp_on_a_table_reference_is_refused() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT PRIMARY KEY)").unwrap();
+    let error = session
+        .run("SELECT a FROM t AS OF TIMESTAMP '2020-01-01 00:00:00'")
+        .unwrap_err();
+    assert!(
+        format!("{error:?}").contains("AS OF TIMESTAMP"),
+        "got {error:?}"
+    );
+}

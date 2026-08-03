@@ -300,6 +300,11 @@ impl Session {
         if self.apply_set_stmt(&stmt)?.is_some() {
             return Ok(StmtOutput::Affected(0));
         }
+        // A pinned historical read must not silently answer from the present.
+        // The check sits BELOW the `SET` and transaction-control doors so the
+        // session can always pin, unpin, and roll back; every statement that
+        // would READ or WRITE is above it and is refused.
+        self.refuse_pinned_historical_read()?;
         // SQL-level prepared statements are answered before variable binding,
         // because a `USING` entry is a variable whose VALUE this statement
         // must read itself (Go's `usingParam.Eval`) rather than one to
@@ -782,6 +787,48 @@ impl Session {
             return Err(DriverError::unsupported(
                 "SELECT ... INTO OUTFILE is not supported yet",
             ));
+        }
+        Ok(())
+    }
+}
+
+impl Session {
+    /// Refuses every statement that would read or write while the session has
+    /// pinned a historical timestamp.
+    ///
+    /// Go answers such a statement from the PAST: `tidb_snapshot` makes the
+    /// session read at that timestamp (`SnapshotTS`), and a negative
+    /// `tidb_read_staleness` reads `now() - staleness`
+    /// (`CalculateAsOfTsExpr`). Both need MVCC history and a timestamp oracle,
+    /// which this tier's store has neither of -- so the honest answer is the
+    /// same refusal the bounded planners already give a stale read
+    /// (`tidb-planner`'s `UnsupportedReadOnlyFeature::StaleRead`), not the
+    /// CURRENT rows under a historical name. Answering from the present is
+    /// the one outcome a client cannot detect.
+    ///
+    /// `tidb_read_staleness` is Go's `int` seconds, at most 0; `tidb_snapshot`
+    /// is Go's timestamp string, empty when nothing is pinned.
+    fn refuse_pinned_historical_read(&mut self) -> Result<(), DriverError> {
+        if let Ok(snapshot) = self.vars.get_system(tidb_vardef::tidb_vars::TIDB_SNAPSHOT) {
+            if !snapshot.is_empty() {
+                return Err(DriverError::unsupported(
+                    "reading at @@tidb_snapshot is not supported yet",
+                ));
+            }
+        }
+        if let Ok(staleness) = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS)
+        {
+            if staleness
+                .trim()
+                .parse::<i64>()
+                .is_ok_and(|value| value != 0)
+            {
+                return Err(DriverError::unsupported(
+                    "reading at @@tidb_read_staleness is not supported yet",
+                ));
+            }
         }
         Ok(())
     }
