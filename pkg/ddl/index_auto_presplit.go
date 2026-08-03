@@ -159,9 +159,6 @@ func planAutoPresplitWithCache(
 		var err error
 		loaded, err = statsProvider.LoadColumnStatsForAutoPresplit(
 			ctx, sctx, tblInfo.ID, leadingCol.ID, leadingCol, cfg.maxTopNKeysPerPhysical)
-		if cause := context.Cause(ctx); cause != nil {
-			return nil, "", cause
-		}
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to load leading column statistics from storage: %w", err)
 		}
@@ -193,9 +190,6 @@ func planAutoPresplitWithCache(
 	} else {
 		topNEvents, err := buildAutoPresplitTopNEvents(
 			sctx, loaded.Column.TopN, leadingCol, cfg.maxTopNKeysPerPhysical)
-		if cause := context.Cause(ctx); cause != nil {
-			return nil, "", cause
-		}
 		if err != nil {
 			logAutoPresplitComponentFailure(tblInfo, idxInfo, "TopN", err)
 		} else {
@@ -208,9 +202,6 @@ func planAutoPresplitWithCache(
 	} else {
 		histogramEvents, err := buildAutoPresplitHistogramEvents(
 			sctx, &loaded.Column.Histogram, leadingCol)
-		if cause := context.Cause(ctx); cause != nil {
-			return nil, "", cause
-		}
 		if err != nil {
 			logAutoPresplitComponentFailure(tblInfo, idxInfo, "Histogram", err)
 		} else {
