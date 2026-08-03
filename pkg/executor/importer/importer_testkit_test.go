@@ -16,7 +16,6 @@ package importer_test
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path"
 	"testing"
@@ -52,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -424,27 +424,51 @@ func TestProcessChunkWith(t *testing.T) {
 }
 
 func TestPopulateChunks(t *testing.T) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalImportInto)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tidbCfg := tidb.GetGlobalConfig()
-	tidbCfg.TempDir = t.TempDir()
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int)")
-	require.NoError(t, os.WriteFile(path.Join(tidbCfg.TempDir, "test-01.csv"),
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "test-01.csv"),
 		[]byte("1,2,3\n4,5,6\n7,8,9\n"), 0o644))
-	require.NoError(t, os.WriteFile(path.Join(tidbCfg.TempDir, "test-02.csv"),
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "test-02.csv"),
 		[]byte("8,8,8\n"), 0o644))
-	require.NoError(t, os.WriteFile(path.Join(tidbCfg.TempDir, "test-03.csv"),
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "test-03.csv"),
 		[]byte("9,9,9\n10,10,10\n"), 0o644))
-	ti := getTableImporter(ctx, t, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir), importer.DataFormatCSV, []*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
-	defer func() {
-		ti.LoadDataController.Close()
-		ti.Backend().CloseEngineMgr()
-	}()
-	require.NoError(t, ti.InitDataFiles(ctx))
-	engines, err := ti.PopulateChunks(ctx)
+
+	fieldType := types.NewFieldType(mysql.TypeLong)
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{ID: 1, Name: ast.NewCIStr("a"), Offset: 0, FieldType: *fieldType, State: model.StatePublic},
+			{ID: 2, Name: ast.NewCIStr("b"), Offset: 1, FieldType: *fieldType, State: model.StatePublic},
+			{ID: 3, Name: ast.NewCIStr("c"), Offset: 2, FieldType: *fieldType, State: model.StatePublic},
+		},
+	}
+	charset := "utf8mb4"
+	controller, err := importer.NewLoadDataController(&importer.Plan{
+		DBName:           "test",
+		DBID:             1,
+		TableInfo:        tblInfo,
+		DesiredTableInfo: tblInfo,
+		Path:             path.Join(tempDir, "test-*.csv"),
+		Format:           importer.DataFormatCSV,
+		Charset:          &charset,
+		FieldNullDef:     []string{`\N`},
+		LineFieldsInfo: plannercore.LineFieldsInfo{
+			FieldsTerminatedBy: `,`,
+			FieldsEnclosedBy:   `"`,
+			FieldsEscapedBy:    `\`,
+		},
+		ThreadCnt:      2,
+		MaxEngineSize:  config.ByteSize(20),
+		InImportInto:   true,
+		DataSourceType: importer.DataSourceTypeFile,
+	}, tables.MockTableFromMeta(tblInfo), &importer.ASTArgs{}, importer.WithLogger(zap.NewNop()))
+	require.NoError(t, err)
+	defer controller.Close()
+
+	require.NoError(t, controller.InitDataFiles(ctx))
+	engines, err := controller.PopulateChunks(ctx)
 	require.NoError(t, err)
 	require.Len(t, engines, 3)
 	require.Len(t, engines[0], 2)
