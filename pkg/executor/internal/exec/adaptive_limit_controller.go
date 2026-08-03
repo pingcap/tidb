@@ -17,6 +17,7 @@ package exec
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 const adaptiveYieldWindowSize = 4
@@ -28,6 +29,12 @@ type adaptiveYieldWindow struct {
 	inputs  [adaptiveYieldWindowSize]uint64
 	outputs [adaptiveYieldWindowSize]uint64
 	next    uint8
+}
+
+type admissionBlockStats struct {
+	waiters      int
+	blockedSince time.Time
+	blockedTime  time.Duration
 }
 
 func (w *adaptiveYieldWindow) add(input, output uint64) {
@@ -48,6 +55,8 @@ func (w *adaptiveYieldWindow) totals() (input, output uint64) {
 // Outer fields are measured in outer rows. Lookup reservation, handle, window,
 // and batch fields are measured in handles; LookupRows is measured in table
 // rows. DemandRows and OutputRows are measured in final Join output rows.
+// AdmissionBlocked fields are wall-clock durations with overlapping waits in
+// the same stage counted once.
 type AdaptiveLimitSnapshot struct {
 	DemandRows              uint64
 	OutputRows              uint64
@@ -63,6 +72,8 @@ type AdaptiveLimitSnapshot struct {
 	LookupBatchSize         uint64
 	LookupPhysicalWindow    uint64
 	LookupOutstandingAtStop uint64
+	OuterAdmissionBlocked   time.Duration
+	LookupAdmissionBlocked  time.Duration
 	Stopped                 bool
 }
 
@@ -103,6 +114,7 @@ type AdaptiveLimitController struct {
 	outerConsumed          uint64 // Fully probed by IndexLookUpJoin.
 	outerReserved          uint64 // Admitted but not yet committed.
 	outerOutstandingAtStop uint64
+	outerAdmissionBlocked  admissionBlockStats
 	// One outer row may produce output across several Next calls. Retain that
 	// output until the outer row is fully consumed and can form a yield sample.
 	pendingOuterOutput uint64
@@ -114,6 +126,7 @@ type AdaptiveLimitController struct {
 	lookupRows              uint64 // Rows returned by those lookup tasks.
 	recentLookupYield       adaptiveYieldWindow
 	lookupOutstandingAtStop uint64
+	lookupAdmissionBlocked  admissionBlockStats
 
 	// Windows are logical admission budgets. A worker may not have more than
 	// its current window outstanding at one time.
@@ -200,6 +213,7 @@ func (c *AdaptiveLimitController) Reset() {
 	c.outerConsumed = 0
 	c.outerReserved = 0
 	c.outerOutstandingAtStop = 0
+	c.outerAdmissionBlocked = admissionBlockStats{}
 	c.pendingOuterOutput = 0
 	c.recentOuterYield = adaptiveYieldWindow{}
 	c.outerNoOutputRows = 0
@@ -215,6 +229,7 @@ func (c *AdaptiveLimitController) Reset() {
 	c.lookupBatchSize = c.initialLookupBatchSize
 	c.lookupGrowthProgress = 0
 	c.lookupOutstandingAtStop = 0
+	c.lookupAdmissionBlocked = admissionBlockStats{}
 	c.stopped = false
 	c.outerChanged = make(chan struct{}, 1)
 	c.lookupChanged = make(chan struct{}, 1)
@@ -246,13 +261,20 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, oute
 	if maxRows <= 0 {
 		return 0, true, nil
 	}
+	waiting := false
 	for {
 		c.mu.Lock()
 		if err := ctx.Err(); err != nil {
+			if waiting {
+				c.endAdmissionBlockedLocked(outer, time.Now())
+			}
 			c.mu.Unlock()
 			return 0, false, err
 		}
 		if c.stopped {
+			if waiting {
+				c.endAdmissionBlockedLocked(outer, time.Now())
+			}
 			c.mu.Unlock()
 			return 0, false, nil
 		}
@@ -267,6 +289,9 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, oute
 			changed = c.outerChanged
 		}
 		if outstanding < window {
+			if waiting {
+				c.endAdmissionBlockedLocked(outer, time.Now())
+			}
 			rows := min(uint64(maxRows), window-outstanding)
 			if outer {
 				c.outerReserved += rows
@@ -277,19 +302,57 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, oute
 			c.mu.Unlock()
 			return int(rows), true, nil
 		}
+		if !waiting {
+			c.beginAdmissionBlockedLocked(outer, time.Now())
+			waiting = true
+		}
 		stopCh := c.stopCh
 		c.mu.Unlock()
 
 		select {
 		case <-ctx.Done():
+			c.endAdmissionBlocked(outer)
 			return 0, false, ctx.Err()
 		case <-stopCh:
+			c.endAdmissionBlocked(outer)
 			if err := ctx.Err(); err != nil {
 				return 0, false, err
 			}
 			return 0, false, nil
 		case <-changed:
 		}
+	}
+}
+
+func (c *AdaptiveLimitController) beginAdmissionBlockedLocked(outer bool, now time.Time) {
+	stats := &c.lookupAdmissionBlocked
+	if outer {
+		stats = &c.outerAdmissionBlocked
+	}
+	if stats.waiters == 0 {
+		stats.blockedSince = now
+	}
+	stats.waiters++
+}
+
+func (c *AdaptiveLimitController) endAdmissionBlocked(outer bool) {
+	c.mu.Lock()
+	c.endAdmissionBlockedLocked(outer, time.Now())
+	c.mu.Unlock()
+}
+
+func (c *AdaptiveLimitController) endAdmissionBlockedLocked(outer bool, now time.Time) {
+	stats := &c.lookupAdmissionBlocked
+	if outer {
+		stats = &c.outerAdmissionBlocked
+	}
+	if stats.waiters == 0 {
+		return
+	}
+	stats.waiters--
+	if stats.waiters == 0 {
+		stats.blockedTime += now.Sub(stats.blockedSince)
+		stats.blockedSince = time.Time{}
 	}
 }
 
@@ -439,6 +502,8 @@ func (c *AdaptiveLimitController) Snapshot() AdaptiveLimitSnapshot {
 		LookupBatchSize:         c.lookupBatchSize,
 		LookupPhysicalWindow:    c.lookupPhysicalWindowLocked(),
 		LookupOutstandingAtStop: c.lookupOutstandingAtStop,
+		OuterAdmissionBlocked:   c.admissionBlockedTimeLocked(true),
+		LookupAdmissionBlocked:  c.admissionBlockedTimeLocked(false),
 		Stopped:                 c.stopped,
 	}
 }
@@ -559,6 +624,9 @@ func (c *AdaptiveLimitController) stopLocked() {
 		return
 	}
 	c.stopped = true
+	now := time.Now()
+	c.endAdmissionBlockedLocked(true, now)
+	c.endAdmissionBlockedLocked(false, now)
 	c.outerOutstandingAtStop = saturatingAdd(
 		c.outerFetched-min(c.outerFetched, c.outerConsumed),
 		c.outerReserved,
@@ -570,6 +638,17 @@ func (c *AdaptiveLimitController) stopLocked() {
 	c.lookupWindow = 0
 	c.lookupBatchSize = 0
 	close(c.stopCh)
+}
+
+func (c *AdaptiveLimitController) admissionBlockedTimeLocked(outer bool) time.Duration {
+	stats := c.lookupAdmissionBlocked
+	if outer {
+		stats = c.outerAdmissionBlocked
+	}
+	if stats.waiters == 0 {
+		return stats.blockedTime
+	}
+	return stats.blockedTime + time.Since(stats.blockedSince)
 }
 
 func (c *AdaptiveLimitController) notifyAllLocked() {

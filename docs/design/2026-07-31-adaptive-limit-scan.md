@@ -380,7 +380,7 @@ Existing batch and concurrency variables are unchanged and remain upper bounds. 
 For an eligible IndexLookUpJoin, `EXPLAIN ANALYZE` includes a compact runtime summary:
 
 ```text
-adaptive:{outer:1400/1000, lookup:1000/700, outstanding:400/1000}
+adaptive:{outer:1400/1000, lookup:1000/700, outstanding:400/1000, blocked:outer=1ms,lookup=3ms}
 ```
 
 The fields are:
@@ -390,10 +390,13 @@ The fields are:
 | `outer` | fetched outer rows / consumed outer rows |
 | `lookup` | lookup handles / returned table rows |
 | `outstanding` | outer / lookup capacity outstanding when admission stopped |
+| `blocked` | wall-clock time during which at least one worker in the stage was blocked by a full admission budget |
 
 LIMIT demand and final Join output already appear in the Limit and IndexLookUpJoin runtime information and are not repeated. Outstanding values are admission accounting: outer outstanding is measured in logical rows, while lookup outstanding is measured in physically reserved handles. Neither value claims that the same amount of already dispatched work was cancelled.
 
-The controller snapshot also retains current window values for deterministic unit tests, but they are not included in the compact plan output.
+Blocked time is the union of overlapping waits in the corresponding stage. It does not include ordinary executor, coprocessor, or table lookup execution time. A zero value means the controller did not block that stage.
+
+The controller keeps current window values internally for admission control and deterministic unit tests. Window values are intentionally not included in the compact plan output.
 
 ### Current Limitations
 
@@ -422,7 +425,7 @@ Additional limitations are:
 - only one keep-order IndexLookUpJoin outer path is supported;
 - physical lookup rounding can admit less than one execution batch beyond the logical window near the LIMIT tail;
 - DistSQL request concurrency and ordered request dispatch are unchanged;
-- runtime stats do not yet include final windows or a reason why a plan was not eligible.
+- runtime stats do not yet include a reason why a plan was not eligible.
 
 ### Compatibility
 

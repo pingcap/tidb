@@ -303,6 +303,7 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 	require.Contains(t, analyze, "outer:")
 	require.Contains(t, analyze, "lookup:")
 	require.Contains(t, analyze, "outstanding:")
+	require.Contains(t, analyze, "blocked:")
 	budgetSQL := `select /*+ inl_join(i) */ o.payload, i.v
 		from adaptive_outer o use index(idx_order_key)
 		join adaptive_inner i use index(idx_join_key) on o.join_key = i.join_key
@@ -341,10 +342,11 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 	tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
 	statsStart := strings.Index(budgetAnalyze, "adaptive:{outer:")
 	require.NotEqual(t, -1, statsStart)
+	require.Regexp(t, `adaptive:\{[^}]*outstanding:[0-9]+/[0-9]+, blocked:outer=[^,]+,lookup=[^}]+\}`, budgetAnalyze[statsStart:])
 	var outerFetched, outerConsumed, lookupHandles, lookupRows, outerOutstanding, lookupOutstanding uint64
 	_, err := fmt.Sscanf(
 		budgetAnalyze[statsStart:],
-		"adaptive:{outer:%d/%d, lookup:%d/%d, outstanding:%d/%d}",
+		"adaptive:{outer:%d/%d, lookup:%d/%d, outstanding:%d/%d, blocked:",
 		&outerFetched, &outerConsumed, &lookupHandles, &lookupRows, &outerOutstanding, &lookupOutstanding,
 	)
 	require.NoError(t, err)
@@ -379,9 +381,10 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 	require.Equal(t, 1, maxTableTasks)
 	statsStart = strings.Index(lowSelectivityAnalyze, "adaptive:{outer:")
 	require.NotEqual(t, -1, statsStart)
+	require.Regexp(t, `adaptive:\{[^}]*outstanding:[0-9]+/[0-9]+, blocked:outer=[^,]+,lookup=[^}]+\}`, lowSelectivityAnalyze[statsStart:])
 	_, err = fmt.Sscanf(
 		lowSelectivityAnalyze[statsStart:],
-		"adaptive:{outer:%d/%d, lookup:%d/%d, outstanding:%d/%d}",
+		"adaptive:{outer:%d/%d, lookup:%d/%d, outstanding:%d/%d, blocked:",
 		&outerFetched, &outerConsumed, &lookupHandles, &lookupRows, &outerOutstanding, &lookupOutstanding,
 	)
 	require.NoError(t, err)

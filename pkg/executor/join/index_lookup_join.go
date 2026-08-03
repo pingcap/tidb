@@ -992,6 +992,10 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 		buf.WriteString(strconv.FormatUint(snapshot.OuterOutstandingAtStop, 10))
 		buf.WriteString("/")
 		buf.WriteString(strconv.FormatUint(snapshot.LookupOutstandingAtStop, 10))
+		buf.WriteString(", blocked:outer=")
+		buf.WriteString(execdetails.FormatDuration(snapshot.OuterAdmissionBlocked))
+		buf.WriteString(",lookup=")
+		buf.WriteString(execdetails.FormatDuration(snapshot.LookupAdmissionBlocked))
 		buf.WriteString("}")
 	}
 	return buf.String()

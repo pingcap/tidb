@@ -231,6 +231,7 @@ func TestAdaptiveLimitControllerStopInterruptsReservation(t *testing.T) {
 	case <-time.After(time.Second):
 		require.Fail(t, "stop did not wake the blocked reservation")
 	}
+	require.Greater(t, controller.Snapshot().OuterAdmissionBlocked, time.Duration(0))
 
 	controller.Reset()
 	reserved, ok = reserveOuterForTest(t, controller, 32)
@@ -283,6 +284,7 @@ func TestAdaptiveLimitControllerStopInterruptsReservation(t *testing.T) {
 		require.Fail(t, "cancel did not wake the blocked outer reservation")
 	}
 	require.Zero(t, blockedOuterController.Snapshot().OuterReserved)
+	require.Greater(t, blockedOuterController.Snapshot().OuterAdmissionBlocked, time.Duration(0))
 
 	blockedLookupController := newAdaptiveLimitControllerForTest(1000, 1, 1, 1, 1)
 	reserved, ok = reserveLookupForTest(t, blockedLookupController, 1)
@@ -307,6 +309,7 @@ func TestAdaptiveLimitControllerStopInterruptsReservation(t *testing.T) {
 		require.Fail(t, "cancel did not wake the blocked lookup reservation")
 	}
 	require.Equal(t, uint64(reserved), blockedLookupController.Snapshot().LookupReserved)
+	require.Greater(t, blockedLookupController.Snapshot().LookupAdmissionBlocked, time.Duration(0))
 
 	pendingController := newAdaptiveLimitControllerForTest(1000, 64, 100000, 32, 100000)
 	fetched, ok := reserveOuterForTest(t, pendingController, 32)
@@ -447,6 +450,50 @@ func TestAdaptiveLimitControllerBoundsLookupAdmission(t *testing.T) {
 	require.Zero(t, snapshot.LookupReserved)
 	require.Equal(t, uint64(10), snapshot.LookupHandles)
 	require.Equal(t, uint64(5), snapshot.LookupRows)
+}
+
+func TestAdaptiveLimitControllerMergesConcurrentLookupBlocks(t *testing.T) {
+	controller := newAdaptiveLimitControllerForTest(1000, 1, 1, 1, 1)
+	reserved, ok := reserveLookupForTest(t, controller, 1)
+	require.True(t, ok)
+
+	type reservationResult struct {
+		admitted bool
+		err      error
+	}
+	started := make(chan struct{}, 2)
+	results := make(chan reservationResult, 2)
+	for range 2 {
+		go func() {
+			started <- struct{}{}
+			_, admitted, err := controller.ReserveLookup(context.Background(), 1)
+			results <- reservationResult{admitted: admitted, err: err}
+		}()
+	}
+	for range 2 {
+		<-started
+	}
+	require.Eventually(t, func() bool {
+		controller.mu.Lock()
+		defer controller.mu.Unlock()
+		return controller.lookupAdmissionBlocked.waiters == 2
+	}, time.Second, time.Millisecond)
+
+	blockedStart := time.Now()
+	controller.CompleteLookup(reserved, reserved, 0)
+	firstResult := <-results
+	require.True(t, firstResult.admitted)
+	require.NoError(t, firstResult.err)
+	controller.AbortLookup(1)
+	secondResult := <-results
+	require.True(t, secondResult.admitted)
+	require.NoError(t, secondResult.err)
+
+	snapshot := controller.Snapshot()
+	blockedElapsed := time.Since(blockedStart)
+	require.Greater(t, snapshot.LookupAdmissionBlocked, time.Duration(0))
+	require.LessOrEqual(t, snapshot.LookupAdmissionBlocked, blockedElapsed+50*time.Millisecond)
+	controller.Stop()
 }
 
 func BenchmarkAdaptiveLimitControllerObserveJoinProgress(b *testing.B) {
