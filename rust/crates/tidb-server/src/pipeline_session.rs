@@ -231,6 +231,12 @@ impl QuerySession for PipelineServerSession {
         self.session.wire_warning_count()
     }
 
+    /// Go `clientConn.initResultEncoder`'s read: this session's
+    /// `@@character_set_results`.
+    fn result_charset(&self) -> String {
+        self.session.result_charset()
+    }
+
     /// The handshake's initial database and `COM_INIT_DB`, which Go serves
     /// with one `useDB` each.
     fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {

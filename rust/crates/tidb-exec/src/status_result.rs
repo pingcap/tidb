@@ -33,7 +33,7 @@ use crate::{PublishedStatementStatus, StatementStatus};
 /// the same warning count plus the caller-owned status/capability flags used
 /// by the text result-set metadata and terminal packets.  No field is derived
 /// from runtime rows or [`tidb_datatype::Datum`] values.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StatusResultSnapshot {
     /// The exact published status used to construct both protocol views.
     pub published: PublishedStatementStatus,
@@ -71,6 +71,7 @@ impl StatusResultSnapshot {
                 warnings,
                 deprecate_eof,
                 protocol_41,
+                ..ResultSetOptions::default()
             },
         }
     }

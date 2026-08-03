@@ -1197,6 +1197,12 @@ impl QuerySession for ClusterServerSession {
         self.session.wire_warning_count()
     }
 
+    /// Go `clientConn.initResultEncoder`'s read: this session's
+    /// `@@character_set_results`.
+    fn result_charset(&self) -> String {
+        self.session.result_charset()
+    }
+
     /// Maps `BEGIN`/`COMMIT`/`ROLLBACK` onto the connection's buffer.
     ///
     /// The driver session owns the *state* (so `in_transaction` and the

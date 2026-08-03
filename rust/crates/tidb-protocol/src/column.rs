@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::result::append_length_encoded_bytes;
-
+use crate::result_encoder::ResultEncoder;
 /// Maximum byte length advertised for a column name by TiDB's server.
 pub const MAX_COLUMN_NAME_SIZE: usize = 256;
 
@@ -105,29 +105,50 @@ pub struct ColumnInfo {
 
 impl ColumnInfo {
     /// Appends a column definition without a default value.
-    pub fn dump(&self, buffer: &mut Vec<u8>) {
-        self.dump_inner(buffer, false);
+    ///
+    /// `encoder` is the connection's `@@character_set_results` policy, which
+    /// Go's `Info.Dump` takes for the same reason: the identifier strings in
+    /// this packet are METADATA and go out in the result charset, and the
+    /// advertised collation id is the result charset's rather than the
+    /// column's. Pass [`ResultEncoder::null`] for the unset state.
+    pub fn dump(&self, buffer: &mut Vec<u8>, encoder: &ResultEncoder) {
+        self.dump_inner(buffer, false, encoder);
     }
 
     /// Appends a column definition with a length-encoded default value.
-    pub fn dump_with_default(&self, buffer: &mut Vec<u8>) {
-        self.dump_inner(buffer, true);
+    pub fn dump_with_default(&self, buffer: &mut Vec<u8>, encoder: &ResultEncoder) {
+        self.dump_inner(buffer, true, encoder);
     }
 
-    fn dump_inner(&self, buffer: &mut Vec<u8>, with_default: bool) {
+    fn dump_inner(&self, buffer: &mut Vec<u8>, with_default: bool, encoder: &ResultEncoder) {
         append_length_encoded_bytes(buffer, Some(b"def"));
         // The source implementation truncates only `Name` and `OrgName` for
         // old-client compatibility.  Schema and table identifiers are sent
         // in full; applying the 256-byte alias limit to them changes the
         // metadata packet even though it looks superficially symmetric.
-        append_length_encoded_bytes(buffer, Some(self.schema.as_bytes()));
-        append_length_encoded_bytes(buffer, Some(self.table.as_bytes()));
-        append_length_encoded_bytes(buffer, Some(self.org_table.as_bytes()));
-        append_length_encoded_bytes(buffer, Some(self.truncate_name(self.name.as_bytes())));
-        append_length_encoded_bytes(buffer, Some(self.truncate_name(self.org_name.as_bytes())));
+        let meta = |bytes: &[u8]| {
+            encoder
+                .encode_meta(bytes)
+                .unwrap_or_else(|_| bytes.to_vec())
+        };
+        append_length_encoded_bytes(buffer, Some(&meta(self.schema.as_bytes())));
+        append_length_encoded_bytes(buffer, Some(&meta(self.table.as_bytes())));
+        append_length_encoded_bytes(buffer, Some(&meta(self.org_table.as_bytes())));
+        append_length_encoded_bytes(
+            buffer,
+            Some(&meta(self.truncate_name(self.name.as_bytes()))),
+        );
+        append_length_encoded_bytes(
+            buffer,
+            Some(&meta(self.truncate_name(self.org_name.as_bytes()))),
+        );
 
         buffer.push(0x0c);
-        buffer.extend_from_slice(&self.dump_charset().to_le_bytes());
+        let charset_id = encoder.column_charset_id(
+            self.dump_charset(),
+            crate::result_encoder::is_string_column_type(self.type_code),
+        );
+        buffer.extend_from_slice(&charset_id.to_le_bytes());
         buffer.extend_from_slice(&self.dump_length().to_le_bytes());
         buffer.push(dump_type(self.type_code));
         buffer.extend_from_slice(&dump_flag(self.type_code, self.flag).to_le_bytes());
@@ -180,13 +201,17 @@ impl ColumnInfo {
 }
 
 /// Appends a column definition without a default value.
-pub fn dump_column(buffer: &mut Vec<u8>, column: &ColumnInfo) {
-    column.dump(buffer);
+pub fn dump_column(buffer: &mut Vec<u8>, column: &ColumnInfo, encoder: &ResultEncoder) {
+    column.dump(buffer, encoder);
 }
 
 /// Appends a column definition including its default value.
-pub fn dump_column_with_default(buffer: &mut Vec<u8>, column: &ColumnInfo) {
-    column.dump_with_default(buffer);
+pub fn dump_column_with_default(
+    buffer: &mut Vec<u8>,
+    column: &ColumnInfo,
+    encoder: &ResultEncoder,
+) {
+    column.dump_with_default(buffer, encoder);
 }
 
 /// Returns the metadata flags exposed for a MySQL field type.

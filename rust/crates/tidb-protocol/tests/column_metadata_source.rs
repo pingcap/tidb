@@ -14,7 +14,7 @@
 
 #![allow(missing_docs)]
 
-use tidb_protocol::{
+use tidb_protocol::result_encoder::ResultEncoder;use tidb_protocol::{
     dump_column, dump_column_with_default, ColumnDefault, ColumnInfo, BINARY_DEFAULT_COLLATION_ID,
     BINARY_FLAG, DEFAULT_COLLATION_ID, ENUM_FLAG, MAX_LONG_BLOB_WIDTH, SET_FLAG, TYPE_LONG_BLOB,
     TYPE_NEW_DATE, TYPE_TIDB_VECTOR_FLOAT32,
@@ -89,7 +89,7 @@ fn metadata_limits_only_display_and_original_column_names() {
     column.org_name = "r".repeat(300);
 
     let mut packet = Vec::new();
-    dump_column(&mut packet, &column);
+    dump_column(&mut packet, &column, &ResultEncoder::null());
     let mut offset = 0;
     assert_eq!(read_lenenc(&packet, &mut offset), b"def");
     assert_eq!(read_lenenc(&packet, &mut offset), column.schema.as_bytes());
@@ -118,7 +118,7 @@ fn metadata_name_limit_never_splits_utf8_or_panics() {
     column.name = "€".repeat(86);
 
     let mut packet = Vec::new();
-    dump_column(&mut packet, &column);
+    dump_column(&mut packet, &column, &ResultEncoder::null());
     let mut offset = 0;
     for _ in 0..4 {
         read_lenenc(&packet, &mut offset);
@@ -139,7 +139,7 @@ fn vector_float32_metadata_projection_matches_source() {
     column.decimal = 9;
 
     let mut packet = Vec::new();
-    dump_column(&mut packet, &column);
+    dump_column(&mut packet, &column, &ResultEncoder::null());
     let mut offset = skip_metadata_prefix(&packet);
     assert_eq!(packet[offset], 0x0c);
     offset += 1;
@@ -175,7 +175,7 @@ fn default_markers_are_all_encoded_as_protocol_null() {
         let mut column = source_column();
         column.default_value = default;
         let mut packet = Vec::new();
-        dump_column_with_default(&mut packet, &column);
+        dump_column_with_default(&mut packet, &column, &ResultEncoder::null());
         let mut offset = skip_metadata_prefix(&packet);
         offset += 13;
         assert_eq!(&packet[offset..], &[0xfb]);
@@ -191,7 +191,7 @@ fn byte_and_text_defaults_keep_length_encoded_payload_bytes() {
         let mut column = source_column();
         column.default_value = Some(default);
         let mut packet = Vec::new();
-        dump_column_with_default(&mut packet, &column);
+        dump_column_with_default(&mut packet, &column, &ResultEncoder::null());
         let mut offset = skip_metadata_prefix(&packet);
         offset += 13;
         assert_eq!(read_lenenc(&packet, &mut offset), expected);

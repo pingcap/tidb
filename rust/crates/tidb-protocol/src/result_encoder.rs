@@ -128,7 +128,7 @@ pub fn is_string_column_type(type_code: u8) -> bool {
 /// value models Go's `isNull` state and therefore leaves data in its column
 /// charset.  Callers must call [`Self::update_data_encoding`] once per column
 /// before encoding a non-null/non-binary result.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResultEncoder {
     result_charset: Option<ResultCharset>,
     data_charset: Option<ResultCharset>,
@@ -136,6 +136,17 @@ pub struct ResultEncoder {
 }
 
 impl ResultEncoder {
+    /// Go's `NewResultEncoder("")`: the `@@character_set_results` unset
+    /// state, which leaves metadata and data in their column charset.
+    #[must_use]
+    pub const fn null() -> Self {
+        Self {
+            result_charset: None,
+            data_charset: None,
+            data_is_binary: false,
+        }
+    }
+
     /// Creates an encoder from a registered session charset name.
     ///
     /// The empty string is the source null-result state.  Charset aliases

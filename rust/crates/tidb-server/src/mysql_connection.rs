@@ -20,6 +20,7 @@ use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 
+use tidb_protocol::result_encoder::ResultEncoder;
 use tidb_protocol::{
     decode_command, decode_prepared_statement_close,
     decode_prepared_statement_execute_with_bound_params, decode_prepared_statement_fetch,
@@ -852,6 +853,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             }
             Err(error) => return Err(error.into()),
         };
+        // Go `clientConn.dispatch` calls `initResultEncoder` here, once per
+        // COMMAND: `@@character_set_results` can be `SET` between two
+        // statements, and the second one has to go out in the new charset.
+        // An unregistered name falls back to Go's unset state, which is what
+        // `initResultEncoder` does when the read fails.
+        let result_encoder =
+            ResultEncoder::new(&engine.result_charset()).unwrap_or_else(|_| ResultEncoder::null());
         let command = match decode_command(&payload) {
             Ok(command) => command,
             Err(error) => {
@@ -956,8 +964,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     }
                 };
                 let write_result = {
-                    let statement_options =
-                        framing.result_set(result.wire_status(), result.warning_count());
+                    let statement_options = framing.result_set(
+                        result.wire_status(),
+                        result.warning_count(),
+                        result_encoder,
+                    );
                     let mut sink = TcpResultSetSink::new(&mut output, 1);
                     write_connection_result_set_to_sink(
                         result.source(),
@@ -1068,7 +1079,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     statement_id,
                     &parameter_columns,
                     &result_columns,
-                    framing.result_set(engine.wire_status(), 0),
+                    framing.result_set(engine.wire_status(), 0, result_encoder),
                 ) {
                     Ok(packets) => packets,
                     Err(error) => {
@@ -1219,8 +1230,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                 }
                             };
                         let write_result = {
-                            let statement_options =
-                                framing.result_set(result.wire_status(), result.warning_count());
+                            let statement_options = framing.result_set(
+                                result.wire_status(),
+                                result.warning_count(),
+                                result_encoder,
+                            );
                             let mut sink = TcpResultSetSink::new(&mut output, 1);
                             write_connection_binary_result_set_to_sink(
                                 result.source(),
@@ -1293,6 +1307,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     let cursor_options = framing.result_set(
                                         status.with(SERVER_STATUS_CURSOR_EXISTS),
                                         warnings,
+                                        result_encoder,
                                     );
                                     let mut stream = match tidb_protocol::BinaryResultSetStream::new(
                                         columns.clone(),
@@ -1377,8 +1392,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         match engine.execute_general(&general, &values) {
                             Ok(GeneralExecuteOutcome::Rows(mut result)) => {
                                 let write_result = {
-                                    let statement_options = framing
-                                        .result_set(result.wire_status(), result.warning_count());
+                                    let statement_options = framing.result_set(
+                                        result.wire_status(),
+                                        result.warning_count(),
+                                        result_encoder,
+                                    );
                                     let mut sink = TcpResultSetSink::new(&mut output, 1);
                                     write_connection_binary_result_set_to_sink(
                                         result.source(),
@@ -1621,7 +1639,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     // COM_STMT_FETCH runs no statement of its own, so this is
                     // still the execute's count -- which is what Go's
                     // `writeEOF` reads here too.
-                    framing.result_set(status, engine.warning_count()),
+                    framing.result_set(status, engine.warning_count(), result_encoder),
                 ) {
                     Ok(()) => {
                         if exhausted {

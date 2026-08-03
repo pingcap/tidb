@@ -1068,7 +1068,7 @@ impl BinaryResultSetStream {
         packets.push(count);
         for column in &self.columns {
             let mut payload = Vec::new();
-            column.dump(&mut payload);
+            column.dump(&mut payload, &self.options.result_encoder);
             packets.push(payload);
         }
         if !self.options.deprecate_eof {
@@ -1266,7 +1266,7 @@ fn append_metadata_packets(
     }
     for column in columns {
         let mut payload = Vec::new();
-        column.dump(&mut payload);
+        column.dump(&mut payload, &options.result_encoder);
         packets.push(payload);
     }
     if !options.deprecate_eof {

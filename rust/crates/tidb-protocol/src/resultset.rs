@@ -78,7 +78,7 @@ impl Default for EofPacket {
 }
 
 /// Controls the metadata and terminal packets around a text result set.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ResultSetOptions {
     /// MySQL server status flags for metadata and terminal EOF packets.
     pub status_flags: u16,
@@ -88,6 +88,13 @@ pub struct ResultSetOptions {
     pub deprecate_eof: bool,
     /// Whether the peer negotiated `CLIENT_PROTOCOL_41`.
     pub protocol_41: bool,
+    /// Go `clientConn.rsEncoder`: the `@@character_set_results` policy every
+    /// column definition and every string cell of this result set is written
+    /// through (`initResultEncoder`, refreshed per command).
+    ///
+    /// The default is Go's `isNull` state -- the variable unset -- which
+    /// leaves metadata and data in their column charset.
+    pub result_encoder: crate::result_encoder::ResultEncoder,
 }
 
 impl Default for ResultSetOptions {
@@ -97,6 +104,7 @@ impl Default for ResultSetOptions {
             warnings: 0,
             deprecate_eof: false,
             protocol_41: true,
+            result_encoder: crate::result_encoder::ResultEncoder::null(),
         }
     }
 }
@@ -185,7 +193,7 @@ pub fn encode_text_result_set(
 
     for column in columns {
         let mut metadata = Vec::new();
-        column.dump(&mut metadata);
+        column.dump(&mut metadata, &options.result_encoder);
         packets.push(metadata);
     }
 

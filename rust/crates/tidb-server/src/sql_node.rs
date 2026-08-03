@@ -715,6 +715,20 @@ pub trait QuerySession {
         WireStatus::AUTOCOMMIT
     }
 
+    /// Go `clientConn.initResultEncoder`: this session's
+    /// `@@character_set_results`, which decides the charset every column
+    /// definition's identifiers and every string cell of a result set go out
+    /// in.
+    ///
+    /// Go reads it once per COMMAND, not once per connection, because the
+    /// variable can be `SET` between two statements. The empty string is
+    /// Go's `NewResultEncoder("")` state -- the variable unset -- which
+    /// leaves metadata and data in their column charset; a session with no
+    /// variables reports it and is unchanged.
+    fn result_charset(&self) -> String {
+        String::new()
+    }
+
     /// Selects this session's current schema (Go `clientConn.useDB`).
     ///
     /// The handshake's initial database and `COM_INIT_DB` are the same

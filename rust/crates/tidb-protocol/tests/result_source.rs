@@ -14,7 +14,7 @@
 
 #![allow(missing_docs)]
 
-use tidb_protocol::{
+use tidb_protocol::result_encoder::ResultEncoder;use tidb_protocol::{
     append_length_encoded_bytes, append_length_encoded_int, dump_column, dump_column_with_default,
     dump_flag, dump_type, encode_text_row, is_string_column_type, ColumnDefault, ColumnInfo,
     PacketError, TYPE_ENUM, TYPE_NEW_DATE, TYPE_SET, TYPE_STRING,
@@ -42,6 +42,7 @@ fn test_dump_column() {
     dump_column(
         &mut got,
         &source_column(Some(ColumnDefault::Bytes(vec![5, 2]))),
+        &ResultEncoder::null(),
     );
     let expected = vec![
         0x03, b'd', b'e', b'f', 0x0a, b't', b'e', b's', b't', b'S', b'c', b'h', b'e', b'm', b'a',
@@ -66,6 +67,7 @@ fn test_dump_column_with_default() {
     dump_column_with_default(
         &mut got,
         &source_column(Some(ColumnDefault::Text("test".to_owned()))),
+        &ResultEncoder::null(),
     );
     let mut expected = vec![
         0x03, b'd', b'e', b'f', 0x0a, b't', b'e', b's', b't', b'S', b'c', b'h', b'e', b'm', b'a',
@@ -83,7 +85,7 @@ fn test_column_name_limit() {
     let mut column = source_column(None);
     column.name = "a".repeat(300);
     let mut got = Vec::new();
-    dump_column(&mut got, &column);
+    dump_column(&mut got, &column, &ResultEncoder::null());
 
     let mut expected = vec![
         0x03, b'd', b'e', b'f', 0x0a, b't', b'e', b's', b't', b'S', b'c', b'h', b'e', b'm', b'a',

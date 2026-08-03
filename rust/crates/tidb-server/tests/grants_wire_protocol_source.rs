@@ -1091,3 +1091,119 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form_over_tcp() {
     drop(fresh);
     acceptor.join().unwrap();
 }
+
+/// The column definition's advertised collation id and the row bytes of one
+/// query, read straight off the wire.
+fn query_metadata_and_rows(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    sql: &str,
+) -> (Vec<u16>, Vec<Vec<Vec<u8>>>) {
+    let mut command = vec![COM_QUERY];
+    command.extend_from_slice(sql.as_bytes());
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+
+    let first = reader.read_packet().unwrap();
+    assert_ne!(first[0], 0xff, "{sql} errored: {first:?}");
+    let column_count = usize::from(first[0]);
+    let mut charsets = Vec::new();
+    for _ in 0..column_count {
+        let definition = reader.read_packet().unwrap();
+        let mut rest = definition.as_slice();
+        // catalog, schema, table, org_table, name, org_name
+        for _ in 0..6 {
+            read_length_encoded_string(&mut rest);
+        }
+        // The fixed-length tail opens with 0x0c and then the collation id.
+        assert_eq!(rest[0], 0x0c);
+        charsets.push(u16::from_le_bytes([rest[1], rest[2]]));
+    }
+    let mut rows = Vec::new();
+    loop {
+        let packet = reader.read_packet().unwrap();
+        if packet[0] == 0xfe && packet.len() < 9 + 4 {
+            break;
+        }
+        let mut remaining = packet.as_slice();
+        let mut row = Vec::new();
+        for _ in 0..column_count {
+            row.push(read_length_encoded_string(&mut remaining));
+        }
+        rows.push(row);
+    }
+    (charsets, rows)
+}
+
+/// `@@character_set_results` must reach the WIRE: it decides the collation id
+/// a column definition advertises and the bytes a string cell is written in.
+///
+/// Go threads `clientConn.rsEncoder` -- built by `initResultEncoder` from
+/// this variable at the top of every command -- through `Info.Dump` and
+/// `FormatValueText` (`pkg/server/conn.go`, `pkg/format/textrow`). This tier
+/// had the faithful encoder and never called it from the live path, so
+/// setting the variable changed nothing a client could see.
+///
+/// `ascii` is the sharp case: Go's `OpEncodeReplace` writes `?` for a group
+/// the target charset cannot hold, and the definition advertises ascii's
+/// default collation (65) rather than the column's utf8mb4 (46).
+#[test]
+fn character_set_results_changes_the_metadata_charset_and_the_row_bytes_over_tcp() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = Arc::new(users());
+    let factory = Arc::new(PipelineSessionFactory::with_accounts_and_globals(
+        store.accounts(),
+        store.global_vars(),
+    ));
+
+    let acceptor_factory = Arc::clone(&factory);
+    let acceptor_store = Arc::clone(&store);
+    let acceptor_tracker = Arc::clone(&tracker);
+    let acceptor = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        std::thread::spawn(move || {
+            serve_mysql_connection(
+                stream,
+                peer_addr,
+                ConnectionCancellation::default(),
+                acceptor_factory.as_ref(),
+                acceptor_store.as_ref(),
+                &acceptor_tracker,
+                DEFAULT_MAX_ALLOWED_PACKET,
+            )
+            .unwrap()
+        })
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let client_read = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(client_read);
+    authenticate(&mut client, &mut reader, "root", b"rootpw");
+
+    // The default: utf8mb4 out, so the multi-byte text survives and the
+    // definition advertises utf8mb4's default collation.
+    let (charsets, rows) =
+        query_metadata_and_rows(&mut client, &mut reader, "SELECT 'caf\u{e9}' AS c");
+    assert_eq!(charsets, vec![46], "utf8mb4 default collation id");
+    assert_eq!(rows, vec![vec!["caf\u{e9}".as_bytes().to_vec()]]);
+
+    // ascii out: the definition advertises ascii's default collation and the
+    // byte the target charset cannot hold becomes Go's `?` replacement.
+    run_write(&mut client, &mut reader, "SET character_set_results = 'ascii'");
+    let (charsets, rows) =
+        query_metadata_and_rows(&mut client, &mut reader, "SELECT 'caf\u{e9}' AS c");
+    assert_eq!(charsets, vec![65], "ascii default collation id");
+    assert_eq!(rows, vec![vec![b"caf?".to_vec()]]);
+
+    // Back to the unset state, which leaves everything in the column charset.
+    run_write(&mut client, &mut reader, "SET character_set_results = 'utf8mb4'");
+    let (charsets, rows) =
+        query_metadata_and_rows(&mut client, &mut reader, "SELECT 'caf\u{e9}' AS c");
+    assert_eq!(charsets, vec![46]);
+    assert_eq!(rows, vec![vec!["caf\u{e9}".as_bytes().to_vec()]]);
+
+    drop(client);
+    let _ = acceptor.join();
+}

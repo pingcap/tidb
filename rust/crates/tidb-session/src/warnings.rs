@@ -234,6 +234,17 @@ impl Session {
         Ok(stmt)
     }
 
+    /// Go `clientConn.initResultEncoder`'s read:
+    /// `GetSessionOrGlobalSystemVar(CharacterSetResults)`, the charset every
+    /// column definition's identifiers and every string cell of a result set
+    /// go out in. The empty string is Go's unset state.
+    #[must_use]
+    pub fn result_charset(&self) -> String {
+        self.vars
+            .get_system("character_set_results")
+            .unwrap_or_default()
+    }
+
     /// The warning count the OK/EOF packet carries, which Go reads through
     /// `TiDBContext.WarningCount` in `writeOkWith` and `writeEOF`.
     ///

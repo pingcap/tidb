@@ -29,7 +29,7 @@ mod error_packet;
 mod packet;
 mod prepared_statement;
 mod result;
-mod result_encoder;
+pub mod result_encoder;
 mod resultset;
 pub mod resultset_stream;
 mod textrow;

@@ -18,6 +18,7 @@
 //! split, and the fact that a status word is only ever read from live session
 //! facts (see [`WireStatus`]) — live in exactly one place.
 
+use tidb_protocol::result_encoder::ResultEncoder;
 use tidb_protocol::{
     encode_error_packet, encode_ok_packet, ColumnInfo, ErrorPacket, OkPacket, PacketWriter,
     ResultSetOptions, BINARY_DEFAULT_COLLATION_ID, MYSQL_TYPE_LONGLONG,
@@ -226,12 +227,23 @@ pub(crate) struct WireFraming {
 }
 
 impl WireFraming {
-    pub(crate) fn result_set(self, status: WireStatus, warnings: u16) -> ResultSetOptions {
+    /// `encoder` is Go's `clientConn.rsEncoder`: the connection's
+    /// `@@character_set_results` policy, which `initResultEncoder` refreshes
+    /// once per COMMAND rather than caching for the connection -- the
+    /// variable can be `SET` between two statements, and the second one must
+    /// go out in the new charset.
+    pub(crate) fn result_set(
+        self,
+        status: WireStatus,
+        warnings: u16,
+        encoder: ResultEncoder,
+    ) -> ResultSetOptions {
         ResultSetOptions {
             status_flags: status.bits(),
             warnings,
             deprecate_eof: self.deprecate_eof,
             protocol_41: self.protocol_41,
+            result_encoder: encoder,
         }
     }
 }

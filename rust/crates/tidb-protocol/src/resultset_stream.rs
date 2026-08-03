@@ -126,7 +126,7 @@ impl ResultSetStream {
         packets.push(count);
         for column in &self.columns {
             let mut payload = Vec::new();
-            column.dump(&mut payload);
+            column.dump(&mut payload, &self.options.result_encoder);
             packets.push(payload);
         }
         if !self.options.deprecate_eof {
@@ -151,10 +151,49 @@ impl ResultSetStream {
                 actual: row.len(),
             });
         }
-        let values = row.iter().map(|value| value.as_deref()).collect::<Vec<_>>();
+        // Go `FormatValueText`: a string-ish cell is written through the
+        // connection's `@@character_set_results` policy, and every other type
+        // is already ASCII text and goes out untouched. The DATA encoding is
+        // reset per cell from that column's own charset (`UpdateDataEncoding`),
+        // because `EncodeData` falls back to it for a binary column even when
+        // the session asked for something else.
+        let encoded = self.encode_row_data(row);
+        let values = encoded.iter().map(Option::as_deref).collect::<Vec<_>>();
         let payload = encode_text_row(&values);
         self.rows += 1;
         Ok(payload)
+    }
+
+    /// Applies `@@character_set_results` to the string cells of one row.
+    fn encode_row_data(&self, row: &[Option<Vec<u8>>]) -> Vec<Option<Vec<u8>>> {
+        let encoder = self.options.result_encoder;
+        if encoder.result_charset().is_none() {
+            // Go's `isNull` state: `EncodeData` returns the column charset's
+            // bytes, which for every charset this tier serves is the input.
+            return row.to_vec();
+        }
+        row.iter()
+            .zip(&self.columns)
+            .map(|(value, column)| {
+                let value = value.as_ref()?;
+                if !crate::result_encoder::is_string_column_type(column.type_code) {
+                    return Some(value.clone());
+                }
+                let mut encoder = encoder;
+                // Go treats JSON and VECTOR as utf8mb4 regardless of the
+                // column's own (binary) collation.
+                let collation = match column.type_code {
+                    crate::column::TYPE_JSON | crate::column::TYPE_TIDB_VECTOR_FLOAT32 => {
+                        crate::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID
+                    }
+                    _ => column.charset,
+                };
+                if encoder.update_data_encoding(collation).is_err() {
+                    return Some(value.clone());
+                }
+                Some(encoder.encode_data(value).unwrap_or_else(|_| value.clone()))
+            })
+            .collect()
     }
 
     /// Emits the terminal EOF exactly once.
