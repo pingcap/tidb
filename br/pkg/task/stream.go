@@ -1661,7 +1661,7 @@ func restoreStream(
 
 	// Always run the post-work even on error, so we don't stuck in the import
 	// mode or emptied schedulers
-	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc)
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
 
 	updateStats := func(kvCount uint64, size uint64) {
 		mu.Lock()
@@ -1727,7 +1727,7 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		err = client.RestoreSSTFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
+		err = client.RestoreSSTFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, cfg.Online, p.IncBy)
 		if err != nil {
 			return errors.Trace(err)
 		}
