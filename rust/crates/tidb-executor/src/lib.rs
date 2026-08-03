@@ -90,6 +90,7 @@ mod stmt_context;
 pub mod storage;
 pub mod table_access;
 pub mod table_dual;
+pub mod topn;
 pub mod view;
 mod window;
 pub mod zero_date;
@@ -143,4 +144,5 @@ pub use tidb_expr::{
     eval_in, like_match_with_collation, truthy_of, Columns, EvalError, JsonError, MysqlRng,
     SessionTimeZone,
 };
+pub use topn::TopNExec;
 pub use view::{run_create_view_in, run_drop_view_in, view_column_list};
