@@ -114,6 +114,13 @@ pub struct SqlMode {
     pub high_not_precedence: bool,
     /// `IGNORE_SPACE`: spaces before `(` do not stop builtin recognition.
     pub ignore_space: bool,
+    /// `PIPES_AS_CONCAT`: `||` is string concatenation rather than `OR`.
+    ///
+    /// Go's scanner (`pkg/parser/lexer.go:248`) rewrites the `pipes` token
+    /// to `pipesAsOr` when this is UNSET, so the flag reaches the grammar as
+    /// a token identity; this lexer has one `||` operator token and the
+    /// parser reads the flag directly instead.
+    pub pipes_as_concat: bool,
 }
 
 /// The scanner. Construct with [`Lexer::new`], then pull tokens with

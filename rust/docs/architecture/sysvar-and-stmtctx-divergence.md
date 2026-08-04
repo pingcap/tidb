@@ -438,10 +438,10 @@ These were compared and agree; re-auditing them is wasted effort.
    `NO_ZERO_IN_DATE`, `ALLOW_INVALID_DATES` on **both** the query and DML
    branches, `ONLY_FULL_GROUP_BY` on both, `ERROR_FOR_DIVISION_BY_ZERO` and
    `STRICT_TRANS_TABLES || STRICT_ALL_TABLES` on the DML branch,
-   `NO_AUTO_VALUE_ON_ZERO` on the DML branch, and the five scanner-visible modes
+   `NO_AUTO_VALUE_ON_ZERO` on the DML branch, and the six scanner-visible modes
    (`REAL_AS_FLOAT`, `NO_BACKSLASH_ESCAPES`, `ANSI_QUOTES`,
-   `HIGH_NOT_PRECEDENCE`, `IGNORE_SPACE`) via `scanner_sql_mode_of`
-   (`stmt_ctx.rs:404`). `PIPES_AS_CONCAT` is a documented, deliberate absence.
+   `HIGH_NOT_PRECEDENCE`, `IGNORE_SPACE`, `PIPES_AS_CONCAT`) via
+   `scanner_sql_mode_of`.
 4. **The type-directed validation contracts** — this is the "clamp vs refuse"
    question the task asks about, and Rust reproduces Go exactly:
 

@@ -72,7 +72,7 @@ DDL), because those are two different parse doors.
 | --- | --- | --- | --- |
 | `NO_BACKSLASH_ESCAPES` | `pkg/parser/lexer.go:730` (string scan), `pkg/planner/core/expression_rewriter.go:2384` (LIKE default escape), `pkg/sessionctx/variable/sysvar.go:1947` (handshake status flag) | **MATCHES** on the session tier — the lexer's support (`tidb-lexer/src/lib.rs:510`, `:1074`) now has callers; the LIKE-default-escape consult site is still unported | `SELECT LENGTH('a\nb')` → **3** default, **4** under the flag. This tier answers 3 both times. |
 | `ANSI_QUOTES` | `pkg/parser/lexer.go:242` (double-quoted token becomes an identifier), `pkg/parser/hintparser.go:1125`, `pkg/util/stringutil/string_util.go:400` (identifier quoting) | **MATCHES** on the READ side (`tidb-lexer/src/lib.rs:352`, now reached). The RESTORE side is still open: TiDB also QUOTES identifiers with `"` under the flag (captured: `SHOW CREATE TABLE rf` prints `CREATE TABLE "rf"`), and this tier still prints backticks | `SELECT "id" AS a` → **row `id`** default, **ERR** (unknown column) under the flag. This tier answers `id` both times. |
-| `PIPES_AS_CONCAT` | `pkg/parser/lexer.go:248` (`pipes` → `pipesAsOr` when unset), `pkg/parser/prec.go:84` (`precConcat` vs `precOr`) | **NOT CONSULTED** — not even a lexer field; `crates/tidb-parser/src/expr.rs:312` hard-codes `"\|\|" => LogicOr`, and `crates/tidb-parser/src/prec.rs:44` documents the missing `precConcat` level | `SELECT 1 \|\| 2` → **1** default, **12** under the flag. This tier answers 1 both times. |
+| `PIPES_AS_CONCAT` | `pkg/parser/lexer.go:248` (`pipes` → `pipesAsOr` when unset), `pkg/parser/prec.go:84` (`precConcat` vs `precOr`) | **MATCHES** on the session tier — `tidb-lexer/src/lib.rs`'s `SqlMode::pipes_as_concat` reaches `tidb-parser/src/expr.rs`, which builds `CONCAT(a, b)` at the now-modelled `prec::CONCAT` | `SELECT 1 \|\| 2` → **1** default, **12** under the flag. This tier answers both. |
 | `HIGH_NOT_PRECEDENCE` | `pkg/parser/lexer.go:252` (`not` → `not2`) | **MATCHES** on the session tier (`tidb-parser/src/expr.rs:577`, `:594`, now reached) | `SELECT NOT 1 BETWEEN 0 AND 3` → **0** default, **1** under the flag. This tier answers 0 both times. |
 | `REAL_AS_FLOAT` | `pkg/parser/ddl_fieldtype_parser.go:67`, `pkg/parser/expr_cast_parser.go:348` | **MATCHES** on the session tier — reached through the DDL entries' explicit `sql_mode` parameter (`tidb-parser/src/ddl/field_type.rs:55`, `cast.rs:209`) | `CREATE TABLE rf (a REAL)` → `SHOW CREATE TABLE` says **`double`** default, **`float`** under the flag. This tier says `double` both times. |
 | `IGNORE_SPACE` | `pkg/parser/misc.go:1148` (a space before `(` stops builtin-name recognition) | **CONSULTED** — passed with the rest (`tidb-lexer/src/lib.rs:402`), which matters because `ANSI` turns it on | No divergence at the obvious probe: `SELECT count (1)` → **1** in both modes. The flag's reachable effect is narrower than the name suggests; not a ranked gap. |
@@ -129,28 +129,24 @@ SELECT 1 || 2;      -- 12
 Because the expansion is what gets STORED in `@@sql_mode`, reading flag names
 out of that text sees everything a combination brought in — which is why
 `scanner_sql_mode_of` matches names rather than re-deriving the bitset. This
-tier now answers the column for `SELECT "id"`; `1 || 2` is still `1`, the one
-remaining flag of the four (`PIPES_AS_CONCAT`, gap 1 below).
+tier now answers all four scanner flags of the expansion: `SELECT "id"` reads
+as a column and `1 || 2` is `12`.
 
 ## Ranked gaps
 
-1. **`PIPES_AS_CONCAT`** — the last scanner flag of the `ANSI` expansion still
-   unmodelled, and the only one whose fix is not plumbing: the lexer has no
-   field for it and `crates/tidb-parser/src/prec.rs:44` documents the missing
-   `precConcat` level.
-2. **`ANSI_QUOTES` on the RESTORE side** — reading is done; `SHOW CREATE TABLE`
+1. **`ANSI_QUOTES` on the RESTORE side** — reading is done; `SHOW CREATE TABLE`
    and every other restore still print backticks where TiDB prints `"` under
    the flag (Go `pkg/util/stringutil/string_util.go:400`).
-3. **The `tidb-exec` tier** — its 7 parse sites have no session mode to read.
+2. **The `tidb-exec` tier** — its 7 parse sites have no session mode to read.
    Uniformly absent there, so not a split; wiring it needs a session-state
    channel that tier does not have yet.
-4. **`NO_UNSIGNED_SUBTRACTION`** — a self-contained expression-tier flag with
+3. **`NO_UNSIGNED_SUBTRACTION`** — a self-contained expression-tier flag with
    no parser blast radius. Cheapest honest win on this list.
-5. **`NO_BACKSLASH_ESCAPES` in LIKE's default escape** — Go
+4. **`NO_BACKSLASH_ESCAPES` in LIKE's default escape** — Go
    `pkg/planner/core/expression_rewriter.go:2384`, gated by
    `@@tidb_enable_no_backslash_escapes_in_like`; the variable exists here
    (`crates/tidb-vardef/src/tidb_vars.rs:712`), the consult does not.
-6. **`ORACLE`'s unaliased derived table** — narrow, low value.
+5. **`ORACLE`'s unaliased derived table** — narrow, low value.
 
 ## Why the one-site version would have been worse than the gap
 

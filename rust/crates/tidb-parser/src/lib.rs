@@ -626,6 +626,9 @@ struct Parser {
     no_backslash_escapes: bool,
     high_not_precedence: bool,
     ignore_space: bool,
+    /// `PIPES_AS_CONCAT`: `||` builds `CONCAT(a, b)` at [`prec::CONCAT`]
+    /// instead of a boolean `OR`.
+    pipes_as_concat: bool,
     warnings: Vec<HintDiagnostic>,
 }
 
@@ -678,6 +681,7 @@ impl Parser {
             no_backslash_escapes: sql_mode.no_backslash_escapes,
             high_not_precedence: sql_mode.high_not_precedence,
             ignore_space: sql_mode.ignore_space,
+            pipes_as_concat: sql_mode.pipes_as_concat,
             warnings: lexer_warnings
                 .into_iter()
                 .map(|message| HintDiagnostic { message })
@@ -789,6 +793,7 @@ impl Parser {
             no_backslash_escapes: false,
             high_not_precedence: false,
             ignore_space: false,
+            pipes_as_concat: false,
             warnings: Vec::new(),
         }
     }

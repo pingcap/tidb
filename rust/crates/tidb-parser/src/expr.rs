@@ -202,6 +202,24 @@ impl Parser {
                 continue;
             }
 
+            // Under `PIPES_AS_CONCAT` the scanner keeps Go's `pipes` token,
+            // which `pkg/parser/expr_parser.go:216` compiles to a `CONCAT()`
+            // CALL rather than a `BinaryExpr` -- at `precConcat`, well above
+            // the `precOr` the same spelling carries by default.
+            if self.pipes_as_concat && self.is_op("||") {
+                if prec::CONCAT < min_prec {
+                    break;
+                }
+                self.bump();
+                let right = self.parse_expr(prec::CONCAT + 1)?; // left-associative
+                left = Expr::Func {
+                    name: "concat".to_string(),
+                    args: vec![left, right],
+                    origin_position: 0,
+                };
+                continue;
+            }
+
             // Standard binary operators.
             let Some((op, p)) = self.infix_op() else {
                 break;

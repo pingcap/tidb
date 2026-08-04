@@ -42,11 +42,13 @@ pub const MUL_DIV: u8 = 11;
 pub const BIT_XOR: u8 = 12;
 /// Unary `-`, `~`, `!`.
 pub const UNARY: u8 = 13;
-/// `COLLATE` — real TiDB's own table (`pkg/parser/prec.go`) has an
-/// intervening `precConcat = 14` level for `||` under `PIPES_AS_CONCAT`
-/// sql_mode, which this crate doesn't model (`||` is always `OR`, matching
-/// [`tidb_ast::BinaryOp::LogicOr`]'s own doc), so that level is skipped
-/// here rather than reserved unused. Binds TIGHTER than [`UNARY`] —
-/// confirmed by reading `pkg/parser/expr_parser.go` directly: MySQL's own
-/// documented example is `-1 COLLATE x` == `-(1 COLLATE x)`.
-pub const COLLATE: u8 = 14;
+/// `||` under `PIPES_AS_CONCAT` sql_mode, where it is string concatenation
+/// rather than `OR`. Binding TIGHTER than [`UNARY`] is not a typo: captured
+/// from TiDB under that mode, `SELECT -1 || 2` is `-12` (`-(1 || 2)`) and
+/// `SELECT 1 + 2 || 3 + 4` is `28` (`1 + (2 || 3) + 4`).
+pub const CONCAT: u8 = 14;
+/// `COLLATE` — binds TIGHTER than [`UNARY`] and than [`CONCAT`]; real
+/// TiDB's yacc `%right collate` sits above `pipes`. Confirmed by reading
+/// `pkg/parser/expr_parser.go` directly: MySQL's own documented example is
+/// `-1 COLLATE x` == `-(1 COLLATE x)`.
+pub const COLLATE: u8 = 15;

@@ -449,10 +449,6 @@ impl Session {
 
 /// The scanner flags Go's `Parser.SetSQLMode` consults, read off an
 /// already-uppercased, already-expanded `@@sql_mode` text.
-///
-/// `PIPES_AS_CONCAT` is deliberately absent: the lexer has no field for it
-/// and the parser has no `precConcat` level, so setting it here would be a
-/// claim this tier cannot honor. See `rust/docs/operations/sql-mode-coverage.md`.
 pub(crate) fn scanner_sql_mode_of(mode: &str) -> tidb_parser::SqlMode {
     let has = |flag: &str| mode.split(',').any(|part| part.trim() == flag);
     tidb_parser::SqlMode {
@@ -461,5 +457,6 @@ pub(crate) fn scanner_sql_mode_of(mode: &str) -> tidb_parser::SqlMode {
         ansi_quotes: has("ANSI_QUOTES"),
         high_not_precedence: has("HIGH_NOT_PRECEDENCE"),
         ignore_space: has("IGNORE_SPACE"),
+        pipes_as_concat: has("PIPES_AS_CONCAT"),
     }
 }

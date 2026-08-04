@@ -851,6 +851,53 @@ fn group_concat_separator_inherits_connection_charset_and_collation() {
     }
 }
 
+/// `PIPES_AS_CONCAT` turns `||` into a `CONCAT()` CALL at `precConcat`
+/// (`pkg/parser/lexer.go:248` keeps Go's `pipes` token, and
+/// `pkg/parser/expr_parser.go:216` compiles it), rather than the `OR` the
+/// same spelling means by default.
+///
+/// Every expectation is a verbatim `Restore` capture from `pkg/parser` with
+/// `SetSQLMode(mysql.ModePipesAsConcat)`. The precedence rows are the point:
+/// `precConcat = 14` sits ABOVE unary and every arithmetic level, and BELOW
+/// `COLLATE` alone.
+#[test]
+fn pipes_as_concat_sql_mode_matches_go() {
+    fn concat(sql: &str) -> String {
+        parse_with_sql_mode(
+            sql,
+            SqlMode {
+                pipes_as_concat: true,
+                ..SqlMode::default()
+            },
+        )
+        .unwrap()
+        .restore()
+    }
+
+    assert_eq!(
+        concat("SELECT 'a' || 'b'"),
+        "SELECT CONCAT(_UTF8MB4'a', _UTF8MB4'b')"
+    );
+    // Left-associative, like every other infix level here.
+    assert_eq!(
+        concat("SELECT 1 || 2 || 3"),
+        "SELECT CONCAT(CONCAT(1, 2), 3)"
+    );
+    // Binds tighter than `+`/`-` ...
+    assert_eq!(concat("SELECT 1 + 2 || 3 + 4"), "SELECT 1+CONCAT(2, 3)+4");
+    // ... and tighter than unary minus ...
+    assert_eq!(concat("SELECT -1 || 2"), "SELECT -CONCAT(1, 2)");
+    // ... and tighter than comparison ...
+    assert_eq!(concat("SELECT 1 || 2 = 12"), "SELECT CONCAT(1, 2)=12");
+    // ... but looser than COLLATE, the one level above it.
+    assert_eq!(
+        concat("SELECT a || b COLLATE utf8mb4_bin"),
+        "SELECT CONCAT(`a`, `b` COLLATE utf8mb4_bin)"
+    );
+    // Unset, the same spelling is still boolean OR.
+    assert_eq!(r("select 'a' || 'b'"), "SELECT _UTF8MB4'a' OR _UTF8MB4'b'");
+}
+
 /// Exact AST/restore contract from Go
 /// `pkg/parser/parser_test.go:TestHighNotPrecedenceMode`.
 #[test]

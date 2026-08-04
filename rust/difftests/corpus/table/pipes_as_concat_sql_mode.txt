@@ -1,0 +1,18 @@
+drop table if exists pc
+create table pc(a varchar(8), b varchar(8))
+insert into pc values ('x','y'), ('1','2')
+select a || b from pc order by a
+set sql_mode='PIPES_AS_CONCAT'
+select a || b from pc order by a
+select 'a' || 'b'
+select 1 || 2 || 3
+select 1 || 2 = 12
+select 1 + 2 || 3 + 4
+select -1 || 2
+select 'x' || null
+select a || b || a from pc order by a
+set sql_mode='ANSI'
+select a || b from pc order by a
+set sql_mode='NO_BACKSLASH_ESCAPES'
+select a || b from pc order by a
+select 1 || 2 || 3

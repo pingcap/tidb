@@ -155,9 +155,10 @@ in-tree pinned the old behaviour.
   `pkg/parser/prec.go:80-85` gives `pipes` `precConcat = 14`, and
   `pkg/parser/expr_parser.go:216-230` builds a `FuncCallExpr{FnName:
   "concat"}` for it.
-- Rust: `tidb-parser/src/expr.rs:312` — `"||" => Some((BinaryOp::LogicOr,
-  prec::OR))`, unconditionally. `tidb-parser/src/prec.rs:45-51` documents
-  the omission of the `precConcat` level as deliberate.
+- Rust: `tidb-parser/src/expr.rs` used to hard-code `"||" =>
+  Some((BinaryOp::LogicOr, prec::OR))` unconditionally, with
+  `tidb-parser/src/prec.rs` documenting the omission of the `precConcat`
+  level as deliberate.
 
 ```sql
 -- sql_mode = 'PIPES_AS_CONCAT'
@@ -171,9 +172,12 @@ The precedence flips with it, so the damage is not limited to a bare
 `||`: `SELECT 1 = 'a' || 'b'` is `1 = CONCAT('a','b')` in Go (14 > 5) but
 `(1 = 'a') OR 'b'` in Rust (1 < 5).
 
-**Not fixed** — this needs a new precedence level, a `sql_mode` bit
-threaded into `infix_op`, and a `Expr::Func{"CONCAT"}` construction; it is
-not a one-line precedence edit.
+**Fixed** — `SqlMode::pipes_as_concat` now reaches the parser, `prec::CONCAT
+= 14` is modelled (pushing `prec::COLLATE` to 15, as in Go's own table), and
+the Pratt loop builds `CONCAT(left, right)` for `||` under the flag. Pinned
+by `tidb-parser`'s `pipes_as_concat_sql_mode_matches_go` (restore text
+captured from `pkg/parser` with `SetSQLMode(mysql.ModePipesAsConcat)`) and
+by the `pipes_as_concat_sql_mode` result-ring corpus topic.
 
 ### Rank 2 — one side accepts SQL the other rejects
 
