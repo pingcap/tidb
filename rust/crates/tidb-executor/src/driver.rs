@@ -888,7 +888,8 @@ pub(crate) fn run_select_traced(
     // every projected column, with a FIRST_ROW aggregate per column, which is
     // exactly a deduplication. It sits above the projection and below LIMIT.
     if select.distinct {
-        root = Box::new(distinct_over(root, &out_schema, ctx));
+        let all: Vec<usize> = (0..out_schema.columns.len()).collect();
+        root = Box::new(distinct_over(root, &out_schema, &all, ctx));
         if let Some(trace) = trace.as_deref_mut() {
             trace.distinct(traced_select.fields.fields(), &qualify);
             root = trace.meter(root);
@@ -1047,8 +1048,14 @@ fn drain_executor_rows(
     Ok(rows)
 }
 
-/// Go `buildDistinct`: an aggregation grouping by every column of `schema`,
-/// carrying each one through a `FIRST_ROW` aggregate.
+/// Go `buildDistinct(child, length)`: an aggregation grouping by the columns
+/// of `schema` at `key_indices`, carrying EVERY column of `schema` through a
+/// `FIRST_ROW` aggregate.
+///
+/// The two sets differ where Go's projection appended `ORDER BY` carriers
+/// past the select list's own `oldLen` columns: those ride through the dedup
+/// so the sort above can still read them, but they do not take part in the
+/// grouping (`logical_plan_builder.go:1973-1990`).
 ///
 /// The hash aggregation emits groups in first-seen order, so a sort below it
 /// still orders the deduplicated rows -- the first row of each group is the
@@ -1056,16 +1063,17 @@ fn drain_executor_rows(
 fn distinct_over(
     child: Box<dyn Executor>,
     schema: &Schema,
+    key_indices: &[usize],
     ctx: &crate::StmtContext,
 ) -> HashAggExec<crate::StmtContext> {
-    let group_by: Vec<Expression> = schema
+    let group_by: Vec<Expression> = key_indices
+        .iter()
+        .map(|index| Expression::Column(schema.columns[*index].clone()))
+        .collect();
+    let agg_funcs: Vec<AggFunc> = schema
         .columns
         .iter()
-        .map(|column| Expression::Column(column.clone()))
-        .collect();
-    let agg_funcs: Vec<AggFunc> = group_by
-        .iter()
-        .map(|column| AggFunc::new(AggKind::FirstRow, Some(column.clone())))
+        .map(|column| AggFunc::new(AggKind::FirstRow, Some(Expression::Column(column.clone()))))
         .collect();
     HashAggExec::new(
         ExecutorMeta::new(schema.clone(), 5, INIT_CAP, MAX_CHUNK_SIZE),

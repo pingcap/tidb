@@ -215,6 +215,47 @@ pub(crate) fn run_aggregate_select(
     // ORDER BY and the final projection resolve against the WIDENED output.
     let agg_resolver = agg_output_resolver(&state, ctx);
 
+    // Stage 8b: `SELECT DISTINCT`'s dedup, BELOW the sort and the limit.
+    //
+    // Go `buildSelect` builds `Projection -> Distinct -> Sort -> Limit`
+    // (`logical_plan_builder.go:4528-4602`), and `buildDistinct(p, oldLen)`
+    // groups by the select list's own columns while carrying every other
+    // column of the projection through a `FIRST_ROW` -- so the `ORDER BY`
+    // carriers survive the dedup and the sort above can still read them.
+    //
+    // Running the dedup ABOVE the limit instead lets the limit truncate rows
+    // the dedup would have collapsed: `select distinct a from t group by a, b
+    // order by a limit 2` answered `1` where Go answers `1;2`.
+    //
+    // The dedup key is the agg-output column each select field reads. A field
+    // that is a computed EXPRESSION has no such column until stage 10
+    // evaluates it -- Go dedups on the projected column, which does not exist
+    // here yet -- so that shape keeps the old order and its own bug, rather
+    // than deduplicating on the wrong key. Documented, and narrower than what
+    // it replaces.
+    let dedup_keys: Option<Vec<usize>> = select
+        .distinct
+        .then(|| {
+            state
+                .slots
+                .iter()
+                .map(|slot| match slot {
+                    OutputSlot::Agg(index) => Some(*index),
+                    OutputSlot::Window(k) => Some(state.window_base + k),
+                    OutputSlot::Expr(_) => None,
+                })
+                .collect::<Option<Vec<usize>>>()
+        })
+        .flatten();
+    let deduplicated = dedup_keys.is_some();
+    let root = match &dedup_keys {
+        Some(keys) => {
+            let schema = root.schema().clone();
+            Box::new(distinct_over(root, &schema, keys, ctx)) as Box<dyn Executor>
+        }
+        None => root,
+    };
+
     // Stage 9: ORDER BY, then LIMIT.
     let root = build_order_and_limit(
         root,
@@ -225,6 +266,7 @@ pub(crate) fn run_aggregate_select(
         resolver,
         current_db,
         &state,
+        deduplicated,
         ctx,
         trace.as_deref_mut(),
     )?;
@@ -232,8 +274,14 @@ pub(crate) fn run_aggregate_select(
     // Stage 10: the select list's own columns.
     let root = build_final_projection(root, select, &agg_resolver, &mut state, ctx)?;
 
-    // Stage 11: DISTINCT, then drain the plan.
-    distinct_and_drain(root, select, &mut state, ctx, trace)
+    // Stage 11: DISTINCT (for the shape stage 8b declined), then drain.
+    distinct_and_drain(
+        root,
+        select.distinct && !deduplicated,
+        &mut state,
+        ctx,
+        trace,
+    )
 }
 
 /// Stage 0: the grouped column names.
@@ -1298,9 +1346,8 @@ fn build_window_stage(
 /// captured `Projection_7|2.00|root` over `TopN_10|2.00|root||test.t.a,
 /// offset:0, count:2` over the two-phase `HashAgg`.
 ///
-/// `SELECT DISTINCT` does not fuse, for the plain path's reason: stage 11's
-/// dedup runs ABOVE this, so a bounded sort would discard rows before they
-/// were deduplicated.
+/// `SELECT DISTINCT` fuses only once stage 8b has deduplicated BELOW this: a
+/// bounded sort may not discard rows a dedup above it would have collapsed.
 #[allow(clippy::too_many_arguments)]
 fn build_order_and_limit(
     root: Box<dyn Executor>,
@@ -1311,6 +1358,7 @@ fn build_order_and_limit(
     resolver: &ScopeResolver<'_>,
     current_db: &str,
     state: &AggPipelineState,
+    deduplicated: bool,
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -1330,7 +1378,10 @@ fn build_order_and_limit(
                 desc: *desc,
             });
         }
-        let fused_limit = if select.distinct {
+        // A bounded sort may only discard rows the dedup has ALREADY
+        // collapsed. Stage 8b puts the dedup below this for every shape it
+        // can key, and only the shape it declined still needs the guard.
+        let fused_limit = if select.distinct && !deduplicated {
             None
         } else {
             select.limit.as_ref()
@@ -1535,7 +1586,7 @@ fn build_final_projection(
 /// Mirrors Go's `buildDistinct` above the projection.
 fn distinct_and_drain(
     root: Box<dyn Executor>,
-    select: &tidb_ast::SelectStmt,
+    dedup: bool,
     state: &mut AggPipelineState,
     ctx: &crate::StmtContext,
     trace: Option<&mut PlanTrace>,
@@ -1545,7 +1596,7 @@ fn distinct_and_drain(
 
     // `SELECT DISTINCT` over an aggregate result deduplicates the output
     // rows, the same buildDistinct step the plain path applies.
-    if select.distinct {
+    if dedup {
         let columns: Vec<Column> = ret_types
             .iter()
             .enumerate()
@@ -1556,7 +1607,8 @@ fn distinct_and_drain(
             })
             .collect();
         let schema = Schema::new(columns);
-        root = Box::new(distinct_over(root, &schema, ctx));
+        let all: Vec<usize> = (0..schema.columns.len()).collect();
+        root = Box::new(distinct_over(root, &schema, &all, ctx));
     }
 
     // Plain `EXPLAIN`: the pipeline is recorded, then dropped undrained.

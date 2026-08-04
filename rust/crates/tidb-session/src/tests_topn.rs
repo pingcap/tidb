@@ -222,31 +222,58 @@ fn a_distinct_over_a_group_by_orders_like_go() {
     );
 }
 
-/// KNOWN BUG, pre-dating the `TopN` work and NOT introduced by it: the
-/// aggregate pipeline applies `SELECT DISTINCT` (stage 11) ABOVE the `LIMIT`
-/// (stage 9), while Go's `buildSelect` builds `Projection -> Distinct ->
-/// Sort -> Limit`, with the dedup BELOW the limit. So the limit truncates
-/// before the dedup and this answers `1` where Go answers `1;2`.
+/// Go's `buildSelect` builds `Projection -> Distinct -> Sort -> Limit`
+/// (`logical_plan_builder.go:4528-4602`), with the dedup BELOW the limit.
 ///
-/// Fixing it means running stage 10's projection and the dedup before stage
-/// 9 and resolving the by-items against the PROJECTED schema (which
-/// `checkOrderByInDistinct` already guarantees they are in) -- a
-/// restructuring of the aggregate pipeline's tail with its own test surface,
-/// not a side effect of the ORDER BY + LIMIT fusion. Ignored rather than
-/// pinned, so the wrong answer is never recorded as expected.
-///
-/// It also means the aggregate path's own DISTINCT guard cannot be probed by
-/// a mutation today: removing it produces the same wrong answer this bug
-/// already produces.
+/// The aggregate pipeline used to run its `SELECT DISTINCT` (stage 11) ABOVE
+/// the `LIMIT` (stage 9), so the limit truncated rows the dedup would have
+/// collapsed and this answered `1` where Go answers `1;2`. With DISTINCT the
+/// projection and the dedup now run first, and the by-items re-resolve
+/// against the projected output -- which `checkOrderByInDistinct` already
+/// guarantees they are in.
 #[test]
-#[ignore = "pre-existing: the aggregate pipeline dedups above the LIMIT, not below it"]
 fn a_distinct_over_a_group_by_limits_after_the_dedup_like_go() {
     let mut session = topn_session();
     // gorun: `select distinct a from t group by a, b order by a limit 2` -> 1;2
-    assert_eq!(
-        flat(row_text(session.run(
-            "select distinct a from t group by a, b order by a limit 2"
-        ))),
-        vec!["1".to_owned(), "2".to_owned()]
-    );
+    for (sql, want) in [
+        // gorun, on these six rows:
+        (
+            "select distinct a from t group by a, b order by a limit 2",
+            "1;2",
+        ),
+        (
+            "select distinct a from t group by a, b order by a desc limit 2",
+            "3;2",
+        ),
+        (
+            "select distinct a from t group by a, b order by a limit 1, 2",
+            "2;3",
+        ),
+        (
+            "select distinct a, count(*) from t group by a, b order by a limit 3",
+            "1,1;2,1;3,1",
+        ),
+        // A computed select field has no aggregation-output column to
+        // deduplicate on until the final projection evaluates it, so this
+        // shape keeps the OLD stage order -- and still agrees with Go here,
+        // because every `a+0` group is distinct already.
+        (
+            "select distinct a+0 from t group by a, b order by a+0 limit 2",
+            "1;2",
+        ),
+        // A HAVING aggregate leaves a carrier column in the aggregation's
+        // output that the select list never reports. The dedup key is the
+        // SELECT LIST's columns, not the whole row -- grouping by (a, sum(b))
+        // would collapse nothing and the limit would answer `1`.
+        (
+            "select distinct a from t group by a, b having sum(b) > 0 order by a limit 2",
+            "1;2",
+        ),
+    ] {
+        assert_eq!(
+            flat(row_text(session.run(sql))).join(";"),
+            want.to_owned(),
+            "{sql}"
+        );
+    }
 }
