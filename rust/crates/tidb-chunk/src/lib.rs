@@ -26,6 +26,12 @@
 //! [`mutrow`] adds Go's `MutRow`, the mutable one-row chunk that partition
 //! pruning and ranger detachment evaluate expressions against.
 //!
+//! [`compare`] adds Go `compare.go` whole: `GetCompareFunc`, `Compare` against
+//! a `Datum`, and `Chunk::lower_bound`/`upper_bound`. [`list`] and [`iterator`]
+//! add Go `list.go`/`iterator.go` whole -- the unbounded in-memory chunk
+//! sequence and the five iterators that do not need a `RowContainer`. Together
+//! they are the in-memory half of what `row_container.go` will need.
+//!
 //! [`chunk_in_disk`] adds the spill-to-disk container `DataInDiskByChunks`
 //! (Go `chunk_in_disk.go`) over the checksum-framed temporary file in
 //! [`chunk_util`]; [`row_in_disk`] carries the read-while-writing reader it
@@ -36,6 +42,9 @@ pub mod chunk_in_disk;
 pub mod chunk_util;
 pub mod codec;
 pub mod column;
+pub mod compare;
+pub mod iterator;
+pub mod list;
 pub mod mutrow;
 pub mod row;
 pub mod row_in_disk;

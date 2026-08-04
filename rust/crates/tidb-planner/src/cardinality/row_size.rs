@@ -433,3 +433,31 @@ pub fn get_avg_row_size_data_in_disk_by_rows(
     }
     go_max(0.0, size + 8.0 * columns.len() as f64)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::RowSizeType;
+
+    /// Go `TestEstimateTypeWidth` (`pkg/util/chunk/codec_test.go`), whose
+    /// subject `chunk.EstimateTypeWidth` is [`RowSizeType::estimate_width`]
+    /// here.
+    ///
+    /// The interesting arm is the 50%-of-declared-length guess between 32 and
+    /// 1000, and the flat 516 ceiling beyond it -- Go's own comment on the
+    /// `2000` case says "colLen < 1000", but the ASSERTED value 516 is the
+    /// `>= 1000` branch, and that value is what this pins.
+    #[test]
+    fn go_test_estimate_type_width() {
+        // A fixed-width type ignores flen entirely.
+        assert_eq!(RowSizeType::LongLong.estimate_width(-1), 8.0);
+
+        // colLen <= 32: the declared length itself.
+        assert_eq!(RowSizeType::Variable.estimate_width(31), 31.0);
+        // 32 < colLen < 1000: 32 + (colLen-32)/2, integer division.
+        assert_eq!(RowSizeType::Variable.estimate_width(999), 515.0);
+        // colLen >= 1000: the flat 32 + (1000-32)/2 estimate.
+        assert_eq!(RowSizeType::Variable.estimate_width(2000), 516.0);
+        // No declared length (`types.UnspecifiedLength`): the 32-byte guess.
+        assert_eq!(RowSizeType::Variable.estimate_width(-1), 32.0);
+    }
+}

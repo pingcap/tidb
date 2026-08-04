@@ -45,6 +45,18 @@ pub struct Row<'a> {
     idx: usize,
 }
 
+/// Go compares two `Row`s with `==` on `{c *Chunk, idx int}`, which is chunk
+/// POINTER identity plus the index -- not a value comparison of the rows' data.
+/// `iterator.go`'s `row != it.End()` loop condition and `iterator_test.go`'s
+/// `require.Equal(t, rows[i], it.Current())` both rely on exactly that.
+impl PartialEq for Row<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.chunk, other.chunk) && self.idx == other.idx
+    }
+}
+
+impl Eq for Row<'_> {}
+
 impl<'a> Row<'a> {
     /// Builds a row cursor at physical index `idx` of `chunk`.
     #[must_use]
@@ -141,6 +153,18 @@ impl<'a> Row<'a> {
     #[must_use]
     pub fn get_raw(&self, col_idx: usize) -> &'a [u8] {
         self.chunk.columns()[col_idx].get_raw(self.idx)
+    }
+
+    /// Go `GetJSON`.
+    #[must_use]
+    pub fn get_json(&self, col_idx: usize) -> tidb_datatype::BinaryJSON {
+        self.chunk.columns()[col_idx].get_json(self.idx)
+    }
+
+    /// Go `getNameValue`: the `(name, value)` pair an ENUM/SET cell stores.
+    #[must_use]
+    pub fn get_name_value(&self, col_idx: usize) -> (String, u64) {
+        self.chunk.columns()[col_idx].get_name_value(self.idx)
     }
 
     /// Go `IsNull`.

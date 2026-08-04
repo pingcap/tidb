@@ -33,6 +33,10 @@ use crate::column::Column;
 use crate::row::Row;
 use tidb_datatype::{Datum, FieldType, MyDecimal, MySqlDuration, Time};
 
+/// Go `chunk.InitialCapacity`: the capacity a chunk grows to when it is renewed
+/// from a chunk that had no capacity of its own.
+pub const INITIAL_CAPACITY: usize = 32;
+
 /// Go `chunk.Chunk`: a columnar batch of rows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Chunk {
@@ -135,6 +139,67 @@ impl Chunk {
         Row::new(self, physical)
     }
 
+    /// Go `SetSel`: install (or, with `None`, drop) the selection vector.
+    pub fn set_sel(&mut self, sel: Option<Vec<usize>>) {
+        self.sel = sel;
+    }
+
+    /// Go `Sel`: the installed selection vector, if any.
+    #[must_use]
+    pub fn sel(&self) -> Option<&[usize]> {
+        self.sel.as_deref()
+    }
+
+    /// Go `reCalcCapacity`: a full chunk doubles (from `INITIAL_CAPACITY` when
+    /// it had none), capped at `max_chunk_size`; an unfilled chunk keeps its
+    /// capacity.
+    #[must_use]
+    fn re_calc_capacity(&self, max_chunk_size: usize) -> usize {
+        if self.num_rows() < self.capacity {
+            return self.capacity;
+        }
+        let new_capacity = self.capacity * 2;
+        let new_capacity = if new_capacity == 0 {
+            INITIAL_CAPACITY
+        } else {
+            new_capacity
+        };
+        new_capacity.min(max_chunk_size)
+    }
+
+    /// Go `renewWithCapacity`: a new, EMPTY chunk with this chunk's column
+    /// shape (each column's `typeSize`, not its field type) at `capacity`.
+    ///
+    /// Go's `chk.columns == nil` short-circuit returns a chunk that carries
+    /// only `inCompleteChunk`; an empty `columns` vector reproduces it.
+    #[must_use]
+    pub fn renew_with_capacity(&self, capacity: usize, required_rows: usize) -> Chunk {
+        if self.columns.is_empty() {
+            return Chunk {
+                in_complete_chunk: self.in_complete_chunk,
+                ..Chunk::default()
+            };
+        }
+        Chunk {
+            sel: None,
+            columns: self
+                .columns
+                .iter()
+                .map(|col| Column::new_column_with_type_size(col.type_size(), capacity))
+                .collect(),
+            num_virtual_rows: 0,
+            capacity,
+            required_rows,
+            in_complete_chunk: self.in_complete_chunk,
+        }
+    }
+
+    /// Go `Renew`: [`Chunk::renew_with_capacity`] at the grown capacity.
+    #[must_use]
+    pub fn renew(&self, max_chunk_size: usize) -> Chunk {
+        self.renew_with_capacity(self.re_calc_capacity(max_chunk_size), max_chunk_size)
+    }
+
     /// Go `numVirtualRows`: the field itself, which the join copy helpers and
     /// their tests assert on directly.
     #[must_use]
@@ -194,6 +259,12 @@ impl Chunk {
     pub fn append_uint64(&mut self, col_idx: usize, value: u64) {
         self.append_sel(col_idx);
         self.columns[col_idx].append_uint64(value);
+    }
+
+    /// Go `AppendFloat32`.
+    pub fn append_float32(&mut self, col_idx: usize, value: f32) {
+        self.append_sel(col_idx);
+        self.columns[col_idx].append_float32(value);
     }
 
     /// Go `AppendFloat64`.
@@ -406,6 +477,44 @@ mod tests {
             chk.append_string(1, "abcdefgh");
         }
         assert!(chk.memory_usage() > empty);
+    }
+
+    /// Go `Renew`/`reCalcCapacity`, measured against the real
+    /// `pkg/util/chunk` (`chunk.Renew(chk, maxChunkSize).Capacity()`):
+    ///
+    /// | old chunk            | maxChunkSize | Go |
+    /// |----------------------|--------------|----|
+    /// | capacity 0, empty    | 1024         | 32 |
+    /// | capacity 32, FULL    | 1024         | 64 |
+    /// | capacity 32, FULL    | 40           | 40 |
+    /// | capacity 32, half    | 1024         | 32 |
+    ///
+    /// Only a FULL chunk doubles, the cap is `maxChunkSize`, and a chunk with
+    /// no capacity of its own starts at `INITIAL_CAPACITY`.
+    #[test]
+    fn renew_capacity_ladder_matches_go() {
+        let bigint = vec![FieldType::new(FieldTypeCode::LongLong)];
+
+        let zero = Chunk::new(&bigint, 0, 1024);
+        assert_eq!(zero.renew(1024).capacity(), 32);
+
+        let mut full = Chunk::new(&bigint, 32, 1024);
+        for _ in 0..32 {
+            full.append_int64(0, 1);
+        }
+        assert_eq!(full.renew(1024).capacity(), 64);
+        assert_eq!(full.renew(40).capacity(), 40);
+
+        let mut half = Chunk::new(&bigint, 32, 1024);
+        for _ in 0..16 {
+            half.append_int64(0, 1);
+        }
+        assert_eq!(half.renew(1024).capacity(), 32);
+
+        // The renewed chunk keeps the column SHAPE but holds no rows.
+        let renewed = full.renew(1024);
+        assert_eq!(renewed.num_cols(), 1);
+        assert_eq!(renewed.num_rows(), 0);
     }
 
     #[test]

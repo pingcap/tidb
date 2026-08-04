@@ -151,6 +151,20 @@ impl Column {
         }
     }
 
+    /// Go `newColumn(ts, capacity)`: a column whose element width is `type_size`
+    /// ([`VAR_ELEM_LEN`] for a variable-length one), sized for `capacity` rows.
+    ///
+    /// This is the constructor `renewColumns` uses, where the shape comes from
+    /// an existing column's `typeSize` rather than from a field type.
+    #[must_use]
+    pub fn new_column_with_type_size(type_size: i64, capacity: usize) -> Self {
+        if type_size == VAR_ELEM_LEN {
+            Column::new_var_len(capacity)
+        } else {
+            Column::new_fixed_len(type_size as usize, capacity)
+        }
+    }
+
     /// Go `NewEmptyColumn`: a column typed for `field_type` but with no
     /// preallocated data/bitmap capacity.
     #[must_use]
@@ -434,6 +448,17 @@ impl Column {
         let start = self.offsets[row_id] as usize;
         let end = self.offsets[row_id + 1] as usize;
         &self.data[start..end]
+    }
+
+    /// Go `GetJSON`: the cell's first byte is the JSON type code and the rest
+    /// is the value, which is exactly what a `BinaryJSON` carries.
+    #[must_use]
+    pub fn get_json(&self, row_id: usize) -> tidb_datatype::BinaryJSON {
+        let cell = self.get_bytes(row_id);
+        let (type_code, value) = cell
+            .split_first()
+            .expect("a JSON cell always carries its type code");
+        tidb_datatype::BinaryJSON::from_encoded_parts(*type_code, value)
     }
 
     /// Go `GetRaw`: the raw element bytes of a row, for either column kind.
@@ -1067,5 +1092,43 @@ mod tests {
         assert_eq!(empty_fixed.type_size(), 4);
         let empty_var = Column::new_empty_column(&FieldType::new(FieldTypeCode::Blob));
         assert!(!empty_var.is_fixed());
+    }
+
+    /// Go `TestLargeStringColumnOffset` (`pkg/util/chunk/column_test.go`): a
+    /// var-length column's offsets are 64-BIT. A 6M string field at a batch
+    /// size of 1024 puts the offset past 6GB, which an `int32` offset would
+    /// silently wrap.
+    #[test]
+    fn go_test_large_string_column_offset() {
+        let mut col = Column::new_var_len(1);
+        col.offsets[0] = 6 << 30;
+        assert_eq!(col.offsets[0], 6_i64 << 30);
+    }
+
+    /// Go `TestJSONColumn` (`pkg/util/chunk/column_test.go`): 1024 distinct
+    /// JSON objects round-trip through the column, and reading them back
+    /// through the COLUMN and through a `Row` agrees, printed form included.
+    #[test]
+    fn go_test_json_column() {
+        let field = FieldType::new(FieldTypeCode::Json);
+        let mut chk = crate::chunk::Chunk::new_with_capacity(&[field], 1024);
+        for i in 0..1024 {
+            let json = tidb_datatype::BinaryJSON::parse(&format!("{{\"{i}\":{i}}}"))
+                .expect("valid JSON object");
+            chk.append_json(0, &json);
+        }
+
+        let mut it = crate::iterator::Iterator4Chunk::new(&chk);
+        let mut i = 0;
+        let mut row = crate::iterator::ChunkIterator::begin(&mut it);
+        while row.is_some() {
+            let j1 = chk.column(0).get_json(i);
+            let j2 = row.expect("not end").get_json(0);
+            assert_eq!(j2.to_string(), j1.to_string());
+            assert_eq!(j1.to_string(), format!("{{\"{i}\": {i}}}"));
+            i += 1;
+            row = crate::iterator::ChunkIterator::next_row(&mut it);
+        }
+        assert_eq!(i, 1024);
     }
 }
