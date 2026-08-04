@@ -258,11 +258,8 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			access[i-eqOrInCount] = filter
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
-<<<<<<< HEAD
-=======
 				usedCnt++
 				path.markConstCol(i)
->>>>>>> 684ced8facb (planner: recognize order by correlated equality (#70217))
 			}
 			break
 		}
