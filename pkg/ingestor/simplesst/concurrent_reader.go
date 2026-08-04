@@ -17,11 +17,11 @@ package simplesst
 import (
 	"context"
 	"io"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -42,7 +42,7 @@ type concurrentFileReader struct {
 	bufferSets   [2][][]byte
 	started      bool
 	resultCh     chan concurrentReadResult
-	wg           sync.WaitGroup
+	eg           *util.ErrorGroupWithRecover
 }
 
 type concurrentReadResult struct {
@@ -74,6 +74,7 @@ func newConcurrentFileReader(
 		name:           name,
 		storage:        st,
 		resultCh:       make(chan concurrentReadResult, 1),
+		eg:             util.NewErrorGroupWithRecover(),
 	}, nil
 }
 
@@ -98,17 +99,19 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 	return result.buffers, result.err
 }
 
+// startRead fills the given window in the background. A panic inside becomes an
+// error rather than taking the process down, matching how readAllData runs the
+// same decode path on its own goroutines.
 func (r *concurrentFileReader) startRead(bufferSet int) {
-	r.wg.Add(1)
-	go func() {
-		defer r.wg.Done()
+	r.eg.Go(func() error {
 		buffers, err := r.readOnce(r.bufferSets[bufferSet])
 		r.resultCh <- concurrentReadResult{
 			bufferSet: bufferSet,
 			buffers:   buffers,
 			err:       err,
 		}
-	}()
+		return nil
+	})
 }
 
 func (r *concurrentFileReader) readOnce(bufs [][]byte) ([][]byte, error) {
@@ -154,5 +157,5 @@ func (r *concurrentFileReader) readOnce(bufs [][]byte) ([][]byte, error) {
 
 func (r *concurrentFileReader) close() {
 	r.cancel()
-	r.wg.Wait()
+	_ = r.eg.Wait()
 }
