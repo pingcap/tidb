@@ -54,5 +54,9 @@ name = "doctest_gate"
 path = "tests/doctest_gate.rs"
 
 [[test]]
+name = "join_shape"
+path = "tests/join_shape.rs"
+
+[[test]]
 name = "many_table_join"
 path = "tests/many_table_join.rs"
