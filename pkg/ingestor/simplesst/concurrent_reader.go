@@ -82,38 +82,15 @@ func newConcurrentFileReader(
 // returned one.
 func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 	if r.singleWindow {
-		if len(bufs) < r.concurrency {
-			return nil, errors.Errorf(
-				"concurrent reader needs %d buffers, got %d",
-				r.concurrency,
-				len(bufs),
-			)
-		}
 		return r.readOnce(bufs[:r.concurrency])
-	}
-
-	if len(bufs) < 2*r.concurrency {
-		return nil, errors.Errorf(
-			"concurrent reader needs %d buffers, got %d",
-			2*r.concurrency,
-			len(bufs),
-		)
 	}
 
 	if !r.started {
 		r.bufferSets[0] = bufs[:r.concurrency]
 		r.bufferSets[1] = bufs[r.concurrency : 2*r.concurrency]
 		r.started = true
-
 		r.startRead(0)
-		result := <-r.resultCh
-		if result.err != nil {
-			return nil, result.err
-		}
-		r.startRead(1)
-		return result.buffers, nil
 	}
-
 	result := <-r.resultCh
 	if result.err != nil {
 		return nil, result.err
