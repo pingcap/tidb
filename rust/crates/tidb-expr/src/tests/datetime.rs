@@ -1044,6 +1044,13 @@ fn addtime_and_subtime_match_the_captured_session_answers() {
             "STR:2020-01-01 11:02:03.456700",
         ),
         ("addtime('10:00:00','01:02:03.4567')", "STR:11:02:03.456700"),
+        // `matchDayHHMMSS`: a leading day count folded into the hours.
+        (
+            "addtime('2020-01-01 10:00:00','1 01:00:00')",
+            "STR:2020-01-02 11:00:00",
+        ),
+        // A duration result can be negative.
+        ("subtime('10:00:00','20:00:00')", "STR:-10:00:00"),
     ] {
         assert_eq!(e(expr), want, "{expr}");
         assert_eq!(chunk_e(expr), want, "{expr} (chunk tier)");
@@ -1073,6 +1080,32 @@ fn timestamp_and_timestampadd_match_the_captured_session_answers() {
         ),
         ("timestamp('bad')", "NULL"),
         ("timestamp('2020-01-01','bad')", "NULL"),
+        // `builtinTimestamp2ArgsSig` gates the second argument on
+        // `isDuration` BEFORE parsing it, so a datetime-shaped one is NULL
+        // even though `types.ParseDuration` would happily fall back to a
+        // datetime and answer 05:00:00 for it.
+        ("timestamp('2020-01-01','2020-01-01 05:00:00')", "NULL"),
+        // The `D HH:MM:SS` and over-24-hour duration forms, which do pass
+        // that gate.
+        (
+            "timestamp('2020-01-01','1 05:00:00')",
+            "STR:2020-01-02 05:00:00",
+        ),
+        (
+            "timestamp('2020-01-01','100:00:00')",
+            "STR:2020-01-05 04:00:00",
+        ),
+        // "MySQL won't evaluate add for date with zero year."
+        ("timestamp('0000-00-00','01:00:00')", "NULL"),
+        // The zero-year gate is not redundant with the range check: this
+        // pair straddles it. Year 0 plus 838 hours would land in a VALID
+        // year 1 datetime, and Go still answers NULL because the gate fires
+        // on the PARSED value before the addition.
+        ("timestamp('0000-12-31 00:00:00','838:00:00')", "NULL"),
+        (
+            "timestamp('0001-01-01 00:00:00','838:00:00')",
+            "STR:0001-02-04 22:00:00",
+        ),
         ("timestamp(null)", "NULL"),
         (
             "timestampadd(minute, 5, '2020-01-01 10:00:00')",
