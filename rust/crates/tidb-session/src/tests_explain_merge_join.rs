@@ -202,3 +202,41 @@ fn an_aliased_self_join_merges_and_an_unaliased_one_is_refused() {
     );
     assert!(session.run("select t2.a from t2, t2").is_err());
 }
+
+/// The ORDER-BY-driven keep-order scan this batch did NOT reach.
+///
+/// Go, on `t(a int, b int, c int, key ia(a))`:
+///
+/// ```text
+/// Limit_13            root
+/// └─IndexReader_26    root       index:Limit_25
+///   └─Limit_25        cop[tikv]
+///     └─IndexFullScan_24  cop[tikv]  table:t, index:ia(a)  keep order:true, desc
+/// ```
+///
+/// -- no ordering operator at all, because the index's own order satisfies the
+/// `ORDER BY`. Reaching that needs the property to flow into the ACCESS-PATH
+/// choice (Go's second, order-carrying `findBestTask` invocation), which is
+/// the follow-on increment: only a merge join demands an order here, and only
+/// of a scan whose path was already fixed. This test records where the tier
+/// actually stands so the gap is a measured fact rather than a claim.
+#[test]
+fn an_order_by_limit_still_sorts_rather_than_reading_the_index_in_order() {
+    let mut session = Session::new();
+    session
+        .run("create table t (a int, b int, c int, key ia(a))")
+        .unwrap();
+    let joined = plan(
+        &mut session,
+        "explain select x.a from (select a from t order by a desc limit 2) x",
+    )
+    .join("\n");
+    assert!(
+        joined.contains("Sort") || joined.contains("TopN"),
+        "an ordering operator is still present, where Go has none:\n{joined}"
+    );
+    assert!(
+        !joined.contains("keep order:true"),
+        "no scan claims the order yet:\n{joined}"
+    );
+}
