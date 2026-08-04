@@ -642,3 +642,95 @@ fn a_correlated_subquery_in_an_aggregate_argument_matches_go() {
         "unexpected error: {error:?}"
     );
 }
+
+/// The aggregation's DEFAULT row is deselected by the Apply above it, so a
+/// correlated SCALAR subquery beside an aggregate over an EMPTY outer answers
+/// NULL -- not what its inner would compute from that all-NULL row.
+///
+/// Go `NestedLoopApplyExec.fetchSelectedOuterRow` names this case in its own
+/// comment: the outer `count(1)` produces one row `<0, null>` over the empty
+/// input, and that row is "specially mark[ed] ... as not selected, to trigger
+/// the mismatch join procedure". Every assertion below is a capture of real
+/// TiDB on `t1(a)`/`t2(a)` holding `1,2` and `1,2,3`.
+#[test]
+fn a_scalar_subquery_beside_an_aggregate_over_an_empty_outer_is_null() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE e1 (a INT)").unwrap();
+    session.run("CREATE TABLE e2 (a INT)").unwrap();
+    session.run("INSERT INTO e1 VALUES (1),(2)").unwrap();
+    session.run("INSERT INTO e2 VALUES (1),(2),(3)").unwrap();
+
+    // THE case: `0, NULL`, where running the inner over the default row's
+    // NULL would have answered `0, 0`.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT COUNT(1), (SELECT COUNT(1) FROM e2 WHERE e2.a > e1.a) AS field \
+             FROM e1 WHERE e1.a = 100"
+        )),
+        [["0", "NULL"]]
+    );
+    // The inner really is skipped rather than merely answering NULL by
+    // accident: a subquery that would return a value for ANY binding still
+    // answers NULL here.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT COUNT(1), (SELECT COUNT(1) FROM e2 WHERE e1.a IS NULL) \
+             FROM e1 WHERE e1.a = 100"
+        )),
+        [["0", "NULL"]]
+    );
+    // Only the FIRST Apply deselects: Go's `aggExecutorTreeInputEmpty` stops
+    // at a two-child operator, and the second Apply's outer IS the first one.
+    // Captured from TiDB, which answers `0, NULL, 0`.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT COUNT(1), (SELECT COUNT(1) FROM e2 WHERE e2.a > e1.a), \
+             (SELECT COUNT(1) FROM e2 WHERE e2.a < e1.a) FROM e1 WHERE e1.a = 100"
+        )),
+        [["0", "NULL", "0"]]
+    );
+    // Only a SCALAR subquery's apply is the left outer join whose mismatch
+    // pads NULL. Go decorrelates `EXISTS` into a semi HASH JOIN, which has no
+    // deselect rule at all, so its inner really does run over the default
+    // row: captured from TiDB, this answers `0, 1` -- an `EXISTS` that is
+    // TRUE precisely because the default row's grouped `a` is NULL.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT COUNT(1), EXISTS(SELECT 1 FROM e2 WHERE e2.a > e1.a OR e1.a IS NULL) \
+             FROM e1 WHERE e1.a = 100"
+        )),
+        [["0", "1"]]
+    );
+
+    // The boundary: a NON-empty outer runs the inner as always, even when the
+    // grouped value it binds is NULL. One row whose `a` IS NULL answers `1, 0`
+    // -- the same binding the default row carries, and a different answer.
+    session.run("INSERT INTO e1 VALUES (NULL)").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT COUNT(1), (SELECT COUNT(1) FROM e2 WHERE e2.a > e1.a) \
+             FROM e1 WHERE e1.a IS NULL"
+        )),
+        [["1", "0"]]
+    );
+    // ... and an aggregate whose own empty-input value is NULL keeps it.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT MAX(a), (SELECT COUNT(1) FROM e2 WHERE e2.a > e1.a) \
+             FROM e1 WHERE e1.a = 100"
+        )),
+        [["NULL", "NULL"]]
+    );
+    // A GROUP BY has no default row at all, so there is nothing to deselect
+    // and the statement answers no rows.
+    assert!(row_text(session.run(
+        "SELECT COUNT(1), (SELECT COUNT(1) FROM e2 WHERE e2.a > e1.a) \
+             FROM e1 WHERE e1.a = 100 GROUP BY e1.a"
+    ))
+    .is_empty());
+    // And without an aggregate there is no default row either.
+    assert!(row_text(
+        session.run("SELECT (SELECT COUNT(1) FROM e2 WHERE e2.a > e1.a) FROM e1 WHERE e1.a = 100")
+    )
+    .is_empty());
+}

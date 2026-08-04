@@ -225,6 +225,81 @@ fn a_nested_natural_join_matches_the_childs_visible_columns() {
     );
 }
 
+/// A PLAIN join above a coalesced one keeps BOTH children's display columns.
+///
+/// Go's `buildJoin` gives a plain join its two CHILDREN's output names
+/// concatenated, and a coalesced child's names are already the coalesced
+/// ones; only the join that COALESCES drops a column. Captured from TiDB:
+/// `select * from t1 join t2 using (a) right join t3 on (t2.a = t3.a)` heads
+/// `a c d a` -- four columns, the inner join's three plus t3's own -- and the
+/// two-coalesced-sides form heads `a b c b d a`.
+#[test]
+fn a_plain_join_above_a_coalesced_one_keeps_the_right_sides_columns() {
+    let mut session = natural_session();
+    session.run("CREATE TABLE t3 (a INT, d INT)").unwrap();
+    session.run("INSERT INTO t3 VALUES (1, 77)").unwrap();
+    assert_eq!(
+        columns(
+            &mut session,
+            "SELECT * FROM n1 JOIN n2 USING (a) RIGHT JOIN t3 ON (n2.a = t3.a)"
+        ),
+        ["a", "b", "c", "a", "d"]
+    );
+    assert_eq!(
+        columns(
+            &mut session,
+            "SELECT * FROM n1 JOIN n2 USING (a) JOIN t3 ON (n2.a = t3.a)"
+        ),
+        ["a", "b", "c", "a", "d"]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT * FROM n1 JOIN n2 USING (a) JOIN t3 ON (n2.a = t3.a)"
+        ),
+        ["1|10|100|1|77"]
+    );
+}
+
+/// A comma binds LOOSER than `NATURAL JOIN`, so `FROM a, b NATURAL JOIN c`
+/// coalesces b with c and leaves a alone.
+///
+/// Captured from TiDB: over three one-column tables `t1(i)`, `t2(i)`, `t3(i)`
+/// with rows 1, 2, 3, `select * from t1, t2 natural left join t3` heads `i i`
+/// and answers `1|2` -- t1's own column plus the natural join's single
+/// coalesced one. The RIGHT form keeps t3's copy instead (`1|3`), which is
+/// the same outer-side rule the two-table case follows. Written as an
+/// explicit parenthesized right operand as well, because that spelling must
+/// agree: it is the same tree.
+#[test]
+fn a_comma_binds_looser_than_a_natural_join() {
+    let mut session = Session::new();
+    for table in ["c1", "c2", "c3"] {
+        session
+            .run(&format!("CREATE TABLE {table} (i INT)"))
+            .unwrap();
+    }
+    session.run("INSERT INTO c1 VALUES (1)").unwrap();
+    session.run("INSERT INTO c2 VALUES (2)").unwrap();
+    session.run("INSERT INTO c3 VALUES (3)").unwrap();
+    assert_eq!(
+        columns(&mut session, "SELECT * FROM c1, c2 NATURAL LEFT JOIN c3"),
+        ["i", "i"]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM c1, c2 NATURAL LEFT JOIN c3"),
+        ["1|2"]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM c1, c2 NATURAL RIGHT JOIN c3"),
+        ["1|3"]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM c1 NATURAL LEFT JOIN c2, c3"),
+        ["1|3"]
+    );
+}
+
 /// A `USING` name neither side offers is Go's `ErrUnknownColumn` (1054)
 /// against the `from clause`, not a silently empty join.
 #[test]

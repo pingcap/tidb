@@ -92,18 +92,38 @@ impl OuterCursor {
         outer: &mut dyn Executor,
         types: &[FieldType],
     ) -> Result<Option<Vec<Datum>>, ExecError> {
+        Ok(self.next_row_marked(outer, types)?.map(|(row, _)| row))
+    }
+
+    /// The next outer row's cells, plus Go's `outerSelected` bit for it.
+    ///
+    /// The bit is `false` for exactly the one row Go's
+    /// `fetchSelectedOuterRow` deselects, and `true` for every other row --
+    /// this cursor has no outer filter to answer for otherwise.
+    fn next_row_marked(
+        &mut self,
+        outer: &mut dyn Executor,
+        types: &[FieldType],
+    ) -> Result<Option<(Vec<Datum>, bool)>, ExecError> {
         loop {
             if let Some(chunk) = self.chunk.as_ref() {
                 if self.cursor < chunk.num_rows() {
                     let row = chunk.get_row(self.cursor);
+                    // Go: `e.outerChunkCursor == 0 && e.OuterChunk.NumRows()
+                    // == 1 && e.outerSelected[0] && aggExecutorTreeInputEmpty
+                    // (e.OuterExec)`, evaluated on the chunk it just fetched.
+                    let selected = !(self.cursor == 0
+                        && chunk.num_rows() == 1
+                        && outer.agg_tree_input_empty());
                     self.cursor += 1;
-                    return Ok(Some(
+                    return Ok(Some((
                         types
                             .iter()
                             .enumerate()
                             .map(|(c, ft)| row.get_datum(c, ft))
                             .collect(),
-                    ));
+                        selected,
+                    )));
                 }
             }
             if self.done {
@@ -259,6 +279,10 @@ pub struct ApplyExec {
     position: OuterCursor,
     memory: StatementMemory,
     tracker: Arc<Tracker>,
+    /// What the appended column holds for an outer row Go's apply loop marks
+    /// as NOT selected -- its `Joiner.OnMissMatch` value -- or `None` when
+    /// this apply has no such row to answer for. See [`ApplyExec::new`].
+    miss_match: Option<Datum>,
 }
 
 impl ApplyExec {
@@ -269,12 +293,33 @@ impl ApplyExec {
     /// snapshot. That copy is the price of this seed's ownership shape, not a
     /// semantic choice -- the inner plan only reads, and Go likewise runs it
     /// against one fixed snapshot for the whole statement.
+    ///
+    /// `miss_match` is the ONE thing this operator needs from the join type
+    /// Go's apply carries. Go `NestedLoopApplyExec.fetchSelectedOuterRow`:
+    ///
+    /// ```text
+    /// // For cases like `select count(1), (select count(1) from s where s.a > t.a) as sub from t where t.a = 1`,
+    /// // if outer child has no row satisfying `t.a = 1`, `sub` should be `null` instead of `0` theoretically; however, the
+    /// // outer `count(1)` produces one row <0, null> over the empty input, we should specially mark this outer row
+    /// // as not selected, to trigger the mismatch join procedure.
+    /// ```
+    ///
+    /// A SCALAR subquery's apply is a left outer join, so its mismatch pads
+    /// the appended column with NULL: pass `Some(Datum::Null)`. Every other
+    /// correlated shape passes `None`, and for a reason that is measured
+    /// rather than assumed -- Go decorrelates `EXISTS`/`IN` into a semi HASH
+    /// join, which has no such rule, so their inner side really does run over
+    /// the aggregation's default row (captured: `select count(1), exists
+    /// (select 1 from t2 where t2.a > t1.a or t1.a is null) from t1 where
+    /// t1.a = 100` answers `0, 1`, while the scalar `select count(1),
+    /// (select 1 from t2 where t1.a is null limit 1) ...` answers `0, NULL`).
     #[must_use]
     pub fn new(
         meta: ExecutorMeta,
         outer: Box<dyn Executor>,
         run_inner: InnerRunner,
         memory: StatementMemory,
+        miss_match: Option<Datum>,
     ) -> Self {
         let tracker = memory.operator_tracker(meta.id());
         ApplyExec {
@@ -284,6 +329,7 @@ impl ApplyExec {
             position: OuterCursor::new(),
             memory,
             tracker,
+            miss_match,
         }
     }
 }
@@ -303,9 +349,21 @@ impl Executor for ApplyExec {
         // cursor on the next call; one outer row yields at most one row here,
         // so the row count is the whole test.
         while req.num_rows() < max_rows {
-            let Some(values) = self.position.next_row(self.outer.as_mut(), &outer_types)? else {
+            let Some((values, selected)) = self
+                .position
+                .next_row_marked(self.outer.as_mut(), &outer_types)?
+            else {
                 break;
             };
+            // Go's mismatch procedure: the deselected outer row never reaches
+            // the inner plan at all, and `Joiner.OnMissMatch` writes the pad.
+            if let Some(pad) = self.miss_match.as_ref().filter(|_| !selected) {
+                for (c, value) in values.iter().enumerate() {
+                    req.append_datum(c, value);
+                }
+                req.append_datum(values.len(), pad);
+                continue;
+            }
             // One inner run per outer row, as Go's apply loop does.
             let inner = (self.run_inner)(&values)?;
             // Go's apply tracker sees the inner result for the row it is
@@ -452,6 +510,7 @@ mod tests {
                 _ => unreachable!("the counter only produces Int"),
             }),
             StatementMemory::default(),
+            Some(Datum::Null),
         );
         apply.open().unwrap();
         let mut chunk = apply.new_chunk();

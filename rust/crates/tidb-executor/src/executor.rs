@@ -126,6 +126,20 @@ pub trait Executor {
     fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
         None
     }
+
+    /// Go `aggExecutorTreeInputEmpty` (`pkg/executor/join/hash_join_v1.go`):
+    /// whether this already-executed operator tree is an aggregation that saw
+    /// NO input row, and therefore owes its single output row entirely to the
+    /// aggregates' default values.
+    ///
+    /// Only [`crate::apply::ApplyExec`] asks, and only of its outer child --
+    /// see the rule quoted there. Go's walk recurses through a SINGLE-child
+    /// operator, stops at a join (`false`) and needs every branch of a union
+    /// to be empty; the default here is Go's leaf answer, so an operator that
+    /// is not an aggregation and does not forward reports `false`.
+    fn agg_tree_input_empty(&self) -> bool {
+        false
+    }
 }
 
 /// Go `exec.executorMeta`: the schema/id/children/result-type base state shared

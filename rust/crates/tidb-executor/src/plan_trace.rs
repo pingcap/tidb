@@ -977,6 +977,12 @@ impl Executor for CountExec {
     fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
         self.child.table_access()
     }
+
+    /// The same reason, for the same reason: Go's `aggExecutorTreeInputEmpty`
+    /// walks THROUGH a single-child operator, and a meter is exactly that.
+    fn agg_tree_input_empty(&self) -> bool {
+        self.child.agg_tree_input_empty()
+    }
 }
 
 fn handle_text(handle: &TableHandle) -> String {

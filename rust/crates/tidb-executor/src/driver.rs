@@ -665,6 +665,10 @@ pub(crate) fn run_select_traced(
                 source,
                 runner,
                 ctx.statement_memory(),
+                // The outer side here is the statement's SOURCE, never an
+                // aggregation, so Go's deselected-default-row case cannot
+                // arise: there is no mismatch row to pad.
+                None,
             ));
             source_schema = apply_schema;
             current_scope = applied;
@@ -817,6 +821,10 @@ pub(crate) fn run_select_traced(
                 source,
                 runner,
                 ctx.statement_memory(),
+                // The outer side here is the statement's SOURCE, never an
+                // aggregation, so Go's deselected-default-row case cannot
+                // arise: there is no mismatch row to pad.
+                None,
             ));
         }
         projected.push((

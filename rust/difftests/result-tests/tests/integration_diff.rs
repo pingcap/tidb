@@ -1189,7 +1189,25 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // remaining 4 are `index_lookup_pushdown(t, idx)`, a scan hint
     // `index_hints` does not resolve, which in Go sets `path.Forced` and so
     // keeps a NON-covering index alive through `skylinePruning`'s `keepIndex`.
-    const KNOWN_DIVERGENCES: usize = 46;
+    // 46 -> 42: a plain join whose CHILD coalesced (`USING`/`NATURAL`) now
+    // takes its display order from its two children's output names, which is
+    // what Go's `buildJoin` copies into a plain join's `OutputNames`. `select
+    // * from t1 join t2 using (a) right join t3 on (t2.a = t3.a)` had been
+    // dropping t3's column (3 headers where TiDB prints 4) and `select * from
+    // t1, t2 natural left join t3` had been printing the coalesced-away one
+    // (3 where TiDB prints 2) -- the two directions of one missing rule in
+    // `driver::from::build_join`. All four are `Rows`-kind, so `compared`
+    // holds at 5639 and matched rises.
+    //
+    // 42 -> 40: Go's apply deselects the aggregation's DEFAULT row
+    // (`aggExecutorTreeInputEmpty` in `NestedLoopApplyExec
+    // .fetchSelectedOuterRow`), so a correlated SCALAR subquery beside an
+    // aggregate over an EMPTY outer answers NULL rather than the value its
+    // inner would compute from the all-NULL default row: `select count(1),
+    // (select count(1) from t2 where t2.a > t1.a) from t1 where t1.a = 100`
+    // is `0, NULL`. Both statements are `Rows`-kind, so `compared` holds at
+    // 5639 and matched rises.
+    const KNOWN_DIVERGENCES: usize = 40;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

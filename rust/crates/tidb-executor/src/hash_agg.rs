@@ -1004,6 +1004,9 @@ pub struct HashAggExec<C: Columns> {
     ctx: C,
     child_chunk: Chunk,
     emitted: bool,
+    /// Go `HashAggExec.IsChildReturnEmpty`: whether the last run saw NO input
+    /// row at all -- read back through [`Executor::agg_tree_input_empty`].
+    child_returned_empty: bool,
 }
 
 impl<C: Columns> HashAggExec<C> {
@@ -1026,15 +1029,23 @@ impl<C: Columns> HashAggExec<C> {
             ctx,
             child_chunk,
             emitted: false,
+            child_returned_empty: true,
         }
     }
 }
 
 impl<C: Columns> Executor for HashAggExec<C> {
+    /// Go `aggExecutorTreeInputEmpty`'s one true answer: the walk exists to
+    /// find an aggregation and read its `IsChildReturnEmpty`.
+    fn agg_tree_input_empty(&self) -> bool {
+        self.child_returned_empty
+    }
+
     fn open(&mut self) -> Result<(), ExecError> {
         self.child.open()?;
         self.child_chunk.reset();
         self.emitted = false;
+        self.child_returned_empty = true;
         Ok(())
     }
 
@@ -1174,6 +1185,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
             }
         }
         // No group-by and no data: one empty group, so a global COUNT is 0.
+        self.child_returned_empty = ordered.is_empty();
         if ordered.is_empty() && self.group_by.is_empty() {
             ordered.push(self.agg_funcs.iter().map(AggState::new).collect());
         }

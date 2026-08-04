@@ -553,6 +553,10 @@ fn build_pre_agg_applies(
             source,
             runner,
             ctx.statement_memory(),
+            // This Apply sits UNDER the aggregation -- its outer side is the
+            // post-`WHERE` source row -- so Go's deselected-default-row case
+            // cannot arise here either.
+            None,
         ));
     }
     Ok(source)
@@ -1184,6 +1188,10 @@ fn build_apply_chain(
     // once per source row, and HAVING/ORDER BY can then read the appended
     // column like any other aggregation output.
     for (correlated, display, value_type) in std::mem::take(&mut state.applies) {
+        // Go's apply deselects the aggregation's default row (see
+        // `ApplyExec::new`), and only a SCALAR subquery's apply is the left
+        // outer join whose mismatch pads NULL.
+        let miss_match = matches!(correlated.kind, SubqueryKind::Scalar).then_some(Datum::Null);
         let outer_scope = FromScope {
             tables: vec![FromTable {
                 name: String::new(),
@@ -1239,6 +1247,7 @@ fn build_apply_chain(
             root,
             runner,
             ctx.statement_memory(),
+            miss_match,
         ));
     }
     Ok(root)

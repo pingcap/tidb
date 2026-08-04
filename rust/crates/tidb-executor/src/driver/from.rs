@@ -1210,10 +1210,30 @@ pub(crate) fn build_join(
         .into_iter()
         .map(|(offset, name, ft)| (offset + left_width, name, ft))
         .collect();
+    let child_coalesced = !left_scope.star.is_empty() || !right_scope.star.is_empty();
     let mut scope = left_scope;
     scope
         .coalesced
         .extend(right_scope.coalesced.iter().map(|o| o + left_width));
+    if !coalescing && child_coalesced {
+        // Go's `buildJoin` gives a plain join the output names of its two
+        // CHILDREN concatenated (`copy(joinPlan.OutputNames(), leftPlan
+        // .OutputNames())` and the same for the right at `leftPlan.Schema()
+        // .Len()`), and a coalesced child's own names are already the
+        // coalesced ones. Row order is therefore the right display order only
+        // when NEITHER side coalesced: `t1 JOIN t2 USING (a) RIGHT JOIN t3 ON
+        // ...` reports `a, c, d` then t3's `a` (four columns, not the inner
+        // join's three), and `FROM t1, t2 NATURAL LEFT JOIN t3` reports t1's
+        // `i` then the natural join's single `i` (two, not three). Both were
+        // captured from TiDB. A RIGHT join does NOT swap the two sides here --
+        // only `coalesceCommonColumns` swaps, and only for the join that
+        // coalesces.
+        scope.star = left_visible
+            .iter()
+            .chain(right_visible.iter())
+            .map(|(offset, ..)| *offset)
+            .collect();
+    }
     for table in right_scope.tables {
         scope.tables.push(FromTable {
             name: table.name,
