@@ -60,6 +60,26 @@
 //! The [`Expr`] match is EXHAUSTIVE with no wildcard arm, so a new expression
 //! variant is a compile error here rather than a subtree nobody walks -- the
 //! same rule [`crate::column_prune`] holds itself to.
+//!
+//! # The second fact this walk carries
+//!
+//! [`LeafDemand::forces_index`] is Go's `StmtCtx.GetIndexForce()`, the other
+//! statement-wide input [`crate::access_cost::enumerate_paths`] reads. It
+//! rides here because it is the same question asked of the same nodes and has
+//! the same one consumer; its own doc says why, and what Go does with it.
+//!
+//! # Where the walk is rooted, and the gap that leaves
+//!
+//! Both facts are computed from the `SELECT` being planned, so a subquery
+//! planned on its own sees its OWN text and everything nested inside it, but
+//! not the statement enclosing it. For the column demand that is the safe
+//! direction (a leaf under a subquery is charged its own references, and the
+//! enclosing statement cannot make it need FEWER). For the index-force flag
+//! it is not symmetric: a `USE INDEX` written in the OUTER query does not yet
+//! penalize a full scan inside an inner one, where Go's session-scoped flag
+//! would. Go raises the flag during `DeriveStats` over the whole logical
+//! tree, which this tier has no equivalent of; a `StmtContext` field set once
+//! at the statement boundary is what would close it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -108,6 +128,24 @@ pub(crate) struct LeafDemand {
     unqualified: BTreeSet<String>,
     /// Lowercased column names written as `t.c`, keyed by lowercased `t`.
     qualified: BTreeMap<String, BTreeSet<String>>,
+    /// Go `StmtCtx.SetIndexForce`, the OTHER statement-wide fact
+    /// [`crate::access_cost::enumerate_paths`] reads: whether ANY table of
+    /// the statement carries a `USE`/`FORCE INDEX`.
+    ///
+    /// It rides this walk rather than a second one because it is the same
+    /// question asked of the same nodes -- what the whole statement, its
+    /// subqueries included, says about the leaves below it -- and it has the
+    /// same one consumer. A second exhaustive [`Expr`] match would be a
+    /// second traversal that could silently disagree with this one about
+    /// which subqueries exist.
+    ///
+    /// Go raises this from `stats.go`'s `getGeneralAttributesFromPaths` the
+    /// moment any `AccessPath` of the statement is `path.Forced`, and
+    /// `getTableScanPenalty` then charges EVERY full table scan of the
+    /// statement -- including one over a table no hint named. `IGNORE INDEX`
+    /// does not force; `USE INDEX ()` does, because Go forces the table path
+    /// itself there.
+    forces_index: bool,
 }
 
 impl LeafDemand {
@@ -139,6 +177,11 @@ impl LeafDemand {
             })
             .map(|(offset, _)| offset)
             .collect()
+    }
+
+    /// Go `StmtCtx.GetIndexForce()`: see [`LeafDemand::forces_index`].
+    pub(crate) const fn statement_forces_an_index(&self) -> bool {
+        self.forces_index
     }
 
     /// Records one written column path in whichever of the two spellings it
@@ -234,8 +277,19 @@ impl LeafDemand {
 
     fn add_join_node(&mut self, node: &JoinNode) {
         match node {
-            // A base table writes no expression of its own.
-            JoinNode::Table(_) => {}
+            // A base table writes no expression of its own -- but it is
+            // where a `USE`/`FORCE INDEX` is written, and that is a
+            // STATEMENT-wide fact (see [`LeafDemand::forces_index`]).
+            JoinNode::Table(table_ref) => {
+                if table_ref.hints.iter().any(|hint| {
+                    // Go: a hint outside `HintForScan` is skipped before its
+                    // names are even looked at, so `FOR JOIN` never forces.
+                    hint.scope == tidb_ast::IndexHintScope::All
+                        && hint.kind != tidb_ast::IndexHintKind::Ignore
+                }) {
+                    self.forces_index = true;
+                }
+            }
             JoinNode::Join(join) => self.add_join(join),
             JoinNode::Derived { subquery, .. } => self.add_query(subquery),
         }

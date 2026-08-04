@@ -596,6 +596,10 @@ pub(crate) fn enumerate_paths(
     // partition pruning conditions, so its table scan is of the partitions
     // that survived rather than of the whole table.
     partition_scan: bool,
+    // Go `StmtCtx.GetIndexForce()`: whether ANY table of the whole statement
+    // carries a `USE`/`FORCE INDEX`. STATEMENT-wide, not this table's -- see
+    // [`crate::driver::leaf_demand::LeafDemand::forces_index`].
+    index_force: bool,
 ) -> Vec<Candidate<AccessPath>> {
     let realtime = realtime_row_count(stats);
     let source_rows = source_row_count(table, where_clause, resolver, stats, realtime);
@@ -621,7 +625,7 @@ pub(crate) fn enumerate_paths(
             table_scan_penalty_rows(
                 stats,
                 realtime.max(MIN_NUM_ROWS),
-                hints.has_forced_path(),
+                index_force || hints.has_forced_path(),
                 partition_scan,
             )
         } else {
@@ -1877,6 +1881,7 @@ mod tests {
                 None,
                 &hints,
                 sort_property,
+                false,
                 false,
             )
             .into_iter()

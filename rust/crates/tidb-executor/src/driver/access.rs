@@ -536,9 +536,28 @@ pub(crate) fn choose_index_range_path(
     let where_clause = select.where_clause.as_ref();
     // The columns the statement reads, which decides whether an index path
     // covers (Go `isCoveringIndex`) and therefore whether it pays for a
-    // double read. A statement outside the pruner's slice reads everything.
-    let needed: Vec<usize> = crate::column_prune::prunable_columns(select, scope)
-        .unwrap_or_else(|| (0..columns.len()).collect());
+    // double read.
+    //
+    // This is the SAME analysis a leaf of a multi-table `FROM` uses
+    // ([`crate::driver::leaf_demand`]), and deliberately not
+    // [`crate::column_prune::prunable_columns`]. The two answer different
+    // questions: the pruner NARROWS the source's output, so it must be exact
+    // in both directions and refuses every shape it cannot prove -- any
+    // subquery above all -- and a refusal reads as "every column". Go has no
+    // such refusal: `rule_column_pruning` walks the correlated subquery like
+    // any other expression and hands the `DataSource` the columns its parents
+    // still need, which is what `isCoveringIndex` then reads. Answering the
+    // COST question with the pruner's refusal made `select c2 = (select ...)
+    // from t1` declare that it needs `c1, c2, c3`, so `KEY c2(c2)` -- which
+    // covers `c1, c2` on an integer-handle table -- was never even a
+    // candidate. Captured TiDB reads `IndexFullScan` there.
+    //
+    // Over-approximating is the safe direction here for the same reason it is
+    // at a join leaf: the source still emits the whole row, so a demand that
+    // is too wide costs a covering index as a double read and falls back to
+    // the scan that would have run anyway.
+    let demand = crate::driver::leaf_demand::LeafDemand::of_select(select);
+    let needed: Vec<usize> = demand.needed(&scope.tables[0].name, columns);
     let resolver = ScopeResolver { scope };
     // The `LIMIT` an index path may be costed under. `scan_limit_cap`'s own
     // refusals for things between the source and the LIMIT apply here too;
@@ -566,6 +585,7 @@ pub(crate) fn choose_index_range_path(
         hints,
         !select.order_by.is_empty(),
         partition_scan,
+        demand.statement_forces_an_index(),
     );
     // Go's `prop.ExpectedCnt != math.MaxFloat64`: a row cap on the required
     // property is what disables Fix45132's row-ratio rule inside pruning.
@@ -633,7 +653,17 @@ pub(crate) fn leaf_index_path(
     let stats = catalog.table_statistics(table.table_id);
     let stats = stats.as_ref().map(AsRef::as_ref);
     let paths = crate::access_cost::enumerate_paths(
-        table, columns, None, &needed, &resolver, None, stats, hints, false, false,
+        table,
+        columns,
+        None,
+        &needed,
+        &resolver,
+        None,
+        stats,
+        hints,
+        false,
+        false,
+        demand.statement_forces_an_index(),
     );
     let best = crate::access_cost::choose_access_path(paths, stats, false)?;
     let (index_id, ranges) = best.index?;
@@ -1011,6 +1041,9 @@ fn write_index_range_path(
         None,
         &hints,
         false,
+        false,
+        // An `UPDATE`/`DELETE` carries no `FROM`-clause index hint in the
+        // grammar this tier accepts, so no path of it is `path.Forced`.
         false,
     );
     let best = crate::access_cost::choose_access_path(paths, None, false)?;

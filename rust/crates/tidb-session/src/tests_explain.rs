@@ -1504,3 +1504,179 @@ fn a_full_table_scan_under_pseudo_stats_pays_gos_risk_penalty() {
     assert_eq!(object, "table:t4");
     assert!(info.starts_with("range:(5,+inf]"), "{info}");
 }
+
+/// The columns a covering test reads are the ones the statement STILL needs
+/// after Go's `rule_column_pruning` -- and Go's pruner walks a correlated
+/// subquery like any other expression, so a column named only inside one is
+/// the DataSource's whole demand.
+///
+/// This tier's exact column pruner
+/// (`tidb_executor::column_prune::prunable_columns`) cannot answer that: it
+/// NARROWS the scan's output, so it must be exact in both directions and
+/// refuses every shape it cannot prove, a subquery above all -- and a refusal
+/// reads as "every column", which makes no index cover and hands the full
+/// scan the win by construction. The cost model therefore reads the
+/// over-approximating leaf walk instead
+/// (`tidb_executor::driver::leaf_demand`), the same one a leaf of a
+/// multi-table `FROM` already used.
+///
+/// Captured from a real TiDB session through `rust/difftests/gorun`:
+///
+/// ```text
+/// create table t1 (c1 int primary key, c2 int, c3 int, index kc2 (c2));
+/// create table t2 (c1 int, c2 int);
+///
+/// explain format = 'plan_tree' select c2 = (select c2 from t2 where t2.c1 = t1.c1) from t1;
+///   Projection            root       eq(test.t1.c2, test.t2.c2)->Column
+///   └─Apply               root       CARTESIAN left outer join, left side:IndexReader
+///     ├─IndexReader(Build)  root     index:IndexFullScan
+///     │ └─IndexFullScan   cop[tikv]  table:t1, index:kc2(c2)  keep order:false, stats:pseudo
+///     ...
+///
+/// explain format = 'plan_tree' select c3 = (select c2 from t2 where t2.c1 = t1.c1) from t1;
+///   ...
+///     ├─TableReader(Build)  root     data:TableFullScan
+///     │ └─TableFullScan   cop[tikv]  table:t1  keep order:false, stats:pseudo
+///     ...
+/// ```
+///
+/// The negative row is the acceptance criterion: reading `c3` instead of `c2`
+/// leaves `kc2(c2)` short of the row by exactly one column, and the same
+/// statement shape then reads the table. So the index is chosen because it
+/// covers what is read, not because a subquery is present.
+#[test]
+fn a_correlated_subquerys_columns_decide_whether_an_index_covers() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, c3 INT, INDEX kc2 (c2))")
+        .unwrap();
+    session.run("CREATE TABLE t2 (c1 INT, c2 INT)").unwrap();
+
+    // The outer `t1` reads `c1` (through the correlated `t2.c1 = t1.c1`) and
+    // `c2`; `kc2(c2)` stores both, because `c1` is the row handle.
+    let (name, object) = scan_of(
+        &mut session,
+        "EXPLAIN SELECT c2 = (SELECT c2 FROM t2 WHERE t2.c1 = t1.c1) FROM t1",
+        "table:t1",
+    );
+    assert!(name.contains("IndexFullScan"), "{name}");
+    assert_eq!(object, "table:t1, index:kc2(c2)");
+
+    // NEGATIVE: `c3` is not in the index and is not the handle.
+    let (name, object) = scan_of(
+        &mut session,
+        "EXPLAIN SELECT c3 = (SELECT c2 FROM t2 WHERE t2.c1 = t1.c1) FROM t1",
+        "table:t1",
+    );
+    assert!(name.contains("TableFullScan"), "{name}");
+    assert_eq!(object, "table:t1");
+}
+
+/// Go's index-force penalty is STATEMENT-wide, not per table.
+/// `getGeneralAttributesFromPaths` (`pkg/planner/core/stats.go`) raises
+/// `StmtCtx.SetIndexForce()` the moment ANY `AccessPath` of the statement is
+/// `path.Forced`, and `getTableScanPenalty` then charges a second scan's
+/// worth of rows to EVERY full table scan of that statement -- including one
+/// over a table no hint ever named. `StatementContext`'s own field comment
+/// says it: "indexForce is set if any table in the query has a force or use
+/// index applied".
+///
+/// The statement below is `tests/integrationtest/t/subquery.test`'s own, and
+/// the positive row is TiDB's recording of it
+/// (`tests/integrationtest/r/subquery.result`):
+///
+/// ```text
+/// create table t(a int primary key, b int, c int, d int, index idx(b,c,d));
+/// insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
+/// analyze table t;
+///
+/// explain format = 'plan_tree' select t.c in (select count(*) from t s use index(idx),
+///     t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;
+///   ...
+///   ├─IndexReader(Build)  root       index:IndexFullScan
+///   │ └─IndexFullScan     cop[tikv]  table:t, index:idx(b, c, d)  keep order:false
+///   ...
+/// ```
+///
+/// The negative row is the same statement with `use index(idx)` DELETED, and
+/// nothing else changed; captured through `rust/difftests/gorun`:
+///
+/// ```text
+///   │ └─TableFullScan     cop[tikv]  table:t   keep order:false
+/// ```
+///
+/// The table is ANALYZED, so nothing else in `getTableScanPenalty` fires: the
+/// statistics are neither pseudo, nor stale, nor outrun by `modify_count`.
+/// With five analyzed rows the two paths over the OUTER `t` cost the same to
+/// the cent (`explain format='verbose'` prints `123.64` for both readers), so
+/// the tie-break keeps the table path -- and the hint on `s`, a different
+/// occurrence of the same table, is the entire reason the recorded plan reads
+/// the index over `t` instead.
+#[test]
+fn a_use_index_on_one_table_penalizes_every_other_full_scan_of_the_statement() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT, c INT, d INT, INDEX idx(b, c, d))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2)")
+        .unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+
+    // The hint names the inner `s`; the outer `t` has none of its own.
+    let (name, object) = scan_of(
+        &mut session,
+        "EXPLAIN SELECT t.c IN (SELECT COUNT(*) FROM t s USE INDEX(idx), t t1 \
+         WHERE s.b = 1 AND s.c = 1 AND s.d = t.a AND s.a = t1.a) FROM t",
+        "table:t",
+    );
+    assert!(name.contains("IndexFullScan"), "{name}");
+    assert_eq!(object, "table:t, index:idx(b, c, d)");
+
+    // Three NEGATIVES, each the same statement with one thing changed, and
+    // each reading `TableFullScan  cop[tikv]  table:t  keep order:false` in
+    // TiDB (captured through `rust/difftests/gorun`).
+    for inner in [
+        // No hint at all. No path of the statement is forced, the analyzed
+        // statistics earn no penalty, and the tie holds the table.
+        "t s",
+        // `IGNORE INDEX` is the one scan hint Go does NOT turn into
+        // `path.Forced`: `planbuilder.go` collects it into `ignored` and
+        // leaves `hasUseOrForce` alone.
+        "t s IGNORE INDEX(idx)",
+        // A hint outside `ast.HintForScan` is skipped before its index names
+        // are even looked up, so `FOR JOIN` forces nothing.
+        "t s USE INDEX FOR JOIN(idx)",
+    ] {
+        let sql = format!(
+            "EXPLAIN SELECT t.c IN (SELECT COUNT(*) FROM {inner}, t t1 \
+             WHERE s.b = 1 AND s.c = 1 AND s.d = t.a AND s.a = t1.a) FROM t"
+        );
+        let (name, object) = scan_of(&mut session, &sql, "table:t");
+        assert!(name.contains("TableFullScan"), "{inner}: {name}");
+        assert_eq!(object, "table:t", "{inner}");
+    }
+}
+
+/// The `(operator, access object)` of the one scan node reading `object`.
+///
+/// Named rather than positional because both tests above plan a JOIN, where
+/// the leaf under test is not the last row and its neighbour reads the same
+/// TABLE under a different alias.
+fn scan_of(session: &mut Session, sql: &str, object: &str) -> (String, String) {
+    let rows = row_text(session.run(sql));
+    let names_it =
+        |written: &str| written == object || written.starts_with(&format!("{object}, index:"));
+    let mut found = rows
+        .iter()
+        .filter(|row| names_it(&row[3]))
+        .map(|row| (row[0].clone(), row[3].clone()));
+    let first = found
+        .next()
+        .unwrap_or_else(|| panic!("no scan over {object} in the plan of {sql}:\n{rows:#?}"));
+    assert!(
+        found.next().is_none(),
+        "more than one scan over {object} in the plan of {sql}:\n{rows:#?}"
+    );
+    first
+}

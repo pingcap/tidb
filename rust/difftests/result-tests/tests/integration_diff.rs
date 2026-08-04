@@ -1207,7 +1207,62 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // (select count(1) from t2 where t2.a > t1.a) from t1 where t1.a = 100`
     // is `0, NULL`. Both statements are `Rows`-kind, so `compared` holds at
     // 5639 and matched rises.
-    const KNOWN_DIVERGENCES: usize = 40;
+    // 40 -> 39: the two STATEMENT-WIDE facts Go's access-path costing reads,
+    // both of which this tier had been answering per table.
+    //
+    // * The columns an index must cover are the ones the `DataSource` still
+    //   needs after Go's `rule_column_pruning`, which walks a correlated
+    //   subquery like any other expression. This tier had been asking its
+    //   EXACT column pruner instead, whose job is to narrow the scan's output
+    //   and which therefore refuses any statement containing a subquery -- a
+    //   refusal that reads as "every column", so no index ever covered such a
+    //   statement and the full scan won by construction rather than by cost.
+    //   The cost model now reads the same over-approximating leaf walk
+    //   (`driver::leaf_demand`) that a leaf of a multi-table `FROM` already
+    //   used.
+    // * `getTableScanPenalty` reads `StmtCtx.GetIndexForce()`, which
+    //   `stats.go` raises the moment ANY path of the statement is
+    //   `path.Forced` -- so a `USE INDEX` on one table penalizes every full
+    //   table scan of the statement, including one over a table no hint
+    //   named. This tier had been passing the hinted table's OWN
+    //   `AvailablePaths`, so the flag could never be true for a table without
+    //   a hint of its own.
+    //
+    // MEASURED, one at a time: only the SECOND moves the count. The
+    // statement that went from diverging to agreeing is `subquery`'s `select
+    // t.c in (select count(*) from t s use index(idx), t t1 where ...) from
+    // t`, over `t(a int primary key, b int, c int, d int, index idx(b,c,d))`
+    // -- and `idx(b, c, d)` plus the integer handle covers every column that
+    // table has, so it was already a candidate over the outer `t` whichever
+    // column demand was asked. What it was not was CHEAPER: with five
+    // analyzed rows the two paths cost the same to the cent (`explain
+    // format='verbose'` prints `123.64` for both readers), the tie-break kept
+    // the table path, and the `use index(idx)` on the inner `s` is the whole
+    // reason Go reads the index over the outer `t`. Verified through
+    // `rust/difftests/gorun` in both directions: delete the hint, or write it
+    // as `ignore index(idx)` or `use index for join(idx)` -- neither of which
+    // Go turns into `path.Forced` -- and TiDB reads the table.
+    //
+    // The FIRST is net zero here, and is landed anyway because the pruner's
+    // refusal is not Go's rule and the cost model should not inherit it. Its
+    // two visible statements are both in `explain_easy`, which held at 8
+    // rather than falling, and the swap is named because it is a real blind
+    // spot rather than noise. `select c2 = (select c2 from t2 where t1.c1 =
+    // t2.c1 order by c1 limit 1) from t1` now reads `IndexFullScan(c2)` and
+    // agrees. `select (select count(1) k from t1 s where s.c1 = t1.c1 having
+    // k != 0) from t1` now reads it and does NOT: Go DECORRELATES that
+    // subquery into a `MergeJoin`, whose child property is `t1.c1`'s order,
+    // and a table scan over the integer handle provides that order while an
+    // index walk does not -- so Go's `matchProp` dimension prunes the index
+    // path before cost is consulted. Confirmed by forcing the join type
+    // through `gorun`: `/*+ hash_join(t1) */` removes the order requirement
+    // and TiDB then reads `IndexFullScan(c2)` there too. This tier builds an
+    // `Apply` and has no decorrelation, so the requirement never exists to be
+    // matched; the statement had been agreeing for the wrong reason.
+    //
+    // Every statement named above is `PlanProperty`-kind, so `compared` holds
+    // at 5639.
+    const KNOWN_DIVERGENCES: usize = 39;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
