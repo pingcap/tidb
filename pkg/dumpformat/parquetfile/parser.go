@@ -532,12 +532,11 @@ func (pp *Parser) ScannedPos() (int64, error) {
 		return fileSize, nil
 	}
 
-	readRows := min(pp.totalReadRows, pp.totalRows)
-	if readRows == pp.totalRows {
+	if pp.totalReadRows == pp.totalRows {
 		return fileSize, nil
 	}
 
-	progress := float64(readRows) / float64(pp.totalRows)
+	progress := float64(pp.totalReadRows) / float64(pp.totalRows)
 	return int64(progress * float64(fileSize)), nil
 }
 

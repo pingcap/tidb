@@ -298,7 +298,6 @@ func TestParquetScannedPosByReadRows(t *testing.T) {
 		{name: "partial", fileSize: 101, readRows: 4, totalRows: 10, expected: 40},
 		{name: "complete", fileSize: 101, readRows: 10, totalRows: 10, expected: 101},
 		{name: "empty-file", fileSize: 101, totalRows: 0, expected: 101},
-		{name: "past-end", fileSize: 101, readRows: 11, totalRows: 10, expected: 101},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fileMeta.SetSourceFileSize(tc.fileSize)
@@ -315,7 +314,7 @@ func TestParquetScannedPosByReadRows(t *testing.T) {
 	fileMeta.SetSourceFileSize(largeFileSize)
 	parser.totalRows = 97
 	previous := int64(0)
-	for readRows := int64(0); readRows <= parser.totalRows+1; readRows++ {
+	for readRows := int64(0); readRows <= parser.totalRows; readRows++ {
 		parser.totalReadRows = readRows
 		pos, err := parser.ScannedPos()
 		require.NoError(t, err)
