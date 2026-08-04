@@ -385,7 +385,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringArray(
 		flagColumnFilter,
 		nil,
-		`Inline TOML column filter rule for data output projection. Can be specified multiple times. Example: --column-filter '{ matcher = ["db.tbl"], columns = ["*", "!col"] }'. Mutually exclusive with --column-filter-file. Requires --no-schemas/-m and cannot be used with --sql`,
+		`Inline TOML column filter rule for data output projection. Can be specified multiple times. Example: --column-filter '{ matcher = ["db.tbl"], columns = ["*", "!col"] }'. Unmatched tables are dumped with all columns; column rules are case-insensitive. Mutually exclusive with --column-filter-file. Requires --no-schemas/-m and cannot be used with --sql`,
 	)
 	flags.String(flagColumnFilterFile, "", "Path to the column filter TOML file for data output projection. Unmatched tables are dumped with all columns; column rules are case-insensitive. Requires --no-schemas/-m and cannot be used with --sql")
 	flags.Bool(flagCaseSensitive, false, "whether the filter should be case-sensitive")

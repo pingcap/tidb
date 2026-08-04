@@ -66,7 +66,7 @@ func TestColumnFilters(t *testing.T) {
 			{Matcher: []string{"db1.t2"}, Columns: []string{"*", "!c3"}},
 		},
 	}
-	require.NoError(t, columnFilter.compile(false))
+	require.NoError(t, columnFilter.compileForOption(false, flagColumnFilterFile))
 
 	selectedFields, selectedIndexes, err := columnFilter.applyToColumns("DB1", "T1", []string{"c1", "C2", "c3", "d"})
 	require.NoError(t, err)
@@ -119,6 +119,14 @@ columns = ["/unterminated"]
 `)
 	_, err = parseColumnFilterConfig(path, false)
 	require.ErrorContains(t, err, "failed to parse --column-filter-file filter 0 columns")
+
+	path = writeColumnFilterFileForTest(t, `
+[[filters]]
+matcher = ["db.t"]
+colums = ["*"]
+`)
+	_, err = parseColumnFilterConfig(path, false)
+	require.ErrorContains(t, err, "--column-filter-file contains unknown TOML keys: filters.colums")
 }
 
 func TestParseColumnFilterFileFlag(t *testing.T) {
@@ -177,6 +185,12 @@ func TestParseColumnFilterFlag(t *testing.T) {
 	require.ErrorContains(t, err, "failed to parse --column-filter filter 0 columns")
 
 	_, err = parseConfigFromArgsForTestWithErr(t,
+		"--no-schemas",
+		"--column-filter", `{ matcher = ["db.t"], colums = ["*"] }`,
+	)
+	require.ErrorContains(t, err, "--column-filter contains unknown TOML keys: filter.colums")
+
+	_, err = parseConfigFromArgsForTestWithErr(t,
 		"--column-filter", `{ matcher = ["db.t"], columns = ["*"] }`,
 	)
 	require.ErrorContains(t, err, "--column-filter requires --no-schemas/-m")
@@ -233,7 +247,7 @@ func newColumnFilterConfigForTest(t *testing.T, filters ...columnFilterRule) col
 	columnFilter := columnFilterConfig{
 		Filters: filters,
 	}
-	require.NoError(t, columnFilter.compile(false))
+	require.NoError(t, columnFilter.compileForOption(false, flagColumnFilterFile))
 	return columnFilter
 }
 

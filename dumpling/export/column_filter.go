@@ -4,6 +4,7 @@ package export
 
 import (
 	"os"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -28,17 +29,17 @@ func parseColumnFilterConfig(path string, caseSensitive bool) (columnFilterConfi
 		return columnFilterConfig{}, errors.Annotatef(err, "failed to read --column-filter-file %s", path)
 	}
 	var columnFilter columnFilterConfig
-	if _, err := toml.Decode(string(content), &columnFilter); err != nil {
+	md, err := toml.Decode(string(content), &columnFilter)
+	if err != nil {
 		return columnFilterConfig{}, errors.Annotatef(err, "failed to parse --column-filter-file %s", path)
+	}
+	if err := validateColumnFilterKeys(md, flagColumnFilterFile); err != nil {
+		return columnFilterConfig{}, err
 	}
 	if err := columnFilter.compileForOption(caseSensitive, flagColumnFilterFile); err != nil {
 		return columnFilterConfig{}, err
 	}
 	return columnFilter, nil
-}
-
-func (c *columnFilterConfig) compile(caseSensitive bool) error {
-	return c.compileForOption(caseSensitive, flagColumnFilterFile)
 }
 
 func (c *columnFilterConfig) compileForOption(caseSensitive bool, flagName string) error {
@@ -76,8 +77,13 @@ func parseColumnFilterArgs(args []string, caseSensitive bool) (columnFilterConfi
 		var wrapper struct {
 			Filter columnFilterRule `toml:"filter"`
 		}
-		if _, err := toml.Decode("filter = "+arg, &wrapper); err != nil {
+		// Decode a single inline rule by wrapping it as a one-field TOML document.
+		md, err := toml.Decode("filter = "+arg, &wrapper)
+		if err != nil {
 			return columnFilterConfig{}, errors.Annotatef(err, "failed to parse --column-filter %d", i)
+		}
+		if err := validateColumnFilterKeys(md, flagColumnFilter); err != nil {
+			return columnFilterConfig{}, err
 		}
 		columnFilter.Filters = append(columnFilter.Filters, wrapper.Filter)
 	}
@@ -85,6 +91,19 @@ func parseColumnFilterArgs(args []string, caseSensitive bool) (columnFilterConfi
 		return columnFilterConfig{}, err
 	}
 	return columnFilter, nil
+}
+
+func validateColumnFilterKeys(md toml.MetaData, flagName string) error {
+	undecoded := md.Undecoded()
+	if len(undecoded) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(undecoded))
+	for _, key := range undecoded {
+		keys = append(keys, key.String())
+	}
+	return errors.Errorf("--%s contains unknown TOML keys: %s", flagName, strings.Join(keys, ", "))
 }
 
 func (c *columnFilterConfig) applyToColumns(database, table string, sourceColumns []string) ([]string, []int, error) {
