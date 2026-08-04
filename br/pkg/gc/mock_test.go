@@ -35,7 +35,8 @@ type mockPDClient struct {
 }
 
 func (p *mockPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
-	return p.updateServiceSafePoint(tikv.NullspaceID, serviceID, ttl, safePoint), nil
+	// The legacy global API removes a service safe point when TTL is zero.
+	return p.updateServiceSafePoint(tikv.NullspaceID, serviceID, ttl <= 0, safePoint), nil
 }
 
 func (p *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
@@ -49,7 +50,8 @@ func (p *mockPDClient) UpdateServiceSafePointV2(
 	ttl int64,
 	safePoint uint64,
 ) (uint64, error) {
-	return p.updateServiceSafePoint(tikv.KeyspaceID(keyspaceID), serviceID, ttl, safePoint), nil
+	// The V2 API only removes a service safe point when TTL is negative.
+	return p.updateServiceSafePoint(tikv.KeyspaceID(keyspaceID), serviceID, ttl < 0, safePoint), nil
 }
 
 func (p *mockPDClient) UpdateGCSafePointV2(ctx context.Context, keyspaceID uint32, safePoint uint64) (uint64, error) {
@@ -76,7 +78,7 @@ func (p *mockPDClient) updateGCSafePoint(keyspaceID tikv.KeyspaceID, safePoint u
 func (p *mockPDClient) updateServiceSafePoint(
 	keyspaceID tikv.KeyspaceID,
 	serviceID string,
-	ttl int64,
+	remove bool,
 	safePoint uint64,
 ) uint64 {
 	p.mu.Lock()
@@ -87,16 +89,28 @@ func (p *mockPDClient) updateServiceSafePoint(
 		serviceSafePoints = make(map[string]gcBarrierInfo)
 		p.serviceSafePoints[keyspaceID] = serviceSafePoints
 	}
-	if ttl <= 0 {
+	if remove {
 		delete(serviceSafePoints, serviceID)
 	} else {
+		currentMinSafePoint := minServiceSafePoint(serviceSafePoints)
+		// Both legacy and V2 APIs reject a proposed service safe point older
+		// than the current minimum by returning that minimum without updating.
+		if safePoint < currentMinSafePoint {
+			return currentMinSafePoint
+		}
 		serviceSafePoints[serviceID] = gcBarrierInfo{BarrierID: serviceID, BarrierTS: safePoint}
 	}
 
+	return minServiceSafePoint(serviceSafePoints)
+}
+
+func minServiceSafePoint(serviceSafePoints map[string]gcBarrierInfo) uint64 {
 	var minSafePoint uint64
+	initialized := false
 	for _, serviceSafePoint := range serviceSafePoints {
-		if minSafePoint == 0 || serviceSafePoint.BarrierTS < minSafePoint {
+		if !initialized || serviceSafePoint.BarrierTS < minSafePoint {
 			minSafePoint = serviceSafePoint.BarrierTS
+			initialized = true
 		}
 	}
 	return minSafePoint

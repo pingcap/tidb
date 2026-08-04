@@ -55,11 +55,22 @@ func (m *keyspaceManager) SetServiceSafePoint(ctx context.Context, sp BRServiceS
 		return m.DeleteServiceSafePoint(ctx, sp)
 	}
 
+	requestedSafePoint := sp.BackupTS - 1
 	lastSafePoint, err := m.pdClient.UpdateServiceSafePointV2(
-		ctx, uint32(m.keyspaceID), sp.ID, sp.TTL, sp.BackupTS-1,
+		ctx, uint32(m.keyspaceID), sp.ID, sp.TTL, requestedSafePoint,
 	)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// The V2 API rejects a service safe point older than the current minimum
+	// without returning an error. Convert that response into an error to match
+	// SetGCBarrier's contract and prevent BR from continuing without GC
+	// protection.
+	if lastSafePoint > requestedSafePoint {
+		return errors.Errorf(
+			"failed to set keyspace service GC safe point: current minimum safe point %d is greater than requested safe point %d",
+			lastSafePoint, requestedSafePoint,
+		)
 	}
 
 	// Integration tests use this to distinguish global vs keyspace GC protection.
@@ -75,17 +86,10 @@ func (m *keyspaceManager) SetServiceSafePoint(ctx context.Context, sp BRServiceS
 		time.Sleep(3 * time.Second)
 	})
 
-	if lastSafePoint > sp.BackupTS-1 {
-		log.Warn("service GC safe point lost, we may fail to back up if GC lifetime isn't long enough",
-			zap.Uint64("lastSafePoint", lastSafePoint),
-			zap.Object("safePoint", sp),
-		)
-	}
-
 	log.Debug("set keyspace GC service safe point succeeded",
 		zap.Uint32("keyspaceID", uint32(m.keyspaceID)),
 		zap.String("serviceID", sp.ID),
-		zap.Uint64("safePoint", sp.BackupTS-1),
+		zap.Uint64("safePoint", requestedSafePoint),
 		zap.Int64("TTL", sp.TTL))
 
 	return nil
@@ -93,7 +97,9 @@ func (m *keyspaceManager) SetServiceSafePoint(ctx context.Context, sp BRServiceS
 
 // DeleteServiceSafePoint removes the service safe point from this keyspace.
 func (m *keyspaceManager) DeleteServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error {
-	_, err := m.pdClient.UpdateServiceSafePointV2(ctx, uint32(m.keyspaceID), sp.ID, 0, 0)
+	// Unlike the legacy global API, the V2 API only removes a service safe
+	// point when TTL is negative. TTL == 0 is handled as a regular update.
+	_, err := m.pdClient.UpdateServiceSafePointV2(ctx, uint32(m.keyspaceID), sp.ID, -1, 0)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -169,6 +169,33 @@ func TestKeyspaceManager(t *testing.T) {
 		requireNoBarrier(t, getState(ctx, t, mockPD, tikv.NullspaceID), sp.ID)
 	})
 
+	t.Run("RejectSafePointBeforeCurrentMinimum", func(t *testing.T) {
+		withKeyspaceConfig(t, "test_keyspace")
+
+		mockPD := newTestMockPD(t)
+		mgr := gc.NewManager(mockPD, testKeyspaceID)
+		ctx := context.Background()
+
+		current := gc.BRServiceSafePoint{
+			ID:       "br-current-minimum",
+			TTL:      300,
+			BackupTS: 1000,
+		}
+		require.NoError(t, mgr.SetServiceSafePoint(ctx, current))
+
+		stale := gc.BRServiceSafePoint{
+			ID:       "br-stale",
+			TTL:      300,
+			BackupTS: 900,
+		}
+		err := mgr.SetServiceSafePoint(ctx, stale)
+		require.ErrorContains(t, err, "current minimum safe point 999 is greater than requested safe point 899")
+
+		state := getState(ctx, t, mockPD, testKeyspaceID)
+		requireBarrier(t, state, current.ID, current.BackupTS-1)
+		requireNoBarrier(t, state, stale.ID)
+	})
+
 	t.Run("SetGCBarrier_ZeroTTL_CallsDelete", func(t *testing.T) {
 		withKeyspaceConfig(t, "test_keyspace")
 
