@@ -402,3 +402,105 @@ fn bit_aggregates_are_unsigned() {
         );
     }
 }
+
+/// Aggregates read the COLLATION of what they aggregate, not raw bytes.
+///
+/// Go builds a `collate.GetCollator(RetTp.GetCollate())` per aggregate
+/// (`aggfuncs/builder.go:460-468` for MIN/MAX, one per `byItem` for
+/// `GROUP_CONCAT`'s own ORDER BY) and keys the DISTINCT value set with the
+/// same collator. Captured from TiDB on a `utf8mb4_general_ci` column:
+///
+/// ```text
+/// values ('a'),('B'),('A')
+///   max(s), min(s)                                  -> B | a
+///   count(distinct s), (distinct concat(s,'')),
+///                      (distinct upper(s))          -> 2 | 2 | 2
+/// values ('B'),('a')
+///   group_concat(s order by s), (... order by s desc) -> a,B | B,a
+/// values ('b'),('A'),('a'),('B')
+///   group_concat(distinct s)                        -> b,A
+/// ```
+///
+/// The ORDER BY probe deliberately uses a pair with NO collation tie:
+/// `'B','a'` sorts `a,B` under the collation and `B,a` under bytes. Go
+/// resolves ties with an unstable `sort.Sort` over its top-N heap
+/// (`func_group_concat.go:470`), so the relative order of two
+/// collation-equal values is not a behavior to pin.
+///
+/// The two COMPUTED-argument DISTINCT counts are the ones a bare column
+/// cannot catch: a column datum carries its own collation, but a string
+/// builtin mints its result with the default `utf8mb4_bin`, so the key has
+/// to come from the argument EXPRESSION's derived collation.
+#[test]
+fn aggregates_read_the_arguments_collation() {
+    fn catalog_with(values: &[&str]) -> Catalog {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE g (s VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)",
+            &mut catalog,
+        )
+        .unwrap();
+        let list = values
+            .iter()
+            .map(|value| format!("('{value}')"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        run_insert_on(
+            &format!("INSERT INTO g VALUES {list}"),
+            &mut catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        catalog
+    }
+
+    let catalog = catalog_with(&["a", "B", "A"]);
+    let row = |sql: &str| {
+        run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+            .unwrap()
+            .remove(0)
+    };
+
+    // MIN/MAX under the case-insensitive collation: the binary answers would
+    // be max='a', min='A'.
+    assert_eq!(
+        row("SELECT MAX(s), MIN(s) FROM g")
+            .iter()
+            .map(datum_text_for_test)
+            .collect::<Vec<_>>(),
+        vec!["B".to_owned(), "a".to_owned()]
+    );
+    // DISTINCT over a bare column AND over two computed string expressions.
+    assert_eq!(
+        row("SELECT COUNT(DISTINCT s), COUNT(DISTINCT CONCAT(s, '')), COUNT(DISTINCT UPPER(s)) FROM g"),
+        vec![Datum::Int(2), Datum::Int(2), Datum::Int(2)]
+    );
+
+    // GROUP_CONCAT's own ORDER BY sorts under the byItem's collation: over
+    // 'B','a' the byte order is the REVERSE of the collation order.
+    let catalog = catalog_with(&["B", "a"]);
+    let row = |sql: &str| {
+        run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+            .unwrap()
+            .remove(0)
+    };
+    assert_eq!(
+        datum_text_for_test(&row("SELECT GROUP_CONCAT(s ORDER BY s) FROM g")[0]),
+        "a,B"
+    );
+    assert_eq!(
+        datum_text_for_test(&row("SELECT GROUP_CONCAT(s ORDER BY s DESC) FROM g")[0]),
+        "B,a"
+    );
+
+    let catalog = catalog_with(&["b", "A", "a", "B"]);
+    let row = |sql: &str| {
+        run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+            .unwrap()
+            .remove(0)
+    };
+    assert_eq!(
+        datum_text_for_test(&row("SELECT GROUP_CONCAT(DISTINCT s) FROM g")[0]),
+        "b,A"
+    );
+}

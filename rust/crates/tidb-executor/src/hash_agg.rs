@@ -285,26 +285,41 @@ enum Partial {
 
 /// One aggregate's per-group state: its partial result plus, for `DISTINCT`,
 /// the input values already folded in (Go's `valueSet`).
+///
+/// `collation` is the ARGUMENT expression's derived collation, which Go
+/// reads off `AggFuncDesc.RetTp` (`aggfuncs/builder.go:460-468` builds
+/// `collate.GetCollator(RetTp.GetCollate())` for MIN/MAX, and the DISTINCT
+/// value set encodes under the same collator). It is not the column's
+/// collation: a computed argument such as `UPPER(s)` derives its own, which
+/// is why the aggregate cannot re-read the datum and has to be told.
 struct AggState {
     partial: Partial,
     seen: Option<HashSet<Vec<u8>>>,
+    collation: tidb_datatype::Collation,
 }
 
 impl AggState {
     fn new(func: &AggFunc) -> AggState {
+        let collation = func
+            .arg
+            .as_ref()
+            .map_or(tidb_datatype::Collation::DEFAULT, expr_collation);
         AggState {
             partial: Partial::new(&func.kind),
             seen: func.distinct.then(HashSet::new),
+            collation,
         }
     }
 
     /// Folds one row's input in, skipping values this group has already seen
     /// when the function is `DISTINCT`.
     ///
-    /// Go keys its `valueSet` on the codec encoding of the evaluated argument;
-    /// the datum hash key is that same encoding. A datum with no hash key
-    /// (Go's encode error) fails the statement rather than silently counting
-    /// twice.
+    /// Go keys its `valueSet` on the codec encoding of the evaluated argument
+    /// UNDER ITS OWN COLLATION -- the same `codec.HashChunkSelected` call the
+    /// group key uses -- so `COUNT(DISTINCT UPPER(s))` over a `_ci` column
+    /// folds `a`/`A` together exactly as `COUNT(DISTINCT s)` does. A datum
+    /// with no hash key (Go's encode error) fails the statement rather than
+    /// silently counting twice.
     fn update(
         &mut self,
         value: Option<Datum>,
@@ -314,15 +329,18 @@ impl AggState {
         if let Some(seen) = &mut self.seen {
             let datum = value.clone().unwrap_or(Datum::Null);
             if datum != Datum::Null {
-                let key = datum
-                    .to_hash_key()
-                    .map_err(|_| ExecError::unsupported("DISTINCT over this datum kind"))?;
+                let key = match datum.as_raw_bytes() {
+                    Some(_) => group_key_part(&self.collation, &datum),
+                    None => datum
+                        .to_hash_key()
+                        .map_err(|_| ExecError::unsupported("DISTINCT over this datum kind"))?,
+                };
                 if !seen.insert(key) {
                     return Ok(());
                 }
             }
         }
-        self.partial.update(value, extra, sort_key)
+        self.partial.update(value, extra, sort_key, self.collation)
     }
 }
 
@@ -523,6 +541,7 @@ impl Partial {
         value: Option<Datum>,
         extra: &[Datum],
         sort_key: Vec<Datum>,
+        collation: tidb_datatype::Collation,
     ) -> Result<(), ExecError> {
         match (self, value) {
             // Go appends the converted value for EVERY row, so a NULL input
@@ -639,7 +658,13 @@ impl Partial {
             (Partial::MaxMin { value, is_max }, Some(input)) => match value {
                 None => *value = Some(input),
                 Some(current) => {
-                    let ordering = compare_datums(&input, current)?;
+                    // Go `aggfuncs/builder.go:460-468`: MIN/MAX order under
+                    // `collate.GetCollator(RetTp.GetCollate())`, so over a
+                    // `utf8mb4_general_ci` column holding 'a','B','A' the
+                    // answers are max=B, min=a -- NOT the binary a/A
+                    // (captured from TiDB).
+                    let ordering =
+                        tidb_expr::compare_datums_with_collation(&input, current, collation)?;
                     if (*is_max && ordering == Ordering::Greater)
                         || (!*is_max && ordering == Ordering::Less)
                     {
@@ -784,14 +809,28 @@ impl Partial {
                 // order, which MySQL documents as undefined.
                 let mut values = values.clone();
                 if !order_by.is_empty() {
+                    // Go `buildGroupConcat` builds one collator per byItem
+                    // from that item's own `RetType`, so `GROUP_CONCAT(s
+                    // ORDER BY s)` over a `_ci` column holding 'b','A','a','B'
+                    // yields `a,A,b,B` rather than the byte order `A,B,a,b`
+                    // (captured from TiDB).
+                    let collations: Vec<tidb_datatype::Collation> = order_by
+                        .iter()
+                        .map(|(expr, _)| expr_collation(expr))
+                        .collect();
                     values.sort_by(|left, right| {
                         for (position, (_, desc)) in order_by.iter().enumerate() {
                             let (Some(a), Some(b)) = (left.1.get(position), right.1.get(position))
                             else {
                                 continue;
                             };
+                            let collation = collations
+                                .get(position)
+                                .copied()
+                                .unwrap_or(tidb_datatype::Collation::DEFAULT);
                             let ordering =
-                                tidb_expr::compare_datums(a, b).unwrap_or(Ordering::Equal);
+                                tidb_expr::compare_datums_with_collation(a, b, collation)
+                                    .unwrap_or(Ordering::Equal);
                             if ordering != Ordering::Equal {
                                 return if *desc { ordering.reverse() } else { ordering };
                             }
@@ -903,6 +942,8 @@ fn datum_bits(value: &Datum) -> Result<u64, ExecError> {
 /// partition (see `crate::window`). Reusing it is what keeps SUM's
 /// integers-summed-in-the-decimal-domain rule, AVG's `div_precision_increment`
 /// division and MIN/MAX's datum comparison identical between the two callers.
+/// `collation` is the argument expression's derived collation, which is what
+/// keeps a windowed `MAX(ci_col)` agreeing with the grouped one.
 /// `None` stands for `COUNT(*)`'s absent argument; every other aggregate takes
 /// `Some(value)`, with `Some(Datum::Null)` for a NULL input. Each item pairs
 /// that first argument with the values of any further arguments, exactly the
@@ -911,10 +952,11 @@ pub(crate) fn aggregate_rows(
     kind: &AggKind,
     rows: impl IntoIterator<Item = (Option<Datum>, Vec<Datum>)>,
     div_precision_increment: u32,
+    collation: tidb_datatype::Collation,
 ) -> Result<Datum, ExecError> {
     let mut partial = Partial::new(kind);
     for (value, extra) in rows {
-        partial.update(value, &extra, Vec::new())?;
+        partial.update(value, &extra, Vec::new(), collation)?;
     }
     partial.finish(&[], div_precision_increment)
 }
@@ -1503,7 +1545,12 @@ mod tests {
         fn json_arrayagg_wraps_binary_charset_value_as_opaque() {
             let mut partial = Partial::JsonArrayAgg(Vec::new(), varbinary());
             partial
-                .update(Some(Datum::new_bytes(*b"ab")), &[], Vec::new())
+                .update(
+                    Some(Datum::new_bytes(*b"ab")),
+                    &[],
+                    Vec::new(),
+                    tidb_datatype::Collation::DEFAULT,
+                )
                 .unwrap();
             let result = partial.finish(&[], 4).unwrap();
             let Datum::Json(json) = result else {
@@ -1522,6 +1569,7 @@ mod tests {
                     Some(Datum::new_string("k")),
                     &[Datum::new_bytes(*b"ab")],
                     Vec::new(),
+                    tidb_datatype::Collation::DEFAULT,
                 )
                 .unwrap();
             let result = partial.finish(&[], 4).unwrap();
@@ -1538,7 +1586,12 @@ mod tests {
         fn json_objectagg_binary_charset_key_is_error_3144() {
             let mut partial = Partial::JsonObjectAgg(BTreeMap::new(), long(), true);
             let err = partial
-                .update(Some(Datum::new_bytes(*b"ab")), &[Datum::Int(1)], Vec::new())
+                .update(
+                    Some(Datum::new_bytes(*b"ab")),
+                    &[Datum::Int(1)],
+                    Vec::new(),
+                    tidb_datatype::Collation::DEFAULT,
+                )
                 .unwrap_err();
             assert!(matches!(
                 err,

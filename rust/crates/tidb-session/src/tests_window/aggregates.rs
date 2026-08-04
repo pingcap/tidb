@@ -323,8 +323,15 @@ fn window_bit_and_variance_aggregates() {
     );
 
     // An all-NULL frame: the variance family is NULL, BIT_AND folds to
-    // its all-ones identity -- which the SIGNED result column prints as
-    // `-1` (captured) -- and BIT_OR/BIT_XOR to 0.
+    // its all-ones identity, and BIT_OR/BIT_XOR to 0.
+    //
+    // The windowed BIT_AND prints `-1` where the GROUPED one prints
+    // `18446744073709551615` (both captured from TiDB). That is not an
+    // inconsistency of ours: `aggregation.NewWindowFuncDesc`
+    // (`window_func.go:62-64`) finishes with `RetTp.SetFlag(NotNullFlag)`
+    // for the bit functions, and Go's `SetFlag` REPLACES the mask rather
+    // than adding to it, so the UnsignedFlag that `typeInfer4BitFuncs` had
+    // just set is wiped for the window form only.
     session.run("CREATE TABLE tn (g BIGINT, v BIGINT)").unwrap();
     session
         .run("INSERT INTO tn VALUES (1,NULL),(1,4),(1,NULL)")
@@ -340,6 +347,11 @@ fn window_bit_and_variance_aggregates() {
             session.run("SELECT BIT_AND(v) OVER (PARTITION BY g ORDER BY v) FROM tn ORDER BY g, v")
         ),
         [["-1"], ["-1"], ["4"]]
+    );
+    // The grouped twin of the same fold, for contrast: UNSIGNED there.
+    assert_eq!(
+        row_text(session.run("SELECT BIT_AND(v) FROM tn WHERE v IS NULL")),
+        [["18446744073709551615"]]
     );
     assert_eq!(
         row_text(

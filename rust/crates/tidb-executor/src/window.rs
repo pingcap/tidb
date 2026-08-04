@@ -1317,9 +1317,16 @@ fn compute_one(
                 indices,
                 &order_keys,
                 &arg_values,
-                agg_kind
-                    .as_ref()
-                    .map(|kind| (kind, tidb_expr::Columns::div_precision_increment(ctx))),
+                agg_kind.as_ref().map(|kind| {
+                    (
+                        kind,
+                        tidb_expr::Columns::div_precision_increment(ctx),
+                        rewritten_args.first().map_or(
+                            tidb_datatype::Collation::DEFAULT,
+                            tidb_expr::collation_derive::collation_of_node,
+                        ),
+                    )
+                }),
                 &result_type,
                 &mut values,
             )?,
@@ -1402,9 +1409,27 @@ impl WindowKind {
                 field_type
             }
             // The aggregates share the GROUP BY path's inference, and with it
-            // that path's documented deferral of Go's display metadata.
+            // that path's documented deferral of Go's display metadata --
+            // and then Go rewrites the NULLABILITY on top of it.
+            //
+            // `aggregation.NewWindowFuncDesc` (`window_func.go:62-76`) ends
+            // with a switch whose listed arm calls `RetTp.SetFlag(NotNullFlag)`
+            // and whose default calls `DelFlag(NotNullFlag)`. `SetFlag`
+            // REPLACES the whole mask, so a windowed BIT_AND loses the
+            // UnsignedFlag its grouped twin keeps -- which is why the same
+            // all-NULL identity prints `18446744073709551615` when grouped
+            // and `-1` in a window (both captured from TiDB).
             WindowKind::Agg { name, .. } => {
-                return Ok(crate::driver::agg_kind_and_type(name, arg_exprs)?.1)
+                let mut field_type = crate::driver::agg_kind_and_type(name, arg_exprs)?.1;
+                if matches!(
+                    name.to_ascii_uppercase().as_str(),
+                    "COUNT" | "APPROX_COUNT_DISTINCT" | "BIT_AND" | "BIT_OR" | "BIT_XOR"
+                ) {
+                    field_type.set_flags(FieldTypeFlags::NOT_NULL);
+                } else {
+                    field_type.del_flags(FieldTypeFlags::NOT_NULL);
+                }
+                return Ok(field_type);
             }
             WindowKind::Value { .. } => carried(0),
             // Go `typeInfer4LeadLag`: the argument's own type without a
@@ -1460,7 +1485,8 @@ fn evaluate_partition(
     // The aggregate fold, when this is an aggregate call, paired with the
     // session's `div_precision_increment` -- the two things AVG's final
     // division needs, and needed only together.
-    agg: Option<(&AggKind, u32)>,
+    // ... plus the ARGUMENT's derived collation, which MIN/MAX orders under.
+    agg: Option<(&AggKind, u32, tidb_datatype::Collation)>,
     result_type: &FieldType,
     values: &mut [Datum],
 ) -> Result<(), DriverError> {
@@ -1525,7 +1551,7 @@ fn evaluate_partition(
                 let (low, high) =
                     call.frame
                         .range(position, total, peers[position], range_keys.as_ref())?;
-                let (kind, div_precision_increment) =
+                let (kind, div_precision_increment, collation) =
                     agg.expect("an aggregate window call resolves its kind");
                 // The extra arguments a frame row contributes: only
                 // `JSON_OBJECTAGG`'s value and `APPROX_COUNT_DISTINCT`'s
@@ -1550,7 +1576,8 @@ fn evaluate_partition(
                     ),
                     _ => (Some(arg_at(0, at)), extras(at)),
                 });
-                aggregate_rows(kind, rows, div_precision_increment).map_err(DriverError::Exec)?
+                aggregate_rows(kind, rows, div_precision_increment, collation)
+                    .map_err(DriverError::Exec)?
             }
             WindowKind::Value { pick, .. } => {
                 let (low, high) =
