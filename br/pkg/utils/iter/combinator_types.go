@@ -78,7 +78,10 @@ func (m *bufferedMapping[T, R]) start(ctx context.Context) {
 			r := m.inner.TryNext(ctx)
 			if r.FinishedOrError() {
 				if r.Err != nil {
-					m.results <- DoneBy[R](r)
+					select {
+					case m.results <- DoneBy[R](r):
+					case <-ctx.Done():
+					}
 					m.cancel()
 				} else {
 					<-m.outstanding
