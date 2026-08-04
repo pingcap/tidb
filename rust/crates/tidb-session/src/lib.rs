@@ -364,6 +364,11 @@ impl Session {
     /// Go `executeUse`: an unknown schema is `ErrDatabaseNotExists`, and the
     /// switch also updates `collation_database`.
     fn use_database(&mut self, name: &str) -> Result<(), DriverError> {
+        // Go `executeUse` (`executor/simple.go` around line 608) refuses an
+        // invisible schema with 1044 BEFORE it looks the schema up, so a
+        // schema the account cannot see is never distinguishable from one
+        // that does not exist.
+        self.require_visible_database(name)?;
         let exists = self.with_catalog_mut(|catalog| Ok(catalog.has_database(name)))?;
         if !exists {
             return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(

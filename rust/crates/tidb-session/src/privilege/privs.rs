@@ -95,6 +95,70 @@ pub const ALL_GLOBAL_PRIVS: &[GlobalPriv] = &[
     GlobalPriv::ReplicationSlave,
 ];
 
+/// One mask built from a variant list, so every named mask below is one
+/// expression rather than a hand-maintained constant that could drift from
+/// the enum.
+fn mask_of(privs: &[GlobalPriv]) -> u64 {
+    privs.iter().fold(0u64, |mask, priv_| mask | priv_.bit())
+}
+
+/// Go `mysql.AllPrivMask`: every bit set, `GRANT OPTION` included. The
+/// "does this account hold ANY privilege here" mask that `SHOW TABLES` and
+/// the `information_schema` retrievers test with.
+#[must_use]
+pub fn any_priv_mask() -> u64 {
+    all_privs_mask() | GlobalPriv::GrantOption.bit()
+}
+
+/// Go's `mysql.AllPrivMask &^ mysql.CreateTMPTablePriv`, the exact mask
+/// `fetchShowTables` (`executor/show.go` around line 613) filters with: a
+/// `CREATE TEMPORARY TABLES` grant alone does not make a table listed.
+#[must_use]
+pub fn show_tables_priv_mask() -> u64 {
+    any_priv_mask() & !GlobalPriv::CreateTemporaryTables.bit()
+}
+
+/// Go `mysql.AllColumnPrivs`, the four privileges
+/// `information_schema.COLUMNS` accepts (`infoschema_reader.go` around line
+/// 1095).
+#[must_use]
+pub fn column_privs_mask() -> u64 {
+    mask_of(&[
+        GlobalPriv::Select,
+        GlobalPriv::Insert,
+        GlobalPriv::Update,
+        GlobalPriv::References,
+    ])
+}
+
+/// Go's `globalDBVisible` (`privileges/cache.go` line 60): the GLOBAL
+/// privileges that alone make every schema appear in `SHOW DATABASES`.
+///
+/// Note what is ABSENT and is not an oversight in either language:
+/// `LOCK TABLES`, and every server-admin privilege (`PROCESS`, `SUPER`,
+/// `CREATE USER`, `RELOAD`, `FILE`, ...). `PROCESS` gets its own
+/// `metrics_schema`-only arm in [`super::PrivilegeRegistry::db_is_visible`].
+pub(crate) fn global_db_visible_mask() -> u64 {
+    mask_of(&[
+        GlobalPriv::Create,
+        GlobalPriv::Select,
+        GlobalPriv::Insert,
+        GlobalPriv::Update,
+        GlobalPriv::Delete,
+        GlobalPriv::ShowDatabases,
+        GlobalPriv::Drop,
+        GlobalPriv::Alter,
+        GlobalPriv::Index,
+        GlobalPriv::CreateView,
+        GlobalPriv::ShowView,
+        GlobalPriv::GrantOption,
+        GlobalPriv::Trigger,
+        GlobalPriv::References,
+        GlobalPriv::Execute,
+        GlobalPriv::CreateTemporaryTables,
+    ])
+}
+
 /// The mask with every privilege in [`ALL_GLOBAL_PRIVS`] set, which is what
 /// `ALL PRIVILEGES` grants and what makes `SHOW GRANTS` print the
 /// `ALL PRIVILEGES` literal instead of an enumerated list (Go

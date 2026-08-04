@@ -12,3 +12,4 @@ mod processlist;
 mod roles;
 mod static_grants;
 mod table_scope;
+mod visibility;

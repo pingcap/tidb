@@ -244,8 +244,9 @@ impl Session {
         } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
             self.user_privileges_table_rows()
         } else {
+            let visibility = self.schema_visibility();
             self.with_catalog_mut(|catalog| {
-                Ok(infoschema::table_rows(&table_name, catalog).unwrap_or_default())
+                Ok(infoschema::table_rows(&table_name, catalog, &visibility).unwrap_or_default())
             })?
         };
 

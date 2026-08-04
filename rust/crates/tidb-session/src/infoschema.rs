@@ -61,29 +61,143 @@ fn text(value: &str) -> Datum {
     Datum::Bytes(value.as_bytes().to_vec())
 }
 
-/// The rows of one `information_schema` table, computed from `catalog`.
+/// Go's `mysql.AllPrivMask`, the mask almost every `information_schema`
+/// retriever tests a row against ("does this account hold ANY privilege on
+/// this object").
+const ANY_PRIV: PrivMask = PrivMask::Any;
+
+/// The per-row privilege filter Go's `information_schema` retrievers apply,
+/// as an owned snapshot of the asking session -- the catalog is borrowed
+/// under a lock while these rows are built, so the decision cannot call back
+/// into the session.
+///
+/// A `SchemaVisibility::unrestricted()` shows everything, which is Go's own
+/// `checker == nil` arm (`infoschema_reader.go`'s `hasPriv` explains it: a
+/// missing privilege manager is the signature of an internal statement).
+#[derive(Clone, Default)]
+pub struct SchemaVisibility {
+    context: Option<VisibilityContext>,
+}
+
+#[derive(Clone)]
+struct VisibilityContext {
+    registry: crate::privilege::PrivilegeRegistry,
+    user: String,
+    host: String,
+    active_roles: Vec<crate::privilege::Account>,
+}
+
+/// Which of Go's two masks a retriever filters with.
+#[derive(Clone, Copy)]
+pub enum PrivMask {
+    /// `mysql.AllPrivMask`.
+    Any,
+    /// `mysql.AllColumnPrivs`, which only `COLUMNS` uses.
+    Column,
+}
+
+impl SchemaVisibility {
+    /// Every object visible -- Go's `checker == nil`.
+    #[must_use]
+    pub fn unrestricted() -> Self {
+        Self::default()
+    }
+
+    /// The filter for one authenticated session.
+    #[must_use]
+    pub fn for_session(
+        registry: crate::privilege::PrivilegeRegistry,
+        user: &str,
+        host: &str,
+        active_roles: &[crate::privilege::Account],
+    ) -> Self {
+        Self {
+            context: Some(VisibilityContext {
+                registry,
+                user: user.to_owned(),
+                host: host.to_owned(),
+                active_roles: active_roles.to_vec(),
+            }),
+        }
+    }
+
+    /// Go `RequestVerification(activeRoles, database, table, "", mask)`.
+    #[must_use]
+    fn allows(&self, database: &str, table: &str, mask: PrivMask) -> bool {
+        let Some(context) = &self.context else {
+            return true;
+        };
+        let mask = match mask {
+            PrivMask::Any => crate::privilege::any_priv_mask(),
+            PrivMask::Column => crate::privilege::column_privs_mask(),
+        };
+        if let Some(verdict) = crate::table_privilege::mem_db_verdict_mask(database, mask) {
+            return verdict;
+        }
+        context.registry.has_priv_mask_with_roles(
+            &context.user,
+            &context.host,
+            &context.active_roles,
+            database,
+            table,
+            mask,
+        )
+    }
+}
+
+/// Every `(schema, table)` pair the asking session may see, in catalog order.
+///
+/// This is the ONE place Go's per-retriever
+/// `RequestVerification(schema, table, "", mask)` lands: every retriever that
+/// walks tables walks this instead of the catalog, so a new one cannot be
+/// written that forgets the check.
+fn visible_tables(
+    catalog: &Catalog,
+    visibility: &SchemaVisibility,
+    mask: PrivMask,
+) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for schema in catalog.database_names() {
+        let Some(tables) = catalog.table_names(&schema) else {
+            continue;
+        };
+        for table_name in tables {
+            if visibility.allows(&schema, &table_name, mask) {
+                pairs.push((schema.clone(), table_name));
+            }
+        }
+    }
+    pairs
+}
+
+/// The rows of one `information_schema` table, computed from `catalog` and
+/// filtered by what `visibility` may see.
 #[must_use]
-pub fn table_rows(name: &str, catalog: &Catalog) -> Option<Vec<Vec<Datum>>> {
+pub fn table_rows(
+    name: &str,
+    catalog: &Catalog,
+    visibility: &SchemaVisibility,
+) -> Option<Vec<Vec<Datum>>> {
     if name.eq_ignore_ascii_case("SCHEMATA") {
-        return Some(schemata_rows(catalog));
+        return Some(schemata_rows(catalog, visibility));
     }
     if name.eq_ignore_ascii_case("TABLES") {
-        return Some(tables_rows(catalog));
+        return Some(tables_rows(catalog, visibility));
     }
     if name.eq_ignore_ascii_case("VIEWS") {
-        return Some(views_rows(catalog));
+        return Some(views_rows(catalog, visibility));
     }
     if name.eq_ignore_ascii_case("COLUMNS") {
-        return Some(columns_rows(catalog));
+        return Some(columns_rows(catalog, visibility));
     }
     if name.eq_ignore_ascii_case("KEY_COLUMN_USAGE") {
-        return Some(key_column_usage_rows(catalog));
+        return Some(key_column_usage_rows(catalog, visibility));
     }
     if name.eq_ignore_ascii_case("STATISTICS") {
-        return Some(statistics_rows(catalog));
+        return Some(statistics_rows(catalog, visibility));
     }
     if name.eq_ignore_ascii_case("TABLE_CONSTRAINTS") {
-        return Some(table_constraints_rows(catalog));
+        return Some(table_constraints_rows(catalog, visibility));
     }
     if name.eq_ignore_ascii_case("REFERENTIAL_CONSTRAINTS") {
         // No foreign keys in this tier: the header exists, the body never
@@ -102,45 +216,40 @@ pub fn table_rows(name: &str, catalog: &Catalog) -> Option<Vec<Vec<Datum>>> {
 }
 
 /// One row per column of every `PRIMARY KEY` or `UNIQUE` index.
-fn key_column_usage_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+fn key_column_usage_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
-    for schema in catalog.database_names() {
-        let Some(tables) = catalog.table_names(&schema) else {
+    for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
             continue;
         };
-        for table_name in tables {
-            let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
+        // The clustered handle, reported as a one-column PRIMARY KEY not
+        // present in `table.indexes()`.
+        if let Some(offset) = table.pk_handle_offset() {
+            push_key_column_usage_row(
+                &mut rows,
+                &schema,
+                &table_name,
+                "PRIMARY",
+                true,
+                1,
+                &table.columns[offset].name,
+            );
+        }
+        for index in table.indexes() {
+            if !index.unique {
                 continue;
-            };
-            // The clustered handle, reported as a one-column PRIMARY KEY not
-            // present in `table.indexes()`.
-            if let Some(offset) = table.pk_handle_offset() {
+            }
+            let is_primary = index.name.eq_ignore_ascii_case("PRIMARY");
+            for (position, offset) in index.column_offsets.iter().enumerate() {
                 push_key_column_usage_row(
                     &mut rows,
                     &schema,
                     &table_name,
-                    "PRIMARY",
-                    true,
-                    1,
-                    &table.columns[offset].name,
+                    &index.name,
+                    is_primary,
+                    (position + 1) as i64,
+                    &table.columns[*offset].name,
                 );
-            }
-            for index in table.indexes() {
-                if !index.unique {
-                    continue;
-                }
-                let is_primary = index.name.eq_ignore_ascii_case("PRIMARY");
-                for (position, offset) in index.column_offsets.iter().enumerate() {
-                    push_key_column_usage_row(
-                        &mut rows,
-                        &schema,
-                        &table_name,
-                        &index.name,
-                        is_primary,
-                        (position + 1) as i64,
-                        &table.columns[*offset].name,
-                    );
-                }
             }
         }
     }
@@ -184,42 +293,37 @@ fn push_key_column_usage_row(
 
 /// One row per indexed column, the `STATISTICS` table's own column set over
 /// the same population `SHOW INDEX` reports.
-fn statistics_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
-    for schema in catalog.database_names() {
-        let Some(tables) = catalog.table_names(&schema) else {
+    for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
             continue;
         };
-        for table_name in tables {
-            let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
-                continue;
-            };
-            if let Some(offset) = table.pk_handle_offset() {
+        if let Some(offset) = table.pk_handle_offset() {
+            rows.push(statistics_row(
+                &schema,
+                &table_name,
+                "PRIMARY",
+                true,
+                1,
+                &table.columns[offset].name,
+                false,
+            ));
+        }
+        for index in table.indexes() {
+            for (position, offset) in index.column_offsets.iter().enumerate() {
+                let column = &table.columns[*offset];
+                let nullable =
+                    column.field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL == 0;
                 rows.push(statistics_row(
                     &schema,
                     &table_name,
-                    "PRIMARY",
-                    true,
-                    1,
-                    &table.columns[offset].name,
-                    false,
+                    &index.name,
+                    index.unique,
+                    position + 1,
+                    &column.name,
+                    nullable,
                 ));
-            }
-            for index in table.indexes() {
-                for (position, offset) in index.column_offsets.iter().enumerate() {
-                    let column = &table.columns[*offset];
-                    let nullable =
-                        column.field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL == 0;
-                    rows.push(statistics_row(
-                        &schema,
-                        &table_name,
-                        &index.name,
-                        index.unique,
-                        position + 1,
-                        &column.name,
-                        nullable,
-                    ));
-                }
             }
         }
     }
@@ -262,40 +366,35 @@ fn statistics_row(
 }
 
 /// One row per `PRIMARY KEY` or `UNIQUE` constraint (not per column).
-fn table_constraints_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+fn table_constraints_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
-    for schema in catalog.database_names() {
-        let Some(tables) = catalog.table_names(&schema) else {
+    for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
             continue;
         };
-        for table_name in tables {
-            let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
+        if table.pk_handle_offset().is_some() {
+            rows.push(table_constraint_row(
+                &schema,
+                &table_name,
+                "PRIMARY",
+                "PRIMARY KEY",
+            ));
+        }
+        for index in table.indexes() {
+            if !index.unique {
                 continue;
+            }
+            let constraint_type = if index.name.eq_ignore_ascii_case("PRIMARY") {
+                "PRIMARY KEY"
+            } else {
+                "UNIQUE"
             };
-            if table.pk_handle_offset().is_some() {
-                rows.push(table_constraint_row(
-                    &schema,
-                    &table_name,
-                    "PRIMARY",
-                    "PRIMARY KEY",
-                ));
-            }
-            for index in table.indexes() {
-                if !index.unique {
-                    continue;
-                }
-                let constraint_type = if index.name.eq_ignore_ascii_case("PRIMARY") {
-                    "PRIMARY KEY"
-                } else {
-                    "UNIQUE"
-                };
-                rows.push(table_constraint_row(
-                    &schema,
-                    &table_name,
-                    &index.name,
-                    constraint_type,
-                ));
-            }
+            rows.push(table_constraint_row(
+                &schema,
+                &table_name,
+                &index.name,
+                constraint_type,
+            ));
         }
     }
     rows
@@ -318,12 +417,21 @@ fn table_constraint_row(
     ]
 }
 
-/// Every schema, including the virtual one, which is why `SHOW DATABASES`
-/// lists it too.
-fn schemata_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+/// Every schema, including the virtual one.
+///
+/// The filter here is Go's `setDataFromSchemata`
+/// (`infoschema_reader.go` around line 439):
+/// `RequestVerification(schema, "", "", AllPrivMask)` -- a GLOBAL or
+/// `mysql.db` privilege, NOT the wider `DBIsVisible` that `SHOW DATABASES`
+/// uses. The two answers really do differ and the difference is measured: an
+/// account holding only `GRANT SELECT(a) ON d1.t` (or only
+/// `GRANT SELECT ON d1.t`) sees `d1` in `SHOW DATABASES` and does NOT see it
+/// here.
+fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     catalog
         .database_names()
         .into_iter()
+        .filter(|name| visibility.allows(name, "", ANY_PRIV))
         .map(|name| {
             vec![
                 text(CATALOG),
@@ -339,56 +447,51 @@ fn schemata_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
 }
 
 /// One row per table, in schema then table order.
-fn tables_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
-    for schema in catalog.database_names() {
-        let Some(tables) = catalog.table_names(&schema) else {
-            continue;
+    for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        let table = match catalog.table_in(&schema, &table_name) {
+            Some(TableEntry::Kv(table)) => table,
+            // A view has no storage, so every storage column is NULL and
+            // the comment states the kind -- Go's own captured row.
+            Some(TableEntry::View(_)) => {
+                rows.push(view_tables_row(&schema, &table_name));
+                continue;
+            }
+            _ => continue,
         };
-        for table_name in tables {
-            let table = match catalog.table_in(&schema, &table_name) {
-                Some(TableEntry::Kv(table)) => table,
-                // A view has no storage, so every storage column is NULL and
-                // the comment states the kind -- Go's own captured row.
-                Some(TableEntry::View(_)) => {
-                    rows.push(view_tables_row(&schema, &table_name));
-                    continue;
-                }
-                _ => continue,
-            };
-            rows.push(vec![
-                text(CATALOG),
-                text(&schema),
-                text(&table_name),
-                text("BASE TABLE"),
-                text("InnoDB"),
-                Datum::Int(10),
-                text("Compact"),
-                // Statistics TiDB reports as 0 until the table is analyzed.
-                Datum::Int(0),
-                Datum::Int(0),
-                Datum::Int(0),
-                Datum::Int(0),
-                Datum::Int(0),
-                Datum::Int(0),
-                Datum::Int(0),
-                // CREATE_TIME is NULL rather than a fabricated timestamp.
-                Datum::Null,
-                Datum::Null,
-                Datum::Null,
-                text(COLLATION),
-                Datum::Null,
-                text(""),
-                text(""),
-                Datum::Int(table.table_id),
-                text(&sharding_info(table)),
-                text(&pk_type(table)),
-                Datum::Null,
-                text("Normal"),
-                Datum::Null,
-                text(""),
-            ]);
-        }
+        rows.push(vec![
+            text(CATALOG),
+            text(&schema),
+            text(&table_name),
+            text("BASE TABLE"),
+            text("InnoDB"),
+            Datum::Int(10),
+            text("Compact"),
+            // Statistics TiDB reports as 0 until the table is analyzed.
+            Datum::Int(0),
+            Datum::Int(0),
+            Datum::Int(0),
+            Datum::Int(0),
+            Datum::Int(0),
+            Datum::Int(0),
+            Datum::Int(0),
+            // CREATE_TIME is NULL rather than a fabricated timestamp.
+            Datum::Null,
+            Datum::Null,
+            Datum::Null,
+            text(COLLATION),
+            Datum::Null,
+            text(""),
+            text(""),
+            Datum::Int(table.table_id),
+            text(&sharding_info(table)),
+            text(&pk_type(table)),
+            Datum::Null,
+            text("Normal"),
+            Datum::Null,
+            text(""),
+        ]);
     }
     rows
 }
@@ -423,29 +526,24 @@ fn view_tables_row(schema: &str, table_name: &str) -> Vec<Datum> {
 ///
 /// DIVERGENCE (documented): `IS_UPDATABLE` is always `NO`, which is what Go
 /// reports for every view this tier can create -- no view here is updatable.
-fn views_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+fn views_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
-    for schema in catalog.database_names() {
-        let Some(tables) = catalog.table_names(&schema) else {
+    for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        let Some(TableEntry::View(view)) = catalog.table_in(&schema, &table_name) else {
             continue;
         };
-        for table_name in tables {
-            let Some(TableEntry::View(view)) = catalog.table_in(&schema, &table_name) else {
-                continue;
-            };
-            rows.push(vec![
-                text(CATALOG),
-                text(&schema),
-                text(&table_name),
-                text(&view.select_sql),
-                text(&view.check_option),
-                text("NO"),
-                text(&format!("{}@{}", view.definer_user, view.definer_host)),
-                text(&view.security),
-                text(CHARSET),
-                text(COLLATION),
-            ]);
-        }
+        rows.push(vec![
+            text(CATALOG),
+            text(&schema),
+            text(&table_name),
+            text(&view.select_sql),
+            text(&view.check_option),
+            text("NO"),
+            text(&format!("{}@{}", view.definer_user, view.definer_host)),
+            text(&view.security),
+            text(CHARSET),
+            text(COLLATION),
+        ]);
     }
     rows
 }
@@ -470,48 +568,49 @@ fn pk_type(table: &KvTable) -> String {
 }
 
 /// One row per column of every table.
-fn columns_rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+///
+/// The only retriever that does NOT filter with `AllPrivMask`: Go's
+/// `setDataForColumnsWithOneTable` (`infoschema_reader.go` around line 1095)
+/// walks `mysql.AllColumnPrivs` and admits the table when ANY of
+/// `SELECT`/`INSERT`/`UPDATE`/`REFERENCES` is held, so a table reachable only
+/// through, say, a `DROP` grant lists no columns.
+fn columns_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
-    for schema in catalog.database_names() {
-        let Some(tables) = catalog.table_names(&schema) else {
-            continue;
-        };
-        for table_name in tables {
-            match catalog.table_in(&schema, &table_name) {
-                Some(TableEntry::Kv(table)) => {
-                    // Hidden columns are absent here, and ORDINAL_POSITION
-                    // counts only the visible ones -- which needs no separate
-                    // counter, because a visible column's offset IS its
-                    // physical offset (see `tidb_executor::expression_index`).
-                    // Captured: a table with an expression index and columns
-                    // `a`, `z` reports exactly a|1, z|2.
-                    for (offset, column) in table.visible_columns().iter().enumerate() {
-                        rows.push(column_row(&schema, &table_name, table, offset, column));
-                    }
+    for (schema, table_name) in visible_tables(catalog, visibility, PrivMask::Column) {
+        match catalog.table_in(&schema, &table_name) {
+            Some(TableEntry::Kv(table)) => {
+                // Hidden columns are absent here, and ORDINAL_POSITION
+                // counts only the visible ones -- which needs no separate
+                // counter, because a visible column's offset IS its
+                // physical offset (see `tidb_executor::expression_index`).
+                // Captured: a table with an expression index and columns
+                // `a`, `z` reports exactly a|1, z|2.
+                for (offset, column) in table.visible_columns().iter().enumerate() {
+                    rows.push(column_row(&schema, &table_name, table, offset, column));
                 }
-                // A view's columns are its body's, resolved now rather than
-                // at CREATE (Go fills them the same way here as DESCRIBE
-                // does). A body that no longer resolves drops out of this
-                // table entirely, which is what Go answers (captured: a view
-                // over a dropped column reports no COLUMNS rows at all).
-                Some(TableEntry::View(view)) => {
-                    let ctx = tidb_executor::StmtContext::for_query();
-                    let Ok(columns) = tidb_executor::view_column_list(view, &schema, catalog, &ctx)
-                    else {
-                        continue;
-                    };
-                    for (offset, (name, field_type)) in columns.iter().enumerate() {
-                        rows.push(view_column_row(
-                            &schema,
-                            &table_name,
-                            name,
-                            field_type,
-                            offset,
-                        ));
-                    }
-                }
-                _ => continue,
             }
+            // A view's columns are its body's, resolved now rather than
+            // at CREATE (Go fills them the same way here as DESCRIBE
+            // does). A body that no longer resolves drops out of this
+            // table entirely, which is what Go answers (captured: a view
+            // over a dropped column reports no COLUMNS rows at all).
+            Some(TableEntry::View(view)) => {
+                let ctx = tidb_executor::StmtContext::for_query();
+                let Ok(columns) = tidb_executor::view_column_list(view, &schema, catalog, &ctx)
+                else {
+                    continue;
+                };
+                for (offset, (name, field_type)) in columns.iter().enumerate() {
+                    rows.push(view_column_row(
+                        &schema,
+                        &table_name,
+                        name,
+                        field_type,
+                        offset,
+                    ));
+                }
+            }
+            _ => continue,
         }
     }
     rows

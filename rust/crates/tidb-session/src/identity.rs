@@ -110,6 +110,72 @@ impl Session {
         self.has_scoped_privilege(database, table, global_priv)
     }
 
+    /// Go `RequestVerification(activeRoles, database, table, "", mask)` for a
+    /// multi-bit `mask`, which Go reads as "ANY of these privileges".
+    ///
+    /// The virtual schemas answer before any grant is read, exactly as they
+    /// do for the single-privilege form
+    /// ([`crate::table_privilege::mem_db_verdict_mask`]).
+    #[must_use]
+    pub fn has_any_scoped_privilege(&self, database: &str, table: &str, mask: u64) -> bool {
+        let Some((registry, user, host)) = self.privilege_context() else {
+            return true;
+        };
+        if let Some(verdict) = crate::table_privilege::mem_db_verdict_mask(database, mask) {
+            return verdict;
+        }
+        registry.has_priv_mask_with_roles(user, host, self.active_roles(), database, table, mask)
+    }
+
+    /// The owned snapshot of this session's identity that the
+    /// `information_schema` retrievers filter their rows with, since they run
+    /// with the catalog borrowed and cannot ask the session anything.
+    #[must_use]
+    pub(crate) fn schema_visibility(&self) -> crate::infoschema::SchemaVisibility {
+        match self.privilege_context() {
+            Some((registry, user, host)) => crate::infoschema::SchemaVisibility::for_session(
+                registry.clone(),
+                user,
+                host,
+                self.active_roles(),
+            ),
+            None => crate::infoschema::SchemaVisibility::unrestricted(),
+        }
+    }
+
+    /// Go `UserPrivileges.DBIsVisible` (`privileges.go` around line 935): may
+    /// this session SEE the schema at all.
+    ///
+    /// A session with no front end is unrestricted, exactly as every other
+    /// check here is, and Go's own callers guard on
+    /// `checker != nil && SessionVars.User != nil` for the same reason.
+    #[must_use]
+    pub fn database_is_visible(&self, database: &str) -> bool {
+        let Some((registry, user, host)) = self.privilege_context() else {
+            return true;
+        };
+        registry.db_is_visible_with_roles(user, host, self.active_roles(), database)
+    }
+
+    /// The `ErrDBaccessDenied` (1044) gate Go's `executeUse`,
+    /// `fetchShowTables`, `fetchShowTableStatus` and
+    /// `fetchShowCreateDatabase` all apply BEFORE they look the schema up --
+    /// which is why naming a schema that does not exist reports 1044 and not
+    /// `ErrBadDB` for an account that could not have seen it either way
+    /// (measured: `SHOW TABLES IN nosuchdb` as an unprivileged user is
+    /// 1044).
+    pub(crate) fn require_visible_database(&self, database: &str) -> Result<(), DriverError> {
+        if self.database_is_visible(database) {
+            return Ok(());
+        }
+        let (user, host) = self.current_identity().unwrap_or_default();
+        Err(DriverError::DbAccessDenied {
+            user: user.to_owned(),
+            host: host.to_owned(),
+            database: database.to_owned(),
+        })
+    }
+
     /// Go `RequestDynamicVerification(activeRoles, name, grantable)`. The
     /// registry's own SUPER fallback is part of this, which is why Go's
     /// denial messages name `SUPER or <PRIVILEGE>`.

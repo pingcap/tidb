@@ -93,6 +93,14 @@ fn open_session_as(node: &MockNode, user: &str) -> ClusterServerSession {
 fn analyze_without_privileges_on_the_table_is_refused_before_the_seam() {
     let node = MockNode::start();
     node.accounts.live.create_user("low", "%", "");
+    // `USE app` is `ErrDBaccessDenied` (1044) for an account with no
+    // evidence at all on the schema, measured in Go, so an account that
+    // cannot see `app` could never reach the 1142 this test is about.
+    // `CREATE TEMPORARY TABLES` is the one privilege that makes a schema
+    // visible without carrying either privilege `ANALYZE` demands.
+    node.accounts
+        .live
+        .grant_db("low", "%", "app", GlobalPriv::CreateTemporaryTables.mask());
     let mut session = open_session_as(&node, "low");
     let refusal = session
         .execute_write("ANALYZE TABLE t")

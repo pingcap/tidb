@@ -1052,10 +1052,34 @@ impl PrivilegeRegistry {
         table: &str,
         global_priv: GlobalPriv,
     ) -> bool {
-        if self.has_global_priv(user, host, global_priv) {
+        self.has_priv_mask(user, host, database, table, global_priv.bit())
+    }
+
+    /// [`Self::has_table_priv`] for a MASK rather than a single privilege --
+    /// Go passes `mysql.PrivilegeType` everywhere, and a multi-bit value
+    /// means "ANY of these", because every scope arm tests `priv & mask > 0`.
+    ///
+    /// `SHOW TABLES` (`mysql.AllPrivMask &^ mysql.CreateTMPTablePriv`) and
+    /// every `information_schema` retriever (`mysql.AllPrivMask`, or
+    /// `mysql.AllColumnPrivs` for `COLUMNS`) ask exactly this question, which
+    /// is why the single-privilege form is now the one-bit case of it rather
+    /// than a second implementation.
+    #[must_use]
+    pub fn has_priv_mask(
+        &self,
+        user: &str,
+        host: &str,
+        database: &str,
+        table: &str,
+        mask: u64,
+    ) -> bool {
+        if self
+            .lock()
+            .get(&(user.to_owned(), host.to_owned()))
+            .is_some_and(|record| record.privs & mask != 0)
+        {
             return true;
         }
-        let bit = global_priv.bit();
         // Schema and table names are stored as the `GRANT` (or the
         // `mysql.db` row) spelled them, while the statement spells them its
         // own way, so the scopes are matched case-insensitively rather than
@@ -1067,7 +1091,7 @@ impl PrivilegeRegistry {
             .lock_db()
             .iter()
             .any(|((row_user, row_host, row_database), privs)| {
-                scoped(row_user, row_host, row_database) && privs & bit != 0
+                scoped(row_user, row_host, row_database) && privs & mask != 0
             })
         {
             return true;
@@ -1077,8 +1101,105 @@ impl PrivilegeRegistry {
             .any(|((row_user, row_host, row_database, row_table), privs)| {
                 scoped(row_user, row_host, row_database)
                     && row_table.eq_ignore_ascii_case(table)
-                    && privs & bit != 0
+                    && privs & mask != 0
             })
+    }
+
+    /// [`Self::has_priv_mask`] over the account and every role it reaches.
+    #[must_use]
+    pub fn has_priv_mask_with_roles(
+        &self,
+        user: &str,
+        host: &str,
+        active_roles: &[Account],
+        database: &str,
+        table: &str,
+        mask: u64,
+    ) -> bool {
+        self.identities_for_check(user, host, active_roles)
+            .into_iter()
+            .any(|(role_user, role_host)| {
+                self.has_priv_mask(&role_user, &role_host, database, table, mask)
+            })
+    }
+
+    /// Go `MySQLPrivilege.DBIsVisible` (`cache.go` around line 1693): whether
+    /// a schema appears in this account's `SHOW DATABASES`, and whether
+    /// `USE`/`SHOW TABLES`/`SHOW CREATE DATABASE`/`SHOW TABLE STATUS` may
+    /// name it at all.
+    ///
+    /// This is deliberately NOT [`Self::has_priv_mask`]: Go walks a DIFFERENT
+    /// and WIDER set of evidence, in this order, and the difference is
+    /// observable --
+    ///
+    /// 1. a GLOBAL privilege inside `globalDBVisible` (which excludes
+    ///    `LOCK TABLES` and every server-admin privilege, so `GRANT PROCESS
+    ///    ON *.*` alone shows no schema);
+    /// 2. global `PROCESS` for `metrics_schema` only;
+    /// 3. `information_schema`, visible to everyone;
+    /// 4. any nonzero `mysql.db` row;
+    /// 5. any `mysql.tables_priv` row in the schema, whatever the table; and
+    /// 6. any `mysql.columns_priv` row in the schema.
+    ///
+    /// Steps 5 and 6 are why a single-column grant makes its schema appear in
+    /// `SHOW DATABASES` while `information_schema.schemata` -- which asks
+    /// `has_priv_mask` at schema scope instead -- still hides it. Both are
+    /// measured against Go.
+    #[must_use]
+    pub fn db_is_visible(&self, user: &str, host: &str, database: &str) -> bool {
+        if let Some(record) = self.lock().get(&(user.to_owned(), host.to_owned())) {
+            if record.privs & global_db_visible_mask() != 0 {
+                return true;
+            }
+            if record.privs & GlobalPriv::Process.bit() != 0
+                && database.eq_ignore_ascii_case("metrics_schema")
+            {
+                return true;
+            }
+        }
+        if database.eq_ignore_ascii_case("information_schema") {
+            return true;
+        }
+        let scoped = |row_user: &str, row_host: &str, row_database: &str| {
+            row_user == user && row_host == host && row_database.eq_ignore_ascii_case(database)
+        };
+        if self
+            .lock_db()
+            .iter()
+            .any(|((row_user, row_host, row_database), privs)| {
+                scoped(row_user, row_host, row_database) && *privs != 0
+            })
+        {
+            return true;
+        }
+        if self
+            .lock_table()
+            .iter()
+            .any(|((row_user, row_host, row_database, _), privs)| {
+                scoped(row_user, row_host, row_database) && *privs != 0
+            })
+        {
+            return true;
+        }
+        self.lock_column()
+            .iter()
+            .any(|row| scoped(&row.user, &row.host, &row.database) && row.privs != 0)
+    }
+
+    /// [`Self::db_is_visible`] over the account and every role it reaches --
+    /// Go's `UserPrivileges.DBIsVisible`, which asks the account first and
+    /// then each effective role.
+    #[must_use]
+    pub fn db_is_visible_with_roles(
+        &self,
+        user: &str,
+        host: &str,
+        active_roles: &[Account],
+        database: &str,
+    ) -> bool {
+        self.identities_for_check(user, host, active_roles)
+            .into_iter()
+            .any(|(role_user, role_host)| self.db_is_visible(&role_user, &role_host, database))
     }
 
     /// [`Self::has_table_priv`] over the account and every role it reaches,

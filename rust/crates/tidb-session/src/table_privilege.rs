@@ -81,34 +81,49 @@ fn is_mem_db(database: &str) -> bool {
 /// The fixed answer `RequestVerification` gives for a virtual schema before
 /// it consults a single grant, or `None` when the stored grants decide.
 ///
-/// Go refuses every write-shaped privilege on all three (`privileges.go`
-/// around line 194) and then admits EVERYTHING on `information_schema`
-/// (around line 201), which is what makes `SELECT ... FROM
-/// information_schema.*` need no grant at all.
-pub(crate) fn mem_db_verdict(database: &str, privilege: GlobalPriv) -> Option<bool> {
+/// `mask` is Go's `priv` argument, which is a `mysql.PrivilegeType` and may
+/// carry several bits. That matters here: Go's write refusal is a
+/// `switch priv { case mysql.CreatePriv, ...: }`, an EQUALITY test, so a
+/// multi-bit mask -- the "any privilege" question `SHOW TABLES` and the
+/// `information_schema` retrievers ask -- never enters it and falls straight
+/// through to the `information_schema` admission below. Matching on the
+/// whole mask rather than on a decoded privilege is what keeps that true
+/// without a second rule.
+///
+/// Go refuses every write-shaped privilege on all three virtual schemas
+/// (`privileges.go` around line 194) and then admits EVERYTHING on
+/// `information_schema` (around line 201), which is what makes `SELECT ...
+/// FROM information_schema.*` need no grant at all while
+/// `performance_schema` and `metrics_schema` still consult stored grants.
+pub(crate) fn mem_db_verdict_mask(database: &str, mask: u64) -> Option<bool> {
     if !is_mem_db(database) {
         return None;
     }
-    if matches!(
-        privilege,
-        GlobalPriv::Create
-            | GlobalPriv::Alter
-            | GlobalPriv::Drop
-            | GlobalPriv::Index
-            | GlobalPriv::CreateView
-            | GlobalPriv::Insert
-            | GlobalPriv::Update
-            | GlobalPriv::Delete
-            | GlobalPriv::References
-            | GlobalPriv::Execute
-            | GlobalPriv::ShowView
-            | GlobalPriv::LockTables
-    ) {
+    const REFUSED: &[GlobalPriv] = &[
+        GlobalPriv::Create,
+        GlobalPriv::Alter,
+        GlobalPriv::Drop,
+        GlobalPriv::Index,
+        GlobalPriv::CreateView,
+        GlobalPriv::Insert,
+        GlobalPriv::Update,
+        GlobalPriv::Delete,
+        GlobalPriv::References,
+        GlobalPriv::Execute,
+        GlobalPriv::ShowView,
+        GlobalPriv::LockTables,
+    ];
+    if REFUSED.iter().any(|priv_| priv_.bit() == mask) {
         return Some(false);
     }
     database
         .eq_ignore_ascii_case("information_schema")
         .then_some(true)
+}
+
+/// [`mem_db_verdict_mask`] for a single privilege.
+pub(crate) fn mem_db_verdict(database: &str, privilege: GlobalPriv) -> Option<bool> {
+    mem_db_verdict_mask(database, privilege.bit())
 }
 
 /// Splits a written name path into `(schema, table)`, defaulting the schema

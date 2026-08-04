@@ -15,10 +15,24 @@ use crate::*;
 
 /// One table `t` in schema `test`, an unprivileged `bob`, and an
 /// unrestricted bootstrap session to grant through.
+///
+/// `bob` gets exactly one grant before he connects: `CREATE TEMPORARY
+/// TABLES ON test.*`. That is not scaffolding, it is what Go requires --
+/// `USE test` is `ErrDBaccessDenied` (1044) for an account with no evidence
+/// at all on the schema, so an account that cannot see `test` could never
+/// reach the 1142 denials these tests are about. The privilege is chosen
+/// because it is the one privilege that makes a schema visible
+/// (`DBIsVisible` accepts ANY nonzero `mysql.db` row) while being demanded by
+/// no statement here AND being the single bit `SHOW TABLES` masks OUT, so it
+/// leaks no table name either. All three facts measured against Go:
+/// with only this grant, `USE test` succeeds, `SELECT * FROM t` is still
+/// `1142 SELECT command denied`, and `SHOW TABLES` is empty.
 fn scoped() -> (privilege::PrivilegeRegistry, Session, Session) {
     let privs = privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privs);
     boot.run("CREATE USER 'bob'@'%'").unwrap();
+    boot.run("GRANT CREATE TEMPORARY TABLES ON test.* TO 'bob'@'%'")
+        .unwrap();
     boot.run("CREATE TABLE t (a INT PRIMARY KEY, b INT)")
         .unwrap();
     boot.run("CREATE TABLE u (a INT PRIMARY KEY, b INT)")

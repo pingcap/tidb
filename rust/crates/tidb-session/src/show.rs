@@ -1022,6 +1022,15 @@ impl Session {
                     ));
                 }
                 let names = self.with_catalog_mut(|catalog| Ok(catalog.database_names()))?;
+                // Go `fetchShowDatabases` (`executor/show.go` around line
+                // 462): one `DBIsVisible` per schema, so an account sees
+                // only what it holds some evidence for -- plus
+                // `information_schema`, which is visible to everyone and is
+                // already first in `database_names`.
+                let names = names
+                    .into_iter()
+                    .filter(|name| self.database_is_visible(name))
+                    .collect();
                 Ok(Some(string_column_output("Database", names)))
             }
             // Go `fetchShowTableStatus`: one row per table in the
@@ -1040,6 +1049,10 @@ impl Session {
                     Some(database) => database.clone(),
                     None => self.require_current_database()?.to_owned(),
                 };
+                // Go `fetchShowTableStatus` (`executor/show.go` around line
+                // 639) applies the same pre-lookup 1044 gate `SHOW TABLES`
+                // does.
+                self.require_visible_database(&database)?;
                 let pattern = match &show.filter {
                     Some(tidb_ast::ShowTableStatusFilter::Like(tidb_ast::Expr::String(text))) => {
                         Some(text.clone())
@@ -1641,6 +1654,11 @@ impl Session {
                     Some(name) => name.clone(),
                     None => self.require_current_database()?.to_owned(),
                 };
+                // Go `fetchShowTables` (`executor/show.go` around line 576)
+                // asks `DBIsVisible` BEFORE `SchemaExists`, so a schema this
+                // account could not see reports 1044 whether or not it
+                // exists.
+                self.require_visible_database(&database)?;
                 let full = show.full;
                 let listed = self.with_catalog_mut(|catalog| {
                     Ok(catalog.table_names(&database).map(|names| {
@@ -1656,6 +1674,22 @@ impl Session {
                 let listed = listed.ok_or_else(|| {
                     DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
                 })?;
+                // Go filters each listed table by "any privilege at all"
+                // (`show.go` around line 613), with `CREATE TEMPORARY
+                // TABLES` excluded from the mask. Column-scope grants are
+                // deliberately not consulted, which is Go's own standing
+                // TODO there and is measured: a `SELECT(a)` grant makes the
+                // SCHEMA visible but lists no table.
+                let listed: Vec<_> = listed
+                    .into_iter()
+                    .filter(|(name, _)| {
+                        self.has_any_scoped_privilege(
+                            &database,
+                            name,
+                            privilege::show_tables_priv_mask(),
+                        )
+                    })
+                    .collect();
                 // Go names the column after the schema being listed.
                 let name_column = format!("Tables_in_{database}");
                 if !full {
