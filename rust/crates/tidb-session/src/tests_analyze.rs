@@ -402,3 +402,76 @@ fn analyzed_selectivity_estimates_a_disjunction_and_never_drops_below_one_row() 
         assert_eq!(selection_rows(&mut session, sql), expected, "{sql}");
     }
 }
+
+/// Go `getColumnRowCount`'s sort-key conversion
+/// (`pkg/planner/cardinality/row_count_column.go:126-132`): a string range
+/// endpoint is replaced by its COLLATION SORT KEY before it is encoded,
+/// compared, or located in a bucket.
+///
+/// `ANALYZE` writes the sort key as the bucket bound under a new collation,
+/// so a raw endpoint locates the wrong bucket. Nothing smaller than a
+/// MULTI-BUCKET histogram sees it: an eight-row table is answered entirely
+/// out of the TopN, which compares encoded values and agrees either way.
+/// That is why this fixture is 300 rows of deliberately mixed case, whose
+/// byte order and `utf8mb4_unicode_ci` order disagree completely.
+///
+/// Every expectation is TiDB's own printed estRows for the same statement on
+/// the same 300 rows, captured with `gorun`.
+#[test]
+fn a_case_insensitive_column_estimates_off_the_collation_sort_key() {
+    let mut session = Session::new();
+    session
+        .run("create table c4 (s varchar(32) collate utf8mb4_unicode_ci)")
+        .unwrap();
+    let values: Vec<String> = (0..300)
+        .map(|i: usize| {
+            let letters = b"abcdefghijklmnopqrstuvwxyz";
+            let word = format!(
+                "{}{}{}",
+                letters[i % 26] as char,
+                letters[(i / 26) % 26] as char,
+                i % 7
+            );
+            let word = if i % 2 == 1 {
+                word.to_uppercase()
+            } else {
+                word
+            };
+            format!("('{word}')")
+        })
+        .collect();
+    session
+        .run(&format!("insert into c4 values {}", values.join(", ")))
+        .unwrap();
+    session.run("analyze table c4").unwrap();
+
+    let selection = |session: &mut Session, sql: &str| -> String {
+        let rows = row_text(session.run(sql));
+        rows.iter()
+            .find(|row| row[0].contains("Selection"))
+            .unwrap_or_else(|| panic!("no Selection in the plan of `{sql}`: {rows:?}"))[1]
+            .clone()
+    };
+
+    for (sql, expected) in [
+        // The four that MOVED. Raw endpoints put `'mm3'` past the end of the
+        // histogram's byte order (every upper-cased bound sorts before every
+        // lower-cased one), which printed 43.00 / 258.00 / 22.00 / 4.00.
+        ("explain select * from c4 where s > 'mm3'", "144.00"),
+        ("explain select * from c4 where s < 'mm3'", "157.00"),
+        (
+            "explain select * from c4 where s >= 'ca0' and s <= 'pz6'",
+            "166.00",
+        ),
+        (
+            "explain select * from c4 where s between 'FA1' and 'ka2'",
+            "61.00",
+        ),
+        // The two the TopN already answered, which is why an eight-row
+        // fixture could not have caught this.
+        ("explain select * from c4 where s = 'AA0'", "1.00"),
+        ("explain select * from c4 where s > 'zz9'", "1.00"),
+    ] {
+        assert_eq!(selection(&mut session, sql), expected, "{sql}");
+    }
+}

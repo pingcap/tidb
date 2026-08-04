@@ -485,12 +485,42 @@ fn prefix_next(key: &[u8]) -> Vec<u8> {
     buf
 }
 
+/// A range endpoint as the histogram stores its own bounds: Go
+/// `getColumnRowCount`'s first three lines
+/// (`row_count_column.go:126-132`).
+///
+/// ```text
+/// if highVal.Kind() == types.KindString {
+///     highVal.SetBytes(collate.GetCollator(highVal.Collation()).Key(highVal.GetString()))
+/// }
+/// ```
+///
+/// Under a new collation `ANALYZE` writes the collation SORT KEY as the
+/// bucket bound, not the value (`tidb_executor::analyze`, and the cluster
+/// loader reads back the same encoding), so a raw `'mm3'` compared against
+/// those bounds lands in the wrong bucket. Every comparison AFTER this
+/// conversion is binary -- Go's `LocateBucket` reads the bounds chunk
+/// directly and its callers pass `collate.GetBinaryCollator()` -- because
+/// both sides are now sort keys.
+///
+/// A non-string endpoint, and a `Datum::Bytes` (Go's `KindBytes`, which the
+/// source's `KindString` test excludes), pass through untouched.
+fn to_sort_key(value: &Datum) -> Datum {
+    match value {
+        Datum::String(string) => Datum::Bytes(string.collation().key(string.bytes())),
+        other => other.clone(),
+    }
+}
+
 /// Estimates a column's row count over `ranges`, Go `getColumnRowCount`.
+///
+/// `collation` is read only to reach [`to_sort_key`]'s domain; the estimates
+/// themselves compare sort key against sort key, which is binary.
 #[must_use]
 pub fn get_column_row_count(
     column: &ColumnStats,
     ranges: &[ColumnRange],
-    collation: Collation,
+    _collation: Collation,
     realtime_row_count: i64,
     modify_count: i64,
     pk_is_handle: bool,
@@ -500,6 +530,15 @@ pub fn get_column_row_count(
     let increase_factor = column.increase_factor(realtime_row_count);
 
     for range in ranges {
+        // Go clones both endpoints and replaces a string with its sort key
+        // BEFORE encoding, comparing, or estimating anything from them.
+        let range = &ColumnRange {
+            low: to_sort_key(&range.low),
+            high: to_sort_key(&range.high),
+            low_exclude: range.low_exclude,
+            high_exclude: range.high_exclude,
+        };
+        let collation = Collation::Binary;
         let low_encoded = encode_datum(&range.low);
         let high_encoded = encode_datum(&range.high);
         let equal_bounds = range
