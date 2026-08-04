@@ -12,7 +12,6 @@ import (
 
 	"github.com/pingcap/errors"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
 )
@@ -111,7 +110,7 @@ func TestWriteInsert(t *testing.T) {
 			{"2"},
 			{"3"},
 		}
-		colInfos := []*parquetfile.ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
 		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
 		parquetWriter := NewBufferWriter()
 		parquetMetrics := newMetrics(cfg.PromFactory, cfg.Labels)
@@ -167,7 +166,7 @@ func TestWriteInsertReturnsError(t *testing.T) {
 			{"2"},
 			{"3"},
 		}
-		colInfos := []*parquetfile.ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
 		parquetRowErr := errors.New("mock parquet row error")
 		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
 		parquetTableIR.rowErr = parquetRowErr

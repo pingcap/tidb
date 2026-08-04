@@ -13,7 +13,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	pd "github.com/tikv/pd/client"
 	pdgc "github.com/tikv/pd/client/clients/gc"
 )
@@ -148,19 +147,19 @@ func newMockMetaIR(targetName string, meta string, specialComments []string) Met
 }
 
 type mockTableIR struct {
-	dbName             string
-	tblName            string
-	chunIndex          int
-	data               [][]driver.Value
-	selectedField      string
-	specCmt            []string
-	colTypes           []string
-	colNames           []string
-	escapeBackSlash    bool
-	hasImplicitRowID   bool
-	rowErr             error
-	rows               *sql.Rows
-	parquetColumnInfos []*parquetfile.ColumnInfo
+	dbName           string
+	tblName          string
+	chunIndex        int
+	data             [][]driver.Value
+	selectedField    string
+	specCmt          []string
+	colTypes         []string
+	colNames         []string
+	escapeBackSlash  bool
+	hasImplicitRowID bool
+	rowErr           error
+	rows             *sql.Rows
+	columnInfos      []*ColumnInfo
 	SQLRowIter
 }
 
@@ -257,8 +256,8 @@ func (m *mockTableIR) EscapeBackSlash() bool {
 	return m.escapeBackSlash
 }
 
-func (m *mockTableIR) columnInfos() []*parquetfile.ColumnInfo {
-	return m.parquetColumnInfos
+func (m *mockTableIR) ColumnInfos() []*ColumnInfo {
+	return m.columnInfos
 }
 
 func newMockTableIR(databaseName, tableName string, data [][]driver.Value, specialComments, colTypes []string) *mockTableIR {
@@ -273,19 +272,19 @@ func newMockTableIR(databaseName, tableName string, data [][]driver.Value, speci
 	}
 }
 
-func newMockTableIRWithColumnInfo(databaseName, tableName string, data [][]driver.Value, specialComments []string, infos []*parquetfile.ColumnInfo) *mockTableIR {
+func newMockTableIRWithColumnInfo(databaseName, tableName string, data [][]driver.Value, specialComments []string, infos []*ColumnInfo) *mockTableIR {
 	colTypes := make([]string, len(infos))
 	for i, info := range infos {
 		colTypes[i] = info.DatabaseTypeName
 	}
 	return &mockTableIR{
-		dbName:             databaseName,
-		tblName:            tableName,
-		data:               data,
-		specCmt:            specialComments,
-		selectedField:      "*",
-		colTypes:           colTypes,
-		SQLRowIter:         nil,
-		parquetColumnInfos: infos,
+		dbName:        databaseName,
+		tblName:       tableName,
+		data:          data,
+		specCmt:       specialComments,
+		selectedField: "*",
+		colTypes:      colTypes,
+		SQLRowIter:    nil,
+		columnInfos:   infos,
 	}
 }

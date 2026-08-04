@@ -9,7 +9,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"go.uber.org/zap"
 )
 
@@ -287,15 +286,15 @@ func tableSourceColumnNames(meta TableMeta) []string {
 	return meta.ColumnNames()
 }
 
-func (tm *tableMeta) columnInfos() []*parquetfile.ColumnInfo {
-	columnInfos := make([]*parquetfile.ColumnInfo, 0, len(tm.colTypes))
+func (tm *tableMeta) ColumnInfos() []*ColumnInfo {
+	columnInfos := make([]*ColumnInfo, 0, len(tm.colTypes))
 	for _, ct := range tm.colTypes {
 		nullable, _ := ct.Nullable()
 		precision, scale, ok := ct.DecimalSize()
 		if !ok {
 			precision, scale = 0, 0
 		}
-		columnInfos = append(columnInfos, &parquetfile.ColumnInfo{
+		columnInfos = append(columnInfos, &ColumnInfo{
 			Name:             ct.Name(),
 			DatabaseTypeName: ct.DatabaseTypeName(),
 			Nullable:         nullable,
