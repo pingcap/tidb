@@ -40,7 +40,7 @@
 
 Adaptive LIMIT Scan adds a lightweight controller to one statement execution. The controller translates the remaining LIMIT demand into admission windows for supported execution stages. Workers must reserve capacity before admitting more work, report the actual input and output after that work is consumed, and stop admitting work when the LIMIT is satisfied.
 
-The initial implementation targets the ordered `IndexLookUpJoin` plan involved in [issue #66658](https://github.com/pingcap/tidb/issues/66658). The feature is guarded by `tidb_enable_adaptive_limit_scan` and is disabled by default.
+The initial implementation targets the ordered `IndexLookUpJoin` plan involved in [issue #66658](https://github.com/pingcap/tidb/issues/66658) and the related direct ordered `IndexLookUp` plan. The feature is guarded by `tidb_enable_adaptive_limit_scan` and is disabled by default.
 
 ## Motivation or Background
 
@@ -108,7 +108,7 @@ The initial implementation does not:
 
 ### Supported Plan Shape
 
-The first version recognizes the following executor shape:
+The first version recognizes the following executor shapes:
 
 ```text
 Limit
@@ -116,9 +116,13 @@ Limit
   └─IndexLookUpJoin
     └─Projection* (outer)
       └─IndexLookUp (keep order)
+
+Limit
+└─Projection*
+  └─IndexLookUp (keep order)
 ```
 
-Only Projection can appear between the recognized operators because Projection preserves row cardinality. An operator such as Selection changes the input/output ratio and would need its own feedback stage. A blocking operator stops budget propagation.
+Only Projection can appear between Limit and the recognized root executor because Projection preserves row cardinality. The IndexLookUp may still contain a table-side Selection inside its coprocessor plan; lookup feedback measures the resulting handle-to-row ratio. An executor-side Selection between Limit and IndexLookUp would need a separate feedback stage. A blocking operator stops budget propagation.
 
 The controller is attached while `LimitExec` is built. One controller is owned by one executor tree and one execution lifecycle.
 
@@ -155,7 +159,7 @@ demandRows = offset + count
 
 Rows before the offset are not returned to the client, but the child executor must still produce them, so they consume demand.
 
-The target plan contains two different input/output transformations:
+The IndexLookUpJoin shape contains two different input/output transformations:
 
 ```text
 IndexLookUpJoin outer stage:
@@ -167,11 +171,13 @@ IndexLookUp table stage:
 
 These units must not share one counter. For example, 1,000 index handles might produce only 100 table rows after a table-side predicate. Controlling only Join outer rows would not prevent IndexLookUp from dispatching too many low-yield table lookup tasks.
 
-The controller therefore maintains:
+For IndexLookUpJoin, the controller therefore maintains:
 
 - an outer row window, which bounds rows prefetched by IndexLookUpJoin;
 - a logical lookup handle window, which estimates how many handles are justified by current LIMIT demand and observed yield;
 - a lookup execution batch size, which keeps each table lookup task large enough to avoid inefficient tiny RPCs.
+
+The direct IndexLookUp shape has no Join outer stage. Its controller maintains only the lookup handle window and execution batch size. Fully consumed table lookup tasks report final rows directly toward LIMIT demand.
 
 The physical lookup admission window is derived from the logical window and the execution batch size. A window is an admission bound, not a prediction that the exact number of rows will be needed.
 
@@ -255,11 +261,18 @@ This preserves throughput early in execution while reducing speculative work nea
 
 The outer window can shrink immediately. It can grow only after new input progress, and one growth step is capped at twice the current window. The maximum is derived from the configured IndexJoin batch size and concurrency.
 
-The lookup stage estimates how many handles are needed to supply the remaining outer window:
+For IndexLookUpJoin, the lookup stage estimates how many handles are needed to supply the remaining outer window:
 
 ```text
 lookupTarget =
     ceil(remainingOuterRows * lookupHandles / lookupRows)
+```
+
+For a direct IndexLookUp, there is no outer window, so the same lookup yield estimates the handles needed to supply the remaining LIMIT output directly:
+
+```text
+lookupTarget =
+    ceil(remainingOutput * lookupHandles / lookupRows)
 ```
 
 The cumulative and recent lookup estimates are computed independently, and the larger result is used. The lookup window follows the same at-most-2x growth rule.
@@ -296,6 +309,8 @@ initialLookupBatchSize =
 maxLookupBatchSize = tidb_index_lookup_size
 ```
 
+For a direct IndexLookUp with paging enabled by the existing plan, `initialLookupBatchSize` is `initialLookupWindow`. This preserves the existing paging behavior for a small LIMIT instead of raising a `LIMIT 1` lookup task to `tidb_max_chunk_size`. Direct non-paging execution and the IndexLookUp under IndexLookUpJoin retain the formula above so productive scans do not start with unnecessarily small table lookup tasks.
+
 Productive input/output feedback adjusts the logical lookup window but does not shrink the execution batch. A fully drained zero-output phase can grow the execution batch by at most 2x. Both the per-task batch and the aggregate physical window remain bounded by existing session settings.
 
 The initial implementation does not change DistSQL scan concurrency. `tidb_distsql_scan_concurrency` and the existing RequestBuilder heuristics keep their original behavior. Lookup yield estimates how many handles should enter future table lookup tasks, but it is not a reliable signal for choosing RPC parallelism. Keeping these controls separate avoids serializing a productive multi-Region scan merely because its lookup window has not grown.
@@ -304,7 +319,7 @@ The initial implementation does not change DistSQL scan concurrency. `tidb_dists
 
 The controller stops admission when:
 
-- Join output reaches `offset + count`;
+- Join output, or fully consumed direct IndexLookUp output, reaches `offset + count`;
 - Limit observes end of input;
 - the executor is closed;
 - the query is cancelled or fails through the existing error path.
@@ -322,18 +337,18 @@ Already dispatched tasks and RPCs are not synchronously withdrawn. They follow t
 
 ### Eligibility
 
-The feature activates only when all of the following are true:
+The feature first requires all of the following shared conditions:
 
 1. `tidb_enable_adaptive_limit_scan` is enabled;
 2. the current physical operator is Limit;
-3. the Limit child is `Projection* -> IndexLookUpJoin`;
-4. the IndexLookUpJoin required physical property for its outer child requires order;
-5. the outer child is `Projection* -> IndexLookUp`;
-6. the IndexLookUp is keep-order;
-7. IndexLookUp concurrency is greater than one;
-8. the IndexLookUp is not in partition-table mode;
-9. the IndexLookUp does not use grouped ranges or a double-read merge-sort path;
-10. IndexLookUp pushdown is not enabled for this reader.
+3. Projection is the only executor between Limit and the recognized IndexLookUpJoin or IndexLookUp;
+4. the IndexLookUp is keep-order;
+5. IndexLookUp concurrency is greater than one;
+6. the IndexLookUp is not in partition-table mode;
+7. the IndexLookUp does not use grouped ranges or a double-read merge-sort path;
+8. IndexLookUp pushdown is not enabled for this reader.
+
+The IndexLookUpJoin shape additionally requires that its outer property preserves order and that its outer child is `Projection* -> IndexLookUp`. The direct shape requires `Projection* -> IndexLookUp` and is skipped when the reader already has a pushed-down LIMIT, because that path already bounds lookup work.
 
 The keep-order requirement narrows the experimental rollout to the high-risk case from #66658. It is not a mathematical requirement of admission control. IndexLookUp concurrency must be greater than one because its index worker and table workers share one worker pool. With only one worker, attaching the controller cannot run index production and table lookup concurrently, so this path keeps the existing executor behavior.
 
@@ -392,7 +407,15 @@ The fields are:
 | `outstanding` | outer / lookup capacity outstanding when admission stopped |
 | `blocked` | wall-clock time during which at least one worker in the stage was blocked by a full admission budget |
 
-LIMIT demand and final Join output already appear in the Limit and IndexLookUpJoin runtime information and are not repeated. Outstanding values are admission accounting: outer outstanding is measured in logical rows, while lookup outstanding is measured in physically reserved handles. Neither value claims that the same amount of already dispatched work was cancelled.
+For a direct IndexLookUp, its runtime information contains only the lookup stage:
+
+```text
+adaptive:{lookup:1000/700, outstanding:1000, blocked:3ms}
+```
+
+Here `outstanding` is lookup capacity outstanding when admission stopped. Direct lookup input/output is sampled only when a lookup task is fully consumed, so a final partially consumed task remains outstanding instead of contributing a misleading yield sample.
+
+LIMIT demand and final output already appear in the Limit and child executor runtime information and are not repeated. Outstanding values are admission accounting: outer outstanding is measured in logical rows, while lookup outstanding is measured in physically reserved handles. Neither value claims that the same amount of already dispatched work was cancelled.
 
 Blocked time is the union of overlapping waits in the corresponding stage. It does not include ordinary executor, coprocessor, or table lookup execution time. A zero value means the controller did not block that stage.
 
@@ -403,7 +426,7 @@ The controller keeps current window values internally for admission control and 
 The current implementation can bound:
 
 - the next batch of outer rows admitted by IndexLookUpJoin;
-- handles admitted into future table lookup tasks.
+- handles admitted into future table lookup tasks for IndexLookUpJoin and direct IndexLookUp.
 
 It cannot hard-bound:
 
@@ -422,7 +445,7 @@ A TiKV request may process many raw keys before returning a small number of hand
 
 Additional limitations are:
 
-- only one keep-order IndexLookUpJoin outer path is supported;
+- only the recognized keep-order IndexLookUpJoin outer path and direct keep-order IndexLookUp path are supported;
 - physical lookup rounding can admit less than one execution batch beyond the logical window near the LIMIT tail;
 - DistSQL request concurrency and ordered request dispatch are unchanged;
 - runtime stats do not yet include a reason why a plan was not eligible.
@@ -467,6 +490,7 @@ Executor unit tests cover:
 - Complete and Abort behavior on success, cancellation, and error;
 - feature ON/OFF lifecycle;
 - result value and order equivalence;
+- direct IndexLookUp paging with a high-selectivity `LIMIT 1`, which must not inflate the initial table lookup task to `tidb_max_chunk_size`;
 - compact runtime statistics.
 
 The regression test for #66658 must fail before the fix because the eligible pipeline admits work without the adaptive bound, and pass after the controller is attached. Assertions should use deterministic logical admission and runtime state rather than wall-clock timings.
@@ -605,23 +629,15 @@ A budget enforced within TiKV could bound processed keys, bytes, or execution ti
 
 Potential extensions, in increasing implementation complexity, are:
 
-1. direct `Limit -> Projection* -> IndexLookUp`, using only the lookup-handle stage when LIMIT cannot already be pushed into IndexLookUp;
-2. IndexReader and TableReader range/request admission;
-3. explicit Selection stage feedback;
-4. unordered IndexJoin, IndexHashJoin, and Apply with task-identified reservations and out-of-order completion;
-5. IndexMerge and partition-level budget distribution;
-6. MPP, Union, and multi-child budget allocation;
-7. strict ordered-task frontier admission;
-8. adaptive DistSQL concurrency based on reliable queue and latency signals;
-9. request-level raw scan budgets in TiKV;
-10. statement and cluster metrics for windows, waits, concurrency, and eligibility reasons.
-
-Direct IndexLookUp cannot reuse the current lookup target unchanged because the current target depends on the Join outer window and consumption. A future implementation should separate final LIMIT progress from per-stage yield, for example:
-
-```text
-ObserveLimitInput(rows)
-ObserveStageProgress(stage, inputRows, outputRows)
-```
+1. IndexReader and TableReader range/request admission;
+2. explicit executor-side Selection feedback;
+3. unordered IndexJoin, IndexHashJoin, and Apply with task-identified reservations and out-of-order completion;
+4. IndexMerge and partition-level budget distribution;
+5. MPP, Union, and multi-child budget allocation;
+6. strict ordered-task frontier admission;
+7. adaptive DistSQL concurrency based on reliable queue and latency signals;
+8. request-level raw scan budgets in TiKV;
+9. statement and cluster metrics for windows, waits, concurrency, and eligibility reasons.
 
 ## Unresolved Questions
 

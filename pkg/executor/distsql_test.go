@@ -409,6 +409,76 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 	require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+sql).Rows()), "adaptive:{")
 }
 
+func TestAdaptiveLimitDirectIndexLookUpExecution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table adaptive_direct_lookup (
+		id int primary key, order_key int not null, filter_col int not null,
+		payload varchar(32), key idx_order_key(order_key))`)
+	values := make([]string, 0, 128)
+	for i := 1; i <= 128; i++ {
+		filterCol := 0
+		if i == 1 || i == 3 || i == 6 || i == 9 || i == 12 || i%16 == 0 {
+			filterCol = 1
+		}
+		values = append(values, fmt.Sprintf("(%d,%d,%d,'payload_%d')", i, i, filterCol, i))
+	}
+	tk.MustExec("insert into adaptive_direct_lookup values " + strings.Join(values, ","))
+	tk.MustExec("set tidb_index_lookup_size = 32")
+	tk.MustExec("set tidb_index_lookup_concurrency = 2")
+	tk.MustExec("set tidb_init_chunk_size = 32")
+	tk.MustExec("set tidb_max_chunk_size = 32")
+
+	sql := `select order_key, payload
+		from adaptive_direct_lookup use index(idx_order_key)
+		where order_key between 1 and 128 and filter_col = 1
+		order by order_key limit 4`
+	plan := fmt.Sprint(tk.MustQuery("explain " + sql).Rows())
+	require.Contains(t, plan, "IndexLookUp")
+	require.Contains(t, plan, "Selection")
+	require.Contains(t, plan, "keep order:true")
+
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
+	onRows := tk.MustQuery(sql).Rows()
+	require.Equal(t, testkit.Rows(
+		"1 payload_1", "3 payload_3", "6 payload_6", "9 payload_9",
+	), onRows)
+	onAnalyze := fmt.Sprint(tk.MustQuery("explain analyze " + sql).Rows())
+	require.Contains(t, onAnalyze, "adaptive:{lookup:")
+	require.NotContains(t, onAnalyze, "outer:")
+	require.Regexp(t, `adaptive:\{lookup:[0-9]+/[0-9]+, outstanding:[0-9]+, blocked:[^}]+\}`, onAnalyze)
+
+	pagingSQL := `select order_key, payload
+		from adaptive_direct_lookup use index(idx_order_key)
+		where order_key between 1 and 128 and filter_col >= 0
+		order by order_key limit 1`
+	pagingPlan := fmt.Sprint(tk.MustQuery("explain " + pagingSQL).Rows())
+	require.Contains(t, pagingPlan, "IndexLookUp")
+	require.Contains(t, pagingPlan, "Selection")
+	require.Contains(t, pagingPlan, "keep order:true")
+	require.Equal(t, testkit.Rows("1 payload_1"), tk.MustQuery(pagingSQL).Rows())
+	pagingAnalyze := fmt.Sprint(tk.MustQuery("explain analyze " + pagingSQL).Rows())
+	require.Contains(t, pagingAnalyze, "adaptive:{lookup:1/1, outstanding:0,")
+
+	offsetSQL := strings.Replace(sql, "limit 4", "limit 2, 2", 1)
+	require.Equal(t, testkit.Rows("6 payload_6", "9 payload_9"), tk.MustQuery(offsetSQL).Rows())
+	emptySQL := strings.Replace(sql, "filter_col = 1", "filter_col = 2", 1)
+	tk.MustQuery(emptySQL).Check(testkit.Rows())
+	require.Contains(t, fmt.Sprint(tk.MustQuery("explain analyze "+emptySQL).Rows()), "adaptive:{lookup:")
+	largeLimitSQL := strings.Replace(sql, "limit 4", "limit 100", 1)
+	largeLimitRows := tk.MustQuery(largeLimitSQL).Rows()
+	require.Len(t, largeLimitRows, 13)
+
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = off")
+	require.Equal(t, onRows, tk.MustQuery(sql).Rows())
+	require.Equal(t, testkit.Rows("1 payload_1"), tk.MustQuery(pagingSQL).Rows())
+	require.Equal(t, testkit.Rows("6 payload_6", "9 payload_9"), tk.MustQuery(offsetSQL).Rows())
+	tk.MustQuery(emptySQL).Check(testkit.Rows())
+	require.Equal(t, largeLimitRows, tk.MustQuery(largeLimitSQL).Rows())
+	require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+sql).Rows()), "adaptive:{")
+}
+
 func TestIndexLookUpStats(t *testing.T) {
 	stats := &executor.IndexLookUpRunTimeStats{
 		FetchHandleTotal:         int64(5 * time.Second),

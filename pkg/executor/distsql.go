@@ -519,6 +519,9 @@ type IndexLookUpExecutor struct {
 
 	// Non-nil only for an eligible reader under a statement-local LIMIT.
 	adaptiveLimitController *exec.AdaptiveLimitController
+	// Only direct IndexLookUp reports the adaptive snapshot here. IndexJoin
+	// reports the shared snapshot through its own runtime stats.
+	reportAdaptiveLimitStats bool
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
@@ -1209,6 +1212,10 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 func (e *IndexLookUpExecutor) Close() error {
 	if e.stats != nil {
 		defer func() {
+			if e.reportAdaptiveLimitStats && e.adaptiveLimitController != nil {
+				snapshot := e.adaptiveLimitController.Snapshot()
+				e.stats.adaptiveLimitSnapshot = &snapshot
+			}
 			e.stmtRuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 			indexScanCopTasks, _ := e.stmtRuntimeStatsColl.GetCopCountAndRows(e.getIndexPlanRootID())
 			if e.indexLookUpPushDown {
@@ -2115,6 +2122,7 @@ type IndexLookUpRunTimeStats struct {
 	NextWaitIndexScan        time.Duration
 	NextWaitTableLookUpBuild time.Duration
 	NextWaitTableLookUpResp  time.Duration
+	adaptiveLimitSnapshot    *exec.AdaptiveLimitSnapshot
 }
 
 func (e *IndexLookUpRunTimeStats) String() string {
@@ -2147,12 +2155,29 @@ func (e *IndexLookUpRunTimeStats) String() string {
 				execdetails.FormatDuration(e.NextWaitTableLookUpResp))
 		}
 	}
+	if e.adaptiveLimitSnapshot != nil {
+		separator := ""
+		if buf.Len() > 0 {
+			separator = ", "
+		}
+		snapshot := e.adaptiveLimitSnapshot
+		fmt.Fprintf(&buf, "%sadaptive:{lookup:%d/%d, outstanding:%d, blocked:%s}", separator,
+			snapshot.LookupHandles,
+			snapshot.LookupRows,
+			snapshot.LookupOutstandingAtStop,
+			execdetails.FormatDuration(snapshot.LookupAdmissionBlocked),
+		)
+	}
 	return buf.String()
 }
 
 // Clone implements the RuntimeStats interface.
 func (e *IndexLookUpRunTimeStats) Clone() execdetails.RuntimeStats {
 	newRs := *e
+	if e.adaptiveLimitSnapshot != nil {
+		snapshot := *e.adaptiveLimitSnapshot
+		newRs.adaptiveLimitSnapshot = &snapshot
+	}
 	return &newRs
 }
 
@@ -2170,6 +2195,10 @@ func (e *IndexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	e.NextWaitIndexScan += tmp.NextWaitIndexScan
 	e.NextWaitTableLookUpBuild += tmp.NextWaitTableLookUpBuild
 	e.NextWaitTableLookUpResp += tmp.NextWaitTableLookUpResp
+	if e.adaptiveLimitSnapshot == nil && tmp.adaptiveLimitSnapshot != nil {
+		snapshot := *tmp.adaptiveLimitSnapshot
+		e.adaptiveLimitSnapshot = &snapshot
+	}
 }
 
 // Tp implements the RuntimeStats interface.

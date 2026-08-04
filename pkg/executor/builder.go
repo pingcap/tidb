@@ -888,6 +888,27 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 				e.adaptiveLimitController = controller
 				indexJoin.AdaptiveLimitController = controller
 			}
+		} else if indexLookup := findAdaptiveLimitIndexLookup(childExec); indexLookup != nil &&
+			adaptiveLimitDirectIndexLookupEligible(indexLookup) {
+			demandRows := v.Offset + v.Count
+			initialLookupWindow := adaptiveLimitInitialWindow(demandRows, b.sctx.GetSessionVars().IndexLookupSize)
+			maxLookupWindow := uint64(b.sctx.GetSessionVars().IndexLookupSize) * uint64(b.sctx.GetSessionVars().IndexLookupConcurrency())
+			initialLookupBatchSize := adaptiveLimitInitialLookupBatchSize(
+				initialLookupWindow,
+				indexLookup.indexPaging,
+				b.sctx.GetSessionVars().MaxChunkSize,
+				b.sctx.GetSessionVars().IndexLookupSize,
+			)
+			controller := exec.NewAdaptiveLimitLookupController(
+				demandRows,
+				initialLookupWindow,
+				maxLookupWindow,
+				initialLookupBatchSize,
+				uint64(b.sctx.GetSessionVars().IndexLookupSize),
+			)
+			indexLookup.adaptiveLimitController = controller
+			indexLookup.reportAdaptiveLimitStats = true
+			e.adaptiveLimitController = controller
 		}
 	}
 
@@ -911,6 +932,13 @@ func adaptiveLimitInitialWindow(demandRows uint64, ceiling int) uint64 {
 	return min(demandRows, uint64(ceiling))
 }
 
+func adaptiveLimitInitialLookupBatchSize(initialWindow uint64, indexPaging bool, maxChunkSize, maxBatchSize int) uint64 {
+	if indexPaging {
+		return initialWindow
+	}
+	return min(max(initialWindow, uint64(maxChunkSize)), uint64(maxBatchSize))
+}
+
 func findAdaptiveLimitIndexJoin(executor exec.Executor) *join.IndexLookUpJoin {
 	if indexJoin, ok := executor.(*join.IndexLookUpJoin); ok {
 		return indexJoin
@@ -925,14 +953,23 @@ func findAdaptiveLimitIndexJoin(executor exec.Executor) *join.IndexLookUpJoin {
 	return findAdaptiveLimitIndexJoin(children[0])
 }
 
+func findAdaptiveLimitIndexLookup(executor exec.Executor) *IndexLookUpExecutor {
+	if indexLookup, ok := executor.(*IndexLookUpExecutor); ok {
+		return indexLookup
+	}
+	if _, ok := executor.(*ProjectionExec); !ok {
+		return nil
+	}
+	children := executor.AllChildren()
+	if len(children) != 1 {
+		return nil
+	}
+	return findAdaptiveLimitIndexLookup(children[0])
+}
+
 func attachAdaptiveLimitIndexLookup(executor exec.Executor, controller *exec.AdaptiveLimitController) bool {
 	if indexLookup, ok := executor.(*IndexLookUpExecutor); ok {
-		// Merge-sort double reads create all SelectResults before rolling handle
-		// admission, and pushed-down lookup does not preserve order. Concurrency 1
-		// cannot run the index and table workers at the same time in the shared
-		// pool. Keep these paths unchanged in v1.
-		if !indexLookup.keepOrder || indexLookup.indexLookupConcurrency <= 1 ||
-			adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup) || indexLookup.indexLookUpPushDown {
+		if !adaptiveLimitIndexLookupEligible(indexLookup) {
 			return false
 		}
 		indexLookup.adaptiveLimitController = controller
@@ -946,6 +983,20 @@ func attachAdaptiveLimitIndexLookup(executor exec.Executor, controller *exec.Ada
 		return false
 	}
 	return attachAdaptiveLimitIndexLookup(children[0], controller)
+}
+
+func adaptiveLimitIndexLookupEligible(indexLookup *IndexLookUpExecutor) bool {
+	// Merge-sort double reads create all SelectResults before rolling handle
+	// admission, and pushed-down lookup does not preserve order. Concurrency 1
+	// cannot run the index and table workers at the same time in the shared pool.
+	// Keep these paths unchanged in v1.
+	return indexLookup.keepOrder && indexLookup.indexLookupConcurrency > 1 &&
+		!adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup) && !indexLookup.indexLookUpPushDown
+}
+
+func adaptiveLimitDirectIndexLookupEligible(indexLookup *IndexLookUpExecutor) bool {
+	return indexLookup.adaptiveLimitController == nil && indexLookup.PushedLimit == nil &&
+		adaptiveLimitIndexLookupEligible(indexLookup)
 }
 
 func adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup *IndexLookUpExecutor) bool {

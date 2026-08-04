@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -140,6 +141,10 @@ func TestNestedLoopApply(t *testing.T) {
 func TestAdaptiveLimitEligibility(t *testing.T) {
 	require.Equal(t, uint64(7), adaptiveLimitInitialWindow(7, 1024))
 	require.Equal(t, uint64(1024), adaptiveLimitInitialWindow(100001, 1024))
+	require.Equal(t, uint64(1), adaptiveLimitInitialLookupBatchSize(1, true, 32, 20000))
+	require.Equal(t, uint64(32), adaptiveLimitInitialLookupBatchSize(1, false, 32, 20000))
+	require.Equal(t, uint64(1000), adaptiveLimitInitialLookupBatchSize(1000, false, 32, 20000))
+	require.Equal(t, uint64(128), adaptiveLimitInitialLookupBatchSize(1000, false, 32, 128))
 
 	sctx := mock.NewContext()
 	indexJoin := &join.IndexLookUpJoin{
@@ -155,6 +160,34 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	require.Same(t, indexJoin, findAdaptiveLimitIndexJoin(indexJoin))
 	require.Same(t, indexJoin, findAdaptiveLimitIndexJoin(projection))
 	require.Nil(t, findAdaptiveLimitIndexJoin(selection))
+
+	directLookup := &IndexLookUpExecutor{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 5),
+		indexLookUpExecutorContext: indexLookUpExecutorContext{
+			indexLookupConcurrency: 2,
+		},
+		keepOrder: true,
+	}
+	directProjection := &ProjectionExec{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 6, directLookup),
+	}
+	directProjection = &ProjectionExec{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 7, directProjection),
+	}
+	require.Same(t, directLookup, findAdaptiveLimitIndexLookup(directProjection))
+	require.True(t, adaptiveLimitDirectIndexLookupEligible(directLookup))
+	directSelection := &SelectionExec{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 8, directLookup),
+	}
+	require.Nil(t, findAdaptiveLimitIndexLookup(directSelection))
+	directLookup.PushedLimit = &physicalop.PushedDownLimit{Count: 10}
+	require.False(t, adaptiveLimitDirectIndexLookupEligible(directLookup))
+	directLookup.PushedLimit = nil
+	directController := exec.NewAdaptiveLimitLookupController(100, 32, 128, 32, 128)
+	directLookup.adaptiveLimitController = directController
+	directLookup.reportAdaptiveLimitStats = true
+	require.Same(t, directController, directLookup.adaptiveLimitController)
+	require.True(t, directLookup.reportAdaptiveLimitStats)
 
 	controller := exec.NewAdaptiveLimitController(exec.AdaptiveLimitConfig{
 		DemandRows: 100, InitialOuterWindow: 32, MaxOuterWindow: 128,
@@ -303,6 +336,22 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	indexLookup.idxPlans = nil
 	indexLookup.indexLookUpPushDown = true
 	assertIneligible()
+}
+
+func TestIndexLookUpAdaptiveLimitRuntimeStats(t *testing.T) {
+	stats := &IndexLookUpRunTimeStats{
+		adaptiveLimitSnapshot: &exec.AdaptiveLimitSnapshot{
+			LookupHandles:           32,
+			LookupRows:              4,
+			LookupOutstandingAtStop: 8,
+			LookupAdmissionBlocked:  time.Second,
+		},
+	}
+	require.Contains(t, stats.String(), "adaptive:{lookup:32/4, outstanding:8, blocked:1s}")
+	clone := stats.Clone().(*IndexLookUpRunTimeStats)
+	require.Equal(t, stats.String(), clone.String())
+	stats.Merge(clone)
+	require.Equal(t, "adaptive:{lookup:32/4, outstanding:8, blocked:1s}", stats.String())
 }
 
 func TestMoveInfoSchemaToFront(t *testing.T) {

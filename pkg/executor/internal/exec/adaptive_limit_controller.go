@@ -22,6 +22,13 @@ import (
 
 const adaptiveYieldWindowSize = 4
 
+type adaptiveLimitMode uint8
+
+const (
+	adaptiveLimitIndexJoin adaptiveLimitMode = iota
+	adaptiveLimitDirectIndexLookup
+)
+
 // adaptiveYieldWindow keeps a small recent sample alongside the controller's
 // cumulative counters. The recent sample lets an ordered scan react when the
 // selectivity near its current position differs from earlier input.
@@ -54,7 +61,9 @@ func (w *adaptiveYieldWindow) totals() (input, output uint64) {
 // AdaptiveLimitSnapshot is a point-in-time view of an AdaptiveLimitController.
 // Outer fields are measured in outer rows. Lookup reservation, handle, window,
 // and batch fields are measured in handles; LookupRows is measured in table
-// rows. DemandRows and OutputRows are measured in final Join output rows.
+// rows. DemandRows and OutputRows are measured in final output rows. For an
+// IndexJoin, output rows are observed by the join; for a direct IndexLookUp,
+// they are observed when a lookup task is fully consumed.
 // AdmissionBlocked fields are wall-clock durations with overlapping waits in
 // the same stage counted once.
 type AdaptiveLimitSnapshot struct {
@@ -106,7 +115,9 @@ type AdaptiveLimitConfig struct {
 type AdaptiveLimitController struct {
 	mu sync.Mutex
 
-	// LIMIT demand and progress are measured in final Join output rows.
+	mode adaptiveLimitMode
+
+	// LIMIT demand and progress are measured in final output rows.
 	demandRows uint64
 	outputRows uint64
 	// Outer-stage counters are measured in outer rows.
@@ -160,6 +171,25 @@ type AdaptiveLimitController struct {
 
 // NewAdaptiveLimitController creates a statement-local admission controller.
 func NewAdaptiveLimitController(config AdaptiveLimitConfig) *AdaptiveLimitController {
+	return newAdaptiveLimitController(config, adaptiveLimitIndexJoin)
+}
+
+// NewAdaptiveLimitLookupController creates a controller for a direct ordered
+// IndexLookUp under LIMIT. Direct lookup has no Join outer stage, so only its
+// lookup handle budget is initialized.
+func NewAdaptiveLimitLookupController(
+	demandRows, initialLookupWindow, maxLookupWindow, initialLookupBatchSize, maxLookupBatchSize uint64,
+) *AdaptiveLimitController {
+	return newAdaptiveLimitController(AdaptiveLimitConfig{
+		DemandRows:             demandRows,
+		InitialLookupWindow:    initialLookupWindow,
+		MaxLookupWindow:        maxLookupWindow,
+		InitialLookupBatchSize: initialLookupBatchSize,
+		MaxLookupBatchSize:     maxLookupBatchSize,
+	}, adaptiveLimitDirectIndexLookup)
+}
+
+func newAdaptiveLimitController(config AdaptiveLimitConfig, mode adaptiveLimitMode) *AdaptiveLimitController {
 	demandRows := config.DemandRows
 	initialOuterWindow, maxOuterWindow := config.InitialOuterWindow, config.MaxOuterWindow
 	initialLookupWindow, maxLookupWindow := config.InitialLookupWindow, config.MaxLookupWindow
@@ -177,6 +207,7 @@ func NewAdaptiveLimitController(config AdaptiveLimitConfig) *AdaptiveLimitContro
 		initialLookupWindow = demandRows
 	}
 	c := &AdaptiveLimitController{
+		mode:                   mode,
 		demandRows:             demandRows,
 		initialOuterWindow:     initialOuterWindow,
 		maxOuterWindow:         maxOuterWindow,
@@ -190,6 +221,11 @@ func NewAdaptiveLimitController(config AdaptiveLimitConfig) *AdaptiveLimitContro
 		outerChanged:           make(chan struct{}, 1),
 		lookupChanged:          make(chan struct{}, 1),
 		stopCh:                 make(chan struct{}),
+	}
+	if mode == adaptiveLimitDirectIndexLookup {
+		c.initialOuterWindow = 0
+		c.maxOuterWindow = 0
+		c.outerWindow = 0
 	}
 	if demandRows == 0 {
 		c.stopLocked()
@@ -244,6 +280,9 @@ func (c *AdaptiveLimitController) Reset() {
 // pipeline. The bool is false after LIMIT completion; context cancellation is
 // returned as an error.
 func (c *AdaptiveLimitController) ReserveOuter(ctx context.Context, maxRows int) (int, bool, error) {
+	if c.mode == adaptiveLimitDirectIndexLookup {
+		return 0, false, nil
+	}
 	return c.reserve(ctx, maxRows, true)
 }
 
@@ -433,6 +472,14 @@ func (c *AdaptiveLimitController) CompleteLookup(reserved, handles, rows int) {
 	c.lookupReserved -= uint64(reserved)
 	c.lookupHandles = saturatingAdd(c.lookupHandles, uint64(handles))
 	c.lookupRows = saturatingAdd(c.lookupRows, uint64(rows))
+	if c.mode == adaptiveLimitDirectIndexLookup {
+		c.outputRows = saturatingAdd(c.outputRows, uint64(rows))
+		if c.outputRows >= c.demandRows {
+			c.stopLocked()
+			c.mu.Unlock()
+			return
+		}
+	}
 	if rows > 0 {
 		c.recentLookupYield.add(uint64(handles), uint64(rows))
 		c.lookupNoOutputRows = 0
@@ -543,6 +590,10 @@ func (c *AdaptiveLimitController) recomputeOuterWindowLocked() {
 }
 
 func (c *AdaptiveLimitController) recomputeLookupWindowLocked() {
+	if c.mode == adaptiveLimitDirectIndexLookup {
+		c.recomputeDirectLookupWindowLocked()
+		return
+	}
 	if c.lookupRows == 0 || c.lookupInNoOutputPhase {
 		return
 	}
@@ -564,6 +615,43 @@ func (c *AdaptiveLimitController) recomputeLookupWindowLocked() {
 	// Productive feedback adjusts the logical budget. Execution granularity is
 	// tracked separately by lookupBatchSize, so shrinking this window does not
 	// turn a small LIMIT into row-at-a-time table RPCs.
+	var grew bool
+	c.lookupWindow, grew = adjustAdaptiveWindow(
+		target, c.lookupWindow, c.initialLookupWindow, c.maxLookupWindow,
+		c.lookupHandles > c.lookupGrowthProgress,
+	)
+	if grew {
+		c.lookupGrowthProgress = c.lookupHandles
+	}
+}
+
+func (c *AdaptiveLimitController) recomputeDirectLookupWindowLocked() {
+	if c.lookupRows == 0 || c.lookupInNoOutputPhase {
+		return
+	}
+	remainingOutput := c.demandRows - min(c.demandRows, c.outputRows)
+	estimatedHandles := divideAndRoundUp(
+		saturatingMultiply(remainingOutput, c.lookupHandles),
+		c.lookupRows,
+	)
+	recentHandles, recentRows := c.recentLookupYield.totals()
+	if recentRows > 0 {
+		recentEstimate := divideAndRoundUp(
+			saturatingMultiply(remainingOutput, recentHandles),
+			recentRows,
+		)
+		estimatedHandles = max(estimatedHandles, recentEstimate)
+	}
+
+	var target uint64
+	switch {
+	case remainingOutput <= c.demandRows/4:
+		target = estimatedHandles
+	case remainingOutput <= c.demandRows/2:
+		target = divideAndRoundUp(saturatingMultiply(estimatedHandles, 9), 8)
+	default:
+		target = divideAndRoundUp(saturatingMultiply(estimatedHandles, 5), 4)
+	}
 	var grew bool
 	c.lookupWindow, grew = adjustAdaptiveWindow(
 		target, c.lookupWindow, c.initialLookupWindow, c.maxLookupWindow,
