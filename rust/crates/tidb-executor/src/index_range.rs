@@ -329,10 +329,26 @@ fn convert_points_in_place(points: &mut [Point], target: &FieldType) {
 
 /// Go `points2Ranges`: consecutive endpoint pairs become single-column
 /// ranges, dropping the empty ones.
-fn points_to_ranges(points: &[Point]) -> Vec<IndexRange> {
+///
+/// `column` is the FIRST index column, because that is the only one Go applies
+/// `skipNull` to: `points2Ranges` passes
+/// `skipNull = mysql.HasNotNullFlag(newTp.GetFlag())`
+/// (`pkg/util/ranger/ranger.go:129`) while `appendPoints2Ranges` passes
+/// `false` (`:295`). A `NOT NULL` column cannot hold the value an interval
+/// ending at NULL selects, so `convertPointsInPlace` drops that interval
+/// entirely (`:102-104`) and an `a IS NULL` over such a column becomes a
+/// `TableDual rows:0` rather than a scan of `[NULL,NULL]` that reads a range
+/// no row lives in.
+fn points_to_ranges(points: &[Point], column: &RangeColumn) -> Vec<IndexRange> {
+    let skip_null = column
+        .field_type
+        .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL);
     let mut ranges = Vec::with_capacity(points.len() / 2);
     for pair in points.chunks_exact(2) {
         let (low, high) = (&pair[0], &pair[1]);
+        if skip_null && high.value == Datum::Null {
+            continue;
+        }
         if !valid_interval(low, high) {
             continue;
         }
@@ -1159,7 +1175,7 @@ fn build_cnf_ranges<'a>(
     let mut column_count = 0;
     for (i, points) in eq_in_points.iter().enumerate() {
         ranges = if i == 0 {
-            points_to_ranges(points)
+            points_to_ranges(points, &index_columns[i])
         } else {
             append_points_to_ranges(&ranges, points)
         };
@@ -1167,7 +1183,7 @@ fn build_cnf_ranges<'a>(
     }
     if let Some(tail) = tail {
         ranges = if eq_in_count == 0 {
-            points_to_ranges(&tail)
+            points_to_ranges(&tail, &index_columns[eq_in_count])
         } else {
             append_points_to_ranges(&ranges, &tail)
         };
@@ -1338,7 +1354,7 @@ pub(crate) fn detach_conds_for_column<'a>(
     let mut ranges = Vec::new();
     if access_count > 0 {
         convert_points_in_place(&mut points, &column.field_type);
-        ranges = points_to_ranges(&points);
+        ranges = points_to_ranges(&points, column);
         if column.prefix_len != UNSPECIFIED_LENGTH {
             ranges = union_ranges(ranges, true);
         }

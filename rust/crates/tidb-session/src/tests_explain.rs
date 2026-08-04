@@ -1337,3 +1337,57 @@ fn a_like_underscore_excludes_its_low_bound_only_on_a_non_pad_collation() {
         [["abcd"]]
     );
 }
+
+/// `a IS NULL` over a `NOT NULL` INDEX column plans a `TableDual`, the index
+/// sibling of the integer-handle case above.
+///
+/// Go `points2Ranges` (`pkg/util/ranger/ranger.go:129`) passes
+/// `skipNull = mysql.HasNotNullFlag(newTp.GetFlag())` into
+/// `convertPointsInPlace`, which then drops any interval ending at NULL. Only
+/// the FIRST index column gets this: `appendPoints2Ranges` (`:295`) passes
+/// `false`, because a NULL there is a real key byte inside a wider range.
+///
+/// This tier's `points_to_ranges` had no nullability input at all, so
+/// `a IS NULL` on a `NOT NULL` key scanned `[NULL,NULL]` -- a range no row can
+/// live in, read anyway. Captured:
+///
+/// ```text
+/// create table nn(id int primary key, a int not null, key(a));
+/// explain select * from nn use index(a) where a is null
+///   TableDual_6 | 0.00 | root | | rows:0
+/// ```
+#[test]
+fn an_is_null_on_a_not_null_index_column_is_a_table_dual() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE nn (id INT PRIMARY KEY, a INT NOT NULL, KEY(a))")
+        .unwrap();
+    session
+        .run("CREATE TABLE nu (id INT PRIMARY KEY, a INT, KEY(a))")
+        .unwrap();
+    session.run("INSERT INTO nn VALUES (1,10)").unwrap();
+    session
+        .run("INSERT INTO nu VALUES (1,10),(2,NULL)")
+        .unwrap();
+
+    let rows = row_text(
+        session.run("EXPLAIN FORMAT = 'brief' SELECT * FROM nn USE INDEX(a) WHERE a IS NULL"),
+    );
+    let leaf = rows.last().expect("a plan has at least one row");
+    assert!(leaf[0].ends_with("TableDual"), "{leaf:?}");
+    assert_eq!(leaf[4], "rows:0");
+    assert!(row_text(session.run("SELECT * FROM nn USE INDEX(a) WHERE a IS NULL")).is_empty());
+
+    // The control: a NULLABLE key keeps its `[NULL,NULL]` range and its row,
+    // because there the interval really can hold one.
+    let rows = row_text(
+        session.run("EXPLAIN FORMAT = 'brief' SELECT * FROM nu USE INDEX(a) WHERE a IS NULL"),
+    );
+    let leaf = rows.last().expect("a plan has at least one row");
+    assert!(leaf[0].ends_with("IndexRangeScan"), "{leaf:?}");
+    assert!(leaf[4].starts_with("range:[NULL,NULL]"), "{leaf:?}");
+    assert_eq!(
+        row_text(session.run("SELECT id FROM nu USE INDEX(a) WHERE a IS NULL")),
+        [["2"]]
+    );
+}
