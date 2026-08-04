@@ -505,8 +505,8 @@ func compareTaskCostWith(curTask, bestTask base.Task, getCost taskCostGetter) (c
 	return curCost < bestCost, nil
 }
 
-// compareDataSourceTaskCost compares local DataSource candidates. An unfinished
-// double-read candidate is costed as the IndexLookUpReader it will become.
+// compareDataSourceTaskCost compares local DataSource candidates. Double-read
+// candidates are costed as the IndexLookUpReader they will become.
 func compareDataSourceTaskCost(curTask, bestTask base.Task, costCache map[base.Task]taskCostResult) (curIsBetter bool, err error) {
 	return compareTaskCostWith(curTask, bestTask, func(t base.Task) (float64, bool, error) {
 		if result, ok := costCache[t]; ok {
@@ -521,8 +521,8 @@ func compareDataSourceTaskCost(curTask, bestTask base.Task, costCache map[base.T
 func getDataSourceTaskPlanCost(t base.Task) (float64, bool, error) {
 	if !t.Invalid() {
 		if cop, ok := t.(*physicalop.CopTask); ok &&
-			cop.IndexPlan != nil && cop.TablePlan != nil && !cop.IndexPlanFinished {
-			cost, err := getUnfinishedIndexLookUpCost(cop)
+			cop.IndexPlan != nil && cop.TablePlan != nil {
+			cost, err := getIndexLookUpReaderEquivalentCost(cop)
 			return cost, false, err
 		}
 	}
@@ -614,9 +614,9 @@ func getTaskPlanCost(t base.Task) (float64, bool, error) {
 	return cost + indexPartialCost, false, err
 }
 
-// getUnfinishedIndexLookUpCost estimates an unfinished double-read CopTask as an
+// getIndexLookUpReaderEquivalentCost estimates a double-read CopTask as an
 // IndexLookUpReader without changing the candidate task or its plan trees.
-func getUnfinishedIndexLookUpCost(cop *physicalop.CopTask) (float64, error) {
+func getIndexLookUpReaderEquivalentCost(cop *physicalop.CopTask) (float64, error) {
 	ctx := cop.IndexPlan.SCtx()
 	indexPlan, err := cop.IndexPlan.Clone(ctx)
 	if err != nil {
@@ -627,14 +627,16 @@ func getUnfinishedIndexLookUpCost(cop *physicalop.CopTask) (float64, error) {
 		return 0, err
 	}
 
-	// FinishIndexPlan makes the table side consume the rows produced by the index
-	// side while retaining its statistics version. Apply those semantics with an
-	// isolated StatsInfo value on the table clone.
-	tableStats := *indexPlan.StatsInfo()
-	if originalStats := tablePlan.StatsInfo(); originalStats != nil {
-		tableStats.StatsVersion = originalStats.StatsVersion
+	if !cop.IndexPlanFinished {
+		// FinishIndexPlan makes the table side consume the rows produced by the index
+		// side while retaining its statistics version. Apply those semantics with an
+		// isolated StatsInfo value on the table clone.
+		tableStats := *indexPlan.StatsInfo()
+		if originalStats := tablePlan.StatsInfo(); originalStats != nil {
+			tableStats.StatsVersion = originalStats.StatsVersion
+		}
+		tablePlan.SetStats(&tableStats)
 	}
-	tablePlan.SetStats(&tableStats)
 	input := indexLookUpCostInput{
 		ctx:         ctx,
 		indexPlan:   indexPlan,
