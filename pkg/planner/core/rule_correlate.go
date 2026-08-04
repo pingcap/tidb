@@ -256,7 +256,7 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 //
 // Returns (nil, false) when the shape does not match, in which case the caller
 // leaves the join untouched.
-func (s *CorrelateSolver) correlateMinMaxAgg(join *logicalop.LogicalJoin) (base.LogicalPlan, bool) {
+func (*CorrelateSolver) correlateMinMaxAgg(join *logicalop.LogicalJoin) (base.LogicalPlan, bool) {
 	// RightConditions filter aggregated output (HAVING-style) and have no meaning
 	// below the aggregation, so they cannot be carried into the correlated form.
 	if len(join.RightConditions) > 0 {
