@@ -179,3 +179,20 @@ value round-trips against its own reader perfectly and still hands a Go reader
 Consumed by `tidb-executor/tests/index_entry_go_bytes.rs` (the `KvTable` write
 path) and `tidb-exec/tests/system_index_entry_go_bytes.rs` (the `mysql.*`
 writer, over the real captured bootstrap `TableInfo`s).
+
+## Prefix-index truncation fixture
+
+`index_prefix_truncation.tsv` is `tablecodec.TruncateIndexValue`'s own output
+-- datum KIND and remaining bytes -- over 469 rows of valid and invalid UTF-8
+against both of Go's arms (byte counting for `binary`/`ascii`, Go-rune
+counting for everything else).
+
+```bash
+GOFLAGS=-p=12 go run ./rust/difftests/transaction-tests/fixtures/generate_index_prefix_truncation.go
+```
+
+It exists because Go counts ONE replacement rune per invalid BYTE
+(`utf8.RuneCount` / `bytes.Runes`) while Rust's `String::from_utf8_lossy`
+counts one per maximal invalid SUBSEQUENCE. That is a different prefix INDEX
+KEY, so an index lookup can miss a row that exists -- silently. 49 of the 469
+rows disagreed when the fixture was first pointed at this crate.

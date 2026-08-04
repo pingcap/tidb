@@ -616,7 +616,51 @@ pub fn index_kv_is_unique(value: &[u8]) -> bool {
     })
 }
 
-/// Truncates one indexed value according to its index prefix length.
+/// Decodes one rune the way Go's `utf8.DecodeRune` does: a valid sequence
+/// yields its rune and width, and ANY invalid byte -- a truncated multi-byte
+/// head, a stray continuation byte, an overlong form, or a surrogate half --
+/// yields `U+FFFD` and a width of exactly ONE byte. Rust's own
+/// `String::from_utf8_lossy` instead collapses a maximal invalid SUBSEQUENCE
+/// into a single `U+FFFD`, so `F0 9F` is one replacement to Rust and two to
+/// Go. That difference is what [`truncate_index_value`] cannot afford: the
+/// prefix-index key written for a row must be the key an index lookup later
+/// rebuilds, and Go writes both.
+///
+/// `str::from_utf8` accepts exactly the sequences Go's decoder accepts
+/// (surrogates and overlong forms are errors in both), so trying the widths
+/// in order and keeping the first whose single rune spans the whole slice
+/// reproduces `DecodeRune` without a hand-rolled UTF-8 table.
+fn go_decode_rune(bytes: &[u8]) -> (char, usize) {
+    for width in 1..=bytes.len().min(4) {
+        if let Ok(text) = std::str::from_utf8(&bytes[..width]) {
+            if let Some(rune) = text.chars().next() {
+                if rune.len_utf8() == width {
+                    return (rune, width);
+                }
+            }
+        }
+    }
+    (char::REPLACEMENT_CHARACTER, 1)
+}
+
+/// Source `tablecodec.TruncateIndexValue`.
+///
+/// Go's shape is preserved arm for arm because each arm decides a different
+/// part of the produced INDEX KEY:
+///
+/// - a non-string, non-bytes datum is left alone (Go tests `v.Kind()`, so a
+///   `Raw` datum -- which `Datum::as_raw_bytes` also answers for -- is NOT a
+///   truncation candidate);
+/// - `binary`/`ascii` count the prefix in BYTES and keep the datum's kind;
+/// - every other charset counts in Go RUNES and always re-lands the value as
+///   a STRING carrying the table column's collation, even when the datum
+///   arrived as `Bytes` (Go's `v.SetString`), because the collation is what
+///   the key encoder then sorts by.
+///
+/// Verified against `tablecodec.TruncateIndexValue` itself over a byte-level
+/// case table (`truncate_index_value_go_vectors`); notably `F0 9F` at prefix
+/// length 1 is `EF BF BD` in Go, not the untouched `F0 9F` a
+/// `from_utf8_lossy` rune count produces.
 pub fn truncate_index_value(
     value: &mut Datum,
     index_column: &IndexColumn,
@@ -625,30 +669,40 @@ pub fn truncate_index_value(
     if index_column.length == UNSPECIFIED_LENGTH {
         return Ok(());
     }
-    let Some(bytes) = value.as_raw_bytes() else {
+    let was_bytes = match value {
+        Datum::Bytes(_) => true,
+        Datum::String(_) => false,
+        _ => return Ok(()),
+    };
+    let Some(bytes) = value.as_raw_bytes().map(<[u8]>::to_vec) else {
         return Ok(());
     };
     let length = usize::try_from(index_column.length)
         .map_err(|_| TableIndexError::Metadata("negative index prefix length"))?;
-    let truncated = match table_column.field_type.collation().charset() {
-        Charset::Binary | Charset::Ascii => bytes.get(..length.min(bytes.len())).unwrap().to_vec(),
-        _ => {
-            let text = String::from_utf8_lossy(bytes);
-            if text.chars().count() <= length {
-                bytes.to_vec()
-            } else {
-                text.chars().take(length).collect::<String>().into_bytes()
+    let collation = table_column.field_type.collation();
+    match table_column.field_type.charset() {
+        Charset::Binary | Charset::Ascii => {
+            if bytes.len() > length {
+                let truncated = bytes[..length].to_vec();
+                *value = if was_bytes {
+                    Datum::new_bytes(truncated)
+                } else {
+                    Datum::new_collation_string(truncated, collation)
+                };
             }
         }
-    };
-    if truncated.as_slice() != bytes {
-        match value {
-            Datum::Bytes(_) => *value = Datum::new_bytes(truncated),
-            Datum::String(_) => {
-                *value =
-                    Datum::new_collation_string(truncated, table_column.field_type.collation());
+        _ => {
+            let mut runes = Vec::new();
+            let mut rest = bytes.as_slice();
+            while !rest.is_empty() {
+                let (rune, width) = go_decode_rune(rest);
+                runes.push(rune);
+                rest = &rest[width..];
             }
-            _ => {}
+            if runes.len() > length {
+                let truncated: String = runes[..length].iter().collect();
+                *value = Datum::new_collation_string(truncated.into_bytes(), collation);
+            }
         }
     }
     Ok(())

@@ -780,17 +780,18 @@ fn truncate_index_values_preserve_byte_and_character_domains() {
     truncate_index_value(&mut utf8, &index_column, &utf8_column).unwrap();
     assert_eq!(utf8.as_raw_bytes().unwrap(), "你好".as_bytes());
 
+    // Go's own answer for these four bytes at prefix length 2, from
+    // `generate_index_prefix_truncation.go`: one replacement rune for the
+    // lone `0xf0`, then `(`. Asserting the bytes a `from_utf8_lossy` count
+    // would produce instead would be asserting this crate against itself, and
+    // that count is the one Go disagrees with elsewhere in the fixture.
     let invalid_utf8 = vec![0xf0, 0x28, 0x8c, 0x28];
     let mut invalid = Datum::new_bytes(invalid_utf8.clone());
     truncate_index_value(&mut invalid, &index_column, &utf8_column).unwrap();
-    assert_eq!(
-        invalid.as_raw_bytes().unwrap(),
-        String::from_utf8_lossy(&invalid_utf8)
-            .chars()
-            .take(2)
-            .collect::<String>()
-            .as_bytes()
-    );
+    assert_eq!(invalid.as_raw_bytes().unwrap(), &[0xef, 0xbf, 0xbd, 0x28]);
+    // Go's rune branch always re-lands the value as a STRING, even when the
+    // datum arrived as bytes, because the collation is what sorts the key.
+    assert!(matches!(invalid, Datum::String(_)));
     let no_truncation = IndexColumn {
         length: 8,
         ..index_column

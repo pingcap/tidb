@@ -1,0 +1,469 @@
+string/ascii_abcdef/utf8mb4/0	String	
+bytes/ascii_abcdef/utf8mb4/0	String	
+string/ascii_abcdef/utf8mb4/1	String	61
+bytes/ascii_abcdef/utf8mb4/1	String	61
+string/ascii_abcdef/utf8mb4/2	String	6162
+bytes/ascii_abcdef/utf8mb4/2	String	6162
+string/ascii_abcdef/utf8mb4/3	String	616263
+bytes/ascii_abcdef/utf8mb4/3	String	616263
+string/ascii_abcdef/utf8mb4/4	String	61626364
+bytes/ascii_abcdef/utf8mb4/4	String	61626364
+string/ascii_abcdef/utf8mb4/8	String	616263646566
+bytes/ascii_abcdef/utf8mb4/8	Bytes	616263646566
+string/ascii_abcdef/bin/0	String	
+bytes/ascii_abcdef/bin/0	Bytes	
+string/ascii_abcdef/bin/1	String	61
+bytes/ascii_abcdef/bin/1	Bytes	61
+string/ascii_abcdef/bin/2	String	6162
+bytes/ascii_abcdef/bin/2	Bytes	6162
+string/ascii_abcdef/bin/3	String	616263
+bytes/ascii_abcdef/bin/3	Bytes	616263
+string/ascii_abcdef/bin/4	String	61626364
+bytes/ascii_abcdef/bin/4	Bytes	61626364
+string/ascii_abcdef/bin/8	String	616263646566
+bytes/ascii_abcdef/bin/8	Bytes	616263646566
+string/ascii_abcdef/ascii/0	String	
+bytes/ascii_abcdef/ascii/0	Bytes	
+string/ascii_abcdef/ascii/1	String	61
+bytes/ascii_abcdef/ascii/1	Bytes	61
+string/ascii_abcdef/ascii/2	String	6162
+bytes/ascii_abcdef/ascii/2	Bytes	6162
+string/ascii_abcdef/ascii/3	String	616263
+bytes/ascii_abcdef/ascii/3	Bytes	616263
+string/ascii_abcdef/ascii/4	String	61626364
+bytes/ascii_abcdef/ascii/4	Bytes	61626364
+string/ascii_abcdef/ascii/8	String	616263646566
+bytes/ascii_abcdef/ascii/8	Bytes	616263646566
+string/utf8_3char/utf8mb4/0	String	
+bytes/utf8_3char/utf8mb4/0	String	
+string/utf8_3char/utf8mb4/1	String	e4b8ad
+bytes/utf8_3char/utf8mb4/1	String	e4b8ad
+string/utf8_3char/utf8mb4/2	String	e4b8ade69687
+bytes/utf8_3char/utf8mb4/2	String	e4b8ade69687
+string/utf8_3char/utf8mb4/3	String	e4b8ade69687e5ad97
+bytes/utf8_3char/utf8mb4/3	Bytes	e4b8ade69687e5ad97
+string/utf8_3char/utf8mb4/4	String	e4b8ade69687e5ad97
+bytes/utf8_3char/utf8mb4/4	Bytes	e4b8ade69687e5ad97
+string/utf8_3char/utf8mb4/8	String	e4b8ade69687e5ad97
+bytes/utf8_3char/utf8mb4/8	Bytes	e4b8ade69687e5ad97
+string/utf8_3char/bin/0	String	
+bytes/utf8_3char/bin/0	Bytes	
+string/utf8_3char/bin/1	String	e4
+bytes/utf8_3char/bin/1	Bytes	e4
+string/utf8_3char/bin/2	String	e4b8
+bytes/utf8_3char/bin/2	Bytes	e4b8
+string/utf8_3char/bin/3	String	e4b8ad
+bytes/utf8_3char/bin/3	Bytes	e4b8ad
+string/utf8_3char/bin/4	String	e4b8ade6
+bytes/utf8_3char/bin/4	Bytes	e4b8ade6
+string/utf8_3char/bin/8	String	e4b8ade69687e5ad
+bytes/utf8_3char/bin/8	Bytes	e4b8ade69687e5ad
+string/utf8_3char/ascii/0	String	
+bytes/utf8_3char/ascii/0	Bytes	
+string/utf8_3char/ascii/1	String	e4
+bytes/utf8_3char/ascii/1	Bytes	e4
+string/utf8_3char/ascii/2	String	e4b8
+bytes/utf8_3char/ascii/2	Bytes	e4b8
+string/utf8_3char/ascii/3	String	e4b8ad
+bytes/utf8_3char/ascii/3	Bytes	e4b8ad
+string/utf8_3char/ascii/4	String	e4b8ade6
+bytes/utf8_3char/ascii/4	Bytes	e4b8ade6
+string/utf8_3char/ascii/8	String	e4b8ade69687e5ad
+bytes/utf8_3char/ascii/8	Bytes	e4b8ade69687e5ad
+string/trunc_emoji_head/utf8mb4/0	String	
+bytes/trunc_emoji_head/utf8mb4/0	String	
+string/trunc_emoji_head/utf8mb4/1	String	efbfbd
+bytes/trunc_emoji_head/utf8mb4/1	String	efbfbd
+string/trunc_emoji_head/utf8mb4/2	String	f09f
+bytes/trunc_emoji_head/utf8mb4/2	Bytes	f09f
+string/trunc_emoji_head/utf8mb4/3	String	f09f
+bytes/trunc_emoji_head/utf8mb4/3	Bytes	f09f
+string/trunc_emoji_head/utf8mb4/4	String	f09f
+bytes/trunc_emoji_head/utf8mb4/4	Bytes	f09f
+string/trunc_emoji_head/utf8mb4/8	String	f09f
+bytes/trunc_emoji_head/utf8mb4/8	Bytes	f09f
+string/trunc_emoji_head/bin/0	String	
+bytes/trunc_emoji_head/bin/0	Bytes	
+string/trunc_emoji_head/bin/1	String	f0
+bytes/trunc_emoji_head/bin/1	Bytes	f0
+string/trunc_emoji_head/bin/2	String	f09f
+bytes/trunc_emoji_head/bin/2	Bytes	f09f
+string/trunc_emoji_head/bin/3	String	f09f
+bytes/trunc_emoji_head/bin/3	Bytes	f09f
+string/trunc_emoji_head/bin/4	String	f09f
+bytes/trunc_emoji_head/bin/4	Bytes	f09f
+string/trunc_emoji_head/bin/8	String	f09f
+bytes/trunc_emoji_head/bin/8	Bytes	f09f
+string/trunc_emoji_head/ascii/0	String	
+bytes/trunc_emoji_head/ascii/0	Bytes	
+string/trunc_emoji_head/ascii/1	String	f0
+bytes/trunc_emoji_head/ascii/1	Bytes	f0
+string/trunc_emoji_head/ascii/2	String	f09f
+bytes/trunc_emoji_head/ascii/2	Bytes	f09f
+string/trunc_emoji_head/ascii/3	String	f09f
+bytes/trunc_emoji_head/ascii/3	Bytes	f09f
+string/trunc_emoji_head/ascii/4	String	f09f
+bytes/trunc_emoji_head/ascii/4	Bytes	f09f
+string/trunc_emoji_head/ascii/8	String	f09f
+bytes/trunc_emoji_head/ascii/8	Bytes	f09f
+string/trunc_emoji_pad/utf8mb4/0	String	
+bytes/trunc_emoji_pad/utf8mb4/0	String	
+string/trunc_emoji_pad/utf8mb4/1	String	efbfbd
+bytes/trunc_emoji_pad/utf8mb4/1	String	efbfbd
+string/trunc_emoji_pad/utf8mb4/2	String	efbfbdefbfbd
+bytes/trunc_emoji_pad/utf8mb4/2	String	efbfbdefbfbd
+string/trunc_emoji_pad/utf8mb4/3	String	efbfbdefbfbdefbfbd
+bytes/trunc_emoji_pad/utf8mb4/3	String	efbfbdefbfbdefbfbd
+string/trunc_emoji_pad/utf8mb4/4	String	efbfbdefbfbdefbfbd61
+bytes/trunc_emoji_pad/utf8mb4/4	String	efbfbdefbfbdefbfbd61
+string/trunc_emoji_pad/utf8mb4/8	String	f09f926162
+bytes/trunc_emoji_pad/utf8mb4/8	Bytes	f09f926162
+string/trunc_emoji_pad/bin/0	String	
+bytes/trunc_emoji_pad/bin/0	Bytes	
+string/trunc_emoji_pad/bin/1	String	f0
+bytes/trunc_emoji_pad/bin/1	Bytes	f0
+string/trunc_emoji_pad/bin/2	String	f09f
+bytes/trunc_emoji_pad/bin/2	Bytes	f09f
+string/trunc_emoji_pad/bin/3	String	f09f92
+bytes/trunc_emoji_pad/bin/3	Bytes	f09f92
+string/trunc_emoji_pad/bin/4	String	f09f9261
+bytes/trunc_emoji_pad/bin/4	Bytes	f09f9261
+string/trunc_emoji_pad/bin/8	String	f09f926162
+bytes/trunc_emoji_pad/bin/8	Bytes	f09f926162
+string/trunc_emoji_pad/ascii/0	String	
+bytes/trunc_emoji_pad/ascii/0	Bytes	
+string/trunc_emoji_pad/ascii/1	String	f0
+bytes/trunc_emoji_pad/ascii/1	Bytes	f0
+string/trunc_emoji_pad/ascii/2	String	f09f
+bytes/trunc_emoji_pad/ascii/2	Bytes	f09f
+string/trunc_emoji_pad/ascii/3	String	f09f92
+bytes/trunc_emoji_pad/ascii/3	Bytes	f09f92
+string/trunc_emoji_pad/ascii/4	String	f09f9261
+bytes/trunc_emoji_pad/ascii/4	Bytes	f09f9261
+string/trunc_emoji_pad/ascii/8	String	f09f926162
+bytes/trunc_emoji_pad/ascii/8	Bytes	f09f926162
+string/ff_run/utf8mb4/0	String	
+bytes/ff_run/utf8mb4/0	String	
+string/ff_run/utf8mb4/1	String	efbfbd
+bytes/ff_run/utf8mb4/1	String	efbfbd
+string/ff_run/utf8mb4/2	String	efbfbdefbfbd
+bytes/ff_run/utf8mb4/2	String	efbfbdefbfbd
+string/ff_run/utf8mb4/3	String	efbfbdefbfbdefbfbd
+bytes/ff_run/utf8mb4/3	String	efbfbdefbfbdefbfbd
+string/ff_run/utf8mb4/4	String	ffffffff
+bytes/ff_run/utf8mb4/4	Bytes	ffffffff
+string/ff_run/utf8mb4/8	String	ffffffff
+bytes/ff_run/utf8mb4/8	Bytes	ffffffff
+string/ff_run/bin/0	String	
+bytes/ff_run/bin/0	Bytes	
+string/ff_run/bin/1	String	ff
+bytes/ff_run/bin/1	Bytes	ff
+string/ff_run/bin/2	String	ffff
+bytes/ff_run/bin/2	Bytes	ffff
+string/ff_run/bin/3	String	ffffff
+bytes/ff_run/bin/3	Bytes	ffffff
+string/ff_run/bin/4	String	ffffffff
+bytes/ff_run/bin/4	Bytes	ffffffff
+string/ff_run/bin/8	String	ffffffff
+bytes/ff_run/bin/8	Bytes	ffffffff
+string/ff_run/ascii/0	String	
+bytes/ff_run/ascii/0	Bytes	
+string/ff_run/ascii/1	String	ff
+bytes/ff_run/ascii/1	Bytes	ff
+string/ff_run/ascii/2	String	ffff
+bytes/ff_run/ascii/2	Bytes	ffff
+string/ff_run/ascii/3	String	ffffff
+bytes/ff_run/ascii/3	Bytes	ffffff
+string/ff_run/ascii/4	String	ffffffff
+bytes/ff_run/ascii/4	Bytes	ffffffff
+string/ff_run/ascii/8	String	ffffffff
+bytes/ff_run/ascii/8	Bytes	ffffffff
+string/mixed/utf8mb4/0	String	
+bytes/mixed/utf8mb4/0	String	
+string/mixed/utf8mb4/1	String	61
+bytes/mixed/utf8mb4/1	String	61
+string/mixed/utf8mb4/2	String	61efbfbd
+bytes/mixed/utf8mb4/2	String	61efbfbd
+string/mixed/utf8mb4/3	String	61efbfbd28
+bytes/mixed/utf8mb4/3	String	61efbfbd28
+string/mixed/utf8mb4/4	String	61efbfbd2862
+bytes/mixed/utf8mb4/4	String	61efbfbd2862
+string/mixed/utf8mb4/8	String	61c32862e28263
+bytes/mixed/utf8mb4/8	Bytes	61c32862e28263
+string/mixed/bin/0	String	
+bytes/mixed/bin/0	Bytes	
+string/mixed/bin/1	String	61
+bytes/mixed/bin/1	Bytes	61
+string/mixed/bin/2	String	61c3
+bytes/mixed/bin/2	Bytes	61c3
+string/mixed/bin/3	String	61c328
+bytes/mixed/bin/3	Bytes	61c328
+string/mixed/bin/4	String	61c32862
+bytes/mixed/bin/4	Bytes	61c32862
+string/mixed/bin/8	String	61c32862e28263
+bytes/mixed/bin/8	Bytes	61c32862e28263
+string/mixed/ascii/0	String	
+bytes/mixed/ascii/0	Bytes	
+string/mixed/ascii/1	String	61
+bytes/mixed/ascii/1	Bytes	61
+string/mixed/ascii/2	String	61c3
+bytes/mixed/ascii/2	Bytes	61c3
+string/mixed/ascii/3	String	61c328
+bytes/mixed/ascii/3	Bytes	61c328
+string/mixed/ascii/4	String	61c32862
+bytes/mixed/ascii/4	Bytes	61c32862
+string/mixed/ascii/8	String	61c32862e28263
+bytes/mixed/ascii/8	Bytes	61c32862e28263
+string/overlong/utf8mb4/0	String	
+bytes/overlong/utf8mb4/0	String	
+string/overlong/utf8mb4/1	String	efbfbd
+bytes/overlong/utf8mb4/1	String	efbfbd
+string/overlong/utf8mb4/2	String	efbfbdefbfbd
+bytes/overlong/utf8mb4/2	String	efbfbdefbfbd
+string/overlong/utf8mb4/3	String	efbfbdefbfbdefbfbd
+bytes/overlong/utf8mb4/3	String	efbfbdefbfbdefbfbd
+string/overlong/utf8mb4/4	String	c0afc0af
+bytes/overlong/utf8mb4/4	Bytes	c0afc0af
+string/overlong/utf8mb4/8	String	c0afc0af
+bytes/overlong/utf8mb4/8	Bytes	c0afc0af
+string/overlong/bin/0	String	
+bytes/overlong/bin/0	Bytes	
+string/overlong/bin/1	String	c0
+bytes/overlong/bin/1	Bytes	c0
+string/overlong/bin/2	String	c0af
+bytes/overlong/bin/2	Bytes	c0af
+string/overlong/bin/3	String	c0afc0
+bytes/overlong/bin/3	Bytes	c0afc0
+string/overlong/bin/4	String	c0afc0af
+bytes/overlong/bin/4	Bytes	c0afc0af
+string/overlong/bin/8	String	c0afc0af
+bytes/overlong/bin/8	Bytes	c0afc0af
+string/overlong/ascii/0	String	
+bytes/overlong/ascii/0	Bytes	
+string/overlong/ascii/1	String	c0
+bytes/overlong/ascii/1	Bytes	c0
+string/overlong/ascii/2	String	c0af
+bytes/overlong/ascii/2	Bytes	c0af
+string/overlong/ascii/3	String	c0afc0
+bytes/overlong/ascii/3	Bytes	c0afc0
+string/overlong/ascii/4	String	c0afc0af
+bytes/overlong/ascii/4	Bytes	c0afc0af
+string/overlong/ascii/8	String	c0afc0af
+bytes/overlong/ascii/8	Bytes	c0afc0af
+string/surrogate/utf8mb4/0	String	
+bytes/surrogate/utf8mb4/0	String	
+string/surrogate/utf8mb4/1	String	efbfbd
+bytes/surrogate/utf8mb4/1	String	efbfbd
+string/surrogate/utf8mb4/2	String	efbfbdefbfbd
+bytes/surrogate/utf8mb4/2	String	efbfbdefbfbd
+string/surrogate/utf8mb4/3	String	efbfbdefbfbdefbfbd
+bytes/surrogate/utf8mb4/3	String	efbfbdefbfbdefbfbd
+string/surrogate/utf8mb4/4	String	eda08078
+bytes/surrogate/utf8mb4/4	Bytes	eda08078
+string/surrogate/utf8mb4/8	String	eda08078
+bytes/surrogate/utf8mb4/8	Bytes	eda08078
+string/surrogate/bin/0	String	
+bytes/surrogate/bin/0	Bytes	
+string/surrogate/bin/1	String	ed
+bytes/surrogate/bin/1	Bytes	ed
+string/surrogate/bin/2	String	eda0
+bytes/surrogate/bin/2	Bytes	eda0
+string/surrogate/bin/3	String	eda080
+bytes/surrogate/bin/3	Bytes	eda080
+string/surrogate/bin/4	String	eda08078
+bytes/surrogate/bin/4	Bytes	eda08078
+string/surrogate/bin/8	String	eda08078
+bytes/surrogate/bin/8	Bytes	eda08078
+string/surrogate/ascii/0	String	
+bytes/surrogate/ascii/0	Bytes	
+string/surrogate/ascii/1	String	ed
+bytes/surrogate/ascii/1	Bytes	ed
+string/surrogate/ascii/2	String	eda0
+bytes/surrogate/ascii/2	Bytes	eda0
+string/surrogate/ascii/3	String	eda080
+bytes/surrogate/ascii/3	Bytes	eda080
+string/surrogate/ascii/4	String	eda08078
+bytes/surrogate/ascii/4	Bytes	eda08078
+string/surrogate/ascii/8	String	eda08078
+bytes/surrogate/ascii/8	Bytes	eda08078
+string/emoji_pair/utf8mb4/0	String	
+bytes/emoji_pair/utf8mb4/0	String	
+string/emoji_pair/utf8mb4/1	String	f09f9880
+bytes/emoji_pair/utf8mb4/1	String	f09f9880
+string/emoji_pair/utf8mb4/2	String	f09f9880f09f9881
+bytes/emoji_pair/utf8mb4/2	Bytes	f09f9880f09f9881
+string/emoji_pair/utf8mb4/3	String	f09f9880f09f9881
+bytes/emoji_pair/utf8mb4/3	Bytes	f09f9880f09f9881
+string/emoji_pair/utf8mb4/4	String	f09f9880f09f9881
+bytes/emoji_pair/utf8mb4/4	Bytes	f09f9880f09f9881
+string/emoji_pair/utf8mb4/8	String	f09f9880f09f9881
+bytes/emoji_pair/utf8mb4/8	Bytes	f09f9880f09f9881
+string/emoji_pair/bin/0	String	
+bytes/emoji_pair/bin/0	Bytes	
+string/emoji_pair/bin/1	String	f0
+bytes/emoji_pair/bin/1	Bytes	f0
+string/emoji_pair/bin/2	String	f09f
+bytes/emoji_pair/bin/2	Bytes	f09f
+string/emoji_pair/bin/3	String	f09f98
+bytes/emoji_pair/bin/3	Bytes	f09f98
+string/emoji_pair/bin/4	String	f09f9880
+bytes/emoji_pair/bin/4	Bytes	f09f9880
+string/emoji_pair/bin/8	String	f09f9880f09f9881
+bytes/emoji_pair/bin/8	Bytes	f09f9880f09f9881
+string/emoji_pair/ascii/0	String	
+bytes/emoji_pair/ascii/0	Bytes	
+string/emoji_pair/ascii/1	String	f0
+bytes/emoji_pair/ascii/1	Bytes	f0
+string/emoji_pair/ascii/2	String	f09f
+bytes/emoji_pair/ascii/2	Bytes	f09f
+string/emoji_pair/ascii/3	String	f09f98
+bytes/emoji_pair/ascii/3	Bytes	f09f98
+string/emoji_pair/ascii/4	String	f09f9880
+bytes/emoji_pair/ascii/4	Bytes	f09f9880
+string/emoji_pair/ascii/8	String	f09f9880f09f9881
+bytes/emoji_pair/ascii/8	Bytes	f09f9880f09f9881
+string/empty/utf8mb4/0	String	
+bytes/empty/utf8mb4/0	Bytes	
+string/empty/utf8mb4/1	String	
+bytes/empty/utf8mb4/1	Bytes	
+string/empty/utf8mb4/2	String	
+bytes/empty/utf8mb4/2	Bytes	
+string/empty/utf8mb4/3	String	
+bytes/empty/utf8mb4/3	Bytes	
+string/empty/utf8mb4/4	String	
+bytes/empty/utf8mb4/4	Bytes	
+string/empty/utf8mb4/8	String	
+bytes/empty/utf8mb4/8	Bytes	
+string/empty/bin/0	String	
+bytes/empty/bin/0	Bytes	
+string/empty/bin/1	String	
+bytes/empty/bin/1	Bytes	
+string/empty/bin/2	String	
+bytes/empty/bin/2	Bytes	
+string/empty/bin/3	String	
+bytes/empty/bin/3	Bytes	
+string/empty/bin/4	String	
+bytes/empty/bin/4	Bytes	
+string/empty/bin/8	String	
+bytes/empty/bin/8	Bytes	
+string/empty/ascii/0	String	
+bytes/empty/ascii/0	Bytes	
+string/empty/ascii/1	String	
+bytes/empty/ascii/1	Bytes	
+string/empty/ascii/2	String	
+bytes/empty/ascii/2	Bytes	
+string/empty/ascii/3	String	
+bytes/empty/ascii/3	Bytes	
+string/empty/ascii/4	String	
+bytes/empty/ascii/4	Bytes	
+string/empty/ascii/8	String	
+bytes/empty/ascii/8	Bytes	
+string/nul_embedded/utf8mb4/0	String	
+bytes/nul_embedded/utf8mb4/0	String	
+string/nul_embedded/utf8mb4/1	String	00
+bytes/nul_embedded/utf8mb4/1	String	00
+string/nul_embedded/utf8mb4/2	String	0041
+bytes/nul_embedded/utf8mb4/2	String	0041
+string/nul_embedded/utf8mb4/3	String	004100
+bytes/nul_embedded/utf8mb4/3	String	004100
+string/nul_embedded/utf8mb4/4	String	00410042
+bytes/nul_embedded/utf8mb4/4	Bytes	00410042
+string/nul_embedded/utf8mb4/8	String	00410042
+bytes/nul_embedded/utf8mb4/8	Bytes	00410042
+string/nul_embedded/bin/0	String	
+bytes/nul_embedded/bin/0	Bytes	
+string/nul_embedded/bin/1	String	00
+bytes/nul_embedded/bin/1	Bytes	00
+string/nul_embedded/bin/2	String	0041
+bytes/nul_embedded/bin/2	Bytes	0041
+string/nul_embedded/bin/3	String	004100
+bytes/nul_embedded/bin/3	Bytes	004100
+string/nul_embedded/bin/4	String	00410042
+bytes/nul_embedded/bin/4	Bytes	00410042
+string/nul_embedded/bin/8	String	00410042
+bytes/nul_embedded/bin/8	Bytes	00410042
+string/nul_embedded/ascii/0	String	
+bytes/nul_embedded/ascii/0	Bytes	
+string/nul_embedded/ascii/1	String	00
+bytes/nul_embedded/ascii/1	Bytes	00
+string/nul_embedded/ascii/2	String	0041
+bytes/nul_embedded/ascii/2	Bytes	0041
+string/nul_embedded/ascii/3	String	004100
+bytes/nul_embedded/ascii/3	Bytes	004100
+string/nul_embedded/ascii/4	String	00410042
+bytes/nul_embedded/ascii/4	Bytes	00410042
+string/nul_embedded/ascii/8	String	00410042
+bytes/nul_embedded/ascii/8	Bytes	00410042
+string/max_rune/utf8mb4/0	String	
+bytes/max_rune/utf8mb4/0	String	
+string/max_rune/utf8mb4/1	String	f48fbfbf
+bytes/max_rune/utf8mb4/1	String	f48fbfbf
+string/max_rune/utf8mb4/2	String	f48fbfbf41
+bytes/max_rune/utf8mb4/2	Bytes	f48fbfbf41
+string/max_rune/utf8mb4/3	String	f48fbfbf41
+bytes/max_rune/utf8mb4/3	Bytes	f48fbfbf41
+string/max_rune/utf8mb4/4	String	f48fbfbf41
+bytes/max_rune/utf8mb4/4	Bytes	f48fbfbf41
+string/max_rune/utf8mb4/8	String	f48fbfbf41
+bytes/max_rune/utf8mb4/8	Bytes	f48fbfbf41
+string/max_rune/bin/0	String	
+bytes/max_rune/bin/0	Bytes	
+string/max_rune/bin/1	String	f4
+bytes/max_rune/bin/1	Bytes	f4
+string/max_rune/bin/2	String	f48f
+bytes/max_rune/bin/2	Bytes	f48f
+string/max_rune/bin/3	String	f48fbf
+bytes/max_rune/bin/3	Bytes	f48fbf
+string/max_rune/bin/4	String	f48fbfbf
+bytes/max_rune/bin/4	Bytes	f48fbfbf
+string/max_rune/bin/8	String	f48fbfbf41
+bytes/max_rune/bin/8	Bytes	f48fbfbf41
+string/max_rune/ascii/0	String	
+bytes/max_rune/ascii/0	Bytes	
+string/max_rune/ascii/1	String	f4
+bytes/max_rune/ascii/1	Bytes	f4
+string/max_rune/ascii/2	String	f48f
+bytes/max_rune/ascii/2	Bytes	f48f
+string/max_rune/ascii/3	String	f48fbf
+bytes/max_rune/ascii/3	Bytes	f48fbf
+string/max_rune/ascii/4	String	f48fbfbf
+bytes/max_rune/ascii/4	Bytes	f48fbfbf
+string/max_rune/ascii/8	String	f48fbfbf41
+bytes/max_rune/ascii/8	Bytes	f48fbfbf41
+string/above_max_rune/utf8mb4/0	String	
+bytes/above_max_rune/utf8mb4/0	String	
+string/above_max_rune/utf8mb4/1	String	efbfbd
+bytes/above_max_rune/utf8mb4/1	String	efbfbd
+string/above_max_rune/utf8mb4/2	String	efbfbdefbfbd
+bytes/above_max_rune/utf8mb4/2	String	efbfbdefbfbd
+string/above_max_rune/utf8mb4/3	String	efbfbdefbfbdefbfbd
+bytes/above_max_rune/utf8mb4/3	String	efbfbdefbfbdefbfbd
+string/above_max_rune/utf8mb4/4	String	efbfbdefbfbdefbfbdefbfbd
+bytes/above_max_rune/utf8mb4/4	String	efbfbdefbfbdefbfbdefbfbd
+string/above_max_rune/utf8mb4/8	String	f580808041
+bytes/above_max_rune/utf8mb4/8	Bytes	f580808041
+string/above_max_rune/bin/0	String	
+bytes/above_max_rune/bin/0	Bytes	
+string/above_max_rune/bin/1	String	f5
+bytes/above_max_rune/bin/1	Bytes	f5
+string/above_max_rune/bin/2	String	f580
+bytes/above_max_rune/bin/2	Bytes	f580
+string/above_max_rune/bin/3	String	f58080
+bytes/above_max_rune/bin/3	Bytes	f58080
+string/above_max_rune/bin/4	String	f5808080
+bytes/above_max_rune/bin/4	Bytes	f5808080
+string/above_max_rune/bin/8	String	f580808041
+bytes/above_max_rune/bin/8	Bytes	f580808041
+string/above_max_rune/ascii/0	String	
+bytes/above_max_rune/ascii/0	Bytes	
+string/above_max_rune/ascii/1	String	f5
+bytes/above_max_rune/ascii/1	Bytes	f5
+string/above_max_rune/ascii/2	String	f580
+bytes/above_max_rune/ascii/2	Bytes	f580
+string/above_max_rune/ascii/3	String	f58080
+bytes/above_max_rune/ascii/3	Bytes	f58080
+string/above_max_rune/ascii/4	String	f5808080
+bytes/above_max_rune/ascii/4	Bytes	f5808080
+string/above_max_rune/ascii/8	String	f580808041
+bytes/above_max_rune/ascii/8	Bytes	f580808041
+int/seven/utf8mb4/1	Int	
