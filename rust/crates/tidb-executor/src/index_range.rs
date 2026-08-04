@@ -1259,6 +1259,66 @@ fn build_dnf_ranges<'a>(
     })
 }
 
+/// Go `ranger.ExtractAccessConditionsForColumn` + `ranger.BuildColumnRange`
+/// over ONE column, which is what `cardinality.getMaskAndRanges` calls down
+/// the `ranger.ColumnRangeType` arm.
+///
+/// The whole conjunct list goes in, so every condition on that column is
+/// intersected into one range set -- `a >= 3 AND a <= 7` becomes `[3,7]`, not
+/// two independent half-lines. [`IndexRanges::residual`] names the conjuncts
+/// the column did NOT take, which is how the caller rebuilds Go's `mask`.
+///
+/// `access_count == 0` is Go's `len(conds) == 0` fast path in
+/// `BuildColumnRange`, which returns the FULL range and an empty mask; the
+/// caller drops such a node instead, which the greedy cover cannot tell apart
+/// (a zero mask covers nothing and is never selected).
+pub(crate) fn detach_conds_for_column<'a>(
+    column: &RangeColumn,
+    conditions: &[&'a Expr],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> IndexRanges<'a> {
+    // `buildColumnRange` (`ranger.go:491-526`) intersects the point set of
+    // EVERY condition it took, with no equality prefix and no per-column walk
+    // -- there is only one column, so `a IN (1,2,3) AND a > 1` narrows to
+    // `[2,2], [3,3]` rather than leaving the `>` behind as a filter.
+    let mut points = full_range();
+    let mut access_count = 0;
+    let mut residual = Vec::new();
+    for condition in conditions {
+        // Go `ExtractAccessConditionsForColumn`: a condition belongs to the
+        // column exactly when the point builder can turn it into points.
+        match points_for_condition(condition, column, zone) {
+            Some(column_points) => {
+                points = intersection(&points, &column_points.points);
+                access_count += 1;
+            }
+            None => residual.push(*condition),
+        }
+    }
+    let mut ranges = Vec::new();
+    if access_count > 0 {
+        convert_points_in_place(&mut points, &column.field_type);
+        ranges = points_to_ranges(&points);
+        if column.prefix_len != UNSPECIFIED_LENGTH {
+            ranges = union_ranges(ranges, true);
+        }
+    }
+    IndexRanges {
+        ranges,
+        access_count,
+        column_count: usize::from(access_count > 0),
+        access_columns: if access_count > 0 {
+            vec![0]
+        } else {
+            Vec::new()
+        },
+        // `BuildColumnRange` has no equality prefix to report; the selectivity
+        // caller is the only user of this entry point and never reads it.
+        eq_or_in_count: 0,
+        residual,
+    }
+}
+
 /// Go `DetachCondAndBuildRangeForIndex`: the index ranges a `WHERE` implies
 /// over one index's columns.
 ///

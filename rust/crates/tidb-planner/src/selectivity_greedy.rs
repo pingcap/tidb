@@ -192,15 +192,21 @@ fn is_better_choice(
 
 /// What kind of predicate one condition is, for the leftover-condition tail of
 /// Go's `Selectivity`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ConditionKind {
     /// A constant that evaluates to NULL or false: it zeroes the result.
     ConstantFalse,
     /// A constant that evaluates to true: it covers itself and changes nothing.
     ConstantTrue,
-    /// A disjunction. The source estimates it recursively; this port leaves it
-    /// to the default factor and says so at [`combine_selectivity`].
-    Disjunction,
+    /// A disjunction, with the caller's recursive inclusion-exclusion estimate
+    /// when it has one (`selectivity.go:327-374`, the `notCoveredDNF` loop).
+    ///
+    /// `Some(sel)` with a NON-ZERO `sel` is the source's `if selectivity != 0`
+    /// arm: it multiplies `ret` and CLEARS the condition's mask bit, so the
+    /// condition is covered and never reaches the default-factor tail.
+    /// `None` -- and `Some(0.0)`, which is the source's own refusal to believe
+    /// a zero -- leaves the condition uncovered for that tail.
+    Disjunction(Option<f64>),
     /// `LIKE`/`ILIKE`/`REGEXP`, which carry their own default selectivity.
     StringMatch,
     /// A negated string match, with its own default selectivity again.
@@ -284,12 +290,13 @@ impl Default for SelectivityDefaults {
 ///
 /// `initial` carries the correlated-column product the source accumulates
 /// before node selection. `conditions` describes each CNF item in the same
-/// order the node masks index. Two source behaviors are *not* reproduced
-/// here, because both need an expression evaluator this crate does not have:
-/// a [`ConditionKind::Disjunction`] is never estimated recursively, and no
-/// TopN-assisted string-match estimation is attempted -- both simply fall
-/// through to their default selectivity, which is what the source itself does
-/// when those attempts decline.
+/// order the node masks index. A [`ConditionKind::Disjunction`] carries the
+/// caller's own recursive estimate, because the recursion needs the caller's
+/// statistics collection. One source behavior is *not* reproduced here,
+/// because it needs an expression evaluator this crate does not have: no
+/// TopN-assisted string-match estimation is attempted, so a string match falls
+/// through to its default selectivity, which is what the source itself does
+/// when that attempt declines.
 #[must_use]
 pub fn combine_selectivity(
     nodes: &mut [StatsNode],
@@ -333,7 +340,13 @@ pub fn combine_selectivity(
             }
             ConditionKind::StringMatch => has_str_match = true,
             ConditionKind::NegatedStringMatch => has_negate_str_match = true,
-            ConditionKind::Disjunction | ConditionKind::Other => has_default = true,
+            // `selectivity.go:369-373`: a DNF the caller could estimate covers
+            // itself, unless the estimate came out exactly zero.
+            ConditionKind::Disjunction(Some(selectivity)) if *selectivity != 0.0 => {
+                ret *= selectivity;
+                mask &= !(1_i64 << index);
+            }
+            ConditionKind::Disjunction(_) | ConditionKind::Other => has_default = true,
         }
     }
 

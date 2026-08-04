@@ -940,13 +940,42 @@ fn explain_est_rows_on_an_unanalyzed_table() {
         "64 x a != k and d = 7"
     );
 
-    // DIVERGENCE. TiDB prints 19.99 -- `sel(A or B) = sel(A) + sel(B) -
-    // sel(A)*sel(B)` (`selectivity.go:331`), the recursive DNF estimate.
-    // `combine_selectivity` documents that recursion as deferred: a
-    // multi-column `OR` builds no column node here, reaches the leftover
-    // block as a `Disjunction`, and takes the 0.8 factor. Pinned as it is so
-    // the gap is visible rather than absent.
-    assert_eq!(est_rows(&mut session, "a = 1 or b = 2"), "8000.00");
+    // `sel(A or B) = sel(A) + sel(B) - sel(A)*sel(B)` (`selectivity.go:331`),
+    // the recursive DNF estimate, now reached on the pseudo path too: the
+    // `Disjunction` carries its own estimate into the leftover block and
+    // covers itself instead of taking the 0.8 factor (which printed 8000.00).
+    assert_eq!(est_rows(&mut session, "a = 1 or b = 2"), "19.99");
+
+    // Every predicate on ONE column merges into ONE range set before it is
+    // estimated -- Go's node loop walks the DEDUPLICATED columns and runs
+    // `getMaskAndRanges` over the whole condition list per column
+    // (`selectivity.go:98-113`). A per-conjunct product instead multiplies
+    // two independent half-lines and says 1107.78 here.
+    let per_column = [
+        ("a >= 3 and a <= 7", "250.00"),
+        // The intersection keeps only the tighter bound, so this is `a > 5`
+        // alone; a product would print 1111.11.
+        ("a > 3 and a > 5", "3333.33"),
+        // `IN` and an ordering predicate on one column intersect too:
+        // `[2,2], [3,3]`, not three points. A product prints 30.00.
+        ("a in (1,2,3) and a > 1", "20.00"),
+        // Two columns still multiply -- the independence assumption is
+        // between COLUMNS, not between conjuncts.
+        ("a > 3 and b < 5", "1107.78"),
+        ("a >= 3 and a <= 7 and b >= 3 and b <= 7", "6.25"),
+        // A prefix LIKE is a range on its own column, so it merges with the
+        // other column's node exactly like any other predicate.
+        ("a >= 3 and a <= 7 and c like 'q%'", "6.25"),
+        ("a < 5 and (b > 8 or b < 2)", "2212.23"),
+        ("a <> 3 and a <> 5", "6906.67"),
+    ];
+    for (where_clause, expected) in per_column {
+        assert_eq!(
+            est_rows(&mut session, where_clause),
+            expected,
+            "{where_clause}"
+        );
+    }
 }
 
 /// Go `findBestTask`'s empty-range short-circuit: a chosen path whose range

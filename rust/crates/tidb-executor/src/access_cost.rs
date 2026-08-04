@@ -128,7 +128,7 @@
 
 use std::collections::BTreeMap;
 
-use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_planner::cardinality::pseudo::{
     pseudo_row_count_by_index_ranges, pseudo_row_count_by_scalar_ranges, pseudo_selectivity,
     IndexRange as PseudoIndexRange, PseudoBoundKind, PseudoColumn, PseudoFunctionKind, PseudoIndex,
@@ -1207,49 +1207,174 @@ pub(crate) fn selectivity(
 /// [`selectivity`] over conditions already split out of the `AND` tree, which
 /// is the shape Go's `cardinality.Selectivity` takes and the shape the index
 /// filters arrive in.
+///
+/// One statistics node PER COLUMN, not per conjunct. Go builds its nodes by
+/// walking the DEDUPLICATED columns the conditions extract
+/// (`selectivity.go:98-113`) and running `getMaskAndRanges` over the WHOLE
+/// condition list for each one, so every predicate on a column is intersected
+/// into that column's single range set before it is estimated. A per-conjunct
+/// product instead treats `a >= 3 AND a <= 7` as two independent half-lines
+/// and multiplies their rates: 1107.78 rows where TiDB prints 250.00, because
+/// `[3,7]` is one BETWEEN range and neither `[3,+inf]` nor `[-inf,7]` is.
 pub(crate) fn selectivity_of_conjuncts(
     conjuncts: &[&tidb_ast::Expr],
     table: &KvTable,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
 ) -> f64 {
-    let Some(stats) = stats.filter(|stats| !stats.pseudo) else {
-        return pseudo_conjunct_selectivity(conjuncts, table, resolver, realtime_row_count(stats));
-    };
-    let realtime = realtime_row_count(Some(stats));
-    if realtime <= 0.0 {
+    let realtime = realtime_row_count(stats);
+    // `selectivity.go:61`: no rows or no conditions is 100% selectivity.
+    if conjuncts.is_empty() || realtime <= 0.0 {
         return 1.0;
     }
-    let mut total = 1.0;
-    for conjunct in conjuncts {
-        total *= match column_ranges(conjunct, table, resolver) {
-            Some((column_id, collation, ranges)) => {
-                let estimate = get_row_count_by_column_ranges(
-                    stats.columns.get(&column_id),
+    // Go has no parenthesis node -- `ParenthesesExpr` is gone before
+    // `Selectivity` runs -- so strip them once, here, and every structural
+    // test downstream sees the shape the source sees.
+    let conjuncts: Vec<&tidb_ast::Expr> = conjuncts.iter().map(|c| strip_parens(c)).collect();
+
+    // `selectivity.go:69-73`: past 63 conditions the mask no longer fits an
+    // int64, and the source gives up on nodes entirely -- for a loaded
+    // histogram collection just as much as for a pseudo one.
+    if conjuncts.len() > 63 {
+        let predicates: Vec<PseudoPredicate> = conjuncts
+            .iter()
+            .map(|conjunct| pseudo_predicate(conjunct, table, resolver))
+            .collect();
+        return pseudo_selectivity(
+            &predicates,
+            &pseudo_unique_indexes(table),
+            realtime as i64,
+            crate::plan_trace::SELECTIVITY_FACTOR,
+        );
+    }
+
+    // A pseudo table is not a table without statistics as far as
+    // `Selectivity` is concerned: `statistics.PseudoTable` fills a
+    // `NewPseudoHistogram` entry for every public column and index
+    // (`pkg/statistics/table.go:1034-1061`), so `coll.ColNum()` is non-zero
+    // and `Selectivity` takes its ORDINARY body. Only the per-node row count
+    // differs: the pseudo equal/less/between rates rather than a histogram.
+    // (`pseudoSelectivity`, a MINIMUM over per-operator rates, is reached only
+    // down the `len(exprs) > 63` arm above -- it cannot compound, and says
+    // 10.00 rows for `a = 1 and b = 2` where TiDB prints 1.00.)
+    let loaded = stats.filter(|stats| !stats.pseudo);
+
+    let mut nodes = Vec::new();
+    for offset in extracted_column_offsets(&conjuncts, table, resolver) {
+        let Some(column) = table.columns.get(offset) else {
+            continue;
+        };
+        // Go `getMaskAndRanges` down the `ranger.ColumnRangeType` arm: a range
+        // over the COLUMN itself, so no index prefix length is in play.
+        let built = crate::index_range::detach_conds_for_column(
+            &crate::index_range::RangeColumn::whole(column.name.clone(), column.field_type.clone()),
+            &conjuncts,
+            &resolver.time_zone(),
+        );
+        // `BuildColumnRange` with no access condition returns the full range
+        // and an empty mask, which the greedy cover can never select.
+        if built.access_count == 0 {
+            continue;
+        }
+        let ranges: Vec<ColumnRange> = built
+            .ranges
+            .iter()
+            .map(|range| ColumnRange {
+                low: range.low.first().cloned().unwrap_or(Datum::MinNotNull),
+                high: range.high.first().cloned().unwrap_or(Datum::MaxValue),
+                low_exclude: range.low_exclusive,
+                high_exclude: range.high_exclusive,
+            })
+            .collect();
+        let is_handle = table.pk_handle_offset() == Some(offset);
+        let row_count = match loaded {
+            Some(stats) => {
+                get_row_count_by_column_ranges(
+                    stats.columns.get(&column.id),
                     &ranges,
-                    collation,
+                    column.field_type.collation(),
                     stats.row_count,
                     stats.modify_count,
-                    table
-                        .pk_handle_offset()
-                        .and_then(|offset| table.columns.get(offset))
-                        .is_some_and(|column| column.id == column_id),
+                    is_handle,
                     estimator_options(),
-                );
-                (estimate.est / realtime).clamp(0.0, 1.0)
+                )
+                .est
             }
-            // A condition no statistics node covered goes into Go's leftover
-            // buckets; `notCoveredDNF` is estimated for real before the
-            // default factor is charged.
-            None => dnf_selectivity(conjunct, table, resolver, stats)
-                .unwrap_or(crate::plan_trace::SELECTIVITY_FACTOR),
+            None => {
+                let scalar: Vec<ScalarRange> = ranges
+                    .iter()
+                    .map(|range| scalar_range(Some(&range.low), Some(&range.high)))
+                    .collect();
+                pseudo_row_count_by_scalar_ranges(&scalar, realtime)
+            }
         };
+        nodes.push(StatsNode {
+            selectivity: (row_count / realtime).clamp(0.0, 1.0),
+            ..StatsNode::new(
+                // `selectivity.go:120`: a handle column's node is a `PkType`,
+                // which outranks a plain column in the greedy tie break.
+                if is_handle {
+                    StatsNodeType::PrimaryKey
+                } else {
+                    StatsNodeType::Column
+                },
+                column.id,
+                covered_mask(&conjuncts, &built.residual),
+                1,
+            )
+        });
     }
-    // `selectivity.go:430`: "Don't allow the result to be less than 1 row".
-    // A product of independent selectivities falls off a cliff -- four
-    // point conditions on an eight-row table multiply to 1/4096 -- and the
-    // source refuses to believe in less than one row.
-    total.clamp(0.0, 1.0).max(1.0 / realtime)
+
+    let conditions: Vec<ConditionKind> = conjuncts
+        .iter()
+        .map(|conjunct| condition_kind(conjunct, table, resolver, stats))
+        .collect();
+    combine_selectivity(
+        &mut nodes,
+        &conditions,
+        1.0,
+        realtime as i64,
+        SelectivityDefaults::default(),
+    )
+}
+
+/// Go's `expression.ExtractColumnsMapFromExpressions` over the whole condition
+/// list, deduplicated and sorted (`selectivity.go:98-104`).
+///
+/// The order matters: it decides the order the statistics nodes are built in,
+/// and the greedy cover breaks ties on node ID. Go sorts by `Column.ID`, which
+/// for this tier is the table column's own id.
+fn extracted_column_offsets(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+) -> Vec<usize> {
+    let mut offsets: Vec<usize> = conjuncts
+        .iter()
+        .filter_map(|conjunct| crate::column_prune::expr_column_offsets(conjunct, resolver))
+        .flatten()
+        .collect();
+    offsets.sort_by_key(|offset| table.columns.get(*offset).map(|column| column.id));
+    offsets.dedup();
+    offsets
+}
+
+/// Go's `mask` for one statistics node: the bit of every condition the column
+/// took as an access condition (`selectivity.go:498-506`).
+///
+/// The source matches access conditions back against the condition list by
+/// expression equality; the range builder here hands back the conjuncts it did
+/// NOT take, borrowed from the very slice that went in, so the same answer
+/// falls out of pointer identity -- and identity, unlike equality, keeps the
+/// two halves of `a = 1 AND a = 1` distinct.
+fn covered_mask(conjuncts: &[&tidb_ast::Expr], residual: &[&tidb_ast::Expr]) -> i64 {
+    let mut mask = 0_i64;
+    for (index, conjunct) in conjuncts.iter().enumerate() {
+        if !residual.iter().any(|left| std::ptr::eq(*left, *conjunct)) {
+            mask |= 1_i64 << index;
+        }
+    }
+    mask
 }
 
 /// An expression with every enclosing `(...)` removed.
@@ -1303,7 +1428,7 @@ fn dnf_selectivity(
     conjunct: &tidb_ast::Expr,
     table: &KvTable,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-    stats: &TableStatistics,
+    stats: Option<&TableStatistics>,
 ) -> Option<f64> {
     let mut items = Vec::new();
     collect_or(conjunct, &mut items);
@@ -1314,91 +1439,10 @@ fn dnf_selectivity(
     for item in items {
         let mut cnf = Vec::new();
         crate::plan_trace::collect_and(strip_parens(item), &mut cnf);
-        let current = selectivity_of_conjuncts(&cnf, table, resolver, Some(stats));
+        let current = selectivity_of_conjuncts(&cnf, table, resolver, stats);
         selectivity = selectivity + current - selectivity * current;
     }
     (selectivity != 0.0).then_some(selectivity)
-}
-
-/// `cardinality.Selectivity` for a table with NO loaded histograms -- Go's
-/// `PseudoTable`.
-///
-/// A pseudo table is not a table without statistics as far as `Selectivity`
-/// is concerned: `statistics.PseudoTable` fills a `NewPseudoHistogram` entry
-/// for every public column and index (`pkg/statistics/table.go:1034-1061`), so
-/// `coll.ColNum()` is non-zero and `Selectivity` takes its ORDINARY body --
-/// build one statistics node per column the conditions constrain, greedily
-/// cover the condition mask, multiply, then charge the leftover conditions
-/// their defaults (`selectivity.go:69-73` is the only escape, and it needs
-/// more than 63 conditions).
-///
-/// That is the whole difference from what this function replaced. A minimum
-/// over per-operator rates -- Go's `pseudoSelectivity`, which is only reached
-/// down the `len(exprs) > 63` arm -- says 10.00 rows for `a = 1 and b = 2`
-/// where TiDB prints 1.00, and 3333.33 for `a > 1 and b > 2` where TiDB
-/// prints 1111.11, because a minimum cannot compound. The product,
-/// the one-row floor, and the string-match defaults all live in
-/// [`combine_selectivity`]; the per-column numbers are the pseudo histogram's
-/// own rates through [`pseudo_row_count_by_scalar_ranges`].
-///
-/// `realtime` is `coll.RealtimeCount`: 10000 for a table `mysql.stats_meta`
-/// has never counted, and the real count when it has (which is also the state
-/// that still prints `stats:pseudo`, decided independently in
-/// [`crate::driver::access::full_scan_estimate`] -- this function does not
-/// move that line).
-fn pseudo_conjunct_selectivity(
-    conjuncts: &[&tidb_ast::Expr],
-    table: &KvTable,
-    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-    realtime: f64,
-) -> f64 {
-    // `coll.RealtimeCount == 0 || len(exprs) == 0` (`selectivity.go:61`).
-    if conjuncts.is_empty() || realtime <= 0.0 {
-        return 1.0;
-    }
-
-    // `selectivity.go:69-73`: past 63 conditions the mask no longer fits an
-    // int64, and the source gives up on nodes entirely.
-    if conjuncts.len() > 63 {
-        let predicates: Vec<PseudoPredicate> = conjuncts
-            .iter()
-            .map(|conjunct| pseudo_predicate(conjunct, table, resolver))
-            .collect();
-        return pseudo_selectivity(
-            &predicates,
-            &pseudo_unique_indexes(table),
-            realtime as i64,
-            crate::plan_trace::SELECTIVITY_FACTOR,
-        );
-    }
-
-    let mut nodes = Vec::with_capacity(conjuncts.len());
-    let mut conditions = Vec::with_capacity(conjuncts.len());
-    for (index, conjunct) in conjuncts.iter().enumerate() {
-        conditions.push(condition_kind(conjunct));
-        let Some((column_id, _collation, ranges)) = column_ranges(conjunct, table, resolver) else {
-            continue;
-        };
-        let scalar: Vec<ScalarRange> = ranges
-            .iter()
-            .map(|range| scalar_range(Some(&range.low), Some(&range.high)))
-            .collect();
-        nodes.push(StatsNode {
-            // Go `getMaskAndSelectivity`: `GetRowCountByColumnRanges(...) /
-            // coll.RealtimeCount`, which for a pseudo histogram is the
-            // equal/less/between rate.
-            selectivity: (pseudo_row_count_by_scalar_ranges(&scalar, realtime) / realtime)
-                .clamp(0.0, 1.0),
-            ..StatsNode::new(StatsNodeType::Column, column_id, 1_i64 << index, 1)
-        });
-    }
-    combine_selectivity(
-        &mut nodes,
-        &conditions,
-        1.0,
-        realtime as i64,
-        SelectivityDefaults::default(),
-    )
 }
 
 /// Which leftover bucket one uncovered condition falls in
@@ -1407,7 +1451,12 @@ fn pseudo_conjunct_selectivity(
 /// The kind is computed for every condition, not just the uncovered ones,
 /// because the mask decides which ones are read; a covered condition's kind
 /// is never consulted.
-fn condition_kind(conjunct: &tidb_ast::Expr) -> ConditionKind {
+fn condition_kind(
+    conjunct: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+) -> ConditionKind {
     match conjunct {
         // Go's `NOT LIKE` is `unaryNot(like(...))`, which the source unwraps
         // before classifying; this AST carries the negation on the node.
@@ -1418,7 +1467,9 @@ fn condition_kind(conjunct: &tidb_ast::Expr) -> ConditionKind {
                 ConditionKind::StringMatch
             }
         }
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => ConditionKind::Disjunction,
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => {
+            ConditionKind::Disjunction(dnf_selectivity(conjunct, table, resolver, stats))
+        }
         _ => ConditionKind::Other,
     }
 }
@@ -1529,43 +1580,6 @@ fn is_constant_literal(expr: &tidb_ast::Expr) -> bool {
             | tidb_ast::Expr::Null
             | tidb_ast::Expr::Bool(_)
     )
-}
-
-/// One conjunct as single-column ranges over a table column, when it is one.
-///
-/// The extraction is [`crate::index_range`]'s -- the same detacher port the
-/// access paths use -- run against a one-column "index" made of the column
-/// the conjunct names, so there is exactly one range algebra in this crate.
-fn column_ranges(
-    conjunct: &tidb_ast::Expr,
-    table: &KvTable,
-    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
-) -> Option<(i64, Collation, Vec<ColumnRange>)> {
-    let [offset] = crate::column_prune::expr_column_offsets(conjunct, resolver)?[..] else {
-        return None;
-    };
-    let column = table.columns.get(offset)?;
-    let built = crate::index_range::detach_cond_and_build_range_for_index(
-        // A per-column range for the risk model, over the COLUMN itself: no
-        // index and therefore no declared length is in play here.
-        &[crate::index_range::RangeColumn::whole(
-            column.name.clone(),
-            column.field_type.clone(),
-        )],
-        conjunct,
-        &resolver.time_zone(),
-    )?;
-    let ranges = built
-        .ranges
-        .iter()
-        .map(|range| ColumnRange {
-            low: range.low.first().cloned().unwrap_or(Datum::MinNotNull),
-            high: range.high.first().cloned().unwrap_or(Datum::MaxValue),
-            low_exclude: range.low_exclusive,
-            high_exclude: range.high_exclusive,
-        })
-        .collect();
-    Some((column.id, column.field_type.collation(), ranges))
 }
 
 /// The cheapest candidate, keeping the incumbent on an exact tie -- Go
