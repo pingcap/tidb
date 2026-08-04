@@ -42,6 +42,52 @@ const maxReadersPerCore = 16
 
 var maxConcurrency = 32
 
+// assignReaderMemory charges each file whole buffers of its own byte range. The
+// budget is shared among the files that can fill at least one buffer, because
+// having more of them decoding at once is worth more than reading any one of them
+// deeper, and whatever that flooring leaves over is handed back out a buffer at a
+// time. A range too small for one buffer is read as a plain stream and costs
+// nothing.
+func assignReaderMemory(rangeSizes []uint64, memoryLimit int64) []int64 {
+	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
+	contenders := int64(0)
+	for _, size := range rangeSizes {
+		if size >= uint64(bufSize) {
+			contenders++
+		}
+	}
+	hardLimit := min(int64(maxConcurrency)*bufSize, memoryLimit)
+	perFileLimit := hardLimit
+	if contenders > 1 {
+		perFileLimit = min(perFileLimit, max(memoryLimit/contenders, bufSize))
+	}
+
+	sizes := make([]int64, len(rangeSizes))
+	spare := memoryLimit
+	for i, size := range rangeSizes {
+		sizes[i] = int64(min(size, uint64(perFileLimit))) / bufSize * bufSize
+		spare -= sizes[i]
+	}
+	for spare >= bufSize {
+		handedOut := false
+		for i, size := range rangeSizes {
+			if spare < bufSize {
+				break
+			}
+			if sizes[i]+bufSize > int64(min(size, uint64(hardLimit))) {
+				continue
+			}
+			sizes[i] += bufSize
+			spare -= bufSize
+			handedOut = true
+		}
+		if !handedOut {
+			break
+		}
+	}
+	return sizes
+}
+
 func readAllData(
 	ctx context.Context,
 	store storeapi.Storage,
@@ -85,29 +131,14 @@ func readAllData(
 	maxReaders := maxReadersPerCore * concurrency
 
 	readerMemory := semaphore.NewWeighted(memoryLimit)
-	readerMemorySizes := make([]int64, len(dataFiles))
 	rangeSizes := make([]uint64, len(dataFiles))
 	totalFileSize := uint64(0)
-	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
-	contenders := int64(0)
 	for i := range dataFiles {
 		rangeSizes[i] = estimatedEndOffsets[i] - startOffsets[i]
 		totalFileSize += rangeSizes[i]
-		if rangeSizes[i] >= uint64(bufSize) {
-			contenders++
-		}
 	}
-	// A file is charged whole buffers of its own range, up to whichever of the
-	// per-file cap and the whole budget is smaller. A range that cannot fill one
-	// buffer is read as a plain stream and charged nothing.
-	perFileLimit := min(int64(maxConcurrency)*bufSize, memoryLimit)
-	if contenders > 1 {
-		// Share the budget out rather than letting the first files take it all:
-		// having more of them decoding at once beats reading any one of them deeper.
-		perFileLimit = min(perFileLimit, max(memoryLimit/contenders, bufSize))
-	}
+	readerMemorySizes := assignReaderMemory(rangeSizes, memoryLimit)
 	for i := range dataFiles {
-		readerMemorySizes[i] = int64(min(rangeSizes[i], uint64(perFileLimit))) / bufSize * bufSize
 		if readerMemorySizes[i] > 0 {
 			logutil.Logger(ctx).Info("found hotspot file in readAllData",
 				zap.String("filename", dataFiles[i]),
@@ -152,7 +183,7 @@ func readAllData(
 							startKey,
 							endKey,
 							startOffsets[fileIdx],
-							int(readerMemorySize/bufSize),
+							int(readerMemorySize)/simplesst.ConcurrentReaderBufferSizePerConc,
 							smallBlockBuf,
 							largeBlockBuf,
 							output,

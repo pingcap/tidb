@@ -209,3 +209,28 @@ func TestReadKVFilesAsync(t *testing.T) {
 
 	require.Equal(t, expectedKVs, readKVs)
 }
+
+func TestAssignReaderMemory(t *testing.T) {
+	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
+
+	// A range that cannot fill one buffer streams and is charged nothing.
+	require.Equal(t, []int64{0}, assignReaderMemory([]uint64{uint64(bufSize) - 1}, 128*units.MiB))
+
+	// A lone contender takes what its range asks for, capped by the budget.
+	require.Equal(t, []int64{128 * units.MiB}, assignReaderMemory([]uint64{units.GiB}, 128*units.MiB))
+
+	// Fifty files against a 768 MiB budget: an even share floors to one buffer
+	// each, and the remainder tops files up until the budget is exactly spent.
+	rangeSizes := make([]uint64, 50)
+	for i := range rangeSizes {
+		rangeSizes[i] = 45 * units.MiB
+	}
+	sizes := assignReaderMemory(rangeSizes, 768*units.MiB)
+	require.Len(t, sizes, 50)
+	total := int64(0)
+	for _, s := range sizes {
+		require.GreaterOrEqual(t, s, bufSize, "every contender keeps at least one buffer")
+		total += s
+	}
+	require.EqualValues(t, 768*units.MiB, total, "the whole budget is spent")
+}
