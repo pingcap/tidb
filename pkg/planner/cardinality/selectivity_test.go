@@ -255,11 +255,11 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 7.2, count)
 
 	idxID := table.Meta().Indices[0].ID
-	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30))
+	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30), nil)
 	require.NoError(t, err)
 	require.Equal(t, 0.1, count)
 
-	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30))
+	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30), nil)
 	require.NoError(t, err)
 	require.Equal(t, 7.0, count)
 
@@ -289,7 +289,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 1.0, count)
 
 	idxID = table.Meta().Indices[0].ID
-	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2))
+	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2), nil)
 	require.NoError(t, err)
 	require.Equal(t, 0.0, count)
 }
@@ -370,7 +370,7 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 	// async load — otherwise the optimization would still pay for the wasted I/O.
 	asyncload.AsyncLoadHistogramNeededItems.Delete(idxItem)
 	fullRanges := ranger.FullRange()
-	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullRanges)
+	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullRanges, nil)
 	require.NoError(t, err)
 	require.Equal(t, float64(realtimeCount), countResult,
 		"full range [NULL,+inf) should use fast path and return RealtimeCount")
@@ -381,14 +381,14 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 	// With nullCount > 0, the histogram estimate must be strictly below RealtimeCount;
 	// equality would mean the fast path was wrongly taken.
 	fullNotNullRanges := ranger.FullNotNullRange()
-	countResult2, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullNotNullRanges)
+	countResult2, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullNotNullRanges, nil)
 	require.NoError(t, err)
 	require.Less(t, countResult2, float64(realtimeCount),
 		"full not-null range excludes %d NULL row(s), estimate must be < RealtimeCount", nullCount)
 
 	// Bounded range should NOT use fast path.
 	boundedRanges := getRange(1, 10)
-	countResult3, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, boundedRanges)
+	countResult3, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, boundedRanges, nil)
 	require.NoError(t, err)
 	require.Less(t, countResult3, float64(realtimeCount),
 		"bounded range should use histogram estimation, not fast path")
@@ -403,7 +403,7 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 		LowExclude: true,
 		Collators:  collate.GetBinaryCollatorSlice(1),
 	}}
-	countResult4, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, exclusiveNullRanges)
+	countResult4, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, exclusiveNullRanges, nil)
 	require.NoError(t, err)
 	require.Less(t, countResult4, float64(realtimeCount),
 		"exclusive lower bound on NULL must drop the NULL row, estimate must be < RealtimeCount")
@@ -548,11 +548,11 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 
 	sctx := mock.NewContext()
 	idxID := table.Meta().Indices[0].ID
-	count, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(7, 7))
+	count, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(7, 7), nil)
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
-	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(6, 6))
+	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(6, 6), nil)
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
@@ -1182,12 +1182,12 @@ func TestIssue39593(t *testing.T) {
 	sctx := testKit.Session()
 	idxID := tblInfo.Indices[0].ID
 	vals := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
-	count, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
+	count, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals), nil)
 	require.NoError(t, err)
 	// estimated row count without any changes
 	require.Equal(t, float64(360), count)
 	statsTbl.RealtimeCount *= 10
-	count, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
+	count, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals), nil)
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table
 	require.Equal(t, float64(3600), count)
@@ -1830,11 +1830,11 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	// Test index estimation as well
 	idx := statsTbl.GetIdx(table.Meta().Indices[0].ID)
 	if idx != nil {
-		idxEnhancedCount, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(11, 11))
+		idxEnhancedCount, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(11, 11), nil)
 		require.NoError(t, err)
 		require.InDelta(t, 100.09, idxEnhancedCount, 0.1, "Index enhanced count should be approximately 100.09")
 
-		idxOtherCount, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(3, 3))
+		idxOtherCount, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(3, 3), nil)
 		require.NoError(t, err)
 		require.InDelta(t, 109.99, idxOtherCount, 0.1, "Index other count should be approximately 109.99")
 	}

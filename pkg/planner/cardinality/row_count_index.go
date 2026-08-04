@@ -41,14 +41,10 @@ import (
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 // idxCols is used to recognize virtual columns inside expBackoffEstimation.
-// It can be omitted, in which case virtual-column fallback is skipped.
+// It can be nil, in which case virtual-column fallback is skipped.
 // When exp-backoff cannot estimate a virtual column, prefer the composite-index estimate as a fallback.
 // This may improve estimation but remains subject to encoded index histogram interpolation accuracy.
-func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range, idxColsOpt ...[]*expression.Column) (result float64, err error) {
-	var idxCols []*expression.Column
-	if len(idxColsOpt) > 0 {
-		idxCols = idxColsOpt[0]
-	}
+func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range, idxCols []*expression.Column) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -199,7 +195,7 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 			// prefer index stats over column stats
 			if idxIDs, ok := coll.ColUniqueID2IdxIDs[colUniqueID]; ok && len(idxIDs) > 0 {
 				idxID := idxIDs[0]
-				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang})
+				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang}, nil)
 			} else {
 				count, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
 			}
@@ -590,7 +586,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 					continue
 				}
 				foundStats = true
-				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan)
+				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan, nil)
 				if err == nil {
 					break
 				}
