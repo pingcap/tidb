@@ -152,14 +152,16 @@ fn pow10(exp: i32) -> f64 {
         .expect("decimal power literal is parsable")
 }
 
-/// Go `strconv.FormatFloat(f, 'g', -1, 64)`.
+/// Go `strconv.FormatFloat(f, 'g', -1, 64)`, which is also what `%v` prints
+/// for a `float64` -- the spelling every `constant %v overflows bigint`
+/// diagnostic carries.
 ///
 /// `'g'` with the shortest precision picks scientific notation exactly when
 /// the decimal exponent is below -4 or at least 6 (Go `ftoa`: "if precision
 /// was the shortest possible, use precision 6 for this decision"), and the
 /// digits themselves are the shortest round-tripping ones, which is what
 /// Rust's own float formatting produces.
-fn format_float_g_shortest(f: f64) -> String {
+pub fn format_float_g_shortest(f: f64) -> String {
     if f.is_nan() {
         return "NaN".to_owned();
     }

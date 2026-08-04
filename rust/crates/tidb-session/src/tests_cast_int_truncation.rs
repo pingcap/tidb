@@ -274,3 +274,65 @@ fn the_write_path_warns_once_per_evaluated_value() {
         "the second value is never reached, so it must not be reported"
     );
 }
+
+/// `CAST(<negative real> AS UNSIGNED)` answers the LOW 64 BITS, not zero.
+///
+/// Go `ConvertFloatToUint` (`pkg/types/convert.go:169-183`) rounds first and
+/// then, for a negative result, takes the `AllowNegativeToUnsigned` arm:
+/// `return uint64(int64(val)), overflow(val, tp)` -- the value AND an overflow
+/// event, not a clamp to zero. This engine answered 0 for every negative real,
+/// and a unit test asserted that wrong answer.
+///
+/// The DECIMAL source really is the opposite (`MyDecimal.ToUint`: negative ->
+/// 0, with a DECIMAL-worded 1292), so the two arms must stay different.
+///
+/// Captured from Go (`gorun`, default sql_mode):
+///
+/// ```text
+/// select cast(-1.5e0 as unsigned)   18446744073709551614
+///   Warning|1690|constant -2 overflows bigint
+/// select cast(-1e300 as unsigned)   9223372036854775808
+///   Warning|1690|constant -1e+300 overflows bigint
+/// select cast(-0.4e0 as unsigned)   0            (no warning)
+/// select cast(-1.5 as unsigned)     0
+///   Warning|1292|Truncated incorrect DECIMAL value: '-1.5'
+/// ```
+#[test]
+fn a_negative_real_cast_to_unsigned_keeps_its_low_64_bits() {
+    let mut session = Session::new();
+    for (sql, value, warning) in [
+        (
+            "SELECT CAST(-1.5e0 AS UNSIGNED)",
+            "18446744073709551614",
+            Some((1690, "constant -2 overflows bigint")),
+        ),
+        (
+            "SELECT CAST(-1e0 AS UNSIGNED)",
+            "18446744073709551615",
+            Some((1690, "constant -1 overflows bigint")),
+        ),
+        (
+            "SELECT CAST(-1e300 AS UNSIGNED)",
+            "9223372036854775808",
+            Some((1690, "constant -1e+300 overflows bigint")),
+        ),
+        // -0.4 rounds to -0.0, which is not `< 0`: the one negative input that
+        // really is 0, and the one that says nothing about it.
+        ("SELECT CAST(-0.4e0 AS UNSIGNED)", "0", None),
+        // The DECIMAL source keeps Go's own opposite rule.
+        (
+            "SELECT CAST(-1.5 AS UNSIGNED)",
+            "0",
+            Some((1292, "Truncated incorrect DECIMAL value: '-1.5'")),
+        ),
+    ] {
+        assert_eq!(row_text(session.run(sql))[0][0], value, "{sql}");
+        assert_eq!(
+            warnings(&session),
+            warning
+                .map(|(code, text)| vec![(code, text.to_owned())])
+                .unwrap_or_default(),
+            "{sql}"
+        );
+    }
+}

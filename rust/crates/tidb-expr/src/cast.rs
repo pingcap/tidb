@@ -49,7 +49,7 @@ pub(crate) fn eval_cast(
         }
         CastType::Unsigned => {
             report_int_truncation(&v, ctx)?;
-            Ok(Datum::UInt(to_u64_unsigned(&v)))
+            Ok(Datum::UInt(to_u64_unsigned(&v, ctx)))
         }
         CastType::Char { len, .. } => {
             let text = datum_sql_string(&v)?;
@@ -129,13 +129,31 @@ pub(crate) fn to_i64_signed(v: &Datum) -> i64 {
 
 /// `UNSIGNED`'s own coercion. Integer and integer-string sources preserve
 /// the low 64 bits, so `CAST(-5 AS UNSIGNED)` is the genuine
-/// `18446744073709551611` UInt64 value. A decimal source rounds half-up then
-/// converts across the full `u64` range (Go `MyDecimal.ToUint`: negative -> 0);
-/// a float source rounds half-to-even then converts across the same full `u64`
-/// range (Go `ConvertFloatToUint`: negative -> 0). The result is
-/// [`Datum::UInt`], so downstream comparisons and arithmetic retain the domain
-/// instead of silently reinterpreting it as signed display text.
-fn to_u64_unsigned(v: &Datum) -> u64 {
+/// `18446744073709551611` UInt64 value.
+///
+/// The DECIMAL and the FLOAT source do NOT agree about a negative value, and
+/// that disagreement is Go's, not an inconsistency to smooth over:
+///
+///  * `MyDecimal.ToUint` (`ConvertDecimalToUint`) returns 0 for a negative
+///    value, plus a truncation event. Captured: `cast(-1.5 as unsigned)` is 0
+///    with `1292 Truncated incorrect DECIMAL value: '-1.5'`.
+///  * `ConvertFloatToUint` (`pkg/types/convert.go:169-183`) rounds first, and
+///    for a negative result takes the `AllowNegativeToUnsigned` arm --
+///    `return uint64(int64(val))`, the low 64 bits, exactly like the integer
+///    source above -- beside an overflow event. Captured:
+///    `cast(-1.5e0 as unsigned)` is 18446744073709551614 with `1690 constant
+///    -2 overflows bigint`, `cast(-1e0 as unsigned)` is 18446744073709551615,
+///    and `cast(-1e300 as unsigned)` is 9223372036854775808 (Go's
+///    out-of-range `int64(...)` conversion lands on `i64::MIN`, which is what
+///    Rust's saturating `as i64` gives too).
+///
+/// `-0.4` is the boundary the two share: it ROUNDS to `-0.0`, which is not
+/// `< 0`, so both answer 0 with no event at all.
+///
+/// The result is [`Datum::UInt`], so downstream comparisons and arithmetic
+/// retain the domain instead of silently reinterpreting it as signed display
+/// text.
+fn to_u64_unsigned(v: &Datum, ctx: &dyn crate::Columns) -> u64 {
     match v {
         // TiDB's integer cast reuses the low 64 bits for an ETInt source.
         // That is observable for `CAST(-5 AS UNSIGNED)`, which is
@@ -146,10 +164,24 @@ fn to_u64_unsigned(v: &Datum) -> u64 {
         // (Go `MyDecimal.ToUint`): a negative value becomes 0, and a magnitude in
         // `(i64::MAX, u64::MAX]` — the upper half of `UNSIGNED BIGINT` — is kept
         // rather than saturated at `i64::MAX` by the signed path.
-        Datum::Decimal(d) => d.round_to_u64_saturating(),
+        Datum::Decimal(d) => {
+            // Go's `convertDecimalStrToUint` reports the clamp, and the
+            // message carries the decimal's ORIGINAL text -- `'-2.0'`, not the
+            // rounded `-2`. The test is on the ROUNDED value, which is why
+            // `cast(-0.4 as unsigned)` is a silent 0 (it rounds to `-0`) while
+            // `cast(-1.5 as unsigned)` warns. Captured (`gorun`, default
+            // sql_mode): `select cast(-2.0 as unsigned)` -> 0 with
+            // `1292 Truncated incorrect DECIMAL value: '-2.0'`;
+            // `cast(1.5 as unsigned)` -> 2 with no warning at all.
+            if d.round_to_i64_saturating() < 0 {
+                ctx.append_warning(1292, &format!("Truncated incorrect DECIMAL value: '{d}'"));
+            }
+            d.round_to_u64_saturating()
+        }
         // A real rounds half-to-even then converts across the full u64 range
-        // (Go `ConvertFloatToUint`), so its own upper half is kept too.
-        Datum::Real(f) => real_to_u64_saturating(*f),
+        // (Go `ConvertFloatToUint`), so its own upper half is kept too -- and
+        // its NEGATIVE half is kept as the low 64 bits rather than clamped.
+        Datum::Real(f) => real_to_u64_saturating(*f, ctx),
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
         other => other
             .to_decimal()
@@ -159,17 +191,36 @@ fn to_u64_unsigned(v: &Datum) -> u64 {
 
 /// `CAST(real AS UNSIGNED)`: round half to even (Go `RoundFloat` =
 /// `math.RoundToEven`, the same rounding the signed real path uses), then Go
-/// `ConvertFloatToUint` across the full `u64` range. A negative value is `0`
-/// under the default flags, and a magnitude past `u64::MAX` saturates to
-/// `u64::MAX` (`ConvertFloatToUint`'s `upperBound` clamp). Routing through the
-/// signed path instead would lose the upper half of `UNSIGNED BIGINT` at
-/// `i64::MAX`.
-fn real_to_u64_saturating(f: f64) -> u64 {
+/// `ConvertFloatToUint` across the full `u64` range. A magnitude past
+/// `u64::MAX` saturates to `u64::MAX` (`ConvertFloatToUint`'s `upperBound`
+/// clamp). Routing through the signed path instead would lose the upper half
+/// of `UNSIGNED BIGINT` at `i64::MAX`.
+///
+/// A NEGATIVE rounded value takes Go's `AllowNegativeToUnsigned` arm
+/// (`convert.go:171-176`): `uint64(int64(val))`, the SAME low-64-bit
+/// reinterpretation an integer source gets -- see [`to_u64_unsigned`]'s doc
+/// for the captures, and for why the DECIMAL source really does answer 0 here
+/// while this one does not.
+fn real_to_u64_saturating(f: f64, ctx: &dyn crate::Columns) -> u64 {
     let rounded = f.round_ties_even();
     if rounded < 0.0 {
-        // A negative rounded value clamps to zero (goeval-confirmed for the
-        // real source, unlike an integer source's low-64-bit reinterpretation).
-        0
+        // Go raises the overflow event on this arm and returns the value
+        // anyway. `overflow(val, tp)` prints the ROUNDED value with `%v`,
+        // which for a float64 is `strconv.FormatFloat(f, 'g', -1, 64)`.
+        // Captured under the DEFAULT (strict) sql_mode, where this is still a
+        // WARNING rather than a statement error, because
+        // `builtinCastRealAsIntSig` routes it through `HandleOverflow`.
+        ctx.append_warning(
+            1690,
+            &format!(
+                "constant {} overflows bigint",
+                tidb_datatype::format_float_g_shortest(rounded)
+            ),
+        );
+        // Rust's saturating `as i64` reproduces Go's out-of-range `int64(...)`
+        // landing on `i64::MIN`, which is what makes `cast(-1e300 as
+        // unsigned)` 9223372036854775808 rather than 0.
+        (rounded as i64) as u64
     } else {
         // Rust's float-to-int cast saturates: an in-range integral float is
         // exact, a magnitude past `u64::MAX` clamps to `u64::MAX`, and `NaN`
@@ -524,6 +575,7 @@ fn cast_to_year(v: &Datum) -> Result<Datum, EvalError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::NoColumns;
 
     #[test]
     fn cast_decimal_as_unsigned_keeps_the_upper_half_of_unsigned_bigint() {
@@ -531,30 +583,38 @@ mod tests {
         // upper half of UNSIGNED BIGINT at i64::MAX (9223372036854775807). Go
         // rounds half-up then MyDecimal.ToUint, keeping the full u64 range.
         assert_eq!(
-            to_u64_unsigned(&Datum::Decimal(Decimal::from_literal(
-                "10000000000000000000"
-            ))),
+            to_u64_unsigned(
+                &Datum::Decimal(Decimal::from_literal("10000000000000000000")),
+                &NoColumns
+            ),
             10_000_000_000_000_000_000,
             "one past i64::MAX is kept, not saturated"
         );
         assert_eq!(
-            to_u64_unsigned(&Datum::Decimal(Decimal::from_literal(
-                "18446744073709551615"
-            ))),
+            to_u64_unsigned(
+                &Datum::Decimal(Decimal::from_literal("18446744073709551615")),
+                &NoColumns
+            ),
             u64::MAX
         );
         // Half-up rounding and the negative-to-zero rule are unchanged.
         assert_eq!(
-            to_u64_unsigned(&Datum::Decimal(Decimal::from_literal("5.6"))),
+            to_u64_unsigned(&Datum::Decimal(Decimal::from_literal("5.6")), &NoColumns),
             6
         );
         assert_eq!(
-            to_u64_unsigned(&Datum::Decimal(Decimal::from_literal("5.6").negate())),
+            to_u64_unsigned(
+                &Datum::Decimal(Decimal::from_literal("5.6").negate()),
+                &NoColumns
+            ),
             0
         );
         // A signed-integer source still reinterprets its low 64 bits:
         // CAST(-5 AS UNSIGNED) stays 18446744073709551611, unaffected by the fix.
-        assert_eq!(to_u64_unsigned(&Datum::Int(-5)), 18_446_744_073_709_551_611);
+        assert_eq!(
+            to_u64_unsigned(&Datum::Int(-5), &NoColumns),
+            18_446_744_073_709_551_611
+        );
     }
 
     #[test]
@@ -564,19 +624,51 @@ mod tests {
         // Go rounds half-to-even (RoundFloat) then ConvertFloatToUint across the
         // full u64 range. 1e19 is exactly representable in f64.
         assert_eq!(
-            to_u64_unsigned(&Datum::Real(1.0e19)),
+            to_u64_unsigned(&Datum::Real(1.0e19), &NoColumns),
             10_000_000_000_000_000_000,
             "a real past i64::MAX is kept, not saturated at i64::MAX"
         );
         // A magnitude past u64::MAX saturates to MaxUint64 (upperBound clamp).
-        assert_eq!(to_u64_unsigned(&Datum::Real(1.0e30)), u64::MAX);
+        assert_eq!(to_u64_unsigned(&Datum::Real(1.0e30), &NoColumns), u64::MAX);
         // Half-to-even rounding (Go RoundFloat = math.RoundToEven), the same rule
         // the signed real path uses: 2.5 -> 2, 3.5 -> 4.
-        assert_eq!(to_u64_unsigned(&Datum::Real(2.5)), 2);
-        assert_eq!(to_u64_unsigned(&Datum::Real(3.5)), 4);
-        // A negative real clamps to zero under the default flags.
-        assert_eq!(to_u64_unsigned(&Datum::Real(-5.6)), 0);
-        assert_eq!(to_u64_unsigned(&Datum::Real(-0.4)), 0);
+        assert_eq!(to_u64_unsigned(&Datum::Real(2.5), &NoColumns), 2);
+        assert_eq!(to_u64_unsigned(&Datum::Real(3.5), &NoColumns), 4);
+        // A negative real does NOT clamp to zero: Go's
+        // `AllowNegativeToUnsigned` arm returns `uint64(int64(val))`, the same
+        // low-64-bit reinterpretation the integer source above gets. This
+        // assertion used to read `, 0)` and pinned the WRONG answer.
+        // Captured (`goeval`): `cast(-1.5e0 as unsigned)` ->
+        // 18446744073709551614, `cast(-1e0 as unsigned)` ->
+        // 18446744073709551615, `cast(-1e300 as unsigned)` ->
+        // 9223372036854775808.
+        assert_eq!(
+            to_u64_unsigned(&Datum::Real(-1.5), &NoColumns),
+            18_446_744_073_709_551_614
+        );
+        assert_eq!(
+            to_u64_unsigned(&Datum::Real(-1.0), &NoColumns),
+            18_446_744_073_709_551_615
+        );
+        assert_eq!(
+            to_u64_unsigned(&Datum::Real(-5.6), &NoColumns),
+            18_446_744_073_709_551_610
+        );
+        assert_eq!(
+            to_u64_unsigned(&Datum::Real(-1.0e300), &NoColumns),
+            9_223_372_036_854_775_808
+        );
+        // -0.4 ROUNDS to -0.0, which is not `< 0`, so it is the one negative
+        // input that really is 0 -- with no warning either.
+        assert_eq!(to_u64_unsigned(&Datum::Real(-0.4), &NoColumns), 0);
+        // The DECIMAL source keeps Go's own opposite rule: negative -> 0.
+        assert_eq!(
+            to_u64_unsigned(
+                &Datum::Decimal(Decimal::from_literal("1.5").negate()),
+                &NoColumns
+            ),
+            0
+        );
     }
 
     /// `CAST(str AS DATETIME)` rounds in the SESSION zone, not in UTC.
