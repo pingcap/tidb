@@ -705,8 +705,8 @@ func TestTableMetaSplitSourceColumns(t *testing.T) {
 	require.Equal(t, []string{"name"}, meta.ColumnNames())
 	require.Equal(t, []string{"VARCHAR"}, meta.ColumnTypes())
 
-	require.Equal(t, []string{"id", "name"}, meta.SourceColumnNames())
-	require.Equal(t, []string{"INT", "VARCHAR"}, meta.SourceColumnTypes())
+	require.Equal(t, []string{"id", "name"}, tableSourceColumnNames(meta))
+	require.Equal(t, []string{"INT", "VARCHAR"}, tableSourceColumnTypes(meta))
 
 	mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).
 		WillReturnRows(sqlmock.NewRows(showIndexHeaders).
@@ -735,8 +735,8 @@ func TestTableMetaAllGeneratedColumns(t *testing.T) {
 	require.Zero(t, meta.SelectedLen())
 	require.Empty(t, meta.ColumnNames())
 	require.Empty(t, meta.ColumnTypes())
-	require.Empty(t, meta.SourceColumnNames())
-	require.Empty(t, meta.SourceColumnTypes())
+	require.Empty(t, tableSourceColumnNames(meta))
+	require.Empty(t, tableSourceColumnTypes(meta))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

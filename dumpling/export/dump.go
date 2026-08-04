@@ -157,6 +157,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	tctx, conf, pool := d.tctx, d.conf, d.dbHandle
 	tctx.L().Info("begin to run Dump", zap.Stringer("conf", conf))
 	if len(conf.columnFilter.Filters) > 0 {
+		// Config can be built or mutated without ParseFromFlags, so keep this runtime guard.
 		if err = validateColumnFilterOptions(conf, flagColumnFilterFile); err != nil {
 			return errors.Trace(err)
 		}

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -132,6 +133,37 @@ func TestBuildSelectAllQuery(t *testing.T) {
 		require.Equal(t, fmt.Sprintf("SELECT * FROM `%s`.`%s`", database, table), q, comment)
 		require.NoError(t, mock.ExpectationsWereMet(), comment)
 	}
+}
+
+func TestGetColumnTypesRetriesCloseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	tctx := tcontext.Background().WithLogger(appLogger)
+	baseConn := newBaseConn(conn, true, nil)
+
+	query := fmt.Sprintf("SELECT `id` FROM `%s`.`%s` LIMIT 1", database, table)
+	firstRows := sqlmock.NewRowsWithColumnDefinition(
+		sqlmock.NewColumn("id").OfType("INT", int64(0)),
+	).AddRow(1).CloseError(errors.New("close failed"))
+	secondRows := sqlmock.NewRowsWithColumnDefinition(
+		sqlmock.NewColumn("id").OfType("INT", int64(0)),
+	).AddRow(1)
+	mock.ExpectQuery(regexp.QuoteMeta(query)).WillReturnRows(firstRows)
+	mock.ExpectQuery(regexp.QuoteMeta(query)).WillReturnRows(secondRows)
+
+	colTypes, err := GetColumnTypes(tctx, baseConn, "`id`", database, table)
+	require.NoError(t, err)
+	require.Len(t, colTypes, 1)
+	require.Equal(t, "id", colTypes[0].Name())
+	require.Equal(t, "INT", colTypes[0].DatabaseTypeName())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestBuildOrderByClause(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/promutil"
@@ -215,7 +216,7 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 			{"2"},
 			{"3"},
 		}
-		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		colInfos := []*parquetfile.ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
 		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
 
 		require.NoError(t, parquetWriter.WriteTableData(parquetTableIR, parquetTableIR, 0))

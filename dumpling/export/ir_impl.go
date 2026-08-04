@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"go.uber.org/zap"
 )
 
@@ -267,15 +268,34 @@ type tableMeta struct {
 	hasImplicitRowID bool
 }
 
-func (tm *tableMeta) ColumnInfos() []*ColumnInfo {
-	columnInfos := make([]*ColumnInfo, 0, len(tm.colTypes))
+type sourceColumnMeta interface {
+	sourceColumnTypes() []string
+	sourceColumnNames() []string
+}
+
+func tableSourceColumnTypes(meta TableMeta) []string {
+	if sourceMeta, ok := meta.(sourceColumnMeta); ok {
+		return sourceMeta.sourceColumnTypes()
+	}
+	return meta.ColumnTypes()
+}
+
+func tableSourceColumnNames(meta TableMeta) []string {
+	if sourceMeta, ok := meta.(sourceColumnMeta); ok {
+		return sourceMeta.sourceColumnNames()
+	}
+	return meta.ColumnNames()
+}
+
+func (tm *tableMeta) columnInfos() []*parquetfile.ColumnInfo {
+	columnInfos := make([]*parquetfile.ColumnInfo, 0, len(tm.colTypes))
 	for _, ct := range tm.colTypes {
 		nullable, _ := ct.Nullable()
 		precision, scale, ok := ct.DecimalSize()
 		if !ok {
 			precision, scale = 0, 0
 		}
-		columnInfos = append(columnInfos, &ColumnInfo{
+		columnInfos = append(columnInfos, &parquetfile.ColumnInfo{
 			Name:             ct.Name(),
 			DatabaseTypeName: ct.DatabaseTypeName(),
 			Nullable:         nullable,
@@ -294,11 +314,11 @@ func (tm *tableMeta) ColumnNames() []string {
 	return columnNames(tm.colTypes)
 }
 
-func (tm *tableMeta) SourceColumnTypes() []string {
+func (tm *tableMeta) sourceColumnTypes() []string {
 	return columnTypes(tm.sourceColTypes)
 }
 
-func (tm *tableMeta) SourceColumnNames() []string {
+func (tm *tableMeta) sourceColumnNames() []string {
 	return columnNames(tm.sourceColTypes)
 }
 

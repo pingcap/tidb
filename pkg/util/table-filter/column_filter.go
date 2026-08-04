@@ -31,7 +31,14 @@ type ColumnFilterRules []columnRule
 // ParseColumnFilter parses a column filter rule list.
 // Column is not case-sensitive on any platform, nor are column aliases.
 // So the parsed ColumnFilterRules is case-insensitive.
-func ParseColumnFilter(args []string) (ColumnFilterRules, error) {
+func ParseColumnFilter(args []string) (ColumnFilter, error) {
+	return ParseColumnFilterRules(args)
+}
+
+// ParseColumnFilterRules parses a column filter rule list.
+// Column is not case-sensitive on any platform, nor are column aliases.
+// So the parsed ColumnFilterRules is case-insensitive.
+func ParseColumnFilterRules(args []string) (ColumnFilterRules, error) {
 	p := columnRulesParser{
 		make([]columnRule, 0, len(args)),
 		matcherParser{

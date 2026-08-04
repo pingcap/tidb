@@ -52,6 +52,9 @@ func (c *columnFilterConfig) compileForOption(caseSensitive bool, flagName strin
 		if len(rule.Matcher) == 0 {
 			return errors.Errorf("--%s filter %d requires at least one matcher", flagName, i)
 		}
+		if len(rule.Columns) == 0 {
+			return errors.Errorf("--%s filter %d requires at least one column rule", flagName, i)
+		}
 		tableFilter, err := filter.Parse(rule.Matcher)
 		if err != nil {
 			return errors.Annotatef(err, "failed to parse --%s filter %d matcher", flagName, i)
@@ -59,7 +62,7 @@ func (c *columnFilterConfig) compileForOption(caseSensitive bool, flagName strin
 		if !caseSensitive {
 			tableFilter = filter.CaseInsensitive(tableFilter)
 		}
-		columnRules, err := filter.ParseColumnFilter(rule.Columns)
+		columnRules, err := filter.ParseColumnFilterRules(rule.Columns)
 		if err != nil {
 			return errors.Annotatef(err, "failed to parse --%s filter %d columns", flagName, i)
 		}

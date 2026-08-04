@@ -602,6 +602,27 @@ func (w *wrappedWriter) Write(p []byte) (n int, err error) {
 	return w.w.Write(w.ctx, p)
 }
 
+type parquetColumnInfoProvider interface {
+	columnInfos() []*parquetfile.ColumnInfo
+}
+
+func tableColumnInfos(meta TableMeta) []*parquetfile.ColumnInfo {
+	if infoProvider, ok := meta.(parquetColumnInfoProvider); ok {
+		return infoProvider.columnInfos()
+	}
+
+	names := meta.ColumnNames()
+	types := meta.ColumnTypes()
+	infos := make([]*parquetfile.ColumnInfo, 0, len(types))
+	for i, tp := range types {
+		infos = append(infos, &parquetfile.ColumnInfo{
+			Name:             names[i],
+			DatabaseTypeName: tp,
+		})
+	}
+	return infos
+}
+
 // WriteInsertInParquet writes table rows to parquet format.
 func WriteInsertInParquet(
 	pCtx *tcontext.Context,
@@ -622,7 +643,7 @@ func WriteInsertInParquet(
 		parquetfile.WithDataPageSize(cfg.ParquetPageSize),
 		parquetfile.WithRowGroupMemoryLimit(cfg.ParquetRowGroupSize),
 	}
-	writer, err := parquetfile.NewWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, meta.ColumnInfos(), opts...)
+	writer, err := parquetfile.NewWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, tableColumnInfos(meta), opts...)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

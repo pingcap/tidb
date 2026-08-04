@@ -83,13 +83,13 @@ func TestColumnFilters(t *testing.T) {
 	require.Equal(t, []string{"c1"}, selectedFields)
 	require.Equal(t, []int{0}, selectedIndexes)
 
-	columnFilter = newColumnFilterConfigForTest(t,
-		columnFilterRule{Matcher: []string{"db1.t1"}},
-	)
-	selectedFields, selectedIndexes, err = columnFilter.applyToColumns("db1", "t1", []string{"c1"})
-	require.NoError(t, err)
-	require.Equal(t, []string{"c1"}, selectedFields)
-	require.Equal(t, []int{0}, selectedIndexes)
+	columnFilter = columnFilterConfig{
+		Filters: []columnFilterRule{
+			{Matcher: []string{"db1.t1"}},
+		},
+	}
+	err = columnFilter.compileForOption(false, flagColumnFilterFile)
+	require.ErrorContains(t, err, "--column-filter-file filter 0 requires at least one column rule")
 }
 
 func TestParseColumnFilterFile(t *testing.T) {
@@ -127,6 +127,22 @@ colums = ["*"]
 `)
 	_, err = parseColumnFilterConfig(path, false)
 	require.ErrorContains(t, err, "--column-filter-file contains unknown TOML keys: filters.colums")
+
+	for _, content := range []string{
+		`
+[[filters]]
+matcher = ["db.t"]
+`,
+		`
+[[filters]]
+matcher = ["db.t"]
+columns = []
+`,
+	} {
+		path = writeColumnFilterFileForTest(t, content)
+		_, err = parseColumnFilterConfig(path, false)
+		require.ErrorContains(t, err, "--column-filter-file filter 0 requires at least one column rule")
+	}
 }
 
 func TestParseColumnFilterFileFlag(t *testing.T) {
@@ -189,6 +205,17 @@ func TestParseColumnFilterFlag(t *testing.T) {
 		"--column-filter", `{ matcher = ["db.t"], colums = ["*"] }`,
 	)
 	require.ErrorContains(t, err, "--column-filter contains unknown TOML keys: filter.colums")
+
+	for _, arg := range []string{
+		`{ matcher = ["db.t"] }`,
+		`{ matcher = ["db.t"], columns = [] }`,
+	} {
+		_, err = parseConfigFromArgsForTestWithErr(t,
+			"--no-schemas",
+			"--column-filter", arg,
+		)
+		require.ErrorContains(t, err, "--column-filter filter 0 requires at least one column rule")
+	}
 
 	_, err = parseConfigFromArgsForTestWithErr(t,
 		"--column-filter", `{ matcher = ["db.t"], columns = ["*"] }`,

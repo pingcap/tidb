@@ -607,7 +607,13 @@ func GetColumnTypes(tctx *tcontext.Context, db *BaseConn, fields, database, tabl
 		failpoint.Inject("ChaosBrokenMetaConn", func(_ failpoint.Value) {
 			failpoint.Return(errors.New("connection is closed"))
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		if err = rows.Close(); err != nil {
+			return err
+		}
+		return rows.Err()
 	}, func() {
 		colTypes = nil
 	}, query)
@@ -623,7 +629,7 @@ func GetPrimaryKeyAndColumnTypes(tctx *tcontext.Context, conn *BaseConn, meta Ta
 	if err != nil {
 		return nil, nil, err
 	}
-	colName2Type := string2Map(meta.SourceColumnNames(), meta.SourceColumnTypes())
+	colName2Type := string2Map(tableSourceColumnNames(meta), tableSourceColumnTypes(meta))
 	colTypes = make([]string, len(colNames))
 	for i, colName := range colNames {
 		colTypes[i] = colName2Type[colName]
@@ -654,7 +660,7 @@ func GetPrimaryKeyColumns(tctx *tcontext.Context, db *BaseConn, database, table 
 // primary key with multi cols is before unique key with single col because we will sort result by primary keys
 func getNumericIndex(tctx *tcontext.Context, db *BaseConn, meta TableMeta) (string, error) {
 	database, table := meta.DatabaseName(), meta.TableName()
-	colName2Type := string2Map(meta.SourceColumnNames(), meta.SourceColumnTypes())
+	colName2Type := string2Map(tableSourceColumnNames(meta), tableSourceColumnTypes(meta))
 	keyQuery := fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", escapeString(database), escapeString(table))
 	results, err := db.QuerySQLWithColumns(tctx, []string{"NON_UNIQUE", "SEQ_IN_INDEX", "KEY_NAME", "COLUMN_NAME", "CARDINALITY"}, keyQuery)
 	if err != nil {
