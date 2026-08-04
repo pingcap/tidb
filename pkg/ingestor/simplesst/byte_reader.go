@@ -113,16 +113,20 @@ func newByteReader(
 	return r, r.reload()
 }
 
+// enableConcurrentRead configures concurrent reading. bufCount is the total
+// number of bufSizePerConc buffers the caller has budgeted; they are paired into
+// double-buffered lanes, so the reader issues bufCount/2 range requests at a time
+// and prefetches the next window while the caller consumes the current one.
 func (r *byteReader) enableConcurrentRead(
 	store storeapi.Storage,
 	filename string,
-	concurrency int,
+	bufCount int,
 	bufSizePerConc int,
 	bufferPool *membuf.Buffer,
 ) {
 	r.concurrentReader.store = store
 	r.concurrentReader.filename = filename
-	r.concurrentReader.concurrency = concurrency
+	r.concurrentReader.concurrency = max(bufCount/2, 1)
 	r.concurrentReader.bufSizePerConc = bufSizePerConc
 	r.concurrentReader.largeBufferPool = bufferPool
 }

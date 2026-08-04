@@ -242,7 +242,8 @@ func readOneFile(
 		rd.EnableConcurrentRead(
 			storage,
 			dataFile,
-			concurrency,
+			// two buffers per lane: the one being decoded and the prefetched one
+			concurrency*2,
 			simplesst.ConcurrentReaderBufferSizePerConc,
 			largeBlockBuf,
 		)
