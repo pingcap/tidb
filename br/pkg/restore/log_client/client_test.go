@@ -50,12 +50,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
->>>>>>> cd225b67102 (br: rebase autoid service after PiTR log replay for AUTO_ID_CACHE=1 tables (#69573))
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -1716,7 +1712,6 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestRepairIngestIndex(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
@@ -2135,7 +2130,8 @@ func TestPutRawKvWithRetry(t *testing.T) {
 			require.Equal(t, tt.wantPuts, mockRawClient.putCount)
 		})
 	}
-=======
+}
+
 // TestRebaseAutoIncrementIDForSepAutoIncTables is a regression test for
 // https://github.com/pingcap/tidb/issues/69485: after PiTR log replay bumps the
 // persisted auto-increment counter of an AUTO_ID_CACHE=1 table directly in TiKV,
@@ -2152,7 +2148,7 @@ func TestRebaseAutoIncrementIDForSepAutoIncTables(t *testing.T) {
 	// base with a reserved range) exactly like a snapshot restore would.
 	tk.MustExec("insert into t (data) values (0)")
 
-	tbl, err := s.Mock.Domain.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := s.Mock.Domain.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	require.True(t, tbl.Meta().SepAutoInc())
 	dbID := tbl.Meta().DBID
@@ -2201,7 +2197,6 @@ func TestRebaseAutoIncrementIDForSepAutoIncTables(t *testing.T) {
 	fixedNext, err := alloc.NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, target+1, fixedNext)
->>>>>>> cd225b67102 (br: rebase autoid service after PiTR log replay for AUTO_ID_CACHE=1 tables (#69573))
 }
 
 type mockLogStrategy struct {

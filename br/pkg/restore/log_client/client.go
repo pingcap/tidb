@@ -62,11 +62,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
->>>>>>> cd225b67102 (br: rebase autoid service after PiTR log replay for AUTO_ID_CACHE=1 tables (#69573))
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"

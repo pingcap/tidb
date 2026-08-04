@@ -45,11 +45,7 @@ go_library(
         "//br/pkg/version",
         "//pkg/ddl/util",
         "//pkg/domain",
-<<<<<<< HEAD
-=======
         "//pkg/infoschema",
-        "//pkg/infoschema/issyncer",
->>>>>>> cd225b67102 (br: rebase autoid service after PiTR log replay for AUTO_ID_CACHE=1 tables (#69573))
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/autoid",
@@ -125,11 +121,7 @@ go_test(
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta",
-<<<<<<< HEAD
-=======
         "//pkg/meta/autoid",
-        "//pkg/meta/metadef",
->>>>>>> cd225b67102 (br: rebase autoid service after PiTR log replay for AUTO_ID_CACHE=1 tables (#69573))
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/planner/core/resolve",
