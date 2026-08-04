@@ -809,7 +809,7 @@ func TestVirtualColumnIndexEstimation(t *testing.T) {
 	// would skip the most selective column and heavily over-estimate the row
 	// count. Verify that estimation falls back to the index statistics instead.
 	// See https://github.com/pingcap/tidb/issues/69134.
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
@@ -848,6 +848,77 @@ func TestVirtualColumnIndexEstimation(t *testing.T) {
 	estRows, err = strconv.ParseFloat(rows[0][1].(string), 64)
 	require.NoError(t, err)
 	require.Greater(t, estRows, 10.0)
+
+	// A virtual column at the beginning of a composite index is mapped back to
+	// that index for single-column estimation. Verify that the recursive index
+	// estimate is propagated into exponential backoff instead of being dropped.
+	tk.MustExec(`create table t3(
+		txn_seq varchar(30) primary key,
+		status varchar(2),
+		flag varchar(1),
+		batch_num varchar(20),
+		txn_suffix varchar(1) as (substr(txn_seq, 30, 1)) virtual,
+		index idx_suffix_first(txn_suffix, status, flag, batch_num),
+		index idx_suffix_second(txn_suffix, status, batch_num, flag)
+	)`)
+	tk.MustExec(`insert into t3(txn_seq, status, flag, batch_num)
+		select concat(lpad(x.a, 29, '0'), mod(x.a, 10)),
+			if(mod(x.a, 10) = 9, '00', '01'), '1', 'batch'
+		from (with recursive x as (
+			select 1 as a union all select a + 1 from x where a < 500
+		) select a from x) as x`)
+	tk.MustExec("analyze table t3 all columns with 10 topn")
+	// Virtual columns have no column statistics, while both indexes have TopN.
+	require.Empty(t, tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't3' and column_name = 'txn_suffix' and is_index = 0").Rows())
+	require.NotEmpty(t, tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't3' and column_name = 'idx_suffix_first' and is_index = 1").Rows())
+	require.NotEmpty(t, tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't3' and column_name = 'idx_suffix_second' and is_index = 1").Rows())
+	tk.MustQuery("select count(*) from t3 where txn_suffix = '9' and status = '00'").Check(testkit.Rows("50"))
+
+	getIndexScanEstRows := func(sql string) float64 {
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "IndexRangeScan") {
+				estRows, err := strconv.ParseFloat(row[1].(string), 64)
+				require.NoError(t, err)
+				return estRows
+			}
+		}
+		t.Fatalf("no IndexRangeScan in plan for %q", sql)
+		return 0
+	}
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
+	require.NoError(t, err)
+	firstCandidate := table.Meta().FindIndexByName("idx_suffix_first")
+	fallbackCandidate := table.Meta().FindIndexByName("idx_suffix_second")
+	require.NotNil(t, firstCandidate)
+	require.NotNil(t, fallbackCandidate)
+	require.Less(t, firstCandidate.ID, fallbackCandidate.ID)
+
+	func() {
+		var firstCandidateFailed, fallbackCandidateSucceeded bool
+		fpName := "github.com/pingcap/tidb/pkg/planner/cardinality/afterRecursiveIndexEstimation"
+		require.NoError(t, failpoint.EnableCall(fpName, func(idxID int64, countResult *statistics.RowEstimate, recursiveErr *error) {
+			switch idxID {
+			case firstCandidate.ID:
+				firstCandidateFailed = true
+				*countResult = statistics.RowEstimate{}
+				*recursiveErr = fmt.Errorf("injected recursive estimation error for index %d", idxID)
+			case fallbackCandidate.ID:
+				fallbackCandidateSucceeded = firstCandidateFailed && *recursiveErr == nil
+			}
+		}))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fpName))
+		}()
+
+		estRows = getIndexScanEstRows("select * from t3 use index(idx_suffix_second) where txn_suffix = '9' and status = '00'")
+		require.True(t, firstCandidateFailed)
+		require.True(t, fallbackCandidateSucceeded)
+		require.InDelta(t, 50.0, estRows, 0.01)
+	}()
+
+	estRows = getIndexScanEstRows("select * from t3 use index(idx_suffix_first) where txn_suffix = '9' and status = '00'")
+	require.InDelta(t, 50.0, estRows, 0.01)
 }
 
 func TestNewIndexWithColumnStats(t *testing.T) {

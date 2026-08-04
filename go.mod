@@ -18,7 +18,6 @@ require (
 	github.com/aliyun/credentials-go v1.4.7
 	github.com/apache/arrow-go/v18 v18.6.1-0.20260713210906-efc145c067b6
 	github.com/apache/skywalking-eyes v0.4.0
-	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 	github.com/ashanbrown/forbidigo/v2 v2.3.0
 	github.com/ashanbrown/makezero v1.2.0
 	github.com/aws/aws-sdk-go-v2 v1.41.5
@@ -122,7 +121,7 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260724023932-61ecd7c11416
+	github.com/tikv/client-go/v2 v2.0.8-0.20260803074519-341d4692ec57
 	github.com/tikv/pd/client v0.0.0-20260708075407-4e05b9d2c2d3
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6

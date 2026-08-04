@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "variable",
     srcs = [
+        "embedding_vars.go",
         "error.go",
         "mock_globalaccessor.go",
         "noop.go",
@@ -101,6 +102,7 @@ go_test(
     name = "variable_test",
     timeout = "short",
     srcs = [
+        "embedding_vars_test.go",
         "main_test.go",
         "mock_globalaccessor_test.go",
         "removed_test.go",
