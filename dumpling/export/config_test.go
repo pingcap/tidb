@@ -203,7 +203,7 @@ func TestParseColumnFilterFlag(t *testing.T) {
 	require.ErrorContains(t, err, "can't specify both --sql and --column-filter at the same time")
 }
 
-func TestColumnFilterFlagRejectsFile(t *testing.T) {
+func TestColumnFilterConflict(t *testing.T) {
 	path := writeColumnFilterFileForTest(t, `
 [[filters]]
 matcher = ["db.t"]
@@ -217,7 +217,7 @@ columns = ["*"]
 	require.ErrorContains(t, err, "can't specify both --column-filter and --column-filter-file at the same time")
 }
 
-func TestValidateColumnFilterOptions(t *testing.T) {
+func TestColumnFilterOptions(t *testing.T) {
 	conf := DefaultConfig()
 	conf.NoSchemas = true
 	require.NoError(t, validateColumnFilterOptions(conf, flagColumnFilterFile))

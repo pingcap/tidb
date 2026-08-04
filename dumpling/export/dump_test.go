@@ -622,19 +622,25 @@ func TestUpdateServiceSafePointCancelDuringRetry(t *testing.T) {
 	mockPD.mu.Unlock()
 }
 
-func TestDumpTableMeta(t *testing.T) {
+func newMockDumpConn(t *testing.T) (*tcontext.Context, sqlmock.Sqlmock, *BaseConn) {
+	t.Helper()
+
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
 
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	defer cancel()
 	conn, err := db.Conn(tctx)
 	require.NoError(t, err)
-	baseConn := newBaseConn(conn, true, nil)
+	t.Cleanup(func() {
+		cancel()
+		require.NoError(t, db.Close())
+	})
 
+	return tctx, mock, newBaseConn(conn, true, nil)
+}
+
+func TestDumpTableMeta(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
 	conf := DefaultConfig()
 	conf.NoSchemas = true
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
@@ -667,19 +673,8 @@ func TestDumpTableMeta(t *testing.T) {
 	}
 }
 
-func TestDumpTableMetaSourceColumnsForSplit(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
-
-	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	defer cancel()
-	conn, err := db.Conn(tctx)
-	require.NoError(t, err)
-	baseConn := newBaseConn(conn, true, nil)
-
+func TestTableMetaSplitSourceColumns(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
 	columnFilter := newColumnFilterConfigForTest(t,
 		columnFilterRule{Matcher: []string{fmt.Sprintf("%s.%s", database, table)}, Columns: []string{"name"}},
 	)
@@ -722,19 +717,8 @@ func TestDumpTableMetaSourceColumnsForSplit(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestDumpTableMetaAllGeneratedColumns(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
-
-	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	defer cancel()
-	conn, err := db.Conn(tctx)
-	require.NoError(t, err)
-	baseConn := newBaseConn(conn, true, nil)
-
+func TestTableMetaAllGeneratedColumns(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
 	conf := DefaultConfig()
 	conf.NoSchemas = true
 	conf.ServerInfo.ServerType = version.ServerTypeMySQL
@@ -756,19 +740,8 @@ func TestDumpTableMetaAllGeneratedColumns(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPrepareColumnProjectionEmptyResultTypes(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
-
-	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	defer cancel()
-	conn, err := db.Conn(tctx)
-	require.NoError(t, err)
-	baseConn := newBaseConn(conn, true, nil)
-
+func TestColumnProjectionEmptyRows(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
 	conf := DefaultConfig()
 	conf.NoSchemas = true
 	conf.ServerInfo.ServerType = version.ServerTypeMySQL
@@ -805,19 +778,8 @@ func TestPrepareColumnProjectionEmptyResultTypes(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestDumpTableMetaView(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
-
-	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	defer cancel()
-	conn, err := db.Conn(tctx)
-	require.NoError(t, err)
-	baseConn := newBaseConn(conn, true, nil)
-
+func TestTableMetaView(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
 	conf := DefaultConfig()
 	conf.NoSchemas = true
 	conf.ServerInfo.ServerType = version.ServerTypeMySQL
@@ -835,19 +797,8 @@ func TestDumpTableMetaView(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPrepareColumnProjection(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
-
-	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	defer cancel()
-	conn, err := db.Conn(tctx)
-	require.NoError(t, err)
-	baseConn := newBaseConn(conn, true, nil)
-
+func TestColumnProjection(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
 	conf := DefaultConfig()
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
 	conf.columnFilter = newColumnFilterConfigForTest(t,
@@ -874,19 +825,37 @@ func TestPrepareColumnProjection(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPrepareColumnProjectionNoFilter(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
+func TestColumnProjectionCompleteInsert(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.CompleteInsert = true
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
 
-	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	defer cancel()
-	conn, err := db.Conn(tctx)
-	require.NoError(t, err)
-	baseConn := newBaseConn(conn, true, nil)
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, "").
+			AddRow("name", "varchar(12)", "NO", "", nil, "").
+			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, ""))
+	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id`,`name`,`quo``te` FROM `%s`.`%s` LIMIT 1", database, table))).
+		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+			sqlmock.NewColumn("id").OfType("INT", int64(0)),
+			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
+			sqlmock.NewColumn("quo`te").OfType("VARCHAR", ""),
+		).AddRow(1, "alice", "quoted"))
 
+	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+	projection, ok := conf.columnProjection[tableName{db: database, table: table}]
+	require.True(t, ok)
+	require.Equal(t, "`id`,`name`,`quo``te`", projection.selectField)
+	require.Equal(t, []string{"id", "name", "quo`te"}, columnNames(projection.sourceTypes))
+	require.Equal(t, []string{"INT", "VARCHAR", "VARCHAR"}, columnTypes(projection.sourceTypes))
+	require.Equal(t, []string{"id", "name", "quo`te"}, columnNames(projection.selectedTypes))
+	require.Equal(t, []string{"INT", "VARCHAR", "VARCHAR"}, columnTypes(projection.selectedTypes))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestColumnProjectionNoFilter(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
 	conf := DefaultConfig()
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
 
@@ -910,19 +879,8 @@ func TestPrepareColumnProjectionNoFilter(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPrepareColumnProjectionGeneratedColumn(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
-
-	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	defer cancel()
-	conn, err := db.Conn(tctx)
-	require.NoError(t, err)
-	baseConn := newBaseConn(conn, true, nil)
-
+func TestColumnProjectionGeneratedColumn(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
 	conf := DefaultConfig()
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
 
@@ -946,19 +904,8 @@ func TestPrepareColumnProjectionGeneratedColumn(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestPrepareColumnProjectionNoSelectedColumns(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
-
-	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
-	defer cancel()
-	conn, err := db.Conn(tctx)
-	require.NoError(t, err)
-	baseConn := newBaseConn(conn, true, nil)
-
+func TestColumnProjectionNoSelectedColumns(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
 	conf := DefaultConfig()
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
 	conf.columnFilter = newColumnFilterConfigForTest(t,
@@ -968,7 +915,7 @@ func TestPrepareColumnProjectionNoSelectedColumns(t *testing.T) {
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
-	err = prepareColumnProjection(tctx, conf, baseConn)
+	err := prepareColumnProjection(tctx, conf, baseConn)
 	require.ErrorContains(t, err, "column filter selects no writable columns")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
