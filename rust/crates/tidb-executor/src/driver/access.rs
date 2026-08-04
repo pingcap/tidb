@@ -101,6 +101,11 @@ pub(crate) fn commit_fast_path_source(
     // so does this: an offer refused leaves the source reading every
     // partition, which is a superset and still every row the statement
     // admits.
+    // Go `getTableScanPenalty`'s `hasPartitionScan` reads
+    // `PlanPartInfo.PruningConds`, which the `PartitionProcessor` leaves
+    // behind whenever it had conditions to prune WITH -- exactly when
+    // `pruned_partition_ids` answers.
+    let partition_scan = pruned_partition_ids(select, &table, zone).is_some();
     if let Some(ids) = pruned_partition_ids(select, &table, zone) {
         if let Some(access) = from_source
             .as_mut()
@@ -144,7 +149,15 @@ pub(crate) fn commit_fast_path_source(
     if !hints.allows_table()
         || try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone)?.is_none()
     {
-        match choose_index_range_path(select, catalog, scope, &table, &columns, &hints) {
+        match choose_index_range_path(
+            select,
+            catalog,
+            scope,
+            &table,
+            &columns,
+            &hints,
+            partition_scan,
+        ) {
             // A table path the ranger narrowed. The source already installed
             // by `build_from` IS the right executor -- a `TableRangeScan` is
             // Go's same `PhysicalTableScan` with ranges -- so this offers it
@@ -513,6 +526,9 @@ pub(crate) fn choose_index_range_path(
     table: &KvTable,
     columns: &[(String, FieldType)],
     hints: &crate::index_hints::AvailablePaths,
+    // Go `getTableScanPenalty`'s `hasPartitionScan`, decided by the caller
+    // because it is the caller that ran the pruning.
+    partition_scan: bool,
 ) -> Option<ChosenPath> {
     // No `WHERE` at all is not a reason to stop: a covering index is still a
     // candidate, and reading the whole of a narrow index beats reading the
@@ -549,6 +565,7 @@ pub(crate) fn choose_index_range_path(
         stats,
         hints,
         !select.order_by.is_empty(),
+        partition_scan,
     );
     // Go's `prop.ExpectedCnt != math.MaxFloat64`: a row cap on the required
     // property is what disables Fix45132's row-ratio rule inside pruning.
@@ -863,6 +880,7 @@ fn write_index_range_path(
         None,
         None,
         &hints,
+        false,
         false,
     );
     let best = crate::access_cost::choose_access_path(paths, None, false)?;

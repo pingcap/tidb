@@ -1391,3 +1391,116 @@ fn an_is_null_on_a_not_null_index_column_is_a_table_dual() {
         [["2"]]
     );
 }
+
+/// Go's table-scan penalty (`getTableScanPenalty`,
+/// `pkg/planner/core/plan_cost_ver2.go`, ported in
+/// `tidb_executor::access_cost::table_scan_penalty_rows`) charges a
+/// full-range table scan a SECOND scan's worth of rows whenever the
+/// statistics behind it cannot be trusted -- pseudo, stale, or outrun by
+/// `modify_count`. Under pseudo statistics a covering index and the table it
+/// covers cost within a few percent of each other, so this penalty is the
+/// whole reason real TiDB reads the index.
+///
+/// Every row below was captured from a real TiDB session through
+/// `rust/difftests/gorun`:
+///
+/// ```text
+/// create table t(a bigint, b bigint, key idx(a, b));
+/// explain format = 'plan_tree' select * from t;
+///   IndexReader        root       index:IndexFullScan
+///   └─IndexFullScan    cop[tikv]  table:t, index:idx(a, b)  keep order:false, stats:pseudo
+///
+/// create table t2(a bigint, b bigint, c bigint, key kb(b));
+/// explain format = 'plan_tree' select * from t2;
+///   TableReader        root       data:TableFullScan
+///   └─TableFullScan    cop[tikv]  table:t2  keep order:false, stats:pseudo
+/// explain format = 'plan_tree' select b from t2;
+///   IndexReader        root       index:IndexFullScan
+///   └─IndexFullScan    cop[tikv]  table:t2, index:kb(b)  keep order:false, stats:pseudo
+///
+/// create table t3(a bigint primary key, b bigint, c varchar(40));
+/// explain format = 'plan_tree' select * from t3 where a > 5;
+///   TableReader        root       data:TableRangeScan
+///   └─TableRangeScan   cop[tikv]  table:t3  range:(5,+inf], keep order:false, stats:pseudo
+/// ```
+///
+/// The three NEGATIVE rows are the acceptance criterion, not a footnote. The
+/// recorded TiDB plans this workspace replays contain roughly nine full scans
+/// for every index read, so a penalty that merely made indexes attractive
+/// would trade a large body of correct agreements for divergences. `t2` reads
+/// its table for `SELECT *` because `kb(b)` covers nothing of `c` and a full
+/// index scan plus a row lookup can never beat the scan it would do anyway;
+/// the same index wins the moment the statement reads only `b`. And a table
+/// path the ranger NARROWED is exempt outright (Go's `hasFullRangeScan`),
+/// because the range is the evidence the penalty exists to demand.
+#[test]
+fn a_full_table_scan_under_pseudo_stats_pays_gos_risk_penalty() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a BIGINT, b BIGINT, KEY idx(a, b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (a BIGINT, b BIGINT, c BIGINT, KEY kb(b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t3 (a BIGINT PRIMARY KEY, b BIGINT, c VARCHAR(40))")
+        .unwrap();
+
+    let leaf = |session: &mut Session, sql: &str| {
+        let rows = row_text(session.run(sql));
+        let last = rows.last().expect("a plan has at least one row").clone();
+        (last[0].clone(), last[3].clone(), last[4].clone())
+    };
+
+    // The whole row is covered by `idx(a, b)`, so the penalty decides it.
+    let (name, object, info) = leaf(&mut session, "EXPLAIN SELECT * FROM t");
+    assert!(name.contains("IndexFullScan"), "{name}");
+    assert_eq!(object, "table:t, index:idx(a, b)");
+    assert_eq!(info, "keep order:false, stats:pseudo");
+
+    // NEGATIVE: `kb(b)` does not cover `c`, so the double read loses and the
+    // penalized scan is still the cheapest path there is.
+    let (name, object, _) = leaf(&mut session, "EXPLAIN SELECT * FROM t2");
+    assert!(name.contains("TableFullScan"), "{name}");
+    assert_eq!(object, "table:t2");
+
+    // The same index, the same penalty, a narrower read: now it covers.
+    let (name, object, _) = leaf(&mut session, "EXPLAIN SELECT b FROM t2");
+    assert!(name.contains("IndexFullScan"), "{name}");
+    assert_eq!(object, "table:t2, index:kb(b)");
+
+    // NEGATIVE: a NARROWED table path is exempt from the penalty, and a table
+    // with no index has nothing to lose to anyway.
+    let (name, _, info) = leaf(&mut session, "EXPLAIN SELECT * FROM t3 WHERE a > 5");
+    assert!(name.contains("TableRangeScan"), "{name}");
+    assert!(info.starts_with("range:(5,+inf]"), "{info}");
+    let (name, object, _) = leaf(&mut session, "EXPLAIN SELECT * FROM t3");
+    assert!(name.contains("TableFullScan"), "{name}");
+    assert_eq!(object, "table:t3");
+
+    // The exemption where it can actually be OBSERVED: a wide table whose
+    // narrowed handle range still loses to a covering index the moment the
+    // penalty is charged to it. Captured TiDB:
+    //
+    // ```text
+    // create table t4(a bigint primary key, b bigint,
+    //                 c varchar(255), d varchar(255), key kb(b));
+    // explain format = 'plan_tree' select b from t4 where a > 5;
+    //   TableReader        root       data:Projection
+    //   └─Projection       cop[tikv]  test.t4.b
+    //     └─TableRangeScan cop[tikv]  table:t4  range:(5,+inf], keep order:false, stats:pseudo
+    // ```
+    //
+    // `kb(b)` covers `{b, a}` and would be read whole; the range reads a
+    // third of a wide row. Go charges the range NOTHING, so the range wins.
+    session
+        .run(
+            "CREATE TABLE t4 (a BIGINT PRIMARY KEY, b BIGINT, \
+             c VARCHAR(255), d VARCHAR(255), KEY kb(b))",
+        )
+        .unwrap();
+    let (name, object, info) = leaf(&mut session, "EXPLAIN SELECT b FROM t4 WHERE a > 5");
+    assert!(name.contains("TableRangeScan"), "{name}");
+    assert_eq!(object, "table:t4");
+    assert!(info.starts_with("range:(5,+inf]"), "{info}");
+}

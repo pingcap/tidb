@@ -222,6 +222,9 @@ const DOUBLE_READ_REQUESTS_PER_ROW: f64 = 32.0 / 20000.0;
 const MIN_NUM_ROWS: f64 = 1.0;
 /// Go `plan_cost_ver2.go`'s `MinRowSize`.
 const MIN_ROW_SIZE: f64 = 2.0;
+/// Go `plan_cost_ver2.go`'s `MaxPenaltyRowCount`: the floor on the extra rows
+/// [`table_scan_penalty_rows`] charges a risky full scan.
+const MAX_PENALTY_ROW_COUNT: f64 = 1000.0;
 
 /// One table's loaded statistics, in the shape the estimator reads them.
 ///
@@ -462,6 +465,103 @@ fn net_cost(rows: f64, row_size: f64) -> f64 {
     rows * row_size * TIDB_KV_NET_FACTOR
 }
 
+/// Go `HistColl.GetAnalyzeRowCount` (`pkg/statistics/table.go`): the row count
+/// an ANALYZE actually observed, which -- unlike `RealtimeCount` -- does not
+/// move with `modify_count`. The first analyzed column by ascending id, then
+/// the first analyzed index, then `-1` for a table that has neither.
+///
+/// Every histogram this tier loads is a full one, so Go's `IsFullLoad` guard
+/// is satisfied by presence; the `BTreeMap`s are already in Go's id order.
+fn analyze_row_count(stats: &TableStatistics) -> f64 {
+    if let Some(column) = stats.columns.values().next() {
+        return column.total_row_count();
+    }
+    if let Some(index) = stats.indexes.values().next() {
+        return index.total_row_count();
+    }
+    -1.0
+}
+
+/// Go `getTableScanPenalty` (`pkg/planner/core/plan_cost_ver2.go`): the EXTRA
+/// rows a full-range table scan is costed at on top of the ones it reads.
+///
+/// # Why a full scan is not priced at what it reads
+///
+/// A full table scan is the plan whose estimate cannot be wrong in the
+/// planner's favour and can be wrong badly against it: when the statistics are
+/// pseudo, or stale enough that `modify_count` outruns the analyzed count, the
+/// row count feeding every OTHER path is a guess, and the scan is the path
+/// that guess makes look cheapest. Go answers by charging the scan a second
+/// scan's worth of rows -- `max(MaxPenaltyRowCount, rows)`, raised again to
+/// `modify_count` on an unpartitioned table -- so a covering index has to be
+/// beaten on its own merits rather than by an estimate nobody trusts.
+///
+/// This is why `EXPLAIN SELECT * FROM t` over `t(a bigint, b bigint, KEY
+/// idx(a,b))` reads `IndexFullScan` in real TiDB: with no statistics the two
+/// paths cost within a few percent of each other, and the penalty is what
+/// decides it. Captured through `rust/difftests/gorun`.
+///
+/// Returns `0.0` -- no penalty -- for the three shapes Go exempts:
+///
+/// * a NARROWED table path (`ranger.HasFullRange` is false, and the
+///   index-join inner side's `RangeInfo`), because the range is the evidence
+///   the penalty exists to demand;
+/// * statistics that are neither pseudo, stale, nor suspiciously low;
+/// * `tidb_opt_prefer_range_scan` off, which this tier has no `SET` for and
+///   so is always on.
+///
+/// `partition_scan` is Go's `hasPartitionScan`: a scan of a PRUNED partition
+/// already proved it reads a fraction of the table, so it stops at the row
+/// floor instead of being raised to the whole table's `modify_count`.
+///
+/// # Two of Go's conditions are ported but not yet OBSERVABLE here
+///
+/// Both are kept because they are Go's own, and a rule this tier reaches by a
+/// different route than Go would be a second answer to disagree with; neither
+/// is what produces the plans above. Recording that they are inert is what
+/// stops a later reader from mistaking either for load-bearing:
+///
+/// * **`hasFullRangeScan`** (the caller's `handle_ranges.is_none()` gate).
+///   MEASURED: charging a NARROWED table path the penalty as well changes no
+///   test in this workspace and no statement of the integration replay -- the
+///   `net_cost` term, which the penalty does not touch, is what decides a
+///   narrowed path, and the widest table and narrowest covering index that
+///   could be built (fifteen `BIGINT` columns against `KEY kb(b)`) still does
+///   not cross over. The gate stays because penalizing a narrowed path is
+///   simply not Go's rule.
+/// * **`index_force`**. Unreachable from a SINGLE-table chooser by
+///   construction: Go's flag is statement-wide, and within one table a
+///   `USE`/`FORCE INDEX` that names an index DELETES the table path
+///   (`AvailablePaths::allows_table`), so no full scan survives for the
+///   penalty to charge. It becomes observable the day path selection runs at
+///   each leaf of a multi-table `FROM`, which is where a hint on one table
+///   penalizes another table's scan.
+fn table_scan_penalty_rows(
+    stats: Option<&TableStatistics>,
+    rows: f64,
+    index_force: bool,
+    partition_scan: bool,
+) -> f64 {
+    let pseudo = is_pseudo(stats);
+    let original_rows = stats.map_or(-1.0, analyze_row_count);
+    let modify_count = stats.map_or(0, |stats| stats.modify_count) as f64;
+    // Go's `hasUnreliableStats`, `hasHighModifyCount` and `hasLowEstimate`.
+    let unreliable = pseudo || original_rows < 1.0;
+    let high_modify_count = modify_count > original_rows;
+    let low_estimate = rows > 1.0 && modify_count < original_rows && rows.trunc() <= modify_count;
+    // Go's `allowPreferRangeScan` is `tidb_opt_prefer_range_scan`, whose
+    // default is on and which this tier has no `SET` for.
+    let prefer_range_scan = unreliable || high_modify_count || low_estimate;
+    if !index_force && !prefer_range_scan {
+        return 0.0;
+    }
+    let min_rows = MAX_PENALTY_ROW_COUNT.max(rows);
+    if partition_scan {
+        return min_rows;
+    }
+    min_rows.max(modify_count)
+}
+
 /// Every candidate way of reading `table` under `where_clause`.
 ///
 /// The table path is always a candidate -- Go's `tablePath` is built
@@ -492,6 +592,10 @@ pub(crate) fn enumerate_paths(
     // this tier has no second invocation, so the statement's own `ORDER BY`
     // is passed in directly.
     sort_property: bool,
+    // Go `getTableScanPenalty`'s `hasPartitionScan`: the statement carries
+    // partition pruning conditions, so its table scan is of the partitions
+    // that survived rather than of the whole table.
+    partition_scan: bool,
 ) -> Vec<Candidate<AccessPath>> {
     let realtime = realtime_row_count(stats);
     let source_rows = source_row_count(table, where_clause, resolver, stats, realtime);
@@ -510,6 +614,19 @@ pub(crate) fn enumerate_paths(
         stats,
         realtime,
         handle_ranges.as_deref(),
+        // Go's `hasFullRangeScan`: only a table path the ranger narrowed
+        // NOTHING on is penalized -- with a handle bound the path carries its
+        // own ranges, and the range is the evidence the penalty demands.
+        if handle_ranges.is_none() {
+            table_scan_penalty_rows(
+                stats,
+                realtime.max(MIN_NUM_ROWS),
+                hints.has_forced_path(),
+                partition_scan,
+            )
+        } else {
+            0.0
+        },
     );
     // Go's `getTableCandidate`: a table path is always a single scan, and it
     // is the full range exactly when the ranger built nothing. Its access
@@ -827,6 +944,10 @@ fn table_scan_path(
     stats: Option<&TableStatistics>,
     realtime: f64,
     ranges: Option<&[IndexRange]>,
+    // Go `getTableScanPenalty`'s answer, computed by the caller because the
+    // hint and partition facts it reads are the caller's. Always `0.0` for a
+    // NARROWED table path -- Go gates the penalty on `hasFullRangeScan`.
+    penalty_rows: f64,
 ) -> AccessPath {
     let row_columns: Vec<RowSizeColumn> = table
         .columns
@@ -853,7 +974,7 @@ fn table_scan_path(
     // Go costs the scan at the rows it READS and the reader's net transfer at
     // the rows that leave the cop task, which is after the pushed Selection.
     let scan_rows = count_after_access.max(MIN_NUM_ROWS);
-    let scanned = scan_cost(scan_rows, row_size.max(MIN_ROW_SIZE));
+    let scanned = scan_cost(scan_rows + penalty_rows, row_size.max(MIN_ROW_SIZE));
     let after_filter = source_row_count(table, where_clause, resolver, stats, realtime);
     let transferred = net_cost(after_filter, row_size.max(MIN_ROW_SIZE));
     AccessPath {
@@ -1756,6 +1877,7 @@ mod tests {
                 None,
                 &hints,
                 sort_property,
+                false,
             )
             .into_iter()
             .filter_map(|candidate| candidate.path.index.map(|(id, _)| id))
@@ -1830,7 +1952,15 @@ mod tests {
 
         // The crossover itself: a point range keeps the index, a range
         // covering the whole table does not.
-        let scan = table_scan_path(&table, None, &NoResolver, None, realtime, None);
+        //
+        // Measured against the scan WITHOUT Go's table-scan penalty
+        // (`table_scan_penalty_rows`, passed as `0.0` here), and deliberately
+        // so: the penalty prices the RISK of a full scan under statistics
+        // nobody trusts, not the double read, and it moves the crossover only
+        // ever in the index path's favour. Excluding it is what keeps this
+        // test measuring the term it names. The penalized scan is asserted
+        // separately below.
+        let scan = table_scan_path(&table, None, &NoResolver, None, realtime, None, 0.0);
         assert!(
             non_covering.cost < scan.cost,
             "a one-row lookup must beat a {realtime}-row scan: index {} vs \
@@ -1874,6 +2004,75 @@ mod tests {
             "at {many_rows} rows the table side, not the request term ({}), \
              is what puts the double read over the scan (by {broad_price})",
             request_term(many_rows)
+        );
+
+        // And the penalty, on top of all of it, only ever moves the scan
+        // AWAY from being chosen -- it is added to the scan's own price and
+        // to nothing else. The whole-table double read still loses, which is
+        // the direction that matters: a rule that priced risk by making the
+        // risky path cheaper would be backwards.
+        let penalized = table_scan_path(
+            &table,
+            None,
+            &NoResolver,
+            None,
+            realtime,
+            None,
+            table_scan_penalty_rows(None, realtime, false, false),
+        );
+        assert!(penalized.cost > scan.cost);
+        assert!(whole_table.cost > penalized.cost);
+    }
+
+    /// Go `getTableScanPenalty` (`pkg/planner/core/plan_cost_ver2.go`), branch
+    /// by branch. The rows are what Go returns, not a cost: the caller turns
+    /// them into one by scanning them a second time.
+    #[test]
+    fn the_full_scan_penalty_is_gos_branch_table() {
+        // Pseudo statistics -- `hasUnreliableStats` -- is the branch every
+        // un-analyzed table in the replay takes. `max(MaxPenaltyRowCount,
+        // rows)` with `modify_count` at zero.
+        assert_eq!(
+            table_scan_penalty_rows(None, 10000.0, false, false),
+            10000.0
+        );
+        // The floor bites on a table smaller than it: an un-analyzed
+        // hundred-row table is charged a thousand.
+        assert_eq!(table_scan_penalty_rows(None, 100.0, false, false), 1000.0);
+
+        // A table with real, fresh statistics and no hint pays nothing --
+        // this is the arm that keeps the 1998 recorded `TableFullScan` lines
+        // full scans.
+        let analyzed = |modify_count: i64| TableStatistics {
+            pseudo: false,
+            row_count: 10000,
+            modify_count,
+            columns: BTreeMap::new(),
+            indexes: BTreeMap::new(),
+        };
+        // `analyze_row_count` of a table with no histogram is Go's `-1`, which
+        // is itself `hasUnreliableStats`; a table that reaches the no-penalty
+        // arm must have an analyzed count above zero, so this pins the
+        // OTHER direction -- that a `pseudo: false` flag alone is not enough.
+        assert_eq!(
+            table_scan_penalty_rows(Some(&analyzed(0)), 10000.0, false, false),
+            10000.0
+        );
+
+        // Go's `hasIndexForce`: a `USE`/`FORCE INDEX` anywhere in the
+        // statement penalizes every full scan in it, whatever the statistics
+        // say.
+        assert_eq!(table_scan_penalty_rows(None, 10.0, true, false), 1000.0);
+
+        // Go's `hasPartitionScan`: a pruned partition stops at the floor
+        // instead of being raised to the whole table's `modify_count`.
+        assert_eq!(
+            table_scan_penalty_rows(Some(&analyzed(50000)), 10.0, false, true),
+            1000.0
+        );
+        assert_eq!(
+            table_scan_penalty_rows(Some(&analyzed(50000)), 10.0, false, false),
+            50000.0
         );
     }
 }

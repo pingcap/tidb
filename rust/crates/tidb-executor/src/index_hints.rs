@@ -110,6 +110,20 @@ impl AvailablePaths {
             .is_some_and(|forced| forced.contains(&index_id))
     }
 
+    /// Go `StmtCtx.SetIndexForce`, which `stats.go`'s
+    /// `getGeneralAttributesFromPaths` raises the moment ANY path of the
+    /// statement is `path.Forced` -- and `USE INDEX` forces just as `FORCE
+    /// INDEX` does, since Go stopped distinguishing them
+    /// (`planbuilder.go`: "Currently we don't distinguish between FORCE and
+    /// USE because our cost estimation is not reliable").
+    ///
+    /// Read by [`crate::access_cost`]'s table-scan penalty, which is the only
+    /// consumer: a hinted statement makes EVERY full table scan in it more
+    /// expensive, including one over a table the hint never named.
+    pub(crate) const fn has_forced_path(&self) -> bool {
+        self.forced_indexes.is_some()
+    }
+
     /// Whether the table path -- full scan, handle range, or point get --
     /// survives. `false` is what makes `FORCE INDEX(idx_b) WHERE a = 2` read
     /// the index instead of doing the point get the cost model would rather

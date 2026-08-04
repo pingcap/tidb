@@ -1166,7 +1166,30 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // (`c1 > 1 and c2 = 1 and c3 < 1` reads `(1 1,1 +inf]`), which needs the
     // handle appended to a non-clustered index's tail -- a documented deferred
     // in `index_range`.
-    const KNOWN_DIVERGENCES: usize = 51;
+    //
+    // 51 -> 49: Go's `getTableScanPenalty` (`plan_cost_ver2.go`) landed in
+    // `access_cost::table_scan_penalty_rows`. A full-range table scan whose
+    // statistics are pseudo, stale, or outrun by `modify_count` is costed at a
+    // SECOND scan's worth of rows, which is what makes real TiDB read a
+    // covering index over a table the index covers: `explain_easy`'s `select *
+    // from t where b in (1,2) and b in (1,3)` and `select * from t t1 where
+    // not exists (select * from t t2 where t1.b = t2.b)` both read
+    // `IndexFullScan idx(a, b)` now. NOTHING regressed: the divergence sets
+    // before and after are a strict subset relation, which is the property
+    // that mattered -- these 48 topics record ~9 full scans for every index
+    // read, and a penalty that merely made indexes attractive would have
+    // traded correct agreements for divergences.
+    //
+    // The 34 access-path divergences left are almost all ONE seam: path
+    // selection runs in `driver::access::commit_fast_path_source`, which bails
+    // on `single_kv_table`, so every leaf of a multi-table `FROM` reads its
+    // whole table with no path costed at all. 30 of the 34 are that; of those,
+    // 8 additionally need Go's index-JOIN inner side (`range: decided by
+    // [eq(...)]`), which is a physical operator this tier does not build. The
+    // remaining 4 are `index_lookup_pushdown(t, idx)`, a scan hint
+    // `index_hints` does not resolve, which in Go sets `path.Forced` and so
+    // keeps a NON-covering index alive through `skylinePruning`'s `keepIndex`.
+    const KNOWN_DIVERGENCES: usize = 49;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

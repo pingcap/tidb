@@ -250,6 +250,7 @@ fn index_ranges_are_built_the_way_go_builds_them() {
             table,
             &columns,
             &crate::index_hints::AvailablePaths::unrestricted(),
+            false,
         ) {
             Some(crate::driver::access::ChosenPath::Index(id, ranges, _)) => Some((id, ranges)),
             Some(crate::driver::access::ChosenPath::HandleRange(ranges, _)) => {
