@@ -140,7 +140,7 @@ func readAllData(
 							startOffsets[fileIdx],
 							smallBlockBuf,
 							largeBlockBufPool,
-							int(readerMemorySize),
+							int(readerMemorySize/bufSize),
 							output,
 						)
 					}()
@@ -178,7 +178,7 @@ func readOneFile(
 	startOffset uint64,
 	smallBlockBuf *membuf.Buffer,
 	largeBlockBufPool *membuf.Pool,
-	readerMemorySize int,
+	bufCount int,
 	output *memKVsAndBuffers,
 ) error {
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
@@ -198,7 +198,7 @@ func readOneFile(
 	defer func() {
 		_ = rd.Close()
 	}()
-	if bufCount := readerMemorySize / simplesst.ConcurrentReaderBufferSizePerConc; bufCount > 0 {
+	if bufCount > 0 {
 		largeBlockBuf := largeBlockBufPool.NewBuffer()
 		rd.EnableConcurrentRead(
 			storage,
