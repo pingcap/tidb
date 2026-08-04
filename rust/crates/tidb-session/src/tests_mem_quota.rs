@@ -241,3 +241,110 @@ fn a_cascade_past_the_quota_repoints_nothing_and_finishes_under_the_default() {
         "accept-control: with room the cascade repoints every child row"
     );
 }
+
+/// The hash join's build-side spill (Go v1's `chunk.RowContainer` +
+/// `SpillDiskAction`), end to end through the session.
+///
+/// Every expectation is `./gorun` on this branch over exactly this data:
+///
+/// ```text
+/// CREATE TABLE hjs (a BIGINT, b BIGINT);   -- 5000 rows, a = i % 1000, b = i
+/// CREATE TABLE hjp (a BIGINT, c BIGINT);   --  200 rows, a = i,        c = i
+/// SELECT sum(hjs.b), count(*) FROM hjp JOIN hjs ON hjp.a = hjs.a;
+///   -> 2099500 | 1000
+/// SELECT sum(hjs.b), sum(hjp.c), count(*) FROM hjp LEFT JOIN hjs ON hjp.a = hjs.a;
+///   -> 2099500 | 99500 | 1000
+/// ```
+///
+/// `hjs` is the BUILD side (the right child of an inner/left join), and at
+/// 5000 rows it is five chunks -- so a quota of a few chunks is one the build
+/// side cannot fit in, and the spill is what lets the query answer at all.
+fn spill_session() -> Session {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE hjs (a BIGINT, b BIGINT)")
+        .unwrap();
+    for batch in 0..10 {
+        let values: Vec<String> = (0..500)
+            .map(|i| {
+                let v = batch * 500 + i;
+                format!("({},{v})", v % 1000)
+            })
+            .collect();
+        session
+            .run(&format!("INSERT INTO hjs VALUES {}", values.join(",")))
+            .unwrap();
+    }
+    session
+        .run("CREATE TABLE hjp (a BIGINT, c BIGINT)")
+        .unwrap();
+    let values: Vec<String> = (0..200).map(|i| format!("({i},{i})")).collect();
+    session
+        .run(&format!("INSERT INTO hjp VALUES {}", values.join(",")))
+        .unwrap();
+    session
+}
+
+const INNER: &str = "SELECT sum(hjs.b), count(*) FROM hjp JOIN hjs ON hjp.a = hjs.a";
+const OUTER: &str =
+    "SELECT sum(hjs.b), sum(hjp.c), count(*) FROM hjp LEFT JOIN hjs ON hjp.a = hjs.a";
+
+/// The control: with room to spare, the answer is Go's.
+#[test]
+fn a_hash_join_with_room_answers_what_go_answers() {
+    let mut session = spill_session();
+    assert_eq!(
+        crate::tests_support::row_text(session.run(INNER)),
+        vec![vec!["2099500".to_owned(), "1000".to_owned()]]
+    );
+    assert_eq!(
+        crate::tests_support::row_text(session.run(OUTER)),
+        vec![vec![
+            "2099500".to_owned(),
+            "99500".to_owned(),
+            "1000".to_owned()
+        ]]
+    );
+}
+
+/// The claim: at a quota the build side does not fit in, the join spills and
+/// still answers EXACTLY what Go answers with room to spare. Not a smaller
+/// answer, not a reordered one -- the same aggregate over the same 1000
+/// matched pairs.
+#[test]
+fn a_hash_join_past_the_quota_spills_and_still_answers_gos_rows() {
+    let mut session = spill_session();
+    session.run("SET @@tidb_mem_quota_query = 65536").unwrap();
+    assert_eq!(
+        crate::tests_support::row_text(session.run(INNER)),
+        vec![vec!["2099500".to_owned(), "1000".to_owned()]]
+    );
+    assert_eq!(
+        crate::tests_support::row_text(session.run(OUTER)),
+        vec![vec![
+            "2099500".to_owned(),
+            "99500".to_owned(),
+            "1000".to_owned()
+        ]]
+    );
+}
+
+/// The gate, and the proof that the test above really is exercising the
+/// spill: the SAME query at the SAME quota with
+/// `tidb_enable_tmp_storage_on_oom` OFF cannot spill, so it takes the
+/// cancellation that was there before -- Go's errno 8175.
+///
+/// The variable is GLOBAL-scope only, so it is set with the `@@global.`
+/// prefix; a session-prefixed `SET` on it is error 1229.
+#[test]
+fn with_tmp_storage_off_the_same_hash_join_is_gos_8175() {
+    let mut session = spill_session();
+    session
+        .run("SET @@global.tidb_enable_tmp_storage_on_oom = 0")
+        .unwrap();
+    session.run("SET @@tidb_mem_quota_query = 65536").unwrap();
+    let error = session.run(INNER).expect_err("the quota must be enforced");
+    let wire = error.to_mysql_error();
+    assert_eq!(wire.code, 8175);
+    assert_eq!(&wire.state, b"HY000");
+}

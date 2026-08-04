@@ -12,9 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The equal-condition analysis and hash-key encoding behind [`JoinExec`]'s
-//! hash path (Go `pkg/executor/join/hash_join_v2.go` plus the
-//! `LogicalJoin.EqualConditions` split the planner performs above it).
+//! The equal-condition analysis, hash-key encoding and BUILD-SIDE CONTAINER
+//! behind [`JoinExec`]'s hash path.
+//!
+//! Go source: `pkg/executor/join/hash_table_v1.go`'s `hashRowContainer`
+//! (which is what [`BuildTable`] is), `pkg/executor/join/hash_join_v1.go`'s
+//! `BuildWorkerV1.BuildHashTableForList`, and the `LogicalJoin.EqualConditions`
+//! split the planner performs above all of it. v1 rather than v2 because this
+//! executor is v1-shaped; see `crate::join`'s module doc for that
+//! determination and what it excludes.
 //!
 //! # What the hash table is, and is not
 //!
@@ -54,8 +60,14 @@
 //! A NaN `DOUBLE` is treated the same way, because `NaN = NaN` is false.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use tidb_chunk::chunk::Chunk;
+use tidb_chunk::chunk_in_disk::DiskError;
+use tidb_chunk::list::RowPtr;
+use tidb_chunk::row_container::{RowContainer, SpillDiskAction};
 use tidb_datatype::{Collation, Datum, EvalType, FieldType};
 use tidb_expr::expression::Expression;
+use tidb_util::memory::Tracker;
 
 /// The comparison domain a hash join key column is encoded in.
 ///
@@ -299,44 +311,157 @@ pub(crate) fn row_key(
     Ok(Some(encoded))
 }
 
-/// The materialized build side: the rows themselves plus, per key, the build
-/// row indices that carry it IN BUILD ORDER.
+/// The materialized build side: Go v1's `hashRowContainer` -- a
+/// [`RowContainer`] holding the row DATA and, per key, the [`RowPtr`]s that
+/// carry it IN BUILD ORDER.
 ///
 /// The order is not incidental. The nested loop this replaces emits, for one
 /// probe row, its matches in build-input order; keeping each bucket sorted
-/// by build index is what makes the hash join's output byte-identical to it
+/// by build order is what makes the hash join's output byte-identical to it
 /// rather than merely equivalent as a set.
+///
+/// # Why the rows live in a container and the pointers do not
+///
+/// This split IS Go's spill mechanism. `hashRowContainer.hashTable` maps a
+/// hash key to `chunk.RowPtr{ChkIdx, RowIdx}` and stays in memory for the
+/// whole join; the `chunk.RowContainer` underneath holds the chunks and is
+/// the only part that moves to disk. So a spill costs the join nothing in
+/// lookup structure: `probe` still answers from memory, and only the
+/// dereference of a pointer becomes a disk read. Spilling the hash table too
+/// is what v2 does, with a completely different partitioned machinery.
 pub(crate) struct BuildTable {
-    pub(crate) rows: Vec<Vec<Datum>>,
-    buckets: HashMap<Vec<u8>, Vec<u32>>,
+    rows: RowContainer,
+    buckets: HashMap<Vec<u8>, Vec<RowPtr>>,
 }
 
 impl BuildTable {
-    /// Indexes `rows` by their key.
+    /// An empty container over the build side's types, chunked at
+    /// `chunk_size` -- Go `newHashRowContainer`, which passes
+    /// `SessionVars.MaxChunkSize`.
+    pub(crate) fn new(field_types: &[FieldType], chunk_size: usize) -> Self {
+        BuildTable {
+            rows: RowContainer::new(field_types, chunk_size),
+            buckets: HashMap::new(),
+        }
+    }
+
+    /// Go `hashRowContainer.PutChunkSelected` with no selection vector: index
+    /// every row of `chunk` by its key, then hand the chunk to the container.
+    ///
+    /// The chunk index is read BEFORE the add, exactly as Go reads
+    /// `chkIdx := uint32(c.rowContainer.NumChunks())` before `Add` -- the
+    /// pointer must name the slot this chunk is about to take, and it stays
+    /// valid across a spill because the spill copies the chunks to disk in
+    /// order and later adds append to the same numbering.
     ///
     /// # Errors
-    /// [`KeyError`] from [`key_part`].
-    pub(crate) fn build(
-        rows: Vec<Vec<Datum>>,
+    /// [`BuildError::Key`] from [`key_part`]; [`BuildError::Disk`] when the
+    /// container is spilled and the write fails.
+    pub(crate) fn index_chunk(
+        &mut self,
+        chunk: Chunk,
         keys: &[EquiKey],
+        types: &[FieldType],
         build_is_left: bool,
-    ) -> Result<Self, KeyError> {
+    ) -> Result<(), BuildError> {
         let offset = |key: &EquiKey| if build_is_left { key.left } else { key.right };
-        let mut buckets: HashMap<Vec<u8>, Vec<u32>> = HashMap::with_capacity(rows.len());
-        for (index, row) in rows.iter().enumerate() {
+        let chk_idx = u32::try_from(self.rows.num_chunks()).map_err(|_| BuildError::Key)?;
+        for row_idx in 0..chunk.num_rows() {
+            let chunk_row = chunk.get_row(row_idx);
+            let row: Vec<Datum> = types
+                .iter()
+                .enumerate()
+                .map(|(c, ft)| chunk_row.get_datum(c, ft))
+                .collect();
             // A row whose key holds a NULL matches nothing, so it is simply
-            // not indexed. The build side is always the NON-preserved one,
-            // so no outer-join row is lost by dropping it here.
-            if let Some(key) = row_key(keys, row, offset)? {
-                buckets.entry(key).or_default().push(index as u32);
+            // not indexed -- but it IS still stored, because Go stores the
+            // whole chunk and only the hash-table entry is skipped. The build
+            // side is always the NON-preserved one, so no outer-join row is
+            // lost by leaving it unindexed.
+            if let Some(key) = row_key(keys, &row, offset).map_err(|_| BuildError::Key)? {
+                let row_idx = u32::try_from(row_idx).map_err(|_| BuildError::Key)?;
+                self.buckets
+                    .entry(key)
+                    .or_default()
+                    .push(RowPtr { chk_idx, row_idx });
             }
         }
-        Ok(BuildTable { rows, buckets })
+        self.rows.add(chunk).map_err(BuildError::disk)
     }
 
     /// The build rows that could match `key`, in build order.
-    pub(crate) fn probe(&self, key: &[u8]) -> &[u32] {
+    pub(crate) fn probe(&self, key: &[u8]) -> &[RowPtr] {
         self.buckets.get(key).map_or(&[], Vec::as_slice)
+    }
+
+    /// Materializes the row `ptr` names, reading it back from the spill file
+    /// when the container has spilled.
+    ///
+    /// Go `GetMatchedRowsAndPtrs` calls `GetRowAndAppendToChunkIfInDisk`,
+    /// which skips the copy while still in memory. Here the row is converted
+    /// to owned `Datum`s either way -- the join's condition evaluation and
+    /// output both need owned values -- so the ALWAYS-append form is used and
+    /// there is one code path instead of two. `buf` is Go's `chkBuf`: the
+    /// reusable landing chunk for a disk read.
+    ///
+    /// # Errors
+    /// [`DiskError`] when the spill file cannot be read.
+    pub(crate) fn row(
+        &self,
+        ptr: RowPtr,
+        buf: &mut Chunk,
+        types: &[FieldType],
+    ) -> Result<Vec<Datum>, DiskError> {
+        buf.reset();
+        let index = self.rows.get_row_and_always_append_to_chunk(ptr, buf)?;
+        let row = buf.get_row(index);
+        Ok(types
+            .iter()
+            .enumerate()
+            .map(|(c, ft)| row.get_datum(c, ft))
+            .collect())
+    }
+
+    /// Go `hashRowContainer.GetMemTracker`, which the build worker attaches
+    /// to the join's own tracker under `LabelForBuildSideResult`.
+    pub(crate) fn mem_tracker(&self) -> &Arc<Tracker> {
+        self.rows.mem_tracker()
+    }
+
+    /// Go `hashRowContainer.GetDiskTracker`.
+    pub(crate) fn disk_tracker(&self) -> &Arc<tidb_util::disk::Tracker> {
+        self.rows.disk_tracker()
+    }
+
+    /// Go `hashRowContainer.ActionSpill`.
+    pub(crate) fn action_spill(&mut self) -> Arc<SpillDiskAction> {
+        self.rows.action_spill()
+    }
+
+    /// Whether the build side has moved to disk (Go
+    /// `AlreadySpilledSafeForTest`).
+    pub(crate) fn already_spilled(&self) -> bool {
+        self.rows.already_spilled()
+    }
+
+    /// Go `hashRowContainer.Close`.
+    pub(crate) fn close(&mut self) {
+        self.rows.close();
+    }
+}
+
+/// What indexing one build chunk can go wrong with.
+#[derive(Debug)]
+pub(crate) enum BuildError {
+    /// A datum outside its key column's statically determined class.
+    Key,
+    /// The spill file rejected the write.
+    Disk(String),
+}
+
+impl BuildError {
+    fn disk(error: DiskError) -> Self {
+        BuildError::Disk(error.to_string())
     }
 }
 

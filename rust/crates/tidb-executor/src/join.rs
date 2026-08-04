@@ -70,16 +70,44 @@
 //! NULL-padded row immediately. No second sweep over a matched-flag array,
 //! and no need to hold the preserved side in memory.
 //!
-//! # Memory
+//! # Memory, and the build side's spill to disk
 //!
-//! The build side is materialized -- that is inherent to hashing -- as
-//! `build rows x row width` datums plus one `u32` per row in its bucket. The
-//! probe side is NOT: it is pulled one chunk at a time and each row is
-//! dropped as soon as its output is emitted. The nested-loop fallback still
-//! materializes both sides.
+//! The build side is materialized -- that is inherent to hashing -- into a
+//! `tidb_chunk::RowContainer`, which is Go v1's `hashRowContainer`: the row
+//! DATA lives in the container and the hash table holds only `RowPtr`s into
+//! it. The probe side is NOT materialized: it is pulled one chunk at a time
+//! and each row is dropped as soon as its output is emitted. The nested-loop
+//! fallback still materializes both sides.
+//!
+//! That split is what makes spilling cheap. When the build side outgrows
+//! `tidb_mem_quota_query`, Go's `SpillDiskAction` -- registered on the
+//! SESSION tracker by `BuildWorkerV1.BuildHashTableForList` via
+//! `FallbackOldAndSetNewAction` -- moves the container's chunks to a file and
+//! releases their memory; the hash table stays put, so a probe still finds
+//! its bucket in memory and only the DEREFERENCE of a pointer becomes a disk
+//! read. The gate is `tidb_enable_tmp_storage_on_oom`: with it off no spill
+//! action is registered at all, so the tracker's existing cancellation fires
+//! and the statement ends with errno 8175, exactly as it did before spilling
+//! existed. With it on and the container still over quota after the spill,
+//! the action's FALLBACK is that same cancellation -- Go chains them, and so
+//! does this.
+//!
+//! WHICH VERSION. TiDB ships two hash joins, selected by
+//! `tidb_hash_join_version`, and their spill mechanisms are not variants of
+//! one design. v2 (`optimized`, the shipped DEFAULT for an equi-join with no
+//! NullEQ and no null-aware key) partitions BOTH sides into its own
+//! serialized row-table format and replays whole partitions in restore
+//! rounds. v1 (`legacy`, and the only path for a cross join, a NullEQ key or
+//! a null-aware anti-join) is the container-plus-pointers design above. This
+//! executor is v1-SHAPED -- one build container, an in-memory key-to-pointer
+//! map, a single-threaded probe loop -- so v1's spill is the one ported here.
+//! Building v2's partitioned machinery onto it would be a rewrite, not a
+//! port, and is NOT started.
 //!
 //! Still deferred relative to Go's `HashJoinExec`: the parallel build/probe
-//! worker pipeline, spill-to-disk, and the semi/anti/outer-apply variants.
+//! worker pipeline, v2's partitioned spill, and the semi/anti/outer-apply
+//! variants. Hash-aggregate spill, TopN spill, parallel-sort spill and
+//! `SortedRowContainer` are other operators' surfaces and are untouched.
 //!
 //! # Memory accounting (`tidb_mem_quota_query`)
 //!
@@ -94,8 +122,8 @@
 //! each followed immediately by `check()`, exactly as
 //! [`crate::sort::SortExec::fetch_and_sort`] does:
 //!
-//! - [`JoinExec::drain`], per chunk, for every side it materializes -- the
-//!   hash build side, and both sides on the nested-loop fallback.
+//! - [`JoinExec::drain`], per chunk, for both sides of the nested-loop
+//!   fallback (the hash build side accounts through its container instead).
 //! - [`JoinExec::next_nested`], per outer row, for the OUTPUT it accumulates,
 //!   because that path emits the whole result into one `req` in a single
 //!   call.
@@ -115,11 +143,17 @@
 //! draws the same line -- `hashJoinExec` tracks its `rowContainer` build
 //! side, not the rows it hands back.
 //!
+//! The hash path's BUILD side no longer goes through [`JoinExec::drain`]: its
+//! container's own tracker accounts each chunk as it lands, which is Go's
+//! accounting for that side and is also what the spill action fires from.
+//! `drain` still serves the nested-loop fallback, whose two sides it counts
+//! per row.
+//!
 //! The check fires INSIDE both loops, never after: after the loop there is
 //! nothing left to save.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::hash_join::{row_key, BuildTable, EquiKey, KeyError};
+use crate::hash_join::{row_key, BuildError, BuildTable, EquiKey, KeyError};
 use crate::mem_quota::StatementMemory;
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -129,7 +163,7 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
-use tidb_util::memory::Tracker;
+use tidb_util::memory::{ArcAction, Tracker};
 
 /// Which side, if any, keeps rows that match nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +181,13 @@ pub enum JoinKind {
 struct HashState {
     /// The materialized, indexed inner side.
     table: BuildTable,
+    /// The build side's column types, needed to read a row back out of the
+    /// container (which stores bytes, not `Datum`s).
+    build_types: Vec<FieldType>,
+    /// Go `hashRowContainer.chkBuf`: the landing chunk a spilled build row is
+    /// read back into. Reused across probes so a disk-backed join does not
+    /// allocate per matched row.
+    build_buf: Chunk,
     /// The chunk the outer child streams into, and how far it is consumed.
     probe_chunk: Chunk,
     probe_row: usize,
@@ -219,6 +260,18 @@ pub struct JoinExec<C: Columns> {
     memory: StatementMemory,
     /// This operator's accountant, hanging off the statement tracker.
     tracker: Arc<Tracker>,
+    /// Go `HashJoinCtxV1.diskTracker`: what the build side has written to
+    /// spill files.
+    disk_tracker: Arc<tidb_util::disk::Tracker>,
+    /// The spill action registered on the session tracker, kept so `close`
+    /// can unbind it -- Go's
+    /// `MemTracker.UnbindActionFromHardLimit(e.RowContainer.ActionSpill())`.
+    registered_action: Option<ArcAction>,
+    /// Whether the build side reached disk, latched when the build finishes
+    /// (see [`JoinExec::build_table`]).
+    build_spilled: bool,
+    /// What the build side wrote to spill files, latched with the flag above.
+    spilled_bytes: i64,
 }
 
 impl<C: Columns> JoinExec<C> {
@@ -256,7 +309,47 @@ impl<C: Columns> JoinExec<C> {
             condition_evals: Cell::new(0),
             memory,
             tracker,
+            disk_tracker: tidb_util::disk::new_tracker(-1, -1),
+            registered_action: None,
+            build_spilled: false,
+            spilled_bytes: 0,
         }
+    }
+
+    /// Whether the build side has moved to a spill file (Go
+    /// `hashRowContainer.AlreadySpilledSafeForTest`). For tests and
+    /// diagnostics.
+    #[must_use]
+    pub fn build_side_spilled(&self) -> bool {
+        self.build_spilled
+    }
+
+    /// The spill action this join put on the session tracker, if any. For
+    /// tests: `close` must take it back off, and identity is the only way to
+    /// tell "the chain still has SOME action" from "the chain still has THIS
+    /// one".
+    #[must_use]
+    pub fn registered_spill_action(&self) -> Option<ArcAction> {
+        self.registered_action.clone()
+    }
+
+    /// How many rows the reusable read-back buffer (Go
+    /// `hashRowContainer.chkBuf`) is holding. It is reset per matched row, so
+    /// this is 1 while probing and 0 before the build finishes -- a growing
+    /// value would mean the buffer accumulates every row the join ever read
+    /// back from disk.
+    #[must_use]
+    pub fn build_buf_rows(&self) -> usize {
+        self.hash
+            .as_ref()
+            .map_or(0, |hash| hash.build_buf.num_rows())
+    }
+
+    /// Bytes the build side has written to spill files (Go
+    /// `HashJoinCtxV1.diskTracker`).
+    #[must_use]
+    pub fn spilled_bytes(&self) -> i64 {
+        self.spilled_bytes
     }
 
     /// Whether this join hashes its equal conditions rather than looping.
@@ -638,26 +731,73 @@ impl<C: Columns> JoinExec<C> {
     }
 
     /// Materializes and indexes the inner side, once per `open()`.
+    ///
+    /// Go `BuildWorkerV1.BuildHashTableForList`, in its order: hang the
+    /// container's trackers off this operator's, register the spill action on
+    /// the SESSION tracker when `tidb_enable_tmp_storage_on_oom` allows it,
+    /// then feed the child's chunks in.
     fn build_table(&mut self) -> Result<(), ExecError> {
         if self.hash.is_some() {
             return Ok(());
         }
         let build_is_left = !self.outer_is_left();
-        let tracker = Arc::clone(&self.tracker);
-        let memory = self.memory.clone();
-        let build_rows = if build_is_left {
-            Self::drain(self.left.as_mut(), &tracker, &memory)?
+        let build_types: Vec<FieldType> = if build_is_left {
+            self.left.ret_field_types().to_vec()
         } else {
-            Self::drain(self.right.as_mut(), &tracker, &memory)?
+            self.right.ret_field_types().to_vec()
         };
+        let mut table = BuildTable::new(&build_types, self.meta.max_chunk_size());
+        table.mem_tracker().attach_to(&self.tracker);
+        table.disk_tracker().attach_to(&self.disk_tracker);
+        // Go: `if vardef.EnableTmpStorageOnOOM.Load() { ...
+        // MemTracker.FallbackOldAndSetNewAction(actionSpill) }`. With the
+        // variable OFF no spill action exists, so an overrun goes straight to
+        // the cancellation that was already registered -- errno 8175, which
+        // is exactly what this executor did before spilling existed.
+        if self.memory.tmp_storage_on_oom() {
+            let action: ArcAction = table.action_spill();
+            self.memory
+                .session_tracker()
+                .fallback_old_and_set_new_action(Arc::clone(&action));
+            self.registered_action = Some(action);
+        }
+        let build: &mut dyn Executor = if build_is_left {
+            self.left.as_mut()
+        } else {
+            self.right.as_mut()
+        };
+        loop {
+            let mut chunk = build.new_chunk();
+            build.next(&mut chunk)?;
+            if chunk.num_rows() == 0 {
+                break;
+            }
+            // The container's own tracker accounts the chunk as it lands,
+            // which is Go's accounting for this side; the spill action fires
+            // from that consume. `check` right after is what turns a
+            // still-exceeding budget -- the action's FALLBACK, the
+            // cancellation -- into the statement's error.
+            table
+                .index_chunk(chunk, &self.keys, &build_types, build_is_left)
+                .map_err(build_error)?;
+            self.memory.check()?;
+        }
         let probe_chunk = if build_is_left {
             self.right.new_chunk()
         } else {
             self.left.new_chunk()
         };
-        let table = BuildTable::build(build_rows, &self.keys, build_is_left).map_err(key_error)?;
+        // The container's live state is only readable while it is open --
+        // `close` deletes the spill file and detaches the disk tracker -- so
+        // what the build side DID is latched here, at the moment the build
+        // finishes and nothing more can change it.
+        self.build_spilled = table.already_spilled();
+        self.spilled_bytes = self.disk_tracker.bytes_consumed();
+        let build_buf = Chunk::new_with_capacity(&build_types, 1);
         self.hash = Some(HashState {
             table,
+            build_types,
+            build_buf,
             probe_chunk,
             probe_row: 0,
             probe_done: false,
@@ -699,7 +839,7 @@ impl<C: Columns> JoinExec<C> {
         };
         let offset = |key: &EquiKey| if probe_is_left { key.left } else { key.right };
         loop {
-            let Some(hash) = self.hash.as_ref() else {
+            let Some(hash) = self.hash.as_mut() else {
                 return Ok(());
             };
             if hash.probe_row >= hash.probe_chunk.num_rows() {
@@ -709,13 +849,29 @@ impl<C: Columns> JoinExec<C> {
             let key = row_key(&self.keys, &probe_row, offset).map_err(key_error)?;
             // A probe row whose key holds a NULL matches nothing, so it never
             // touches the table -- and, on an outer join, pads immediately.
+            //
+            // Go `GetMatchedRowsAndPtrs`: walk the bucket's pointers in order
+            // and dereference each one through the container, which is where
+            // a spilled build side becomes a read from the spill file.
             let candidates: Vec<Vec<Datum>> = match &key {
-                Some(key) => hash
-                    .table
-                    .probe(key)
-                    .iter()
-                    .map(|index| hash.table.rows[*index as usize].clone())
-                    .collect(),
+                Some(key) => {
+                    let ptrs = hash.table.probe(key).to_vec();
+                    let mut rows = Vec::with_capacity(ptrs.len());
+                    for ptr in ptrs {
+                        let HashState {
+                            table,
+                            build_buf,
+                            build_types,
+                            ..
+                        } = hash;
+                        rows.push(
+                            table
+                                .row(ptr, build_buf, build_types)
+                                .map_err(|error| ExecError::SpillFailed(error.to_string()))?,
+                        );
+                    }
+                    rows
+                }
                 None => Vec::new(),
             };
             self.emit_outer_row(req, &probe_row, candidates.into_iter())?;
@@ -755,6 +911,16 @@ fn key_error(_: KeyError) -> ExecError {
     ExecError::unsupported("join key value outside its column's comparison domain")
 }
 
+/// Indexing one build chunk failed: either the key error above, or the spill
+/// file rejecting the write (Go returns the `RowContainer.Add` error to the
+/// build worker, which fails the statement).
+fn build_error(error: BuildError) -> ExecError {
+    match error {
+        BuildError::Key => key_error(KeyError),
+        BuildError::Disk(message) => ExecError::SpillFailed(message),
+    }
+}
+
 /// Go's condition truth test (`Datum.ToBool` via `expression.EvalBool`):
 /// Compares two merge-join keys column by column, reversing for a descending
 /// merge.
@@ -789,6 +955,8 @@ impl<C: Columns> Executor for JoinExec<C> {
         self.right.open()?;
         self.emitted = false;
         self.hash = None;
+        self.build_spilled = false;
+        self.spilled_bytes = 0;
         self.merge_state = None;
         self.condition_evals.set(0);
         Ok(())
@@ -805,7 +973,18 @@ impl<C: Columns> Executor for JoinExec<C> {
         self.next_hashed(req)
     }
 
+    /// Go `HashJoinV1Exec.Close`: close the container (which deletes the
+    /// spill file), then take the spill action back off the session tracker
+    /// so the next statement is not left with a dangling one.
     fn close(&mut self) -> Result<(), ExecError> {
+        if let Some(hash) = self.hash.as_mut() {
+            hash.table.close();
+        }
+        if let Some(action) = self.registered_action.take() {
+            self.memory
+                .session_tracker()
+                .unbind_action_from_hard_limit(&action);
+        }
         self.left.close()?;
         self.right.close()
     }
@@ -838,7 +1017,7 @@ mod tests {
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::column::Column;
     use tidb_expr::scalar_function::ScalarFunction;
-    use tidb_expr::NoColumns;
+    pub(super) use tidb_expr::NoColumns;
 
     const CHUNK: usize = 1024;
 
@@ -933,6 +1112,24 @@ mod tests {
         right: Vec<Vec<Datum>>,
         width: usize,
     ) -> JoinExec<NoColumns> {
+        join_with_memory(
+            kind,
+            conditions,
+            left,
+            right,
+            width,
+            StatementMemory::default(),
+        )
+    }
+
+    pub(super) fn join_with_memory(
+        kind: JoinKind,
+        conditions: Vec<Expression>,
+        left: Vec<Vec<Datum>>,
+        right: Vec<Vec<Datum>>,
+        width: usize,
+        memory: StatementMemory,
+    ) -> JoinExec<NoColumns> {
         JoinExec::new(
             ExecutorMeta::new(schema_of(2 * width), 1, CHUNK, CHUNK),
             kind,
@@ -940,7 +1137,7 @@ mod tests {
             Box::new(RowSource::new(left, width)),
             Box::new(RowSource::new(right, width)),
             NoColumns,
-            StatementMemory::default(),
+            memory,
         )
     }
 
@@ -1113,7 +1310,7 @@ mod merge_path_tests {
     /// their sequence. That difference is the algorithm, not a bug -- Go's
     /// merge join reorders the result the same way, which is why its plans
     /// still carry a `Sort` above when the query asked for one.
-    fn as_multiset(mut rows: Vec<Vec<i64>>) -> Vec<Vec<i64>> {
+    pub(super) fn as_multiset(mut rows: Vec<Vec<i64>>) -> Vec<Vec<i64>> {
         rows.sort_unstable();
         rows
     }
@@ -1225,5 +1422,304 @@ mod merge_path_tests {
             desc: false,
         });
         assert_eq!(run(&mut merged).len(), 9000);
+    }
+}
+
+/// The build side's spill-to-disk, ported from Go's hash join v1
+/// (`BuildWorkerV1.BuildHashTableForList` + `chunk.RowContainer`).
+///
+/// The claim under test is the one that makes spilling worth having: a join
+/// whose build side does not fit answers THE SAME ROWS, IN THE SAME ORDER,
+/// as the same join with room to spare. Every test below therefore compares
+/// against an unspilled run of the identical data rather than against a
+/// hand-written expectation, and asserts that the spilled run really did go
+/// to disk -- otherwise the comparison would pass trivially.
+#[cfg(test)]
+mod spill_tests {
+    use super::merge_path_tests::as_multiset;
+    use super::tests::{eq_on, join_with_memory, run, NoColumns};
+    use super::*;
+    use crate::mem_quota::{OomAction, StatementMemory};
+
+    /// A build side big enough that its chunks outweigh any quota worth
+    /// setting, with duplicate keys so each probe row walks a multi-entry
+    /// bucket -- the case where reading rows back in the wrong order would
+    /// show up.
+    fn fixture(rows: i64, modulus: i64) -> Vec<Vec<Datum>> {
+        (0..rows)
+            .map(|i| vec![Datum::Int(i % modulus), Datum::Int(i)])
+            .collect()
+    }
+
+    /// The build side is the RIGHT child for an inner join. 5000 rows at a
+    /// 1024-row chunk is five chunks, and `i % 1000` puts each key's five
+    /// duplicates in five DIFFERENT chunks -- so a bucket walk after a spill
+    /// touches every chunk of the file, in build order.
+    const BUILD_ROWS: i64 = 5000;
+    const BUILD_KEYS: i64 = 1000;
+    const PROBE_ROWS: i64 = 200;
+
+    fn inner_join(memory: StatementMemory) -> JoinExec<NoColumns> {
+        join_with_memory(
+            JoinKind::Inner,
+            vec![eq_on(0, 0, 2)],
+            fixture(PROBE_ROWS, BUILD_KEYS),
+            fixture(BUILD_ROWS, BUILD_KEYS),
+            2,
+            memory,
+        )
+    }
+
+    /// A quota the build side cannot fit in, but which is still far larger
+    /// than a single chunk -- so the spill has something to release and the
+    /// read-path cancellation #289 describes is not what is being measured.
+    fn tight_quota() -> StatementMemory {
+        StatementMemory::new(64 * 1024, OomAction::Cancel, 1)
+    }
+
+    /// What one build chunk costs, measured rather than assumed, so the
+    /// quota above can be stated as a MULTIPLE of it -- the regime where a
+    /// spill has something to release. (#289: at quotas below one chunk Go
+    /// cancels on read-path accounting before any spill can help, and that
+    /// is deliberately not what these tests exercise.)
+    #[test]
+    fn the_tight_quota_is_several_chunks_not_a_fraction_of_one() {
+        // Measured with room to spare, so nothing is released mid-build, and
+        // read BEFORE `close` detaches the tracker.
+        let mut join = inner_join(StatementMemory::default());
+        join.open().unwrap();
+        let mut req = join.new_chunk();
+        join.next(&mut req).unwrap();
+        let chunks = i64::try_from(BUILD_ROWS as usize).unwrap() / CHUNK_ROWS as i64 + 1;
+        let one_chunk = join.tracker.bytes_consumed() / chunks;
+        assert!(one_chunk > 0, "the build side must account something");
+        assert!(
+            64 * 1024 > 2 * one_chunk,
+            "quota 65536 must be several chunks, one chunk is {one_chunk}"
+        );
+        assert!(
+            join.tracker.bytes_consumed() > 64 * 1024,
+            "the build side must not fit in the quota the spill tests use"
+        );
+    }
+
+    const CHUNK_ROWS: usize = 1024;
+
+    /// The read-back buffer must not accumulate. Go reuses one `chkBuf` per
+    /// probe and lets the disk reader recycle it; here it is reset before
+    /// every row, so after a join that read 1000 rows back from disk it holds
+    /// exactly the last one. Without the reset this grows by one row per
+    /// matched pair, which on a large spilled join is the whole build side
+    /// pulled back into memory -- the precise thing the spill exists to
+    /// prevent.
+    #[test]
+    fn the_read_back_buffer_does_not_accumulate_across_a_spilled_probe() {
+        let mut join = inner_join(tight_quota());
+        join.open().unwrap();
+        let mut req = join.new_chunk();
+        let mut seen = 0;
+        loop {
+            join.next(&mut req).unwrap();
+            if req.num_rows() == 0 {
+                break;
+            }
+            seen += req.num_rows();
+            assert!(
+                join.build_buf_rows() <= 1,
+                "the read-back buffer holds {} rows after {seen} output rows",
+                join.build_buf_rows()
+            );
+        }
+        assert!(join.build_side_spilled());
+        assert_eq!(seen, 1000);
+    }
+
+    /// The end-to-end claim: spilled and unspilled produce identical output.
+    #[test]
+    fn a_spilled_build_side_answers_exactly_the_unspilled_rows() {
+        let mut roomy = inner_join(StatementMemory::default());
+        let expected = run(&mut roomy);
+        assert!(
+            !roomy.build_side_spilled(),
+            "the control run must NOT spill, or it proves nothing"
+        );
+        assert!(!expected.is_empty());
+
+        // An INDEPENDENT oracle, not just the unspilled hash run: the nested
+        // loop shares no build-side addressing with the hash path, so a
+        // pointer bug that corrupts both hash runs identically still shows
+        // up here. (A mutation probe that shifted the chunk index by one
+        // survived the spilled-vs-unspilled comparison alone.)
+        let mut looped = inner_join(StatementMemory::default());
+        looped.force_nested_loop();
+        assert_eq!(
+            as_multiset(run(&mut looped)),
+            as_multiset(expected.clone()),
+            "the hash path must agree with the nested loop it replaces"
+        );
+
+        let mut tight = inner_join(tight_quota());
+        let spilled = run(&mut tight);
+        assert!(
+            tight.build_side_spilled(),
+            "the build side must actually reach disk"
+        );
+        assert!(
+            tight.spilled_bytes() > 0,
+            "a spilled build side must have written bytes"
+        );
+        // Row for row and in order, not merely as a set: a bucket read back
+        // from disk out of build order would still match as a multiset.
+        assert_eq!(spilled, expected);
+    }
+
+    /// The same claim for a LEFT join, where the probe side is preserved and
+    /// a build row that fails to come back from disk would look like a
+    /// legitimate NULL pad rather than an error.
+    #[test]
+    fn a_spilled_outer_join_pads_exactly_where_the_unspilled_one_does() {
+        let build = |memory| {
+            join_with_memory(
+                JoinKind::Left,
+                vec![eq_on(0, 0, 2)],
+                fixture(PROBE_ROWS, BUILD_KEYS),
+                fixture(BUILD_ROWS, 97),
+                2,
+                memory,
+            )
+        };
+        let mut roomy = build(StatementMemory::default());
+        let expected = run(&mut roomy);
+        assert!(!roomy.build_side_spilled());
+
+        let mut tight = build(tight_quota());
+        let spilled = run(&mut tight);
+        assert!(tight.build_side_spilled());
+        assert_eq!(spilled, expected);
+    }
+
+    /// The gate. Go registers the spill action only when
+    /// `tidb_enable_tmp_storage_on_oom` is on; with it off the memory action
+    /// is still the cancellation, so the statement fails with 8175 instead of
+    /// spilling. This is the behaviour that existed before this unit, and it
+    /// must survive unchanged.
+    #[test]
+    fn with_tmp_storage_off_an_over_quota_build_side_is_cancelled_not_spilled() {
+        let memory = tight_quota().with_tmp_storage_on_oom(false);
+        let mut join = inner_join(memory);
+        join.open().unwrap();
+        let mut req = join.new_chunk();
+        let error = loop {
+            match join.next(&mut req) {
+                Err(error) => break error,
+                Ok(()) if req.num_rows() == 0 => panic!("the quota must be enforced"),
+                Ok(()) => {}
+            }
+        };
+        assert!(
+            !join.build_side_spilled(),
+            "with the gate off nothing may reach disk"
+        );
+        assert!(matches!(error, ExecError::MemoryExceedForQuery { .. }));
+    }
+
+    /// A spill that fires must not leave the action bound to the session
+    /// tracker: Go's `Close` calls `UnbindActionFromHardLimit`, and a
+    /// statement that inherited a closed join's action would spill into a
+    /// container that no longer exists.
+    #[test]
+    fn close_unbinds_the_spill_action_from_the_session_tracker() {
+        let memory = tight_quota();
+        let mut join = inner_join(memory.clone());
+        join.open().unwrap();
+        let mut req = join.new_chunk();
+        join.next(&mut req).unwrap();
+        let spill = join
+            .registered_spill_action()
+            .expect("the gate is on, so an action was registered");
+        // Registered: the spill action is at the head, ahead of the
+        // cancellation it pushed down as its fallback.
+        let head = memory
+            .session_tracker()
+            .get_fallback_for_test(false)
+            .expect("the session tracker always has an action");
+        assert!(Arc::ptr_eq(&head, &spill), "the spill action must be bound");
+
+        join.close().unwrap();
+
+        // Unbound: the chain still ACTS -- the cancellation is back at the
+        // head -- but this join's action, whose container is now closed, is
+        // gone from it.
+        let mut current = memory.session_tracker().get_fallback_for_test(false);
+        let mut found_any = false;
+        while let Some(action) = current {
+            found_any = true;
+            assert!(
+                !Arc::ptr_eq(&action, &spill),
+                "a closed join's spill action must not stay in the chain"
+            );
+            current = action.get_fallback();
+        }
+        assert!(
+            found_any,
+            "unbinding must restore the fallback, not clear the chain"
+        );
+    }
+
+    /// The container is the only thing that moves: the hash TABLE stays in
+    /// memory, so a spilled join still answers a miss without touching disk
+    /// and a NULL key still matches nothing.
+    #[test]
+    fn a_spilled_build_side_keeps_null_and_miss_semantics() {
+        let mut build = fixture(BUILD_ROWS, BUILD_KEYS);
+        build.push(vec![Datum::Null, Datum::Int(-1)]);
+        let probe = vec![
+            vec![Datum::Int(7), Datum::Int(0)],
+            vec![Datum::Null, Datum::Int(1)],
+            vec![Datum::Int(9999), Datum::Int(2)],
+        ];
+        let make = |memory| {
+            join_with_memory(
+                JoinKind::Inner,
+                vec![eq_on(0, 0, 2)],
+                probe.clone(),
+                build.clone(),
+                2,
+                memory,
+            )
+        };
+        let mut roomy = make(StatementMemory::default());
+        let expected = run(&mut roomy);
+        assert!(!roomy.build_side_spilled());
+
+        let mut tight = make(tight_quota());
+        let spilled = run(&mut tight);
+        assert!(tight.build_side_spilled());
+        assert_eq!(spilled, expected);
+        // The NULL-keyed build row and the 9999 probe row match nothing, and
+        // the NULL probe row matches nothing either.
+        assert!(spilled.iter().all(|row| row[0] == 7));
+    }
+
+    /// A cross join has no equal conditions, so it never reaches the hash
+    /// path and never gets a container -- Go's v1 spill covers the build side
+    /// of a hash join only. The nested loop's existing 8175 cancellation is
+    /// what still bounds it, gate or no gate.
+    #[test]
+    fn a_cross_join_still_cancels_rather_than_spilling() {
+        let mut join = join_with_memory(
+            JoinKind::Inner,
+            Vec::new(),
+            fixture(PROBE_ROWS, BUILD_KEYS),
+            fixture(BUILD_ROWS, BUILD_KEYS),
+            2,
+            tight_quota(),
+        );
+        assert!(!join.is_hash_join());
+        join.open().unwrap();
+        let mut req = join.new_chunk();
+        let error = join.next(&mut req).expect_err("the quota must be enforced");
+        assert!(matches!(error, ExecError::MemoryExceedForQuery { .. }));
+        assert!(!join.build_side_spilled());
     }
 }
