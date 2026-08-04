@@ -114,14 +114,7 @@ pub fn run_alter_table_in(
         match action {
             tidb_ast::AlterTableAction::AddColumn {
                 column, position, ..
-            } => add_column_action(
-                catalog,
-                &database,
-                &name,
-                column,
-                position,
-                &ctx.session_zone(),
-            )?,
+            } => add_column_action(catalog, &database, &name, column, position, ctx)?,
             tidb_ast::AlterTableAction::AddColumns {
                 columns,
                 constraints,
@@ -139,7 +132,7 @@ pub fn run_alter_table_in(
                         &name,
                         column,
                         &tidb_ast::ColumnPosition::Default,
-                        &ctx.session_zone(),
+                        ctx,
                     )?;
                 }
             }
@@ -311,7 +304,7 @@ pub fn run_alter_table_in(
                     &name,
                     column,
                     alter.default_value.as_ref(),
-                    &ctx.session_zone(),
+                    ctx,
                 )?;
             }
             // `CHECK` constraints, under the `tidb_enable_check_constraint =
@@ -541,6 +534,74 @@ fn set_table_options_action(
     Ok(())
 }
 
+/// Go `checkColumnDefaultValue` (`pkg/ddl/add_column.go:1212`), the BLOB /
+/// TEXT / JSON arm, shared by every entry point that Go's `SetDefaultValue`
+/// serves: CREATE TABLE, ADD COLUMN, MODIFY/CHANGE COLUMN and
+/// ALTER COLUMN ... SET DEFAULT.
+///
+/// It answers Go's `(hasDefaultValue, value)` pair, and is a SEPARATE step
+/// from [`normalize_column_default`] (Go's `getDefaultValue` +
+/// `checkDefaultValue`), which runs after it over the value returned here.
+///
+/// Go, verbatim in shape:
+///
+/// - non-strict `sql_mode` AND an EMPTY-STRING default: warn 1101 and accept.
+///   `BLOB`/`LONGBLOB` (which is where `TEXT`/`LONGTEXT` land) additionally
+///   report `hasDefaultValue = false`; `JSON`'s default is rewritten to the
+///   text `null`. `TINYBLOB`/`MEDIUMBLOB` and their TEXT spellings keep both
+///   the default AND `hasDefaultValue`, which is not an oversight here --
+///   Go's `if col.GetType() == mysql.TypeBlob || col.GetType() ==
+///   mysql.TypeLongBlob` names only those two.
+/// - anything else non-NULL on those types: 1101, in every mode.
+///
+/// Measured against TiDB (`sql_mode=''`):
+///
+/// ```text
+/// create table n1 (c1 text not null default '')       -> `c1` text NOT NULL
+/// create table n4 (c1 tinyblob not null default '')   -> `c1` tinyblob NOT NULL DEFAULT ''
+/// create table n3 (c1 json not null default '')       -> `c1` json NOT NULL DEFAULT 'null'
+/// create table e1 (c1 text default 'x')               -> ERROR 1101
+/// ```
+///
+/// `hasDefaultValue = false` is not "drop the default": Go still STORES the
+/// value, and only a NOT NULL column then takes `NoDefaultValueFlag`, which
+/// is what makes `SHOW CREATE TABLE` print no DEFAULT clause. A NULLABLE
+/// `text DEFAULT ''` keeps printing `DEFAULT ''`. This tier models that flag
+/// as "no default recorded", so the pair maps onto `None` for a NOT NULL
+/// column and onto the stored value otherwise.
+pub(crate) fn check_column_default_value(
+    value: Datum,
+    field_type: &FieldType,
+    column: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(bool, Datum), DriverError> {
+    use tidb_datatype::FieldTypeCode;
+
+    if value.is_null()
+        || !matches!(
+            field_type.code(),
+            FieldTypeCode::Json
+                | FieldTypeCode::TinyBlob
+                | FieldTypeCode::MediumBlob
+                | FieldTypeCode::LongBlob
+                | FieldTypeCode::Blob
+        )
+    {
+        return Ok((true, value));
+    }
+    let empty = matches!(value.as_raw_bytes(), Some(bytes) if bytes.is_empty());
+    if ctx.strict() || !empty {
+        return Err(DriverError::BlobCantHaveDefault(column.to_owned()));
+    }
+    let reported = DriverError::BlobCantHaveDefault(column.to_owned()).to_mysql_error();
+    ctx.append_warning_parts(reported.code, &reported.message);
+    Ok(match field_type.code() {
+        FieldTypeCode::Blob | FieldTypeCode::LongBlob => (false, value),
+        FieldTypeCode::Json => (true, Datum::new_string("null")),
+        _ => (true, value),
+    })
+}
+
 /// One `ADD COLUMN`.
 /// Go `getDefaultValue` + `checkDefaultValue`: normalizes a column's written
 /// DEFAULT and rejects one the column cannot hold.
@@ -562,13 +623,12 @@ pub(crate) fn normalize_column_default(
     // refused at `-08:00`.
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Datum, DriverError> {
-    // Go `checkColumnDefaultValue`: a JSON column's only legal default is
-    // NULL. The default is stored as metadata TEXT, and a JSON document has
-    // no text form that survives that round trip, so TiDB refuses it up
-    // front rather than storing a document it cannot rebuild.
-    if !value.is_null() && field_type.code() == tidb_datatype::FieldTypeCode::Json {
-        return Err(DriverError::BlobCantHaveDefault(column.to_owned()));
-    }
+    // The BLOB/TEXT/JSON rule does NOT live here: it is Go's
+    // `checkColumnDefaultValue`, a SEPARATE step that runs before this one at
+    // every entry point (see [`check_column_default_value`]). Answering it
+    // twice, once as a blanket refusal, is what used to refuse the very
+    // `null` that a non-strict JSON default is rewritten to.
+    //
     // Go `checkDefaultValue`'s two arms for a NULL default, in Go's order: a
     // column that cannot HOLD NULL cannot DEFAULT to it, and a primary key
     // says so with its own error rather than 1067.
@@ -1227,13 +1287,24 @@ fn modify_column_action(
     // An ALTER-written default is always a literal here: the expression forms
     // are refused above, so the settled value and the ORIGIN_DEFAULT existing
     // rows read back are the same value.
+    // Go's `SetDefaultValue` order: `checkColumnDefaultValue` (the
+    // BLOB/TEXT/JSON rule, which may rewrite the value or report that the
+    // column ends up with NO default) and only then the normalization.
     let default_value = match default_value {
-        Some(value) => Some(normalize_column_default(
-            value,
-            &field_type,
-            &def.name,
-            zone,
-        )?),
+        Some(value) => {
+            let (has_default, value) =
+                check_column_default_value(value, &field_type, &def.name, ctx)?;
+            if !has_default && field_type.has_flag(NOT_NULL_FLAG) {
+                None
+            } else {
+                Some(normalize_column_default(
+                    value,
+                    &field_type,
+                    &def.name,
+                    zone,
+                )?)
+            }
+        }
         None => None,
     };
     let stored_default = default_value
@@ -1286,8 +1357,9 @@ fn add_column_action(
     table_name: &str,
     def: &ColumnDef,
     position: &tidb_ast::ColumnPosition,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    let zone = &ctx.session_zone();
     let field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
     let mut default_value = None;
     for option in &def.options {
@@ -1370,13 +1442,24 @@ fn add_column_action(
     // An ALTER-written default is always a literal here: the expression forms
     // are refused above, so the settled value and the ORIGIN_DEFAULT existing
     // rows read back are the same value.
+    // Go's `SetDefaultValue` order: `checkColumnDefaultValue` (the
+    // BLOB/TEXT/JSON rule, which may rewrite the value or report that the
+    // column ends up with NO default) and only then the normalization.
     let default_value = match default_value {
-        Some(value) => Some(normalize_column_default(
-            value,
-            &field_type,
-            &def.name,
-            zone,
-        )?),
+        Some(value) => {
+            let (has_default, value) =
+                check_column_default_value(value, &field_type, &def.name, ctx)?;
+            if !has_default && field_type.has_flag(NOT_NULL_FLAG) {
+                None
+            } else {
+                Some(normalize_column_default(
+                    value,
+                    &field_type,
+                    &def.name,
+                    zone,
+                )?)
+            }
+        }
         None => None,
     };
     let stored_default = default_value

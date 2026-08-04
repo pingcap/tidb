@@ -1605,13 +1605,21 @@ fn create_table_refuses_what_go_refuses() {
 /// `null`. A non-empty default stays 1101 in every mode, which is why the
 /// strict half above and this one are both needed to pin the rule.
 ///
-/// **The JSON line is deliberately not asserted here.** `normalize_column_default`
-/// still carries a blanket "a non-NULL JSON default is 1101" -- Go's
-/// `checkColumnDefaultValue` rule living inside Go's `checkDefaultValue` -- and
-/// it refuses the `null` the DDL builder rewrites. That predates this test and
-/// is unchanged by it; lifting it means sharing one helper with the three ALTER
-/// entry points that call the same function, so it is tracked separately rather
-/// than pinned wrong here.
+/// The rest of the table below was MEASURED against real TiDB rather than read
+/// off the recording, because the recorded test covers only NOT NULL columns
+/// and only three types. `sql_mode=''`, verbatim:
+///
+/// ```text
+/// create table n4 (c1 tinyblob not null default '')  -> `c1` tinyblob NOT NULL DEFAULT ''
+/// create table n5 (c1 mediumtext not null default '')-> `c1` mediumtext NOT NULL DEFAULT ''
+/// create table t1 (c1 text default '')               -> `c1` text DEFAULT ''
+/// ```
+///
+/// Two rules that a "TEXT and BLOB drop the default" reading would get wrong:
+/// only `TypeBlob`/`TypeLongBlob` report `hasDefaultValue = false` (TINY and
+/// MEDIUM do not), and the drop is only VISIBLE on a NOT NULL column, because
+/// what Go sets is `NoDefaultValueFlag` and `setNoDefaultValueFlag` returns
+/// early for a nullable one.
 #[test]
 fn a_non_strict_empty_default_on_blob_text_warns_and_drops_the_default() {
     let mut session = Session::new();
@@ -1627,6 +1635,35 @@ fn a_non_strict_empty_default_on_blob_text_warns_and_drops_the_default() {
             "CREATE TABLE text_default_blob (c1 BLOB NOT NULL DEFAULT '')",
             "text_default_blob",
             "`c1` blob NOT NULL",
+        ),
+        // The line the blanket JSON refusal used to make unreachable.
+        (
+            "CREATE TABLE text_default_json (c1 JSON NOT NULL DEFAULT '')",
+            "text_default_json",
+            "`c1` json NOT NULL DEFAULT 'null'",
+        ),
+        // Only BLOB and LONGBLOB report `hasDefaultValue = false`.
+        (
+            "CREATE TABLE text_default_tiny (c1 TINYBLOB NOT NULL DEFAULT '')",
+            "text_default_tiny",
+            "`c1` tinyblob NOT NULL DEFAULT ''",
+        ),
+        (
+            "CREATE TABLE text_default_medium (c1 MEDIUMTEXT NOT NULL DEFAULT '')",
+            "text_default_medium",
+            "`c1` mediumtext NOT NULL DEFAULT ''",
+        ),
+        (
+            "CREATE TABLE text_default_long (c1 LONGTEXT NOT NULL DEFAULT '')",
+            "text_default_long",
+            "`c1` longtext NOT NULL",
+        ),
+        // A NULLABLE column keeps the default it was written, because the
+        // flag Go sets is only reached for NOT NULL.
+        (
+            "CREATE TABLE text_default_null (c1 TEXT DEFAULT '')",
+            "text_default_null",
+            "`c1` text DEFAULT ''",
         ),
     ] {
         session.run(sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
@@ -1648,4 +1685,88 @@ fn a_non_strict_empty_default_on_blob_text_warns_and_drops_the_default() {
         error.message,
         "BLOB/TEXT/JSON column 'c1' can't have a default value"
     );
+}
+
+/// The SAME rule, at the three ALTER entry points Go's `SetDefaultValue`
+/// serves besides CREATE TABLE. Measured against real TiDB; the ALTER COLUMN
+/// line is the one that is NOT a copy of the others.
+///
+/// ```text
+/// set sql_mode='';
+/// create table s7 (c1 text);
+/// alter table s7 alter column c1 set default '';  -> ERROR 1067 Invalid default value for 'c1'
+/// alter table s7 add column c2 text default '';   -> OK, `c2` text DEFAULT ''
+/// alter table s7 add column c3 json default '';   -> OK, `c3` json DEFAULT 'null'
+/// alter table s7 modify column c1 json default '';-> OK, `c1` json DEFAULT 'null'
+/// set sql_mode='STRICT_TRANS_TABLES';
+/// alter table s6 alter column c1 set default 'x'; -> ERROR 1101
+/// alter table s6 add column c2 text default '';   -> ERROR 1101
+/// ```
+///
+/// 1067 rather than 1101 for `SET DEFAULT ''` is Go's `updateColumnDefaultValue`
+/// (`pkg/ddl/column.go:1150`), which re-runs `checkColumnDefaultValue` inside
+/// the DDL job and turns `!hasDefaultValue` into `ErrInvalidDefaultValue`.
+#[test]
+fn the_blob_default_rule_reaches_every_alter_entry_point() {
+    let mut session = Session::new();
+    session.run("SET sql_mode=''").unwrap();
+    session.run("CREATE TABLE s7 (c1 TEXT)").unwrap();
+
+    let error = session
+        .run("ALTER TABLE s7 ALTER COLUMN c1 SET DEFAULT ''")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1067);
+    assert_eq!(error.message, "Invalid default value for 'c1'");
+
+    session
+        .run("ALTER TABLE s7 ADD COLUMN c2 TEXT DEFAULT ''")
+        .unwrap();
+    session
+        .run("ALTER TABLE s7 ADD COLUMN c3 JSON DEFAULT ''")
+        .unwrap();
+    session
+        .run("ALTER TABLE s7 MODIFY COLUMN c1 JSON DEFAULT ''")
+        .unwrap();
+    let created = show_create(&mut session, "s7");
+    for printed in [
+        "`c1` json DEFAULT 'null'",
+        "`c2` text DEFAULT ''",
+        "`c3` json DEFAULT 'null'",
+    ] {
+        assert!(
+            created.contains(printed),
+            "expected `{printed}`:\n{created}"
+        );
+    }
+
+    // The NOT NULL drop, at ADD COLUMN and MODIFY:
+    //   alter table s8 add column c9 text not null default ''
+    //     -> `c9` text NOT NULL, no DEFAULT
+    session.run("CREATE TABLE s8 (c1 TEXT NOT NULL)").unwrap();
+    session
+        .run("ALTER TABLE s8 ADD COLUMN c9 TEXT NOT NULL DEFAULT ''")
+        .unwrap();
+    session
+        .run("ALTER TABLE s8 MODIFY COLUMN c1 TEXT NOT NULL DEFAULT ''")
+        .unwrap();
+    let created = show_create(&mut session, "s8");
+    assert!(
+        created.contains("`c1` text NOT NULL,") && created.contains("`c9` text NOT NULL\n"),
+        "neither column should print a DEFAULT:\n{created}"
+    );
+
+    // Strict mode refuses all three with 1101, empty string included.
+    session.run("SET sql_mode='STRICT_TRANS_TABLES'").unwrap();
+    session.run("CREATE TABLE s6 (c1 TEXT)").unwrap();
+    for sql in [
+        "ALTER TABLE s6 ALTER COLUMN c1 SET DEFAULT 'x'",
+        "ALTER TABLE s6 ALTER COLUMN c1 SET DEFAULT ''",
+        "ALTER TABLE s6 ADD COLUMN c2 TEXT DEFAULT ''",
+        "ALTER TABLE s6 ADD COLUMN c3 JSON DEFAULT '{}'",
+        "ALTER TABLE s6 MODIFY COLUMN c1 TEXT DEFAULT ''",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1101, "{sql}");
+    }
 }

@@ -265,8 +265,9 @@ pub(crate) fn alter_column_default_action(
     table_name: &str,
     column_name: &str,
     default_value: Option<&tidb_ast::Expr>,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    let zone = &ctx.session_zone();
     let Some(expr) = default_value else {
         return Err(DriverError::unsupported(
             "ALTER COLUMN ... DROP DEFAULT is not supported yet: it sets Go's \
@@ -299,6 +300,17 @@ pub(crate) fn alter_column_default_action(
         });
     };
     let field_type = table.columns[offset].field_type.clone();
+    // Go runs this twice for a SET DEFAULT: `SetDefaultValue` calls
+    // `checkColumnDefaultValue` in the session, and the DDL job's
+    // `updateColumnDefaultValue` (`pkg/ddl/column.go:1150`) calls it AGAIN
+    // and turns `!hasDefaultValue` into `ErrInvalidDefaultValue` -- which is
+    // why `sql_mode=''; ALTER TABLE t ALTER COLUMN c1 SET DEFAULT ''` on a
+    // TEXT column is 1067, not the silent acceptance ADD COLUMN gets.
+    let (has_default, value) =
+        super::alter_table::check_column_default_value(value, &field_type, column_name, ctx)?;
+    if !has_default {
+        return Err(DriverError::InvalidDefault(column_name.to_owned()));
+    }
     let normalized =
         super::alter_table::normalize_column_default(value, &field_type, column_name, zone)?;
     let KvColumn {

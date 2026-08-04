@@ -805,63 +805,27 @@ pub fn run_create_table_in(
                     // Go normalizes and checks a SETTLED default against the
                     // column's own type at DDL time; a computed one is cast
                     // per row instead, exactly as Go's `CastColumnValue` does.
-                    // Go `checkColumnDefaultValue` (`add_column.go:1220-1237`):
-                    // a non-NULL literal default on JSON or any BLOB/TEXT code
-                    // is 1101. The one exception is a non-strict statement with
-                    // an EMPTY-STRING default, which warns instead -- and then
-                    // Go DROPS the default for BLOB/LONGBLOB and rewrites JSON's
-                    // to the text `null`.
                     //
-                    // Ground truth is TiDB's own `TestCheckColumnDefaultValue`
-                    // (`t/ddl/column_modify.test:149-172`): a non-empty default
-                    // is 1101 in every mode, and under `sql_mode=''` an empty
-                    // one restores as `c1 text NOT NULL` / `c1 blob NOT NULL`
-                    // (the default DROPPED) and `c1 json NOT NULL DEFAULT
-                    // 'null'`.
-                    //
-                    // The JSON third of that is NOT yet reached: the shared
-                    // `normalize_column_default` below still carries a blanket
-                    // "a non-NULL JSON default is 1101", which is Go's
-                    // `checkColumnDefaultValue` rule sitting inside Go's
-                    // `checkDefaultValue`. It refuses the `null` this arm just
-                    // rewrote. Undoing that means moving the rule into one
-                    // helper shared with the three ALTER entry points that also
-                    // call it, which is its own unit of work; until then the
-                    // non-strict JSON case stays the carried divergence it
-                    // already was, and only TEXT/BLOB are fixed here.
-                    let built = match &built {
-                        crate::column_default::ColumnDefault::Value(value)
-                            if !value.is_null() && is_blob_or_json(field_type.code()) =>
-                        {
-                            let empty =
-                                matches!(value.as_raw_bytes(), Some(bytes) if bytes.is_empty());
-                            if ctx.strict() || !empty {
-                                return Err(DriverError::BlobCantHaveDefault(def.name.clone()));
-                            }
-                            ctx.append_warning_parts(
-                                1101,
-                                &format!(
-                                    "BLOB/TEXT/JSON column '{}' can't have a default value",
-                                    def.name
-                                ),
-                            );
-                            match field_type.code() {
-                                FieldTypeCode::Blob | FieldTypeCode::LongBlob => None,
-                                FieldTypeCode::Json => {
-                                    Some(crate::column_default::ColumnDefault::Value(
-                                        tidb_datatype::Datum::new_string("null"),
-                                    ))
-                                }
-                                _ => Some(built.clone()),
-                            }
-                        }
-                        _ => Some(built),
-                    };
-                    let Some(built) = built else {
-                        continue;
-                    };
+                    // Go's two steps, in Go's order: `checkColumnDefaultValue`
+                    // answers the BLOB/TEXT/JSON rule and may rewrite the
+                    // value, then `getDefaultValue` + `checkDefaultValue`
+                    // normalize what it returned.
                     default_value = Some(match built {
                         crate::column_default::ColumnDefault::Value(value) => {
+                            let (has_default, value) = alter_table::check_column_default_value(
+                                value,
+                                &field_type,
+                                &def.name,
+                                ctx,
+                            )?;
+                            // Go's `setNoDefaultValueFlag`: only a NOT NULL
+                            // column takes the flag that hides the DEFAULT,
+                            // and this tier spells that flag as "no default".
+                            if !has_default && field_type.has_flag(NOT_NULL_FLAG) {
+                                // `default_value` stays None and the push at
+                                // the end of this column's loop records it.
+                                continue;
+                            }
                             crate::column_default::ColumnDefault::Value(normalize_column_default(
                                 value,
                                 &field_type,
@@ -1192,17 +1156,6 @@ pub(crate) fn generated_column_error(
 
 /// Go `checkColumnDefaultValue`'s type test: the codes whose literal default
 /// is 1101.
-fn is_blob_or_json(code: FieldTypeCode) -> bool {
-    matches!(
-        code,
-        FieldTypeCode::Json
-            | FieldTypeCode::TinyBlob
-            | FieldTypeCode::MediumBlob
-            | FieldTypeCode::LongBlob
-            | FieldTypeCode::Blob
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
