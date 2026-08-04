@@ -42,26 +42,15 @@ const maxReadersPerCore = 16
 
 var maxConcurrency = 32
 
-// readerMemoryForRange returns the reader-buffer charge for one file's byte range
-// and how many buffers it buys. A range too small to fill the two buffers a lane
-// needs is charged its own size and read as a single prefetched stream instead.
-func readerMemoryForRange(rangeSize uint64, memoryLimit int64) (int64, int) {
-	if rangeSize == 0 || memoryLimit <= 0 {
-		return 0, 0
+// readerMemoryForRange returns how much reader buffer one file's byte range is
+// charged. It buys whole 8 MiB buffers read concurrently, or, when it cannot fill
+// even one, a single prefetched stream of that size.
+func readerMemoryForRange(rangeSize uint64, memoryLimit int64) int64 {
+	perFileLimit := min(int64(maxConcurrency)*int64(simplesst.ConcurrentReaderBufferSizePerConc), memoryLimit)
+	if perFileLimit <= 0 {
+		return 0
 	}
-
-	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
-	// A single charge must never exceed the budget: semaphore.Acquire blocks
-	// until ctx is done when n > size.
-	perFileLimit := min(int64(maxConcurrency)*bufSize, memoryLimit)
-	requested := int64(min(rangeSize, uint64(perFileLimit)))
-	// Buffers are paired into lanes, so an odd one could not be used.
-	bufCount := int(requested/bufSize) / 2 * 2
-	if bufCount == 0 {
-		return requested, 0
-	}
-
-	return int64(bufCount) * bufSize, bufCount
+	return int64(min(rangeSize, uint64(perFileLimit)))
 }
 
 func readAllData(
@@ -102,27 +91,23 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	if concurrency <= 0 {
-		return errors.New("reader concurrency must be positive")
-	}
+	concurrency = max(concurrency, 1)
 	memoryLimit := readerMemoryQuotaPerCore * int64(concurrency)
 	maxReaders := maxReadersPerCore * concurrency
 
 	readerMemory := semaphore.NewWeighted(memoryLimit)
 	readerMemorySizes := make([]int64, len(dataFiles))
-	concurrences := make([]int, len(dataFiles))
 	totalFileSize := uint64(0)
 	for i := range dataFiles {
 		size := estimatedEndOffsets[i] - startOffsets[i]
 		totalFileSize += size
-		readerMemorySizes[i], concurrences[i] = readerMemoryForRange(size, memoryLimit)
-		if concurrences[i] > 0 {
+		readerMemorySizes[i] = readerMemoryForRange(size, memoryLimit)
+		if readerMemorySizes[i] >= int64(simplesst.ConcurrentReaderBufferSizePerConc) {
 			logutil.Logger(ctx).Info("found hotspot file in readAllData",
 				zap.String("filename", dataFiles[i]),
 				zap.Uint64("startOffset", startOffsets[i]),
 				zap.Uint64("endOffset", estimatedEndOffsets[i]),
 				zap.Int64("readerMemory", readerMemorySizes[i]),
-				zap.Int("concurrency", concurrences[i]),
 			)
 		}
 	}
@@ -159,7 +144,6 @@ func readAllData(
 							startKey,
 							endKey,
 							startOffsets[fileIdx],
-							concurrences[fileIdx],
 							smallBlockBuf,
 							largeBlockBufPool,
 							int(readerMemorySize),
@@ -201,7 +185,6 @@ func readOneFile(
 	dataFile string,
 	startKey, endKey []byte,
 	startOffset uint64,
-	concurrency int,
 	smallBlockBuf *membuf.Buffer,
 	largeBlockBufPool *membuf.Pool,
 	readerMemorySize int,
@@ -211,9 +194,10 @@ func readOneFile(
 
 	ts := time.Now()
 
-	prefetchSize := readerMemorySize
-	if concurrency > 0 || prefetchSize < 2 {
-		prefetchSize = 0
+	bufCount := readerMemorySize / simplesst.ConcurrentReaderBufferSizePerConc
+	prefetchSize := 0
+	if bufCount == 0 && readerMemorySize >= 2 {
+		prefetchSize = readerMemorySize
 	}
 	rd, err := simplesst.NewKVReaderWithPrefetchSize(
 		ctx,
@@ -229,12 +213,12 @@ func readOneFile(
 	defer func() {
 		_ = rd.Close()
 	}()
-	if concurrency > 0 {
+	if bufCount > 0 {
 		largeBlockBuf := largeBlockBufPool.NewBuffer()
 		rd.EnableConcurrentRead(
 			storage,
 			dataFile,
-			concurrency,
+			bufCount,
 			simplesst.ConcurrentReaderBufferSizePerConc,
 			largeBlockBuf,
 		)

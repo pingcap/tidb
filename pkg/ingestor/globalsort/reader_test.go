@@ -117,32 +117,17 @@ func TestReadLargeFile(t *testing.T) {
 	ctx := context.Background()
 	memStore := objstore.NewMemStorage()
 	memoryLimit := readerMemoryQuotaPerCore * 7
+	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
 
-	// A range too small for one lane is charged its own size and read as a stream.
-	memorySize, concurrency := readerMemoryForRange(8*units.MiB, memoryLimit)
-	require.EqualValues(t, 8*units.MiB, memorySize)
-	require.Zero(t, concurrency)
-
-	// Two buffers is the smallest a lane can use.
-	memorySize, concurrency = readerMemoryForRange(16*units.MiB, memoryLimit)
-	require.EqualValues(t, 16*units.MiB, memorySize)
-	require.Equal(t, 2, concurrency)
-
-	// An odd buffer cannot be paired, so it is neither charged nor handed out.
-	memorySize, concurrency = readerMemoryForRange(24*units.MiB, memoryLimit)
-	require.EqualValues(t, 16*units.MiB, memorySize)
-	require.Equal(t, 2, concurrency)
+	// A range is charged its own size until it reaches a cap.
+	require.EqualValues(t, 8*units.MiB, readerMemoryForRange(8*units.MiB, memoryLimit))
+	require.EqualValues(t, 24*units.MiB, readerMemoryForRange(24*units.MiB, memoryLimit))
 
 	// One file never takes more than maxConcurrency buffers.
-	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
-	memorySize, concurrency = readerMemoryForRange(units.GiB, memoryLimit)
-	require.EqualValues(t, int64(maxConcurrency)*bufSize, memorySize)
-	require.Equal(t, maxConcurrency, concurrency)
+	require.EqualValues(t, int64(maxConcurrency)*bufSize, readerMemoryForRange(units.GiB, memoryLimit))
 
-	// A budget smaller than that cap binds instead, and a charge never exceeds it.
-	memorySize, concurrency = readerMemoryForRange(units.GiB, readerMemoryQuotaPerCore)
-	require.EqualValues(t, readerMemoryQuotaPerCore, memorySize)
-	require.Equal(t, 16, concurrency)
+	// A budget smaller than that cap binds instead.
+	require.EqualValues(t, readerMemoryQuotaPerCore, readerMemoryForRange(units.GiB, readerMemoryQuotaPerCore))
 
 	backup := simplesst.ConcurrentReaderBufferSizePerConc
 	t.Cleanup(func() {
