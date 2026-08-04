@@ -2208,7 +2208,7 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	}
 
 	b.optFlag |= rule.FlagEliminateSemiJoinEmptyChild
-	joinPlan := logicalop.LogicalJoin{JoinType: joinType}.Init(b.ctx, b.getSelectOffset())
+	joinPlan := logicalop.LogicalJoin{JoinType: joinType, FromSetOperator: true}.Init(b.ctx, b.getSelectOffset())
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(leftPlan.Schema())
 	joinPlan.SetOutputNames(make([]*types.FieldName, leftPlan.Schema().Len()))

@@ -31,12 +31,11 @@ import (
 // The rule is gated by FlagEliminateSemiJoinEmptyChild, set only when
 // buildSemiJoinForSetOperator builds a join for INTERSECT/EXCEPT (mirroring
 // EliminateUnionAllDualItem's FlagEliminateUnionAllDualItem gating for UNION
-// ALL), rather than being scoped to the specific join node it was built for.
-// Once enabled it walks the whole plan, so it can also fold an unrelated
-// SemiJoin/AntiSemiJoin from an ordinary IN/EXISTS subquery in the same
-// statement -- but only when that join is itself statically empty by the
-// same shape check, so this is never a correctness concern, only a wider
-// application of an already-sound rule.
+// ALL). That flag is statement-wide, so once enabled the rule still walks the
+// whole plan; it additionally requires LogicalJoin.FromSetOperator on each
+// candidate join, so an ordinary IN/EXISTS semi-join elsewhere in the same
+// statement is left untouched even if it happens to also be statically
+// empty.
 type EliminateSemiJoinEmptyChild struct {
 }
 
@@ -91,7 +90,7 @@ func eliminateSemiJoinEmptyChild(p base.LogicalPlan) (base.LogicalPlan, bool) {
 		planChanged = planChanged || changed
 	}
 
-	if join, ok := p.(*logicalop.LogicalJoin); ok {
+	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FromSetOperator {
 		left, right := join.Children()[0], join.Children()[1]
 		switch join.JoinType {
 		case base.SemiJoin:

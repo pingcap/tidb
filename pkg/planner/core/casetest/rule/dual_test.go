@@ -118,23 +118,19 @@ func TestSetOprEmptyChild(t *testing.T) {
 		testKit.MustQuery(`select s.id, s.val from
 			((select id, val from t4) intersect (select id, val from t5 where false)) s`).Check(testkit.Rows())
 
-		// The rule is gated by a statement-wide flag set whenever the query
-		// contains INTERSECT/EXCEPT, so it also walks ordinary IN/EXISTS
-		// semi-joins elsewhere in the same statement. That is intentional:
-		// isStaticallyEmpty only folds a join that is itself provably empty
-		// by cardinality (an empty side of a SemiJoin, or an empty left side
-		// of an AntiSemiJoin), a conclusion that holds for any SemiJoin or
-		// AntiSemiJoin regardless of where it came from, independent of the
-		// join predicate or NULL-aware semantics. This is not scoped to
-		// set-operator-built joins because doing so would only narrow an
-		// already-sound optimization, not fix a correctness gap.
-		//
-		// An ordinary, non-correlated EXISTS subquery that is independently
-		// empty (WHERE FALSE, unrelated to t1/t2) must still fold to an
-		// empty result when combined with an unrelated INTERSECT in the same
-		// statement, and an ordinary EXISTS subquery that is NOT empty must
-		// be completely unaffected.
-		testKit.MustQuery(`select * from t3 where exists (select 1 from t1 where false)`).Check(testkit.Rows())
+		// The rule's optimizer flag is statement-wide (set whenever the query
+		// contains INTERSECT/EXCEPT), so it walks the whole plan once
+		// enabled. It is still restricted to set-operator joins: each join
+		// LogicalJoin.FromSetOperator is only set by buildSemiJoinForSetOperator,
+		// so an ordinary IN/EXISTS semi-join elsewhere in the same statement
+		// is never rewritten by this rule even if it is independently empty.
+		// See TestEliminateSemiJoinEmptyChildRequiresFromSetOperator in
+		// pkg/planner/core for a direct plan-tree proof of that guard; SQL
+		// alone cannot isolate it well because non-correlated IN decorrelates
+		// to InnerJoin and OR-combined EXISTS becomes LeftOuterSemiJoin,
+		// neither of which this rule ever touches in the first place. The
+		// two queries below only check that results stay correct with both
+		// forms present in one statement.
 		testKit.MustQuery(`select * from t3 where exists (select 1 from t1 where false)
 			and t3.id in (select id from t1 intersect select id from t2 where false)`).Check(testkit.Rows())
 		testKit.MustQuery(`select * from t3 where exists (select 1 from t1)
