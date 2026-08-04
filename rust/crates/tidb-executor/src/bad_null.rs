@@ -59,8 +59,8 @@
 //! the bare integer zero.
 
 use tidb_datatype::{
-    BinaryJSON, BinaryJSONValue, BinaryLiteral, CoreTime, Datum, Decimal, FieldType, FieldTypeCode,
-    MySqlDuration, MysqlEnum, MysqlSet, StringDatum, Time, TimeType,
+    BinaryJSON, BinaryJSONValue, BinaryLiteral, Charset, CoreTime, Datum, Decimal, FieldType,
+    FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, StringDatum, Time, TimeType, VectorFloat32,
 };
 
 use crate::driver::DriverError;
@@ -144,6 +144,19 @@ pub(crate) fn zero_value(field_type: &FieldType) -> Datum {
         FieldTypeCode::NewDecimal => {
             Datum::new_decimal(Decimal::from_int(0).round_to_scale(field_type.decimal() as i32))
         }
+        // Go's `mysql.TypeString` arm is the one that is NOT an empty string:
+        // a fixed-width BINARY(n) zero value is n zero BYTES, so the row on
+        // disk carries the column's full declared width. Only the fixed-width
+        // CHAR/BINARY code takes it -- VARBINARY stays empty, exactly as Go's
+        // separate `TypeVarString` arm does.
+        FieldTypeCode::String
+            if field_type.flen() > 0 && field_type.charset() == Charset::Binary =>
+        {
+            Datum::String(StringDatum::new(
+                vec![0u8; field_type.flen() as usize],
+                collation,
+            ))
+        }
         FieldTypeCode::String
         | FieldTypeCode::VarString
         | FieldTypeCode::Varchar
@@ -163,6 +176,8 @@ pub(crate) fn zero_value(field_type: &FieldType) -> Datum {
         FieldTypeCode::Enum => Datum::new_enum(MysqlEnum::new(String::new(), 0), collation),
         FieldTypeCode::Json => BinaryJSON::from_typed_value(&BinaryJSONValue::Null)
             .map_or(Datum::Null, Datum::new_json),
+        // Go `types.ZeroVectorFloat32` = `InitVectorFloat32(0)`.
+        FieldTypeCode::VectorFloat32 => Datum::new_vector_float32(VectorFloat32::init(0)),
         _ => Datum::Null,
     }
 }
@@ -173,4 +188,96 @@ fn zero_time(kind: TimeType, fsp: i64) -> Datum {
     Time::new(CoreTime::from_raw(0), kind, fsp)
         .or_else(|_| Time::new(CoreTime::from_raw(0), kind, 0))
         .map_or(Datum::Null, Datum::new_time)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_datatype::FieldTypeBuilder;
+
+    fn field(code: FieldTypeCode, flen: i64, charset: &str, collation: &str) -> FieldType {
+        FieldTypeBuilder::new()
+            .with_code(code)
+            .flen_set(flen)
+            .charset_set(charset)
+            .collation_set(collation)
+            .build()
+    }
+
+    fn bytes_of(datum: &Datum) -> Vec<u8> {
+        match datum {
+            Datum::String(value) => value.bytes().to_vec(),
+            other => panic!("expected a string datum, got {other:?}"),
+        }
+    }
+
+    /// Go `table.GetZeroValue`'s `mysql.TypeString` arm. Captured from TiDB:
+    ///
+    /// ```text
+    /// alter table t add column a binary(8) not null;
+    /// alter table t add column b char(4) charset binary not null;
+    /// alter table t add column c char(4) not null;
+    /// alter table t add column d varbinary(8) not null;
+    /// select hex(a),length(a),hex(b),length(b),hex(c),length(c),hex(d),length(d);
+    ///   -> 0000000000000000|8|00000000|4||0||0
+    /// ```
+    #[test]
+    fn binary_zero_value_is_flen_zero_bytes() {
+        assert_eq!(
+            bytes_of(&zero_value(&field(
+                FieldTypeCode::String,
+                8,
+                "binary",
+                "binary"
+            ))),
+            vec![0u8; 8]
+        );
+        assert_eq!(
+            bytes_of(&zero_value(&field(
+                FieldTypeCode::String,
+                4,
+                "binary",
+                "binary"
+            ))),
+            vec![0u8; 4]
+        );
+    }
+
+    /// The three shapes that share the code but NOT the zero fill: a non-binary
+    /// CHAR, a zero-width BINARY, and VARBINARY (a separate Go arm entirely).
+    #[test]
+    fn only_fixed_width_binary_zero_fills() {
+        assert!(bytes_of(&zero_value(&field(
+            FieldTypeCode::String,
+            4,
+            "utf8mb4",
+            "utf8mb4_bin"
+        )))
+        .is_empty());
+        assert!(bytes_of(&zero_value(&field(
+            FieldTypeCode::String,
+            0,
+            "binary",
+            "binary"
+        )))
+        .is_empty());
+        assert!(bytes_of(&zero_value(&field(
+            FieldTypeCode::VarString,
+            8,
+            "binary",
+            "binary"
+        )))
+        .is_empty());
+    }
+
+    /// Go `column.go`'s `mysql.TypeTiDBVectorFloat32` arm sets
+    /// `types.ZeroVectorFloat32`, not a NULL datum.
+    #[test]
+    fn vector_zero_value_is_the_empty_vector() {
+        let zero = zero_value(&field(FieldTypeCode::VectorFloat32, 0, "binary", "binary"));
+        match zero {
+            Datum::VectorFloat32(value) => assert_eq!(value.len(), 0),
+            other => panic!("expected a vector datum, got {other:?}"),
+        }
+    }
 }
