@@ -737,3 +737,96 @@ fn an_on_duplicate_assignment_warns_over_the_cast_value_and_its_own_row() {
         "Out of range value for column 'b' at row 1"
     );
 }
+
+/// The 1062 message renders every duplicated key value the way Go's
+/// `Datum.ToString` does, including the kinds that are not an integer or a
+/// string.
+///
+/// Go goldens, `pkg/executor/insert_test.go:471,476,481`:
+///
+/// ```text
+/// a DATETIME UNIQUE
+///   -> [kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 't.a'
+/// PRIMARY KEY (a DATETIME, b INT, c VARCHAR(10)) COLLATE utf8mb4_general_ci
+///   -> [kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 't.PRIMARY'
+/// ```
+///
+/// plus `tests/integrationtest/r/**`, e.g. `Duplicate entry '2020-03-01
+/// 00:00:00' for key 't_54271.PRIMARY'`. `Datum::Time`, `Decimal`,
+/// `Duration`, `Enum`, `Set`, `Bit`, `Json`, `BinaryLiteral`, `Float32` and
+/// `VectorFloat32` all used to reach a Rust `Debug` fallback and print as
+/// `Time { .. }`.
+#[test]
+fn duplicate_entry_renders_every_datum_kind_as_go_does() {
+    let mut session = Session::new();
+    let duplicate = |session: &mut Session, create: &str, insert: &str, key: &str| {
+        session.run(create).unwrap();
+        session.run(insert).unwrap();
+        match session.run(insert) {
+            Err(DriverError::DuplicateEntry { value, .. }) => assert_eq!(value, key),
+            other => panic!("expected a 1062, got {other:?}"),
+        }
+    };
+
+    duplicate(
+        &mut session,
+        "CREATE TABLE dt (a DATETIME, UNIQUE KEY(a))",
+        "INSERT INTO dt VALUES ('2020-01-01')",
+        "2020-01-01 00:00:00",
+    );
+    duplicate(
+        &mut session,
+        "CREATE TABLE dd (a DECIMAL(10,3), UNIQUE KEY(a))",
+        "INSERT INTO dd VALUES (1.5)",
+        "1.500",
+    );
+    duplicate(
+        &mut session,
+        "CREATE TABLE dur (a TIME(2), UNIQUE KEY(a))",
+        "INSERT INTO dur VALUES ('01:02:03.45')",
+        "01:02:03.45",
+    );
+    duplicate(
+        &mut session,
+        "CREATE TABLE de (a ENUM('x','y'), UNIQUE KEY(a))",
+        "INSERT INTO de VALUES ('y')",
+        "y",
+    );
+    duplicate(
+        &mut session,
+        "CREATE TABLE ds (a SET('x','y'), UNIQUE KEY(a))",
+        "INSERT INTO ds VALUES ('x,y')",
+        "x,y",
+    );
+    duplicate(
+        &mut session,
+        "CREATE TABLE dda (a DATE, UNIQUE KEY(a))",
+        "INSERT INTO dda VALUES ('2020-02-03')",
+        "2020-02-03",
+    );
+    // These two are read off Go's `Datum.ToString` rather than captured:
+    // gorun reports the statement outcome without the message text. A BIT
+    // takes `BinaryLiteral.ToString()`, which is `string(b)` -- the raw
+    // bytes, so 0x41 prints as `A` and NOT as the `0x41` form this type's
+    // Display renders. A FLOAT takes 32-bit formatting.
+    duplicate(
+        &mut session,
+        "CREATE TABLE db8 (a BIT(8), UNIQUE KEY(a))",
+        "INSERT INTO db8 VALUES (b'01000001')",
+        "A",
+    );
+    duplicate(
+        &mut session,
+        "CREATE TABLE df (a FLOAT, UNIQUE KEY(a))",
+        "INSERT INTO df VALUES (1.25)",
+        "1.25",
+    );
+    // The composite form: Go joins the key parts with `-`, and each part
+    // goes through the same renderer.
+    duplicate(
+        &mut session,
+        "CREATE TABLE dc (a DATETIME, b INT, c VARCHAR(10), PRIMARY KEY (a, b, c))",
+        "INSERT INTO dc VALUES ('2020-01-01', 1, 'ASDD')",
+        "2020-01-01 00:00:00-1-ASDD",
+    );
+}

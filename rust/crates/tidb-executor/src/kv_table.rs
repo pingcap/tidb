@@ -1549,19 +1549,14 @@ impl KvTable {
 }
 
 /// The text a clustered-key duplicate reports: the key columns joined by `-`,
-/// as Go's `ErrKeyExists` formats them.
+/// as Go's `ErrKeyExists` formats them. Every part goes through the one
+/// [`datum_text`] renderer, so a composite key can never disagree with a
+/// single-column one about how a value prints.
 fn clustered_key_text(table: &KvTable, row: &[Datum]) -> String {
-    let offsets = table.handle_column_offsets();
-    offsets
+    table
+        .handle_column_offsets()
         .iter()
-        .map(|offset| match row.get(*offset) {
-            Some(Datum::Int(value)) => value.to_string(),
-            Some(Datum::UInt(value)) => value.to_string(),
-            Some(Datum::Bytes(bytes)) => String::from_utf8_lossy(bytes).into_owned(),
-            Some(Datum::String(text)) => String::from_utf8_lossy(text.bytes()).into_owned(),
-            Some(other) => format!("{other:?}"),
-            None => String::new(),
-        })
+        .map(|offset| row.get(*offset).map_or_else(String::new, datum_text))
         .collect::<Vec<_>>()
         .join("-")
 }
@@ -1599,9 +1594,28 @@ pub(in crate::kv_table) fn datum_text(value: &Datum) -> String {
     match value {
         Datum::Int(value) => value.to_string(),
         Datum::UInt(value) => value.to_string(),
+        // Go formats a FLOAT with 32-bit precision, so the shortest text that
+        // round-trips as an f32 -- not the f64 widening of it.
+        Datum::Float32(value) => value.to_string(),
+        Datum::Real(value) => value.to_string(),
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
-        Datum::Real(value) => value.to_string(),
+        Datum::Decimal(value) => value.to_string(),
+        Datum::Time(value) => value.to_string(),
+        Datum::Duration(value) => value.to_string(),
+        Datum::Enum(value, _) => value.to_string(),
+        Datum::Set(value, _) => value.to_string(),
+        // Go's `Datum.ToString` reaches `BinaryLiteral.ToString()`, which is
+        // `string(b)` -- the RAW BYTES. It is deliberately not the `String()`
+        // form (`0x...`) that this type's `Display` renders.
+        Datum::Bit(value) | Datum::BinaryLiteral(value) => {
+            String::from_utf8_lossy(value.as_bytes()).into_owned()
+        }
+        Datum::Json(value) => value.to_string(),
+        Datum::VectorFloat32(value) => value.to_string(),
+        // Go's `KindNull` arm is the empty string; the remaining kinds are
+        // its `default` error arm, which no stored column value reaches.
+        Datum::Null => String::new(),
         other => format!("{other:?}"),
     }
 }
