@@ -518,9 +518,6 @@ func InsertColStats2KV(
 			); err != nil {
 				return 0, errors.Trace(err)
 			}
-			if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
-				hasStatsUpdate = true
-			}
 			continue
 		}
 
