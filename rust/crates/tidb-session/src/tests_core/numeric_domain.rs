@@ -339,17 +339,18 @@ fn rand_seed_sysvars_seed_the_generator_and_always_read_back_as_zero() {
 ///    either spelling. The "rendering diverges" half does not reach an
 ///    observable answer.
 ///
-///  - the WARNINGS do not. Go raises TWO on the out-of-range cases below --
-///    1292 `Truncated incorrect DECIMAL value: '1e+308'` (whose text is the
-///    `'g'` spelling, so the formatting DOES matter here) and 1690
-///    `DECIMAL value is out of range in '(65, 0)'` -- and this tier raises
-///    none, because the discarded error is the only thing that could have
-///    produced them.
+///  - the WARNINGS half is now HALF closed. Go raises TWO on the
+///    out-of-range cases below, from two different places:
 ///
-/// The warning assertions below record the KNOWN gap: a real fix makes them
-/// fail, which is the point.
+///     * 1292 `Truncated incorrect DECIMAL value: '1e+308'` from
+///       `builtinCastRealAsDecimalSig`'s own `res.FromFloat64` overflow,
+///       whose text is the `'g'` spelling of the ARGUMENT -- still open,
+///       and still the discarded-error half above; and
+///     * 1690 `DECIMAL value is out of range in '(65, 0)'` from
+///       `ProduceDecWithSpecifiedTp`'s clamp, which `tidb-expr`'s
+///       `report_decimal_production` now raises.
 #[test]
-fn float_to_decimal_matches_gos_values_but_not_yet_its_warnings() {
+fn float_to_decimal_matches_gos_values_but_not_yet_its_from_float64_warning() {
     let mut session = Session::new();
 
     // Captured from TiDB.
@@ -380,7 +381,16 @@ fn float_to_decimal_matches_gos_values_but_not_yet_its_warnings() {
             [["99999999999999999999999999999999999999999999999999999999999999999"]],
             "{sql}"
         );
-        // KNOWN GAP: Go reports 1292 and then 1690 here.
-        assert_eq!(row_text(session.run("SHOW WARNINGS")).len(), 0, "{sql}");
+        // Go reports 1292 and THEN 1690 here; only the 1690 is modelled,
+        // and the missing 1292 is `FromFloat64`'s discarded error.
+        assert_eq!(
+            row_text(session.run("SHOW WARNINGS")),
+            [[
+                "Warning".to_owned(),
+                "1690".to_owned(),
+                "DECIMAL value is out of range in '(65, 0)'".to_owned()
+            ]],
+            "{sql}"
+        );
     }
 }

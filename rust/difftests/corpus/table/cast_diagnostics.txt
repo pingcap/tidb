@@ -1,0 +1,39 @@
+drop table if exists cd
+create table cd(id int)
+insert into cd values (1)
+select cast('abcdef' as char(3)) from cd
+show warnings
+select cast('中文abc' as char(2)) from cd
+show warnings
+select cast('ab   ' as char(2)) from cd
+show warnings
+select cast('abc' as char(3)) from cd
+show warnings
+select hex(cast('中文abc' as binary(4))) from cd
+show warnings
+select hex(cast('ab' as binary(5))) from cd
+show warnings
+select cast(123.456 as decimal(10,2)) from cd
+show warnings
+select cast(1234.5 as decimal(4,1)) from cd
+show warnings
+select cast(123456 as decimal(4,1)) from cd
+show warnings
+select cast(1234.56 as decimal(4,1)) from cd
+show warnings
+select cast(1.5 as decimal(10,2)) from cd
+show warnings
+select cast(1e300 as signed) from cd
+show warnings
+select cast(1.9e19 as signed) from cd
+show warnings
+select cast(9223372036854775806.9e0 as signed) from cd
+show warnings
+select cast(99999999999999999999.9 as signed) from cd
+show warnings
+select cast(-1e300 as signed) from cd
+show warnings
+select cast(-99999999999999999999.9 as signed) from cd
+show warnings
+select cast(1.5 as signed) from cd
+show warnings

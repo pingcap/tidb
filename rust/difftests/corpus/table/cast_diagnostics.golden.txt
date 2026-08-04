@@ -1,0 +1,39 @@
+OK
+OK
+OK
+RS:abc
+RS:Warning|1406|Data Too Long, field len 3, data len 6
+RS:中文
+RS:Warning|1406|Data Too Long, field len 2, data len 5
+RS:ab
+RS:Warning|1406|Data Too Long, field len 2, data len 5
+RS:abc
+RS:
+RS:E4B8ADE6
+RS:Warning|1406|Data Too Long, field len 4, data len 9
+RS:6162000000
+RS:
+RS:123.46
+RS:Warning|1292|Truncated incorrect DECIMAL value: '123.456'
+RS:999.9
+RS:Warning|1690|DECIMAL value is out of range in '(4, 1)'
+RS:999.9
+RS:Warning|1690|DECIMAL value is out of range in '(4, 1)'
+RS:999.9
+RS:Warning|1690|DECIMAL value is out of range in '(4, 1)'
+RS:1.50
+RS:
+RS:9223372036854775807
+RS:Warning|1690|constant 1e+300 overflows bigint
+RS:9223372036854775807
+RS:Warning|1690|constant 1.9e+19 overflows bigint
+RS:9223372036854775807
+RS:
+RS:9223372036854775807
+RS:Warning|1292|Truncated incorrect DECIMAL value: '99999999999999999999.9'
+RS:-9223372036854775808
+RS:Warning|1690|constant -1e+300 overflows bigint
+RS:-9223372036854775808
+RS:Warning|1292|Truncated incorrect DECIMAL value: '-99999999999999999999.9'
+RS:2
+RS:

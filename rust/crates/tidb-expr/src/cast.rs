@@ -45,6 +45,7 @@ pub(crate) fn eval_cast(
     match cast_type {
         CastType::Signed => {
             report_int_truncation(&v, ctx)?;
+            report_signed_overflow(&v, ctx);
             Ok(Datum::Int(to_i64_signed_in(&v, &ctx.time_zone())))
         }
         CastType::Unsigned => {
@@ -54,7 +55,10 @@ pub(crate) fn eval_cast(
         CastType::Char { len, .. } => {
             let text = datum_sql_string(&v)?;
             Ok(Datum::new_string(match len {
-                Some(n) => text.chars().take(*n as usize).collect(),
+                Some(n) => {
+                    report_data_too_long(ctx, text.chars().count(), *n as usize);
+                    text.chars().take(*n as usize).collect()
+                }
                 None => text,
             }))
         }
@@ -66,19 +70,95 @@ pub(crate) fn eval_cast(
             // complete UTF-8 sequence (see `TestCastFunctions`).
             let bytes = datum_binary_bytes(&v)?;
             Ok(Datum::new_bytes(match len {
-                Some(n) => binary_pad_truncate(&bytes, *n as usize),
+                Some(n) => {
+                    // A binary target measures in BYTES, not characters:
+                    // Go's `chs == CharsetBin` arm sets
+                    // `characterLen = len(s)`.
+                    report_data_too_long(ctx, bytes.len(), *n as usize);
+                    binary_pad_truncate(&bytes, *n as usize)
+                }
                 None => bytes,
             }))
         }
-        CastType::Decimal { flen, scale } => Ok(Datum::Decimal(
-            to_decimal_for_cast(&v).cast_to_precision(*flen, *scale),
-        )),
+        CastType::Decimal { flen, scale } => {
+            let source = to_decimal_for_cast(&v);
+            let produced = source.cast_to_precision(*flen, *scale);
+            report_decimal_production(ctx, &source, &produced, *flen, *scale);
+            Ok(Datum::Decimal(produced))
+        }
         CastType::Date => cast_to_time(&v, ctx, tidb_datatype::TimeType::Date),
         CastType::DateTime { .. } => cast_to_time(&v, ctx, tidb_datatype::TimeType::DateTime),
         CastType::Year => cast_to_year(&v),
         CastType::Double | CastType::Float => Ok(Datum::Real(to_f64_for_cast(&v))),
         CastType::Time { .. } => Err(EvalError::Unsupported("CAST AS TIME")),
         CastType::Json => crate::builtin_ext::cast_as_json(&v),
+    }
+}
+
+/// Go `types.ProduceStrWithSpecifiedTp` (`pkg/types/datum.go:1289-1304`),
+/// warning half: a value the target width cannot hold raises
+/// `ErrDataTooLong` (1406) "Data Too Long, field len %d, data len %d".
+///
+/// `data_len` is what Go's `characterLen` counts, which is the SOURCE's own
+/// length in the target's unit -- runes for a character target, bytes for a
+/// binary one -- NOT the truncated result's. Captured:
+/// `CAST('中文abc' AS CHAR(2))` warns `field len 2, data len 5` while
+/// `CAST('中文abc' AS BINARY(4))` warns `field len 4, data len 9`.
+///
+/// Go's one exception, the whitespace-only overflow that downgrades to a
+/// 1265 `Data truncated`, needs `tp.GetType() == TypeVarchar`; a CAST target
+/// is `TypeVarString`, so it cannot apply here. Captured:
+/// `CAST('ab   ' AS CHAR(2))` warns 1406, not 1265.
+fn report_data_too_long(ctx: &dyn crate::Columns, data_len: usize, field_len: usize) {
+    if data_len > field_len {
+        ctx.append_warning(
+            1406,
+            &format!("Data Too Long, field len {field_len}, data len {data_len}"),
+        );
+    }
+}
+
+/// Go `types.ProduceDecWithSpecifiedTp` (`pkg/types/datum.go:1629-1666`),
+/// warning half. Two mutually exclusive events, in Go's own `else if` order:
+///
+///  * the rounded value no longer fits `flen - scale` integer digits, so it
+///    is clamped to the max/min decimal and `ErrOverflow` (1690) reports
+///    `DECIMAL value is out of range in '(flen, scale)'`;
+///  * otherwise, if rounding to `scale` CHANGED the value, `ErrTruncatedWrongVal`
+///    (1292) reports `Truncated incorrect DECIMAL value: '<original>'` -- with
+///    the ORIGINAL text, not the rounded one.
+///
+/// The overflow arm suppresses the truncation arm even when both are true.
+/// Captured: `CAST(1234.56 AS DECIMAL(4,1))`, which both overflows AND loses
+/// a digit to rounding, warns 1690 ONLY -- that case is what makes the `else`
+/// load-bearing, and turning it into a second `if` is the mutation the corpus
+/// now catches. `CAST(123.456 AS DECIMAL(10,2))` warns 1292 with `'123.456'`.
+///
+/// Go's guard is `flen != UnspecifiedLength && decimal != UnspecifiedLength`;
+/// [`tidb_ast::CastType::Decimal`] carries `flen == 0` for unspecified, which
+/// is the same gate [`Decimal::cast_to_precision`] uses to skip the clamp.
+fn report_decimal_production(
+    ctx: &dyn crate::Columns,
+    source: &Decimal,
+    produced: &Decimal,
+    flen: u32,
+    scale: u32,
+) {
+    if flen == 0 {
+        return;
+    }
+    let rounded = source.round_to_scale(scale as i32);
+    let int_digits = rounded.coefficient_digits().len() as u32 - rounded.storage_scale();
+    if int_digits > flen.saturating_sub(scale) {
+        ctx.append_warning(
+            1690,
+            &format!("DECIMAL value is out of range in '({flen}, {scale})'"),
+        );
+    } else if source.storage_scale() > scale && produced != source {
+        ctx.append_warning(
+            1292,
+            &format!("Truncated incorrect DECIMAL value: '{source}'"),
+        );
     }
 }
 
@@ -289,10 +369,59 @@ fn int_prefix_consumed_all(s: &str) -> bool {
 /// SIGNED/UNSIGNED)` did not consume the whole operand, which is the point
 /// Go's `getValidIntPrefix` calls `Context.HandleTruncate`.
 ///
+/// The `CAST(<number> AS SIGNED)` clamp's own warning, which is the only
+/// thing that says the value saturated:
+///
+///  * `builtinCastRealAsIntSig` (`builtin_cast.go:1367`) returns
+///    `ConvertFloatToInt`'s `ErrOverflow` (1690)
+///    "constant %v overflows bigint" -- printing the ROUNDED value.
+///  * `builtinCastDecimalAsIntSig` (`:1566`) aliases its own `ErrOverflow`
+///    to `ErrTruncatedWrongVal` (1292)
+///    "Truncated incorrect DECIMAL value: '%v'" -- printing the ORIGINAL
+///    decimal, not the rounded one.
+///
+/// Both are WARNINGS in the default (strict) sql_mode, captured: reads never
+/// fail. Go compares against `float64(upperBound)`, so the check is exact
+/// only in `f64`: `CAST(9223372036854775806.9e0 AS SIGNED)` is `i64::MAX`
+/// with NO warning, because the bound itself rounds up to the same `f64`.
+/// Go's `val >= float64(upperBound)` spares exactly that equal case and
+/// `val < float64(lowerBound)` is strict, which is why the range below is
+/// INCLUSIVE at both ends.
+///
+/// `RoundFloat` is `math.RoundToEven`, mirrored here, but NO input can
+/// observe it: an `f64` keeps a fractional part only below 2^52, while this
+/// arm fires only past 2^63, so the rounding is the identity for both the
+/// comparison and the printed text. It is kept because Go rounds; a fixture
+/// that pins it cannot exist.
+///
+/// SIGNED only. Go's UNSIGNED target takes the other branch of the same
+/// signature (`ConvertFloatToUint`/`MyDecimal.ToUint`), whose warning
+/// [`to_u64_unsigned`] already raises -- calling both would double it.
+fn report_signed_overflow(v: &Datum, ctx: &dyn crate::Columns) {
+    match v {
+        Datum::Real(value) | Datum::Float32(value) => {
+            let rounded = value.round_ties_even();
+            if !(i64::MIN as f64..=i64::MAX as f64).contains(&rounded) {
+                ctx.append_warning(
+                    1690,
+                    &format!(
+                        "constant {} overflows bigint",
+                        tidb_datatype::format_float_g_shortest(rounded)
+                    ),
+                );
+            }
+        }
+        Datum::Decimal(value) if value.round_to_i64().is_none() => ctx.append_warning(
+            1292,
+            &format!("Truncated incorrect DECIMAL value: '{value}'"),
+        ),
+        _ => {}
+    }
+}
+
 /// Only a string-valued operand reaches Go's `builtinCastStringAsIntSig`;
-/// numeric and temporal sources have their own signatures and their own
-/// (overflow-shaped, not truncation-shaped) diagnostics, so they are left
-/// alone here rather than given a warning TiDB does not emit.
+/// the numeric signatures have their own, overflow-shaped diagnostic, in
+/// [`report_signed_overflow`].
 pub(crate) fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Result<(), EvalError> {
     let text = match v {
         Datum::String(value) => value.as_utf8().ok(),
