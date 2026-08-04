@@ -557,6 +557,213 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     }
 }
 
+/// Which object an index join's inner side probes once per distinct outer
+/// key: an index of the table, or the clustered integer handle.
+///
+/// Go reaches the two through different builders --
+/// `buildDataSource2IndexScanByIndexJoinProp` and
+/// `buildDataSource2TableScanByIndexJoinProp` -- and prints them as
+/// `IndexRangeScan` and `TableRangeScan`. The difference here is only which
+/// cursor a probe opens; everything above is one path.
+#[derive(Clone, Debug)]
+pub enum LookupObject {
+    /// Go's `IndexRangeScan ... range: decided by [eq(idx_col, outer_key)]`:
+    /// a point range over the index's leading columns.
+    Index(i64),
+    /// Go's `TableRangeScan ... range: decided by [outer_key]`: the outer
+    /// key IS the handle, so the probe is a point read.
+    Handle,
+}
+
+/// The inner side of an index join: the rows of one table whose join-key
+/// columns equal one of a batch of probe values.
+///
+/// This is Go's inner executor, the one `IndexJoinExecutorBuilder
+/// .BuildExecutorForIndexJoin` rebuilds for every outer batch. Here it is
+/// built once and *re-seeded* per batch ([`Self::set_probes`]), which is the
+/// same contract -- the probe list is the only thing that changes between
+/// batches -- without rebuilding the storage handle each time.
+///
+/// The probe list is the caller's promise: it must already be the DEDUPED,
+/// SORTED, inner-column-typed key list Go's `sortAndDedupLookUpContents`
+/// produces. This source does not re-check it, because the encoding that
+/// makes two probes equal is the caller's (`constructDatumLookupKey`'s
+/// `ConvertTo` + `Compare`), and a second answer here could only disagree.
+pub struct IndexJoinLookupExec {
+    meta: ExecutorMeta,
+    table: KvTable,
+    object: LookupObject,
+    /// The current outer batch's distinct probe tuples, in walk order.
+    probes: Vec<Vec<Datum>>,
+    /// The next probe to open a cursor over.
+    next_probe: usize,
+    /// The open cursor over `probes[next_probe - 1]` (index object only).
+    cursor: Option<IndexRangeCursor>,
+    /// Rows produced since `open`, which the trace reads as `actRows`.
+    produced: Rc<Cell<u64>>,
+    /// See [`HandleSourceExec`].
+    zone: SessionTimeZone,
+}
+
+impl IndexJoinLookupExec {
+    /// Builds a lookup source over `object` of `table`, with no probes yet:
+    /// before the first batch is seeded it is an empty relation, which is
+    /// what an index join whose outer side produced no rows must read.
+    #[must_use]
+    pub fn new(
+        meta: ExecutorMeta,
+        table: KvTable,
+        object: LookupObject,
+        zone: SessionTimeZone,
+    ) -> Self {
+        IndexJoinLookupExec {
+            meta,
+            table,
+            object,
+            probes: Vec::new(),
+            next_probe: 0,
+            cursor: None,
+            produced: Rc::new(Cell::new(0)),
+            zone,
+        }
+    }
+
+    /// Seeds the next outer batch's probe list and rewinds the walk.
+    ///
+    /// `produced` is NOT reset: it accumulates across batches, because the
+    /// operator EXPLAIN prints is the inner reader as a whole and Go's
+    /// `actRows` for it is the total over every batch, not the last one's.
+    pub(crate) fn set_probes(&mut self, probes: Vec<Vec<Datum>>) {
+        self.probes = probes;
+        self.next_probe = 0;
+        self.cursor = None;
+    }
+
+    /// The live count of rows this source produced.
+    #[must_use]
+    pub fn produced_rows(&self) -> Rc<Cell<u64>> {
+        Rc::clone(&self.produced)
+    }
+
+    /// The next handle the probe list reaches, opening the next probe's
+    /// cursor when the current one runs out.
+    fn next_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
+        loop {
+            if let Some(cursor) = self.cursor.as_mut() {
+                let handle = cursor
+                    .next_handle()
+                    .map_err(|_| ExecError::unsupported("index bytes failed to decode"))?;
+                if let Some(handle) = handle {
+                    return Ok(Some(handle));
+                }
+                self.cursor = None;
+            }
+            let Some(probe) = self.probes.get(self.next_probe).cloned() else {
+                return Ok(None);
+            };
+            self.next_probe += 1;
+            match &self.object {
+                LookupObject::Index(index_id) => {
+                    // Go's `IndexRangeScan` over the range the outer row
+                    // decided: a POINT range over the key columns, both
+                    // bounds the probe itself and neither excluded.
+                    let range = IndexRange {
+                        low: probe.clone(),
+                        high: probe,
+                        low_exclusive: false,
+                        high_exclusive: false,
+                    };
+                    self.cursor = Some(
+                        self.table
+                            .index_range_cursor(*index_id, &range, &self.zone)
+                            .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
+                    );
+                }
+                LookupObject::Handle => {
+                    // The probe IS the handle. A value that is not an
+                    // integer handle reads nothing rather than erroring:
+                    // Go's `BuildTableRange` produces an empty range for it,
+                    // and an empty range is no rows.
+                    let [value] = probe.as_slice() else {
+                        continue;
+                    };
+                    let Some(handle) = handle_of(value) else {
+                        continue;
+                    };
+                    return Ok(Some(handle));
+                }
+            }
+        }
+    }
+}
+
+/// The clustered integer handle a probe value names, or `None` when no row
+/// can carry it.
+fn handle_of(value: &Datum) -> Option<TableHandle> {
+    match value {
+        Datum::Int(v) => Some(TableHandle::Int(*v)),
+        Datum::UInt(v) => i64::try_from(*v).ok().map(TableHandle::Int),
+        _ => None,
+    }
+}
+
+impl Executor for IndexJoinLookupExec {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.next_probe = 0;
+        self.cursor = None;
+        self.produced.set(0);
+        Ok(())
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        let cap = self.meta.max_chunk_size();
+        while req.num_rows() < cap {
+            let Some(handle) = self.next_handle()? else {
+                return Ok(());
+            };
+            let row = self
+                .table
+                .get_row_by_handle(&handle, &self.zone)
+                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+            // An index entry whose row is gone is not a row, as in
+            // [`IndexRangeSourceExec`].
+            if let Some(row) = row {
+                for (c, value) in visible_of(&self.table, &row).iter().enumerate() {
+                    req.append_datum(c, value);
+                }
+                self.produced.set(self.produced.get() + 1);
+            }
+        }
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        self.cursor = None;
+        Ok(())
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};

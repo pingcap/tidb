@@ -92,6 +92,8 @@ mod stmt_context;
 pub mod storage;
 pub mod table_access;
 pub mod table_dual;
+#[cfg(test)]
+mod tests_index_join;
 pub mod topn;
 pub mod view;
 mod window;

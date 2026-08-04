@@ -191,6 +191,7 @@ mod errors;
 mod from;
 pub(crate) mod funcdep;
 mod grouping;
+pub(crate) mod index_join_decision;
 pub mod infoschema_meta;
 mod join_reorder;
 pub(crate) mod leaf_demand;

@@ -1368,6 +1368,11 @@ pub(crate) fn build_join(
     // Go's stats-less build side: the inner (non-preserved) child, which is
     // the left one only for a RIGHT join. See `join.rs`'s module doc.
     let build_is_left = kind == JoinKind::Right;
+    // Read before the children move into the join: the index-join decision
+    // needs each side's OUTPUT types (post-pruning), which only the built
+    // executors know.
+    let left_types = left_exec.ret_field_types().to_vec();
+    let right_types = right_exec.ret_field_types().to_vec();
     let mut join_exec = JoinExec::new(
         meta,
         kind,
@@ -1427,10 +1432,135 @@ pub(crate) fn build_join(
     if let Some(plan) = merged.clone() {
         join_exec.set_merge_plan(plan);
     }
+    // The index strategy: one side read once per outer key rather than whole.
+    // It is asked only where the merge decision declined, and it refuses a
+    // coalesced join for the same reason the merge one is dropped there --
+    // that scope addresses columns by row offset, not by name.
+    let index_join = (!coalescing)
+        .then(|| {
+            let (left_side, right_side) = crate::driver::index_join_decision::join_sides(
+                join,
+                &scope,
+                current_db,
+                left_width,
+                catalog,
+                &left_types,
+                &right_types,
+            );
+            crate::driver::index_join_decision::index_join_decision(
+                kind,
+                &split.keys,
+                &left_side,
+                &right_side,
+                merged.is_some(),
+            )
+        })
+        .flatten();
+    let index_text = index_join.map(|decision| {
+        let source = crate::access_path::IndexJoinLookupExec::new(
+            ExecutorMeta::new(
+                Schema::new(
+                    decision
+                        .columns
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (_, ft))| {
+                            let mut column = Column::new((i + 1) as i64, ft.clone());
+                            column.index = i as i64;
+                            column
+                        })
+                        .collect(),
+                ),
+                0,
+                INIT_CAP,
+                MAX_CHUNK_SIZE,
+            ),
+            decision.table.clone(),
+            decision.object.clone(),
+            ctx.session_zone(),
+        );
+        let keys: Vec<(String, String)> = decision
+            .probe_keys
+            .iter()
+            .map(|at| {
+                let key = split.keys[*at];
+                let (outer, inner) = if decision.lookup_is_left {
+                    (left_width + key.right, key.left)
+                } else {
+                    (key.left, left_width + key.right)
+                };
+                (
+                    qualified_scope_column(&scope, current_db, outer),
+                    qualified_scope_column(&scope, current_db, inner),
+                )
+            })
+            .collect();
+        let index = match &decision.object {
+            crate::access_path::LookupObject::Index(_) => true,
+            crate::access_path::LookupObject::Handle => false,
+        };
+        let access = match &decision.object {
+            crate::access_path::LookupObject::Index(id) => {
+                let index = decision
+                    .table
+                    .indexes()
+                    .iter()
+                    .find(|index| index.id == *id)
+                    .expect("the decision named an index of this table");
+                let columns: Vec<&str> = index
+                    .column_offsets
+                    .iter()
+                    .map(|offset| decision.columns[*offset].0.as_str())
+                    .collect();
+                format!(
+                    "table:{}, index:{}({})",
+                    decision.visible,
+                    index.name,
+                    columns.join(", ")
+                )
+            }
+            crate::access_path::LookupObject::Handle => format!("table:{}", decision.visible),
+        };
+        join_exec.set_index_lookup_plan(crate::join::IndexLookupPlan {
+            lookup_is_left: decision.lookup_is_left,
+            probe_keys: decision.probe_keys.clone(),
+            source,
+        });
+        (
+            crate::plan_trace::IndexJoinText {
+                reader: if index { "IndexReader" } else { "TableReader" },
+                keys,
+            },
+            decision.lookup_is_left,
+            access,
+            decision.range_info.clone(),
+            index,
+        )
+    });
+    // The plan row and the executor are one decision: if the recorder cannot
+    // rewrite the inner side's scan into the range it now reads, the trace is
+    // refused rather than printed with a whole-table read under an index
+    // join. The EXECUTOR is unaffected -- it still answers correctly.
+    let index_text = match (index_text, trace.as_deref_mut()) {
+        (Some((text, lookup_is_left, access, range_info, index)), Some(trace)) => {
+            if trace
+                .index_join_inner_scan(lookup_is_left, access, &range_info, index)
+                .is_ok()
+            {
+                Some(text)
+            } else {
+                trace.refuse("this index join's inner side is not printable yet");
+                None
+            }
+        }
+        (Some((text, ..)), None) => Some(text),
+        (None, _) => None,
+    };
     let exec: Box<dyn Executor> = Box::new(join_exec);
     let strategy = crate::plan_trace::JoinStrategy {
         equal_mask: split.equal_mask.clone(),
         build_is_left,
+        index_lookup: index_text,
         merge_keys: merged.as_ref().map(|plan| {
             plan.keys
                 .iter()
@@ -1556,7 +1686,7 @@ fn scope_offset_of(
 
 /// A joined-row offset rendered as `db.table.column`, the form
 /// `ExplainColumnList` prints a merge join's keys in.
-fn qualified_scope_column(scope: &FromScope, current_db: &str, offset: usize) -> String {
+pub(crate) fn qualified_scope_column(scope: &FromScope, current_db: &str, offset: usize) -> String {
     for table in &scope.tables {
         if offset >= table.offset && offset - table.offset < table.columns.len() {
             let database = table.database.as_deref().unwrap_or(current_db);

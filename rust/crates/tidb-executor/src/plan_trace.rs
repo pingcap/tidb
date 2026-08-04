@@ -591,6 +591,59 @@ impl PlanTrace {
         self.consumed = true;
     }
 
+    /// Rewrites the inner side's scan node into the range read an index join
+    /// decided per outer key: Go's `IndexRangeScan`/`TableRangeScan` with
+    /// `range: decided by [...]` instead of a literal interval.
+    ///
+    /// It rewrites rather than replaces because the node is already on the
+    /// stack under the OTHER child -- the join's two children are both built
+    /// before the strategy is known -- and because the executor behind it is
+    /// the one that runs, so its row counter and estimate stay.
+    ///
+    /// `lookup_is_left` picks which of the two child subtrees to rewrite;
+    /// `Err` means the stack does not hold two children, or the chosen one is
+    /// not a scan this may rename.
+    pub(crate) fn index_join_inner_scan(
+        &mut self,
+        lookup_is_left: bool,
+        access: String,
+        range_info: &str,
+        index: bool,
+    ) -> Result<(), ()> {
+        let depth = self.stack.len();
+        if depth < 2 {
+            return Err(());
+        }
+        let at = if lookup_is_left { depth - 2 } else { depth - 1 };
+        let node = &mut self.stack[at];
+        // The decision only ever names a bare base table, so its child
+        // subtree is the single scan node `build_from` pushed for it. Anything
+        // else means the two disagree, and renaming it would print a range
+        // over an operator that reads none.
+        if !matches!(
+            node.name,
+            "TableFullScan" | "IndexFullScan" | "TableRangeScan" | "IndexRangeScan"
+        ) || !node.children.is_empty()
+        {
+            return Err(());
+        }
+        // `stats:pseudo` is a property of the TABLE, not of the path, so it
+        // survives the rename -- and the replay compares it.
+        let pseudo = if node.info.contains("stats:pseudo") {
+            ", stats:pseudo"
+        } else {
+            ""
+        };
+        node.name = if index {
+            "IndexRangeScan"
+        } else {
+            "TableRangeScan"
+        };
+        node.access = access;
+        node.info = format!("range: decided by {range_info}, keep order:false{pseudo}");
+        Ok(())
+    }
+
     /// A `WHERE` over whatever the access path produced.
     ///
     /// The access path's own estimate already reflects the conditions it
@@ -732,6 +785,7 @@ impl PlanTrace {
             equal_mask,
             build_is_left,
             merge_keys,
+            index_lookup,
         } = strategy;
         let build_is_left = *build_is_left;
         let qualify = Qualifier {
@@ -778,7 +832,7 @@ impl PlanTrace {
         // Go `PhysicalMergeJoin.explainInfo` has NO `CARTESIAN` prefix: a
         // property-driven merge join always has keys, and the keyless one is
         // only ever produced by the enforced path this tier does not build.
-        if equal.is_empty() && merge_keys.is_none() {
+        if equal.is_empty() && merge_keys.is_none() && index_lookup.is_none() {
             info.push_str("CARTESIAN ");
         }
         info.push_str(kind);
@@ -807,6 +861,35 @@ impl PlanTrace {
                     .collect::<Vec<_>>()
                     .join(", "),
             );
+        } else if let Some(text) = &index_lookup {
+            // Go `PhysicalIndexJoin.explainInfo`: the reader, then the two
+            // key lists, then the equal conditions spelled in full. The
+            // residual `ON` conjuncts this tier still evaluates are not
+            // printed, for the same reason the merge arm does not print them.
+            tail.push_str(", inner:");
+            tail.push_str(text.reader);
+            tail.push_str(", outer key:");
+            tail.push_str(
+                &text
+                    .keys
+                    .iter()
+                    .map(|(outer, _)| outer.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            tail.push_str(", inner key:");
+            tail.push_str(
+                &text
+                    .keys
+                    .iter()
+                    .map(|(_, inner)| inner.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            if !equal.is_empty() {
+                tail.push_str(", equal cond:");
+                tail.push_str(&equal.join(", "));
+            }
         } else {
             if !equal.is_empty() {
                 tail.push_str(", equal:[");
@@ -834,6 +917,15 @@ impl PlanTrace {
         self.stack.push(PlanNode {
             name: if merge_keys.is_some() {
                 "MergeJoin"
+            } else if index_lookup.is_some() {
+                // Go's `IndexJoin` IS `IndexLookUpJoin`: the outer side
+                // streams in batches and the batch's inner rows are indexed
+                // by the outer key, which is exactly `crate::join`'s index
+                // strategy. RESIDUE: Go also costs `IndexHashJoin` (which
+                // hashes the OUTER batch instead) and picks it for most of
+                // the recorded plans; this tier has no join cost model, so it
+                // names the operator it actually runs.
+                "IndexJoin"
             } else {
                 "HashJoin"
             },
@@ -1165,6 +1257,25 @@ pub(crate) struct JoinStrategy {
     /// A merge join's `(left key, right key)` column names, already
     /// qualified; `None` for every other strategy.
     pub(crate) merge_keys: Option<Vec<(String, String)>>,
+    /// An index join's printed shape: the reader Go names after `inner:`,
+    /// and the `(outer key, inner key)` column names. `None` for every other
+    /// strategy.
+    pub(crate) index_lookup: Option<IndexJoinText>,
+}
+
+/// What an index join's plan row says beyond its join kind.
+///
+/// Go prints `inner:<reader>, outer key:<cols>, inner key:<cols>, equal
+/// cond:<conjuncts>` (`PhysicalIndexJoin.explainInfo`). The reader is the
+/// operator ABOVE the range scan in Go's tree, which this tier collapses into
+/// the scan itself -- so it is named from the probed object rather than read
+/// off a child that does not exist here.
+pub(crate) struct IndexJoinText {
+    /// `IndexReader` for an index probe, `TableReader` for a handle probe.
+    pub(crate) reader: &'static str,
+    /// The outer and inner key column names, already qualified, in probe
+    /// order.
+    pub(crate) keys: Vec<(String, String)>,
 }
 
 pub(crate) fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {

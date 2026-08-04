@@ -224,6 +224,65 @@ impl MergeSide {
     }
 }
 
+/// Go `DefIndexJoinBatchSize` / `tidb_index_join_batch_size`: the largest
+/// number of outer rows one index-join probe batch may hold.
+///
+/// RESIDUE: the session variable is not read here yet, so a `SET
+/// tidb_index_join_batch_size` changes nothing. The batch size is a
+/// PERFORMANCE decision -- every batch boundary produces the same rows in the
+/// same order, which `index_join_batch_boundary_does_not_change_the_result`
+/// pins -- so reading the default is a smaller claim, not a wrong answer.
+pub(crate) const INDEX_JOIN_BATCH_SIZE: usize = 25000;
+
+/// The index-join strategy: which child is LOOKED UP once per distinct outer
+/// key, and over which object.
+///
+/// Go's `IndexLookUpJoin`. The outer child streams in batches; each batch's
+/// distinct keys decide the ranges the inner side reads
+/// (`range: decided by [...]` in `EXPLAIN`), and the rows that come back are
+/// indexed by the join's OWN equality keys, so this strategy and the hash
+/// strategy answer "does this pair match?" with the same bytes.
+pub(crate) struct IndexLookupPlan {
+    /// Whether the LOOKED-UP side is this join's left child.
+    ///
+    /// It is never the outer-join-preserved side: a `LEFT JOIN` may only look
+    /// up its right child and a `RIGHT JOIN` only its left, which is what
+    /// lets [`JoinExec::outer_is_left`] answer for both strategies at once.
+    pub(crate) lookup_is_left: bool,
+    /// Offsets into [`JoinExec::keys`] of the equalities that decide the
+    /// probe range, in the looked-up object's own key-column order.
+    ///
+    /// A subset, not the whole list: Go's `KeyCols` are the index prefix the
+    /// range is built from while `HashCols` are every equality, and a join
+    /// whose index covers only the first of two keys still probes on one
+    /// column and matches on both.
+    pub(crate) probe_keys: Vec<usize>,
+    /// The re-seedable inner source.
+    pub(crate) source: crate::access_path::IndexJoinLookupExec,
+}
+
+/// The index strategy's live state: one outer batch and the inner rows its
+/// probes found.
+struct IndexLookupState {
+    /// The current batch's outer rows, in the order the child produced them
+    /// -- which is the order the result preserves.
+    outer: Vec<Vec<Datum>>,
+    /// How far `outer` is consumed.
+    cursor: usize,
+    /// The inner rows the batch's probes read, in read order.
+    inner: Vec<Vec<Datum>>,
+    /// Every equality key's encoding to the `inner` positions carrying it.
+    matched: std::collections::HashMap<Vec<u8>, Vec<usize>>,
+    /// The chunk the outer child streams into, and how far it is consumed.
+    outer_chunk: Chunk,
+    outer_row: usize,
+    /// Whether the outer child has returned its final (empty) chunk.
+    outer_done: bool,
+    /// The next batch's size, doubling to [`INDEX_JOIN_BATCH_SIZE`] as Go's
+    /// `increaseBatchSize` does.
+    batch_size: usize,
+}
+
 /// The merge strategy's live state: one [`MergeSide`] per child.
 struct MergeState {
     left: MergeSide,
@@ -252,6 +311,13 @@ pub struct JoinExec<C: Columns> {
     merge: Option<crate::merge_join_plan::MergeJoinPlan>,
     /// The merge strategy's live state; absent until the first `next()`.
     merge_state: Option<MergeState>,
+    /// The index strategy's plan, set by the planner when one side is a
+    /// single table whose index the join keys can probe. `None` is every
+    /// other join, and -- as with `merge` above -- the opt-in is fail-closed:
+    /// a lookup over the wrong object silently loses rows.
+    index_lookup: Option<IndexLookupPlan>,
+    /// The index strategy's live state; absent until the first `next()`.
+    index_state: Option<IndexLookupState>,
     /// How many times the `ON` clause has been evaluated. This is the cost
     /// the hash table exists to remove, so it is the number a scaling test
     /// asserts on directly instead of timing the machine.
@@ -306,6 +372,8 @@ impl<C: Columns> JoinExec<C> {
             hash: None,
             merge: None,
             merge_state: None,
+            index_lookup: None,
+            index_state: None,
             condition_evals: Cell::new(0),
             memory,
             tracker,
@@ -379,7 +447,15 @@ impl<C: Columns> JoinExec<C> {
     /// side is the other, and is the one the hash path builds its table on.
     /// `true` means the LEFT child is the outer one.
     fn outer_is_left(&self) -> bool {
-        self.kind != JoinKind::Right
+        match &self.index_lookup {
+            // The index strategy DRIVES from the side it does not look up,
+            // whichever side that is -- an inner join whose left child is the
+            // indexed table streams its right child. For an outer join the
+            // two answers coincide, because the decision refuses to look up
+            // the preserved side (see [`IndexLookupPlan::lookup_is_left`]).
+            Some(plan) => !plan.lookup_is_left,
+            None => self.kind != JoinKind::Right,
+        }
     }
 
     /// Drains a child into rows of `Datum`s, accounting each chunk's worth
@@ -490,6 +566,257 @@ impl<C: Columns> JoinExec<C> {
             Self::append(req, &self.padded_row(outer_row));
         }
         Ok(())
+    }
+
+    /// Declares that this join looks its inner side up per outer batch.
+    ///
+    /// As with [`Self::set_merge_plan`] the promise is the caller's: only
+    /// `driver::index_join_decision` makes it, and only after checking that
+    /// the probed object's key columns ARE the join's own equality columns.
+    pub(crate) fn set_index_lookup_plan(&mut self, plan: IndexLookupPlan) {
+        self.index_lookup = Some(plan);
+    }
+
+    /// Whether this join looks its inner side up per outer batch.
+    #[must_use]
+    pub fn is_index_join(&self) -> bool {
+        self.index_lookup.is_some()
+    }
+
+    /// The index strategy: stream the outer side in batches, and read only
+    /// the inner rows each batch's keys can reach.
+    ///
+    /// Go's `IndexLookUpJoin.Next` over the tasks its outer worker builds.
+    /// One call consumes batches until it produces at least one output row,
+    /// for the same reason [`Self::next_hashed`] does: an empty `req` is the
+    /// caller's EOF signal.
+    fn next_index_lookup(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        loop {
+            if !self.fill_index_batch()? {
+                return Ok(());
+            }
+            self.drain_index_batch(req)?;
+            if req.num_rows() > 0 {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Makes sure a batch with unconsumed outer rows is loaded, returning
+    /// `false` once the outer child is exhausted.
+    fn fill_index_batch(&mut self) -> Result<bool, ExecError> {
+        if self.index_state.is_none() {
+            let outer_chunk = if self.outer_is_left() {
+                self.left.new_chunk()
+            } else {
+                self.right.new_chunk()
+            };
+            self.index_state = Some(IndexLookupState {
+                outer: Vec::new(),
+                cursor: 0,
+                inner: Vec::new(),
+                matched: std::collections::HashMap::new(),
+                outer_chunk,
+                outer_row: 0,
+                outer_done: false,
+                // Go's `startWorkers(ctx, req.RequiredRows())`: the first
+                // batch is what the caller asked for, capped by the maximum.
+                batch_size: self.meta.max_chunk_size().min(INDEX_JOIN_BATCH_SIZE),
+            });
+        }
+        loop {
+            let state = self.index_state.as_ref().expect("just installed above");
+            if state.cursor < state.outer.len() {
+                return Ok(true);
+            }
+            if state.outer_done && state.outer_row >= state.outer_chunk.num_rows() {
+                return Ok(false);
+            }
+            self.load_index_batch()?;
+            let state = self.index_state.as_ref().expect("still installed");
+            if state.outer.is_empty() && state.outer_done {
+                return Ok(false);
+            }
+        }
+    }
+
+    /// Pulls the next batch of outer rows, probes the inner side with their
+    /// distinct keys, and indexes what comes back.
+    ///
+    /// Go's `outerWorker.buildTask` + `innerWorker.handleTask`, in that
+    /// order and with the same three steps: build the lookup contents, fetch
+    /// the inner results, build the lookup map.
+    fn load_index_batch(&mut self) -> Result<(), ExecError> {
+        let outer_is_left = self.outer_is_left();
+        // Disjoint field borrows: the batch below reads the outer CHILD while
+        // it writes the state and re-seeds the source, and those are three
+        // different fields of this executor.
+        let JoinExec {
+            left,
+            right,
+            keys,
+            tracker,
+            memory,
+            index_lookup,
+            index_state,
+            ..
+        } = self;
+        let outer_child = if outer_is_left {
+            left.as_mut()
+        } else {
+            right.as_mut()
+        };
+        let outer_types: Vec<FieldType> = outer_child.ret_field_types().to_vec();
+        let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
+        let inner_offset = |key: &EquiKey| if outer_is_left { key.right } else { key.left };
+        let plan = index_lookup
+            .as_mut()
+            .expect("this path runs only with a plan");
+        let state = index_state.as_mut().expect("fill_index_batch installed it");
+
+        // 1. The outer batch, up to `batch_size` rows.
+        state.outer.clear();
+        state.cursor = 0;
+        let mut bytes = 0i64;
+        while state.outer.len() < state.batch_size {
+            if state.outer_row >= state.outer_chunk.num_rows() {
+                if state.outer_done {
+                    break;
+                }
+                outer_child.next(&mut state.outer_chunk)?;
+                state.outer_row = 0;
+                if state.outer_chunk.num_rows() == 0 {
+                    state.outer_done = true;
+                    break;
+                }
+            }
+            let row = datum_row(&state.outer_chunk, state.outer_row, &outer_types);
+            state.outer_row += 1;
+            bytes += row_bytes(&row);
+            state.outer.push(row);
+        }
+        tracker.consume(bytes);
+        memory.check()?;
+        // Go `increaseBatchSize`, applied to the NEXT batch.
+        state.batch_size = state
+            .batch_size
+            .saturating_mul(2)
+            .min(INDEX_JOIN_BATCH_SIZE);
+
+        // 2. The batch's distinct probe tuples. A NULL key part contributes
+        //    no probe: `key_part` refuses NULL too, so such an outer row
+        //    matches nothing either way -- Go's `constructDatumLookupKey`
+        //    returning nil.
+        //
+        //    Go DEDUPES by sorting (`sortAndDedupLookUpContents`); this
+        //    dedupes by the same encoding the match map is keyed on and
+        //    keeps first-seen order. Sorting is what makes Go's ranges walk
+        //    the index forwards, which is a cost, not an answer -- and
+        //    deduping by the key encoding cannot merge two probes the join
+        //    would have distinguished, which a comparison that swallowed its
+        //    own error could.
+        let probe_encoding: Vec<EquiKey> = plan
+            .probe_keys
+            .iter()
+            .enumerate()
+            .map(|(at, key)| EquiKey {
+                left: at,
+                right: at,
+                class: keys[*key].class,
+            })
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        let mut probes: Vec<Vec<Datum>> = Vec::new();
+        for row in &state.outer {
+            let probe: Option<Vec<Datum>> = plan
+                .probe_keys
+                .iter()
+                .map(|at| {
+                    let value = row[outer_offset(&keys[*at])].clone();
+                    (!matches!(value, Datum::Null)).then_some(value)
+                })
+                .collect();
+            let Some(probe) = probe else {
+                continue;
+            };
+            let encoded =
+                row_key(&probe_encoding, &probe, |key| key.left).map_err(|_: KeyError| {
+                    ExecError::unsupported("a join key column has no comparable encoding")
+                })?;
+            if let Some(encoded) = encoded {
+                if seen.insert(encoded) {
+                    probes.push(probe);
+                }
+            }
+        }
+
+        // 3. The inner rows those probes reach.
+        plan.source.set_probes(probes);
+        let inner_types: Vec<FieldType> = plan.source.ret_field_types().to_vec();
+        state.inner.clear();
+        state.matched.clear();
+        let mut chunk = plan.source.new_chunk();
+        loop {
+            plan.source.next(&mut chunk)?;
+            let n = chunk.num_rows();
+            if n == 0 {
+                break;
+            }
+            let mut bytes = 0i64;
+            for r in 0..n {
+                let row = datum_row(&chunk, r, &inner_types);
+                bytes += row_bytes(&row);
+                state.inner.push(row);
+            }
+            tracker.consume(bytes);
+            memory.check()?;
+        }
+
+        // 4. Go `buildLookUpMap`, keyed by the join's OWN equalities so this
+        //    strategy and the hash strategy cannot disagree about a match.
+        for (at, row) in state.inner.iter().enumerate() {
+            let key = row_key(keys, row, inner_offset).map_err(|_: KeyError| {
+                ExecError::unsupported("a join key column has no comparable encoding")
+            })?;
+            if let Some(key) = key {
+                state.matched.entry(key).or_default().push(at);
+            }
+        }
+        Ok(())
+    }
+
+    /// Emits the loaded batch's outer rows, in the order the child produced
+    /// them, until `req` is full or the batch runs out.
+    fn drain_index_batch(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        let keys = self.keys.clone();
+        let outer_is_left = self.outer_is_left();
+        let outer_offset = |key: &EquiKey| if outer_is_left { key.left } else { key.right };
+        let cap = self.meta.max_chunk_size();
+        loop {
+            let state = self
+                .index_state
+                .as_ref()
+                .expect("this path runs only with a batch");
+            if state.cursor >= state.outer.len() || req.num_rows() >= cap {
+                return Ok(());
+            }
+            let outer_row = state.outer[state.cursor].clone();
+            let key = row_key(&keys, &outer_row, outer_offset).map_err(|_: KeyError| {
+                ExecError::unsupported("a join key column has no comparable encoding")
+            })?;
+            let candidates: Vec<Vec<Datum>> = key
+                .and_then(|key| state.matched.get(&key))
+                .map(|positions| {
+                    positions
+                        .iter()
+                        .map(|at| state.inner[*at].clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.emit_outer_row(req, &outer_row, candidates.into_iter())?;
+            let state = self.index_state.as_mut().expect("still installed");
+            state.cursor += 1;
+        }
     }
 
     /// Declares that both children produce rows in `plan`'s key order, and
@@ -958,12 +1285,19 @@ impl<C: Columns> Executor for JoinExec<C> {
         self.build_spilled = false;
         self.spilled_bytes = 0;
         self.merge_state = None;
+        self.index_state = None;
+        if let Some(plan) = self.index_lookup.as_mut() {
+            plan.source.open()?;
+        }
         self.condition_evals.set(0);
         Ok(())
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
+        if self.index_lookup.is_some() {
+            return self.next_index_lookup(req);
+        }
         if self.merge.is_some() {
             return self.next_merged(req);
         }
@@ -984,6 +1318,9 @@ impl<C: Columns> Executor for JoinExec<C> {
             self.memory
                 .session_tracker()
                 .unbind_action_from_hard_limit(&action);
+        }
+        if let Some(plan) = self.index_lookup.as_mut() {
+            plan.source.close()?;
         }
         self.left.close()?;
         self.right.close()
