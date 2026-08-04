@@ -1402,6 +1402,95 @@ pub(crate) fn detach_cond_and_build_range_for_index<'a>(
     (built.access_count > 0).then_some(built)
 }
 
+/// Go's `PredicateSimplification` / `unsatisfiable`
+/// (`pkg/planner/core/rule/rule_predicate_simplification.go`): a `WHERE` reads
+/// no row on ANY access path when some column carries an equality `col = c`
+/// that another binary comparison on the same column contradicts.
+///
+/// This is the index-INDEPENDENT `TableDual`: `b = 1 AND b = 2` reads nothing
+/// no matter which columns are indexed, so Go plans `TableDual rows:0` before
+/// any path is costed, and does the same for a partition key
+/// (`a = 2 AND a = 3` over a partitioned table). It is distinct from the
+/// empty-range short-circuit in [`detach_cond_and_build_range_for_index`],
+/// which fires only for the column an access path was chosen on.
+///
+/// The EQUALITY gate is Go's own. `unsatisfiable` pairs an equality
+/// (`equalPredicate`) only with another BINARY COMPARISON
+/// (`binaryComparisonPredicate`: `=`, `<>`, `<`, `>`, `<=`, `>=`) -- never with
+/// an `IN`, a `BETWEEN` or an `OR` -- and requires one side of the pair to be
+/// an equality. So `b > 10 AND b < 1` (no equality) stays an ordinary filter,
+/// matching Go which leaves it a `TableFullScan` on a non-indexed column, and
+/// `b = 1 AND b IN (2, 3)` is not proven contradictory because the other side
+/// is an `IN` rather than a binary comparison.
+///
+/// Intersecting the equality's single point with each other comparison's point
+/// set and asking whether the result is empty is exactly Go's pairwise check:
+/// the intersection drops the equality's value iff some `c1 <op> c2` is false.
+pub(crate) fn where_is_unsatisfiable(
+    columns: &[(String, FieldType)],
+    where_clause: &Expr,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
+    let mut conjuncts = Vec::new();
+    collect_conjuncts(where_clause, &mut conjuncts);
+    // A lone top-level OR is a disjunction, so a contradictory branch does not
+    // make the whole predicate false. A top-level AND is already flattened into
+    // several conjuncts by `collect_conjuncts`.
+    if conjuncts.len() == 1 && is_or(conjuncts[0]) {
+        return false;
+    }
+    columns
+        .iter()
+        .any(|(name, field_type)| column_conjuncts_contradict(name, field_type, &conjuncts, zone))
+}
+
+/// Whether the binary-comparison conjuncts on one column, taken together with
+/// at least one equality among them, admit no value.
+fn column_conjuncts_contradict(
+    name: &str,
+    field_type: &FieldType,
+    conjuncts: &[&Expr],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
+    let column = RangeColumn::whole(name.to_owned(), field_type.clone());
+    let mut points = full_range();
+    let mut has_equality = false;
+    let mut access = false;
+    for condition in conjuncts {
+        let Some(column_points) = simple_comparison_points(condition, &column, zone) else {
+            continue;
+        };
+        points = intersection(&points, &column_points.points);
+        has_equality |= column_points.eq_or_in;
+        access = true;
+    }
+    if !(access && has_equality) {
+        return false;
+    }
+    convert_points_in_place(&mut points, &column.field_type);
+    points_to_ranges(&points, &column).is_empty()
+}
+
+/// The points a TOP-LEVEL binary comparison (`=`, `<>`, `<`, `>`, `<=`, `>=`)
+/// on `column` puts on it, with `eq_or_in` set only for the `=` Go's
+/// `unsatisfiable` requires. `None` for every other shape -- an `IN`, a
+/// `BETWEEN`, an `OR`, a `LIKE`, an `IS NULL` -- because Go's pairwise check
+/// never uses those as the contradicting side.
+fn simple_comparison_points(
+    condition: &Expr,
+    column: &RangeColumn,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<ColumnPoints> {
+    match condition {
+        Expr::Paren(inner) => simple_comparison_points(inner, column, zone),
+        Expr::Binary(
+            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge,
+            ..,
+        ) => points_on_column(condition, column, zone),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2037,5 +2126,71 @@ mod tests {
                 "{where_sql}"
             );
         }
+    }
+
+    /// `where_is_unsatisfiable` fires exactly on Go's `unsatisfiable`: an
+    /// equality contradicted by another BINARY comparison on the same column,
+    /// on ANY column of the table -- and never on the shapes Go leaves a
+    /// filter (a range pair with no equality, an equality vs an `IN`, a lone
+    /// disjunction).
+    #[test]
+    fn where_is_unsatisfiable_matches_go_predicate_simplification() {
+        // The table is `t(a int, b int, c int)`; the contradiction may be on
+        // any of them, indexed or not.
+        let table: Vec<(String, FieldType)> = ["a", "b", "c"]
+            .iter()
+            .map(|name| {
+                (
+                    (*name).to_owned(),
+                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                )
+            })
+            .collect();
+        let unsat = |where_sql: &str| {
+            let sql = format!("SELECT * FROM t WHERE {where_sql}");
+            let stmt = tidb_parser::parse(&sql).expect("parses");
+            let tidb_ast::Stmt::Query(query) = &stmt else {
+                panic!("not a query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("not a select")
+            };
+            let where_clause = select.where_clause.as_ref().expect("has a WHERE");
+            where_is_unsatisfiable(&table, where_clause, &tidb_datatype::SessionTimeZone::utc())
+        };
+
+        // Contradictory: an equality no other comparison on the column admits.
+        // The column need not be the leading one, nor indexed at all -- this is
+        // the whole point of the index-independent dual.
+        assert!(unsat("b = 1 and b = 2"), "two conflicting equalities on b");
+        assert!(unsat("a = 2 and a = 3"), "the partition-key shape");
+        assert!(unsat("a = 1 and a > 2"), "equality below a lower bound");
+        assert!(unsat("a = 1 and a < 1"), "equality at an excluded bound");
+        assert!(unsat("a = 1 and a <> 1"), "equality against its own <>");
+        assert!(
+            unsat("c > 0 and b = 1 and b = 2"),
+            "a satisfiable conjunct on another column does not hide it"
+        );
+
+        // Satisfiable / not proven false by Go's rule:
+        assert!(!unsat("a = 1 and a = 1"), "the same equality twice");
+        assert!(!unsat("a = 1 and a < 2"), "equality inside the bound");
+        assert!(
+            !unsat("b > 10 and b < 1"),
+            "no equality: Go keeps it a filter, not a dual"
+        );
+        assert!(
+            !unsat("b = 1 and b in (2, 3)"),
+            "the other side is an IN, not a binary comparison"
+        );
+        assert!(
+            !unsat("(b = 1 and b = 2) or c = 5"),
+            "a lone top-level OR is a disjunction"
+        );
+        assert!(!unsat("a = 1"), "a single equality constrains nothing else");
+        assert!(
+            !unsat("a = b"),
+            "a column-to-column equality is not a point"
+        );
     }
 }

@@ -85,6 +85,18 @@ pub(crate) fn commit_fast_path_source(
         Some(table_ref) => crate::index_hints::table_ref_hints(table_ref, &table)?,
         None => crate::index_hints::AvailablePaths::unrestricted(),
     };
+    // Go's `PredicateSimplification` plans a `TableDual rows:0` before any path
+    // is costed when the `WHERE` is provably contradictory on some column
+    // (`b = 1 AND b = 2`), which is index-independent: it reads no row whether
+    // or not `b` is indexed, and holds for a partition key over a partitioned
+    // table just the same. Committing the dual here supersedes every access
+    // path below, exactly as Go's whole-`DataSource`-to-dual replacement does.
+    if let Some(where_clause) = select.where_clause.as_ref() {
+        if crate::index_range::where_is_unsatisfiable(&columns, where_clause, zone) {
+            install_contradiction_dual(&columns, from_source, trace.as_deref_mut());
+            return Ok(None);
+        }
+    }
     // Go's `PartitionProcessor` prunes before any access path is costed, and
     // so does this: an offer refused leaves the source reading every
     // partition, which is a superset and still every row the statement
@@ -212,6 +224,32 @@ pub(crate) fn commit_fast_path_source(
         *from_source = Some(Box::new(exec));
     }
     Ok(index_order)
+}
+
+/// Installs a zero-row [`TableDualExec`] for a contradictory `WHERE` and
+/// records the `TableDual rows:0` node in place of the scan `build_from` traced.
+///
+/// The `WHERE` stays in the pipeline above (as every fast path leaves it), so
+/// the `Selection` over this source is fed no rows and produces none -- the
+/// same answer the full scan gave, reached without reading the table.
+fn install_contradiction_dual(
+    columns: &[(String, FieldType)],
+    from_source: &mut Option<Box<dyn Executor>>,
+    trace: Option<&mut PlanTrace>,
+) {
+    let exec = crate::table_dual::TableDualExec::new(
+        ExecutorMeta::new(
+            Schema::new(source_schema_columns(columns)),
+            0,
+            INIT_CAP,
+            MAX_CHUNK_SIZE,
+        ),
+        0,
+    );
+    if let Some(trace) = trace {
+        trace.empty_range_table_dual();
+    }
+    *from_source = Some(Box::new(exec));
 }
 
 /// Installs the streaming index-range source for a committed index path, and

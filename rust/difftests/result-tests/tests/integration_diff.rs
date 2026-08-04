@@ -1408,7 +1408,20 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // (`handle_range::build_handle_ranges`), so an `IS NULL` over an integer
     // handle now drops its NULL-ended interval and plans the `TableDual rows:0`
     // TiDB records instead of a full table scan.
-    const KNOWN_DIVERGENCES: usize = 61;
+    //
+    // 61 -> 58: Go's `PredicateSimplification` index-independent `TableDual`
+    // landed (`index_range::where_is_unsatisfiable`, wired in
+    // `driver::access::commit_fast_path_source`). A `WHERE` an equality proves
+    // contradictory on some column now plans `TableDual rows:0` before any path
+    // is costed, matching TiDB's `<not read>` for three statements:
+    // `explain_easy`'s `select * from t where b = 1 and b = 2` (b is the
+    // non-leading column of `idx(a, b)`, so no range path ever caught it), and
+    // `partition_with_expression`'s `select * from {trange,thash} where a = 2
+    // and a = 3`. All three carry no access property on either side now, so
+    // they move from compared-and-diverged to the `PlanWithoutProperty` skip
+    // class (`5642 -> 5639` compared): TiDB's plan has no scan node to compare
+    // against, and neither does this tier's.
+    const KNOWN_DIVERGENCES: usize = 58;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
