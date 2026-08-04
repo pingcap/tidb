@@ -328,9 +328,8 @@ type ParquetParser struct {
 	curRowGroup   int
 	totalRowGroup int
 
-	totalRows      int64 // total rows in this file
-	totalReadRows  int64 // total rows read
-	totalReadBytes int   // total bytes read, estimated by all the read datum.
+	totalRows     int64 // total rows in this file
+	totalReadRows int64 // total rows read
 
 	lastRow Row
 	logger  log.Logger
@@ -488,7 +487,6 @@ func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
 		return err
 	}
 
-	pp.totalReadBytes += estimateRowSize(row)
 	pp.totalReadRows++
 	return nil
 }
@@ -519,9 +517,26 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 }
 
 // ScannedPos implements the Parser interface.
+<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser.go
 // For parquet we use the size of all read datum to estimate the scanned position.
 func (pp *ParquetParser) ScannedPos() (int64, error) {
 	return int64(pp.totalReadBytes), nil
+=======
+// Parquet readers may preload or read ahead, so estimate source-byte progress
+// from the proportion of rows consumed by the parser.
+func (pp *Parser) ScannedPos() (int64, error) {
+	fileSize := pp.fileMeta.GetSourceFileSize()
+	if pp.totalRows <= 0 {
+		return fileSize, nil
+	}
+
+	if pp.totalReadRows == pp.totalRows {
+		return fileSize, nil
+	}
+
+	progress := float64(pp.totalReadRows) / float64(pp.totalRows)
+	return int64(progress * float64(fileSize)), nil
+>>>>>>> c48a9917c50 (dumpformat: track Parquet scan progress by source file offset (#70307)):pkg/dumpformat/parquetfile/parser.go
 }
 
 // Close closes the parquet file of the parser.
