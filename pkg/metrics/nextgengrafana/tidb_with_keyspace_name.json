@@ -3259,7 +3259,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB connection disconnected counts",
+          "description": "TiDB connection disconnected rate per result (ok/error); undetermined is shown separately as a cumulative count on the right axis since any occurrence needs investigation",
           "editable": true,
           "error": false,
           "fieldConfig": {
@@ -3305,6 +3305,11 @@
               "alias": "total",
               "fill": 0,
               "lines": false
+            },
+            {
+              "alias": "/-undetermined-total$/",
+              "stack": false,
+              "yaxis": 2
             }
           ],
           "spaceLength": 10,
@@ -3312,11 +3317,19 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(tidb_server_disconnection_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}) by (instance, result)",
+              "expr": "sum(irate(tidb_server_disconnection_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", result!=\"undetermined\"}[30s])) by (instance, result)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{instance}}-{{result}}",
               "refId": "A",
+              "step": 40
+            },
+            {
+              "expr": "sum(tidb_server_disconnection_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", result=\"undetermined\"}) by (instance)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{instance}}-undetermined-total",
+              "refId": "B",
               "step": 40
             }
           ],
