@@ -446,11 +446,7 @@ fn go_test_convert_type_out_of_range_enum_and_set_keep_the_empty_value() {
 fn go_test_to_int64() {
     fn to_int64(value: &Datum) -> i64 {
         value
-            .convert_to_signed(
-                FieldTypeCode::LongLong,
-                crate::DEFAULT_STATEMENT_FLAGS,
-                &crate::SessionTimeZone::utc(),
-            )
+            .to_i64_in(&crate::SessionTimeZone::utc())
             .unwrap_or_else(|error| panic!("{value:?}: {error:?}"))
             .value
     }
@@ -493,6 +489,21 @@ fn go_test_to_int64() {
     ] {
         assert_eq!(to_int64(&value), expected, "{value:?}");
     }
+
+    // The second half of `toSignedInteger`'s own contract comment
+    // (`datum.go:2010`, `:2023`), which the Go table above does not reach:
+    // the carry is applied to the TEMPORAL value, so it propagates through
+    // the sexagesimal fields rather than producing a 60th second.
+    //   2011-11-10 11:59:59.999999 -> 20111110120000
+    //   11:59:59.999999            -> 120000
+    let carry = parse_datetime_fsp("2011-11-10 11:59:59.999999", TimeType::DateTime, 6);
+    assert_eq!(to_int64(&Datum::new_time(carry)), 20_111_110_120_000);
+    let midnight = parse_datetime_fsp("2011-12-31 23:59:59.999999", TimeType::DateTime, 6);
+    assert_eq!(to_int64(&Datum::new_time(midnight)), 20_120_101_000_000);
+    let parsed = crate::parse_duration(b"11:59:59.999999", 6).unwrap();
+    let carry_duration =
+        MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+    assert_eq!(to_int64(&Datum::new_duration(carry_duration)), 120_000);
 }
 
 /// The session zone reaches `Datum.ConvertTo`'s integer and DURATION arms.

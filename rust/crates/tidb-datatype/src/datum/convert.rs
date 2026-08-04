@@ -104,7 +104,22 @@ impl Datum {
     }
 
     /// Source `Datum.ToInt64`.
+    ///
+    /// Go's takes a `types.Context`, whose LOCATION reaches
+    /// `Time.RoundFrac`. This overload supplies UTC for the zone-free
+    /// callers, exactly as [`Datum::convert_to`] does for
+    /// [`Datum::convert_to_in`]; a caller that owns a session zone must use
+    /// [`Datum::to_i64_in`].
     pub fn to_i64(&self) -> Result<Converted<i64>, DatumValueError> {
+        self.to_i64_in(&crate::SessionTimeZone::utc())
+    }
+
+    /// Source `Datum.ToInt64` = `toSignedInteger(ctx, TypeLonglong)` with the
+    /// statement's own `ctx.Location()`.
+    pub fn to_i64_in(
+        &self,
+        zone: &crate::SessionTimeZone,
+    ) -> Result<Converted<i64>, DatumValueError> {
         let converted = match self {
             Self::Int(value) => Converted {
                 value: *value,
@@ -124,8 +139,26 @@ impl Datum {
             }
             Self::String(value) => str_to_int(value.as_utf8()?, false),
             Self::Bytes(value) => str_to_int(std::str::from_utf8(value)?, false),
-            Self::Time(value) => decimal_to_i64(value.to_number()),
-            Self::Duration(value) => decimal_to_i64(value.to_number()),
+            // Go `toSignedInteger`'s temporal arms round the TEMPORAL value
+            // to `DefaultFsp` FIRST and only then render it as a number, so a
+            // fractional carry propagates through the sexagesimal fields
+            // instead of landing on an impossible seconds digit. Its own
+            // comment states the contract: `11:59:59.999999 -> 120000`, not
+            // `115960`. The zone is load-bearing on the DATETIME arm the same
+            // way it is for `convert_to_signed` -- a carry that lands on a DST
+            // transition instant reads back the SESSION zone's wall clock.
+            Self::Time(value) => decimal_to_i64(
+                value
+                    .round_frac(crate::DEFAULT_FSP, zone)
+                    .map_err(|error| DatumValueError::Comparison(error.to_string()))?
+                    .to_number(),
+            ),
+            Self::Duration(value) => decimal_to_i64(
+                value
+                    .round_frac(crate::DEFAULT_FSP)
+                    .map_err(|error| DatumValueError::Comparison(error.to_string()))?
+                    .to_number(),
+            ),
             Self::Decimal(value) => decimal_to_i64(value.clone()),
             Self::Enum(value, _) => Converted {
                 value: value.value().min(i64::MAX as u64) as i64,

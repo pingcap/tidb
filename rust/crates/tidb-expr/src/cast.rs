@@ -45,7 +45,7 @@ pub(crate) fn eval_cast(
     match cast_type {
         CastType::Signed => {
             report_int_truncation(&v, ctx)?;
-            Ok(Datum::Int(to_i64_signed(&v)))
+            Ok(Datum::Int(to_i64_signed_in(&v, &ctx.time_zone())))
         }
         CastType::Unsigned => {
             report_int_truncation(&v, ctx)?;
@@ -115,6 +115,13 @@ fn datum_binary_bytes(value: &Datum) -> Result<Vec<u8>, EvalError> {
 /// KNOWN, deliberately excluded divergence for a value nobody writes
 /// intentionally — see [`str_int_prefix`]'s own doc).
 pub(crate) fn to_i64_signed(v: &Datum) -> i64 {
+    to_i64_signed_in(v, &tidb_datatype::SessionTimeZone::utc())
+}
+
+/// [`to_i64_signed`] with the session's `time_zone`, which Go's
+/// `toSignedInteger` hands to `Time.RoundFrac` -- load-bearing only when a
+/// DATETIME's fractional carry lands on a DST transition instant.
+pub(crate) fn to_i64_signed_in(v: &Datum, zone: &tidb_datatype::SessionTimeZone) -> i64 {
     match v {
         Datum::Int(i) => *i,
         Datum::UInt(i) => *i as i64,
@@ -123,7 +130,7 @@ pub(crate) fn to_i64_signed(v: &Datum) -> i64 {
         Datum::String(s) => s.as_utf8().map(str_int_prefix).unwrap_or(0),
         Datum::Bytes(s) => std::str::from_utf8(s).map(str_int_prefix).unwrap_or(0),
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
-        other => other.to_i64().map_or(0, |converted| converted.value),
+        other => other.to_i64_in(zone).map_or(0, |converted| converted.value),
     }
 }
 
@@ -158,7 +165,16 @@ fn to_u64_unsigned(v: &Datum, ctx: &dyn crate::Columns) -> u64 {
         // TiDB's integer cast reuses the low 64 bits for an ETInt source.
         // That is observable for `CAST(-5 AS UNSIGNED)`, which is
         // 18446744073709551611 rather than an error or a display-only wrap.
-        Datum::Int(_) | Datum::String(_) | Datum::Bytes(_) => to_i64_signed(v) as u64,
+        // Go's `builtinCastTimeAsIntSig`/`builtinCastDurationAsIntSig`
+        // produce a plain `int64` and the UNSIGNED target only reinterprets
+        // its bits, so a temporal source takes the SIGNED path -- including
+        // its `RoundFrac(DefaultFsp)`, which `convertToUint`'s own temporal
+        // arm (a different caller) does NOT do.
+        Datum::Int(_)
+        | Datum::String(_)
+        | Datum::Bytes(_)
+        | Datum::Time(_)
+        | Datum::Duration(_) => to_i64_signed_in(v, &ctx.time_zone()) as u64,
         Datum::UInt(i) => *i,
         // A decimal rounds half-up then converts through the full u64 range
         // (Go `MyDecimal.ToUint`): a negative value becomes 0, and a magnitude in

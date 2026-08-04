@@ -1,0 +1,11 @@
+drop table if exists ct
+create table ct(id int, t time(6), d datetime(6))
+insert into ct values (1,'11:11:11.999999','2011-11-10 11:11:11.999999')
+insert into ct values (2,'11:59:59.999999','2011-11-10 11:59:59.999999')
+insert into ct values (3,'11:59:59.4','2011-12-31 23:59:59.999999')
+insert into ct values (4,'23:59:59.999999','2011-11-10 11:11:11.4')
+select id, cast(t as signed) from ct order by id
+select id, cast(d as signed) from ct order by id
+select id, cast(t as unsigned) from ct order by id
+select id, cast(d as unsigned) from ct order by id
+select id, t + 0, d + 0 from ct order by id
