@@ -112,9 +112,7 @@ func (r *KVReader) NextKV() (key, val []byte, err error) {
 	return keyAndValue[:keyLen], keyAndValue[keyLen:], nil
 }
 
-// EnableConcurrentRead enables concurrent read for the reader. bufCount is the
-// total number of bufSizePerConc buffers the caller has budgeted; see
-// byteReader.enableConcurrentRead for how they are used.
+// EnableConcurrentRead enable concurrent read for the reader.
 func (r *KVReader) EnableConcurrentRead(
 	store storeapi.Storage,
 	filename string,

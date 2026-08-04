@@ -42,17 +42,6 @@ const maxReadersPerCore = 16
 
 var maxConcurrency = 32
 
-// readerMemoryForRange returns how much reader buffer one file's byte range is
-// charged. It buys whole 8 MiB buffers read concurrently, or, when it cannot fill
-// even one, a single prefetched stream of that size.
-func readerMemoryForRange(rangeSize uint64, memoryLimit int64) int64 {
-	perFileLimit := min(int64(maxConcurrency)*int64(simplesst.ConcurrentReaderBufferSizePerConc), memoryLimit)
-	if perFileLimit <= 0 {
-		return 0
-	}
-	return int64(min(rangeSize, uint64(perFileLimit)))
-}
-
 func readAllData(
 	ctx context.Context,
 	store storeapi.Storage,
@@ -98,10 +87,13 @@ func readAllData(
 	readerMemory := semaphore.NewWeighted(memoryLimit)
 	readerMemorySizes := make([]int64, len(dataFiles))
 	totalFileSize := uint64(0)
+	// A file is charged its own range, up to whichever of the per-file cap and the
+	// whole budget is smaller.
+	perFileLimit := min(int64(maxConcurrency)*int64(simplesst.ConcurrentReaderBufferSizePerConc), memoryLimit)
 	for i := range dataFiles {
 		size := estimatedEndOffsets[i] - startOffsets[i]
 		totalFileSize += size
-		readerMemorySizes[i] = readerMemoryForRange(size, memoryLimit)
+		readerMemorySizes[i] = int64(min(size, uint64(perFileLimit)))
 		if readerMemorySizes[i] >= int64(simplesst.ConcurrentReaderBufferSizePerConc) {
 			logutil.Logger(ctx).Info("found hotspot file in readAllData",
 				zap.String("filename", dataFiles[i]),

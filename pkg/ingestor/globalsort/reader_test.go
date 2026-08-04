@@ -116,19 +116,6 @@ func TestReadAllOneFile(t *testing.T) {
 func TestReadLargeFile(t *testing.T) {
 	ctx := context.Background()
 	memStore := objstore.NewMemStorage()
-	memoryLimit := readerMemoryQuotaPerCore * 7
-	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
-
-	// A range is charged its own size until it reaches a cap.
-	require.EqualValues(t, 8*units.MiB, readerMemoryForRange(8*units.MiB, memoryLimit))
-	require.EqualValues(t, 24*units.MiB, readerMemoryForRange(24*units.MiB, memoryLimit))
-
-	// One file never takes more than maxConcurrency buffers.
-	require.EqualValues(t, int64(maxConcurrency)*bufSize, readerMemoryForRange(units.GiB, memoryLimit))
-
-	// A budget smaller than that cap binds instead.
-	require.EqualValues(t, readerMemoryQuotaPerCore, readerMemoryForRange(units.GiB, readerMemoryQuotaPerCore))
-
 	backup := simplesst.ConcurrentReaderBufferSizePerConc
 	t.Cleanup(func() {
 		simplesst.ConcurrentReaderBufferSizePerConc = backup
