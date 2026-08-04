@@ -306,7 +306,17 @@ pub(crate) fn build_from(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
     offered: crate::driver::predicate_push_down::Offered<'_>,
+    required: &tidb_planner::physical_property::PhysicalProperty,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
+    // Go's `findBestTask(prop)` asks a child for a plan that SATISFIES the
+    // property and lets the child answer with the path that does. This tier
+    // has no such recursion (see `crate::merge_join_plan`), so the property
+    // arrives already checked: the only caller that asks for an order is
+    // `build_join`'s merge decision, and it asks only when the path this
+    // builder would have taken anyway already produces that order. The scan
+    // therefore RECORDS the order rather than choosing to produce it, which is
+    // exactly what Go prints for the same case.
+    let keep_order = required.need_keep_order();
     match node {
         JoinNode::Table(table_ref) => {
             // A `db.t` reference resolves in that schema; a bare `t` resolves
@@ -340,7 +350,7 @@ pub(crate) fn build_from(
                 if crate::infoschema_meta::is_information_schema(database) {
                     trace.mem_table_scan(&declared_table_name(entry, name));
                 } else {
-                    trace.table_full_scan(&visible, full_scan_estimate(catalog, entry));
+                    trace.table_full_scan(&visible, full_scan_estimate(catalog, entry), keep_order);
                 }
             }
             if let TableEntry::View(view) = entry {
@@ -1046,6 +1056,31 @@ pub(crate) fn build_join(
             return build_join(inner, catalog, current_db, ctx, trace, prune, offered);
         }
     }
+    // Go's `GetMergeJoin` reads its children's PROVIDED orders and then hands
+    // each child a required property over its own join keys
+    // (`tryToGetChildReqProp`). Both halves happen here, BEFORE the children
+    // exist, because this tier's children are executors rather than logical
+    // plans and cannot be re-planned once built. Everything the decision reads
+    // -- the two tables' primary keys and the `ON` clause -- is catalog and
+    // syntax, so it needs no child.
+    //
+    // The required property this join is itself asked for is the empty one:
+    // no caller demands an order from a join yet, and the empty property's
+    // `AllSameOrder` is Go's ascending answer.
+    let required_of_join = tidb_planner::physical_property::PhysicalProperty::default();
+    let merge = merge_join_decision(join, catalog, current_db, &required_of_join);
+    let (left_required, right_required) = match &merge {
+        // `tryToGetChildReqProp`: each child is required to produce ITS OWN
+        // join keys' order, in the direction the parent asked for.
+        Some((plan, _)) => (
+            child_required_prop(plan.keys.iter().map(|key| key.left), plan.desc),
+            child_required_prop(plan.keys.iter().map(|key| key.right), plan.desc),
+        ),
+        None => (
+            tidb_planner::physical_property::PhysicalProperty::default(),
+            tidb_planner::physical_property::PhysicalProperty::default(),
+        ),
+    };
     let (mut left_exec, left_scope) = build_from(
         &join.left,
         catalog,
@@ -1053,6 +1088,7 @@ pub(crate) fn build_join(
         ctx,
         trace.as_deref_mut(),
         offered,
+        &left_required,
     )?;
     let Some(right_node) = &join.right else {
         // The single-table wrapper the parser always produces.
@@ -1089,6 +1125,7 @@ pub(crate) fn build_join(
         ctx,
         trace.as_deref_mut(),
         offered,
+        &right_required,
     )?;
 
     // The joined scope: the right tables' columns follow the left's.
@@ -1222,7 +1259,7 @@ pub(crate) fn build_join(
     // Go's stats-less build side: the inner (non-preserved) child, which is
     // the left one only for a RIGHT join. See `join.rs`'s module doc.
     let build_is_left = kind == JoinKind::Right;
-    let exec: Box<dyn Executor> = Box::new(JoinExec::new(
+    let mut join_exec = JoinExec::new(
         meta,
         kind,
         conditions,
@@ -1230,21 +1267,56 @@ pub(crate) fn build_join(
         right_exec,
         ctx.clone(),
         ctx.statement_memory(),
-    ));
+    );
+    // The key offsets the decision computed are pre-pruning; the scope is
+    // post-pruning. Re-resolving the key NAMES against it is what keeps the
+    // executor's merge keys and the columns it actually holds one answer.
+    // A name that no longer resolves drops the merge -- fail-closed, and the
+    // `keep order:true` already recorded below stays TRUE either way, because
+    // the scan streams record keys in key order whether or not this join
+    // relies on it.
+    let merged = merge.and_then(|(plan, names)| {
+        let keys: Option<Vec<_>> = names
+            .iter()
+            .map(|(left, right)| {
+                Some(crate::merge_join_plan::MergeJoinKey {
+                    // Both offsets are within the CHILD's own row -- that is
+                    // what the merge reads its keys out of. The joined-row
+                    // offset the trace needs is the right one plus the left
+                    // side's width, and is formed only there.
+                    left: column_offset_in(&scope.tables[0].columns, left)?,
+                    right: column_offset_in(&scope.tables[1].columns, right)?,
+                })
+            })
+            .collect();
+        keys.map(|keys| crate::merge_join_plan::MergeJoinPlan { keys, ..plan })
+    });
+    if let Some(plan) = merged.clone() {
+        join_exec.set_merge_plan(plan);
+    }
+    let exec: Box<dyn Executor> = Box::new(join_exec);
+    let strategy = crate::plan_trace::JoinStrategy {
+        equal_mask: split.equal_mask.clone(),
+        build_is_left,
+        merge_keys: merged.as_ref().map(|plan| {
+            plan.keys
+                .iter()
+                .map(|key| {
+                    (
+                        qualified_scope_column(&scope, current_db, key.left),
+                        qualified_scope_column(&scope, current_db, left_width + key.right),
+                    )
+                })
+                .collect()
+        }),
+    };
     if let Some(trace) = trace.as_deref_mut() {
         if coalescing {
             // The recorder prints the `ON` as written, and a coalesced join
             // has none -- its equalities are synthesized here.
             trace.refuse("NATURAL and USING joins are not printed yet");
         } else if trace
-            .join(
-                join,
-                &scope,
-                current_db,
-                &pushed,
-                &split.equal_mask,
-                build_is_left,
-            )
+            .join(join, &scope, current_db, &pushed, &strategy)
             .is_err()
         {
             trace.refuse("this join's plan is not supported yet");
@@ -1324,4 +1396,210 @@ fn declared_table_name(entry: &TableEntry, written: &str) -> String {
         TableEntry::Kv(table) if !table.name.is_empty() => table.name.clone(),
         _ => written.to_owned(),
     }
+}
+
+/// One side of a candidate merge join: the table itself, the columns its
+/// executor will produce, and the name a column path addresses it by.
+type MergeJoinSide<'a> = (
+    &'a crate::kv_table::KvTable,
+    Vec<(String, FieldType)>,
+    String,
+);
+
+/// The base table a `FROM` node reads directly, when it reads exactly one and
+/// reads all of it.
+///
+/// A PARTITIONED table is refused: this tier reads it partition by partition,
+/// so the stream is ordered WITHIN each partition and not across them, and a
+/// handle order it cannot produce must not be promised. Go reaches the same
+/// answer through a different door -- `PartitionProcessor` replaces the
+/// `DataSource` with a `PartitionUnion`, whose `PreparePossibleProperties`
+/// offers no order.
+fn merge_join_side<'a>(
+    node: &JoinNode,
+    catalog: &'a Catalog,
+    current_db: &str,
+) -> Option<MergeJoinSide<'a>> {
+    let JoinNode::Table(table_ref) = node else {
+        return None;
+    };
+    if table_ref.as_of.is_some() || !table_ref.partitions.is_empty() {
+        return None;
+    }
+    let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
+    let TableEntry::Kv(kv) = catalog.get_in(database, name)? else {
+        return None;
+    };
+    if kv.partition().is_some() {
+        return None;
+    }
+    let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
+    Some((kv, TableEntry::Kv(kv.clone()).column_list(), visible))
+}
+
+/// The offset within `columns` of the column `path` names, when `path` names a
+/// column of the table displayed as `visible`.
+fn side_column_offset(
+    path: &[String],
+    visible: &str,
+    columns: &[(String, FieldType)],
+) -> Option<usize> {
+    let name = match path {
+        [name] => name,
+        [table, name] if table.eq_ignore_ascii_case(visible) => name,
+        [_, table, name] if table.eq_ignore_ascii_case(visible) => name,
+        _ => return None,
+    };
+    columns
+        .iter()
+        .position(|(column, _)| column.eq_ignore_ascii_case(name))
+}
+
+/// The merge join `GetMergeJoin` would build for this `FROM` node, or `None`.
+///
+/// Both sides must be whole, unpartitioned base tables, every `ON` conjunct
+/// this reads must be a bare `left.col = right.col`, and the resulting keys
+/// must be fully covered by an order both sides already provide -- which for
+/// now means the clustered integer primary key (see
+/// [`crate::merge_join_plan`]).
+///
+/// The parent's required property is the EMPTY one at every call site today,
+/// so `AllSameOrder` answers ascending and both children are asked for an
+/// ascending read. That is Go's answer for the same property, and it is where
+/// an ORDER BY flowing down would change the direction once one does.
+fn merge_join_decision(
+    join: &tidb_ast::Join,
+    catalog: &Catalog,
+    current_db: &str,
+    required: &tidb_planner::physical_property::PhysicalProperty,
+) -> Option<(crate::merge_join_plan::MergeJoinPlan, Vec<(String, String)>)> {
+    let right_node = join.right.as_ref()?;
+    if join.natural || !join.using.is_empty() {
+        // A coalesced join's equalities are synthesized rather than written,
+        // and its scope addresses columns by row offset; the plan recorder
+        // already refuses to print it.
+        return None;
+    }
+    let on = join.on.as_ref()?;
+    let (left_table, left_columns, left_visible) =
+        merge_join_side(&join.left, catalog, current_db)?;
+    let (right_table, right_columns, right_visible) =
+        merge_join_side(right_node, catalog, current_db)?;
+    if left_visible.eq_ignore_ascii_case(&right_visible) {
+        // A self-join without aliases: a column path cannot say which side it
+        // names, so no key can be resolved honestly.
+        return None;
+    }
+    let mut conjuncts = Vec::new();
+    crate::plan_trace::collect_and(on, &mut conjuncts);
+    let mut keys = Vec::new();
+    for conjunct in conjuncts {
+        let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, lhs, rhs) = conjunct else {
+            continue;
+        };
+        let (tidb_ast::Expr::Column(left_path), tidb_ast::Expr::Column(right_path)) =
+            (&**lhs, &**rhs)
+        else {
+            continue;
+        };
+        // `ON` may write either side first; a key is a key whichever way round
+        // it was spelled.
+        let pair = match (
+            side_column_offset(left_path, &left_visible, &left_columns),
+            side_column_offset(right_path, &right_visible, &right_columns),
+        ) {
+            (Some(left), Some(right)) => Some((left, right)),
+            _ => match (
+                side_column_offset(right_path, &left_visible, &left_columns),
+                side_column_offset(left_path, &right_visible, &right_columns),
+            ) {
+                (Some(left), Some(right)) => Some((left, right)),
+                _ => None,
+            },
+        };
+        if let Some((left, right)) = pair {
+            keys.push(crate::merge_join_plan::MergeJoinKey { left, right });
+        }
+    }
+    let orders_of = |table: &crate::kv_table::KvTable, columns: &[(String, FieldType)]| {
+        crate::merge_join_plan::provided_orders(table)
+            .into_iter()
+            .filter_map(|order| {
+                order
+                    .into_iter()
+                    .map(|at| {
+                        let name = &table.columns.get(at)?.name;
+                        columns
+                            .iter()
+                            .position(|(column, _)| column.eq_ignore_ascii_case(name))
+                    })
+                    .collect::<Option<Vec<usize>>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    let plan = crate::merge_join_plan::get_merge_join(
+        &keys,
+        &orders_of(left_table, &left_columns),
+        &orders_of(right_table, &right_columns),
+        required.all_same_order().1,
+    )?;
+    // Column pruning renumbers both sides AFTER the children are built, so
+    // the offsets above cannot be handed to the executor. The key NAMES can:
+    // they are what the pruned scope is still addressed by, and resolving
+    // them against it is the one place the executor's key offsets come from.
+    let names = plan
+        .keys
+        .iter()
+        .map(|key| {
+            (
+                left_columns[key.left].0.clone(),
+                right_columns[key.right].0.clone(),
+            )
+        })
+        .collect();
+    Some((plan, names))
+}
+
+/// The property a merge join's child is required to satisfy: its own join
+/// keys' order, in the direction the parent asked for.
+///
+/// `PhysicalMergeJoin.tryToGetChildReqProp`, whose `NewPhysicalProperty(
+/// RootTaskType, p.LeftJoinKeys, desc, math.MaxFloat64, false)` this is.  The
+/// column identity is the offset within the child's own row, which is what
+/// [`crate::merge_join_plan`] resolves and what a scan can answer about.
+fn child_required_prop(
+    keys: impl Iterator<Item = usize>,
+    desc: bool,
+) -> tidb_planner::physical_property::PhysicalProperty {
+    let cols: Vec<i64> = keys.map(|at| at as i64).collect();
+    tidb_planner::physical_property::PhysicalProperty::new(
+        tidb_planner::physical_property::TaskType::Root,
+        &cols,
+        desc,
+        f64::MAX,
+        false,
+    )
+}
+
+/// The offset of the column named `name` in a scope table's column list.
+fn column_offset_in(columns: &[(String, FieldType)], name: &str) -> Option<usize> {
+    columns
+        .iter()
+        .position(|(column, _)| column.eq_ignore_ascii_case(name))
+}
+
+/// A joined-row offset rendered as `db.table.column`, the form
+/// `ExplainColumnList` prints a merge join's keys in.
+fn qualified_scope_column(scope: &FromScope, current_db: &str, offset: usize) -> String {
+    for table in &scope.tables {
+        if offset >= table.offset && offset - table.offset < table.columns.len() {
+            let database = table.database.as_deref().unwrap_or(current_db);
+            return format!(
+                "{database}.{}.{}",
+                table.name,
+                table.columns[offset - table.offset].0
+            );
+        }
+    }
+    String::new()
 }

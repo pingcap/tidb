@@ -426,13 +426,23 @@ impl PlanTrace {
     /// statistics, `statistics.PseudoTable`'s constant when it has not. Go
     /// appends `stats:pseudo` on exactly the second case
     /// (`physical_table_scan.go`: `StatsVersion == statistics.PseudoVersion`).
-    pub(crate) fn table_full_scan(&mut self, visible: &str, estimate: ScanEstimate) {
+    /// `keep_order` is Go's `PhysicalTableScan.KeepOrder`: true when a parent
+    /// DEMANDED the handle's order and this scan is the path that already
+    /// produces it. It changes nothing about what is read -- the record keys
+    /// are streamed in key order either way -- only whether the plan says the
+    /// order is being relied upon.
+    pub(crate) fn table_full_scan(
+        &mut self,
+        visible: &str,
+        estimate: ScanEstimate,
+        keep_order: bool,
+    ) {
         self.push(
             PlanNode::new(
                 "TableFullScan",
                 Some(estimate.rows),
                 format!("table:{visible}"),
-                format!("keep order:false{}", pseudo_suffix(estimate)),
+                format!("keep order:{keep_order}{}", pseudo_suffix(estimate)),
             )
             .with_pseudo_ndv(estimate),
         );
@@ -716,9 +726,14 @@ impl PlanTrace {
         scope: &FromScope,
         current_db: &str,
         pushed: &[&tidb_ast::Expr],
-        equal_mask: &[bool],
-        build_is_left: bool,
+        strategy: &JoinStrategy,
     ) -> Result<(), ()> {
+        let JoinStrategy {
+            equal_mask,
+            build_is_left,
+            merge_keys,
+        } = strategy;
+        let build_is_left = *build_is_left;
         let qualify = Qualifier {
             db: current_db,
             scope,
@@ -746,7 +761,7 @@ impl PlanTrace {
         }
         let mut equal = Vec::new();
         let mut other = Vec::new();
-        for (conjunct, is_equal) in conjuncts.iter().zip(equal_mask) {
+        for (conjunct, is_equal) in conjuncts.iter().zip(equal_mask.iter()) {
             let rendered = qualify.expr(conjunct);
             if *is_equal {
                 equal.push(rendered);
@@ -760,19 +775,48 @@ impl PlanTrace {
         // (`SortedExplainExpressionList`), while `equal:` keeps `ON` order.
         other.sort();
         let mut info = String::new();
-        if equal.is_empty() {
+        // Go `PhysicalMergeJoin.explainInfo` has NO `CARTESIAN` prefix: a
+        // property-driven merge join always has keys, and the keyless one is
+        // only ever produced by the enforced path this tier does not build.
+        if equal.is_empty() && merge_keys.is_none() {
             info.push_str("CARTESIAN ");
         }
         info.push_str(kind);
         let mut tail = String::new();
-        if !equal.is_empty() {
-            tail.push_str(", equal:[");
-            tail.push_str(&equal.join(" "));
-            tail.push(']');
-        }
-        if !other.is_empty() {
-            tail.push_str(", other cond:");
-            tail.push_str(&other.join(", "));
+        if let Some(keys) = &merge_keys {
+            // `left key:%s, right key:%s` over `ExplainColumnList`, which
+            // prints the LEFT child's keys and then the RIGHT child's, each
+            // comma-separated -- not pairwise. The residual `ON` conjuncts
+            // this tier still evaluates are NOT printed as `other cond:`,
+            // because Go moved the USED equal conditions out of that list and
+            // this tier keeps them (see `crate::join`); printing them would
+            // report conditions Go's plan does not carry.
+            tail.push_str(", left key:");
+            tail.push_str(
+                &keys
+                    .iter()
+                    .map(|(left, _)| left.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            tail.push_str(", right key:");
+            tail.push_str(
+                &keys
+                    .iter()
+                    .map(|(_, right)| right.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+        } else {
+            if !equal.is_empty() {
+                tail.push_str(", equal:[");
+                tail.push_str(&equal.join(" "));
+                tail.push(']');
+            }
+            if !other.is_empty() {
+                tail.push_str(", other cond:");
+                tail.push_str(&other.join(", "));
+            }
         }
         let (Some(mut right), Some(mut left)) = (self.stack.pop(), self.stack.pop()) else {
             return Err(());
@@ -788,7 +832,11 @@ impl PlanTrace {
             vec![right, left]
         };
         self.stack.push(PlanNode {
-            name: "HashJoin",
+            name: if merge_keys.is_some() {
+                "MergeJoin"
+            } else {
+                "HashJoin"
+            },
             est_rows,
             access: String::new(),
             info,
@@ -1096,6 +1144,21 @@ fn full_join_row_count(left: &PlanNode, right: &PlanNode, equal_count: usize) ->
         // that moves it: the 0.9-per-remaining-key correlation factor is off.
         join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD as i32,
     }))
+}
+
+/// Which algorithm a join committed to, and what its plan row must therefore
+/// say. Bundled because the three answers are one decision -- the strategy
+/// picks the build side AND the info clause -- and because a printer that
+/// took them apart could print a merge join's name over a hash join's
+/// `equal:[...]`.
+pub(crate) struct JoinStrategy {
+    /// Which of the join's conjuncts the hash table indexes, in `ON` order.
+    pub(crate) equal_mask: Vec<bool>,
+    /// Whether the LEFT child is the build side.
+    pub(crate) build_is_left: bool,
+    /// A merge join's `(left key, right key)` column names, already
+    /// qualified; `None` for every other strategy.
+    pub(crate) merge_keys: Option<Vec<(String, String)>>,
 }
 
 pub(crate) fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {

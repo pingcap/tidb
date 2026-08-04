@@ -2091,7 +2091,7 @@ fn trace_dml_source(
         columns,
         where_clause.as_ref(),
     );
-    trace.table_full_scan(&visible, estimate);
+    trace.table_full_scan(&visible, estimate, false);
     // The same two rewrites the read side performs, from the same chooser: a
     // range scan RENAMES the scan just recorded, because the write really
     // does run that scan over only those ranges; a point get REPLACES it,
