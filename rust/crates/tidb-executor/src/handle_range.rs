@@ -107,7 +107,7 @@ pub(crate) fn build_handle_ranges<'a>(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<IndexRanges<'a>> {
     let column = handle_column(table)?;
-    let built = crate::index_range::detach_cond_and_build_range_for_index(
+    let mut built = crate::index_range::detach_cond_and_build_range_for_index(
         // The clustered handle stores the whole column: a row identifier has
         // no declared prefix to cut to.
         &[crate::index_range::RangeColumn::whole(
@@ -117,6 +117,27 @@ pub(crate) fn build_handle_ranges<'a>(
         where_clause,
         zone,
     )?;
+    // Go `points2TableRanges` (`pkg/util/ranger/ranger.go:466`) calls
+    // `convertPointsInPlace` with `skipNull = true`, and that function DROPS
+    // any interval whose END point is still `KindNull` (`:102-104`) -- while
+    // converting a NULL START point to the domain minimum, INCLUSIVE
+    // (`:85-88`), which is what [`to_table_range`] does below.
+    //
+    // The asymmetry is the whole point: a row handle is never NULL, so an
+    // interval that ENDS at NULL selects nothing and Go removes it, leaving
+    // zero ranges and a `TableDual`. Captured:
+    //
+    // ```text
+    // explain select * from t where id is null    TableDual_6 | 0.00 | rows:0
+    // explain select * from t where id <=> null   TableDual_5 | 1.00 | rows:0
+    // ```
+    //
+    // Without this the `[NULL, NULL]` pair became `[MinInt64, MaxInt64]` and
+    // the plan was a FULL TABLE SCAN -- the right rows (the `WHERE` above
+    // still filters), read the most expensive possible way.
+    built
+        .ranges
+        .retain(|range| range.high.first() != Some(&Datum::Null));
     Some(built)
 }
 
@@ -143,9 +164,10 @@ fn handle_column(table: &KvTable) -> Option<&crate::kv_table::KvColumn> {
 /// Go `points2TableRanges`' conversion: an open endpoint becomes the handle
 /// domain's own extreme, so every bound is a real integer.
 ///
-/// Go converts a NULL low bound to the minimum INCLUSIVE (`startPoint.excl =
-/// false`) as well; a `NOT NULL` handle never carries one, but the rule is
-/// ported rather than assumed away.
+/// A NULL LOW bound becomes the minimum INCLUSIVE (Go `startPoint.excl =
+/// false`). A NULL HIGH bound cannot reach here at all -- the `skipNull` filter
+/// in [`build_handle_ranges`] has already dropped that whole interval -- so the
+/// catch-all high arm below is a total-match requirement, not a rule.
 fn to_table_range(range: &IndexRange) -> (i64, i64, bool, bool) {
     let low = range.low.first();
     let high = range.high.first();

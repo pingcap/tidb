@@ -405,8 +405,17 @@ fn the_handle_range_corpus_matches_go() {
             "range:[1,1], [150,150]",
         ),
         // A `WHERE` no handle satisfies reads NOTHING, which is the one
-        // direction a range must never get wrong.
-        ("id > 100 AND id < 100", "TableRangeScan", "0.00", "range:"),
+        // direction a range must never get wrong -- and Go names that a
+        // `TableDual`, not a scan over an empty range list
+        // (`find_best_task.go`: `if len(path.Ranges) == 0`). Captured:
+        // `explain select * from t where id > 100 and id < 100` ->
+        // `TableDual_5 | 1.00 | rows:0`. The OPERATOR now matches; the estRows
+        // does not, because Go reaches ITS dual here through an earlier
+        // always-false predicate rule (whose dual prints 1.00) rather than
+        // through the empty-range short-circuit (whose dual prints 0.00, as it
+        // does for `id is null`). This tier has only the latter, so it lands
+        // on 0.00 for both -- one rule short, not one rule wrong.
+        ("id > 100 AND id < 100", "TableDual", "0.00", "rows:0"),
         // No handle bound at all: still the whole table.
         ("k > 5", "TableFullScan", "10000.00", "keep order:false"),
     ] {

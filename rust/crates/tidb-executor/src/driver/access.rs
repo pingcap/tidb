@@ -147,11 +147,22 @@ pub(crate) fn commit_fast_path_source(
                     .is_some_and(|access| access.accept_handle_ranges(&ranges));
                 if accepted {
                     if let Some(trace) = trace.as_deref_mut() {
-                        trace.table_range_scan(
-                            source_table_name(scope, &table.name),
-                            &ranges,
-                            estimate,
-                        );
+                        // Go's `findBestTask` returns a `PhysicalTableDual`
+                        // the moment a chosen path has NO ranges
+                        // (`find_best_task.go`: `if len(path.Ranges) == 0`),
+                        // the same short-circuit the index arm below takes.
+                        // On the TABLE path this is what `id IS NULL` over an
+                        // integer handle reaches: `points2TableRanges` drops
+                        // the NULL-ended interval, leaving nothing to read.
+                        if ranges.is_empty() {
+                            trace.empty_range_table_dual();
+                        } else {
+                            trace.table_range_scan(
+                                source_table_name(scope, &table.name),
+                                &ranges,
+                                estimate,
+                            );
+                        }
                     }
                 }
             }

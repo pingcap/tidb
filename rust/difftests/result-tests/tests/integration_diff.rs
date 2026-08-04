@@ -1403,7 +1403,12 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // `KindMysqlDecimal` has one arm that never reads `mysql.UnsignedFlag`.
     // Both facts are pinned to Go's bytes in
     // `tidb-codec/tests/unsigned_decimal_key_order.rs`.
-    const KNOWN_DIVERGENCES: usize = 62;
+    //
+    // 62 -> 61: `points2TableRanges`' `skipNull` landed
+    // (`handle_range::build_handle_ranges`), so an `IS NULL` over an integer
+    // handle now drops its NULL-ended interval and plans the `TableDual rows:0`
+    // TiDB records instead of a full table scan.
+    const KNOWN_DIVERGENCES: usize = 61;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

@@ -1195,3 +1195,56 @@ fn explain_est_rows_for_a_join() {
         "N/A"
     );
 }
+
+/// `id IS NULL` over an INTEGER PRIMARY KEY selects nothing, and the plan says
+/// so instead of reading the whole table.
+///
+/// Go `points2TableRanges` (`pkg/util/ranger/ranger.go:466`) passes
+/// `skipNull = true` into `convertPointsInPlace`, which DROPS any interval
+/// whose END point is `KindNull` (`:102-104`) while converting a NULL START
+/// point to the domain minimum, inclusive. A row handle is never NULL, so the
+/// `[NULL, NULL]` pair `IS NULL` produces leaves zero ranges.
+///
+/// This tier mapped the NULL high bound to `i64::MAX` instead, so the pair
+/// became `[MinInt64, MaxInt64]` -- the RIGHT rows (the `WHERE` above still
+/// filters) read the MOST EXPENSIVE possible way. Captured:
+///
+/// ```text
+/// explain select * from t where id is null      TableDual_6 | 0.00 | rows:0
+/// explain select * from t where id <=> null     TableDual_5 | 1.00 | rows:0
+/// explain select * from t where id is not null  TableReader -> TableFullScan
+/// select * from t where id is null              (no rows)
+/// ```
+///
+/// `IS NOT NULL` is the control: it must STAY a full scan, because dropping
+/// every NULL-ended interval there would be dropping nothing.
+#[test]
+fn an_is_null_on_an_integer_handle_is_a_table_dual_not_a_full_scan() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1,10),(2,20)").unwrap();
+
+    for where_clause in ["id IS NULL", "id <=> NULL"] {
+        let rows = row_text(session.run(&format!(
+            "EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE {where_clause}"
+        )));
+        let leaf = rows.last().expect("a plan has at least one row");
+        assert!(leaf[0].ends_with("TableDual"), "{where_clause}: {leaf:?}");
+        assert_eq!(leaf[4], "rows:0", "{where_clause}");
+        assert!(row_text(session.run(&format!("SELECT * FROM t WHERE {where_clause}"))).is_empty());
+    }
+
+    // The control: `IS NOT NULL` keeps its full scan and its rows.
+    let rows =
+        row_text(session.run("EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE id IS NOT NULL"));
+    assert!(
+        rows.iter().any(|r| r[0].ends_with("TableFullScan")),
+        "{rows:?}"
+    );
+    assert_eq!(
+        row_text(session.run("SELECT * FROM t WHERE id IS NOT NULL")),
+        [["1", "10"], ["2", "20"]]
+    );
+}
