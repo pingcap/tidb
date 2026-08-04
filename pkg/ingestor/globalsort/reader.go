@@ -158,9 +158,6 @@ func readAllData(
 		})
 	}
 
-	// Dispatch cheap readers first: semaphore.Weighted queues an acquire behind any
-	// existing waiter, so an expensive reader at the head holds up readers that the
-	// free budget could admit right away.
 	dispatchOrder := make([]int, len(dataFiles))
 	for i := range dispatchOrder {
 		dispatchOrder[i] = i
