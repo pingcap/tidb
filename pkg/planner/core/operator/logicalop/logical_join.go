@@ -103,7 +103,8 @@ type LogicalJoin struct {
 	// should convert it back to a correlated Apply with index lookups.
 	PreferCorrelate bool
 
-	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
+	// EqualCondOutCnt indicates the estimated matched row pairs after evaluating
+	// equal join-key conditions, including null-aware equal conditions.
 	EqualCondOutCnt float64
 
 	// allJoinLeaf is used to identify the table where the column is located during constant propagation.
@@ -551,7 +552,9 @@ func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentCh
 // RecursiveDeriveStats inherits the BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements the base.LogicalPlan.<11th> interface.
-// If the type of join is SemiJoin, the selectivity of it will be same as selection's.
+// If the type of join is SemiJoin/AntiSemiJoin, use join-key stats to estimate
+// matched left rows, and fall back to selection's selectivity when no join key
+// is available.
 // If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose NDV should be two.
 // If the type of join is inner/outer join, the output of join(s, t) should be N(s) * N(t) / (V(s.key) * V(t.key)) * Min(s.key, t.key).
 // N(s) stands for the number of rows in relation s. V(s.key) means the NDV of join key in s.
@@ -569,19 +572,50 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	}
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
-	p.EqualCondOutCnt = cardinality.EstimateFullJoinRowCount(p.SCtx(),
-		0 == len(p.EqualConditions),
+	leftNAJoinKeys, rightNAJoinKeys := p.GetNAJoinKeys()
+	hasEqualJoinKeys := len(p.EqualConditions) > 0
+	hasNAJoinKeys := len(p.NAEQConditions) > 0
+	p.EqualCondOutCnt = cardinality.EstimateJoinMatchedRowCount(
+		p.SCtx(),
+		!hasEqualJoinKeys && !hasNAJoinKeys,
 		leftProfile, rightProfile,
 		leftJoinKeys, rightJoinKeys,
 		childSchema[0], childSchema[1],
-		nil, nil)
+		leftNAJoinKeys, rightNAJoinKeys,
+	)
 	if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin {
+		rowCount := leftProfile.RowCount * cost.SelectionFactor
+		if hasEqualJoinKeys || hasNAJoinKeys {
+			semiRightJoinKeys := rightJoinKeys
+			if !hasEqualJoinKeys {
+				semiRightJoinKeys = rightNAJoinKeys
+			}
+			matchedRowCount := cardinality.EstimateSemiJoinRowCount(
+				p.SCtx(),
+				p.EqualCondOutCnt,
+				leftProfile, rightProfile,
+				semiRightJoinKeys,
+				childSchema[1],
+			)
+			if len(p.OtherConditions) > 0 {
+				matchedRowCount *= cost.SelectionFactor
+			}
+			if p.JoinType == base.SemiJoin {
+				rowCount = matchedRowCount
+			} else {
+				rowCount = math.Max(leftProfile.RowCount-matchedRowCount, 0)
+			}
+		}
+		selectivity := 0.0
+		if leftProfile.RowCount > 0 {
+			selectivity = rowCount / leftProfile.RowCount
+		}
 		p.SetStats(&property.StatsInfo{
-			RowCount: leftProfile.RowCount * cost.SelectionFactor,
+			RowCount: rowCount,
 			ColNDVs:  make(map[int64]float64, len(leftProfile.ColNDVs)),
 		})
 		for id, c := range leftProfile.ColNDVs {
-			p.StatsInfo().ColNDVs[id] = c * cost.SelectionFactor
+			p.StatsInfo().ColNDVs[id] = c * selectivity
 		}
 		return p.StatsInfo(), true, nil
 	}

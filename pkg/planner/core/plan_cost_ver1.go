@@ -758,7 +758,7 @@ func getCost4PhysicalMergeJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFla
 		innerSchema = p.Children()[0].Schema()
 		innerStats = p.Children()[0].StatsInfo()
 	}
-	numPairs := cardinality.EstimateFullJoinRowCount(p.SCtx(), false,
+	numPairs := cardinality.EstimateJoinMatchedRowCount(p.SCtx(), false,
 		p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo(),
 		p.LeftJoinKeys, p.RightJoinKeys,
 		p.Children()[0].Schema(), p.Children()[1].Schema(),
@@ -834,8 +834,8 @@ func getCost4PhysicalHashJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag
 	cpuCost := buildCnt * cpuFactor
 	memoryCost := buildCnt * memoryFactor
 	diskCost := buildCnt * diskFactor * rowSize
-	// Number of matched row pairs regarding the equal join conditions.
-	numPairs := cardinality.EstimateFullJoinRowCount(p.SCtx(), false,
+	// Number of matched row pairs regarding the join key conditions.
+	numPairs := cardinality.EstimateJoinMatchedRowCount(p.SCtx(), false,
 		p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo(),
 		p.LeftJoinKeys, p.RightJoinKeys,
 		p.Children()[0].Schema(), p.Children()[1].Schema(),

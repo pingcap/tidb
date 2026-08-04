@@ -127,13 +127,19 @@ func TestGroupNDVs(t *testing.T) {
 func TestNDVGroupCols(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists t1, t2")
+		testKit.MustExec("drop table if exists t1, t2, t3, t4")
 		testKit.MustExec("create table t1(a int not null, b int not null, key(a,b))")
 		testKit.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")
 		testKit.MustExec("create table t2(a int not null, b int not null, key(a,b))")
 		testKit.MustExec("insert into t2 values(1,1),(1,2),(1,3),(2,1),(2,2),(2,3),(3,1),(3,2),(3,3)")
+		testKit.MustExec("create table t3(a int, b int, key(a,b))")
+		testKit.MustExec("insert into t3 values(1,1),(1,2),(2,1),(2,2)")
+		testKit.MustExec("create table t4(a int, b int, key(a,b))")
+		testKit.MustExec("insert into t4 values(1,3),(2,3),(3,3)")
 		testKit.MustExec("analyze table t1")
 		testKit.MustExec("analyze table t2")
+		testKit.MustExec("analyze table t3")
+		testKit.MustExec("analyze table t4")
 
 		// Default RPC encoding may cause statistics explain result differ and then the test unstable.
 		testKit.MustExec("set @@tidb_enable_chunk_rpc = on")
