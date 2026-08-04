@@ -480,6 +480,11 @@ fn number_of(value: &Datum) -> Result<Option<f64>, EvalError> {
     })
 }
 
+/// NOT MODELLED: `tidb_sysdate_is_now`. Go checks it in
+/// `function_traits.go:153` and `scalar_function.go:217` and, when it is on,
+/// makes SYSDATE evaluate as NOW instead. Its default is off, which is what
+/// this function reproduces; the variable is not read here.
+///
 /// `builtinSysDateWithFspSig`/`builtinSysDateWithoutFspSig`: `time.Now()` in
 /// the session zone, ROUNDED half-up to `fsp` digits -- not the statement
 /// clock `NOW` reads, which is why two `SYSDATE()` calls in one statement can
