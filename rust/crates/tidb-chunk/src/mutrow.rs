@@ -748,6 +748,36 @@ mod tests {
         assert_matches_go("set_datum_null", &mut_row);
     }
 
+    /// Go `TestIssue29947`: `SetDatum(NULL)` must mark the cell null and zero
+    /// its offsets WITHOUT reallocating either buffer.
+    ///
+    /// The bug it guards is a NULL write that drops the typed buffer, after
+    /// which the next non-NULL write to that column lands in a wrongly sized
+    /// cell. Reallocation is invisible to a value-level assertion, so the
+    /// buffer LENGTHS are what this pins.
+    #[test]
+    fn set_datum_null_does_not_reallocate() {
+        let types = the_types();
+        let mut mut_row = MutRow::from_types(&types);
+        let before: Vec<(Vec<u8>, Vec<u8>)> = mut_row
+            .chunk
+            .columns()
+            .iter()
+            .map(|c| (c.data.clone(), c.elem_buf.clone()))
+            .collect();
+        for (i, (data, elem_buf)) in before.iter().enumerate() {
+            mut_row.set_datum(i, &Datum::Null);
+            let column = mut_row.chunk.column(i);
+            assert!(column.is_null(0), "col {i}: must read back NULL");
+            assert!(
+                column.offsets.iter().all(|&off| off == 0),
+                "col {i}: offsets must be zeroed"
+            );
+            assert_eq!(column.data, *data, "col {i}: data buffer changed");
+            assert_eq!(column.elem_buf, *elem_buf, "col {i}: elem buffer changed");
+        }
+    }
+
     /// `setMutRowBytes`' grow / reslice / regrow rule.
     #[test]
     fn set_bytes_grow_and_shrink_matches_go() {
