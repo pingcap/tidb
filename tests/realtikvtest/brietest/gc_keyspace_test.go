@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -35,17 +34,21 @@ func TestKeyspaceBackupUsesGCBarrier(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("only run this test with real TiKV")
 	}
-	if !kerneltype.IsNextGen() {
-		t.Skip("keyspace GC barrier requires nextgen kernel")
+	if *realtikvtest.KeyspaceName == "" {
+		t.Skip("keyspace GC safe point test requires -keyspace-name")
 	}
 
-	const keyspaceName = "keyspace1"
-	store := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithKeyspaceName(keyspaceName))
+	keyspaceName := *realtikvtest.KeyspaceName
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
-	cfg := config.GetGlobalConfig()
-	cfg.Store = config.StoreTypeTiKV
+	previousCfg := *config.GetGlobalConfig()
+	cfg := previousCfg
+	cfg.Store = "tikv"
 	cfg.Path = realtikvtest.PDAddr
-	config.StoreGlobalConfig(cfg)
+	config.StoreGlobalConfig(&cfg)
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&previousCfg)
+	})
 
 	tk := testkit.NewTestKit(t, store)
 

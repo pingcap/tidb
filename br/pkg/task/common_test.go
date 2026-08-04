@@ -10,12 +10,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
-=======
 	"github.com/pingcap/tidb/br/pkg/gc"
->>>>>>> cb138ca3deb (br: add keyspace-aware GC safepoint support for backup and restore (#65483))
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/pflag"

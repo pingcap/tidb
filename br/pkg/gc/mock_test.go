@@ -4,102 +4,102 @@ package gc_test
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 
-	"github.com/pingcap/badger"
 	"github.com/pingcap/tidb/br/pkg/gc"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
-	unistoretikv "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	pdgc "github.com/tikv/pd/client/clients/gc"
 )
 
 // testKeyspaceID is a non-global keyspace ID used for testing.
 const testKeyspaceID = tikv.KeyspaceID(100)
 
-// ============================================================================
-// Mock implementations
-// ============================================================================
+type gcBarrierInfo struct {
+	BarrierID string
+	BarrierTS uint64
+}
 
-// createTestDB creates a BadgerDB instance for testing
-func createTestDB(t *testing.T) (*badger.DB, string, string, error) {
-	dbPath := t.TempDir()
-	logPath := t.TempDir()
-	subPath := fmt.Sprintf("/%d", 0)
-	opts := badger.DefaultOptions
-	opts.Dir = filepath.Join(dbPath, subPath)
-	opts.ValueDir = filepath.Join(logPath, subPath)
-	opts.ManagedTxns = true
-	db, err := badger.Open(opts)
-	return db, dbPath, logPath, err
+type gcState struct {
+	GCSafePoint uint64
+	GCBarriers  []gcBarrierInfo
 }
 
 type mockPDClient struct {
 	pd.Client
-	mockPD *unistoretikv.MockPD
+
+	mu                sync.Mutex
+	gcSafePoints      map[tikv.KeyspaceID]uint64
+	serviceSafePoints map[tikv.KeyspaceID]map[string]gcBarrierInfo
 }
 
 func (p *mockPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
-	return p.mockPD.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
+	return p.updateServiceSafePoint(tikv.NullspaceID, serviceID, ttl, safePoint), nil
 }
 
 func (p *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
-	return p.mockPD.UpdateGCSafePoint(ctx, safePoint)
+	return p.updateGCSafePoint(tikv.NullspaceID, safePoint), nil
 }
 
-func (p *mockPDClient) GetGCStatesClient(keyspaceID uint32) pdgc.GCStatesClient {
-	return p.mockPD.GetGCStatesClient(keyspaceID)
+func (p *mockPDClient) UpdateServiceSafePointV2(
+	ctx context.Context,
+	keyspaceID uint32,
+	serviceID string,
+	ttl int64,
+	safePoint uint64,
+) (uint64, error) {
+	return p.updateServiceSafePoint(tikv.KeyspaceID(keyspaceID), serviceID, ttl, safePoint), nil
 }
 
-func (p *mockPDClient) GetGCInternalController(keyspaceID uint32) pdgc.InternalController {
-	return p.mockPD.GetGCInternalController(keyspaceID)
+func (p *mockPDClient) UpdateGCSafePointV2(ctx context.Context, keyspaceID uint32, safePoint uint64) (uint64, error) {
+	return p.updateGCSafePoint(tikv.KeyspaceID(keyspaceID), safePoint), nil
 }
 
-// newTestMockPD creates a fully configured MockPD wrapped in a pd.Client adapter.
-// Cleanup is automatically handled via t.Cleanup().
 func newTestMockPD(t *testing.T) *mockPDClient {
-	db, dbPath, logPath, err := createTestDB(t)
-	require.NoError(t, err)
+	t.Helper()
+	return &mockPDClient{
+		gcSafePoints:      make(map[tikv.KeyspaceID]uint64),
+		serviceSafePoints: make(map[tikv.KeyspaceID]map[string]gcBarrierInfo),
+	}
+}
 
-	dbBundle := &mvcc.DBBundle{
-		DB:        db,
-		LockStore: lockstore.NewMemStore(4096),
+func (p *mockPDClient) updateGCSafePoint(keyspaceID tikv.KeyspaceID, safePoint uint64) uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if safePoint > p.gcSafePoints[keyspaceID] {
+		p.gcSafePoints[keyspaceID] = safePoint
+	}
+	return p.gcSafePoints[keyspaceID]
+}
+
+func (p *mockPDClient) updateServiceSafePoint(
+	keyspaceID tikv.KeyspaceID,
+	serviceID string,
+	ttl int64,
+	safePoint uint64,
+) uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	serviceSafePoints := p.serviceSafePoints[keyspaceID]
+	if serviceSafePoints == nil {
+		serviceSafePoints = make(map[string]gcBarrierInfo)
+		p.serviceSafePoints[keyspaceID] = serviceSafePoints
+	}
+	if ttl <= 0 {
+		delete(serviceSafePoints, serviceID)
+	} else {
+		serviceSafePoints[serviceID] = gcBarrierInfo{BarrierID: serviceID, BarrierTS: safePoint}
 	}
 
-	rm, err := unistoretikv.NewMockRegionManager(dbBundle, 1,
-		unistoretikv.RegionOptions{
-			StoreAddr:  "127.0.0.1:10086",
-			PDAddr:     "127.0.0.1:2379",
-			RegionSize: 96 * 1024 * 1024,
-		})
-	require.NoError(t, err)
-
-	mockPD := unistoretikv.NewMockPD(rm)
-
-	// Register cleanup
-	t.Cleanup(func() {
-		if rm != nil {
-			_ = rm.Close()
+	var minSafePoint uint64
+	for _, serviceSafePoint := range serviceSafePoints {
+		if minSafePoint == 0 || serviceSafePoint.BarrierTS < minSafePoint {
+			minSafePoint = serviceSafePoint.BarrierTS
 		}
-		if db != nil {
-			_ = db.Close()
-		}
-		if dbPath != "" {
-			_ = os.RemoveAll(dbPath)
-		}
-		if logPath != "" {
-			_ = os.RemoveAll(logPath)
-		}
-	})
-
-	return &mockPDClient{mockPD: mockPD}
+	}
+	return minSafePoint
 }
 
 // ============================================================================
@@ -108,33 +108,40 @@ func newTestMockPD(t *testing.T) *mockPDClient {
 
 // findBarrier finds a barrier by ID in the GC state.
 // Returns nil if not found.
-func findBarrier(state pdgc.GCState, barrierID string) *pdgc.GCBarrierInfo {
+func findBarrier(state gcState, barrierID string) *gcBarrierInfo {
 	for _, b := range state.GCBarriers {
 		if b.BarrierID == barrierID {
-			return b
+			return &b
 		}
 	}
 	return nil
 }
 
 // requireBarrier asserts that a barrier exists with the expected TS.
-func requireBarrier(t *testing.T, state pdgc.GCState, barrierID string, expectedTS uint64) {
+func requireBarrier(t *testing.T, state gcState, barrierID string, expectedTS uint64) {
 	barrier := findBarrier(state, barrierID)
 	require.NotNil(t, barrier, "barrier %q should exist", barrierID)
 	require.Equal(t, expectedTS, barrier.BarrierTS, "barrier %q TS mismatch", barrierID)
 }
 
 // requireNoBarrier asserts that a barrier does not exist.
-func requireNoBarrier(t *testing.T, state pdgc.GCState, barrierID string) {
+func requireNoBarrier(t *testing.T, state gcState, barrierID string) {
 	barrier := findBarrier(state, barrierID)
 	require.Nil(t, barrier, "barrier %q should not exist", barrierID)
 }
 
 // getState returns the GC state for the specified keyspace.
 // Use tikv.NullspaceID for global mode.
-func getState(ctx context.Context, t *testing.T, mockPD *mockPDClient, keyspaceID tikv.KeyspaceID) pdgc.GCState {
-	state, err := mockPD.GetGCStatesClient(uint32(keyspaceID)).GetGCState(ctx)
-	require.NoError(t, err)
+func getState(ctx context.Context, t *testing.T, mockPD *mockPDClient, keyspaceID tikv.KeyspaceID) gcState {
+	t.Helper()
+	require.NoError(t, ctx.Err())
+
+	mockPD.mu.Lock()
+	defer mockPD.mu.Unlock()
+	state := gcState{GCSafePoint: mockPD.gcSafePoints[keyspaceID]}
+	for _, serviceSafePoint := range mockPD.serviceSafePoints[keyspaceID] {
+		state.GCBarriers = append(state.GCBarriers, serviceSafePoint)
+	}
 	return state
 }
 
@@ -201,14 +208,10 @@ func (m *mockManager) getSetSafePointCalls() int {
 // setGCSafePoint sets the GC safe point in mockPD for testing.
 // This first advances txn safe point, then advances GC safe point.
 func (m *mockManager) setGCSafePoint(ctx context.Context, keyspaceID tikv.KeyspaceID, ts uint64) error {
-	ctl := m.mockPD.GetGCInternalController(uint32(keyspaceID))
-	// First advance txn safe point (GC safe point cannot exceed txn safe point)
-	if _, err := ctl.AdvanceTxnSafePoint(ctx, ts); err != nil {
+	if keyspaceID == tikv.NullspaceID {
+		_, err := m.mockPD.UpdateGCSafePoint(ctx, ts)
 		return err
 	}
-	// Then advance GC safe point
-	if _, err := ctl.AdvanceGCSafePoint(ctx, ts); err != nil {
-		return err
-	}
-	return nil
+	_, err := m.mockPD.UpdateGCSafePointV2(ctx, uint32(keyspaceID), ts)
+	return err
 }

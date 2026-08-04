@@ -16,10 +16,6 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-=======
-    shard_count = 27,
->>>>>>> cb138ca3deb (br: add keyspace-aware GC safepoint support for backup and restore (#65483))
     deps = [
         "//br/pkg/gc",
         "//br/pkg/glue",
@@ -33,7 +29,6 @@ go_test(
         "//br/pkg/task/operator",
         "//br/pkg/utils",
         "//pkg/config",
-        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/executor",
         "//pkg/kv",
