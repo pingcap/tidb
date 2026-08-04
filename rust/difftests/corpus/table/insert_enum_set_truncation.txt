@@ -1,0 +1,18 @@
+drop table if exists te, ts
+create table te(e enum('a','b') not null)
+create table ts(s set('a','b') not null)
+set sql_mode=''
+insert into te values (7)
+show warnings
+insert into ts values (7)
+show warnings
+insert into te values ('zzz')
+show warnings
+insert into te values (0)
+show warnings
+insert into ts values (0)
+show warnings
+insert into te values ('b')
+insert into ts values (3)
+select e is null, length(e) from te
+select s is null, length(s) from ts

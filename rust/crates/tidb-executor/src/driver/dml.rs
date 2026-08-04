@@ -728,6 +728,22 @@ pub(crate) fn cast_value_for_column(
             column: column.to_owned(),
             row: row_index + 1,
         },
+        // Go `castColumnValue` (`pkg/table/column.go:356`) re-titles a bare
+        // `ErrTruncated` as `ErrTruncatedWrongVal` for EVERY column type
+        // EXCEPT SET and ENUM, whose conversion is the one that stores the
+        // zero value beside the error. Those two therefore keep Go's plain
+        // 1265 "Data truncated for column '%s' at row %d".
+        tidb_datatype::ScalarConversionEvent::Truncated
+            if matches!(
+                field_type.code(),
+                tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+            ) =>
+        {
+            DriverError::DataTruncatedAtRow {
+                column: column.to_owned(),
+                row: row_index + 1,
+            }
+        }
         // A BIT column is the second producer of Go's `ErrDataTooLong`:
         // `convertToMysqlBit` clamps a value wider than the declared `flen`
         // to `(1<<flen)-1` and returns `ErrDataTooLong`, NOT the generic

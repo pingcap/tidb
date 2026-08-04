@@ -1,0 +1,18 @@
+OK
+OK
+OK
+OK
+OK
+RS:Warning|1265|Data truncated for column 'e' at row 1
+OK
+RS:Warning|1265|Data truncated for column 's' at row 1
+OK
+RS:Warning|1265|Data truncated for column 'e' at row 1
+OK
+RS:Warning|1265|Data truncated for column 'e' at row 1
+OK
+RS:
+OK
+OK
+RS:0|0;0|0;0|0;0|1
+RS:0|0;0|0;0|3

@@ -580,28 +580,48 @@ impl Datum {
         target: &FieldType,
         flags: ConversionFlags,
     ) -> Result<Converted<Self>, DatumValueError> {
-        let value = match self {
-            Self::String(value) => parse_enum(target.elems(), value.as_utf8()?, target.collation()),
+        let parsed = match self {
+            Self::String(value) => {
+                parse_enum(target.elems(), value.as_utf8()?, target.collation()).map_err(|_| ())
+            }
             Self::Bytes(value) => parse_enum(
                 target.elems(),
                 std::str::from_utf8(value)?,
                 target.collation(),
-            ),
+            )
+            .map_err(|_| ()),
             Self::BinaryLiteral(value) => parse_enum(
                 target.elems(),
                 std::str::from_utf8(value.as_bytes())?,
                 target.collation(),
-            ),
+            )
+            .map_err(|_| ()),
             Self::Enum(value, _) if value.value() == 0 => Ok(crate::MysqlEnum::new("", 0)),
-            Self::Enum(value, _) => parse_enum(target.elems(), value.name(), target.collation()),
-            Self::Set(value, _) => parse_enum(target.elems(), value.name(), target.collation()),
-            _ => {
-                let number = self.convert_to_unsigned(FieldTypeCode::LongLong, flags)?;
-                parse_enum_value(target.elems(), number.value)
+            Self::Enum(value, _) => {
+                parse_enum(target.elems(), value.name(), target.collation()).map_err(|_| ())
             }
-        }
-        .map_err(|error| DatumValueError::Comparison(error.to_string()))?;
-        Ok(exact(Self::new_enum(value, target.collation())))
+            Self::Set(value, _) => {
+                parse_enum(target.elems(), value.name(), target.collation()).map_err(|_| ())
+            }
+            // Go wraps `convertToUint`'s own failure in `ErrTruncated` too
+            // (`datum.go`'s "convert to MySQL enum failed: " arm), so it
+            // reaches the caller as the same truncation event, not an error.
+            _ => match self.convert_to_unsigned(FieldTypeCode::LongLong, flags) {
+                Ok(number) => parse_enum_value(target.elems(), number.value).map_err(|_| ()),
+                Err(_) => Err(()),
+            },
+        };
+        // Go `convertToMysqlEnum` calls `SetMysqlEnum` UNCONDITIONALLY and
+        // returns the value beside `ErrTruncated`: a failed parse stores the
+        // zero enum (`Enum{Name: "", Value: 0}`) and only raises an event, so
+        // a non-strict write keeps the row and warns 1265.
+        Ok(match parsed {
+            Ok(value) => exact(Self::new_enum(value, target.collation())),
+            Err(_) => Converted {
+                value: Self::new_enum(crate::MysqlEnum::default(), target.collation()),
+                event: Some(ScalarConversionEvent::Truncated),
+            },
+        })
     }
 
     fn convert_to_set(
@@ -609,28 +629,46 @@ impl Datum {
         target: &FieldType,
         flags: ConversionFlags,
     ) -> Result<Converted<Self>, DatumValueError> {
-        let value = match self {
-            Self::String(value) => parse_set(target.elems(), value.as_utf8()?, target.collation()),
+        let parsed = match self {
+            Self::String(value) => {
+                parse_set(target.elems(), value.as_utf8()?, target.collation()).map_err(|_| ())
+            }
             Self::Bytes(value) => parse_set(
                 target.elems(),
                 std::str::from_utf8(value)?,
                 target.collation(),
-            ),
+            )
+            .map_err(|_| ()),
             Self::BinaryLiteral(value) => parse_set(
                 target.elems(),
                 std::str::from_utf8(value.as_bytes())?,
                 target.collation(),
-            ),
-            Self::Enum(value, _) => parse_set(target.elems(), value.name(), target.collation()),
-            Self::Set(value, _) => parse_set(target.elems(), value.name(), target.collation()),
-            Self::VectorFloat32(_) => return Err(DatumValueError::Unsupported(self.kind(), "set")),
-            _ => {
-                let number = self.convert_to_unsigned(FieldTypeCode::LongLong, flags)?;
-                parse_set_value(target.elems(), number.value)
+            )
+            .map_err(|_| ()),
+            Self::Enum(value, _) => {
+                parse_set(target.elems(), value.name(), target.collation()).map_err(|_| ())
             }
-        }
-        .map_err(|error| DatumValueError::Comparison(error.to_string()))?;
-        Ok(exact(Self::new_set(value, target.collation())))
+            Self::Set(value, _) => {
+                parse_set(target.elems(), value.name(), target.collation()).map_err(|_| ())
+            }
+            // Go's `convertToMysqlSet` alone keeps a hard `invalidConv` for a
+            // vector source, ahead of the `ErrTruncated` wrap below.
+            Self::VectorFloat32(_) => return Err(DatumValueError::Unsupported(self.kind(), "set")),
+            _ => match self.convert_to_unsigned(FieldTypeCode::LongLong, flags) {
+                Ok(number) => parse_set_value(target.elems(), number.value).map_err(|_| ()),
+                Err(_) => Err(()),
+            },
+        };
+        // Go `convertToMysqlSet` wraps EVERY failure in `ErrTruncated` and
+        // still calls `SetMysqlSet`, so the zero set is stored and the caller
+        // decides between a 1265 warning and a strict error.
+        Ok(match parsed {
+            Ok(value) => exact(Self::new_set(value, target.collation())),
+            Err(()) => Converted {
+                value: Self::new_set(crate::MysqlSet::default(), target.collation()),
+                event: Some(ScalarConversionEvent::Truncated),
+            },
+        })
     }
 
     fn convert_to_bit(

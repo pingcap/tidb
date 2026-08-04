@@ -23,7 +23,7 @@
 use chrono::Utc;
 
 use super::*;
-use crate::{parse_time, BinaryLiteralWidth, FieldTypeFlags, MysqlEnum, TimeType};
+use crate::{parse_time, BinaryLiteralWidth, FieldTypeFlags, MysqlEnum, MysqlSet, TimeType};
 
 /// Runs a conversion and reports it the way Go's `types.Convert` does:
 /// the produced value (absent only when this crate could not produce one) and
@@ -395,21 +395,46 @@ fn go_test_convert_type() {
     convert_err(&Datum::Int(9), &set_type, "set 9");
 }
 
-/// The one `TestConvertType` row this crate cannot answer yet.
-///
-/// `convertToMysqlEnum` returns the zero `Enum{}` *beside* `ErrTruncated`, so
-/// a non-strict statement stores the empty ENUM. [`Datum::convert_to`] models
-/// an out-of-range ENUM ordinal as `Err`, which carries no value at all, so
-/// the non-strict store has nothing to write. Fixing it means giving the ENUM
-/// and SET arms the same value-plus-event shape the numeric arms already have.
+/// `convertToMysqlEnum`/`convertToMysqlSet` call `SetMysqlEnum`/`SetMysqlSet`
+/// UNCONDITIONALLY and return the zero value *beside* `ErrTruncated`, so a
+/// non-strict statement stores the empty ENUM/SET and only warns. Every
+/// failing source kind takes that route: a name that is not a member, an
+/// ordinal outside the declaration, and a number whose bits do not fit the
+/// SET.
 #[test]
-#[ignore = "convert_to returns Err without Go's best-effort value for an out-of-range ENUM ordinal"]
-fn go_test_convert_type_out_of_range_enum_keeps_the_empty_enum() {
+fn go_test_convert_type_out_of_range_enum_and_set_keep_the_empty_value() {
     let enum_type = FieldType::new(FieldTypeCode::Enum).with_elems(["a", "b", "c"]);
     let collation = enum_type.collation();
-    let value = convert_err(&Datum::Int(4), &enum_type, "enum 4")
-        .expect("Go returns the zero Enum beside ErrTruncated");
-    assert_eq!(value, Datum::new_enum(MysqlEnum::default(), collation));
+    for input in [Datum::Int(4), Datum::Int(0), Datum::new_string("d")] {
+        let row = format!("enum {input:?}");
+        let value = convert_err(&input, &enum_type, &row)
+            .expect("Go returns the zero Enum beside ErrTruncated");
+        assert_eq!(
+            value,
+            Datum::new_enum(MysqlEnum::default(), collation),
+            "{row}"
+        );
+    }
+
+    let set_type = FieldType::new(FieldTypeCode::Set).with_elems(["a", "b", "c"]);
+    let collation = set_type.collation();
+    for input in [Datum::Int(9), Datum::new_string("d")] {
+        let row = format!("set {input:?}");
+        let value = convert_err(&input, &set_type, &row)
+            .expect("Go returns the zero Set beside ErrTruncated");
+        assert_eq!(
+            value,
+            Datum::new_set(MysqlSet::default(), collation),
+            "{row}"
+        );
+    }
+
+    // Go `ParseSetValue(elems, 0)` returns `zeroSet` with NO error, so the
+    // zero SET is a legal stored value rather than a truncation.
+    assert_eq!(
+        convert_ok(&Datum::Int(0), &set_type, "set 0"),
+        Datum::new_set(MysqlSet::default(), collation)
+    );
 }
 
 /// Complete translation of `pkg/types/datum_test.go:124::TestToInt64`.
