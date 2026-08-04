@@ -1660,7 +1660,7 @@ func restoreStream(
 			log.Info("using fine-grained scheduler pausing for log restore",
 				zap.Int("key-ranges-count", len(keyRanges)))
 			restoreSchedulersFunc, _, err = restore.FineGrainedRestorePreWork(ctx, mgr,
-				importModeSwitcher, keyRanges, cfg.Online, false)
+				importModeSwitcher, keyRanges, false)
 		} else {
 			log.Info("no key ranges to pause, skipping scheduler pausing")
 			restoreSchedulersFunc = func(context.Context) error { return nil }
@@ -1745,7 +1745,7 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		err = client.RestoreSSTFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
+		err = client.RestoreSSTFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, cfg.Online, p.IncBy)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1856,6 +1856,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return nil, errors.Trace(err)
 	}
+	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
 	client.SetUpstreamClusterID(cfg.UpstreamClusterID)

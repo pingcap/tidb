@@ -1511,7 +1511,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 		keyRange := rewriteKeyRanges(preAllocRange)
 		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(
-			ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
+			ctx, mgr, importModeSwitcher, keyRange, !cfg.Online)
 	}
 	if err != nil {
 		return errors.Trace(err)
