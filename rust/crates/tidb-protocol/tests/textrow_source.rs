@@ -156,15 +156,30 @@ fn source_scalar_formatter_rejects_mismatched_and_unported_branches() {
         TextFormatError::ScalarTypeMismatch(tidb_protocol::TYPE_VARCHAR)
     );
 
-    for type_code in [
-        TYPE_DATE,
-        TYPE_DATETIME,
-        TYPE_TIMESTAMP,
-        TYPE_DURATION,
-        TYPE_ENUM,
-        TYPE_SET,
-        TYPE_JSON,
-    ] {
+    // The temporal branches are connected now, and they take their OWN
+    // scalar: Go renders them with `Time.String()`/`Duration.String()` and
+    // never runs the result encoder over the text, which is what lets this
+    // charset-free leaf carry them. A `Bytes` scalar in a temporal column is
+    // still a mismatch, so the two carriers cannot be confused.
+    for type_code in [TYPE_DATE, TYPE_DATETIME, TYPE_TIMESTAMP, TYPE_DURATION] {
+        assert_eq!(
+            format_text_value(TextColumn::new(type_code), TextScalar::Bytes(b"12:00:00"))
+                .unwrap_err(),
+            TextFormatError::ScalarTypeMismatch(type_code),
+            "temporal type={type_code}"
+        );
+        assert_eq!(
+            format_text_value(TextColumn::new(type_code), TextScalar::Temporal(b"12:00:00"))
+                .unwrap(),
+            Some(b"12:00:00".to_vec()),
+            "temporal type={type_code}"
+        );
+    }
+
+    // ENUM/SET/JSON stay unported: all three run `enc.EncodeData`, and they
+    // disagree on the encoding to use, so this leaf must not pretend a byte
+    // payload is already correct.
+    for type_code in [TYPE_ENUM, TYPE_SET, TYPE_JSON] {
         assert_eq!(
             format_text_value(TextColumn::new(type_code), TextScalar::Bytes(b"not-ported"))
                 .unwrap_err(),

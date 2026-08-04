@@ -100,6 +100,18 @@ pub enum TextScalar<'a> {
     Decimal(&'a [u8]),
     /// Already-encoded bytes for string/blob-like values.
     Bytes(&'a [u8]),
+    /// The already-rendered temporal text produced by Go `Time.String()` or
+    /// `Duration.String()`.
+    ///
+    /// Go's `TypeDate`/`TypeDatetime`/`TypeTimestamp`/`TypeDuration` branches
+    /// are the only string-shaped ones that do NOT touch the result encoder
+    /// -- `hack.Slice(row.GetTime(idx).String())`, with no
+    /// `UpdateDataEncoding`/`EncodeData` around it -- so the rendered text IS
+    /// the wire bytes and this leaf can carry them without acquiring charset
+    /// state. `Duration`'s own precision comes from `col.Decimal` at the
+    /// `row.GetDuration(idx, int(col.Decimal))` call, i.e. before this point,
+    /// which is why the column's `decimal` is not re-applied here.
+    Temporal(&'a [u8]),
 }
 
 /// The column attributes needed by the dependency-closed subset of
@@ -267,9 +279,16 @@ pub fn format_text_value(
             TextScalar::Bytes(value) => formatted.extend_from_slice(value),
             _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
         },
-        // These source branches require typed Datum conversion and charset
-        // state. Keeping them explicit prevents a JSON/enum/set payload from
-        // being mistaken for already-encoded bytes.
+        TYPE_DATE | TYPE_DATETIME | TYPE_TIMESTAMP | TYPE_DURATION => match value {
+            TextScalar::Temporal(value) => formatted.extend_from_slice(value),
+            _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
+        },
+        // These three source branches are the ones that route through
+        // `enc.UpdateDataEncoding` + `enc.EncodeData`, and they do NOT agree
+        // on which encoding: enum and set take `col.Charset`, while JSON
+        // forces `mysql.DefaultCollationID` regardless of the column. This
+        // leaf owns no charset state, so accepting bytes here would make it
+        // look complete while leaving that rule unwritten for its caller.
         TYPE_ENUM | TYPE_SET | TYPE_JSON => {
             return Err(TextFormatError::UnsupportedType(column.type_code));
         }

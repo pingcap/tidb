@@ -196,3 +196,18 @@ It exists because Go counts ONE replacement rune per invalid BYTE
 counts one per maximal invalid SUBSEQUENCE. That is a different prefix INDEX
 KEY, so an index lookup can miss a row that exists -- silently. 49 of the 469
 rows disagreed when the fixture was first pointed at this crate.
+
+## Text-protocol fixture
+
+`textrow_vectors.tsv` is `textrow.FormatValueText`'s own output over 1,516
+rows driven through a real `chunk.Row`. This is the tier that serves clients,
+so a divergence here is a wrong answer on the wire.
+
+```bash
+GOFLAGS=-p=12 go run ./rust/difftests/transaction-tests/fixtures/generate_textrow_vectors.go
+```
+
+Floats are carried as bit patterns, and 800 of the rows are pseudo-random
+f64/f32 patterns. Pointing `tidb-protocol` at it found 12 disagreements, all
+of them a type branch Go renders and that crate refused; the nine temporal
+ones are closed and ENUM/SET/JSON remain, pinned by the test.
