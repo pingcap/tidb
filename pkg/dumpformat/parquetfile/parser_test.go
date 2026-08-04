@@ -78,14 +78,6 @@ func newParquetS3StoreForTest(
 	return store, accessStats
 }
 
-type testReadSeekCloser struct {
-	io.ReadSeeker
-}
-
-func (*testReadSeekCloser) Close() error {
-	return nil
-}
-
 func newParquetParserForTest(
 	ctx context.Context,
 	t *testing.T,
@@ -196,44 +188,6 @@ func TestParquetParser(t *testing.T) {
 		_, statErr := os.Stat(filepath.Join(dir, fileName))
 		require.True(t, os.IsNotExist(statErr), "unexpected file state: %v", statErr)
 	})
-
-	t.Run("nil_scan_progress", func(t *testing.T) {
-		var progress *scanProgress
-		require.NotPanics(t, func() { progress.advance(1) })
-		require.Zero(t, progress.current())
-	})
-
-	t.Run("partial_streaming_read_tracks_progress", func(t *testing.T) {
-		progress := &scanProgress{}
-		wrapper := &readerWrapper{
-			ReadSeekCloser: &testReadSeekCloser{ReadSeeker: bytes.NewReader([]byte("abc"))},
-			skipBuf:        make([]byte, defaultBufSize),
-			progress:       progress,
-		}
-
-		n, err := wrapper.ReadAt(make([]byte, 4), 0)
-		require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-		require.Equal(t, 3, n)
-		require.Equal(t, int64(3), wrapper.lastOff)
-		require.Equal(t, int64(3), progress.current())
-	})
-
-	t.Run("partial_streaming_gap_read_tracks_only_consumed_bytes", func(t *testing.T) {
-		progress := &scanProgress{}
-		wrapper := &readerWrapper{
-			ReadSeekCloser: &testReadSeekCloser{ReadSeeker: bytes.NewReader([]byte("ab"))},
-			skipBuf:        make([]byte, defaultBufSize),
-			progress:       progress,
-		}
-		buf := make([]byte, 1)
-
-		n, err := wrapper.ReadAt(buf, 4)
-		require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-		require.Zero(t, n)
-		require.Equal(t, []byte{0}, buf)
-		require.Equal(t, int64(2), wrapper.lastOff)
-		require.Equal(t, int64(2), progress.current())
-	})
 }
 
 func TestParquetParserMultipleRowGroup(t *testing.T) {
@@ -300,25 +254,13 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 
 			parser := newParquetParserForTest(context.Background(), t, dir, fileName, tc.fileSize, FileMeta{})
 			require.Greater(t, parser.fileMeta.NumRowGroups(), 1)
-			firstRowGroupRange, err := rowGroupRangeFromMeta(parser.fileMeta, 0)
-			require.NoError(t, err)
 			if tc.expectWholeFileLoaded {
 				require.NotNil(t, parser.preloadBase)
-				scannedPos, err := parser.ScannedPos()
-				require.NoError(t, err)
-				require.Equal(t, info.Size(), scannedPos)
-			} else if !tc.stream {
-				scannedPos, err := parser.ScannedPos()
-				require.NoError(t, err)
-				require.Equal(t, firstRowGroupRange.end, scannedPos)
-			} else {
-				scannedPos, err := parser.ScannedPos()
-				require.NoError(t, err)
-				require.Less(t, scannedPos, info.Size(), "footer reads must not count as data progress")
 			}
 
 			previousScannedPos, err := parser.ScannedPos()
 			require.NoError(t, err)
+			require.Zero(t, previousScannedPos)
 			for i := range 50 {
 				require.NoError(t, parser.ReadRow())
 				require.Equal(t, int64(i), parser.LastRow().Row[0].GetInt64())
@@ -326,11 +268,9 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 
 				scannedPos, err := parser.ScannedPos()
 				require.NoError(t, err)
+				require.Equal(t, info.Size()*int64(i+1)/50, scannedPos)
 				require.GreaterOrEqual(t, scannedPos, previousScannedPos)
 				require.LessOrEqual(t, scannedPos, info.Size())
-				if tc.stream && i == 0 {
-					require.Greater(t, scannedPos, firstRowGroupRange.columnStarts[1])
-				}
 				previousScannedPos = scannedPos
 
 				last := parser.LastRow()
@@ -341,6 +281,48 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 			require.Equal(t, info.Size(), finalScannedPos)
 			require.ErrorIs(t, parser.ReadRow(), io.EOF)
 		})
+	}
+}
+
+func TestParquetScannedPosByReadRows(t *testing.T) {
+	fileMeta := &metadata.FileMetaData{}
+	parser := &Parser{fileMeta: fileMeta}
+	for _, tc := range []struct {
+		name      string
+		fileSize  int64
+		readRows  int64
+		totalRows int64
+		expected  int64
+	}{
+		{name: "negative-file-size", fileSize: -1, totalRows: 10, expected: 0},
+		{name: "no-rows-read", fileSize: 101, totalRows: 10, expected: 0},
+		{name: "partial", fileSize: 101, readRows: 4, totalRows: 10, expected: 40},
+		{name: "complete", fileSize: 101, readRows: 10, totalRows: 10, expected: 101},
+		{name: "empty-file", fileSize: 101, totalRows: 0, expected: 101},
+		{name: "past-end", fileSize: 101, readRows: 11, totalRows: 10, expected: 101},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fileMeta.SetSourceFileSize(tc.fileSize)
+			parser.totalReadRows = tc.readRows
+			parser.totalRows = tc.totalRows
+
+			pos, err := parser.ScannedPos()
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, pos)
+		})
+	}
+
+	const largeFileSize = int64(10 << 30)
+	fileMeta.SetSourceFileSize(largeFileSize)
+	parser.totalRows = 97
+	previous := int64(0)
+	for readRows := int64(0); readRows <= parser.totalRows+1; readRows++ {
+		parser.totalReadRows = readRows
+		pos, err := parser.ScannedPos()
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, pos, previous)
+		require.LessOrEqual(t, pos, largeFileSize)
+		previous = pos
 	}
 }
 
