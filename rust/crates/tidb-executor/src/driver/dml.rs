@@ -1996,6 +1996,24 @@ fn fetch_write_rows(
         Some(super::access::WriteReadPath::Ranges(ranges, _)) => kv
             .scan_rows_with_handles_in(Some(ranges), zone)
             .map_err(decode_failed),
+        Some(super::access::WriteReadPath::IndexRanges(index_id, ranges, _)) => {
+            // The index range narrows WHICH records are fetched, in index
+            // order; the row is then read by its handle, and the `WHERE` above
+            // still filters. Ranges over one index cover disjoint key intervals,
+            // so a handle is read at most once.
+            let mut rows = Vec::new();
+            for range in ranges {
+                for handle in kv
+                    .scan_index_range(*index_id, range, zone)
+                    .map_err(decode_failed)?
+                {
+                    if let Some(row) = kv.get_row_by_handle(&handle, zone).map_err(decode_failed)? {
+                        rows.push((handle, row));
+                    }
+                }
+            }
+            Ok(rows)
+        }
         None => kv
             .scan_rows_with_handles_in(None, zone)
             .map_err(decode_failed),
@@ -2015,6 +2033,39 @@ struct DmlTarget<'a> {
     database: &'a str,
     /// The stored table name.
     name: &'a str,
+}
+
+/// Renames the scan `trace_dml_source` just recorded to the `IndexRangeScan`
+/// (or `IndexFullScan`) the write reads through, matching what the read side's
+/// `commit_index_range_source` prints for the same index and ranges.
+#[allow(clippy::too_many_arguments)]
+fn trace_write_index_scan(
+    trace: &mut PlanTrace,
+    catalog: &Catalog,
+    database: &str,
+    name: &str,
+    visible: &str,
+    index_id: i64,
+    ranges: &[crate::kv_table::IndexRange],
+    estimate: crate::access_cost::ScanEstimate,
+) {
+    let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name) else {
+        return;
+    };
+    let Some(index) = table.indexes().iter().find(|index| index.id == index_id) else {
+        return;
+    };
+    let index_columns: Vec<String> = index
+        .column_offsets
+        .iter()
+        .map(|offset| super::access::index_key_part_name(table, *offset))
+        .collect();
+    let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
+    if ranges.len() == 1 && ranges[0].is_full() {
+        trace.index_full_scan(visible, &index.name, &index_columns, estimate);
+    } else {
+        trace.index_range_scan(visible, &index.name, &index_columns, ranges, estimate);
+    }
 }
 
 fn trace_dml_source(
@@ -2048,6 +2099,18 @@ fn trace_dml_source(
     match read_path {
         Some(super::access::WriteReadPath::Ranges(ranges, range_estimate)) => {
             trace.table_range_scan(&visible, ranges, *range_estimate);
+        }
+        Some(super::access::WriteReadPath::IndexRanges(index_id, ranges, range_estimate)) => {
+            trace_write_index_scan(
+                trace,
+                catalog,
+                database,
+                name,
+                &visible,
+                *index_id,
+                ranges,
+                *range_estimate,
+            );
         }
         Some(super::access::WriteReadPath::Point(handle)) => {
             trace.point_get(&visible, handle.as_ref());

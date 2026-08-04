@@ -1431,7 +1431,16 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // `TrimComment`), so the three `select (select /*+ INL_*_JOIN(x2) */ x2.a
     // ...) from t1` labels drop their closing `*/` to match TiDB. All four are
     // `Rows`-kind, so `compared` holds at 5639 and matched rises.
-    const KNOWN_DIVERGENCES: usize = 54;
+    //
+    // 54 -> 52: an `UPDATE`/`DELETE` now costs the index paths beside the table
+    // path, the same chooser a `SELECT` reaches (Go's write plan falls through
+    // to the ordinary `DataSource`). `driver::access::write_read_path` gained a
+    // `WriteReadPath::IndexRanges` arm fed by `enumerate_paths` +
+    // `choose_access_path`, so `delete from t1 where t1.c2 = 1` and `update t
+    // ... where a = x'..' and b = 'xb'` read through their index
+    // (`IndexRangeScan`) instead of a full scan. Both are `PlanProperty`-kind,
+    // so `compared` holds at 5639 and matched rises.
+    const KNOWN_DIVERGENCES: usize = 52;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

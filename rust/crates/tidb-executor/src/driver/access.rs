@@ -588,7 +588,7 @@ fn pruned_partition_ids(
 /// prints `` index:k1(`a` + 1, b) ``, and the hidden column's generated name
 /// appears in no user-visible output at all. The text is the one the column
 /// already stores, so the plan and `SHOW CREATE TABLE` cannot disagree.
-fn index_key_part_name(table: &KvTable, offset: usize) -> String {
+pub(crate) fn index_key_part_name(table: &KvTable, offset: usize) -> String {
     let Some(column) = table.columns.get(offset) else {
         return String::new();
     };
@@ -728,6 +728,11 @@ pub(crate) enum WriteReadPath {
     /// Go's `TableRangeScan`: the handle intervals the `WHERE` implies, and
     /// the estimate `EXPLAIN` prints for them.
     Ranges(Vec<IndexRange>, crate::access_cost::ScanEstimate),
+    /// Go's `IndexRangeScan`: the id of the index the chooser preferred, the
+    /// ranges of it the `WHERE` implies, and the estimate `EXPLAIN` prints. A
+    /// write fetches the candidate records through the index and still filters
+    /// per row above, so the ranges are a superset of the affected rows.
+    IndexRanges(i64, Vec<IndexRange>, crate::access_cost::ScanEstimate),
 }
 
 /// The read a single-table `UPDATE`/`DELETE` performs to find its target
@@ -778,10 +783,63 @@ pub(crate) fn write_read_path(
     if let Some(handle) = try_point_get(stmt, table, &columns, zone)? {
         return Ok(Some(WriteReadPath::Point(handle)));
     }
+    // Go's write plan costs the index paths beside the table path, through the
+    // same chooser a `SELECT` reaches (`tryUpdatePointPlan` falls through to
+    // the ordinary `DataSource`). When the winner is an index, read through it;
+    // otherwise fall back to the clustered-handle table path below, unchanged.
+    if let Some(index_path) = write_index_range_path(table, &columns, stmt.where_clause, name, zone)
+    {
+        return Ok(Some(index_path));
+    }
     Ok(
         write_handle_ranges(catalog, database, name, stmt.where_clause, zone)
             .map(|(ranges, estimate)| WriteReadPath::Ranges(ranges, estimate)),
     )
+}
+
+/// The index range a single-table `UPDATE`/`DELETE` should read through, when
+/// the cost chooser prefers an index over the table path -- Go's write plan
+/// reusing the read side's `findBestTask`.
+///
+/// Returns `Some` only when the winner is an INDEX; a table-path winner (the
+/// clustered handle, or nothing) is left to [`write_handle_ranges`] so that
+/// path's estimate and its `skipNull` handling are unchanged. Every column is
+/// declared needed, because a write reads the whole row to act on it -- Go's
+/// write is always a double read -- so the index never covers and the chooser
+/// prices it honestly.
+fn write_index_range_path(
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+    where_clause: Option<&tidb_ast::Expr>,
+    table_name: &str,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<WriteReadPath> {
+    let where_clause = where_clause?;
+    let resolver = TableResolver {
+        table_name,
+        columns,
+        zone: zone.clone(),
+    };
+    let needed: Vec<usize> = (0..columns.len()).collect();
+    let hints = crate::index_hints::AvailablePaths::unrestricted();
+    let paths = crate::access_cost::enumerate_paths(
+        table,
+        columns,
+        Some(where_clause),
+        &needed,
+        &resolver,
+        None,
+        None,
+        &hints,
+        false,
+    );
+    let best = crate::access_cost::choose_access_path(paths, None, false)?;
+    match best.index {
+        Some((index_id, ranges)) => {
+            Some(WriteReadPath::IndexRanges(index_id, ranges, best.estimate))
+        }
+        None => None,
+    }
 }
 
 /// The handle ranges a single-table `UPDATE`/`DELETE` reads through, and the

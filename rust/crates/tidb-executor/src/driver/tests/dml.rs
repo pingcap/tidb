@@ -7,6 +7,68 @@
 
 use super::*;
 
+/// Go plans an `UPDATE`/`DELETE`'s read from the same cost chooser a `SELECT`
+/// reaches, so a `WHERE` on a secondary index reads through that index rather
+/// than scanning the whole table. `EXPLAIN` prints the `IndexRangeScan`, and
+/// the write still removes exactly the rows the `WHERE` admits.
+#[test]
+fn a_delete_on_a_secondary_index_reads_through_it() {
+    use crate::explain::{explain_delete_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, c3 INT, INDEX c2 (c2))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO t1 VALUES (1, 10, 100), (2, 20, 200), (3, 10, 300)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    // EXPLAIN reads the index, not the table.
+    let stmt = tidb_parser::parse("DELETE FROM t1 WHERE c2 = 10").unwrap();
+    let Stmt::Dml(dml) = &stmt else {
+        panic!("not a DML statement");
+    };
+    let tidb_ast::DmlStmt::Delete(delete) = &**dml else {
+        panic!("not a DELETE");
+    };
+    let (_, rows) =
+        explain_delete_stmt(delete, &mut catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let cell = |datum: &Datum| match datum {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| row.iter().map(cell).collect::<Vec<_>>().join("\t"))
+        .collect();
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("IndexRangeScan") && line.contains("index:c2(c2)")),
+        "the delete reads through index c2, got {plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|line| line.contains("TableFullScan")),
+        "no full scan remains, got {plan:?}"
+    );
+
+    // Executing it removes exactly the two c2 = 10 rows, index entries and all,
+    // proving the index-range read fetched the right records.
+    assert_eq!(
+        run_delete_on("DELETE FROM t1 WHERE c2 = 10", &mut catalog, &ctx).unwrap(),
+        2
+    );
+    assert_eq!(
+        run_select_on("SELECT c1 FROM t1 ORDER BY c1", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(2)]]
+    );
+}
+
 /// A bare integer in `UPDATE`/`DELETE ... ORDER BY` is a POSITIONAL
 /// reference to the table's own column at that 1-based position, not a
 /// constant. Captured via `zz_dump_parity_test.go`
