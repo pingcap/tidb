@@ -194,6 +194,18 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 			// whether or not the inner plan is correlated. Scaling the product down by the
 			// NDV of the correlated columns, as this used to do, applied that selectivity a
 			// second time and underestimated the join by roughly that NDV.
+			//
+			// For a LATERAL join like:
+			//   SELECT o.k1, f.k2
+			//   FROM outer_t o
+			//   JOIN LATERAL (
+			//       SELECT t2.k2 FROM inner_t t2 WHERE t2.k1 = o.k1
+			//   ) f;
+			//
+			// assume outer_t has 600 rows and 30 distinct k1 values, and inner_t has 1500 rows
+			// over the same 30 distinct k1 values. The right side has already applied
+			// `t2.k1 = o.k1`, so rightProfile.RowCount is 1500 / 30 = 50, not 1500.
+			// The Apply output should be 600 * 50 rows.
 			rowCount = leftProfile.RowCount * rightProfile.RowCount
 		}
 		if la.JoinType == base.LeftOuterJoin {
