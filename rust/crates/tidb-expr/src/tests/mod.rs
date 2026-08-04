@@ -1917,15 +1917,63 @@ fn weight_string_and_load_file_source_vectors() {
 fn hex_and_bit_literals_are_binary_literals_in_a_numeric_context() {
     for (expr, want) in [
         ("0x1A + 1", "UINT:27"),
-        ("b'101' + 1", "UINT:6"),
+        // A BIT literal is SIGNED (`types.DefaultTypeForValue` adds
+        // `UnsignedFlag` for Hex and Binary literals, not for Bit), so its
+        // arithmetic answers INT where a hex literal's answers UINT.
+        ("b'101' + 1", "INT:6"),
         ("abs(b'11')", "FLOAT:3"),
         ("0x1A > 25", "INT:1"),
         ("0xFF + 0", "UINT:255"),
-        ("b'' + 0", "UINT:0"),
+        ("b'' + 0", "INT:0"),
         ("0x1A * 2", "UINT:52"),
         ("0x1A div 2", "UINT:13"),
         ("0x20000000000000 + 1", "UINT:9007199254740993"),
-        ("b'11' + b'11'", "UINT:6"),
+        ("b'11' + b'11'", "INT:6"),
+        // The one literal whose top bit is set, where the signedness is a
+        // different VALUE and not only a different label. Every row here is
+        // what a real TiDB session answered.
+        (
+            "b'1111111111111111111111111111111111111111111111111111111111111111' + 0",
+            "INT:-1",
+        ),
+        (
+            "b'1111111111111111111111111111111111111111111111111111111111111111' - 1",
+            "INT:-2",
+        ),
+        (
+            "b'1111111111111111111111111111111111111111111111111111111111111111' * -1",
+            "INT:1",
+        ),
+        (
+            "b'1111111111111111111111111111111111111111111111111111111111111111' div 2",
+            "INT:0",
+        ),
+        (
+            "b'1111111111111111111111111111111111111111111111111111111111111111' mod 3",
+            "INT:-1",
+        ),
+        (
+            "b'1111111111111111111111111111111111111111111111111111111111111111' + b'1'",
+            "INT:0",
+        ),
+        ("x'ffffffffffffffff' + 0", "UINT:18446744073709551615"),
+        // DIVISION and any DECIMAL/REAL operand keep the UNSIGNED reading:
+        // `/` picks a decimal signature, so Go wraps the operand with
+        // `WrapWithCastAsDecimal`, and `Datum.ToDecimal` reads the octets
+        // unsigned whatever the field type says.
+        (
+            "b'1111111111111111111111111111111111111111111111111111111111111111' / 2",
+            "DEC:9223372036854775807.5000",
+        ),
+        (
+            "b'1111111111111111111111111111111111111111111111111111111111111111' + 0.0",
+            "DEC:18446744073709551615.0",
+        ),
+        // A COMPARISON is a third rule again and is unchanged.
+        (
+            "b'1111111111111111111111111111111111111111111111111111111111111111' > 0",
+            "INT:1",
+        ),
         ("0x0A + 0x0A", "UINT:20"),
         // The string context is unchanged: a literal is still its octets.
         ("concat(0x41, 'x')", "STR:Ax"),
@@ -1936,6 +1984,20 @@ fn hex_and_bit_literals_are_binary_literals_in_a_numeric_context() {
         ("0x41 = 'A'", "INT:1"),
     ] {
         assert_eq!(e(expr), want, "{expr}");
+    }
+    // The CHUNK tier reads the same signedness off the operand's real
+    // `FieldType` where this tier reads it off the AST node, so the two must
+    // agree on the rows where the two literal forms diverge.
+    for (expr, want) in [
+        (
+            "b'1111111111111111111111111111111111111111111111111111111111111111' + 0",
+            "INT:-1",
+        ),
+        ("x'ffffffffffffffff' + 0", "UINT:18446744073709551615"),
+        ("b'101' + 1", "INT:6"),
+        ("0x1A + 1", "UINT:27"),
+    ] {
+        assert_eq!(chunk_e(expr), want, "{expr} (chunk tier)");
     }
     // `-0x1A` is Go's -26; only the label's TYPE differs between this tier
     // and the chunk tier, which `gorun` cannot distinguish, so the value is

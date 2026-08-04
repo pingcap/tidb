@@ -385,6 +385,17 @@ pub(crate) use tidb_datatype::{Datum, Decimal};
 use tidb_ast::{CastStyle, Expr, GetFormatSelector, IsTarget};
 
 use binary_literal::{bit_literal_value, hex_literal_value};
+
+/// Whether this AST node is a BIT literal, whose `types.DefaultTypeForValue`
+/// arm is the one that does NOT add `mysql.UnsignedFlag` -- the AST tier's
+/// stand-in for the `FieldType` the chunk tier reads instead.
+fn is_signed_binary_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Bit(_) => true,
+        Expr::Paren(inner) => is_signed_binary_literal(inner),
+        _ => false,
+    }
+}
 use coerce::{bool_int, coerce_str, coerce_str_bytes};
 use func::{eval_func, eval_in_list, negate_if};
 use like::like_match;
@@ -604,13 +615,21 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
                 .collect::<Result<_, _>>()?;
             row_compare(*op, &lv, &rv)
         }
-        Expr::Binary(op, l, r) => eval_binary_with_div_precision(
-            *op,
-            eval_in(l, cols)?,
-            eval_in(r, cols)?,
-            cols.div_precision_increment(),
-            cols,
-        ),
+        Expr::Binary(op, l, r) => {
+            // Go's `DefaultTypeForValue` gives a BIT literal a SIGNED field
+            // type and a HEX one an unsigned one, and the arithmetic classes
+            // are the only place that difference is reachable. This tier has
+            // no `FieldType` at all, so the AST node itself is the type
+            // fact -- see `binary_literal::cast_signed_literal_operands`.
+            let signed = [is_signed_binary_literal(l), is_signed_binary_literal(r)];
+            let (left, right) = binary_literal::cast_signed_literal_operands(
+                *op,
+                eval_in(l, cols)?,
+                eval_in(r, cols)?,
+                signed,
+            );
+            eval_binary_with_div_precision(*op, left, right, cols.div_precision_increment(), cols)
+        }
         // A constant `RAND(N)` has state per function occurrence for the
         // whole statement. The function node's address is stable while this
         // parsed statement is evaluated; an argument-slice view is not,

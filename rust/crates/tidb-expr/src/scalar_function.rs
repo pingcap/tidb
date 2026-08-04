@@ -363,6 +363,17 @@ impl ScalarFunction {
             if self.args.len() == 2 {
                 let lhs = self.args[0].eval(ctx, row)?;
                 let rhs = self.args[1].eval(ctx, row)?;
+                // A binary-literal operand carries its signedness in its own
+                // `FieldType` and nowhere else -- `binary_literal_type(len,
+                // false)` for `b'..'`, `true` for `0x..`/`x'..'`. See
+                // `binary_literal::cast_signed_literal_operands`.
+                let signed = [0, 1].map(|index| {
+                    self.args[index]
+                        .static_type()
+                        .is_some_and(|ft| !ft.is_unsigned())
+                });
+                let (lhs, rhs) =
+                    crate::binary_literal::cast_signed_literal_operands(op, lhs, rhs, signed);
                 // The statement context travels with the operands, so a
                 // zero divisor reaches the same warning/error policy the AST
                 // evaluator applies.

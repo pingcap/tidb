@@ -16,10 +16,7 @@
 //! evaluate today, so putting them in the corpus would only turn the
 //! differential gate red without adding information.
 //!
-//! Each guard pins TODAY's behavior and carries the Go answer beside it. A
-//! held-out row need not be one that fails to evaluate -- one of them
-//! evaluates to the wrong SIGNEDNESS, which is exactly the kind of gap a
-//! corpus row would only turn into an unexplained red line. The
+//! Each guard pins TODAY's behavior and carries the Go answer beside it. The
 //! point is that the gap cannot close silently: the day `tidb-expr` learns to
 //! evaluate one of these, its assertion here fails and the reader is sent back
 //! to the corpus topic to move the row into the executable set.
@@ -27,9 +24,13 @@
 //! Mirrors the hold-out list in `corpus/expr/int_arithmetic_source.txt`, which
 //! is itself the tail of `pkg/expression/builtin_arithmetic_test.go`'s tables.
 //!
-//! The mechanism has fired once already: the HEX arithmetic row left this
+//! The mechanism has fired twice already. The HEX arithmetic row left this
 //! file for the executable corpus when `binary_literal.rs` started producing
-//! Go's `KindBinaryLiteral`.
+//! Go's `KindBinaryLiteral`, and the BIT arithmetic row followed it when the
+//! arithmetic classes learned to read the operand's UNSIGNED FLAG rather
+//! than its datum kind -- taking eight more captured rows with it, including
+//! the `/` one that stays UNSIGNED because a decimal signature reads the
+//! same octets a different way.
 
 use tidb_ast::{QueryStmt, SelectField, Stmt};
 
@@ -49,35 +50,6 @@ fn eval_label(expr: &str) -> Result<String, String> {
             .map_err(|e| format!("{e:?}")),
         _ => Err("no field expression".to_owned()),
     }
-}
-
-/// `TestArithmeticPlus`'s `types.NewBitLiteral` row evaluates now, but with
-/// the wrong SIGNEDNESS.
-///
-/// Go's `DefaultTypeForValue` adds `mysql.UnsignedFlag` for a `HexLiteral`
-/// and a `BinaryLiteral` and NOT for a `BitLiteral`
-/// (`pkg/types/field_type.go:284-301`), so `b''` arithmetic is SIGNED: `goeval`
-/// says `b'00011' + 1` is INT:4 and `b'<64 ones>' + 0` is INT:-1, where both
-/// tiers here answer UINT. The distinction lives in the operand's FieldType,
-/// never in its datum kind -- Go stores BOTH literals as `KindBinaryLiteral`
-/// -- so `coerce::integer_of`, which sees only the kind, cannot make it. The
-/// AST tier carries no FieldType at all; the CHUNK tier does build the signed
-/// type (`rewriter.rs`'s `binary_literal_type(len, false)`) and still answers
-/// UINT, so closing this means reading the operand's unsigned flag in the
-/// arithmetic dispatch rather than the datum's kind.
-#[test]
-fn bit_literal_arithmetic_is_still_unsigned() {
-    // Go: INT:4
-    assert_eq!(eval_label("b'00011' + 1").as_deref(), Ok("UINT:4"));
-    // Go: INT:-1 -- the row where the signedness is a WRONG VALUE and not
-    // only a wrong label.
-    assert_eq!(
-        eval_label("b'1111111111111111111111111111111111111111111111111111111111111111' + 0")
-            .as_deref(),
-        Ok("UINT:18446744073709551615"),
-        "bit-literal arithmetic is signed now; move the row into \
-         corpus/expr/int_arithmetic_source.txt and regenerate its golden"
-    );
 }
 
 /// `TestArithmeticMod`'s `types.Duration{45296s}` row: a TIME operand takes its

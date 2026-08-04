@@ -40,22 +40,25 @@
 ## tests about which builtin*Sig or tipb.ScalarFuncSig was CHOSEN, which
 ## observes dispatch rather than the value.
 ##
-## Two further rows are held out; each is pinned, with the Go answer above,
+## One further row is held out; it is pinned, with the Go answer above,
 ## by a running guard in
 ## `difftests/result-tests/tests/expr_corpus_holdouts.rs`, so the gap fails
 ## loudly the day it closes rather than staying invisible:
 ##
-##   b'00011' + 1                         Go INT:4
 ##   mod(cast('12:34:56' as time), 122)   Go INT:114
 ##
-## The last needs `CAST(... AS TIME)`. The first EVALUATES today but with the
-## wrong SIGNEDNESS: Go's `DefaultTypeForValue` adds `UnsignedFlag` for a
-## `HexLiteral` and a `BinaryLiteral` but NOT for a `BitLiteral`
-## (`pkg/types/field_type.go:284-301`), so `b'<64 ones>' + 0` is INT:-1 in Go
-## and UINT:18446744073709551615 here. The distinction lives in the operand's
-## FieldType, not in its datum kind -- both literals are `KindBinaryLiteral`
-## -- and this tier carries no FieldType at all, so the row stays out until
-## the signedness is read from the type rather than from the kind.
+## It needs `CAST(... AS TIME)`.
+##
+## The BIT-literal arithmetic row left that hold-out list for the executable
+## rows below when the arithmetic classes learned to read the operand's
+## UNSIGNED FLAG rather than its datum kind: Go's `DefaultTypeForValue` adds
+## `UnsignedFlag` for a `HexLiteral` and a `BinaryLiteral` and NOT for a
+## `BitLiteral` (`pkg/types/field_type.go:284-301`), so `b'<64 ones>' + 0` is
+## INT:-1 while `x'ffffffffffffffff' + 0` is UINT:18446744073709551615. Both
+## literals are the same datum kind (`KindBinaryLiteral`) and the same
+## octets; only the FieldType differs, and only the ARITHMETIC classes
+## consult it -- `/` picks a decimal signature and reads the same octets
+## unsigned, which is why that row is here too.
 ##
 ## The HEX arithmetic row moved out of this hold-out list and into the
 ## executable set below: `binary_literal.rs` now gives a hex/bit literal Go's
@@ -146,3 +149,12 @@ null % null
 '1231' % 12
 '1231' % '12'
 0x20000000000000 + 1
+b'00011' + 1
+b'1111111111111111111111111111111111111111111111111111111111111111' + 0
+b'1111111111111111111111111111111111111111111111111111111111111111' - 1
+b'1111111111111111111111111111111111111111111111111111111111111111' * -1
+b'1111111111111111111111111111111111111111111111111111111111111111' div 2
+b'1111111111111111111111111111111111111111111111111111111111111111' mod 3
+b'1111111111111111111111111111111111111111111111111111111111111111' + b'1'
+b'1111111111111111111111111111111111111111111111111111111111111111' / 2
+x'ffffffffffffffff' + 0

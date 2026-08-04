@@ -194,7 +194,7 @@ pub(crate) fn coerce_str_bytes(value: &Datum) -> Result<Option<Vec<u8>>, EvalErr
     })
 }
 
-fn binary_literal_value(value: &tidb_datatype::BinaryLiteral) -> u64 {
+pub(crate) fn binary_literal_value(value: &tidb_datatype::BinaryLiteral) -> u64 {
     match value.to_int() {
         BinaryLiteralIntOutcome::Exact(value) | BinaryLiteralIntOutcome::Truncated { value } => {
             value
