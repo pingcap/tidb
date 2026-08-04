@@ -291,9 +291,10 @@ func SubtaskMetaPath(taskID int64, subtaskID int64) string {
 	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), metaName)
 }
 
-// DivideMergeSortDataFiles divides the data files into multiple groups for
-// merge sort. Each group will be assigned to a node for sorting.
-// The number of files in each group is limited to MaxMergeSortFileCountStep.
+// DivideMergeSortDataFiles divides data files into groups, one per merge-sort
+// subtask. It balances groups in rounds of nodeCnt to use all available
+// resources. It also limits each group's input files and caps the total target
+// files so the following ingest step can read them all.
 func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([][]string, error) {
 	if nodeCnt == 0 {
 		return nil, errors.Errorf("unsupported zero node count")
@@ -301,45 +302,45 @@ func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([
 	if len(dataFiles) == 0 {
 		return [][]string{}, nil
 	}
-	adjustedMergeSortFileCountStep := simplesst.GetAdjustedMergeSortFileCountStep(mergeConc)
-	dataFilesCnt := len(dataFiles)
-	result := make([][]string, 0, nodeCnt)
-	batches := len(dataFiles) / adjustedMergeSortFileCountStep
-	rounds := batches / nodeCnt
-	fullGroupCount := rounds * nodeCnt
-	for range fullGroupCount {
-		result = append(result, dataFiles[:adjustedMergeSortFileCountStep])
-		dataFiles = dataFiles[adjustedMergeSortFileCountStep:]
+	maxFiles := simplesst.GetAdjustedMergeSortFileCountStep(mergeConc)
+	fileCnt := len(dataFiles)
+	groups := make([][]string, 0, nodeCnt)
+	// Fill complete rounds first so every available subtask slot has work.
+	fullGroups := fileCnt / maxFiles / nodeCnt * nodeCnt
+	for range fullGroups {
+		groups = append(groups, dataFiles[:maxFiles])
+		dataFiles = dataFiles[maxFiles:]
 	}
-	targetFileCount := fullGroupCount * getTargetDataFileCount(adjustedMergeSortFileCountStep, mergeConc)
-	threshold := int(simplesst.GetAdjustedMergeSortOverlapThreshold(mergeConc))
-	remainder := dataFilesCnt - (fullGroupCount * adjustedMergeSortFileCountStep)
-	if remainder == 0 {
-		if targetFileCount > threshold {
-			return nil, errdef.ErrTooManyDataFiles.GenWithStackByArgs(dataFilesCnt, mergeConc, threshold)
+	targetCnt := fullGroups * getTargetDataFileCount(maxFiles, mergeConc)
+	targetLimit := int(simplesst.GetAdjustedMergeSortOverlapThreshold(mergeConc))
+	remaining := fileCnt - fullGroups*maxFiles
+	if remaining == 0 {
+		if targetCnt > targetLimit {
+			return nil, errdef.ErrTooManyDataFiles.GenWithStackByArgs(fileCnt, mergeConc, targetLimit)
 		}
-		return result, nil
+		return groups, nil
 	}
 
-	minimalFileCount := 32 // Each subtask should merge at least 32 files.
-	maxCandidateNodeCnt := max(min(remainder/minimalFileCount, nodeCnt), 1)
-	minCandidateNodeCnt := (remainder + adjustedMergeSortFileCountStep - 1) / adjustedMergeSortFileCountStep
-	selectedNodeCnt := 0
-	for candidateNodeCnt := maxCandidateNodeCnt; candidateNodeCnt >= minCandidateNodeCnt; candidateNodeCnt-- {
-		candidateTargetFileCount := targetFileCount + getEvenlyDividedTargetDataFileCount(remainder, candidateNodeCnt, mergeConc)
-		if candidateTargetFileCount <= threshold {
-			selectedNodeCnt = candidateNodeCnt
+	minFiles := 32 // Each subtask should merge at least 32 files.
+	maxGroups := max(min(remaining/minFiles, nodeCnt), 1)
+	minGroups := (remaining + maxFiles - 1) / maxFiles
+	remainingGroups := 0
+	// Prefer more groups for parallelism while staying within the ingest limit.
+	for candidateGroups := maxGroups; candidateGroups >= minGroups; candidateGroups-- {
+		finalTargetCnt := targetCnt + getEvenlyDividedTargetDataFileCount(remaining, candidateGroups, mergeConc)
+		if finalTargetCnt <= targetLimit {
+			remainingGroups = candidateGroups
 			break
 		}
 	}
-	if selectedNodeCnt == 0 {
-		return nil, errdef.ErrTooManyDataFiles.GenWithStackByArgs(dataFilesCnt, mergeConc, threshold)
+	if remainingGroups == 0 {
+		return nil, errdef.ErrTooManyDataFiles.GenWithStackByArgs(fileCnt, mergeConc, targetLimit)
 	}
 
-	sizes := mathutil.Divide2Batches(remainder, selectedNodeCnt)
-	for _, size := range sizes {
-		result = append(result, dataFiles[:size])
+	groupSizes := mathutil.Divide2Batches(remaining, remainingGroups)
+	for _, size := range groupSizes {
+		groups = append(groups, dataFiles[:size])
 		dataFiles = dataFiles[size:]
 	}
-	return result, nil
+	return groups, nil
 }

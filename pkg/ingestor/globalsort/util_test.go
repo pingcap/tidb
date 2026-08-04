@@ -532,10 +532,10 @@ func TestDivideMergeSortDataFilesBasic(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result, 250)
 		totalTargetFileCount := 0
-		adjustedMergeSortFileCountStep := simplesst.GetAdjustedMergeSortFileCountStep(16)
+		maxFiles := simplesst.GetAdjustedMergeSortFileCountStep(16)
 		for _, group := range result {
 			require.Len(t, group, 4000)
-			require.LessOrEqual(t, len(group), adjustedMergeSortFileCountStep)
+			require.LessOrEqual(t, len(group), maxFiles)
 			totalTargetFileCount += len(splitDataFiles(group, 16))
 		}
 		require.Equal(t, 4000, totalTargetFileCount)
@@ -543,20 +543,20 @@ func TestDivideMergeSortDataFilesBasic(t *testing.T) {
 }
 
 func TestDivideMergeSortDataFilesSubtaskCount(t *testing.T) {
-	const Concurrency = 16
-	for _, fileCount := range []int{3000, 4000, 40000, 400000, 712345, 1000000} {
-		for _, nodeCount := range []int{1, 3, 7, 16, 30, 60, 97} {
-			dataFiles := make([]string, fileCount)
-			dataFilesGroup, err := DivideMergeSortDataFiles(dataFiles, nodeCount, Concurrency)
+	const mergeConc = 16
+	for _, fileCnt := range []int{3000, 4000, 40000, 400000, 712345, 1000000} {
+		for _, nodeCnt := range []int{1, 3, 7, 16, 30, 60, 97} {
+			dataFiles := make([]string, fileCnt)
+			groups, err := DivideMergeSortDataFiles(dataFiles, nodeCnt, mergeConc)
 			require.NoError(t, err)
-			var totalTargetFileCount int
-			for _, dataFiles := range dataFilesGroup {
-				totalTargetFileCount += len(splitDataFiles(dataFiles, Concurrency))
+			var targetCnt int
+			for _, group := range groups {
+				targetCnt += len(splitDataFiles(group, mergeConc))
 			}
-			t.Logf("nodeCount: %d, fileCount: %d, subtaskCount:%d, totalTargetFileCount: %d",
-				nodeCount, fileCount, len(dataFilesGroup), totalTargetFileCount)
-			require.LessOrEqual(t, len(dataFilesGroup), 250)
-			require.LessOrEqual(t, totalTargetFileCount, 4000)
+			t.Logf("node count: %d, file count: %d, group count: %d, target file count: %d",
+				nodeCnt, fileCnt, len(groups), targetCnt)
+			require.LessOrEqual(t, len(groups), 250)
+			require.LessOrEqual(t, targetCnt, 4000)
 		}
 	}
 }
