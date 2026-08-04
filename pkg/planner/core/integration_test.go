@@ -1857,10 +1857,10 @@ func TestCorColEqProvidesIndexOrder(t *testing.T) {
 
 	// explainOf returns the operator name, task and operator info of each explain row.
 	explainOf := func(sql string) []string {
-		rows := tk.MustQuery("explain format='plan_tree' " + sql).Rows()
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
 		infos := make([]string, 0, len(rows))
 		for _, row := range rows {
-			infos = append(infos, fmt.Sprintf("%v %v %v", row[0], row[1], row[3]))
+			infos = append(infos, fmt.Sprintf("%v %v %v", row[0], row[2], row[4]))
 		}
 		return infos
 	}

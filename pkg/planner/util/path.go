@@ -258,7 +258,6 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			access[i-eqOrInCount] = filter
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
-				usedCnt++
 				path.markConstCol(i)
 			}
 			break
