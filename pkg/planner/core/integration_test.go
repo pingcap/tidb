@@ -1920,6 +1920,8 @@ func TestApplyCacheEnabledByOuterRowCount(t *testing.T) {
 	// tac_uniq.k1 is a primary key, but joining it to tac_fan repeats every value ten times.
 	info = applyCacheInfo("select o.k1, f.k2 from tac_uniq o join tac_fan on tac_fan.k1 = o.k1 " + lateral)
 	require.Contains(t, info, "cache:ON", "a unique key duplicated by a join can still hit the cache")
+}
+
 // TestCorColEqProvidesIndexOrder verifies that an `index_col = correlated_col` access condition
 // pins that column to a single value per execution, so the index columns after it can satisfy an
 // ORDER BY. The inner subquery of the correlated scalar aggregate should then read one row with a
