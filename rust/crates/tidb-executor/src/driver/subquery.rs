@@ -165,7 +165,7 @@ fn collect_correlated_columns(
             ctx,
             None,
             None,
-            &[],
+            crate::driver::leaf_demand::FromDemand::none(),
             &tidb_planner::physical_property::PhysicalProperty::default(),
         ) {
             Ok((_, scope)) => scope,
@@ -693,7 +693,7 @@ pub(crate) fn select_outer_scope(
             ctx,
             None,
             None,
-            &[],
+            crate::driver::leaf_demand::FromDemand::none(),
             &tidb_planner::physical_property::PhysicalProperty::default(),
         ) {
             Ok((_, scope)) => scope,

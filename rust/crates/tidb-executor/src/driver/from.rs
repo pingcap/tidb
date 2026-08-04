@@ -305,7 +305,7 @@ pub(crate) fn build_from(
     current_db: &str,
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
-    offered: crate::driver::predicate_push_down::Offered<'_>,
+    demand: crate::driver::leaf_demand::FromDemand<'_>,
     required: &tidb_planner::physical_property::PhysicalProperty,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
     // Go's `findBestTask(prop)` asks a child for a plan that SATISFIES the
@@ -393,15 +393,57 @@ pub(crate) fn build_from(
                     ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
                     mem.rows.clone(),
                 )),
-                TableEntry::Kv(kv) => Box::new(TableScanExec::new(
-                    ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
-                    restricted_to_partitions(kv, &table_ref.partitions, name)?,
-                    ctx.session_zone(),
-                    // The one production build site: the statement's own
-                    // `DAGRequest.flags` and its warning sink, taken together
-                    // from the context that decided both.
-                    crate::remote_scan::PushdownStatementContext::from_stmt(ctx),
-                )),
+                // Go's `findBestTask` costs an access path for EVERY
+                // `DataSource` of the tree, this leaf included, and answers
+                // its parent with the cheapest. `leaf_index_path` is that
+                // costing. It is offered no condition, so the only path it
+                // can return is a WHOLE covering index -- the same rows the
+                // scan below reads, through a narrower structure.
+                //
+                // Two refusals, both about the ORDER an index walk produces
+                // rather than about the rows:
+                //
+                // * `keep_order` is a parent that DEMANDED the handle's order
+                //   of this scan (`build_join`'s merge decision, made before
+                //   this child existed and unable to re-plan it afterwards).
+                //   An index walk is not that order.
+                // * `demand.columns == None` is a caller with no statement
+                //   above the `FROM`, and a single base table -- which
+                //   `driver::access::commit_fast_path_source` costs WITH its
+                //   `WHERE`, so a second, condition-blind choice here would
+                //   only be the worse of the two.
+                TableEntry::Kv(kv) => {
+                    match demand.columns.filter(|_| !keep_order).and_then(|wanted| {
+                        let hints = crate::index_hints::table_ref_hints(table_ref, kv).ok()?;
+                        crate::driver::access::leaf_index_path(
+                            kv,
+                            &visible,
+                            &columns,
+                            wanted,
+                            &hints,
+                            catalog,
+                            &ctx.session_zone(),
+                        )
+                    }) {
+                        Some(path) => crate::driver::access::leaf_index_source(
+                            kv,
+                            &visible,
+                            &columns,
+                            path,
+                            trace.as_deref_mut(),
+                            &ctx.session_zone(),
+                        ),
+                        None => Box::new(TableScanExec::new(
+                            ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
+                            restricted_to_partitions(kv, &table_ref.partitions, name)?,
+                            ctx.session_zone(),
+                            // The one production build site: the statement's own
+                            // `DAGRequest.flags` and its warning sink, taken
+                            // together from the context that decided both.
+                            crate::remote_scan::PushdownStatementContext::from_stmt(ctx),
+                        )),
+                    }
+                }
                 // Handled above, before the columns were taken.
                 TableEntry::View(_) | TableEntry::Sequence(_) => {
                     unreachable!("views and sequences take the branches above")
@@ -425,7 +467,7 @@ pub(crate) fn build_from(
         JoinNode::Join(join) => {
             // A nested join builds full width: see `build_join`'s `prune`.
             build_join(
-                join, catalog, current_db, ctx, trace, None, offered, required,
+                join, catalog, current_db, ctx, trace, None, demand, required,
             )
         }
         JoinNode::Derived {
@@ -1053,7 +1095,7 @@ pub(crate) fn build_join(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
     prune: Option<&tidb_ast::SelectStmt>,
-    offered: crate::driver::predicate_push_down::Offered<'_>,
+    demand: crate::driver::leaf_demand::FromDemand<'_>,
     required: &tidb_planner::physical_property::PhysicalProperty,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
     // `FROM a, b` parses as the single-relation wrapper AROUND the real join,
@@ -1063,7 +1105,7 @@ pub(crate) fn build_join(
     if join.right.is_none() && join.on.is_none() && join.using.is_empty() && !join.natural {
         if let JoinNode::Join(inner) = &join.left {
             return build_join(
-                inner, catalog, current_db, ctx, trace, prune, offered, required,
+                inner, catalog, current_db, ctx, trace, prune, demand, required,
             );
         }
     }
@@ -1079,7 +1121,11 @@ pub(crate) fn build_join(
     // no caller demands an order from a join yet, and the empty property's
     // `AllSameOrder` is Go's ascending answer.
     let merge = crate::driver::merge_decision::merge_join_decision(
-        join, catalog, current_db, required, offered,
+        join,
+        catalog,
+        current_db,
+        required,
+        demand.offered,
     );
     let (left_required, right_required) = match &merge {
         // `tryToGetChildReqProp`: each child is required to produce ITS OWN
@@ -1112,7 +1158,7 @@ pub(crate) fn build_join(
         current_db,
         ctx,
         trace.as_deref_mut(),
-        offered,
+        demand,
         &left_required,
     )?;
     let Some(right_node) = &join.right else {
@@ -1149,7 +1195,7 @@ pub(crate) fn build_join(
         current_db,
         ctx,
         trace.as_deref_mut(),
-        offered,
+        demand,
         &right_required,
     )?;
 
@@ -1261,7 +1307,7 @@ pub(crate) fn build_join(
     // in `WHERE`, so it can only narrow the pairs the filter above would
     // have narrowed anyway -- see `driver::predicate_push_down`.
     let pushed: Vec<&tidb_ast::Expr> = if join.tp == tidb_ast::JoinType::Cross && !coalescing {
-        crate::driver::predicate_push_down::spanning_conjuncts(offered, &scope, left_width)
+        crate::driver::predicate_push_down::spanning_conjuncts(demand.offered, &scope, left_width)
     } else {
         Vec::new()
     };

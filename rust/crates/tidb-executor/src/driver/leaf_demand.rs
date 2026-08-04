@@ -1,0 +1,591 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Which columns of each base-table LEAF of a `FROM` the statement reads:
+//! Go's `rule_column_pruning.go` delivering every `DataSource` the column set
+//! its parents demand, expressed over the statement text.
+//!
+//! # Why a leaf needs this at all
+//!
+//! Go costs an access path per `DataSource`, and the single input that decides
+//! whether an index path is a SINGLE scan or a double read is
+//! `isCoveringIndex(path.IdxCols, ds.schema.Columns)` -- the columns the
+//! `DataSource`'s parents still need after pruning. A leaf under a join has
+//! exactly the same question to answer as a lone table does, so the same
+//! answer has to reach it; without one, every leaf declares that it needs
+//! every column, no index ever covers, and `TableFullScan` wins by
+//! construction rather than by cost.
+//!
+//! [`crate::column_prune`] cannot supply it. That module NARROWS a source's
+//! output, so it must be exact in both directions and refuses every shape it
+//! cannot prove (any subquery, three or more tables, a derived table). This
+//! one only feeds the COST MODEL: the source it informs still emits the whole
+//! row, so a demand that is too wide costs a covering index as a double read
+//! and falls back to the scan that would have run anyway. That asymmetry is
+//! what lets this analysis be a name-level over-approximation and stay safe.
+//!
+//! # The over-approximation, stated
+//!
+//! A leaf `t` needs its column `c` when ANY of these appears anywhere in the
+//! statement -- select list, `WHERE`, `ON`, `GROUP BY`, `HAVING`, `ORDER BY`,
+//! `LIMIT`, and INSIDE every subquery of all of them:
+//!
+//! * `*`, or `t.*` -- every column of `t`;
+//! * `t.c` or `db.t.c` -- matched on the leaf's VISIBLE name, which is its
+//!   alias when it has one, exactly as a column reference resolves;
+//! * a bare `c` -- charged to EVERY leaf owning a column of that name,
+//!   because which one it resolves to needs the whole `FROM` scope and this
+//!   runs before that scope exists.
+//!
+//! The bare-name rule is the over-approximation, and it is the safe
+//! direction: charging `c` to a leaf that does not own the reference can only
+//! make an index look less covering than it is, which costs the leaf the
+//! ordinary table scan.
+//!
+//! A construct this walk cannot see through does not silently narrow the
+//! answer: it charges every column of every leaf, and therefore reproduces
+//! the behaviour of no analysis at all.
+//!
+//! The [`Expr`] match is EXHAUSTIVE with no wildcard arm, so a new expression
+//! variant is a compile error here rather than a subtree nobody walks -- the
+//! same rule [`crate::column_prune`] holds itself to.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use tidb_ast::{Expr, Join, JoinNode, QueryStmt, SelectField, SelectStmt};
+use tidb_datatype::FieldType;
+
+/// What an enclosing `SELECT` hands down to every relation of its `FROM`:
+/// Go's two pre-physical rules, `rule_predicate_push_down` and
+/// `rule_column_pruning`, travelling together because they travel to the same
+/// places.
+///
+/// Both are `None`/empty for a caller that has no statement above the `FROM`
+/// -- a subquery built through [`crate::driver::from::build_join`] directly,
+/// or a `FROM` with no filter -- which is [`FromDemand::none`].
+#[derive(Clone, Copy)]
+pub(crate) struct FromDemand<'a> {
+    /// The `WHERE` equalities offered to the joins below; see
+    /// [`crate::driver::predicate_push_down`].
+    pub(crate) offered: crate::driver::predicate_push_down::Offered<'a>,
+    /// The columns each base-table leaf must still produce, or `None` when
+    /// the caller has no statement to compute them from -- which every leaf
+    /// reads as "every column", the answer it gave before this existed.
+    pub(crate) columns: Option<&'a LeafDemand>,
+}
+
+impl FromDemand<'_> {
+    /// The demand a caller with nothing to offer passes.
+    pub(crate) fn none() -> Self {
+        FromDemand {
+            offered: &[],
+            columns: None,
+        }
+    }
+}
+
+/// The column names a statement reads, keyed the way a `FROM` leaf can be
+/// named. See the module doc for the rules and for why they may over-count.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct LeafDemand {
+    /// A bare `*`, or a construct this walk cannot see through: every leaf
+    /// needs every column.
+    all: bool,
+    /// `t.*`, keyed by the lowercased qualifier.
+    star_tables: BTreeSet<String>,
+    /// Lowercased column names written with no qualifier.
+    unqualified: BTreeSet<String>,
+    /// Lowercased column names written as `t.c`, keyed by lowercased `t`.
+    qualified: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl LeafDemand {
+    /// The demand a `SELECT`'s clauses place on the leaves of its own `FROM`.
+    pub(crate) fn of_select(select: &SelectStmt) -> Self {
+        let mut demand = LeafDemand::default();
+        demand.add_select(select);
+        demand
+    }
+
+    /// The offsets of `columns` this leaf must still produce, given that it is
+    /// visible under the name `visible`.
+    ///
+    /// The offsets are ascending and unique, which is the shape
+    /// [`crate::access_cost::enumerate_paths`] reads them in.
+    pub(crate) fn needed(&self, visible: &str, columns: &[(String, FieldType)]) -> Vec<usize> {
+        let visible = visible.to_ascii_lowercase();
+        if self.all || self.star_tables.contains(&visible) {
+            return (0..columns.len()).collect();
+        }
+        let qualified = self.qualified.get(&visible);
+        columns
+            .iter()
+            .enumerate()
+            .filter(|(_, (name, _))| {
+                let name = name.to_ascii_lowercase();
+                self.unqualified.contains(&name)
+                    || qualified.is_some_and(|names| names.contains(&name))
+            })
+            .map(|(offset, _)| offset)
+            .collect()
+    }
+
+    /// Records one written column path in whichever of the two spellings it
+    /// used. A path longer than `db.t.c` names nothing this tier resolves.
+    fn add_path(&mut self, path: &[String]) {
+        match path {
+            [name] => {
+                self.unqualified.insert(name.to_ascii_lowercase());
+            }
+            [table, name] | [_, table, name] => {
+                self.qualified
+                    .entry(table.to_ascii_lowercase())
+                    .or_default()
+                    .insert(name.to_ascii_lowercase());
+            }
+            _ => self.all = true,
+        }
+    }
+
+    /// Records a `*` / `t.*` / `db.t.*` wildcard.
+    fn add_wildcard(&mut self, path: &[String]) {
+        match path {
+            [] => self.all = true,
+            [table] | [_, table] => {
+                self.star_tables.insert(table.to_ascii_lowercase());
+            }
+            _ => self.all = true,
+        }
+    }
+
+    /// Adds every column reference of one `SELECT`, its `FROM` included.
+    fn add_select(&mut self, select: &SelectStmt) {
+        // A CTE introduces relation names this walk cannot tell apart from
+        // the leaves below it, and `VALUES`/`WITH ROLLUP`/a `WINDOW` clause
+        // each name columns through machinery outside the expression tree.
+        if select.with.is_some()
+            || !select.values.is_empty()
+            || !select.windows.is_empty()
+            || select.rollup
+        {
+            self.all = true;
+            return;
+        }
+        for field in select.fields.fields() {
+            match field {
+                SelectField::Wildcard(path) => self.add_wildcard(path),
+                SelectField::Expr { expr, alias: _ } => self.add_expr(expr),
+            }
+        }
+        if let Some(join) = &select.from {
+            self.add_join(join);
+        }
+        for predicate in [select.where_clause.as_ref(), select.having.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            self.add_expr(predicate);
+        }
+        for item in &select.group_by {
+            self.add_expr(&item.expr);
+        }
+        for item in &select.order_by {
+            self.add_expr(&item.expr);
+        }
+        if let Some(limit) = &select.limit {
+            self.add_expr(&limit.count);
+            if let Some(offset) = &limit.offset {
+                self.add_expr(offset);
+            }
+        }
+    }
+
+    /// Adds the references a `FROM` tree writes itself: every `ON`, every
+    /// `USING` name, and every derived table's own subquery.
+    fn add_join(&mut self, join: &Join) {
+        // A `USING (a, b)` names the columns by bare name on BOTH sides, and
+        // `NATURAL` names them by the two sides' shared names -- which this
+        // walk cannot enumerate without the catalog.
+        if join.natural {
+            self.all = true;
+        }
+        for name in &join.using {
+            self.unqualified.insert(name.to_ascii_lowercase());
+        }
+        if let Some(on) = &join.on {
+            self.add_expr(on);
+        }
+        self.add_join_node(&join.left);
+        if let Some(right) = &join.right {
+            self.add_join_node(right);
+        }
+    }
+
+    fn add_join_node(&mut self, node: &JoinNode) {
+        match node {
+            // A base table writes no expression of its own.
+            JoinNode::Table(_) => {}
+            JoinNode::Join(join) => self.add_join(join),
+            JoinNode::Derived { subquery, .. } => self.add_query(subquery),
+        }
+    }
+
+    /// Adds a nested query's references, because a correlated one names a
+    /// column of THIS statement's leaves.
+    fn add_query(&mut self, query: &QueryStmt) {
+        match query {
+            QueryStmt::Select(select) => self.add_select(select),
+            // A set operation's terms are `SelectStmt`s reached through a
+            // shape this walk does not model; the fallback names everything.
+            QueryStmt::SetOpr(_) => self.all = true,
+        }
+    }
+
+    /// Adds every column reference inside one expression.
+    ///
+    /// Exhaustive with no wildcard arm on purpose: see the module doc.
+    fn add_expr(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Column(path) => self.add_path(path),
+            Expr::Default(Some(path)) => self.add_path(path),
+            Expr::MatchAgainst {
+                columns,
+                against,
+                modifier: _,
+            } => {
+                for path in columns {
+                    self.add_path(path);
+                }
+                self.add_expr(against);
+            }
+
+            // Leaves: no column can hide inside them.
+            Expr::Int(_)
+            | Expr::Decimal(_)
+            | Expr::Float(_)
+            | Expr::Hex(_)
+            | Expr::Bit(_)
+            | Expr::String(_)
+            | Expr::RawString(_)
+            | Expr::CharsetString { .. }
+            | Expr::Null
+            | Expr::Bool(_)
+            | Expr::Default(None)
+            | Expr::ParamMarker { .. }
+            | Expr::UserVar(_)
+            | Expr::SysVar { .. } => {}
+
+            // A window function's frame and partition live in a `WindowOver`
+            // this walk does not model, so the whole statement falls back.
+            Expr::Window { .. } => self.all = true,
+
+            // Nested queries: a correlated reference inside one names a
+            // column of the leaves this demand is computed for.
+            Expr::Subquery(subquery) => self.add_query(subquery),
+            Expr::Exists { subquery, not: _ } => self.add_query(subquery),
+            Expr::InSubquery {
+                expr,
+                subquery,
+                not: _,
+            } => {
+                self.add_expr(expr);
+                self.add_query(subquery);
+            }
+            Expr::CompareSubquery {
+                op: _,
+                left,
+                all: _,
+                subquery,
+            } => {
+                self.add_expr(left);
+                self.add_query(subquery);
+            }
+
+            // Recursions.
+            Expr::Paren(inner)
+            | Expr::Unary(_, inner)
+            | Expr::Assign { value: inner, .. }
+            | Expr::CharsetBinary { value: inner, .. }
+            | Expr::Interval { value: inner, .. }
+            | Expr::Extract { value: inner, .. }
+            | Expr::WeightString { expr: inner, .. }
+            | Expr::GetFormat { expr: inner, .. }
+            | Expr::Is { expr: inner, .. }
+            | Expr::ConvertUsing { expr: inner, .. }
+            | Expr::Collate { expr: inner, .. } => self.add_expr(inner),
+            Expr::Binary(_, left, right)
+            | Expr::Position {
+                substr: left,
+                str: right,
+            }
+            | Expr::TimestampAdd {
+                interval: left,
+                expr: right,
+                ..
+            }
+            | Expr::TimestampDiff {
+                expr1: left,
+                expr2: right,
+                ..
+            }
+            | Expr::Like {
+                expr: left,
+                pattern: right,
+                ..
+            }
+            | Expr::Regexp {
+                expr: left,
+                pattern: right,
+                ..
+            }
+            | Expr::MemberOf {
+                expr: left,
+                array: right,
+            } => {
+                self.add_expr(left);
+                self.add_expr(right);
+            }
+            Expr::Trim {
+                expr,
+                remstr,
+                direction: _,
+            } => {
+                self.add_expr(expr);
+                if let Some(remstr) = remstr {
+                    self.add_expr(remstr);
+                }
+            }
+            Expr::Row(items)
+            | Expr::Func { args: items, .. }
+            | Expr::GenericFuncCall { args: items, .. }
+            | Expr::Aggregate { args: items, .. } => {
+                for item in items {
+                    self.add_expr(item);
+                }
+            }
+            Expr::GroupConcat { args, order_by, .. } => {
+                for arg in args {
+                    self.add_expr(arg);
+                }
+                for item in order_by {
+                    self.add_expr(&item.expr);
+                }
+            }
+            Expr::In { expr, list, not: _ } => {
+                self.add_expr(expr);
+                for item in list {
+                    self.add_expr(item);
+                }
+            }
+            Expr::Between {
+                expr,
+                low,
+                high,
+                not: _,
+            } => {
+                self.add_expr(expr);
+                self.add_expr(low);
+                self.add_expr(high);
+            }
+            Expr::Case {
+                value,
+                when_clauses,
+                else_clause,
+            } => {
+                if let Some(value) = value {
+                    self.add_expr(value);
+                }
+                for (condition, result) in when_clauses {
+                    self.add_expr(condition);
+                    self.add_expr(result);
+                }
+                if let Some(else_clause) = else_clause {
+                    self.add_expr(else_clause);
+                }
+            }
+            Expr::Cast(cast) => self.add_expr(&cast.expr),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_datatype::FieldTypeCode;
+
+    fn select_of(sql: &str) -> SelectStmt {
+        let stmt = tidb_parser::parse(sql).expect("the test statement parses");
+        let tidb_ast::Stmt::Query(query) = stmt else {
+            panic!("the test statement is a query");
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("the test statement is a SELECT");
+        };
+        (**select).clone()
+    }
+
+    fn columns(names: &[&str]) -> Vec<(String, FieldType)> {
+        names
+            .iter()
+            .map(|name| ((*name).to_owned(), FieldType::new(FieldTypeCode::LongLong)))
+            .collect()
+    }
+
+    fn needed_of(sql: &str, visible: &str, names: &[&str]) -> Vec<usize> {
+        LeafDemand::of_select(&select_of(sql)).needed(visible, &columns(names))
+    }
+
+    /// The whole point: a leaf under a join is charged only the columns its
+    /// own name reaches, so a two-column index can cover it.
+    #[test]
+    fn a_join_leaf_is_charged_only_its_own_qualified_columns() {
+        assert_eq!(
+            needed_of(
+                "select t1.a, t2.b from t1 join t2 on t1.c = t2.c",
+                "t1",
+                &["a", "b", "c"]
+            ),
+            vec![0, 2],
+            "t1 contributes a and c; t2.b is charged to t2"
+        );
+        assert_eq!(
+            needed_of(
+                "select t1.a, t2.b from t1 join t2 on t1.c = t2.c",
+                "t2",
+                &["a", "b", "c"]
+            ),
+            vec![1, 2]
+        );
+    }
+
+    /// The alias is the name a column reference resolves through, so it is
+    /// the name the demand is keyed by.
+    #[test]
+    fn an_alias_is_the_name_the_demand_is_keyed_by() {
+        assert_eq!(
+            needed_of(
+                "select x.a from t1 x, t2 y where y.b = x.b",
+                "x",
+                &["a", "b"]
+            ),
+            vec![0, 1]
+        );
+        assert_eq!(
+            needed_of(
+                "select x.a from t1 x, t2 y where y.b = x.b",
+                "t1",
+                &["a", "b"]
+            ),
+            Vec::<usize>::new(),
+            "the written name no longer reaches an aliased table"
+        );
+    }
+
+    /// A bare name is charged to every leaf that owns one -- the stated
+    /// over-approximation, and the direction that cannot mis-plan.
+    #[test]
+    fn a_bare_column_name_is_charged_to_every_leaf_that_has_it() {
+        assert_eq!(
+            needed_of("select a from t1 join t2 on t1.c = t2.c", "t2", &["a", "c"]),
+            vec![0, 1],
+            "`a` may belong to t2, so t2 is charged for it"
+        );
+    }
+
+    /// A wildcard names every column, which is exactly the answer no
+    /// analysis would have given.
+    #[test]
+    fn a_wildcard_names_every_column() {
+        assert_eq!(
+            needed_of(
+                "select * from t1 join t2 on t1.c = t2.c",
+                "t1",
+                &["a", "b", "c"]
+            ),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            needed_of(
+                "select t1.* from t1 join t2 on t1.c = t2.c",
+                "t1",
+                &["a", "b", "c"]
+            ),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            needed_of(
+                "select t1.* from t1 join t2 on t1.c = t2.c",
+                "t2",
+                &["a", "b", "c"]
+            ),
+            vec![2],
+            "the other side of `t1.*` is still charged only its ON column"
+        );
+    }
+
+    /// A correlated reference lives inside a subquery, and it names a column
+    /// of THIS statement's leaf -- so the walk descends into one.
+    #[test]
+    fn a_correlated_reference_inside_a_subquery_is_charged_to_its_leaf() {
+        assert_eq!(
+            needed_of(
+                "select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1",
+                "t1",
+                &["c1", "c2", "c3"]
+            ),
+            vec![0, 1],
+            "c1 is reached only through the subquery's correlated equality"
+        );
+    }
+
+    /// A derived table in the FROM contributes its subquery's references,
+    /// and its own alias is charged nothing a base leaf would answer for.
+    #[test]
+    fn a_derived_table_contributes_its_subquerys_references() {
+        assert_eq!(
+            needed_of(
+                "select t1.a, dt.k from t1, (select t2.a as k from t2 join t3 on t2.b = t3.b) dt \
+                 where t1.a = dt.k",
+                "t2",
+                &["a", "b", "c"]
+            ),
+            vec![0, 1]
+        );
+    }
+
+    /// An unwalkable construct falls back to the demand that names
+    /// everything, never to a narrower one.
+    #[test]
+    fn an_unwalkable_construct_falls_back_to_everything() {
+        assert_eq!(
+            needed_of(
+                "select row_number() over (partition by t1.b) from t1 join t2 on t1.c = t2.c",
+                "t1",
+                &["a", "b", "c"]
+            ),
+            vec![0, 1, 2],
+            "a window function's OVER clause is not walked, so nothing is pruned"
+        );
+    }
+
+    /// `USING` names its columns on both sides by bare name.
+    #[test]
+    fn using_names_its_columns_on_both_sides() {
+        assert_eq!(
+            needed_of("select t1.a from t1 join t2 using (c)", "t2", &["a", "c"]),
+            vec![1],
+            "USING names `c` on both sides; `a` was written qualified to t1"
+        );
+    }
+}

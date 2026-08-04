@@ -580,6 +580,136 @@ pub(crate) fn choose_index_range_path(
     }
 }
 
+/// The covering index a LEAF of a multi-table `FROM` reads instead of its
+/// table, when Go's chooser prefers one; `None` leaves the whole-table scan
+/// the leaf builder already installed.
+///
+/// # Why a leaf gets a choice at all
+///
+/// Go's `findBestTask` recurses through a `LogicalJoin` into EVERY
+/// `DataSource` below it, and each one enumerates and costs its own access
+/// paths. There is no separate rule for a table under a join: the join asks
+/// its children for a plan and a child answers with the cheapest path it
+/// has. This is that recursion, expressed where this tier builds the leaf.
+///
+/// # Why no `WHERE` reaches it, and why that is the safe half
+///
+/// The conditions of a leaf under a join arrive from three places -- the
+/// statement's `WHERE`, the join's own `ON`, and an equality another leaf
+/// supplies -- and which of them may narrow a given leaf depends on which
+/// side of which outer join that leaf sits on. None of them is passed here.
+/// The consequence is exactly the restriction that makes this safe: with no
+/// condition, the only index path the enumeration can produce is the WHOLE
+/// index, which reads every row of the table the table scan would have read.
+/// So the choice changes which physical structure the rows arrive through
+/// and nothing else -- Go's `IndexFullScan` over a covering index, the read
+/// it prints wherever an index is narrower than the row.
+///
+/// The row ORDER does change (index order, not handle order), which is why
+/// [`crate::driver::from::build_from`] declines the choice for a leaf whose
+/// parent demanded an order of it.
+pub(crate) fn leaf_index_path(
+    table: &KvTable,
+    visible: &str,
+    columns: &[(String, FieldType)],
+    demand: &crate::driver::leaf_demand::LeafDemand,
+    hints: &crate::index_hints::AvailablePaths,
+    catalog: &Catalog,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<LeafIndexPath> {
+    // A partitioned leaf would need the pruning this call site has no
+    // conditions to run, and Go's `hasPartitionScan` penalty with it.
+    if table.partition().is_some() {
+        return None;
+    }
+    // Go's `isCoveringIndex(path.IdxCols, ds.schema.Columns)`: the columns
+    // this leaf's parents still read after `rule_column_pruning`.
+    let needed = demand.needed(visible, columns);
+    let resolver = TableResolver {
+        table_name: visible,
+        columns,
+        zone: zone.clone(),
+    };
+    let stats = catalog.table_statistics(table.table_id);
+    let stats = stats.as_ref().map(AsRef::as_ref);
+    let paths = crate::access_cost::enumerate_paths(
+        table, columns, None, &needed, &resolver, None, stats, hints, false, false,
+    );
+    let best = crate::access_cost::choose_access_path(paths, stats, false)?;
+    let (index_id, ranges) = best.index?;
+    // Stated as a guard rather than assumed: with no `WHERE` to detach, the
+    // enumeration has nothing to narrow an index with, so anything other than
+    // the whole index would mean this call site is reading a path it did not
+    // ask for.
+    if ranges.len() != 1 || !ranges[0].is_full() {
+        return None;
+    }
+    Some(LeafIndexPath {
+        index_id,
+        ranges,
+        estimate: best.estimate,
+    })
+}
+
+/// The whole-index path a join leaf committed to: what
+/// [`leaf_index_path`] decided and [`leaf_index_source`] then builds.
+pub(crate) struct LeafIndexPath {
+    index_id: i64,
+    ranges: Vec<IndexRange>,
+    estimate: crate::access_cost::ScanEstimate,
+}
+
+/// The streaming source and the `EXPLAIN` node for an index path a leaf
+/// committed to, replacing the whole-table scan
+/// [`crate::driver::from::build_from`] installed for it.
+///
+/// This is [`commit_index_range_source`] for the leaf position. It records
+/// no `IndexAccessOrder`: that answer belongs to the single-table pipeline,
+/// where a `LIMIT` under a matching `ORDER BY` reads it, and a join leaf has
+/// no such caller.
+pub(crate) fn leaf_index_source(
+    table: &KvTable,
+    visible: &str,
+    columns: &[(String, FieldType)],
+    path: LeafIndexPath,
+    trace: Option<&mut PlanTrace>,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Box<dyn Executor> {
+    let LeafIndexPath {
+        index_id,
+        ranges,
+        estimate,
+    } = path;
+    let exec = IndexRangeSourceExec::new(
+        ExecutorMeta::new(
+            Schema::new(source_schema_columns(columns)),
+            0,
+            INIT_CAP,
+            MAX_CHUNK_SIZE,
+        ),
+        table.clone(),
+        index_id,
+        ranges,
+        zone.clone(),
+    );
+    if let Some(trace) = trace {
+        let index = table
+            .indexes()
+            .iter()
+            .find(|index| index.id == index_id)
+            .expect("the chosen path names an index of this table");
+        let index_columns: Vec<String> = index
+            .column_offsets
+            .iter()
+            .map(|offset| index_key_part_name(table, *offset))
+            .collect();
+        let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
+        trace.index_full_scan(visible, &index.name, &index_columns, estimate);
+        trace.set_scan_act_rows(exec.produced_rows());
+    }
+    Box::new(exec)
+}
+
 /// The partitions a single-table `SELECT`'s `WHERE` proves it has to read,
 /// or `None` when nothing narrows them.
 ///

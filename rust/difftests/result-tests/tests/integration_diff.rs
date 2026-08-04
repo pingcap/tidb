@@ -1189,7 +1189,7 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // remaining 4 are `index_lookup_pushdown(t, idx)`, a scan hint
     // `index_hints` does not resolve, which in Go sets `path.Forced` and so
     // keeps a NON-covering index alive through `skylinePruning`'s `keepIndex`.
-    const KNOWN_DIVERGENCES: usize = 49;
+    const KNOWN_DIVERGENCES: usize = 46;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

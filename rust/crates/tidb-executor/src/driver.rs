@@ -192,6 +192,7 @@ mod from;
 pub(crate) mod funcdep;
 mod grouping;
 pub mod infoschema_meta;
+pub(crate) mod leaf_demand;
 mod merge_decision;
 mod multi_dml;
 mod only_full_group_by;
@@ -438,6 +439,19 @@ pub(crate) fn run_select_traced(
             // build the cross product the filter would then throw away. See
             // `driver::predicate_push_down`.
             let offered = predicate_push_down::offered_conjuncts(select.where_clause.as_ref());
+            // Go's `rule_column_pruning`: what every `DataSource` below still
+            // has to produce, which is the input its access-path costing
+            // needs (`isCoveringIndex`). A `FROM` of ONE base table is
+            // deliberately excluded -- `commit_fast_path_source` below costs
+            // that table's paths WITH its `WHERE`, and a second, condition-
+            // blind choice here could only be the worse of the two.
+            let wanted = access::single_kv_table(&select.from, catalog, current_db)
+                .is_none()
+                .then(|| leaf_demand::LeafDemand::of_select(select));
+            let demand = leaf_demand::FromDemand {
+                offered: &offered,
+                columns: wanted.as_ref(),
+            };
             let (exec, scope) = build_join(
                 join,
                 catalog,
@@ -445,7 +459,7 @@ pub(crate) fn run_select_traced(
                 ctx,
                 trace.as_deref_mut(),
                 Some(select),
-                &offered,
+                demand,
                 &tidb_planner::physical_property::PhysicalProperty::default(),
             )?;
             (Some(exec), scope)
