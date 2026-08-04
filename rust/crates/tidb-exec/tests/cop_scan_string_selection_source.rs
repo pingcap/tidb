@@ -484,6 +484,11 @@ fn a_refused_string_comparison_still_answers_right_and_sends_the_whole_relation(
 /// is EMPTY: TiKV prefers a non-empty NAME and can only load one a zone
 /// database knows, so `"+08:00"` sent as a name is a name that does not
 /// resolve. A named zone sends its name and its offset at this instant.
+///
+/// The row table itself lives in `crate::dag_zone_contract`, shared with the
+/// OTHER node type that stamps a DAG request
+/// (`real_tikv_read_source::set_time_zone_threads_into_every_subsequent_dag_request`),
+/// so the two cannot drift apart: they are one assertion run twice.
 #[test]
 fn each_request_carries_the_issuing_statements_time_zone() {
     let zoned = |zone: tidb_expr::SessionTimeZone| {
@@ -493,33 +498,7 @@ fn each_request_carries_the_issuing_statements_time_zone() {
             .expect("the scan is served by the coprocessor");
         sole_observation(&region).time_zone
     };
-
-    assert_eq!(
-        zoned(tidb_expr::SessionTimeZone::utc()),
-        ("UTC".to_owned(), 0)
-    );
-    assert_eq!(
-        zoned(tidb_expr::SessionTimeZone::Fixed {
-            name: "+08:00".to_owned(),
-            offset_secs: 8 * 3600,
-        }),
-        (String::new(), 8 * 3600),
-        "Go sends a fixed offset with an EMPTY name, because `+08:00` is no \
-         zone a database can load"
-    );
-    assert_eq!(
-        zoned(tidb_expr::SessionTimeZone::Fixed {
-            name: "-06:30".to_owned(),
-            offset_secs: -(6 * 3600 + 30 * 60),
-        }),
-        (String::new(), -(6 * 3600 + 30 * 60))
-    );
-    // A named zone keeps its name: only a name carries daylight saving, which
-    // is why Go prefers it over the offset whenever there is one.
-    assert_eq!(
-        zoned(tidb_expr::SessionTimeZone::Named(chrono_tz::Tz::Asia__Shanghai)).0,
-        "Asia/Shanghai".to_owned()
-    );
+    crate::dag_zone_contract::assert_go_dag_zone_contract("cop_scan", |zone| zoned(zone.clone()));
 }
 
 /// Go `distsql.RequestBuilder.SetFromSessionVars`, which every read in

@@ -375,6 +375,7 @@ pub use build::{BuildContext, BuiltStringLength, StringLengthFunction, StringLen
 pub use coerce::truthy_of;
 pub use context::{
     Columns, ErrorLevel, EvalError, JsonError, NoColumns, SequenceEvalError, SessionTimeZone,
+    ZonedNoColumns,
 };
 pub use grouping::{GroupingFunction, GroupingMetadata, GroupingMetadataError, GroupingMode};
 pub use like::{ilike_match, like_match_with_collation};

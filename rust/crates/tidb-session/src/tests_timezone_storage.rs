@@ -615,3 +615,96 @@ fn a_timestamp_literal_folds_in_the_sessions_time_zone() {
         [["2011-11-06 01:00:00.000000"]]
     );
 }
+
+/// A VIRTUAL generated column's expression is REBUILT by the reading
+/// session, so a `TIMESTAMP 'lit'` inside it folds in the READER's zone --
+/// while its STORED twin keeps the value the WRITER computed.
+///
+/// Go keeps the AST (`ColumnInfo.GeneratedExpr`) and rewrites it per
+/// statement (`logical_plan_builder.go`'s `b.rewrite(ctx,
+/// columns[i].GeneratedExpr.Clone(), ds, nil, true)`); it does NOT keep a
+/// compiled expression on the table. Building once at `CREATE TABLE` time and
+/// keeping the result froze the DDL session's zone into every later read.
+///
+/// Captured from real TiDB (`gorun`, 2026-08-04), one table created under
+/// `+05:00` and read from three sessions:
+///
+/// ```text
+/// create table g(a int,
+///   v datetime as (timestamp '2020-01-01 10:00:00+00:00') virtual,
+///   s datetime as (timestamp '2020-01-01 10:00:00+00:00') stored);
+/// insert into g(a) values(1);
+///          v                     s
+/// +05:00   2020-01-01 15:00:00   2020-01-01 15:00:00
+/// +00:00   2020-01-01 10:00:00   2020-01-01 15:00:00
+/// -08:00   2020-01-01 02:00:00   2020-01-01 15:00:00
+/// ```
+///
+/// The STORED column is the control that makes the rule visible as one rule
+/// rather than two: it is the SAME expression folded in the SAME way, just at
+/// the moment the writer's context was the current one.
+///
+/// Both columns are `datetime` on purpose. A `timestamp` column would move
+/// with the reader for the storage reason this file's other tests pin, and
+/// could not tell that apart from the fold moving.
+#[test]
+fn a_virtual_generated_columns_literal_folds_in_the_reading_sessions_zone() {
+    let mut session = session();
+    set_zone(&mut session, "+05:00");
+    session
+        .run(
+            "CREATE TABLE g(a int primary key, \
+             v datetime as (timestamp '2020-01-01 10:00:00+00:00') virtual, \
+             s datetime as (timestamp '2020-01-01 10:00:00+00:00') stored)",
+        )
+        .expect("the generated columns build");
+    session.run("INSERT INTO g(a) VALUES(1)").expect("insert");
+
+    // Both read shapes, because they restore a virtual column through
+    // DIFFERENT call sites: the scan through `KvTableScan`, the point get
+    // through `KvTable::fill_virtual_columns`. Fixing one and not the other
+    // would make the same row read two ways in one session.
+    for select in ["SELECT v, s FROM g", "SELECT v, s FROM g WHERE a = 1"] {
+        assert_eq!(
+            read_at(&mut session, "+05:00", select),
+            [["2020-01-01 15:00:00", "2020-01-01 15:00:00"]],
+            "{select}"
+        );
+        assert_eq!(
+            read_at(&mut session, "+00:00", select),
+            [["2020-01-01 10:00:00", "2020-01-01 15:00:00"]],
+            "{select}"
+        );
+        assert_eq!(
+            read_at(&mut session, "-08:00", select),
+            [["2020-01-01 02:00:00", "2020-01-01 15:00:00"]],
+            "{select}"
+        );
+    }
+}
+
+/// The same expression in an expression INDEX is refused, because its value
+/// goes into the stored key: an index whose hidden column re-folded per
+/// session would read back rows whose key no longer matches it.
+///
+/// Go refuses it too, and refuses it earlier -- captured
+/// (`create table e(a int, key idx((timestamp '2020-01-01 10:00:00+00:00')))`):
+///
+/// ```text
+/// [ddl:8200]Unsupported creating expression index containing unsafe
+/// functions without allow-expression-index in config
+/// ```
+///
+/// `key idx((a+1))` stays accepted, which is the control: only the
+/// ZONE-READING half of Go's allow-list is ported here.
+#[test]
+fn an_expression_index_over_a_temporal_literal_is_refused() {
+    let mut session = session();
+    set_zone(&mut session, "+05:00");
+    session
+        .run("CREATE TABLE ok(a int, key idx((a + 1)))")
+        .expect("a zone-free expression index is accepted");
+    session
+        .run("CREATE TABLE bad(a int, key idx((timestamp '2020-01-01 10:00:00+00:00')))")
+        .expect_err("a temporal literal in an expression index is refused");
+}

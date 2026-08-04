@@ -111,14 +111,28 @@
 //!   folder, so no zone-reading function can reach the fold at all. The
 //!   context is passed to that fold anyway, because it is the same
 //!   `EvalSimpleAst` Go passes its own `BuildContext` to.
-//! * **Generated columns and expression indexes -- NOT affected, structurally.**
-//!   Go's `checkIllegalFn4Generated` rejects every name in
-//!   `expression.IllegalFunctions4GeneratedColumns`, and `UNIX_TIMESTAMP` is
-//!   ON that list, as are `NOW`/`CURDATE`/`CURTIME` and the rest of the clock.
-//!   Captured: `create table g (a timestamp, b bigint as (unix_timestamp(a)))`
-//!   is an ERROR in both zones, stored and virtual alike, and the same
-//!   expression in `key idx((...))` likewise. A zone-dependent generated
-//!   expression cannot exist, so there is nothing to fold wrongly.
+//! * **Generated columns -- AFFECTED. This entry used to say the opposite and
+//!   the opposite was wrong.** Go's `checkIllegalFn4Generated` does reject
+//!   every name in `expression.IllegalFunctions4GeneratedColumns`, and
+//!   `UNIX_TIMESTAMP`/`NOW`/`CURDATE`/`CURTIME` are on it -- captured, `create
+//!   table g (a timestamp, b bigint as (unix_timestamp(a)))` is an ERROR in
+//!   both zones. But that list is a list of FUNCTION NAMES, and a temporal
+//!   LITERAL is not on it: `b datetime as (timestamp '2020-01-01
+//!   10:00:00+00:00')` is ACCEPTED, and its value moves with the reading
+//!   session. So a zone-dependent generated expression not only can exist,
+//!   one is trivially written.
+//!
+//!   It does not fold wrongly at DDL time, though, which is why this entry
+//!   sat under the DDL-zone audit and read as closed: Go keeps the AST and
+//!   REWRITES it per statement, so the DDL zone never reaches the value at
+//!   all. The bug was on the READ path, and is fixed in
+//!   [`crate::generated_column`] (`GeneratedColumn::source`).
+//! * **Expression indexes -- NOT affected.** Go refuses a zone-reading
+//!   expression there outright: `key idx((timestamp '...'))` is
+//!   `[ddl:8200] Unsupported creating expression index containing unsafe
+//!   functions without allow-expression-index in config` (captured), because
+//!   `timestampliteral` is not on `variable.GAFunction4ExpressionIndex`.
+//!   [`crate::expression_index`] ports that half of the gate.
 //! * **`CHECK` constraints -- NOT affected.** They are DISCARDED at DDL time
 //!   under the stock `tidb_enable_check_constraint = OFF`; see
 //!   [`run_create_table_in`].

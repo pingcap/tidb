@@ -322,6 +322,34 @@ pub fn build_hidden_columns(
                 clause: "expression".to_owned(),
             });
         }
+        // Go `checkIllegalFn4GeneratedColumn`'s `hasNotGAFunc4ExprIdx` arm:
+        // an expression index may only use the functions on
+        // `variable.GAFunction4ExpressionIndex` unless the server was started
+        // with `allow-expression-index`, and everything else is 8200
+        // `Unsupported creating expression index containing unsafe functions
+        // without allow-expression-index in config`. `TIMESTAMP 'lit'` is a
+        // `FuncCallExpr` named `timestampliteral` to that walk and is not on
+        // the list, so Go refuses it -- captured:
+        //
+        // ```text
+        // create table e(a int, key idx((timestamp '2020-01-01 10:00:00+00:00')));
+        //   [ddl:8200]Unsupported creating expression index containing
+        //   unsafe functions without allow-expression-index in config
+        // create table e(a int, key idx((a+1)));  -- accepted
+        // ```
+        //
+        // Only the ZONE-READING half of that gate is ported here, because it
+        // is the half this index cannot survive: the value goes into the
+        // stored key at write time, so an expression that folds differently
+        // per session would read back rows whose key no longer matches. The
+        // rest of the allow-list is a separate unit; refusing a subset of
+        // what Go refuses can only turn an accepted statement into Go's own
+        // error, never the reverse.
+        if resolver.zone_was_read() {
+            return Err(DriverError::unsupported(
+                "an expression index over a temporal literal is not supported (Go answers 8200)",
+            ));
+        }
         // Go `BuildHiddenColumnInfo`: an expression that IS a column is 3762,
         // checked on the BUILT expression so `((a))` and `(((a)))` are both
         // caught, exactly as Go's `expr.(*expression.Column)` is.
@@ -356,6 +384,13 @@ pub fn build_hidden_columns(
                     stored: false,
                     dependencies: resolver.dependency_names(),
                     expr: built_expr,
+                    source: expr.clone(),
+                    build_zone: zone.clone(),
+                    // Unreachable by the refusal above, and stated rather than
+                    // assumed: an index whose hidden column re-folded per
+                    // session would read back rows its stored key no longer
+                    // matches.
+                    zone_sensitive: false,
                 },
             },
         ));

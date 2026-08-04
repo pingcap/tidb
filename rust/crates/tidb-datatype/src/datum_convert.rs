@@ -435,13 +435,10 @@ impl Datum {
                 }
                 converted.round_frac(fsp, zone).map_err(wrong_value)?
             }
+            // Go `Duration.ConvertToTime`: `gotime.Now().In(ctx.Location())`,
+            // which is [`session_now`] -- the same one the YEAR arm reads.
             Self::Duration(value) => value
-                .convert_to_time(
-                    Utc::now().with_timezone(zone),
-                    kind,
-                    zero_in_date,
-                    invalid_date,
-                )
+                .convert_to_time(session_now(zone), kind, zero_in_date, invalid_date)
                 .and_then(|time| time.round_frac(fsp, zone))
                 .map_err(wrong_value)?,
             Self::String(value) => {
@@ -552,9 +549,24 @@ impl Datum {
             Self::String(value) => year_from_text(value.as_utf8()?)?,
             Self::Bytes(value) => year_from_text(std::str::from_utf8(value)?)?,
             Self::Time(value) => (i64::from(value.core_time().year()), false, None),
+            // Go `Duration.ConvertToYearFromNow` (`pkg/types/time.go`):
+            //
+            // ```go
+            // if ctx.Flags().CastTimeToYearThroughConcat() { ... }
+            // year, month, day := now.In(ctx.Location()).Date()
+            // ```
+            //
+            // Both halves come from the STATEMENT and both were hardcoded
+            // here. `now` is an INSTANT, and only projecting it into the
+            // session zone picks the calendar day -- and so the YEAR -- that
+            // Go picks; that projection is [`session_now`], shared with the
+            // DATETIME arm so the two cannot pick different days. The flag
+            // selects Go's OTHER source entirely (the time fields read as a
+            // number, `00:20:12` -> 2012), so pinning it to `false` made that
+            // whole branch unreachable.
             Self::Duration(value) => (
                 value
-                    .convert_to_year(Utc::now(), false)
+                    .convert_to_year(session_now(zone), flags.cast_time_to_year_through_concat())
                     .map_err(conversion_error)?,
                 false,
                 None,
@@ -1090,6 +1102,17 @@ fn decimal_to_unsigned(value: &Decimal, upper: u64, target: FieldTypeCode) -> Co
 /// `2011-03-13 02:00:00` under UTC but `2011-03-13 03:00:00` under
 /// America/Los_Angeles, and `"20111106015959.999999"` yields
 /// `2011-11-06 02:00:00` under UTC but `2011-11-06 01:00:00` there.
+/// Go's `gotime.Now()` projected with `.In(ctx.Location())`: the one place
+/// this file decides what "now" means.
+///
+/// The two Duration arms -- `ConvertToTime` and `ConvertToYearFromNow` --
+/// both read it, and Go hands both the SAME `ctx`, so it is one decision
+/// rather than two that can disagree. `Utc::now()` here is the instant, not a
+/// zone choice; `with_timezone` is Go's `In`.
+fn session_now(zone: &SessionTimeZone) -> chrono::DateTime<SessionTimeZone> {
+    Utc::now().with_timezone(zone)
+}
+
 fn duration_from_text(
     text: &str,
     fsp: i64,
@@ -1206,6 +1229,86 @@ mod go_tests;
 mod tests {
     use super::*;
     use crate::{parse_enum_value, parse_set_value, FieldTypeFlags};
+
+    /// Casting a `TIME` to `YEAR` reads BOTH statement inputs Go reads:
+    /// `ctx.Flags().CastTimeToYearThroughConcat()` and `ctx.Location()`.
+    ///
+    /// Go `Duration.ConvertToYearFromNow` (`pkg/types/time.go`):
+    ///
+    /// ```go
+    /// if ctx.Flags().CastTimeToYearThroughConcat() {
+    ///     dur, _ := d.RoundFrac(DefaultFsp, ctx.Location())
+    ///     ival, _ := dur.ToNumber().ToInt()
+    ///     return AdjustYear(ival, false)
+    /// }
+    /// year, month, day := now.In(ctx.Location()).Date()
+    /// ```
+    ///
+    /// The flag was hardcoded `false` here, which made the concat branch --
+    /// Go's only source for `MODIFY COLUMN ... YEAR` reorg
+    /// (`pkg/ddl/reorg.go`'s `WithCastTimeToYearThroughConcat(true)`) --
+    /// unreachable whatever the statement said. `00:20:12` is
+    /// `pkg/types/time_test.go`'s own row: it concatenates to `2012`, a year
+    /// the calendar branch could not produce.
+    ///
+    /// The other half, `now.In(ctx.Location())`, is [`session_now`] -- the
+    /// one place this file decides what "now" means, read by the
+    /// Duration->DATETIME arm too -- and is pinned by the test above rather
+    /// than here: its effect on the YEAR is only visible on New Year's Eve,
+    /// but its effect on the DATE is visible every second of every day.
+    /// Go's `now.In(ctx.Location())` picks the session's CALENDAR DAY, and
+    /// two zones 25 hours apart are never on the same one -- whatever the
+    /// instant, whatever the day this runs. That is what makes the zone half
+    /// of the Duration conversions testable without waiting for midnight:
+    /// hardcoding `Utc` collapses both sides onto the UTC date.
+    #[test]
+    fn session_now_lands_on_the_zones_own_calendar_day() {
+        let at = |name: &str, offset_secs: i32| {
+            session_now(&SessionTimeZone::Fixed {
+                name: name.to_owned(),
+                offset_secs,
+            })
+            .date_naive()
+        };
+        assert_ne!(at("+14:00", 14 * 3600), at("-11:00", -11 * 3600));
+    }
+
+    #[test]
+    fn a_time_to_year_cast_reads_the_statements_concat_flag() {
+        let year = FieldType::new(FieldTypeCode::Year);
+        let time = Datum::new_duration(MySqlDuration::new(0, 20, 12, 0, 0).unwrap());
+        let zone = SessionTimeZone::Fixed {
+            name: "+05:30".to_owned(),
+            offset_secs: 5 * 3600 + 1800,
+        };
+
+        assert_eq!(
+            time.convert_to_in(
+                &year,
+                crate::DEFAULT_STATEMENT_FLAGS.with_cast_time_to_year_through_concat(true),
+                &zone,
+            )
+            .unwrap()
+            .value,
+            Datum::Int(2012)
+        );
+
+        // Without the flag Go takes TODAY's year in the session zone, so the
+        // assertion is the branch, not a literal: a fixed year would be a
+        // test that expires.
+        let calendar = time
+            .convert_to_in(&year, crate::DEFAULT_STATEMENT_FLAGS, &zone)
+            .unwrap()
+            .value;
+        assert_eq!(
+            calendar,
+            Datum::Int(i64::from(
+                chrono::Datelike::year(&session_now(&zone)).unsigned_abs()
+            )),
+            "the calendar branch reads the session zone's own date"
+        );
+        assert_ne!(calendar, Datum::Int(2012));
+    }
 
     #[test]
     fn source_convert_to_integer_float_string_decimal_rows() {

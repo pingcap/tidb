@@ -28,6 +28,28 @@ impl Default for RealTiKvSessionTimeZone {
 }
 
 impl RealTiKvSessionTimeZone {
+    /// This value as the shared [`tidb_datatype::SessionTimeZone`], which is
+    /// what derives the DAG request's `TimeZoneName`/`TimeZoneOffset` pair
+    /// (`SessionTimeZone::dag_zone`, Go `timeutil.Zone`).
+    ///
+    /// `SYSTEM` resolves to `UTC` here rather than being passed through as
+    /// the written word: Go sends `Zone(SystemLocation())`, the RESOLVED
+    /// system zone's name, and this node's system zone IS UTC -- that is
+    /// what [`Self::parse`]'s `offset_secs: 0` says. Passing `"SYSTEM"`
+    /// through would name a zone no zone database can load, which is the
+    /// same failure the offset spellings had.
+    pub(crate) fn zone(&self) -> tidb_datatype::SessionTimeZone {
+        let system = self.name.eq_ignore_ascii_case("SYSTEM");
+        tidb_datatype::SessionTimeZone::Fixed {
+            name: if system {
+                "UTC".to_owned()
+            } else {
+                self.name.clone()
+            },
+            offset_secs: self.offset_secs,
+        }
+    }
+
     /// Parses `SET time_zone = <value>`'s source-observable subset: `SYSTEM`,
     /// `UTC`, and fixed `+HH:MM`/`-HH:MM` offsets. Named IANA zones are
     /// refused rather than silently approximated, matching this node's
@@ -130,6 +152,41 @@ mod tests {
         // Not a `time_zone` assignment at all.
         assert_eq!(parse_set_time_zone("SET autocommit = 0"), None);
         assert_eq!(parse_set_time_zone("SELECT 1"), None);
+    }
+
+    /// Go `ConstructDAGReq` stamps `timeutil.Zone(SessionVars.Location())`,
+    /// and `Zone` returns `loc.String()` as the NAME. An offset zone is
+    /// `time.FixedZone("", ofst)` (`timeutil.ParseTimeZone`'s `+HH:MM`
+    /// branch), whose `String()` is EMPTY -- TiKV then falls back to the
+    /// offset, which is the only half it can use. Measured against Go on this
+    /// branch (`timeutil.Zone(timeutil.ParseTimeZone(s))`, system TZ
+    /// `Asia/Shanghai`):
+    ///
+    /// ```text
+    /// 'Asia/Shanghai' -> name "Asia/Shanghai" offset 28800
+    /// '+05:00'        -> name ""              offset 18000
+    /// '-08:00'        -> name ""              offset -28800
+    /// 'UTC'           -> name "UTC"           offset 0
+    /// '+00:00'        -> name ""              offset 0
+    /// 'SYSTEM'        -> name "Asia/Shanghai" offset 28800
+    /// ```
+    ///
+    /// Note the last two rows: `'+00:00'` is NOT `"UTC"` -- it is an offset
+    /// zone that happens to be zero -- and `SYSTEM` sends the RESOLVED system
+    /// zone's name, which for this node (whose system zone is UTC) is `UTC`.
+    #[test]
+    fn an_offset_zone_stamps_an_empty_dag_name_and_a_named_one_stamps_its_name() {
+        let dag = |value: &str| {
+            RealTiKvSessionTimeZone::parse(value)
+                .expect("the probe value parses")
+                .zone()
+                .dag_zone()
+        };
+        assert_eq!(dag("+05:00"), (String::new(), 18_000));
+        assert_eq!(dag("-08:00"), (String::new(), -28_800));
+        assert_eq!(dag("+00:00"), (String::new(), 0));
+        assert_eq!(dag("UTC"), ("UTC".to_owned(), 0));
+        assert_eq!(dag("SYSTEM"), ("UTC".to_owned(), 0));
     }
 
     #[test]

@@ -580,8 +580,17 @@ impl KvTable {
     /// A caller that needs the WRITE level -- an index backfill, whose value
     /// is about to be persisted -- passes its own context to
     /// [`Self::fill_virtual_columns_in`].
-    fn fill_virtual_columns(&self, row: &mut [Datum]) -> Result<(), KvTableError> {
-        self.fill_virtual_columns_in(row, &tidb_expr::NoColumns)
+    ///
+    /// `zone` is the reading session's `time_zone`, which the expression is
+    /// REBUILT in when it folds a temporal literal (Go rewrites the stored
+    /// AST per statement); it is not optional decoration, since `NoColumns`
+    /// alone would answer the trait's mock-oracle zone.
+    fn fill_virtual_columns(
+        &self,
+        row: &mut [Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<(), KvTableError> {
+        self.fill_virtual_columns_in(row, &tidb_expr::ZonedNoColumns(zone.clone()))
     }
 
     /// [`Self::fill_virtual_columns`] under a caller-chosen context.
@@ -1398,7 +1407,7 @@ impl KvTable {
         // handle itself.
         self.fill_handle_columns(&mut row, handle, zone)?;
         // Nor is a VIRTUAL generated column, whose value is its expression.
-        self.fill_virtual_columns(&mut row)?;
+        self.fill_virtual_columns(&mut row, zone)?;
         Ok(Some(row))
     }
 

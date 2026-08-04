@@ -41,6 +41,7 @@ use std::time::Duration;
 
 use prost::Message;
 use tidb_ast::{QueryStmt, Stmt};
+use tidb_datatype::SessionTimeZone;
 use tidb_distsql::region::RegionCache;
 use tidb_distsql::{
     signed_handle_ranges_to_kv_ranges, CancelHandle, DirectUnaryQueryTransport,
@@ -1230,9 +1231,19 @@ where
     /// Updates this session's `time_zone`, consulted fresh by every DAG
     /// request from this point on — the same fresh-per-query read Go's
     /// `ConstructDAGReq` performs against `SessionVars.Location()`.
-    pub fn set_time_zone(&mut self, name: impl Into<String>, offset_secs: i32) {
-        self.time_zone_name = name.into();
-        self.time_zone_offset_secs = offset_secs;
+    ///
+    /// It takes the ZONE, not a name/offset pair, because the pair is derived
+    /// and deriving it is the part that was wrong: `timeutil.Zone` sends an
+    /// OFFSET zone with an EMPTY name, and a caller handing over its own
+    /// spelling sent `"+05:00"` as the `TimeZoneName` — a name no zone
+    /// database can load, so a real TiKV region fails the request rather than
+    /// evaluating the pushed conditions in it. With the pair derived here,
+    /// this stamper and `crate::cop_scan`'s reduce to the one call to
+    /// [`SessionTimeZone::dag_zone`] and cannot drift apart.
+    pub fn set_time_zone(&mut self, zone: &SessionTimeZone) {
+        let (name, offset_secs) = zone.dag_zone();
+        self.time_zone_name = name;
+        self.time_zone_offset_secs = i32::try_from(offset_secs).unwrap_or_default();
     }
 
     /// Returns the real PD cluster identity, or zero for an injected test engine.
@@ -1564,10 +1575,9 @@ where
     /// on this two-table session is visible to every DAG request either
     /// relation's reader builds afterward, matching the single-table
     /// session's [`RealTiKvReadSession::set_time_zone`].
-    pub fn set_time_zone(&mut self, name: impl Into<String>, offset_secs: i32) {
-        let name = name.into();
+    pub fn set_time_zone(&mut self, zone: &SessionTimeZone) {
         for reader in &mut self.readers {
-            reader.set_time_zone(name.clone(), offset_secs);
+            reader.set_time_zone(zone);
         }
     }
 }

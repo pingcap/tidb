@@ -551,3 +551,24 @@ impl Columns for NoColumns {
         None
     }
 }
+
+/// [`NoColumns`] carrying the session's `time_zone`.
+///
+/// The eval-time twin of [`crate::rewriter::ZonedNoResolver`], and it exists
+/// for the same reason: [`NoColumns`] answers the trait's DEFAULT zone
+/// (`UTC+11`, the goeval oracle's mock session), which is nobody's session.
+/// Any evaluation that HAS a session behind it -- restoring a virtual
+/// generated column on a read, most of all, since Go rebuilds that
+/// expression in the reading session -- must carry that session's zone here
+/// rather than inherit the oracle's.
+pub struct ZonedNoColumns(pub SessionTimeZone);
+
+impl Columns for ZonedNoColumns {
+    fn get(&self, _: &[String]) -> Option<Datum> {
+        None
+    }
+
+    fn time_zone(&self) -> SessionTimeZone {
+        self.0.clone()
+    }
+}

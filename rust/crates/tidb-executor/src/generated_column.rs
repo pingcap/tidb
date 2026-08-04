@@ -141,7 +141,7 @@
 //! gives a single equality with no mapping and no second comparison mode. The
 //! compiled [`GeneratedColumn::expr`] is not consulted by the rule at all.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
@@ -173,6 +173,61 @@ pub struct GeneratedColumn {
     /// these even when the query never named them, or the expression would
     /// evaluate over holes.
     pub dependencies: Vec<String>,
+    /// Go `ColumnInfo.GeneratedExpr`, the AST Go keeps beside the text.
+    ///
+    /// Go does NOT keep a compiled expression on the table: every statement
+    /// that touches the column REWRITES this AST in its OWN context
+    /// (`logical_plan_builder.go`'s `b.rewrite(ctx,
+    /// columns[i].GeneratedExpr.Clone(), ds, nil, true)`), so a fold that
+    /// reads the session `time_zone` follows the READING session rather than
+    /// the session that ran the `CREATE TABLE`. [`Self::expr`] is a CACHE of
+    /// that rewrite for one zone; this is what the cache is rebuilt from when
+    /// another zone asks.
+    pub source: tidb_ast::Expr,
+    /// The session `time_zone` [`Self::expr`] was built in -- the one zone
+    /// the cache is valid for.
+    pub build_zone: tidb_datatype::SessionTimeZone,
+    /// Whether building [`Self::expr`] CONSULTED the zone -- reported by the
+    /// resolver that was asked rather than guessed from the expression's
+    /// shape, so a new zone-reading fold in the rewriter is covered the day
+    /// it lands without anything here changing.
+    ///
+    /// It is what keeps `b INT AS (a + 1)` on the fast path: an expression
+    /// that never asked for a zone builds identically in every session, so
+    /// its cache is valid everywhere.
+    pub zone_sensitive: bool,
+}
+
+impl GeneratedColumn {
+    /// The evaluable expression for a statement running in `zone`.
+    ///
+    /// Borrows the cached build when it is the right one, which is every
+    /// zone-independent expression and every statement whose zone matches the
+    /// DDL's, and otherwise re-runs the rewrite Go re-runs per statement.
+    fn expression_in<S: GeneratedColumnSlot>(
+        &self,
+        columns: &[S],
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Result<std::borrow::Cow<'_, Expression>, ()> {
+        if !self.zone_sensitive || *zone == self.build_zone {
+            return Ok(std::borrow::Cow::Borrowed(&self.expr));
+        }
+        let names: Vec<String> = columns
+            .iter()
+            .map(|column| column.column_name().to_owned())
+            .collect();
+        let types: Vec<FieldType> = columns
+            .iter()
+            .map(|column| column.column_type().clone())
+            .collect();
+        let resolver = TableColumnResolver::new(&names, &types, zone.clone());
+        // The dependency namespace is derived from the EXPRESSION's first-seen
+        // order, so re-resolving the same AST reproduces the same one and the
+        // rebuilt `Column` indexes stay the ones `dependencies` names.
+        tidb_expr::rewriter::rewrite_expr_resolved(&self.source, &resolver)
+            .map(std::borrow::Cow::Owned)
+            .map_err(|_| ())
+    }
 }
 
 /// A column description reduced to what generation needs: the two facts
@@ -267,13 +322,35 @@ pub fn materialize<S: GeneratedColumnSlot>(
         if only_virtual && generated.stored {
             continue;
         }
-        let value =
-            eval_over_dependencies(&generated.expr, &generated.dependencies, columns, row, ctx)
-                .map_err(|error| GenerationError {
-                    column: columns[offset].column_name().to_owned(),
-                    detail: format!("{error:?}"),
-                    eval: Some(error),
-                })?;
+        // Go rewrites the stored AST in the CURRENT statement's context, so a
+        // `TIMESTAMP 'lit'` inside the expression folds in the reading
+        // session's zone. Captured from real TiDB, one table created under
+        // `+05:00` and read from three sessions:
+        //
+        // ```text
+        // v datetime as (timestamp '2020-01-01 10:00:00+00:00') virtual
+        //   read at +05:00 -> 2020-01-01 15:00:00
+        //   read at +00:00 -> 2020-01-01 10:00:00
+        //   read at -08:00 -> 2020-01-01 02:00:00
+        // ```
+        //
+        // The STORED twin of that column answers 15:00:00 from all three,
+        // because a stored value is computed once by the WRITING session --
+        // which is this same rule, applied at the moment the write's own
+        // context is the current one, not a second rule.
+        let expr = generated
+            .expression_in(columns, &ctx.time_zone())
+            .map_err(|()| GenerationError {
+                column: columns[offset].column_name().to_owned(),
+                detail: "the generated expression does not build in this session".to_owned(),
+                eval: None,
+            })?;
+        let value = eval_over_dependencies(&expr, &generated.dependencies, columns, row, ctx)
+            .map_err(|error| GenerationError {
+                column: columns[offset].column_name().to_owned(),
+                detail: format!("{error:?}"),
+                eval: Some(error),
+            })?;
         // Go casts the generated value into the column's declared type before
         // it is stored or returned (`table.CastValue`), which is what makes
         // `b INT AS (a / 2)` an integer rather than the decimal the division
@@ -450,6 +527,9 @@ pub fn build_generated_columns(
             stored: *stored,
             expr,
             dependencies: resolver.dependency_names(),
+            source: expression.clone(),
+            build_zone: zone.clone(),
+            zone_sensitive: resolver.zone_was_read(),
         }));
     }
     Ok(built)
@@ -495,6 +575,9 @@ pub fn build_added_generated_column(
         stored,
         expr,
         dependencies: resolver.dependency_names(),
+        source: expression.clone(),
+        build_zone: zone.clone(),
+        zone_sensitive: resolver.zone_was_read(),
     })
 }
 
@@ -538,6 +621,11 @@ pub struct TableColumnResolver<'a> {
     seen: RefCell<Vec<(usize, String)>>,
     /// The first name that resolved to nothing, which is Go's 1054 argument.
     missing: RefCell<Option<String>>,
+    /// Whether the rewriter ASKED for the zone while building against this
+    /// resolver, which is the only honest answer to "does this expression
+    /// fold differently in another session". Recorded here rather than
+    /// derived from the AST so it cannot fall behind the rewriter.
+    zone_read: Cell<bool>,
 }
 
 impl<'a> TableColumnResolver<'a> {
@@ -553,6 +641,7 @@ impl<'a> TableColumnResolver<'a> {
             zone,
             seen: RefCell::new(Vec::new()),
             missing: RefCell::new(None),
+            zone_read: Cell::new(false),
         }
     }
 
@@ -579,10 +668,17 @@ impl<'a> TableColumnResolver<'a> {
     pub fn missing_name(&self) -> Option<String> {
         self.missing.borrow().clone()
     }
+
+    /// Whether the build read the session zone, so the caller knows whether
+    /// the expression it just built is valid in other sessions.
+    pub fn zone_was_read(&self) -> bool {
+        self.zone_read.get()
+    }
 }
 
 impl ColumnResolver for TableColumnResolver<'_> {
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        self.zone_read.set(true);
         self.zone.clone()
     }
 
@@ -672,11 +768,15 @@ mod tests {
             let resolver =
                 TableColumnResolver::new(&names, &types, tidb_datatype::SessionTimeZone::utc());
             let expr = parse_generated_expr(text);
+            let built = tidb_expr::rewriter::rewrite_expr_resolved(&expr, &resolver).unwrap();
             GeneratedColumn {
                 expr_text: text.to_owned(),
                 stored,
-                expr: tidb_expr::rewriter::rewrite_expr_resolved(&expr, &resolver).unwrap(),
+                expr: built,
                 dependencies: resolver.dependency_names(),
+                source: expr,
+                build_zone: tidb_datatype::SessionTimeZone::utc(),
+                zone_sensitive: resolver.zone_was_read(),
             }
         };
         vec![

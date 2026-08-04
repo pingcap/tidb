@@ -924,8 +924,7 @@ impl QuerySession for RealTiKvServerSession {
             let parsed = RealTiKvSessionTimeZone::parse(value.trim()).ok_or_else(|| {
                 SqlQueryError::unknown(format!("unsupported SET time_zone value: {value}"))
             })?;
-            self.inner
-                .set_time_zone(parsed.name.clone(), parsed.offset_secs);
+            self.inner.set_time_zone(&parsed.zone());
             self.time_zone = parsed;
             return Ok(Some(WriteOutcome {
                 affected_rows: 0,

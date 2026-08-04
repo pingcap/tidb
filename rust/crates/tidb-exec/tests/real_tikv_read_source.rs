@@ -604,41 +604,53 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
 /// `dagReq.TimeZoneName, dagReq.TimeZoneOffset =
 /// timeutil.Zone(ctx.GetSessionVars().Location())`. A session that never
 /// calls `SET time_zone` still sends `"UTC"`/`0`, this session's default.
+///
+/// WHAT it sends is `crate::dag_zone_contract`'s measured Go table, shared
+/// with the OTHER node type that stamps a DAG request
+/// (`cop_scan_string_selection_source::each_request_carries_the_issuing_statements_time_zone`).
+/// This test used to assert the opposite for an offset zone -- a
+/// `TimeZoneName` of `"+05:00"`, which no zone database can load -- and it was
+/// the only assertion in the tree that looked at this stamper at all, so the
+/// sibling that had it right could not contradict it.
 #[test]
 fn set_time_zone_threads_into_every_subsequent_dag_request() {
-    let timestamps = ScriptedTimestampSource::new([1, 2]);
-    let state = Rc::new(SharedTransportState::default());
-    let next_count = Rc::new(Cell::new(0));
-    let close_count = Rc::new(Cell::new(0));
-    let responses = [
-        response(&[1], Rc::clone(&next_count), Rc::clone(&close_count)),
-        response(&[1], Rc::clone(&next_count), Rc::clone(&close_count)),
-    ];
-    let mut engine = RealTiKvReadSession::new(
-        configured_table(),
-        transport(responses, Rc::clone(&state)),
-        timestamps,
-    );
+    let stamp = |zone: &tidb_datatype::SessionTimeZone| {
+        let state = Rc::new(SharedTransportState::default());
+        let responses = [
+            response(&[1], Rc::new(Cell::new(0)), Rc::new(Cell::new(0))),
+            response(&[1], Rc::new(Cell::new(0)), Rc::new(Cell::new(0))),
+        ];
+        let mut engine = RealTiKvReadSession::new(
+            configured_table(),
+            transport(responses, Rc::clone(&state)),
+            ScriptedTimestampSource::new([1, 2]),
+        );
+        // The FIRST query runs before the `SET`, so the same fixture also
+        // pins the default zone and the fresh-per-query read: a zone applied
+        // only at connection time would stamp the second request too.
+        engine
+            .execute("SELECT id FROM test.accounts")
+            .expect("default-zone query must reach the transport");
+        engine.set_time_zone(zone);
+        engine
+            .execute("SELECT id FROM test.accounts")
+            .expect("re-zoned query must reach the transport");
 
-    engine
-        .execute("SELECT id FROM test.accounts")
-        .expect("default-zone query must reach the transport");
-    engine.set_time_zone("+05:00", 18_000);
-    engine
-        .execute("SELECT id FROM test.accounts")
-        .expect("re-zoned query must reach the transport");
+        let requests = state.requests.borrow();
+        let [first, second] = requests.as_slice() else {
+            panic!("exactly two requests must be sent");
+        };
+        let first_dag = DagRequest::decode(first.data.as_slice()).expect("request data is a DAG");
+        assert_eq!(first_dag.time_zone_name.as_deref(), Some("UTC"));
+        assert_eq!(first_dag.time_zone_offset, Some(0));
 
-    let requests = state.requests.borrow();
-    let [first, second] = requests.as_slice() else {
-        panic!("exactly two requests must be sent");
+        let second_dag = DagRequest::decode(second.data.as_slice()).expect("request data is a DAG");
+        (
+            second_dag.time_zone_name.unwrap_or_default(),
+            second_dag.time_zone_offset.unwrap_or_default(),
+        )
     };
-    let first_dag = DagRequest::decode(first.data.as_slice()).expect("request data is a DAG");
-    assert_eq!(first_dag.time_zone_name.as_deref(), Some("UTC"));
-    assert_eq!(first_dag.time_zone_offset, Some(0));
-
-    let second_dag = DagRequest::decode(second.data.as_slice()).expect("request data is a DAG");
-    assert_eq!(second_dag.time_zone_name.as_deref(), Some("+05:00"));
-    assert_eq!(second_dag.time_zone_offset, Some(18_000));
+    crate::dag_zone_contract::assert_go_dag_zone_contract("real_tikv_read", stamp);
 }
 
 #[test]
