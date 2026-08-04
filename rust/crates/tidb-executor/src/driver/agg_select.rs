@@ -811,6 +811,7 @@ fn lower_select_fields(
                     extra_args: Vec::new(),
                     distinct: false,
                     order_by: Vec::new(),
+                    arg_orig_name: String::new(),
                 });
                 state.names.push(match other {
                     tidb_ast::Expr::Column(path) => {
@@ -1016,6 +1017,7 @@ fn carry_apply_columns(
                 extra_args: Vec::new(),
                 distinct: false,
                 order_by: Vec::new(),
+                arg_orig_name: String::new(),
             });
             state.names.push(name.clone());
             state.types.push(ftype);

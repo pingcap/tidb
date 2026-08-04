@@ -471,6 +471,7 @@ impl AggregateSubstitutor<'_, '_> {
                     extra_args: Vec::new(),
                     distinct: false,
                     order_by: Vec::new(),
+                    arg_orig_name: String::new(),
                 });
                 self.names.push(name.clone());
                 self.types.push(ftype);
@@ -668,6 +669,13 @@ pub(crate) fn build_agg_func(
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
             order_items.push((expr, item.desc));
         }
+        // The 1260 truncation message names args[0] by its `OrigName`, which
+        // the rewrite above discards; capture it while the AST path is still
+        // in hand.
+        let arg_orig_name = match first {
+            tidb_ast::Expr::Column(path) => resolver.orig_name(path).unwrap_or_default(),
+            _ => String::new(),
+        };
         let mut ret_type = FieldType::new(FieldTypeCode::VarString);
         ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
         return Ok((
@@ -679,6 +687,7 @@ pub(crate) fn build_agg_func(
                 extra_args,
                 distinct: *distinct,
                 order_by: order_items,
+                arg_orig_name,
             },
             ret_type,
         ));
@@ -751,6 +760,7 @@ pub(crate) fn build_agg_func(
             extra_args,
             distinct: *distinct,
             order_by: Vec::new(),
+            arg_orig_name: String::new(),
         },
         ftype,
     ))

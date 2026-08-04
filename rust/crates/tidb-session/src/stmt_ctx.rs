@@ -268,6 +268,14 @@ impl Session {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(64 << 20);
+        // Go `SessionVars.GroupConcatMaxLen`, the SESSION copy the aggregate
+        // builder reads. Default `DefGroupConcatMaxLen` = 1024.
+        let group_concat_max_len = self
+            .vars
+            .get_system("group_concat_max_len")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(1024);
         let oom_action = tidb_executor::OomAction::parse(
             &self
                 .vars
@@ -301,7 +309,7 @@ impl Session {
                 .with_previous_statement(self.last_insert_id, self.prev_row_count)
                 .with_week_and_division_scale(week_format, div_scale)
                 .with_max_allowed_packet(max_allowed_packet)
-                .with_max_allowed_packet(max_allowed_packet)
+                .with_group_concat_max_len(group_concat_max_len)
                 .with_sequences(self.sequence_snapshot())
                 .with_sql_mode(scanner_sql_mode_of(&mode))
                 .with_clock(clock, zone);
@@ -326,6 +334,7 @@ impl Session {
         .with_previous_statement(self.last_insert_id, self.prev_row_count)
         .with_week_and_division_scale(week_format, div_scale)
         .with_max_allowed_packet(max_allowed_packet)
+        .with_group_concat_max_len(group_concat_max_len)
         .with_sequences(self.sequence_snapshot())
         .with_clock(clock, zone)
         .with_sql_mode(scanner_sql_mode_of(&mode))

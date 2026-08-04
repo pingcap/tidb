@@ -133,6 +133,24 @@ pub(crate) struct ScopeResolver<'a> {
     pub(crate) scope: &'a FromScope,
 }
 
+impl ScopeResolver<'_> {
+    /// Go `expression.ColumnFullName(db, table, column)` -- the `OrigName` a
+    /// resolved column carries and the only text the 1260 `GROUP_CONCAT`
+    /// truncation message renders. The rewritten `Expression` keeps only an
+    /// index and a unique id, so the name has to be read here, where the
+    /// scope still knows which table the reference bound to.
+    pub(crate) fn orig_name(&self, path: &[String]) -> Option<String> {
+        let (index, _, _) = self.resolve(path)?;
+        let table =
+            self.scope.tables.iter().find(|table| {
+                (table.offset..table.offset + table.columns.len()).contains(&index)
+            })?;
+        let column = table.columns.get(index - table.offset)?;
+        let database = table.database.as_deref()?;
+        Some(format!("{database}.{}.{}", table.name, column.0))
+    }
+}
+
 /// A resolver over `scope`, for the modules that build their own expressions.
 pub(crate) fn scope_resolver(scope: &FromScope) -> impl ColumnResolver + '_ {
     ScopeResolver { scope }

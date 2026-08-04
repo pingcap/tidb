@@ -169,6 +169,7 @@ pub(crate) fn add_grouping_column(
         extra_args: Vec::new(),
         distinct: false,
         order_by: Vec::new(),
+        arg_orig_name: String::new(),
     });
     grouping_specs.push(GroupingSpec {
         out_index: names.len(),

@@ -824,3 +824,90 @@ fn grouping_with_rollup() {
         Err(DriverError::Unsupported(_))
     ));
 }
+
+/// `group_concat_max_len` truncates the JOINED buffer by BYTES and warns
+/// 1260 exactly once per GROUP_CONCAT for the whole statement.
+///
+/// Go `func_group_concat.go:56-60` carries `maxLen` plus a `truncated`
+/// sentinel whose comment says the warning is generated once per function
+/// lifetime "no matter how many group actually truncated"; `:99-100` is
+/// `buffer.Truncate(int(e.maxLen))`, a byte cut. Captured from TiDB with
+/// `s VARCHAR(10)`:
+///
+/// ```text
+/// set group_concat_max_len=5;
+/// values ('aaa'),('bbb'),('ccc')
+///   select group_concat(s)          -> aaa,b
+///   show warnings                   -> Warning|1260|Some rows were cut by
+///                                        GROUPCONCAT(test.g.s)
+/// values ('aaa',1),('bbb',1),('ccc',2),('ddd',2)
+///   select k, group_concat(s) group by k -> 1|aaa,b ; 2|ccc,d
+///   show warnings                        -> ONE 1260 row, not two
+///   select group_concat(s), group_concat(t) -> two 1260 rows, one each
+/// set group_concat_max_len=4;
+///   select group_concat(s order by s desc) -> ccc,   (the separator is cut
+///                                                     mid-way; bytes, not
+///                                                     values)
+/// ```
+#[test]
+fn group_concat_max_len_truncates_by_bytes_and_warns_1260_once() {
+    let mut session = Session::new();
+    let warnings = |session: &Session| {
+        session
+            .warnings()
+            .iter()
+            .map(|w| (w.code, w.message.clone()))
+            .collect::<Vec<_>>()
+    };
+    let cut = |column: &str| {
+        (
+            1260u16,
+            format!("Some rows were cut by GROUPCONCAT(test.g.{column})"),
+        )
+    };
+
+    session
+        .run("CREATE TABLE g (s VARCHAR(10), t VARCHAR(10), k BIGINT)")
+        .unwrap();
+    session
+        .run("INSERT INTO g VALUES ('aaa','xxx',1),('bbb','yyy',1),('ccc','zzz',2),('ddd','www',2)")
+        .unwrap();
+    session.run("SET group_concat_max_len=5").unwrap();
+
+    assert_eq!(
+        row_text(session.run("SELECT GROUP_CONCAT(s) FROM g")),
+        [["aaa,b"]]
+    );
+    assert_eq!(warnings(&session), vec![cut("s")]);
+
+    // Two groups both truncate; the sentinel is per FUNCTION, so ONE warning.
+    assert_eq!(
+        row_text(session.run("SELECT k, GROUP_CONCAT(s) FROM g GROUP BY k ORDER BY k")),
+        [["1", "aaa,b"], ["2", "ccc,d"]]
+    );
+    assert_eq!(warnings(&session), vec![cut("s")]);
+
+    // Two different functions each get their own sentinel.
+    assert_eq!(
+        row_text(session.run("SELECT GROUP_CONCAT(s), GROUP_CONCAT(t) FROM g")),
+        [["aaa,b", "xxx,y"]]
+    );
+    assert_eq!(warnings(&session), vec![cut("s"), cut("t")]);
+
+    // A budget that lands ON the separator: the cut is by bytes, so the
+    // trailing separator survives rather than the last value being dropped.
+    session.run("SET group_concat_max_len=4").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT GROUP_CONCAT(s ORDER BY s DESC) FROM g")),
+        [["ddd,"]]
+    );
+    assert_eq!(warnings(&session), vec![cut("s")]);
+
+    // A group that fits emits nothing at all.
+    session.run("SET group_concat_max_len=1024").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT GROUP_CONCAT(s) FROM g")),
+        [["aaa,bbb,ccc,ddd"]]
+    );
+    assert_eq!(warnings(&session), vec![]);
+}

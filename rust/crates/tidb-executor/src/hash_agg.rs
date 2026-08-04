@@ -199,6 +199,12 @@ pub struct AggFunc {
     /// concatenation -- a separate scope from the query's `ORDER BY`. Each
     /// entry is an expression over the source row and its descending flag.
     pub order_by: Vec<(Expression, bool)>,
+    /// Go `Column.OrigName` of the FIRST argument -- `db.table.column` --
+    /// which is the only thing the 1260 truncation message renders and which
+    /// the rewritten `Expression` no longer carries. Empty for every
+    /// aggregate but `GROUP_CONCAT`, and for a computed `GROUP_CONCAT`
+    /// argument, where Go prints an internal plan column id instead.
+    pub arg_orig_name: String,
 }
 
 impl AggFunc {
@@ -211,6 +217,7 @@ impl AggFunc {
             extra_args: Vec::new(),
             order_by: Vec::new(),
             distinct: false,
+            arg_orig_name: String::new(),
         }
     }
 }
@@ -367,6 +374,33 @@ fn group_key_part(collation: &tidb_datatype::Collation, datum: &Datum) -> Vec<u8
             encoded
         }
         None => tidb_codec::hash_code(datum),
+    }
+}
+
+/// Go `SessionVars.GroupConcatMaxLen` as this statement sees it.
+fn group_concat_max_len<C: Columns>(ctx: &C) -> u64 {
+    match ctx.sysvar(None, "group_concat_max_len") {
+        Some(Datum::UInt(value)) => value,
+        Some(Datum::Int(value)) if value >= 0 => value as u64,
+        // Go `DefGroupConcatMaxLen`.
+        _ => 1024,
+    }
+}
+
+/// The argument text Go's 1260 message names, which is
+/// `Expression.StringWithCtx` of `args[0]`: a table column prints as its
+/// `OrigName` (`test.g.s`), and anything else prints as `Column#<id>` --
+/// Go's aggregate reads a PROJECTED column, so a computed argument shows an
+/// internal plan id this tier does not mint. The bare-column case, which is
+/// the one a user can predict, is exact.
+fn group_concat_arg_text(func: &AggFunc) -> String {
+    if func.arg_orig_name.is_empty() {
+        match &func.arg {
+            Some(Expression::Column(column)) => format!("Column#{}", column.unique_id),
+            _ => "Column#0".to_owned(),
+        }
+    } else {
+        func.arg_orig_name.clone()
     }
 }
 
@@ -1143,18 +1177,44 @@ impl<C: Columns> Executor for HashAggExec<C> {
         if ordered.is_empty() && self.group_by.is_empty() {
             ordered.push(self.agg_funcs.iter().map(AggState::new).collect());
         }
+        // Go `SessionVars.GroupConcatMaxLen`, read once per statement, and
+        // the per-FUNCTION `truncated` sentinel that goes with it: MySQL
+        // emits exactly ONE 1260 warning per GROUP_CONCAT for the whole
+        // statement no matter how many GROUPS were cut, which is why the
+        // sentinel lives out here and not in the per-group state
+        // (`func_group_concat.go:56-60`, and captured: two truncating groups
+        // of one function warn once, two different functions warn twice).
+        let max_len = group_concat_max_len(&self.ctx);
+        let mut truncated = vec![false; self.agg_funcs.len()];
         for states in &ordered {
             for (c, state) in states.iter().enumerate() {
-                let order_by = self
-                    .agg_funcs
-                    .get(c)
-                    .map_or(&[][..], |func| func.order_by.as_slice());
-                req.append_datum(
-                    c,
-                    &state
-                        .partial
-                        .finish(order_by, self.ctx.div_precision_increment())?,
-                );
+                let func = self.agg_funcs.get(c);
+                let order_by = func.map_or(&[][..], |func| func.order_by.as_slice());
+                let mut value = state
+                    .partial
+                    .finish(order_by, self.ctx.div_precision_increment())?;
+                if let (Some(func), Datum::Bytes(joined)) = (func, &mut value) {
+                    if matches!(func.kind, AggKind::GroupConcat { .. })
+                        && max_len > 0
+                        && joined.len() as u64 > max_len
+                    {
+                        // Go `bytes.Buffer.Truncate(int(e.maxLen))`: a BYTE
+                        // cut, so it lands mid-character or mid-separator
+                        // (captured: max_len 4 over 'ccc','bbb' -> `ccc,`).
+                        joined.truncate(max_len as usize);
+                        if !truncated[c] {
+                            truncated[c] = true;
+                            self.ctx.append_warning(
+                                1260,
+                                &format!(
+                                    "Some rows were cut by GROUPCONCAT({})",
+                                    group_concat_arg_text(func)
+                                ),
+                            );
+                        }
+                    }
+                }
+                req.append_datum(c, &value);
             }
         }
         self.emitted = true;

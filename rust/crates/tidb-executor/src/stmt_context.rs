@@ -328,6 +328,9 @@ pub struct StmtContext {
     sql_mode: tidb_parser::SqlMode,
     /// `@@max_allowed_packet`, which the result-sizing string builtins read.
     max_allowed_packet: u64,
+    /// `@@group_concat_max_len`, the BYTE budget `GROUP_CONCAT` truncates its
+    /// joined buffer to (Go `baseGroupConcat4String.maxLen`).
+    group_concat_max_len: u64,
     /// Which `ResetContextOfStmt` arm built this context; see
     /// [`StatementClass`]. It is an INPUT to [`StmtContext::push_down_flags`],
     /// which is why it rides the context rather than being re-derived at the
@@ -465,6 +468,7 @@ impl StmtContext {
             // Go `vardef.DefMaxAllowedPacket`, the value a default server runs
             // with and the one the `Columns` trait default already used.
             max_allowed_packet: 64 << 20,
+            group_concat_max_len: 1024,
             statement_class: StatementClass::Other,
             cop_warnings: WarningCollector::new(),
         }
@@ -623,6 +627,17 @@ impl StmtContext {
     #[must_use]
     pub fn with_max_allowed_packet(mut self, max_allowed_packet: u64) -> Self {
         self.max_allowed_packet = max_allowed_packet;
+        self
+    }
+
+    /// Sets the session's `group_concat_max_len`.
+    ///
+    /// Go `SessionVars.GroupConcatMaxLen`, which the aggregate builder copies
+    /// into every `GROUP_CONCAT` it builds. The default is Go's
+    /// `DefGroupConcatMaxLen`, 1024.
+    #[must_use]
+    pub fn with_group_concat_max_len(mut self, group_concat_max_len: u64) -> Self {
+        self.group_concat_max_len = group_concat_max_len;
         self
     }
 
@@ -1178,6 +1193,12 @@ impl Columns for StmtContext {
                 .version
                 .as_ref()
                 .map(|value| Datum::Bytes(value.clone().into_bytes()));
+        }
+        // `GROUP_CONCAT`'s byte budget travels this way rather than as its own
+        // `Columns` method: the aggregate reads it once per statement, and the
+        // trait already has a general variable channel.
+        if name.eq_ignore_ascii_case("group_concat_max_len") {
+            return Some(Datum::UInt(self.group_concat_max_len));
         }
         None
     }
