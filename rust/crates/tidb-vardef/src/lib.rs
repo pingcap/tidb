@@ -33,5 +33,12 @@
 //! rewrite deliberately replaces with explicit wiring), and `runtime.go`.
 
 pub mod defaults;
+/// One function from `sessionctx/variable/sysvar.go` rather than from
+/// `vardef`: `GlobalSystemVariableInitialValue`, which decides the value a
+/// `Def*` constant above actually takes on a real install. It lives here
+/// because both tiers that need it -- the bootstrap writer above this crate
+/// and `SET <var> = DEFAULT` in `tidb-session` -- can only share it from a
+/// leaf, and because it is pure policy over those same constants.
+pub mod global_sysvar_initial;
 pub mod modes;
 pub mod tidb_vars;

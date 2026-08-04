@@ -118,7 +118,7 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
     // top of them client-side, which is Go's `UnionScan` over a distsql
     // reader.
     let cop_scans: Arc<dyn PushdownScanner> =
-        Arc::new(CopScanSource::new(authority.transport_factory(), "UTC", 0));
+        Arc::new(CopScanSource::new(authority.transport_factory()));
     let factory = Arc::new(
         ClusterSessionFactory::new(
             Arc::new(RealClusterTransactions::new(

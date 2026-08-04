@@ -145,7 +145,7 @@ fn run() -> Result<(), String> {
     let buffer = MutationBuffer::new();
     let cop_scans: Option<CopScans> = arguments
         .cop
-        .then(|| Arc::new(CopScanSource::new(authority.transport_factory(), "UTC", 0)));
+        .then(|| Arc::new(CopScanSource::new(authority.transport_factory())));
     let failure = if arguments.transaction {
         run_explicit_transaction(&opener, &buffer, &catalog, &arguments, cop_scans.as_ref())
     } else {

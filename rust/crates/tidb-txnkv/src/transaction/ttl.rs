@@ -27,6 +27,7 @@
 //! borrow the caller's session; it builds its own inside the thread from the
 //! supplied factory. That is why this takes a factory rather than a sender.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -143,6 +144,9 @@ impl CloseSignal {
 /// — commit, rollback, or unwinding — stops refreshing its lock.
 pub struct LockKeepAlive {
     signal: Arc<CloseSignal>,
+    /// client-go's `lockCtx.LockExpired`, raised by the loop and read by the
+    /// session BEFORE it runs the next statement; see [`Self::lock_expired`].
+    lock_expired: Arc<AtomicBool>,
     worker: Option<JoinHandle<KeepAliveReport>>,
 }
 
@@ -172,14 +176,47 @@ impl LockKeepAlive {
         }
         let signal = Arc::new(CloseSignal::default());
         let thread_signal = Arc::clone(&signal);
+        let lock_expired = Arc::new(AtomicBool::new(false));
+        let thread_expired = Arc::clone(&lock_expired);
         let worker = std::thread::Builder::new()
             .name(format!("txn-ttl-{start_ts}"))
-            .spawn(move || keep_alive_loop(&thread_signal, make_sender, &primary, start_ts, tick))
+            .spawn(move || {
+                keep_alive_loop(
+                    &thread_signal,
+                    &thread_expired,
+                    make_sender,
+                    &primary,
+                    start_ts,
+                    tick,
+                )
+            })
             .map_err(|error| format!("cannot spawn keep-alive thread: {error}"))?;
         Ok(Self {
             signal,
+            lock_expired,
             worker: Some(worker),
         })
+    }
+
+    /// client-go's `lockCtx.LockExpired`: whether this transaction has
+    /// outlived [`MAX_TXN_TTL_MS`], so TiKV may already be letting other
+    /// transactions resolve the locks it believes it holds.
+    ///
+    /// This is the ONE terminal reason client-go publishes to the session
+    /// (`2pc.go`'s `ttlManager` sets the flag only under
+    /// `uptime > maxTtl`, and only for a pessimistic transaction); a rejected
+    /// or repeatedly failing heartbeat merely stops the loop, because the
+    /// lock's own TTL has not necessarily run out. A session that reads
+    /// `true` here must refuse every statement but `COMMIT` and `ROLLBACK`
+    /// (Go `session.checkTxnAborted` -> `kv.ErrLockExpire`, 8229).
+    ///
+    /// It is a live flag rather than the [`KeepAliveReport`] that
+    /// [`Self::close`] answers, because the report arrives when the
+    /// transaction ENDS and the whole point is to stop it executing before
+    /// that.
+    #[must_use]
+    pub fn lock_expired(&self) -> bool {
+        self.lock_expired.load(Ordering::Relaxed)
     }
 
     /// Stops the loop and returns its evidence.
@@ -204,6 +241,7 @@ impl Drop for LockKeepAlive {
 
 fn keep_alive_loop<F, S>(
     signal: &CloseSignal,
+    lock_expired: &AtomicBool,
     make_sender: F,
     primary: &[u8],
     start_ts: u64,
@@ -236,6 +274,12 @@ where
         };
         let uptime_ms = transaction_uptime_ms(start_ts, now);
         if uptime_ms > MAX_TXN_TTL_MS {
+            // client-go `2pc.go`: "the pessimistic locks may expire if the ttl
+            // manager has timed out, set `LockExpired` flag so that this
+            // transaction could only commit or rollback with no more statement
+            // executions". Raised BEFORE the loop returns, so the flag is
+            // already up when the next statement reads it.
+            lock_expired.store(true, Ordering::Relaxed);
             report.stop = KeepAliveStop::LifetimeExceeded { uptime_ms };
             return report;
         }
@@ -416,6 +460,58 @@ mod tests {
         ));
         // An expired transaction must not refresh a lock it no longer owns.
         assert!(advised.lock().unwrap().is_empty());
+    }
+
+    /// client-go's `lockCtx.LockExpired`: the ONE terminal reason that reaches
+    /// the session while the transaction is still open.
+    ///
+    /// `2pc.go`'s `ttlManager` raises it under `uptime > maxTtl` and nowhere
+    /// else -- a rejected heartbeat means the lock is already gone and a
+    /// failing one means the network is, and in neither case has client-go
+    /// concluded the transaction's locks may be resolved out from under it. So
+    /// the flag has to be readable BEFORE `close`, and it has to stay down for
+    /// the other three terminal reasons; a flag raised for all of them would
+    /// abort transactions Go keeps running.
+    #[test]
+    fn only_the_lifetime_bound_raises_lock_expired_and_it_is_live() {
+        let expired_after = |clock_ms: u64, reject_after: u64, fail: bool, ready: usize| {
+            let advised = Arc::new(Mutex::new(Vec::new()));
+            let ts_calls = Arc::new(AtomicU64::new(0));
+            let sender = ScriptedSender {
+                clock_ms,
+                ts_calls: Arc::clone(&ts_calls),
+                advised: Arc::clone(&advised),
+                reject_after,
+                always_fail_transport: fail,
+            };
+            let keep_alive =
+                LockKeepAlive::start(b"primary".to_vec(), START_TS, TICK, move || Ok(sender))
+                    .expect("keep-alive starts");
+            wait_until(|| {
+                ts_calls.load(Ordering::SeqCst) >= 1 && advised.lock().unwrap().len() >= ready
+            });
+            // Read WHILE the handle is alive: the session has to learn this
+            // before the transaction ends, which is the whole point.
+            let live = keep_alive.lock_expired();
+            (live, keep_alive.close().stop)
+        };
+
+        let (live, stop) = expired_after(1_000 + MAX_TXN_TTL_MS + 1, 0, false, 0);
+        assert!(matches!(stop, KeepAliveStop::LifetimeExceeded { .. }));
+        assert!(live, "the session must be able to read this before close");
+
+        let (live, stop) = expired_after(1_000, 1, false, 2);
+        assert!(matches!(stop, KeepAliveStop::Rejected(_)));
+        assert!(!live, "a gone lock is not client-go's LockExpired");
+
+        let (live, stop) = expired_after(
+            1_000,
+            0,
+            true,
+            usize::try_from(MAX_CONSECUTIVE_FAILURES).expect("a small budget") + 1,
+        );
+        assert!(matches!(stop, KeepAliveStop::ConsecutiveFailures(_)));
+        assert!(!live, "a failing transport is not client-go's LockExpired");
     }
 
     #[test]

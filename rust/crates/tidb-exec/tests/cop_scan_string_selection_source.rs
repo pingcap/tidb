@@ -102,6 +102,13 @@ struct Observation {
     signature: Option<i32>,
     /// Rows the fake sent back -- the wire receipt.
     rows_sent: usize,
+    /// `DAGRequest.time_zone_name` / `time_zone_offset`, the zone TiKV
+    /// evaluates this request's conditions in.
+    time_zone: (String, i64),
+    /// `kv.Request.Concurrency` and `kv.Request.ResourceGroupName`, two of the
+    /// fields Go's `SetFromSessionVars` fills on every read.
+    concurrency: isize,
+    resource_group_name: String,
 }
 
 #[derive(Debug, Default)]
@@ -235,6 +242,12 @@ impl QueryTransport for FakeTransport {
             conditions: conditions.len(),
             signature: conditions.first().and_then(|condition| condition.sig),
             rows_sent: sent,
+            time_zone: (
+                dag.time_zone_name.clone().unwrap_or_default(),
+                dag.time_zone_offset.unwrap_or_default(),
+            ),
+            concurrency: request.metadata().concurrency,
+            resource_group_name: request.metadata().resource_group_name.clone(),
         });
 
         let response = SelectResponse {
@@ -274,7 +287,7 @@ fn fixture(collation: &str) -> (Catalog, Arc<FakeRegion>) {
     let factory = Arc::new(FakeFactory {
         region: Arc::clone(&region),
     });
-    let scanner = Arc::new(CopScanSource::new(factory, "UTC", 0));
+    let scanner = Arc::new(CopScanSource::new(factory));
     let snapshot: Arc<Mutex<dyn ClusterSnapshot>> = Arc::new(Mutex::new(EmptySnapshot));
     let mut text = FieldType::new(FieldTypeCode::Varchar).with_collation_name(collation);
     text.set_flen(20);
@@ -452,4 +465,81 @@ fn a_refused_string_comparison_still_answers_right_and_sends_the_whole_relation(
         "and the answer is right regardless, which is why rows alone cannot \
          see a push-down"
     );
+}
+
+/// The request carries the ZONE OF THE STATEMENT THAT ISSUED IT, not a
+/// constant fixed when the node booted.
+///
+/// Go reads it fresh for every request --
+/// `dagReq.TimeZoneName, dagReq.TimeZoneOffset =
+/// timeutil.Zone(ctx.GetSessionVars().Location())`
+/// (`pkg/executor/internal/builder/builder_utils.go`) -- and the scanner this
+/// exercises is ONE object shared by every connection of a node, so a zone
+/// held there could be neither corrected by `SET time_zone` nor kept private
+/// to one connection.
+///
+/// The two spellings are both pinned because they are not the same field. Go
+/// builds a fixed offset as `time.FixedZone("", ofst)`
+/// (`timeutil.ParseTimeZone`), whose `String()` -- the value `Zone` returns --
+/// is EMPTY: TiKV prefers a non-empty NAME and can only load one a zone
+/// database knows, so `"+08:00"` sent as a name is a name that does not
+/// resolve. A named zone sends its name and its offset at this instant.
+#[test]
+fn each_request_carries_the_issuing_statements_time_zone() {
+    let zoned = |zone: tidb_expr::SessionTimeZone| {
+        let (catalog, region) = fixture("utf8mb4_bin");
+        let context = StmtContext::for_query().with_clock((0, 0, 0), zone);
+        run_select_on("SELECT id, s FROM t WHERE s = 'a'", &catalog, &context)
+            .expect("the scan is served by the coprocessor");
+        sole_observation(&region).time_zone
+    };
+
+    assert_eq!(
+        zoned(tidb_expr::SessionTimeZone::utc()),
+        ("UTC".to_owned(), 0)
+    );
+    assert_eq!(
+        zoned(tidb_expr::SessionTimeZone::Fixed {
+            name: "+08:00".to_owned(),
+            offset_secs: 8 * 3600,
+        }),
+        (String::new(), 8 * 3600),
+        "Go sends a fixed offset with an EMPTY name, because `+08:00` is no \
+         zone a database can load"
+    );
+    assert_eq!(
+        zoned(tidb_expr::SessionTimeZone::Fixed {
+            name: "-06:30".to_owned(),
+            offset_secs: -(6 * 3600 + 30 * 60),
+        }),
+        (String::new(), -(6 * 3600 + 30 * 60))
+    );
+    // A named zone keeps its name: only a name carries daylight saving, which
+    // is why Go prefers it over the offset whenever there is one.
+    assert_eq!(
+        zoned(tidb_expr::SessionTimeZone::Named(chrono_tz::Tz::Asia__Shanghai)).0,
+        "Asia/Shanghai".to_owned()
+    );
+}
+
+/// Go `distsql.RequestBuilder.SetFromSessionVars`, which every read in
+/// `pkg/distsql` runs before the request leaves TiDB.
+///
+/// A zero-value `kv.Request` is not "the defaults": `Concurrency: 0` and an
+/// EMPTY `ResourceGroupName` correspond to no TiDB session at all -- a stock
+/// one is `tidb_distsql_scan_concurrency = 15` (`DefDistSQLScanConcurrency`)
+/// and resource group `default`, which is what `RequestContext::default()`
+/// holds and what the resource-control context on the wire is keyed by.
+#[test]
+fn the_request_carries_the_stock_session_concurrency_and_resource_group() {
+    let (catalog, region) = fixture("utf8mb4_bin");
+    run_select_on(
+        "SELECT id, s FROM t WHERE s = 'a'",
+        &catalog,
+        &StmtContext::for_query(),
+    )
+    .expect("the scan is served by the coprocessor");
+    let observation = sole_observation(&region);
+    assert_eq!(observation.concurrency, 15);
+    assert_eq!(observation.resource_group_name, "default");
 }

@@ -266,6 +266,36 @@ impl MultiStatementTransaction {
         })
     }
 
+    /// Go `session.checkTxnAborted`: refuses every statement of a transaction
+    /// whose keep-alive has given up on the lifetime bound.
+    ///
+    /// The keep-alive raises `LockExpired` once the transaction outlives
+    /// client-go's `MaxTxnTTL` (`2pc.go`: "the pessimistic locks may expire if
+    /// the ttl manager has timed out, set `LockExpired` flag so that this
+    /// transaction could only commit or rollback with no more statement
+    /// executions"). Past that point TiKV may let another transaction resolve
+    /// the locks this one believes it holds, so a statement that read through
+    /// them would be reading rows it no longer owns -- the lost-update shape.
+    /// `COMMIT` and `ROLLBACK` are the two statements Go still admits, and
+    /// they do not come through here.
+    ///
+    /// The failure is statement-scoped, so the transaction stays open for
+    /// exactly those two.
+    pub fn check_lock_expired(&self) -> Result<(), TransactionStatementError> {
+        if self
+            .keep_alive
+            .as_ref()
+            .is_some_and(LockKeepAlive::lock_expired)
+        {
+            return Err(TransactionStatementError::Statement(LockSqlError {
+                code: tidb_error::tidb::errcode::ErrLockExpire,
+                state: *b"HY000",
+                message: tidb_error::tidb::errname::ErrLockExpire.raw.to_owned(),
+            }));
+        }
+        Ok(())
+    }
+
     /// A fresh RPC budget for one statement, starting now.
     fn statement_call(&self) -> UnaryCallContext {
         UnaryCallContext::with_timeout(self.timeout)

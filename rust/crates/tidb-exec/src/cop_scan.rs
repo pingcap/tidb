@@ -68,7 +68,7 @@ use std::thread;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::{
-    CancelHandle, EncodeType, ExecutorKind, ExecutorShape, InjectedQueryRuntime,
+    CancelHandle, DistSqlContext, EncodeType, ExecutorKind, ExecutorShape, InjectedQueryRuntime,
     QueryResultContext, QueryTransport, RequestBuilder, RequestEnvelope, SelectInput,
     WarningCollector,
 };
@@ -124,8 +124,6 @@ const BATCHES_AHEAD: usize = 2;
 /// crosses threads is the request and the decoded rows.
 pub struct CopScanSource<F> {
     factory: Arc<F>,
-    time_zone_name: String,
-    time_zone_offset_secs: i64,
     /// Rows this node has received from coprocessor scans, for the receipt a
     /// live proof reads.
     rows_returned: Arc<AtomicU64>,
@@ -164,12 +162,17 @@ pub struct CopScanStats {
 
 impl<F> CopScanSource<F> {
     /// Builds the capability over an already-running transport factory.
+    ///
+    /// The scanner holds no `time_zone` of its own: one object serves every
+    /// connection of a node, so a zone here would be a process-wide constant
+    /// no `SET time_zone` could correct. Each request carries the zone of the
+    /// statement that issued it
+    /// (`tidb_executor::PushdownStatementContext::time_zone`), which is where
+    /// Go reads it from too (`ConstructDAGReq` -> `SessionVars.Location()`).
     #[must_use]
-    pub fn new(factory: Arc<F>, time_zone_name: impl Into<String>, offset_secs: i64) -> Self {
+    pub fn new(factory: Arc<F>) -> Self {
         Self {
             factory,
-            time_zone_name: time_zone_name.into(),
-            time_zone_offset_secs: offset_secs,
             rows_returned: Arc::new(AtomicU64::new(0)),
             scans_served: Arc::new(AtomicU64::new(0)),
             scans_refused: Arc::new(AtomicU64::new(0)),
@@ -255,10 +258,13 @@ where
         // the order it merges the staged buffer against.
         spec.keep_order = true;
         let scan = PhysicalTableScanPlan::init(0, 0, spec);
+        // Go `ConstructDAGReq`: the zone comes from the SESSION VARIABLES of
+        // the statement that issued this request, read fresh every time.
+        let (time_zone_name, time_zone_offset_secs) = request.statement.time_zone.dag_zone();
         let dag = construct_capped_read_only_dag_req_with_conditions(
             &DagRequestContext::new(
-                self.time_zone_name.clone(),
-                self.time_zone_offset_secs,
+                time_zone_name,
+                time_zone_offset_secs,
                 // Go `builder_utils.go`'s `sc.PushDownFlags()`. The literal
                 // `0` this replaced is TiKV's strictest branch: a truncation
                 // TiDB degrades to a 1292 warning failed the whole region
@@ -410,7 +416,19 @@ where
 
     let mut transport = factory.open_session_transport()?;
     let cancellation = Arc::new(CancelHandle::default());
-    let mut builder = RequestBuilder::new();
+    // Go `SetFromSessionVars`, which EVERY read in `pkg/distsql` runs. The
+    // zero-value builder this replaced sent `Concurrency: 0` and an EMPTY
+    // `ResourceGroupName`, neither of which any TiDB sends: a stock session
+    // is `tidb_distsql_scan_concurrency = 15` and resource group `default`.
+    //
+    // The context is the STOCK one, not this session's: the remaining
+    // `SetFromSessionVars` fields (replica read, statement priority, paging,
+    // request source, task id, max_execution_time, tidb_kv_read_timeout, the
+    // runaway checker) are session variables no `StmtContext` carries yet, so
+    // threading them is a session-tier change this seam cannot make on its
+    // own. What it can do is stop sending values that correspond to no
+    // session at all.
+    let mut builder = RequestBuilder::from_context(&DistSqlContext::new());
     builder
         .set_start_ts(plan.snapshot_ts)
         .set_keep_order(true)

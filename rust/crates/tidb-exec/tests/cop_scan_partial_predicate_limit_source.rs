@@ -252,7 +252,7 @@ fn fixture() -> (Catalog, Arc<FakeRegion>) {
     let factory = Arc::new(FakeFactory {
         region: Arc::clone(&region),
     });
-    let scanner = Arc::new(CopScanSource::new(factory, "UTC", 0));
+    let scanner = Arc::new(CopScanSource::new(factory));
     let snapshot: Arc<Mutex<dyn ClusterSnapshot>> = Arc::new(Mutex::new(EmptySnapshot));
     let columns = vec![column("id", 1, false), column("tag", 2, true)];
     let storage = ClusterTableStorage::new(MutationBuffer::new(), snapshot)

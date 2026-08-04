@@ -398,6 +398,21 @@ impl RealTiKvServerSession {
         // mutably borrowed.
         let opener = self.transaction_opener.clone();
         let table = self.inner.configured_table().clone();
+        // Go `session.checkTxnAborted`, which runs before EVERY statement of
+        // an open transaction: once the keep-alive has given up on the
+        // lifetime bound, only `COMMIT` and `ROLLBACK` may still run -- and
+        // neither of them opens a transaction, so this is the one gate every
+        // other statement passes through.
+        if let Some(open) = self.transaction.opened() {
+            if let Err(error) = open.check_lock_expired() {
+                let sql_error = error.sql_error();
+                return Err(SqlQueryError::new(
+                    sql_error.code,
+                    sql_error.state,
+                    sql_error.message.clone(),
+                ));
+            }
+        }
         self.transaction
             .opened_or_begin(|mode| {
                 MultiStatementTransaction::begin(

@@ -457,20 +457,36 @@ impl SessionVars {
         self.globals.reset(name)
     }
 
-    /// Clears a session override so the registry default applies again
-    /// (Go's `SET x = DEFAULT`).
+    /// Go's `SET x = DEFAULT`.
+    ///
+    /// DEFAULT is not "forget the override". Go `SetExecutor.getVarValue`
+    /// RESOLVES it to a string --
+    /// `variable.GlobalSystemVariableInitialValue(sysVar.Name, sysVar.Value)`
+    /// -- and then writes that string through the ordinary session-set path.
+    /// The difference is the whole point of that call: four variables ship a
+    /// registry value that a real install never runs with
+    /// (`tidb_row_format_version` is `1` in the struct and `2` everywhere
+    /// else), so clearing the override answers a value no TiDB reports.
+    /// Captured on a v8.5.6 playground: `SET tidb_row_format_version =
+    /// DEFAULT; SELECT @@tidb_row_format_version` reads `2` on a Go node.
+    ///
+    /// The environment is the stock one. `store_is_tikv` is a PROCESS fact in
+    /// Go (`config.GetGlobalConfig().Store`) that this tier is not told, so
+    /// `tidb_enable_async_commit`/`tidb_enable_1pc` resolve to their
+    /// non-TiKV-store defaults here; every other override is unconditional.
     pub fn reset_system(&mut self, name: &str) -> Result<(), VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        if def.is_read_only() {
-            return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
-        }
-        let key = name.to_ascii_lowercase();
-        if let Some(other) = alias_of(&key) {
-            self.systems.remove(other);
-        }
-        self.systems.remove(&key);
-        Ok(())
+        let value = tidb_vardef::global_sysvar_initial::global_system_variable_initial_value(
+            &name.to_ascii_lowercase(),
+            def.value,
+            tidb_vardef::global_sysvar_initial::GlobalSysvarEnvironment {
+                store_is_tikv: false,
+                in_test: false,
+                next_gen: false,
+            },
+        );
+        self.set_system(name, value).map(|_truncated| ())
     }
 
     /// Go `SET NAMES <charset>`: sets the three client character-set

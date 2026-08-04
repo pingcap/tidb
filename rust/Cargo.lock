@@ -1609,6 +1609,7 @@ name = "tidb-exec"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "chrono-tz",
  "prost",
  "serde_json",
  "tidb-ast",
@@ -1629,6 +1630,7 @@ dependencies = [
  "tidb-stats",
  "tidb-tablecodec",
  "tidb-txnkv",
+ "tidb-vardef",
 ]
 
 [[package]]

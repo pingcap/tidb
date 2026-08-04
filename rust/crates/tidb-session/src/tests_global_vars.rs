@@ -840,3 +840,65 @@ fn a_result_sizing_builtin_reads_the_sessions_max_allowed_packet() {
         Some("4000")
     );
 }
+
+/// Go `SetExecutor.getVarValue`: `SET x = DEFAULT` resolves to
+/// `GlobalSystemVariableInitialValue(sysVar.Name, sysVar.Value)` -- the
+/// registry value with the FOR-NEW-INSTALLS-ONLY overrides applied -- and
+/// writes that string, rather than clearing the override and answering the
+/// raw registry value.
+///
+/// Captured against a v8.5.6 `tiup playground` (one PD, one TiKV, one Go
+/// tidb-server), over the MySQL protocol:
+///
+/// ```text
+/// mysql> SET tidb_row_format_version = DEFAULT; SELECT @@tidb_row_format_version;
+/// 2
+/// ```
+///
+/// while the sysvar registry (`sysvar/catalog/ddl_schema.rs`, and Go's own
+/// `SysVar` struct) carries `1`. Three of the four overridden variables are
+/// spelled out because they are the ones a fresh cluster actually runs with:
+/// row format v2, `FAST` assertions, and fair locking on.
+#[test]
+fn set_default_resolves_the_new_install_initial_value() {
+    let mut session = Session::new();
+
+    session.run("SET tidb_row_format_version = 1").unwrap();
+    session
+        .run("SET tidb_row_format_version = DEFAULT")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@tidb_row_format_version").as_deref(),
+        Some("2"),
+        "the registry value is 1, but no install runs with it"
+    );
+
+    session.run("SET tidb_txn_assertion_level = OFF").unwrap();
+    session
+        .run("SET tidb_txn_assertion_level = DEFAULT")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@tidb_txn_assertion_level").as_deref(),
+        Some("FAST")
+    );
+
+    session
+        .run("SET tidb_pessimistic_txn_fair_locking = OFF")
+        .unwrap();
+    session
+        .run("SET tidb_pessimistic_txn_fair_locking = DEFAULT")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@tidb_pessimistic_txn_fair_locking").as_deref(),
+        Some("1")
+    );
+
+    // A variable with no override still answers its plain registry default,
+    // which is the `return varVal` arm of the same Go function.
+    session.run("SET autocommit = OFF").unwrap();
+    session.run("SET autocommit = DEFAULT").unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@autocommit").as_deref(),
+        Some("1")
+    );
+}

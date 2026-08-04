@@ -66,6 +66,42 @@ impl SessionTimeZone {
         }
     }
 
+    /// Go `timeutil.Zone`: the `(TimeZoneName, TimeZoneOffset)` pair a
+    /// coprocessor request carries, which is how the REGION is told which
+    /// zone to evaluate a pushed condition in.
+    ///
+    /// The two halves are not redundant. TiKV prefers the NAME when it is
+    /// non-empty, because only a named zone carries daylight saving, and
+    /// falls back to the offset when it is empty. Go therefore sends an empty
+    /// name for a fixed offset: `timeutil.ParseTimeZone`'s `+HH:MM` branch
+    /// builds `time.FixedZone("", ofst)`, whose `String()` -- the very value
+    /// `Zone` returns -- is the empty string. Sending `"+08:00"` as a zone
+    /// NAME instead would be a name no zone database can load.
+    ///
+    /// A named zone's offset is a property of the INSTANT (daylight saving),
+    /// so Go takes it at `time.Now()` and so does this.
+    #[must_use]
+    pub fn dag_zone(&self) -> (String, i64) {
+        match self {
+            // Go's `SystemLocation()` keeps its own name, which `Zone`
+            // rewrites from `"Local"` to `"System"`; every other fixed zone
+            // this session builds is the anonymous offset one.
+            Self::Fixed { name, offset_secs } => (
+                if name.starts_with(['+', '-']) {
+                    String::new()
+                } else {
+                    name.clone()
+                },
+                i64::from(*offset_secs),
+            ),
+            Self::Named(zone) => {
+                let now = chrono::Utc::now().naive_utc();
+                let offset = zone.offset_from_utc_datetime(&now).fix().local_minus_utc();
+                (zone.name().to_owned(), i64::from(offset))
+            }
+        }
+    }
+
     /// Whether this zone is UTC, which is what lets the storage codecs skip
     /// the conversion exactly where Go's `loc != time.UTC` guard does.
     #[must_use]

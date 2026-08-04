@@ -58,7 +58,7 @@
 
 use std::fmt;
 
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_distsql::WarningCollector;
 use tidb_txnkv::Key;
 
@@ -139,6 +139,19 @@ pub struct PushdownStatementContext {
     pub push_down_flags: u64,
     /// Go `DistSQLContext.WarnHandler`: the statement's own warning buffer.
     pub warnings: WarningCollector,
+    /// Go `ConstructDAGReq`'s `dagReq.TimeZoneName, dagReq.TimeZoneOffset =
+    /// timeutil.Zone(ctx.GetSessionVars().Location())`: the zone the REGION
+    /// evaluates this request's conditions in.
+    ///
+    /// It rides the STATEMENT rather than the scanner because Go reads it
+    /// fresh from `SessionVars` for every request, while the scanner is one
+    /// object shared by every connection of a node: a zone held there would be
+    /// a process-wide constant no `SET time_zone` could correct, and a setter
+    /// on it would let one connection re-zone another connection's reads.
+    ///
+    /// The `Default` is UTC, which is the zone a caller with no session behind
+    /// it evaluates in.
+    pub time_zone: SessionTimeZone,
 }
 
 impl PushdownStatementContext {
@@ -148,6 +161,7 @@ impl PushdownStatementContext {
         Self {
             push_down_flags: ctx.push_down_flags(),
             warnings: ctx.cop_warning_sink(),
+            time_zone: ctx.session_zone(),
         }
     }
 }
