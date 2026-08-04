@@ -1281,6 +1281,24 @@ impl DriverError {
         ),
         // The expression-index refusals, each errno and wording captured from
         // `gorun`. See `crate::expression_index`'s module doc for the script.
+        DriverError::WrongKeyColumnFunctionalIndex(expr) => MysqlError::new(
+            3761,
+            *b"HY000",
+            format!("The used storage engine cannot index the expression '{expr}'"),
+        ),
+        DriverError::FunctionalIndexOnJson => MysqlError::new(
+            3753,
+            *b"HY000",
+            "Cannot create an expression index on a function that returns a JSON or GEOMETRY value"
+                .to_owned(),
+        ),
+        DriverError::FunctionalIndexOnBlob => MysqlError::new(
+            3757,
+            *b"HY000",
+            "Cannot create an expression index on an expression that returns a BLOB or TEXT. \
+             Please consider using CAST"
+                .to_owned(),
+        ),
         DriverError::FunctionalIndexOnField => MysqlError::new(
             3762,
             *b"HY000",

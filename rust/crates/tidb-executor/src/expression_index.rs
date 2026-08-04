@@ -112,20 +112,54 @@
 //!   while `create index i on t((vec_cosine_distance(v,'[1,2,3]')))` --
 //!   an ordinary index over the same call -- IS 8200.
 //!
-//! # What Go refuses here and this tier does not, measured
+//! # The SECOND gate: the result TYPE
 //!
-//! `pkg/ddl/index.go`'s `checkIndexColumn` runs on the HIDDEN column after
-//! this gate and refuses two result types that this tier still accepts:
-//! 3753 `Cannot create an expression index on a function that returns a JSON
-//! or GEOMETRY value` and 3757 `... returns a BLOB or TEXT`. Captured, twelve
-//! GA functions land there -- `json_extract`, `json_array`, `json_object`,
-//! `json_set`, `json_insert`, `json_replace`, `json_remove`,
-//! `json_array_append`, `json_array_insert`, `json_merge_patch`,
-//! `json_merge_preserve`, `json_search`, `json_keys` as 3753, and
-//! `json_unquote`/`json_pretty` as 3757. It is a result-TYPE rule, not a
-//! function rule, so it is a unit of its own rather than a widening of this
-//! one; `tests_expression_indexes` records each one's Go code beside the
-//! assertion that it passes THIS gate.
+//! Passing the function gate is not enough. `pkg/ddl/index.go`'s
+//! `checkIndexColumn` runs over every key part `buildIndexColumns` builds --
+//! the hidden column included -- and four of its arms report a different
+//! error when `col.Hidden` is set: 3761 for 1167, 3753 for 3152, 3757 for
+//! 1170. [`crate::ddl::index_prefix::stored_index_length`] is that function,
+//! and [`build_hidden_columns`] runs it here.
+//!
+//! What makes it a rule of its own rather than a widening of the function
+//! gate is that it reads a TYPE. Fifteen GA functions are refused by it --
+//! the thirteen with a JSON result as 3753 and `json_unquote`/`json_pretty`
+//! as 3757 -- but so is `CAST(x AS JSON)`, which is no function call at all,
+//! while `json_extract(j,'$.a')+0` is ACCEPTED because the arithmetic makes
+//! the result a bigint. Captured all three ways.
+//!
+//! The type it reads is Go's, not this crate's. A JSON-returning builtin is
+//! typed `VarString` here -- there is no BinaryJSON cell to hold a JSON value
+//! in, see [`tidb_expr::rewriter::go_result_type_code`] -- so reading
+//! `static_type()` straight would answer "not JSON" for `json_extract` and
+//! accept the index TiDB refuses. [`go_result_type`] is the one place that
+//! divergence is undone.
+//!
+//! ## What that gate still MISSES here, measured
+//!
+//! The other two ways to reach it need a flen this crate does not derive.
+//! Go sizes a string builtin's result from its argument
+//! (`lowerFunctionClass.getFunction` and friends set `bf.tp`'s flen from
+//! `args[0]`, promoting the type to TEXT/MEDIUMTEXT/LONGTEXT as the width
+//! grows); this crate leaves it unspecified. So, captured against TiDB and
+//! still accepted here:
+//!
+//! ```text
+//! index i((lower(mt)))   -- MEDIUMTEXT arg -> mediumtext result -> 3757
+//! index i((lower(t)))    -- TEXT arg -> var_string(65535) -> 1071 too long
+//! index i((lower(v)))    -- varchar(0) arg -> var_string(0) -> 3761
+//! ```
+//!
+//! All three are wrong-ACCEPTS. The arms are in place and correct; they fire
+//! the moment the argument-driven flen lands, which is a unit of its own
+//! (Go's per-builtin return-type derivation, not one rule).
+//!
+//! `CAST(... AS ... ARRAY)` is the remaining shape, and it is the opposite
+//! direction: Go ACCEPTS it as a multi-valued index, whose hidden column is
+//! JSON with `IsArray` set -- which is exactly why the 3753 arm tests
+//! `!col.FieldType.IsArray()`. This tier declines it earlier, at 1105, so the
+//! array arm is written to Go's rule and unreachable until multi-valued
+//! indexes land.
 //!
 //! Two smaller residuals, both the safe direction (this tier refuses what Go
 //! accepts, never the reverse): `MATCH ... AGAINST` and `DEFAULT(a)` are
@@ -650,13 +684,30 @@ pub fn build_hidden_columns(
                 "an expression index over an expression with no static type is not supported yet",
             ));
         };
+        let expr_text = expr.restore_with_flags(hidden_restore_flags());
+        // Go `pkg/ddl/index.go`'s `checkIndexColumn`, which `buildIndexColumns`
+        // runs over EVERY non-columnar key part including this hidden one.
+        // Reported against the EXPRESSION, which is what `col.Hidden` selects
+        // there: 3761 rather than 1167, 3753 rather than 3152, 3757 rather
+        // than 1170. See [`crate::ddl::index_prefix::stored_index_length`].
+        //
+        // An expression key part carries no declared length -- there is no
+        // syntax for `((lower(a))(10))` -- so the length is always
+        // unspecified, which is what turns the BLOB arm from "say how much"
+        // into an outright 3757.
+        crate::ddl::index_prefix::key_part_length(
+            &go_result_type(&built_expr, &field_type),
+            crate::ddl::index_prefix::IndexedColumn::Expression(&expr_text),
+            None,
+            true,
+        )?;
         built.push((
             position,
             HiddenIndexColumn {
                 name,
                 field_type,
                 generated: GeneratedColumn {
-                    expr_text: expr.restore_with_flags(hidden_restore_flags()),
+                    expr_text,
                     // Go sets `GeneratedStored: false`: the value is
                     // recomputed on every read, and only the INDEX stores it.
                     stored: false,
@@ -674,6 +725,33 @@ pub fn build_hidden_columns(
         ));
     }
     Ok(built)
+}
+
+/// The field type Go's `checkIndexColumn` would see for this hidden column.
+///
+/// It is the expression's own type EXCEPT where this workspace deliberately
+/// reports a different one. There is one such family --
+/// [`tidb_expr::rewriter::go_result_type_code`] documents it in full: a
+/// JSON-returning builtin evaluates to canonical JSON TEXT here and is typed
+/// `VarString`, because there is no BinaryJSON cell to put a JSON value in.
+///
+/// The refusal must not inherit that. `checkIndexColumn` is asking what TiDB
+/// calls the result, and reading `static_type()` straight would answer
+/// `VarString` for `json_extract` and accept the index Go answers 3753 for --
+/// captured, `create table t(j json, index i((j->'$.a')))` is 3753 and
+/// `index i((j->>'$.a')))` is 3757, `->` and `->>` being `json_extract` and
+/// `json_unquote(json_extract(...))` to the parser.
+///
+/// Only the TOP-level function decides, as Go's `expr.GetType()` does:
+/// `json_extract(j,'$.a')+0` is a bigint to both and is ACCEPTED, captured.
+fn go_result_type(expr: &tidb_expr::expression::Expression, reported: &FieldType) -> FieldType {
+    let tidb_expr::expression::Expression::ScalarFunction(function) = expr else {
+        return reported.clone();
+    };
+    match tidb_expr::rewriter::go_result_type_code(function.func_name.lowercase()) {
+        Some(code) => FieldType::new(code),
+        None => reported.clone(),
+    }
 }
 
 /// Go restores an expression index's key part with the same flag set a

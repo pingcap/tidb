@@ -83,6 +83,23 @@ pub enum PrefixError {
     /// Go `dbterror.ErrWrongKeyColumn` (1167): the column cannot carry an
     /// index at all.
     WrongKeyColumn(String),
+    /// Go `dbterror.ErrWrongKeyColumnFunctionalIndex` (3761): the same arm as
+    /// [`PrefixError::WrongKeyColumn`] reached over a HIDDEN column, which
+    /// names the EXPRESSION instead of the column.
+    WrongKeyColumnFunctionalIndex(String),
+    /// Go `dbterror.ErrJSONUsedAsKey` (3152): a JSON column in an index.
+    JsonUsedAsKey(String),
+    /// Go `dbterror.ErrFunctionalIndexOnJSONOrGeometryFunction` (3753): the
+    /// same arm reached over a HIDDEN column -- an expression index whose
+    /// result type is JSON. Named after neither the column nor the
+    /// expression, as Go's message names neither.
+    FunctionalIndexOnJson,
+    /// Go `dbterror.ErrFunctionalIndexOnBlob` (3757): an expression index
+    /// whose result type is BLOB or TEXT. This is the hidden-column form of
+    /// [`PrefixError::BlobKeyWithoutLength`]; an expression key part never
+    /// carries a declared length, so the "give it a prefix" escape the named
+    /// column has does not exist here.
+    FunctionalIndexOnBlob,
     /// Go `dbterror.ErrTooLongKey` (1071). Both numbers are BYTES, and the
     /// first has already been multiplied by the charset's maximum bytes per
     /// character, which is what Go reports.
@@ -94,12 +111,43 @@ pub enum PrefixError {
     },
 }
 
-/// Go `checkIndexColumn`'s `ErrJSONUsedAsKey` (3152) arm is NOT here: both
-/// tiers already raise it from their own index lowering, where the column
-/// name is in hand, and it does not depend on the declared length.
+/// WHICH key part `checkIndexColumn` is looking at, which is Go's
+/// `col.Hidden` and the argument its message carries.
 ///
-/// Validates the declared length of one key part and returns the length TiDB
-/// STORES for it, which is not always the one that was written.
+/// Four of Go's arms report a DIFFERENT error for a hidden column than for a
+/// named one -- 3761 for 1167, 3753 for 3152, 3757 for 1170 -- and the
+/// hidden ones name `col.GeneratedExprString` where the named ones name
+/// `col.Name`. Carrying the distinction in the argument rather than in a
+/// separate boolean is what keeps a call site from passing a hidden column's
+/// generated name (`_V$_idx_0`) into a user-facing 1167.
+#[derive(Clone, Copy, Debug)]
+pub enum IndexedColumn<'a> {
+    /// A key part naming a table column, reported by that name.
+    Named(&'a str),
+    /// The hidden column an EXPRESSION key part was rewritten into, carrying
+    /// Go's `col.GeneratedExprString` -- the restored expression text.
+    Expression(&'a str),
+}
+
+impl<'a> IndexedColumn<'a> {
+    /// The string Go's `col.Name.O` resolves to for the arms that report the
+    /// SAME error either way. Those arms all test for a DECLARED length,
+    /// which an expression key part never carries, so the second variant is
+    /// unreachable through them.
+    const fn name(self) -> &'a str {
+        match self {
+            IndexedColumn::Named(name) | IndexedColumn::Expression(name) => name,
+        }
+    }
+}
+
+/// Validates one key part and returns the length TiDB STORES for it, which is
+/// not always the one that was written.
+///
+/// This is Go `checkIndexColumn` whole, followed by the length
+/// normalization at the tail of `buildIndexColumns`. Go runs it over every
+/// non-columnar key part INCLUDING the hidden column an expression part was
+/// rewritten into, which is why [`IndexedColumn`] exists.
 ///
 /// `strict` is Go's `suppressTooLongKeyErr` inverted: outside strict mode Go
 /// downgrades only the too-long check to a warning and truncates.
@@ -108,10 +156,10 @@ pub enum PrefixError {
 ///
 /// One of [`PrefixError`], in the order Go checks them -- the order is
 /// observable, because a `blob` key part with a zero length is 1391 and not
-/// 1170.
+/// 1170, and a `json` key part with a prefix is 3152 and not 1089.
 pub fn stored_index_length(
     field_type: &FieldType,
-    column: &str,
+    column: IndexedColumn<'_>,
     declared: Option<i64>,
     strict: bool,
 ) -> Result<i64, PrefixError> {
@@ -122,21 +170,49 @@ pub fn stored_index_length(
     // `char(0)`/`varchar(0)`/`binary(0)` whose declared width leaves no bytes
     // to key on, cannot be indexed at all. Captured:
     // `create table t (b char(0), index(b))` is
-    // "[ddl:1167]The used storage engine can't index column 'b'".
+    // "[ddl:1167]The used storage engine can't index column 'b'", and
+    // `create table t(v varchar(0), index i((lower(v))))` -- whose hidden
+    // column is `var_string(0)` -- is
+    // "[ddl:3761]The used storage engine cannot index the expression
+    // 'lower(`v`)'".
+    //
+    // The width test is Go's `IsTypeChar || IsTypeVarchar`, which is CHAR,
+    // VARCHAR and VarString. VarString is not a type a user column can
+    // declare, and is exactly the type a hidden column gets.
     if code == tidb_datatype::FieldTypeCode::Null
-        || (field_type.flen() == 0
-            && (code.is_type_char() || code == tidb_datatype::FieldTypeCode::Varchar))
+        || (field_type.flen() == 0 && (code.is_type_char() || code.is_type_varchar()))
     {
-        return Err(PrefixError::WrongKeyColumn(column.to_owned()));
+        return Err(match column {
+            IndexedColumn::Named(name) => PrefixError::WrongKeyColumn(name.to_owned()),
+            IndexedColumn::Expression(expr) => {
+                PrefixError::WrongKeyColumnFunctionalIndex(expr.to_owned())
+            }
+        });
     }
 
-    // A BLOB/TEXT key part must carry a length, and it may not be zero.
+    // A JSON key part is refused -- unless it is an ARRAY, which is the
+    // multi-valued index and a feature of its own (see
+    // `crate::expression_index`). Captured: `index i(j)` and `index i(j(10))`
+    // are both 3152, so this arm outranks the prefix rules below.
+    if code == tidb_datatype::FieldTypeCode::Json && !field_type.is_array() {
+        return Err(match column {
+            IndexedColumn::Named(name) => PrefixError::JsonUsedAsKey(name.to_owned()),
+            IndexedColumn::Expression(_) => PrefixError::FunctionalIndexOnJson,
+        });
+    }
+
+    // A BLOB/TEXT key part must carry a length, and it may not be zero. An
+    // expression key part cannot carry one at all, so for a hidden column
+    // this arm is an outright refusal.
     if code.is_type_blob() {
         if declared == UNSPECIFIED_LENGTH {
-            return Err(PrefixError::BlobKeyWithoutLength(column.to_owned()));
+            return Err(match column {
+                IndexedColumn::Named(name) => PrefixError::BlobKeyWithoutLength(name.to_owned()),
+                IndexedColumn::Expression(_) => PrefixError::FunctionalIndexOnBlob,
+            });
         }
         if declared == 0 {
-            return Err(PrefixError::KeyPart0(column.to_owned()));
+            return Err(PrefixError::KeyPart0(column.name().to_owned()));
         }
     }
 
@@ -153,7 +229,7 @@ pub fn stored_index_length(
             return Err(PrefixError::IncorrectPrefixKey);
         }
         if declared == 0 {
-            return Err(PrefixError::KeyPart0(column.to_owned()));
+            return Err(PrefixError::KeyPart0(column.name().to_owned()));
         }
     }
 
@@ -325,7 +401,7 @@ fn charset_max_bytes(field_type: &FieldType) -> i64 {
 /// refusing.
 pub fn key_part_length(
     field_type: &FieldType,
-    column: &str,
+    column: IndexedColumn<'_>,
     declared: Option<i64>,
     strict: bool,
 ) -> Result<i64, crate::DriverError> {
@@ -344,6 +420,12 @@ pub fn driver_error(error: PrefixError) -> crate::DriverError {
         }
         PrefixError::KeyPart0(column) => crate::DriverError::KeyPart0(column),
         PrefixError::WrongKeyColumn(column) => crate::DriverError::WrongKeyColumn(column),
+        PrefixError::WrongKeyColumnFunctionalIndex(expr) => {
+            crate::DriverError::WrongKeyColumnFunctionalIndex(expr)
+        }
+        PrefixError::JsonUsedAsKey(column) => crate::DriverError::JsonUsedInKey(column),
+        PrefixError::FunctionalIndexOnJson => crate::DriverError::FunctionalIndexOnJson,
+        PrefixError::FunctionalIndexOnBlob => crate::DriverError::FunctionalIndexOnBlob,
         PrefixError::TooLongKey { length, max } => crate::DriverError::TooLongKey { length, max },
     }
 }
@@ -388,12 +470,12 @@ mod tests {
     fn a_length_on_a_non_prefixable_type_is_1089() {
         let int_type = FieldType::new(FieldTypeCode::Long);
         assert_eq!(
-            stored_index_length(&int_type, "a", Some(3), true),
+            stored_index_length(&int_type, IndexedColumn::Named("a"), Some(3), true),
             Err(PrefixError::IncorrectPrefixKey)
         );
         // Without a length the same column is an ordinary key part.
         assert_eq!(
-            stored_index_length(&int_type, "a", None, true),
+            stored_index_length(&int_type, IndexedColumn::Named("a"), None, true),
             Ok(UNSPECIFIED_LENGTH)
         );
     }
@@ -404,13 +486,16 @@ mod tests {
     fn a_blob_key_part_must_carry_a_length() {
         let blob = FieldType::new(FieldTypeCode::Blob);
         assert_eq!(
-            stored_index_length(&blob, "a", None, true),
+            stored_index_length(&blob, IndexedColumn::Named("a"), None, true),
             Err(PrefixError::BlobKeyWithoutLength("a".to_owned()))
         );
-        assert_eq!(stored_index_length(&blob, "a", Some(5), true), Ok(5));
+        assert_eq!(
+            stored_index_length(&blob, IndexedColumn::Named("a"), Some(5), true),
+            Ok(5)
+        );
         // Zero is a different error from absent, and is checked first.
         assert_eq!(
-            stored_index_length(&blob, "a", Some(0), true),
+            stored_index_length(&blob, IndexedColumn::Named("a"), Some(0), true),
             Err(PrefixError::KeyPart0("a".to_owned()))
         );
     }
@@ -422,14 +507,17 @@ mod tests {
     fn a_char_key_part_may_not_outrun_its_column() {
         let short = char_type(FieldTypeCode::Varchar, 5, "utf8mb4");
         assert_eq!(
-            stored_index_length(&short, "a", Some(10), true),
+            stored_index_length(&short, IndexedColumn::Named("a"), Some(10), true),
             Err(PrefixError::IncorrectPrefixKey)
         );
         assert_eq!(
-            stored_index_length(&short, "a", Some(0), true),
+            stored_index_length(&short, IndexedColumn::Named("a"), Some(0), true),
             Err(PrefixError::KeyPart0("a".to_owned()))
         );
-        assert_eq!(stored_index_length(&short, "a", Some(3), true), Ok(3));
+        assert_eq!(
+            stored_index_length(&short, IndexedColumn::Named("a"), Some(3), true),
+            Ok(3)
+        );
     }
 
     /// Go `buildIndexColumns` normalizes a full-length CHAR prefix away, so
@@ -439,15 +527,21 @@ mod tests {
     fn a_full_length_char_prefix_is_stored_as_no_prefix() {
         let exact = char_type(FieldTypeCode::Varchar, 10, "utf8mb4");
         assert_eq!(
-            stored_index_length(&exact, "a", Some(10), true),
+            stored_index_length(&exact, IndexedColumn::Named("a"), Some(10), true),
             Ok(UNSPECIFIED_LENGTH)
         );
         // One short of the column is a real prefix.
-        assert_eq!(stored_index_length(&exact, "a", Some(9), true), Ok(9));
+        assert_eq!(
+            stored_index_length(&exact, IndexedColumn::Named("a"), Some(9), true),
+            Ok(9)
+        );
 
         let mut text = FieldType::new(FieldTypeCode::Blob);
         text.set_flen(10);
-        assert_eq!(stored_index_length(&text, "a", Some(10), true), Ok(10));
+        assert_eq!(
+            stored_index_length(&text, IndexedColumn::Named("a"), Some(10), true),
+            Ok(10)
+        );
     }
 
     /// Go multiplies the length by the charset's bytes per character before
@@ -457,7 +551,7 @@ mod tests {
     fn the_length_limit_counts_bytes_not_characters() {
         let wide = char_type(FieldTypeCode::Varchar, 2000, "utf8mb4");
         assert_eq!(
-            stored_index_length(&wide, "a", Some(1000), true),
+            stored_index_length(&wide, IndexedColumn::Named("a"), Some(1000), true),
             Err(PrefixError::TooLongKey {
                 length: 4000,
                 max: MAX_INDEX_LENGTH,
@@ -466,10 +560,13 @@ mod tests {
         // The same 1000 characters fit in a single-byte charset.
         let narrow = char_type(FieldTypeCode::Varchar, 2000, "latin1");
         assert_eq!(
-            stored_index_length(&narrow, "a", Some(1000), true),
+            stored_index_length(&narrow, IndexedColumn::Named("a"), Some(1000), true),
             Ok(1000)
         );
         // Non-strict downgrades the check, as Go's suppressTooLongKeyErr does.
-        assert_eq!(stored_index_length(&wide, "a", Some(1000), false), Ok(1000));
+        assert_eq!(
+            stored_index_length(&wide, IndexedColumn::Named("a"), Some(1000), false),
+            Ok(1000)
+        );
     }
 }

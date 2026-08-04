@@ -230,7 +230,7 @@ pub(crate) fn add_index_to_table(
                 // same column still fails 1071.
                 prefix_lengths.push(crate::ddl::index_prefix::key_part_length(
                     &table.columns[offset].field_type,
-                    name,
+                    crate::ddl::index_prefix::IndexedColumn::Named(name),
                     *prefix_len,
                     true,
                 )?);

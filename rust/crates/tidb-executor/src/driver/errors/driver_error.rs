@@ -341,6 +341,17 @@ pub enum DriverError {
     },
     /// Go `dbterror.ErrGeneratedColumnNonPrior` (3107).
     GeneratedColumnNonPrior,
+    /// Go `dbterror.ErrWrongKeyColumnFunctionalIndex` (3761), carrying the
+    /// restored expression text: `checkIndexColumn`'s first arm reached over
+    /// a HIDDEN column -- the expression's result has no width to key on.
+    WrongKeyColumnFunctionalIndex(String),
+    /// Go `dbterror.ErrFunctionalIndexOnJSONOrGeometryFunction` (3753): an
+    /// expression index whose result type is JSON. Go's message names neither
+    /// the index nor the expression.
+    FunctionalIndexOnJson,
+    /// Go `dbterror.ErrFunctionalIndexOnBlob` (3757): an expression index
+    /// whose result type is BLOB or TEXT.
+    FunctionalIndexOnBlob,
     /// Go `dbterror.ErrFunctionalIndexOnField` (3762): an expression index
     /// whose expression is nothing but a column, which is a plain index
     /// written the long way. See [`crate::expression_index`].

@@ -247,7 +247,7 @@ pub(crate) fn table_indexes(
                     let offset = offset_of(name)?;
                     prefix_lengths.push(crate::ddl::index_prefix::key_part_length(
                         &column_types[offset],
-                        name,
+                        crate::ddl::index_prefix::IndexedColumn::Named(name),
                         *prefix_len,
                         strict,
                     )?);
@@ -713,8 +713,12 @@ pub(crate) fn primary_key_column(
             // different problem from a cut secondary-index entry: there is no
             // row to go back to for the whole value. See
             // `index_prefix::clustered_prefix_unsupported`.
-            if crate::ddl::index_prefix::key_part_length(field_type, name, *prefix_len, true)?
-                != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
+            if crate::ddl::index_prefix::key_part_length(
+                field_type,
+                crate::ddl::index_prefix::IndexedColumn::Named(name),
+                *prefix_len,
+                true,
+            )? != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
             {
                 return Err(DriverError::unsupported(
                     crate::ddl::index_prefix::clustered_prefix_unsupported(),

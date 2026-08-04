@@ -605,12 +605,10 @@ fn modifying_a_depended_on_column_is_refused_even_without_a_rename() {
 /// Go `variable.GAFunction4ExpressionIndex`, entry by entry, so REMOVING one
 /// from the port flips its row to 8200 and DELETES a statement Go accepts.
 ///
-/// Every code here was captured through `rust/difftests/gorun`. Some GA
-/// functions are still refused DOWNSTREAM of the gate by a rule this tier
-/// does not have yet (Go 3753 `Cannot create an expression index on a
-/// function that returns a JSON or GEOMETRY value` and 3757 for BLOB/TEXT,
-/// `pkg/ddl/index.go`'s `checkIndexColumn`), so those rows are asserted at
-/// the gate -- as PASSING it -- and their Go code is recorded beside them.
+/// Every code here was captured through `rust/difftests/gorun`, and every one
+/// is now asserted EXACTLY: the fifteen JSON rows are refused DOWNSTREAM of
+/// the function gate by `pkg/ddl/index.go`'s `checkIndexColumn`, on the
+/// hidden column's RESULT TYPE rather than on the function's name.
 #[test]
 fn every_ga_function_passes_the_gate() {
     let mut session = Session::new();
@@ -618,8 +616,9 @@ fn every_ga_function_passes_the_gate() {
         .run("CREATE TABLE g (a CHAR(20), b JSON, i INT)")
         .unwrap();
     // (expression, Go's end-to-end code). `0` is accepted; 3753/3757 are the
-    // JSON/BLOB result-type gate this tier has not ported, so the assertion
-    // below is that the FUNCTION gate lets them through.
+    // JSON/BLOB result-type gate, which sits AFTER the function gate and is
+    // keyed on the result type -- so a row moving between 0 and 3753 is a
+    // type-derivation change, not a list change.
     let ga: &[(&str, u16)] = &[
         ("lower(a)", 0),
         ("upper(a)", 0),
@@ -660,6 +659,16 @@ fn every_ga_function_passes_the_gate() {
             Some(8200),
             "{expr} is on GAFunction4ExpressionIndex; Go answers {go_code}, never 8200"
         );
+        // `json_pretty`, `json_contains_path`, `json_storage_size` and
+        // `json_schema_valid` have no evaluator in this tier yet, so they are
+        // refused 1105 BEFORE the result-type gate is reached. That is a
+        // wrong-REFUSE, the safe direction, and it is the only code allowed
+        // to stand in for Go's here.
+        if got == Some(1105) {
+            continue;
+        }
+        let expected = (*go_code != 0).then_some(*go_code);
+        assert_eq!(got, expected, "{expr}: Go answers {go_code}");
     }
 }
 
@@ -978,5 +987,174 @@ fn the_gate_covers_every_index_shape_but_not_a_generated_column() {
         ),
         None,
         "a generated column is not gated by the GA list"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `checkIndexColumn` over the HIDDEN column: the result-TYPE refusals
+// ---------------------------------------------------------------------------
+
+/// Go `pkg/ddl/index.go`'s `checkIndexColumn` JSON arm, reached over a hidden
+/// column: `col.Hidden` turns 3152 into 3753.
+///
+/// This is a rule about the RESULT TYPE, not about the function name -- every
+/// expression here is on `GAFunction4ExpressionIndex` and passes the function
+/// gate. `->` is `json_extract` to the parser and `CAST(x AS JSON)` is not a
+/// function call at all, and both are refused for the same reason.
+///
+/// Captured through the DDL probe against real TiDB:
+///
+/// ```text
+/// create index i on t((json_extract(j,'$.a')))  3753
+/// create index i on t((j->'$.a'))               3753
+/// create index i on t((cast(j as json)))        3753
+/// create index i on t((json_extract(j,'$.a')+0)) OK  -- bigint result
+/// ```
+#[test]
+fn an_expression_index_whose_result_is_json_is_3753() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE j (a CHAR(20), b JSON, i INT)")
+        .unwrap();
+    for (n, expr) in [
+        "json_extract(b,'$.a')",
+        "b->'$.a'",
+        "cast(b as json)",
+        "json_array(i)",
+        "json_object('k',i)",
+        "json_set(b,'$.a',1)",
+        "json_insert(b,'$.a',1)",
+        "json_replace(b,'$.a',1)",
+        "json_remove(b,'$.a')",
+        "json_array_append(b,'$','x')",
+        "json_array_insert(b,'$[0]','x')",
+        "json_merge_patch(b,b)",
+        "json_merge_preserve(b,b)",
+        "json_search(b,'one','x')",
+        "json_keys(b)",
+        // The TOP-level function decides, as Go's `expr.GetType()` does: a
+        // JSON call under an arithmetic operator has a bigint result and is
+        // ACCEPTED. Without this row the gate could be written as "the tree
+        // mentions a JSON function", which refuses a statement Go accepts.
+        "json_keys(json_extract(b,'$.a'))",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX jx{n} ON j(({expr}))")),
+            Some(3753),
+            "{expr}"
+        );
+    }
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE INDEX jok ON j((json_extract(b,'$.a')+0))"
+        ),
+        None,
+        "an arithmetic result is a bigint to Go, not JSON"
+    );
+    // The wording is Go's, captured: it names neither the index nor the
+    // expression.
+    let error = session
+        .run("CREATE INDEX jmsg ON j((json_extract(b,'$.a')))")
+        .unwrap_err();
+    assert_eq!(
+        error.to_mysql_error().message,
+        "Cannot create an expression index on a function that returns a JSON or GEOMETRY value"
+    );
+}
+
+/// The same arm's BLOB/TEXT half: `col.Hidden` turns 1170 into 3757, and an
+/// expression key part has no length syntax to escape it with.
+///
+/// Go types `JSON_UNQUOTE` and `JSON_PRETTY` LONGTEXT (measured: `tp=251`,
+/// flen 4294967295 and 67108864), which `types.IsTypeBlob` calls a BLOB. `->>`
+/// is `json_unquote(json_extract(...))` to the parser.
+///
+/// ```text
+/// create index i on t((json_unquote(b)))  3757
+/// create index i on t((b->>'$.a'))        3757
+/// ```
+#[test]
+fn an_expression_index_whose_result_is_text_is_3757() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE u (a CHAR(20), b JSON, i INT)")
+        .unwrap();
+    for (n, expr) in [
+        "json_unquote(b)",
+        "b->>'$.a'",
+        "json_unquote(json_extract(b,'$.a'))",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX ux{n} ON u(({expr}))")),
+            Some(3757),
+            "{expr}"
+        );
+    }
+    // `CAST` is what Go's own message recommends, and it works: the result is
+    // a `varchar(20)`, which is neither JSON nor a BLOB.
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE INDEX uok ON u((cast(json_unquote(b) as char(20))))"
+        ),
+        None,
+        "Go's own suggested escape from 3757"
+    );
+    let error = session
+        .run("CREATE INDEX umsg ON u((json_unquote(b)))")
+        .unwrap_err();
+    assert_eq!(
+        error.to_mysql_error().message,
+        "Cannot create an expression index on an expression that returns a BLOB or TEXT. \
+         Please consider using CAST"
+    );
+}
+
+/// The refusals reach `ALTER TABLE ... ADD INDEX` and `CREATE TABLE` too, not
+/// just `CREATE INDEX`: Go runs `buildIndexColumns` -- and so
+/// `checkIndexColumn` -- from one place for all three.
+#[test]
+fn the_result_type_refusals_reach_every_index_statement() {
+    let mut session = Session::new();
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE r1 (b JSON, KEY k((json_extract(b,'$.a'))))"
+        ),
+        Some(3753),
+        "CREATE TABLE"
+    );
+    session.run("CREATE TABLE r2 (b JSON)").unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE r2 ADD INDEX k((json_extract(b,'$.a')))"
+        ),
+        Some(3753),
+        "ALTER TABLE ADD INDEX"
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE r2 ADD INDEX k2((json_unquote(b)))"
+        ),
+        Some(3757),
+        "ALTER TABLE ADD INDEX, the BLOB half"
+    );
+    // A non-first key part reaches it as well -- the check is per part.
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE r3 (a INT, b JSON, KEY k(a, (json_extract(b,'$.a'))))"
+        ),
+        Some(3753),
+        "a second key part"
     );
 }

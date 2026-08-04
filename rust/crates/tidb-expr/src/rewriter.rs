@@ -40,11 +40,11 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 pub(crate) mod result_type;
 
-pub use result_type::set_numeric_len_from_args;
 use result_type::{
     binary_literal_type, builtin_return_type, decimal_literal_type, int_literal_type,
     returns_binary_string, set_binary_charset,
 };
+pub use result_type::{go_result_type_code, set_numeric_len_from_args};
 
 /// Resolves a dotted column path to an output column, standing in for the
 /// schema/name resolution Go's `expression_rewriter` performs against the

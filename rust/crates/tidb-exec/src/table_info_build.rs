@@ -160,10 +160,14 @@ fn prefix_length(
     column: &str,
     part: &KeyPart,
 ) -> Refusal<i64> {
-    use tidb_executor::ddl::index_prefix::{stored_index_length, PrefixError};
+    use tidb_executor::ddl::index_prefix::{stored_index_length, IndexedColumn, PrefixError};
 
     let declared = (part.prefix_len != UNSPECIFIED_LENGTH).then_some(part.prefix_len);
-    stored_index_length(field_type, column, declared, true).map_err(|error| match error {
+    // This builder lowers an ALREADY ADMITTED catalog, whose expression key
+    // parts have become ordinary hidden columns; the hidden-column arms of
+    // `checkIndexColumn` were decided when the catalog was built.
+    stored_index_length(field_type, IndexedColumn::Named(column), declared, true).map_err(|error| {
+        match error {
         PrefixError::IncorrectPrefixKey => DdlAdmissionError::with_code(
             tidb_error::tidb::errcode::ErrWrongSubKey,
             "Incorrect prefix key; the used key part isn't a string, the used length is longer \
@@ -181,10 +185,18 @@ fn prefix_length(
             tidb_error::tidb::errcode::ErrWrongKeyColumn,
             format!("The used storage engine can't index column '{column}'"),
         ),
+        PrefixError::JsonUsedAsKey(column) => DdlAdmissionError::with_code(
+            tidb_error::tidb::errcode::ErrJSONUsedAsKey,
+            format!("JSON column '{column}' cannot be used in key specification."),
+        ),
         PrefixError::TooLongKey { length, max } => DdlAdmissionError::with_code(
             tidb_error::tidb::errcode::ErrTooLongKey,
             format!("Specified key was too long ({length} bytes); max key length is {max} bytes"),
         ),
+        // The hidden-column arms, which `IndexedColumn::Named` above cannot
+        // reach.
+        other => unreachable!("a named key part cannot report {other:?}"),
+        }
     })
 }
 
