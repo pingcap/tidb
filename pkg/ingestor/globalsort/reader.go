@@ -40,36 +40,37 @@ import (
 
 const maxReadersPerCore = 16
 
-// maxLanesPerFile bounds one file's read-ahead. Range-GET throughput on a single
-// object peaks around this many concurrent requests and then degrades: measured
-// against S3, one file read at 16 lanes reaches 810 MiB/s while the same read at
-// 64 lanes drops to 520 MiB/s. Budget left over is better spent on more files.
-// It is a var so benchmarks can sweep it.
-var maxLanesPerFile = 16
+// maxConcurrency bounds the buffers one file may hold. They are paired into
+// double-buffered lanes, so this is twice the number of range requests in flight.
+// Range-GET throughput on a single object peaks around 16 in-flight requests and
+// then degrades: measured against S3, one file read at 16 reaches 810 MiB/s while
+// the same read at 64 drops to 520 MiB/s. Budget left over is better spent on more
+// files. It is a var so benchmarks can sweep it.
+var maxConcurrency = 32
 
 // readerMemoryForRange returns the reader-buffer charge for one file's byte range
-// and the number of 8 MiB range-read lanes it buys. Each lane owns a current and a
-// prefetched buffer. A range too small for one lane is charged its own size and is
-// read as a single prefetched stream instead.
+// and how many buffers it buys. A range too small to fill the two buffers a lane
+// needs is charged its own size and read as a single prefetched stream instead.
 func readerMemoryForRange(rangeSize uint64, memoryLimit int64) (int64, int) {
 	if rangeSize == 0 || memoryLimit <= 0 {
 		return 0, 0
 	}
 
-	laneSize := int64(2 * simplesst.ConcurrentReaderBufferSizePerConc)
+	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
 	// A single charge must never exceed the budget: semaphore.Acquire blocks
 	// until ctx is done when n > size.
-	perFileLimit := min(int64(maxLanesPerFile)*laneSize, memoryLimit)
+	perFileLimit := min(int64(maxConcurrency)*bufSize, memoryLimit)
 	requested := perFileLimit
 	if rangeSize < uint64(perFileLimit) {
 		requested = int64(rangeSize)
 	}
-	if requested < laneSize {
+	// Buffers are paired into lanes, so an odd one could not be used.
+	bufCount := int(requested/bufSize) / 2 * 2
+	if bufCount == 0 {
 		return requested, 0
 	}
 
-	lanes := int(requested / laneSize)
-	return int64(lanes) * laneSize, lanes
+	return int64(bufCount) * bufSize, bufCount
 }
 
 func readAllData(
@@ -242,8 +243,7 @@ func readOneFile(
 		rd.EnableConcurrentRead(
 			storage,
 			dataFile,
-			// two buffers per lane: the one being decoded and the prefetched one
-			concurrency*2,
+			concurrency,
 			simplesst.ConcurrentReaderBufferSizePerConc,
 			largeBlockBuf,
 		)

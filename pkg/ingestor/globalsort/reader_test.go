@@ -123,20 +123,26 @@ func TestReadLargeFile(t *testing.T) {
 	require.EqualValues(t, 8*units.MiB, memorySize)
 	require.Zero(t, concurrency)
 
+	// Two buffers is the smallest a lane can use.
 	memorySize, concurrency = readerMemoryForRange(16*units.MiB, memoryLimit)
 	require.EqualValues(t, 16*units.MiB, memorySize)
-	require.Equal(t, 1, concurrency)
+	require.Equal(t, 2, concurrency)
 
-	// One file never takes more than maxLanesPerFile lanes.
-	laneSize := int64(2 * simplesst.ConcurrentReaderBufferSizePerConc)
+	// An odd buffer cannot be paired, so it is neither charged nor handed out.
+	memorySize, concurrency = readerMemoryForRange(24*units.MiB, memoryLimit)
+	require.EqualValues(t, 16*units.MiB, memorySize)
+	require.Equal(t, 2, concurrency)
+
+	// One file never takes more than maxConcurrency buffers.
+	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
 	memorySize, concurrency = readerMemoryForRange(units.GiB, memoryLimit)
-	require.EqualValues(t, int64(maxLanesPerFile)*laneSize, memorySize)
-	require.Equal(t, maxLanesPerFile, concurrency)
+	require.EqualValues(t, int64(maxConcurrency)*bufSize, memorySize)
+	require.Equal(t, maxConcurrency, concurrency)
 
 	// A budget smaller than that cap binds instead, and a charge never exceeds it.
 	memorySize, concurrency = readerMemoryForRange(units.GiB, readerMemoryQuotaPerCore)
 	require.EqualValues(t, readerMemoryQuotaPerCore, memorySize)
-	require.Equal(t, 8, concurrency)
+	require.Equal(t, 16, concurrency)
 
 	backup := simplesst.ConcurrentReaderBufferSizePerConc
 	t.Cleanup(func() {
